@@ -1,9 +1,16 @@
 #[cfg(all(unix, not(any(target_os = "linux", target_os = "android"))))]
 use core::ptr;
 
+use core::sync::atomic::{AtomicBool, Ordering};
+
 use bun_core::feature_flags;
 use bun_sys::{self, Fd};
 use bun_url::URL;
+
+/// Set once `sendfile(2)` answers `ENOSYS`. The JS thread reads it in
+/// `is_eligible`, so later uploads skip the missing syscall and read the
+/// file into memory as on other platforms.
+static SENDFILE_UNAVAILABLE: AtomicBool = AtomicBool::new(false);
 
 #[derive(Copy, Clone)]
 pub struct SendFile {
@@ -21,6 +28,9 @@ impl SendFile {
     pub fn is_eligible(url: &URL) -> bool {
         // `if cfg!()` is fine here: both branches type-check (no platform-only items referenced).
         if cfg!(windows) || !feature_flags::STREAMING_FILE_UPLOADS_FOR_HTTP_CLIENT {
+            return false;
+        }
+        if SENDFILE_UNAVAILABLE.load(Ordering::Relaxed) {
             return false;
         }
         url.is_http() && url.href.len() > 0
@@ -75,6 +85,9 @@ impl SendFile {
                 | bun_sys::E::ENOSYS
                 | bun_sys::E::EOPNOTSUPP
                 | bun_sys::E::EPERM => {
+                    if errcode == bun_sys::E::ENOSYS {
+                        SENDFILE_UNAVAILABLE.store(true, Ordering::Relaxed);
+                    }
                     self.use_read_write = true;
                     return self.write_with_read_write(socket_fd);
                 }

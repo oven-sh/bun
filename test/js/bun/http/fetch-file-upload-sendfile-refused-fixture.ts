@@ -78,14 +78,17 @@ await using server = Bun.serve({
   },
 });
 
-const res = await fetch(server.url, { method: "PUT", body: Bun.file(path) });
-const body = await res.json();
-console.log(
-  JSON.stringify({
+// Two uploads: the second one runs after the first refusal was observed.
+const results = [];
+for (let i = 0; i < 2; i++) {
+  const res = await fetch(server.url, { method: "PUT", body: Bun.file(path) });
+  const body = await res.json();
+  results.push({
     status: res.status,
     ok: body.hash === expectedHash,
     contentLength: body.contentLength,
     received: body.received,
     expected: size,
-  }),
-);
+  });
+}
+console.log(JSON.stringify(results));

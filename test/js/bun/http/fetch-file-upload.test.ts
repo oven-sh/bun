@@ -178,13 +178,14 @@ describe.skipIf(!isLinux)("Bun.file() upload falls back to read+write when sendf
         return;
       }
       expect(stderr).toBe("");
-      expect(JSON.parse(stdout)).toEqual({
+      const upload = {
         status: 200,
         ok: true,
         contentLength: String(256 * 1024 + 123),
         received: 256 * 1024 + 123,
         expected: 256 * 1024 + 123,
-      });
+      };
+      expect(JSON.parse(stdout)).toEqual([upload, upload]);
       expect(exitCode).toBe(0);
     });
   }

@@ -2507,9 +2507,8 @@ pub mod internal {
     }
 
     // Pack getaddrinfo results into one allocation with address families
-    // interleaved (RFC 8305 §4) so the staggered connect attempts in
-    // usockets reach the other family on the second attempt when the first
-    // family is unroutable. See #4938 / #33278.
+    // interleaved (RFC 8305 §4): usockets dials them one at a time, so the
+    // second attempt is the other family. See #4938 / #33278.
     fn process_results(info: *mut AddrInfo) -> Box<[ResultEntry]> {
         let mut count: usize = 0;
         let mut n_first: usize = 0;

@@ -49,8 +49,7 @@ pub struct InternalLoopData {
     pub low_prio_budget: i32,
     pub dns_ready_head: *mut ConnectingSocket,
     pub closed_connecting_head: *mut ConnectingSocket,
-    /// Earliest scheduled connect attempt (monotonic ns) on this loop, or -1.
-    /// Owned by `loop.c`. Never read here.
+    /// Earliest scheduled connect attempt (monotonic ns), or -1. Owned by `loop.c`.
     pub(crate) connect_next_attempt_ns: i64,
     #[cfg(windows)]
     pub(crate) connect_timer: *mut Timer,

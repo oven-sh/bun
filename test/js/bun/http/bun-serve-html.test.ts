@@ -1655,4 +1655,40 @@ describe("chrome devtools automatic workspace folders", () => {
         : { status: 404, body: "fell through" },
     );
   });
+
+  // `process.chdir()` stores the cwd with a trailing separator. Both modes
+  // must report the same normalized root, so the uuid is the same too.
+  test.concurrent("root is the same with and without HMR after process.chdir()", async () => {
+    using dir = tempDir("bun-serve-html-devtools-json-chdir", {
+      "index.html": `<!DOCTYPE html><html><head><script type="module" src="./app.ts"></script></head><body>hi</body></html>`,
+      "app.ts": `console.log("app");`,
+      "serve.ts": /*ts*/ `
+        import page from "./index.html";
+        process.chdir(import.meta.dir);
+        const results = [];
+        for (const hmr of [true, false]) {
+          using server = Bun.serve({
+            port: 0,
+            development: { hmr },
+            routes: { "/": page },
+          });
+          const response = await fetch(new URL(${JSON.stringify(route)}, server.url));
+          results.push(await response.json());
+        }
+        console.log(JSON.stringify(results));
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), join(String(dir), "serve.ts")],
+      env: { ...bunEnv, NODE_ENV: undefined },
+      cwd: join(String(dir), ".."),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    if (exitCode !== 0) throw new Error(stdout + "\n" + stderr);
+    const [withHmr, withoutHmr] = JSON.parse(stdout);
+    expect(withHmr).toEqual({ workspace: { root: String(dir), uuid: expect.any(String) } });
+    expect(withoutHmr).toEqual(withHmr);
+  });
 });

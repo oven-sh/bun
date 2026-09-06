@@ -3397,9 +3397,13 @@ where
 
         // Without a DevServer (HMR off) the HTML bundle is still served from
         // the project root, which is the cwd the DevServer would have used.
+        // `process.chdir()` leaves a trailing separator on `top_level_dir`;
+        // strip it the way `DevServer::init` does so both modes agree.
         let root: &[u8] = match self.dev_server.as_deref() {
             Some(dev_server) => &dev_server.root,
-            None => FileSystem::instance().top_level_dir,
+            None => paths::string_paths::without_trailing_slash_windows_path(
+                FileSystem::instance().top_level_dir,
+            ),
         };
 
         // They need a 16 byte uuid. It needs to be somewhat consistent. We don't want to store this field anywhere.

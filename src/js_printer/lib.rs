@@ -3449,8 +3449,6 @@ pub(crate) mod __gated_printer {
                     self.add_source_mapping(expr.loc);
                     self.print(b"new");
                     self.print_space();
-                    // The callee is not part of the `new` expression's chain, so an
-                    // optional chain there must keep its grouping parentheses.
                     self.print_expr(
                         e.target,
                         Level::New,
@@ -3689,7 +3687,6 @@ pub(crate) mod __gated_printer {
                         if flags.contains(ExprFlag::HasNonOptionalChainParent) {
                             wrap = true;
                             self.print(b"(");
-                            // The parentheses already isolate the chain from `new`.
                             flags.remove(ExprFlag::ForbidCall);
                         }
                         flags.remove(ExprFlag::HasNonOptionalChainParent);
@@ -3755,7 +3752,6 @@ pub(crate) mod __gated_printer {
                         if flags.contains(ExprFlag::HasNonOptionalChainParent) {
                             wrap = true;
                             self.print(b"(");
-                            // The parentheses already isolate the chain from `new`.
                             flags.remove(ExprFlag::ForbidCall);
                         }
                         flags.remove(ExprFlag::HasNonOptionalChainParent);
@@ -4213,8 +4209,6 @@ pub(crate) mod __gated_printer {
                         } else if let ExprData::ECommonjsExportIdentifier(id) = tag.data {
                             self.print_commonjs_export_identifier(id, tag.loc, true);
                         } else {
-                            // Inside the target of `new`, a call in the tag must keep its
-                            // parentheses: `new foo()\`x\`()` calls `new foo()` first.
                             self.print_expr(*tag, Level::Postfix, flags & ExprFlag::ForbidCall);
                         }
                     } else {

@@ -445,6 +445,39 @@ describe("Bun.Transpiler", () => {
       exp("export import type = require('mod'); type", 'export const type = require("mod");\n');
     });
 
+    it("an import clause with no bindings is dropped like tsc does", async () => {
+      const exp = ts.expectPrinted_;
+
+      // tsc keeps only the bare `import "x"` form as a side-effect import
+      exp("import {} from 'bar'; x", "x;\n");
+      exp("import { } from 'bar'; x", "x;\n");
+      exp("import {} from 'bar';\nimport 'bar'; x", 'import"bar";\nx;\n');
+      exp("import foo, {} from 'bar'; foo", 'import foo from "bar";\nfoo;\n');
+      exp("import 'bar'; x", 'import"bar";\nx;\n');
+
+      // JavaScript has no type-only bindings, so the statement is kept
+      const js = new Bun.Transpiler({ loader: "js" });
+      expect(js.transformSync("import {} from 'bar'; x")).toBe('import"bar";\nx;\n');
+
+      using dir = tempDir("ts-empty-import-clause", {
+        "polyfill.ts": `(globalThis as any).__polyfilled = true; export {};`,
+        "index.ts": `
+          import {} from "./polyfill.ts";
+          console.log("polyfilled:", (globalThis as any).__polyfilled === true);
+        `,
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "index.ts"],
+        env: bunEnv,
+        cwd: String(dir),
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("polyfilled: false\n");
+      expect(exitCode).toBe(0);
+    });
+
     it("runs TypeScript that tsc accepts at these parse edges", async () => {
       using dir = tempDir("ts-parse-edges", {
         "mod.ts": "export default 'default export';",

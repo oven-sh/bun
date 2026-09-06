@@ -312,6 +312,8 @@ describe("FormData", () => {
       'multipart/form-data; boundary="ab\\c"',
       'multipart/form-data; boundary="abc',
       'multipart/form-data; boundary="abc" junk; charset=utf-8',
+      // An empty unquoted value does not set the parameter. The next one wins.
+      "multipart/form-data; boundary= ; boundary=abc",
     ];
     const rejects = [
       // The delimiter in the body is "--abc", not "--abc ".

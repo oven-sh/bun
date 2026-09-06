@@ -5370,7 +5370,7 @@ pub mod form_data {
     /// charset=utf-8` is `abc`, not `abc `). A quoted value is unescaped
     /// (`"ab\c"` is `abc`), runs to the end of the header when the closing
     /// quote is missing, and anything between the closing quote and the next
-    /// `;` is discarded.
+    /// `;` is discarded. The first `boundary` parameter with a value wins.
     pub fn get_boundary(content_type: &[u8]) -> Option<std::borrow::Cow<'_, [u8]>> {
         use std::borrow::Cow;
         let mut rest = content_type;
@@ -5413,8 +5413,11 @@ pub mod form_data {
             }
             let end = crate::strings::index_of_char_usize(begin, b';').unwrap_or(begin.len());
             let value = crate::strings_impl::trim_right(&begin[..end], b" \t\r\n");
+            // An empty unquoted value does not set the parameter, so a later
+            // `boundary=` still counts. An empty quoted value (`""`) does set
+            // it, and an empty boundary is rejected.
             if value.is_empty() {
-                return None;
+                continue;
             }
             return Some(Cow::Borrowed(value));
         }

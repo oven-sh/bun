@@ -1701,8 +1701,11 @@ impl FileSink {
         );
 
         if let Some(err) = promise_result.to_error() {
-            self.readable_stream.set(readable_stream::Strong::default());
-            return Err(global_this.throw_value(err));
+            // Same outcome as a pump that rejected before returning: the caller rethrows `err`.
+            let promise = bun_jsc::JSPromise::rejected_promise(global_this, err);
+            promise.set_handled();
+            self.handle_reject_stream(global_this, err)?;
+            return Ok(promise.to_js());
         }
 
         if !promise_result.is_empty_or_undefined_or_null() {

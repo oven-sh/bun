@@ -427,44 +427,79 @@ describe("spawn stdin ReadableStream edge cases", () => {
     expect(exitCode).toBe(0);
   });
 
-  test.skipIf(isWindows)("a spawn that throws on its stdin stream kills and reaps the child", async () => {
-    let onExitCalls = 0;
-    const stream = new ReadableStream({
-      start(controller) {
-        controller.enqueue(new Uint8Array(2));
-        controller.enqueue(42);
-        controller.close();
+  const failingStdinStreams = {
+    locked: {
+      make() {
+        const stream = new ReadableStream({
+          start(controller) {
+            controller.enqueue(new Uint8Array(3));
+            controller.close();
+          },
+        });
+        stream.getReader();
+        return stream;
       },
-    });
+      message: "ReadableStream is locked",
+    },
+    "non-byte chunk": {
+      make() {
+        return new ReadableStream({
+          start(controller) {
+            controller.enqueue(new Uint8Array(2));
+            controller.enqueue(42);
+            controller.close();
+          },
+        });
+      },
+      message: "write() expects a string, ArrayBufferView, or ArrayBuffer",
+    },
+    "direct stream whose pull throws": {
+      make() {
+        return new ReadableStream({
+          type: "direct",
+          pull() {
+            throw new Error("direct boom");
+          },
+        });
+      },
+      message: "direct boom",
+    },
+  };
 
-    expect(() => {
-      spawn({
-        cmd: ["sleep", "5"],
-        stdin: stream,
-        stdout: "ignore",
-        stderr: "ignore",
-        onExit() {
-          onExitCalls++;
-        },
-      });
-    }).toThrow("write() expects a string, ArrayBufferView, or ArrayBuffer");
+  test.skipIf(isWindows).each(Object.entries(failingStdinStreams))(
+    "a spawn that throws on its stdin stream (%s) kills and reaps the child",
+    async (_name, { make, message }) => {
+      let onExitCalls = 0;
 
-    const listChildren = () =>
-      Bun.spawnSync(["ps", "-ax", "-o", "pid=,ppid=,stat=,comm="])
-        .stdout.toString()
-        .split("\n")
-        .map(line => line.trim().split(/\s+/))
-        .filter(([, ppid, , comm]) => ppid === String(process.pid) && comm === "sleep");
+      expect(() => {
+        spawn({
+          cmd: ["sleep", "5"],
+          stdin: make(),
+          stdout: "ignore",
+          stderr: "ignore",
+          onExit() {
+            onExitCalls++;
+          },
+        });
+      }).toThrow(message);
 
-    const deadline = Date.now() + 2000;
-    let children = listChildren();
-    while (children.length > 0 && Date.now() < deadline) {
-      await Bun.sleep(20);
-      children = listChildren();
-    }
-    expect(children).toEqual([]);
-    expect(onExitCalls).toBe(0);
-  });
+      const listChildren = () =>
+        Bun.spawnSync(["ps", "-ax", "-o", "pid=,ppid=,stat=,comm="])
+          .stdout.toString()
+          .split("\n")
+          .map(line => line.trim().split(/\s+/))
+          .filter(([, ppid, , comm]) => ppid === String(process.pid) && comm === "sleep");
+
+      const deadline = Date.now() + 2000;
+      let children = listChildren();
+      while (children.length > 0 && Date.now() < deadline) {
+        await Bun.sleep(20);
+        children = listChildren();
+      }
+      expect(children).toEqual([]);
+      expect(onExitCalls).toBe(0);
+    },
+  );
 
   test("ReadableStream with byte stream", async () => {
     const data = new Uint8Array(256);

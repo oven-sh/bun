@@ -653,77 +653,6 @@ pub(crate) mod on_unhandled_rejection {
     }
 }
 
-/// Skips the leading whitespace (ECMA-262 WhiteSpace and LineTerminator) that `parseInt` / `parseFloat` ignore.
-fn trim_js_leading_whitespace(s: &[u8]) -> &[u8] {
-    let mut i = 0;
-    while i < s.len() {
-        let rest = &s[i..];
-        let skip = match rest {
-            [b' ' | b'\t' | b'\n' | b'\r' | 0x0b | 0x0c, ..] => 1,
-            [0xc2, 0xa0, ..] => 2,
-            [0xe1, 0x9a, 0x80, ..] => 3,
-            [0xe2, 0x80, 0x80..=0x8a | 0xa8 | 0xa9 | 0xaf, ..] => 3,
-            [0xe2, 0x81, 0x9f, ..] => 3,
-            [0xe3, 0x80, 0x80, ..] => 3,
-            [0xef, 0xbb, 0xbf, ..] => 3,
-            _ => 0,
-        };
-        if skip == 0 {
-            break;
-        }
-        i += skip;
-    }
-    &s[i..]
-}
-
-/// `parseInt(s)` with no radix argument.
-fn js_parse_int(s: &[u8]) -> f64 {
-    let s = trim_js_leading_whitespace(s);
-    let (neg, s) = match s {
-        [b'-', rest @ ..] => (true, rest),
-        [b'+', rest @ ..] => (false, rest),
-        _ => (false, s),
-    };
-    let (radix, s) = match s {
-        [b'0', b'x' | b'X', rest @ ..] => (16u32, rest),
-        _ => (10u32, s),
-    };
-    let digits_len = s
-        .iter()
-        .take_while(|&&c| (c as char).is_digit(radix))
-        .count();
-    if digits_len == 0 {
-        return f64::NAN;
-    }
-    let digits = &s[..digits_len];
-    let magnitude = if radix == 10 {
-        bun_core::fmt::parse_double(digits).unwrap_or(f64::NAN)
-    } else {
-        digits.iter().fold(0.0f64, |acc, &c| {
-            acc * 16.0 + f64::from((c as char).to_digit(16).unwrap_or(0))
-        })
-    };
-    if neg {
-        -magnitude
-    } else {
-        magnitude
-    }
-}
-
-/// `parseFloat(s)`.
-fn js_parse_float(s: &[u8]) -> f64 {
-    let s = trim_js_leading_whitespace(s);
-    let (neg, unsigned) = match s {
-        [b'-', rest @ ..] => (true, rest),
-        [b'+', rest @ ..] => (false, rest),
-        _ => (false, s),
-    };
-    if unsigned.starts_with(b"Infinity") {
-        return if neg { f64::NEG_INFINITY } else { f64::INFINITY };
-    }
-    bun_core::fmt::parse_double(s).unwrap_or(f64::NAN)
-}
-
 /// Pretty-prints `value` on one line; a string keeps its quotes.
 fn write_pretty_value(
     global_this: &JSGlobalObject,
@@ -765,10 +694,10 @@ fn write_placeholder_arg(
             return Ok(());
         }
         b'd' | b'i' if arg.is_big_int() => return write_title_value(global_this, arg, list),
-        _ if arg.is_symbol() => f64::NAN,
+        b'd' if arg.is_symbol() => f64::NAN,
         b'd' => arg.to_number(global_this)?,
-        b'i' => js_parse_int(&arg.to_utf8(global_this)?),
-        _ => js_parse_float(&arg.to_utf8(global_this)?),
+        b'i' => arg.parse_int(global_this, 0)?,
+        _ => arg.parse_float(global_this)?,
     };
     write_title_value(global_this, JSValue::js_number(number), list)
 }

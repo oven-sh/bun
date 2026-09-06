@@ -148,6 +148,68 @@ describe("Bun.deepEquals strict mode", () => {
   });
 });
 
+// A non-enumerable property must not satisfy an enumerable one on the other
+// side, in either argument order and on both the structure fast path and the
+// property-name slow path (objects with an accessor).
+describe("Bun.deepEquals with mixed enumerability", () => {
+  function nonEnumerable<T extends object>(object: T, key: PropertyKey, value: unknown): T {
+    Object.defineProperty(object, key, { value, enumerable: false });
+    return object;
+  }
+
+  // An accessor disables the structure fast path.
+  function withGetter<T extends object>(object: T): T {
+    Object.defineProperty(object, "g", { get: () => 1, enumerable: true });
+    return object;
+  }
+
+  const cases: [string, () => object, () => object][] = [
+    ["string key", () => ({ a: 1, h: 2 }), () => nonEnumerable({ a: 1 }, "h", 2)],
+    [
+      "symbol key",
+      () => ({ [Symbol.for("h")]: 2 }),
+      () => nonEnumerable({}, Symbol.for("h"), 2),
+    ],
+    ["nested", () => ({ x: { a: 1, h: 2 } }), () => ({ x: nonEnumerable({ a: 1 }, "h", 2) })],
+    ["inside an array", () => [{ a: 1, h: 2 }], () => [nonEnumerable({ a: 1 }, "h", 2)]],
+    [
+      "undefined enumerable next to a non-enumerable value",
+      () => ({ k: 2 }),
+      () => nonEnumerable({ a: undefined }, "k", 2),
+    ],
+    ["slow path", () => withGetter({ a: 1, h: 2 }), () => withGetter(nonEnumerable({ a: 1 }, "h", 2))],
+    [
+      "slow path, undefined enumerable next to a missing key",
+      () => withGetter({ a: 1, b: 1 }),
+      () => withGetter({ a: 1, x: undefined }),
+    ],
+  ];
+
+  it.each(cases)("%s is not equal in either direction", (_, makeA, makeB) => {
+    for (const strict of [false, true]) {
+      expect(Bun.deepEquals(makeA(), makeB(), strict)).toBe(false);
+      expect(Bun.deepEquals(makeB(), makeA(), strict)).toBe(false);
+    }
+  });
+
+  it("toEqual and toContainEqual reject it in either direction", () => {
+    const a = { a: 1, h: 2 };
+    const b = nonEnumerable({ a: 1 }, "h", 2);
+    expect(a).not.toEqual(b);
+    expect(b).not.toEqual(a);
+    expect([a]).not.toContainEqual(b);
+    expect([b]).not.toContainEqual(a);
+  });
+
+  it("still ignores non-enumerable properties present on both sides", () => {
+    const a = nonEnumerable({ a: 1 }, "h", 2);
+    const b = nonEnumerable({ a: 1 }, "h", 3);
+    expect(Bun.deepEquals(a, b)).toBe(true);
+    expect(Bun.deepEquals(a, b, true)).toBe(true);
+    expect(Bun.deepEquals(withGetter(a), withGetter(b))).toBe(true);
+  });
+});
+
 // The object fast path used to recurse into nested values while walking the
 // structure's PropertyTable; a getter on a nested object that added or removed
 // properties on the parent rehashed that table and freed the vector being

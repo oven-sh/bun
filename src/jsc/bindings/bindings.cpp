@@ -719,6 +719,30 @@ static ALWAYS_INLINE bool hasExtraOwnProperties(JSC::Structure* structure)
         || hasIndexedProperties(structure->indexingType());
 }
 
+// Like getIfPropertyExists(), but a non-enumerable match counts as absent. The
+// callers iterate enumerable names only, so a non-enumerable property on the
+// other side must not satisfy one of them or the result would depend on the
+// argument order.
+static JSValue getEnumerablePropertyIfExists(JSC::JSGlobalObject* globalObject, JSC::JSObject* object, JSC::PropertyName propertyName)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    PropertySlot slot(object, PropertySlot::InternalMethodType::HasProperty);
+    bool hasProperty = object->getPropertySlot(globalObject, propertyName, slot);
+    RETURN_IF_EXCEPTION(scope, {});
+    if (!hasProperty)
+        return {};
+
+    if (slot.isTaintedByOpaqueObject()) [[unlikely]]
+        RELEASE_AND_RETURN(scope, object->get(globalObject, propertyName));
+
+    if (slot.attributes() & PropertyAttribute::DontEnum)
+        return {};
+
+    RELEASE_AND_RETURN(scope, slot.getValue(globalObject, propertyName));
+}
+
 // node compares the non-index own properties of typed arrays as well;
 // only the node entry point (checkPrototypes) pays for this.
 template<bool isStrict, bool enableAsymmetricMatchers, bool checkPrototypes, bool skipPrototypeIdentity = false>
@@ -1128,18 +1152,13 @@ bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
 
                     JSValue left = o1->getDirect(entry.offset());
                     JSValue right;
-                    if constexpr (isStrict) {
-                        // Only an enumerable property on o2 can match an enumerable one on o1.
-                        // getDirect() alone would also find a non-enumerable property, which the
-                        // reverse loop skips, so the two objects would compare equal. Loose
-                        // comparison keeps matching either, as node does.
-                        unsigned o2Attributes = 0;
-                        PropertyOffset o2Offset = o2Structure->get(vm, JSC::PropertyName(entry.key()), o2Attributes);
-                        if (o2Offset != invalidOffset && !(o2Attributes & PropertyAttribute::DontEnum)) {
-                            right = o2->getDirect(o2Offset);
-                        }
-                    } else {
-                        right = o2->getDirect(vm, JSC::PropertyName(entry.key()));
+                    // Only an enumerable property on o2 can match an enumerable one on o1.
+                    // getDirect() alone would also find a non-enumerable property, which the
+                    // reverse loop skips, so the result would depend on the argument order.
+                    unsigned o2Attributes = 0;
+                    PropertyOffset o2Offset = o2Structure->get(vm, JSC::PropertyName(entry.key()), o2Attributes);
+                    if (o2Offset != invalidOffset && !(o2Attributes & PropertyAttribute::DontEnum)) {
+                        right = o2->getDirect(o2Offset);
                     }
 
                     if constexpr (!isStrict) {
@@ -1172,7 +1191,9 @@ bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
                         }
 
                         // Membership check only; every left property is in `pairs` and compared below.
-                        if (o1->getDirectOffset(vm, JSC::PropertyName(entry.key())) == invalidOffset) {
+                        unsigned o1Attributes = 0;
+                        PropertyOffset o1Offset = o1Structure->get(vm, JSC::PropertyName(entry.key()), o1Attributes);
+                        if (o1Offset == invalidOffset || (o1Attributes & PropertyAttribute::DontEnum)) {
                             result = false;
                             return false;
                         }
@@ -1237,8 +1258,7 @@ bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
     }
 
     // take a property name from one, try to get it from both
-    size_t i;
-    for (i = 0; i < propertyArrayLength1; i++) {
+    for (size_t i = 0; i < propertyArrayLength1; i++) {
         Identifier i1 = a1[i];
         PropertyName propertyName1 = PropertyName(i1);
 
@@ -1262,7 +1282,7 @@ bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
             prop2 = slot2.getValue(globalObject, propertyName1);
             RETURN_IF_EXCEPTION(scope, false);
         } else {
-            prop2 = o2->getIfPropertyExists(globalObject, propertyName1);
+            prop2 = getEnumerablePropertyIfExists(globalObject, o2, propertyName1);
             RETURN_IF_EXCEPTION(scope, false);
         }
 
@@ -1281,16 +1301,24 @@ bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
         if (!eql) return false;
     }
 
-    // for the remaining properties in the other object, make sure they are undefined
-    for (; i < propertyArrayLength2; i++) {
-        Identifier i2 = a2[i];
-        PropertyName propertyName2 = PropertyName(i2);
+    if constexpr (!isStrict) {
+        // Every defined enumerable property of o2 must be an enumerable property of o1.
+        // The values were compared above, because every such name is also in a1.
+        for (size_t i = 0; i < propertyArrayLength2; i++) {
+            Identifier i2 = a2[i];
+            PropertyName propertyName2 = PropertyName(i2);
 
-        JSValue prop2 = o2->getIfPropertyExists(globalObject, propertyName2);
-        RETURN_IF_EXCEPTION(scope, false);
+            JSValue prop2 = o2->get(globalObject, propertyName2);
+            RETURN_IF_EXCEPTION(scope, false);
+            if (prop2.isUndefined()) {
+                continue;
+            }
 
-        if (!prop2.isUndefined()) {
-            return false;
+            JSValue prop1 = getEnumerablePropertyIfExists(globalObject, o1, propertyName2);
+            RETURN_IF_EXCEPTION(scope, false);
+            if (!prop1) {
+                return false;
+            }
         }
     }
 

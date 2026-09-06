@@ -35,15 +35,22 @@ function makeTree(dir: string) {
   return tree;
 }
 
+function startWorker(source: string, workerData: object) {
+  const worker = new Worker(source, { eval: true, workerData });
+  const failed = new Promise<never>((_, reject) => worker.once("error", reject));
+  const online = new Promise<void>(resolve => worker.once("online", resolve));
+  return { worker, failed, online };
+}
+
 async function raceDeleter(tree: string, run: () => Promise<void> | void) {
   const sab = new SharedArrayBuffer(4);
-  const worker = new Worker(deleter, { eval: true, workerData: { tree, sab } });
-  await new Promise<void>(resolve => worker.once("online", resolve));
+  const { worker, failed, online } = startWorker(deleter, { tree, sab });
+  await Promise.race([online, failed]);
   const flag = new Int32Array(sab);
   Atomics.store(flag, 0, 1);
   Atomics.notify(flag, 0);
   try {
-    await run();
+    await Promise.race([run(), failed]);
   } finally {
     await worker.terminate();
   }
@@ -74,17 +81,21 @@ describe("fs.rm recursive while another thread deletes the same tree", () => {
   // Two recursive walkers on the same tree, started at the same instant. The
   // one that falls behind in a directory still holds it open when the other
   // removes it, and its next `getdents64` on that directory reports ENOENT.
+  // If one walker is stalled until the other has removed the root, it sees a
+  // missing root, which `rm` without `force` reports as ENOENT on the root.
+  // That is not the bug under test, so a root ENOENT counts as a success.
   test("two rmSync walkers on the same tree both succeed", async () => {
     using dir = tempDir("rm-race-two-walkers", {});
     const tree = makeTree(String(dir));
     const sab = new SharedArrayBuffer(4);
-    const worker = new Worker(
+    const { worker, failed, online } = startWorker(
       `
       const fs = require("node:fs");
       const { parentPort, workerData } = require("node:worker_threads");
       const flag = new Int32Array(workerData.sab);
       Atomics.wait(flag, 0, 0);
       Atomics.store(flag, 0, 2);
+      Atomics.notify(flag, 0);
       try {
         fs.rmSync(workerData.tree, { recursive: true });
         parentPort.postMessage("ok");
@@ -92,17 +103,24 @@ describe("fs.rm recursive while another thread deletes the same tree", () => {
         parentPort.postMessage(e.code + " " + e.path);
       }
       `,
-      { eval: true, workerData: { tree, sab } },
+      { tree, sab },
     );
     const workerResult = new Promise<string>(resolve => worker.once("message", resolve));
-    await new Promise<void>(resolve => worker.once("online", resolve));
+    await Promise.race([online, failed]);
     const flag = new Int32Array(sab);
     Atomics.store(flag, 0, 1);
     Atomics.notify(flag, 0);
-    while (Atomics.load(flag, 0) !== 2) {}
+    expect(Atomics.wait(flag, 0, 1, 10_000)).not.toBe("timed-out");
     try {
-      fs.rmSync(tree, { recursive: true });
-      expect(await workerResult).toBe("ok");
+      let main = "ok";
+      try {
+        fs.rmSync(tree, { recursive: true });
+      } catch (e: any) {
+        main = e.code + " " + e.path;
+      }
+      const results = [main, await Promise.race([workerResult, failed])];
+      expect(results.filter(r => r !== "ok" && r !== `ENOENT ${tree}`)).toEqual([]);
+      expect(results).toContain("ok");
       expect(fs.existsSync(tree)).toBe(false);
     } finally {
       await worker.terminate();

@@ -7451,10 +7451,12 @@ impl NodeFS {
     pub(crate) fn rm(&mut self, args: &args::Rm, _: Flavor) -> Maybe<ret::Rm> {
         // We cannot use removefileat() on macOS because it does not handle write-protected files as expected.
         if args.recursive {
-            // See the matching comment in `rmdir`: pre-resolve the path on
-            // Windows so rooted-but-driveless paths ("/tmp/foo") get the cwd
-            // drive prepended before reaching the dt_* / Syscall::*at helpers,
-            // which do not do that themselves.
+            // On Windows a rooted-but-driveless path ("/tmp/foo") must resolve
+            // against the cwd drive. The dt_* helpers go through
+            // Syscall::*at -> to_nt_path / normalize_path_windows, which do not
+            // add the drive and would turn "/tmp/foo" into a nonexistent NT
+            // name (ENOENT). Pre-resolve with slice_z so the path carries a
+            // drive letter, the same way existsSync/statSync/unlinkSync see it.
             #[cfg(windows)]
             let resolved = args.path.slice_z(&mut self.sync_error_buf).as_bytes();
             #[cfg(not(windows))]

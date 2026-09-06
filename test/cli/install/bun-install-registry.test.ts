@@ -8756,6 +8756,34 @@ describe("outdated", () => {
     expect(await exited).toBe(0);
   });
 
+  test("lockfile without packages", async () => {
+    await Promise.all([
+      write(
+        packageJson,
+        JSON.stringify({
+          name: "foo",
+          dependencies: {
+            "a-dep": "1.0.1",
+          },
+        }),
+      ),
+      write(join(packageDir, "bun.lock"), JSON.stringify({ lockfileVersion: 1, workspaces: { "": { name: "foo" } } })),
+    ]);
+
+    await using proc = spawn({
+      cmd: [bunExe(), "outdated"],
+      cwd: packageDir,
+      stdout: "pipe",
+      stderr: "pipe",
+      env,
+    });
+
+    const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(err).toBe("");
+    expect(out.split("\n")).toEqual([expect.stringContaining("bun outdated "), ""]);
+    expect(exitCode).toBe(0);
+  });
+
   test("NO_COLOR works", async () => {
     await write(
       packageJson,

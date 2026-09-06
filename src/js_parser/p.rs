@@ -2175,8 +2175,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         if self.options.features.inlining {
             if let Some(replacement) = self.const_values.get(&ref_) {
-                // Keep the use site's position, not the declaration's, so
-                // an error thrown here maps back to this line.
+                // Use-site position, as esbuild does.
                 let data = replacement.data;
                 self.ignore_usage(ref_);
                 return Expr { loc, data };
@@ -2770,10 +2769,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 }
                 js_ast::StmtData::SReturn(mut ret) => {
                     if let Some(value) = ret.value.as_mut() {
-                        // `const r = g(); return r;` keeps this function on the
-                        // stack. `return g()` is a tail call in strict mode and
-                        // JSC drops the frame. Only a requested minify may do
-                        // that: the runtime forces `minify_syntax` on.
+                        // `return g()` is a tail call: JSC drops this frame.
+                        // The runtime forces `minify_syntax` on, so only a bundle may.
                         if !self.options.bundle
                             && Self::any_in_tail_position(&replacement, &mut |e| {
                                 matches!(e.data, js_ast::ExprData::ECall(_))
@@ -2861,9 +2858,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         false
     }
 
-    /// Tail position follows JSC's bytecode generator: the whole expression,
-    /// the last operand of a comma, the right side of `&&` / `||` / `??`,
-    /// and both branches of `?:`.
+    /// JSC's tail positions: the expression, a comma's last operand,
+    /// the right side of `&&` / `||` / `??`, both branches of `?:`.
     fn any_in_tail_position(expr: &Expr, pred: &mut impl FnMut(&Expr) -> bool) -> bool {
         match expr.data {
             js_ast::ExprData::EIf(e) => {

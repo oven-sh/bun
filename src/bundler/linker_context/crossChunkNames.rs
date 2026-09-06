@@ -16,7 +16,7 @@ use bun_collections::StringHashMap;
 use crate::bun_renamer as renamer;
 use crate::bun_renamer::ChunkRenamer;
 use crate::chunk::Content;
-use crate::{Chunk, LinkerContext};
+use crate::{Chunk, LinkerContext, WrapKind};
 use std::io::Write as _;
 
 /// The bindings in a deterministic order: chunk by chunk, each chunk's
@@ -32,16 +32,15 @@ fn cross_chunk_refs(chunks: &[Chunk]) -> Vec<Ref> {
 }
 
 /// Names no chunk may use for a cross-chunk binding: keywords and the like,
-/// every unbound or must-not-be-renamed name in any module scope of the
-/// bundle, and the entry points' own export names. A per-chunk renamer only
-/// avoids its own chunk's; a bundle-wide name has to avoid all of them.
+/// and every unbound or must-not-be-renamed name in any module scope of the
+/// bundle. A per-chunk renamer only avoids its own chunk's; a bundle-wide
+/// name has to avoid all of them.
 fn reserved_names(
     c: &LinkerContext,
     chunks: &[Chunk],
 ) -> Result<StringHashMap<u32>, bun_alloc::AllocError> {
     let mut reserved = renamer::compute_initial_reserved_names(c.options.output_format)?;
     let scopes = c.graph.ast.items_module_scope();
-    let export_aliases = c.graph.meta.items_sorted_and_filtered_export_aliases();
     for chunk in chunks {
         if let Content::Javascript(js) = &chunk.content {
             for &source_index in js.files_in_chunk_order.iter() {
@@ -52,15 +51,32 @@ fn reserved_names(
                 );
             }
         }
-        // An entry point's own `export {}` names share its export namespace
-        // with the cross-chunk exports it may carry.
-        if chunk.entry_point.is_entry_point() {
-            for alias in export_aliases[chunk.entry_point.source_index() as usize].iter() {
-                reserved.put(alias, 1)?;
-            }
-        }
     }
     Ok(reserved)
+}
+
+/// The names an entry point chunk's closing `export {}` clause already uses
+/// for the entry point's own exports (`generate_entry_point_tail_js`). The
+/// chunk's cross-chunk exports print in that same clause, so a binding the
+/// chunk hosts must not take one of them. Empty for every other chunk.
+fn entry_point_export_names(
+    c: &LinkerContext,
+    chunk: &Chunk,
+) -> Result<StringHashMap<()>, bun_alloc::AllocError> {
+    let mut names = StringHashMap::<()>::default();
+    if !chunk.entry_point.is_entry_point() {
+        return Ok(names);
+    }
+    let source_index = chunk.entry_point.source_index() as usize;
+    // A CommonJS-wrapped entry point ends in `export default require_x()`
+    // instead, and `default` is reserved anyway.
+    if c.graph.meta.items_flags()[source_index].wrap == WrapKind::Cjs {
+        return Ok(names);
+    }
+    for alias in c.graph.meta.items_sorted_and_filtered_export_aliases()[source_index].iter() {
+        names.put(alias, ())?;
+    }
+    Ok(names)
 }
 
 fn intern(c: &LinkerContext, name: &[u8]) -> &'static [u8] {
@@ -70,8 +86,9 @@ fn intern(c: &LinkerContext, name: &[u8]) -> &'static [u8] {
 }
 
 /// Without `--minify-identifiers`: each binding keeps its own name, numbered
-/// only against reserved names and the other cross-chunk bindings. Runs
-/// before the chunk renamers, which pin these and number the rest around them.
+/// only against reserved names, the other cross-chunk bindings, and the
+/// export names of the entry point whose chunk hosts it. Runs before the
+/// chunk renamers, which pin these and number the rest around them.
 pub(crate) fn assign_unminified(
     c: &mut LinkerContext,
     chunks: &[Chunk],
@@ -83,35 +100,52 @@ pub(crate) fn assign_unminified(
     let mut used = reserved_names(c, chunks)?;
     let mut buf: Vec<u8> = Vec::new();
     c.cross_chunk_names.reserve(refs.len());
-    for ref_ in refs {
-        let original = c
-            .graph
-            .symbols
-            .get_const(ref_)
-            .unwrap()
-            .original_name
-            .slice();
-        let base = bun_core::MutableString::ensure_valid_identifier(original)?;
-        let mut name: &[u8] = &base;
-        // `used[base]` remembers the last suffix handed out for `base`, so a
-        // run of bindings sharing one name does not re-probe 2, 3, ... each time.
-        if let Some(last) = used.get(&*base).copied() {
-            let mut tries = last.max(1);
-            loop {
-                tries += 1;
-                buf.clear();
-                buf.extend_from_slice(&base);
-                write!(&mut buf, "{tries}").expect("Vec<u8> write");
-                if !used.contains_key(buf.as_slice()) {
-                    break;
-                }
-            }
-            used.put(&base, tries)?;
-            name = &buf;
+    for chunk in chunks {
+        let Content::Javascript(js) = &chunk.content else {
+            continue;
+        };
+        if js.exports_to_other_chunks.keys().is_empty() {
+            continue;
         }
-        used.put(name, 1)?;
-        let name = intern(c, name);
-        c.cross_chunk_names.insert(ref_, name);
+        let host_exports = entry_point_export_names(c, chunk)?;
+        let taken = |used: &StringHashMap<u32>, name: &[u8]| {
+            used.contains_key(name) || host_exports.contains_key(name)
+        };
+        for &ref_ in js.exports_to_other_chunks.keys() {
+            let original = c
+                .graph
+                .symbols
+                .get_const(ref_)
+                .unwrap()
+                .original_name
+                .slice();
+            let base = bun_core::MutableString::ensure_valid_identifier(original)?;
+            let name: &[u8] = if !taken(&used, &base) {
+                &base
+            } else {
+                // `used[base]` remembers the last suffix handed out for `base`,
+                // so a run of bindings sharing one name does not re-probe
+                // 2, 3, ... each time.
+                let last = used.get(&*base).copied();
+                let mut tries = last.unwrap_or(1).max(1);
+                loop {
+                    tries += 1;
+                    buf.clear();
+                    buf.extend_from_slice(&base);
+                    write!(&mut buf, "{tries}").expect("Vec<u8> write");
+                    if !taken(&used, &buf) {
+                        break;
+                    }
+                }
+                if last.is_some() {
+                    used.put(&base, tries)?;
+                }
+                &buf
+            };
+            used.put(name, 1)?;
+            let name = intern(c, name);
+            c.cross_chunk_names.insert(ref_, name);
+        }
     }
     Ok(())
 }
@@ -138,6 +172,10 @@ pub(crate) fn assign_minified(
                 reserved.put(name, 1)?;
             }
         }
+        // An entry point chunk prints its cross-chunk exports in the clause
+        // that carries the entry point's own export names
+        // (`entry_point_export_names`). A minified name means nothing, so
+        // keep off all of them instead of checking chunk by chunk.
         if chunk.entry_point.is_entry_point() {
             for alias in export_aliases[chunk.entry_point.source_index() as usize].iter() {
                 reserved.put(alias, 1)?;

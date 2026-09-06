@@ -774,6 +774,99 @@ describe("bundler", () => {
     ],
   });
 
+  // An entry point's export names only constrain the cross-chunk bindings
+  // that its own chunk exports next to them. A module imported both
+  // statically and with import() becomes an entry point whose chunk
+  // re-exports from main.js; its export names must not push the declarations
+  // in main.js to `Node2` / `then2` (visible through `.name`).
+  itBundled("splitting/CrossChunkBindingKeepsNameStaticAndDynamicImport", {
+    files: {
+      "/main.js": /* js */ `
+        import { Node, Link, then } from './lib.js'
+        import * as ns from './lib.js'
+        console.log(Node.name, Link.name, then.name, new Node('x').constructor.name, ns.Widget.name)
+        console.log(Object.keys(ns).join())
+        // (the namespace exports a "then", so the import() promise never settles)
+        import('./lib.js')
+      `,
+      "/lib.js": /* js */ `
+        export class Node extends Error {}
+        export class Link {}
+        export class Widget {}
+        export function then() {}
+      `,
+    },
+    entryPoints: ["/main.js"],
+    splitting: true,
+    outdir: "/out",
+    format: "esm",
+    onAfterBundle(api) {
+      api.expectFile("/out/main.js").toContain("class Node extends Error");
+      api.expectFile("/out/main.js").not.toMatch(/\b(Node|Link|Widget|then)2\b/);
+      expect(jsOutput(api, "lib")).toMatch(/export\s*\{\s*Link,\s*Node,\s*Widget,\s*then\s*\}/);
+    },
+    run: { file: "/out/main.js", stdout: "Node Link then Node Widget\nLink,Node,Widget,then" },
+  });
+
+  // The entry point's own exports, imported back by the import() chunk: the
+  // module moves to a shared chunk and entry.js re-exports from it by name,
+  // `export { Node, helper }` rather than `export { Node2 as Node, ... }`.
+  itBundled("splitting/EntryExportImportedByLazyChunkKeepsName", {
+    files: {
+      "/entry.js": /* js */ `
+        export class Node {}
+        export function helper() { return 'helper' }
+        export { helper as alias }
+        console.log('entry', Node.name, helper.name)
+        import('./lazy.js').then(m => m.run())
+      `,
+      "/lazy.js": /* js */ `
+        import { Node, helper, alias } from './entry.js'
+        export function run() { console.log('lazy', Node.name, helper(), alias === helper) }
+      `,
+    },
+    entryPoints: ["/entry.js"],
+    splitting: true,
+    outdir: "/out",
+    format: "esm",
+    onAfterBundle(api) {
+      for (const f of jsFilesIn(api)) expect(api.readFile("/out/" + f)).not.toMatch(/\b(Node|helper)2\b/);
+      api.expectFile("/out/entry.js").toMatch(/export\s*\{\s*Node,\s*helper as alias,\s*helper\s*\};?\s*$/);
+    },
+    run: { file: "/out/entry.js", stdout: "entry Node helper\nlazy Node helper true" },
+  });
+
+  // The entry point exports its own `x` and imports a shared `x` that now
+  // keeps its name across chunks; entry.js must still export the right one.
+  itBundled("splitting/EntryExportNamedLikeCrossChunkBinding", {
+    files: {
+      "/entry.js": /* js */ `
+        import { x as sharedX } from './shared.js'
+        export const x = 'entry-x'
+        console.log(x, sharedX(), sharedX.name)
+        import('./lazy.js').then(m => console.log(m.lazy()))
+      `,
+      "/lazy.js": /* js */ `
+        import { x } from './shared.js'
+        export function lazy() { return 'lazy ' + x() + ' ' + x.name }
+      `,
+      "/shared.js": /* js */ `
+        export function x() { return 'shared-x' }
+      `,
+    },
+    entryPoints: ["/entry.js"],
+    splitting: true,
+    outdir: "/out",
+    format: "esm",
+    runtimeFiles: {
+      "/test.js": /* js */ `
+        import { x } from './out/entry.js'
+        console.log('imported', x)
+      `,
+    },
+    run: { file: "/test.js", stdout: "entry-x shared-x x\nimported entry-x\nlazy shared-x x" },
+  });
+
   // Two chunks that import() each other reach the same set of chunks; their
   // content hashes must still differ, or hash-only naming collides.
   itBundled("splitting/ChunkImportCycleDistinctHashes", {

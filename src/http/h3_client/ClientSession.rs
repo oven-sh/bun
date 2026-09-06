@@ -255,8 +255,7 @@ impl ClientSession {
         let replayable = not_applied || client_ref.method.is_idempotent();
         // Always allow the first retry. Past that, keep retrying only a fast
         // failure whose request is safe to replay, and never past the cap.
-        let budget_left =
-            retries < crate::MAX_H3_RETRIES && (retries == 0 || (fast && replayable));
+        let budget_left = retries < crate::MAX_H3_RETRIES && (retries == 0 || (fast && replayable));
         if !budget_left || st.is_streaming_body {
             return self.fail(stream, err);
         }

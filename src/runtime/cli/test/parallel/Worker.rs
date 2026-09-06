@@ -420,7 +420,11 @@ impl WorkerPipe {
     ///
     /// # Safety
     /// `this` is the live pipe, embedded in its worker.
-    pub(crate) unsafe fn on_read_chunk(this: *mut Self, chunk: &[u8], _: bun_io::ReadState) -> bool {
+    pub(crate) unsafe fn on_read_chunk(
+        this: *mut Self,
+        chunk: &[u8],
+        _: bun_io::ReadState,
+    ) -> bool {
         // SAFETY: worker backref valid while WorkerPipe is embedded in Worker.
         // Mutating through cast_mut requires write provenance on the stored
         // pointer; all backref creation sites (the runner.rs coord_ptr, the

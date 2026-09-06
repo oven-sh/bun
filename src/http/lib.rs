@@ -336,14 +336,8 @@ const MAX_TLS_RECORD_SIZE: usize = 16 * 1024;
 /// for `.bytes` bodies (replayable).
 pub(crate) const MAX_H2_RETRIES: u8 = 5;
 
-/// An HTTP/3 stream that closed before any response headers (a dead pooled
-/// session, a peer reset, or a peer-closed connection). Re-dispatch it on a
-/// fresh session. Only reached before any response byte and for non-streaming
-/// bodies (replayable). The first retry fires for any such failure, like the
-/// original one-shot behavior. Past that, `ClientSession::retry_or_fail` keeps
-/// retrying only a fast failure whose request the origin provably never
-/// processed or whose method is idempotent, so a POST the origin may have run
-/// is not replayed and an unreachable origin still fails fast.
+/// Cap on re-dispatching an HTTP/3 request whose stream closed before any
+/// response headers. The gate is in `h3_client::ClientSession::retry_or_fail`.
 pub(crate) const MAX_H3_RETRIES: u8 = 5;
 
 const PREALLOCATE_MAX: usize = 1024 * 1024 * 256;
@@ -797,9 +791,7 @@ pub struct HTTPClient<'a> {
     /// where the server promises the request was not processed. Capped by
     /// `MAX_H2_RETRIES`.
     pub(crate) h2_retries: u8,
-    /// Transparent re-dispatch count for an HTTP/3 stream that closed before
-    /// any response headers. Capped by `MAX_H3_RETRIES`. See that constant and
-    /// `ClientSession::retry_or_fail` for the conditions past the first retry.
+    /// HTTP/3 re-dispatch count, capped by `MAX_H3_RETRIES`.
     pub(crate) h3_retries: u8,
     pub(crate) redirect_type: FetchRedirect,
     pub(crate) redirect: Vec<u8>,

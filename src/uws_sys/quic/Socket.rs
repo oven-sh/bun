@@ -10,11 +10,7 @@ bun_opaque::opaque_ffi! {
     pub struct Socket;
 }
 
-/// `LSCONN_ST_TIMED_OUT` from lsquic's `enum LSQUIC_CONN_STATUS`, the value
-/// `Socket::status` returns when the connection never got a peer response and
-/// reached the handshake or idle timeout. Distinct from the peer-closed and
-/// peer-reset states, which report as other values. Re-exported from the
-/// canonical lsquic bindings so the enum ordinal lives in one place.
+/// `Socket::status` value for a connection that never got a peer response.
 pub use bun_lsquic_sys::LSCONN_ST_TIMED_OUT as CONN_STATUS_TIMED_OUT;
 
 // `Socket` is an `opaque_ffi!` ZST (`UnsafeCell<[u8; 0]>`), so `&mut Socket` is

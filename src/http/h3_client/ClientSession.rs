@@ -214,24 +214,11 @@ impl ClientSession {
         }
     }
 
-    /// A stream closed before any response headers arrived. If the retry
-    /// budget allows and the body wasn't a JS stream (which may already be
-    /// consumed), re-enqueue it on a fresh session — this is the standard
-    /// h2/h3 client behavior for the GOAWAY / stateless-reset / port-reuse
-    /// race where a pooled session goes stale between the `matches()` check
-    /// and the first stream open.
-    ///
-    /// The first retry fires for any such failure, preserving the original
-    /// one-shot behavior. Past that, the request is re-sent only when it is
-    /// safe and cheap:
-    /// - `fast` is false for a no-response handshake timeout, so an
-    ///   unreachable origin fails in about one timeout rather than
-    ///   `MAX_H3_RETRIES` of them.
-    /// - `not_applied` is true only when the origin provably never processed
-    ///   the request (the connection never finished its handshake). When it is
-    ///   false the request may have run, so a non-idempotent method is not
-    ///   replayed, matching the h1 (`is_idempotent`) and h2 (REFUSED_STREAM)
-    ///   clients and RFC 9110 section 9.2.2.
+    /// A stream closed before any response headers arrived: re-enqueue it on a
+    /// fresh session (the stale-pooled-session race), up to `MAX_H3_RETRIES`.
+    /// The first retry always fires. Later ones need `fast` (not a no-response
+    /// timeout) and a replayable request: `not_applied` (the handshake never
+    /// finished, so the origin never saw it) or an idempotent method.
     pub(crate) fn retry_or_fail(
         &mut self,
         stream: *mut Stream,
@@ -247,14 +234,10 @@ impl ClientSession {
         let Some(client_ptr) = st.client else {
             return self.fail(stream, err);
         };
-        // `Stream.client` is a live backref while attached; `ParentRef::from`
-        // (NonNull → shared deref) reads the Copy fields without forming
-        // `&mut HTTPClient` across the `detach()` below.
+        // Shared deref only: no `&mut HTTPClient` may live across `detach()`.
         let client_ref = bun_ptr::ParentRef::from(client_ptr);
         let retries = client_ref.h3_retries;
         let replayable = not_applied || client_ref.method.is_idempotent();
-        // Always allow the first retry. Past that, keep retrying only a fast
-        // failure whose request is safe to replay, and never past the cap.
         let budget_left = retries < crate::MAX_H3_RETRIES && (retries == 0 || (fast && replayable));
         if !budget_left || st.is_streaming_body {
             return self.fail(stream, err);
@@ -373,10 +356,7 @@ impl ClientSession {
 
         if client.state.response_stage != HTTPStage::Body {
             if done {
-                // Stream closed before headers. The connection still lives, so
-                // this is a fast peer reset, not a no-response timeout. The
-                // request was already sent on this stream, so the origin may
-                // have processed it: not a "not applied" case.
+                // Peer reset before headers: fast, but the request was sent.
                 return self.retry_or_fail(
                     stream,
                     if st.status_code == 0 {

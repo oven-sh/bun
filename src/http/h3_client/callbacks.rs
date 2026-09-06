@@ -139,14 +139,8 @@ extern "C" fn on_conn_close(qs: *mut quic::Socket) {
         st,
         BStr::new(bun_core::slice_to_nul(&buf)),
     );
-    // A timeout means the peer never answered, so the origin is likely
-    // unreachable and a bounded retry must not multiply the wait. Every other
-    // terminal status (the peer closed, reset, or went away) is a fast result
-    // worth retrying on a fresh session. See `ClientSession::retry_or_fail`.
+    // See `ClientSession::retry_or_fail` for how these gate the retry budget.
     let fast = st != quic::CONN_STATUS_TIMED_OUT;
-    // Without a completed handshake no request byte reached the origin, so a
-    // pending request was provably not processed and is safe to replay even if
-    // its method is not idempotent.
     let not_applied = !session.handshake_done;
     if let Some(ctx) = ClientContext::get() {
         ClientContext::as_mut(ctx).unregister(session);

@@ -514,7 +514,8 @@ describe.skipIf(isWindows)("tty.ReadStream is a net.Socket over a native TTY han
 
   // https://github.com/oven-sh/bun/issues/33580: Node emits errnoException(err,
   // "setRawMode"), so code/errno/syscall are set. A pipe is accepted by
-  // uv_tty_init, and tcgetattr on it fails with ENOTTY.
+  // uv_tty_init. Closing fd 0 under the handle makes tcgetattr fail with EBADF
+  // on every platform (a pipe alone gives ENOTTY on Linux, EOPNOTSUPP on macOS).
   test("setRawMode failure emits an ErrnoException", async () => {
     await using proc = Bun.spawn({
       cmd: [
@@ -527,6 +528,7 @@ describe.skipIf(isWindows)("tty.ReadStream is a net.Socket over a native TTY han
             console.log(JSON.stringify({ code: err.code, errno: err.errno, syscall: err.syscall, message: err.message, isRaw: s.isRaw }));
             s.destroy();
           });
+          require("node:fs").closeSync(0);
           s.setRawMode(true);
         `,
       ],
@@ -537,10 +539,10 @@ describe.skipIf(isWindows)("tty.ReadStream is a net.Socket over a native TTY han
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).toBe("");
     expect(JSON.parse(stdout)).toEqual({
-      code: "ENOTTY",
-      errno: -25,
+      code: "EBADF",
+      errno: -9,
       syscall: "setRawMode",
-      message: "setRawMode ENOTTY",
+      message: "setRawMode EBADF",
       isRaw: false,
     });
     expect(exitCode).toBe(0);

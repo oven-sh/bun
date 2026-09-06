@@ -64,6 +64,11 @@ pub struct FileSink {
     /// Bytes accepted since `pipe_stream` (`written` counts buffered bytes again when flushed).
     pub(crate) stream_bytes: Cell<Option<u64>>,
 
+    /// A write failure that arrived while no `write()`/`flush()`/`end()` promise was pending
+    /// to carry it (the writer dropped buffered bytes on an async error). The next
+    /// `write`/`flush`/`end` from JS takes it.
+    undelivered_error: JsCell<Option<sys::Error>>,
+
     /// Strong reference to the JS wrapper object to prevent GC from collecting it
     /// while an async operation is pending. This is set when endFromJS returns a
     /// pending Promise and cleared when the operation completes.
@@ -466,19 +471,21 @@ impl FileSink {
         // SAFETY: caller contract — `this` is live with write+dealloc provenance.
         unsafe {
             (*this).record_stream_error(streams::StreamError::Error(err.clone()));
-            if (*this).pending.get().state == streams::PendingState::Pending {
-                (*this)
-                    .pending
-                    .with_mut(|p| p.result = streams::Writable::Err(err));
-                if let Some(vm) = (*this).js_vm() {
-                    if vm.is_inside_deferred_task_queue.get() {
-                        (*this).run_pending_later();
-                        return;
-                    }
-                }
-
-                FileSink::run_pending(this);
+            if (*this).pending.get().state != streams::PendingState::Pending {
+                (*this).undelivered_error.set(Some(err));
+                return;
             }
+            (*this)
+                .pending
+                .with_mut(|p| p.result = streams::Writable::Err(err));
+            if let Some(vm) = (*this).js_vm() {
+                if vm.is_inside_deferred_task_queue.get() {
+                    (*this).run_pending_later();
+                    return;
+                }
+            }
+
+            FileSink::run_pending(this);
         }
     }
 
@@ -879,6 +886,8 @@ impl FileSink {
                         (*this)
                             .pending
                             .with_mut(|p| p.result = streams::Writable::Err(err));
+                    } else {
+                        (*this).undelivered_error.set(Some(err));
                     }
                     (*this).writer.with_mut(|w| w.end());
                     (*this).run_pending_later();
@@ -928,6 +937,10 @@ impl FileSink {
             if let streams::WritableFuture::Promise { strong, .. } = &self.pending.get().future {
                 return sys::Result::Ok(strong.value());
             }
+        }
+
+        if let Some(err) = self.undelivered_error.take() {
+            return sys::Result::Err(err);
         }
 
         if self.done.get() {
@@ -1047,6 +1060,9 @@ impl FileSink {
     }
 
     pub fn write(&self, data: &streams::Result) -> streams::Writable {
+        if let Some(err) = self.undelivered_error.take() {
+            return streams::Writable::Err(err);
+        }
         if self.done.get() {
             return streams::Writable::Done;
         }
@@ -1083,6 +1099,9 @@ impl FileSink {
     }
 
     pub(crate) fn write_latin1(&self, data: &streams::Result) -> streams::Writable {
+        if let Some(err) = self.undelivered_error.take() {
+            return streams::Writable::Err(err);
+        }
         if self.done.get() {
             return streams::Writable::Done;
         }
@@ -1100,6 +1119,9 @@ impl FileSink {
     }
 
     pub(crate) fn write_utf16(&self, data: &streams::Result) -> streams::Writable {
+        if let Some(err) = self.undelivered_error.take() {
+            return streams::Writable::Err(err);
+        }
         if self.done.get() {
             return streams::Writable::Done;
         }
@@ -1233,7 +1255,15 @@ impl FileSink {
                     return sys::Result::Ok(strong.value());
                 }
             }
+            if let Some(err) = self.undelivered_error.take() {
+                return sys::Result::Err(err);
+            }
             return sys::Result::Ok(JSValue::js_number(self.written.get() as f64));
+        }
+
+        if let Some(err) = self.undelivered_error.take() {
+            self.done.set(true);
+            return sys::Result::Err(err);
         }
 
         // SAFETY(JsCell): `IOWriter::flush` is pure I/O; no JS while held.
@@ -1494,6 +1524,7 @@ impl FileSink {
             stream_done: JsCell::new(bun_jsc::JSPromiseStrong::empty()),
             stream_error: JsCell::new(None),
             stream_bytes: Cell::new(None),
+            undelivered_error: JsCell::new(None),
             js_sink_ref: JsCell::new(bun_jsc::strong::Optional::empty()),
         }
     }

@@ -1,4 +1,4 @@
-import { expect, test } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, normalizeBunSnapshot, tempDir } from "harness";
 import { readFileSync } from "node:fs";
 import path from "path";
@@ -607,7 +607,7 @@ export default function count(values: string[]) {
 }
 `,
     "execute.test.ts": `
-import { expect, test } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import count from "./subject.ts";
 
 test("executes the function", () => {
@@ -615,7 +615,7 @@ test("executes the function", () => {
 });
 `,
     "importOnly.test.ts": `
-import { expect, test } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import count from "./subject.ts";
 
 test("only imports the function", () => {
@@ -665,7 +665,7 @@ export function second() {
 }
 `,
     "first.test.ts": `${rendezvous("first", "second")}
-import { expect, test } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { first } from "./subject.ts";
 
 test("calls first", () => {
@@ -673,7 +673,7 @@ test("calls first", () => {
 });
 `,
     "second.test.ts": `${rendezvous("second", "first")}
-import { expect, test } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { second } from "./subject.ts";
 
 test("calls second", () => {
@@ -696,4 +696,178 @@ test("calls second", () => {
   const record = lcov.split("end_of_record").find(r => r.includes("SF:subject.ts"));
   expect(record).toMatch(/FNF:2\nFNH:2\n/);
   expect(exitCode).toBe(0);
+});
+
+// Every executed basic block used to be OR-ed into the line set, and only a
+// never-called function cleared lines afterwards. One executed block that
+// enclosed a dead one then marked the dead one as covered, and a hit count
+// grew by one per byte of executed block on the line. Now the innermost range
+// that contains a line's first significant byte decides the line, the same
+// rule JSC uses in findBasicBlockAtTextOffset.
+async function lineHits(dir: string, subject: string): Promise<Record<number, number>> {
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test", "--coverage", "--coverage-reporter=lcov", "./run.test.ts"],
+    env: bunEnv,
+    cwd: dir,
+    stderr: "pipe",
+  });
+  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+  expect(stderr).not.toContain("error");
+  expect(exitCode).toBe(0);
+  const lcov = readFileSync(path.join(dir, "coverage", "lcov.info"), "utf-8");
+  const record = lcov.split("end_of_record").find(r => r.includes(`SF:${subject}\n`));
+  expect(record).toBeDefined();
+  const hits: Record<number, number> = {};
+  for (const [, line, count] of record!.matchAll(/^DA:(\d+),(\d+)$/gm)) {
+    hits[Number(line)] = Number(count);
+  }
+  return hits;
+}
+
+const runTest = `import { test } from "bun:test";
+import "./subject";
+test("runs", () => {});
+`;
+
+describe.concurrent("line coverage follows the innermost block", () => {
+  test("a dead method, function and if-body stay uncovered next to a class field", async () => {
+    using dir = tempDir("cov-innermost", {
+      "subject.ts": `export class Foo {
+  x = 1;
+  constructor() {}
+  dead() {
+    return 2;
+  }
+}
+export function neverCalled() {
+  return 3;
+}
+export function loop() {
+  let n = 0;
+  for (let i = 0; i < 5; i++) {
+    n += i;
+  }
+  if (n > 100) {
+    console.log("unreachable");
+  }
+  return n;
+}
+new Foo();
+loop();
+`,
+      "run.test.ts": runTest,
+    });
+    expect(await lineHits(String(dir), "subject.ts")).toEqual({
+      1: 1,
+      2: 1,
+      3: 1,
+      4: 0,
+      5: 0,
+      8: 0,
+      9: 0,
+      11: 1,
+      12: 1,
+      13: 1,
+      14: 5,
+      16: 1,
+      17: 0,
+      19: 1,
+      21: 1,
+      22: 1,
+    });
+  });
+
+  test("a never-called accessor stays uncovered next to a called method", async () => {
+    using dir = tempDir("cov-accessor", {
+      "subject.ts": `export class Foo {
+  m() {
+    return 1;
+  }
+  get g() {
+    return 2;
+  }
+  set s(v) {
+    this.v = v;
+  }
+}
+const f = new Foo();
+f.m();
+`,
+      "run.test.ts": runTest,
+    });
+    expect(await lineHits(String(dir), "subject.ts")).toEqual({
+      1: 1,
+      2: 1,
+      3: 1,
+      5: 0,
+      6: 0,
+      8: 0,
+      9: 0,
+      12: 1,
+      13: 1,
+    });
+  });
+
+  test("code after an await or yield that never resumed is uncovered", async () => {
+    using dir = tempDir("cov-await", {
+      "subject.ts": `export async function suspended() {
+  const p = new Promise(() => {});
+  await p;
+  console.log("never");
+}
+export function* gen() {
+  yield 1;
+  console.log("never");
+}
+suspended();
+gen().next();
+`,
+      "run.test.ts": runTest,
+    });
+    expect(await lineHits(String(dir), "subject.ts")).toEqual({
+      1: 1,
+      2: 1,
+      3: 1,
+      4: 0,
+      6: 1,
+      7: 1,
+      8: 0,
+      10: 1,
+      11: 1,
+    });
+  });
+
+  test("the same lines without a source map", async () => {
+    using dir = tempDir("cov-no-sourcemap", {
+      "bunfig.toml": `[test]
+coverageIgnoreSourcemaps = true
+`,
+      "subject.js": `export class Foo {
+  x = 1;
+  dead() {
+    return 2;
+  }
+}
+export function neverCalled() {
+  return 3;
+}
+if (false) {
+  console.log("dead");
+}
+new Foo();
+`,
+      "run.test.ts": runTest,
+    });
+    expect(await lineHits(String(dir), "subject.js")).toEqual({
+      1: 1,
+      2: 1,
+      3: 0,
+      4: 0,
+      7: 0,
+      8: 0,
+      10: 1,
+      11: 0,
+      13: 1,
+    });
+  });
 });

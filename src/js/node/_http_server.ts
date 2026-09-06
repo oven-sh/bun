@@ -259,9 +259,7 @@ function connectionListener(this: Server, socket) {
   });
 }
 
-// Builds the `tls` object handed to Bun.serve from Node-style https.Server
-// options. Returns a TLS config even when no key/cert is given, so the
-// listener speaks TLS (and fails handshakes) the way Node's tls.Server does.
+// Always returns a config, so https.Server speaks TLS without key/cert like Node's tls.Server.
 function serverTlsOptions(options) {
   const tlsHelpers = require("internal/tls");
 
@@ -338,8 +336,7 @@ function serverTlsOptions(options) {
   });
 }
 
-// Node's http.Server ignores TLS material (key, cert, ca, pfx) in its
-// options and always serves plaintext. Only https.Server reads them.
+// Like Node, http.Server ignores key/cert/ca/pfx. Only HttpsServer reads them.
 function Server(options, callback): void {
   if (!(this instanceof Server)) return new Server(options, callback);
   return initServer.$call(this, options, callback, false);

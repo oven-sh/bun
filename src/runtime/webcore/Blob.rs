@@ -5303,7 +5303,8 @@ pub(crate) fn write_file(global_this: &JSGlobalObject, callframe: &CallFrame) ->
     )
 }
 
-pub(crate) const WRITE_PERMISSIONS: bun_sys::Mode = 0o664;
+/// Default create mode. Not `DEFAULT_PERMISSION`: that is 0 on Windows, which libuv creates read-only.
+pub(crate) const WRITE_PERMISSIONS: bun_sys::Mode = 0o666;
 
 #[cfg(not(windows))]
 fn write_string_to_file_fast<const NEEDS_OPEN: bool>(

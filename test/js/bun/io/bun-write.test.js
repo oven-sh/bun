@@ -1256,4 +1256,41 @@ describe.skipIf(isWindows).concurrent("Bun.write mode option", () => {
     await Bun.write(dest, "hello");
     expect(modeOf(dest)).toBe(0o751);
   });
+
+  // umask is process-global, so this runs in a child with umask 0 to make the
+  // raw create mode observable. Every path must match fs.writeFileSync (0o666).
+  test("default create mode does not depend on the payload size or write path", async () => {
+    using dir = tempDir("bun-write-mode", {});
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          const fs = require("node:fs");
+          process.umask(0);
+          await Bun.write("small.txt", "x");
+          await Bun.write("large.bin", new Uint8Array(512 * 1024));
+          const writer = Bun.file("writer.txt").writer();
+          writer.write("x");
+          await writer.end();
+          fs.writeFileSync("node.txt", "x");
+          const modeOf = p => (fs.statSync(p).mode & 0o777).toString(8);
+          console.log(JSON.stringify({
+            small: modeOf("small.txt"),
+            large: modeOf("large.bin"),
+            writer: modeOf("writer.txt"),
+            node: modeOf("node.txt"),
+          }));
+        `,
+      ],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({ small: "666", large: "666", writer: "666", node: "666" });
+    expect(exitCode).toBe(0);
+  });
 });

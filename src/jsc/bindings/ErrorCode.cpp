@@ -101,7 +101,7 @@ namespace Bun {
 using namespace JSC;
 using namespace WTF;
 
-static JSC::JSObject* createErrorPrototype(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::ErrorType type, WTF::ASCIILiteral name, WTF::ASCIILiteral code)
+static JSC::JSObject* createErrorPrototype(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::ErrorType type, WTF::ASCIILiteral name)
 {
     JSC::JSObject* prototype;
 
@@ -135,11 +135,9 @@ static JSC::JSObject* createErrorPrototype(JSC::VM& vm, JSC::JSGlobalObject* glo
         break;
     }
 
-    // Node's NodeError has no enumerable prototype properties, so `for (k in err)` yields only
-    // the instance's own `code` (and whatever a site adds). `code` lives here so every
-    // instance can share one string, see `putOwnCode`.
+    // Non-enumerable, like the members of Node's NodeError class prototype, so `for (k in err)`
+    // yields only the instance's own properties. `code` is one of those, see `putOwnCode`.
     prototype->putDirect(vm, vm.propertyNames->name, jsString(vm, String(name)), JSC::PropertyAttribute::DontEnum | 0);
-    prototype->putDirect(vm, WebCore::builtinNames(vm).codePublicName(), jsString(vm, String(code)), JSC::PropertyAttribute::DontEnum | 0);
     prototype->putDirect(vm, vm.propertyNames->toString, JSC::JSFunction::create(vm, globalObject, 0, "toString"_s, NodeError_proto_toString, JSC::ImplementationVisibility::Private), JSC::PropertyAttribute::DontEnum | 0);
 
     return prototype;
@@ -147,11 +145,9 @@ static JSC::JSObject* createErrorPrototype(JSC::VM& vm, JSC::JSGlobalObject* glo
 
 // Node assigns `code` as a plain own property (`error.code = key` in lib/internal/errors.js),
 // so `Object.keys`, `JSON.stringify` and `{ ...err }` all carry it.
-static JSC::ErrorInstance* putOwnCode(JSC::VM& vm, JSC::Structure* structure, JSC::ErrorInstance* error)
+static JSC::ErrorInstance* putOwnCode(JSC::VM& vm, JSC::ErrorInstance* error, WTF::ASCIILiteral code)
 {
-    auto& codeName = WebCore::builtinNames(vm).codePublicName();
-    JSValue code = asObject(structure->storedPrototype())->getDirect(vm, codeName);
-    error->putDirect(vm, codeName, code, 0);
+    error->putDirect(vm, WebCore::builtinNames(vm).codePublicName(), jsString(vm, String(code)), 0);
     return error;
 }
 
@@ -202,9 +198,9 @@ static ErrorCodeCache* errorCache(Zig::GlobalObject* globalObject)
 }
 
 // clang-format on
-static Structure* createErrorStructure(JSC::VM& vm, JSGlobalObject* globalObject, JSC::ErrorType type, WTF::ASCIILiteral name, WTF::ASCIILiteral code)
+static Structure* createErrorStructure(JSC::VM& vm, JSGlobalObject* globalObject, JSC::ErrorType type, WTF::ASCIILiteral name)
 {
-    auto* prototype = createErrorPrototype(vm, globalObject, type, name, code);
+    auto* prototype = createErrorPrototype(vm, globalObject, type, name);
     return ErrorInstance::createStructure(vm, globalObject, prototype);
 }
 
@@ -214,7 +210,7 @@ JSObject* ErrorCodeCache::createError(VM& vm, Zig::GlobalObject* globalObject, E
     auto* cache = errorCache(globalObject);
     const auto& data = errors[static_cast<size_t>(code)];
     if (!cache->internalField(static_cast<unsigned>(code))) {
-        auto* structure = createErrorStructure(vm, globalObject, data.type, data.name, data.code);
+        auto* structure = createErrorStructure(vm, globalObject, data.type, data.name);
         cache->internalField(static_cast<unsigned>(code)).set(vm, cache, structure);
     }
 
@@ -238,7 +234,7 @@ JSObject* ErrorCodeCache::createError(VM& vm, Zig::GlobalObject* globalObject, E
                 return object;
         }
     }
-    return putOwnCode(vm, structure, JSC::ErrorInstance::create(vm, structure, messageString, cause, nullptr, JSC::RuntimeType::TypeNothing, data.type, true));
+    return putOwnCode(vm, JSC::ErrorInstance::create(vm, structure, messageString, cause, nullptr, JSC::RuntimeType::TypeNothing, data.type, true), data.code);
 }
 
 JSObject* createError(VM& vm, Zig::GlobalObject* globalObject, ErrorCode code, const String& message)
@@ -261,12 +257,13 @@ JSObject* createError(VM& vm, JSC::JSGlobalObject* globalObject, ErrorCode code,
     if (auto* zigGlobalObject = dynamicDowncast<Zig::GlobalObject>(globalObject))
         return createError(vm, zigGlobalObject, code, message, jsUndefined());
 
-    auto* structure = createErrorStructure(vm, globalObject, errors[static_cast<size_t>(code)].type, errors[static_cast<size_t>(code)].name, errors[static_cast<size_t>(code)].code);
+    const auto& data = errors[static_cast<size_t>(code)];
+    auto* structure = createErrorStructure(vm, globalObject, data.type, data.name);
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     String messageString = message.isUndefined() ? String() : message.toWTFString(globalObject);
     if (scope.exception() && !vm.hasPendingTerminationException())
         (void)scope.tryClearException();
-    return putOwnCode(vm, structure, JSC::ErrorInstance::create(vm, structure, messageString, JSValue(), nullptr, JSC::RuntimeType::TypeNothing, errors[static_cast<size_t>(code)].type, true));
+    return putOwnCode(vm, JSC::ErrorInstance::create(vm, structure, messageString, JSValue(), nullptr, JSC::RuntimeType::TypeNothing, data.type, true), data.code);
 }
 
 JSC::JSObject* createError(VM& vm, Zig::GlobalObject* globalObject, ErrorCode code, JSValue message, JSValue options)
@@ -1065,8 +1062,8 @@ JSC::EncodedJSValue INVALID_ARG_VALUE_RangeError(JSC::ThrowScope& throwScope, JS
     JSValueToStringSafe(globalObject, builder, value, true);
     RELEASE_RETURN_IF_EXCEPTION(throwScope, {});
 
-    auto* structure = createErrorStructure(vm, globalObject, ErrorType::RangeError, "RangeError"_s, "ERR_INVALID_ARG_VALUE"_s);
-    auto* error = putOwnCode(vm, structure, JSC::ErrorInstance::create(vm, structure, builder.toString(), jsUndefined(), nullptr, JSC::RuntimeType::TypeNothing, ErrorType::RangeError, true));
+    auto* structure = createErrorStructure(vm, globalObject, ErrorType::RangeError, "RangeError"_s);
+    auto* error = putOwnCode(vm, JSC::ErrorInstance::create(vm, structure, builder.toString(), jsUndefined(), nullptr, JSC::RuntimeType::TypeNothing, ErrorType::RangeError, true), "ERR_INVALID_ARG_VALUE"_s);
     throwScope.throwException(globalObject, error);
     throwScope.release();
     return {};

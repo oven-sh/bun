@@ -55,6 +55,9 @@ test("ERR_* code is writable and deletable like in node", () => {
   expect(e.code).toBe("CUSTOM");
   delete e.code;
   expect(Object.hasOwn(e, "code")).toBe(false);
+  expect(e.code).toBeUndefined();
+  // The Node-style toString lives on the shared prototype and keeps working.
+  expect(capture(() => Buffer.alloc(-1)).toString()).toStartWith("RangeError [ERR_OUT_OF_RANGE]: ");
 });
 
 test("ERR_SYSTEM_ERROR code is enumerable next to info, errno and syscall", () => {
@@ -70,17 +73,21 @@ test("warning objects expose name, code and detail as enumerable properties", as
       bunExe(),
       "--no-warnings",
       "-e",
-      `process.on("warning", w => console.log(JSON.stringify({ keys: Object.keys(w), json: JSON.parse(JSON.stringify(w)) })));
-       process.emitWarning("w", { code: "MY_CODE", detail: "d" });`,
+      `const seen = [];
+       process.on("warning", w => seen.push({ keys: Object.keys(w), json: JSON.parse(JSON.stringify(w)) }));
+       process.emitWarning("w", { code: "MY_CODE", detail: "d" });
+       // Like Node, an Error passed in is emitted as is: no name, code or detail are added to it.
+       process.emitWarning(new Error("e"), { type: "DeprecationWarning", code: "DEP0XXX", detail: "d" });
+       process.on("exit", () => console.log(JSON.stringify(seen)));`,
     ],
     env: bunEnv,
     stderr: "pipe",
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect(stderr).toBe("");
-  expect(JSON.parse(stdout)).toEqual({
-    keys: ["name", "code", "detail"],
-    json: { name: "Warning", code: "MY_CODE", detail: "d" },
-  });
+  expect(JSON.parse(stdout)).toEqual([
+    { keys: ["name", "code", "detail"], json: { name: "Warning", code: "MY_CODE", detail: "d" } },
+    { keys: [], json: {} },
+  ]);
   expect(exitCode).toBe(0);
 });

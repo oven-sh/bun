@@ -1,6 +1,6 @@
 import { ArrayBufferSink } from "bun";
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, isASAN, withoutAggressiveGC } from "harness";
+import { bunEnv, bunExe, expectNativeMemoryReportedToGC, isASAN, withoutAggressiveGC } from "harness";
 import { join } from "node:path";
 
 describe("ArrayBufferSink", () => {
@@ -154,6 +154,17 @@ describe("ArrayBufferSink", () => {
     expect(() => s.flush()).toThrow(/already been closed/);
     expect(() => s.end()).toThrow(/already been closed/);
     expect(s.close()).toBeUndefined();
+  });
+
+  // The buffered bytes live in a native Vec the GC cannot see. Each write
+  // re-reports the sink's size, so dropped sinks holding data count toward the
+  // next collection (500 x 4 MiB sinks reached 2 GiB RSS before).
+  it("reports its buffered bytes to the GC", async () => {
+    await expectNativeMemoryReportedToGC(
+      "const payload = new Uint8Array(1 << 20).fill(7);",
+      "(() => { const s = new Bun.ArrayBufferSink(); s.start(); s.write(payload); return s; })()",
+      { drop: 300, live: 20, minBytesEach: 1 << 20 },
+    );
   });
 
   it("start() with an option getter that closes the sink throws instead of crashing", async () => {

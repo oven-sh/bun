@@ -2697,9 +2697,7 @@ fn resolve_local_image_path(src: &[u8], base_dir: Option<&[u8]>) -> Option<Box<[
     // Percent-decode the path so file:///foo/bar%20baz works.
     let decoded = bun_url::PercentEncoding::decode_alloc(path).ok()?;
 
-    // Resolve against the markdown file's directory, or the cwd for
-    // `Bun.markdown.ansi()` callers. A result longer than a PathBuffer cannot
-    // exist on disk and is skipped like a missing file.
+    // Relative to the markdown file's directory, else the cwd (`Bun.markdown.ansi()`).
     let mut cwd_buf = bun_paths::path_buffer_pool::get();
     let base: &[u8] = if let Some(d) = base_dir {
         d

@@ -740,6 +740,101 @@ impl UninstallTask {
     }
 }
 
+// ─────────────────────── installed package.json verification ───────────────────────
+
+/// Whether an installed `package.json` still names the package the lockfile
+/// expects at its path. This is the "is it installed" test both linkers apply:
+/// hoisted to `node_modules/<pkg>`, isolated to a store entry. Build metadata
+/// is ignored on both sides (https://github.com/oven-sh/bun/issues/13563) and
+/// a leading `v`, `=` or whitespace on the installed version is tolerated.
+pub(crate) fn installed_package_json_matches(
+    source: &bun_ast::Source,
+    name: &[u8],
+    version: &[u8],
+    version_required: bool,
+) -> bool {
+    let mut log = bun_ast::Log::init();
+
+    initialize_store();
+
+    let mut package_json_checker = bun_json::PackageJSONVersionChecker::init(source, &mut log);
+    if package_json_checker.parse().is_err() {
+        return false;
+    }
+    if package_json_checker.has_errors() || !package_json_checker.has_found_name {
+        return false;
+    }
+    if !package_json_checker.has_found_version && version_required {
+        return false;
+    }
+
+    let found_version = package_json_checker.found_version();
+
+    // exclude build tags from comparsion
+    // https://github.com/oven-sh/bun/issues/13563
+    let found_version_end =
+        strings::last_index_of_char(found_version, b'+').unwrap_or(found_version.len());
+    let expected_version_end =
+        strings::last_index_of_char(version, b'+').unwrap_or(version.len());
+    // Check if the version matches
+    if found_version[..found_version_end] != version[..expected_version_end] {
+        let offset = 'brk: {
+            // ASCII only.
+            for c in 0..found_version.len() {
+                match found_version[c] {
+                    // newlines & whitespace
+                    b' ' | b'\t' | b'\n' | b'\r'
+                    | 0x0B /* VT */
+                    | 0x0C /* FF */
+                    // version separators
+                    | b'v' | b'=' => {}
+                    _ => break 'brk c,
+                }
+            }
+            // If we didn't find any of these characters, there's no point in checking the version again.
+            // it will never match.
+            return false;
+        };
+
+        if found_version[offset..] != *version {
+            return false;
+        }
+    }
+
+    // lastly, check the name.
+    package_json_checker.found_name() == name
+}
+
+/// Reads the `package.json` at `path` into `buf` (scratch, reused across
+/// calls) and checks it with [`installed_package_json_matches`]. A missing or
+/// unreadable file is a mismatch.
+pub(crate) fn installed_package_json_at_path_matches(
+    path: &ZStr,
+    buf: &mut Vec<u8>,
+    name: &[u8],
+    version: &[u8],
+) -> bool {
+    buf.clear();
+    {
+        // Closed on drop, before parsing: the longer the file stays open, the
+        // more likely it causes issues for other processes on Windows.
+        let Ok(fd) = sys::openat(Fd::cwd(), path, sys::O::RDONLY, 0) else {
+            return false;
+        };
+        if sys::File::from_fd(fd).read_to_end_into(buf).is_err() {
+            return false;
+        }
+    }
+
+    // If it's not long enough to have {"name": "foo", "version": "1.2.0"}, there's no way it's valid
+    if buf.len() < br#"{"name":"","version":""}"#.len() + name.len() + version.len() {
+        return false;
+    }
+
+    let source = bun_ast::Source::init_path_string(path.as_bytes(), &buf[..]);
+    installed_package_json_matches(&source, name, version, true)
+}
+
 // ───────────────────────────── impl PackageInstall ─────────────────────────────
 
 impl<'a> PackageInstall<'a> {
@@ -948,60 +1043,14 @@ impl<'a> PackageInstall<'a> {
         else {
             return false;
         };
-        let source = &source;
 
-        let mut log = bun_ast::Log::init();
-
-        initialize_store();
-
-        let mut package_json_checker = bun_json::PackageJSONVersionChecker::init(source, &mut log);
-        if package_json_checker.parse().is_err() {
-            return false;
-        }
-        if package_json_checker.has_errors() || !package_json_checker.has_found_name {
-            return false;
-        }
-        // workspaces aren't required to have a version
-        if !package_json_checker.has_found_version && resolution_tag != resolution::Tag::Workspace {
-            return false;
-        }
-
-        let found_version = package_json_checker.found_version();
-
-        // exclude build tags from comparsion
-        // https://github.com/oven-sh/bun/issues/13563
-        let found_version_end =
-            strings::last_index_of_char(found_version, b'+').unwrap_or(found_version.len());
-        let expected_version_end = strings::last_index_of_char(self.package_version, b'+')
-            .unwrap_or(self.package_version.len());
-        // Check if the version matches
-        if found_version[..found_version_end] != self.package_version[..expected_version_end] {
-            let offset = 'brk: {
-                // ASCII only.
-                for c in 0..found_version.len() {
-                    match found_version[c] {
-                        // newlines & whitespace
-                        b' ' | b'\t' | b'\n' | b'\r'
-                        | 0x0B /* VT */
-                        | 0x0C /* FF */
-                        // version separators
-                        | b'v' | b'=' => {}
-                        _ => break 'brk c,
-                    }
-                }
-                // If we didn't find any of these characters, there's no point in checking the version again.
-                // it will never match.
-                return false;
-            };
-
-            if found_version[offset..] != *self.package_version {
-                return false;
-            }
-        }
-
-        // lastly, check the name.
-        package_json_checker.found_name()
-            == self.package_name.slice(&self.lockfile.buffers.string_bytes)
+        installed_package_json_matches(
+            &source,
+            self.package_name.slice(&self.lockfile.buffers.string_bytes),
+            self.package_version,
+            // workspaces aren't required to have a version
+            resolution_tag != resolution::Tag::Workspace,
+        )
     }
 
     // ───────────────────────────── install backends ─────────────────────────────

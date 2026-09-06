@@ -2007,6 +2007,40 @@ test("same resolution, different dependency name", async () => {
   expect(await readdirSorted(join(packageDir, "node_modules", ".bun"))).toEqual(["no-deps@1.0.0", "node_modules"]);
 });
 
+test("reinstalls a store entry whose package.json does not match the lockfile", async () => {
+  const { packageJson, packageDir } = await registry.createTestDir({ bunfigOpts: { linker: "isolated" } });
+
+  await write(packageJson, JSON.stringify({ name: "test-pkg-stale-store-entry", dependencies: { "no-deps": "1.0.0" } }));
+  await runBunInstall(bunEnv, packageDir);
+
+  const storePackageJson = join(packageDir, "node_modules", ".bun", "no-deps@1.0.0", "node_modules", "no-deps", "package.json");
+  expect(await file(storePackageJson).json()).toEqual({ name: "no-deps", version: "1.0.0" });
+
+  // Another version's contents under this entry's path (an interrupted or
+  // foreign write). The hoisted linker reads name and version back out of
+  // node_modules/<pkg>/package.json, so it repairs this; the isolated linker
+  // must not treat the entry as installed just because the file exists.
+  await rm(storePackageJson);
+  await write(storePackageJson, JSON.stringify({ name: "no-deps", version: "0.9.0" }));
+
+  let { out } = await runBunInstall(bunEnv, packageDir, { savesLockfile: false });
+  expect(out).toContain("1 package installed");
+  expect(await file(storePackageJson).json()).toEqual({ name: "no-deps", version: "1.0.0" });
+
+  // Same for a package.json with the right version but the wrong name.
+  await rm(storePackageJson);
+  await write(storePackageJson, JSON.stringify({ name: "not-no-deps", version: "1.0.0" }));
+
+  ({ out } = await runBunInstall(bunEnv, packageDir, { savesLockfile: false }));
+  expect(out).toContain("1 package installed");
+  expect(await file(storePackageJson).json()).toEqual({ name: "no-deps", version: "1.0.0" });
+
+  // Once repaired, the next install is a no-op again.
+  ({ out } = await runBunInstall(bunEnv, packageDir, { savesLockfile: false }));
+  expect(out).not.toContain("package installed");
+  expect(out).toContain("(no changes)");
+});
+
 test("successfully removes and corrects symlinks", async () => {
   const { packageJson, packageDir } = await registry.createTestDir({ bunfigOpts: { linker: "isolated" } });
   await Promise.all([

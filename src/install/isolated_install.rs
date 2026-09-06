@@ -2104,6 +2104,9 @@ pub(crate) fn install_isolated_packages(
         installer
             .manager_mut()
             .increment_pending_tasks(u32::try_from(store.entries.len()).expect("int cast"));
+        // Scratch for reading each existing entry's package.json, reused across entries.
+        let mut package_json_buf: Vec<u8> = Vec::new();
+        let mut expected_version_buf: Vec<u8> = Vec::new();
         for _entry_id in 0..store.entries.len() {
             let entry_id = store::entry::Id::from(u32::try_from(_entry_id).expect("int cast"));
 
@@ -2240,12 +2243,32 @@ pub(crate) fn install_isolated_packages(
                             // Capture the length instead of a `ResetScope` so
                             // `store_path` stays unborrowed.
                             let scope_for_patch_tag_path = store_path.len();
-                            if pkg_res_tag == ResolutionTag::Npm {
-                                // if it's from npm, it should always have a package.json.
-                                // in other cases, probably yes but i'm less confident.
+                            let exists = if pkg_res_tag == ResolutionTag::Npm {
+                                // An npm package always has a package.json. Read the
+                                // name and version back out of it, as the hoisted
+                                // linker does for `node_modules/<pkg>`, so an entry
+                                // holding some other package's files (an interrupted
+                                // or foreign write) is rebuilt instead of trusted
+                                // because the file exists.
                                 store_path.append(b"package.json").assume_ok();
-                            }
-                            let exists = sys::exists_z(store_path.slice_z());
+                                expected_version_buf.clear();
+                                write!(
+                                    &mut expected_version_buf,
+                                    "{}",
+                                    pkg_res.npm().version.fmt(string_buf)
+                                )
+                                .expect("formatting into a Vec is infallible");
+                                crate::package_install::installed_package_json_at_path_matches(
+                                    store_path.slice_z(),
+                                    &mut package_json_buf,
+                                    pkg_name.slice(string_buf),
+                                    &expected_version_buf,
+                                )
+                            } else {
+                                // in other cases there is probably a package.json
+                                // too, but the directory is the safer signal.
+                                sys::exists_z(store_path.slice_z())
+                            };
 
                             break 'needs_install match &patch_info {
                                 installer::PatchInfo::None => !exists,

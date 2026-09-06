@@ -607,7 +607,7 @@ export default function count(values: string[]) {
 }
 `,
     "execute.test.ts": `
-import { describe, expect, test } from "bun:test";
+import { expect, test } from "bun:test";
 import count from "./subject.ts";
 
 test("executes the function", () => {
@@ -615,7 +615,7 @@ test("executes the function", () => {
 });
 `,
     "importOnly.test.ts": `
-import { describe, expect, test } from "bun:test";
+import { expect, test } from "bun:test";
 import count from "./subject.ts";
 
 test("only imports the function", () => {
@@ -665,7 +665,7 @@ export function second() {
 }
 `,
     "first.test.ts": `${rendezvous("first", "second")}
-import { describe, expect, test } from "bun:test";
+import { expect, test } from "bun:test";
 import { first } from "./subject.ts";
 
 test("calls first", () => {
@@ -673,7 +673,7 @@ test("calls first", () => {
 });
 `,
     "second.test.ts": `${rendezvous("second", "first")}
-import { describe, expect, test } from "bun:test";
+import { expect, test } from "bun:test";
 import { second } from "./subject.ts";
 
 test("calls second", () => {

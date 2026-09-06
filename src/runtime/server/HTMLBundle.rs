@@ -158,6 +158,11 @@ pub struct Route {
     pub(crate) dev_server_id: Cell<Option<route_bundle::Index>>,
     /// When state == .pending, incomplete responses are stored here.
     pending_responses: JsCell<Vec<PendingResponse>>,
+    /// The static routes the last successful bundle appended to the server:
+    /// the js and css chunks, and the page at its output path. They live on
+    /// the server's static route list, which `server.reload()` replaces, so
+    /// the route keeps its own copy for `adopt_built_state`.
+    assets: JsCell<Vec<(Box<[u8]>, RefPtr<StaticRoute>)>>,
 }
 
 pub enum State {
@@ -200,7 +205,42 @@ impl Route {
             server: Cell::new(None),
             state: JsCell::new(State::Pending),
             dev_server_id: Cell::new(None),
+            assets: JsCell::new(Vec::new()),
         })
+    }
+
+    /// `server.reload()` builds a fresh `Route` for every html import in the
+    /// new config and drops the old static route list with the chunk routes
+    /// the old route's bundle appended. A fresh route for the same
+    /// `HTMLBundle` takes those chunk routes from the old route here, so the
+    /// chunk urls in a document a client already holds stay served until the
+    /// next build replaces them. The page itself is not taken: the next
+    /// request to it bundles again, as before. Returns the chunk routes for
+    /// the caller to append to the new config. Empty when the routes are for
+    /// different files, the old route never finished a build, or this route
+    /// already adopted.
+    pub(crate) fn adopt_assets(&self, old: &Route) -> Vec<(Box<[u8]>, RefPtr<StaticRoute>)> {
+        if !std::ptr::eq(self.bundle.as_ptr(), old.bundle.as_ptr())
+            || !self.assets.get().is_empty()
+        {
+            return Vec::new();
+        }
+        let assets = old.assets.get().clone();
+        self.assets.set(assets.clone());
+        assets
+    }
+
+    /// Registers one output of the bundle on the server and records it in
+    /// `assets`.
+    fn append_asset(&self, server: AnyServer, path: &[u8], route: StaticRoute) {
+        let route = RefPtr::new(route);
+        self.assets
+            .with_mut(|assets| assets.push((Box::<[u8]>::from(path), route.clone())));
+        bun_core::handle_oom(server.append_static_route(
+            path,
+            AnyRoute::Static(route),
+            MethodOptional::Any,
+        ));
     }
 
     pub(crate) fn on_request(this: ThisPtr<Self>, req: AnyRequest, resp: AnyResponse) {
@@ -551,6 +591,7 @@ impl Route {
                 // needs it by `&mut` before it is shared. Static routes are keyed
                 // by `dest_path`, so registration order is immaterial.
                 let mut this_html_route: Option<(StaticRoute, Box<[u8]>)> = None;
+                self.assets.set(Vec::new());
 
                 // Create static routes for each output file
                 // Index loop because the SourceMap branch reads a sibling entry.
@@ -623,21 +664,13 @@ impl Route {
                         continue;
                     }
 
-                    bun_core::handle_oom(server.append_static_route(
-                        route_path,
-                        AnyRoute::Static(RefPtr::new(static_route)),
-                        MethodOptional::Any,
-                    ));
+                    self.append_asset(server, route_path, static_route);
                 }
 
                 let (mut html_route, html_route_path) =
                     this_html_route.expect("the loop above visited html_index");
                 let html_route_clone = html_route.clone(global_this);
-                bun_core::handle_oom(server.append_static_route(
-                    &html_route_path,
-                    AnyRoute::Static(RefPtr::new(html_route)),
-                    MethodOptional::Any,
-                ));
+                self.append_asset(server, &html_route_path, html_route);
                 self.state.set(State::Html(html_route_clone));
 
                 if !bun_core::handle_oom(server.reload_static_routes()) {

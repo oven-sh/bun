@@ -2150,6 +2150,29 @@ where
             dev_server.html_router.fallback = None;
         }
 
+        // The old static route list goes away below, with the chunk routes
+        // each built html route appended to it. A new html route for the same
+        // file takes the chunks from the old one, so the chunk urls stay
+        // served until its own build replaces them.
+        let mut adopted_assets = Vec::new();
+        for new_entry in new_config.static_routes.iter() {
+            let AnyRoute::Html(new_route) = &new_entry.route else {
+                continue;
+            };
+            for old_entry in self.config.static_routes.iter() {
+                if let AnyRoute::Html(old_route) = &old_entry.route {
+                    adopted_assets.extend(new_route.adopt_assets(old_route));
+                }
+            }
+        }
+        for (path, route) in adopted_assets {
+            bun_core::handle_oom(new_config.append_static_route(
+                &path,
+                AnyRoute::Static(route),
+                server_config::MethodOptional::Any,
+            ));
+        }
+
         // NOTE: `Vec<StaticRouteEntry>` impls `Drop`, so
         // a move-assign frees the old `static_routes`.
         self.config.static_routes = core::mem::take(&mut new_config.static_routes);

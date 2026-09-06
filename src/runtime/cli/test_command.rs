@@ -1398,7 +1398,8 @@ impl CommandLineReporter {
                         if this.jest.bail == 1 { "" } else { "s" }
                     );
                     Output::flush();
-                    this.write_junit_report_if_needed();
+                    // The run exits 1 below whatever the write did.
+                    let _ = this.write_junit_report_if_needed();
                     this.write_timings_if_needed();
                     Global::exit(1);
                 }
@@ -1437,14 +1438,14 @@ impl CommandLineReporter {
     }
 
     /// Writes the JUnit report to `--reporter-outfile` when one is configured.
-    /// Returns `false` when the file could not be written.
-    pub(crate) fn write_junit_report_if_needed(&mut self) -> bool {
+    /// The error is already printed; the caller decides the exit code.
+    pub(crate) fn write_junit_report_if_needed(&mut self) -> crate::Result<()> {
         if let Some(junit) = self.reporters.junit.as_mut() {
             if let Some(outfile) = self.jest.test_options.reporter_outfile.as_deref() {
-                return junit.write_to_file(outfile).is_ok();
+                junit.write_to_file(outfile)?;
             }
         }
-        true
+        Ok(())
     }
 
     /// This process's coverage, one `Report` per instrumented file, sorted by
@@ -2636,7 +2637,7 @@ impl TestCommand {
         pretty_error!("\n");
         Output::flush();
 
-        let junit_written = reporter.write_junit_report_if_needed();
+        let junit_written = reporter.write_junit_report_if_needed().is_ok();
         if !test_files.is_empty() || ctx.test_options.shard.is_some() {
             reporter.write_timings_if_needed();
         }
@@ -2927,7 +2928,8 @@ impl TestCommand {
                             reporter.jest.bail,
                             if reporter.jest.bail == 1 { "" } else { "s" }
                         );
-                        reporter.write_junit_report_if_needed();
+                        // The run exits 1 below whatever the write did.
+                        let _ = reporter.write_junit_report_if_needed();
                         reporter.write_timings_if_needed();
 
                         vm.exit_handler.exit_code = 1;

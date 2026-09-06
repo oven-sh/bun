@@ -221,7 +221,8 @@ pub(crate) fn run_as_coordinator(
         aggregate::write_coverage_report(&mut coord, coverage_opts);
     }
     if let Some(code) = coord.aborted {
-        coord.reporter.write_junit_report_if_needed();
+        // The run exits with `code` (non-zero) whatever the write did.
+        let _ = coord.reporter.write_junit_report_if_needed();
         coord.reporter.write_timings_if_needed();
         Output::flush();
         Global::exit(code);

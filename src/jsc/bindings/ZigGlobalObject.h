@@ -287,6 +287,8 @@ public:
     Structure* CommonJSModuleObjectStructure() const { return m_commonJSModuleObjectStructure.getInitializedOnMainThread(this); }
     Structure* JSSocketAddressDTOStructure() const { return m_JSSocketAddressDTOStructure.getInitializedOnMainThread(this); }
     Structure* JSReactElementStructure() const { return m_JSReactElementStructure.getInitializedOnMainThread(this); }
+    Structure* JSReactElementDevStructure() const { return m_JSReactElementDevStructure.getInitializedOnMainThread(this); }
+    Structure* JSReactElementStoreStructure() const { return m_JSReactElementStoreStructure.getInitializedOnMainThread(this); }
     Structure* JSMarkdownListItemMetaStructure() const { return m_JSMarkdownListItemMetaStructure.getInitializedOnMainThread(this); }
     Structure* JSMarkdownListMetaStructure() const { return m_JSMarkdownListMetaStructure.getInitializedOnMainThread(this); }
     Structure* JSMarkdownCellMetaStructure() const { return m_JSMarkdownCellMetaStructure.getInitializedOnMainThread(this); }
@@ -630,6 +632,8 @@ public:
     V(private, LazyPropertyOfGlobalObject<Structure>, m_commonJSModuleObjectStructure)                       \
     V(private, LazyPropertyOfGlobalObject<Structure>, m_JSSocketAddressDTOStructure)                         \
     V(private, LazyPropertyOfGlobalObject<Structure>, m_JSReactElementStructure)                             \
+    V(private, LazyPropertyOfGlobalObject<Structure>, m_JSReactElementDevStructure)                          \
+    V(private, LazyPropertyOfGlobalObject<Structure>, m_JSReactElementStoreStructure)                        \
     V(private, LazyPropertyOfGlobalObject<Structure>, m_JSMarkdownListItemMetaStructure)                     \
     V(private, LazyPropertyOfGlobalObject<Structure>, m_JSMarkdownListMetaStructure)                         \
     V(private, LazyPropertyOfGlobalObject<Structure>, m_JSMarkdownCellMetaStructure)                         \

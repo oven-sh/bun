@@ -344,8 +344,21 @@ unsafe extern "C" {
     safe fn JSReactElement__createFragment(
         global_object: &JSGlobalObject,
         react_version: u8,
+        development: bool,
         children: JSValue,
     ) -> JSValue;
+}
+
+/// How `Bun.markdown.react` shapes the elements it creates.
+#[derive(Clone, Copy)]
+struct ReactMode {
+    /// 0: `Symbol.for("react.element")` (React 18 and older).
+    /// 1: `Symbol.for("react.transitional.element")` (React 19+).
+    version: u8,
+    /// Add the fields React's development build puts on every element
+    /// (`_owner`, `_store`, `_debugInfo`, `_debugStack`, `_debugTask`).
+    /// React's development renderers read them without guards.
+    development: bool,
 }
 
 fn render_react_impl(
@@ -368,8 +381,20 @@ fn render_react_impl(
         }
     }
 
-    let children = render_ast(global_this, callframe, marked_args, Some(react_version))?;
-    let fragment = JSReactElement__createFragment(global_this, react_version, children);
+    // Same condition React uses to pick its development build.
+    let development = global_this
+        .bun_vm()
+        .env_loader()
+        .get(b"NODE_ENV")
+        .is_none_or(|node_env| node_env != b"production");
+
+    let mode = ReactMode {
+        version: react_version,
+        development,
+    };
+    let children = render_ast(global_this, callframe, marked_args, Some(mode))?;
+    let fragment =
+        JSReactElement__createFragment(global_this, mode.version, mode.development, children);
     marked_args.append(fragment);
     Ok(fragment)
 }
@@ -378,7 +403,7 @@ fn render_ast(
     global_this: &JSGlobalObject,
     callframe: &CallFrame,
     marked_args: &mut MarkedArgumentBuffer,
-    react_version: Option<u8>,
+    react_mode: Option<ReactMode>,
 ) -> JsResult<JSValue> {
     let [input_value, components_value, opts_value] = callframe.arguments_as_array::<3>();
 
@@ -406,7 +431,7 @@ fn render_ast(
         input,
         marked_args,
         options.heading_ids,
-        react_version,
+        react_mode,
     ) {
         Ok(r) => r,
         Err(_) => return Err(global_this.throw_out_of_memory()),
@@ -428,10 +453,10 @@ fn render_ast(
 
 /// Renderer that builds an object AST from markdown.
 ///
-/// In plain mode (`react_version == None`), each element becomes:
+/// In plain mode (`react_mode == None`), each element becomes:
 /// `{ type: "tagName", props: { ...metadata, children: [...] } }`
 ///
-/// In React mode (`react_version != None`), each element becomes a valid React element
+/// In React mode (`react_mode != None`), each element becomes a valid React element
 /// created via a cached JSC Structure with putDirectOffset:
 /// `{ $$typeof: Symbol.for('react.element'), type: "tagName", key: null, ref: null, props: { ...metadata, children: [...] } }`
 ///
@@ -446,13 +471,14 @@ struct ParseRenderer<'a> {
     src_text: &'a [u8],
     heading_tracker: md::helpers::HeadingIdTracker,
     components: Components,
-    react_version: Option<u8>,
+    react_mode: Option<ReactMode>,
 }
 
 unsafe extern "C" {
     safe fn JSReactElement__create(
         global_object: &JSGlobalObject,
         react_version: u8,
+        development: bool,
         element_type: JSValue,
         props: JSValue,
     ) -> JSValue;
@@ -555,7 +581,7 @@ impl<'a> ParseRenderer<'a> {
         src_text: &'a [u8],
         marked_args: &'a mut MarkedArgumentBuffer,
         heading_ids: bool,
-        react_version: Option<u8>,
+        react_mode: Option<ReactMode>,
     ) -> Result<ParseRenderer<'a>, bun_alloc::AllocError> {
         let mut self_ = ParseRenderer {
             global_object,
@@ -565,7 +591,7 @@ impl<'a> ParseRenderer<'a> {
             src_text,
             heading_tracker: md::helpers::HeadingIdTracker::init(heading_ids),
             components: Components::default(),
-            react_version,
+            react_mode,
         };
         // Root entry — its children array becomes the return value
         let root_array =
@@ -661,8 +687,14 @@ impl<'a> ParseRenderer<'a> {
     /// a cached Structure and putDirectOffset. In plain mode, creates a
     /// simple `{ type, props }` object.
     fn create_element(&mut self, type_val: JSValue, props: JSValue) -> JSValue {
-        if let Some(version) = self.react_version {
-            let obj = JSReactElement__create(self.global_object, version, type_val, props);
+        if let Some(mode) = self.react_mode {
+            let obj = JSReactElement__create(
+                self.global_object,
+                mode.version,
+                mode.development,
+                type_val,
+                props,
+            );
             self.marked_args.append(obj);
             obj
         } else {

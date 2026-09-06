@@ -445,6 +445,7 @@ JSPromise* readableStreamCancel(JSGlobalObject* globalObject, JSReadableStream* 
             RETURN_IF_EXCEPTION(scope, nullptr);
         }
         controller->m_closed = true;
+        controller->settleDrainPromise(globalObject, JSC::jsNumber(0));
         directStreamControllerClearSource(controller);
         sourceCancelPromise = promiseFulfilledWith(globalObject, JSC::jsUndefined());
         break;

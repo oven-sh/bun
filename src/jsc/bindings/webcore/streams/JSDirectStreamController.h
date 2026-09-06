@@ -32,7 +32,7 @@ public:
 
     DECLARE_INFO;
     // visitChildrenImpl MUST visit: m_stream, m_underlyingSource, m_pull, m_pendingRead,
-    // m_deferCloseReason, m_arrayBufferSink, m_array, m_closingPromise, m_finalChunk, and
+    // m_deferCloseReason, m_arrayBufferSink, m_drainPromise, m_array, m_closingPromise, m_finalChunk, and
     // the barrier container m_textAccumulator.pieces (via
     // m_textAccumulator.visit(locker, visitor) inside ONE `Locker { cellLock() }` scope
     // taken by THIS visitChildrenImpl — cellLock() is non-recursive; see StreamQueue.h).
@@ -84,6 +84,15 @@ public:
 
     // ArrayBuffer sink: a real Bun.ArrayBufferSink cell (ArrayBuffer kind only).
     JSC::WriteBarrier<JSC::JSObject> m_arrayBufferSink;
+    // ArrayBuffer sink backpressure. Bytes written since the sink was last flushed to a
+    // consumer; once they reach m_highWaterMark, write() returns m_drainPromise, which
+    // settles when a consumer takes the bytes or the controller closes. This is what pauses
+    // the async-iterable pump (and a pull() that awaits its writes) for a slow reader.
+    JSC::WriteBarrier<JSC::JSPromise> m_drainPromise;
+    size_t m_bufferedBytes { 0 };
+    double m_highWaterMark { 64 * 1024 };
+    // Fulfills m_drainPromise (if any) with `value` and resets the buffered byte count.
+    void settleDrainPromise(JSC::JSGlobalObject*, JSC::JSValue value);
 
     // Text sink: the ONE shared createTextStream accumulator value type
     // (BunStandaloneTextSink.h), also owned by the standalone JSBunStandaloneTextSink — one

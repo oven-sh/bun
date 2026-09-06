@@ -26,18 +26,25 @@ const ws = new WebSocket(`wss://${server.hostname}:${server.port}`, { tls: { rej
 const { promise: openWS, resolve: onWSOpen } = Promise.withResolvers();
 ws.onopen = onWSOpen;
 await openWS;
-for (let i = 0; i < 1000; i++) {
-  ws.send("hello");
-}
+const MESSAGES = 1000;
+const { promise: allEchoed, resolve: onAllEchoed } = Promise.withResolvers();
 let bytesReceived = 0;
 ws.onmessage = event => {
   bytesReceived += event.data.length;
+  if (bytesReceived >= MESSAGES * "hello".length) onAllEchoed();
 };
+for (let i = 0; i < MESSAGES; i++) {
+  ws.send("hello");
+}
+// Only sample once the echo traffic is over, so every window below measures an
+// idle connection rather than the tail of the burst.
+await allEchoed;
 
 let previousUsage = process.cpuUsage();
 let previousTime = Date.now();
 
 let count = 0;
+let minCpuUsagePercentage = Infinity;
 setInterval(() => {
   count++;
 
@@ -53,6 +60,7 @@ setInterval(() => {
 
   // Calculate percentage for the current process
   const cpuUsagePercentage = (totalCpuTime / timeDeltaMicroseconds) * 100;
+  minCpuUsagePercentage = Math.min(minCpuUsagePercentage, cpuUsagePercentage);
 
   console.log(`CPU Usage: ${cpuUsagePercentage.toFixed(2)}%`);
 
@@ -61,7 +69,9 @@ setInterval(() => {
 
   if (count == 3) {
     server.stop(true);
-    // The expected value is around 0.XX%, but we allow a 2% margin of error to account for potential flakiness.
-    process.exit(cpuUsagePercentage < 2 ? 0 : 1);
+    // The #25475 regression spins the event loop at ~100% on every sample; an idle
+    // loop reads ~0% (up to a few % on Windows where GetProcessTimes charges whole
+    // ~15.6ms ticks). Gate on the quietest sample with the same 50% bound as 21654.
+    process.exit(minCpuUsagePercentage < 50 ? 0 : 1);
   }
-}, 1000);
+}, 500);

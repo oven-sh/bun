@@ -10,14 +10,7 @@ path = "lib.rs"
 workspace = true
 
 [dependencies]
-strum.workspace = true
 bstr.workspace = true
-scopeguard.workspace = true
-const_format.workspace = true
-enum-map.workspace = true
-enumset.workspace = true
-libc.workspace = true
-bitflags.workspace = true
 bun_alloc.workspace = true
 bun_core.workspace = true
 bun_collections.workspace = true

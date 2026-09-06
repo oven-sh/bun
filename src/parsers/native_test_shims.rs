@@ -38,3 +38,99 @@ unsafe extern "C" fn highway_index_of_any_char(
     };
     t.iter().position(|c| cs.contains(c)).unwrap_or(text_len)
 }
+
+#[unsafe(no_mangle)]
+unsafe extern "C" fn highway_memmem(
+    haystack: *const u8,
+    haystack_len: usize,
+    needle: *const u8,
+    needle_len: usize,
+) -> *const u8 {
+    let (h, n) = unsafe {
+        (
+            core::slice::from_raw_parts(haystack, haystack_len),
+            core::slice::from_raw_parts(needle, needle_len),
+        )
+    };
+    if n.is_empty() {
+        return haystack;
+    }
+    if h.len() < n.len() {
+        return core::ptr::null();
+    }
+    match (0..=h.len() - n.len()).find(|&i| h[i..i + n.len()] == *n) {
+        Some(i) => unsafe { haystack.add(i) },
+        None => core::ptr::null(),
+    }
+}
+
+#[unsafe(no_mangle)]
+unsafe extern "C" fn highway_last_index_of_char(
+    haystack: *const u8,
+    haystack_len: usize,
+    needle: u8,
+) -> usize {
+    let h = unsafe { core::slice::from_raw_parts(haystack, haystack_len) };
+    h.iter().rposition(|&c| c == needle).unwrap_or(haystack_len)
+}
+
+#[unsafe(no_mangle)]
+unsafe extern "C" fn highway_index_of_not_char(
+    haystack: *const u8,
+    haystack_len: usize,
+    value: u8,
+) -> usize {
+    let h = unsafe { core::slice::from_raw_parts(haystack, haystack_len) };
+    h.iter().position(|&c| c != value).unwrap_or(haystack_len)
+}
+
+#[unsafe(no_mangle)]
+unsafe extern "C" fn highway_count_char(
+    haystack: *const u8,
+    haystack_len: usize,
+    needle: u8,
+) -> usize {
+    let h = unsafe { core::slice::from_raw_parts(haystack, haystack_len) };
+    h.iter().filter(|&&c| c == needle).count()
+}
+
+#[unsafe(no_mangle)]
+unsafe extern "C" fn highway_last_index_of_any_char(
+    text: *const u8,
+    text_len: usize,
+    chars: *const u8,
+    chars_len: usize,
+) -> usize {
+    let (t, cs) = unsafe {
+        (
+            core::slice::from_raw_parts(text, text_len),
+            core::slice::from_raw_parts(chars, chars_len),
+        )
+    };
+    t.iter().rposition(|c| cs.contains(c)).unwrap_or(text_len)
+}
+
+#[unsafe(no_mangle)]
+unsafe extern "C" fn highway_memrmem(
+    haystack: *const u8,
+    haystack_len: usize,
+    needle: *const u8,
+    needle_len: usize,
+) -> usize {
+    let (h, n) = unsafe {
+        (
+            core::slice::from_raw_parts(haystack, haystack_len),
+            core::slice::from_raw_parts(needle, needle_len),
+        )
+    };
+    if n.is_empty() {
+        return h.len();
+    }
+    if h.len() < n.len() {
+        return usize::MAX;
+    }
+    (0..=h.len() - n.len())
+        .rev()
+        .find(|&i| h[i..i + n.len()] == *n)
+        .unwrap_or(usize::MAX)
+}

@@ -1,0 +1,7 @@
+{
+  "name": "web",
+  "version": "1.0.0",
+  "dependencies": {
+    "common": "^1.0.0"
+  }
+}

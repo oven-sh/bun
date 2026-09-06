@@ -178,7 +178,7 @@ describe("Bun.CookieMap", () => {
 
     expect(cookieMap.toSetCookieHeaders()).toMatchInlineSnapshot(`
       [
-        "name=; Domain=example.com; Path=/foo; Expires=Fri, 1 Jan 1970 00:00:00 -0000; SameSite=Lax",
+        "name=; Domain=example.com; Path=/foo; Expires=Thu, 01 Jan 1970 00:00:00 GMT; SameSite=Lax",
       ]
     `);
 
@@ -507,7 +507,7 @@ describe("cookie.serialize(name, value, options)", function () {
         cookie.serialize("foo", "bar", {
           expires: new Date(Date.UTC(2000, 11, 24, 10, 30, 59, 900)),
         }),
-      ).toEqual("foo=bar; Expires=Mon, 24 Dec 2000 10:30:59 -0000; SameSite=Lax");
+      ).toEqual("foo=bar; Expires=Sun, 24 Dec 2000 10:30:59 GMT; SameSite=Lax");
     });
   });
 

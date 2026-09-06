@@ -31,14 +31,8 @@
 #include <type_traits>
 #include <variant>
 #include <wtf/Brigand.h>
-#include <wtf/Markable.h>
 #include <wtf/StdLibExtras.h>
 #include <wtf/URL.h>
-#include <wtf/WallTime.h>
-
-#if ENABLE(WEBGL)
-#include "WebGLAny.h"
-#endif
 
 namespace JSC {
 class ArrayBuffer;
@@ -50,16 +44,7 @@ class JSObject;
 
 namespace WebCore {
 
-class IDBKey;
-class IDBKeyData;
-class IDBValue;
-class JSWindowProxy;
 class DOMPromise;
-class ScheduledAction;
-
-#if ENABLE(WEBGL)
-class WebGLExtension;
-#endif
 
 template<typename T>
 struct IDLType {
@@ -80,20 +65,6 @@ struct IDLType {
     static bool isNullValue(const NullableType& value) { return !value; }
     static ImplementationType extractValueFromNullable(const NullableType& value) { return value.value(); }
     static ImplementationType extractValueFromNullable(NullableType&& value) { return std::move(value.value()); }
-
-    template<typename Traits> using NullableTypeWithLessPadding = Markable<ImplementationType, Traits>;
-    template<typename Traits>
-    static NullableTypeWithLessPadding<Traits> nullValue() { return std::nullopt; }
-    template<typename Traits>
-    static bool isNullType(const NullableTypeWithLessPadding<Traits>& value) { return !value; }
-    template<typename Traits>
-    static ImplementationType extractValueFromNullable(const NullableTypeWithLessPadding<Traits>& value) { return value.value(); }
-    template<typename Traits>
-    static ImplementationType extractValueFromNullable(NullableTypeWithLessPadding<Traits>&& value) { return std::move(value.value()); }
-};
-
-// IDLUnsupportedType is a special type that serves as a base class for currently unsupported types.
-struct IDLUnsupportedType : IDLType<void> {
 };
 
 // IDLNull is a special type for use as a subtype in an IDLUnion that is nullable.
@@ -184,14 +155,6 @@ struct IDLDOMString : IDLString<String> {
 struct IDLByteString : IDLString<String> {
 };
 struct IDLUSVString : IDLString<String> {
-};
-
-template<typename T> struct IDLLegacyNullToEmptyStringAdaptor : IDLString<String> {
-    using InnerType = T;
-};
-
-template<typename T> struct IDLLegacyNullToEmptyAtomStringAdaptor : IDLString<AtomString> {
-    using InnerType = T;
 };
 
 template<typename T> struct IDLAtomStringAdaptor : IDLString<AtomString> {
@@ -298,11 +261,6 @@ template<typename T> struct IDLPromise : IDLWrapper<DOMPromise> {
     using InnerType = T;
 };
 
-struct IDLError : IDLUnsupportedType {
-};
-struct IDLDOMException : IDLUnsupportedType {
-};
-
 template<typename... Ts>
 struct IDLUnion : IDLType<std::variant<typename Ts::ImplementationType...>> {
     using TypeList = brigand::list<Ts...>;
@@ -352,51 +310,12 @@ struct IDLDataView : IDLBufferSource<JSC::DataView> {
 template<typename T> struct IDLTypedArray : IDLBufferSource<T> {
 };
 // NOTE: The specific typed array types are IDLTypedArray specialized on the typed array
-//       implementation type, e.g. IDLFloat64Array is IDLTypedArray<JSC::Float64Array>
+//       implementation type, e.g. IDLUint8Array is IDLTypedArray<JSC::Uint8Array>
 
 // Non-WebIDL extensions
 
-struct IDLDate : IDLType<WallTime> {
-    using ConversionResultType = WallTime;
-    using NullableConversionResultType = WallTime;
-    using NullableType = WallTime;
-    static WallTime nullValue() { return WallTime::nan(); }
-    static bool isNullValue(WallTime value) { return value.isNaN(); }
-    static WallTime extractValueFromNullable(WallTime value) { return value; }
-};
-
-struct IDLJSON : IDLType<String> {
-    using ConversionResultType = String;
-    using NullableConversionResultType = String;
-    using ParameterType = const String&;
-    using NullableParameterType = const String&;
-
-    using NullableType = String;
-    static String nullValue() { return String(); }
-    static bool isNullValue(const String& value) { return value.isNull(); }
-    template<typename U> static U&& extractValueFromNullable(U&& value) { return std::forward<U>(value); }
-};
-
-struct IDLScheduledAction : IDLType<std::unique_ptr<ScheduledAction>> {
-};
-template<typename T> struct IDLSerializedScriptValue : IDLWrapper<T> {
-};
 template<typename T> struct IDLEventListener : IDLWrapper<T> {
 };
-
-struct IDLIDBKey : IDLWrapper<IDBKey> {
-};
-struct IDLIDBKeyData : IDLWrapper<IDBKeyData> {
-};
-struct IDLIDBValue : IDLWrapper<IDBValue> {
-};
-
-#if ENABLE(WEBGL)
-struct IDLWebGLAny : IDLType<WebGLAny> {
-};
-struct IDLWebGLExtension : IDLWrapper<WebGLExtension> {
-};
-#endif
 
 // Helper predicates
 
@@ -406,10 +325,6 @@ struct IsIDLInterface : public std::integral_constant<bool, WTF::IsTemplate<T, I
 
 template<typename T>
 struct IsIDLDictionary : public std::integral_constant<bool, WTF::IsTemplate<T, IDLDictionary>::value> {
-};
-
-template<typename T>
-struct IsIDLEnumeration : public std::integral_constant<bool, WTF::IsTemplate<T, IDLEnumeration>::value> {
 };
 
 template<typename T>

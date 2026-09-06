@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
+import { scryptSync } from "node:crypto";
 
 // When `crypto.scrypt` fails to allocate the output buffer (OOM for a huge
 // `keylen`), `CryptoJob.init` takes the error path. Previously the `errdefer`
@@ -75,4 +76,17 @@ test("scrypt async does not leak callback/buffers when output allocation fails",
   });
 
   expect(exitCode).toBe(0);
+});
+
+test("scryptSync reads its buffers only after every argument has been coerced", () => {
+  const passwordBytes = new Uint8Array(64).fill(97);
+  const key = scryptSync(passwordBytes, "salt", 16, {
+    get N() {
+      structuredClone(passwordBytes.buffer, { transfer: [passwordBytes.buffer] });
+      Bun.gc(true);
+      return 1024;
+    },
+  });
+  expect(passwordBytes.byteLength).toBe(0);
+  expect(key).toStrictEqual(scryptSync("", "salt", 16, { N: 1024 }));
 });

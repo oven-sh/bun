@@ -11,10 +11,9 @@ const LSQPACK_COMMIT = "1e9c5b8e59f8161c54f168a570c8bfdc59ded0c3";
 
 export const lsqpack: Dependency = {
   name: "lsqpack",
-  versionMacro: "LSQPACK",
 
   source: () => ({
-    kind: "github-archive",
+    kind: "github",
     repo: "litespeedtech/ls-qpack",
     commit: LSQPACK_COMMIT,
   }),

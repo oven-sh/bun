@@ -1,45 +1,32 @@
 import { SQL } from "bun";
-import { afterAll, describe, expect, test } from "bun:test";
-import * as dockerCompose from "../../docker/index.ts";
+import { expect, test } from "bun:test";
+import { describeWithContainer } from "harness";
 
 // Tests for `prepare: false` (unnamed prepared statements).
 // These verify that parameterized queries work correctly when using unnamed
 // prepared statements, which is critical for PgBouncer compatibility.
 
-describe("PostgreSQL prepare: false", async () => {
-  let container: { port: number; host: string };
-
-  try {
-    const info = await dockerCompose.ensure("postgres_plain");
-    container = { port: info.ports[5432], host: info.host };
-  } catch (e) {
-    test.skip(`Docker not available: ${e}`);
-    return;
-  }
-
-  const options = {
-    db: "bun_sql_test",
-    username: "bun_sql_test",
-    host: container.host,
-    port: container.port,
-    max: 1,
-    prepare: false,
-  };
-
-  afterAll(async () => {
-    if (!process.env.BUN_KEEP_DOCKER) {
-      await dockerCompose.down();
-    }
-  });
+describeWithContainer("PostgreSQL prepare: false", { image: "postgres_plain" }, container => {
+  const options = () =>
+    ({
+      db: "bun_sql_test",
+      username: "bun_sql_test",
+      host: container.host,
+      port: container.port,
+      max: 1,
+      prepare: false,
+    }) as const;
 
   test("basic parameterized query", async () => {
-    await using db = new SQL(options);
+    await container.ready;
+    await using db = new SQL(options());
     const [{ x }] = await db`SELECT ${42}::int AS x`;
     expect(x).toBe(42);
   });
 
   test("multiple parameterized queries sequentially", async () => {
-    await using db = new SQL(options);
+    await container.ready;
+    await using db = new SQL(options());
 
     const [{ a }] = await db`SELECT ${1}::int AS a`;
     expect(a).toBe(1);
@@ -52,7 +39,8 @@ describe("PostgreSQL prepare: false", async () => {
   });
 
   test("same query repeated with different params", async () => {
-    await using db = new SQL(options);
+    await container.ready;
+    await using db = new SQL(options());
     for (let i = 0; i < 10; i++) {
       const [{ x }] = await db`SELECT ${i}::int AS x`;
       expect(x).toBe(i);
@@ -62,7 +50,8 @@ describe("PostgreSQL prepare: false", async () => {
   test("concurrent queries with different tables return correct results", async () => {
     // This test simulates the scenario where concurrent unnamed prepared
     // statements could interfere with each other via PgBouncer.
-    await using db = new SQL({ ...options, max: 4 });
+    await container.ready;
+    await using db = new SQL({ ...options(), max: 4 });
 
     // Create real tables (not temp, so they're visible across connections)
     await db`CREATE TABLE IF NOT EXISTS prepare_false_test_a (id int, val text)`;
@@ -91,19 +80,22 @@ describe("PostgreSQL prepare: false", async () => {
   });
 
   test("parameterized query with multiple params", async () => {
-    await using db = new SQL(options);
+    await container.ready;
+    await using db = new SQL(options());
     const [{ sum }] = await db`SELECT (${10}::int + ${20}::int) AS sum`;
     expect(sum).toBe(30);
   });
 
   test("query without params still works", async () => {
-    await using db = new SQL(options);
+    await container.ready;
+    await using db = new SQL(options());
     const [{ x }] = await db`SELECT 1 AS x`;
     expect(x).toBe(1);
   });
 
   test("transactions with parameterized queries", async () => {
-    await using db = new SQL(options);
+    await container.ready;
+    await using db = new SQL(options());
 
     await db`CREATE TEMP TABLE IF NOT EXISTS tx_test (id int, val text)`;
 
@@ -119,7 +111,8 @@ describe("PostgreSQL prepare: false", async () => {
   });
 
   test("concurrent parameterized queries with high concurrency", async () => {
-    await using db = new SQL({ ...options, max: 8 });
+    await container.ready;
+    await using db = new SQL({ ...options(), max: 8 });
 
     // Fire many concurrent queries to stress-test unnamed statement handling
     const promises = [];

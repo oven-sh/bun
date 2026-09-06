@@ -11,11 +11,13 @@
  *   node --experimental-strip-types --test test/js/node/http2/node-http2-upgrade.test.ts
  */
 import assert from "node:assert";
+import { once } from "node:events";
 import fs from "node:fs";
 import http2 from "node:http2";
 import net from "node:net";
 import path from "node:path";
 import { afterEach, describe, test } from "node:test";
+import tls from "node:tls";
 import { fileURLToPath } from "node:url";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -413,6 +415,52 @@ describe("HTTP/2 upgrade — independent upgrade per connection", () => {
     srv.netServer.close();
   });
 });
+
+describe("HTTP/2 upgrade — server TLS options", () => {
+  test("minVersion from createSecureServer is enforced on injected connections", async () => {
+    const h2Server = http2.createSecureServer({ ...TLS, minVersion: "TLSv1.3" }, (_req, res) => {
+      res.writeHead(200);
+      res.end("ok");
+    });
+    h2Server.on("error", () => {});
+    h2Server.on("sessionError", () => {});
+
+    const netServer = net.createServer(socket => {
+      socket.on("error", () => {});
+      h2Server.emit("connection", socket);
+    });
+    const port = await new Promise<number>(resolve => {
+      netServer.listen(0, "127.0.0.1", () => resolve((netServer.address() as net.AddressInfo).port));
+    });
+
+    try {
+      const okClient = tls.connect({ host: "127.0.0.1", port, rejectUnauthorized: false, ALPNProtocols: ["h2"] });
+      okClient.on("error", () => {});
+      await once(okClient, "secureConnect");
+      const negotiated = { protocol: okClient.getProtocol(), alpn: okClient.alpnProtocol };
+      okClient.destroy();
+      assert.deepStrictEqual(negotiated, { protocol: "TLSv1.3", alpn: "h2" });
+
+      const oldClient = tls.connect({
+        host: "127.0.0.1",
+        port,
+        rejectUnauthorized: false,
+        ALPNProtocols: ["h2"],
+        maxVersion: "TLSv1.2",
+      });
+      const outcome = await new Promise<{ secureConnect: boolean; protocol: string | null }>(resolve => {
+        oldClient.on("secureConnect", () => resolve({ secureConnect: true, protocol: oldClient.getProtocol() }));
+        oldClient.on("error", () => resolve({ secureConnect: false, protocol: null }));
+        oldClient.on("close", () => resolve({ secureConnect: false, protocol: null }));
+      });
+      oldClient.destroy();
+      assert.deepStrictEqual(outcome, { secureConnect: false, protocol: null });
+    } finally {
+      netServer.close();
+    }
+  });
+});
+
 if (typeof Bun !== "undefined") {
   describe("Node.js compatibility", () => {
     test("tests should run on node.js", async () => {

@@ -353,7 +353,7 @@ typedef enum llhttp_status llhttp_status_t;
     XX(21, MKACTIVITY, MKACTIVITY)   \
     XX(22, CHECKOUT, CHECKOUT)       \
     XX(23, MERGE, MERGE)             \
-    XX(24, MSEARCH, M - SEARCH)      \
+    XX(24, MSEARCH, M-SEARCH)        \
     XX(25, NOTIFY, NOTIFY)           \
     XX(26, SUBSCRIBE, SUBSCRIBE)     \
     XX(27, UNSUBSCRIBE, UNSUBSCRIBE) \
@@ -406,7 +406,7 @@ typedef enum llhttp_status llhttp_status_t;
     XX(21, MKACTIVITY, MKACTIVITY)       \
     XX(22, CHECKOUT, CHECKOUT)           \
     XX(23, MERGE, MERGE)                 \
-    XX(24, MSEARCH, M - SEARCH)          \
+    XX(24, MSEARCH, M-SEARCH)            \
     XX(25, NOTIFY, NOTIFY)               \
     XX(26, SUBSCRIBE, SUBSCRIBE)         \
     XX(27, UNSUBSCRIBE, UNSUBSCRIBE)     \

@@ -1,5 +1,6 @@
 #include "V8String.h"
 #include "V8HandleScope.h"
+#include "helpers.h"
 #include "wtf/SIMDUTF.h"
 #include "v8_compatibility_assertions.h"
 
@@ -37,7 +38,11 @@ MaybeLocal<String> String::NewFromUtf8(Isolate* isolate, char const* data, NewSt
     std::span<const unsigned char> span(reinterpret_cast<const unsigned char*>(data), length);
     JSString* jsString = nullptr;
     // ReplacingInvalidSequences matches how v8 behaves here
-    auto string = WTF::String::fromUTF8ReplacingInvalidSequences(span);
+    auto string = Zig::convertUTF8ToString(span);
+    if (string.isNull() && length > 0) [[unlikely]] {
+        // empty, like the too-long case above
+        return MaybeLocal<String>();
+    }
     switch (type) {
     case NewStringType::kNormal:
         jsString = JSC::jsString(vm, string);
@@ -51,6 +56,14 @@ MaybeLocal<String> String::NewFromUtf8(Isolate* isolate, char const* data, NewSt
         break;
     }
     return MaybeLocal<String>(isolate->currentHandleScope()->createLocal<String>(vm, jsString));
+}
+
+Local<String> String::NewFromUtf8Literal(Isolate* isolate, const char* literal, NewStringType type, int length)
+{
+    // V8 statically asserts the literal length is in range, so this never returns empty.
+    Local<String> result;
+    (void)NewFromUtf8(isolate, literal, type, length).ToLocal(&result);
+    return result;
 }
 
 MaybeLocal<String> String::NewFromOneByte(Isolate* isolate, const uint8_t* data, NewStringType type, int signed_length)

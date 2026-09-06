@@ -11,18 +11,25 @@
 // ours, so a workload looks the same to the caller either way. Exits with the
 // child's status.
 //
-// PTYRUN_PRELOAD becomes the child's LD_PRELOAD. The page tracer belongs in the
-// binary being traced and nowhere else, and it drops itself from the environment
-// once loaded, so it is handed down here rather than inherited.
+// PTYRUN_PRELOAD becomes the child's LD_PRELOAD (DYLD_INSERT_LIBRARIES on
+// macOS). The tracer belongs in the binary being traced and nowhere else, and
+// it drops itself from the environment once loaded, so it is handed down here
+// rather than inherited.
 #define _GNU_SOURCE
 #include <errno.h>
 #include <poll.h>
-#include <pty.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <sys/ioctl.h>
 #include <sys/wait.h>
 #include <unistd.h>
+#if defined(__APPLE__)
+#include <util.h>
+#define PRELOAD_VAR "DYLD_INSERT_LIBRARIES"
+#else
+#include <pty.h>
+#define PRELOAD_VAR "LD_PRELOAD"
+#endif
 
 #define EOT 4 // ^D: how a terminal says end-of-input
 
@@ -42,7 +49,7 @@ int main(int argc, char **argv)
     }
     if (child == 0) {
         const char *preload = getenv("PTYRUN_PRELOAD");
-        if (preload && *preload) setenv("LD_PRELOAD", preload, 1);
+        if (preload && *preload) setenv(PRELOAD_VAR, preload, 1);
         execvp(argv[1], &argv[1]);
         perror(argv[1]);
         _exit(127);

@@ -35,7 +35,7 @@ fn statement_loc(stmt: &Stmt) -> Option<SourceLocation> {
 ///
 /// Implements the TS BlockStatement hoisting pass: identifies forward references to
 /// block-scoped bindings and emits DeclareContext instructions to hoist them.
-pub(super) fn lower_block_statement(
+fn lower_block_statement(
     builder: &mut HirBuilder,
     body: &[Stmt],
 ) -> Result<(), CompilerDiagnostic> {
@@ -235,7 +235,7 @@ fn ref_in_nested_fn_stmt(builder: &HirBuilder, target: Ref, stmt: &Stmt, depth: 
             .is_some_and(|v| ref_in_nested_fn_expr(builder, target, v, depth)),
         Data::SThrow(t) => ref_in_nested_fn_expr(builder, target, &t.value, depth),
         Data::SIf(i) => {
-            ref_in_nested_fn_expr(builder, target, &i.test_, depth)
+            ref_in_nested_fn_expr(builder, target, &i.test, depth)
                 || ref_in_nested_fn_stmt(builder, target, &i.yes, depth)
                 || i.no
                     .as_ref()
@@ -245,7 +245,7 @@ fn ref_in_nested_fn_stmt(builder: &HirBuilder, target: Ref, stmt: &Stmt, depth: 
             f.init
                 .as_ref()
                 .is_some_and(|s| ref_in_nested_fn_stmt(builder, target, s, depth))
-                || f.test_
+                || f.test
                     .as_ref()
                     .is_some_and(|e| ref_in_nested_fn_expr(builder, target, e, depth))
                 || f.update
@@ -264,15 +264,15 @@ fn ref_in_nested_fn_stmt(builder: &HirBuilder, target: Ref, stmt: &Stmt, depth: 
                 || ref_in_nested_fn_stmt(builder, target, &f.body, depth)
         }
         Data::SWhile(w) => {
-            ref_in_nested_fn_expr(builder, target, &w.test_, depth)
+            ref_in_nested_fn_expr(builder, target, &w.test, depth)
                 || ref_in_nested_fn_stmt(builder, target, &w.body, depth)
         }
         Data::SDoWhile(d) => {
             ref_in_nested_fn_stmt(builder, target, &d.body, depth)
-                || ref_in_nested_fn_expr(builder, target, &d.test_, depth)
+                || ref_in_nested_fn_expr(builder, target, &d.test, depth)
         }
         Data::SSwitch(sw) => {
-            ref_in_nested_fn_expr(builder, target, &sw.test_, depth)
+            ref_in_nested_fn_expr(builder, target, &sw.test, depth)
                 || sw.cases.slice().iter().any(|c| {
                     c.value
                         .as_ref()
@@ -288,7 +288,7 @@ fn ref_in_nested_fn_stmt(builder: &HirBuilder, target: Ref, stmt: &Stmt, depth: 
                 .slice()
                 .iter()
                 .any(|s| ref_in_nested_fn_stmt(builder, target, s, depth))
-                || t.catch_.as_ref().is_some_and(|c| {
+                || t.catch.as_ref().is_some_and(|c| {
                     c.body
                         .slice()
                         .iter()
@@ -427,7 +427,7 @@ fn ref_in_nested_fn_expr(builder: &HirBuilder, target: Ref, e: &Expr, depth: u32
         }),
         ExprData::ESpread(s) => ref_in_nested_fn_expr(builder, target, &s.value, depth),
         ExprData::EIf(c) => {
-            ref_in_nested_fn_expr(builder, target, &c.test_, depth)
+            ref_in_nested_fn_expr(builder, target, &c.test, depth)
                 || ref_in_nested_fn_expr(builder, target, &c.yes, depth)
                 || ref_in_nested_fn_expr(builder, target, &c.no, depth)
         }
@@ -491,7 +491,7 @@ fn ref_in_nested_fn_expr(builder: &HirBuilder, target: Ref, e: &Expr, depth: u32
 // =============================================================================
 
 #[allow(clippy::too_many_lines)]
-pub(crate) fn lower_statement(
+fn lower_statement(
     builder: &mut HirBuilder,
     stmt: &Stmt,
     label: Option<String>,
@@ -740,7 +740,7 @@ pub(crate) fn lower_statement(
                 continuation_id
             };
 
-            let test = lower_expression_to_temporary(builder, &if_stmt.test_)?;
+            let test = lower_expression_to_temporary(builder, &if_stmt.test)?;
             builder.terminate_with_continuation(
                 Terminal::If {
                     test,
@@ -855,7 +855,7 @@ pub(crate) fn lower_statement(
             );
 
             // Fill in the test block
-            if let Some(test_expr) = &for_stmt.test_ {
+            if let Some(test_expr) = &for_stmt.test {
                 let test = lower_expression_to_temporary(builder, test_expr)?;
                 builder.terminate_with_continuation(
                     Terminal::Branch {
@@ -933,7 +933,7 @@ pub(crate) fn lower_statement(
             );
 
             // Fill in the conditional block: lower test, branch
-            let test = lower_expression_to_temporary(builder, &while_stmt.test_)?;
+            let test = lower_expression_to_temporary(builder, &while_stmt.test)?;
             builder.terminate_with_continuation(
                 Terminal::Branch {
                     test,
@@ -982,7 +982,7 @@ pub(crate) fn lower_statement(
             );
 
             // Fill in the conditional block: lower test, branch
-            let test = lower_expression_to_temporary(builder, &do_while_stmt.test_)?;
+            let test = lower_expression_to_temporary(builder, &do_while_stmt.test)?;
             builder.terminate_with_continuation(
                 Terminal::Branch {
                     test,
@@ -1241,7 +1241,7 @@ pub(crate) fn lower_statement(
             }
 
             builder.pop_scope();
-            let test = lower_expression_to_temporary(builder, &switch_stmt.test_)?;
+            let test = lower_expression_to_temporary(builder, &switch_stmt.test)?;
             builder.terminate_with_continuation(
                 Terminal::Switch {
                     test,
@@ -1258,7 +1258,7 @@ pub(crate) fn lower_statement(
             let continuation_block = builder.reserve(BlockKind::Block);
             let continuation_id = continuation_block.id;
 
-            let handler_clause = match &try_stmt.catch_ {
+            let handler_clause = match &try_stmt.catch {
                 Some(h) => h,
                 None => {
                     builder.record_error(CompilerErrorDetail {

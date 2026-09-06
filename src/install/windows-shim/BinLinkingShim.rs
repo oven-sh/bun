@@ -29,16 +29,16 @@
 pub struct VersionFlag(u16);
 
 impl VersionFlag {
-    pub(crate) const CURRENT: VersionFlag = VersionFlag::V5;
+    const CURRENT: VersionFlag = VersionFlag::V5;
 
     /// Fixed bugs where passing arguments did not always work.
-    pub(crate) const V5: VersionFlag = VersionFlag(5478);
+    const V5: VersionFlag = VersionFlag(5478);
 
     /// Maximum 13-bit value.
     const MAX: VersionFlag = VersionFlag((1u16 << 13) - 1);
 
     #[inline]
-    pub const fn bits(self) -> u16 {
+    pub(crate) const fn bits(self) -> u16 {
         self.0
     }
 }
@@ -51,7 +51,7 @@ pub struct Flags(u16);
 
 impl Flags {
     #[inline]
-    pub const fn new(
+    pub(crate) const fn new(
         is_node_or_bun: bool,
         is_node: bool,
         has_shebang: bool,
@@ -66,41 +66,41 @@ impl Flags {
     }
 
     #[inline]
-    pub const fn bits(self) -> u16 {
+    pub(crate) const fn bits(self) -> u16 {
         self.0
     }
 
     #[inline]
-    pub const fn from_bits(b: u16) -> Flags {
+    pub(crate) const fn from_bits(b: u16) -> Flags {
         Flags(b)
     }
 
     // this is set if the shebang content is "node" or "bun"
     #[inline]
-    pub const fn is_node_or_bun(self) -> bool {
+    pub(crate) const fn is_node_or_bun(self) -> bool {
         (self.0 & 0b001) != 0
     }
     // this is for validation that the shim is not corrupt and to detect offset memory reads
     #[inline]
-    pub const fn is_node(self) -> bool {
+    pub(crate) const fn is_node(self) -> bool {
         (self.0 & 0b010) != 0
     }
     // indicates if a shebang is present
     #[inline]
-    pub const fn has_shebang(self) -> bool {
+    pub(crate) const fn has_shebang(self) -> bool {
         (self.0 & 0b100) != 0
     }
     #[inline]
-    pub const fn version_tag(self) -> VersionFlag {
+    pub(crate) const fn version_tag(self) -> VersionFlag {
         VersionFlag(self.0 >> 3)
     }
 
     #[inline]
-    pub fn set_is_node(&mut self, v: bool) {
+    pub(crate) fn set_is_node(&mut self, v: bool) {
         self.0 = (self.0 & !0b010) | ((v as u16) << 1);
     }
 
-    pub fn is_valid(self) -> bool {
+    pub(crate) fn is_valid(self) -> bool {
         let mask: u16 = Flags::new(false, false, false, VersionFlag::MAX).bits();
         let compare_to: u16 = Flags::new(false, false, false, VersionFlag::CURRENT).bits();
         (self.0 & mask) == compare_to
@@ -137,9 +137,9 @@ mod host {
     // (`bin::Linker::create_windows_shim`), so on non-Windows hosts there is no
     // artifact to embed and the data is never read.
     #[cfg(windows)]
-    pub const EMBEDDED_EXECUTABLE_DATA: &[u8] = include_bytes!("bun_shim_impl.exe");
+    pub(crate) const EMBEDDED_EXECUTABLE_DATA: &[u8] = include_bytes!("bun_shim_impl.exe");
     #[cfg(not(windows))]
-    pub const EMBEDDED_EXECUTABLE_DATA: &[u8] = &[];
+    pub(crate) const EMBEDDED_EXECUTABLE_DATA: &[u8] = &[];
 
     /// Guard against the placeholder/empty artifact slipping through: a 0-byte
     /// embed would silently make `bun install` write 0-byte `.exe` shims into
@@ -158,7 +158,7 @@ mod host {
     /// fail the *process* fast instead.
     #[inline]
     #[track_caller]
-    pub fn embedded_executable_data() -> &'static [u8] {
+    pub(crate) fn embedded_executable_data() -> &'static [u8] {
         if EMBEDDED_EXECUTABLE_DATA.is_empty() {
             bun_core::pretty_errorln!(
                 "<r><red>error<r>: bun_shim_impl.exe is empty — the Windows shim \
@@ -206,13 +206,13 @@ mod host {
     #[derive(Copy, Clone)]
     pub struct Shebang<'a> {
         // Borrows into the caller's input buffer (see `parse` doc).
-        pub launcher: &'a [u8],
-        pub utf16_len: u32,
-        pub is_node_or_bun: bool,
+        pub(crate) launcher: &'a [u8],
+        pub(crate) utf16_len: u32,
+        pub(crate) is_node_or_bun: bool,
     }
 
     impl<'a> Shebang<'a> {
-        pub fn init(launcher: &'a [u8], is_node_or_bun: bool) -> Shebang<'a> {
+        pub(crate) fn init(launcher: &'a [u8], is_node_or_bun: bool) -> Shebang<'a> {
             Shebang {
                 launcher,
                 // TODO: what if this is invalid utf8?
@@ -223,7 +223,7 @@ mod host {
         }
 
         /// Returns the file extension (including the dot) of a UTF-16 path.
-        pub fn extension_w(path: &[u16]) -> &[u16] {
+        pub(crate) fn extension_w(path: &[u16]) -> &[u16] {
             let filename = strings::basename_windows(path);
             let Some(index) = filename.iter().rposition(|&c| c == b'.' as u16) else {
                 return &path[path.len()..];
@@ -234,7 +234,7 @@ mod host {
             &filename[index..]
         }
 
-        pub fn parse_from_bin_path(bin_path: &[u16]) -> Option<Shebang<'static>> {
+        pub(crate) fn parse_from_bin_path(bin_path: &[u16]) -> Option<Shebang<'static>> {
             if let Some(i) = bun_extensions_get(Self::extension_w(bin_path)) {
                 return Some(match i {
                     // Const-evaluated; the
@@ -262,14 +262,14 @@ mod host {
 
         /// `32766` is taken from `CreateProcessW` docs. One less to account for the null terminator
         /// https://learn.microsoft.com/en-us/windows/win32/api/processthreadsapi/nf-processthreadsapi-createprocessw#parameters
-        pub const MAX_SHEBANG_INPUT_LENGTH: usize = 32766 + b"#!".len();
+        pub(crate) const MAX_SHEBANG_INPUT_LENGTH: usize = 32766 + b"#!".len();
 
         /// Given the start of a file, parse the shebang
         /// Output contains slices that point into the input buffer
         ///
         /// Since a command line cannot be longer than 32766 characters,
         /// this function does not accept inputs longer than `MAX_SHEBANG_INPUT_LENGTH`
-        pub fn parse(
+        pub(crate) fn parse(
             contents_maybe_overflow: &'a [u8],
             bin_path: &[u16],
         ) -> Result<Option<Shebang<'a>>, bun_core::Error> {
@@ -335,20 +335,20 @@ mod host {
             Ok(Some(Shebang::init(line, false)))
         }
 
-        pub fn encoded_length(&self) -> usize {
+        pub(crate) fn encoded_length(&self) -> usize {
             (b" ".len() + self.utf16_len as usize) * size_of::<u16>() + size_of::<u32>() * 2
         }
     }
 
-    pub struct BinLinkingShim<'a> {
+    pub(crate) struct BinLinkingShim<'a> {
         /// Relative to node_modules. Do not include slash
-        pub bin_path: &'a [u16],
+        pub(crate) bin_path: &'a [u16],
         /// Information found within the target file's shebang
-        pub shebang: Option<Shebang<'a>>,
+        pub(crate) shebang: Option<Shebang<'a>>,
     }
 
     impl<'a> BinLinkingShim<'a> {
-        pub fn encoded_length(&self) -> usize {
+        pub(crate) fn encoded_length(&self) -> usize {
             let l = ((self.bin_path.len() + b"\" ".len()) * size_of::<u16>())
             + size_of::<u16>() // @sizeOf(Flags)
             + if let Some(s) = &self.shebang {
@@ -362,9 +362,10 @@ mod host {
 
         /// The buffer must be exactly the correct length given by encoded_length.
         ///
-        /// The `Result` is kept only because the caller (`bin.rs`) treats it as
-        /// a fallible API — this always returns `Ok(())`.
-        pub fn encode_into(&self, buf: &mut [u8]) -> Result<(), bun_core::Error> {
+        /// Returns `Err` when the shebang launcher does not encode to exactly
+        /// `utf16_len` UTF-16 units (invalid UTF-8); the caller (`bin.rs`) reports
+        /// that as an invalid bin.
+        pub(crate) fn encode_into(&self, buf: &mut [u8]) -> Result<(), bun_core::Error> {
             debug_assert!(buf.len() == self.encoded_length());
             debug_assert!(self.bin_path[0] != b'/' as u16);
 
@@ -402,11 +403,15 @@ mod host {
                     debug_assert!(flags.is_node_or_bun());
                 }
 
-                let encoded = strings::convert_utf8_to_utf16_in_buffer(
+                let Some(encoded) = strings::try_convert_utf8_to_utf16_in_buffer(
                     &mut wbuf[0..s.utf16_len as usize],
                     s.launcher,
-                );
-                debug_assert!(encoded.len() == s.utf16_len as usize);
+                ) else {
+                    return Err(bun_core::Error::InvalidByteSequence);
+                };
+                if encoded.len() != s.utf16_len as usize {
+                    return Err(bun_core::Error::InvalidByteSequence);
+                }
                 wbuf = &mut wbuf[s.utf16_len as usize..];
 
                 wbuf[0] = b' ' as u16;
@@ -436,55 +441,5 @@ mod host {
 
             Ok(())
         }
-    }
-
-    pub struct Decoded<'a> {
-        pub bin_path: &'a [u16],
-        pub flags: Flags,
-    }
-
-    pub fn loose_decode(input: &[u8]) -> Option<Decoded<'_>> {
-        const FLAGS_SIZE: usize = size_of::<u16>(); // @sizeOf(Flags)
-        if input.len() < FLAGS_SIZE + 2 * size_of::<u32>() + 8 {
-            return None;
-        }
-        // Bounds checked above so the trailing 2-byte slice is in range.
-        // `pod_read_unaligned` is the safe equivalent of
-        // `ptr.cast::<u16>().read_unaligned()` over a `&[u8]`.
-        let flags = Flags::from_bits(bytemuck::pod_read_unaligned::<u16>(
-            &input[input.len() - FLAGS_SIZE..],
-        ));
-        if !flags.is_valid() {
-            return None;
-        }
-
-        let bin_path_u8: &[u8] = if flags.has_shebang() {
-            'bin_path_u8: {
-                // Bounds checked above; unaligned u32 read via safe `bytemuck`.
-                let off = input.len() - FLAGS_SIZE - 2 * size_of::<u32>();
-                let bin_path_byte_len =
-                    bytemuck::pod_read_unaligned::<u32>(&input[off..off + size_of::<u32>()])
-                        as usize;
-                if !bin_path_byte_len.is_multiple_of(2) {
-                    return None;
-                }
-                if bin_path_byte_len > (input.len() - 8) {
-                    return None;
-                }
-                break 'bin_path_u8 &input[0..bin_path_byte_len];
-            }
-        } else {
-            // path slice is 0..flags-2
-            &input[0..input.len() - FLAGS_SIZE]
-        };
-
-        if !bin_path_u8.len().is_multiple_of(2) {
-            return None;
-        }
-
-        Some(Decoded {
-            bin_path: bun_core::cast_slice::<u8, u16>(bin_path_u8),
-            flags,
-        })
     }
 } // mod host

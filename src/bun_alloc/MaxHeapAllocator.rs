@@ -3,12 +3,11 @@
 use core::alloc::Layout;
 use core::ptr::NonNull;
 
+use crate::Allocator;
 use crate::MAX_ALIGN_T as MAX_ALIGN;
-use crate::{Alignment, Allocator};
 
-/// The returned pointer must be aligned to `max_align_t`. Rust `Vec<u8>`
-/// allocates with align 1, which would violate the `alignment <= MAX_ALIGN`
-/// contract. Store a raw `MAX_ALIGN`-aligned buffer instead.
+/// Owns a single raw `MAX_ALIGN`-aligned buffer (a `Vec<u8>` would allocate
+/// with align 1, violating the `alignment <= MAX_ALIGN` contract).
 pub struct MaxHeapAllocator {
     ptr: Option<NonNull<u8>>,
     capacity: usize,
@@ -24,46 +23,7 @@ unsafe impl Send for MaxHeapAllocator {}
 unsafe impl Sync for MaxHeapAllocator {}
 
 impl MaxHeapAllocator {
-    pub fn alloc(&mut self, len: usize, alignment: Alignment, _ret_addr: usize) -> Option<*mut u8> {
-        debug_assert!(alignment.to_byte_units() <= MAX_ALIGN);
-        // Reuse the existing buffer.
-        self.len = 0;
-        if self.capacity < len {
-            // Grow (or first-allocate) to at least `len`, MAX_ALIGN-aligned.
-            let new_layout = Layout::from_size_align(len, MAX_ALIGN).ok()?;
-            // SAFETY: `new_layout` has nonzero align; size may be 0, which
-            // `alloc::alloc` accepts (returns a dangling-but-aligned ptr we
-            // never deref). On grow, the old buffer is freed first.
-            let new_ptr = unsafe {
-                if let Some(old) = self.ptr {
-                    let old_layout = Layout::from_size_align_unchecked(self.capacity, MAX_ALIGN);
-                    std::alloc::realloc(old.as_ptr(), old_layout, len)
-                } else {
-                    std::alloc::alloc(new_layout)
-                }
-            };
-            let new_ptr = NonNull::new(new_ptr)?;
-            self.ptr = Some(new_ptr);
-            self.capacity = len;
-        }
-        self.len = len;
-        Some(self.ptr?.as_ptr())
-    }
-
-    pub fn resize(
-        &mut self,
-        _buf: &mut [u8],
-        _alignment: Alignment,
-        _new_len: usize,
-        _ret_addr: usize,
-    ) -> bool {
-        panic!("not implemented");
-    }
-
-    /// No-op (single owned buffer freed on Drop).
-    pub fn free(&mut self, _buf: &mut [u8], _alignment: Alignment, _ret_addr: usize) {}
-
-    pub fn reset(&mut self) {
+    pub(crate) fn reset(&mut self) {
         self.len = 0;
     }
 
@@ -81,16 +41,6 @@ impl MaxHeapAllocator {
             capacity: 0,
             len: 0,
         }
-    }
-
-    pub fn is_instance(alloc: &dyn Allocator) -> bool {
-        alloc.is::<Self>()
-    }
-}
-
-impl Default for MaxHeapAllocator {
-    fn default() -> Self {
-        Self::init()
     }
 }
 
@@ -120,15 +70,15 @@ impl Drop for MaxHeapScope<'_> {
     }
 }
 
-// `Allocator` is a marker trait carrying `type_id()`; the vtable methods above
-// are inherent (no dynamic dispatch needed for a single-allocation arena).
+// `Allocator` is a marker trait; the vtable methods above are inherent (no
+// dynamic dispatch needed for a single-allocation arena).
 impl Allocator for MaxHeapAllocator {}
 
 impl Drop for MaxHeapAllocator {
     fn drop(&mut self) {
         if let Some(ptr) = self.ptr.take() {
-            // SAFETY: `ptr`/`capacity` were produced by `alloc`/`realloc` above
-            // with `MAX_ALIGN` alignment.
+            // SAFETY: `ptr`/`capacity` describe this allocator's own buffer,
+            // allocated with `MAX_ALIGN` alignment.
             unsafe {
                 std::alloc::dealloc(
                     ptr.as_ptr(),

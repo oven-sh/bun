@@ -8,7 +8,7 @@ namespace Bake {
 
 class SourceProvider;
 
-extern "C" void Bun__addBakeSourceProviderSourceMap(void* bun_vm, SourceProvider* opaque_source_provider, BunString* specifier);
+extern "C" void Bun__addBakeSourceProviderSourceMap(void* bun_vm, SourceProvider* opaque_source_provider, const BunString* specifier);
 
 class SourceProvider final : public JSC::StringSourceProvider {
 public:

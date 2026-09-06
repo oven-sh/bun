@@ -12,6 +12,7 @@
 
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import {
+  AdversarialProxy,
   BodyEncoding,
   BodyFraming,
   cartesian,
@@ -23,13 +24,32 @@ import {
   restoreProxyEnv,
 } from "./proxy-stress-helpers";
 
+// Concurrent stateless cases share one {http, https} proxy pair to avoid
+// ephemeral-port churn under test.concurrent; cases that pass non-default
+// proxy options or inspect proxy.connections still create a dedicated proxy.
 let savedEnv: Record<string, string | undefined>;
-beforeAll(() => {
+let sharedHttpProxy: AdversarialProxy;
+let sharedHttpsProxy: AdversarialProxy;
+const sharedProxy = (tls: boolean) => (tls ? sharedHttpsProxy : sharedHttpProxy);
+
+beforeAll(async () => {
   savedEnv = clearProxyEnv();
+  sharedHttpProxy = await createAdversarialProxy({ tls: false });
+  sharedHttpsProxy = await createAdversarialProxy({ tls: true });
 });
-afterAll(() => {
+afterAll(async () => {
+  await sharedHttpProxy?.close();
+  await sharedHttpsProxy?.close();
   restoreProxyEnv(savedEnv);
 });
+
+// Find this test's entry in the shared proxy log: the origin port is unique
+// while its `await using` scope holds it, so the single record in
+// `connections.slice(before)` whose target is that exact port is ours.
+function ownConnections(proxy: AdversarialProxy, before: number, originPort: number) {
+  const p = `:${originPort}`;
+  return proxy.connections.slice(before).filter(c => c.target.endsWith(p) || c.target.includes(p + "/"));
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Response-side matrix: every way the origin can frame/encode a body, through
@@ -62,7 +82,8 @@ describe("response matrix", () => {
         framing,
         encoding,
       });
-      await using proxy = await createAdversarialProxy({ tls: proxyTls });
+      const proxy = sharedProxy(proxyTls);
+      const before = proxy.connections.length;
 
       const res = await fetch(origin.url, {
         proxy: proxy.url,
@@ -77,13 +98,14 @@ describe("response matrix", () => {
         tail: payload.slice(-8),
       });
 
-      // The request actually went through the proxy.
-      expect(proxy.connections.length).toBe(1);
+      // The request actually went through the proxy, with the right envelope.
+      const mine = ownConnections(proxy, before, origin.port);
+      expect(mine.length).toBe(1);
       if (originTls) {
-        expect(proxy.connections[0].method).toBe("CONNECT");
+        expect(mine[0].method).toBe("CONNECT");
       } else {
-        expect(proxy.connections[0].method).toBe("GET");
-        expect(proxy.connections[0].target).toStartWith("http://");
+        expect(mine[0].method).toBe("GET");
+        expect(mine[0].target).toStartWith("http://");
       }
     });
   }
@@ -173,7 +195,7 @@ describe("upload matrix", () => {
     test.concurrent(label, async () => {
       const payload = makeBody(bodySize, "U");
       await using origin = await createAdversarialOrigin({ tls: originTls, echo: true });
-      await using proxy = await createAdversarialProxy({ tls: proxyTls });
+      const proxy = sharedProxy(proxyTls);
 
       const { body, duplex, verify } = makeUploadBody(shape, payload);
       const res = await fetch(origin.url, {
@@ -212,7 +234,7 @@ describe("streamed response via reader", () => {
       async () => {
         const payload = makeBody(128 * 1024, "S");
         await using origin = await createAdversarialOrigin({ tls: originTls, body: payload, framing });
-        await using proxy = await createAdversarialProxy({ tls: proxyTls });
+        const proxy = sharedProxy(proxyTls);
 
         const res = await fetch(origin.url, { proxy: proxy.url, keepalive: false, tls: laxTls });
         expect(res.status).toBe(200);
@@ -348,7 +370,7 @@ describe("method matrix", () => {
         `${method} via ${proxyTls ? "https" : "http"}-proxy → ${originTls ? "https" : "http"}-origin`,
         async () => {
           await using origin = await createAdversarialOrigin({ tls: originTls, body: "m" });
-          await using proxy = await createAdversarialProxy({ tls: proxyTls });
+          const proxy = sharedProxy(proxyTls);
 
           const res = await fetch(origin.url, {
             method,

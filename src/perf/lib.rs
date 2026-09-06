@@ -8,9 +8,7 @@ use core::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Once;
 
 pub mod generated_perf_trace_events;
-pub mod hw_timer;
 pub mod system_timer;
-pub mod tracy;
 
 pub use crate::generated_perf_trace_events::PerfEvent;
 
@@ -31,11 +29,11 @@ pub struct Disabled;
 
 impl Disabled {
     #[inline]
-    pub(crate) fn end(&self) {}
+    fn end(&self) {}
 }
 
 impl Ctx {
-    pub fn end(&self) {
+    pub(crate) fn end(&self) {
         match self {
             Ctx::Disabled(ctx) => ctx.end(),
             Ctx::Enabled(ctx) => ctx.end(),
@@ -93,7 +91,7 @@ fn is_enabled_once() {
     }
 }
 
-pub(crate) fn is_enabled() -> bool {
+fn is_enabled() -> bool {
     IS_ENABLED_ONCE.call_once(is_enabled_once);
     IS_ENABLED.load(Ordering::SeqCst)
 }
@@ -143,7 +141,7 @@ mod darwin_impl {
     }
 
     impl Darwin {
-        pub fn init(name: i32) -> Self {
+        pub(crate) fn init(name: i32) -> Self {
             Self {
                 // SAFETY: `is_enabled()` returned true, which implies `Darwin::get()` is Some
                 // (see `is_enabled_once`).
@@ -154,7 +152,7 @@ mod darwin_impl {
             }
         }
 
-        pub fn end(&self) {
+        pub(crate) fn end(&self) {
             self.interval.end();
         }
 
@@ -164,7 +162,7 @@ mod darwin_impl {
             }
         }
 
-        pub fn get() -> Option<&'static OSLog> {
+        pub(crate) fn get() -> Option<&'static OSLog> {
             OS_LOG_ONCE.call_once(Self::get_once);
             let ptr = OS_LOG.load(Ordering::Acquire);
             if ptr.is_null() {
@@ -188,7 +186,7 @@ pub struct Linux {
 
 #[cfg(any(target_os = "linux", target_os = "android"))]
 impl Linux {
-    pub(crate) fn is_supported() -> bool {
+    fn is_supported() -> bool {
         INIT_ONCE.call_once(Self::init_once);
         IS_INITIALIZED.load(Ordering::Relaxed)
     }
@@ -198,14 +196,14 @@ impl Linux {
         IS_INITIALIZED.store(result != 0, Ordering::Relaxed);
     }
 
-    pub(crate) fn init(event: PerfEvent) -> Self {
+    fn init(event: PerfEvent) -> Self {
         Self {
             start_time: bun_core::Timespec::now(bun_core::TimespecMockMode::ForceRealTime).ns(),
             event,
         }
     }
 
-    pub(crate) fn end(&self) {
+    fn end(&self) {
         if !Self::is_supported() {
             return;
         }

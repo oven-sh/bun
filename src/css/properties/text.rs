@@ -5,50 +5,19 @@ use crate::Printer;
 use crate::css_values::color::CssColor;
 use crate::css_values::length::LengthValue as Length;
 
-bitflags::bitflags! {
-    #[derive(Clone, Copy, PartialEq, Eq, Default)]
-    pub(crate) struct TextTransformOther: u8 {
-        /// Puts all typographic character units in full-width form.
-        const FULL_WIDTH     = 1 << 0;
-        /// Converts all small Kana characters to the equivalent full-size Kana.
-        const FULL_SIZE_KANA = 1 << 1;
-    }
-}
-
-bitflags::bitflags! {
-    /// A value for the [text-decoration-line](https://www.w3.org/TR/2020/WD-css-text-decor-4-20200506/#text-decoration-line-property) property.
-    ///
-    /// Multiple lines may be specified by combining the flags.
-    #[derive(Clone, Copy, PartialEq, Eq, Default)]
-    pub(crate) struct TextDecorationLine: u8 {
-        /// Each line of text is underlined.
-        const UNDERLINE      = 1 << 0;
-        /// Each line of text has a line over it.
-        const OVERLINE       = 1 << 1;
-        /// Each line of text has a line through the middle.
-        const LINE_THROUGH   = 1 << 2;
-        /// The text blinks.
-        const BLINK          = 1 << 3;
-        /// The text is decorated as a spelling error.
-        const SPELLING_ERROR = 1 << 4;
-        /// The text is decorated as a grammar error.
-        const GRAMMAR_ERROR  = 1 << 5;
-    }
-}
-
 /// A value for the [text-shadow](https://www.w3.org/TR/2020/WD-css-text-decor-4-20200506/#text-shadow-property) property.
 #[derive(Clone, PartialEq)]
 pub struct TextShadow {
     /// The color of the text shadow.
-    pub color: CssColor,
+    pub(crate) color: CssColor,
     /// The x offset of the text shadow.
-    pub x_offset: Length,
+    pub(crate) x_offset: Length,
     /// The y offset of the text shadow.
-    pub y_offset: Length,
+    pub(crate) y_offset: Length,
     /// The blur radius of the text shadow.
-    pub blur: Length,
+    pub(crate) blur: Length,
     /// The spread distance of the text shadow.
-    pub spread: Length, // added in Level 4 spec
+    pub(crate) spread: Length, // added in Level 4 spec
 }
 
 impl TextShadow {
@@ -118,7 +87,7 @@ impl TextShadow {
         Ok(())
     }
 
-    pub(crate) fn is_compatible(&self, browsers: &css::targets::Browsers) -> bool {
+    fn is_compatible(&self, browsers: &css::targets::Browsers) -> bool {
         self.color.is_compatible(browsers)
             && self.x_offset.is_compatible(browsers)
             && self.y_offset.is_compatible(browsers)

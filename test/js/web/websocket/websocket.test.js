@@ -878,6 +878,7 @@ describe("WebSocket tls option does not leak SSLConfig on error paths", () => {
     // 256 KiB duped per SSLConfig -> ~128 MiB per path if every iteration leaks.
     const bigCA = Buffer.alloc(256 * 1024, "A").toString();
     const tls = { ca: bigCA, rejectUnauthorized: false };
+    const rss = process.platform === "darwin" && typeof Bun.unsafe.memoryFootprint === "function" ? Bun.unsafe.memoryFootprint : process.memoryUsage.rss;
 
     function hit() {
       // Path 1: getter on a later option throws after the SSLConfig has
@@ -906,11 +907,11 @@ describe("WebSocket tls option does not leak SSLConfig on error paths", () => {
     // Warm up so one-off allocations (ICU, resolver caches, JIT) settle.
     for (let i = 0; i < 100; i++) hit();
     Bun.gc(true);
-    const baseline = process.memoryUsage.rss();
+    const baseline = rss();
 
     for (let i = 0; i < iterations; i++) hit();
     Bun.gc(true);
-    const after = process.memoryUsage.rss();
+    const after = rss();
 
     const growthMiB = (after - baseline) / (1024 * 1024);
     console.log(JSON.stringify({ baseline, after, growthMiB }));
@@ -1147,4 +1148,27 @@ describe("WebSocket message handler re-entrancy during a multi-frame read", () =
     expect(messages).toEqual(["A"]);
     expect(close).toEqual({ code: 1006, wasClean: false });
   });
+});
+
+// https://github.com/oven-sh/bun/issues/38188
+it("terminate() on a wss:// socket whose peer never answers close_notify still fires close", async () => {
+  const worker = new Worker(join(import.meta.dir, "websocket-frozen-server-fixture.ts"));
+  try {
+    const workerFailed = new Promise((_, reject) => (worker.onerror = e => reject(e.error ?? new Error(e.message))));
+    const port = await Promise.race([workerFailed, new Promise(resolve => (worker.onmessage = e => resolve(e.data)))]);
+    const frozen = new Promise(resolve => (worker.onmessage = e => resolve(e.data)));
+    const ws = new WebSocket(`wss://127.0.0.1:${port}`, { tls: { rejectUnauthorized: false } });
+    const errored = new Promise((_, reject) => (ws.onerror = e => reject(e.error ?? new Error(e.message))));
+    const closed = new Promise(resolve => (ws.onclose = e => resolve(e.code)));
+    await Promise.race([errored, new Promise(resolve => (ws.onopen = resolve))]);
+    ws.send("freeze");
+    expect(await Promise.race([workerFailed, frozen])).toBe("frozen");
+
+    ws.terminate();
+    expect(ws.readyState).toBe(WebSocket.CLOSING);
+    expect(await closed).toBe(1006);
+    expect(ws.readyState).toBe(WebSocket.CLOSED);
+  } finally {
+    worker.terminate();
+  }
 });

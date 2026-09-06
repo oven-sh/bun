@@ -3275,7 +3275,7 @@ fn build_table() -> Table {
 }
 
 /// Decompress the package-name table. Idempotent.
-pub fn init() {
+pub(crate) fn init() {
     TABLE.get_or_init(build_table);
 }
 

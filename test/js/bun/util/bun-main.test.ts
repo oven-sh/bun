@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { join } from "node:path";
-import "../../../harness"; // for expect().toRun()
+import { bunRun } from "../../../harness"; // for expect().toSpawn()
 
 describe("Bun.main", () => {
   test("can be overridden", () => {
@@ -12,11 +12,14 @@ describe("Bun.main", () => {
     expect(Bun.main as any).toBe(override);
   });
 
-  test("override is reset when switching to a new test file", () => {
-    expect([
+  test.concurrent("override is reset when switching to a new test file", async () => {
+    // `bun test` writes its summary to stderr, so check exitCode directly instead of .toSpawn().
+    const { stderr, exitCode } = await bunRun([
       "test",
       join(import.meta.dir, "bun-main-test-fixture-1.ts"),
       join(import.meta.dir, "bun-main-test-fixture-2.ts"),
-    ]).toRun();
+    ]);
+    expect(stderr).toContain("1 pass");
+    expect(exitCode).toBe(0);
   });
 });

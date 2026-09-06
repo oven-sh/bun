@@ -11,8 +11,6 @@ using namespace std;
 
 #include "DOMURL.h"
 
-#include "headers-cpp.h"
-
 #include <JavaScriptCore/CallFrame.h>
 #include <JavaScriptCore/JSArrayBufferViewInlines.h>
 

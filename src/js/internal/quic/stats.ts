@@ -1,0 +1,990 @@
+// Ported from Node.js lib/internal/quic/stats.js (v26.3.0).
+const { uncurryThis } = require("internal/primordials");
+const { isArrayBuffer } = require("node:util/types");
+const { inspect } = require("node:util");
+
+const JSONStringify = JSON.stringify;
+const TypedArrayPrototypeSubarray = uncurryThis(Uint8Array.prototype.subarray);
+
+const { kFinishClose, kInspect, kPrivateConstructor } = require("internal/quic/symbols");
+
+function ERR_ILLEGAL_CONSTRUCTOR() {
+  return $ERR_ILLEGAL_CONSTRUCTOR();
+}
+function ERR_INVALID_THIS(type) {
+  return $ERR_INVALID_THIS(type);
+}
+function ERR_INVALID_ARG_TYPE(name, expected, actual) {
+  return $ERR_INVALID_ARG_TYPE(name, expected, actual);
+}
+
+const {
+  IDX_STATS_ENDPOINT_CREATED_AT,
+  IDX_STATS_ENDPOINT_DESTROYED_AT,
+  IDX_STATS_ENDPOINT_BYTES_RECEIVED,
+  IDX_STATS_ENDPOINT_BYTES_SENT,
+  IDX_STATS_ENDPOINT_PACKETS_RECEIVED,
+  IDX_STATS_ENDPOINT_PACKETS_SENT,
+  IDX_STATS_ENDPOINT_SERVER_SESSIONS,
+  IDX_STATS_ENDPOINT_CLIENT_SESSIONS,
+  IDX_STATS_ENDPOINT_SERVER_BUSY_COUNT,
+  IDX_STATS_ENDPOINT_RETRY_COUNT,
+  IDX_STATS_ENDPOINT_RETRY_RATE_LIMITED,
+  IDX_STATS_ENDPOINT_VERSION_NEGOTIATION_COUNT,
+  IDX_STATS_ENDPOINT_VERSION_NEGOTIATION_RATE_LIMITED,
+  IDX_STATS_ENDPOINT_STATELESS_RESET_COUNT,
+  IDX_STATS_ENDPOINT_STATELESS_RESET_RATE_LIMITED,
+  IDX_STATS_ENDPOINT_IMMEDIATE_CLOSE_COUNT,
+  IDX_STATS_ENDPOINT_IMMEDIATE_CLOSE_RATE_LIMITED,
+  IDX_STATS_ENDPOINT_SESSION_CREATION_RATE_LIMITED,
+  IDX_STATS_ENDPOINT_PACKETS_BLOCKED,
+
+  IDX_STATS_SESSION_CREATED_AT,
+  IDX_STATS_SESSION_DESTROYED_AT,
+  IDX_STATS_SESSION_CLOSING_AT,
+  IDX_STATS_SESSION_HANDSHAKE_COMPLETED_AT,
+  IDX_STATS_SESSION_HANDSHAKE_CONFIRMED_AT,
+  IDX_STATS_SESSION_BYTES_RECEIVED,
+  IDX_STATS_SESSION_BIDI_IN_STREAM_COUNT,
+  IDX_STATS_SESSION_BIDI_OUT_STREAM_COUNT,
+  IDX_STATS_SESSION_UNI_IN_STREAM_COUNT,
+  IDX_STATS_SESSION_UNI_OUT_STREAM_COUNT,
+  IDX_STATS_SESSION_MAX_BYTES_IN_FLIGHT,
+  IDX_STATS_SESSION_BYTES_IN_FLIGHT,
+  IDX_STATS_SESSION_BLOCK_COUNT,
+  IDX_STATS_SESSION_CWND,
+  IDX_STATS_SESSION_LATEST_RTT,
+  IDX_STATS_SESSION_MIN_RTT,
+  IDX_STATS_SESSION_RTTVAR,
+  IDX_STATS_SESSION_SMOOTHED_RTT,
+  IDX_STATS_SESSION_SSTHRESH,
+  IDX_STATS_SESSION_PKT_SENT,
+  IDX_STATS_SESSION_BYTES_SENT,
+  IDX_STATS_SESSION_PKT_RECV,
+  IDX_STATS_SESSION_BYTES_RECV,
+  IDX_STATS_SESSION_PKT_LOST,
+  IDX_STATS_SESSION_BYTES_LOST,
+  IDX_STATS_SESSION_PING_RECV,
+  IDX_STATS_SESSION_PKT_DISCARDED,
+  IDX_STATS_SESSION_DATAGRAMS_RECEIVED,
+  IDX_STATS_SESSION_DATAGRAMS_SENT,
+  IDX_STATS_SESSION_DATAGRAMS_ACKNOWLEDGED,
+  IDX_STATS_SESSION_DATAGRAMS_LOST,
+  IDX_STATS_SESSION_STREAMS_IDLE_TIMED_OUT,
+
+  IDX_STATS_STREAM_CREATED_AT,
+  IDX_STATS_STREAM_OPENED_AT,
+  IDX_STATS_STREAM_RECEIVED_AT,
+  IDX_STATS_STREAM_ACKED_AT,
+  IDX_STATS_STREAM_DESTROYED_AT,
+  IDX_STATS_STREAM_BYTES_RECEIVED,
+  IDX_STATS_STREAM_BYTES_SENT,
+  IDX_STATS_STREAM_MAX_OFFSET,
+  IDX_STATS_STREAM_MAX_OFFSET_ACK,
+  IDX_STATS_STREAM_MAX_OFFSET_RECV,
+  IDX_STATS_STREAM_FINAL_SIZE,
+  IDX_STATS_STREAM_BYTES_ACCUMULATED,
+  IDX_STATS_STREAM_MAX_BYTES_ACCUMULATED,
+  IDX_STATS_STREAM_COUNT,
+  IDX_STATS_SESSION_COUNT,
+} = require("internal/quic/binding");
+
+const kCreateDisconnected = Symbol("kCreateDisconnected");
+
+let assertIsQuicEndpointStats;
+let assertIsQuicSessionStats;
+let assertIsQuicStreamStats;
+let isQuicEndpointStats;
+let isQuicSessionStats;
+let isQuicStreamStats;
+
+function assertIsPrivateConstructor(privateSymbol) {
+  if (privateSymbol !== kPrivateConstructor) {
+    throw new ERR_ILLEGAL_CONSTRUCTOR();
+  }
+}
+
+class QuicEndpointStats {
+  /** @type {BigUint64Array} */
+  #handle;
+  /** @type {boolean} */
+  #disconnected = false;
+
+  static {
+    isQuicEndpointStats = function (val) {
+      return val != null && typeof val === "object" && #handle in val;
+    };
+
+    assertIsQuicEndpointStats = function (val) {
+      if (!isQuicEndpointStats(val)) {
+        throw new ERR_INVALID_THIS("QuicEndpointStats");
+      }
+    };
+  }
+
+  /**
+   * @param {symbol} privateSymbol
+   * @param {ArrayBuffer} buffer
+   */
+  constructor(privateSymbol, buffer) {
+    assertIsPrivateConstructor(privateSymbol);
+    if (!isArrayBuffer(buffer)) {
+      throw new ERR_INVALID_ARG_TYPE("buffer", ["ArrayBuffer"], buffer);
+    }
+    this.#handle = new BigUint64Array(buffer);
+  }
+
+  /** @type {bigint} */
+  get createdAt() {
+    assertIsQuicEndpointStats(this);
+    return this.#handle[IDX_STATS_ENDPOINT_CREATED_AT];
+  }
+
+  /** @type {bigint} */
+  get destroyedAt() {
+    assertIsQuicEndpointStats(this);
+    return this.#handle[IDX_STATS_ENDPOINT_DESTROYED_AT];
+  }
+
+  /** @type {bigint} */
+  get bytesReceived() {
+    assertIsQuicEndpointStats(this);
+    return this.#handle[IDX_STATS_ENDPOINT_BYTES_RECEIVED];
+  }
+
+  /** @type {bigint} */
+  get bytesSent() {
+    assertIsQuicEndpointStats(this);
+    return this.#handle[IDX_STATS_ENDPOINT_BYTES_SENT];
+  }
+
+  /** @type {bigint} */
+  get packetsReceived() {
+    assertIsQuicEndpointStats(this);
+    return this.#handle[IDX_STATS_ENDPOINT_PACKETS_RECEIVED];
+  }
+
+  /** @type {bigint} */
+  get packetsSent() {
+    assertIsQuicEndpointStats(this);
+    return this.#handle[IDX_STATS_ENDPOINT_PACKETS_SENT];
+  }
+
+  /** @type {bigint} */
+  get serverSessions() {
+    assertIsQuicEndpointStats(this);
+    return this.#handle[IDX_STATS_ENDPOINT_SERVER_SESSIONS];
+  }
+
+  /** @type {bigint} */
+  get clientSessions() {
+    assertIsQuicEndpointStats(this);
+    return this.#handle[IDX_STATS_ENDPOINT_CLIENT_SESSIONS];
+  }
+
+  /** @type {bigint} */
+  get serverBusyCount() {
+    assertIsQuicEndpointStats(this);
+    return this.#handle[IDX_STATS_ENDPOINT_SERVER_BUSY_COUNT];
+  }
+
+  /** @type {bigint} */
+  get retryCount() {
+    assertIsQuicEndpointStats(this);
+    return this.#handle[IDX_STATS_ENDPOINT_RETRY_COUNT];
+  }
+
+  /** @type {bigint} */
+  get retryRateLimited() {
+    assertIsQuicEndpointStats(this);
+    return this.#handle[IDX_STATS_ENDPOINT_RETRY_RATE_LIMITED];
+  }
+
+  /** @type {bigint} */
+  get versionNegotiationCount() {
+    assertIsQuicEndpointStats(this);
+    return this.#handle[IDX_STATS_ENDPOINT_VERSION_NEGOTIATION_COUNT];
+  }
+
+  /** @type {bigint} */
+  get versionNegotiationRateLimited() {
+    assertIsQuicEndpointStats(this);
+    return this.#handle[IDX_STATS_ENDPOINT_VERSION_NEGOTIATION_RATE_LIMITED];
+  }
+
+  /** @type {bigint} */
+  get statelessResetCount() {
+    assertIsQuicEndpointStats(this);
+    return this.#handle[IDX_STATS_ENDPOINT_STATELESS_RESET_COUNT];
+  }
+
+  /** @type {bigint} */
+  get statelessResetRateLimited() {
+    assertIsQuicEndpointStats(this);
+    return this.#handle[IDX_STATS_ENDPOINT_STATELESS_RESET_RATE_LIMITED];
+  }
+
+  /** @type {bigint} */
+  get immediateCloseCount() {
+    assertIsQuicEndpointStats(this);
+    return this.#handle[IDX_STATS_ENDPOINT_IMMEDIATE_CLOSE_COUNT];
+  }
+
+  /** @type {bigint} */
+  get immediateCloseRateLimited() {
+    assertIsQuicEndpointStats(this);
+    return this.#handle[IDX_STATS_ENDPOINT_IMMEDIATE_CLOSE_RATE_LIMITED];
+  }
+
+  /** @type {bigint} */
+  get sessionCreationRateLimited() {
+    assertIsQuicEndpointStats(this);
+    return this.#handle[IDX_STATS_ENDPOINT_SESSION_CREATION_RATE_LIMITED];
+  }
+
+  /** @type {bigint} */
+  get packetsBlocked() {
+    assertIsQuicEndpointStats(this);
+    return this.#handle[IDX_STATS_ENDPOINT_PACKETS_BLOCKED];
+  }
+
+  toString() {
+    return JSONStringify(this.toJSON());
+  }
+
+  toJSON() {
+    assertIsQuicEndpointStats(this);
+    const {
+      createdAt,
+      destroyedAt,
+      bytesReceived,
+      bytesSent,
+      packetsReceived,
+      packetsSent,
+      serverSessions,
+      clientSessions,
+      serverBusyCount,
+      retryCount,
+      retryRateLimited,
+      versionNegotiationCount,
+      versionNegotiationRateLimited,
+      statelessResetCount,
+      statelessResetRateLimited,
+      immediateCloseCount,
+      immediateCloseRateLimited,
+      sessionCreationRateLimited,
+      packetsBlocked,
+    } = this;
+    return {
+      __proto__: null,
+      connected: this.isConnected,
+      createdAt: `${createdAt}`,
+      destroyedAt: `${destroyedAt}`,
+      bytesReceived: `${bytesReceived}`,
+      bytesSent: `${bytesSent}`,
+      packetsReceived: `${packetsReceived}`,
+      packetsSent: `${packetsSent}`,
+      serverSessions: `${serverSessions}`,
+      clientSessions: `${clientSessions}`,
+      serverBusyCount: `${serverBusyCount}`,
+      retryCount: `${retryCount}`,
+      retryRateLimited: `${retryRateLimited}`,
+      versionNegotiationCount: `${versionNegotiationCount}`,
+      versionNegotiationRateLimited: `${versionNegotiationRateLimited}`,
+      statelessResetCount: `${statelessResetCount}`,
+      statelessResetRateLimited: `${statelessResetRateLimited}`,
+      immediateCloseCount: `${immediateCloseCount}`,
+      immediateCloseRateLimited: `${immediateCloseRateLimited}`,
+      sessionCreationRateLimited: `${sessionCreationRateLimited}`,
+      packetsBlocked: `${packetsBlocked}`,
+    };
+  }
+
+  [kInspect](depth, options) {
+    assertIsQuicEndpointStats(this);
+    if (depth < 0) {
+      return "QuicEndpointStats { }";
+    }
+
+    const opts = {
+      __proto__: null,
+      ...options,
+      depth: options.depth == null ? null : options.depth - 1,
+    };
+
+    const {
+      createdAt,
+      destroyedAt,
+      bytesReceived,
+      bytesSent,
+      packetsReceived,
+      packetsSent,
+      serverSessions,
+      clientSessions,
+      serverBusyCount,
+      retryCount,
+      retryRateLimited,
+      versionNegotiationCount,
+      versionNegotiationRateLimited,
+      statelessResetCount,
+      statelessResetRateLimited,
+      immediateCloseCount,
+      immediateCloseRateLimited,
+      sessionCreationRateLimited,
+      packetsBlocked,
+    } = this;
+
+    return `QuicEndpointStats ${inspect(
+      {
+        connected: this.isConnected,
+        createdAt,
+        destroyedAt,
+        bytesReceived,
+        bytesSent,
+        packetsReceived,
+        packetsSent,
+        serverSessions,
+        clientSessions,
+        serverBusyCount,
+        retryCount,
+        retryRateLimited,
+        versionNegotiationCount,
+        versionNegotiationRateLimited,
+        statelessResetCount,
+        statelessResetRateLimited,
+        immediateCloseCount,
+        immediateCloseRateLimited,
+        sessionCreationRateLimited,
+        packetsBlocked,
+      },
+      opts,
+    )}`;
+  }
+
+  /** @type {boolean} */
+  get isConnected() {
+    assertIsQuicEndpointStats(this);
+    return !this.#disconnected;
+  }
+
+  [kFinishClose]() {
+    this.#handle = new BigUint64Array(this.#handle);
+    this.#disconnected = true;
+  }
+}
+
+class QuicSessionStats {
+  /** @type {BigUint64Array} */
+  #handle;
+  #disconnected = false;
+  #offset = 0;
+
+  static {
+    isQuicSessionStats = function (val) {
+      return val != null && typeof val === "object" && #handle in val;
+    };
+
+    assertIsQuicSessionStats = function (val) {
+      if (!isQuicSessionStats(val)) {
+        throw new ERR_INVALID_THIS("QuicSessionStats");
+      }
+    };
+  }
+
+  /**
+   * @param {symbol} privateSymbol
+   * @param {ArrayBuffer} view
+   * @param {number} [byteOffset]
+   */
+  constructor(privateSymbol, view, byteOffset = 0) {
+    assertIsPrivateConstructor(privateSymbol);
+    if (isArrayBuffer(view)) {
+      this.#handle = new BigUint64Array(view);
+    } else {
+      this.#handle = view;
+    }
+    this.#offset = byteOffset / 8;
+  }
+
+  /** @type {bigint} */
+  get createdAt() {
+    assertIsQuicSessionStats(this);
+    return this.#handle[this.#offset + IDX_STATS_SESSION_CREATED_AT];
+  }
+
+  /** @type {bigint} */
+  get destroyedAt() {
+    assertIsQuicSessionStats(this);
+    return this.#handle[this.#offset + IDX_STATS_SESSION_DESTROYED_AT];
+  }
+
+  /** @type {bigint} */
+  get closingAt() {
+    assertIsQuicSessionStats(this);
+    return this.#handle[this.#offset + IDX_STATS_SESSION_CLOSING_AT];
+  }
+
+  /** @type {bigint} */
+  get handshakeCompletedAt() {
+    assertIsQuicSessionStats(this);
+    return this.#handle[this.#offset + IDX_STATS_SESSION_HANDSHAKE_COMPLETED_AT];
+  }
+
+  /** @type {bigint} */
+  get handshakeConfirmedAt() {
+    assertIsQuicSessionStats(this);
+    return this.#handle[this.#offset + IDX_STATS_SESSION_HANDSHAKE_CONFIRMED_AT];
+  }
+
+  /** @type {bigint} */
+  get bytesReceived() {
+    assertIsQuicSessionStats(this);
+    return this.#handle[this.#offset + IDX_STATS_SESSION_BYTES_RECEIVED];
+  }
+
+  /** @type {bigint} */
+  get bidiInStreamCount() {
+    assertIsQuicSessionStats(this);
+    return this.#handle[this.#offset + IDX_STATS_SESSION_BIDI_IN_STREAM_COUNT];
+  }
+
+  /** @type {bigint} */
+  get bidiOutStreamCount() {
+    assertIsQuicSessionStats(this);
+    return this.#handle[this.#offset + IDX_STATS_SESSION_BIDI_OUT_STREAM_COUNT];
+  }
+
+  /** @type {bigint} */
+  get uniInStreamCount() {
+    assertIsQuicSessionStats(this);
+    return this.#handle[this.#offset + IDX_STATS_SESSION_UNI_IN_STREAM_COUNT];
+  }
+
+  /** @type {bigint} */
+  get uniOutStreamCount() {
+    assertIsQuicSessionStats(this);
+    return this.#handle[this.#offset + IDX_STATS_SESSION_UNI_OUT_STREAM_COUNT];
+  }
+
+  /** @type {bigint} */
+  get maxBytesInFlight() {
+    assertIsQuicSessionStats(this);
+    return this.#handle[this.#offset + IDX_STATS_SESSION_MAX_BYTES_IN_FLIGHT];
+  }
+
+  /** @type {bigint} */
+  get bytesInFlight() {
+    assertIsQuicSessionStats(this);
+    return this.#handle[this.#offset + IDX_STATS_SESSION_BYTES_IN_FLIGHT];
+  }
+
+  /** @type {bigint} */
+  get blockCount() {
+    assertIsQuicSessionStats(this);
+    return this.#handle[this.#offset + IDX_STATS_SESSION_BLOCK_COUNT];
+  }
+
+  /** @type {bigint} */
+  get cwnd() {
+    assertIsQuicSessionStats(this);
+    return this.#handle[this.#offset + IDX_STATS_SESSION_CWND];
+  }
+
+  /** @type {bigint} */
+  get latestRtt() {
+    assertIsQuicSessionStats(this);
+    return this.#handle[this.#offset + IDX_STATS_SESSION_LATEST_RTT];
+  }
+
+  /** @type {bigint} */
+  get minRtt() {
+    assertIsQuicSessionStats(this);
+    return this.#handle[this.#offset + IDX_STATS_SESSION_MIN_RTT];
+  }
+
+  /** @type {bigint} */
+  get rttVar() {
+    assertIsQuicSessionStats(this);
+    return this.#handle[this.#offset + IDX_STATS_SESSION_RTTVAR];
+  }
+
+  /** @type {bigint} */
+  get smoothedRtt() {
+    assertIsQuicSessionStats(this);
+    return this.#handle[this.#offset + IDX_STATS_SESSION_SMOOTHED_RTT];
+  }
+
+  /** @type {bigint} */
+  get ssthresh() {
+    assertIsQuicSessionStats(this);
+    return this.#handle[this.#offset + IDX_STATS_SESSION_SSTHRESH];
+  }
+
+  get pktSent() {
+    assertIsQuicSessionStats(this);
+    return this.#handle[this.#offset + IDX_STATS_SESSION_PKT_SENT];
+  }
+
+  get bytesSent() {
+    assertIsQuicSessionStats(this);
+    return this.#handle[this.#offset + IDX_STATS_SESSION_BYTES_SENT];
+  }
+
+  get pktRecv() {
+    assertIsQuicSessionStats(this);
+    return this.#handle[this.#offset + IDX_STATS_SESSION_PKT_RECV];
+  }
+
+  get bytesRecv() {
+    assertIsQuicSessionStats(this);
+    return this.#handle[this.#offset + IDX_STATS_SESSION_BYTES_RECV];
+  }
+
+  get pktLost() {
+    assertIsQuicSessionStats(this);
+    return this.#handle[this.#offset + IDX_STATS_SESSION_PKT_LOST];
+  }
+
+  get bytesLost() {
+    assertIsQuicSessionStats(this);
+    return this.#handle[this.#offset + IDX_STATS_SESSION_BYTES_LOST];
+  }
+
+  get pingRecv() {
+    assertIsQuicSessionStats(this);
+    return this.#handle[this.#offset + IDX_STATS_SESSION_PING_RECV];
+  }
+
+  get pktDiscarded() {
+    assertIsQuicSessionStats(this);
+    return this.#handle[this.#offset + IDX_STATS_SESSION_PKT_DISCARDED];
+  }
+
+  /** @type {bigint} */
+  get datagramsReceived() {
+    assertIsQuicSessionStats(this);
+    return this.#handle[this.#offset + IDX_STATS_SESSION_DATAGRAMS_RECEIVED];
+  }
+
+  /** @type {bigint} */
+  get datagramsSent() {
+    assertIsQuicSessionStats(this);
+    return this.#handle[this.#offset + IDX_STATS_SESSION_DATAGRAMS_SENT];
+  }
+
+  /** @type {bigint} */
+  get datagramsAcknowledged() {
+    assertIsQuicSessionStats(this);
+    return this.#handle[this.#offset + IDX_STATS_SESSION_DATAGRAMS_ACKNOWLEDGED];
+  }
+
+  /** @type {bigint} */
+  get datagramsLost() {
+    assertIsQuicSessionStats(this);
+    return this.#handle[this.#offset + IDX_STATS_SESSION_DATAGRAMS_LOST];
+  }
+
+  /** @type {bigint} */
+  get streamsIdleTimedOut() {
+    assertIsQuicSessionStats(this);
+    return this.#handle[this.#offset + IDX_STATS_SESSION_STREAMS_IDLE_TIMED_OUT];
+  }
+
+  toString() {
+    return JSONStringify(this.toJSON());
+  }
+
+  toJSON() {
+    assertIsQuicSessionStats(this);
+    const {
+      createdAt,
+      closingAt,
+      handshakeCompletedAt,
+      handshakeConfirmedAt,
+      bytesReceived,
+      bidiInStreamCount,
+      bidiOutStreamCount,
+      uniInStreamCount,
+      uniOutStreamCount,
+      maxBytesInFlight,
+      bytesInFlight,
+      blockCount,
+      cwnd,
+      latestRtt,
+      minRtt,
+      rttVar,
+      smoothedRtt,
+      ssthresh,
+      pktSent,
+      bytesSent,
+      pktRecv,
+      bytesRecv,
+      pktLost,
+      bytesLost,
+      pingRecv,
+      pktDiscarded,
+      datagramsReceived,
+      datagramsSent,
+      datagramsAcknowledged,
+      datagramsLost,
+      streamsIdleTimedOut,
+    } = this;
+    return {
+      __proto__: null,
+      connected: this.isConnected,
+      createdAt: `${createdAt}`,
+      closingAt: `${closingAt}`,
+      handshakeCompletedAt: `${handshakeCompletedAt}`,
+      handshakeConfirmedAt: `${handshakeConfirmedAt}`,
+      bytesReceived: `${bytesReceived}`,
+      bidiInStreamCount: `${bidiInStreamCount}`,
+      bidiOutStreamCount: `${bidiOutStreamCount}`,
+      uniInStreamCount: `${uniInStreamCount}`,
+      uniOutStreamCount: `${uniOutStreamCount}`,
+      maxBytesInFlight: `${maxBytesInFlight}`,
+      bytesInFlight: `${bytesInFlight}`,
+      blockCount: `${blockCount}`,
+      cwnd: `${cwnd}`,
+      latestRtt: `${latestRtt}`,
+      minRtt: `${minRtt}`,
+      rttVar: `${rttVar}`,
+      smoothedRtt: `${smoothedRtt}`,
+      ssthresh: `${ssthresh}`,
+      pktSent: `${pktSent}`,
+      bytesSent: `${bytesSent}`,
+      pktRecv: `${pktRecv}`,
+      bytesRecv: `${bytesRecv}`,
+      pktLost: `${pktLost}`,
+      bytesLost: `${bytesLost}`,
+      pingRecv: `${pingRecv}`,
+      pktDiscarded: `${pktDiscarded}`,
+      datagramsReceived: `${datagramsReceived}`,
+      datagramsSent: `${datagramsSent}`,
+      datagramsAcknowledged: `${datagramsAcknowledged}`,
+      datagramsLost: `${datagramsLost}`,
+      streamsIdleTimedOut: `${streamsIdleTimedOut}`,
+    };
+  }
+
+  [kInspect](depth, options) {
+    if (depth < 0) {
+      return "QuicSessionStats { }";
+    }
+
+    const opts = {
+      __proto__: null,
+      ...options,
+      depth: options.depth == null ? null : options.depth - 1,
+    };
+
+    const {
+      createdAt,
+      closingAt,
+      handshakeCompletedAt,
+      handshakeConfirmedAt,
+      bytesReceived,
+      bidiInStreamCount,
+      bidiOutStreamCount,
+      uniInStreamCount,
+      uniOutStreamCount,
+      maxBytesInFlight,
+      bytesInFlight,
+      blockCount,
+      cwnd,
+      latestRtt,
+      minRtt,
+      rttVar,
+      smoothedRtt,
+      ssthresh,
+      pktSent,
+      bytesSent,
+      pktRecv,
+      bytesRecv,
+      pktLost,
+      bytesLost,
+      pingRecv,
+      pktDiscarded,
+      datagramsReceived,
+      datagramsSent,
+      datagramsAcknowledged,
+      datagramsLost,
+      streamsIdleTimedOut,
+    } = this;
+
+    return `QuicSessionStats ${inspect(
+      {
+        connected: this.isConnected,
+        createdAt,
+        closingAt,
+        handshakeCompletedAt,
+        handshakeConfirmedAt,
+        bytesReceived,
+        bidiInStreamCount,
+        bidiOutStreamCount,
+        uniInStreamCount,
+        uniOutStreamCount,
+        maxBytesInFlight,
+        bytesInFlight,
+        blockCount,
+        cwnd,
+        latestRtt,
+        minRtt,
+        rttVar,
+        smoothedRtt,
+        ssthresh,
+        pktSent,
+        bytesSent,
+        pktRecv,
+        bytesRecv,
+        pktLost,
+        bytesLost,
+        pingRecv,
+        pktDiscarded,
+        datagramsReceived,
+        datagramsSent,
+        datagramsAcknowledged,
+        datagramsLost,
+        streamsIdleTimedOut,
+      },
+      opts,
+    )}`;
+  }
+
+  /** @type {boolean} */
+  get isConnected() {
+    return !this.#disconnected;
+  }
+
+  [kFinishClose]() {
+    const view = TypedArrayPrototypeSubarray(this.#handle, this.#offset, this.#offset + IDX_STATS_SESSION_COUNT);
+    this.#handle = new BigUint64Array(view);
+    this.#offset = 0;
+    this.#disconnected = true;
+  }
+}
+
+class QuicStreamStats {
+  /** @type {BigUint64Array} */
+  #handle;
+  #offset = 0;
+  #disconnected = false;
+
+  static {
+    isQuicStreamStats = function (val) {
+      return val != null && typeof val === "object" && #handle in val;
+    };
+
+    assertIsQuicStreamStats = function (val) {
+      if (!isQuicStreamStats(val)) {
+        throw new ERR_INVALID_THIS("QuicStreamStats");
+      }
+    };
+  }
+
+  /**
+   * @param {symbol} privateSymbol
+   * @param {BigUint64Array|ArrayBuffer} view
+   * @param {number} [byteOffset] - byte offset into the shared page view
+   */
+  constructor(privateSymbol, view, byteOffset = 0) {
+    assertIsPrivateConstructor(privateSymbol);
+    if (isArrayBuffer(view)) {
+      this.#handle = new BigUint64Array(view);
+    } else {
+      this.#handle = view;
+    }
+    this.#offset = byteOffset / 8;
+  }
+
+  /** @type {bigint} */
+  get createdAt() {
+    assertIsQuicStreamStats(this);
+    return this.#handle[this.#offset + IDX_STATS_STREAM_CREATED_AT];
+  }
+
+  /** @type {bigint} */
+  get openedAt() {
+    assertIsQuicStreamStats(this);
+    return this.#handle[this.#offset + IDX_STATS_STREAM_OPENED_AT];
+  }
+
+  /** @type {bigint} */
+  get receivedAt() {
+    assertIsQuicStreamStats(this);
+    return this.#handle[this.#offset + IDX_STATS_STREAM_RECEIVED_AT];
+  }
+
+  /** @type {bigint} */
+  get ackedAt() {
+    assertIsQuicStreamStats(this);
+    return this.#handle[this.#offset + IDX_STATS_STREAM_ACKED_AT];
+  }
+
+  /** @type {bigint} */
+  get destroyedAt() {
+    assertIsQuicStreamStats(this);
+    return this.#handle[this.#offset + IDX_STATS_STREAM_DESTROYED_AT];
+  }
+
+  /** @type {bigint} */
+  get bytesReceived() {
+    assertIsQuicStreamStats(this);
+    return this.#handle[this.#offset + IDX_STATS_STREAM_BYTES_RECEIVED];
+  }
+
+  /** @type {bigint} */
+  get bytesSent() {
+    assertIsQuicStreamStats(this);
+    return this.#handle[this.#offset + IDX_STATS_STREAM_BYTES_SENT];
+  }
+
+  /** @type {bigint} */
+  get maxOffset() {
+    assertIsQuicStreamStats(this);
+    return this.#handle[this.#offset + IDX_STATS_STREAM_MAX_OFFSET];
+  }
+
+  /** @type {bigint} */
+  get maxOffsetAcknowledged() {
+    assertIsQuicStreamStats(this);
+    return this.#handle[this.#offset + IDX_STATS_STREAM_MAX_OFFSET_ACK];
+  }
+
+  /** @type {bigint} */
+  get maxOffsetReceived() {
+    assertIsQuicStreamStats(this);
+    return this.#handle[this.#offset + IDX_STATS_STREAM_MAX_OFFSET_RECV];
+  }
+
+  /** @type {bigint} */
+  get finalSize() {
+    assertIsQuicStreamStats(this);
+    return this.#handle[this.#offset + IDX_STATS_STREAM_FINAL_SIZE];
+  }
+
+  /** @type {bigint} */
+  get bytesAccumulated() {
+    assertIsQuicStreamStats(this);
+    return this.#handle[this.#offset + IDX_STATS_STREAM_BYTES_ACCUMULATED];
+  }
+
+  /** @type {bigint} */
+  get maxBytesAccumulated() {
+    assertIsQuicStreamStats(this);
+    return this.#handle[this.#offset + IDX_STATS_STREAM_MAX_BYTES_ACCUMULATED];
+  }
+
+  toString() {
+    return JSONStringify(this.toJSON());
+  }
+
+  toJSON() {
+    assertIsQuicStreamStats(this);
+    const {
+      createdAt,
+      openedAt,
+      receivedAt,
+      ackedAt,
+      destroyedAt,
+      bytesReceived,
+      bytesSent,
+      maxOffset,
+      maxOffsetAcknowledged,
+      maxOffsetReceived,
+      finalSize,
+      bytesAccumulated,
+      maxBytesAccumulated,
+    } = this;
+    return {
+      __proto__: null,
+      connected: this.isConnected,
+      createdAt: `${createdAt}`,
+      openedAt: `${openedAt}`,
+      receivedAt: `${receivedAt}`,
+      ackedAt: `${ackedAt}`,
+      destroyedAt: `${destroyedAt}`,
+      bytesReceived: `${bytesReceived}`,
+      bytesSent: `${bytesSent}`,
+      maxOffset: `${maxOffset}`,
+      maxOffsetAcknowledged: `${maxOffsetAcknowledged}`,
+      maxOffsetReceived: `${maxOffsetReceived}`,
+      finalSize: `${finalSize}`,
+      bytesAccumulated: `${bytesAccumulated}`,
+      maxBytesAccumulated: `${maxBytesAccumulated}`,
+    };
+  }
+
+  [kInspect](depth, options) {
+    if (depth < 0) {
+      return "QuicStreamStats { }";
+    }
+
+    const opts = {
+      __proto__: null,
+      ...options,
+      depth: options.depth == null ? null : options.depth - 1,
+    };
+
+    const {
+      createdAt,
+      openedAt,
+      receivedAt,
+      ackedAt,
+      destroyedAt,
+      bytesReceived,
+      bytesSent,
+      maxOffset,
+      maxOffsetAcknowledged,
+      maxOffsetReceived,
+      finalSize,
+      bytesAccumulated,
+      maxBytesAccumulated,
+    } = this;
+
+    return `QuicStreamStats ${inspect(
+      {
+        connected: this.isConnected,
+        createdAt,
+        openedAt,
+        receivedAt,
+        ackedAt,
+        destroyedAt,
+        bytesReceived,
+        bytesSent,
+        maxOffset,
+        maxOffsetAcknowledged,
+        maxOffsetReceived,
+        finalSize,
+        bytesAccumulated,
+        maxBytesAccumulated,
+      },
+      opts,
+    )}`;
+  }
+
+  /** @type {boolean} */
+  get isConnected() {
+    return !this.#disconnected;
+  }
+
+  [kFinishClose]() {
+    const view = TypedArrayPrototypeSubarray(this.#handle, this.#offset, this.#offset + IDX_STATS_STREAM_COUNT);
+    this.#handle = new BigUint64Array(view);
+    this.#offset = 0;
+    this.#disconnected = true;
+  }
+
+  static [kCreateDisconnected]() {
+    const count = IDX_STATS_STREAM_COUNT;
+    const stats = new QuicStreamStats(kPrivateConstructor, new BigUint64Array(count), 0);
+    stats.#disconnected = true;
+    return stats;
+  }
+}
+
+export default {
+  QuicEndpointStats,
+  QuicSessionStats,
+  QuicStreamStats,
+  kCreateDisconnected,
+};

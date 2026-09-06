@@ -166,3 +166,50 @@ test("mocking a builtin", async () => {
   const { readFile } = await import("node:fs/promises");
   expect(await readFile("hello.txt", "utf8")).toBe("hello world");
 });
+
+test("a factory export getter that throws fails the import", async () => {
+  mock.module("mock-module-getter-throws", () => ({
+    get a() {
+      throw new Error("export getter");
+    },
+    b: 2,
+  }));
+  await expect(import("mock-module-getter-throws")).rejects.toThrow("export getter");
+});
+
+test("a factory export getter that throws while patching an already-imported module throws from mock.module and leaves the namespace untouched", async () => {
+  const before = { fn, variable };
+  expect(() =>
+    mock.module("./mock-module-fixture", () => ({
+      fn: () => "patched",
+      get variable() {
+        throw new Error("export getter");
+      },
+    })),
+  ).toThrow("export getter");
+  // `fn` was read successfully before `variable` threw; neither may have been applied.
+  expect(fn).toBe(before.fn);
+  expect(variable).toBe(before.variable);
+});
+
+test("onResolve plugin errors surface from mock.module; an unresolvable specifier is still mockable", () => {
+  Bun.plugin({
+    name: "mock-module-onresolve-errors",
+    setup(build) {
+      build.onResolve({ filter: /\.mock-onresolve-throws$/ }, () => {
+        throw new Error("onResolve threw");
+      });
+      build.onResolve({ filter: /\.mock-onresolve-invalid$/ }, () => ({ path: 42 }) as any);
+    },
+  });
+  try {
+    expect(() => mock.module("./thing.mock-onresolve-throws", () => ({ default: 1 }))).toThrow("onResolve threw");
+    expect(() => mock.module("./thing.mock-onresolve-invalid", () => ({ default: 1 }))).toThrow(
+      'Expected "path" to be a string in onResolve plugin',
+    );
+    mock.module("./does-not-exist-mock-probe", () => ({ default: 7 }));
+    expect(require("./does-not-exist-mock-probe").default).toBe(7);
+  } finally {
+    Bun.plugin.clearAll();
+  }
+});

@@ -182,6 +182,48 @@ fn key_blob(keys: &[(Vec<u8>, Span)]) -> (LitByteStr, usize, Vec<TokenStream>, T
 /// of a `memcmp` call (4 × 16-byte loads on both aarch64 and x86-64-with-SSE).
 const MAX_INLINE_EQ_LEN: usize = 64;
 
+/// Past this many keys the `match len` compare tree (~20 bytes of code per
+/// key) is replaced by a binary search over the keys stored as sorted data
+/// (`bun_core::comptime_string_map::sorted_key_index`).
+/// `#[inline]` on the map/set declaration opts a hot lookup back into the
+/// fully inlined compare tree regardless of size (see `Method::which`).
+fn take_inline_attr(attrs: &mut Vec<Attribute>) -> bool {
+    let before = attrs.len();
+    attrs.retain(|a| !a.path().is_ident("inline"));
+    attrs.len() != before
+}
+
+const MAX_COMPARE_TREE_KEYS: usize = 64;
+
+/// `(blob, buckets, order)` for `sorted_key_index`: keys sorted by
+/// `(len, bytes)` and concatenated; per length, the blob offset and first
+/// sorted position of its run (plus a trailing sentinel); and the declaration
+/// index of each sorted position.
+fn sorted_tables(keys: &[(Vec<u8>, Span)]) -> (LitByteStr, Vec<TokenStream>, Vec<TokenStream>) {
+    let buckets_by_len = length_buckets(keys);
+    let max_len = buckets_by_len.last().map(|(l, _)| *l).unwrap_or(0);
+    let mut blob = Vec::new();
+    let mut order = Vec::new();
+    let mut buckets = Vec::new();
+    let mut by_len = buckets_by_len.iter().peekable();
+    for len in 0..=max_len + 1 {
+        let offset = blob.len() as u32;
+        let first = order.len() as u32;
+        buckets.push(quote!((#offset, #first)));
+        if let Some((l, idxs)) = by_len.peek() {
+            if *l == len {
+                for &i in idxs {
+                    blob.extend_from_slice(&keys[i].0);
+                    let i = u16::try_from(i).expect("map too large for u16 order table");
+                    order.push(quote!(#i));
+                }
+                by_len.next();
+            }
+        }
+    }
+    (LitByteStr::new(&blob, Span::call_site()), buckets, order)
+}
+
 /// `key == lit` for keys longer than [`MAX_INLINE_EQ_LEN`], written the way
 /// `strings.eqlComptime` unrolls in the Zig original: XOR 8/4/2/1-byte chunks
 /// against constants and OR-accumulate, comparing once at the end. A single
@@ -233,17 +275,64 @@ fn eq_check(keys: &[(Vec<u8>, Span)], idx: usize) -> TokenStream {
     }
 }
 
+/// Body of the exact-match lookup plus any statics it needs: the compare
+/// tree for small maps, the sorted-data binary search for large ones. `miss`
+/// is what a failed lookup evaluates to and `arms` are the compare-tree arms
+/// (each yielding a hit value or falling through to `miss`).
+fn key_index_parts(
+    crate_path: &TokenStream,
+    name: &Ident,
+    keys: &[(Vec<u8>, Span)],
+    arms: &TokenStream,
+    miss: &TokenStream,
+    force_inline: bool,
+) -> (TokenStream, TokenStream) {
+    if force_inline || keys.len() <= MAX_COMPARE_TREE_KEYS {
+        let body = quote! {
+            match key.len() {
+                #arms
+                _ => #miss,
+            }
+        };
+        return (body, quote!());
+    }
+    let sorted_blob_name = format_ident!("__COMPTIME_STRING_MAP_SORTED_KEYS_{}", name);
+    let sorted_buckets_name = format_ident!("__COMPTIME_STRING_MAP_SORTED_BUCKETS_{}", name);
+    let sorted_order_name = format_ident!("__COMPTIME_STRING_MAP_SORTED_ORDER_{}", name);
+    let (blob, buckets, order) = sorted_tables(keys);
+    let n_buckets = buckets.len();
+    let n = order.len();
+    let statics = quote! {
+        #[doc(hidden)]
+        static #sorted_blob_name: &[u8] = #blob;
+        #[doc(hidden)]
+        static #sorted_buckets_name: [(u32, u32); #n_buckets] = [ #(#buckets),* ];
+        #[doc(hidden)]
+        static #sorted_order_name: [u16; #n] = [ #(#order),* ];
+    };
+    let body = quote! {
+        #crate_path::comptime_string_map::sorted_key_index(
+            key,
+            #sorted_blob_name,
+            &#sorted_buckets_name,
+            &#sorted_order_name,
+        )
+    };
+    (body, statics)
+}
+
 pub(crate) fn expand_map(input: TokenStream) -> syn::Result<TokenStream> {
     let MapParse(input) = syn::parse2(input)?;
     let Input {
         crate_path,
-        attrs,
+        mut attrs,
         vis,
         name,
         value_ty,
         keys,
         values,
     } = input;
+    let force_inline = take_inline_attr(&mut attrs);
     let value_ty = value_ty.expect("map form always has a value type");
 
     let ty_name = format_ident!("__ComptimeStringMap_{}", name);
@@ -276,6 +365,15 @@ pub(crate) fn expand_map(input: TokenStream) -> syn::Result<TokenStream> {
         }
     });
 
+    let (key_index_body, sorted_statics) = key_index_parts(
+        &crate_path,
+        &name,
+        &keys,
+        &quote! { #(#eq_arms)* },
+        &quote!(::core::primitive::u32::MAX),
+        force_inline,
+    );
+
     // Same dispatch with a caller-supplied comparator; monomorphized only
     // when actually used (case-insensitive and encoding-aware lookups).
     let eql_arms = buckets.iter().map(|(len, idxs)| {
@@ -296,6 +394,14 @@ pub(crate) fn expand_map(input: TokenStream) -> syn::Result<TokenStream> {
     let decl_keys = (0..n).map(|i| key_lit(&keys, i));
     let decl_values = values.iter();
     let decl_values_again = values.iter();
+    // The compare tree is meant to vanish into the caller (length dispatch
+    // first, so most misses cost one compare); the sorted-table lookup for
+    // large maps is a real function.
+    let lookup_inline = if force_inline || n <= MAX_COMPARE_TREE_KEYS {
+        quote!(#[inline])
+    } else {
+        quote!()
+    };
 
     Ok(quote! {
         #(#attrs)*
@@ -316,6 +422,7 @@ pub(crate) fn expand_map(input: TokenStream) -> syn::Result<TokenStream> {
         static #blob_name: [u8; #blob_total] = *#blob_lit;
         #[doc(hidden)]
         static #lens_name: [#len_ty; #n] = [ #(#lens),* ];
+        #sorted_statics
 
         #[allow(dead_code)]
         impl #ty_name {
@@ -330,12 +437,9 @@ pub(crate) fn expand_map(input: TokenStream) -> syn::Result<TokenStream> {
 
             /// Declaration-order index of `key`, or `u32::MAX` for a miss.
             #[doc(hidden)]
-            #[inline]
+            #lookup_inline
             #vis fn __key_index(key: &[u8]) -> ::core::primitive::u32 {
-                match key.len() {
-                    #(#eq_arms)*
-                    _ => ::core::primitive::u32::MAX,
-                }
+                #key_index_body
             }
 
             #[inline]
@@ -406,7 +510,7 @@ pub(crate) fn expand_map(input: TokenStream) -> syn::Result<TokenStream> {
 
             /// ASCII-lowercases `key` into a stack buffer, then looks it up.
             /// Keys must be declared in lowercase for this to match.
-            #[inline]
+            #lookup_inline
             #vis fn get_ascii_case_insensitive(
                 &self,
                 key: &[u8],
@@ -419,7 +523,7 @@ pub(crate) fn expand_map(input: TokenStream) -> syn::Result<TokenStream> {
                 for (dst, src) in buf.iter_mut().zip(key.iter()) {
                     *dst = src.to_ascii_lowercase();
                 }
-                self.get_with_len_and_eql(&*buf, key.len(), |a: &[u8], b| a == b)
+                #values_name.get(Self::__key_index(buf) as usize)
             }
         }
 
@@ -446,14 +550,15 @@ pub(crate) fn expand_map(input: TokenStream) -> syn::Result<TokenStream> {
 pub(crate) fn expand_set(input: TokenStream) -> syn::Result<TokenStream> {
     let SetParse(input) = syn::parse2(input)?;
     let Input {
-        crate_path: _,
-        attrs,
+        crate_path,
+        mut attrs,
         vis,
         name,
         value_ty: _,
         keys,
         values: _,
     } = input;
+    let force_inline = take_inline_attr(&mut attrs);
 
     let ty_name = format_ident!("__ComptimeStringSet_{}", name);
     let blob_name = format_ident!("__COMPTIME_STRING_SET_KEY_BLOB_{}", name);
@@ -478,7 +583,28 @@ pub(crate) fn expand_set(input: TokenStream) -> syn::Result<TokenStream> {
         }
     });
 
+    let (contains_body, sorted_statics) = {
+        let (body, statics) = key_index_parts(
+            &crate_path,
+            &name,
+            &keys,
+            &quote! { #(#eq_arms)* },
+            &quote!(false),
+            force_inline,
+        );
+        if force_inline || keys.len() <= MAX_COMPARE_TREE_KEYS {
+            (body, statics)
+        } else {
+            (quote! { #body != ::core::primitive::u32::MAX }, statics)
+        }
+    };
+
     let decl_keys = (0..n).map(|i| key_lit(&keys, i));
+    let lookup_inline = if force_inline || n <= MAX_COMPARE_TREE_KEYS {
+        quote!(#[inline])
+    } else {
+        quote!()
+    };
 
     Ok(quote! {
         #(#attrs)*
@@ -492,6 +618,7 @@ pub(crate) fn expand_set(input: TokenStream) -> syn::Result<TokenStream> {
         static #blob_name: [u8; #blob_total] = *#blob_lit;
         #[doc(hidden)]
         static #lens_name: [#len_ty; #n] = [ #(#lens),* ];
+        #sorted_statics
 
         #[allow(dead_code)]
         impl #ty_name {
@@ -503,12 +630,9 @@ pub(crate) fn expand_set(input: TokenStream) -> syn::Result<TokenStream> {
             /// pointer-free blob.
             #vis const KEYS: &'static [&'static [u8]] = &[ #(#decl_keys),* ];
 
-            #[inline]
+            #lookup_inline
             #vis fn contains(&self, key: &[u8]) -> bool {
-                match key.len() {
-                    #(#eq_arms)*
-                    _ => false,
-                }
+                #contains_body
             }
 
             #vis fn len(&self) -> usize {

@@ -11,12 +11,6 @@ pub struct BackendKeyData {
 }
 
 impl BackendKeyData {
-    pub fn decode<Container: super::new_reader::ReaderContext>(
-        context: Container,
-    ) -> Result<Self, AnyPostgresError> {
-        Self::decode_internal(NewReader { wrapped: context })
-    }
-
     /// `Int32(16) Int32(80877102) Int32(pid) Int32(secret)`: no type byte, it
     /// is the only message on a connection opened just to carry it.
     pub fn cancel_request(&self) -> [u8; 16] {
@@ -36,7 +30,6 @@ impl BackendKeyData {
         }
 
         Ok(Self {
-            // i32 -> u32: same-width signed→unsigned `as` cast preserves bits.
             process_id: reader.int4()?,
             secret_key: reader.int4()?,
         })

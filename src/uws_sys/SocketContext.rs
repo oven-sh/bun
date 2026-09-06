@@ -6,7 +6,7 @@
 use core::ffi::{c_char, c_long};
 use core::ptr;
 
-use bun_boringssl_sys::SSL_CTX;
+use bun_boringssl_sys::{OwnedSslCtx, SSL_CTX};
 
 use crate::create_bun_socket_error_t;
 
@@ -118,6 +118,12 @@ pub struct BunSocketContextOptions {
     pub request_cert: i32,
     pub client_renegotiation_limit: u32,
     pub client_renegotiation_window: u32,
+    pub session_timeout: i32,
+    pub crl: *const *const c_char,
+    pub crl_count: u32,
+    pub allow_partial_trust_chain: i32,
+    pub sigalgs: *const c_char,
+    pub ecdh_curve: *const c_char,
 }
 
 impl Default for BunSocketContextOptions {
@@ -143,15 +149,19 @@ impl Default for BunSocketContextOptions {
             request_cert: 0,
             client_renegotiation_limit: 3,
             client_renegotiation_window: 600,
+            session_timeout: 0,
+            crl: ptr::null(),
+            crl_count: 0,
+            allow_partial_trust_chain: 0,
+            sigalgs: ptr::null(),
+            ecdh_curve: ptr::null(),
         }
     }
 }
 
 impl BunSocketContextOptions {
-    /// Build a BoringSSL `SSL_CTX*` from these options. Caller owns one ref
-    /// and releases with `SSL_CTX_free` — the passphrase is freed inside this
-    /// call once private-key load completes, so plain `SSL_CTX_free` is
-    /// correct on every path.
+    /// Build a BoringSSL `SSL_CTX` from these options. The passphrase is freed
+    /// inside this call once private-key load completes.
     ///
     /// Mode-neutral: the same `SSL_CTX*` may back client connects and server
     /// accepts. CTX-level verify mode comes from `request_cert`/`ca`/
@@ -159,10 +169,10 @@ impl BunSocketContextOptions {
     /// chain validation, populate verify_error) is applied in
     /// `us_internal_ssl_attach`, so a server reusing this ctx never sends
     /// CertificateRequest unless these options asked it to.
-    pub fn create_ssl_context(self, err: &mut create_bun_socket_error_t) -> Option<*mut SSL_CTX> {
+    pub fn create_ssl_context(self, err: &mut create_bun_socket_error_t) -> Option<OwnedSslCtx> {
         // SAFETY: FFI call; `self` is `#[repr(C)]` and passed by value, `err` is a valid out-param.
-        let ctx = unsafe { c::us_ssl_ctx_from_options(self, err) };
-        if ctx.is_null() { None } else { Some(ctx) }
+        // A non-null return carries the +1 from `SSL_CTX_new`.
+        unsafe { OwnedSslCtx::from_raw(c::us_ssl_ctx_from_options(self, err)) }
     }
 
     /// SHA-256 over every field this struct carries, dereferencing string
@@ -243,6 +253,11 @@ impl BunSocketContextOptions {
         h.update(bun_core::bytes_of(&self.request_cert));
         h.update(bun_core::bytes_of(&self.client_renegotiation_limit));
         h.update(bun_core::bytes_of(&self.client_renegotiation_window));
+        h.update(bun_core::bytes_of(&self.session_timeout));
+        feed_arr(&mut h, self.crl, self.crl_count);
+        h.update(bun_core::bytes_of(&self.allow_partial_trust_chain));
+        feed_z(&mut h, self.sigalgs);
+        feed_z(&mut h, self.ecdh_curve);
         let mut out = [0u8; 32];
         h.final_(&mut out);
         out
@@ -268,6 +283,7 @@ impl BunSocketContextOptions {
         sum(self.key, self.key_count, &mut n);
         sum(self.cert, self.cert_count, &mut n);
         sum(self.ca, self.ca_count, &mut n);
+        sum(self.crl, self.crl_count, &mut n);
         n
     }
 }

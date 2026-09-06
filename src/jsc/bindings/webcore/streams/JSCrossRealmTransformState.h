@@ -28,6 +28,7 @@ public:
     // visitChildrenImpl MUST visit: m_port, m_backpressurePromise, m_readableController,
     // m_writableController.
     DECLARE_VISIT_CHILDREN;
+    static void analyzeHeap(JSCell*, JSC::HeapAnalyzer&);
 
     template<typename, JSC::SubspaceAccess mode>
     static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)

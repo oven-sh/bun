@@ -1,0 +1,14 @@
+{
+  "name": "two-bundled-deps",
+  "version": "1.0.0",
+  "license": "ISC",
+  "dependencies": {
+    "@isaacs/testing-bundledeps": "^1.0.0"
+  },
+  "devDependencies": {
+    "tap": "^14.10.5"
+  },
+  "optionalDependencies": {
+    "abbrev": "^1.1.1"
+  }
+}

@@ -1,0 +1,21 @@
+{
+  "dependencies": {
+    "abbrev": "^1.1.0",
+    "json-parse-even-better-errors": ""
+  },
+  "peerDependencies": {
+    "semver": "",
+    "once": ""
+  },
+  "peerDependenciesMeta": {
+    "semver": {
+      "optional": true
+    }
+  },
+  "optionalDependencies": {
+    "json-parse-even-better-errors": ""
+  },
+  "devDependencies": {
+    "walden": ""
+  }
+}

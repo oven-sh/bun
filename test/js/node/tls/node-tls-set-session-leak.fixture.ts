@@ -15,6 +15,10 @@ import tls from "node:tls";
 
 const fixturesDir = path.join(import.meta.dirname, "fixtures");
 const iterations = parseInt(process.argv[2] || "20000", 10);
+const rss =
+  process.platform === "darwin" && typeof Bun.unsafe.memoryFootprint === "function"
+    ? Bun.unsafe.memoryFootprint
+    : process.memoryUsage.rss;
 
 const server = tls.createServer(
   {
@@ -74,11 +78,11 @@ function runSetSessionLoop(n: number) {
 // growth (mimalloc page commit, JIT, etc.).
 await runSetSessionLoop(500);
 Bun.gc(true);
-const before = process.memoryUsage.rss();
+const before = rss();
 
 const calls = await runSetSessionLoop(iterations);
 Bun.gc(true);
-const after = process.memoryUsage.rss();
+const after = rss();
 
 console.log(JSON.stringify({ calls, growthBytes: after - before }));
 

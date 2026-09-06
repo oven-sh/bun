@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test";
+import { bunEnv, bunExe, tempDir } from "harness";
 
 test("Worker from a Blob", async () => {
   const worker = new Worker(
@@ -123,4 +124,55 @@ test("Worker on a revoked blob still works", async () => {
   });
 
   expect(revoked).toBe("revoked.");
+});
+
+test("object URL created in one worker is usable and revocable across threads", async () => {
+  using dir = tempDir("worker-object-url", {
+    "main.mjs": `import { Worker, isMainThread, parentPort, workerData } from "node:worker_threads";
+      if (isMainThread) {
+        const a = new Worker(new URL(import.meta.url), { workerData: "a" });
+        const b = new Worker(new URL(import.meta.url), { workerData: "b" });
+        a.on("message", urls => b.postMessage(urls));
+        b.on("message", result => { console.log(JSON.stringify(result)); a.postMessage("revoke"); });
+        a.on("exit", code => { console.log("a exited", code); b.terminate(); });
+      } else if (workerData === "a") {
+        const urls = [];
+        globalThis.files = [];
+        for (let i = 0; i < 100; i++) {
+          const f = new File(["x"], "ignored");
+          f.name = "nm" + i + Math.random().toString(36).slice(2);
+          files.push(f);
+          urls.push(URL.createObjectURL(f));
+        }
+        parentPort.postMessage(urls);
+        parentPort.on("message", () => {
+          for (const url of urls) URL.revokeObjectURL(url);
+          globalThis.files = null;
+          Bun.gc(true);
+          Bun.gc(true);
+          process.exit(0);
+        });
+      } else {
+        parentPort.on("message", async urls => {
+          let count = 0, ok = true;
+          for (const url of urls) {
+            const blob = await (await fetch(url)).blob();
+            const o = {};
+            o[blob.name] = 1; // use the name as a property key on this thread
+            ok &&= blob.name.startsWith("nm");
+            count++;
+          }
+          Bun.gc(true);
+          Bun.gc(true);
+          parentPort.postMessage({ count, ok });
+          setInterval(() => {}, 1000); // stay alive while "a" drops the last references
+        });
+      }
+      `,
+  });
+  await using proc = Bun.spawn({ cmd: [bunExe(), "main.mjs"], cwd: String(dir), env: bunEnv, stderr: "pipe" });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(stdout.trim()).toBe('{"count":100,"ok":true}\na exited 0');
+  expect(exitCode).toBe(0);
 });

@@ -96,10 +96,22 @@ const originUrl = (p: string) => `https://localhost:${origin.port}${p}`;
 
 let completed = 0;
 let failed = 0;
+let firstError: string | undefined;
 let rssStart = 0;
 let rssMax = 0;
 
-const rss = () => process.memoryUsage.rss();
+function recordError(i: number, e: unknown) {
+  failed++;
+  if (firstError === undefined) {
+    const any = e as { code?: unknown; name?: unknown; message?: unknown };
+    firstError = `[i=${i}] ${any?.code ?? any?.name ?? "Error"}: ${any?.message ?? e}`;
+  }
+}
+
+const rss =
+  process.platform === "darwin" && typeof Bun.unsafe.memoryFootprint === "function"
+    ? Bun.unsafe.memoryFootprint
+    : process.memoryUsage.rss;
 
 async function one(i: number): Promise<void> {
   const path = mode === "redirect" ? "/start" : `/${i}`;
@@ -120,8 +132,8 @@ async function one(i: number): Promise<void> {
     });
     await res.arrayBuffer();
     completed++;
-  } catch {
-    failed++;
+  } catch (e) {
+    recordError(i, e);
   }
 }
 
@@ -149,8 +161,8 @@ async function run() {
               await r.arrayBuffer();
               completed++;
             })
-            .catch(() => {
-              failed++;
+            .catch(e => {
+              recordError(idx, e);
             });
           queueMicrotask(() => ac.abort());
           tasks.push(p);
@@ -179,7 +191,7 @@ async function run() {
 
   Bun.gc(true);
   const rssEnd = rss();
-  console.log(JSON.stringify({ completed, failed, rssStart, rssEnd, rssMax }));
+  console.log(JSON.stringify({ completed, failed, firstError, rssStart, rssEnd, rssMax }));
 }
 
 await run();

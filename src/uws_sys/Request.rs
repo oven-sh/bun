@@ -46,12 +46,6 @@ bun_opaque::opaque_ffi! {
 }
 
 impl Request {
-    pub fn is_ancient(&self) -> bool {
-        c::uws_req_is_ancient(self)
-    }
-    pub fn get_yield(&self) -> bool {
-        c::uws_req_get_yield(self)
-    }
     pub fn set_yield(&mut self, yield_: bool) {
         c::uws_req_set_yield(self, yield_)
     }
@@ -81,13 +75,13 @@ impl Request {
         // SAFETY: ptr/len describe a valid slice owned by the request for its lifetime
         Some(unsafe { bun_core::ffi::slice(ptr, len) })
     }
-    pub fn query(&self, name: &[u8]) -> &[u8] {
-        let mut ptr: *const u8 = core::ptr::null();
-        // SAFETY: uws_req_get_query writes a pointer into request-owned storage and returns its length
-        let len = unsafe { c::uws_req_get_query(self, name.as_ptr(), name.len(), &raw mut ptr) };
-        // SAFETY: ptr/len describe a valid slice owned by the request for its lifetime;
-        // ffi::slice tolerates the (null, 0) shape uWS returns when no query is present.
-        unsafe { bun_core::ffi::slice(ptr, len) }
+    /// The parser's verdict on the Transfer-Encoding header, the one that
+    /// selects chunked body framing. `header(b"transfer-encoding")` sees only
+    /// the first field and reports an empty value as `None`, so it disagrees
+    /// with the framing for "Transfer-Encoding:" followed by
+    /// "Transfer-Encoding: chunked".
+    pub fn has_transfer_encoding(&self) -> bool {
+        c::uws_req_has_transfer_encoding(self)
     }
     pub fn parameter(&self, index: u16) -> &[u8] {
         let mut ptr: *const u8 = core::ptr::null();
@@ -103,8 +97,6 @@ mod c {
     use core::ffi::c_ushort;
 
     unsafe extern "C" {
-        pub(super) safe fn uws_req_is_ancient(res: &Request) -> bool;
-        pub(super) safe fn uws_req_get_yield(res: &Request) -> bool;
         pub(super) safe fn uws_req_set_yield(res: &mut Request, yield_: bool);
         // Out-param `dest` is a `&mut *const u8` (non-null, valid for write); the C
         // shim only stores a pointer into request-owned storage and returns its
@@ -117,16 +109,11 @@ mod c {
             lower_case_header_length: usize,
             dest: *mut *const u8,
         ) -> usize;
-        pub(super) fn uws_req_get_query(
-            res: *const Request,
-            key: *const u8,
-            key_length: usize,
-            dest: *mut *const u8,
-        ) -> usize;
         pub(super) safe fn uws_req_get_parameter(
             res: &Request,
             index: c_ushort,
             dest: &mut *const u8,
         ) -> usize;
+        pub(super) safe fn uws_req_has_transfer_encoding(res: &Request) -> bool;
     }
 }

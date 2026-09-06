@@ -8,7 +8,7 @@ use crate::command;
 pub(crate) struct PatchCommand;
 
 impl PatchCommand {
-    pub(crate) fn exec(ctx: command::Context) -> Result<(), bun_core::Error> {
+    pub(crate) fn exec(ctx: command::Context) -> Result<(), crate::Error> {
         update_package_json_and_install_catch_error(ctx, bun_install::Subcommand::Patch)?;
         Ok(())
     }

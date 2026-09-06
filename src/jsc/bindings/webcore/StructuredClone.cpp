@@ -37,90 +37,6 @@
 namespace WebCore {
 using namespace JSC;
 
-enum class CloneMode {
-    Full,
-    Partial,
-};
-
-static JSC::EncodedJSValue cloneArrayBufferImpl(JSGlobalObject* lexicalGlobalObject, CallFrame* callFrame, CloneMode mode)
-{
-    auto& vm = JSC::getVM(lexicalGlobalObject);
-
-    ASSERT(lexicalGlobalObject);
-    ASSERT(callFrame->argumentCount());
-    ASSERT(callFrame->lexicalGlobalObject(vm) == lexicalGlobalObject);
-
-    auto* buffer = toUnsharedArrayBuffer(vm, callFrame->uncheckedArgument(0));
-    if (!buffer) {
-        auto scope = DECLARE_THROW_SCOPE(vm);
-        throwDataCloneError(*lexicalGlobalObject, scope);
-        return {};
-    }
-    if (mode == CloneMode::Partial) {
-        ASSERT(callFrame->argumentCount() == 3);
-        int srcByteOffset = static_cast<int>(callFrame->uncheckedArgument(1).toNumber(lexicalGlobalObject));
-        int srcLength = static_cast<int>(callFrame->uncheckedArgument(2).toNumber(lexicalGlobalObject));
-        return JSValue::encode(JSArrayBuffer::create(lexicalGlobalObject->vm(), lexicalGlobalObject->arrayBufferStructure(ArrayBufferSharingMode::Default), buffer->slice(srcByteOffset, srcByteOffset + srcLength)));
-    }
-    return JSValue::encode(JSArrayBuffer::create(lexicalGlobalObject->vm(), lexicalGlobalObject->arrayBufferStructure(ArrayBufferSharingMode::Default), buffer->slice(0)));
-}
-
-JSC_DEFINE_HOST_FUNCTION(cloneArrayBuffer, (JSGlobalObject * globalObject, CallFrame* callFrame))
-{
-    return cloneArrayBufferImpl(globalObject, callFrame, CloneMode::Partial);
-}
-
-JSC_DEFINE_HOST_FUNCTION(structuredCloneForStream, (JSGlobalObject * globalObject, CallFrame* callFrame))
-{
-    ASSERT(callFrame);
-    ASSERT(callFrame->argumentCount());
-
-    VM& vm = globalObject->vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
-
-    JSValue value = callFrame->uncheckedArgument(0);
-
-    if (value.isPrimitive()) {
-        return JSValue::encode(value);
-    }
-
-    if (value.inherits<JSArrayBuffer>())
-        RELEASE_AND_RETURN(scope, cloneArrayBufferImpl(globalObject, callFrame, CloneMode::Full));
-
-    if (value.inherits<JSArrayBufferView>()) {
-        auto* bufferView = uncheckedDowncast<JSArrayBufferView>(value);
-        ASSERT(bufferView);
-
-        auto* buffer = bufferView->unsharedBuffer();
-        if (!buffer) {
-            throwDataCloneError(*globalObject, scope);
-            return {};
-        }
-        // Copy only the bytes the view covers. Chunks are often narrow windows into a
-        // much larger shared buffer (e.g. a fetch body's read buffer); cloning the whole
-        // backing buffer per chunk retains every neighboring chunk's bytes again.
-        size_t byteOffset = bufferView->byteOffset();
-        auto bufferClone = buffer->slice(byteOffset, byteOffset + bufferView->byteLength());
-        Structure* structure = bufferView->structure();
-
-#define CLONE_TYPED_ARRAY(name)                                                                                                                            \
-    do {                                                                                                                                                   \
-        if (bufferView->inherits<JS##name##Array>())                                                                                                       \
-            RELEASE_AND_RETURN(scope, JSValue::encode(JS##name##Array::create(globalObject, structure, WTF::move(bufferClone), 0, bufferView->length()))); \
-    } while (0);
-
-        FOR_EACH_TYPED_ARRAY_TYPE_EXCLUDING_DATA_VIEW(CLONE_TYPED_ARRAY)
-
-#undef CLONE_TYPED_ARRAY
-
-        if (value.inherits<JSDataView>())
-            RELEASE_AND_RETURN(scope, JSValue::encode(JSDataView::create(globalObject, structure, WTF::move(bufferClone), 0, bufferView->length())));
-    }
-
-    throwTypeError(globalObject, scope, "structuredClone not implemented for non-ArrayBuffer / non-ArrayBufferView"_s);
-    return {};
-}
-
 JSC_DEFINE_HOST_FUNCTION(jsFunctionStructuredClone, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     auto& vm = JSC::getVM(globalObject);
@@ -141,12 +57,17 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionStructuredClone, (JSC::JSGlobalObject * globa
     RETURN_IF_EXCEPTION(throwScope, {});
 
     Vector<RefPtr<MessagePort>> ports;
-    ExceptionOr<Ref<SerializedScriptValue>> serialized = SerializedScriptValue::create(*globalObject, value, WTF::move(serializeOptions.transfer), ports);
+    // structuredClone never leaves this agent cluster, so SABs may share their backing store per
+    // https://html.spec.whatwg.org/multipage/structured-data.html#structuredserializeinternal —
+    // only the WorkerPostMessage context takes the SAB-sharing path; Default would copy to a plain AB.
+    ExceptionOr<Ref<SerializedScriptValue>> serialized = SerializedScriptValue::create(*globalObject, value, WTF::move(serializeOptions.transfer), ports,
+        SerializationForStorage::No, SerializationContext::WorkerPostMessage);
+    RETURN_IF_EXCEPTION(throwScope, {});
     if (serialized.hasException()) {
         WebCore::propagateException(*globalObject, throwScope, serialized.releaseException());
         RELEASE_AND_RETURN(throwScope, {});
     }
-    throwScope.assertNoException();
+    RETURN_IF_EXCEPTION(throwScope, {});
 
     JSValue deserialized = serialized.releaseReturnValue()->deserialize(*globalObject, globalObject, ports);
     RETURN_IF_EXCEPTION(throwScope, {});
@@ -172,16 +93,19 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionStructuredCloneAdvanced, (JSC::JSGlobalObject
 
     SerializationContext serializationContext = SerializationContext::Default;
     if (serializationContextValue.isString()) {
-        if (serializationContextValue.getString(globalObject) == "worker"_s) {
+        String serializationContextString = serializationContextValue.getString(globalObject);
+        RETURN_IF_EXCEPTION(throwScope, {});
+        if (serializationContextString == "worker"_s) {
             serializationContext = SerializationContext::WorkerPostMessage;
-        } else if (serializationContextValue.getString(globalObject) == "window"_s) {
+        } else if (serializationContextString == "window"_s) {
             serializationContext = SerializationContext::WindowPostMessage;
-        } else if (serializationContextValue.getString(globalObject) == "postMessage"_s) {
+        } else if (serializationContextString == "postMessage"_s) {
             serializationContext = SerializationContext::WindowPostMessage;
-        } else if (serializationContextValue.getString(globalObject) == "default"_s) {
+        } else if (serializationContextString == "default"_s) {
             serializationContext = SerializationContext::Default;
         } else {
             throwTypeError(globalObject, throwScope, "invalid serialization context"_s);
+            return {};
         }
     }
 
@@ -205,11 +129,12 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionStructuredCloneAdvanced, (JSC::JSGlobalObject
 
     Vector<RefPtr<MessagePort>> ports;
     ExceptionOr<Ref<SerializedScriptValue>> serialized = SerializedScriptValue::create(*globalObject, value, WTF::move(transferList), ports, forStorage, serializationContext, forTransfer);
+    RETURN_IF_EXCEPTION(throwScope, {});
     if (serialized.hasException()) {
         WebCore::propagateException(*globalObject, throwScope, serialized.releaseException());
         RELEASE_AND_RETURN(throwScope, {});
     }
-    throwScope.assertNoException();
+    RETURN_IF_EXCEPTION(throwScope, {});
 
     JSValue deserialized = serialized.releaseReturnValue()->deserialize(*globalObject, globalObject, ports);
     RETURN_IF_EXCEPTION(throwScope, {});

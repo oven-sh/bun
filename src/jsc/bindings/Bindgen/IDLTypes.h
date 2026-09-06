@@ -17,9 +17,6 @@ struct IDLStrongAny : WebCore::IDLType<Bun::StrongRef> {
     }
 };
 
-template<typename T>
-struct IsIDLStrongAny : std::integral_constant<bool, std::is_base_of<IDLStrongAny, T>::value> {};
-
 // Dictionaries that contain raw `JSValue`s must live on the stack.
 template<typename T>
 struct IDLStackOnlyDictionary : WebCore::IDLType<T> {

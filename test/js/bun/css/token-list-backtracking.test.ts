@@ -28,11 +28,12 @@ function spawnMinify(css: string) {
       bunExe(),
       "-e",
       `const c = require("bun:internal-for-testing").cssInternals;
+       const rss = process.platform === "darwin" && typeof Bun.unsafe.memoryFootprint === "function" ? Bun.unsafe.memoryFootprint : process.memoryUsage.rss;
        const css = ${JSON.stringify(css)};
-       const rssBefore = process.memoryUsage.rss();
+       const rssBefore = rss();
        let threw = false;
        try { c.minifyTest(css, ""); } catch { threw = true; }
-       const deltaMB = (process.memoryUsage.rss() - rssBefore) / 1024 / 1024;
+       const deltaMB = (rss() - rssBefore) / 1024 / 1024;
        if (deltaMB > 256) throw new Error("memory grew by " + deltaMB.toFixed(0) + "MB");
        console.log("done threw=" + threw);`,
     ],

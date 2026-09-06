@@ -30,10 +30,10 @@ void Bun__setSamplingInterval(int intervalMicroseconds)
 namespace Bun {
 
 // Store the profiling start time in microseconds since Unix epoch
-static double s_profilingStartTime = 0.0;
+static thread_local double s_profilingStartTime = 0.0;
 // Set sampling interval to 1ms (1000 microseconds) to match Node.js
-static int s_samplingInterval = 1000;
-static bool s_isProfilerRunning = false;
+static thread_local int s_samplingInterval = 1000;
+static thread_local bool s_isProfilerRunning = false;
 
 void setSamplingInterval(int intervalMicroseconds)
 {

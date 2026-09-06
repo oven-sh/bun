@@ -31,11 +31,7 @@ impl WaitGroup {
         }
     }
 
-    pub fn add_unsynchronized(&mut self, n: usize) {
-        *self.raw_count.get_mut() += n;
-    }
-
-    pub fn add(&self, n: usize) {
+    pub(crate) fn add(&self, n: usize) {
         // Not Acquire because we don't need to synchronize with other tasks (each runs independently).
         // Not Release because there are no side effects that other threads depend on when they see
         // the *start* of a task (only finishing a task has such requirements).
@@ -46,23 +42,56 @@ impl WaitGroup {
         self.add(1);
     }
 
+    /// For a group kept alive past this call by something other than `wait()` returning (a
+    /// `static`, say); otherwise use [`finish_raw`](Self::finish_raw).
     pub fn finish(&self) {
-        let old_count = self.raw_count.fetch_sub(1, Ordering::AcqRel);
-        if old_count > 1 {
-            return;
-        }
-
-        // This is the last task, so we need to signal the condition. If we were to call `cond.signal`
-        // right now, a concurrent call to `wait` which has read a non-zero count (from before we
-        // decremented it above) but which has not yet called `cond.wait` will miss the signal and
-        // end up blocking forever. A thread in this state (in between reading the count and calling
-        // `cond.wait`) is necessarily holding the mutex, so by locking and unlocking the mutex here,
-        // we ensure that it reaches the call to `cond.wait` before we call `cond.signal`.
-        self.mutex.lock();
-        self.mutex.unlock();
-        self.cond.signal();
+        // SAFETY: the group outlives this call (fn contract).
+        unsafe { Self::finish_raw(self) }
     }
 
+    /// [`finish`](Self::finish) for a group the owner may free as soon as `wait()` returns:
+    /// the unlock's releasing store is this thread's last access to the group, which a
+    /// `&self` argument would instead assert until the call returned.
+    ///
+    /// # Safety
+    /// `this` must be live with this task counted; once this lets `wait()` return, the
+    /// owner may free it.
+    pub unsafe fn finish_raw(this: *const Self) {
+        // Fast path: decrement lock-free while other tasks are outstanding. We cannot
+        // unconditionally `fetch_sub(1)` and then lock/signal for the last one: the moment
+        // `raw_count` reaches 0 a concurrent `wait()` can return and the owner free the group.
+        //
+        // SAFETY: live until some finisher publishes 0 (fn contract); this path leaves >= 1.
+        unsafe {
+            let mut old = (*this).raw_count.load(Ordering::Relaxed);
+            while old > 1 {
+                match (*this).raw_count.compare_exchange_weak(
+                    old,
+                    old - 1,
+                    Ordering::AcqRel,
+                    Ordering::Relaxed,
+                ) {
+                    Ok(_) => return,
+                    Err(cur) => old = cur,
+                }
+            }
+        }
+
+        // We are (or a concurrent `add` may yet make us not) the last one. Publish
+        // `raw_count == 0` only while holding the mutex so `wait()`, which checks the count
+        // under the same mutex, cannot return until the unlock below; signal before unlocking.
+        //
+        // SAFETY: hence live until that unlock (fn contract), whose store is the last access.
+        unsafe {
+            (*this).mutex.lock();
+            let old_count = (*this).raw_count.fetch_sub(1, Ordering::AcqRel);
+            debug_assert!(old_count >= 1);
+            (*this).cond.signal();
+            Mutex::unlock_raw(&raw const (*this).mutex);
+        }
+    }
+
+    /// Once this returns every [`finish_raw`](Self::finish_raw) is done; the group may be freed.
     pub fn wait(&self) {
         self.mutex.lock();
         // crate::Mutex is a raw lock/unlock wrapper (no RAII guard), so unlock
@@ -73,5 +102,41 @@ impl WaitGroup {
         }
 
         self.mutex.unlock();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // Miri rejects the `Box` drop if the finisher still holds a reference into the group.
+    #[test]
+    fn wait_returning_means_finish_raw_is_done_with_the_group() {
+        // ~30ms per iteration under Miri; the unfixed shape fails within 200 on every seed tried.
+        #[cfg(miri)]
+        const ITERATIONS: usize = 500;
+        #[cfg(not(miri))]
+        const ITERATIONS: usize = 10_000;
+
+        for _ in 0..ITERATIONS {
+            let wg = Box::into_raw(Box::new(WaitGroup::init_with_count(1)));
+            struct SendPtr(*const WaitGroup);
+            // SAFETY: `WaitGroup` is `Sync`; only dereferenced via `finish_raw` below.
+            unsafe impl Send for SendPtr {}
+            let p = SendPtr(wg);
+            let t = std::thread::Builder::new()
+                .spawn(move || {
+                    let p = p;
+                    // SAFETY: `wg` is live until `wait()` returns, which this call permits.
+                    unsafe { WaitGroup::finish_raw(p.0) };
+                })
+                .unwrap();
+            // SAFETY: sole owner of `wg`; `wait()` returning means `finish_raw` is done with it.
+            unsafe {
+                (*wg).wait();
+                drop(Box::from_raw(wg));
+            }
+            t.join().unwrap();
+        }
     }
 }

@@ -1,0 +1,29 @@
+lockfileVersion: '9.0'
+
+settings:
+  autoInstallPeers: true
+  excludeLinksFromLockfile: false
+
+patchedDependencies:
+  is-positive@3.1.0:
+    hash: b27bbf2d83e68cac4491a38dd8b846aadd55d9c7bf8a4971139465c4de3566ce
+    path: patches/is-positive@3.1.0.patch
+
+importers:
+
+  .:
+    dependencies:
+      is-positive:
+        specifier: github:kevva/is-positive
+        version: https://codeload.github.com/kevva/is-positive/tar.gz/97edff6f525f192a3f83cea1944765f769ae2678(patch_hash=b27bbf2d83e68cac4491a38dd8b846aadd55d9c7bf8a4971139465c4de3566ce)
+
+packages:
+
+  is-positive@https://codeload.github.com/kevva/is-positive/tar.gz/97edff6f525f192a3f83cea1944765f769ae2678:
+    resolution: {tarball: https://codeload.github.com/kevva/is-positive/tar.gz/97edff6f525f192a3f83cea1944765f769ae2678}
+    version: 3.1.0
+    engines: {node: '>=0.10.0'}
+
+snapshots:
+
+  is-positive@https://codeload.github.com/kevva/is-positive/tar.gz/97edff6f525f192a3f83cea1944765f769ae2678(patch_hash=b27bbf2d83e68cac4491a38dd8b846aadd55d9c7bf8a4971139465c4de3566ce): {}

@@ -2,13 +2,13 @@ use crate::jsc::{JSArrayIterator, JSGlobalObject, JSValue, JsResult};
 
 use super::object_iterator::ObjectIterator;
 
-pub enum QueryBindingIterator<'a> {
+pub(crate) enum QueryBindingIterator<'a> {
     Array(JSArrayIterator<'a>),
     Objects(ObjectIterator<'a>),
 }
 
 impl<'a> QueryBindingIterator<'a> {
-    pub fn init(
+    pub(crate) fn init(
         array: JSValue,
         columns: JSValue,
         global: &'a JSGlobalObject,
@@ -30,21 +30,21 @@ impl<'a> QueryBindingIterator<'a> {
         }))
     }
 
-    pub fn next(&mut self) -> JsResult<Option<JSValue>> {
+    pub(crate) fn next(&mut self) -> JsResult<Option<JSValue>> {
         match self {
             Self::Array(iter) => iter.next(),
             Self::Objects(iter) => iter.next(),
         }
     }
 
-    pub fn any_failed(&self) -> bool {
+    pub(crate) fn any_failed(&self) -> bool {
         match self {
             Self::Array(_) => false,
             Self::Objects(iter) => iter.any_failed,
         }
     }
 
-    pub fn to(&mut self, index: u32) {
+    pub(crate) fn to(&mut self, index: u32) {
         match self {
             Self::Array(iter) => iter.i = index,
             Self::Objects(iter) => {

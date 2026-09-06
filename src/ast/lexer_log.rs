@@ -1,10 +1,10 @@
 //! Shared lexer→Log error-reporting cluster.
 //!
-//! js_parser, json, and toml lexers each carried a near-identical 50-line block
+//! The js_parser and json lexers each carried a near-identical 50-line block
 //! of `{syntax_error, add_error, add_range_error, add_default_error,
 //! add_syntax_error}` that gate on `is_log_disabled`, dedup against
 //! `prev_error_loc`, push into `Log`, then record the loc. This trait
-//! collapses all three.
+//! collapses both.
 //!
 //! The trait carries a `'s` lifetime so `source()` can hand back the lexer's
 //! stored `&'s Source` *without* borrowing `self` — that is what lets the
@@ -17,7 +17,7 @@ use crate::{AddErrorOptions, Loc, Log, Range, Source, usize2loc};
 
 pub trait LexerLog<'s> {
     /// Per-lexer error variant returned from the `*_error` family
-    /// (`Error::SyntaxError` for js/toml, `bun_core::err!("SyntaxError")` for
+    /// (`Error::SyntaxError` for js, `crate::Error::SyntaxError` for
     /// the JSON-subset lexer).
     type Err;
 
@@ -29,14 +29,9 @@ pub trait LexerLog<'s> {
     fn start(&self) -> usize;
     fn syntax_err() -> Self::Err;
 
-    /// js/json gate every push on this; toml has no flag (default `false`).
+    /// js/json gate every push on this.
     #[inline]
     fn is_log_disabled(&self) -> bool {
-        false
-    }
-    /// toml threads `should_redact_logs` into every message; js/json don't.
-    #[inline]
-    fn should_redact(&self) -> bool {
         false
     }
 
@@ -52,13 +47,11 @@ pub trait LexerLog<'s> {
             return;
         }
         let source = self.source();
-        let redact = self.should_redact();
         self.log_mut().add_error_fmt_opts(
             args,
             AddErrorOptions {
                 source: Some(source),
                 loc: l,
-                redact_sensitive_information: redact,
                 ..Default::default()
             },
         );
@@ -74,14 +67,12 @@ pub trait LexerLog<'s> {
             return Ok(());
         }
         let source = self.source();
-        let redact = self.should_redact();
         self.log_mut().add_error_fmt_opts(
             args,
             AddErrorOptions {
                 source: Some(source),
                 loc: r.loc,
                 len: r.len,
-                redact_sensitive_information: redact,
                 ..Default::default()
             },
         );

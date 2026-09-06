@@ -358,17 +358,11 @@ export default {
   Query,
   SQLQueryFlags,
   SQLQueryResultMode,
-  SQLQueryStatus,
 
   symbols: {
-    _resolve,
-    _reject,
     _handle,
-    _queryStatus,
-    _handler,
     _strings,
     _values,
-    _flags,
     _results,
   },
 };

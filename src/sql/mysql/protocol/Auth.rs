@@ -4,7 +4,6 @@
 use core::ffi::c_char;
 
 use bun_boringssl as boringssl;
-use bun_core::{self, err};
 
 use bun_sha_hmac::{SHA1, SHA256};
 
@@ -14,10 +13,10 @@ use crate::shared::Data;
 
 bun_core::declare_scope!(Auth, hidden);
 
-pub mod mysql_native_password {
+pub(crate) mod mysql_native_password {
     use super::*;
 
-    pub(crate) fn scramble(password: &[u8], nonce: &[u8]) -> Result<[u8; 20], bun_core::Error> {
+    pub(crate) fn scramble(password: &[u8], nonce: &[u8]) -> crate::Result<[u8; 20]> {
         // SHA1( password ) XOR SHA1( nonce + SHA1( SHA1( password ) ) ) )
         let mut stage1 = [0u8; 20];
         let mut stage2 = [0u8; 20];
@@ -30,7 +29,7 @@ pub mod mysql_native_password {
         // short plugin_data; without this check the slicing below reads past
         // the end of the buffer.
         if nonce.len() < 20 {
-            return Err(err!("MissingAuthData"));
+            return Err(crate::Error::MissingAuthData);
         }
 
         // Stage 1: SHA1(password)
@@ -66,7 +65,7 @@ pub mod mysql_native_password {
 pub mod caching_sha2_password {
     use super::*;
 
-    pub(crate) fn scramble(password: &[u8], nonce: &[u8]) -> Result<[u8; 32], bun_core::Error> {
+    pub(crate) fn scramble(password: &[u8], nonce: &[u8]) -> crate::Result<[u8; 32]> {
         // XOR(SHA256(password), SHA256(SHA256(SHA256(password)), nonce))
         let mut digest1 = [0u8; 32];
         let mut digest2 = [0u8; 32];
@@ -105,14 +104,14 @@ pub mod caching_sha2_password {
     // so represent as a transparent u8 newtype rather than a closed Rust enum.
     #[repr(transparent)]
     #[derive(Copy, Clone, Eq, PartialEq, Debug)]
-    pub struct FastAuthStatus(pub u8);
+    pub struct FastAuthStatus(pub(crate) u8);
 
     impl FastAuthStatus {
         pub const SUCCESS: Self = Self(0x03);
         pub const CONTINUE_AUTH: Self = Self(0x04);
 
         #[inline]
-        pub const fn from_raw(n: u8) -> Self {
+        pub(crate) const fn from_raw(n: u8) -> Self {
             Self(n)
         }
     }
@@ -126,17 +125,17 @@ pub mod caching_sha2_password {
     #[derive(Default)]
     pub struct Response {
         pub status: FastAuthStatus,
-        pub data: Data,
+        pub(crate) data: Data,
     }
 
     impl Response {
         // `Data`'s own Drop frees `self.data`, so no explicit Drop impl is
         // needed here.
 
-        pub fn decode_internal<Context: ReaderContext>(
+        pub(crate) fn decode_internal<Context: ReaderContext>(
             &mut self,
             reader: NewReader<Context>,
-        ) -> Result<(), bun_core::Error> {
+        ) -> crate::Result<()> {
             let status: u8 = reader.int::<u8>()?;
             bun_core::scoped_log!(Auth, "FastAuthStatus: {}", status);
             self.status = FastAuthStatus::from_raw(status);
@@ -153,7 +152,7 @@ pub mod caching_sha2_password {
         pub fn decode<Context: ReaderContext>(
             &mut self,
             reader: NewReader<Context>,
-        ) -> Result<(), bun_core::Error> {
+        ) -> crate::Result<()> {
             self.decode_internal(reader)
         }
     }
@@ -174,10 +173,10 @@ pub mod caching_sha2_password {
         // https://mariadb.com/kb/en/sha256_password-plugin/#rsa-encrypted-password
         // RSA encrypted value of XOR(password, seed) using server public key (RSA_PKCS1_OAEP_PADDING).
 
-        pub fn write_internal<Context: WriterContext>(
+        pub(crate) fn write_internal<Context: WriterContext>(
             &self,
             writer: NewWriter<Context>,
-        ) -> Result<(), bun_core::Error> {
+        ) -> crate::Result<()> {
             // `RawSlice` invariant: backing storage outlives the holder (this
             // struct lives only for the single `write()` call its caller wraps it
             // in), so safe `Deref` recovers `&[u8]` without an `unsafe` block.
@@ -189,13 +188,13 @@ pub mod caching_sha2_password {
             // The XOR below does `nonce[i % nonce.len]`; an empty nonce from a
             // malicious server's AuthSwitchRequest would be a divide-by-zero.
             if nonce.is_empty() {
-                return Err(err!("MissingAuthData"));
+                return Err(crate::Error::MissingAuthData);
             }
             // `&this.public_key[0]` below would index past a zero-length
             // slice if the server answered the public-key request with an
             // empty payload.
             if public_key.is_empty() {
-                return Err(err!("InvalidPublicKey"));
+                return Err(crate::Error::InvalidPublicKey);
             }
             // 1024 is overkill but lets cover all cases
             let needed_len = password.len() + 1;
@@ -218,7 +217,7 @@ pub mod caching_sha2_password {
                 )
             };
             if bio.is_null() {
-                return Err(err!("InvalidPublicKey"));
+                return Err(crate::Error::InvalidPublicKey);
             }
             let bio = scopeguard::guard(bio, |bio| {
                 // SAFETY: bio is a valid non-null BIO* allocated by BIO_new_mem_buf above.
@@ -256,7 +255,7 @@ pub mod caching_sha2_password {
                         );
                     }
                 }
-                return Err(err!("InvalidPublicKey"));
+                return Err(crate::Error::InvalidPublicKey);
             }
             let rsa = scopeguard::guard(rsa, |rsa| {
                 // SAFETY: rsa is a valid non-null RSA* returned by PEM_read_bio_RSA_PUBKEY.
@@ -281,7 +280,7 @@ pub mod caching_sha2_password {
                 )
             };
             if encrypted_password_len == -1 {
-                return Err(err!("FailedToEncryptPassword"));
+                return Err(crate::Error::FailedToEncryptPassword);
             }
             let encrypted_password_slice =
                 &encrypted_password[0..usize::try_from(encrypted_password_len).expect("int cast")];
@@ -296,7 +295,7 @@ pub mod caching_sha2_password {
         pub fn write<Context: WriterContext>(
             &self,
             writer: NewWriter<Context>,
-        ) -> Result<(), bun_core::Error> {
+        ) -> crate::Result<()> {
             self.write_internal(writer)
         }
     }
@@ -309,10 +308,10 @@ pub mod caching_sha2_password {
     impl PublicKeyResponse {
         // `Data`'s own Drop frees `self.data`.
 
-        pub fn decode_internal<Context: ReaderContext>(
+        pub(crate) fn decode_internal<Context: ReaderContext>(
             &mut self,
             reader: NewReader<Context>,
-        ) -> Result<(), bun_core::Error> {
+        ) -> crate::Result<()> {
             // get all the data
             let remaining = reader.peek();
             if !remaining.is_empty() {
@@ -324,7 +323,7 @@ pub mod caching_sha2_password {
         pub fn decode<Context: ReaderContext>(
             &mut self,
             reader: NewReader<Context>,
-        ) -> Result<(), bun_core::Error> {
+        ) -> crate::Result<()> {
             self.decode_internal(reader)
         }
     }
@@ -332,10 +331,10 @@ pub mod caching_sha2_password {
     pub struct PublicKeyRequest;
 
     impl PublicKeyRequest {
-        pub fn write_internal<Context: WriterContext>(
+        pub(crate) fn write_internal<Context: WriterContext>(
             &self,
             writer: NewWriter<Context>,
-        ) -> Result<(), bun_core::Error> {
+        ) -> crate::Result<()> {
             writer.int1(0x02)?; // Request public key
             Ok(())
         }
@@ -344,7 +343,7 @@ pub mod caching_sha2_password {
         pub fn write<Context: WriterContext>(
             &self,
             writer: NewWriter<Context>,
-        ) -> Result<(), bun_core::Error> {
+        ) -> crate::Result<()> {
             self.write_internal(writer)
         }
     }

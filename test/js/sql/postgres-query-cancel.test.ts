@@ -101,7 +101,8 @@ async function backend() {
       buffered = pgReadFrontendMessages(Buffer.concat([buffered, data]), type => {
         // Sync ends every extended-protocol unit; the simple protocol's Query is
         // its own sync point.
-        if (type === "S" || type === "Q") onQueryUnit();
+        const message = String.fromCharCode(type);
+        if (message === "S" || message === "Q") onQueryUnit();
       });
     });
   });

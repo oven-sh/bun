@@ -12,7 +12,7 @@ import type { Config } from "../config.ts";
 import type { Dependency } from "../source.ts";
 import { depBuildDir } from "../source.ts";
 
-const CARES_COMMIT = "3ac47ee46edd8ea40370222f91613fc16c434853";
+const CARES_COMMIT = "c7a3138dcfe3bb0eaaf10c0c24c36dc66dc790ab";
 
 // prettier-ignore
 const SOURCES = [
@@ -53,10 +53,12 @@ export const cares: Dependency = {
   versionMacro: "C_ARES",
 
   source: () => ({
-    kind: "github-archive",
+    kind: "github",
     repo: "c-ares/c-ares",
     commit: CARES_COMMIT,
   }),
+
+  patches: ["patches/cares/accept-rdata-compression.patch"],
 
   build: cfg => ({
     kind: "direct",

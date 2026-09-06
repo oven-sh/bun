@@ -75,7 +75,12 @@ function fixtureFor(serve: object) {
       },
     });
     console.error("PORT=" + server.port);
-    process.stdin.on("data", () => {});
+    // Graceful stop on stdin close so the client's pooled QUIC session sees
+    // CONNECTION_CLOSE. An abrupt kill leaves the client retransmitting to
+    // an unbound port, and that ICMP noise contends with every other
+    // connection on the shared HTTP/3 client engine.
+    process.stdin.on("end", () => { server.stop(true); setTimeout(() => process.exit(0), 50); });
+    process.stdin.resume();
   `;
 }
 
@@ -114,8 +119,12 @@ async function withServer(serve: object, fn: (origin: string) => Promise<void>) 
     await fn(`127.0.0.1:${port}`);
   } finally {
     proc.stdin?.end();
-    proc.kill();
-    await proc.exited;
+    const killTimer = setTimeout(() => proc.kill(), 500);
+    try {
+      await proc.exited;
+    } finally {
+      clearTimeout(killTimer);
+    }
   }
 }
 

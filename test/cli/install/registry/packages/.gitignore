@@ -1,0 +1,26 @@
+# Packages that publish tests write into this directory at run time; never commit them.
+/dry-run-1/
+/dry-run-2/
+/otp-pkg-1/
+/otp-pkg-2/
+/otp-pkg-3/
+/otp-pkg-4/
+/otp-pkg-5/
+/publish-pkg-1/
+/publish-pkg-10/
+/publish-pkg-11/
+/publish-pkg-2/
+/publish-pkg-3/
+/publish-pkg-4/
+/publish-pkg-5/
+/publish-pkg-6/
+/publish-pkg-7/
+/publish-pkg-9/
+/publish-pkg-deps/
+/publish-version-update/
+/republish-test-1/
+/republish-test-2/
+/republish-test-3/
+/@scoped/pkg-1/
+/@secret/
+/publish-pkg-*/

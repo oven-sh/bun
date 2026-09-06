@@ -75,12 +75,12 @@ describe("MessageEvent constructor", () => {
     // @ts-expect-error
     expect(() => new MessageEvent("message", { source: 1 })).toThrow({
       name: "TypeError",
-      message: 'The "eventInitDict.source" property must be of type MessagePort. Received type number (1)',
+      message: 'MessageEvent constructor: Expected eventInitDict.source ("1") to be an instance of MessagePort.',
     });
     // @ts-expect-error
     expect(() => new MessageEvent("message", { source: {} })).toThrow({
       name: "TypeError",
-      message: 'The "eventInitDict.source" property must be of type MessagePort. Received an instance of Object',
+      message: 'MessageEvent constructor: Expected eventInitDict.source ("{}") to be an instance of MessagePort.',
     });
   });
 
@@ -88,17 +88,17 @@ describe("MessageEvent constructor", () => {
     // @ts-expect-error
     expect(() => new MessageEvent("message", { ports: 1 })).toThrow({
       name: "TypeError",
-      message: "MessageEvent constructor: eventInitDict.ports is not iterable.",
+      message: "MessageEvent constructor: eventInitDict.ports (1) is not iterable.",
     });
     // @ts-expect-error
     expect(() => new MessageEvent("message", { ports: [1] })).toThrow({
       name: "TypeError",
-      message: "MessageEvent constructor: Expected every item of eventInitDict.ports to be an instance of MessagePort.",
+      message: 'MessageEvent constructor: Expected eventInitDict.ports[0] ("1") to be an instance of MessagePort.',
     });
     // @ts-expect-error
     expect(() => new MessageEvent("message", { ports: [{}] })).toThrow({
       name: "TypeError",
-      message: "MessageEvent constructor: Expected every item of eventInitDict.ports to be an instance of MessagePort.",
+      message: 'MessageEvent constructor: Expected eventInitDict.ports[0] ("{}") to be an instance of MessagePort.',
     });
   });
 });

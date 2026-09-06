@@ -567,9 +567,5 @@ export default {
   isPrimitiveChunk,
   isSyncIterable,
   isUint8ArrayBatch,
-  normalizeAsyncSource,
   normalizeAsyncValue,
-  normalizeSyncSource,
-  normalizeSyncValue,
-  primitiveToUint8Array,
 };

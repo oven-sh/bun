@@ -7,12 +7,11 @@ pub struct StmtPrepareOKPacket {
     pub statement_id: u32,
     pub num_columns: u16,
     pub num_params: u16,
-    pub warning_count: u16,
     pub packet_length: u32,
 }
 
 impl StmtPrepareOKPacket {
-    pub fn decode_internal<Context: ReaderContext>(
+    pub(crate) fn decode_internal<Context: ReaderContext>(
         &mut self,
         reader: NewReader<Context>,
     ) -> Result<(), AnyMySQLError> {
@@ -22,11 +21,17 @@ impl StmtPrepareOKPacket {
         }
 
         self.statement_id = reader.int::<u32>()?;
+        // The server never issues statement_id 0, and the client keys its own
+        // "prepared" state on statement_id > 0 (see handle_prepared_statement
+        // and bind_and_execute), so a 0 here is a protocol violation.
+        if self.statement_id == 0 {
+            return Err(AnyMySQLError::InvalidPrepareOKPacket);
+        }
         self.num_columns = reader.int::<u16>()?;
         self.num_params = reader.int::<u16>()?;
         let _ = reader.int::<u8>()?; // reserved_1
         if self.packet_length >= 12 {
-            self.warning_count = reader.int::<u16>()?;
+            reader.int::<u16>()?; // warning_count
         }
         Ok(())
     }

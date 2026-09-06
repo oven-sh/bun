@@ -1,4 +1,5 @@
 import { realpathSync } from "fs";
+import { bunEnv, bunExe, tempDir } from "harness";
 import { AddressInfo, createServer, Server, Socket } from "net";
 import { createTest } from "node-harness";
 import { once } from "node:events";
@@ -17,18 +18,18 @@ describe("net.createServer listen", () => {
     done();
   });
 
+  // No secondary setTimeout deadline: the test runner already bounds each test,
+  // and a real listen failure reaches done() via the 'error' listener below.
+  const failOnError = (server: Server, done: (err?: unknown) => void) => (err: unknown) => {
+    server.close();
+    done(err);
+  };
+
   it("should listen on IPv6 by default", done => {
-    const { mustCall, mustNotCall } = createCallCheckCtx(done);
+    const { mustCall } = createCallCheckCtx(done);
 
     const server: Server = createServer();
-    let timeout: Timer;
-    const closeAndFail = () => {
-      clearTimeout(timeout);
-      server.close();
-      mustNotCall()();
-    };
-    server.on("error", closeAndFail);
-    timeout = setTimeout(closeAndFail, 100);
+    server.on("error", failOnError(server, done));
 
     server.listen(
       0,
@@ -45,18 +46,10 @@ describe("net.createServer listen", () => {
   });
 
   it("should listen on IPv4", done => {
-    const { mustCall, mustNotCall } = createCallCheckCtx(done);
+    const { mustCall } = createCallCheckCtx(done);
 
     const server: Server = createServer();
-
-    let timeout: Timer;
-    const closeAndFail = () => {
-      clearTimeout(timeout);
-      server.close();
-      mustNotCall()();
-    };
-    server.on("error", closeAndFail);
-    timeout = setTimeout(closeAndFail, 100);
+    server.on("error", failOnError(server, done));
 
     server.listen(
       0,
@@ -74,73 +67,45 @@ describe("net.createServer listen", () => {
   });
 
   it("should call listening", done => {
-    const { mustCall, mustNotCall } = createCallCheckCtx(done);
+    const { mustCall } = createCallCheckCtx(done);
 
     const server: Server = createServer();
 
-    let timeout: Timer;
-    const closeAndFail = () => {
-      clearTimeout(timeout);
-      server.close();
-      mustNotCall()();
-    };
-
-    server.on("error", closeAndFail).on(
+    server.on("error", failOnError(server, done)).on(
       "listening",
       mustCall(() => {
-        clearTimeout(timeout);
         server.close();
         done();
       }),
     );
 
-    timeout = setTimeout(closeAndFail, 100);
-
     server.listen(0, "0.0.0.0");
   });
 
   it("should provide listening property", done => {
-    const { mustCall, mustNotCall } = createCallCheckCtx(done);
+    const { mustCall } = createCallCheckCtx(done);
 
     const server: Server = createServer();
     expect(server.listening).toBeFalse();
 
-    let timeout: Timer;
-    const closeAndFail = () => {
-      clearTimeout(timeout);
-      server.close();
-      mustNotCall()();
-    };
-
-    server.on("error", closeAndFail).on(
+    server.on("error", failOnError(server, done)).on(
       "listening",
       mustCall(() => {
         expect(server.listening).toBeTrue();
-        clearTimeout(timeout);
         server.close();
         expect(server.listening).toBeFalse();
         done();
       }),
     );
 
-    timeout = setTimeout(closeAndFail, 100);
-
     server.listen(0, "0.0.0.0");
   });
 
   it("should listen on localhost", done => {
-    const { mustCall, mustNotCall } = createCallCheckCtx(done);
+    const { mustCall } = createCallCheckCtx(done);
 
     const server: Server = createServer();
-
-    let timeout: Timer;
-    const closeAndFail = () => {
-      clearTimeout(timeout);
-      server.close();
-      mustNotCall()();
-    };
-    server.on("error", closeAndFail);
-    timeout = setTimeout(closeAndFail, 100);
+    server.on("error", failOnError(server, done));
 
     server.listen(
       0,
@@ -158,18 +123,10 @@ describe("net.createServer listen", () => {
   });
 
   it("should listen on localhost", done => {
-    const { mustCall, mustNotCall } = createCallCheckCtx(done);
+    const { mustCall } = createCallCheckCtx(done);
 
     const server: Server = createServer();
-
-    let timeout: Timer;
-    const closeAndFail = () => {
-      clearTimeout(timeout);
-      server.close();
-      mustNotCall()();
-    };
-    server.on("error", closeAndFail);
-    timeout = setTimeout(closeAndFail, 100);
+    server.on("error", failOnError(server, done));
 
     server.listen(
       0,
@@ -185,18 +142,10 @@ describe("net.createServer listen", () => {
   });
 
   it("should listen without port or host", done => {
-    const { mustCall, mustNotCall } = createCallCheckCtx(done);
+    const { mustCall } = createCallCheckCtx(done);
 
     const server: Server = createServer();
-
-    let timeout: Timer;
-    const closeAndFail = () => {
-      clearTimeout(timeout);
-      server.close();
-      mustNotCall()();
-    };
-    server.on("error", closeAndFail);
-    timeout = setTimeout(closeAndFail, 100);
+    server.on("error", failOnError(server, done));
 
     server.listen(
       mustCall(() => {
@@ -212,18 +161,10 @@ describe("net.createServer listen", () => {
   });
 
   it("should listen on unix domain socket", done => {
-    const { mustCall, mustNotCall } = createCallCheckCtx(done);
+    const { mustCall } = createCallCheckCtx(done);
 
     const server: Server = createServer();
-
-    let timeout: Timer;
-    const closeAndFail = () => {
-      clearTimeout(timeout);
-      server.close();
-      mustNotCall()();
-    };
-    server.on("error", closeAndFail);
-    timeout = setTimeout(closeAndFail, 100);
+    server.on("error", failOnError(server, done));
 
     server.listen(
       socket_domain,
@@ -237,17 +178,10 @@ describe("net.createServer listen", () => {
   });
 
   it("should bind IPv4 0.0.0.0 when listen on 0.0.0.0, issue#7355", done => {
-    const { mustCall, mustNotCall } = createCallCheckCtx(done);
+    const { mustCall } = createCallCheckCtx(done);
 
     const server: Server = createServer();
-    let timeout: Timer;
-    const closeAndFail = () => {
-      clearTimeout(timeout);
-      server.close();
-      mustNotCall()();
-    };
-    server.on("error", closeAndFail);
-    timeout = setTimeout(closeAndFail, 100);
+    server.on("error", failOnError(server, done));
 
     server.listen(
       0,
@@ -292,6 +226,103 @@ describe("net.createServer listen", () => {
         done();
       }),
     );
+  });
+
+  it("emits 'listening' on the next tick, before the event loop polls", async () => {
+    const server: Server = createServer();
+    const order: string[] = [];
+    server.on("listening", () => order.push("listening"));
+    server.listen(0);
+    process.nextTick(() => order.push("nextTick"));
+    await once(server, "listening");
+    server.close();
+    await once(server, "close");
+    expect(order).toEqual(["listening", "nextTick"]);
+  });
+
+  // The error twin of the test above: a listen() that fails reports on the same tick as one that succeeds.
+  // No host argument: with one, Node resolves it through dns.lookup first, which adds a tick.
+  it("emits a listen() error on the next tick, before the event loop polls", async () => {
+    const occupant: Server = createServer();
+    occupant.listen(0);
+    await once(occupant, "listening");
+    const { port } = occupant.address() as AddressInfo;
+
+    const server: Server = createServer();
+    const order: string[] = [];
+    server.on("error", (err: NodeJS.ErrnoException) => order.push("error:" + err.code));
+    server.listen(port);
+    process.nextTick(() => order.push("nextTick"));
+    await once(server, "error");
+    occupant.close();
+    await once(occupant, "close");
+    expect(order).toEqual(["error:EADDRINUSE", "nextTick"]);
+  });
+
+  // How vite, get-port and friends probe for a free port: listen, then close()
+  // from the 'listening' handler. A peer that connects in between must be reset
+  // by the kernel when the listening fd closes, not accepted into the closing
+  // server, whose close() would then wait on a connection nobody is reading.
+  it("close() from 'listening' does not accept a peer that connected in between", async () => {
+    const server: Server = createServer();
+    let accepted = 0;
+    server.on("connection", () => accepted++);
+    const { promise: closed, resolve: onClosed, reject } = Promise.withResolvers<void>();
+    server.on("error", reject);
+    server.listen(0, "127.0.0.1");
+
+    // Bun.connect() issues connect(2) synchronously, so the peer is already
+    // sitting in the listen backlog when the 'listening' handler runs.
+    const { port } = server.address() as AddressInfo;
+    const peer = Bun.connect({
+      hostname: "127.0.0.1",
+      port,
+      socket: {
+        data() {},
+        error() {},
+        connectError() {},
+      },
+    }).catch(() => null);
+
+    server.once("listening", () => {
+      server.close(() => onClosed());
+      peer.then(socket => socket?.end());
+    });
+
+    await closed;
+    expect(accepted).toBe(0);
+  });
+
+  // Node's server.close() completes the handle's uv_close() on the next loop
+  // turn, so a server listened and closed from a 'beforeExit' handler brings
+  // the loop back to life once more and 'beforeExit' fires again
+  // (upstream test-process-beforeexit). 'listening' itself is only a nextTick
+  // now, so close() has to hold the loop for that turn on its own.
+  it("closing a server listened from 'beforeExit' re-emits 'beforeExit'", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          const net = require("net");
+          process.once("beforeExit", () => {
+            net
+              .createServer()
+              .listen(0)
+              .on("listening", function () {
+                this.close();
+                process.once("beforeExit", () => console.log("beforeExit again"));
+              });
+          });
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr }).toEqual({ stdout: "beforeExit again\n", stderr: "" });
+    expect(exitCode).toBe(0);
   });
 });
 
@@ -568,4 +599,163 @@ describe("net.createServer events", () => {
       server.close();
     }
   });
+});
+
+// Node gives each accepted handle its own uv_stream_t ref; Bun's Listener used
+// to hold ONE KeepAlive for the listening socket and all its connections, so an
+// accepted socket's unref() was a no-op and server.unref() dropped live
+// connections. Both directions are covered below via Bun.listen to bypass
+// node:net's onconnection (whose resume() on main would paper over case 1).
+describe("accepted socket event-loop hold matches Node (per-connection KeepAlive)", () => {
+  async function run(body: string) {
+    // Spawned so "process exits naturally" is the observable.
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", body],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    // stderr is drained but only surfaced on failure: debug builds may emit
+    // benign warnings, so it is not asserted empty.
+    return { stdout, exitCode, failureDetail: exitCode === 0 ? "" : stderr };
+  }
+
+  it("server.stop() + accepted socket.unref() lets the process exit", async () => {
+    // do_stop used to gate the listener's KeepAlive release on
+    // active_connections == 0, and the accepted socket's own KeepAlive was
+    // never activated, so neither unref reached the loop counter and the
+    // process hung even though nothing wanted it alive.
+    expect(
+      await run(`
+        const accepted = Promise.withResolvers();
+        const server = Bun.listen({
+          hostname: "127.0.0.1",
+          port: 0,
+          socket: { open(s) { accepted.resolve(s); }, data() {}, close() {} },
+        });
+        const client = await Bun.connect({
+          hostname: "127.0.0.1",
+          port: server.port,
+          socket: { open() {}, data() {}, close() {} },
+        });
+        const srvSock = await accepted.promise;
+        server.stop();
+        client.unref();
+        srvSock.unref();
+        setTimeout(() => { process.stdout.write("HUNG"); process.exit(1); }, 4000).unref();
+      `),
+    ).toEqual({ stdout: "", exitCode: 0, failureDetail: "" });
+  });
+
+  it("server.unref() alone does not drop a ref'd accepted connection's hold", async () => {
+    // Before the fix the Listener's single KeepAlive covered the listening
+    // socket AND every accepted socket; server.unref() released the lot and
+    // the process exited immediately, dropping the live ref'd connection
+    // before the 300ms timer could observe it. Node keeps the loop alive for
+    // the accepted handle on its own (as does this fix) so "alive" prints.
+    expect(
+      await run(`
+        const accepted = Promise.withResolvers();
+        const server = Bun.listen({
+          hostname: "127.0.0.1",
+          port: 0,
+          socket: { open(s) { accepted.resolve(s); }, data() {}, close() {} },
+        });
+        const client = await Bun.connect({
+          hostname: "127.0.0.1",
+          port: server.port,
+          socket: { open() {}, data() {}, close() {} },
+        });
+        const srvSock = await accepted.promise;
+        server.unref();
+        client.unref();
+        // srvSock is NOT unref'd: it must keep the process alive on its own.
+        setTimeout(() => {
+          process.stdout.write(srvSock ? "alive" : "dead");
+          srvSock.end();
+          client.end();
+          server.stop();
+        }, 300).unref();
+        setTimeout(() => { process.stdout.write("|HUNG"); process.exit(1); }, 4000).unref();
+      `),
+    ).toEqual({ stdout: "alive", exitCode: 0, failureDetail: "" });
+  });
+
+  it("half-open accepted sockets after peer FIN do not busy-poll the event loop (Windows AFD DISCONNECT)", async () => {
+    // A write-only connection handler whose peer sends data+FIN leaves the
+    // accepted socket half-open with bytes buffered (Node's flowing=null
+    // accept state). On Windows, poll_cb mapped UV_DISCONNECT to READABLE
+    // unconditionally, recv() re-found the same EOF, the half-open EOF path
+    // re-armed WRITABLE+DISCONNECT, and AFD kept reporting DISCONNECT - so
+    // on_end fired once per loop turn per half-open socket. 40 such sockets
+    // made a 2000-setImmediate spin take seconds instead of tens of ms.
+    expect(
+      await run(`
+        const net = require("net");
+        (async () => {
+          for (let i = 0; i < 40; i++) {
+            const srv = net.createServer(conn => { conn.write("x"); });
+            await new Promise(r => srv.listen(0, "127.0.0.1", r));
+            await new Promise(r => {
+              const c = net.connect(srv.address().port, "127.0.0.1", () => {
+                c.write("y".repeat(50));
+                c.end();
+                r();
+              });
+              c.on("data", () => {});
+            });
+            srv.close();
+          }
+          // Half-open sockets are now sitting with end delivered and 50 bytes
+          // buffered; the loop must not be paying per-iteration cost for them.
+          await new Promise(r => setTimeout(r, 50));
+          const t0 = Date.now();
+          let n = 0;
+          await new Promise(r => {
+            function tick() { if (++n >= 2000) return r(); setImmediate(tick); }
+            tick();
+          });
+          const ms = Date.now() - t0;
+          // Well under 200ms when quiescent (release ~5ms, debug ~50ms); the
+          // busy-poll made 40 sockets x 2000 turns cost multiple seconds.
+          process.stdout.write(ms < 800 ? "fast" : "busy-poll " + ms + "ms");
+          process.exit(0);
+        })();
+      `),
+    ).toEqual({ stdout: "fast", exitCode: 0, failureDetail: "" });
+  });
+});
+
+// The Windows named-pipe listener never stripped libuv's own loop ref from its
+// uv_pipe_t (uv_listen marks the handle active+ref'd), so server.unref()
+// dropped the Listener's KeepAlive but the uv handle still pinned
+// uv_loop_alive and the process never exited. TCP and unix-socket listeners go
+// through usockets, which unrefs its uv handles up front.
+it("server.unref() on a pipe/unix-socket listener lets the process exit", async () => {
+  // The child exits without close() (natural exit is the observable), so the
+  // unix socket file must live in a tempDir the parent disposes.
+  using dir = tempDir("server-unref", {});
+  const listenPath =
+    process.platform === "win32"
+      ? "\\\\.\\pipe\\bun-server-unref-" + process.pid + "-" + Math.random().toString(36).slice(2)
+      : join(String(dir), "server-unref.sock");
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+      const server = require("net").createServer();
+      server.listen(process.env.SERVER_UNREF_LISTEN_PATH, () => server.unref());
+      setTimeout(() => { process.stdout.write("HUNG"); process.exit(1); }, 4000).unref();
+      `,
+    ],
+    env: { ...bunEnv, SERVER_UNREF_LISTEN_PATH: listenPath },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stdout).toBe("");
+  expect(exitCode === 0 ? "" : stderr).toBe("");
+  expect(exitCode).toBe(0);
 });

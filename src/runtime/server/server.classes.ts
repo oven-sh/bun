@@ -1,4 +1,4 @@
-import { define } from "../../codegen/class-definitions";
+import { define } from "../../codegen/class-definitions.ts";
 
 function generate(name) {
   return define({
@@ -90,7 +90,21 @@ function generate(name) {
     finalize: true,
     construct: true,
     noConstructor: true,
-    values: ["routeList"],
+    values: [
+      "routeList",
+      "onRequest",
+      "onError",
+      "onNodeHTTPRequest",
+      "onClientError",
+      "onConnection",
+      "wsOnOpen",
+      "wsOnMessage",
+      "wsOnClose",
+      "wsOnDrain",
+      "wsOnError",
+      "wsOnPing",
+      "wsOnPong",
+    ],
   });
 }
 export default [
@@ -111,6 +125,10 @@ export default [
       },
       writeContinue: {
         fn: "writeContinue",
+      },
+      writeInformational: {
+        fn: "writeInformational",
+        length: 1,
       },
       write: {
         fn: "write",
@@ -147,9 +165,25 @@ export default [
         length: 0,
         passThis: true,
       },
+      pauseReads: {
+        fn: "pauseSocketReads",
+        length: 0,
+      },
       drainRequestBody: {
         fn: "drainRequestBody",
         length: 0,
+      },
+      takeRequestTrailers: {
+        fn: "takeRequestTrailers",
+        length: 0,
+      },
+      takeRawHeaders: {
+        fn: "takeRawHeaders",
+        length: 0,
+      },
+      writeHeadAndEnd: {
+        fn: "writeHeadAndEnd",
+        length: 8,
       },
       dumpRequestBody: {
         fn: "dumpRequestBody",
@@ -195,10 +229,6 @@ export default [
       upgraded: {
         getter: "getUpgraded",
       },
-      // ontimeout: {
-      //   getter: "getOnTimeout",
-      //   setter: "setOnTimeout",
-      // },
       onwritable: {
         getter: "getOnWritable",
         setter: "setOnWritable",
@@ -206,9 +236,9 @@ export default [
       },
     },
     klass: {},
-    finalize: true,
+    refCounted: true,
     noConstructor: true,
-    values: ["onAborted", "onWritable", "onData"],
+    values: ["onAborted", "onWritable", "onData", "pendingWriteBuffer"],
   }),
 
   define({
@@ -335,13 +365,13 @@ export default [
     finalize: true,
     construct: true,
     klass: {},
-    values: ["socket"],
+    values: ["server"],
   }),
 
   define({
     name: "HTMLBundle",
     noConstructor: true,
-    finalize: true,
+    refCounted: true,
     proto: {
       index: {
         getter: "getIndex",

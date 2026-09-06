@@ -657,6 +657,7 @@
 #endif
 
 #define FOR_EACH_SQLITE_ERROR(MACRO)      \
+    MACRO(SQLITE_ERROR)                   \
     MACRO(SQLITE_INTERNAL)                \
     MACRO(SQLITE_PERM)                    \
     MACRO(SQLITE_ABORT)                   \

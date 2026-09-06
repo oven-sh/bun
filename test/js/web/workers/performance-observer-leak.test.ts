@@ -24,6 +24,7 @@ test("PerformanceObserver without disconnect() does not leak Performance when Wo
       // Intentionally never call observer.disconnect().
     `,
     "main.js": `
+      const rss = process.platform === "darwin" && typeof Bun.unsafe.memoryFootprint === "function" ? Bun.unsafe.memoryFootprint : process.memoryUsage.rss;
       const workerPath = new URL("./worker.js", import.meta.url).href;
 
       async function runOne() {
@@ -43,12 +44,12 @@ test("PerformanceObserver without disconnect() does not leak Performance when Wo
 
       // Warm up: establish allocator / JIT high-water mark.
       await runBatch(8);
-      const rssBefore = process.memoryUsage.rss();
+      const rssBefore = rss();
 
       // Measured batch: if each worker leaks ~4 MB via the Performance <->
       // PerformanceObserver cycle, 20 iterations leak ~80 MB over baseline.
       await runBatch(20);
-      const rssAfter = process.memoryUsage.rss();
+      const rssAfter = rss();
 
       const deltaMB = (rssAfter - rssBefore) / 1024 / 1024;
       // Without fix: ~110+ MB (baseline ~30 MB + 20 * 4 MB leaked).

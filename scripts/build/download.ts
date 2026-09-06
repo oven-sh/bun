@@ -8,10 +8,25 @@
  *
  * ## Retry behavior
  *
- * Exponential backoff (1s → 2s → 4s → 8s → cap at 30s), 5 attempts. GitHub
- * releases (our main source) are usually reliable, but CI sees transient
- * CDN failures often enough that no-retry means flaky builds. The cap at
- * 30s means worst-case we spend ~60s total before giving up.
+ * `downloadRetry`: 10 attempts, backoff doubling from 2s and capped at 30s,
+ * so a download keeps trying through ~3 minutes of backoff (plus whatever
+ * the failing attempts themselves take).
+ *
+ * The window is sized for github.com being unreachable from a CI agent, not
+ * for one bad request. Every download starts at github.com (archives and
+ * release assets both 302 from there), and every dep whose pin moved after
+ * the CI images were baked misses the prefetch cache below, so each build
+ * makes on the order of a hundred live github.com downloads (several deps at
+ * any given time, plus WebKit, which is bumped more often than the images
+ * are rebaked). The outages CI actually hits are agent-wide: every
+ * github.com connection from one agent failing for 30s to over two minutes
+ * while the rest of the build is fine. The previous 5 attempts / ~30s gave
+ * up inside those and took a random build lane with them.
+ *
+ * 408/429 are retried along with 5xx and network errors; the other 4xx are
+ * deterministic and fail immediately. Retry lines and the final error name
+ * the underlying failure (`describeError`), since `fetch` itself only says
+ * "fetch failed".
  *
  * ## Atomic writes
  *
@@ -37,7 +52,8 @@ import { basename, resolve } from "node:path";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import type { ReadableStream as NodeWebReadable } from "node:stream/web";
-import { BuildError, assert } from "./error.ts";
+import { BuildError, assert, describeError } from "./error.ts";
+import { formatElapsed } from "./tty.ts";
 
 // On Windows, prefer the OS-shipped bsdtar. Git-for-Windows / MSYS put GNU tar
 // earlier in PATH, and GNU tar parses `C:\...` as an rsh `host:path` spec
@@ -88,6 +104,22 @@ export function prefetchPathForUrl(url: string, dir = prefetchDir): string | und
 }
 
 /**
+ * If `prefetchDir/by-url/` holds `url`, copy it to `dest` and return true.
+ * Temp-then-rename, same as the network path: an interrupted copy must not
+ * leave a partial file claiming to be complete.
+ */
+async function tryPrefetchFile(url: string, dest: string): Promise<boolean> {
+  const prefetched = prefetchPathForUrl(url);
+  if (prefetched === undefined || !existsSync(prefetched)) return false;
+  console.log(`using prefetch cache: ${prefetched}`);
+  await mkdir(resolve(dest, ".."), { recursive: true });
+  const tmp = `${dest}.${process.pid}.partial`;
+  await copyFile(prefetched, tmp);
+  await rename(tmp, dest);
+  return true;
+}
+
+/**
  * If `prefetchDir/extracted/<basename(dest)>/<stampFile>` matches `expected`,
  * copy that tree to `dest` and return true. Used by fetchPrebuilt to
  * skip download+extract entirely when the image has the right version baked.
@@ -132,35 +164,46 @@ async function chmodRecursiveWritable(root: string): Promise<void> {
   for (const e of await readdir(root)) await chmodRecursiveWritable(resolve(root, e));
 }
 
+/** Retry schedule for one download. Sizing rationale: "Retry behavior" above. */
+export interface RetryPolicy {
+  /** Total tries, including the first. */
+  attempts: number;
+  /** Delay before try number `attempt` (2..attempts). */
+  backoffMs(attempt: number): number;
+}
+
+export const downloadRetry: RetryPolicy = {
+  attempts: 10,
+  backoffMs: attempt => Math.min(1000 * 2 ** (attempt - 1), 30_000),
+};
+
 /**
  * Download a URL to a file with retry. Atomic: temp file → rename on success.
  *
  * Checks `prefetchDir/by-url/` first — on a CI image with a warm prefetch
  * cache the network is never touched for matching URLs.
  *
- * @param logPrefix Shown in progress/retry messages: `[<logPrefix>] retry 2/5`
+ * @param logPrefix Unused: under ninja, stream.ts already prefixes every line
+ *   with the dep name.
+ * @param retry Tests pass a schedule with no backoff to drive the full
+ *   attempt count without sleeping through it.
  */
-export async function downloadWithRetry(url: string, dest: string, logPrefix: string): Promise<void> {
-  const prefetched = prefetchPathForUrl(url);
-  if (prefetched !== undefined && existsSync(prefetched)) {
-    console.log(`using prefetch cache: ${prefetched}`);
-    await mkdir(resolve(dest, ".."), { recursive: true });
-    // Same temp-then-rename atomicity as the network path below — an
-    // interrupted copy must not leave a partial file claiming to be complete.
-    const tmp = `${dest}.${process.pid}.partial`;
-    await copyFile(prefetched, tmp);
-    await rename(tmp, dest);
-    return;
-  }
+export async function downloadWithRetry(
+  url: string,
+  dest: string,
+  logPrefix: string,
+  retry: RetryPolicy = downloadRetry,
+): Promise<void> {
+  if (await tryPrefetchFile(url, dest)) return;
 
-  const maxAttempts = 5;
+  const maxAttempts = retry.attempts;
   let lastError: unknown;
   let permanent = false;
 
   for (let attempt = 1; attempt <= maxAttempts && !permanent; attempt++) {
     if (attempt > 1) {
-      const backoffMs = Math.min(1000 * Math.pow(2, attempt - 1), 30000);
-      console.log(`retry ${attempt}/${maxAttempts} in ${backoffMs}ms`);
+      const backoffMs = retry.backoffMs(attempt);
+      console.log(`retry ${attempt}/${maxAttempts} in ${backoffMs}ms (${describeError(lastError)})`);
       await new Promise(r => setTimeout(r, backoffMs));
     }
 
@@ -169,9 +212,10 @@ export async function downloadWithRetry(url: string, dest: string, logPrefix: st
       const res = await fetch(url, { headers: { "User-Agent": "bun-build-system" } });
       if (!res.ok || res.body === null) {
         lastError = new BuildError(`HTTP ${res.status} ${res.statusText} for ${url}`);
-        // 4xx is deterministic — a bad URL/missing artifact won't succeed on
-        // retry. Only loop on 5xx/network where the CDN may recover.
-        permanent = res.status >= 400 && res.status < 500;
+        // 4xx is deterministic (bad URL, missing artifact) and won't succeed
+        // on retry, except 408/429, which are the server asking for exactly
+        // that. Loop on those, 5xx, and network errors.
+        permanent = res.status >= 400 && res.status < 500 && res.status !== 408 && res.status !== 429;
         continue;
       }
 
@@ -198,6 +242,150 @@ export async function downloadWithRetry(url: string, dest: string, logPrefix: st
     cause: lastError,
     hint: "Check network connectivity, or place the file manually at the destination path",
   });
+}
+
+/** The tarball GitHub serves for a commit (or tag) of `repo`. */
+export function githubArchiveUrl(repo: string, commit: string): string {
+  return `https://github.com/${repo}/archive/${commit}.tar.gz`;
+}
+
+/**
+ * Cache/prefetch key for a source tree produced by `gitArchive()`. Shaped as a
+ * URL so it shares `by-url/` (and `prefetchPathForUrl`) with real downloads;
+ * nothing ever requests it over HTTP.
+ */
+export function gitArchiveUrl(repo: string, commit: string, sparse: string[]): string {
+  return `git+https://github.com/${repo}@${commit}?sparse=${sparse.join(",")}`;
+}
+
+/** Inverse of gitArchiveUrl; undefined for a plain download URL. */
+export function parseGitArchiveUrl(url: string): { repo: string; commit: string; sparse: string[] } | undefined {
+  const m = /^git\+https:\/\/github\.com\/([^@]+)@([^?]+)\?sparse=(.*)$/.exec(url);
+  if (m === null) return undefined;
+  return { repo: m[1]!, commit: m[2]!, sparse: m[3]!.split(",").filter(p => p.length > 0) };
+}
+
+/**
+ * Produce a `.tar.gz` shaped like a GitHub source archive (one top-level dir)
+ * from a shallow, blobless, sparse git fetch of `commit`: only the paths in
+ * `sparse` (git sparse-checkout non-cone patterns) are downloaded. This is the
+ * road for repositories GitHub refuses to serve `/archive/` tarballs for
+ * (WebKit: HTTP 422) — the same repositories where a build wants a few
+ * percent of the tree. GitHub serves any reachable commit by sha this way,
+ * branch tip or not.
+ *
+ * Same prefetch lookup, retry schedule and temp-then-rename discipline as
+ * `downloadWithRetry`. The tree is archived without `.git`, so what lands in
+ * vendor/ is indistinguishable from an extracted GitHub archive.
+ */
+export async function gitArchive(
+  repo: string,
+  commit: string,
+  sparse: string[],
+  dest: string,
+  retry: RetryPolicy = downloadRetry,
+): Promise<void> {
+  assert(sparse.length > 0, `gitArchive ${repo}: empty sparse set`);
+  if (await tryPrefetchFile(gitArchiveUrl(repo, commit, sparse), dest)) return;
+
+  const work = `${dest}.${process.pid}.git`;
+  const top = `${basename(repo)}-${commit}`;
+  const tree = resolve(work, top);
+  await rm(work, { recursive: true, force: true });
+  await mkdir(tree, { recursive: true });
+
+  // http.lowSpeed*: a transfer that moves under 1 KB/s for 60 s is a stalled
+  // connection — git aborts it with an error and the retry loop below takes
+  // over, instead of the build hanging on a dead socket.
+  const git = (args: string[], what: string, input?: string): { ok: boolean; stderr: string } => {
+    const result = spawnSync(
+      "git",
+      [
+        "-c",
+        "protocol.version=2",
+        "-c",
+        "advice.detachedHead=false",
+        "-c",
+        "http.lowSpeedLimit=1000",
+        "-c",
+        "http.lowSpeedTime=60",
+        ...args,
+      ],
+      {
+        cwd: tree,
+        input,
+        stdio: [input === undefined ? "ignore" : "pipe", "ignore", "pipe"],
+        encoding: "utf8",
+        env: { ...process.env, GIT_TERMINAL_PROMPT: "0" },
+      },
+    );
+    if (result.error) {
+      throw new BuildError(`Failed to spawn git ${what}`, { hint: "Is `git` in your PATH?", cause: result.error });
+    }
+    return { ok: result.status === 0, stderr: result.stderr };
+  };
+  const mustGit = (args: string[], what: string, input?: string): void => {
+    const { ok, stderr } = git(args, what, input);
+    if (!ok) throw new BuildError(`git ${what} failed in ${tree}:\n${stderr}`);
+  };
+
+  try {
+    // autocrlf/longpaths: a Windows host must produce the same bytes as a
+    // posix one (patches are authored against LF) and WebKit paths run deep.
+    mustGit(["init", "-q"], "init");
+    mustGit(["config", "core.autocrlf", "false"], "config");
+    mustGit(["config", "core.longpaths", "true"], "config");
+    mustGit(["remote", "add", "origin", `https://github.com/${repo}.git`], "remote add");
+    mustGit(["sparse-checkout", "set", "--no-cone", "--stdin"], "sparse-checkout", sparse.join("\n") + "\n");
+
+    // fetch brings the commit and its trees; checkout then asks origin for
+    // exactly the blobs the sparse set selects. Both touch the network, so
+    // both sit inside the retry loop; both are idempotent.
+    let lastError = "";
+    let done = false;
+    for (let attempt = 1; attempt <= retry.attempts && !done; attempt++) {
+      if (attempt > 1) {
+        const backoffMs = retry.backoffMs(attempt);
+        console.log(`retry ${attempt}/${retry.attempts} in ${backoffMs}ms (${lastError.trim().split("\n").pop()})`);
+        await new Promise(r => setTimeout(r, backoffMs));
+      }
+      const fetched = git(["fetch", "-q", "--depth=1", "--filter=blob:none", "--no-tags", "origin", commit], "fetch");
+      if (!fetched.ok) {
+        lastError = fetched.stderr;
+        // A ref the server doesn't have is a bad pin, not a network blip.
+        if (/couldn't find remote ref|not our ref|no such remote ref/i.test(lastError)) {
+          throw new BuildError(`git fetch: ${repo} has no commit ${commit}\n${lastError}`, {
+            hint: `Check the commit pinned in scripts/build/deps/ — it must be pushed to github.com/${repo}`,
+          });
+        }
+        continue;
+      }
+      const checkedOut = git(["checkout", "-q", "--detach", "FETCH_HEAD"], "checkout");
+      if (!checkedOut.ok) {
+        lastError = checkedOut.stderr;
+        continue;
+      }
+      done = true;
+    }
+    if (!done) {
+      throw new BuildError(`Failed to fetch ${repo}@${commit} after ${retry.attempts} attempts:\n${lastError}`, {
+        hint: "Check network connectivity to github.com",
+      });
+    }
+
+    await rm(resolve(tree, ".git"), { recursive: true, force: true });
+    const tmp = `${dest}.${process.pid}.partial`;
+    await mkdir(resolve(dest, ".."), { recursive: true });
+    const tarred = spawnSync(tarExe, ["-czf", tmp, "-C", work, top], {
+      stdio: ["ignore", "ignore", "pipe"],
+      encoding: "utf8",
+    });
+    if (tarred.error) throw new BuildError(`Failed to spawn tar`, { cause: tarred.error });
+    if (tarred.status !== 0) throw new BuildError(`tar failed (exit ${tarred.status}): ${tarred.stderr}`);
+    await rename(tmp, dest);
+  } finally {
+    await rm(work, { recursive: true, force: true }).catch(() => {});
+  }
 }
 
 /**
@@ -274,6 +462,36 @@ export async function extractZip(zipPath: string, dest: string): Promise<void> {
 }
 
 /**
+ * A missing prebuilt tarball is a bad pin, not a network blip. The
+ * `autobuild-preview-pr-*` WebKit tags are the sharp edge: GitHub deletes the
+ * preview release when the PR merges or closes, so every build 404s at once.
+ * Say so, and say which line to edit.
+ */
+function prebuiltDownloadError(name: string, url: string, cause: unknown): Error {
+  const message = cause instanceof Error ? cause.message : String(cause);
+  // 404 only: a 403/429 is GitHub rate-limiting us, not a deleted release.
+  const missing = message.includes("HTTP 404");
+  if (name === "WebKit" && missing && url.includes("/autobuild-preview-pr-")) {
+    return new BuildError(`WebKit preview release is gone: ${message}`, {
+      cause,
+      file: "scripts/build/deps/webkit.ts",
+      hint:
+        "WEBKIT_VERSION points at an `autobuild-preview-pr-*` tag. Those releases only exist " +
+        "while the WebKit PR is open — this one has merged, closed, or been re-tagged. Set " +
+        "WEBKIT_VERSION in scripts/build/deps/webkit.ts to the merged main sha (see " +
+        "https://github.com/oven-sh/WebKit/releases).",
+    });
+  }
+  if (missing) {
+    return new BuildError(`Prebuilt ${name} is not published at that URL: ${message}`, {
+      cause,
+      hint: `Check the version pin for '${name}' in scripts/build/deps/.`,
+    });
+  }
+  return cause instanceof Error ? cause : new BuildError(message);
+}
+
+/**
  * Fetch a prebuilt tarball: download + extract + write identity stamp.
  *
  * Generic mechanism for the `{ kind: "prebuilt" }` Source variant. Download a
@@ -314,6 +532,7 @@ export async function fetchPrebuilt(
   if (await tryPrefetchExtracted(dest, ".identity", identity)) return;
 
   console.log(`fetching ${url}`);
+  const started = performance.now();
 
   // Process-unique temp paths so concurrent builds (shared cacheDir across
   // checkouts) can't stomp each other's download/extraction.
@@ -323,7 +542,11 @@ export async function fetchPrebuilt(
   const destParent = resolve(dest, "..");
   await mkdir(destParent, { recursive: true });
   const tarballPath = `${dest}${suffix}.tar.gz`;
-  await downloadWithRetry(url, tarballPath, name);
+  try {
+    await downloadWithRetry(url, tarballPath, name);
+  } catch (err) {
+    throw prebuiltDownloadError(name, url, err);
+  }
 
   // ─── Extract ───
   // Extract to a private staging dir, then hoist. We don't extract directly
@@ -367,7 +590,7 @@ export async function fetchPrebuilt(
       throw err;
     }
 
-    console.log(`extracted to ${dest}`);
+    console.log(`extracted to ${dest} (${formatElapsed(performance.now() - started)})`);
   } finally {
     await rm(stagingDir, { recursive: true, force: true });
     await rm(tarballPath, { force: true });

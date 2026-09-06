@@ -6,6 +6,9 @@ name: FreeBSD smoke test
 #
 # Triggered manually with a BuildKite artifact URL.
 
+permissions:
+  contents: read
+
 on:
   workflow_dispatch:
     inputs:
@@ -23,8 +26,9 @@ jobs:
       matrix:
         version: ['14.3']
     steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          persist-credentials: false
           sparse-checkout: |
             test/js/bun
             test/harness.ts
@@ -45,7 +49,7 @@ jobs:
           file ./bin/bun
 
       - name: Run in FreeBSD VM
-        uses: vmactions/freebsd-vm@d1e65811565151536c0c894fff74f06351ed26e6 # v1
+        uses: vmactions/freebsd-vm@83b151f58c6047089f4c80eb5ba2039d158ce093 # v1
         with:
           release: ${{ matrix.version }}
           usesh: true

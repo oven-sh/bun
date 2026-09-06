@@ -7,6 +7,9 @@
 
 #include "JSDOMConstructorBase.h"
 #include "ErrorCode.h"
+#include "JSDOMWrapperCache.h"
+#include <JavaScriptCore/InternalFunction.h>
+#include <JavaScriptCore/ThrowScope.h>
 #include <JavaScriptCore/WriteBarrier.h>
 
 namespace WebCore {
@@ -62,5 +65,23 @@ private:
 
     JSC::WriteBarrier<JSC::Structure> m_instanceStructure;
 };
+
+// The shared `construct` slow path for a subclass/foreign newTarget. newTarget's realm may
+// be a non-Zig global (a node:vm context) with no DOM structure caches, so it must NOT be
+// downcast to JSDOMGlobalObject; fall back to the constructor's own realm's cached Structure.
+template<typename JSClass, Bun::ErrorCode errorCodeIfCalled>
+JSC::Structure* structureForNewTarget(JSC::VM& vm, JSStreamConstructor<JSClass, errorCodeIfCalled>* constructor, JSC::JSGlobalObject* lexicalGlobalObject, JSC::JSObject* newTarget)
+{
+    if (newTarget == constructor) [[likely]]
+        return constructor->instanceStructure();
+
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto* newTargetGlobalObject = JSC::getFunctionRealm(lexicalGlobalObject, newTarget);
+    RETURN_IF_EXCEPTION(scope, nullptr);
+    JSC::Structure* baseStructure = constructor->instanceStructure();
+    if (auto* domGlobalObject = dynamicDowncast<JSDOMGlobalObject>(newTargetGlobalObject)) [[likely]]
+        baseStructure = getDOMStructure<JSClass>(vm, *domGlobalObject);
+    RELEASE_AND_RETURN(scope, JSC::InternalFunction::createSubclassStructure(lexicalGlobalObject, newTarget, baseStructure));
+}
 
 } // namespace WebCore

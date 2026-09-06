@@ -1,6 +1,6 @@
 import { dlopen, FFIType } from "bun:ffi";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isMusl, isWindows } from "harness";
+import { bunEnv, bunExe, isMusl, isWindows, tempDir } from "harness";
 import fs from "node:fs";
 
 // Cross-platform Bun.Terminal + Bun.spawn integration tests that don't rely
@@ -22,6 +22,85 @@ describe("Bun.Terminal subprocess integration", () => {
     expect(terminal.write("hello")).toBe(5);
     expect(terminal.write("")).toBe(0);
     expect(terminal.write(new TextEncoder().encode("abc"))).toBe(3);
+  });
+
+  // The streaming writer buffers whatever it can't flush synchronously, so
+  // write() must report the full input as accepted. Before the fix it returned
+  // the synchronously-flushed count (~12-14KB on a PTY), and a caller that
+  // re-sent the "unwritten" tail duplicated stdin on the child. ConPTY injects
+  // escape sequences into the byte stream so exact counting is POSIX-only.
+  test.skipIf(isWindows)("write returns the full input length when the PTY buffer fills", async () => {
+    const N = 128 * 1024;
+    const childSrc = `
+      let buf = Buffer.alloc(0);
+      process.stdin.on("data", d => {
+        buf = Buffer.concat([buf, d]);
+        const idx = buf.indexOf(0);
+        if (idx >= 0) {
+          process.stdout.write("CHILD_READ " + idx + "\\n");
+          process.exit(0);
+        }
+      });
+      process.stdout.write("READY\\n");
+    `;
+
+    let output = "";
+    let drainCount = 0;
+    const ready = Promise.withResolvers<void>();
+    const done = Promise.withResolvers<string>();
+    const drained = Promise.withResolvers<void>();
+
+    const proc = Bun.spawn({
+      cmd: [bunExe(), "-e", childSrc],
+      env: bunEnv,
+      terminal: {
+        data(_t, chunk) {
+          output += new TextDecoder().decode(chunk);
+          if (output.includes("READY")) ready.resolve();
+          const m = output.match(/CHILD_READ (\d+)/);
+          if (m) done.resolve(m[1]);
+        },
+        drain() {
+          drainCount++;
+          drained.resolve();
+        },
+        exit() {
+          const err = new Error("terminal exit; output=" + JSON.stringify(output));
+          ready.reject(err);
+          done.reject(err);
+          drained.reject(err);
+        },
+      },
+    });
+    const terminal = proc.terminal!;
+    terminal.setRawMode(true);
+
+    await ready.promise;
+
+    // A single write that overflows the kernel PTY buffer: the writer accepts
+    // everything (buffering the tail), so the return must be the input length.
+    const payload = Buffer.alloc(N, 65);
+    const r1 = terminal.write(payload);
+    expect(r1).toBe(N);
+
+    // Second write while the first is still buffered: must also return its own
+    // input length (previously could include bytes drained from the first).
+    const r2 = terminal.write(Buffer.alloc(64, 66));
+    expect(r2).toBe(64);
+
+    // Terminator so the child can report without a timeout.
+    terminal.write(new Uint8Array([0]));
+
+    // Child must receive exactly N + 64 bytes before the terminator.
+    const childRead = Number(await done.promise);
+    expect(childRead).toBe(N + 64);
+
+    // Buffered data was drained to reach the child, so drain must have fired.
+    await drained.promise;
+    expect(drainCount).toBeGreaterThan(0);
+
+    await proc.exited;
+    terminal.close();
   });
 
   test("resize succeeds", async () => {
@@ -435,6 +514,101 @@ describe("Bun.Terminal subprocess integration", () => {
     const exitCode = await proc.exited;
     expect(terminal.localFlags & ICANON).not.toBe(0);
     expect(terminal.localFlags & ECHO).not.toBe(0);
+    expect(exitCode).toBe(0);
+  });
+
+  // Regression test for a Windows-only use-after-free: cancelling a stdin
+  // stream while a cooked-mode console read was parked used to free the
+  // reader's buffer immediately (finish() shrink / Drop). libuv's line reads
+  // block a worker thread in ReadConsoleW and convert the result into the
+  // alloc_cb buffer from that thread; uv_read_stop cancels asynchronously by
+  // injecting a VK_RETURN, so the worker still wrote "\r\n" through the
+  // stale pointer, corrupting whatever mimalloc handed the freed 8 KiB
+  // block to next (a plausible mechanism for production reports of full-GC
+  // crashes on clobbered ArrayBuffers). Fixed by serving tty reads from the
+  // handle-owned uv::Tty::read_scratch. The child adopts the
+  // previously-freed size class with ArrayBuffer probes and reports any
+  // mutation.
+  test.skipIf(!isWindows)("cancelling a parked console stdin read does not corrupt the heap", async () => {
+    using dir = tempDir("conpty-stdin-read-cancel", {
+      "child-fixture.ts": `
+        const reader = Bun.stdin.stream().getReader();
+        // Warm-up round-trip: arm a cooked-mode console line read and await
+        // the line the parent writes once it sees CHILD-READY. Resolving
+        // proves the whole line-read machinery (libuv worker thread
+        // included) works end to end before cancellation is tested.
+        const warmup = reader.read();
+        console.log("CHILD-READY");
+        await warmup;
+        // Arm the read under test; no more input arrives, so the libuv
+        // worker parks in ReadConsoleW holding the read buffer (pre-fix:
+        // the reader's spare capacity; post-fix: the tty-owned scratch).
+        reader.read().catch(() => {});
+        // The park itself is unobservable from JS; there is no condition to
+        // await. With the machinery proven warm above, a short delay makes
+        // it overwhelmingly likely the worker is inside ReadConsoleW. If it
+        // is not yet, cancellation traps the read before any write and the
+        // run is vacuous rather than wrong.
+        await Bun.sleep(150);
+        await reader.cancel();
+        // Immediately adopt the 8 KiB block the buggy teardown just freed;
+        // mimalloc serves freshly freed blocks of a size class first.
+        const probes: Uint8Array[] = [];
+        for (let i = 0; i < 32; i++) {
+          const probe = new Uint8Array(new ArrayBuffer(8192));
+          probe.fill(0xaa);
+          probes.push(probe);
+        }
+        // Bounded window for the cancelled console read's late write to land.
+        const deadline = Date.now() + 600;
+        let corrupted = false;
+        while (Date.now() < deadline && !corrupted) {
+          for (const probe of probes) {
+            for (let i = 0; i < 64; i++) {
+              if (probe[i] !== 0xaa) corrupted = true;
+            }
+          }
+          Bun.gc(true);
+          await Bun.sleep(20);
+        }
+        console.log(corrupted ? "PROBE-CORRUPTED" : "PROBE-CLEAN");
+        process.exit(corrupted ? 42 : 0);
+      `,
+    });
+
+    const ready = Promise.withResolvers<void>();
+    const probeReported = Promise.withResolvers<void>();
+    const decoder = new TextDecoder();
+    let output = "";
+    await using terminal = new Bun.Terminal({
+      data(_, chunk: Uint8Array) {
+        output += decoder.decode(chunk, { stream: true });
+        if (output.includes("CHILD-READY")) ready.resolve();
+        if (output.includes("PROBE-")) probeReported.resolve();
+      },
+    });
+
+    const proc = Bun.spawn({
+      cmd: [bunExe(), "child-fixture.ts"],
+      env: bunEnv,
+      cwd: String(dir),
+      terminal,
+    });
+    // Fail fast with the child's output if it dies before the handshake.
+    proc.exited.then(code => ready.reject(new Error(`child exited before handshake: ${code}\n${output}`)));
+
+    await ready.promise;
+    terminal.write("warmup\r");
+
+    const exitCode = await proc.exited;
+    // The exit IOCP and the final ConPTY pipe-data IOCP are independent, so
+    // the verdict line can arrive after proc.exited resolves. The child
+    // prints PROBE-* before exit(0)/exit(42) on both paths, so the marker is
+    // guaranteed to arrive for those codes; on any other exit (crash) the
+    // marker may never come, so don't wait for it.
+    if (exitCode === 0 || exitCode === 42) await probeReported.promise;
+    expect(output).toContain("PROBE-CLEAN");
+    expect(output).not.toContain("PROBE-CORRUPTED");
     expect(exitCode).toBe(0);
   });
 });

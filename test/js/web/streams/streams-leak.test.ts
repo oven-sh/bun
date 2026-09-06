@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { isASAN, isWindows } from "harness";
+import { bunEnv, bunExe, isASAN, isWindows, rss, tempDir } from "harness";
 
 test("native ReadableStream reuses the pull buffer across small reads", async () => {
   // #getInternalBuffer used to rotate to a fresh autoAllocateChunkSize
@@ -60,18 +60,55 @@ test("native ReadableStream reuses the pull buffer across small reads", async ()
   // through the native pull path.
   expect(chunks.length).toBeGreaterThanOrEqual(CHUNKS_TO_WRITE);
 
-  // Consecutive small reads should land in the same backing buffer (the
-  // tail subarray is reused until a read fills it). 128 bytes of 2-byte
-  // chunks fits well inside one 256KB buffer, so the whole stream should
-  // share a handful at most. Pre-fix every chunk had its own 256KB
-  // buffer, so this was ~chunks.length.
+  // A small read is copied out right-sized and the pull slab is reused for
+  // the next read, so each chunk's backing store is its own few bytes rather
+  // than a 256KB slab per chunk (~chunks.length * 256KB ≈ 16 MB before).
   const distinctBuffers = new Set(chunks.map(c => c.buffer));
-  expect(distinctBuffers.size).toBeLessThan(8);
-
   let backingBytes = 0;
   for (const buf of distinctBuffers) backingBytes += buf.byteLength;
-  // Pre-fix this was ~chunks.length * 256KB ≈ 16 MB.
-  expect(backingBytes).toBeLessThan(4 * 1024 * 1024);
+  expect(backingBytes).toBeLessThan(64 * 1024);
+});
+
+// Abandoning a Bun.file().stream() reader mid-file (no cancel(), no EOF) must
+// not leak the fd once the ReadableStream is collected. Previously on_start()
+// took a Strong on its own JS wrapper for every lazy-opened file and only
+// released it at EOF/error, so an abandoned reader's wrapper was a GC root
+// forever and its finalizer (which closes the fd) never ran.
+test.skipIf(isWindows)("abandoned Bun.file().stream() reader does not leak its fd after GC", async () => {
+  using dir = tempDir("file-stream-fd-leak", {
+    "big.bin": Buffer.alloc(1 << 20, 7),
+  });
+  const script = `
+    import fs from "node:fs";
+    const p = process.env.BIG_BIN;
+    const fdc = () => fs.readdirSync(process.platform === "darwin" ? "/dev/fd" : "/proc/self/fd").length;
+    const shapes = {
+      getReader: async () => { Bun.file(p).stream().getReader(); },
+      read: async () => { const r = Bun.file(p).stream().getReader(); await r.read(); },
+      releaseLock: async () => { const r = Bun.file(p).stream().getReader(); await r.read(); r.releaseLock(); },
+      response: async () => { const r = new Response(Bun.file(p)).body.getReader(); await r.read(); },
+    };
+    const f0 = fdc();
+    for (const fn of Object.values(shapes)) {
+      for (let i = 0; i < 30; i++) await fn();
+    }
+    for (let r = 0; r < 30; r++) { Bun.gc(true); await new Promise(x => setImmediate(x)); }
+    const fend = fdc();
+    process.stdout.write(JSON.stringify({ f0, fend }));
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", script],
+    env: { ...bunEnv, BIG_BIN: `${dir}/big.bin` },
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  const { f0, fend } = JSON.parse(stdout);
+  // 120 readers were acquired (4 shapes x 30 each); before the fix ~120 fds
+  // stayed open even after a full-GC storm. Allow a small slack for any GC
+  // nondeterminism, but require the vast majority to have been reclaimed.
+  expect(fend).toBeLessThan(f0 + 20);
+  expect(exitCode).toBe(0);
 });
 
 const BYTES_TO_WRITE = 500_000;
@@ -112,19 +149,19 @@ test.skipIf(isWindows)(
       await readAndWrite(BYTES_TO_WRITE);
     }
     Bun.gc(true);
-    const before = process.memoryUsage.rss();
+    const before = rss();
 
     for (let i = 0; i < rounds; i++) {
       await readAndWrite();
     }
     Bun.gc(true);
-    const after = process.memoryUsage.rss();
+    const after = rss();
 
     for (let i = 0; i < rounds; i++) {
       await readAndWrite();
     }
     Bun.gc(true);
-    const after2 = process.memoryUsage.rss();
+    const after2 = rss();
     console.log({ after, after2 });
     console.log(require("bun:jsc").heapStats());
     console.log("RSS delta", ((after - before) | 0) / 1024 / 1024);

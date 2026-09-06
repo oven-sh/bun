@@ -2,7 +2,7 @@ use core::ffi::c_void;
 
 use crate::host_fn::to_js_host_call;
 use crate::js_promise::{Status, UnwrapMode, Unwrapped};
-use crate::{JSGlobalObject, JSInternalPromise, JSPromise, JSValue, JsResult, JsTerminated, VM};
+use crate::{JSGlobalObject, JSInternalPromise, JSPromise, JSValue, JsResult, VM};
 
 /// `jsc.AnyPromise` — `JSPromise | JSInternalPromise`.
 ///
@@ -53,23 +53,18 @@ impl AnyPromise {
     }
 
     #[inline]
-    pub fn is_handled(self) -> bool {
-        any_promise_dispatch!(self, |p| p.is_handled())
-    }
-
-    #[inline]
     pub fn set_handled(self, vm: &VM) {
         let _ = vm;
         any_promise_dispatch!(self, |p| p.set_handled())
     }
 
     #[inline]
-    pub fn resolve(self, global_this: &JSGlobalObject, value: JSValue) -> Result<(), JsTerminated> {
+    pub fn resolve(self, global_this: &JSGlobalObject, value: JSValue) -> JsResult<()> {
         any_promise_dispatch!(self, |p| p.resolve(global_this, value))
     }
 
     #[inline]
-    pub fn reject(self, global_this: &JSGlobalObject, value: JSValue) -> Result<(), JsTerminated> {
+    pub fn reject(self, global_this: &JSGlobalObject, value: JSValue) -> JsResult<()> {
         any_promise_dispatch!(self, |p| p.reject(global_this, Ok(value)))
     }
 
@@ -82,7 +77,7 @@ impl AnyPromise {
         self,
         global_this: &JSGlobalObject,
         value: JSValue,
-    ) -> Result<(), JsTerminated> {
+    ) -> JsResult<()> {
         value.attach_async_stack_from_promise(
             global_this,
             JSPromise::opaque_ref(self.as_js_promise()),
@@ -93,22 +88,13 @@ impl AnyPromise {
     /// JSInternalPromise subclasses JSPromise in C++ — this cast is safe for
     /// any C++ function taking JSPromise*.
     #[inline]
-    pub fn as_js_promise(self) -> *mut JSPromise {
+    pub(crate) fn as_js_promise(self) -> *mut JSPromise {
         match self {
             Self::Normal(p) => p,
             // SAFETY: JSInternalPromise subclasses JSPromise in C++; the
             // pointer reinterpretation is valid for any C++ API taking JSPromise*.
             Self::Internal(p) => p.cast::<JSPromise>(),
         }
-    }
-
-    #[inline]
-    pub fn reject_as_handled(
-        self,
-        global_this: &JSGlobalObject,
-        value: JSValue,
-    ) -> Result<(), JsTerminated> {
-        any_promise_dispatch!(self, |p| p.reject_as_handled(global_this, value))
     }
 
     #[inline]
@@ -124,7 +110,7 @@ impl AnyPromise {
     /// into a rejection of this existing promise; otherwise resolve with the
     /// result. The C++ side (`JSC__AnyPromise__wrap`, bindings.cpp) owns the
     /// resolve/reject decision.
-    pub fn wrap<F>(self, global_object: &JSGlobalObject, f: F) -> Result<(), JsTerminated>
+    pub fn wrap<F>(self, global_object: &JSGlobalObject, f: F) -> JsResult<()>
     where
         F: FnOnce(&JSGlobalObject) -> JsResult<JSValue>,
     {
@@ -158,11 +144,9 @@ impl AnyPromise {
             (&raw mut ctx).cast::<c_void>(),
             call::<F>,
         );
-        // C++ converts any thrown exception into a rejection, so a pending non-termination
-        // exception here indicates a bug; surface termination as JsTerminated.
-        scope
-            .assert_no_exception_except_termination()
-            .map_err(|_| JsTerminated::JSTerminated)
+        // C++ converts any thrown exception into a rejection, so the only exception that can be
+        // pending here is the termination; it stays pending and unwinds.
+        scope.assert_no_exception_except_termination()
     }
 }
 

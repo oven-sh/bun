@@ -51,9 +51,11 @@ test("non-transferable", () => {
   expect(() => {
     channel.port1.postMessage("hello", [channel.port1]);
   }).toThrow();
+  // node: posting the source port's own entangled peer targets the message at
+  // itself, which warns and loses the channel rather than throwing.
   expect(() => {
     channel.port1.postMessage("hello", [channel.port2]);
-  }).toThrow();
+  }).not.toThrow();
 });
 
 test("transfer message ports and post messages", done => {
@@ -138,9 +140,15 @@ test("many message channels", done => {
   expect(() => {
     channel.port1.postMessage("same port", [channel.port1]);
   }).toThrow();
-  expect(() => {
-    channel.port1.postMessage("entangled port", [channel.port2]);
-  }).toThrow();
+  // node: posting the entangled peer warns and loses the channel, not a throw.
+  // Use a dedicated channel: the post closes its source port, which would break
+  // the "done" delivery on the shared channel below.
+  {
+    const peerChannel = new MessageChannel();
+    expect(() => {
+      peerChannel.port1.postMessage("entangled port", [peerChannel.port2]);
+    }).not.toThrow();
+  }
   expect(() => {
     // @ts-ignore
     channel.port1.postMessage("null port", [channel3.port1, null, channel3.port2]);
@@ -322,4 +330,130 @@ test("cloneable and non-transferable equals (net.BlockList)", async () => {
   };
   mc.port2.postMessage(blocklist);
   await promise;
+});
+
+// close() sets m_isDetached and then queues the 'close' event as a task. While that
+// task is pending, hasPendingActivity() must keep the JS wrapper alive: otherwise a
+// GC in that window severs the JSEventListener weak and the dispatch hits a dead
+// wrapper (debug: ASSERTION FAILED: m_wrapper).
+test("a pending close event survives GC after the port becomes unreachable", async () => {
+  let fired = 0;
+  for (let i = 0; i < 50; i++) {
+    (() => {
+      const { port1, port2 } = new MessageChannel();
+      port1.addEventListener("close", () => fired++);
+      port1.close();
+      port2.close();
+    })();
+    if (i % 10 === 0) Bun.gc(true);
+  }
+  Bun.gc(true);
+  for (let i = 0; i < 4; i++) await new Promise(r => setImmediate(r));
+  expect(fired).toBe(50);
+});
+
+// The peer's notifyPeerClosed() task only holds a weak ref back to this port, so a
+// port whose only listener is 'close' must survive GC until the event is delivered.
+test("a close event from the peer survives GC of the unreachable port", async () => {
+  let fired = 0;
+  const peers: MessagePort[] = [];
+  for (let i = 0; i < 20; i++) {
+    (() => {
+      const { port1, port2 } = new MessageChannel();
+      port1.addEventListener("close", () => fired++);
+      peers.push(port2); // keep only the peer reachable
+    })();
+  }
+  Bun.gc(true);
+  Bun.gc(true);
+  for (const p of peers) p.close();
+  for (let i = 0; i < 4; i++) await new Promise(r => setImmediate(r));
+  expect(fired).toBe(20);
+});
+
+// A 'close'-listener-only pair pins both ports until the context dies (same as Node,
+// which never collects an entangled port). Bound the retention: explicitly-closed pairs
+// must still be swept, so a regression that leaks closed ports too would show as growth.
+test("explicitly-closed close-listener ports are collected; open ones are pinned like Node", async () => {
+  const { heapStats } = require("bun:jsc");
+  const count = () => heapStats().objectTypeCounts.MessagePort ?? 0;
+  for (let i = 0; i < 4; i++) await new Promise(r => setImmediate(r));
+  Bun.gc(true);
+  const base = count();
+  (() => {
+    for (let i = 0; i < 20; i++) {
+      const { port1, port2 } = new MessageChannel();
+      port1.addEventListener("close", () => {});
+      port2.addEventListener("close", () => {});
+      port1.close();
+      port2.close();
+    }
+  })();
+  for (let i = 0; i < 4; i++) await new Promise(r => setImmediate(r));
+  Bun.gc(true);
+  Bun.gc(true);
+  // All 20 closed pairs must be swept (allow small slack for GC nondeterminism).
+  expect(count() - base).toBeLessThanOrEqual(4);
+  // Re-baseline: ports left over from earlier tests may be in `base` but get swept by the
+  // GCs above (a conservative stack scan kept them past the first GC). Measuring the
+  // still-open pairs against `base` then undercounts by that many.
+  const afterClosed = count();
+  (() => {
+    for (let i = 0; i < 20; i++) {
+      const { port1, port2 } = new MessageChannel();
+      port1.addEventListener("close", () => {});
+      port2.addEventListener("close", () => {});
+    }
+  })();
+  Bun.gc(true);
+  Bun.gc(true);
+  // Node parity: still-open close-listener pairs survive GC (>= 40 ports pinned).
+  expect(count() - afterClosed).toBeGreaterThanOrEqual(40);
+});
+
+// registerCloseContext()'s retroactive peer-Closed check posts a peerClosed task before
+// attach()'s drain when on('close') precedes on('message'); peerClosed() must still flush
+// the queued messages first so 'close' stays terminal.
+test("on('close') before on('message') still delivers queued messages before 'close'", async () => {
+  require("worker_threads"); // installs .on/.off on MessagePort
+  const { port1, port2 } = new MessageChannel();
+  port2.postMessage("m1");
+  port2.postMessage("m2");
+  port2.close();
+  const order: string[] = [];
+  const done = Promise.withResolvers<void>();
+  port1.on("close", () => {
+    order.push("close");
+    done.resolve();
+  });
+  port1.on("message", (m: string) => order.push(m));
+  await done.promise;
+  expect(order).toEqual(["m1", "m2", "close"]);
+});
+
+// A 'message' handler running inside peerClosed()'s flush can transfer this port; the
+// remaining inbox belongs to the new owner and must not be popped-and-dropped by the
+// stale port. flushQueuedMessagesBeforeClose() breaks on m_isDetached to guard this.
+test("transferring a port from inside peerClosed()'s flush preserves the remaining inbox", async () => {
+  require("worker_threads");
+  const { port1, port2 } = new MessageChannel();
+  const carrier = new MessageChannel();
+  port2.postMessage("m1");
+  port2.postMessage("m2");
+  port2.postMessage("m3");
+  port2.close();
+  const seen: string[] = [];
+  const done = Promise.withResolvers<void>();
+  carrier.port2.on("message", (received: MessagePort) => {
+    received.on("message", (m: string) => seen.push("new:" + m));
+    received.on("close", () => done.resolve());
+  });
+  port1.on("close", () => {});
+  port1.on("message", (m: string) => {
+    seen.push("old:" + m);
+    if (m === "m1") carrier.port1.postMessage(port1, [port1]);
+  });
+  await done.promise;
+  // m1 delivered to the old owner; m2/m3 buffered for the new owner.
+  expect(seen).toEqual(["old:m1", "new:m2", "new:m3"]);
 });

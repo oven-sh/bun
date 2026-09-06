@@ -24,13 +24,14 @@ describe("leaks", () => {
       await run(
         String(dir),
         /* ts */ `
+        const rss = process.platform === "darwin" && typeof Bun.unsafe.memoryFootprint === "function" ? Bun.unsafe.memoryFootprint : process.memoryUsage.rss;
         const glob = new Bun.Glob("**/*");
         for (let i = 0; i < 1000; i++) Array.from(glob.scanSync());
         Bun.gc(true);
-        const before = process.memoryUsage.rss();
+        const before = rss();
         for (let i = 0; i < 100000; i++) Array.from(glob.scanSync());
         Bun.gc(true);
-        const growthMB = (process.memoryUsage.rss() - before) / 1024 / 1024;
+        const growthMB = (rss() - before) / 1024 / 1024;
         if (growthMB > ${thresholdMB}) throw new Error("leaked " + growthMB.toFixed(2) + "MB");
       `,
       );
@@ -45,13 +46,14 @@ describe("leaks", () => {
       await run(
         String(dir),
         /* ts */ `
+        const rss = process.platform === "darwin" && typeof Bun.unsafe.memoryFootprint === "function" ? Bun.unsafe.memoryFootprint : process.memoryUsage.rss;
         const glob = new Bun.Glob("**/*");
         for (let i = 0; i < 1000; i++) await Array.fromAsync(glob.scan());
         Bun.gc(true);
-        const before = process.memoryUsage.rss();
+        const before = rss();
         for (let i = 0; i < 100000; i++) await Array.fromAsync(glob.scan());
         Bun.gc(true);
-        const growthMB = (process.memoryUsage.rss() - before) / 1024 / 1024;
+        const growthMB = (rss() - before) / 1024 / 1024;
         if (growthMB > ${thresholdMB}) throw new Error("leaked " + growthMB.toFixed(2) + "MB");
       `,
       );
@@ -66,13 +68,14 @@ describe("leaks", () => {
       await run(
         String(dir),
         /* ts */ `
+        const rss = process.platform === "darwin" && typeof Bun.unsafe.memoryFootprint === "function" ? Bun.unsafe.memoryFootprint : process.memoryUsage.rss;
         const glob = new Bun.Glob("*.txt");
         for (let i = 0; i < 1000; i++) Array.from(glob.scanSync());
         Bun.gc(true);
-        const before = process.memoryUsage.rss();
+        const before = rss();
         for (let i = 0; i < 100000; i++) Array.from(glob.scanSync());
         Bun.gc(true);
-        const growthMB = (process.memoryUsage.rss() - before) / 1024 / 1024;
+        const growthMB = (rss() - before) / 1024 / 1024;
         if (growthMB > ${thresholdMB}) throw new Error("leaked " + growthMB.toFixed(2) + "MB");
       `,
       );
@@ -87,13 +90,14 @@ describe("leaks", () => {
       await run(
         String(dir),
         /* ts */ `
+        const rss = process.platform === "darwin" && typeof Bun.unsafe.memoryFootprint === "function" ? Bun.unsafe.memoryFootprint : process.memoryUsage.rss;
         const glob = new Bun.Glob("*.txt");
         for (let i = 0; i < 1000; i++) await Array.fromAsync(glob.scan());
         Bun.gc(true);
-        const before = process.memoryUsage.rss();
+        const before = rss();
         for (let i = 0; i < 100000; i++) await Array.fromAsync(glob.scan());
         Bun.gc(true);
-        const growthMB = (process.memoryUsage.rss() - before) / 1024 / 1024;
+        const growthMB = (rss() - before) / 1024 / 1024;
         if (growthMB > ${thresholdMB}) throw new Error("leaked " + growthMB.toFixed(2) + "MB");
       `,
       );

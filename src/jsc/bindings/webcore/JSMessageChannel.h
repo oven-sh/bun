@@ -22,7 +22,6 @@
 
 #include "JSDOMWrapper.h"
 #include "MessageChannel.h"
-#include <wtf/NeverDestroyed.h>
 
 namespace WebCore {
 
@@ -45,7 +44,7 @@ public:
 
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
     {
-        return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info(), JSC::NonArray);
+        return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info(), JSC::NonArray);
     }
 
     static JSC::JSValue getConstructor(JSC::VM&, const JSC::JSGlobalObject*);
@@ -67,23 +66,6 @@ protected:
 
     DECLARE_DEFAULT_FINISH_CREATION;
 };
-
-class JSMessageChannelOwner final : public JSC::WeakHandleOwner {
-public:
-    bool isReachableFromOpaqueRoots(JSC::Handle<JSC::Unknown>, void* context, JSC::AbstractSlotVisitor&, ASCIILiteral*) final;
-    void finalize(JSC::Handle<JSC::Unknown>, void* context) final;
-};
-
-inline JSC::WeakHandleOwner* wrapperOwner(DOMWrapperWorld&, MessageChannel*)
-{
-    static NeverDestroyed<JSMessageChannelOwner> owner;
-    return &owner.get();
-}
-
-inline void* wrapperKey(MessageChannel* wrappableObject)
-{
-    return wrappableObject;
-}
 
 JSC::JSValue toJS(JSC::JSGlobalObject*, JSDOMGlobalObject*, MessageChannel&);
 inline JSC::JSValue toJS(JSC::JSGlobalObject* lexicalGlobalObject, JSDOMGlobalObject* globalObject, MessageChannel* impl) { return impl ? toJS(lexicalGlobalObject, globalObject, *impl) : JSC::jsNull(); }

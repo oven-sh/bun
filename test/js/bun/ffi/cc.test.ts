@@ -1,16 +1,22 @@
 import { cc, CString, JSCallback, ptr, type FFIFunction, type Library } from "bun:ffi";
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
-import { promises as fs } from "fs";
-import { bunEnv, bunExe, isArm64, isASAN, isWindows, normalizeBunSnapshot, tempDir, tempDirWithFiles } from "harness";
+import {
+  chmodSync,
+  existsSync,
+  promises as fs,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  symlinkSync,
+  writeFileSync,
+} from "fs";
+import { bunEnv, bunExe, isASAN, isWindows, normalizeBunSnapshot, tempDir, tempDirWithFiles } from "harness";
 import path from "path";
-
-// TinyCC (and all of bun:ffi) is disabled on Windows ARM64
-const isFFIUnavailable = isWindows && isArm64;
 
 // TODO: we need to install build-essential and Apple SDK in CI.
 // It can't find includes. It can on machines with that enabled.
 // TinyCC's setjmp/longjmp error handling conflicts with ASan.
-it.todoIf(isWindows || isASAN || isFFIUnavailable)("can run a .c file", () => {
+it.todoIf(isWindows || isASAN)("can run a .c file", () => {
   const result = Bun.spawnSync({
     cmd: [bunExe(), path.join(__dirname, "cc-fixture.js")],
     cwd: __dirname,
@@ -22,8 +28,7 @@ it.todoIf(isWindows || isASAN || isFFIUnavailable)("can run a .c file", () => {
 });
 
 // TinyCC's setjmp/longjmp error handling conflicts with ASan.
-// TinyCC is disabled on Windows ARM64.
-describe.skipIf(isASAN || isFFIUnavailable)("given an add(a, b) function", () => {
+describe.skipIf(isASAN)("given an add(a, b) function", () => {
   const source = /* c */ `
       int add(int a, int b) {
         return a + b;
@@ -391,7 +396,7 @@ describe.skipIf(isWindows || isASAN)("threadsafe JSCallback invoked from a forei
 // Pins GC liveness: compiled trampolines survive the library wrapper being
 // collected, and a JSCallback's closure stays alive until close().
 // TinyCC's setjmp/longjmp error handling conflicts with ASan.
-describe.skipIf(isASAN || isFFIUnavailable)("GC liveness of compiled symbols and callbacks", () => {
+describe.skipIf(isASAN)("GC liveness of compiled symbols and callbacks", () => {
   it("keeps symbol functions and callback closures alive across forced GC", async () => {
     using dir = tempDir("bun-ffi-cc-gc-liveness", {
       "lib.c": /* c */ `
@@ -457,7 +462,192 @@ describe.skipIf(isASAN || isFFIUnavailable)("GC liveness of compiled symbols and
   });
 });
 
-describe.skipIf(isFFIUnavailable)("double <-> JSValue conversions", () => {
+// va_arg on x86_64 SysV lowers to a call to __va_arg, which TinyCC expects
+// libtcc1 to provide; Bun replaces libtcc1 with src/runtime/ffi/libtcc1.c.
+// TinyCC's setjmp/longjmp error handling conflicts with ASan.
+describe.skipIf(isASAN)("variadic functions inside cc()-compiled C", () => {
+  it("va_arg over ints, doubles, and the stack overflow area", async () => {
+    using dir = tempDir("bun-ffi-cc-varargs", {
+      "varargs.c": /* c */ `
+        #include <stdarg.h>
+
+        static long long sum_ints(int count, ...) {
+          va_list ap;
+          va_start(ap, count);
+          long long total = 0;
+          for (int i = 0; i < count; i++) total += va_arg(ap, int);
+          va_end(ap);
+          return total;
+        }
+
+        static double sum_doubles(int count, ...) {
+          va_list ap;
+          va_start(ap, count);
+          double total = 0;
+          for (int i = 0; i < count; i++) total += va_arg(ap, double);
+          va_end(ap);
+          return total;
+        }
+
+        /* alternating int/double reads from one va_list: gp_offset and
+           fp_offset must advance independently */
+        static double sum_pairs(int count, ...) {
+          va_list ap;
+          va_start(ap, count);
+          double total = 0;
+          for (int i = 0; i < count; i++) {
+            total += va_arg(ap, int);
+            total += va_arg(ap, double);
+          }
+          va_end(ap);
+          return total;
+        }
+
+        /* a 16-byte all-double struct occupies two SSE register save slots */
+        struct dd { double a, b; };
+        static double sum_dd(int count, ...) {
+          va_list ap;
+          va_start(ap, count);
+          double total = 0;
+          for (int i = 0; i < count; i++) {
+            struct dd v = va_arg(ap, struct dd);
+            total += v.a + v.b;
+          }
+          va_end(ap);
+          return total;
+        }
+
+        /* 10 ints: exhausts the 6 integer registers and spills to the stack. */
+        long long ten_ints(void) { return sum_ints(10, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10); }
+        /* 10 doubles: exhausts the 8 SSE registers and spills to the stack. */
+        double ten_doubles(void) { return sum_doubles(10, 0.5, 1.5, 2.5, 3.5, 4.5, 5.5, 6.5, 7.5, 8.5, 9.5); }
+        double interleaved(void) { return sum_pairs(9, 1,0.5, 2,0.5, 3,0.5, 4,0.5, 5,0.5, 6,0.5, 7,0.5, 8,0.5, 9,0.5); }
+        double double_pairs(void) {
+          struct dd x = { 1.5, 2.5 }, y = { 3.0, 4.0 };
+          return sum_dd(2, x, y);
+        }
+      `,
+      "fixture.js": /* js */ `
+        import { cc } from "bun:ffi";
+        import path from "path";
+
+        const { symbols } = cc({
+          source: path.join(import.meta.dir, "varargs.c"),
+          symbols: {
+            ten_ints: { args: [], returns: "i64" },
+            ten_doubles: { args: [], returns: "f64" },
+            interleaved: { args: [], returns: "f64" },
+            double_pairs: { args: [], returns: "f64" },
+          },
+        });
+        console.log(
+          JSON.stringify({
+            ten_ints: Number(symbols.ten_ints()),
+            ten_doubles: symbols.ten_doubles(),
+            interleaved: symbols.interleaved(),
+            double_pairs: symbols.double_pairs(),
+          }),
+        );
+      `,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "fixture.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    // stderr is included in the received object so failures show it, but is not
+    // asserted empty: debug builds emit benign startup warnings.
+    const results = stdout.startsWith("{") ? JSON.parse(stdout) : stdout;
+    expect({ results, stderr, exitCode }).toMatchObject({
+      results: {
+        ten_ints: 55,
+        ten_doubles: 50,
+        interleaved: 49.5,
+        double_pairs: 11,
+      },
+      exitCode: 0,
+    });
+  });
+});
+
+// long double is 16 bytes on x86_64 and always va_arg'd through the stack; on
+// aarch64 it is binary128 and its arithmetic needs soft-float helpers
+// (__addtf3, ...) that Bun's TCC states do not provide, so x64 only.
+describe.skipIf(isASAN || process.arch !== "x64")("long double varargs inside cc()-compiled C", () => {
+  it("va_arg over long double", async () => {
+    using dir = tempDir("bun-ffi-cc-varargs-ld", {
+      "ld.c": /* c */ `
+        #include <stdarg.h>
+
+        static double sum_long_doubles(int count, ...) {
+          va_list ap;
+          va_start(ap, count);
+          long double total = 0;
+          for (int i = 0; i < count; i++) total += va_arg(ap, long double);
+          va_end(ap);
+          return (double)total;
+        }
+
+        double long_doubles(void) { return sum_long_doubles(3, 1.5L, 2.25L, 3.25L); }
+      `,
+      "fixture.js": /* js */ `
+        import { cc } from "bun:ffi";
+        import path from "path";
+
+        const { symbols } = cc({
+          source: path.join(import.meta.dir, "ld.c"),
+          symbols: { long_doubles: { args: [], returns: "f64" } },
+        });
+        console.log(JSON.stringify({ long_doubles: symbols.long_doubles() }));
+      `,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "fixture.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    const results = stdout.startsWith("{") ? JSON.parse(stdout) : stdout;
+    expect({ results, stderr, exitCode }).toMatchObject({
+      results: { long_doubles: 7 },
+      exitCode: 0,
+    });
+  });
+});
+
+// TinyCC emits Local-Exec TLS, which has no PT_TLS segment to target under
+// in-memory relocation and would alias the host's own thread block; it must be
+// rejected up front instead of silently corrupting Bun's thread-locals.
+describe.skipIf(isASAN)("thread-local storage inside cc()-compiled C", () => {
+  it.each([
+    ["_Thread_local", " = 0"],
+    ["__thread", " = 0"],
+    // No initializer: lands in .tbss, so the guard's tbss/SHF_TLS arm is covered too.
+    ["_Thread_local", ""],
+    ["__thread", ""],
+  ])("%s int x%s; is a compile error", (keyword, init) => {
+    using dir = tempDir("bun-ffi-cc-tls", {
+      "tls.c": `${keyword} int bun_test_tls_counter${init};\nint bump(void) { return ++bun_test_tls_counter; }\n`,
+    });
+    expect(() => {
+      cc({
+        source: path.join(String(dir), "tls.c"),
+        symbols: { bump: { args: [], returns: "int" } },
+      });
+    }).toThrow(/thread-local storage is not supported/);
+  });
+});
+
+describe("double <-> JSValue conversions", () => {
   // JSC NaN-boxes doubles, so a NaN whose payload collides with the tag space
   // ("impure NaN", see JSC's PureNaN.h) must never be encoded as-is: it would
   // decode as a native-chosen JSValue (true, undefined, an Int32, or a cell
@@ -736,9 +926,92 @@ describe.skipIf(isFFIUnavailable)("double <-> JSValue conversions", () => {
         huge_bigint: ["number", "Infinity"],
         negative_huge_bigint: ["number", "-Infinity"],
         fractional: ["number", "-2.5"],
-        string: ["number", "2.5"],
+        string: ["threw", "TypeError"],
         null_arg: ["number", "0"],
         undefined_arg: ["number", "NaN"],
+      },
+      exitCode: 0,
+    });
+  });
+
+  // JSVALUE_TO_INT32 must decode double-encoded JSValues: whether a JS number
+  // is int32-tagged or double-encoded is the engine's choice (JIT tier, double
+  // speculation, Math.* provenance), so an int-typed JSCallback return that
+  // truncates the raw encoded bits hands C 0 once the callback tiers up.
+  it("double-encoded JS numbers returned from an int-typed JSCallback reach C as the integer", async () => {
+    using dir = tempDir("bun-ffi-int32-cb-return", {
+      "cb.c": /* c */ `
+        typedef int (*cb_i32)(int);
+        int call_i32(cb_i32 f, int x) { return f(x); }
+        typedef unsigned int (*cb_u32)(int);
+        unsigned int call_u32(cb_u32 f, int x) { return f(x); }
+        typedef signed char (*cb_i8)(int);
+        int call_i8(cb_i8 f, int x) { return (int)f(x); }
+        typedef unsigned short (*cb_u16)(int);
+        int call_u16(cb_u16 f, int x) { return (int)f(x); }
+      `,
+      "fixture.js": /* js */ `
+        import { cc, JSCallback } from "bun:ffi";
+        import path from "path";
+
+        const { symbols } = cc({
+          source: path.join(import.meta.dir, "cb.c"),
+          symbols: {
+            call_i32: { args: ["function", "i32"], returns: "i32" },
+            call_u32: { args: ["function", "i32"], returns: "u32" },
+            call_i8: { args: ["function", "i32"], returns: "i32" },
+            call_u16: { args: ["function", "i32"], returns: "i32" },
+          },
+        });
+
+        // +0.5 then -0.5 on a runtime value: integer-valued, but the intermediate
+        // pins a double-represented result regardless of JIT tier or const-folding.
+        const asDouble = x => {
+          const v = x + 0.5;
+          return v - 0.5;
+        };
+        const echoDouble = new JSCallback(asDouble, { args: ["i32"], returns: "i32" });
+        // Plain int32-tagged return must keep working.
+        const echoInt = new JSCallback(x => x, { args: ["i32"], returns: "i32" });
+        const fractional = new JSCallback(() => 5.7, { args: ["i32"], returns: "i32" });
+        const negFractional = new JSCallback(() => -5.7, { args: ["i32"], returns: "i32" });
+        const u32Double = new JSCallback(x => asDouble(x) + 3000000000, { args: ["i32"], returns: "u32" });
+        const i8Double = new JSCallback(asDouble, { args: ["i32"], returns: "i8" });
+        const u16Double = new JSCallback(asDouble, { args: ["i32"], returns: "u16" });
+
+        const results = {
+          echo_double: symbols.call_i32(echoDouble.ptr, 938),
+          echo_int: symbols.call_i32(echoInt.ptr, 938),
+          fractional: symbols.call_i32(fractional.ptr, 0),
+          neg_fractional: symbols.call_i32(negFractional.ptr, 0),
+          u32_double: symbols.call_u32(u32Double.ptr, 0),
+          i8_double: symbols.call_i8(i8Double.ptr, -7),
+          u16_double: symbols.call_u16(u16Double.ptr, 40000),
+        };
+        for (const cb of [echoDouble, echoInt, fractional, negFractional, u32Double, i8Double, u16Double]) cb.close();
+        console.log(JSON.stringify(results));
+      `,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "fixture.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    const results = stdout.startsWith("{") ? JSON.parse(stdout) : stdout;
+    expect({ results, stderr, exitCode }).toMatchObject({
+      results: {
+        echo_double: 938,
+        echo_int: 938,
+        fractional: 5,
+        neg_fractional: -5,
+        u32_double: 3000000000,
+        i8_double: -7,
+        u16_double: 40000,
       },
       exitCode: 0,
     });
@@ -811,5 +1084,226 @@ describe.skipIf(isFFIUnavailable)("double <-> JSValue conversions", () => {
       },
       exitCode: 0,
     });
+  });
+});
+
+describe.skipIf(isASAN)("compiler runtime header directory under BUN_TMPDIR", () => {
+  const plantedHeader = "#define bool int\n#define true 100\n#define false 0\n";
+  const files = {
+    "sentinel.txt": "sentinel-unchanged\n",
+    "add.c": /* c */ `
+      #include <stdbool.h>
+      int add(int a, int b) {
+        return a + b + (int)true - 1;
+      }
+    `,
+    "fixture.js": /* js */ `
+      import { cc } from "bun:ffi";
+      import path from "path";
+
+      const { symbols } = cc({
+        source: path.join(import.meta.dir, "add.c"),
+        symbols: { add: { args: ["int", "int"], returns: "int" } },
+      });
+      console.log(symbols.add(1, 2));
+    `,
+  };
+
+  async function runFixture(dir: string) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "fixture.js"],
+      env: { ...bunEnv, BUN_TMPDIR: String(dir) },
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    return await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  }
+
+  it.skipIf(isWindows)("compiles a source that includes a compiler runtime header", async () => {
+    using dir = tempDir("bun-ffi-cc-rt-dir", files);
+
+    const [stdout, stderr, exitCode] = await runFixture(String(dir));
+
+    expect(readFileSync(path.join(String(dir), `bun-cc-${process.getuid!()}`, "stdbool.h"), "utf8")).toContain(
+      "_STDBOOL_H",
+    );
+    expect(stdout).toBe("3\n");
+    expect(exitCode).toBe(0);
+  });
+
+  it.skipIf(isWindows)("does not write compiler runtime headers through a symlinked entry", async () => {
+    using dir = tempDir("bun-ffi-cc-rt-dir-symlink", files);
+    for (const name of ["bun-cc", `bun-cc-${process.getuid!()}`]) {
+      const headerDir = path.join(String(dir), name);
+      mkdirSync(headerDir, { recursive: true });
+      chmodSync(headerDir, 0o755);
+      symlinkSync("../sentinel.txt", path.join(headerDir, "stdbool.h"));
+    }
+
+    const [stdout, stderr, exitCode] = await runFixture(String(dir));
+
+    expect(readFileSync(path.join(String(dir), "sentinel.txt"), "utf8")).toBe("sentinel-unchanged\n");
+    expect(stdout).toBe("3\n");
+    expect(exitCode).toBe(0);
+  });
+
+  it.skipIf(isWindows)(
+    "does not place compiler runtime headers in a pre-existing group- and world-writable directory",
+    async () => {
+      using dir = tempDir("bun-ffi-cc-rt-dir-mode", files);
+      const sharedName = `bun-cc-${process.getuid!()}`;
+      for (const name of ["bun-cc", sharedName]) {
+        const headerDir = path.join(String(dir), name);
+        mkdirSync(headerDir, { recursive: true });
+        writeFileSync(path.join(headerDir, "stdbool.h"), plantedHeader);
+      }
+      chmodSync(path.join(String(dir), "bun-cc"), 0o755);
+      chmodSync(path.join(String(dir), sharedName), 0o777);
+
+      const [stdout, stderr, exitCode] = await runFixture(String(dir));
+
+      expect(readFileSync(path.join(String(dir), "bun-cc", "stdbool.h"), "utf8")).toBe(plantedHeader);
+      expect(readFileSync(path.join(String(dir), sharedName, "stdbool.h"), "utf8")).toBe(plantedHeader);
+      expect(stdout).toBe("3\n");
+      expect(exitCode).toBe(0);
+    },
+  );
+
+  it("does not reuse a pre-existing fixed-name bun-cc directory for compiler runtime headers", async () => {
+    using dir = tempDir("bun-ffi-cc-rt-dir-fixed-name", files);
+    const fixedDir = path.join(String(dir), "bun-cc");
+    mkdirSync(fixedDir, { recursive: true });
+    writeFileSync(path.join(fixedDir, "stdbool.h"), plantedHeader);
+
+    const [stdout, stderr, exitCode] = await runFixture(String(dir));
+
+    const staged = readdirSync(String(dir)).filter(
+      name => name !== "bun-cc" && name.includes("bun-cc") && existsSync(path.join(String(dir), name, "stdbool.h")),
+    );
+    expect(staged.length).toBe(1);
+    expect(readFileSync(path.join(String(dir), staged[0], "stdbool.h"), "utf8")).toContain("_STDBOOL_H");
+    expect(readdirSync(fixedDir).sort()).toEqual(["stdbool.h"]);
+    expect(readFileSync(path.join(fixedDir, "stdbool.h"), "utf8")).toBe(plantedHeader);
+    expect(stdout).toBe("3\n");
+    expect(exitCode).toBe(0);
+  });
+});
+
+// The gate runs before any option is read or any C is compiled, so these do
+// not need a working TinyCC and run under ASan too. Without the gate, the
+// empty `symbols` object makes cc() fail with a plain validation error, which
+// is the control for "cc() was not blocked".
+describe.concurrent("disabling cc()", () => {
+  // `report` receives one string: the error code, or the message for an
+  // error without a code, or "no-error".
+  const probeWith = (report: string) => /* js */ `
+    const { cc } = require("bun:ffi");
+    try {
+      cc({ source: "does-not-exist.c", symbols: {} });
+      ${report}("no-error");
+    } catch (e) {
+      ${report}(e.code ?? e.message);
+    }
+  `;
+  const probe = probeWith("console.log");
+
+  async function run(...args: string[]): Promise<[stdout: string, stderr: string, exitCode: number]> {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), ...args],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    return await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  }
+
+  it("cc() is allowed by default", async () => {
+    const [stdout, stderr, exitCode] = await run("-e", probe);
+    expect(stdout).toBe("Expected at least one exported symbol\n");
+    expect(exitCode).toBe(0);
+  });
+
+  it("--no-ffi-cc makes cc() throw ERR_FFI_CC_DISABLED", async () => {
+    const [stdout, stderr, exitCode] = await run("--no-ffi-cc", "-e", probe);
+    expect(stdout).toBe("ERR_FFI_CC_DISABLED\n");
+    expect(exitCode).toBe(0);
+  });
+
+  it("--no-addons makes cc() throw ERR_FFI_CC_DISABLED", async () => {
+    const [stdout, stderr, exitCode] = await run("--no-addons", "-e", probe);
+    expect(stdout).toBe("ERR_FFI_CC_DISABLED\n");
+    expect(exitCode).toBe(0);
+  });
+
+  it("the error message names the disabled compiler", async () => {
+    const [stdout, stderr, exitCode] = await run(
+      "--no-ffi-cc",
+      "-p",
+      'require("bun:ffi").cc({ source: "does-not-exist.c", symbols: {} })',
+    );
+    expect(stdout).toBe("");
+    expect(stderr).toContain("error: Cannot compile C code because the bun:ffi C compiler is disabled.");
+    expect(stderr).toContain('code: "ERR_FFI_CC_DISABLED"');
+    expect(exitCode).toBe(1);
+  });
+
+  it("BUN_OPTIONS=--no-ffi-cc makes cc() throw ERR_FFI_CC_DISABLED", async () => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", probe],
+      env: { ...bunEnv, BUN_OPTIONS: "--no-ffi-cc" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout).toBe("ERR_FFI_CC_DISABLED\n");
+    expect(exitCode).toBe(0);
+  });
+
+  // The Worker runs the probe and posts its one line back to the parent. A
+  // worker that fails before it posts is reported on stdout instead of
+  // hanging the process.
+  const workerHost = (execArgv: string) => /* js */ `
+    const { Worker } = require("node:worker_threads");
+    const source = ${JSON.stringify(probeWith("require('node:worker_threads').parentPort.postMessage"))};
+    const worker = new Worker(source, { eval: true, execArgv: ${execArgv} });
+    let reported = false;
+    worker.on("message", msg => {
+      reported = true;
+      console.log(msg);
+      worker.terminate();
+    });
+    worker.on("error", e => {
+      reported = true;
+      console.log("worker error: " + (e.code ?? e.message));
+      worker.terminate();
+    });
+    worker.on("exit", code => {
+      if (!reported) console.log("worker exited with " + code + " before posting");
+    });
+  `;
+
+  it("--no-ffi-cc stays in effect inside a Worker with an empty execArgv", async () => {
+    const [stdout, stderr, exitCode] = await run("--no-ffi-cc", "-e", workerHost("[]"));
+    expect(stdout).toBe("ERR_FFI_CC_DISABLED\n");
+    expect(exitCode).toBe(0);
+  });
+
+  it("--no-addons stays in effect inside a Worker with an empty execArgv", async () => {
+    const [stdout, stderr, exitCode] = await run("--no-addons", "-e", workerHost("[]"));
+    expect(stdout).toBe("ERR_FFI_CC_DISABLED\n");
+    expect(exitCode).toBe(0);
+  });
+
+  it("a Worker can disable cc() for itself with execArgv", async () => {
+    const [stdout, stderr, exitCode] = await run("-e", workerHost('["--no-ffi-cc"]'));
+    expect(stdout).toBe("ERR_FFI_CC_DISABLED\n");
+    expect(exitCode).toBe(0);
+  });
+
+  it("a Worker cannot re-enable cc() that its parent disabled", async () => {
+    const [stdout, stderr, exitCode] = await run("--no-ffi-cc", "-e", workerHost('["--smol"]'));
+    expect(stdout).toBe("ERR_FFI_CC_DISABLED\n");
+    expect(exitCode).toBe(0);
   });
 });

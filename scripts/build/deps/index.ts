@@ -11,11 +11,13 @@
  */
 
 import type { Dependency } from "../source.ts";
+import { bootstrapCmds } from "./bootstrap-cmds.ts";
 import { boringssl } from "./boringssl.ts";
 import { brotli } from "./brotli.ts";
 import { cares } from "./cares.ts";
 import { hdrhistogram } from "./hdrhistogram.ts";
 import { highway } from "./highway.ts";
+import { icu } from "./icu.ts";
 import { libarchive } from "./libarchive.ts";
 import { libdeflate } from "./libdeflate.ts";
 import { libjpegTurbo } from "./libjpeg-turbo.ts";
@@ -29,6 +31,7 @@ import { lsquic } from "./lsquic.ts";
 import { mimalloc } from "./mimalloc.ts";
 import { nodejsHeaders } from "./nodejs-headers.ts";
 import { picohttpparser } from "./picohttpparser.ts";
+import { rustArgon2 } from "./rust-argon2.ts";
 import { sqlite } from "./sqlite.ts";
 import { tinycc } from "./tinycc.ts";
 import { webkit } from "./webkit.ts";
@@ -61,6 +64,7 @@ export const allDeps: readonly Dependency[] = [
   highway,
   libuv,
   lolhtml,
+  rustArgon2,
   lshpack,
   lsqpack,
   mimalloc,
@@ -71,6 +75,12 @@ export const allDeps: readonly Dependency[] = [
   // a DirectBuild dep its .o files go straight on the link line so static
   // link order doesn't apply.
   lsquic,
+  // icu before WebKit: WTF/JSC compile against its headers (fetchDeps).
+  // Disabled on macOS (the SDK's ICU) and with a prebuilt WebKit (bundles it).
+  icu,
+  // bootstrap_cmds before WebKit: source of the migcom host tool the macOS
+  // source build runs (fetchDeps). macOS only; not with a prebuilt WebKit.
+  bootstrapCmds,
   // WebKit LAST in link order — WTF/JSC provide symbols that everything
   // above might reference (via JavaScriptCore types in headers).
   webkit,
@@ -78,11 +88,13 @@ export const allDeps: readonly Dependency[] = [
 
 // Re-export individuals for direct import when needed.
 export {
+  bootstrapCmds,
   boringssl,
   brotli,
   cares,
   hdrhistogram,
   highway,
+  icu,
   libarchive,
   libdeflate,
   libjpegTurbo,
@@ -96,6 +108,7 @@ export {
   mimalloc,
   nodejsHeaders,
   picohttpparser,
+  rustArgon2,
   sqlite,
   tinycc,
   webkit,

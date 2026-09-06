@@ -14,6 +14,11 @@ const fs = require("fs");
 const path = require("path");
 const os = require("os");
 
+const rss =
+  process.platform === "darwin" && typeof Bun.unsafe.memoryFootprint === "function"
+    ? Bun.unsafe.memoryFootprint
+    : process.memoryUsage.rss;
+
 const seg = (ch, n = 220) => Buffer.alloc(n, ch).toString();
 
 const base = fs.mkdtempSync(path.join(os.tmpdir(), "readdir-err-leak-"));
@@ -55,7 +60,7 @@ for (let i = 0; i < 10000; i++) {
   } catch {}
 }
 Bun.gc(true);
-const before = process.memoryUsage.rss();
+const before = rss();
 
 for (let i = 0; i < 20000; i++) {
   try {
@@ -63,7 +68,7 @@ for (let i = 0; i < 20000; i++) {
   } catch {}
 }
 Bun.gc(true);
-const after = process.memoryUsage.rss();
+const after = rss();
 
 const deltaMB = Math.round((after - before) / 1024 / 1024);
 console.log("RSS delta", deltaMB, "MB");

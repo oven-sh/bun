@@ -3,8 +3,8 @@ use crate::jsc::{CallFrame, JSGlobalObject, JSValue, StrongOptional, VirtualMach
 #[repr(C)]
 #[derive(Default)]
 pub struct MySQLContext {
-    pub on_query_resolve_fn: StrongOptional,
-    pub on_query_reject_fn: StrongOptional,
+    pub(crate) on_query_resolve_fn: StrongOptional,
+    pub(crate) on_query_reject_fn: StrongOptional,
 }
 
 // The binding object is built in Rust (`mysql.rs` registers this fn through

@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { isLinux, isWindows, tmpdirSync } from "harness";
+import { execSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 
@@ -301,6 +302,45 @@ describe("fs.mkdir - return values", () => {
     expect(fs.existsSync(pathname)).toBe(true);
     expect(fs.statSync(pathname).isDirectory()).toBe(true);
     expect(result).toBeUndefined();
+  });
+});
+
+// https://github.com/oven-sh/bun/issues/34413
+describe.skipIf(!isWindows)("fs.mkdir - recursive with ReadOnly attribute (Windows)", () => {
+  let tmpdir: string;
+  let readonlyDir: string;
+
+  beforeEach(() => {
+    tmpdir = getTmpDir();
+    readonlyDir = path.join(tmpdir, nextdir());
+    fs.mkdirSync(readonlyDir);
+    execSync(`attrib +R "${readonlyDir}"`);
+  });
+
+  afterEach(() => {
+    try {
+      execSync(`attrib -R "${readonlyDir}"`);
+      fs.rmSync(tmpdir, { recursive: true, force: true });
+    } catch (err) {
+      // Ignore cleanup errors
+    }
+  });
+
+  it("mkdirSync does not throw when the directory exists and is ReadOnly", () => {
+    expect(fs.mkdirSync(readonlyDir, { recursive: true })).toBeUndefined();
+    expect(fs.statSync(readonlyDir).isDirectory()).toBe(true);
+  });
+
+  it("promises.mkdir does not throw when the directory exists and is ReadOnly", async () => {
+    expect(await fs.promises.mkdir(readonlyDir, { recursive: true })).toBeUndefined();
+    expect(fs.statSync(readonlyDir).isDirectory()).toBe(true);
+  });
+
+  it("creates nested directories under a ReadOnly ancestor", () => {
+    const pathname = path.join(readonlyDir, nextdir(), nextdir());
+
+    fs.mkdirSync(pathname, { recursive: true });
+    expect(fs.statSync(pathname).isDirectory()).toBe(true);
   });
 });
 

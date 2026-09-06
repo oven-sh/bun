@@ -38,17 +38,6 @@ private:
     us_socket_group_t group{};
     WebSocketContextData<SSL, USERDATA> data;
 
-    /* WebSocket::getContextData() recovers &data as
-     * (us_socket_group_t*)group.ext + 1 to avoid pulling this header into
-     * WebSocket.h. That's only sound if `group` is the first member and `data`
-     * sits immediately after it with no inserted base/field. */
-    static void layoutAssert() {
-        static_assert(offsetof(WebSocketContext, group) == 0,
-                      "WebSocket::getContextData layout assumption broken");
-        static_assert(offsetof(WebSocketContext, data) == sizeof(us_socket_group_t),
-                      "WebSocket::getContextData layout assumption broken");
-    }
-
 public:
     /* Not constexpr — the ordinals are linked from `src/uws_sys/SocketKind.rs`
      * so a reorder there can't silently mis-route us. */
@@ -287,13 +276,6 @@ private:
             /* Emit close event */
             auto *webSocketContextData = getExtS(s);
 
-            /* At this point we iterate all currently held subscriptions and emit an event for all of them */
-            if (webSocketData->subscriber && webSocketContextData->subscriptionHandler) {
-                for (Topic *t : webSocketData->subscriber->topics) {
-                    webSocketContextData->subscriptionHandler((WebSocket<SSL, isServer, USERDATA> *) s, t->name, (int) t->size() - 1, (int) t->size());
-                }
-            }
-
             /* Make sure to unsubscribe from any pub/sub node at exit */
             webSocketContextData->topicTree->freeSubscriber(webSocketData->subscriber);
             webSocketData->subscriber = nullptr;
@@ -452,6 +434,13 @@ public:
      * SSL_CTX needed — the socket already has its `s->ssl` from accept time. */
     static WebSocketContext *create(Loop *loop, TopicTree<TopicTreeMessage, TopicTreeBigMessage> *topicTree) {
         WebSocketContext *webSocketContext = new WebSocketContext(topicTree);
+        /* WebSocket::getContextData() recovers &data as
+         * (us_socket_group_t*)group.ext + 1 to avoid pulling this header into
+         * WebSocket.h. That's only sound if `group` is the first member and `data`
+         * sits immediately after it with no inserted base/field. (offsetof is not
+         * usable here: the struct is not standard-layout.) The layout can differ
+         * per ABI, so check it in every build; this runs once per context. */
+        RELEASE_ASSERT((void *) &webSocketContext->data == (void *) ((us_socket_group_t *) webSocketContext + 1));
         us_socket_group_init(&webSocketContext->group, (us_loop_t *) loop, &wsVTable, webSocketContext);
         return webSocketContext;
     }

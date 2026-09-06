@@ -1,9 +1,9 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 
 describe("bunfig.toml test options", () => {
   test("randomize with seed produces consistent order", async () => {
-    const dir = tempDirWithFiles("bunfig-test-randomize-seed", {
+    await using dir = tempDir("bunfig-test-randomize-seed", {
       "test.test.ts": `
         import { test, expect } from "bun:test";
         test("alpha", () => {
@@ -76,7 +76,7 @@ describe("bunfig.toml test options", () => {
   });
 
   test("seed without randomize errors", async () => {
-    const dir = tempDirWithFiles("bunfig-test-seed-no-randomize", {
+    await using dir = tempDir("bunfig-test-seed-no-randomize", {
       "test.test.ts": `
         import { test, expect } from "bun:test";
         test("test 1", () => expect(1).toBe(1));
@@ -105,7 +105,7 @@ describe("bunfig.toml test options", () => {
   });
 
   test("seed with randomize=false errors", async () => {
-    const dir = tempDirWithFiles("bunfig-test-seed-randomize-false", {
+    await using dir = tempDir("bunfig-test-seed-randomize-false", {
       "test.test.ts": `
         import { test, expect } from "bun:test";
         test("test 1", () => expect(1).toBe(1));
@@ -134,7 +134,7 @@ describe("bunfig.toml test options", () => {
   });
 
   test("rerunEach option works", async () => {
-    const dir = tempDirWithFiles("bunfig-test-rerun-each", {
+    await using dir = tempDir("bunfig-test-rerun-each", {
       "test.test.ts": `
         import { test, expect } from "bun:test";
         let counter = 0;
@@ -168,7 +168,7 @@ describe("bunfig.toml test options", () => {
   });
 
   test("all test options together", async () => {
-    const dir = tempDirWithFiles("bunfig-test-all-options", {
+    await using dir = tempDir("bunfig-test-all-options", {
       "test.test.ts": `
         import { test, expect } from "bun:test";
         test("test 1", () => expect(1).toBe(1));

@@ -1,0 +1,33 @@
+lockfileVersion: '9.0'
+
+settings:
+  autoInstallPeers: true
+  excludeLinksFromLockfile: false
+
+importers:
+
+  .:
+    dependencies:
+      sub-dep:
+        specifier: file:./sub-dep
+        version: file:sub-dep
+
+packages:
+
+  nested-child@file:sub-dep/child:
+    resolution: {directory: sub-dep/child, type: directory}
+    version: 1.0.0
+
+  sub-dep@file:sub-dep:
+    resolution: {directory: sub-dep, type: directory}
+    version: 1.0.0
+
+snapshots:
+
+  nested-child@file:sub-dep/child:
+    dev: false
+
+  sub-dep@file:sub-dep:
+    dependencies:
+      nested-child: file:sub-dep/child
+    dev: false

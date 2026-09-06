@@ -42,10 +42,10 @@ describe.skipIf(!isDockerEnabled())("autobahn", () => {
     wsOptions = process.env.BUN_AUTOBAHN_HOST_HEADER
       ? { headers: { Host: process.env.BUN_AUTOBAHN_HOST_HEADER } }
       : undefined;
-    // Cold container start is bounded by `compose up --wait-timeout 60` plus
+    // Cold container start is bounded by `compose up --wait-timeout 180` plus
     // a `compose build` step; the default 5s hook timeout fires long before
     // that on a cold cache.
-  }, 120_000);
+  }, 240_000);
 
   function getCaseStatus(testID: number) {
     return new Promise((resolve, reject) => {
@@ -123,8 +123,6 @@ describe.skipIf(!isDockerEnabled())("autobahn", () => {
     for (const i of testCases) {
       if (i > count) continue;
 
-      const info = (await getCaseInfo(i)) as { id: string; description: string };
-
       // Run test case
       await runTestCase(i);
       const result = (await getCaseStatus(i)) as { behavior: string };
@@ -133,7 +131,14 @@ describe.skipIf(!isDockerEnabled())("autobahn", () => {
       try {
         expect(result.behavior).toBeOneOf(["OK", "INFORMATIONAL", "NON-STRICT"]);
       } catch (e) {
-        throw new Error(`Test case ${info.id} (${info.description}) failed: behavior was ${result.behavior}`);
+        // getCaseInfo is only needed for the failure message; fetching it
+        // lazily skips one WebSocket round trip per case on the happy path.
+        let label = `Test case ${i}`;
+        try {
+          const info = (await getCaseInfo(i)) as { id: string; description: string };
+          label = `Test case ${info.id} (${info.description})`;
+        } catch {}
+        throw new Error(`${label} failed: behavior was ${result.behavior}`);
       }
     }
   }, 300000); // 5 minute timeout

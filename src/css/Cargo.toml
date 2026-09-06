@@ -10,6 +10,7 @@ path = "lib.rs"
 workspace = true
 
 [dependencies]
+thiserror.workspace = true
 strum.workspace = true
 bstr.workspace = true
 scopeguard.workspace = true
@@ -18,7 +19,6 @@ enum-map.workspace = true
 enumset.workspace = true
 libc.workspace = true
 bitflags.workspace = true
-bumpalo.workspace = true
 typed-arena.workspace = true
 bun_base64.workspace = true
 bun_alloc.workspace = true

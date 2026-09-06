@@ -285,8 +285,31 @@ devTest("hmr handles rapid consecutive edits", {
     // already in the pipe has been applied. Don't use dev.batchChanges()
     // here: if a bundle from the rapid burst is still in flight when the
     // batch 'H' arrives, the harness's seenFiles promise can hang.
-    writeFileSync(target, hmrSelfAcceptingModule("render sentinel"));
-    await waitForMessage("render sentinel");
+    //
+    // The sentinel must be re-written whenever the client fixture reports a
+    // reload or an HMR-socket event: on Windows the 0-byte race can force a
+    // fullReload() (see allowUnlimitedReloads above), and after a full page
+    // reload the user module's console.log reaches this process via IPC
+    // BEFORE the new HMR WebSocket has subscribed + sent SetUrl. If the
+    // sentinel is written in that window its bundle is finalized while
+    // `num_subscribers(HotUpdate) == 0` / `active_viewers == 0` and the
+    // hot_update is dropped server-side (DevServer.rs finalize_bundle), so
+    // the sentinel never reaches the client. Re-writing on each
+    // `received-hmr-event` (which fires on socket open and on every 'u'/'e'
+    // WS frame) guarantees that at least one sentinel write lands after the
+    // server has a subscriber. The same-content writes are idempotent and
+    // the loop terminates the moment waitForMessage resolves below.
+    const sentinelContent = hmrSelfAcceptingModule("render sentinel");
+    const rewriteSentinel = () => writeFileSync(target, sentinelContent);
+    client.on("reload", rewriteSentinel);
+    client.on("received-hmr-event", rewriteSentinel);
+    try {
+      rewriteSentinel();
+      await waitForMessage("render sentinel");
+    } finally {
+      client.off("reload", rewriteSentinel);
+      client.off("received-hmr-event", rewriteSentinel);
+    }
 
     // Watcher coalescing / double-firing makes the exact count
     // non-deterministic, but every message must be one of the two values

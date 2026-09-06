@@ -2,7 +2,6 @@
 use core::ptr;
 
 use bun_alloc::AllocError;
-use bun_core::{Error, err};
 #[cfg(not(windows))]
 use bun_core::{Global, fmt as bun_fmt};
 use bun_paths::{self, OSPathChar, OSPathSlice};
@@ -20,14 +19,14 @@ type PathAutoOs = bun_paths::Path<
     { bun_paths::path_options::PathSeparators::AUTO },
 >;
 
-pub struct FileCopier {
-    pub src_path: AbsPathAutoOs,
-    pub dest_subpath: PathAutoOs,
-    pub walker: Walker,
+pub(crate) struct FileCopier {
+    pub(crate) src_path: AbsPathAutoOs,
+    pub(crate) dest_subpath: PathAutoOs,
+    pub(crate) walker: Walker,
 }
 
 impl FileCopier {
-    pub fn init(
+    pub(crate) fn init(
         src_dir: Fd,
         src_path: AbsPathAutoOs,
         dest_subpath: PathAutoOs,
@@ -52,7 +51,7 @@ impl FileCopier {
     // `Walker` owns its resources and drops automatically, so no explicit
     // `Drop` impl is needed.
 
-    pub fn copy(&mut self) -> sys::Result<()> {
+    pub(crate) fn copy(&mut self) -> sys::Result<()> {
         // `make_open_path` is u8-only; on Windows the OS-unit path is u16 so
         // narrow it via the same infallible `from_w_path` transcode that
         // `bun_sys::make_path_w` uses. Don't synthesise EINVAL on
@@ -75,50 +74,9 @@ impl FileCopier {
             Ok(d) => d,
             Err(e) => {
                 // TODO: remove the need for this and implement openDir makePath makeOpenPath in bun
-                let errno: E = {
-                    // Match against interned bun_core::Error tags.
-                    let e: Error = e;
-                    if e == err!("AccessDenied") {
-                        E::EPERM
-                    } else if e == err!("FileTooBig") {
-                        E::EFBIG
-                    } else if e == err!("SymLinkLoop") {
-                        E::ELOOP
-                    } else if e == err!("ProcessFdQuotaExceeded") {
-                        E::ENFILE
-                    } else if e == err!("NameTooLong") {
-                        E::ENAMETOOLONG
-                    } else if e == err!("SystemFdQuotaExceeded") {
-                        E::EMFILE
-                    } else if e == err!("SystemResources") {
-                        E::ENOMEM
-                    } else if e == err!("ReadOnlyFileSystem") {
-                        E::EROFS
-                    } else if e == err!("FileSystem") {
-                        E::EIO
-                    } else if e == err!("FileBusy") || e == err!("DeviceBusy") {
-                        E::EBUSY
-                    }
-                    // One of the path components was not a directory.
-                    // This error is unreachable if `sub_path` does not contain a path separator.
-                    else if e == err!("NotDir") {
-                        E::ENOTDIR
-                    }
-                    // On Windows, file paths must be valid Unicode.
-                    // On Windows, file paths cannot contain these characters:
-                    // '/', '*', '?', '"', '<', '>', '|'
-                    else if e == err!("InvalidUtf8")
-                        || e == err!("InvalidWtf8")
-                        || e == err!("BadPathName")
-                    {
-                        E::EINVAL
-                    } else if e == err!("FileNotFound") {
-                        E::ENOENT
-                    } else if e == err!("IsDir") {
-                        E::EISDIR
-                    } else {
-                        E::EFAULT
-                    }
+                let errno: E = match e.get_errno() {
+                    E::EACCES => E::EPERM,
+                    other => other,
                 };
                 #[cfg(windows)]
                 let errno = if errno == E::ENOTDIR {
@@ -251,7 +209,7 @@ impl FileCopier {
                             Err(err) => {
                                 bun_core::pretty_errorln!(
                                     "<r><red>{}<r>: copy file {}",
-                                    err.name(),
+                                    bstr::BStr::new(err.name()),
                                     bun_fmt::fmt_os_path(entry.path, Default::default()),
                                 );
                                 Global::exit(1);

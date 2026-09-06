@@ -149,6 +149,8 @@ trait CronJobBase: Sized + bun_ptr::AnyRefCounted {
         }
         drop(owner);
         ev.exit();
+        #[cfg(all(not(target_os = "macos"), not(windows)))]
+        crontab_queue::on_job_finished();
     }
 
     fn set_err(&self, args: core::fmt::Arguments<'_>) {
@@ -868,7 +870,7 @@ pub(crate) fn cron_register(global: &JSGlobalObject, frame: &CallFrame) -> JsRes
     #[cfg(windows)]
     CronRegisterJob::start_windows(job);
     #[cfg(all(not(target_os = "macos"), not(windows)))]
-    CronRegisterJob::start_linux(job);
+    crontab_queue::enqueue(crontab_queue::Queued::Register(job));
 
     Ok(promise_value)
 }
@@ -1311,7 +1313,7 @@ pub(crate) fn cron_remove(global: &JSGlobalObject, frame: &CallFrame) -> JsResul
     #[cfg(windows)]
     CronRemoveJob::start_windows(job);
     #[cfg(all(not(target_os = "macos"), not(windows)))]
-    CronRemoveJob::start_linux(job);
+    crontab_queue::enqueue(crontab_queue::Queued::Remove(job));
     Ok(promise_value)
 }
 
@@ -1876,6 +1878,99 @@ pub(crate) fn cron_parse(global: &JSGlobalObject, frame: &CallFrame) -> JsResult
         return Ok(JSValue::NULL);
     }
     Ok(JSValue::from_date_number(global, next_ms))
+}
+
+// ============================================================================
+// Crontab job queue
+// ============================================================================
+
+/// `crontab(1)` takes no lock: the jobs of one thread run one at a time.
+#[cfg(all(not(target_os = "macos"), not(windows)))]
+mod crontab_queue {
+    use super::{CronRegisterJob, CronRemoveJob};
+    use bun_ptr::ThisPtr;
+    use std::cell::RefCell;
+    use std::collections::VecDeque;
+
+    pub(super) enum Queued {
+        Register(ThisPtr<CronRegisterJob>),
+        Remove(ThisPtr<CronRemoveJob>),
+    }
+
+    struct Queue {
+        running: bool,
+        draining: bool,
+        finished_while_draining: bool,
+        pending: VecDeque<Queued>,
+    }
+
+    thread_local! {
+        static QUEUE: RefCell<Queue> = const {
+            RefCell::new(Queue {
+                running: false,
+                draining: false,
+                finished_while_draining: false,
+                pending: VecDeque::new(),
+            })
+        };
+    }
+
+    /// Starts `job` now or queues it behind the running one. May free `job`.
+    pub(super) fn enqueue(job: Queued) {
+        let start_now = QUEUE.with(|q| {
+            let mut q = q.borrow_mut();
+            if q.running {
+                q.pending.push_back(job);
+                None
+            } else {
+                q.running = true;
+                Some(job)
+            }
+        });
+        if let Some(job) = start_now {
+            start(job);
+        }
+    }
+
+    /// Starts the queued jobs in turn, without recursing through `finish`.
+    pub(super) fn on_job_finished() {
+        let nested = QUEUE.with(|q| {
+            let mut q = q.borrow_mut();
+            if q.draining {
+                q.finished_while_draining = true;
+                return true;
+            }
+            q.draining = true;
+            false
+        });
+        if nested {
+            return;
+        }
+        loop {
+            let next = QUEUE.with(|q| {
+                let mut q = q.borrow_mut();
+                q.finished_while_draining = false;
+                let next = q.pending.pop_front();
+                q.running = next.is_some();
+                next
+            });
+            let Some(job) = next else {
+                break;
+            };
+            start(job);
+            if !QUEUE.with(|q| q.borrow().finished_while_draining) {
+                break;
+            }
+        }
+        QUEUE.with(|q| q.borrow_mut().draining = false);
+    }
+
+    fn start(job: Queued) {
+        match job {
+            Queued::Register(job) => CronRegisterJob::start_linux(job),
+            Queued::Remove(job) => CronRemoveJob::start_linux(job),
+        }
+    }
 }
 
 // ============================================================================

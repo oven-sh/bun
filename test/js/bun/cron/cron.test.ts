@@ -1861,6 +1861,44 @@ describe.skipIf(!isLinux)("crontab read-modify-write (stub crontab)", () => {
     return existsSync(p) ? readFileSync(p, "utf8").trim().split("\n") : [];
   }
 
+  test.concurrent("concurrent registrations all land, in call order", async () => {
+    using dir = stubDir();
+    const { stdout, stderr, exitCode } = await runInDir(
+      String(dir),
+      `await Promise.all([0, 1, 2, 3, 4, 5].map(i => Bun.cron("./w.ts", "@hourly", "c" + i)));
+       console.log("all 6 resolved");`,
+    );
+    expect(stderr).toBe("");
+    expect(stdout).toBe("all 6 resolved\n");
+    expect(exitCode).toBe(0);
+    const markers = readStub(String(dir))
+      .split("\n")
+      .filter(l => l.startsWith("# bun-cron: "));
+    expect(markers).toEqual(["c0", "c1", "c2", "c3", "c4", "c5"].map(t => `# bun-cron: ${t}`));
+  });
+
+  test.concurrent("concurrent removes and a register do not lose each other's work", async () => {
+    using dir = stubDir({
+      "crontab.txt": ["r0", "r1", "r2", "r3"]
+        .map(t => `# bun-cron: ${t}\n0 * * * * '/x/bun' run --cron-title=${t} --cron-period='0 * * * *' '/x/w.ts'\n`)
+        .join(""),
+    });
+    const { stderr, exitCode } = await runInDir(
+      String(dir),
+      `await Promise.all([
+         Bun.cron.remove("r0"), Bun.cron.remove("r1"),
+         Bun.cron("./w.ts", "@daily", "added"),
+         Bun.cron.remove("r2"), Bun.cron.remove("r3"),
+       ]);`,
+    );
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+    const markers = readStub(String(dir))
+      .split("\n")
+      .filter(l => l.startsWith("# bun-cron: "));
+    expect(markers).toEqual(["# bun-cron: added"]);
+  });
+
   test.concurrent("a crontab -l failure that is not 'no crontab' rejects and leaves the crontab alone", async () => {
     const existing = "MAILTO=ops\n0 1 * * * /usr/local/bin/nightly\n";
     using dir = stubDir({ "crontab.txt": existing });
@@ -1936,6 +1974,34 @@ describe.skipIf(!isLinux)("crontab read-modify-write (stub crontab)", () => {
     expect(stderr).toBe("");
     expect(exitCode).toBe(0);
     expect(existsSync(join(String(dir), "crontab.txt"))).toBe(false);
+    expect(readLog(String(dir))).toEqual(["-l"]);
+  });
+
+  test.concurrent("a long queue of jobs that fail before they spawn rejects each one", async () => {
+    using dir = stubDir();
+    // The first job's `crontab -l` is held in the stub until a release file appears. Once the stub
+    // has logged the call (so /bin/sh has the script open), the stub is deleted and 2000 jobs are
+    // queued behind the first. PATH holds only the stub dir, so after the release the first job's
+    // install step and every queued job fail inside start(), and the queue drains them in a loop.
+    // Nothing can reach a real crontab(1).
+    const log = join(String(dir), "crontab.log");
+    const release = join(String(dir), "release");
+    const { stdout, stderr, exitCode } = await runInDir(
+      String(dir),
+      `import { existsSync, rmSync, writeFileSync } from "node:fs";
+       const first = Bun.cron("./w.ts", "@hourly", "first");
+       while (!existsSync(${JSON.stringify(log)})) await Bun.sleep(1);
+       rmSync(${JSON.stringify(join(String(dir), "bin", "crontab"))});
+       const rest = Array.from({ length: 2000 }, (_, i) => (i % 2 ? Bun.cron("./w.ts", "@hourly", "q" + i) : Bun.cron.remove("q" + i)));
+       writeFileSync(${JSON.stringify(release)}, "");
+       const results = await Promise.allSettled([first, ...rest]);
+       const reasons = new Set(results.map(r => r.status + ":" + (r.reason?.message ?? "")));
+       console.log([...reasons].join(","));`,
+      { BUN_TEST_CRONTAB_HOLD: release },
+    );
+    expect(stderr).toBe("");
+    expect(stdout).toBe("rejected:crontab not found in PATH\n");
+    expect(exitCode).toBe(0);
     expect(readLog(String(dir))).toEqual(["-l"]);
   });
 });

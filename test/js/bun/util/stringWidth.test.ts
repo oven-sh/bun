@@ -579,7 +579,7 @@ describe("stringWidth extended", () => {
       expect(Bun.stringWidth("🇺🇸")).toBe(2); // US flag
       expect(Bun.stringWidth("🇬🇧")).toBe(2); // UK flag
       expect(Bun.stringWidth("🇯🇵")).toBe(2); // Japan flag
-      expect(Bun.stringWidth("🇦")).toBe(2); // Single regional indicator: Emoji_Presentation
+      expect(Bun.stringWidth("🇦")).toBe(1); // Single regional indicator (string-width: 1)
     });
 
     test("skin tone modifiers", () => {
@@ -1941,19 +1941,21 @@ describe("width table derived from Unicode properties", () => {
     expect(widths([0x16d63, 0x16d67])).toEqual([1, 1]);
   });
 
-  test("Emoji_Presentation codepoints are wide, including a lone regional indicator", () => {
-    expect(widths([0x1f1e6, 0x1f1ff, 0x1f3fb, 0x231a, 0x2b50, 0x1f600])).toEqual([2, 2, 2, 2, 2, 2]);
+  test("emoji presentation symbols are wide, a lone regional indicator is narrow", () => {
+    expect(widths([0x1f3fb, 0x231a, 0x2b50, 0x1f600])).toEqual([2, 2, 2, 2]);
+    expect(widths([0x1f1e6, 0x1f1ff])).toEqual([1, 1]);
   });
 });
 
 describe("grapheme cluster width rules", () => {
-  test("regional indicators: pairs are flags, a lone one is still a wide emoji", () => {
-    expect(Bun.stringWidth("\u{1F1E6}")).toBe(2);
-    expect(Bun.stringWidth("\u{1F1E6}\u0301")).toBe(2); // RI + combining mark
-    expect(Bun.stringWidth("\u{1F1E6}\uFE0F")).toBe(2); // RI + VS16
+  test("regional indicators: pairs are flags, a lone one is narrow with or without marks", () => {
+    expect(Bun.stringWidth("\u{1F1E6}")).toBe(1);
+    expect(Bun.stringWidth("\u{1F1E6}\u0301")).toBe(1); // RI + combining mark
+    expect(Bun.stringWidth("\u{1F1E6}\u{1F3FB}")).toBe(2); // RI + emoji modifier: modifier sequence
+    expect(Bun.stringWidth("\u{1F1E6}\uFE0F")).toBe(2); // RI + VS16: emoji presentation
     expect(Bun.stringWidth("\u{1F1E6}\u{1F1E7}")).toBe(2); // flag
-    expect(Bun.stringWidth("\u{1F1E6}\u{1F1E7}\u{1F1E8}")).toBe(4); // flag + lone RI
-    expect(Bun.stringWidth("A\u{1F1E6}")).toBe(3);
+    expect(Bun.stringWidth("\u{1F1E6}\u{1F1E7}\u{1F1E8}")).toBe(3); // flag + lone RI
+    expect(Bun.stringWidth("A\u{1F1E6}")).toBe(2);
     expect(Bun.stringWidth("\u{1F1E6}\u{1F1E7}\u{1F1E8}\u{1F1E9}")).toBe(4); // two flags
   });
 

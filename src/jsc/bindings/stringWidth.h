@@ -120,7 +120,7 @@ struct GraphemeState {
     {
         if (count == 0)
             return 0;
-        // Regional indicator pair (flag emoji)
+        // Regional indicator pair (flag emoji); a lone one stays narrow
         if (regionalIndicators >= 2)
             return 2;
         // Keycap sequence: [0-9#*] (VS16)? U+20E3

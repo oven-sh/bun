@@ -10,7 +10,7 @@
 //             with Indic_Conjunct_Break, Emoji_Modifier(_Base) and
 //             Extended_Pictographic
 //   bits 5-6  width class: 0 zero-width, 1 narrow, 2 wide (East Asian Width
-//             W/F or Emoji_Presentation), 3 East Asian Ambiguous
+//             W/F), 3 East Asian Ambiguous
 //   bit  7    the Unicode Emoji property, minus the keycap bases [0-9#*]
 // Zero-width: Cc, Cf, Mn, Me, surrogates, unassigned default-ignorable
 // codepoints, conjoining Hangul jungseong/jongseong, and the spacing vowel
@@ -1245,7 +1245,7 @@ static constexpr uint8_t kGraphemeBreakStage2[33024] = {
 
 static constexpr uint8_t kGraphemeBreakStage3[33] = {
     17, 32, 96, 171, 235, 14, 1, 3, 48, 15, 33, 35, 68, 5, 6, 46, 47, 10, 9, 49, 203, 64, 172, 236,
-    204, 78, 71, 72, 0, 37, 43, 194, 205,
+    204, 78, 71, 72, 0, 37, 43, 162, 205,
 };
 
 } // namespace StringWidthTables

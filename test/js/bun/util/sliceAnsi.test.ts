@@ -357,10 +357,9 @@ describe("Bun.sliceAnsi", () => {
     test("counts emoji-style graphemes as fullwidth", () => {
       expect(Bun.sliceAnsi("A☺️B", 1, 3)).toBe("☺️");
       expect(Bun.sliceAnsi("A1️⃣B", 1, 3)).toBe("1️⃣");
-      // Single (unpaired) regional indicator is width 2 — matches Bun.stringWidth
-      expect(Bun.stringWidth("\u{1F1E6}")).toBe(2);
-      expect(Bun.sliceAnsi("A\u{1F1E6}B", 1, 3)).toBe("\u{1F1E6}");
-      expect(Bun.sliceAnsi("A\u{1F1E6}B", 3, 4)).toBe("B");
+      // Single (unpaired) regional indicator is width 1 — matches Bun.stringWidth
+      expect(Bun.stringWidth("\u{1F1E6}")).toBe(1);
+      expect(Bun.sliceAnsi("A\u{1F1E6}B", 1, 2)).toBe("\u{1F1E6}");
     });
 
     test("does not treat text-presentation pictographs as fullwidth", () => {

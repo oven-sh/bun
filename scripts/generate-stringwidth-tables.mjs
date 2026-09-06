@@ -12,8 +12,8 @@
 //   extracted/DerivedGeneralCategory.txt   zero-width categories
 //   DerivedCoreProperties.txt              Default_Ignorable_Code_Point, InCB
 //   auxiliary/GraphemeBreakProperty.txt    Grapheme_Cluster_Break
-//   emoji/emoji-data.txt                   Emoji, Emoji_Presentation,
-//                                          Emoji_Modifier(_Base), Extended_Pictographic
+//   emoji/emoji-data.txt                   Emoji, Emoji_Modifier(_Base),
+//                                          Extended_Pictographic
 //
 // Usage: bun scripts/generate-stringwidth-tables.mjs [--ucd <dir>]
 //        Rewrites src/jsc/bindings/stringWidthTables.h in place. Downloads
@@ -120,7 +120,6 @@ const gcb = {
 
 const emojiProperty = name => parseUCDRanges(emojiDataText, p => p === name);
 const emojiRanges = emojiProperty("Emoji");
-const emojiPresentationRanges = emojiProperty("Emoji_Presentation");
 const emojiModifierRanges = emojiProperty("Emoji_Modifier");
 const emojiModifierBaseRanges = emojiProperty("Emoji_Modifier_Base");
 const extendedPictographicRanges = emojiProperty("Extended_Pictographic");
@@ -209,12 +208,10 @@ function isZeroWidth(cp) {
   return false;
 }
 
-// 0 = zero-width, 1 = narrow, 2 = wide, 3 = ambiguous. Emoji_Presentation
-// codepoints are wide even when their East Asian Width is not W/F (the
-// regional indicators).
+// 0 = zero-width, 1 = narrow, 2 = wide, 3 = ambiguous
 function widthClass(cp) {
   if (isZeroWidth(cp)) return 0;
-  if (inRanges(cp, wideRanges) || inRanges(cp, emojiPresentationRanges)) return 2;
+  if (inRanges(cp, wideRanges)) return 2;
   if (inRanges(cp, ambiguousRanges)) return 3;
   return 1;
 }
@@ -295,7 +292,7 @@ const output = `// clang-format off
 //             with Indic_Conjunct_Break, Emoji_Modifier(_Base) and
 //             Extended_Pictographic
 //   bits 5-6  width class: 0 zero-width, 1 narrow, 2 wide (East Asian Width
-//             W/F or Emoji_Presentation), 3 East Asian Ambiguous
+//             W/F), 3 East Asian Ambiguous
 //   bit  7    the Unicode Emoji property, minus the keycap bases [0-9#*]
 // Zero-width: Cc, Cf, Mn, Me, surrogates, unassigned default-ignorable
 // codepoints, conjoining Hangul jungseong/jongseong, and the spacing vowel

@@ -72,7 +72,7 @@ static_assert(widthFromFused(classifyFromTable(0xFFF9), false) == 0); // interli
 static_assert(widthFromFused(classifyFromTable(0xFFF0), false) == 0); // unassigned default-ignorable
 static_assert(widthFromFused(classifyFromTable(0x4E2D), false) == 2); // CJK ideograph: wide
 static_assert(widthFromFused(classifyFromTable(0xFF21), false) == 2); // fullwidth A: wide
-static_assert(widthFromFused(classifyFromTable(0x1F1E6), false) == 2); // regional indicator: Emoji_Presentation
+static_assert(widthFromFused(classifyFromTable(0x1F1E6), false) == 1); // regional indicator: narrow on its own
 static_assert(widthFromFused(classifyFromTable(0xA7), false) == 1); // section sign: ambiguous, narrow by default
 static_assert(widthFromFused(classifyFromTable(0xA7), true) == 2); // section sign: ambiguous as wide
 static_assert((classifyFromTable(0x1F600) & kFusedEmojiBit) != 0); // emoji

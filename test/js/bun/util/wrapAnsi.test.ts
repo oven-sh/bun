@@ -120,8 +120,9 @@ describe("Bun.wrapAnsi", () => {
         expect(Bun.wrapAnsi("a\x1b[31m\u0301\x1b[39mb", 1, { hard: true })).toBe(
           "a\x1b[31m\u0301\x1b[39m\n\x1b[31m\x1b[39mb",
         );
-        // Each lone regional indicator is a 2-column emoji.
+        // A lone regional indicator after a flag is its own narrow cluster.
         expect(Bun.wrapAnsi("\u{1F1E6}\u{1F1E7}\u{1F1E8}", 2, { hard: true })).toBe("\u{1F1E6}\u{1F1E7}\n\u{1F1E8}");
+        expect(Bun.wrapAnsi("\u{1F1E6}\u{1F1E7}\u{1F1E8}x", 3, { hard: true })).toBe("\u{1F1E6}\u{1F1E7}\u{1F1E8}\nx");
         // Consecutive clusters wider than the row get one row each, no blank
         // row between them (same shape as two wide CJK characters).
         expect(Bun.wrapAnsi("\u{1F600}\u{1F600}", 1, { hard: true })).toBe("\n\u{1F600}\n\u{1F600}");

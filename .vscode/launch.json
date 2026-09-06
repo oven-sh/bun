@@ -5,8 +5,8 @@
   // - FORCE_COLOR=1 forces colors in the terminal
   // - "${workspaceFolder}/test" is the cwd for `bun test` so it matches CI, we should fix this later
   // - "cppvsdbg" is used instead of "lldb" on Windows, because "lldb" is too slow
-  // - Seeing WebKit files requires `vendor/WebKit` to hold the pinned sources: any
-  //   `--webkit=source` build fetches them there (see CONTRIBUTING.md for a full clone).
+  // - Seeing WebKit files requires `vendor/WebKit` to hold the pinned sources: any build
+  //   fetches them there (see CONTRIBUTING.md for working from a full clone).
   "version": "0.2.0",
   "configurations": [
     // bun test [file]

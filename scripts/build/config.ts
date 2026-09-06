@@ -1584,7 +1584,7 @@ export function formatConfig(cfg: Config, exe: string): string {
   }
   if (!cfg.canary) features.push("canary:off");
   // Non-default modes — show so you notice when a build is unusual.
-  if (cfg.webkit !== "prebuilt") features.push(`webkit:${cfg.webkit}`);
+  if (cfg.webkit !== "source") features.push(`webkit:${cfg.webkit}`);
   for (const name of Object.keys(cfg.localDeps)) features.push(`local:${name}`);
   if (cfg.packageManager !== "bun") features.push(`package-manager:${cfg.packageManager}`);
   if (cfg.mode !== "full") features.push(`mode:${cfg.mode}`);

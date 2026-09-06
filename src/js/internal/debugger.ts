@@ -11,6 +11,9 @@ class SocketFramer {
   sizeBuffer: Buffer = Buffer.alloc(4);
   sizeBufferIndex: number = 0;
   bufferedData: Buffer = Buffer.alloc(0);
+  // True while the socket holds bytes from `send` that it has not written yet.
+  // The socket's `drain` handler clears it.
+  hasUnsentData = false;
 
   constructor(private onMessage: (message: string | string[]) => void) {
     if (!socketFramerMessageLengthBuffer) {
@@ -24,6 +27,17 @@ class SocketFramer {
     this.bufferedData = Buffer.alloc(0);
     this.sizeBufferIndex = 0;
     this.sizeBuffer = Buffer.alloc(4);
+    this.hasUnsentData = false;
+  }
+
+  // The socket's `drain` handler fires once every buffered byte is written.
+  didDrain(): void {
+    this.hasUnsentData = false;
+    reportExitFlushIfDrained();
+  }
+
+  isFlushed(): boolean {
+    return !this.hasUnsentData;
   }
 
   send(socket: Socket<{ framer: SocketFramer; backend: Backend }>, data: string): void {
@@ -32,8 +46,11 @@ class SocketFramer {
     }
 
     socketFramerMessageLengthBuffer.writeUInt32BE(Buffer.byteLength(data), 0);
-    socket.$write(socketFramerMessageLengthBuffer);
-    socket.$write(data);
+    const wroteLength = socket.$write(socketFramerMessageLengthBuffer);
+    const wroteData = socket.$write(data);
+    if (!wroteLength || !wroteData) {
+      this.hasUnsentData = true;
+    }
   }
 
   onData(socket: Socket<{ framer: SocketFramer; backend: Writer }>, data: Buffer): void {
@@ -103,6 +120,58 @@ function cdpAdapterConstructor() {
 }
 
 export default function (
+  executionContextId: number,
+  url: string,
+  createBackend: CreateBackendFn,
+  send: (message: string | string[]) => void,
+  close: () => void,
+  isAutomatic: boolean,
+  urlIsServer: boolean,
+  isNodeInspector: boolean,
+  reportNodeInspectorServerStarted: (url: string, controlCallback?: (message: string) => void, error?: string) => void,
+): typeof flushBeforeExit {
+  start(
+    executionContextId,
+    url,
+    createBackend,
+    send,
+    close,
+    isAutomatic,
+    urlIsServer,
+    isNodeInspector,
+    reportNodeInspectorServerStarted,
+  );
+  return flushBeforeExit;
+}
+
+// Client transports that can still hold bytes the inspected thread expects to
+// be delivered. Checked when the inspected thread flushes before it exits.
+const activeTransports = new Set<Transport>();
+let exitFlushDone: (() => void) | undefined;
+
+// Called from the debugger thread's C++ side right before the inspected thread
+// exits, after every queued protocol message has been handed to the
+// transports. `done` unblocks the inspected thread.
+function flushBeforeExit(done: () => void): void {
+  exitFlushDone = done;
+  reportExitFlushIfDrained();
+}
+
+function reportExitFlushIfDrained(): void {
+  if (!exitFlushDone) {
+    return;
+  }
+  for (const transport of activeTransports) {
+    if (!transport.isFlushed()) {
+      return;
+    }
+  }
+  const done = exitFlushDone;
+  exitFlushDone = undefined;
+  done();
+}
+
+function start(
   executionContextId: number,
   url: string,
   createBackend: CreateBackendFn,
@@ -413,6 +482,7 @@ class Debugger {
             framer,
             backend,
           };
+          activeTransports.add(framer);
           socket.ref();
         },
         data: (socket, bytes) => {
@@ -422,13 +492,17 @@ class Debugger {
           }
           socket.data.framer.onData(socket, bytes);
         },
-        drain: _socket => {},
+        drain: socket => {
+          socket.data?.framer.didDrain();
+        },
         close: socket => {
           const socketData = socket.data;
           if (socketData) {
             const { backend, framer } = socketData;
+            activeTransports.delete(framer);
             backend.close();
             framer.reset();
+            reportExitFlushIfDrained();
           }
         },
       },
@@ -546,6 +620,7 @@ class Debugger {
     const { refEventLoop } = data;
 
     const client = bufferedWriter(writer);
+    activeTransports.add(client);
 
     if (this.#nodeInspector) {
       // node:inspector clients speak CDP; the adapter sits between the
@@ -599,15 +674,23 @@ class Debugger {
 
   #close(connection: ConnectionOwner): void {
     const { data } = connection;
-    const { backend } = data;
+    const { backend, client } = data;
+    if (client) {
+      activeTransports.delete(client);
+    }
     backend?.close();
+    reportExitFlushIfDrained();
   }
 
   #error(connection: ConnectionOwner, error: Error): void {
     const { data } = connection;
-    const { backend } = data;
+    const { backend, client } = data;
+    if (client) {
+      activeTransports.delete(client);
+    }
     console.error(error);
     backend?.close();
+    reportExitFlushIfDrained();
   }
 }
 
@@ -680,6 +763,7 @@ async function connectToUnixServer(
           backend,
         };
 
+        activeTransports.add(framer);
         socket.ref();
       },
       data: (socket, bytes) => {
@@ -693,14 +777,18 @@ async function connectToUnixServer(
 
       // Ensure we always drain the socket.
       // This is necessary due to socket.$write usage.
-      drain: _socket => {},
+      drain: socket => {
+        socket.data?.framer.didDrain();
+      },
 
       close: socket => {
         const socketData = socket.data;
         if (socketData) {
           const { backend, framer } = socketData;
+          activeTransports.delete(framer);
           backend.close();
           framer.reset();
+          reportExitFlushIfDrained();
         }
       },
     },
@@ -738,6 +826,7 @@ function nodeVersionInfo(): unknown {
 function webSocketWriter(ws: ServerWebSocket<unknown>): Writer {
   return {
     write: message => !!ws.sendText(message),
+    isFlushed: () => ws.getBufferedAmount() === 0,
     close: () => ws.close(),
   };
 }
@@ -766,7 +855,9 @@ function bufferedWriter(writer: Writer): Writer {
       } finally {
         draining = false;
       }
+      reportExitFlushIfDrained();
     },
+    isFlushed: () => pendingMessages.length === 0 && writer.isFlushed(),
     close: () => {
       writer.close();
       pendingMessages.length = 0;
@@ -913,7 +1004,12 @@ type Connection = {
   adapter?: any;
 };
 
-type Writer = {
+type Transport = {
+  // True when no byte handed to this transport is still waiting to be written.
+  isFlushed: () => boolean;
+};
+
+type Writer = Transport & {
   write: (message: string) => boolean;
   drain?: () => void;
   close: () => void;

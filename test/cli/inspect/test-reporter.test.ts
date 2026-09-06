@@ -455,4 +455,84 @@ afterAll(async () => {
     }
     expect(exitCode).toBe(0);
   });
+
+  test("delivers every event emitted before the test run exits", async () => {
+    // The debugger thread writes inspector events to the socket. The test
+    // runner exits right after the last test, so the events for the last tests
+    // (and the LifecycleReporter.error for the last failure) must be flushed
+    // before the process exits. No gate file holds the process open here.
+    const testCount = 100;
+    using dir = tempDir("test-reporter-exit-flush", {
+      "many.test.ts": `
+import { test, expect } from "bun:test";
+for (let i = 0; i < ${testCount}; i++) {
+  test("test " + i, () => {
+    expect(i).toBe(i);
+  });
+}
+test("last one fails", () => {
+  expect(1).toBe(2);
+});
+`,
+    });
+
+    const socketPath = join(String(dir), `inspector-${Math.random().toString(36).substring(2)}.sock`);
+
+    const session = new TestReporterSession();
+    const framer = new SocketFramer((message: string) => {
+      session.onMessage(message);
+    });
+    const errors: any[] = [];
+    session.addEventListener("LifecycleReporter.error", (params: any) => {
+      errors.push(params);
+    });
+
+    const socketClosed = Promise.withResolvers<void>();
+    const socketPromise = connect(`unix://${socketPath}`, () => socketClosed.resolve()).then(s => {
+      socket = s;
+      session.socket = s;
+      session.framer = framer;
+      s.data = {
+        onData: framer.onData.bind(framer),
+      };
+      return s;
+    });
+
+    proc = spawn({
+      cmd: [bunExe(), `--inspect-wait=unix:${socketPath}`, "test", "many.test.ts"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    await socketPromise;
+
+    session.enableInspector();
+    session.enableTestReporter();
+    session.send("LifecycleReporter.enable");
+    session.initialize();
+
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    // The process closed its end of the socket on exit. Once our end closes,
+    // every byte it wrote has been read.
+    await socketClosed.promise;
+
+    expect(stderr).toContain(`Ran ${testCount + 1} tests across 1 file.`);
+    const endedTests = session.getEndedTests();
+    expect({
+      found: session.getFoundTests().size,
+      started: session.getStartedTests().size,
+      ended: endedTests.size,
+      failed: [...endedTests.values()].filter(t => t.status === "fail").length,
+      errors: errors.map(e => e.message),
+    }).toEqual({
+      found: testCount + 1,
+      started: testCount + 1,
+      ended: testCount + 1,
+      failed: 1,
+      errors: [expect.stringContaining("expect(received).toBe(expected)")],
+    });
+    expect(exitCode).toBe(1);
+  });
 });

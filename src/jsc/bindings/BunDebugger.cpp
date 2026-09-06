@@ -10,6 +10,7 @@
 #include <JavaScriptCore/HeapIterationScope.h>
 #include <JavaScriptCore/IsoCellSetInlines.h>
 #include <wtf/Condition.h>
+#include <wtf/MonotonicTime.h>
 #include <wtf/NeverDestroyed.h>
 #include "ScriptExecutionContext.h"
 #include "debug-helpers.h"
@@ -955,6 +956,112 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_closeNodeInspector, (JSGlobalObject*, CallFr
     return JSValue::encode(jsUndefined());
 }
 
+// Handshake between the inspected thread, which is about to exit, and the
+// debugger thread, which still holds outgoing protocol messages: in the
+// connection's queue, in internal/debugger.ts's per-client buffer, and in the
+// socket's write buffer. The inspected thread posts a task behind every
+// queued message and blocks until internal/debugger.ts reports that every
+// client transport has written its pending bytes.
+struct ExitFlushState {
+    WTF::Lock lock;
+    WTF::Condition condition;
+    bool done { false };
+    // Owned by the debugger thread's VM; process-lifetime once set (the
+    // debugger thread is never joined).
+    JSC::Strong<JSC::Unknown> flushCallback {};
+};
+
+static ExitFlushState& exitFlushState()
+{
+    static NeverDestroyed<ExitFlushState> instance;
+    return instance.get();
+}
+
+static void reportExitFlushDone()
+{
+    auto& state = exitFlushState();
+    Locker<Lock> locker(state.lock);
+    state.done = true;
+    state.condition.notifyAll();
+}
+
+JSC_DECLARE_HOST_FUNCTION(jsFunctionReportExitFlushDone);
+JSC_DEFINE_HOST_FUNCTION(jsFunctionReportExitFlushDone, (JSGlobalObject*, CallFrame*))
+{
+    reportExitFlushDone();
+    return JSValue::encode(jsUndefined());
+}
+
+extern "C" void Bun__Debugger__flushBeforeExit(Zig::GlobalObject* globalObject)
+{
+    if (!debuggerScriptExecutionContext)
+        return;
+
+    {
+        Locker<Lock> locker(inspectorConnectionsLock);
+        if (!inspectorConnections)
+            return;
+        auto* context = globalObject->scriptExecutionContext();
+        if (!context)
+            return;
+        auto it = inspectorConnections->find(context->identifier());
+        if (it == inspectorConnections->end())
+            return;
+        bool hasConnectedFrontend = false;
+        for (auto& connection : it->value) {
+            if (connection->status == ConnectionStatus::Connected) {
+                hasConnectedFrontend = true;
+                break;
+            }
+        }
+        if (!hasConnectedFrontend)
+            return;
+    }
+
+    auto& state = exitFlushState();
+    {
+        Locker<Lock> locker(state.lock);
+        state.done = false;
+    }
+
+    // The debugger thread runs its concurrent tasks in order, so this task
+    // runs after every receiveMessagesOnDebuggerThread task posted before it
+    // has handed its messages to internal/debugger.ts.
+    debuggerScriptExecutionContext->postTaskConcurrently([](ScriptExecutionContext& context) {
+        auto& state = exitFlushState();
+        JSC::JSValue flushCallback;
+        {
+            Locker<Lock> locker(state.lock);
+            flushCallback = state.flushCallback.get();
+        }
+        if (!flushCallback || !flushCallback.isCallable()) {
+            reportExitFlushDone();
+            return;
+        }
+
+        auto* globalObject = context.jsGlobalObject();
+        auto& vm = globalObject->vm();
+        auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+        MarkedArgumentBuffer arguments;
+        arguments.append(JSFunction::create(vm, globalObject, 0, String("reportExitFlushDone"_s), jsFunctionReportExitFlushDone, ImplementationVisibility::Public));
+        JSC::call(globalObject, flushCallback.getObject(), arguments, "Bun__Debugger__flushBeforeExit - flushCallback"_s);
+        if (auto* exception = scope.exception()) [[unlikely]] {
+            (void)scope.tryClearException();
+            Zig::GlobalObject::reportUncaughtExceptionAtEventLoop(globalObject, exception);
+            reportExitFlushDone();
+        }
+    });
+
+    // A client that stops reading never drains. Bound the wait so such a
+    // client delays exit instead of preventing it.
+    auto deadline = MonotonicTime::now() + Seconds(2);
+    Locker<Lock> locker(state.lock);
+    while (!state.done) {
+        if (!state.condition.waitUntil(state.lock, deadline))
+            break;
+    }
+}
+
 extern "C" void Bun__startJSDebuggerThread(Zig::GlobalObject* debuggerGlobalObject, ScriptExecutionContextIdentifier scriptId, const BunString* portOrPathString, int isAutomatic, bool isUrlServer, bool isNodeInspector)
 {
     if (!debuggerScriptExecutionContext)
@@ -983,8 +1090,14 @@ extern "C" void Bun__startJSDebuggerThread(Zig::GlobalObject* debuggerGlobalObje
     arguments.append(jsBoolean(isNodeInspector));
     arguments.append(JSFunction::create(vm, debuggerGlobalObject, 3, String("reportNodeInspectorServerStarted"_s), jsFunctionReportNodeInspectorServerStarted, ImplementationVisibility::Public));
 
-    JSC::call(debuggerGlobalObject, debuggerDefaultFn, arguments, "Bun__initJSDebuggerThread - debuggerDefaultFn"_s);
+    JSValue flushCallback = JSC::call(debuggerGlobalObject, debuggerDefaultFn, arguments, "Bun__initJSDebuggerThread - debuggerDefaultFn"_s);
     scope.assertNoException();
+
+    if (flushCallback.isCallable()) {
+        auto& state = exitFlushState();
+        Locker<Lock> locker(state.lock);
+        state.flushCallback = { vm, flushCallback };
+    }
 }
 
 enum class AsyncCallTypeUint8 : uint8_t {

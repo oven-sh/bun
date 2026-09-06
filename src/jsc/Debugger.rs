@@ -161,6 +161,7 @@ impl Default for Debugger {
 unsafe extern "C" {
     safe fn Bun__createJSDebugger(global: &JSGlobalObject) -> u32;
     safe fn Bun__ensureDebugger(ctx_id: u32, wait: bool);
+    safe fn Bun__Debugger__flushBeforeExit(global: &JSGlobalObject);
     safe fn Bun__startJSDebuggerThread(
         global: &JSGlobalObject,
         ctx_id: u32,
@@ -186,6 +187,14 @@ struct DebuggerThreadInit {
 }
 
 impl Debugger {
+    /// Block until the debugger thread has written every queued protocol
+    /// message to its connected frontends, or until a short deadline. Called
+    /// right before the process exits so events emitted by the last test
+    /// (`TestReporter.end`, `LifecycleReporter.error`) reach the client.
+    pub fn flush_before_exit(global: &JSGlobalObject) {
+        Bun__Debugger__flushBeforeExit(global);
+    }
+
     /// `Debugger.waitForDebuggerIfNecessary(vm)` — block on the futex until
     /// `start()` (debugger thread) signals, then run the wait-loop until a
     /// frontend connects (`Debugger__didConnect`) or the deadline elapses.

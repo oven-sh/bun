@@ -511,6 +511,14 @@ const cases: Case[] = [
     loose: false,
   },
   {
+    name: "{ a: undefined } and an object with a non-enumerable a",
+    a: () => ({ a: undefined }),
+    b: () => withHiddenProperty({}, "a", 999),
+    strict: false,
+    loose: false,
+    looseBug: "reports equal",
+  },
+  {
     name: "an object with a non-enumerable x and { x: 1 }",
     a: () => withHiddenProperty({}, "x", 1),
     b: () => ({ x: 1 }),

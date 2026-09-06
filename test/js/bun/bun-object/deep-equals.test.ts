@@ -183,6 +183,13 @@ describe("Bun.deepEquals with mixed enumerability", () => {
       () => withGetter({ a: 1, b: 1 }),
       () => withGetter({ a: 1, x: undefined }),
     ],
+    ["Error", () => Object.assign(new Error("m"), { h: 2 }), () => nonEnumerable(new Error("m"), "h", 2)],
+    [
+      "array symbol key",
+      () => Object.assign([1], { [Symbol.for("h")]: 2 }),
+      () => nonEnumerable([1], Symbol.for("h"), 2),
+    ],
+    ["array symbol key missing on one side", () => Object.assign([1], { [Symbol.for("h")]: 2 }), () => [1]],
   ];
 
   it.each(cases)("%s is not equal in either direction", (_, makeA, makeB) => {
@@ -199,6 +206,21 @@ describe("Bun.deepEquals with mixed enumerability", () => {
     expect(b).not.toEqual(a);
     expect([a]).not.toContainEqual(b);
     expect([b]).not.toContainEqual(a);
+  });
+
+  it("ignores an undefined property on the slow path in either direction", () => {
+    const withExtra = () => Object.assign(new Error("boom"), { extra: undefined, code: "E" });
+    const withoutExtra = () => Object.assign(new Error("boom"), { code: "E" });
+    expect(Bun.deepEquals(withExtra(), withoutExtra())).toBe(true);
+    expect(Bun.deepEquals(withoutExtra(), withExtra())).toBe(true);
+    expect(Bun.deepEquals(withExtra(), withoutExtra(), true)).toBe(false);
+    expect(Bun.deepEquals(withoutExtra(), withExtra(), true)).toBe(false);
+
+    const frozen = Object.freeze({ a: 1, b: undefined, nested: { d: 1, e: undefined } });
+    expect(Bun.deepEquals(frozen, Object.freeze({ a: 1, nested: { d: 1 } }))).toBe(true);
+    expect(Bun.deepEquals(Object.freeze({ a: 1, nested: { d: 1 } }), frozen)).toBe(true);
+    expect(Bun.deepEquals(withGetter({ a: 1, x: undefined }), withGetter({ a: 1 }))).toBe(true);
+    expect(Bun.deepEquals(withGetter({ a: 1 }), withGetter({ a: 1, x: undefined }))).toBe(true);
   });
 
   it("still ignores non-enumerable properties present on both sides", () => {

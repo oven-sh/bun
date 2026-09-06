@@ -719,28 +719,6 @@ static ALWAYS_INLINE bool hasExtraOwnProperties(JSC::Structure* structure)
         || hasIndexedProperties(structure->indexingType());
 }
 
-// Finds `propertyName` on `object` (prototype chain included) like
-// getIfPropertyExists(), but a non-enumerable match counts as absent. The
-// callers iterate enumerable names only, so a non-enumerable property on the
-// other side must not satisfy one of them or the result would depend on the
-// argument order. On true, the value is in `slot`.
-static bool findEnumerableProperty(JSC::JSGlobalObject* globalObject, JSC::JSObject* object, JSC::PropertyName propertyName, PropertySlot& slot)
-{
-    VM& vm = globalObject->vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
-
-    bool hasProperty = object->getPropertySlot(globalObject, propertyName, slot);
-    RETURN_IF_EXCEPTION(scope, false);
-    if (!hasProperty)
-        return false;
-
-    // A Proxy reports no attributes. Its properties count as enumerable.
-    if (slot.isTaintedByOpaqueObject()) [[unlikely]]
-        return true;
-
-    return !(slot.attributes() & PropertyAttribute::DontEnum);
-}
-
 // node compares the non-index own properties of typed arrays as well;
 // only the node entry point (checkPrototypes) pays for this.
 template<bool isStrict, bool enableAsymmetricMatchers, bool checkPrototypes, bool skipPrototypeIdentity = false>
@@ -782,6 +760,120 @@ static bool nonIndexOwnPropertiesEqual(JSC::JSGlobalObject* globalObject, Marked
         bool eq = Bun__deepEquals<isStrict, enableAsymmetricMatchers, checkPrototypes, skipPrototypeIdentity>(globalObject, v1, v2, gcBuffer, stack, scope, true);
         RETURN_IF_EXCEPTION(scope, false);
         if (!eq) {
+            return false;
+        }
+    }
+    return true;
+}
+
+struct DeepEqualsMode {
+    bool isStrict;
+    bool enableAsymmetricMatchers;
+    bool checkPrototypes;
+    bool skipPrototypeIdentity;
+    bool (*deepEquals)(JSC::JSGlobalObject*, JSValue, JSValue, MarkedArgumentBuffer&, Vector<std::pair<JSValue, JSValue>, 16>&, ThrowScope&, bool);
+    bool (*nonIndexOwnPropertiesEqual)(JSC::JSGlobalObject*, MarkedArgumentBuffer&, Vector<std::pair<JSValue, JSValue>, 16>&, ThrowScope&, JSObject*, JSObject*);
+};
+
+template<bool isStrict, bool enableAsymmetricMatchers, bool checkPrototypes, bool skipPrototypeIdentity>
+static constexpr DeepEqualsMode deepEqualsMode {
+    isStrict,
+    enableAsymmetricMatchers,
+    checkPrototypes,
+    skipPrototypeIdentity,
+    &Bun__deepEquals<isStrict, enableAsymmetricMatchers, checkPrototypes, skipPrototypeIdentity>,
+    checkPrototypes ? &nonIndexOwnPropertiesEqual<isStrict, enableAsymmetricMatchers, checkPrototypes, skipPrototypeIdentity> : nullptr,
+};
+
+// Finds an enumerable property `propertyName` on `object`. `ownOnly` skips the
+// prototype chain (node compares own properties only). A non-enumerable match
+// counts as absent: the callers iterate enumerable names, so a non-enumerable
+// property on the other side must not satisfy one of them, or the result would
+// depend on the argument order. When `value` is given, the property is read
+// into it. Without it the getter does not run.
+static bool findEnumerableProperty(JSC::JSGlobalObject* globalObject, JSC::JSObject* object, JSC::PropertyName propertyName, bool ownOnly, JSValue* value)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    PropertySlot slot(object, ownOnly ? PropertySlot::InternalMethodType::GetOwnProperty : PropertySlot::InternalMethodType::HasProperty);
+    bool hasProperty = ownOnly
+        ? object->methodTable()->getOwnPropertySlot(object, globalObject, propertyName, slot)
+        : object->getPropertySlot(globalObject, propertyName, slot);
+    RETURN_IF_EXCEPTION(scope, false);
+    if (!hasProperty)
+        return false;
+
+    // A Proxy reports no attributes. Its properties count as enumerable.
+    bool opaque = slot.isTaintedByOpaqueObject();
+    if (!opaque && (slot.attributes() & PropertyAttribute::DontEnum))
+        return false;
+
+    if (value) {
+        *value = opaque ? object->get(globalObject, propertyName) : slot.getValue(globalObject, propertyName);
+        RETURN_IF_EXCEPTION(scope, false);
+    }
+    return true;
+}
+
+// Compares the properties of o1 and o2 by the enumerable names in a1 and a2.
+// Every name in a1 must be an enumerable property of o2 with an equal value.
+// In strict mode the two name lists must have the same length, which makes the
+// name sets equal. In loose mode a property whose value is undefined counts as
+// absent, so every name in a2 that o1 does not have must be undefined on o2.
+// `ownOnly` must match how the name lists were built (own names, or the
+// prototype chain too). `skipName` is ignored on both sides (Error's `stack`).
+static bool enumerablePropertiesEqual(const DeepEqualsMode& mode, JSC::JSGlobalObject* globalObject, MarkedArgumentBuffer& gcBuffer, Vector<std::pair<JSC::JSValue, JSC::JSValue>, 16>& stack, ThrowScope& scope, JSC::JSObject* o1, JSC::JSObject* o2, const JSC::PropertyNameArrayBuilder& a1, const JSC::PropertyNameArrayBuilder& a2, bool ownOnly, const Identifier* skipName = nullptr)
+{
+    const size_t propertyArrayLength1 = a1.size();
+    const size_t propertyArrayLength2 = a2.size();
+    if (mode.isStrict && propertyArrayLength1 != propertyArrayLength2) {
+        return false;
+    }
+
+    for (size_t i = 0; i < propertyArrayLength1; i++) {
+        const Identifier& i1 = a1[i];
+        if (skipName && i1 == *skipName) continue;
+        PropertyName propertyName1 = PropertyName(i1);
+
+        JSValue prop1 = o1->get(globalObject, propertyName1);
+        RETURN_IF_EXCEPTION(scope, false);
+        if (!prop1) [[unlikely]] {
+            return false;
+        }
+
+        JSValue prop2;
+        bool has2 = findEnumerableProperty(globalObject, o2, propertyName1, ownOnly, &prop2);
+        RETURN_IF_EXCEPTION(scope, false);
+        if (!has2) {
+            if (!mode.isStrict && prop1.isUndefined()) {
+                continue;
+            }
+            return false;
+        }
+
+        bool eql = mode.deepEquals(globalObject, prop1, prop2, gcBuffer, stack, scope, true);
+        RETURN_IF_EXCEPTION(scope, false);
+        if (!eql) return false;
+    }
+
+    if (mode.isStrict) {
+        return true;
+    }
+
+    for (size_t i = 0; i < propertyArrayLength2; i++) {
+        const Identifier& i2 = a2[i];
+        if (skipName && i2 == *skipName) continue;
+        PropertyName propertyName2 = PropertyName(i2);
+
+        // A name o1 has was compared in the loop above. The getter does not run again.
+        bool has1 = findEnumerableProperty(globalObject, o1, propertyName2, ownOnly, nullptr);
+        RETURN_IF_EXCEPTION(scope, false);
+        if (has1) continue;
+
+        JSValue prop2 = o2->get(globalObject, propertyName2);
+        RETURN_IF_EXCEPTION(scope, false);
+        if (!prop2.isUndefined()) {
             return false;
         }
     }
@@ -1057,44 +1149,7 @@ bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
         JSObject::getOwnPropertyNames(o2, globalObject, a2, DontEnumPropertiesMode::Exclude);
         RETURN_IF_EXCEPTION(scope, false);
 
-        size_t propertyLength = a1.size();
-        if constexpr (isStrict) {
-            if (propertyLength != a2.size()) {
-                return false;
-            }
-        }
-
-        // take a property name from one, try to get it from both
-        for (size_t i = 0; i < propertyLength; i++) {
-            Identifier i1 = a1[i];
-            PropertyName propertyName1 = PropertyName(i1);
-
-            JSValue prop1 = o1->get(globalObject, propertyName1);
-            RETURN_IF_EXCEPTION(scope, false);
-
-            if (!prop1) [[unlikely]] {
-                return false;
-            }
-
-            JSValue prop2 = o2->getIfPropertyExists(globalObject, propertyName1);
-            RETURN_IF_EXCEPTION(scope, false);
-
-            if constexpr (!isStrict) {
-                if (prop1.isUndefined() && prop2.isEmpty()) {
-                    continue;
-                }
-            }
-
-            if (!prop2) {
-                return false;
-            }
-
-            auto eql = Bun__deepEquals<isStrict, enableAsymmetricMatchers, checkPrototypes, skipPrototypeIdentity>(globalObject, prop1, prop2, gcBuffer, stack, scope, true);
-            RETURN_IF_EXCEPTION(scope, false);
-            if (!eql) return false;
-        }
-
-        return true;
+        return enumerablePropertiesEqual(deepEqualsMode<isStrict, enableAsymmetricMatchers, checkPrototypes, skipPrototypeIdentity>, globalObject, gcBuffer, stack, scope, o1, o2, a1, a2, true);
     }
 
     if constexpr (isStrict && !checkPrototypes && !skipPrototypeIdentity) {
@@ -1247,89 +1302,7 @@ bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
         RETURN_IF_EXCEPTION(scope, false);
     }
 
-    const size_t propertyArrayLength1 = a1.size();
-    const size_t propertyArrayLength2 = a2.size();
-    if constexpr (isStrict) {
-        if (propertyArrayLength1 != propertyArrayLength2) {
-            return false;
-        }
-    }
-
-    // take a property name from one, try to get it from both
-    for (size_t i = 0; i < propertyArrayLength1; i++) {
-        Identifier i1 = a1[i];
-        PropertyName propertyName1 = PropertyName(i1);
-
-        JSValue prop1 = o1->get(globalObject, propertyName1);
-        RETURN_IF_EXCEPTION(scope, false);
-
-        if (!prop1) [[unlikely]] {
-            return false;
-        }
-
-        JSValue prop2;
-        if constexpr (checkPrototypes) {
-            // node only matches own enumerable properties; getIfPropertyExists
-            // would also find non-enumerable or inherited ones.
-            PropertySlot slot2(o2, PropertySlot::InternalMethodType::GetOwnProperty);
-            bool has = o2->methodTable()->getOwnPropertySlot(o2, globalObject, propertyName1, slot2);
-            RETURN_IF_EXCEPTION(scope, false);
-            if (!has || (slot2.attributes() & PropertyAttribute::DontEnum)) {
-                return false;
-            }
-            prop2 = slot2.getValue(globalObject, propertyName1);
-            RETURN_IF_EXCEPTION(scope, false);
-        } else {
-            PropertySlot slot2(o2, PropertySlot::InternalMethodType::HasProperty);
-            bool has = findEnumerableProperty(globalObject, o2, propertyName1, slot2);
-            RETURN_IF_EXCEPTION(scope, false);
-            if (has) {
-                if (slot2.isTaintedByOpaqueObject()) [[unlikely]]
-                    prop2 = o2->get(globalObject, propertyName1);
-                else
-                    prop2 = slot2.getValue(globalObject, propertyName1);
-                RETURN_IF_EXCEPTION(scope, false);
-            }
-        }
-
-        if constexpr (!isStrict) {
-            if (prop1.isUndefined() && prop2.isEmpty()) {
-                continue;
-            }
-        }
-
-        if (!prop2) {
-            return false;
-        }
-
-        auto eql = Bun__deepEquals<isStrict, enableAsymmetricMatchers, checkPrototypes, skipPrototypeIdentity>(globalObject, prop1, prop2, gcBuffer, stack, scope, true);
-        RETURN_IF_EXCEPTION(scope, false);
-        if (!eql) return false;
-    }
-
-    if constexpr (!isStrict) {
-        // Every defined enumerable property of o2 must be an enumerable property of o1.
-        // The values were compared above, because every such name is also in a1.
-        for (size_t i = 0; i < propertyArrayLength2; i++) {
-            Identifier i2 = a2[i];
-            PropertyName propertyName2 = PropertyName(i2);
-
-            JSValue prop2 = o2->get(globalObject, propertyName2);
-            RETURN_IF_EXCEPTION(scope, false);
-            if (prop2.isUndefined()) {
-                continue;
-            }
-
-            PropertySlot slot1(o1, PropertySlot::InternalMethodType::HasProperty);
-            bool has = findEnumerableProperty(globalObject, o1, propertyName2, slot1);
-            RETURN_IF_EXCEPTION(scope, false);
-            if (!has) {
-                return false;
-            }
-        }
-    }
-
-    return true;
+    return enumerablePropertiesEqual(deepEqualsMode<isStrict, enableAsymmetricMatchers, checkPrototypes, skipPrototypeIdentity>, globalObject, gcBuffer, stack, scope, o1, o2, a1, a2, checkPrototypes);
 }
 
 static bool isTemporalObject(JSC::JSObject* object)
@@ -1396,25 +1369,6 @@ static std::optional<bool> temporalObjectsDequal(JSC::JSObject* o1, JSC::JSObjec
         return false;
     return std::nullopt;
 }
-
-struct DeepEqualsMode {
-    bool isStrict;
-    bool enableAsymmetricMatchers;
-    bool checkPrototypes;
-    bool skipPrototypeIdentity;
-    bool (*deepEquals)(JSC::JSGlobalObject*, JSValue, JSValue, MarkedArgumentBuffer&, Vector<std::pair<JSValue, JSValue>, 16>&, ThrowScope&, bool);
-    bool (*nonIndexOwnPropertiesEqual)(JSC::JSGlobalObject*, MarkedArgumentBuffer&, Vector<std::pair<JSValue, JSValue>, 16>&, ThrowScope&, JSObject*, JSObject*);
-};
-
-template<bool isStrict, bool enableAsymmetricMatchers, bool checkPrototypes, bool skipPrototypeIdentity>
-static constexpr DeepEqualsMode deepEqualsMode {
-    isStrict,
-    enableAsymmetricMatchers,
-    checkPrototypes,
-    skipPrototypeIdentity,
-    &Bun__deepEquals<isStrict, enableAsymmetricMatchers, checkPrototypes, skipPrototypeIdentity>,
-    checkPrototypes ? &nonIndexOwnPropertiesEqual<isStrict, enableAsymmetricMatchers, checkPrototypes, skipPrototypeIdentity> : nullptr,
-};
 
 // The per-type comparisons (Map, Set, Date, typed arrays, ...) are compiled once
 // and take the mode at runtime; only the dispatch and the plain-object tail in
@@ -1622,60 +1576,7 @@ static std::optional<bool> specialObjectsDequalSlow(const DeepEqualsMode& mode, 
             right->getPropertyNames(globalObject, a2, DontEnumPropertiesMode::Exclude);
             RETURN_IF_EXCEPTION(scope, {});
 
-            const size_t propertyArrayLength1 = a1.size();
-            const size_t propertyArrayLength2 = a2.size();
-            if (mode.isStrict) {
-                if (propertyArrayLength1 != propertyArrayLength2) {
-                    return false;
-                }
-            }
-
-            // take a property name from one, try to get it from both
-            size_t i;
-            for (i = 0; i < propertyArrayLength1; i++) {
-                Identifier i1 = a1[i];
-                if (i1 == vm.propertyNames->stack) continue;
-                PropertyName propertyName1 = PropertyName(i1);
-
-                JSValue prop1 = left->get(globalObject, propertyName1);
-                RETURN_IF_EXCEPTION(scope, {});
-                ASSERT(prop1);
-
-                JSValue prop2 = right->getIfPropertyExists(globalObject, propertyName1);
-                RETURN_IF_EXCEPTION(scope, {});
-
-                if (!mode.isStrict) {
-                    if (prop1.isUndefined() && prop2.isEmpty()) {
-                        continue;
-                    }
-                }
-
-                if (!prop2) {
-                    return false;
-                }
-
-                bool propertiesEqual = mode.deepEquals(globalObject, prop1, prop2, gcBuffer, stack, scope, true);
-                RETURN_IF_EXCEPTION(scope, {});
-                if (!propertiesEqual) {
-                    return false;
-                }
-            }
-
-            // for the remaining properties in the other object, make sure they are undefined
-            for (; i < propertyArrayLength2; i++) {
-                Identifier i2 = a2[i];
-                if (i2 == vm.propertyNames->stack) continue;
-                PropertyName propertyName2 = PropertyName(i2);
-
-                JSValue prop2 = right->getIfPropertyExists(globalObject, propertyName2);
-                RETURN_IF_EXCEPTION(scope, {});
-
-                if (!prop2.isUndefined()) {
-                    return false;
-                }
-            }
-
-            return true;
+            return enumerablePropertiesEqual(mode, globalObject, gcBuffer, stack, scope, left, right, a1, a2, false, &vm.propertyNames->stack);
         }
         break;
     }

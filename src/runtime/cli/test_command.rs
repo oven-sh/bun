@@ -902,29 +902,20 @@ impl JunitReporter {
 
         // SAFETY: junit_path_buf[path.len()] == 0 written above
         let zpath = bun_core::ZStr::from_buf(&junit_path_buf[..], path.len());
-        match File::openat(
+        let written = File::openat(
             Fd::cwd(),
             zpath,
             bun_sys::O::WRONLY | bun_sys::O::CREAT | bun_sys::O::TRUNC,
             0o664,
-        ) {
-            bun_sys::Result::Err(err) => {
-                Output::err(
-                    crate::Error::JUnitReportFailed,
-                    "Failed to write JUnit report to {}\n{}",
-                    (bstr::BStr::new(path), err),
-                );
-            }
-            bun_sys::Result::Ok(fd) => match File::write_all(&fd, &self.contents) {
-                bun_sys::Result::Ok(()) => {}
-                bun_sys::Result::Err(err) => {
-                    Output::err(
-                        crate::Error::JUnitReportFailed,
-                        "Failed to write JUnit report to {}\n{}",
-                        (bstr::BStr::new(path), err),
-                    );
-                }
-            },
+        )
+        .and_then(|fd| File::write_all(&fd, &self.contents));
+        if let Err(err) = written {
+            Output::err(
+                crate::Error::JUnitReportFailed,
+                "Failed to write JUnit report to {}\n{}",
+                (bstr::BStr::new(path), err),
+            );
+            return Err(crate::Error::JUnitReportFailed);
         }
         Ok(())
     }
@@ -1447,13 +1438,15 @@ impl CommandLineReporter {
 
     /// Writes the JUnit reporter output file if a JUnit reporter is active and
     /// an outfile path was configured. This must be called before any early exit
-    /// (e.g. bail) so that the report is not lost.
-    pub(crate) fn write_junit_report_if_needed(&mut self) {
+    /// (e.g. bail) so that the report is not lost. Returns `false` when the
+    /// file could not be written; the run must then exit non-zero.
+    pub(crate) fn write_junit_report_if_needed(&mut self) -> bool {
         if let Some(junit) = self.reporters.junit.as_mut() {
             if let Some(outfile) = self.jest.test_options.reporter_outfile.as_deref() {
-                let _ = junit.write_to_file(outfile);
+                return junit.write_to_file(outfile).is_ok();
             }
         }
+        true
     }
 
     /// This process's coverage, one `Report` per instrumented file, sorted by
@@ -2645,7 +2638,7 @@ impl TestCommand {
         pretty_error!("\n");
         Output::flush();
 
-        reporter.write_junit_report_if_needed();
+        let junit_written = reporter.write_junit_report_if_needed();
         if !test_files.is_empty() || ctx.test_options.shard.is_some() {
             reporter.write_timings_if_needed();
         }
@@ -2668,6 +2661,7 @@ impl TestCommand {
                 && coverage_options.fail_on_low_coverage)
             || !write_snapshots_success
             || reporter.jest.unhandled_errors_between_tests > 0
+            || !junit_written
         {
             vm.exit_handler.exit_code = 1;
         }

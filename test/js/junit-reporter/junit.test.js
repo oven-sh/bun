@@ -608,6 +608,35 @@ describe("junit reporter", () => {
     expect(longPathCase.failure[0]._).toContain(`at fromLongPath (${longPath}:1:`);
     expect(pathCase.failure[0]._).toContain("at fromPath (generated.js:1:");
   });
+
+  it.each(["", "--parallel=2"])("exits non-zero when the report file cannot be written %s", async parallelFlag => {
+    await using tmpDir = tempDir("junit-unwritable", {
+      "package.json": "{}",
+      "a.test.js": `
+        import { expect, test } from "bun:test";
+        test("passes", () => {
+          expect(1).toBe(1);
+        });
+      `,
+      "not-a-dir": "",
+    });
+
+    // The parent of the report path is a regular file, so open() fails with ENOTDIR.
+    const junitPath = join(tmpDir, "not-a-dir", "junit.xml");
+    await using proc = spawn(
+      [bunExe(), "test", ...(parallelFlag ? [parallelFlag] : []), "--reporter=junit", "--reporter-outfile", junitPath],
+      {
+        cwd: tmpDir,
+        env: { ...bunEnv, BUN_DEBUG_QUIET_LOGS: "1" },
+        stdout: "pipe",
+        stderr: "pipe",
+      },
+    );
+    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toContain("1 pass");
+    expect(stderr).toContain("Failed to write JUnit report to");
+    expect(exitCode).toBe(1);
+  });
 });
 
 function filterJunitXmlOutput(xmlContent) {

@@ -87,21 +87,17 @@ const tlsFailed = (url: string) => [
 ];
 
 describe.concurrent("WebSocket tls.serverName", () => {
-  test("is sent as SNI when the URL host is an IP address", async () => {
-    using server = startSniServer();
-    const url = `wss://127.0.0.1:${await server.port}/`;
-    const ws = new WebSocket(url, { tls: { ca: tlsCerts.cert, serverName: "localhost" } });
-    expect(await openSession(ws)).toEqual(opened);
-    expect(server.sni).toEqual(["localhost"]);
-  });
-
-  test("accepts the node spelling servername", async () => {
-    using server = startSniServer();
-    const url = `wss://127.0.0.1:${await server.port}/`;
-    const ws = new WebSocket(url, { tls: { ca: tlsCerts.cert, servername: "localhost" } });
-    expect(await openSession(ws)).toEqual(opened);
-    expect(server.sni).toEqual(["localhost"]);
-  });
+  // `servername` is the node spelling of the same option.
+  test.each(["serverName", "servername"] as const)(
+    "%s is sent as SNI when the URL host is an IP address",
+    async key => {
+      using server = startSniServer();
+      const url = `wss://127.0.0.1:${await server.port}/`;
+      const ws = new WebSocket(url, { tls: { ca: tlsCerts.cert, [key]: "localhost" } });
+      expect(await openSession(ws)).toEqual(opened);
+      expect(server.sni).toEqual(["localhost"]);
+    },
+  );
 
   test("is the name the certificate is verified against", async () => {
     using server = startSniServer();

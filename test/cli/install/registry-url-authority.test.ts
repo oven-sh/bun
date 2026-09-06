@@ -92,11 +92,43 @@ describe.concurrent("registry URL authority", () => {
     });
   });
 
+  test("credentials and a path prefix without a trailing slash keep the prefix", async () => {
+    using a = recorder();
+    const exitCode = await install({}, [], {
+      BUN_CONFIG_REGISTRY: `http://carol:s3cret@127.0.0.1:${a.port}/api/npm/repo`,
+    });
+    expect({ a: a.requests, exitCode }).toEqual({
+      a: [{ path: "/api/npm/repo/no-deps", authorization: `Basic ${Buffer.from("carol:s3cret").toString("base64")}` }],
+      exitCode: 1,
+    });
+  });
+
   test("a token before the host is still a Bearer token", async () => {
     using a = recorder();
     const exitCode = await install({}, [], { BUN_CONFIG_REGISTRY: `http://:tok-en@127.0.0.1:${a.port}/` });
     expect({ a: a.requests, exitCode }).toEqual({
       a: [{ path: "/no-deps", authorization: "Bearer tok-en" }],
+      exitCode: 1,
+    });
+  });
+
+  // An env registry on the same host as the .npmrc registry keeps its token.
+  // The host that decides this is the one the request goes to.
+  test.each([
+    ["BUN_CONFIG_REGISTRY", []],
+    ["--registry", ["--registry"]],
+  ] as const)("%s: the .npmrc token of a second host after #@ is not sent to the first host", async (_, args) => {
+    using a = recorder();
+    using b = recorder();
+    const url = `http://127.0.0.1:${a.port}#@127.0.0.1:${b.port}/`;
+    const exitCode = await install(
+      { ".npmrc": `registry=http://127.0.0.1:${b.port}/\n//127.0.0.1:${b.port}/:_authToken=secret-for-b\n` },
+      args.length ? [...args, url] : [],
+      args.length ? {} : { BUN_CONFIG_REGISTRY: url },
+    );
+    expect({ a: a.requests, b: b.requests, exitCode }).toEqual({
+      a: [{ path: "/no-deps", authorization: null }],
+      b: [],
       exitCode: 1,
     });
   });

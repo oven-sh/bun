@@ -412,6 +412,18 @@ pub(crate) fn open_global_bin_dir(opts_: Option<&Api::BunInstall>) -> crate::Res
 // (no struct lifetime params). Park a clone for the
 // lifetime of the install command via the named hand-off helper.
 #[inline]
+/// Whether `Scope::set_url(registry_url)` keeps `scope` on its host, with no downgrade from
+/// https. The URL is read as `set_url` reads it (WTF::URL, the string itself when it rejects it).
+fn keeps_origin(scope: &Npm::registry::Scope, registry_url: &[u8]) -> bool {
+    let normalized = bun_url::URL::from_string(&bun_core::String::borrow_utf8(registry_url))
+        .unwrap_or_else(|_| bun_url::OwnedURL::from_href(Box::from(registry_url)));
+    let new_url = normalized.url();
+    let prev_url = scope.url.url();
+    bun_core::without_trailing_slash(new_url.host)
+        == bun_core::without_trailing_slash(prev_url.host)
+        && (new_url.is_https() || !prev_url.is_https())
+}
+
 fn leak_static(s: &[u8]) -> &'static [u8] {
     bun_core::heap::release(s.to_vec().into_boxed_slice())
 }
@@ -630,15 +642,10 @@ impl Options {
                     {
                         let mut api_registry = Api::NpmRegistry::from_url(registry_);
                         // Credentials in the URL win, as they do for `registry=` in .npmrc.
-                        if !api_registry.has_credentials() {
-                            let prev_url = self.scope.url.url();
-                            let new_url = bun_url::URL::parse(&api_registry.url);
-                            if bun_core::without_trailing_slash(new_url.host)
-                                == bun_core::without_trailing_slash(prev_url.host)
-                                && (new_url.is_https() || !prev_url.is_https())
-                            {
-                                api_registry.token = core::mem::take(&mut self.scope.token);
-                            }
+                        if !api_registry.has_credentials()
+                            && keeps_origin(&self.scope, &api_registry.url)
+                        {
+                            api_registry.token = core::mem::take(&mut self.scope.token);
                         }
                         self.scope = Npm::registry::Scope::from_api(b"", api_registry, env)?;
                         break;
@@ -653,14 +660,7 @@ impl Options {
                 if api_registry.has_credentials() {
                     self.scope = Npm::registry::Scope::from_api(b"", api_registry, env)?;
                 } else {
-                    let new_url = bun_url::URL::parse(&api_registry.url);
-                    let same_origin = {
-                        let prev_url = self.scope.url.url();
-                        bun_core::without_trailing_slash(new_url.host)
-                            == bun_core::without_trailing_slash(prev_url.host)
-                            && (new_url.is_https() || !prev_url.is_https())
-                    };
-                    if !same_origin {
+                    if !keeps_origin(&self.scope, &api_registry.url) {
                         self.scope.token = Box::default();
                         self.scope.auth = Box::default();
                         self.scope.user = Box::default();

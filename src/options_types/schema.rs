@@ -186,18 +186,20 @@ pub mod api {
             }
             let username = url.username();
             let password = url.password();
-            if username.is_empty() && password.is_empty() {
+            if password.is_empty() {
                 // As written, since `.npmrc` `//host/` credential keys match these bytes.
                 return Some(NpmRegistry {
                     url: Box::from(str),
                     ..Default::default()
                 });
             }
-            // WTF::URL encodes every `@` inside the credentials, so the first `@` ends them.
-            let mut href = url.href().to_owned_slice();
-            let authority = bun_core::strings::index_of(&href, b"://").map_or(0, |i| i + 3);
-            if let Some(at) = bun_core::strings::index_of_char_usize(&href[authority..], b'@') {
-                href.drain(authority..=authority + at);
+            // The same `scheme://host/path/` that `URL::href_without_auth` produces.
+            let mut href = url.protocol().to_owned_slice();
+            href.extend_from_slice(b"://");
+            href.extend_from_slice(&url.hostname().to_utf8());
+            href.extend_from_slice(&url.pathname().to_utf8());
+            if !href.ends_with(b"/") {
+                href.push(b'/');
             }
             let mut registry = NpmRegistry {
                 url: href.into_boxed_slice(),

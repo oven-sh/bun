@@ -150,6 +150,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         p.lexer.next()?;
         let decls = p.parse_and_declare_decls(js_ast::symbol::Kind::Hoisted, opts)?;
         p.lexer.expect_or_insert_semicolon()?;
+        p.note_var_shadowing_module_or_exports(decls.slice());
         Ok(p.s(
             S::Local {
                 kind: js_ast::s::Kind::KVar,
@@ -159,6 +160,54 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             },
             loc,
         ))
+    }
+
+    /// `var exports = {...}` / `var module = {...}` hoisted to the module scope gives
+    /// the wrapper name a value of its own. `var exports;` and
+    /// `var exports = module.exports;` keep the wrapper value, so they are not counted.
+    fn note_var_shadowing_module_or_exports(&mut self, decls: &[G::Decl]) {
+        for decl in decls {
+            let Some(value) = decl.value else {
+                continue;
+            };
+            let js_ast::b::B::BIdentifier(id) = decl.binding.data else {
+                continue;
+            };
+            let name = self.symbols[id.r#ref.inner_index() as usize]
+                .original_name
+                .slice();
+            if name != b"module" && name != b"exports" {
+                continue;
+            }
+            if self.is_module_dot_exports_at_parse(value) {
+                continue;
+            }
+            let mut scope = self.current_scope_ref();
+            while !scope.kind_stops_hoisting() {
+                scope = scope.parent.unwrap();
+            }
+            if scope == self.module_scope_ref() {
+                self.has_user_declared_module_or_exports = true;
+            }
+        }
+    }
+
+    /// `module.exports` or `module.exports = ...` before the visit pass resolves names.
+    fn is_module_dot_exports_at_parse(&self, mut expr: Expr) -> bool {
+        if let Some(bin) = expr.data.e_binary()
+            && bin.op == js_ast::OpCode::BinAssign
+        {
+            expr = bin.left;
+        }
+        let Some(dot) = expr.data.e_dot() else {
+            return false;
+        };
+        dot.name == b"exports"
+            && dot
+                .target
+                .data
+                .e_identifier()
+                .is_some_and(|id| self.load_name_from_ref(id.ref_) == b"module")
     }
 
     #[inline]

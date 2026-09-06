@@ -293,7 +293,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         }
                     }
 
-                    if !p.is_control_flow_dead && id.ref_.eql(p.module_ref) {
+                    if !p.is_control_flow_dead
+                        && id.ref_.eql(p.module_ref)
+                        && !p.has_user_declared_module_or_exports
+                    {
                         // Rewrite "module.require()" to "require()" for Webpack compatibility.
                         // See https://github.com/webpack/webpack/pull/7750 for more info.
                         // This also makes correctness a little easier.
@@ -461,7 +464,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
                     if p.should_unwrap_common_js_to_esm() {
                         if !p.is_control_flow_dead && id.ref_.eql(p.exports_ref) {
-                            if !p.commonjs_named_exports_deoptimized {
+                            if !p.commonjs_named_exports_deoptimized
+                                && !p.has_user_declared_module_or_exports
+                            {
                                 if identifier_opts.is_delete_target() {
                                     p.deoptimize_common_js_named_exports();
                                     return None;

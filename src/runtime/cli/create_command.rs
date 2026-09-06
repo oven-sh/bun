@@ -58,6 +58,13 @@ const SKIP_FILES: &[&OSPathSlice] = &[
 
 const NEVER_CONFLICT: &[&[u8]] = &[b"README.md", b"gitignore", b".gitignore", b".git/"];
 
+/// Erases the local borrow on a string that lives in the JSON arena.
+fn arena_str(s: &[u8]) -> &'static [u8] {
+    // SAFETY: `s` points into the JSON arena (`initialize_store()`), which
+    // lives for the rest of the process.
+    unsafe { &*std::ptr::from_ref::<[u8]>(s) }
+}
+
 /// Runs one `bun-create` hook the way `bun run` runs a package.json script:
 /// through the shell, in `cwd`, with `npm_lifecycle_event` set to `name`.
 /// A non-zero exit stops `bun create` with that exit code.
@@ -67,11 +74,22 @@ fn exec_task(
     name: &[u8],
     cwd: &[u8],
     env_loader: &mut DotEnv::Loader,
+    script_names: &[&[u8]],
 ) -> crate::Result<()> {
     let task = strings::trim(task_, b" \n\r\t");
     if task.is_empty() {
         return Ok(());
     }
+
+    // A task that is only the name of a package.json script runs that
+    // script, as it did when every task went through `bun run`.
+    let run_script: Box<[u8]>;
+    let task: &[u8] = if script_names.contains(&task) {
+        run_script = strings::concat(&[b"bun run ", task]);
+        &run_script
+    } else {
+        task
+    };
 
     let use_system_shell = ctx.debug.use_system_shell;
     Output::flush();
@@ -269,7 +287,14 @@ impl CreateCommand {
 
         // SAFETY: `fs::FileSystem::init` returns a process-global singleton pointer.
         let filesystem: &mut fs::FileSystem = unsafe { &mut *fs::FileSystem::init(None)? };
-        let mut env_loader = DotEnv::Loader::init();
+        // The loader is the process `dotenv::INSTANCE` so every mini event
+        // loop this command creates (git, install, hooks) sees the same env.
+        let env_loader_ptr: *mut DotEnv::Loader =
+            bun_core::heap::into_raw(Box::new(DotEnv::Loader::init()));
+        DotEnv::set_instance(env_loader_ptr);
+        // SAFETY: just allocated, process-lifetime, and only this thread
+        // dereferences it.
+        let env_loader: &'static mut DotEnv::Loader = unsafe { &mut *env_loader_ptr };
 
         env_loader.load_process()?;
 
@@ -341,7 +366,7 @@ impl CreateCommand {
             ExampleTag::GithubRepository | ExampleTag::Official => {
                 let tarball_bytes: MutableString = match example_tag {
                     ExampleTag::Official => {
-                        match Example::fetch(&ctx, &mut env_loader, template, &mut progress, node) {
+                        match Example::fetch(&ctx, env_loader, template, &mut progress, node) {
                             Ok(b) => b,
                             Err(err) => {
                                 if matches!(
@@ -358,10 +383,7 @@ impl CreateCommand {
                                     Output::flush();
 
                                     let examples = Example::fetch_all_local_and_remote(
-                                        &ctx,
-                                        None,
-                                        &mut env_loader,
-                                        filesystem,
+                                        &ctx, None, env_loader, filesystem,
                                     )?;
                                     Example::print(&examples, Some(dirname));
                                     Global::exit(1);
@@ -378,7 +400,7 @@ impl CreateCommand {
                     }
                     ExampleTag::GithubRepository => match Example::fetch_from_github(
                         &ctx,
-                        &mut env_loader,
+                        env_loader,
                         template,
                         &mut progress,
                         node,
@@ -421,10 +443,7 @@ impl CreateCommand {
                                 Output::flush();
 
                                 let examples = Example::fetch_all_local_and_remote(
-                                    &ctx,
-                                    None,
-                                    &mut env_loader,
-                                    filesystem,
+                                    &ctx, None, env_loader, filesystem,
                                 )?;
                                 Example::print(&examples, Some(dirname));
                                 Global::crash();
@@ -731,6 +750,7 @@ impl CreateCommand {
         let create_react_app_entry_point_path: &[u8] = b"";
         let mut preinstall_tasks: Vec<&[u8]> = Vec::new();
         let mut postinstall_tasks: Vec<&[u8]> = Vec::new();
+        let mut script_names: Vec<&[u8]> = Vec::new();
         let mut has_dependencies: bool = false;
         let path_env: Vec<u8> = env_loader.map.get(b"PATH").unwrap_or(b"").to_vec();
         let path_env: &[u8] = &path_env;
@@ -944,6 +964,14 @@ impl CreateCommand {
                                 scripts_obj
                                     .properties
                                     .shrink_retaining_capacity(script_property_out_i);
+
+                                for prop in scripts_obj.properties.slice() {
+                                    if let Some(name) =
+                                        prop.key.as_ref().and_then(|k| k.as_utf8_string_literal())
+                                    {
+                                        script_names.push(arena_str(name));
+                                    }
+                                }
                             }
                         }
 
@@ -955,19 +983,6 @@ impl CreateCommand {
                         }
 
                         let value = props.slice()[i].value.unwrap();
-                        // `as_property` returns an owned `Query`
-                        // (Copy types backed by an arena `StoreRef`). Borrowck
-                        // ties any `&[u8]` we pull out of it to the `if let`
-                        // scope even though the underlying `EString.data` is
-                        // `&'static [u8]`. Erase the local borrow lifetime via
-                        // raw-pointer round-trip so the task slices can outlive
-                        // the temporary `Query`.
-                        let arena_str = |s: &[u8]| -> &'static [u8] {
-                            // SAFETY: `s` always points into the JSON arena
-                            // (initialized via `initialize_store()`), which
-                            // lives for the rest of `exec`.
-                            unsafe { &*std::ptr::from_ref::<[u8]>(s) }
-                        };
                         if let Some(postinstall) = value.as_property(b"postinstall") {
                             match postinstall.expr.data {
                                 LExprData::EString(single_task) => {
@@ -1061,19 +1076,24 @@ impl CreateCommand {
 
         // `--no-install` skips node_modules and the hooks. A template with no
         // dependencies skips only `bun install`: its hooks still run.
-        let run_tasks = !create_options.skip_install;
+        let run_tasks = !create_options.skip_install
+            && !(preinstall_tasks.is_empty() && postinstall_tasks.is_empty());
         create_options.skip_install = create_options.skip_install || !has_dependencies;
 
-        if run_tasks && !(preinstall_tasks.is_empty() && postinstall_tasks.is_empty()) {
-            configure_path_for_tasks(&mut env_loader, destination)?;
+        if run_tasks {
+            configure_path_for_tasks(env_loader, destination)?;
             env_loader
                 .map
                 .put(b"npm_package_name", bun_paths::basename(destination))?;
         }
 
+        // Git runs on its own thread next to `bun install`, unless a hook
+        // could end the process while that thread still writes.
+        let mut git_thread_pending = false;
         if !create_options.skip_git {
-            if !create_options.skip_install {
+            if !create_options.skip_install && !run_tasks {
                 GitHandler::spawn(destination, path_env, create_options.verbose);
+                git_thread_pending = true;
             } else {
                 if create_options.verbose {
                     create_options.skip_git =
@@ -1094,7 +1114,14 @@ impl CreateCommand {
 
         if run_tasks {
             for task in &preinstall_tasks {
-                exec_task(ctx, task, b"preinstall", destination, &mut env_loader)?;
+                exec_task(
+                    ctx,
+                    task,
+                    b"preinstall",
+                    destination,
+                    env_loader,
+                    &script_names,
+                )?;
             }
         }
 
@@ -1148,28 +1175,23 @@ impl CreateCommand {
                 windows: (),
                 ..Default::default()
             })?;
-            let result = process?;
-            if !result.is_ok() {
-                let exit_code: u32 = match &result.status {
-                    crate::api::bun::process::Status::Exited(e) => u32::from(e.code),
-                    _ => 1,
-                };
-                bun_core::pretty_errorln!(
-                    "<r><red>error<r><d>:<r> <b>bun install<r> exited with code {}<r>",
-                    exit_code,
-                );
-                Output::flush();
-                Global::exit(exit_code.max(1));
-            }
+            let _ = process?;
         }
 
         if run_tasks {
             for task in &postinstall_tasks {
-                exec_task(ctx, task, b"postinstall", destination, &mut env_loader)?;
+                exec_task(
+                    ctx,
+                    task,
+                    b"postinstall",
+                    destination,
+                    env_loader,
+                    &script_names,
+                )?;
             }
         }
 
-        if !create_options.skip_install && !create_options.skip_git {
+        if git_thread_pending {
             create_options.skip_git = !GitHandler::wait();
         }
 

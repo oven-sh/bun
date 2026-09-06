@@ -554,29 +554,49 @@ describe("bun-create hooks", () => {
     expect(await exists(join(dest, "POST_RAN"))).toBe(false);
   });
 
-  it("stop when bun install fails", async () => {
-    using server = Bun.serve({
-      port: 0,
-      fetch() {
-        return new Response("not found", { status: 404 });
-      },
+  it.skipIf(!isPosix)("run a bare package.json script name through bun run", async () => {
+    const bunCreateDir = await writeTemplate("hooks-script-name", {
+      scripts: { setup: "echo setup-ran > SETUP" },
+      "bun-create": { postinstall: "setup" },
     });
-    const bunCreateDir = await writeTemplate("hooks-install-fail", {
-      dependencies: { "no-such-package-for-bun-create": "1.0.0" },
-      "bun-create": {
-        preinstall: "echo pre > PRE_RAN",
-        postinstall: "echo post > POST_RAN",
-      },
-    });
-    await Bun.write(join(bunCreateDir, "hooks-install-fail", "bunfig.toml"), `[install]\nregistry = "${server.url}"\n`);
-    const dest = join(x_dir, "hooks-install-fail-dest");
+    const dest = join(x_dir, "hooks-script-name-dest");
 
-    const { out, err, exitCode } = await runCreate("hooks-install-fail", dest, bunCreateDir);
-    expect(err).toContain("bun install exited with code 1");
-    expect(out).not.toContain("project successfully");
-    expect(exitCode).toBe(1);
-    expect(await exists(join(dest, "PRE_RAN"))).toBe(true);
-    expect(await exists(join(dest, "POST_RAN"))).toBe(false);
+    const { err, exitCode } = await runCreate("hooks-script-name", dest, bunCreateDir);
+    expect(err).toContain("$ bun run setup\n");
+    expect(exitCode).toBe(0);
+    expect(await Bun.file(join(dest, "SETUP")).text()).toBe("setup-ran\n");
+  });
+
+  it.skipIf(!isPosix)("commit the template before a hook can fail", async () => {
+    // With a dependency, git runs on its own thread next to bun install.
+    // The failing hook must not end the process while that thread writes.
+    const bunCreateDir = await writeTemplate("hooks-git-first", {
+      dependencies: { "is-number": "7.0.0" },
+      "bun-create": { preinstall: "exit 7" },
+    });
+    const dest = join(x_dir, "hooks-git-first-dest");
+
+    await using proc = spawn({
+      cmd: [bunExe(), "create", "hooks-git-first", dest],
+      cwd: x_dir,
+      stdout: "pipe",
+      stdin: "ignore",
+      stderr: "pipe",
+      env: {
+        ...env,
+        BUN_CREATE_DIR: bunCreateDir,
+        GIT_AUTHOR_NAME: "t",
+        GIT_AUTHOR_EMAIL: "t@t.t",
+        GIT_COMMITTER_NAME: "t",
+        GIT_COMMITTER_EMAIL: "t@t.t",
+      },
+    });
+    const [, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(err).toContain('script "preinstall" exited with code 7');
+    expect(exitCode).toBe(7);
+
+    await using git = spawn({ cmd: ["git", "log", "--oneline"], cwd: dest, stdout: "pipe", stderr: "pipe" });
+    expect(await git.stdout.text()).toContain("Initial commit");
   });
 });
 

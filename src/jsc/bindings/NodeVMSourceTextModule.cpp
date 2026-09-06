@@ -155,11 +155,26 @@ static ScriptFetchParameters::Type importAttributesType(VM& vm, ImportAttributes
     return ScriptFetchParameters::Type::JavaScript;
 }
 
-// `requestedModules()` is deduplicated by (specifier, type) in first-occurrence
-// order, so it cannot be index-aligned with the import statements. Find the
-// statement that produced `request`: the first import with the same specifier
-// and type. Returns null for a request that came from an `export ... from`.
-static ImportAttributesListNode* findImportAttributesList(VM& vm, ModuleProgramNode& node, const AbstractModuleRecord::ModuleRequest& request)
+// The phase of an import statement. The AST node does not expose it, but the
+// module record keeps it on the import entry of each binding the statement
+// declares. A statement with no bindings (`import 'm'`) is always evaluation
+// phase: `import defer` requires a namespace binding.
+static AbstractModuleRecord::ModulePhase importPhase(JSModuleRecord& moduleRecord, ImportDeclarationNode& importDeclaration)
+{
+    const auto& specifiers = importDeclaration.specifierList()->specifiers();
+    if (specifiers.isEmpty())
+        return AbstractModuleRecord::ModulePhase::Evaluation;
+    auto entry = moduleRecord.importEntries().find(specifiers[0]->localName().impl());
+    if (entry == moduleRecord.importEntries().end())
+        return AbstractModuleRecord::ModulePhase::Evaluation;
+    return entry->value.phase;
+}
+
+// `requestedModules()` is deduplicated by (specifier, type, phase) in
+// first-occurrence order, so it cannot be index-aligned with the import
+// statements. Find the statement that produced `request`: the first import with
+// the same key. Returns null for a request that came from an `export ... from`.
+static ImportAttributesListNode* findImportAttributesList(VM& vm, JSModuleRecord& moduleRecord, ModuleProgramNode& node, const AbstractModuleRecord::ModuleRequest& request)
 {
     ScriptFetchParameters::Type requestType = request.m_attributes ? request.m_attributes->type() : ScriptFetchParameters::Type::JavaScript;
     for (StatementNode* statement = node.statements()->firstStatement(); statement; statement = statement->next()) {
@@ -173,6 +188,8 @@ static ImportAttributesListNode* findImportAttributesList(VM& vm, ModuleProgramN
             continue;
         ImportAttributesListNode* attributesList = importDeclaration->attributesList();
         if (importAttributesType(vm, attributesList) != requestType)
+            continue;
+        if (importPhase(moduleRecord, *importDeclaration) != request.m_phase)
             continue;
         return attributesList;
     }
@@ -288,7 +305,7 @@ JSValue NodeVMSourceTextModule::createModuleRecord(JSGlobalObject* globalObject)
             }
         }
 
-        if (ImportAttributesListNode* attributesNode = findImportAttributesList(vm, *node, request)) {
+        if (ImportAttributesListNode* attributesNode = findImportAttributesList(vm, *moduleRecord, *node, request)) {
             for (auto [key, value] : attributesNode->attributes()) {
                 attributeMap.set(key->string(), value->string());
                 attributesObject->putDirect(vm, *key, JSC::jsString(vm, value->string()));

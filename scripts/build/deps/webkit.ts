@@ -1538,15 +1538,35 @@ function jscGroup(
  * only says how: the source, the flags a JSC-family TU compiles with, and
  * the link flags a standalone JSC executable needs.
  */
-export function jscTestFFI(cfg: Config): { source: string; cxxflags: string[]; ldflags: string[] } {
+export function jscTestFFI(cfg: Config): JSCProgram {
+  return jscProgram(cfg, "testFFI", ["ffi/tests/testFFI.cpp"], []);
+}
+
+/**
+ * JSC's `jsc` shell (shell/CMakeLists.txt: jsc.cpp + the $vm shell helpers,
+ * libedit for its REPL on macOS). Not a default target: bun.ts emits it so
+ * `bun run build --target=jsc` / `ninja jsc` build it on demand.
+ */
+export function jscShell(cfg: Config): JSCProgram {
+  return jscProgram(cfg, "jsc", ["jsc.cpp", "tools/JSDollarVMShell.cpp"], cfg.darwin ? ["-ledit"] : []);
+}
+
+export interface JSCProgram {
+  sources: string[];
+  cxxflags: string[];
+  ldflags: string[];
+}
+
+/** A standalone JSC executable compiled the way shell/CMakeLists.txt compiles them: JSC's flags, statically linked with the framework. */
+function jscProgram(cfg: Config, name: string, sources: string[], ldflags: string[]): JSCProgram {
   const wk = webkitLayout(cfg);
   const jsc = jscCompileFlags(wk, webkitFlags(wk));
   const { cxx } = groupCompileFlags(cfg, wk.W, {
     includes: jsc.includes,
-    cflags: [...jsc.targetFlags, "-DBUILDING_testFFI", "-DSTATICALLY_LINKED_WITH_JavaScriptCore"],
+    cflags: [...jsc.targetFlags, `-DBUILDING_${name}`, "-DSTATICALLY_LINKED_WITH_JavaScriptCore"],
     cxxflags: jsc.cxx,
   });
-  return { source: join(wk.JSC, "ffi", "tests", "testFFI.cpp"), cxxflags: cxx, ldflags: standaloneExeLinkFlags(cfg) };
+  return { sources: inTree(wk.JSC, sources), cxxflags: cxx, ldflags: [...standaloneExeLinkFlags(cfg), ...ldflags] };
 }
 
 // ───────────────────────────────────────────────────────────────────────────

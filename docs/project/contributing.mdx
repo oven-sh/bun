@@ -291,7 +291,7 @@ git -C ../WebKit checkout <WEBKIT_VERSION>
 bun run build:local
 ```
 
-`bun run build:local` builds JSC and Bun in one ninja graph; on subsequent runs only the WebKit files you changed (and what includes them) recompile. `ninja -Cbuild/debug-local` also works after the first build.
+`bun run build:local` builds JSC and Bun in one ninja graph; on subsequent runs only the WebKit files you changed (and what includes them) recompile. `ninja -Cbuild/debug-local` also works after the first build. `bun run build:local --target=jsc` (or `--target=jsc` on any build) additionally links JSC's `jsc` shell into the build directory; it is not built by default.
 
 The build output goes to `./build/debug-local` (instead of `./build/debug`), so you'll need to update a couple of places:
 

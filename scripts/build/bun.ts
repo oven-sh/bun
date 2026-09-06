@@ -37,7 +37,7 @@ import { generateDepVersionsHeader } from "./depVersionsHeader.ts";
 import { allDeps } from "./deps/index.ts";
 import { lolhtml } from "./deps/lolhtml.ts";
 import { rustArgon2 } from "./deps/rust-argon2.ts";
-import { jscTestFFI, webkitClassInfoCheckScript } from "./deps/webkit.ts";
+import { type JSCProgram, jscShell, jscTestFFI, webkitClassInfoCheckScript } from "./deps/webkit.ts";
 import { assert } from "./error.ts";
 import {
   bunIncludes,
@@ -408,7 +408,8 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
   // archived or linked into bun.
   const testFFIEdge = emitTestFFI(n, cfg, depsByName);
   const testFFI = testFFIEdge?.exe;
-  const sideObjects = testFFIEdge !== undefined ? [testFFIEdge.object] : [];
+  const jscShellEdge = emitJscShell(n, cfg, depsByName);
+  const sideObjects = [...(testFFIEdge?.objects ?? []), ...(jscShellEdge?.objects ?? [])];
 
   // ─── Step 6: cpp-only / archive-link → archive (cpp-only returns here) ───
   // CI's build-cpp step: archive all .o into libbun.a, stop. The sibling
@@ -925,22 +926,46 @@ function emitTestFFI(
   n: Ninja,
   cfg: Config,
   deps: ReadonlyMap<string, ResolvedDep>,
-): { exe: string; object: string } | undefined {
+): { exe: string; objects: string[] } | undefined {
+  return emitJscProgram(n, cfg, deps, "testFFI", jscTestFFI);
+}
+
+/**
+ * JSC's `jsc` shell — the same objects plus jsc.cpp. Emitted but not a default
+ * target and not uploaded: `bun run build --target=jsc` (or `ninja jsc`)
+ * builds it when someone wants a bare JSC REPL against bun's exact JSC build.
+ */
+function emitJscShell(
+  n: Ninja,
+  cfg: Config,
+  deps: ReadonlyMap<string, ResolvedDep>,
+): { exe: string; objects: string[] } | undefined {
+  return emitJscProgram(n, cfg, deps, "jsc", jscShell);
+}
+
+/** A standalone JSC program (webkit.ts says how JSC compiles them) linked with the WebKit/ICU/mimalloc objects bun links. */
+function emitJscProgram(
+  n: Ninja,
+  cfg: Config,
+  deps: ReadonlyMap<string, ResolvedDep>,
+  name: string,
+  program: (cfg: Config) => JSCProgram,
+): { exe: string; objects: string[] } | undefined {
   const webkit = deps.get("WebKit");
   if (cfg.webkit !== "source" || webkit === undefined) return undefined;
-  const spec = jscTestFFI(cfg);
-  const fromDep = (name: string): string[] => {
-    const d = deps.get(name);
+  const spec = program(cfg);
+  const fromDep = (dep: string): string[] => {
+    const d = deps.get(dep);
     return d === undefined ? [] : [...d.objects, ...d.libs];
   };
-  n.comment("─── testFFI (JSC's FFI test program) ───");
-  const obj = cxx(n, cfg, spec.source, { flags: spec.cxxflags, orderOnlyInputs: webkit.outputs });
+  n.comment(`─── ${name} (JSC standalone program) ───`);
+  const objects = spec.sources.map(src => cxx(n, cfg, src, { flags: spec.cxxflags, orderOnlyInputs: webkit.outputs }));
   const shims = emitShims(n, cfg);
-  const exe = link(n, cfg, "testFFI", [obj, ...fromDep("WebKit"), ...fromDep("icu"), ...fromDep("mimalloc")], {
+  const exe = link(n, cfg, name, [...objects, ...fromDep("WebKit"), ...fromDep("icu"), ...fromDep("mimalloc")], {
     libs: [],
-    // Debug info stripped at link: nothing symbolizes a testFFI crash, and
-    // with full DWARF it is 0.5 GB on the non-LTO lanes' artifacts. (Windows
-    // never gets /DEBUG here, so no PDB either.)
+    // Debug info stripped at link: nothing symbolizes these, and with full
+    // DWARF testFFI is 0.5 GB on the non-LTO lanes' artifacts. (Windows never
+    // gets /DEBUG here, so no PDB either.)
     flags: [
       ...computeTargetLinkFlags(cfg),
       ...(cfg.darwin ? ["-Wl,-dead_strip", "-Wl,-S"] : cfg.windows ? [] : ["-Wl,--gc-sections", "-Wl,--strip-debug"]),
@@ -950,11 +975,10 @@ function emitTestFFI(
     ],
     implicitInputs: shims.implicitInputs,
   });
-  // No phony: the file is `testFFI[.exe]` at the build root, so `ninja
-  // testFFI` already names it (on Windows a `testFFI` alias would not clash,
-  // but one spelling everywhere).
-  if (cfg.windows) n.phony("testFFI", [exe]);
-  return { exe, object: obj };
+  // The file is `<name>[.exe]` at the build root, so `ninja <name>` already
+  // names it on unix; Windows gets the suffix-less alias.
+  if (cfg.windows) n.phony(name, [exe]);
+  return { exe, objects };
 }
 
 /**

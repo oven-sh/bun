@@ -552,6 +552,50 @@ fn validate_route_name(global: &JSGlobalObject, path: &[u8]) -> JsResult<()> {
     Ok(())
 }
 
+/// Every key `SSLConfig::from_js` reads (see `SSLConfig.bindv2.ts`). The
+/// legacy form (Bun v0.x) read them from the top-level options object.
+const TLS_OPTION_KEYS: &[&str] = &[
+    "passphrase",
+    "dhParamsFile",
+    "serverName",
+    "servername",
+    "lowMemoryMode",
+    "rejectUnauthorized",
+    "requestCert",
+    "ca",
+    "cert",
+    "key",
+    "secureOptions",
+    "minVersion",
+    "maxVersion",
+    "keyFile",
+    "certFile",
+    "caFile",
+    "ALPNProtocols",
+    "ciphers",
+    "clientRenegotiationLimit",
+    "clientRenegotiationWindow",
+    "crl",
+    "allowPartialTrustChain",
+    "sessionTimeout",
+    "sigalgs",
+    "ecdhCurve",
+];
+
+/// The first legacy top-level TLS key that is set (not `undefined`) on the
+/// options object.
+fn first_top_level_tls_key(
+    global: &JSGlobalObject,
+    arg: JSValue,
+) -> JsResult<Option<&'static str>> {
+    for &key in TLS_OPTION_KEYS {
+        if arg.get(global, key)?.is_some() {
+            return Ok(Some(key));
+        }
+    }
+    Ok(None)
+}
+
 fn get_routes_object(global: &JSGlobalObject, arg: JSValue) -> JsResult<Option<JSValue>> {
     for key in ["routes", "static"] {
         if let Some(routes) = arg.get(global, key)? {
@@ -1241,6 +1285,15 @@ impl ServerConfig {
         }
 
         if let Some(tls) = arg.get_truthy(global, "tls")? {
+            // The legacy top-level keys are only read when `tls` is absent.
+            // A mix would silently drop the top-level ones (for example
+            // `requestCert` and `rejectUnauthorized`), so refuse it.
+            if let Some(key) = first_top_level_tls_key(global, arg)? {
+                return Err(global.throw_invalid_arguments(format_args!(
+                    "Bun.serve() received both \"tls\" and the top-level TLS option \"{key}\". \
+                     Move \"{key}\" into the \"tls\" object.",
+                )));
+            }
             if tls.is_falsey() {
                 args.ssl_config = None;
             } else if tls.js_type().is_array() {

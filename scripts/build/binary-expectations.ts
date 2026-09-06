@@ -217,8 +217,10 @@ function runtimeInitializers(cfg: Config): string[] {
     // Rust std's aarch64 outline-atomics (LSE) probe.
     initializers.push("_R*3std3sys18configure_builtins13RUST_LSE_INIT*");
   }
-  if (cfg.arm64 && android) {
-    // compiler-rt's outline-atomics probe and bionic's cpu-feature init.
+  if (cfg.arm64 && (android || cfg.freebsd)) {
+    // compiler-rt's outline-atomics LSE probe and cpu-feature init (cpu_model), linked in because
+    // clang defaults to -moutline-atomics on these targets (FreeBSD: since clang 22) and
+    // -march=armv8-a has no LSE.
     initializers.push("init_have_lse_atomics", "__init_cpu_features");
   }
   return initializers;

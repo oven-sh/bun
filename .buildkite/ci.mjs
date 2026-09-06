@@ -289,6 +289,13 @@ function getImageName(platform, options) {
   // linux image tag that doesn't exist.
   const hostOs = os === "freebsd" || crossCompile ? "linux" : os;
 
+  // Trial branch: run on the images this branch baked in build #110938 (bootstrap v48 with the
+  // per-lane /opt/bun-toolchain/<variant> from bun-toolchain-…-6464ba2b) instead of the published
+  // v<N>, so follow-up commits need no rebake.
+  if (hostOs === "linux" && !buildImages) {
+    return `${name}-build-110938`;
+  }
+
   if (buildImages && !publishImages && (!imageFilter || hostOs === imageFilter || distro === imageFilter)) {
     return `${name}-build-${getBuildNumber()}`;
   }

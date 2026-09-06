@@ -3651,15 +3651,16 @@ describe("response header size cap", () => {
     const lines: string[] = [];
     let size = prefix.length + 2; // trailing CRLF
     let i = 0;
+    const filler = Buffer.alloc(100_000, "a").toString();
     while (totalBytes - size > 100_000 + 16) {
-      const line = `x-${String(i++).padStart(3, "0")}: ${"a".repeat(100_000)}\r\n`;
+      const line = `x-${String(i++).padStart(3, "0")}: ${filler}\r\n`;
       lines.push(line);
       size += line.length;
     }
     const padName = "x-pad: ";
     const padLen = totalBytes - size - padName.length - 2;
     expect(padLen).toBeGreaterThanOrEqual(0);
-    lines.push(`${padName}${"b".repeat(padLen)}\r\n`);
+    lines.push(`${padName}${Buffer.alloc(padLen, "b").toString()}\r\n`);
     const head = prefix + lines.join("") + "\r\n";
     expect(head.length).toBe(totalBytes);
     return Buffer.from(head + "ok", "latin1");

@@ -289,6 +289,7 @@ describe("WebSocket upgrade split across reads", () => {
       ws.close();
     };
     ws.onerror = ev => resolve("error: " + ((ev as ErrorEvent).message ?? "error"));
+    ws.onclose = ev => resolve(`close: ${ev.code} ${ev.reason}`);
     return promise;
   }
 

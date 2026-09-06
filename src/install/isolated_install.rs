@@ -1938,6 +1938,13 @@ pub(crate) fn install_isolated_packages(
         }
     }
 
+    // Read the process umask once, before install tasks spawn. `bin::Linker`
+    // chmods each bin target to `0o777 & !umask` from the thread pool.
+    #[cfg(unix)]
+    {
+        crate::bin::Linker::ensure_umask();
+    }
+
     {
         // Conditionally initialized (only when progress is shown); definite-
         // initialization analysis guarantees no use before assignment.

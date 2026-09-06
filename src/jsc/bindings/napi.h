@@ -137,7 +137,7 @@ struct napi_async_cleanup_hook_handle__ {
 
 #define NAPI_ABORT(message)                                    \
     do {                                                       \
-        Bun__napi_suppress_crash_on_abort_if_desired();    \
+        Bun__napi_suppress_crash_on_abort_if_desired();        \
         Bun__crashHandler(message "", sizeof(message "") - 1); \
     } while (0)
 

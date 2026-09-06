@@ -1561,7 +1561,17 @@ impl NodeHTTPResponse {
             raw_response.clear_on_data();
             raw_response.clear_on_writable();
             raw_response.clear_timeout();
-            raw_response.end_without_body(true);
+            if raw_response.state().is_http_write_called() {
+                // The head is on the wire: the client sees a truncated body
+                // once the socket closes.
+                raw_response.end_without_body(true);
+            } else {
+                // Nothing reached the wire. `end_without_body` would emit the
+                // default `200 OK` head and turn the abort into a complete,
+                // successful response (writeHead is staged in JS, so even a
+                // staged 503 is lost). Node.js writes nothing and closes.
+                raw_response.discard();
+            }
         }
         self.on_request_complete();
         Ok(JSValue::UNDEFINED)

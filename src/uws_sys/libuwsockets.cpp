@@ -1213,6 +1213,30 @@ extern "C"
     }
   }
 
+  void uws_res_discard(int ssl, uws_res_r res)
+  {
+    /* Unlike uws_res_end_without_body, never write the head: the caller
+     * aborts a response whose header section is still open, and the default
+     * "200 OK" head would turn the abort into a complete, successful
+     * message. The connection is marked close; the caller closes it. */
+    if (ssl)
+    {
+      uWS::HttpResponse<true> *uwsRes = (uWS::HttpResponse<true> *)res;
+      auto *data = uwsRes->getHttpResponseData();
+      data->state |= uWS::HttpResponseData<true>::HTTP_CONNECTION_CLOSE | uWS::HttpResponseData<true>::HTTP_END_CALLED;
+      data->markDone(uwsRes);
+      uwsRes->resetTimeout();
+    }
+    else
+    {
+      uWS::HttpResponse<false> *uwsRes = (uWS::HttpResponse<false> *)res;
+      auto *data = uwsRes->getHttpResponseData();
+      data->state |= uWS::HttpResponseData<false>::HTTP_CONNECTION_CLOSE | uWS::HttpResponseData<false>::HTTP_END_CALLED;
+      data->markDone(uwsRes);
+      uwsRes->resetTimeout();
+    }
+  }
+
   bool uws_res_write(int ssl, uws_res_r res, const char *data, size_t *length) nonnull_fn_decl;
 
   bool uws_res_write(int ssl, uws_res_r res, const char *data, size_t *length)

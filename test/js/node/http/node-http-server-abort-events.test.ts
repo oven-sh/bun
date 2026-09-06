@@ -206,7 +206,7 @@ describe("res.destroy() defers 'close'", () => {
   });
 
   test.concurrent("after the request listener has returned", async () => {
-    const { events } = await serveAndRecord((req, res, events) => {
+    const { events, received } = await serveAndRecord((req, res, events) => {
       setImmediate(() => destroyRecording(res, events));
     });
     expect(events).toEqual([
@@ -217,6 +217,62 @@ describe("res.destroy() defers 'close'", () => {
       "res.close (closed: true)",
       "req.close",
     ]);
+    // No head was ever flushed, so the connection drops without a response.
+    // An empty "200 OK" here would make a failed handler look successful.
+    expect(received).toBe("");
+  });
+
+  // writeHead() only stages the status until the first write, so a deferred
+  // destroy() sends nothing, not a 200 and not the staged 503.
+  test.concurrent("after the listener has returned with a staged writeHead()", async () => {
+    const { events, received } = await serveAndRecord((req, res, events) => {
+      res.writeHead(503, { "content-length": "100", "retry-after": "5" });
+      setImmediate(() => destroyRecording(res, events, new Error("upstream failed")));
+    });
+    expect(events).toEqual([
+      "listener returned",
+      "destroy()",
+      "destroy() returned (closed: false)",
+      "req.aborted",
+      "res.close (closed: true)",
+      "req.close",
+    ]);
+    expect(received).toBe("");
+  });
+
+  test.concurrent("req.destroy() after the listener has returned sends no response", async () => {
+    const { events, received } = await serveAndRecord((req, res, events) => {
+      setImmediate(() => {
+        events.push("req.destroy()");
+        req.destroy(new Error("upstream failed"));
+      });
+    });
+    expect(events).toEqual([
+      "listener returned",
+      "req.destroy()",
+      "req.aborted",
+      "req.close",
+      "res.close (closed: true)",
+    ]);
+    expect(received).toBe("");
+  });
+
+  // Once the head is on the wire the client gets the truncated body instead.
+  test.concurrent("after the listener has returned with a partial body", async () => {
+    const { events, received } = await serveAndRecord((req, res, events) => {
+      res.write("partial");
+      setImmediate(() => destroyRecording(res, events));
+    });
+    expect(events).toEqual([
+      "listener returned",
+      "destroy()",
+      "destroy() returned (closed: false)",
+      "req.aborted",
+      "res.close (closed: true)",
+      "req.close",
+    ]);
+    expect(received).toStartWith("HTTP/1.1 200 ");
+    expect(received).toEndWith("\r\n\r\n7\r\npartial\r\n");
   });
 
   // server.emit("connection", duplex) serves the connection with the JS

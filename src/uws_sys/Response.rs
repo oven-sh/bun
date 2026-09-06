@@ -251,6 +251,13 @@ impl<const SSL: bool> Response<SSL> {
         c::uws_res_end_without_body(Self::ssl_flag(), self.as_raw(), close_connection)
     }
 
+    /// Ends a response whose header section is still open without writing
+    /// anything, so the client never sees a complete message. Marks the
+    /// connection close; the caller closes the socket.
+    pub fn discard(&mut self) {
+        c::uws_res_discard(Self::ssl_flag(), self.as_raw())
+    }
+
     pub(crate) fn end_send_file(&mut self, write_offset: u64, close_connection: bool) {
         c::uws_res_end_sendfile(
             Self::ssl_flag(),
@@ -891,6 +898,18 @@ impl AnyResponse {
         any_dispatch!(self, |r| r.end_without_body(close_connection))
     }
 
+    /// Aborts a response whose header section is still open. HTTP/1 writes
+    /// nothing and leaves the close to the caller. HTTP/2 and HTTP/3 reset
+    /// the stream.
+    pub fn discard(self) {
+        match self {
+            AnyResponse::SSL(ptr) => TLSResponse::as_handle(ptr).discard(),
+            AnyResponse::TCP(ptr) => TCPResponse::as_handle(ptr).discard(),
+            AnyResponse::H3(ptr) => H3Response::as_handle(ptr).force_close(),
+            AnyResponse::H2(ptr) => H2Response::as_handle(ptr).force_close(),
+        }
+    }
+
     pub fn force_close(self) {
         match self {
             AnyResponse::SSL(ptr) => {
@@ -1223,6 +1242,7 @@ pub mod c {
             res: &mut uws_res,
             close_connection: bool,
         );
+        pub(crate) safe fn uws_res_discard(ssl: i32, res: &mut uws_res);
         pub(crate) safe fn uws_res_end_sendfile(
             ssl: i32,
             res: &mut uws_res,

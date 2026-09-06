@@ -17,8 +17,7 @@ extern "C" bool Bun__graphemeBreak(uint32_t cp1, uint32_t cp2, uint8_t* state);
 namespace Bun {
 using namespace WTF;
 
-// UTF-16 decoding is in ANSIHelpers.h (shared with sliceAnsi.cpp). The local
-// wrapper here just delegates to keep existing call sites unchanged.
+// UTF-16 decoding is in ANSIHelpers.h (shared with sliceAnsi.cpp).
 static inline char32_t decodeUTF16(const UChar* ptr, size_t available, size_t& outLen)
 {
     return ANSI::decodeUTF16(ptr, available, outLen);
@@ -206,8 +205,7 @@ public:
 // Word Wrapping Core Logic
 // ============================================================================
 
-// Hard-wraps one word that is wider than `columns`, one grapheme cluster at a
-// time: a flag, a keycap or an emoji ZWJ sequence is never split across rows.
+// Hard-wraps one word wider than `columns`, one grapheme cluster at a time.
 template<typename Char>
 static void wrapWord(Vector<Row<Char>>& rows, const Char* wordStart, const Char* wordEnd, size_t columns, const WrapAnsiOptions& options)
 {
@@ -224,9 +222,7 @@ static void wrapWord(Vector<Row<Char>>& rows, const Char* wordStart, const Char*
             continue;
         }
 
-        // Gather one grapheme cluster. An escape sequence between two
-        // codepoints of the cluster travels with it; escapes after the
-        // cluster's last codepoint are left to the loop above.
+        // Gather one cluster; escapes inside it travel with it.
         StringWidth::GraphemeState cluster;
         uint8_t breakState = 0;
         char32_t prevCp = 0;

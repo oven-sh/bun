@@ -135,9 +135,7 @@ static constexpr bool isIndicConjunctBreakExtend(GraphemeBreakClass gb)
     return gb == GraphemeBreakClass::IndicConjunctBreakExtend || gb == GraphemeBreakClass::Zwj;
 }
 
-// Grapheme_Cluster_Break=Extend: the emoji modifiers are Extend too (GB9
-// attaches them to any base; GB11 lets them sit between an Extended
-// Pictographic and its ZWJ).
+// Grapheme_Cluster_Break=Extend, which includes the emoji modifiers.
 static constexpr bool isExtend(GraphemeBreakClass gb)
 {
     return gb == GraphemeBreakClass::Zwnj
@@ -151,16 +149,14 @@ static constexpr bool isExtendedPictographic(GraphemeBreakClass gb)
     return gb == GraphemeBreakClass::ExtendedPictographic || gb == GraphemeBreakClass::EmojiModifierBase;
 }
 
-// Core grapheme break algorithm (ported from uucode's
-// computeGraphemeBreakNoControl, plus GB4/GB5 for the Control class). Only
+// Core grapheme break algorithm (ported from uucode, plus GB4/GB5). Only
 // evaluated at compile time to build the precomputed decision table below.
 static constexpr bool computeGraphemeBreak(GraphemeBreakClass gb1, GraphemeBreakClass gb2, GraphemeBreakState& state)
 {
     using G = GraphemeBreakClass;
     using S = GraphemeBreakState;
 
-    // GB4, GB5: a control, CR or LF breaks on both sides. (CR x LF is not
-    // needed here: a CR LF pair is zero-width either way.)
+    // GB4, GB5: a control breaks on both sides (CR x LF is zero-width anyway).
     if (gb1 == G::Control || gb2 == G::Control) {
         state = S::Default;
         return true;
@@ -364,18 +360,12 @@ bool graphemeBreak(char32_t cp1, char32_t cp2, uint8_t& state)
 // Grapheme cluster width accumulator
 // ============================================================================
 
-// Feeds decoded codepoints through the grapheme break algorithm and sums the
-// width of each completed cluster (GraphemeState decides a cluster's width).
-// Encoding-specific walkers own the decode and the escape-sequence handling;
-// state is carried across escape sequences so a combining mark that follows
-// an SGR code still joins the cluster before it.
+// Sums the width of each completed grapheme cluster. The encoding-specific
+// walkers decode and skip escape sequences; state carries across an escape.
 struct ClusterWidthAccumulator {
     size_t len = 0; // width of the completed clusters
     GraphemeState graphemeState; // the pending cluster
-    // Break class of the last *visible* codepoint, used for grapheme break
-    // decisions (carried so each codepoint is classified only once). Escape
-    // sequence bytes must not participate: a CSI final byte like 'm' would
-    // otherwise wrongly join to a following combining mark.
+    // Break class of the last visible codepoint (escape bytes never take part).
     GraphemeBreakClass prevClass = GraphemeBreakClass::Other;
     GraphemeBreakState breakState = GraphemeBreakState::Default;
     bool hasPrevVisible = false;
@@ -386,8 +376,7 @@ struct ClusterWidthAccumulator {
     {
     }
 
-    // Returns true when `cp` starts a new cluster (the previous one, if any,
-    // has been added to `len`).
+    // Returns true when `cp` starts a new cluster.
     bool addCodepoint(char32_t cp)
     {
         const uint8_t packed = classifyFromTable(cp);
@@ -407,9 +396,7 @@ struct ClusterWidthAccumulator {
         return startsCluster;
     }
 
-    // True when `cp` would join the pending cluster instead of starting a new
-    // one (a Prepend before it, GB9b). The bulk paths check their first unit
-    // with this before they count it as a cluster of its own.
+    // True when `cp` joins the pending cluster (GB9b, a Prepend before it).
     bool joinsPendingCluster(char32_t cp) const
     {
         if (!hasPrevVisible)
@@ -418,11 +405,8 @@ struct ClusterWidthAccumulator {
         return !graphemeBreakClasses(prevClass, graphemeBreakClassFromFused(classifyFromTable(cp)), state);
     }
 
-    // Seed the cluster state from the last codepoint of a bulk-counted run,
-    // flushing whatever cluster was pending before it. The codepoint's own
-    // width is not added here: a combining mark, jamo or ZWJ right after the
-    // run still joins its cluster, so the caller counts every unit but the
-    // last and lets GraphemeState::width() settle the final one.
+    // Seed the cluster state from the last codepoint of a bulk-counted run.
+    // The caller counts every unit but that one; its cluster settles here.
     void seedFromBulkRun(char32_t cp, uint8_t packed)
     {
         if (graphemeState.count > 0)
@@ -565,9 +549,7 @@ static char32_t decodeWTF8RuneMultibyte(const std::array<uint8_t, 4>& p, uint8_t
     return cp;
 }
 
-// Decode the WTF-8 codepoint at `p` (p < end). Returns the codepoint and
-// the number of bytes it occupies (a truncated or invalid sequence decodes
-// to U+FFFD).
+// Decodes the WTF-8 codepoint at `p` (p < end): codepoint and byte length.
 static std::pair<char32_t, size_t> decodeWTF8At(const uint8_t* p, const uint8_t* end)
 {
     const uint8_t byte = *p;
@@ -596,11 +578,9 @@ static const uint8_t* findEscapeIntroducerUTF8(const uint8_t* p, const uint8_t* 
     }
 }
 
-// Grapheme-cluster-aware walk of UTF-8 text with ANSI escape sequences
-// treated as zero-width. With `kReportClusters`, every cluster start is
-// reported to `onCluster` (byte offset of the cluster, width of the completed
-// clusters before it) and a false return stops the walk; without it, ASCII
-// runs are counted with the SIMD kernel.
+// Cluster-aware walk of UTF-8 text, escape sequences zero-width. With
+// `kReportClusters`, `onCluster(byteOffset, widthBefore)` sees every cluster
+// start and may return false to stop.
 template<bool kReportClusters, typename OnCluster>
 static ClusterWidthAccumulator walkUTF8ExcludeANSI(std::span<const uint8_t> input, OnCluster onCluster)
 {
@@ -614,10 +594,8 @@ static ClusterWidthAccumulator walkUTF8ExcludeANSI(std::span<const uint8_t> inpu
         const uint8_t* const runEnd = esc ? esc : end;
 
         while (p != runEnd) {
-            // ASCII runs: every printable byte is its own width-1 cluster and
-            // the non-printable ones are width-0 controls, so all but the last
-            // byte are counted in bulk. The last one seeds the cluster state:
-            // a combining mark right after the run still joins it.
+            // ASCII bytes never join each other: count all but the last in
+            // bulk, and let the last one seed the cluster state.
             if (*p <= 0x7F && !accumulator.joinsPendingCluster(*p)) {
                 const size_t asciiLen = highway_first_non_ascii8(p, static_cast<size_t>(runEnd - p));
                 if (asciiLen > 1) {
@@ -672,9 +650,6 @@ size_t visibleUTF8WidthExcludeANSI(std::span<const uint8_t> input)
 
 size_t utf8IndexAtWidthExcludeANSI(std::span<const uint8_t> input, size_t maxWidth)
 {
-    // The prefix ends at the first cluster whose predecessors already fill
-    // `maxWidth`, or, when every cluster starts within budget, at the end of
-    // the input unless the final cluster overflows it.
     size_t stopAt = input.size();
     size_t lastClusterStart = 0;
     const auto accumulator = walkUTF8ExcludeANSI<true>(input, [&](size_t offset, size_t widthBefore) {
@@ -759,9 +734,7 @@ struct UTF16WidthAccumulator : ClusterWidthAccumulator {
             // Ambiguous); the first-unit check skips the call when the next
             // codepoint (surrogate pair, control) clearly needs the scalar
             // path anyway.
-            // A unit that joins the pending cluster (after a Prepend) goes
-            // through the scalar path: both bulk kernels below would count it
-            // as a cluster of its own.
+            // The bulk kernels count a unit after a Prepend as its own cluster.
             if (!input.empty() && !U16_IS_SURROGATE(input[0]) && joinsPendingCluster(input[0])) {
                 addCodepoint(input[0]);
                 input = input.subspan(1);

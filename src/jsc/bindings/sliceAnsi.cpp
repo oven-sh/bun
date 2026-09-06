@@ -16,11 +16,8 @@ extern "C" size_t Bun__visibleWidthExcludeANSI_utf16(const uint16_t* ptr, size_t
 namespace Bun {
 using namespace WTF;
 
-// Shared SIMD/SGR helpers live in ANSIHelpers.h. Cluster widths come from
-// StringWidth::GraphemeState (stringWidth.h), the same accumulator
-// Bun.stringWidth uses, so a slice is always measured the way the whole
-// string is.
-
+// Shared SIMD/SGR helpers live in ANSIHelpers.h; cluster widths come from
+// the GraphemeState that Bun.stringWidth uses.
 struct GraphemeWidthState : StringWidth::GraphemeState {
     void reset(uint32_t cp, bool ambiguousIsWide)
     {

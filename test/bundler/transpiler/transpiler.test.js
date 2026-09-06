@@ -3666,6 +3666,42 @@ console.log(resolve.length)
     expectPrinted_("delete foo?.bar?.baz", "delete foo?.bar?.baz");
   });
 
+  it("parenthesized optional chain as template tag", () => {
+    expectPrinted_("(a?.b)`x`", "(a?.b)`x`");
+    expectPrinted_("(a?.[0])`x`", "(a?.[0])`x`");
+    expectPrinted_("(a?.b.c)`x`", "(a?.b.c)`x`");
+    expectPrinted_("(a?.b())`x`", "(a?.b())`x`");
+    expectPrinted_("(a?.b()).c`x`", "(a?.b()).c`x`");
+    expectPrinted_("(a.b?.().c)`x`", "(a.b?.().c)`x`");
+    expectPrinted_("(a.b?.())`x`", "(a.b?.())`x`");
+    expectPrinted_("((a?.b))`x`", "(a?.b)`x`");
+    expectPrinted_("((0 >= a.b)?.())`x`", "((0 >= a.b)?.())`x`");
+    ts.expectPrinted_("(a?.b)!`x`", "(a?.b)`x`");
+    ts.expectPrinted_("(a?.b as any)`x`", "(a?.b)`x`");
+    ts.expectPrinted_("(<any>a?.b)`x`", "(a?.b)`x`");
+    ts.expectPrinted_("(a?.b satisfies any)`x`", "(a?.b)`x`");
+    expectPrinted_("a.b`x`", "a.b`x`");
+    expectPrinted_("a()`x`", "a()`x`");
+  });
+
+  it("parenthesized optional chain as new callee", () => {
+    expectPrinted_("new (a?.b)()", "new (a?.b)");
+    expectPrinted_("new (a?.b)().c", "new (a?.b)().c");
+    expectPrinted_("new (a?.b)(1)", "new (a?.b)(1)");
+    expectPrinted_("new (a?.[0])()", "new (a?.[0])");
+    expectPrinted_("new (a?.b.c)()", "new (a?.b.c)");
+    expectPrinted_("new (a?.b())()", "new (a?.b())");
+    expectPrinted_("new (a?.b()).c()", "new (a?.b()).c");
+    expectPrinted_("new (a.b?.().c)()", "new (a.b?.().c)");
+    expectPrinted_("new ((a.h())?.c)", "new ((a.h())?.c)");
+    expectPrinted_("new ((a.arr[1])?.b)()", "new (a.arr[1]?.b)");
+    ts.expectPrinted_("new (a?.b)!()", "new (a?.b)");
+    ts.expectPrinted_("new (a?.b as any)(2)", "new (a?.b)(2)");
+    ts.expectPrinted_("new (a?.b!)()", "new (a?.b)");
+    expectPrinted_("new a.b()", "new a.b");
+    expectPrinted_("new (a())()", "new (a())");
+  });
+
   it("useDefineForConst TypeScript class initialization", () => {
     var { expectPrinted_ } = ts;
     expectPrinted_(

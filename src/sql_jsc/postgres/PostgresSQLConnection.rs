@@ -1537,9 +1537,7 @@ impl PostgresSQLConnection {
         }
     }
 
-    /// Drop the cache entry for `stmt`'s signature if it still points at
-    /// `stmt` (re-entrant JS may already have replaced it). The caller's
-    /// request holds its own ref, so this never frees `stmt`.
+    /// Remove the cache entry for `stmt` unless re-entrant JS already replaced it.
     fn evict_statement(&self, stmt: &PostgresSQLStatement) {
         let stmt_ptr: *const PostgresSQLStatement = core::ptr::from_ref(stmt);
         self.statements.with_mut(|m| {

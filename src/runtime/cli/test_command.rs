@@ -895,32 +895,7 @@ impl JunitReporter {
             self.contents.extend_from_slice(b"</testsuites>\n");
         }
 
-        let mut junit_path_buf = bun_paths::path_buffer_pool::get();
-
-        junit_path_buf[..path.len()].copy_from_slice(path);
-        junit_path_buf[path.len()] = 0;
-
-        // SAFETY: junit_path_buf[path.len()] == 0 written above
-        let zpath = bun_core::ZStr::from_buf(&junit_path_buf[..], path.len());
-        // `make_open` creates a missing parent directory, as jest-junit does.
-        let written = File::make_open(
-            zpath,
-            bun_sys::O::WRONLY | bun_sys::O::CREAT | bun_sys::O::TRUNC,
-            0o664,
-        )
-        .and_then(|file| {
-            let written = file.write_all(&self.contents);
-            drop(file);
-            // Drop a truncated report. `lstat`: keep a symlink (/dev/stdout) or a device.
-            if written.is_err()
-                && bun_sys::lstat(zpath)
-                    .is_ok_and(|st| bun_sys::is_regular_file(st.st_mode as bun_sys::Mode))
-            {
-                let _ = bun_sys::unlink(zpath);
-            }
-            written
-        });
-        if let Err(err) = written {
+        if let Err(err) = Self::write_report(path, &self.contents) {
             Output::err(
                 crate::Error::JUnitReportFailed,
                 "Failed to write JUnit report to {}\n{}",
@@ -929,6 +904,34 @@ impl JunitReporter {
             return Err(crate::Error::JUnitReportFailed);
         }
         Ok(())
+    }
+
+    /// A regular file, or a path that does not exist yet, is written through a
+    /// sibling temp file and a rename, like `lcov.info`, so a failed write never
+    /// leaves a partial report. A symlink (`/dev/stdout`), a device or a FIFO
+    /// is written in place.
+    fn write_report(path: &[u8], contents: &[u8]) -> bun_sys::Result<()> {
+        let flags =
+            bun_sys::O::WRONLY | bun_sys::O::CREAT | bun_sys::O::TRUNC | bun_sys::O::CLOEXEC;
+        let dest = bun_core::ZBox::from_bytes(path);
+        if bun_sys::lstat(&dest)
+            .is_ok_and(|st| !bun_sys::is_regular_file(st.st_mode as bun_sys::Mode))
+        {
+            return File::open(&dest, flags, 0o664).and_then(|file| file.write_all(contents));
+        }
+
+        let mut tmp: Vec<u8> = path.to_vec();
+        let _ = write!(&mut tmp, ".{}.tmp", std::process::id());
+        let tmp = bun_core::ZBox::from_vec(tmp);
+        // `make_open` creates a missing parent directory, as jest-junit does.
+        let file = File::make_open(tmp.as_bytes(), flags, 0o664)?;
+        let written = file.write_all(contents);
+        drop(file);
+        let moved = written.and_then(|()| bun_sys::renameat(Fd::cwd(), &tmp, Fd::cwd(), &dest));
+        if moved.is_err() {
+            let _ = bun_sys::unlinkat(Fd::cwd(), &tmp);
+        }
+        moved
     }
 }
 

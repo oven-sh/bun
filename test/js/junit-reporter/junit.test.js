@@ -1,7 +1,7 @@
 import { file, spawn } from "bun";
 import { describe, expect, it } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
-import { existsSync } from "node:fs";
+import { existsSync, lstatSync, readdirSync, symlinkSync } from "node:fs";
 import { join } from "node:path";
 
 const xml2js = require("xml2js");
@@ -716,7 +716,38 @@ describe("junit reporter", () => {
     expect(stderr).toContain("200 pass");
     expect(stderr).toContain("Failed to write JUnit report to");
     expect(existsSync(junitPath)).toBe(false);
+    // The report is written through a sibling temp file; a failed write leaves neither behind.
+    expect(readdirSync(String(tmpDir)).filter(name => name.endsWith(".tmp"))).toEqual([]);
     expect(exitCode).toBe(1);
+  });
+
+  // A target that is not a regular file is written in place, not replaced by a rename.
+  it.skipIf(isWindows)("writes through a symlinked --reporter-outfile instead of replacing the link", async () => {
+    await using tmpDir = tempDir("junit-symlink-outfile", {
+      "package.json": "{}",
+      "a.test.js": `
+        import { expect, test } from "bun:test";
+        test("passes", () => {
+          expect(1).toBe(1);
+        });
+      `,
+      "reports/.keep": "",
+    });
+    const realPath = join(tmpDir, "reports", "real.xml");
+    const linkPath = join(tmpDir, "junit.xml");
+    symlinkSync(realPath, linkPath);
+
+    await using proc = spawn([bunExe(), "test", "--reporter=junit", "--reporter-outfile", linkPath], {
+      cwd: tmpDir,
+      env: { ...bunEnv, BUN_DEBUG_QUIET_LOGS: "1" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toContain("1 pass");
+    expect(lstatSync(linkPath).isSymbolicLink()).toBe(true);
+    expect(await file(realPath).text()).toContain("</testsuites>");
+    expect(exitCode).toBe(0);
   });
 });
 

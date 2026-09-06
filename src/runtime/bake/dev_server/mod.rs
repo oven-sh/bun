@@ -452,14 +452,14 @@ impl HotReloadEvent {
                 while let Some(index) = it {
                     // Note: reshaped for borrowck — re-index per iteration instead of
                     // holding `dep` ref across resolver call + appendFile + freeDependencyIndex.
-                    let (source_file_path, specifier, next, import_kind, through_symlink) = {
+                    let (source_file_path, specifier, next, import_kind, link_path) = {
                         let dep = &dev.directory_watchers.dependencies[index as usize];
                         (
                             dep.source_file_path,
                             &raw const *dep.specifier,
                             dep.next,
                             dep.import_kind,
-                            dep.previous_target.is_some(),
+                            dep.symlink.as_ref().map(|s| &raw const *s.link_path),
                         )
                     };
                     it = next;
@@ -472,23 +472,16 @@ impl HotReloadEvent {
                     // SAFETY: see `Dep` doc — neither slice is mutated mid-resolve.
                     let specifier: &[u8] = unsafe { &*specifier };
 
-                    if through_symlink {
+                    if let Some(link_path) = link_path {
                         // A directory on the way from the changed directory to
-                        // the import can be the retargeted link. Each of them
-                        // caches its old real path, so bust them all. The walk
-                        // starts at the import itself: a specifier can name
+                        // the link path can be the retargeted link. Each of
+                        // them caches its old real path, so bust them all. The
+                        // walk starts at the link path itself, which can name
                         // the linked directory (`./links/cur` for its index
-                        // file), and a bust of a file path is a no-op.
-                        let mut buf = bun_paths::path_buffer_pool::get();
-                        let mut dir: &[u8] = if bun_paths::is_absolute(specifier) {
-                            specifier
-                        } else {
-                            bun_paths::resolve_path::join_abs_string_buf::<bun_paths::platform::Auto>(
-                                source_dir,
-                                &mut buf.0,
-                                &[specifier],
-                            )
-                        };
+                        // file). A bust of a file path is a no-op.
+                        // SAFETY: points into the dep's owned `Box<[u8]>`, not
+                        // mutated until after `resolve` returns.
+                        let mut dir: &[u8] = unsafe { &*link_path };
                         while dir.len() > changed_dir.len() && dir.starts_with(changed_dir) {
                             // SAFETY: see above.
                             let _ = unsafe { dev.server_transpiler.assume_init_mut() }
@@ -1143,18 +1136,24 @@ pub mod directory_watch_store {
         pub(crate) specifier: Box<[u8]>,
         /// The import kind the bundler resolved `specifier` with.
         pub(crate) import_kind: bun_ast::ImportKind,
-        /// What `specifier` resolved to when the dep was recorded. `None`
-        /// for a failed resolution. `Some(real_path)` for a resolution that
-        /// went through a symlink, so a retarget of the link is detected as
-        /// a change in the resolved path.
-        pub(crate) previous_target: Option<Box<[u8]>>,
+        /// `None` for a failed resolution. `Some` for a resolution that went
+        /// through a symlink, so a retarget of the link is detected as a
+        /// change in the resolved path.
+        pub(crate) symlink: Option<SymlinkTarget>,
+    }
+    /// The two paths of a resolution that went through a symlink.
+    pub struct SymlinkTarget {
+        /// The absolute path before symlink resolution.
+        pub(crate) link_path: Box<[u8]>,
+        /// The path after symlink resolution, what `specifier` resolved to.
+        pub(crate) real_path: Box<[u8]>,
     }
     impl Dep {
         /// Whether a fresh resolution result is the same as the recorded one.
         pub(crate) fn matches_target(&self, resolved: Option<&[u8]>) -> bool {
-            match (&self.previous_target, resolved) {
+            match (&self.symlink, resolved) {
                 (None, None) => true,
-                (Some(prev), Some(now)) => **prev == *now,
+                (Some(prev), Some(now)) => *prev.real_path == *now,
                 _ => false,
             }
         }
@@ -1166,7 +1165,7 @@ pub mod directory_watch_store {
                 source_file_path: bun_ptr::RawSlice::EMPTY,
                 specifier: Box::default(),
                 import_kind: bun_ast::ImportKind::Stmt,
-                previous_target: None,
+                symlink: None,
             }
         }
     }
@@ -1392,7 +1391,7 @@ impl DirectoryWatchStore {
             kind,
             renderer,
             &dirs,
-            Some(real_path),
+            Some((link_path, real_path)),
         )
     }
 
@@ -1403,7 +1402,7 @@ impl DirectoryWatchStore {
         kind: bun_ast::ImportKind,
         renderer: Graph,
         dirs: &[&[u8]],
-        previous_target: Option<&[u8]>,
+        symlink: Option<(&[u8], &[u8])>,
     ) -> Result<(), bun_alloc::AllocError> {
         // The `import_source` parameter is not a stable string. Since the
         // import source will be added to IncrementalGraph anyways, this is a
@@ -1435,7 +1434,7 @@ impl DirectoryWatchStore {
         };
 
         for dir in dirs {
-            match self.insert(dir, owned_file_path, specifier, kind, previous_target) {
+            match self.insert(dir, owned_file_path, specifier, kind, symlink) {
                 Ok(()) => {}
                 Err(DirectoryWatchInsertError::Ignore) => {} // ignoring watch errors.
                 Err(DirectoryWatchInsertError::OutOfMemory) => return Err(bun_alloc::AllocError),
@@ -1445,14 +1444,14 @@ impl DirectoryWatchStore {
     }
 
     /// `dir_name_to_watch` is cloned; `file_path` must outlive the watch;
-    /// `specifier` and `previous_target` are cloned.
+    /// `specifier` and `symlink` (link path, real path) are cloned.
     fn insert(
         &mut self,
         dir_name_to_watch: &[u8],
         file_path: bun_ptr::RawSlice<u8>,
         specifier: &[u8],
         kind: bun_ast::ImportKind,
-        previous_target: Option<&[u8]>,
+        symlink: Option<(&[u8], &[u8])>,
     ) -> Result<(), DirectoryWatchInsertError> {
         debug_assert!(!specifier.is_empty());
         // TODO: watch the parent dir too.
@@ -1483,18 +1482,21 @@ impl DirectoryWatchStore {
         // A failed resolution is retried as a relative `Stmt` import. A
         // symlinked resolution is retried exactly as the bundler resolved it,
         // so a tsconfig `paths` alias stays an alias.
-        let specifier_cloned: Box<[u8]> = if previous_target.is_some()
-            || specifier[0] == b'.'
-            || bun_paths::is_absolute(specifier)
-        {
-            Box::<[u8]>::from(specifier)
-        } else {
-            let mut v = Vec::with_capacity(2 + specifier.len());
-            v.extend_from_slice(b"./");
-            v.extend_from_slice(specifier);
-            v.into_boxed_slice()
-        };
-        let previous_target: Option<Box<[u8]>> = previous_target.map(Box::<[u8]>::from);
+        let specifier_cloned: Box<[u8]> =
+            if symlink.is_some() || specifier[0] == b'.' || bun_paths::is_absolute(specifier) {
+                Box::<[u8]>::from(specifier)
+            } else {
+                let mut v = Vec::with_capacity(2 + specifier.len());
+                v.extend_from_slice(b"./");
+                v.extend_from_slice(specifier);
+                v.into_boxed_slice()
+            };
+        let symlink: Option<directory_watch_store::SymlinkTarget> = symlink.map(
+            |(link_path, real_path)| directory_watch_store::SymlinkTarget {
+                link_path: Box::<[u8]>::from(link_path),
+                real_path: Box::<[u8]>::from(real_path),
+            },
+        );
         // errdefer free(specifier_cloned) — handled by Drop on `?` paths.
 
         if found_existing {
@@ -1508,7 +1510,7 @@ impl DirectoryWatchStore {
                     && *dep.specifier == *specifier_cloned
                 {
                     dep.import_kind = kind;
-                    dep.previous_target = previous_target;
+                    dep.symlink = symlink;
                     return Ok(());
                 }
             }
@@ -1518,7 +1520,7 @@ impl DirectoryWatchStore {
                 source_file_path: file_path,
                 specifier: specifier_cloned,
                 import_kind: kind,
-                previous_target,
+                symlink,
             });
             self.watches.values_mut()[gop_index].first_dep = dep;
             return Ok(());
@@ -1613,7 +1615,7 @@ impl DirectoryWatchStore {
             source_file_path: file_path,
             specifier: specifier_cloned,
             import_kind: kind,
-            previous_target,
+            symlink,
         });
         self.watches.values_mut()[gop_index] = directory_watch_store::Entry {
             dir: fd,

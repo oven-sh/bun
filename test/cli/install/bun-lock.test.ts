@@ -1064,6 +1064,44 @@ it("prints an actionable error for a lockfile version newer than this build supp
   expect(await exited).toBe(0);
 });
 
+it("indents the caret under the printed excerpt when a one-line bun.lock has many warnings", async () => {
+  const count = 300;
+  using dir = tempDir("one-line-lockfile", {
+    "package.json": JSON.stringify({ name: "one-line-lockfile", dependencies: {} }),
+    "bun.lock":
+      `{\n  "lockfileVersion": 1,\n  "workspaces": { "": { "name": "one-line-lockfile" } },\n  "packages": { ` +
+      Array.from({ length: count }, (_, i) => `"p${i}": ["p${i}@1.0.0", "", {}, "sha512-x"]`).join(", ") +
+      ` }\n}\n`,
+  });
+
+  await using proc = spawn({
+    cmd: [bunExe(), "install"],
+    cwd: String(dir),
+    env,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [err, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+
+  const lines = err.split("\n");
+  const carets = lines.filter(line => /^ *\^$/.test(line));
+  expect(carets.length).toBe(count);
+
+  // Each caret points at the `"` that opens the bad integrity string in the
+  // excerpt above it. Before the fix it was padded to the column in the full
+  // line, so the caret lines alone grew quadratically with the entry count.
+  for (let i = 0; i < lines.length; i++) {
+    if (!/^ *\^$/.test(lines[i])) continue;
+    const excerpt = lines[i - 1];
+    expect(excerpt).toMatch(/^4 \| /);
+    const caretAt = lines[i].indexOf("^");
+    expect(caretAt).toBeLessThan(excerpt.length);
+    expect(excerpt.slice(caretAt, caretAt + 8)).toBe('"sha512-');
+  }
+  expect(Math.max(...lines.map(line => line.length))).toBeLessThan(200);
+  expect(exitCode).toBe(0);
+});
+
 async function installWithHandEditedOverrides(overrides: Record<string, unknown>) {
   const { packageDir, packageJson } = await registry.createTestDir();
   const lockfile = JSON.stringify(

@@ -142,8 +142,8 @@ test.concurrent("long non-ASCII line's lineText window does not split a UTF-8 se
 });
 
 test.concurrent("CLI caret stays under the token for an error at the end of a long line", async () => {
-  // `write_format` offsets the caret by `column - 1` with no knowledge of any
-  // left-trim, so the window gate must not left-trim this case.
+  // The excerpt keeps the 40 bytes before the token, and the caret is placed
+  // relative to that window, not to the token's column in the full line.
   using dir = tempDir("parse-col-caret", {
     "long.js": Buffer.alloc(150, "a").toString() + "]",
   });
@@ -158,5 +158,8 @@ test.concurrent("CLI caret stays under the token for an error at the end of a lo
   const lines = stderr.split("\n");
   const textLine = lines.find(l => l.includes("]"))!;
   const caretLine = lines.find(l => l.trimEnd().endsWith("^"))!;
-  expect({ token: textLine.indexOf("]"), caret: caretLine.indexOf("^") }).toEqual({ token: 154, caret: 154 });
+  expect({ text: textLine, caret: caretLine.indexOf("^") }).toEqual({
+    text: "1 | " + Buffer.alloc(40, "a").toString() + "]",
+    caret: 44,
+  });
 });

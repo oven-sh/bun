@@ -651,6 +651,11 @@ pub struct Location {
     pub length: usize,
     // TODO: document or remove
     pub offset: usize,
+    /// 0-based column (UTF-16 units, like `column`) at which `line_text`
+    /// starts in the source line. Non-zero when `line_text` is a window of a
+    /// longer line; `write_format` subtracts it from `column` to place the
+    /// caret under the excerpt.
+    pub line_text_start_column: usize,
 
     /// 1-based line number.
     /// Line <= 0 means there is no line and column information.
@@ -679,6 +684,7 @@ impl Clone for Location {
             length: self.length,
             line_text: self.line_text.as_deref().map(|t| Cow::Owned(t.to_vec())),
             offset: self.offset,
+            line_text_start_column: self.line_text_start_column,
         }
     }
 }
@@ -691,6 +697,7 @@ impl Default for Location {
             line_text: None,
             length: 0,
             offset: 0,
+            line_text_start_column: 0,
             line: 0,
             column: 0,
         }
@@ -738,6 +745,7 @@ impl Location {
             length: self.length,
             line_text: self.line_text.as_deref().map(|t| Cow::Owned(t.to_vec())),
             offset: self.offset,
+            line_text_start_column: self.line_text_start_column,
         }
     }
 
@@ -759,6 +767,7 @@ impl Location {
             length: length as usize,
             line_text: line_text.map(Cow::Borrowed),
             offset: length as usize,
+            line_text_start_column: 0,
         }
     }
 
@@ -792,6 +801,7 @@ impl Location {
                     length: 0,
                     line_text: Some(Cow::Borrowed(b"")),
                     offset: 0,
+                    line_text_start_column: 0,
                 });
             }
             let data = match tracker {
@@ -800,12 +810,15 @@ impl Location {
             };
             let mut full_line = &source.contents[data.line_start..data.line_end];
             // Window a long line to ~120 bytes around the error. Bounds are
-            // BYTE offsets; the gate keeps the original shape (no left trim for
-            // an error in the last 80 bytes) so `write_format`'s caret aligns.
+            // BYTE offsets. `line_text_start_column` records how many columns
+            // the window drops on the left so `write_format`'s caret aligns.
+            // An error in the last 80 bytes of a long line still gets the
+            // window: otherwise one diagnostic prints the whole line.
             let offset_in_line = clamp_error_offset(&source.contents, r.loc)
                 .saturating_sub(data.line_start)
                 .min(full_line.len());
-            if full_line.len() > 80 + offset_in_line {
+            let mut line_text_start_column = 0;
+            if full_line.len() > 80 + offset_in_line || full_line.len() > 120 {
                 let mut lo = offset_in_line.saturating_sub(40);
                 let mut hi = (offset_in_line + 80).min(full_line.len());
                 while lo > 0 && !bun_core::strings::is_utf8_char_boundary(full_line[lo]) {
@@ -815,6 +828,16 @@ impl Location {
                     && !bun_core::strings::is_utf8_char_boundary(full_line[hi])
                 {
                     hi += 1;
+                }
+                if lo > 0 {
+                    let columns_in_window_before_error =
+                        bun_core::strings::element_length_utf8_into_utf16(
+                            &full_line[lo..offset_in_line],
+                        );
+                    line_text_start_column = data
+                        .column_count
+                        .saturating_sub(1)
+                        .saturating_sub(columns_in_window_before_error);
                 }
                 full_line = &full_line[lo..hi];
             }
@@ -837,6 +860,7 @@ impl Location {
                 // paths.
                 line_text: Some(Cow::Owned(bun_core::trim_left(full_line, b"\n\r").to_vec())),
                 offset: usize::try_from(r.loc.start.max(0)).expect("int cast"),
+                line_text_start_column,
             });
         }
         None
@@ -981,8 +1005,13 @@ impl Data {
                 let line_text_right_trimmed = bun_core::trim_right(line_text_, b" \r\n\t");
                 let line_text = bun_core::trim_left(line_text_right_trimmed, b"\n\r");
                 if location.column > 0 && !line_text.is_empty() {
+                    // The caret sits under the printed excerpt, so its indent
+                    // is bounded by the excerpt, never by the full column.
                     let mut line_offset_for_second_line: usize =
-                        usize::try_from(location.column - 1).expect("int cast");
+                        usize::try_from(location.column - 1)
+                            .expect("int cast")
+                            .saturating_sub(location.line_text_start_column)
+                            .min(line_text.len());
 
                     if location.line > -1 {
                         let bold = matches!(kind, Kind::Err | Kind::Warn);

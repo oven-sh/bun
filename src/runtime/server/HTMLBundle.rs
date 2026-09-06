@@ -617,14 +617,15 @@ impl Route {
                     {
                         route_path = &route_path[1..];
                     }
+                    let route_path = crate::server::percent_encode_route_path(route_path);
 
                     if i == html_index {
-                        this_html_route = Some((static_route, Box::<[u8]>::from(route_path)));
+                        this_html_route = Some((static_route, Box::<[u8]>::from(&*route_path)));
                         continue;
                     }
 
                     bun_core::handle_oom(server.append_static_route(
-                        route_path,
+                        &route_path,
                         AnyRoute::Static(RefPtr::new(static_route)),
                         MethodOptional::Any,
                     ));

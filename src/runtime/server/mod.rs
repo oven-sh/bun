@@ -161,6 +161,35 @@ pub(crate) fn write_status<const SSL: bool>(resp: *mut uws_sys::NewAppResponse<S
 }
 
 // ─── AnyRoute ────────────────────────────────────────────────────────────────
+
+/// An output file's path as a browser puts it on the request line: every
+/// byte in the WHATWG URL path percent-encode set is escaped. The URL written
+/// into the page is the raw name, and the browser encodes it before the
+/// request, so the route must be registered under the encoded form.
+pub(crate) fn percent_encode_route_path(path: &[u8]) -> std::borrow::Cow<'_, [u8]> {
+    fn needs_escape(byte: u8) -> bool {
+        byte < 0x20
+            || byte >= 0x7F
+            || matches!(
+                byte,
+                b' ' | b'"' | b'#' | b'<' | b'>' | b'?' | b'`' | b'{' | b'}'
+            )
+    }
+    if !path.iter().copied().any(needs_escape) {
+        return std::borrow::Cow::Borrowed(path);
+    }
+    let mut out = Vec::with_capacity(path.len() + 16);
+    for &byte in path {
+        if needs_escape(byte) {
+            let hex = bun_core::fmt::hex2_upper(byte);
+            out.extend_from_slice(&[b'%', hex[0], hex[1]]);
+        } else {
+            out.push(byte);
+        }
+    }
+    std::borrow::Cow::Owned(out)
+}
+
 /// The route table's ref on each route.
 pub enum AnyRoute {
     /// Serve a static file — `"/robots.txt": new Response(...)`

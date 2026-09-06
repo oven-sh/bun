@@ -627,7 +627,7 @@ impl AnyRoute {
         if !relative_path.starts_with(b"/") {
             builder.push(b'/');
         }
-        builder.extend_from_slice(relative_path);
+        builder.extend_from_slice(&super::percent_encode_route_path(relative_path));
 
         let Some(headers_js) = argument.get(init_ctx.global, b"headers")? else {
             return Ok(None);

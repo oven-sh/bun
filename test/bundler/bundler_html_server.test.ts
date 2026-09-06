@@ -121,5 +121,44 @@ describe.concurrent("bundler", () => {
         stdout: "Home status: 200\nHome has content: true\nAbout status: 200\nAbout has content: true",
       },
     });
+
+    // The page carries the raw asset name. A browser percent-encodes it
+    // before the request, so the route is registered under that form.
+    itBundled(`compile/${backend}/HTMLServerEncodedAssetRoute`, {
+      compile: true,
+      backend: backend,
+      files: {
+        "/entry.ts": /* js */ `
+        import index from "./index.html";
+
+        using server = Bun.serve({
+          port: 0,
+          routes: {
+            "/": index,
+          },
+        });
+
+        const html = await (await fetch(server.url)).text();
+        for (const [, src] of html.matchAll(/<img src="([^"]+)"/g)) {
+          const url = new URL(src, server.url);
+          console.log(url.pathname.replace(/-[a-z0-9]+\.png$/, ".png"), (await fetch(url)).status);
+        }
+      `,
+        "/index.html": /* html */ `
+        <!DOCTYPE html>
+        <html>
+          <body>
+            <img src="./my img.png">
+            <img src="./ünï.png">
+          </body>
+        </html>
+      `,
+        "/my img.png": "fake png",
+        "/ünï.png": "fake png",
+      },
+      run: {
+        stdout: "/my%20img.png 200\n/%C3%BCn%C3%AF.png 200",
+      },
+    });
   }
 });

@@ -1606,3 +1606,33 @@ describe("production headers and import.meta.env", () => {
     expect(results).toEqual(cases.map(([, , expected]) => expected));
   });
 });
+
+// The page carries the raw asset name. A browser percent-encodes it before
+// the request, so the production build registers the route under that form.
+test.concurrent("production build serves an asset whose name has a space or non-ASCII", async () => {
+  using dir = tempDir("bun-serve-html-encoded-asset-route", {
+    "index.html": `<!DOCTYPE html><html><body><img src="./my img.png"><img src="./ünï.png"><script type="module" src="./app.ts"></script></body></html>`,
+    "my img.png": "fake png",
+    "ünï.png": "fake png",
+    "app.ts": `console.log("app");`,
+    "serve.ts": /*ts*/ `
+      import page from "./index.html";
+      using server = Bun.serve({ port: 0, development: false, routes: { "/": page } });
+      const html = await (await fetch(server.url)).text();
+      const result = [];
+      for (const [, src] of html.matchAll(/<img src="([^"]+)"/g)) {
+        const url = new URL(src, server.url);
+        result.push([src, url.pathname, (await fetch(url)).status]);
+      }
+      console.log(JSON.stringify(result));
+    `,
+  });
+  const { stdout, stderr, exitCode } = await runServeFixture(dir);
+  expect({ result: stdout === "" ? null : JSON.parse(stdout), exitCode }, stderr).toEqual({
+    result: [
+      [expect.stringMatching(/^\/my img-[a-z0-9]+\.png$/), expect.stringMatching(/^\/my%20img-[a-z0-9]+\.png$/), 200],
+      [expect.stringMatching(/^\/ünï-[a-z0-9]+\.png$/), expect.stringMatching(/^\/%C3%BCn%C3%AF-[a-z0-9]+\.png$/), 200],
+    ],
+    exitCode: 0,
+  });
+});

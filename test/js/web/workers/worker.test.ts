@@ -446,6 +446,7 @@ describe("web worker", () => {
       expect(stderr).not.toContain("WEB-WORKER-UNCAUGHT");
       expect(stdout).toContain("caught TypeError WEB-WORKER-UNCAUGHT");
       expect(stdout).toContain("worker closed 1");
+      if (exitCode !== 0) expect(stderr).toBe("");
       expect(exitCode).toBe(0);
     });
 
@@ -484,6 +485,7 @@ describe("web worker", () => {
         expect(stderr).not.toContain("WEB-WORKER-NESTED-UNCAUGHT");
         expect(stdout).toContain("main saw true");
         expect(stdout).toContain("middle closed 1");
+        if (exitCode !== 0) expect(stderr).toBe("");
         expect(exitCode).toBe(0);
       }
     });
@@ -507,6 +509,7 @@ describe("web worker", () => {
       expect(stdout).toContain("listener saw true cancelable true");
       expect(stdout).not.toContain("caught");
       expect(stdout).toContain("worker closed 1");
+      if (exitCode !== 0) expect(stderr).toBe("");
       expect(exitCode).toBe(0);
     });
 
@@ -537,6 +540,7 @@ describe("web worker", () => {
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
       expect(stderr).not.toContain("POST-TERMINATE");
       expect(stdout).toContain("done");
+      if (exitCode !== 0) expect(stderr).toBe("");
       expect(exitCode).toBe(0);
     });
 

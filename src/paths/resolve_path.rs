@@ -1476,6 +1476,28 @@ pub fn join_z_spill<'a, P: PlatformT>(spill: &'a mut Vec<u8>, parts: &[&[u8]]) -
     join_z_buf::<P>(&mut spill[..], parts)
 }
 
+/// Like [`join_z_buf`], but returns `None` when the normalized result (plus
+/// its NUL) does not fit `buf`. Use this when `parts` may contain
+/// user-controlled input of arbitrary length.
+pub fn join_z_buf_checked<'a, P: PlatformT>(
+    buf: &'a mut [u8],
+    parts: &[&[u8]],
+) -> Option<&'a ZStr> {
+    let needed = join_needed(parts);
+    if needed <= buf.len() {
+        return Some(join_z_buf::<P>(buf, parts));
+    }
+    let mut scratch = vec![0u8; needed];
+    let joined = join_string_buf::<P>(&mut scratch, parts);
+    let len = joined.len();
+    if len + 1 > buf.len() {
+        return None;
+    }
+    buf[..len].copy_from_slice(joined);
+    buf[len] = 0;
+    Some(ZStr::from_buf(buf, len))
+}
+
 pub fn join_z_buf<'a, P: PlatformT>(buf: &'a mut [u8], parts: &[&[u8]]) -> &'a ZStr {
     // reshaped for borrowck — capture buf base ptr before sub-borrow
     let buf_base = buf.as_mut_ptr();
@@ -1701,6 +1723,30 @@ pub fn join_abs_string_buf_checked<'a, P: PlatformT>(
     let len = joined.len();
     buf[..len].copy_from_slice(joined);
     Some(&buf[..len])
+}
+
+/// [`join_abs_string_buf_checked`] with a NUL terminator: `None` when the
+/// normalized result plus its NUL does not fit `buf`.
+pub fn join_abs_string_buf_z_checked<'a, P: PlatformT>(
+    cwd: &'a [u8],
+    buf: &'a mut [u8],
+    parts: &[&[u8]],
+) -> Option<&'a ZStr> {
+    let buf_base = buf.as_ptr();
+    let capacity = buf.len().checked_sub(1)?;
+    let (buf_backed, len) = {
+        let joined = join_abs_string_buf_checked::<P>(cwd, &mut buf[..capacity], parts)?;
+        (joined.as_ptr() == buf_base, joined.len())
+    };
+    if !buf_backed {
+        // No parts: the result is `cwd` itself.
+        if len > capacity {
+            return None;
+        }
+        buf[..len].copy_from_slice(&cwd[..len]);
+    }
+    buf[len] = 0;
+    Some(ZStr::from_buf(buf, len))
 }
 
 pub fn join_abs_string_buf_z<'a, P: PlatformT>(
@@ -2659,6 +2705,52 @@ mod tests {
             join_string_buf::<platform::Posix>(&mut out, &[b"", b""]),
             b"."
         );
+    }
+
+    #[test]
+    fn join_z_buf_checked_reports_results_that_do_not_fit() {
+        let mut out = [0u8; 16];
+        let joined = join_z_buf_checked::<platform::Posix>(&mut out, &[b"foo", b"bar"]).unwrap();
+        assert_eq!(joined.as_bytes_with_nul(), b"foo/bar\0");
+        // Fits exactly: 15 bytes plus the NUL.
+        assert!(
+            join_z_buf_checked::<platform::Posix>(&mut out, &[b"aaaaaaa", b"bbbbbbb"]).is_some()
+        );
+        assert!(
+            join_z_buf_checked::<platform::Posix>(&mut out, &[b"aaaaaaaa", b"bbbbbbb"]).is_none()
+        );
+        // `..` segments shorten a result whose unnormalized form is too long.
+        let long = vec![b'x'; 64];
+        let joined =
+            join_z_buf_checked::<platform::Posix>(&mut out, &[&long, b"..", b"ok"]).unwrap();
+        assert_eq!(joined.as_bytes(), b"ok");
+    }
+
+    #[test]
+    fn join_abs_string_buf_z_checked_reports_results_that_do_not_fit() {
+        let mut out = [0u8; 16];
+        let joined =
+            join_abs_string_buf_z_checked::<platform::Posix>(b"/cwd", &mut out, &[b"a/b"]).unwrap();
+        assert_eq!(joined.as_bytes_with_nul(), b"/cwd/a/b\0");
+        assert!(
+            join_abs_string_buf_z_checked::<platform::Posix>(b"/cwd", &mut out, &[b"0123456789"])
+                .is_some()
+        );
+        assert!(
+            join_abs_string_buf_z_checked::<platform::Posix>(b"/cwd", &mut out, &[b"01234567890"])
+                .is_none()
+        );
+        let long = vec![b'x'; 64];
+        let joined = join_abs_string_buf_z_checked::<platform::Posix>(
+            b"/cwd",
+            &mut out,
+            &[&long, b"..", b"ok"],
+        )
+        .unwrap();
+        assert_eq!(joined.as_bytes(), b"/cwd/ok");
+        let joined =
+            join_abs_string_buf_z_checked::<platform::Posix>(b"/cwd", &mut out, &[]).unwrap();
+        assert_eq!(joined.as_bytes(), b"/cwd");
     }
 
     #[test]

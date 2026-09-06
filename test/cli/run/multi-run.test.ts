@@ -1875,6 +1875,119 @@ describe.concurrent("glob pattern matching", () => {
   });
 });
 
+// ─── ARGUMENTS AFTER `--` ───────────────────────────────────────────────────
+
+const ARGS_JS = `console.log(JSON.stringify(process.argv.slice(2)))`;
+
+/** Extract the JSON argv array printed by ARGS_JS for a given label. */
+function argvFor(stdout: string, label: string): string[] {
+  const re = new RegExp(`^${escapeRe(label)}\\s+\\| (\\[.*\\])$`, "m");
+  const m = stdout.match(re);
+  expect(m, `no argv line for ${label} in:\n${stdout}`).not.toBeNull();
+  return JSON.parse(m![1]);
+}
+
+describe.concurrent("arguments after --", () => {
+  const hostile = "$(echo pwned)";
+
+  test("parallel: args are passed literally to every script, not run as commands", async () => {
+    using dir = tempDir("mr-pt-parallel", {
+      "args.js": ARGS_JS,
+      "package.json": JSON.stringify({
+        scripts: { a: `${bunExe()} args.js a`, b: `${bunExe()} args.js b` },
+      }),
+    });
+    const r = await runMulti(["run", "--parallel", "a", "b", "--", "--watch", hostile, "two words"], String(dir));
+    expect(argvFor(r.stdout, "a")).toEqual(["a", "--watch", hostile, "two words"]);
+    expect(argvFor(r.stdout, "b")).toEqual(["b", "--watch", hostile, "two words"]);
+    expect(r.stderr).not.toMatch(/^--watch\s+\|/m);
+    expect(r.stderr).not.toContain("pwned");
+    expect(r.exitCode).toBe(0);
+  });
+
+  test("-- right after the only script name: the rest are args, not scripts", async () => {
+    // Script names that are not also `bun` subcommand aliases, so `bun --parallel one two` works too.
+    using dir = tempDir("mr-pt-single", {
+      "args.js": ARGS_JS,
+      "package.json": JSON.stringify({
+        scripts: { one: `${bunExe()} args.js one`, two: `${bunExe()} args.js two` },
+      }),
+    });
+    const r = await runMulti(["run", "--parallel", "one", "--", "two", hostile], String(dir));
+    expect(argvFor(r.stdout, "one")).toEqual(["one", "two", hostile]);
+    expect(r.stdout).not.toMatch(/^two\s+\|/m);
+    expect(r.stderr).not.toMatch(/^two\s+\|/m);
+    expect(r.exitCode).toBe(0);
+
+    const auto = await runMulti(["--parallel", "one", "two", "--", "-v"], String(dir));
+    expect(argvFor(auto.stdout, "one")).toEqual(["one", "-v"]);
+    expect(argvFor(auto.stdout, "two")).toEqual(["two", "-v"]);
+    expect(auto.exitCode).toBe(0);
+  });
+
+  test("sequential: args are passed literally to every script", async () => {
+    using dir = tempDir("mr-pt-sequential", {
+      "args.js": ARGS_JS,
+      "package.json": JSON.stringify({
+        scripts: { a: `${bunExe()} args.js a`, b: `${bunExe()} args.js b` },
+      }),
+    });
+    const r = await runMulti(["run", "--sequential", "a", "b", "--", "--fix", hostile], String(dir));
+    expect(argvFor(r.stdout, "a")).toEqual(["a", "--fix", hostile]);
+    expect(argvFor(r.stdout, "b")).toEqual(["b", "--fix", hostile]);
+    expect(r.stderr).not.toContain("pwned");
+    expect(r.exitCode).toBe(0);
+  });
+
+  test("args go to the main script only, not to pre/post", async () => {
+    using dir = tempDir("mr-pt-prepost", {
+      "args.js": ARGS_JS,
+      "package.json": JSON.stringify({
+        scripts: {
+          prebuild: `${bunExe()} args.js pre`,
+          build: `${bunExe()} args.js main`,
+          postbuild: `${bunExe()} args.js post`,
+        },
+      }),
+    });
+    const r = await runMulti(["run", "--sequential", "build", "--", "--flag"], String(dir));
+    const lines = r.stdout
+      .match(/^build\s+\| (\[.*\])$/gm)!
+      .map(l => JSON.parse(l.slice(l.indexOf("[")))) as string[][];
+    expect(lines).toEqual([["pre"], ["main", "--flag"], ["post"]]);
+    expect(r.exitCode).toBe(0);
+  });
+
+  test("args are appended to file and raw commands", async () => {
+    using dir = tempDir("mr-pt-raw", {
+      "args.js": ARGS_JS,
+    });
+    const r = await runMulti(["run", "--parallel", "./args.js", "echo raw-cmd", "--", "-x", hostile], String(dir));
+    expect(argvFor(r.stdout, "./args.js")).toEqual(["-x", hostile]);
+    expectPrefixed(r.stdout, "echo raw-cmd", `raw-cmd -x ${hostile}`);
+    expect(r.exitCode).toBe(0);
+  });
+
+  test("--parallel --filter: args reach the script in every package", async () => {
+    using dir = tempDir("mr-pt-filter", {
+      "args.js": ARGS_JS,
+      "package.json": JSON.stringify({ name: "monorepo", private: true, workspaces: ["packages/*"] }),
+      "packages/pkg-a/package.json": JSON.stringify({
+        name: "pkg-a",
+        scripts: { build: `${bunExe()} ../../args.js a` },
+      }),
+      "packages/pkg-b/package.json": JSON.stringify({
+        name: "pkg-b",
+        scripts: { build: `${bunExe()} ../../args.js b` },
+      }),
+    });
+    const r = await runMulti(["run", "--parallel", "--filter", "*", "build", "--", "--watch", hostile], String(dir));
+    expect(argvFor(r.stdout, "pkg-a:build")).toEqual(["a", "--watch", hostile]);
+    expect(argvFor(r.stdout, "pkg-b:build")).toEqual(["b", "--watch", hostile]);
+    expect(r.exitCode).toBe(0);
+  });
+});
+
 // ─── WORKSPACE INTEGRATION ──────────────────────────────────────────────────
 
 /** Helper to create a monorepo workspace temp directory. */

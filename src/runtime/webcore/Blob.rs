@@ -1445,7 +1445,7 @@ impl BlobExt for Blob {
                 let fd: Fd = if let PathOrFileDescriptor::Fd(fd) = pathlike {
                     *fd
                 } else {
-                    let mut file_path = bun_paths::PathBuffer::uninit();
+                    let mut file_path = bun_paths::path_buffer_pool::get();
                     let path = pathlike.path().slice_z(&mut file_path);
                     let flags = bun_sys::O::WRONLY
                         | bun_sys::O::CREAT
@@ -1765,7 +1765,7 @@ impl BlobExt for Blob {
             let fd: Fd = match pathlike {
                 PathOrFileDescriptor::Fd(fd) => *fd,
                 PathOrFileDescriptor::Path(p) => {
-                    let mut file_path = bun_paths::PathBuffer::uninit();
+                    let mut file_path = bun_paths::path_buffer_pool::get();
                     match bun_sys::open(
                         p.slice_z(&mut file_path),
                         bun_sys::O::WRONLY | bun_sys::O::CREAT | bun_sys::O::NONBLOCK,
@@ -4314,7 +4314,7 @@ fn write_file_with_empty_source_to_destination(
                                 }
 
                                 // SAFETY: we check if `file.pathlike` is an fd above, returning if it is.
-                                let mut buf = bun_paths::PathBuffer::uninit();
+                                let mut buf = bun_paths::path_buffer_pool::get();
                                 let mode: bun_sys::Mode =
                                     options.mode.unwrap_or(node::fs::DEFAULT_PERMISSION);
                                 match bun_sys::File::open(
@@ -5267,7 +5267,7 @@ fn write_string_to_file_fast<const NEEDS_OPEN: bool>(
     let fd: Fd = if !NEEDS_OPEN {
         pathlike.fd()
     } else {
-        let mut file_path = bun_paths::PathBuffer::uninit();
+        let mut file_path = bun_paths::path_buffer_pool::get();
         match bun_sys::open(
             pathlike.path().slice_z(&mut file_path),
             // we deliberately don't use O_TRUNC here
@@ -5351,7 +5351,7 @@ fn write_bytes_to_file_fast<const NEEDS_OPEN: bool>(
     let fd: Fd = if !NEEDS_OPEN {
         pathlike.fd()
     } else {
-        let mut file_path = bun_paths::PathBuffer::uninit();
+        let mut file_path = bun_paths::path_buffer_pool::get();
         let flags = if cfg!(not(windows)) {
             bun_sys::O::WRONLY | bun_sys::O::CREAT | bun_sys::O::NONBLOCK
         } else {
@@ -6011,7 +6011,7 @@ fn resolve_file_stat(store: &RefPtr<Store>) {
     let file = Store::data_mut(store).as_file_mut();
     match &file.pathlike {
         PathOrFileDescriptor::Path(path) => {
-            let mut buffer = bun_paths::PathBuffer::uninit();
+            let mut buffer = bun_paths::path_buffer_pool::get();
             match bun_sys::stat(path.slice_z(&mut buffer)) {
                 bun_sys::Result::Ok(stat) => {
                     file.max_size = if bun_sys::S::ISREG(stat.st_mode as _) || stat.st_size > 0 {
@@ -6684,7 +6684,7 @@ pub trait FileOpener: Sized {
     fn open_callback(&self) -> fn(&mut Self, Fd);
 
     fn get_fd_by_opening(&mut self, callback: fn(&mut Self, Fd)) {
-        let mut buf = bun_paths::PathBuffer::uninit();
+        let mut buf = bun_paths::path_buffer_pool::get();
         let path_string = match self.pathlike() {
             PathOrFileDescriptor::Path(p) => p.clone(),
             PathOrFileDescriptor::Fd(_) => unreachable!(),

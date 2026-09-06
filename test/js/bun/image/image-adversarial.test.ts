@@ -403,6 +403,15 @@ describe("malformed PNG structure", () => {
     expect(await new Bun.Image(buf).metadata()).toEqual({ width: 2, height: 2, format: "png" });
   });
 
+  test("IDAT CRC and zlib adler32 mismatches are tolerated (checksums are skipped on decode)", async () => {
+    const expected = await rgbaOf(tinyPng);
+    const buf = Buffer.from(tinyPng);
+    const idatLen = buf.readUInt32BE(33);
+    buf[33 + 8 + idatLen - 1] ^= 0xff; // last adler32 byte of the zlib stream
+    buf[33 + 8 + idatLen + 3] ^= 0xff; // last IDAT CRC byte
+    expect(await rgbaOf(buf)).toStrictEqual(expected);
+  });
+
   test("missing IEND is tolerated (spec recovery: stream ending after a complete IDAT is valid)", async () => {
     const buf = tinyPng.subarray(0, tinyPng.length - 12);
     expect(await new Bun.Image(buf).metadata()).toEqual({ width: 2, height: 2, format: "png" });

@@ -1,5 +1,6 @@
 import { mkdirSync, writeFileSync } from "fs";
 import { join, resolve } from "path";
+import { createHashTable } from "./create-hash-table.ts";
 
 const classes = [
   "ArrayBufferSink",
@@ -1279,15 +1280,4 @@ writeFileSync(resolve(outDir + "/JSSink.lut.txt"), lutInput());
   console.log(`generated_jssink.rs: ${classes.length} sinks, ${symbols.length} exported symbols`);
 }
 
-Bun.spawnSync(
-  [
-    process.execPath,
-    "run",
-    join(import.meta.dir, "create-hash-table.ts"),
-    resolve(outDir + "/JSSink.lut.txt"),
-    join(outDir, "JSSink.lut.h"),
-  ],
-  {
-    stdio: ["inherit", "inherit", "inherit"],
-  },
-);
+createHashTable(resolve(outDir + "/JSSink.lut.txt"), join(outDir, "JSSink.lut.h"));

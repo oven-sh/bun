@@ -296,6 +296,33 @@ test("re-entering a storage inside run() does not grow the context", () => {
   });
 });
 
+// Node's run() exits through enterWith(prior), a fresh frame: a disable() after
+// run() returned reaches continuations captured since, not ones from before it.
+test("disable() after a run() does not reach continuations captured before the run()", () => {
+  const a = new AsyncLocalStorage();
+  const b = new AsyncLocalStorage();
+  const seen: unknown[] = [];
+  a.run("outer", () => {
+    b.run(2, () => {
+      const before = AsyncLocalStorage.snapshot();
+      a.run(1, () => {
+        b.run(5, () => {});
+      });
+      const after = AsyncLocalStorage.snapshot();
+      b.disable();
+      seen.push(
+        before(() => b.getStore()),
+        after(() => b.getStore()),
+        b.getStore(),
+        a.getStore(),
+      );
+    });
+    seen.push(a.getStore(), b.getStore());
+  });
+  seen.push(a.getStore(), b.getStore());
+  expect(seen).toEqual([2, undefined, undefined, "outer", "outer", undefined, undefined, undefined]);
+});
+
 // Node's run() enters a fresh frame, so a disable() inside it only reaches
 // continuations captured since; ones captured before keep their binding.
 test("disable() inside another storage's run() does not reach earlier continuations", async () => {
@@ -1555,4 +1582,46 @@ test("an active store adds no per-await / per-then helper allocations", () => {
   });
   expect(keep.length).toBe(N * 3);
   expect(delta).toBeLessThan(50);
+});
+
+// A callback captured inside exit() or a nested run() cannot see the outer
+// store, so it must not keep it alive either.
+test("exit() and nested run() release the shadowed outer store", async () => {
+  const als = new AsyncLocalStorage();
+  const other = new AsyncLocalStorage();
+  const N = 20;
+  const timers: ReturnType<typeof setTimeout>[] = [];
+  const pending: Promise<unknown>[] = [];
+  const never = new Promise(() => {});
+  function arm() {
+    timers.push(setTimeout(() => {}, 1_000_000).unref());
+    pending.push(never.then(() => {}));
+  }
+  const modes = [
+    (fn: () => void) => als.exit(fn),
+    (fn: () => void) => als.run(undefined, fn),
+    (fn: () => void) => als.run({ inner: true }, fn),
+    (fn: () => void) => other.run(1, () => als.run({ inner: true }, () => other.run(2, fn))),
+  ];
+  const refs: WeakRef<object>[][] = modes.map(() => []);
+  for (const [m, mode] of modes.entries()) {
+    for (let i = 0; i < N; i++) {
+      const outer = { payload: new Uint8Array(64 * 1024) };
+      refs[m].push(new WeakRef(outer));
+      als.run(outer, () => {
+        mode(arm);
+        expect(als.getStore()).toBe(outer);
+      });
+    }
+  }
+  expect(als.getStore()).toBeUndefined();
+  const alive = () => refs.map(mode => mode.filter(r => r.deref() !== undefined).length);
+  for (let i = 0; i < 20 && Math.max(...alive()) > N / 2; i++) {
+    Bun.gc(true);
+    await new Promise(r => setTimeout(r, 10));
+  }
+  expect(timers.length + pending.length).toBe(modes.length * N * 2);
+  // without the fix every store of an affected mode is retained
+  for (const n of alive()) expect(n).toBeLessThanOrEqual(N / 2);
+  for (const t of timers) clearTimeout(t);
 });

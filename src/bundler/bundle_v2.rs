@@ -4337,6 +4337,7 @@ pub mod bv2_impl {
                     )
                 };
                 let mut additional_output_files: Vec<options::OutputFile> = Vec::new();
+                let mut templates: Vec<(usize, options::PathTemplate)> = Vec::new();
 
                 for reachable_source in reachable_files {
                     let index = reachable_source.get() as usize;
@@ -4373,9 +4374,8 @@ pub mod bv2_impl {
                             template
                         };
 
-                        let source = &mut sources[index];
-
-                        let output_path: Box<[u8]> = {
+                        {
+                            let source = &sources[index];
                             // TODO: outbase
                             let pathname =
                                 Fs::PathName::init(bun_paths::resolve_path::relative_platform::<
@@ -4395,13 +4395,41 @@ pub mod bv2_impl {
                             template.placeholder.ext = ext.to_vec().into_boxed_slice();
 
                             if template.needs(options::PlaceholderField::Hash) {
-                                template.placeholder.hash =
-                                    Some(content_hashes_for_additional_files[index]);
+                                template.placeholder.hash = Some(
+                                    template
+                                        .content_hash(content_hashes_for_additional_files[index]),
+                                );
                             }
 
                             if template.needs(options::PlaceholderField::Target) {
                                 template.placeholder.target = target.naming_placeholder().into();
                             }
+                        }
+                        templates.push((index, template));
+                    }
+                }
+
+                // Two assets whose hashes differ only past `[hash]`'s width get wider names.
+                {
+                    let hashed: Vec<usize> = (0..templates.len())
+                        .filter(|&i| templates[i].1.placeholder.hash.is_some())
+                        .collect();
+                    let mut names: Vec<bun_core::fmt::ContentHash> = hashed
+                        .iter()
+                        .map(|&i| templates[i].1.placeholder.hash.unwrap())
+                        .collect();
+                    while bun_core::fmt::ContentHash::widen_to_distinguish(&mut names) {}
+                    for (&i, name) in hashed.iter().zip(names) {
+                        templates[i].1.placeholder.hash = Some(name);
+                    }
+                }
+
+                for (index, template) in templates {
+                    let loader = loaders[index];
+                    {
+                        let source = &mut sources[index];
+
+                        let output_path: Box<[u8]> = {
                             let mut v = Vec::new();
                             template
                                 .print(
@@ -4435,7 +4463,10 @@ pub mod bv2_impl {
                                 input_loader: Loader::File,
                                 output_kind: crate::options::OutputKind::Asset,
                                 loader,
-                                hash: Some(content_hashes_for_additional_files[index]),
+                                hash: Some(
+                                    template
+                                        .content_hash(content_hashes_for_additional_files[index]),
+                                ),
                                 side: Some(crate::options::Side::Client),
                                 entry_point_index: None,
                                 is_executable: false,

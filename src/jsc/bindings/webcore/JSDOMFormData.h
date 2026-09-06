@@ -60,8 +60,7 @@ public:
     static size_t estimatedSize(JSCell* cell, JSC::VM& vm);
 
     size_t m_memoryCost { 0 };
-    void computeMemoryCost(); // O(entries); append uses reportAppendedEntry
-    void reportAppendedEntry(size_t bytes);
+    void computeMemoryCost();
 
 protected:
     JSDOMFormData(JSC::Structure*, JSDOMGlobalObject&, Ref<DOMFormData>&&);

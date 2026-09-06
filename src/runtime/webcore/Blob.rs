@@ -3435,10 +3435,6 @@ impl BlobExt for Blob {
     }
 
     fn estimated_size(&self) -> usize {
-        // A natively held Blob (a multipart file part) has no wrapper, so `to_js` has not run.
-        if self.reported_estimated_size.get() == 0 {
-            self.calculate_estimated_byte_size();
-        }
         self.reported_estimated_size.get()
     }
 

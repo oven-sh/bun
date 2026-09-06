@@ -75,7 +75,7 @@ public:
     void set(const String& name, RefPtr<Blob>, const String& filename = {});
 
     size_t count() const { return m_items.size(); }
-    // Native bytes the entries hold, including each StringImpl header.
+    // Native bytes the string entries hold, including each StringImpl header.
     size_t memoryCost() const;
     static size_t stringMemoryCost(const String& string)
     {

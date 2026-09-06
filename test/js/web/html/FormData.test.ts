@@ -1013,7 +1013,7 @@ describe.concurrent("FormData native memory is reported to the GC", () => {
   // `create` is the source of an async function that returns one FormData.
   async function extraMemoryDelta(create: string, count: number): Promise<number> {
     const script = `
-      const { heapStats } = require("bun:jsc");
+      import { heapStats } from "bun:jsc";
       const create = ${create};
 
       Bun.gc(true);
@@ -1067,23 +1067,5 @@ describe.concurrent("FormData native memory is reported to the GC", () => {
       { headers: { "content-type": "multipart/form-data; boundary=X" } },
     ).formData()`;
     expect(await extraMemoryDelta(create, count)).toBeGreaterThan(count * valueSize * 0.5);
-  });
-
-  test("multipart file parts report their store bytes", async () => {
-    const create = `async () => new Response(
-      "--X\\r\\nContent-Disposition: form-data; name=\\"a\\"; filename=\\"a.txt\\"\\r\\n\\r\\n" + ${value} + "\\r\\n--X--\\r\\n",
-      { headers: { "content-type": "multipart/form-data; boundary=X" } },
-    ).formData()`;
-    expect(await extraMemoryDelta(create, count)).toBeGreaterThan(count * valueSize * 0.5);
-  });
-
-  test("append and set report their bytes", async () => {
-    const create = `async () => {
-      const fd = new FormData();
-      fd.append("a", ${value});
-      fd.set("b", ${value});
-      return fd;
-    }`;
-    expect(await extraMemoryDelta(create, count)).toBeGreaterThan(count * 2 * valueSize * 0.5);
   });
 });

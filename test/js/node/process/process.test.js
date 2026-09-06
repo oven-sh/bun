@@ -1241,7 +1241,14 @@ describe.concurrent(() => {
 
     // Node appends the effective gid to getgroups(2) when the kernel does not return it.
     // Needs root and setpriv (util-linux) to drop to an identity with no supplementary groups.
-    const setpriv = process.platform === "linux" && process.getuid() === 0 ? which("setpriv") : null;
+    const setpriv = (() => {
+      if (process.platform !== "linux" || process.getuid() !== 0) return null;
+      const path = which("setpriv");
+      if (!path) return null;
+      // BusyBox ships a setpriv applet without --reuid and friends.
+      const { stdout } = spawnSync({ cmd: [path, "--help"], stdout: "pipe", stderr: "pipe" });
+      return stdout.toString().includes("--reuid") ? path : null;
+    })();
     it.skipIf(!setpriv)("process.getgroups includes the effective gid when the supplementary list omits it", () => {
       const script = "console.log(JSON.stringify([process.getgroups(), process.getegid()]))";
       const run = (...privArgs) => {

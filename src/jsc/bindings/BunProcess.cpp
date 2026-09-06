@@ -3341,12 +3341,15 @@ JSC_DEFINE_HOST_FUNCTION(Process_functiongetgroups, (JSGlobalObject * globalObje
         return {};
     }
     Vector<gid_t> groupVector(ngroups);
-    ngroups = getgroups(ngroups, groupVector.begin());
-    if (ngroups == -1) {
-        throwSystemError(throwScope, globalObject, "getgroups"_s, errno);
-        return {};
+    if (ngroups > 0) {
+        // With a size of 0 this call only reports the count. It never fills the buffer.
+        ngroups = getgroups(ngroups, groupVector.begin());
+        if (ngroups == -1) {
+            throwSystemError(throwScope, globalObject, "getgroups"_s, errno);
+            return {};
+        }
+        groupVector.shrink(ngroups);
     }
-    groupVector.shrink(ngroups);
 
     // Node always includes the effective gid. getgroups(2) may not.
     gid_t egid = getegid();

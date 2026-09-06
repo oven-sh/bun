@@ -127,49 +127,50 @@ test("server.reload() applies the new websocket maxPayloadLength to sockets open
 // The per-route upgrade data (which route matched, its params) lives in the
 // HTTP route, not in the shared context, so every route still upgrades with
 // its own data, with or without the `/*` fallback, before and after a reload.
-test("websocket routes keep their own upgrade data on the shared context", async () => {
-  const config = (version: number, withFallback: boolean) => ({
-    port: 0,
-    routes: {
-      "/a/:name": (req: Bun.BunRequest<"/a/:name">, server: Bun.Server) =>
-        server.upgrade(req, { data: `a:${req.params.name}` }) ? undefined : new Response("no", { status: 500 }),
-      "/b/:name": (req: Bun.BunRequest<"/b/:name">, server: Bun.Server) =>
-        server.upgrade(req, { data: `b:${req.params.name}` }) ? undefined : new Response("no", { status: 500 }),
-    },
-    fetch: withFallback
-      ? (req: Request, server: Bun.Server) =>
-          server.upgrade(req, { data: "fallback" }) ? undefined : new Response("no", { status: 500 })
-      : undefined,
-    websocket: {
-      message(ws: Bun.ServerWebSocket<string>, message: string | Buffer) {
-        ws.send(`v${version} ${ws.data} ${message}`);
+test.each([true, false])(
+  "websocket routes keep their own upgrade data on the shared context (fallback: %p)",
+  async withFallback => {
+    const config = (version: number) => ({
+      port: 0,
+      routes: {
+        "/a/:name": (req: Bun.BunRequest<"/a/:name">, server: Bun.Server) =>
+          server.upgrade(req, { data: `a:${req.params.name}` }) ? undefined : new Response("no", { status: 500 }),
+        "/b/:name": (req: Bun.BunRequest<"/b/:name">, server: Bun.Server) =>
+          server.upgrade(req, { data: `b:${req.params.name}` }) ? undefined : new Response("no", { status: 500 }),
       },
-    },
-  });
+      fetch: withFallback
+        ? (req: Request, server: Bun.Server) =>
+            server.upgrade(req, { data: "fallback" }) ? undefined : new Response("no", { status: 500 })
+        : undefined,
+      websocket: {
+        message(ws: Bun.ServerWebSocket<string>, message: string | Buffer) {
+          ws.send(`v${version} ${ws.data} ${message}`);
+        },
+      },
+    });
 
-  const echo = (server: Bun.Server, path: string) => {
-    const { promise, resolve, reject } = Promise.withResolvers<string>();
-    const ws = new WebSocket(new URL(path, server.url));
-    ws.onerror = reject;
-    ws.onclose = event => reject(new Error(`closed ${event.code}`));
-    ws.onmessage = event => {
-      ws.onclose = null;
-      ws.close();
-      resolve(String(event.data));
+    const echo = (server: Bun.Server, path: string) => {
+      const { promise, resolve, reject } = Promise.withResolvers<string>();
+      const ws = new WebSocket(new URL(path, server.url));
+      ws.onerror = reject;
+      ws.onclose = event => reject(new Error(`closed ${event.code}`));
+      ws.onmessage = event => {
+        ws.onclose = null;
+        ws.close();
+        resolve(String(event.data));
+      };
+      ws.onopen = () => ws.send("hi");
+      return promise;
     };
-    ws.onopen = () => ws.send("hi");
-    return promise;
-  };
 
-  for (const withFallback of [true, false]) {
-    using server = Bun.serve(config(1, withFallback));
+    using server = Bun.serve(config(1));
     const paths = withFallback ? ["/a/x", "/b/y", "/other"] : ["/a/x", "/b/y"];
     expect(await Promise.all(paths.map(path => echo(server, path)))).toEqual(
       withFallback ? ["v1 a:x hi", "v1 b:y hi", "v1 fallback hi"] : ["v1 a:x hi", "v1 b:y hi"],
     );
-    server.reload(config(2, withFallback));
+    server.reload(config(2));
     expect(await Promise.all(paths.map(path => echo(server, path)))).toEqual(
       withFallback ? ["v2 a:x hi", "v2 b:y hi", "v2 fallback hi"] : ["v2 a:x hi", "v2 b:y hi"],
     );
-  }
-});
+  },
+);

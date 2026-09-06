@@ -11,6 +11,10 @@ pub struct SendFile {
     pub remain: usize,
     pub offset: usize,
     pub content_size: usize,
+    /// Set once `sendfile(2)` refuses the fd (seccomp, a filesystem without
+    /// `splice_read`, an old kernel). The rest of the body goes through
+    /// `pread` + `write` from `offset`, so nothing already sent is repeated.
+    pub use_read_write: bool,
 }
 
 impl SendFile {
@@ -34,6 +38,9 @@ impl SendFile {
         #[cfg(any(target_os = "linux", target_os = "android"))]
         {
             let _ = adjusted_count; // unused on Linux path
+            if self.use_read_write {
+                return self.write_with_read_write(socket_fd);
+            }
             let mut signed_offset: i64 = i64::try_from(self.offset).expect("int cast");
             let begin = self.offset;
             // this does the syscall directly, without libc
@@ -55,12 +62,23 @@ impl SendFile {
                 .saturating_sub((self.offset as u64).saturating_sub(begin as u64))
                 as usize;
 
-            if errcode != bun_sys::E::SUCCESS || self.remain == 0 || val == 0 {
-                if errcode == bun_sys::E::SUCCESS {
-                    return Status::Done;
+            match errcode {
+                bun_sys::E::SUCCESS => {
+                    if self.remain == 0 || val == 0 {
+                        return Status::Done;
+                    }
                 }
-
-                return Status::Err(bun_errno::from_errno(errcode as i32).into());
+                bun_sys::E::EAGAIN => {}
+                // Same set as the statx and copy_file_range fallbacks: the
+                // syscall is refused for this fd, not failing on it.
+                bun_sys::E::EINVAL
+                | bun_sys::E::ENOSYS
+                | bun_sys::E::EOPNOTSUPP
+                | bun_sys::E::EPERM => {
+                    self.use_read_write = true;
+                    return self.write_with_read_write(socket_fd);
+                }
+                _ => return Status::Err(bun_errno::from_errno(errcode as i32).into()),
             }
         }
 
@@ -131,6 +149,44 @@ impl SendFile {
         }
 
         Status::Again
+    }
+
+    /// Copy from `offset` to the socket until the socket would block, the
+    /// window is sent, or the file ends early. `pread` keeps the fd's file
+    /// position untouched, so a partial socket write is resumed at `offset`
+    /// on the next writable event.
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    fn write_with_read_write(&mut self, socket_fd: Fd) -> Status {
+        let mut stack_buf = bun_core::vec::UninitBuf::<{ 16 * 4096 }>::uninit();
+        // SAFETY: `pread` is the only writer of `buf`; only `buf[..read]` is read back.
+        let buf = unsafe { stack_buf.as_bytes_mut() };
+        loop {
+            if self.remain == 0 {
+                return Status::Done;
+            }
+            let want = buf.len().min(self.remain);
+            let Ok(signed_offset) = i64::try_from(self.offset) else {
+                return Status::Err(bun_errno::SystemErrno::EOVERFLOW.into());
+            };
+            let read = match bun_sys::pread(self.fd, &mut buf[..want], signed_offset) {
+                Ok(0) => return Status::Done,
+                Ok(n) => n,
+                Err(err) => return Status::Err(crate::Error::Sys(err.into())),
+            };
+            let mut sent = 0;
+            while sent < read {
+                match bun_sys::write(socket_fd, &buf[sent..read]) {
+                    Ok(0) => return Status::Again,
+                    Ok(n) => {
+                        sent += n;
+                        self.offset += n;
+                        self.remain -= n;
+                    }
+                    Err(err) if err.get_errno() == bun_sys::E::EAGAIN => return Status::Again,
+                    Err(err) => return Status::Err(crate::Error::Sys(err.into())),
+                }
+            }
+        }
     }
 }
 

@@ -1543,6 +1543,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                         remain: (blob_offset + original_size) as usize,
                         offset: blob_offset as usize,
                         content_size: original_size.min(stat_size) as usize,
+                        use_read_write: false,
                     };
 
                     if bun_sys::S::ISREG(stat.st_mode as u32) {

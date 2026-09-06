@@ -894,7 +894,26 @@ export function resolveDep(
   let sourceStamp: string | undefined;
   let fetchDeclares: string[] = [];
   if (source.kind === "github" || source.kind === "tarball") {
-    const fetch = emitFetch(n, cfg, dep.name, source, patches, [...resolvedSources, ...directSources]);
+    // A fetch edge declares files of ITS tree only. A source this dep compiles
+    // out of a sibling's tree (lsquic builds vendor/lsqpack/lsqpack.c) has to
+    // be an output of the sibling's fetch — the edge that actually rewrites it
+    // on a bump — which the sibling arranges by naming it in `treeFiles`.
+    const own: string[] = [];
+    for (const file of [...resolvedSources, ...directSources]) {
+      if (file.startsWith(srcDir + sep)) {
+        own.push(file);
+        continue;
+      }
+      const owner = relative(cfg.vendorDir, file).split(sep)[0]!;
+      assert(
+        resolved.get(owner)?.fetchDeclares.includes(file),
+        `${dep.name} compiles ${file}, which lives in ${owner}'s source tree, but ${owner} does not declare it`,
+        {
+          hint: `Add "${relative(resolve(cfg.vendorDir, owner), file)}" to treeFiles in deps/${owner}.ts (and keep ${owner} before ${dep.name} in allDeps)`,
+        },
+      );
+    }
+    const fetch = emitFetch(n, cfg, dep.name, source, patches, own);
     sourceStamp = fetch.refStamp;
     fetchDeclares = fetch.declares;
   } else {
@@ -1067,9 +1086,9 @@ export function computeDepLibs(cfg: Config, dep: Dependency): string[] {
  * recompile just what the bump changed, without configure ever reading or
  * deleting the tree. (One dyndep rule to respect: a file may be declared by
  * one edge only, so the sources build.ninja already names as static outputs
- * of a fetch edge — the ones bun or a dep compiles, which must have a
- * producer before any dyndep exists for a fresh checkout to schedule — are
- * listed for `plan` to leave out: writeFetchStaticOutputs().)
+ * of the fetch edge — the ones bun or a dep compiles from this tree, which
+ * must have a producer before any dyndep exists for a fresh checkout to
+ * schedule — are listed for `plan` to leave out: writeFetchStaticOutputs().)
  */
 function emitFetch(
   n: Ninja,
@@ -1140,10 +1159,8 @@ const fetchStaticOutputsPath = (cfg: Config): string => resolve(cfg.buildDir, "d
  * Write the list every `plan` edge reads (an implicit input of each): all
  * files under vendor/ that build.ninja declares as static outputs of some
  * fetch edge, which a dyndep file must therefore not declare again (ninja
- * refuses a file with two producers). One list for the whole graph because a
- * dep may compile a sibling's source — lsquic builds vendor/lsqpack/lsqpack.c
- * — so the file lsqpack's plan has to leave out is declared by lsquic's
- * fetch edge. Call once, after every dep of the graph is resolved.
+ * refuses a file with two producers). Call once, after every dep of the
+ * graph is resolved.
  */
 export function writeFetchStaticOutputs(cfg: Config, deps: ResolvedDep[]): void {
   const all = [...new Set(deps.flatMap(d => d.fetchDeclares))].sort();

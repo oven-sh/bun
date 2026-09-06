@@ -316,10 +316,9 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
   // Implicit deps on the libs make "dep rebuilt" itself the invalidation
   // signal. Cost is negligible: if the libs changed you're relinking anyway.
   //
-  // Fetched source trees and codegen/generated headers stay order-only: the
-  // former are final before ninja starts (fetch pre-pass in build.ts), the
-  // latter ARE declared ninja outputs with restat, so depfile tracking is
-  // exact and doesn't lag.
+  // Fetched source trees and codegen/generated headers stay order-only: both
+  // ARE declared ninja outputs with restat (a fetched tree's files through the
+  // fetch edge's dyndep file), so depfile tracking is exact and doesn't lag.
   //
   // PCH also has implicit deps on depHeaderSignal (see above). When PCH is enabled,
   // cxx inherits the dep transitively via its implicit dep on the PCH, so we

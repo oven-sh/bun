@@ -27,7 +27,9 @@ export const lsqpack: Dependency = {
   // pointing at lsquic-internal headers. This dep just provides lsqpack.h.
   build: cfg => {
     void cfg;
-    const spec: DirectBuild = { kind: "direct", sources: [] };
+    // lsqpack.c is compiled by lsquic's build (above), so it is this tree's
+    // fetch that declares it: a bump of lsqpack then rebuilds that object.
+    const spec: DirectBuild = { kind: "direct", sources: [], treeFiles: ["lsqpack.c"] };
     return spec;
   },
 

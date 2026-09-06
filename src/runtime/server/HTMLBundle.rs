@@ -220,8 +220,7 @@ impl Route {
     /// different files, the old route never finished a build, or this route
     /// already adopted.
     pub(crate) fn adopt_assets(&self, old: &Route) -> Vec<(Box<[u8]>, RefPtr<StaticRoute>)> {
-        if !std::ptr::eq(self.bundle.as_ptr(), old.bundle.as_ptr())
-            || !self.assets.get().is_empty()
+        if !std::ptr::eq(self.bundle.as_ptr(), old.bundle.as_ptr()) || !self.assets.get().is_empty()
         {
             return Vec::new();
         }

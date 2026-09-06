@@ -47,13 +47,16 @@
  * output), writing only when the content changed so restat can prune.
  * --label=TEXT puts TEXT after the `[name]` prefix on every line (the
  * post-link checks label their lines with the executable they ran on).
+ * --elapsed holds each line back until the next one arrives so the last
+ * line can end with the command's wall time, `(1.2s)` — for short jobs
+ * whose whole output is a summary line.
  */
 
 import { spawn, spawnSync } from "node:child_process";
 import { closeSync, createWriteStream, openSync, writeSync } from "node:fs";
 import { createInterface } from "node:readline";
 import { writeIfChanged } from "./fs.ts";
-import { nameColor } from "./tty.ts";
+import { formatElapsed, nameColor } from "./tty.ts";
 
 export const streamPath: string = import.meta.filename;
 
@@ -104,6 +107,7 @@ function main(): void {
   let stampPath: string | undefined;
   let stdoutPath: string | undefined;
   let label = "";
+  let elapsed = false;
   const envOverrides: Record<string, string> = {};
 
   // Bun's bundled BoringSSL doesn't consult the system trust store, so
@@ -150,6 +154,8 @@ function main(): void {
       stdoutPath = opt.slice(9);
     } else if (opt.startsWith("--label=")) {
       label = opt.slice(8) + " ";
+    } else if (opt === "--elapsed") {
+      elapsed = true;
     } else {
       process.stderr.write(`stream.ts: unknown option ${opt}\n`);
       process.exit(2);
@@ -252,7 +258,20 @@ function main(): void {
   // correctly (emits the trailing fragment without a newline).
   const pump = (stream: NodeJS.ReadableStream): void => {
     const rl = createInterface({ input: stream, crlfDelay: Infinity });
-    rl.on("line", line => write(prefix + line + "\n"));
+    rl.on("line", line => {
+      if (!elapsed) return write(prefix + line + "\n");
+      if (held !== undefined) write(prefix + held + "\n");
+      held = line;
+    });
+  };
+  // --elapsed: the most recent line, written when the next one arrives or,
+  // with the timing appended, when the child exits.
+  let held: string | undefined;
+  const started = performance.now();
+  const flushHeld = (): void => {
+    if (held === undefined) return;
+    writeSync(outFd, lead + prefix + `${held} (${formatElapsed(performance.now() - started)})\n`);
+    held = undefined;
   };
   const captured: Buffer[] = [];
   if (stdoutPath !== undefined) child.stdout!.on("data", (chunk: Buffer) => captured.push(chunk));
@@ -272,6 +291,7 @@ function main(): void {
   });
 
   child.on("close", (code, signal) => {
+    flushHeld();
     if (signal) {
       writeFinal(`killed by ${signal}\n`);
       process.exit(1);

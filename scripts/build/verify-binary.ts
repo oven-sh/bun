@@ -128,11 +128,16 @@ interface CheckResult {
   violations: string[];
   /** What was found, itemized; printed only alongside violations. */
   details: string[];
+  ms: number;
 }
 const results: CheckResult[] = [];
+let checkStarted = performance.now();
 function report(name: CheckName, summary: string, violations: string[] = [], details: string[] = []): void {
-  results.push({ name, summary, violations, details });
+  const now = performance.now();
+  results.push({ name, summary, violations, details, ms: now - checkStarted });
+  checkStarted = now;
 }
+const formatMs = (ms: number): string => (ms < 1000 ? `${Math.round(ms)}ms` : `${(ms / 1000).toFixed(1)}s`);
 
 /** Compare a found set against an expected set: extras are always violations, absentees only when `exact`. */
 function setDifference(
@@ -687,7 +692,9 @@ function main(argv: string[]): number {
     else verifyPE(spec);
     let failed = 0;
     for (const r of results) {
-      console.log(`${r.name}: ${r.summary}${r.violations.length ? ` — ${r.violations.length} violation(s)` : ""}`);
+      console.log(
+        `${r.name}: ${r.summary}${r.violations.length ? ` — ${r.violations.length} violation(s)` : ""} (${formatMs(r.ms)})`,
+      );
       if (r.violations.length > 0) {
         failed++;
         if (r.details.length > 0) console.log(`    found: ${r.details.join(", ")}`);

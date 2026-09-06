@@ -872,7 +872,7 @@ function emitDuplicateSymbolCheck(n: Ninja, cfg: Config, exeName: string, linkIn
   if (report === undefined || cfg.nm === undefined) return [];
   const q = (p: string) => quote(p, cfg.windows);
   n.rule("duplicate_symbols", {
-    command: `${cfg.jsRuntime} ${q(streamPath)} check --label=${exeName} ${cfg.jsRuntime} ${q(verifyBinaryPath)} duplicates ${q(cfg.nm)} $out.rsp $out`,
+    command: `${cfg.jsRuntime} ${q(streamPath)} check --label=${exeName} --elapsed ${cfg.jsRuntime} ${q(verifyBinaryPath)} duplicates ${q(cfg.nm)} $out.rsp $out`,
     description: `check ${exeName} link inputs for duplicate definitions`,
     rspfile: "$out.rsp",
     rspfile_content: "$in_newline",
@@ -941,7 +941,7 @@ function emitClassInfoCheck(n: Ninja, cfg: Config, exe: string, exeName: string)
   const nmEnv = cfg.nm === undefined ? "" : ` --env=NM=${quote(cfg.nm, false)}`;
   n.rule("classinfo_check", {
     command:
-      `${cfg.jsRuntime} ${quote(streamPath, false)} check --label=${exeName} --stamp=$out${nmEnv} sh -c ` +
+      `${cfg.jsRuntime} ${quote(streamPath, false)} check --label=${exeName} --elapsed --stamp=$out${nmEnv} sh -c ` +
       `'python3 ${quote(script, false)} "$$1" > "$$2.log" 2>&1 && sed -n "s/^check-classinfo-uniqueness: [^:]*: \\([0-9]*\\) ClassInfo.*/ClassInfo uniqueness: \\1 ClassInfo/p" "$$2.log" || { cat "$$2.log"; exit 1; }' sh $in $out`,
     description: `check ${exeName} JSC ClassInfo uniqueness`,
   });
@@ -984,7 +984,7 @@ function emitSmokeTest(n: Ninja, cfg: Config, exe: string, exeName: string, stri
   // same label/colour as the other post-link checks; --stamp writes $out
   // when the command exits 0.
   n.rule("smoke_test", {
-    command: `${cfg.jsRuntime} ${q(streamPath)} check --label=${exeName} --stamp=$out --env=BUN_DEBUG_QUIET_LOGS=1 ${testCmd}`,
+    command: `${cfg.jsRuntime} ${q(streamPath)} check --label=${exeName} --elapsed --stamp=$out --env=BUN_DEBUG_QUIET_LOGS=1 ${testCmd}`,
     description: `check ${exeName} --revision`,
   });
 

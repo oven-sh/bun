@@ -3178,6 +3178,16 @@ test("no assertion failures 3", () => {
     assert.strictEqual(util.inspect(-0.12, { numericSeparator: true }), "-0.12");
     assert.strictEqual(util.inspect(-0.123, { numericSeparator: true }), "-0.123");
     assert.strictEqual(util.inspect(-0.1234, { numericSeparator: true }), "-0.123_4");
+
+    // Exponential notation has no meaningful "group by 3 digits" form, so it
+    // must be left untouched rather than having separators spliced into it.
+    // (Node.js itself mangles these same inputs, e.g. `util.inspect(1e-7, {
+    // numericSeparator: true })` produces "1e-.1e-_7" on Node v24.9.0; Bun
+    // intentionally diverges here rather than reproducing that bug.)
+    assert.strictEqual(util.inspect(1e-7, { numericSeparator: true }), "1e-7");
+    assert.strictEqual(util.inspect(-1e-7, { numericSeparator: true }), "-1e-7");
+    assert.strictEqual(util.inspect(1.5e-7, { numericSeparator: true }), "1.5e-7");
+    assert.strictEqual(util.inspect(-1.5e-7, { numericSeparator: true }), "-1.5e-7");
   }
 
   // Regression test for https://github.com/nodejs/node/issues/41244

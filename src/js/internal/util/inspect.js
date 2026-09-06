@@ -2037,6 +2037,12 @@ function formatNumber(fn, number, numericSeparator) {
     return fn(string, "number");
   }
   const numberString = String(number);
+  // Exponential notation (very large/small magnitudes) has no meaningful
+  // "group by 3 digits" form; leave it untouched, same as the integer
+  // branch above already does for `StringPrototypeIncludes(string, "e")`.
+  if (StringPrototypeIncludes(numberString, "e")) {
+    return fn(numberString, "number");
+  }
   // `MathTrunc` collapses e.g. -0.12 to -0, and `String(-0)` is "0" (no sign),
   // so `string` can be missing the sign that `numberString` still has.
   const sign = numberString[0] === "-" && string[0] !== "-" ? "-" : "";

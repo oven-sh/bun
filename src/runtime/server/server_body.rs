@@ -14,7 +14,7 @@ use crate::webcore::body::Value as BodyValue;
 use crate::webcore::fetch as Fetch;
 use crate::webcore::response::HeadersRef;
 use crate::webcore::{
-    self as WebCore, AbortSignal, AnyBlob, Blob, FetchHeaders, Request, Response, request,
+    self as WebCore, AbortSignal, AnyBlob, Blob, FetchHeaders, Request, Response,
 };
 use ::bstr::BStr;
 use bun_collections::HashMap;
@@ -1789,8 +1789,8 @@ where
             );
         };
         // SAFETY: from_js returns a live *mut Request (rooted by the caller's
-        // argument). Shared, re-derived after each JS re-entry point below; the
-        // one field write at the end goes through `request_ptr`.
+        // argument). Shared; may be the server's own `Request` or a copy of
+        // it (`req.clone()`, `new Request(req)`) holding a derived handle.
         let request = unsafe { &*request_ptr };
 
         let Some(upgrader_ptr) = request
@@ -2011,23 +2011,20 @@ where
         let signal = upgrader.signal.take();
         upgrader.resp.set(None);
 
-        // Snapshot lazy url/headers before detaching (mirrors to_async_without_abort_handler).
-        // SAFETY: re-derived after the JS-running option getters above; still
-        // the live JsClass payload for `object`.
-        let request = unsafe { &*request_ptr };
-        if request.ensure_url().is_err() {
-            request.url.set(BunString::EMPTY);
-        }
-        if !request.has_fetch_headers() {
-            if let Some(req_ptr) = upgrader.req.get() {
-                request.set_fetch_headers(Some(HeadersRef::create_from_uws(req_ptr)));
+        // Snapshot the original request's lazy url/headers before detaching
+        // (mirrors to_async_without_abort_handler). A copy passed as `object`
+        // already owns its url/headers.
+        if let Some(original) = upgrader.original_request() {
+            if original.ensure_url().is_err() {
+                original.url.set(BunString::EMPTY);
+            }
+            if !original.has_fetch_headers() {
+                if let Some(req_ptr) = upgrader.req.get() {
+                    original.set_fetch_headers(Some(HeadersRef::create_from_uws(req_ptr)));
+                }
             }
         }
-
-        // SAFETY: plain-field detach through the root pointer; the shared
-        // borrow above is not used past this point.
-        unsafe { (*request_ptr).request_context = AnyRequestContext::NULL };
-        upgrader.request_weakref.set(request::WeakRef::EMPTY);
+        upgrader.detach_requests();
 
         data_value.ensure_still_alive();
         let ws = ServerWebSocket::init(

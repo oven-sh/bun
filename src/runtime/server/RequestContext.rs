@@ -114,6 +114,10 @@ pub struct RequestContext<
     pub(crate) resp: Cell<Option<uws::AnyResponse>>,
     pub(crate) req: Cell<Option<*mut Req<SSL_ENABLED, MUX>>>,
     pub(crate) request_weakref: JsCell<request::WeakRef>,
+    /// Copies of the `Request` (`req.clone()`, `new Request(req)`) that hold
+    /// a derived handle to this context. Detached together with the original
+    /// in [`detach_requests`](Self::detach_requests).
+    derived_requests: JsCell<Vec<request::WeakRef>>,
     // NOTE: `Arc<AbortSignal>` was wrong —
     // `AbortSignal` is an opaque ZST FFI handle; an `Arc` of a ZST never owns
     // the C++ allocation. Store the raw pointer. The request holds TWO counts:
@@ -217,6 +221,7 @@ where
             + self.request_body_buf.get().capacity()
             + self.response_buf_owned.get().capacity()
             + self.blob.get().memory_cost()
+            + self.derived_requests.get().capacity() * core::mem::size_of::<request::WeakRef>()
     }
 
     #[inline]
@@ -641,6 +646,46 @@ where
         // SAFETY: weak handle just reported the allocation live; the pointee
         // is disjoint from `*self`.
         ptr.map(|p| unsafe { &mut *p })
+    }
+
+    /// The `Request` the server created for this context, if JS has not
+    /// finalized it yet. Copies made from it are not returned here.
+    #[inline]
+    pub(crate) fn original_request<'r>(&self) -> Option<&'r mut Request> {
+        self.request_mut()
+    }
+
+    /// Tracks a copy of the `Request` that stores a derived handle to this
+    /// context (see [`AnyRequestContext::derive`]).
+    ///
+    /// # Safety
+    /// Same contract as [`request::WeakRef::init_ref`].
+    pub(crate) unsafe fn attach_derived_request(&self, request: *mut Request) {
+        self.derived_requests.with_mut(|list| {
+            if list.len() == list.capacity() {
+                // Before growing, drop entries whose `Request` JS already
+                // finalized, so a handler that copies in a loop pins at most
+                // the live copies until the request ends.
+                list.retain_mut(|weak| weak.get().is_some());
+            }
+            // SAFETY: caller contract.
+            list.push(unsafe { request::WeakRef::init_ref(request) });
+        });
+    }
+
+    /// Clears the handle to this context on the original `Request` and on
+    /// every copy derived from it, and releases the weak references. Safe to
+    /// call more than once.
+    pub(crate) fn detach_requests(&self) {
+        if let Some(request) = self.request_mut() {
+            request.request_context = AnyRequestContext::NULL;
+        }
+        self.request_weakref.set(request::WeakRef::EMPTY);
+        for mut weak in self.derived_requests.take() {
+            if let Some(request) = weak.get() {
+                request.request_context = AnyRequestContext::NULL;
+            }
+        }
     }
 
     /// Take the pooled request-body slot out of `self`; the handle's `Drop`
@@ -1427,6 +1472,7 @@ where
                 defer_deinit_until_callback_completes: Cell::new(should_deinit_context),
                 range: RangeRequest::raw_from_request(&Self::any_request(req)),
                 request_weakref: JsCell::new(request::WeakRef::EMPTY),
+                derived_requests: JsCell::new(Vec::new()),
                 signal: Cell::new(None),
                 cookies: JsCell::new(None),
                 flags: Flags::<DEBUG_MODE>::default(),
@@ -1499,10 +1545,7 @@ where
             }
         }
 
-        if let Some(request) = this.request_mut() {
-            request.request_context = AnyRequestContext::NULL;
-            this.request_weakref.set(request::WeakRef::EMPTY);
-        }
+        this.detach_requests();
         // if signal is not aborted, abort the signal
         if let Some(signal) = this.signal.take() {
             if !shim::signal_aborted(signal) {
@@ -1613,10 +1656,7 @@ where
         // Releases the ref taken in `set_cookies` (via `CookieMapRef::drop`).
         drop(self.cookies.replace(None));
 
-        if let Some(request) = self.request_mut() {
-            request.request_context = AnyRequestContext::NULL;
-            self.request_weakref.set(request::WeakRef::EMPTY);
-        }
+        self.detach_requests();
 
         // if signal is not aborted, abort the signal
         if let Some(signal) = self.signal.take() {

@@ -727,12 +727,12 @@ int us_socket_get_error(us_socket_r s);
  * making a stall there routine backpressure, so it asks the kernel
  * (SO_ERROR, then a zero-byte send probe). */
 int us_socket_stalled_write_means_peer_gone(us_socket_r s);
-/* A mark of how far the kernel has delivered this socket's outgoing bytes to
- * the peer. Linux and macOS read the unsent queue, Windows the cumulative
- * sent-bytes counter. Returns 0 and writes the mark, or -1 where the platform
- * or socket kind cannot answer. Take it when an idle timer is armed with
- * outgoing bytes pending, so that the timeout can tell a slow reader from a
- * stalled one with us_socket_send_progressed. */
+/* A monotonic count of bytes this socket has delivered toward the peer (Linux
+ * TCP_INFO tcpi_bytes_acked, macOS tcpi_txbytes, Windows SIO_TCP_INFO BytesOut).
+ * Returns 0 and writes the mark, or -1 where the platform or socket kind cannot
+ * answer. Take it when an idle timer is armed with outgoing bytes pending, so
+ * that the timeout can tell a slow reader from a stalled one with
+ * us_socket_send_progressed. */
 int us_socket_send_progress_mark(us_socket_r s, uint64_t *mark);
 /* Did the kernel move at least min_bytes toward the peer since *mark was
  * taken, with no write in between? Advances *mark when it did. */

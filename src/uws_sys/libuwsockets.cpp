@@ -1513,8 +1513,7 @@ size_t uws_req_get_header(uws_req_t *res, const char *lower_case_header,
 
   void uws_res_uncork(int ssl, uws_res_r res)
   {
-    /* A short write here leaves bytes pending on a timer that was armed
-     * before them; re-arm so the timer knows (HttpResponse::resetTimeout). */
+    /* resetTimeout on a short write records the pending bytes for onTimeout. */
     if (ssl)
     {
       uWS::HttpResponse<true> *uwsRes = (uWS::HttpResponse<true> *)res;
@@ -1541,8 +1540,7 @@ size_t uws_req_get_header(uws_req_t *res, const char *lower_case_header,
      * half-open socket. */
     us_poll_change(&s->p, s->group->loop,
                    LIBUS_SOCKET_WRITABLE | ((s->flags.is_paused || s->read_eof) ? 0 : LIBUS_SOCKET_READABLE));
-    /* The sendfile that ran before this left bytes pending; re-arm the idle
-     * timer so it records that (HttpResponse::resetTimeout). */
+    /* resetTimeout records the sendfile remainder for onTimeout. */
     ((uWS::HttpResponse<false> *)res)->resetTimeout();
   }
 

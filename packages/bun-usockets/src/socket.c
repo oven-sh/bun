@@ -434,14 +434,10 @@ int us_socket_send_progressed(struct us_socket_t *s, uint64_t *mark, uint64_t mi
     if (us_socket_send_progress_mark(s, &now) != 0) {
         return 0;
     }
-#ifdef _WIN32
-    /* Cumulative sent bytes: the mark grows. */
+    /* The mark is a monotonic delivered-bytes counter (see
+     * bsd_socket_send_progress_mark), so progress is how much it grew. */
     uint64_t delivered = now > *mark ? now - *mark : 0;
-#else
-    /* Unsent queue: the mark shrinks. */
-    uint64_t delivered = *mark > now ? *mark - now : 0;
-#endif
-    if (delivered == 0 || delivered < min_bytes) {
+    if (delivered < min_bytes) {
         return 0;
     }
     *mark = now;

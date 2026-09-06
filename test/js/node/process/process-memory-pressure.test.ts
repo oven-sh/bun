@@ -1,10 +1,13 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, isLinux } from "harness";
+import { closeSync, constants, openSync, readFileSync, writeSync } from "node:fs";
 
 // process.on("memoryPressure") is a Bun extension. These tests drive the
 // emit path synthetically via bun:internal-for-testing since real OS memory
 // pressure cannot be induced reliably (and PSI trigger creation requires
 // CAP_SYS_RESOURCE on Linux kernels before 6.6, which CI containers lack).
+// The one test that arms a real PSI trigger first checks that this process
+// is allowed to create one, and is skipped otherwise.
 
 async function run(src: string) {
   await using proc = Bun.spawn({
@@ -15,6 +18,42 @@ async function run(src: string) {
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   return { stdout, stderr, exitCode };
+}
+
+function canArmPsiTriggerAt(path: string): boolean {
+  let fd: number;
+  try {
+    fd = openSync(path, constants.O_RDWR | constants.O_NONBLOCK);
+  } catch {
+    return false;
+  }
+  try {
+    // The trigger format from Documentation/accounting/psi.rst. The kernel
+    // sample writes strlen + 1 bytes, so the NUL is part of the write.
+    writeSync(fd, Buffer.from("some 150000 2000000\0"));
+    return true;
+  } catch {
+    return false;
+  } finally {
+    closeSync(fd);
+  }
+}
+
+// The same two files, in the same order, that Bun tries when a listener is
+// added: the system-wide PSI file, then this process's own cgroup v2 file.
+function canArmPsiTrigger(): boolean {
+  if (!isLinux) return false;
+  if (canArmPsiTriggerAt("/proc/pressure/memory")) return true;
+  let cgroup: string;
+  try {
+    cgroup = readFileSync("/proc/self/cgroup", "utf8");
+  } catch {
+    return false;
+  }
+  const entry = cgroup.split("\n").find(line => line.startsWith("0::"));
+  if (entry === undefined) return false;
+  const rest = entry.slice("0::".length).replace(/^\//, "");
+  return canArmPsiTriggerAt(`/sys/fs/cgroup/${rest}${rest ? "/" : ""}memory.pressure`);
 }
 
 describe.concurrent("process.on('memoryPressure')", () => {
@@ -91,6 +130,44 @@ describe.concurrent("process.on('memoryPressure')", () => {
       process.stdout.write("done");
     `);
     expect(stdout).toBe("done");
+    expect(exitCode).toBe(0);
+  });
+
+  // psi_write() in kernel/sched/psi.c overwrites the last byte of the write
+  // with NUL before it parses the trigger. A write without its own NUL loses
+  // the last digit of the window, and the kernel rejects the trigger.
+  test.skipIf(!isLinux)("the PSI trigger write ends in NUL", async () => {
+    const { stdout, stderr, exitCode } = await run(/* js */ `
+      const { memoryPressurePsiTrigger } = require("bun:internal-for-testing");
+      process.stdout.write(memoryPressurePsiTrigger());
+    `);
+    expect(stderr.trim()).toBe("");
+    expect(stdout).toMatch(/^(some|full) \d+ \d+\0$/);
+    // The other two rules psi_trigger_create() applies to an unprivileged
+    // writer: the threshold fits in the window, and the window is N * 2 s.
+    const [, thresholdUs, windowUs] = stdout.slice(0, -1).split(" ").map(Number);
+    expect({
+      thresholdFitsWindow: thresholdUs <= windowUs,
+      windowRemainderUs: windowUs % 2_000_000,
+    }).toEqual({ thresholdFitsWindow: true, windowRemainderUs: 0 });
+    expect(exitCode).toBe(0);
+  });
+
+  test.skipIf(!canArmPsiTrigger())("first listener arms a PSI trigger on Linux", async () => {
+    const { stdout, stderr, exitCode } = await run(/* js */ `
+      const { memoryPressureWatcherHasOsBackend } = require("bun:internal-for-testing");
+      const h = () => {};
+      const before = memoryPressureWatcherHasOsBackend();
+      process.on("memoryPressure", h);
+      const armed = memoryPressureWatcherHasOsBackend();
+      process.off("memoryPressure", h);
+      const after = memoryPressureWatcherHasOsBackend();
+      process.stdout.write(JSON.stringify({ before, armed, after }));
+    `);
+    expect({ stdout, stderr: stderr.trim() }).toEqual({
+      stdout: JSON.stringify({ before: false, armed: true, after: false }),
+      stderr: "",
+    });
     expect(exitCode).toBe(0);
   });
 

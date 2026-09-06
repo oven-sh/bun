@@ -56,7 +56,7 @@ jobs:
           llvm-version: ${{ env.LLVM_VERSION_MAJOR }}
           toolchain: ${{ env.RUSTUP_TOOLCHAIN }}
           components: clippy
-          ninja-targets: codegen clone-lolhtml
+          ninja-targets: codegen clone-lolhtml clone-rust-argon2
 
       - name: cargo clippy
         env:
@@ -139,7 +139,7 @@ jobs:
         with:
           bun-version: ${{ env.BUN_VERSION }}
           llvm-version: ${{ env.LLVM_VERSION_MAJOR }}
-          ninja-targets: codegen clone-lolhtml
+          ninja-targets: codegen clone-lolhtml clone-rust-argon2
 
       - name: Cache the dylint binaries
         # Compiling cargo-dylint and dylint-link is ~100s; they only change on

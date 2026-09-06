@@ -38,6 +38,7 @@ use bun_resolver::fs::FileSystem;
 
 type CoreError = crate::Error;
 
+use bun_collections::index_sort;
 use bun_core::HashedString;
 use bun_ptr::Interned;
 
@@ -488,8 +489,9 @@ impl<'a> RouteLoader<'a> {
             };
         }
 
-        this.all_routes
-            .sort_unstable_by(|a, b| sorter::sort_by_name_cmp(a, b));
+        index_sort::sort_slice_unstable_by(&mut this.all_routes, |a, b| {
+            sorter::sort_by_name_cmp(a, b)
+        });
 
         let mut route_list = RouteIndexList::default();
         route_list

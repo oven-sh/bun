@@ -3,7 +3,6 @@ use core::ffi::c_void;
 use crate::{JSGlobalObject, JSValue, JsError, JsResult, VM};
 // `jsc.Strong.Optional` collides with this module's own `Strong`, so import it under an alias.
 use crate::strong::Optional as JscStrong;
-use crate::virtual_machine::VirtualMachine;
 
 bun_opaque::opaque_ffi! {
     /// Opaque handle to a `JSC::JSPromise` cell. Always used by reference; never
@@ -107,19 +106,6 @@ impl Strong {
 
     pub fn resolve(&mut self, global: &JSGlobalObject, val: JSValue) -> JsResult<()> {
         self.swap().resolve(global, val)
-    }
-
-    /// [`settle`](Self::settle) from a native completion at the top of the
-    /// event loop (drains microtasks when the scope exits).
-    pub fn settle_task(&mut self, global: &JSGlobalObject, val: JsResult<JSValue>) -> JsResult<()> {
-        let _guard = VirtualMachine::get().enter_event_loop_scope();
-        self.settle(global, val)
-    }
-
-    /// Like `resolve`, except it drains microtasks at the end of the current event loop iteration.
-    pub fn resolve_task(&mut self, global: &JSGlobalObject, val: JSValue) -> JsResult<()> {
-        let _guard = VirtualMachine::get().enter_event_loop_scope();
-        self.resolve(global, val)
     }
 
     pub fn init(global: &JSGlobalObject) -> Self {
@@ -364,15 +350,14 @@ impl JSPromise {
             // We can't use `global.take_exception()` because it throws an
             // out-of-memory error when we instead need to take the exception.
             Err(JsError::OutOfMemory) => global.create_out_of_memory_error(),
-            Err(JsError::Thrown) if global.has_pending_termination_exception() => {
-                return Err(JsError::Thrown);
-            }
+            // A termination is nothing to settle a promise with: already taken outside script…
+            Err(JsError::Terminated) => return Err(JsError::Terminated),
             Err(JsError::Thrown) => {
-                let Some(exception) = global.try_take_exception() else {
-                    panic!(
-                        "A JavaScript exception was thrown, but it was cleared before it could be read."
-                    );
-                };
+                let exception = global.take_exception(JsError::Thrown);
+                // …or still pending beneath script, where it keeps unwinding.
+                if exception.is_termination_exception() {
+                    return Err(crate::top_exception_scope::thrown(global));
+                }
                 exception.to_error().unwrap_or(exception)
             }
         };

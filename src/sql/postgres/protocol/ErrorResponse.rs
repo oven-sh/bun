@@ -30,11 +30,11 @@ impl ErrorResponse {
         for m in &self.messages {
             match m {
                 FieldMessage::Code(code) => {
-                    code_26000 = code.eql_comptime(b"26000");
-                    code_0a000 = code.eql_comptime(b"0A000");
+                    code_26000 = code.eq_ascii(b"26000");
+                    code_0a000 = code.eq_ascii(b"0A000");
                 }
                 FieldMessage::Routine(r) => {
-                    routine_revalidate = r.eql_comptime(b"RevalidateCachedQuery");
+                    routine_revalidate = r.eq_ascii(b"RevalidateCachedQuery");
                 }
                 _ => {}
             }

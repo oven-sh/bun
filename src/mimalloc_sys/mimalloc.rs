@@ -14,7 +14,6 @@ unsafe extern "C" {
     pub fn mi_realloc(p: *mut c_void, newsize: usize) -> *mut c_void;
     pub fn mi_expand(p: *mut c_void, newsize: usize) -> *mut c_void;
     pub fn mi_free(p: *mut c_void);
-    pub fn mi_strdup(s: *const c_char) -> *mut c_char;
     /// No preconditions; returns null on failure.
     pub safe fn mi_zalloc(size: usize) -> *mut c_void;
     pub fn mi_usable_size(p: *const c_void) -> usize;
@@ -81,7 +80,6 @@ unsafe extern "C" {
     pub fn mi_heap_new() -> *mut Heap;
     pub fn mi_heap_destroy(heap: *mut Heap);
     pub fn mi_heap_main() -> *mut Heap;
-    pub fn mi_heap_collect(heap: *mut Heap, force: bool);
     pub fn mi_heap_malloc(heap: *mut Heap, size: usize) -> *mut c_void;
     fn mi_heap_zalloc(heap: *mut Heap, size: usize) -> *mut c_void;
     fn mi_heap_calloc(heap: *mut Heap, count: usize, size: usize) -> *mut c_void;
@@ -119,10 +117,6 @@ unsafe extern "C" {
         arg: *mut c_void,
     ) -> bool;
     pub fn mi_is_in_heap_region(p: *const c_void) -> bool;
-}
-
-unsafe extern "C" {
-    pub fn mi_thread_set_in_threadpool();
 }
 
 // Named `Option` after mimalloc's `mi_option_t`; shadows `core::option::Option` in

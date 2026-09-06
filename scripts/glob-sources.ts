@@ -123,7 +123,6 @@ const patterns = {
       "packages/bun-usockets/src/crypto/*.c",
       "src/jsc/bindings/uv-posix-polyfills.c",
       "src/jsc/bindings/uv-posix-stubs.c",
-      "src/*.c",
       "src/jsc/bindings/node/http/llhttp/*.c",
     ],
   },

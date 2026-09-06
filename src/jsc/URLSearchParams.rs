@@ -2,7 +2,7 @@ use core::ffi::c_void;
 use core::ptr::NonNull;
 
 use crate::JSValue;
-use bun_core::ZigString;
+use bun_core::EncodedSlice;
 
 bun_opaque::opaque_ffi! {
     /// Opaque FFI handle to WebCore::URLSearchParams (lives on the C++ side).
@@ -17,7 +17,7 @@ unsafe extern "C" {
     safe fn URLSearchParams__toString(
         self_: &mut URLSearchParams,
         ctx: *mut c_void,
-        callback: extern "C" fn(ctx: *mut c_void, str: *const ZigString),
+        callback: extern "C" fn(ctx: *mut c_void, str: *const EncodedSlice),
     );
 }
 
@@ -28,20 +28,24 @@ impl URLSearchParams {
         URLSearchParams__fromJS(value)
     }
 
-    pub fn to_string<Ctx>(&mut self, ctx: &mut Ctx, callback: fn(ctx: &mut Ctx, str: ZigString)) {
+    pub fn to_string<Ctx>(
+        &mut self,
+        ctx: &mut Ctx,
+        callback: fn(ctx: &mut Ctx, str: EncodedSlice),
+    ) {
         // A fn pointer cannot be a const generic, so pack (ctx, callback) on the
         // stack and pass the pair through the C trampoline's void* context.
         struct Wrap<'a, Ctx> {
             ctx: &'a mut Ctx,
-            callback: fn(&mut Ctx, ZigString),
+            callback: fn(&mut Ctx, EncodedSlice),
         }
 
-        extern "C" fn cb<Ctx>(c: *mut c_void, str: *const ZigString) {
+        extern "C" fn cb<Ctx>(c: *mut c_void, str: *const EncodedSlice) {
             // SAFETY: `c` is the &mut Wrap<Ctx> we passed below; the callback is
             // invoked synchronously so `w` is live for the entire call.
             let w = unsafe { bun_ptr::callback_ctx::<Wrap<'_, Ctx>>(c) };
-            // SAFETY: C++ passes a non-null pointer to a stack ZigString that is
-            // valid for the duration of this synchronous callback; ZigString is Copy.
+            // SAFETY: C++ passes a non-null pointer to a stack EncodedSlice that is
+            // valid for the duration of this synchronous callback; EncodedSlice is Copy.
             let str = unsafe { *str };
             (w.callback)(w.ctx, str);
         }

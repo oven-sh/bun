@@ -3,7 +3,7 @@ use std::borrow::Cow;
 use std::io::Write as _;
 
 use crate::Error;
-use bun_collections::{HashMap, StringHashMap};
+use bun_collections::{HashMap, StringHashMap, index_sort};
 use bun_install::bin::Bin;
 use bun_install::dependency::{self, Dependency, DependencyExt as _};
 use bun_install::install::{self, DependencyID, PackageID, PackageManager};
@@ -29,7 +29,6 @@ use crate::repository::Repository;
 use crate::resolution_real::{Resolution, Tag as ResolutionTag, TaggedValue as ResolutionValue};
 use crate::versioned_url::VersionedURL;
 use bun_core::strings;
-use bun_paths::PathBuffer;
 use bun_semver::{self as Semver, SlicedString, String as SemverString};
 use bun_sys::Fd;
 
@@ -640,7 +639,7 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
     };
 
     // `package_json_source.path` borrows this buffer (lifetime-erased); keep it alive until the overrides are parsed below.
-    let mut package_json_path_buf = PathBuffer::uninit();
+    let mut package_json_path_buf = bun_paths::path_buffer_pool::get();
     let package_json_source = {
         let Ok(package_json_path) =
             bun_sys::get_fd_path(package_json_fd.handle(), &mut package_json_path_buf)
@@ -1383,7 +1382,7 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
     for (base_name, versions) in scoped_packages.iter_mut() {
         let base_name: &[u8] = base_name.as_ref();
 
-        versions.sort_by_key(|a| a.package_id);
+        index_sort::sort_slice_by(versions, |a, b| a.package_id.cmp(&b.package_id));
 
         let original_name_hash = string_hash(base_name);
         // `remove` drops the value (and thus the `Ids` Vec) automatically.
@@ -1901,6 +1900,7 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
             lockfile::DependencyIDSlice::new(resolutions_off, dep_count);
     }
 
+    this.tag_workspace_links(manager.options.link_workspace_packages);
     // `Lockfile::resolve` returns `Result<(), tree::SubtreeError>`; surface as
     // a tagged error until `From<SubtreeError>` lands.
     if let Err(_e) = this.resolve(log) {

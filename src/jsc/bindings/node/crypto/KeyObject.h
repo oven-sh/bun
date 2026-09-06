@@ -29,7 +29,6 @@ public:
     static KeyObject create(WTF::Vector<uint8_t>&& symmetricKey);
     static KeyObject create(WebCore::CryptoKeyType type, ncrypto::EVPKeyPointer&& asymmetricKey);
     static KeyObject create(WebCore::CryptoKeyType type, RefPtr<KeyObjectData>&& data);
-    // static KeyObject createJwk(JSC::JSGlobalObject*, JSC::ThrowScope&, JSC::JSValue keyValue, WebCore::CryptoKeyType type);
 
     enum class KeyEncodingContext {
         Input,

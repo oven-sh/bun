@@ -64,64 +64,70 @@ function getValidCiphersSet() {
 }
 
 // OpenSSL cipher-list selector keywords that are not literal suite names.
-const CIPHER_LIST_SELECTORS = new Set([
-  "DEFAULT",
-  "ALL",
-  "COMPLEMENTOFDEFAULT",
-  "COMPLEMENTOFALL",
-  "HIGH",
-  "MEDIUM",
-  "LOW",
-  "PSK",
-  "aNULL",
-  "eNULL",
-  "NULL",
-  "EXPORT",
-  "EXP",
-  "kRSA",
-  "aRSA",
-  "RSA",
-  "kDHE",
-  "kEDH",
-  "DH",
-  "DHE",
-  "EDH",
-  "kECDHE",
-  "kEECDH",
-  "ECDHE",
-  "EECDH",
-  "ECDH",
-  "aECDSA",
-  "ECDSA",
-  "aDSS",
-  "DSS",
-  "kPSK",
-  "aPSK",
-  "AES",
-  "AES128",
-  "AES256",
-  "AESGCM",
-  "AESCCM",
-  "CHACHA20",
-  "3DES",
-  "DES",
-  "RC4",
-  "RC2",
-  "MD5",
-  "SHA",
-  "SHA1",
-  "SHA256",
-  "SHA384",
-  "CAMELLIA",
-  "ARIA",
-  "SRP",
-  "TLSv1",
-  "TLSv1.0",
-  "TLSv1.2",
-  "TLSv1.3",
-  "SSLv3",
-  "FIPS",
-]);
+let _CIPHER_LIST_SELECTORS: Set<string> | undefined;
+function getCipherListSelectors() {
+  if (!_CIPHER_LIST_SELECTORS) {
+    _CIPHER_LIST_SELECTORS = new Set([
+      "DEFAULT",
+      "ALL",
+      "COMPLEMENTOFDEFAULT",
+      "COMPLEMENTOFALL",
+      "HIGH",
+      "MEDIUM",
+      "LOW",
+      "PSK",
+      "aNULL",
+      "eNULL",
+      "NULL",
+      "EXPORT",
+      "EXP",
+      "kRSA",
+      "aRSA",
+      "RSA",
+      "kDHE",
+      "kEDH",
+      "DH",
+      "DHE",
+      "EDH",
+      "kECDHE",
+      "kEECDH",
+      "ECDHE",
+      "EECDH",
+      "ECDH",
+      "aECDSA",
+      "ECDSA",
+      "aDSS",
+      "DSS",
+      "kPSK",
+      "aPSK",
+      "AES",
+      "AES128",
+      "AES256",
+      "AESGCM",
+      "AESCCM",
+      "CHACHA20",
+      "3DES",
+      "DES",
+      "RC4",
+      "RC2",
+      "MD5",
+      "SHA",
+      "SHA1",
+      "SHA256",
+      "SHA384",
+      "CAMELLIA",
+      "ARIA",
+      "SRP",
+      "TLSv1",
+      "TLSv1.0",
+      "TLSv1.2",
+      "TLSv1.3",
+      "SSLv3",
+      "FIPS",
+    ]);
+  }
+  return _CIPHER_LIST_SELECTORS;
+}
 
 function validateCiphers(ciphers: string, name: string = "options") {
   // Set the cipher list and cipher suite before anything else because
@@ -167,7 +173,7 @@ function validateCiphers(ciphers: string, name: string = "options") {
         first === 0x2b /* + */ ||
         first === 0x40 /* @ */ ||
         StringPrototypeIncludes.$call(r, "+") ||
-        CIPHER_LIST_SELECTORS.has(r) ||
+        getCipherListSelectors().has(r) ||
         ciphersSet.has(r)
       ) {
         sawUsableEntry = true;
@@ -190,7 +196,6 @@ const SUPPORTED_ECDH_GROUPS = new Set([
   "secp521r1",
   "X25519",
   "x25519",
-  "X25519Kyber768Draft00",
   "X25519MLKEM768",
   "MLKEM1024",
 ]);
@@ -1167,7 +1172,10 @@ function Server(options, secureConnectionListener): void {
 
   // tls.createServer(options) requires an object (a function is the connection
   // listener); matches Node throwing ERR_INVALID_ARG_TYPE for e.g. a string.
-  if (options != null && typeof options !== "object" && typeof options !== "function") {
+  if (typeof options === "function") {
+    secureConnectionListener = options;
+    options = {};
+  } else if (options != null && typeof options !== "object") {
     throw $ERR_INVALID_ARG_TYPE("options", "object", options);
   }
   // A custom SNICallback must be a function.
@@ -1189,7 +1197,9 @@ function Server(options, secureConnectionListener): void {
     }
   }
 
-  NetServer.$apply(this, [options, secureConnectionListener]);
+  // The listener belongs on "secureConnection", not "connection": do not let
+  // the net.Server constructor register it.
+  NetServer.$apply(this, [options]);
 
   this.key = undefined;
   this.cert = undefined;
@@ -1509,6 +1519,13 @@ function Server(options, secureConnectionListener): void {
     wrapped._rejectUnauthorized = this._rejectUnauthorized;
     this[kArmHandshakeTimeout](wrapped);
   });
+
+  // Node registers the createServer callback as a plain "secureConnection"
+  // listener, so a manual emit("secureConnection", socket) reaches it.
+  // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L1408-L1410
+  if (secureConnectionListener) {
+    this.on("secureConnection", secureConnectionListener);
+  }
 }
 $toClass(Server, "Server", NetServer);
 Server.prototype[kSharedCreds] = function () {

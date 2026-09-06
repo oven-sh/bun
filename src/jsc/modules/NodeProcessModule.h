@@ -18,7 +18,7 @@ DEFINE_LAZY_NATIVE_MODULE(NodeProcess)
     process->getPropertyNames(globalObject, properties, DontEnumPropertiesMode::Exclude);
     RETURN_IF_EXCEPTION(scope, nullptr);
 
-    return exportObjectProperties(vm, process, properties, exportNames, exportValues);
+    RELEASE_AND_RETURN(scope, exportObjectProperties(globalObject, process, properties, exportNames, exportValues));
 }
 
 } // namespace Zig

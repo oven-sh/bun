@@ -1,0 +1,27 @@
+Adds an optional per-item transform hook in udata.cpp between TOC lookup and
+header validation. Bun defines bun_icu_maybe_decompress to lazily zstd-
+decompress individual data items; ICU's own tools leave it weak-null and
+the hook is skipped.
+
+--- a/source/common/udata.cpp
++++ b/source/common/udata.cpp
+@@ -27,6 +27,10 @@
+
+ #include "unicode/putil.h"
+ #include "unicode/udata.h"
++
++// Weak: defined by the embedder (Bun) to decompress per-item zstd frames.
++// Null when linking ICU's own tools, in which case the call is skipped.
++extern "C" __attribute__((weak)) const void* bun_icu_maybe_decompress(const void*, int32_t*);
+ #include "unicode/uversion.h"
+ #include "charstr.h"
+ #include "cmemory.h"
+@@ -1078,6 +1082,8 @@ static UDataMemory *doLoadFromCommonData(UBool isICUData, const char * /*pkgName
+ #endif
+
+             if(pHeader!=nullptr) {
++                if (bun_icu_maybe_decompress)
++                    pHeader = (const DataHeader*)bun_icu_maybe_decompress(pHeader, &length);
+                 pEntryData = checkDataItem(pHeader, isAcceptable, context, type, name, subErrorCode, pErrorCode);
+ #ifdef UDATA_DEBUG
+                 fprintf(stderr, "pEntryData=%p\n", (void*) pEntryData);

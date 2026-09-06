@@ -10,7 +10,6 @@ const { setDefaultHighWaterMark, getDefaultHighWaterMark } = require("internal/s
 const { pipeline } = require("internal/streams/pipeline");
 const { destroyer } = require("internal/streams/destroy");
 const eos = require("internal/streams/end-of-stream");
-const promises = require("internal/stream.promises");
 const utils = require("internal/streams/utils");
 const { isArrayBufferView, isUint8Array } = require("node:util/types");
 const Stream = require("internal/streams/legacy").Stream;
@@ -81,7 +80,7 @@ ObjectDefineProperty(Stream, "promises", {
   configurable: true,
   enumerable: true,
   get() {
-    return promises;
+    return require("internal/stream.promises");
   },
 });
 
@@ -89,7 +88,7 @@ ObjectDefineProperty(pipeline, customPromisify, {
   __proto__: null,
   enumerable: true,
   get() {
-    return promises.pipeline;
+    return require("internal/stream.promises").pipeline;
   },
 });
 
@@ -97,7 +96,7 @@ ObjectDefineProperty(eos, customPromisify, {
   __proto__: null,
   enumerable: true,
   get() {
-    return promises.finished;
+    return require("internal/stream.promises").finished;
   },
 });
 

@@ -234,12 +234,6 @@ impl Behavior {
     }
 
     #[inline]
-    #[cfg(debug_assertions)]
-    pub fn eq(lhs: Behavior, rhs: Behavior) -> bool {
-        lhs.bits() == rhs.bits()
-    }
-
-    #[inline]
     pub fn add(self, kind: Behavior) -> Behavior {
         self | kind
     }
@@ -388,15 +382,6 @@ pub struct TagInfo {
 pub struct TarballInfo {
     pub uri: URI,
     pub package_name: SemverString,
-}
-
-impl Default for TarballInfo {
-    fn default() -> Self {
-        TarballInfo {
-            uri: URI::Local(SemverString::default()),
-            package_name: SemverString::default(),
-        }
-    }
 }
 
 impl TarballInfo {

@@ -65,6 +65,137 @@ impl Default for ByteStream {
 /// ReadableStream source backed by a ByteStream.
 pub type Source = readable_stream::NewSource<ByteStream>;
 
+/// A network body producer's (fetch, S3) hold on the stream it feeds: a counted ref on the stream's
+/// `Source`, so delivery and unhooking go through memory the producer keeps alive rather than the
+/// JS wrapper (which the VM's last sweep destroys in no particular order), plus the parked bit of
+/// the receive backpressure. The ref roots the wrapper except while parked, so an unread stream
+/// can be collected (`SourceHandle::consumer_collected`).
+#[derive(Default)]
+pub struct ProducerHold {
+    source: Cell<Option<core::ptr::NonNull<Source>>>,
+    parked: Cell<bool>,
+}
+
+/// The JS-thread half of `BODY_HIGH_WATER_MARK`, decided from the stream's buffer after a
+/// delivery. The HTTP thread does the other half on its hop buffer.
+pub enum AfterDelivery {
+    /// Under the mark, or a whole-body consumer (`readableStreamTo*`) is collecting: keep going.
+    Resume,
+    /// At the mark with a back-pressured sink: it resumes the producer when it drains.
+    Pause,
+    /// At the mark and nothing reads: pause, release the loop, leave the stream collectable.
+    Park,
+}
+
+impl ProducerHold {
+    /// Take the producer ref on the stream's source (JS thread).
+    ///
+    /// # Safety
+    /// `bytes` is the live ByteStream of a stream the caller holds.
+    pub unsafe fn hold(&self, bytes: *mut ByteStream) {
+        self.release();
+        // SAFETY: fn contract; the ref keeps the Source alive past this call.
+        unsafe {
+            let source = Source::from_context_ptr(bytes);
+            (*source).increment_count();
+            self.source.set(core::ptr::NonNull::new(source));
+        }
+    }
+
+    pub fn is_held(&self) -> bool {
+        self.source.get().is_some()
+    }
+
+    /// The held stream, pinned for the guard's life: a consumer inside `on_data` can cancel the
+    /// producer (which drops the hold), and while parked the wrapper is not rooted.
+    pub fn bytes(&self) -> Option<PinnedBytes> {
+        let source = self.source.get()?;
+        // SAFETY: live through our ref; no borrow of the source exists yet.
+        unsafe { (*source.as_ptr()).increment_count() };
+        Some(PinnedBytes(source))
+    }
+
+    /// Stop being the producer. The source stays pinned by the returned guard, so the caller can
+    /// still deliver a terminal chunk. Touches no JS cell.
+    pub fn take(&self) -> Option<PinnedBytes> {
+        let source = self.source.take()?;
+        self.parked.set(false);
+        // SAFETY: still pinned by our ref, which the guard now owns.
+        unsafe {
+            (*source.as_ptr()).producer.set(streams::SourceHandle::None);
+            (*source.as_ptr()).wrapper_unrooted.set(false);
+        }
+        Some(PinnedBytes(source))
+    }
+
+    /// `take` and drop. Touches no JS cell (safe inside a GC sweep).
+    pub fn release(&self) {
+        drop(self.take());
+    }
+
+    pub fn after_delivery(bytes: &ByteStream) -> AfterDelivery {
+        if bytes.buffered_len() < bun_http::signals::BODY_HIGH_WATER_MARK
+            || bytes.buffer_action.get().is_some()
+        {
+            AfterDelivery::Resume
+        } else if bytes.sink.get().is_some() {
+            AfterDelivery::Pause
+        } else {
+            AfterDelivery::Park
+        }
+    }
+
+    /// Returns whether this call parked (the caller then releases its loop ref).
+    pub fn park(&self) -> bool {
+        if self.parked.replace(true) {
+            return false;
+        }
+        if let Some(source) = self.source.get() {
+            // SAFETY: live through our ref. The caller may hold the `&ByteStream` of this very
+            // source (the chunk it just delivered), which is why this is not a method call.
+            unsafe { Source::unroot_wrapper(source.as_ptr()) };
+        }
+        true
+    }
+
+    /// Returns whether this call unparked (the caller then re-takes its loop ref). Reached from a
+    /// consumer holding the stream.
+    pub fn unpark(&self) -> bool {
+        if !self.parked.replace(false) {
+            return false;
+        }
+        if let Some(source) = self.source.get() {
+            // SAFETY: as in `park`.
+            unsafe { Source::root_wrapper(source.as_ptr()) };
+        }
+        true
+    }
+}
+
+impl Drop for ProducerHold {
+    fn drop(&mut self) {
+        self.release();
+    }
+}
+
+/// A counted ref on a stream's `Source` for the guard's life; derefs to its ByteStream.
+pub struct PinnedBytes(core::ptr::NonNull<Source>);
+
+impl core::ops::Deref for PinnedBytes {
+    type Target = ByteStream;
+    fn deref(&self) -> &ByteStream {
+        // SAFETY: pinned by this guard's ref; ByteStream is `&self`-only.
+        unsafe { &(*self.0.as_ptr()).context }
+    }
+}
+
+impl Drop for PinnedBytes {
+    fn drop(&mut self) {
+        // SAFETY: balances the ref this guard owns. Can free the source.
+        unsafe { Source::decrement_count(self.0.as_ptr()) };
+    }
+}
+
 impl readable_stream::SourceContext for ByteStream {
     const NAME: &'static str = "Bytes";
     // setRefUnrefFn = null
@@ -85,6 +216,9 @@ impl readable_stream::SourceContext for ByteStream {
     }
     fn deinit_fn(&mut self) {
         Self::finalize(self)
+    }
+    fn wrapper_finalized(&mut self) {
+        self.parent_const().producer.get().consumer_collected();
     }
     fn drain_internal_buffer(&mut self) -> Vec<u8> {
         Self::drain(self)
@@ -121,11 +255,7 @@ impl ByteStream {
         drop(core::mem::take(self));
     }
 
-    /// Seeds the stream with what the producer's `on_start_streaming` handed
-    /// over: the bytes it had already buffered, or its estimate of the total.
-    /// Init-time like [`Self::setup`] (no JS wrapper yet, so `&mut self` is
-    /// sound). Callers drop the body to `Null` on `Empty` / `Aborted` instead
-    /// of realising a stream, so those arms have nothing to seed.
+    /// Seeds the stream from the drain result; init-time like [`Self::setup`].
     pub(crate) fn apply_drain_result(&mut self, drain_result: DrainResult) {
         match drain_result {
             DrainResult::EstimatedSize(estimated_size) => {
@@ -136,7 +266,7 @@ impl ByteStream {
                 self.buffer.set(list);
                 self.size_hint.set(size_hint as blob::SizeType);
             }
-            DrainResult::Empty | DrainResult::Aborted => {}
+            DrainResult::Aborted => {}
         }
     }
 
@@ -176,6 +306,22 @@ impl ByteStream {
     pub(crate) fn unpipe_without_deref(&self) {
         self.sink.set(SinkHandle::None);
         self.sink_paused.set(false);
+    }
+
+    /// The sink is gone before the stream ended (its peer went away). The stream stays
+    /// locked to it, so nobody else can read the rest: close the producer too.
+    pub(crate) fn detach_finished_sink(&self) {
+        if self.has_received_last_chunk.get() {
+            self.unpipe_without_deref();
+        } else {
+            self.cancel_from_sink(None);
+        }
+    }
+
+    /// Bytes delivered that no consumer has taken yet.
+    #[inline]
+    pub fn buffered_len(&self) -> usize {
+        self.buffer.get().len() - self.offset.get()
     }
 
     /// Sink's drain ack: unpause, push buffered bytes, end if last chunk already arrived.
@@ -219,6 +365,15 @@ impl ByteStream {
 
         self.signal_drained();
 
+        // A synchronous producer (RewriterPipe) may have pushed its remaining
+        // output through `on_data` just now. If one of those writes hit
+        // backpressure, the chunks after it (and the end) were buffered; the
+        // sink's next drain ack comes back here and delivers them. Ending now
+        // would drop them.
+        if self.sink_paused.get() {
+            return;
+        }
+
         if self.has_received_last_chunk.get() && self.sink.get().is_some() {
             self.sink.set(SinkHandle::None);
             sink.end(None);
@@ -256,8 +411,8 @@ impl ByteStream {
         Vec::<u8>::move_from_list(list)
     }
 
-    /// Called by native fast-paths after wiring `self.sink`. Restores
-    /// producer-side backpressure if it was already dropped (BufferAll).
+    /// Called by native fast-paths after wiring `self.sink`: a consumer now
+    /// waits for bytes, so a parked producer resumes.
     pub fn signal_consumer_attached(&self) {
         self.parent_const().producer.get().start();
     }
@@ -639,6 +794,15 @@ impl ByteStream {
         }
         self.done.set(true);
         self.pending_value.with_mut(|pv| pv.deinit());
+        // A native sink wired to this stream must fail, not later see an EOF and commit what it
+        // has (an S3 upload would complete with a truncated object).
+        let sink = self.sink.replace(SinkHandle::None);
+        if sink.is_some() {
+            self.sink_paused.set(false);
+            sink.end(Some(streams::StreamError::AbortReason(
+                jsc::CommonAbortReason::UserAbort,
+            )));
+        }
 
         if !view.is_empty() {
             self.pending_buffer.set(Self::empty_pending_buffer());

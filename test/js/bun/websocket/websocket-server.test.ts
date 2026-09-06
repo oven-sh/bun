@@ -798,6 +798,88 @@ describe("Server", () => {
         },
       );
     });
+    describe.concurrent("perMessageDeflate (decompress size)", () => {
+      // The client offers `client_max_window_bits` with no value. The server
+      // answers with the inflate window it wants the client to compress with.
+      async function negotiate(decompress: string): Promise<Record<string, string | true>> {
+        using server = serve({
+          port: 0,
+          fetch(req, server) {
+            if (server.upgrade(req)) return;
+            return new Response("not upgraded", { status: 400 });
+          },
+          websocket: {
+            message() {},
+            perMessageDeflate: { compress: "shared", decompress: decompress as any },
+          },
+        });
+        const res = await fetch(`http://${server.hostname}:${server.port}/`, {
+          headers: {
+            Upgrade: "websocket",
+            Connection: "Upgrade",
+            "Sec-WebSocket-Version": "13",
+            "Sec-WebSocket-Key": "dGhlIHNhbXBsZSBub25jZQ==",
+            "Sec-WebSocket-Extensions": "permessage-deflate; client_max_window_bits",
+          },
+        });
+        expect(res.status).toBe(101);
+        const params: Record<string, string | true> = {};
+        for (const part of res.headers.get("sec-websocket-extensions")!.split(";").slice(1)) {
+          const [name, value] = part.trim().split("=");
+          params[name] = value ?? true;
+        }
+        return params;
+      }
+
+      it.each([
+        ["3KB", 11],
+        ["4KB", 12],
+        ["8KB", 13],
+        ["16KB", 14],
+      ] as const)("%s asks for client_max_window_bits=%d and keeps the compressor shared", async (size, bits) => {
+        expect(await negotiate(size)).toEqual({
+          client_max_window_bits: String(bits),
+          server_no_context_takeover: true,
+        });
+      });
+
+      it.each(["32KB", "64KB", "128KB", "256KB", "dedicated"])(
+        "%s uses the full 32KB inflate window and keeps the compressor shared",
+        async size => {
+          expect(await negotiate(size)).toEqual({
+            server_no_context_takeover: true,
+          });
+        },
+      );
+
+      it("a dedicated compressor and a sized decompressor round-trip a compressed message", async () => {
+        const payload = Buffer.alloc(64 * 1024, "hello world ").toString();
+        const { promise, resolve, reject } = Promise.withResolvers<string>();
+        using server = serve({
+          port: 0,
+          fetch(req, server) {
+            if (server.upgrade(req)) return;
+            return new Response("not upgraded", { status: 400 });
+          },
+          websocket: {
+            perMessageDeflate: { compress: "dedicated", decompress: "8KB" },
+            open(ws) {
+              ws.send(payload, true);
+            },
+            message(ws, message) {
+              resolve(message as string);
+            },
+          },
+        });
+        const ws = new WebSocket(`ws://${server.hostname}:${server.port}/`);
+        ws.onmessage = event => ws.send(event.data);
+        ws.onerror = () => reject(new Error("websocket error"));
+        ws.onclose = event => reject(new Error(`closed with ${event.code}`));
+        expect(await promise).toBe(payload);
+        ws.onclose = null;
+        ws.close();
+      });
+    });
   });
 });
 describe("ServerWebSocket", () => {

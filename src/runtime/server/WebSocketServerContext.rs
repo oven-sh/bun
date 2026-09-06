@@ -204,16 +204,33 @@ bun_core::comptime_string_map! {
         b"disable" => 0,
         b"shared" => uws::SHARED_DECOMPRESSOR,
         b"dedicated" => uws::DEDICATED_DECOMPRESSOR,
-        b"3KB" => uws::DEDICATED_COMPRESSOR_3KB,
-        b"4KB" => uws::DEDICATED_COMPRESSOR_4KB,
-        b"8KB" => uws::DEDICATED_COMPRESSOR_8KB,
-        b"16KB" => uws::DEDICATED_COMPRESSOR_16KB,
-        b"32KB" => uws::DEDICATED_COMPRESSOR_32KB,
-        b"64KB" => uws::DEDICATED_COMPRESSOR_64KB,
-        b"128KB" => uws::DEDICATED_COMPRESSOR_128KB,
-        b"256KB" => uws::DEDICATED_COMPRESSOR_256KB,
+        // The size is the inflate window budget. A 3KB budget fits a 2KB
+        // window. The window cannot exceed 32KB, so larger sizes equal
+        // "dedicated".
+        b"3KB" => uws::DEDICATED_DECOMPRESSOR_2KB,
+        b"4KB" => uws::DEDICATED_DECOMPRESSOR_4KB,
+        b"8KB" => uws::DEDICATED_DECOMPRESSOR_8KB,
+        b"16KB" => uws::DEDICATED_DECOMPRESSOR_16KB,
+        b"32KB" => uws::DEDICATED_DECOMPRESSOR_32KB,
+        b"64KB" => uws::DEDICATED_DECOMPRESSOR,
+        b"128KB" => uws::DEDICATED_DECOMPRESSOR,
+        b"256KB" => uws::DEDICATED_DECOMPRESSOR,
     };
 }
+
+// Each table may only set its own bits of the uWS compression mode.
+const _: () = {
+    let mut i = 0;
+    while i < __ComptimeStringMap_COMPRESS_TABLE::ENTRIES.len() {
+        assert!(__ComptimeStringMap_COMPRESS_TABLE::ENTRIES[i].1 & !uws::COMPRESSOR_MASK == 0);
+        i += 1;
+    }
+    let mut i = 0;
+    while i < __ComptimeStringMap_DECOMPRESS_TABLE::ENTRIES.len() {
+        assert!(__ComptimeStringMap_DECOMPRESS_TABLE::ENTRIES[i].1 & !uws::DECOMPRESSOR_MASK == 0);
+        i += 1;
+    }
+};
 
 pub(crate) fn on_create(
     global_object: &JSGlobalObject,

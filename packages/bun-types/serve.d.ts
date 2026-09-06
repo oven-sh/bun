@@ -522,10 +522,17 @@ declare module "bun" {
       | {
           /**
            * Sets the compression level.
+           *
+           * A size is the memory budget of a dedicated per-connection
+           * compressor. `"dedicated"` equals `"256KB"`.
            */
           compress?: WebSocketCompressor | boolean;
           /**
            * Sets the decompression level.
+           *
+           * A size is the memory budget of a dedicated per-connection
+           * decompressor. The inflate window is at most 32KB, so `"32KB"`
+           * and larger equal `"dedicated"`.
            */
           decompress?: WebSocketCompressor | boolean;
         };

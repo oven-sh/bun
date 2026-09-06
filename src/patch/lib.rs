@@ -257,10 +257,10 @@ impl<'a> PatchFile<'a> {
 /// A hunk is located by its `-` side: the context and deleted lines are
 /// matched against the file, starting at the header's `-` start adjusted by
 /// the line delta of the hunks already applied, then at the nearest offsets
-/// in both directions (`git apply` does the same). The `+` start is not
-/// trusted: `yarn patch-commit` emits `+` starts that ignore the lines earlier
-/// hunks added. A hunk that matches nowhere fails the apply. The file is
-/// written only after every hunk has been placed.
+/// in both directions (`git apply` does the same). The `+` side is never
+/// used for placement: `yarn patch-commit` emits `+` starts that ignore the
+/// lines earlier hunks added. A hunk that matches nowhere fails the apply.
+/// The file is written only after every hunk has been placed.
 fn apply_patch(
     patch: &FilePatch<'_>,
     patch_dir: Fd,
@@ -313,21 +313,21 @@ fn apply_patch(
     // expected position, since `-` side line numbers refer to the original file.
     let mut line_delta: isize = 0;
     for (hunk_index, hunk) in patch.hunks.iter().enumerate() {
+        let original_start = hunk.header.original.start as isize + line_delta;
         let mut line_cursor = if hunk.header.original.len == 0 {
-            // Pure insertion: no context or deleted lines to anchor on, so the
-            // header offset is all there is.
-            (hunk.header.patched.start - 1) as usize
+            // Pure insertion: a zero-length `-` range names the line the new
+            // lines go after (`-0,0` is the top of the file). There is nothing
+            // to match, so the position is taken as stated.
+            if original_start < 0 || original_start as usize > lines.len() {
+                return Err(does_not_apply(hunk_index, hunk));
+            }
+            original_start as usize
         } else {
-            let expected = hunk.header.original.start as isize - 1 + line_delta;
-            match find_hunk_position(hunk, &lines, expected) {
+            match find_hunk_position(hunk, &lines, original_start - 1) {
                 Some(idx) => idx,
                 None => return Err(does_not_apply(hunk_index, hunk)),
             }
         };
-
-        if line_cursor > lines.len() {
-            return Err(does_not_apply(hunk_index, hunk));
-        }
 
         for part in &hunk.parts {
             let part: &PatchMutationPart = part;
@@ -1449,7 +1449,7 @@ fn parse_hunk_header_line_impl(text_: &[u8]) -> Result<HunkHeaderLineImpl<'_>, P
     }
 
     Ok(HunkHeaderLineImpl {
-        line_nr: 1.max(bun_core::parse_decimal::<u32>(line_nr).ok_or(ParseErr::bad_header_line)?),
+        line_nr: bun_core::parse_decimal::<u32>(line_nr).ok_or(ParseErr::bad_header_line)?,
         line_count: bun_core::parse_decimal::<u32>(line_nr_count)
             .ok_or(ParseErr::bad_header_line)?,
         rest: text,

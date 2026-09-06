@@ -1981,8 +1981,8 @@ impl Package<u64> {
                     // (`workspace:`) or one that lands on the project root (`workspace:.`)
                     // resolves like `workspace:*`, so it fails instead of linking the
                     // declaring package under the dependency name.
-                    let path =
-                        string_builder.append::<String>(if workspace == b"*"
+                    let path = string_builder.append::<String>(
+                        if workspace == b"*"
                             || strings::trim(workspace, &strings::WHITESPACE_CHARS).is_empty()
                         {
                             b"*"
@@ -2033,7 +2033,8 @@ impl Package<u64> {
                                 #[cfg(not(windows))]
                                 break 'brk rel;
                             }
-                        });
+                        },
+                    );
                     debug_assert!(path.len() > 0);
                     debug_assert!(!bun_paths::is_absolute(path.slice(buf)));
                     dependency_version.value.workspace = path;

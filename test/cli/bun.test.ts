@@ -581,8 +581,17 @@ describe.concurrent("global flag before subcommand", () => {
     ["completions", "Usage: bun completions"],
   ] as const) {
     test(`bun --help ${keyword} prints the command's help and writes nothing`, async () => {
+      // The dir is also HOME: the completions installer writes there (bunx
+      // symlink, shell profile), so an empty dir after the run proves it did not run.
       using dir = tempDir("which-help-before-keyword", {});
-      const { stdout, exitCode } = await run(String(dir), ["--help", keyword]);
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "--help", keyword],
+        env: { ...bunEnv, HOME: String(dir), BUN_INSTALL: undefined },
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
       expect(stdout).toContain(usage);
       expect(fs.readdirSync(String(dir))).toEqual([]);
       expect(exitCode).toBe(0);

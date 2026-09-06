@@ -122,7 +122,7 @@ bun_core::comptime_string_map! {
 
 pub use draft::{
     ConfigIterator, Parser, RegistryAuth, ScopeItem, ScopeIterator, ToStringFormatter,
-    apply_registry_auth, load_npmrc, load_npmrc_config,
+    apply_registry_auth, credentials_for_registry, load_npmrc, load_npmrc_config,
 };
 
 mod draft {
@@ -1170,6 +1170,26 @@ mod draft {
                 RegistryCredential::Email(email) => registry.email.clone_from(email),
             }
         }
+    }
+
+    /// The registry at `registry_url` with the credentials its `//host/path/:` lines give it,
+    /// if they amount to a token or a username + password pair (npm's rule).
+    pub fn credentials_for_registry(
+        auth: &[RegistryAuth],
+        registry_url: &[u8],
+    ) -> Option<NpmRegistry> {
+        let mut registry = NpmRegistry {
+            url: registry_url.into(),
+            ..Default::default()
+        };
+        for item in auth {
+            if item.matches(registry_url) {
+                item.apply_to(&mut registry);
+            }
+        }
+        let has_credentials = !registry.token.is_empty()
+            || (!registry.username.is_empty() && !registry.password.is_empty());
+        has_credentials.then_some(registry)
     }
 
     // ──────────────────────────────────────────────────────────────────────────

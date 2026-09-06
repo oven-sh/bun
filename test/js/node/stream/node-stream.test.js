@@ -1689,10 +1689,9 @@ describe("node v26 stream semantics", () => {
     src.push(big);
     expect(await waitFor(() => composed.readableLength === big.length * 2 - 1)).toBe(true);
     // The second loop receives done while the buffer is still full. The fix
-    // pushes null here. Without it nothing observable changes, so this wait
-    // runs to its bound and the drain below never sees 'end'.
+    // pushes null here, before anything drains the buffer.
     src.push(null);
-    await waitFor(() => composed._readableState.ended);
+    expect(await waitFor(() => composed._readableState.ended)).toBe(true);
 
     let total = 1;
     let chunk;

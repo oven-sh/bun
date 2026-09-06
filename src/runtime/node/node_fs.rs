@@ -4581,7 +4581,6 @@ impl NodeFS {
                 broke = true;
                 break 'toplevel;
             }
-            *wrote += amt as u64;
             remain = remain.saturating_sub(amt as u64);
 
             let mut slice = &buf[..amt];
@@ -4600,6 +4599,7 @@ impl NodeFS {
                     broke = true;
                     break 'toplevel;
                 }
+                *wrote += written as u64;
                 slice = &slice[written..];
             }
         }
@@ -4620,7 +4620,6 @@ impl NodeFS {
                 if amt == 0 {
                     break;
                 }
-                *wrote += amt as u64;
 
                 let mut slice = &buf[..amt];
                 while !slice.is_empty() {
@@ -4634,10 +4633,11 @@ impl NodeFS {
                             });
                         }
                     };
-                    slice = &slice[written..];
                     if written == 0 {
                         break 'outer;
                     }
+                    *wrote += written as u64;
+                    slice = &slice[written..];
                 }
             }
         }
@@ -4674,6 +4674,28 @@ impl NodeFS {
             }
         }
         Ok(())
+    }
+
+    /// Closes a destination that `copyFile`/`cp` opened by path. It is opened
+    /// without O_TRUNC (a same-inode copy must not zero itself first), so on
+    /// success trim it to the bytes written. On failure remove it, as libuv's
+    /// `uv_fs_copyfile` does, unless it turns out to be the source inode.
+    #[cfg(not(windows))]
+    fn close_copy_dest(dest: &ZStr, dest_fd: FD, src_stat: &sys::Stat, wrote: u64, ok: bool) {
+        if ok {
+            let _ = Syscall::ftruncate(dest_fd, (wrote & ((1u64 << 63) - 1)) as i64);
+            let _ = Syscall::fchmod(dest_fd, src_stat.st_mode as Mode);
+            dest_fd.close();
+            return;
+        }
+        let is_src = matches!(
+            Syscall::fstat(dest_fd),
+            Ok(d) if d.st_dev == src_stat.st_dev && d.st_ino == src_stat.st_ino
+        );
+        dest_fd.close();
+        if !is_src {
+            let _ = Syscall::unlink(dest);
+        }
     }
 
     pub(crate) fn copy_file(&mut self, args: &args::CopyFile, _: Flavor) -> Maybe<ret::CopyFile> {
@@ -4749,12 +4771,6 @@ impl NodeFS {
                     let _close_src = scopeguard::guard(src_fd, |fd| fd.close());
 
                     let mut flags: i32 = sys::O::CREAT | sys::O::WRONLY;
-                    // VERIFY-FIX(round1): was `usize` then passed as `&mut (wrote as u64)` —
-                    // that wrote into a discarded temporary so the deferred ftruncate
-                    // always saw 0. The scopeguard variant also double-borrowed `wrote`.
-                    // There are no early returns between open(dest) and the
-                    // `copy_file_using_read_write_loop` call, so inlining the
-                    // cleanup after it is equivalent.
                     let mut wrote: u64 = 0;
                     if args.mode.shouldnt_overwrite() {
                         flags |= sys::O::EXCL;
@@ -4773,9 +4789,7 @@ impl NodeFS {
                         stat_.st_size.max(0) as usize,
                         &mut wrote,
                     );
-                    let _ = Syscall::ftruncate(dest_fd, (wrote & ((1u64 << 63) - 1)) as i64);
-                    let _ = Syscall::fchmod(dest_fd, stat_.st_mode as u32);
-                    dest_fd.close();
+                    Self::close_copy_dest(dest, dest_fd, &stat_, wrote, result.is_ok());
                     return result;
                 }
             }
@@ -4928,13 +4942,6 @@ impl NodeFS {
             }
 
             let mut flags: i32 = sys::O::CREAT | sys::O::WRONLY;
-            // VERIFY-FIX(round1): `wrote` is read by the deferred-close scopeguard
-            // *after* the copy loops below mutate it. As a `usize` captured by-copy
-            // the guard always saw 0, and the `&mut (wrote as u64)` call sites
-            // wrote into discarded temporaries. `Cell<u64>` lets the guard borrow
-            // by reference while the loops `get`/`set`, so the value observed at
-            // scope-exit time is the final one.
-            let wrote: core::cell::Cell<u64> = core::cell::Cell::new(0);
             if args.mode.shouldnt_overwrite() {
                 flags |= sys::O::EXCL;
             }
@@ -4942,140 +4949,122 @@ impl NodeFS {
             let dest_fd = Syscall::open(dest, flags, stat_.st_mode as Mode)?;
 
             let mut size: usize = stat_.st_size.max(0) as usize;
+            let mut wrote: u64 = 0;
 
-            // https://manpages.debian.org/testing/manpages-dev/ioctl_ficlone.2.en.html
-            if args.mode.is_force_clone() {
-                if let Some(err) = Maybe::<ret::CopyFile>::errno_sys_p(
-                    sys::linux::ioctl_ficlone(dest_fd, src_fd),
-                    sys::Tag::ioctl_ficlone,
-                    dest,
-                ) {
-                    dest_fd.close();
-                    // This is racey, but it's the best we can do
-                    let _ = sys::unlink(dest);
-                    return err;
-                }
-                let _ = Syscall::fchmod(dest_fd, stat_.st_mode as u32);
-                dest_fd.close();
-                return Ok(());
-            }
-
-            // If we know it's a regular file and ioctl_ficlone is available, attempt to use it.
-            if sys::S::ISREG(stat_.st_mode as u32) && sys::copy_file::can_use_ioctl_ficlone() {
-                let rc = sys::linux::ioctl_ficlone(dest_fd, src_fd);
-                if rc == 0 {
-                    let _ = Syscall::fchmod(dest_fd, stat_.st_mode as u32);
-                    dest_fd.close();
-                    return Ok(());
-                }
-                // If this fails for any reason, we say it's disabled
-                // We don't want to add the system call overhead of running this function on a lot of files that don't support it
-                sys::copy_file::disable_ioctl_ficlone();
-            }
-
-            let _close_dest =
-                scopeguard::guard((dest_fd, stat_.st_mode, &wrote), |(fd, m, wrote)| {
-                    // ftruncate/fchmod take only ints — no memory-safety preconditions; route
-                    // through the existing `bun_sys` safe wrappers (same as lines above).
-                    let _ = Syscall::ftruncate(fd, (wrote.get() & ((1u64 << 63) - 1)) as i64);
-                    let _ = Syscall::fchmod(fd, m as u32);
-                    fd.close();
-                });
-
-            let mut off_in_copy: i64 = 0;
-            let mut off_out_copy: i64 = 0;
-
-            if !sys::copy_file::can_use_copy_file_range_syscall() {
-                let mut w = wrote.get();
-                let r = Self::copy_file_using_sendfile_on_linux_with_read_write_fallback(
-                    src, dest, src_fd, dest_fd, size, &mut w,
-                );
-                wrote.set(w);
-                return r;
-            }
-
-            if size == 0 {
-                // copy until EOF
-                loop {
-                    // Linux Kernel 5.3 or later
-                    // Not supported in gVisor
-                    // SAFETY: src_fd/dest_fd are valid open fds; copy_file_range is the libc FFI
-                    let written = unsafe {
-                        sys::linux::copy_file_range(
-                            src_fd.native(),
-                            &raw mut off_in_copy,
-                            dest_fd.native(),
-                            &raw mut off_out_copy,
-                            sys::page_size(),
-                            0,
-                        )
-                    };
+            let result: Maybe<ret::CopyFile> = 'copy: {
+                // https://manpages.debian.org/testing/manpages-dev/ioctl_ficlone.2.en.html
+                if args.mode.is_force_clone() {
                     if let Some(err) = Maybe::<ret::CopyFile>::errno_sys_p(
-                        written,
-                        sys::Tag::copy_file_range,
+                        sys::linux::ioctl_ficlone(dest_fd, src_fd),
+                        sys::Tag::ioctl_ficlone,
                         dest,
                     ) {
-                        match err.get_errno() {
-                            E::EINTR => continue,
-                            E::EXDEV | E::ENOSYS | E::EINVAL | E::EOPNOTSUPP => {
-                                if matches!(err.get_errno(), E::ENOSYS | E::EOPNOTSUPP) {
-                                    sys::copy_file::disable_copy_file_range_syscall();
-                                }
-                                let mut w = wrote.get();
-                                let r = Self::copy_file_using_sendfile_on_linux_with_read_write_fallback(src, dest, src_fd, dest_fd, size, &mut w);
-                                wrote.set(w);
-                                return r;
-                            }
-                            _ => return err,
-                        }
+                        break 'copy err;
                     }
-                    // wrote zero bytes means EOF
-                    if written == 0 {
-                        break;
-                    }
-                    wrote.set(wrote.get().saturating_add(written as u64));
+                    // FICLONE reflinks up to the source EOF but never shrinks dest.
+                    wrote = size as u64;
+                    break 'copy Ok(());
                 }
-            } else {
-                while size > 0 {
-                    // SAFETY: src_fd/dest_fd are valid open fds; copy_file_range is the libc FFI
-                    let written = unsafe {
-                        sys::linux::copy_file_range(
-                            src_fd.native(),
-                            &raw mut off_in_copy,
-                            dest_fd.native(),
-                            &raw mut off_out_copy,
-                            size,
-                            0,
-                        )
-                    };
-                    if let Some(err) = Maybe::<ret::CopyFile>::errno_sys_p(
-                        written,
-                        sys::Tag::copy_file_range,
-                        dest,
-                    ) {
-                        match err.get_errno() {
-                            E::EINTR => continue,
-                            E::EXDEV | E::ENOSYS | E::EINVAL | E::EOPNOTSUPP => {
-                                if matches!(err.get_errno(), E::ENOSYS | E::EOPNOTSUPP) {
-                                    sys::copy_file::disable_copy_file_range_syscall();
-                                }
-                                let mut w = wrote.get();
-                                let r = Self::copy_file_using_sendfile_on_linux_with_read_write_fallback(src, dest, src_fd, dest_fd, size, &mut w);
-                                wrote.set(w);
-                                return r;
-                            }
-                            _ => return err,
-                        }
-                    }
-                    if written == 0 {
-                        break;
-                    }
-                    wrote.set(wrote.get().saturating_add(written as u64));
-                    size = size.saturating_sub(written as usize);
-                }
-            }
 
-            return Ok(());
+                // If we know it's a regular file and ioctl_ficlone is available, attempt to use it.
+                if sys::copy_file::can_use_ioctl_ficlone() {
+                    if sys::linux::ioctl_ficlone(dest_fd, src_fd) == 0 {
+                        wrote = size as u64;
+                        break 'copy Ok(());
+                    }
+                    // If this fails for any reason, we say it's disabled
+                    // We don't want to add the system call overhead of running this function on a lot of files that don't support it
+                    sys::copy_file::disable_ioctl_ficlone();
+                }
+
+                if !sys::copy_file::can_use_copy_file_range_syscall() {
+                    break 'copy Self::copy_file_using_sendfile_on_linux_with_read_write_fallback(
+                        src, dest, src_fd, dest_fd, size, &mut wrote,
+                    );
+                }
+
+                let mut off_in_copy: i64 = 0;
+                let mut off_out_copy: i64 = 0;
+
+                if size == 0 {
+                    // copy until EOF
+                    loop {
+                        // Linux Kernel 5.3 or later
+                        // Not supported in gVisor
+                        // SAFETY: src_fd/dest_fd are valid open fds; copy_file_range is the libc FFI
+                        let written = unsafe {
+                            sys::linux::copy_file_range(
+                                src_fd.native(),
+                                &raw mut off_in_copy,
+                                dest_fd.native(),
+                                &raw mut off_out_copy,
+                                sys::page_size(),
+                                0,
+                            )
+                        };
+                        if let Some(err) = Maybe::<ret::CopyFile>::errno_sys_p(
+                            written,
+                            sys::Tag::copy_file_range,
+                            dest,
+                        ) {
+                            match err.get_errno() {
+                                E::EINTR => continue,
+                                E::EXDEV | E::ENOSYS | E::EINVAL | E::EOPNOTSUPP => {
+                                    if matches!(err.get_errno(), E::ENOSYS | E::EOPNOTSUPP) {
+                                        sys::copy_file::disable_copy_file_range_syscall();
+                                    }
+                                    break 'copy Self::copy_file_using_sendfile_on_linux_with_read_write_fallback(src, dest, src_fd, dest_fd, size, &mut wrote);
+                                }
+                                _ => break 'copy err,
+                            }
+                        }
+                        // wrote zero bytes means EOF
+                        if written == 0 {
+                            break;
+                        }
+                        wrote = wrote.saturating_add(written as u64);
+                    }
+                } else {
+                    while size > 0 {
+                        // SAFETY: src_fd/dest_fd are valid open fds; copy_file_range is the libc FFI
+                        let written = unsafe {
+                            sys::linux::copy_file_range(
+                                src_fd.native(),
+                                &raw mut off_in_copy,
+                                dest_fd.native(),
+                                &raw mut off_out_copy,
+                                size,
+                                0,
+                            )
+                        };
+                        if let Some(err) = Maybe::<ret::CopyFile>::errno_sys_p(
+                            written,
+                            sys::Tag::copy_file_range,
+                            dest,
+                        ) {
+                            match err.get_errno() {
+                                E::EINTR => continue,
+                                E::EXDEV | E::ENOSYS | E::EINVAL | E::EOPNOTSUPP => {
+                                    if matches!(err.get_errno(), E::ENOSYS | E::EOPNOTSUPP) {
+                                        sys::copy_file::disable_copy_file_range_syscall();
+                                    }
+                                    break 'copy Self::copy_file_using_sendfile_on_linux_with_read_write_fallback(src, dest, src_fd, dest_fd, size, &mut wrote);
+                                }
+                                _ => break 'copy err,
+                            }
+                        }
+                        if written == 0 {
+                            break;
+                        }
+                        wrote = wrote.saturating_add(written as u64);
+                        size = size.saturating_sub(written as usize);
+                    }
+                }
+
+                Ok(())
+            };
+            Self::close_copy_dest(dest, dest_fd, &stat_, wrote, result.is_ok());
+            return result;
         }
 
         #[cfg(windows)]
@@ -8309,31 +8298,23 @@ impl NodeFS {
                 let _close_src = scopeguard::guard(src_fd, |fd| fd.close());
 
                 let mut flags: i32 = sys::O::CREAT | sys::O::WRONLY;
-                let wrote: core::cell::Cell<u64> = core::cell::Cell::new(0);
+                let mut wrote: u64 = 0;
                 if mode.shouldnt_overwrite() {
                     flags |= sys::O::EXCL;
                 }
 
                 let dest_fd =
                     Self::cp_open_dest_with_mkdir(self, dest, flags, stat_.st_mode as Mode)?;
-                let _close_dest =
-                    scopeguard::guard((dest_fd, stat_.st_mode, &wrote), |(fd, m, wrote)| {
-                        let _ = Syscall::ftruncate(fd, (wrote.get() & ((1u64 << 63) - 1)) as i64);
-                        let _ = Syscall::fchmod(fd, m as u32);
-                        fd.close();
-                    });
-
-                let mut w = wrote.get();
-                let r = Self::copy_file_using_read_write_loop(
+                let result = Self::copy_file_using_read_write_loop(
                     src,
                     dest,
                     src_fd,
                     dest_fd,
                     stat_.st_size.max(0) as usize,
-                    &mut w,
+                    &mut wrote,
                 );
-                wrote.set(w);
-                return r;
+                Self::close_copy_dest(dest, dest_fd, &stat_, wrote, result.is_ok());
+                return result;
             }
 
             // we fallback to copyfile() when the file is > 128 KB and clonefile fails
@@ -8403,7 +8384,6 @@ impl NodeFS {
             }
 
             let mut flags: i32 = sys::O::CREAT | sys::O::WRONLY;
-            let wrote: core::cell::Cell<u64> = core::cell::Cell::new(0);
             if mode.shouldnt_overwrite() {
                 flags |= sys::O::EXCL;
             }
@@ -8411,129 +8391,115 @@ impl NodeFS {
             let dest_fd = Self::cp_open_dest_with_mkdir(self, dest, flags, stat_.st_mode as Mode)?;
 
             let mut size: usize = stat_.st_size.max(0) as usize;
+            let mut wrote: u64 = 0;
 
-            if sys::S::ISREG(stat_.st_mode as u32) && sys::copy_file::can_use_ioctl_ficlone() {
-                let rc = sys::linux::ioctl_ficlone(dest_fd, src_fd);
-                if rc == 0 {
-                    let _ = Syscall::fchmod(dest_fd, stat_.st_mode as u32);
-                    dest_fd.close();
-                    return Ok(());
+            let result: Maybe<ret::CopyFile> = 'copy: {
+                if sys::copy_file::can_use_ioctl_ficlone() {
+                    if sys::linux::ioctl_ficlone(dest_fd, src_fd) == 0 {
+                        // FICLONE reflinks up to the source EOF but never shrinks dest.
+                        wrote = size as u64;
+                        break 'copy Ok(());
+                    }
+                    sys::copy_file::disable_ioctl_ficlone();
                 }
-                sys::copy_file::disable_ioctl_ficlone();
-            }
 
-            let _close_dest = scopeguard::guard(
-                (dest_fd, stat_.st_mode as Mode, &wrote),
-                |(fd, m, wrote)| {
-                    let _ = Syscall::ftruncate(fd, (wrote.get() & ((1u64 << 63) - 1)) as i64);
-                    let _ = Syscall::fchmod(fd, m);
-                    fd.close();
-                },
-            );
+                if !sys::copy_file::can_use_copy_file_range_syscall() {
+                    break 'copy Self::copy_file_using_sendfile_on_linux_with_read_write_fallback(
+                        src, dest, src_fd, dest_fd, size, &mut wrote,
+                    );
+                }
 
-            let mut off_in_copy: i64 = 0;
-            let mut off_out_copy: i64 = 0;
+                let mut off_in_copy: i64 = 0;
+                let mut off_out_copy: i64 = 0;
 
-            if !sys::copy_file::can_use_copy_file_range_syscall() {
-                let mut w = wrote.get();
-                let r = Self::copy_file_using_sendfile_on_linux_with_read_write_fallback(
-                    src, dest, src_fd, dest_fd, size, &mut w,
-                );
-                wrote.set(w);
-                return r;
-            }
-
-            if size == 0 {
-                // copy until EOF
-                loop {
-                    // Linux Kernel 5.3 or later
-                    // Not supported in gVisor
-                    // SAFETY: src_fd/dest_fd are valid open fds; copy_file_range is the libc FFI
-                    let written = unsafe {
-                        sys::linux::copy_file_range(
-                            src_fd.native(),
-                            &raw mut off_in_copy,
-                            dest_fd.native(),
-                            &raw mut off_out_copy,
-                            sys::page_size(),
-                            0,
-                        )
-                    };
-                    if let Some(err) = Maybe::<ret::CopyFile>::errno_sys_p(
-                        written,
-                        sys::Tag::copy_file_range,
-                        dest.as_bytes(),
-                    ) {
-                        match err.get_errno() {
-                            // EINVAL: eCryptfs and other filesystems may not support copy_file_range
-                            // XDEV: cross-device copy not supported
-                            // NOSYS: syscall not available
-                            // OPNOTSUPP: filesystem doesn't support this operation
-                            E::EXDEV | E::ENOSYS | E::EINVAL | E::EOPNOTSUPP => {
-                                if matches!(err.get_errno(), E::ENOSYS | E::EOPNOTSUPP) {
-                                    sys::copy_file::disable_copy_file_range_syscall();
+                if size == 0 {
+                    // copy until EOF
+                    loop {
+                        // Linux Kernel 5.3 or later
+                        // Not supported in gVisor
+                        // SAFETY: src_fd/dest_fd are valid open fds; copy_file_range is the libc FFI
+                        let written = unsafe {
+                            sys::linux::copy_file_range(
+                                src_fd.native(),
+                                &raw mut off_in_copy,
+                                dest_fd.native(),
+                                &raw mut off_out_copy,
+                                sys::page_size(),
+                                0,
+                            )
+                        };
+                        if let Some(err) = Maybe::<ret::CopyFile>::errno_sys_p(
+                            written,
+                            sys::Tag::copy_file_range,
+                            dest.as_bytes(),
+                        ) {
+                            match err.get_errno() {
+                                // EINVAL: eCryptfs and other filesystems may not support copy_file_range
+                                // XDEV: cross-device copy not supported
+                                // NOSYS: syscall not available
+                                // OPNOTSUPP: filesystem doesn't support this operation
+                                E::EXDEV | E::ENOSYS | E::EINVAL | E::EOPNOTSUPP => {
+                                    if matches!(err.get_errno(), E::ENOSYS | E::EOPNOTSUPP) {
+                                        sys::copy_file::disable_copy_file_range_syscall();
+                                    }
+                                    break 'copy Self::copy_file_using_sendfile_on_linux_with_read_write_fallback(src, dest, src_fd, dest_fd, size, &mut wrote);
                                 }
-                                let mut w = wrote.get();
-                                let r = Self::copy_file_using_sendfile_on_linux_with_read_write_fallback(src, dest, src_fd, dest_fd, size, &mut w);
-                                wrote.set(w);
-                                return r;
+                                _ => break 'copy err,
                             }
-                            _ => return err,
                         }
+                        // wrote zero bytes means EOF
+                        if written == 0 {
+                            break;
+                        }
+                        wrote = wrote.saturating_add(written as u64);
                     }
-                    // wrote zero bytes means EOF
-                    if written == 0 {
-                        break;
-                    }
-                    wrote.set(wrote.get().saturating_add(written as u64));
-                }
-            } else {
-                while size > 0 {
-                    // Linux Kernel 5.3 or later
-                    // Not supported in gVisor
-                    // SAFETY: src_fd/dest_fd are valid open fds; copy_file_range is the libc FFI
-                    let written = unsafe {
-                        sys::linux::copy_file_range(
-                            src_fd.native(),
-                            &raw mut off_in_copy,
-                            dest_fd.native(),
-                            &raw mut off_out_copy,
-                            size,
-                            0,
-                        )
-                    };
-                    if let Some(err) = Maybe::<ret::CopyFile>::errno_sys_p(
-                        written,
-                        sys::Tag::copy_file_range,
-                        dest.as_bytes(),
-                    ) {
-                        match err.get_errno() {
-                            // EINVAL: eCryptfs and other filesystems may not support copy_file_range
-                            // XDEV: cross-device copy not supported
-                            // NOSYS: syscall not available
-                            // OPNOTSUPP: filesystem doesn't support this operation
-                            E::EXDEV | E::ENOSYS | E::EINVAL | E::EOPNOTSUPP => {
-                                if matches!(err.get_errno(), E::ENOSYS | E::EOPNOTSUPP) {
-                                    sys::copy_file::disable_copy_file_range_syscall();
+                } else {
+                    while size > 0 {
+                        // Linux Kernel 5.3 or later
+                        // Not supported in gVisor
+                        // SAFETY: src_fd/dest_fd are valid open fds; copy_file_range is the libc FFI
+                        let written = unsafe {
+                            sys::linux::copy_file_range(
+                                src_fd.native(),
+                                &raw mut off_in_copy,
+                                dest_fd.native(),
+                                &raw mut off_out_copy,
+                                size,
+                                0,
+                            )
+                        };
+                        if let Some(err) = Maybe::<ret::CopyFile>::errno_sys_p(
+                            written,
+                            sys::Tag::copy_file_range,
+                            dest.as_bytes(),
+                        ) {
+                            match err.get_errno() {
+                                // EINVAL: eCryptfs and other filesystems may not support copy_file_range
+                                // XDEV: cross-device copy not supported
+                                // NOSYS: syscall not available
+                                // OPNOTSUPP: filesystem doesn't support this operation
+                                E::EXDEV | E::ENOSYS | E::EINVAL | E::EOPNOTSUPP => {
+                                    if matches!(err.get_errno(), E::ENOSYS | E::EOPNOTSUPP) {
+                                        sys::copy_file::disable_copy_file_range_syscall();
+                                    }
+                                    break 'copy Self::copy_file_using_sendfile_on_linux_with_read_write_fallback(src, dest, src_fd, dest_fd, size, &mut wrote);
                                 }
-                                let mut w = wrote.get();
-                                let r = Self::copy_file_using_sendfile_on_linux_with_read_write_fallback(src, dest, src_fd, dest_fd, size, &mut w);
-                                wrote.set(w);
-                                return r;
+                                _ => break 'copy err,
                             }
-                            _ => return err,
                         }
+                        // wrote zero bytes means EOF
+                        if written == 0 {
+                            break;
+                        }
+                        wrote = wrote.saturating_add(written as u64);
+                        size = size.saturating_sub(written as usize);
                     }
-                    // wrote zero bytes means EOF
-                    if written == 0 {
-                        break;
-                    }
-                    wrote.set(wrote.get().saturating_add(written as u64));
-                    size = size.saturating_sub(written as usize);
                 }
-            }
 
-            return Ok(());
+                Ok(())
+            };
+            Self::close_copy_dest(dest, dest_fd, &stat_, wrote, result.is_ok());
+            return result;
         }
 
         #[cfg(target_os = "freebsd")]
@@ -8574,7 +8540,6 @@ impl NodeFS {
             }
 
             let mut flags: i32 = sys::O::CREAT | sys::O::WRONLY;
-            let wrote: core::cell::Cell<u64> = core::cell::Cell::new(0);
             if mode.shouldnt_overwrite() {
                 flags |= sys::O::EXCL;
             }
@@ -8600,65 +8565,58 @@ impl NodeFS {
                 }
             }
 
-            let _close_dest = scopeguard::guard(
-                (dest_fd, stat_.st_mode as Mode, &wrote),
-                |(fd, m, wrote)| {
-                    let _ = Syscall::ftruncate(fd, (wrote.get() & ((1u64 << 63) - 1)) as i64);
-                    let _ = Syscall::fchmod(fd, m);
-                    fd.close();
-                },
-            );
-
             let size: usize = stat_.st_size.max(0) as usize;
+            let mut wrote: u64 = 0;
 
-            // FreeBSD 13+ has copy_file_range(2).
-            let mut off_in: i64 = 0;
-            let mut off_out: i64 = 0;
-            'cfr: loop {
-                let want = if size == 0 {
-                    (i32::MAX - 1) as usize
-                } else {
-                    size.saturating_sub(wrote.get() as usize)
-                };
-                // SAFETY: src_fd/dest_fd are valid open fds; copy_file_range is the libc FFI
-                let rc: isize = unsafe {
-                    sys::freebsd::copy_file_range(
-                        src_fd.native(),
-                        &mut off_in,
-                        dest_fd.native(),
-                        &mut off_out,
-                        want,
-                        0,
-                    )
-                } as isize;
-                match sys::get_errno(rc) {
-                    E::SUCCESS => {
-                        if rc == 0 {
-                            return Ok(());
+            let result: Maybe<ret::CopyFile> = 'copy: {
+                // FreeBSD 13+ has copy_file_range(2).
+                let mut off_in: i64 = 0;
+                let mut off_out: i64 = 0;
+                loop {
+                    let want = if size == 0 {
+                        (i32::MAX - 1) as usize
+                    } else {
+                        size.saturating_sub(wrote as usize)
+                    };
+                    // SAFETY: src_fd/dest_fd are valid open fds; copy_file_range is the libc FFI
+                    let rc: isize = unsafe {
+                        sys::freebsd::copy_file_range(
+                            src_fd.native(),
+                            &mut off_in,
+                            dest_fd.native(),
+                            &mut off_out,
+                            want,
+                            0,
+                        )
+                    } as isize;
+                    match sys::get_errno(rc) {
+                        E::SUCCESS => {
+                            if rc == 0 {
+                                break 'copy Ok(());
+                            }
+                            wrote = wrote.saturating_add(rc as u64);
+                            if size != 0 && wrote >= size as u64 {
+                                break 'copy Ok(());
+                            }
                         }
-                        wrote.set(wrote.get().saturating_add(rc as u64));
-                        if size != 0 && wrote.get() >= size as u64 {
-                            return Ok(());
+                        E::EINTR => continue,
+                        E::EXDEV | E::EINVAL | E::EOPNOTSUPP | E::ENOSYS | E::EBADF => break,
+                        e => {
+                            self.sync_error_buf[..dest.len()].copy_from_slice(dest.as_bytes());
+                            break 'copy Err(sys::Error {
+                                errno: e as _,
+                                syscall: sys::Tag::copyfile,
+                                path: self.sync_error_buf[..dest.len()].into(),
+                                ..Default::default()
+                            });
                         }
-                    }
-                    E::EINTR => continue,
-                    E::EXDEV | E::EINVAL | E::EOPNOTSUPP | E::ENOSYS | E::EBADF => break 'cfr,
-                    e => {
-                        self.sync_error_buf[..dest.len()].copy_from_slice(dest.as_bytes());
-                        return Err(sys::Error {
-                            errno: e as _,
-                            syscall: sys::Tag::copyfile,
-                            path: self.sync_error_buf[..dest.len()].into(),
-                            ..Default::default()
-                        });
                     }
                 }
-            }
 
-            let mut w = wrote.get();
-            let r = Self::copy_file_using_read_write_loop(src, dest, src_fd, dest_fd, size, &mut w);
-            wrote.set(w);
-            return r;
+                Self::copy_file_using_read_write_loop(src, dest, src_fd, dest_fd, size, &mut wrote)
+            };
+            Self::close_copy_dest(dest, dest_fd, &stat_, wrote, result.is_ok());
+            return result;
         }
 
         #[cfg(windows)]

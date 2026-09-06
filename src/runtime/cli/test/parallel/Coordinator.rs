@@ -414,10 +414,6 @@ impl<'a> Coordinator<'a> {
         if end == 0 {
             return;
         }
-        // The worker already ended the dots line.
-        if w.captured[0] == b'\n' {
-            self.last_printed_dot = false;
-        }
         self.break_dots();
         if let Some(idx) = idx {
             self.ensure_header(idx);

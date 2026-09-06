@@ -1305,7 +1305,12 @@ impl CommandLineReporter {
                         let _ = bun_core::write_pretty!(writer, colors, "<r><red>.<r>");
                     }
                 }
-                reporter_ref.unwrap().last_printed_dot.set(true);
+                let reporter = reporter_ref.unwrap();
+                // Under --parallel the coordinator prints the dot and ends
+                // the dots line itself.
+                if reporter.worker_ipc_file_idx.is_none() {
+                    reporter.last_printed_dot.set(true);
+                }
             } else if basic != bun_test::BasicResult::Fail
                 && reporter_ref.is_some_and(|r| r.reporters.only_failures)
             {
@@ -1361,6 +1366,7 @@ impl CommandLineReporter {
             // output. The coordinator prints captured stderr up to it when
             // the frame arrives. Dots stay out of the stream.
             if strings::ends_with_char(formatted_line, b'\n') {
+                Output::flush();
                 let _ = Output::error_writer().write_all(formatted_line);
             }
             ParallelRunner::worker_emit_test_done(idx, formatted_line, report.as_ref());

@@ -383,9 +383,9 @@ describe.each([
                 }
                 for (const res of doClone ? [response.clone(), response] : [response]) {
                   const body = await res.bytes();
-                  expect(res.status).toBe(200);
                   expect(body.byteLength).toBe(expectedResponse.byteLength);
                   expect(body).toEqual(expectedResponse);
+                  expect(res.status).toBe(200);
                   expectFraming(res, expectedResponse.byteLength, mode !== "reader");
                   expect(res.headers.get("content-type")).toBe("text/plain");
                   expect(JSON.parse(res.headers.get("x-request-headers")!)).toEqual({

@@ -615,9 +615,7 @@ Socket.prototype.bind = function (port_, address_ /* , callback */) {
       return;
     }
 
-    // Node's UDPWrap binds through uv_ip4_addr/uv_ip6_addr for the socket's
-    // `type`, so a literal of the other family (or a non-IP) is EINVAL there.
-    // Bun.udpSocket derives the family from the literal, so check it here.
+    // uv_ip4_addr/uv_ip6_addr reject a literal of the other family with EINVAL.
     if (isIP(ip) !== (this.type === "udp4" ? 4 : 6)) {
       state.bindState = BIND_STATE_UNBOUND;
       this.emit("error", new ExceptionWithHostPort(UV_EINVAL, "bind", ip, port));

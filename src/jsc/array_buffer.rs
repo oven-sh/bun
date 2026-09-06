@@ -820,8 +820,7 @@ impl BinaryType {
         }
     }
 
-    /// The lowercase `BINARY_TYPE_MAP` key for this variant, as a
-    /// `binaryType` getter reports it.
+    /// The lowercase `BINARY_TYPE_MAP` key, as a `binaryType` getter reports it.
     pub fn lowercase_name(self) -> &'static str {
         match self {
             BinaryType::Buffer => "buffer",

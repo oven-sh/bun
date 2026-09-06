@@ -89,9 +89,7 @@ function lazyCpus({ cpus, hostCpuCount }) {
 // all logic based on `process.platform` and `process.arch` is inlined at bundle time
 function bound(binding) {
   return {
-    availableParallelism: function () {
-      return navigator.hardwareConcurrency;
-    },
+    availableParallelism: binding.availableParallelism,
     arch: function () {
       return process.arch;
     },

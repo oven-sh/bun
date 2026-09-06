@@ -537,6 +537,18 @@ fn bindgen_out<T>(global: &JSGlobalObject, out: *mut T, r: bun_jsc::JsResult<T>)
     }
 }
 
+/// # Safety
+/// `out` must be a valid C++ stack out-param.
+#[unsafe(no_mangle)]
+unsafe extern "C" fn bindgen_Node_os_dispatchAvailableParallelism1(
+    _global: *mut JSGlobalObject,
+    out: *mut i32,
+) -> bool {
+    // SAFETY: `out` is a valid C++ stack out-param. `available_parallelism()` is infallible.
+    unsafe { *out = node_os::available_parallelism() };
+    true
+}
+
 // HOST_EXPORT(bindgen_Node_os_dispatchCpus1)
 pub fn bindgen_node_os_cpus(global: &JSGlobalObject) -> bun_jsc::JsResult<JSValue> {
     node_os::cpus(global)

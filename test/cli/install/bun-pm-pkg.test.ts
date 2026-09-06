@@ -393,6 +393,21 @@ describe.concurrent("bun pm pkg", () => {
       });
     });
 
+    it("should reject an index far past the end of the array", async () => {
+      using dir = tempDir("pm-pkg-array-huge-index", {
+        "package.json": JSON.stringify({ name: "x", files: ["a.js"] }, null, 2),
+      });
+
+      const { error, code } = await runPmPkg(["set", "files[1000000000]=x"], dir, false);
+      expect(error).toContain("Array index 1000000000 is too far past the end of the array (1 items)");
+      expect(code).toBe(1);
+      expect(await readPkg(dir)).toEqual({ name: "x", files: ["a.js"] });
+
+      const { code: maxCode } = await runPmPkg(["set", "files[18446744073709551615]=x"], dir, false);
+      expect(maxCode).toBe(1);
+      expect(await readPkg(dir)).toEqual({ name: "x", files: ["a.js"] });
+    });
+
     it("should append with empty brackets", async () => {
       using dir = tempDir("pm-pkg-array-append", {
         "package.json": JSON.stringify({ name: "x", files: ["a.js", "b.js"], empty: {} }, null, 2),

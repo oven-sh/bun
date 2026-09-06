@@ -129,6 +129,17 @@ private:
     /* WebSocketContexts are of differing type, but we as owners and creators must delete them correctly */
     std::vector<MoveOnlyFunction<void()>> webSocketContextDeleters;
     std::vector<us_socket_group_t *> webSocketGroups;
+    /* One WebSocketContext per UserData type, shared by every ws() route and
+     * by every re-registration after clearRoutes(). A context can only be
+     * freed once all of its sockets are gone, which is at app destruction, so
+     * a context per ws() call would leak one per route per server.reload().
+     * The per-route state (upgrade handler, user data) lives in the HTTP
+     * route closure, which clearRoutes() drops. Each ws() call writes the
+     * behavior's handlers and limits into the shared context, so a reload
+     * applies its new limits to the sockets that are already open. */
+    void *sharedWebSocketContext = nullptr;
+    template <typename UserData> static inline char sharedWebSocketContextTag = 0;
+    const void *sharedWebSocketContextType = nullptr;
 
 public:
 
@@ -522,16 +533,25 @@ public:
             });
         }
 
-        /* Every route has its own websocket context with its own behavior and user data type */
-        auto *webSocketContext = WebSocketContext<SSL, true, UserData>::create(Loop::get(), topicTree);
+        WebSocketContext<SSL, true, UserData> *webSocketContext;
+        if (sharedWebSocketContext && sharedWebSocketContextType == &sharedWebSocketContextTag<UserData>) {
+            webSocketContext = (WebSocketContext<SSL, true, UserData> *) sharedWebSocketContext;
+        } else {
+            /* The socket group is sized for this UserData type */
+            webSocketContext = WebSocketContext<SSL, true, UserData>::create(Loop::get(), topicTree);
+            if (!sharedWebSocketContext) {
+                sharedWebSocketContext = webSocketContext;
+                sharedWebSocketContextType = &sharedWebSocketContextTag<UserData>;
+            }
 
-        /* We need to clear this later on */
-        webSocketContextDeleters.push_back([webSocketContext]() {
-            webSocketContext->free();
-        });
+            /* We need to clear this later on */
+            webSocketContextDeleters.push_back([webSocketContext]() {
+                webSocketContext->free();
+            });
 
-        /* We also keep this list for easy closing */
-        webSocketGroups.push_back(webSocketContext->getSocketGroup());
+            /* We also keep this list for easy closing */
+            webSocketGroups.push_back(webSocketContext->getSocketGroup());
+        }
 
         /* If we are the first one to use compression, initialize it */
         if (behavior.compression) {

@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, expectRssDeltaBelow } from "harness";
+import { join } from "node:path";
 
 // server.reload({ websocket: { close() {} } }) — i.e. a websocket config
 // without `open` or `message` — is silently discarded by onReloadFromZig.
@@ -61,4 +62,63 @@ test("server.reload() with websocket config lacking open/message does not leak p
   // Without it, the delta should be a small constant independent of `iters`.
   expect(after - before).toBeLessThan(iters);
   expect(exitCode).toBe(0);
+});
+
+// Every ws() registration (the "/*" fallback plus each GET-capable callback
+// route) allocated a uWS WebSocketContext that the app only freed when it was
+// destroyed. So each server.reload() of a websocket-enabled server kept one
+// more generation of contexts. Now the app keeps one context and each ws()
+// registration writes the behavior into it.
+test("server.reload() on a websocket-enabled server does not keep a WebSocketContext per reload", async () => {
+  // 1000 reloads of 12 routes keep about 15 MiB of contexts on bun 1.4.3, and
+  // 14 to 18 MiB on an ASAN build with the quarantine off. Fixed: about 1 MiB
+  // and 5 MiB.
+  await expectRssDeltaBelow([join(import.meta.dir, "websocket-server-reload-context-fixture.ts")], {
+    release: 7,
+    debug: 10,
+  });
+}, 60_000);
+
+// With one shared context, the limits of the latest reload apply to sockets
+// that were open before it, like the handlers already did.
+test("server.reload() applies the new websocket maxPayloadLength to sockets opened before the reload", async () => {
+  const config = (maxPayloadLength: number) => ({
+    port: 0,
+    fetch(req: Request, server: Bun.Server) {
+      if (server.upgrade(req)) return;
+      return new Response("not a websocket", { status: 400 });
+    },
+    websocket: {
+      maxPayloadLength,
+      message(ws: Bun.ServerWebSocket, message: string | Buffer) {
+        ws.send(`got ${message.length} bytes`);
+      },
+    },
+  });
+  using server = Bun.serve(config(1 << 20));
+
+  const open = () => {
+    const { promise, resolve, reject } = Promise.withResolvers<WebSocket>();
+    const ws = new WebSocket(server.url);
+    ws.onopen = () => resolve(ws);
+    ws.onerror = reject;
+    return promise;
+  };
+  const ask = (ws: WebSocket, message: string) => {
+    const { promise, resolve } = Promise.withResolvers<string>();
+    ws.onmessage = event => resolve(String(event.data));
+    ws.onclose = event => resolve(`closed ${event.code}`);
+    ws.send(message);
+    return promise;
+  };
+
+  const before = await open();
+  const big = Buffer.alloc(1000, "x").toString();
+  expect(await ask(before, big)).toBe("got 1000 bytes");
+
+  server.reload(config(64));
+  const after = await open();
+
+  expect(await ask(before, "small")).toBe("got 5 bytes");
+  expect(await Promise.all([ask(before, big), ask(after, big)])).toEqual(["closed 1006", "closed 1006"]);
 });

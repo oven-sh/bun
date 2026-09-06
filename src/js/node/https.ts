@@ -495,8 +495,7 @@ Agent.prototype._evictSession = function _evictSession(key) {
 
 const { shouldUseEnvProxy } = require("node:_http_agent");
 
-// Node's https.Server is a tls.Server: it always speaks TLS, and it reads the TLS
-// options that http.Server ignores.
+// Always a TLS listener, like Node's tls.Server. http.Server ignores these TLS options.
 function Server(options, requestListener): void {
   if (!(this instanceof Server)) return new Server(options, requestListener);
   http.Server.$call(this, options, requestListener);

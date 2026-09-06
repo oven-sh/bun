@@ -191,8 +191,7 @@ function normalizeServerTls(tls) {
   return tls;
 }
 
-// The `tls` config for Bun.serve behind an https.Server. Always returns a config, so the
-// listener speaks TLS without key/cert like Node's tls.Server.
+// Bun.serve `tls` config for https.Server. Never null: without key/cert the listener still speaks TLS.
 function httpsServerTlsOptions(options) {
   // Node's https.Server accepts PKCS#12 bundles (pfx [+ passphrase]); fold
   // them into plain key/cert/ca so the native TLS config sees PEM material.

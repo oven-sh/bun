@@ -4380,6 +4380,17 @@ extern "C" void Zig__GlobalObject__stopActiveDOMObjectsForTestIsolation(Zig::Glo
     globalObject->scriptExecutionContext()->prepareForDestruction();
 }
 
+// The realm's context went through prepareForDestruction(): a `bun test --isolate` global retired by
+// the function above, or any global once VM teardown began. Script the realm leaked can still run.
+extern "C" bool Zig__GlobalObject__isContextStopped(JSC::JSGlobalObject* lexicalGlobalObject)
+{
+    auto* globalObject = dynamicDowncast<Zig::GlobalObject>(lexicalGlobalObject);
+    if (!globalObject)
+        return false;
+    auto* context = globalObject->scriptExecutionContext();
+    return !context || context->activeDOMObjectsAreStopped();
+}
+
 extern "C" void Zig__GlobalObject__destructOnExit(Zig::GlobalObject* globalObject)
 {
     auto& vm = JSC::getVM(globalObject);

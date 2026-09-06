@@ -1353,6 +1353,17 @@ impl JSGlobalObject {
         Zig__GlobalObject__createForTestIsolation(old_global, console)
     }
 
+    /// The realm's `ScriptExecutionContext` went through `prepareForDestruction()`:
+    /// a `bun test --isolate` global whose file finished (from the start of
+    /// [`VirtualMachine::swap_global_for_test_isolation`] on), or any global once
+    /// VM teardown began. JS the realm leaked (a threadpool job's `.then`, an
+    /// event handler) still runs and still reaches host functions; the ones that
+    /// drive state outside the realm check this to stay inert. `false` for a
+    /// global that is not a `Zig::GlobalObject`.
+    pub fn is_context_stopped(&self) -> bool {
+        Zig__GlobalObject__isContextStopped(self)
+    }
+
     pub fn to_type_error(&self, code: JscError, args: Arguments<'_>) -> JSValue {
         code.fmt(self, args)
     }
@@ -1590,6 +1601,7 @@ unsafe extern "C" {
         old_global: &JSGlobalObject,
         console: *mut c_void,
     ) -> *mut JSGlobalObject;
+    safe fn Zig__GlobalObject__isContextStopped(this: &JSGlobalObject) -> bool;
 }
 
 impl ScriptExecutionContextIdentifier {

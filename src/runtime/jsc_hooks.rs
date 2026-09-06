@@ -1621,9 +1621,10 @@ fn cron_clear_all_reload(vm: &mut VirtualMachine) {
 
 /// `RuntimeHooks::cancel_all_timers` — cancel every `TimeoutObject` /
 /// `ImmediateObject` still linked in the current thread's timer heap so the
-/// in-heap `+1` ref and the JS pin drop before the GC sweep / `~VM`.
-/// `timer::All` lives in `bun_runtime`; callers (`global_exit`,
-/// `WebWorker::shutdown`) are in `bun_jsc`, hence the hook.
+/// in-heap `+1` ref and the JS pin drop before the GC sweep / `~VM`, and put
+/// the thread back on the real clock.
+/// `timer::All` lives in `bun_runtime`; callers (VM teardown, the `--isolate`
+/// swap) are in `bun_jsc`, hence the hook.
 ///
 /// # Safety
 /// `vm` is the live per-thread VM; `runtime_state()` must still be installed.
@@ -1632,6 +1633,23 @@ unsafe fn cancel_all_timers(vm: *mut VirtualMachine) {
     let state = runtime_state();
     if state.is_null() {
         return;
+    }
+    // Fake-timer activation lives in the per-thread `timer::All`, not the JS
+    // global, so under `--isolate` it belongs to the outgoing file exactly like
+    // the timers below: left on, it would route every later file's `setTimeout`
+    // into the never-driven fake heap. The swap calls this hook after the last
+    // point where the outgoing realm's JS runs as the live realm; anything that
+    // realm runs later is inert (`FakeTimers.rs` `called_from_retired_realm`).
+    // The fake heap itself stays populated for `cancel_all_timeout_objects`,
+    // which walks both heaps.
+    // SAFETY: `state` is the live boxed per-thread `RuntimeState`; `vm` per fn
+    // contract; `reset_for_isolation` touches only `fake_timers.active`, the
+    // `CURRENT_TIME` static and VM fields.
+    unsafe {
+        let fake_timers = &mut *ptr::addr_of_mut!((*state).timer.fake_timers);
+        if fake_timers.is_active() {
+            fake_timers.reset_for_isolation((*vm).global());
+        }
     }
     // Drain the `fs.watchFile` scheduler queue while the timer heap and JSC
     // are both still live. Each queued `StatWatcher` holds a `RefPtr` back to
@@ -1737,26 +1755,12 @@ fn stop_active_handles(vm: &mut VirtualMachine, reason: StopReason) -> SweepResu
         return SweepResult::Idle;
     }
     let mut result = SweepResult::Idle;
-    // Fake-timer state lives in the per-thread `timer::All`, not the JS
-    // global, so a file that leaves it active routes every later file's
-    // `setTimeout` into the never-driven fake heap. Leave the heap itself
-    // intact: `swap_global_for_test_isolation` runs `cancel_all_timeout_objects`
-    // next, which walks both heaps and releases `TimeoutObject` pins and
-    // discards `AbortSignalTimeout` timers at a point where no user JS can
-    // touch the outgoing signals.
     {
         let all = timer_all();
-        // SAFETY: `state` is non-null so `timer_all()` is non-null; single
-        // JS thread, no re-entry while we hold the field borrow.
-        if !all.is_null() && unsafe { (*all).fake_timers.is_active() } {
-            let global = vm.global();
-            // SAFETY: as above; only touches `fake_timers.active` and the
-            // `CURRENT_TIME` static.
-            unsafe { (*all).fake_timers.reset_for_isolation(global) };
-        }
         if !all.is_null() {
-            // SAFETY: as above; `disable` borrows only `event_loop_delay` and
-            // reaches the heap through `timer_all()` (disjoint-field access).
+            // SAFETY: `state` is non-null so `timer_all()` is live; single JS
+            // thread; `disable` borrows only `event_loop_delay` and reaches the
+            // heap through `timer_all()` (disjoint-field access).
             unsafe { (*all).event_loop_delay.disable() };
         }
     }

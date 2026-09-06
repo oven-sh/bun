@@ -519,6 +519,101 @@ describe.concurrent("bun test --isolate", () => {
     expect(exitCode).toBe(0);
   });
 
+  test("with --isolate, jest timer controls called by a finished file's leaked continuation are inert", async () => {
+    // The boundary reset above covers fake timers a file left on. This covers
+    // the file reaching back afterwards: a threadpool job it leaked completes
+    // while the next file runs, and its `.then` (running in the retired
+    // global) calls jest.useFakeTimers() / useRealTimers() / runAllTimers().
+    // The fake clock is per thread, so those calls used to install, drain or
+    // remove the clock of the file that is running now. The two files
+    // handshake through marker files so the calls land at known points, not
+    // after a sleep.
+    const fixtures = {
+      "a-finished.test.ts": `
+        import { expect, jest, test } from "bun:test";
+        import { existsSync, writeFileSync } from "node:fs";
+        import { join } from "node:path";
+
+        const marker = (name: string) => join(import.meta.dir, name);
+        const hop = (until: string, then: () => unknown): unknown =>
+          Bun.password.hash("pw", { algorithm: "bcrypt", cost: 4 }).then(() =>
+            existsSync(marker(until)) ? then() : hop(until, then),
+          );
+
+        test("leaks a threadpool chain that calls jest timer controls once the next file runs", () => {
+          hop("b-on-real-timers", () => {
+            jest.useFakeTimers();
+            jest.setSystemTime(0);
+            writeFileSync(marker("a-installed-fake-timers"), "");
+            return hop("b-on-fake-timers", () => {
+              jest.advanceTimersByTime(1000);
+              jest.runAllTimers();
+              jest.clearAllTimers();
+              jest.useRealTimers();
+              writeFileSync(marker("a-removed-fake-timers"), String(jest.isFakeTimers()) + " " + jest.getTimerCount());
+            });
+          });
+          expect(1).toBe(1);
+        });
+      `,
+      "b-live.test.ts": `
+        import { expect, jest, test } from "bun:test";
+        import { existsSync, readFileSync, writeFileSync } from "node:fs";
+        import { join } from "node:path";
+
+        const marker = (name: string) => join(import.meta.dir, name);
+        // setImmediate never goes through the fake clock, so this turns the
+        // event loop (landing the finished file's continuations) either way.
+        const until = async (name: string) => {
+          while (!existsSync(marker(name))) await new Promise(resolve => setImmediate(resolve));
+        };
+
+        test("the finished file's calls do not reach this file's clock", async () => {
+          writeFileSync(marker("b-on-real-timers"), "");
+          await until("a-installed-fake-timers");
+          expect(jest.isFakeTimers()).toBe(false);
+          expect(performance.now()).toBeGreaterThan(0);
+          expect(await new Promise(resolve => setTimeout(() => resolve("fired"), 1))).toBe("fired");
+
+          jest.useFakeTimers();
+          let calls = 0;
+          setTimeout(() => calls++, 1000);
+          writeFileSync(marker("b-on-fake-timers"), "");
+          await until("a-removed-fake-timers");
+          expect(readFileSync(marker("a-removed-fake-timers"), "utf8")).toBe("false 0");
+          expect(jest.isFakeTimers()).toBe(true);
+          expect(jest.getTimerCount()).toBe(1);
+          expect(calls).toBe(0);
+          jest.runAllTimers();
+          expect(calls).toBe(1);
+          jest.useRealTimers();
+        });
+      `,
+    };
+    const files = ["./a-finished.test.ts", "./b-live.test.ts"];
+
+    using isolated = tempDir("isolate-retired-fake-timers", fixtures);
+    const serial = await runTests(String(isolated), ["--isolate"], files);
+    expect(normalizeBunSnapshot(serial.stderr, isolated)).toContain("2 pass");
+    expect(normalizeBunSnapshot(serial.stderr, isolated)).toContain("0 fail");
+    expect(serial.exitCode).toBe(0);
+
+    // One worker takes both files (scale-up gated), so the finished file's
+    // chain keeps running inside the --parallel worker that runs the next one.
+    using parallel = tempDir("isolate-retired-fake-timers-parallel", fixtures);
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", "--parallel=2", ...files],
+      env: { ...bunEnv, BUN_TEST_PARALLEL_SCALE_MS: "60000" },
+      cwd: String(parallel),
+      stderr: "pipe",
+      stdout: "pipe",
+    });
+    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(normalizeBunSnapshot(stderr, parallel)).toContain("2 pass");
+    expect(normalizeBunSnapshot(stderr, parallel)).toContain("0 fail");
+    expect(exitCode).toBe(0);
+  });
+
   test("with --isolate, a leaked monitorEventLoopDelay() is disabled before next file", async () => {
     // The monitor is per thread while its histogram belongs to the file's
     // global. A file that enables it and never disables it used to leave the

@@ -5185,7 +5185,9 @@ impl VirtualMachine {
         // graph) for an hour. Every TimeoutObject / ImmediateObject /
         // AbortSignal timeout in the heap belongs to the outgoing file (the
         // new global doesn't exist yet), so drop them eagerly, same as
-        // `global_exit()`. Runs no user JS.
+        // `global_exit()`. Runs no user JS. So does a `jest.useFakeTimers()`
+        // the file left on: the hook puts the thread back on the real clock
+        // here, after the last drain above ran the outgoing realm's JS.
         //
         // The hook also runs `StatWatcherScheduler::shutdown_for_exit` first:
         // it drains the (already-closed — the caller ran

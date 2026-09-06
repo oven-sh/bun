@@ -103,6 +103,9 @@ impl CurrentTime {
 /// and `performance.timeOrigin` go back to real as well.
 #[unsafe(no_mangle)]
 extern "C" fn Bun__FakeTimers__setSystemTime(global: &JSGlobalObject, ms: f64) {
+    if called_from_retired_realm(global) {
+        return;
+    }
     let Some(current) = CURRENT_TIME.get_timespec_now() else {
         return;
     };
@@ -187,10 +190,10 @@ impl FakeTimers {
     }
 
     /// Restore real timers without draining the fake heap. Used by the
-    /// `--isolate` file boundary so `swap_global_for_test_isolation`'s
-    /// `cancel_all_timeout_objects` (which runs after the outgoing global's
-    /// JS has stopped) can walk the still-populated fake heap and release
-    /// `TimeoutObject` pins and discard `AbortSignalTimeout` timers.
+    /// `cancel_all_timers` hook (the `--isolate` swap, VM teardown) right
+    /// before `cancel_all_timeout_objects`, which walks the still-populated
+    /// fake heap itself to release `TimeoutObject` pins and discard
+    /// `AbortSignalTimeout` timers once the outgoing global's JS has stopped.
     pub(crate) fn reset_for_isolation(&mut self, global: &JSGlobalObject) {
         CURRENT_TIME.clear(global);
         self.active = false;
@@ -316,6 +319,15 @@ impl FakeTimers {
 // JS Functions
 // ===
 
+/// Under `--isolate` a file's `jest`/`vi` object outlives the file: JS it
+/// leaked (a threadpool job's `.then`) still runs in the retired realm while a
+/// later file owns the thread. The fake clock is per thread, not per realm, so
+/// from a retired realm every control below is inert: it neither installs,
+/// drives, reads, nor removes the clock of the file that is running now.
+fn called_from_retired_realm(global: &JSGlobalObject) -> bool {
+    global.is_context_stopped()
+}
+
 fn error_unless_fake_timers(global: &JSGlobalObject) -> JsResult<()> {
     // SAFETY: per-thread `timer::All`, live for the VM lifetime.
     if unsafe { (*timer_all()).fake_timers.is_active() } {
@@ -352,6 +364,9 @@ fn set_fake_timer_marker(global: &JSGlobalObject, enabled: bool) -> JsResult<()>
 
 #[bun_jsc::host_fn]
 fn use_fake_timers(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+    if called_from_retired_realm(global) {
+        return Ok(frame.this());
+    }
     // SAFETY: FFI call into C++ JSMock
     let mut js_now = JSMock__getCurrentUnixTimeMs();
 
@@ -396,6 +411,9 @@ fn use_fake_timers(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSVal
 
 #[bun_jsc::host_fn]
 fn use_real_timers(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+    if called_from_retired_realm(global) {
+        return Ok(frame.this());
+    }
     // SAFETY: per-thread `timer::All`; the borrow ends before `release`.
     let cleared = unsafe { (*timer_all()).fake_timers.deactivate(global) };
     cleared.release(global.bun_vm_ptr());
@@ -408,6 +426,9 @@ fn use_real_timers(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSVal
 
 #[bun_jsc::host_fn]
 fn advance_timers_to_next_timer(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+    if called_from_retired_realm(global) {
+        return Ok(frame.this());
+    }
     error_unless_fake_timers(global)?;
 
     FakeTimers::execute_next(global)?;
@@ -417,6 +438,9 @@ fn advance_timers_to_next_timer(global: &JSGlobalObject, frame: &CallFrame) -> J
 
 #[bun_jsc::host_fn]
 fn advance_timers_by_time(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+    if called_from_retired_realm(global) {
+        return Ok(frame.this());
+    }
     error_unless_fake_timers(global)?;
 
     let arg = frame.arguments_as_array::<1>()[0];
@@ -453,6 +477,9 @@ fn advance_timers_by_time(global: &JSGlobalObject, frame: &CallFrame) -> JsResul
 
 #[bun_jsc::host_fn]
 fn run_only_pending_timers(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+    if called_from_retired_realm(global) {
+        return Ok(frame.this());
+    }
     error_unless_fake_timers(global)?;
 
     FakeTimers::execute_only_pending_timers(global)?;
@@ -462,6 +489,9 @@ fn run_only_pending_timers(global: &JSGlobalObject, frame: &CallFrame) -> JsResu
 
 #[bun_jsc::host_fn]
 fn run_all_timers(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+    if called_from_retired_realm(global) {
+        return Ok(frame.this());
+    }
     error_unless_fake_timers(global)?;
 
     FakeTimers::execute_all_timers(global)?;
@@ -471,6 +501,9 @@ fn run_all_timers(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValu
 
 #[bun_jsc::host_fn]
 fn get_timer_count(global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
+    if called_from_retired_realm(global) {
+        return Ok(JSValue::js_number(0.0));
+    }
     error_unless_fake_timers(global)?;
 
     // SAFETY: per-thread `timer::All`, live for the VM lifetime.
@@ -481,6 +514,9 @@ fn get_timer_count(global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSVa
 
 #[bun_jsc::host_fn]
 fn clear_all_timers(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+    if called_from_retired_realm(global) {
+        return Ok(frame.this());
+    }
     error_unless_fake_timers(global)?;
 
     // SAFETY: per-thread `timer::All`; the borrow ends before `release`.
@@ -491,7 +527,10 @@ fn clear_all_timers(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSVa
 }
 
 #[bun_jsc::host_fn]
-fn is_fake_timers(_global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
+fn is_fake_timers(global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
+    if called_from_retired_realm(global) {
+        return Ok(JSValue::FALSE);
+    }
     // SAFETY: per-thread `timer::All`, live for the VM lifetime.
     let is_active = unsafe { (*timer_all()).fake_timers.is_active() };
 

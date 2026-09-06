@@ -122,6 +122,13 @@ describe("Bun.wrapAnsi", () => {
         );
         // Each lone regional indicator is a 2-column emoji.
         expect(Bun.wrapAnsi("\u{1F1E6}\u{1F1E7}\u{1F1E8}", 2, { hard: true })).toBe("\u{1F1E6}\u{1F1E7}\n\u{1F1E8}");
+        // Consecutive clusters wider than the row get one row each, no blank
+        // row between them (same shape as two wide CJK characters).
+        expect(Bun.wrapAnsi("\u{1F600}\u{1F600}", 1, { hard: true })).toBe("\n\u{1F600}\n\u{1F600}");
+        expect(Bun.wrapAnsi("\u4E2D\u4E2D", 1, { hard: true })).toBe("\n\u4E2D\n\u4E2D");
+        expect(Bun.wrapAnsi("\u{1F1FA}\u{1F1F8}\u{1F1FA}\u{1F1F8}", 1, { hard: true })).toBe(
+          "\n\u{1F1FA}\u{1F1F8}\n\u{1F1FA}\u{1F1F8}",
+        );
       });
     });
 

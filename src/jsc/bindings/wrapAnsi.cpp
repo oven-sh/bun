@@ -260,7 +260,7 @@ static void wrapWord(Vector<Row<Char>>& rows, const Char* wordStart, const Char*
         vis += clusterWidth;
         it = clusterEnd;
 
-        if (vis >= columns && it < wordEnd) {
+        if (vis == columns && it < wordEnd) {
             rows.append(Row<Char>());
             vis = 0;
         }

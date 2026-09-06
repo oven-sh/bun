@@ -7,6 +7,7 @@ import {
   exampleSite,
   gcTick,
   isASAN,
+  isMacOS,
   isWindows,
   tempDir,
   withoutAggressiveGC,
@@ -415,6 +416,113 @@ const IS_UV_FS_COPYFILE_DISABLED =
 
   it("Bun.write(Bun.stderr, 'new TextEncoder().encode(Bun.write STDERR TEST'))", async () => {
     expect(await Bun.write(Bun.stderr, new TextEncoder().encode("\nBun.write STDERR TEST\n\n"))).toBe(24);
+  });
+
+  describe("empty source", () => {
+    const emptySources = () => ["", new Uint8Array(0), new Blob([]), new Response(""), []];
+    const emptySourceExprs = [`""`, `new Uint8Array(0)`, `new Blob([])`, `new Response("")`, `[]`];
+
+    it.skipIf(isWindows)("to /dev/null resolves 0", async () => {
+      const results = [];
+      for (const src of emptySources()) {
+        results.push(await Bun.write(Bun.file("/dev/null"), src));
+      }
+      expect(results).toEqual([0, 0, 0, 0, 0]);
+    });
+
+    it("to a user-provided fd does not truncate", async () => {
+      using dir = tempDir("bun-write-empty-fd", { "out.txt": "" });
+      const p = path.join(String(dir), "out.txt");
+      const results = [];
+      for (const flags of ["r+", "a"]) {
+        for (const src of emptySources()) {
+          fs.writeFileSync(p, "EXISTING");
+          const fd = fs.openSync(p, flags);
+          try {
+            results.push({
+              flags,
+              ret: await Bun.write(Bun.file(fd), src),
+              size: fs.fstatSync(fd).size,
+              contents: fs.readFileSync(p, "utf8"),
+            });
+          } finally {
+            fs.closeSync(fd);
+          }
+        }
+      }
+      expect(results).toEqual(
+        ["r+", "a"].flatMap(flags => emptySourceExprs.map(() => ({ flags, ret: 0, size: 8, contents: "EXISTING" }))),
+      );
+    });
+
+    // The `bun app.js >> app.log 2>> err.log` shape: fd 1 and fd 2 arrive already open in
+    // append mode on files that hold an earlier process's output.
+    it("to inherited O_APPEND stdout/stderr leaves earlier content intact", async () => {
+      using dir = tempDir("bun-write-empty-append-stdio", {
+        "out.log": "line1\nline2\nline3\n",
+        "err.log": "err1\nerr2\n",
+        "results.json": "",
+      });
+      const outLog = path.join(String(dir), "out.log");
+      const errLog = path.join(String(dir), "err.log");
+      const resultsPath = path.join(String(dir), "results.json");
+      // A Response body is single-use, so build a fresh source for each destination.
+      const script = `
+        const mk = () => [${emptySourceExprs.join(", ")}];
+        const results = [];
+        for (let i = 0; i < ${emptySourceExprs.length}; i++) {
+          results.push([await Bun.write(Bun.stdout, mk()[i]), await Bun.write(Bun.stderr, mk()[i])]);
+        }
+        require("fs").writeFileSync(process.env.RESULTS_PATH, JSON.stringify(results));
+      `;
+      const outFd = fs.openSync(outLog, "a");
+      const errFd = fs.openSync(errLog, "a");
+      let exitCode;
+      try {
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), "-e", script],
+          env: { ...bunEnv, RESULTS_PATH: resultsPath },
+          stdin: "ignore",
+          stdout: outFd,
+          stderr: errFd,
+        });
+        exitCode = await proc.exited;
+      } finally {
+        fs.closeSync(outFd);
+        fs.closeSync(errFd);
+      }
+      expect({
+        out: fs.readFileSync(outLog, "utf8"),
+        err: fs.readFileSync(errLog, "utf8"),
+        results: JSON.parse(fs.readFileSync(resultsPath, "utf8") || "null"),
+        exitCode,
+      }).toEqual({
+        out: "line1\nline2\nline3\n",
+        err: "err1\nerr2\n",
+        results: emptySourceExprs.map(() => [0, 0]),
+        exitCode: 0,
+      });
+    });
+
+    it("to a regular-file path still empties the file", async () => {
+      using dir = tempDir("bun-write-empty-truncate", { "out.txt": "EXISTING" });
+      const p = path.join(String(dir), "out.txt");
+      for (const src of emptySources()) {
+        fs.writeFileSync(p, "EXISTING");
+        expect(await Bun.write(p, src)).toBe(0);
+        expect(fs.readFileSync(p, "utf8")).toBe("");
+      }
+    });
+
+    it("to a new path still creates an empty file", async () => {
+      using dir = tempDir("bun-write-empty-create", {});
+      let n = 0;
+      for (const src of emptySources()) {
+        const p = path.join(String(dir), `out-${n++}.txt`);
+        expect(await Bun.write(p, src)).toBe(0);
+        expect(fs.readFileSync(p, "utf8")).toBe("");
+      }
+    });
   });
 
   // These tests pass by not throwing:
@@ -1161,3 +1269,100 @@ int posix_fadvise(int fd, off_t offset, off_t len, int advice) {
     expect(f.name).toBe(filePath);
   });
 });
+
+it("Bun.write(Bun.stdout, <empty source>) does not truncate the destination", async () => {
+  const emptySourceExprs = [`""`, `new Uint8Array(0)`, `new Blob([])`, `new Response("")`, `[]`];
+  const script = `
+    const fs = require("fs");
+    for (const src of [${emptySourceExprs.join(", ")}]) {
+      fs.writeSync(1, "BEFORE ");
+      const r = await Bun.write(Bun.stdout, src);
+      fs.writeSync(2, "ret=" + r + "\\n");
+      fs.writeSync(1, "AFTER\\n");
+    }
+  `;
+  const expectedStdout = "BEFORE AFTER\n".repeat(emptySourceExprs.length);
+  const expectedStderr = "ret=0\n".repeat(emptySourceExprs.length);
+
+  using dir = tempDir("bun-write-empty-stdout", {});
+  const out = path.join(String(dir), "out.txt");
+  {
+    // stdout redirected to a regular file: must not ftruncate it
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: bunEnv,
+      stdout: Bun.file(out),
+      stderr: "pipe",
+    });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    expect({ out: fs.readFileSync(out, "utf8"), stderr, exitCode }).toEqual({
+      out: expectedStdout,
+      stderr: expectedStderr,
+      exitCode: 0,
+    });
+  }
+  {
+    // stdout is a pipe: must not reject with EINVAL
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({
+      stdout: expectedStdout,
+      stderr: expectedStderr,
+      exitCode: 0,
+    });
+  }
+});
+
+// XNU's dofilewrite updates the shared fg_offset with a non-atomic `+= bytecnt` RMW, so
+// concurrent write(2) on a shared fd without O_APPEND can double-count the increment and
+// leave a NUL sparse hole independently of this PR's fix. Linux f_pos_lock serializes the
+// offset update, so nulBytes === 0 is a real invariant there.
+it.skipIf(isMacOS)(
+  "Bun.write(Bun.stdout, '') does not drop concurrent in-flight writes when stdout is a file",
+  async () => {
+    // Many fire-and-forget Bun.write(Bun.stdout, chunk) calls are dispatched to the thread
+    // pool. An empty-string write used to synchronously ftruncate(fd, 0) on the main thread,
+    // which discarded already-written bytes without resetting the kernel file offset, so the
+    // remaining thread-pool writes landed past a NUL-filled sparse hole while every promise
+    // still resolved with its full byte count.
+    const N = 2000;
+    const script = `
+    const fs = require("fs");
+    const ps = [];
+    for (let i = 0; i < ${N}; i++) ps.push(Bun.write(Bun.stdout, "C" + i + "\\n"));
+    fs.writeSync(1, "SYNC_WRITE\\n");
+    await Bun.write(Bun.stdout, "");
+    const r = await Promise.allSettled(ps);
+    process.stderr.write(
+      "fulfilled=" + r.filter(x => x.status === "fulfilled").length +
+      " bytes=" + r.reduce((a, x) => a + (x.value || 0), 0) + "\\n",
+    );
+  `;
+    const expectedBytes = Array.from({ length: N }, (_, i) => ("C" + i).length + 1).reduce((a, b) => a + b, 0);
+
+    using dir = tempDir("bun-write-stdout-nul-hole", {});
+    const out = path.join(String(dir), "out.txt");
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: bunEnv,
+      stdout: Bun.file(out),
+      stderr: "pipe",
+    });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    const buf = fs.readFileSync(out);
+    expect({
+      stderr,
+      nulBytes: buf.indexOf(0) === -1 ? 0 : Array.prototype.reduce.call(buf, (a, b) => a + (b === 0 ? 1 : 0), 0),
+      exitCode,
+    }).toEqual({
+      stderr: `fulfilled=${N} bytes=${expectedBytes}\n`,
+      nulBytes: 0,
+      exitCode: 0,
+    });
+  },
+);

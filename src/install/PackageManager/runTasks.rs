@@ -643,8 +643,7 @@ fn run_tasks_erased(
                         // If we requested extended manifest but we somehow got an abbreviated one, this is a bug
                         debug_assert!(!is_extended_manifest || manifest.pkg.has_extended_manifest);
 
-                        manifest.pkg.public_max_age =
-                            npm::Registry::manifest_expiry(&response.headers);
+                        npm::Registry::refresh_manifest_expiry(&mut manifest.pkg, &response.headers);
 
                         // reshaped for borrowck —
                         // `bun_collections::HashMap` lacks `get_or_put` for

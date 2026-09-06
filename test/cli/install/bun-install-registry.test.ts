@@ -10109,6 +10109,8 @@ describe("manifest conditional requests", () => {
     etag?: string;
     lastModified?: string;
     cacheControl?: string;
+    /** Cache-Control on a 304. `undefined` sends `cacheControl` again, `null` sends none. */
+    cacheControl304?: string | null;
     versions?: string[];
   }) {
     const requests: ManifestRequest[] = [];
@@ -10144,7 +10146,12 @@ describe("manifest conditional requests", () => {
             entry.ifModifiedSince === validators.lastModified);
         if (notModified) {
           entry.status = 304;
-          return new Response(null, { status: 304, headers });
+          const cacheControl =
+            validators.cacheControl304 === undefined ? validators.cacheControl : validators.cacheControl304;
+          return new Response(null, {
+            status: 304,
+            headers: cacheControl == null ? {} : { "Cache-Control": cacheControl },
+          });
         }
         if (validators.etag !== undefined) headers["ETag"] = validators.etag;
         if (validators.lastModified !== undefined) headers["Last-Modified"] = validators.lastModified;
@@ -10360,6 +10367,30 @@ describe("manifest conditional requests", () => {
     // The 304 carried `max-age=60` too, so the manifest is fresh again.
     await installAt(5);
     expect(requests).toHaveLength(2);
+  });
+
+  test.skipIf(!isDebug)("a 304 without Cache-Control keeps the max-age of the stored 200", async () => {
+    const { server, requests } = startRegistry({ etag, cacheControl: "max-age=60", cacheControl304: null });
+    using _ = server;
+    await setup(server.port);
+
+    await install();
+    await installAt(120);
+    expect(requests.map(r => r.status)).toStrictEqual([200, 304]);
+    await installAt(5);
+    expect(requests).toHaveLength(2);
+  });
+
+  test.skipIf(!isDebug)("a 304 with its own Cache-Control replaces the max-age of the stored 200", async () => {
+    const { server, requests } = startRegistry({ etag, cacheControl: "max-age=60", cacheControl304: "no-cache" });
+    using _ = server;
+    await setup(server.port);
+
+    await install();
+    await installAt(120);
+    expect(requests.map(r => r.status)).toStrictEqual([200, 304]);
+    await installAt(5);
+    expect(requests.map(r => r.status)).toStrictEqual([200, 304, 304]);
   });
 
   test.skipIf(!isDebug)("Cache-Control max-age is capped at 300 seconds", async () => {

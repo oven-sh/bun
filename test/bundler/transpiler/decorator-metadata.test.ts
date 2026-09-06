@@ -9,6 +9,16 @@ namespace MetadataNs {
       S = "s",
     }
   }
+  export enum Empty {}
+}
+
+enum WithHelpers {
+  A,
+}
+namespace WithHelpers {
+  export function from(value: number) {
+    return value;
+  }
 }
 
 describe("decorator metadata", () => {
@@ -566,6 +576,10 @@ describe("decorator metadata", () => {
       laterString: LaterString;
       @d2
       laterAlias: LaterAlias;
+      @d2
+      laterNested: LaterNs.Str;
+      @d2
+      laterNestedMember: LaterNs.Str.A;
     }
 
     enum Later {
@@ -606,6 +620,7 @@ describe("decorator metadata", () => {
     enum Merged {
       B = "b",
     }
+    enum Empty {}
 
     class A {
       @d2
@@ -620,6 +635,12 @@ describe("decorator metadata", () => {
       computed: Computed;
       @d2
       merged: Merged;
+      @d2
+      withHelpers: WithHelpers;
+      @d2
+      empty: Empty;
+      @d2
+      nsEmpty: MetadataNs.Empty;
       @d2
       nullable: Numeric | null;
       @d2
@@ -653,6 +674,9 @@ describe("decorator metadata", () => {
     expect(type(A.prototype, "constEnum")).toBe(Number);
     expect(type(A.prototype, "computed")).toBe(Number);
     expect(type(A.prototype, "merged")).toBe(Object);
+    expect(type(A.prototype, "withHelpers")).toBe(Number);
+    expect(type(A.prototype, "empty")).toBe(Number);
+    expect(type(A.prototype, "nsEmpty")).toBe(Number);
     expect(type(A.prototype, "nullable")).toBe(Number);
     expect(type(A.prototype, "optional")).toBe(String);
     expect(type(A.prototype, "array")).toBe(Array);
@@ -669,6 +693,8 @@ describe("decorator metadata", () => {
     expect(type(Declared.prototype, "later")).toBe(Number);
     expect(type(Declared.prototype, "laterString")).toBe(String);
     expect(type(Declared.prototype, "laterAlias")).toBe(String);
+    expect(type(Declared.prototype, "laterNested")).toBe(String);
+    expect(type(Declared.prototype, "laterNestedMember")).toBe(String);
   });
 
   // Unions are folded while the type is parsed, before the enum can be classified.
@@ -684,3 +710,10 @@ describe("decorator metadata", () => {
     expect(Reflect.getMetadata("design:type", A.prototype, "value")).toBe(Number);
   });
 });
+
+// Declared after the classes above so the enum is not visited yet when they are lowered.
+namespace LaterNs {
+  export enum Str {
+    A = "a",
+  }
+}

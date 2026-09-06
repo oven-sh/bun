@@ -8076,12 +8076,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 _ => return None,
             }
         }
-        let map: &js_ast::TSNamespaceMemberMap = &members;
-        // A namespace has no enum members, so an empty map is a namespace.
-        if map.count() == 0 {
-            return None;
-        }
-        Self::enum_members_metadata(map)
+        Self::enum_members_metadata(&members)
     }
 
     /// Re-resolve the name from the class scope like `visit_expr`, then follow symbol links.
@@ -8104,19 +8099,25 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     }
 
     /// A computed member (`A = f()`) counts as a number, the only type tsc allows there.
+    /// A namespace merged into the enum adds `Property` entries that do not count.
+    /// A map with no enum members and some other entry is a plain namespace.
     fn enum_members_metadata(
         members: &js_ast::TSNamespaceMemberMap,
     ) -> Option<bun_ast::ts::Metadata> {
         let mut has_number = false;
         let mut has_string = false;
+        let mut has_other = false;
         for member in members.values() {
             match member.data {
                 js_ast::ts::Data::EnumNumber(_) | js_ast::ts::Data::EnumProperty => {
                     has_number = true
                 }
                 js_ast::ts::Data::EnumString(_) => has_string = true,
-                js_ast::ts::Data::Property | js_ast::ts::Data::Namespace(_) => return None,
+                js_ast::ts::Data::Property | js_ast::ts::Data::Namespace(_) => has_other = true,
             }
+        }
+        if has_other && !has_number && !has_string {
+            return None;
         }
         Some(if has_string && has_number {
             bun_ast::ts::Metadata::MObject

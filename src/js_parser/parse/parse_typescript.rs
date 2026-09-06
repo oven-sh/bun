@@ -661,13 +661,22 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
             let value_name = value.name;
             let value_loc = value.loc;
+            // A literal value is known now. The visit pass fills in the rest, but
+            // decorator metadata can read this map before the enum is visited.
+            let data = match value.value.map(|v| v.data) {
+                Some(js_ast::ExprData::ENumber(num)) => {
+                    TSNamespaceMemberData::EnumNumber(num.value())
+                }
+                Some(js_ast::ExprData::EString(str_)) => TSNamespaceMemberData::EnumString(str_),
+                _ => TSNamespaceMemberData::EnumProperty,
+            };
             values.push(value);
 
             exported_members.put(
                 value_name.slice(),
                 TSNamespaceMember {
                     loc: value_loc,
-                    data: TSNamespaceMemberData::EnumProperty,
+                    data,
                 },
             )?;
 

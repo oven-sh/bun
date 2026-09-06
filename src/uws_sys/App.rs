@@ -423,12 +423,17 @@ impl<const SSL: bool> App<SSL> {
         c::uws_filter(Self::SSL_FLAG, self.as_raw(), Some(handler), user_data)
     }
 
+    /// Registers a websocket route. Calls with the same non-null
+    /// `shared_context_key` share one uWS `WebSocketContext`, so they do not
+    /// allocate a context each time the routes are set again. The latest
+    /// call's `behavior` applies to every socket open on that context.
     pub fn ws(
         &mut self,
         pattern: &[u8],
         ctx: *mut c_void,
         id: usize,
         behavior_: WebSocketBehavior,
+        shared_context_key: *const c_void,
     ) {
         let behavior = behavior_;
         // SAFETY: self is a valid app; pattern valid for the call; behavior is stack-local.
@@ -441,6 +446,7 @@ impl<const SSL: bool> App<SSL> {
                 pattern.len(),
                 id,
                 &raw const behavior,
+                shared_context_key,
             )
         }
     }

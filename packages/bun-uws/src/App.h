@@ -129,17 +129,14 @@ private:
     /* WebSocketContexts are of differing type, but we as owners and creators must delete them correctly */
     std::vector<MoveOnlyFunction<void()>> webSocketContextDeleters;
     std::vector<us_socket_group_t *> webSocketGroups;
-    /* One WebSocketContext per UserData type, shared by every ws() route and
-     * by every re-registration after clearRoutes(). A context can only be
+    /* WebSocketContexts that ws() calls share by key. A context can only be
      * freed once all of its sockets are gone, which is at app destruction, so
-     * a context per ws() call would leak one per route per server.reload().
+     * a context per ws() call leaks one per route per clearRoutes() cycle.
      * The per-route state (upgrade handler, user data) lives in the HTTP
-     * route closure, which clearRoutes() drops. Each ws() call writes the
-     * behavior's handlers and limits into the shared context, so a reload
-     * applies its new limits to the sockets that are already open. */
-    void *sharedWebSocketContext = nullptr;
-    template <typename UserData> static inline char sharedWebSocketContextTag = 0;
-    const void *sharedWebSocketContextType = nullptr;
+     * route closure, which clearRoutes() drops. Every ws() call with a key
+     * writes the behavior's handlers and limits into that key's context, so
+     * the sockets already open on it get the latest behavior. */
+    std::vector<std::pair<const void *, void *>> sharedWebSocketContexts;
 
 public:
 
@@ -452,8 +449,11 @@ public:
         return closed;
     }
 
+    /* With a non-null sharedContextKey the route uses the WebSocketContext
+     * registered under that key, creating it on the first call. Every call
+     * with the same key must use the same UserData type. */
     template <typename UserData>
-    TemplatedApp &&ws(std::string_view pattern, WebSocketBehavior<UserData> &&behavior) {
+    TemplatedApp &&ws(std::string_view pattern, WebSocketBehavior<UserData> &&behavior, const void *sharedContextKey = nullptr) {
         /* Don't compile if alignment rules cannot be satisfied */
         static_assert(alignof(UserData) <= LIBUS_EXT_ALIGNMENT,
         "µWebSockets cannot satisfy UserData alignment requirements. You need to recompile µSockets with LIBUS_EXT_ALIGNMENT adjusted accordingly.");
@@ -533,15 +533,19 @@ public:
             });
         }
 
-        WebSocketContext<SSL, true, UserData> *webSocketContext;
-        if (sharedWebSocketContext && sharedWebSocketContextType == &sharedWebSocketContextTag<UserData>) {
-            webSocketContext = (WebSocketContext<SSL, true, UserData> *) sharedWebSocketContext;
-        } else {
-            /* The socket group is sized for this UserData type */
+        WebSocketContext<SSL, true, UserData> *webSocketContext = nullptr;
+        if (sharedContextKey) {
+            for (auto &[key, context] : sharedWebSocketContexts) {
+                if (key == sharedContextKey) {
+                    webSocketContext = (WebSocketContext<SSL, true, UserData> *) context;
+                    break;
+                }
+            }
+        }
+        if (!webSocketContext) {
             webSocketContext = WebSocketContext<SSL, true, UserData>::create(Loop::get(), topicTree);
-            if (!sharedWebSocketContext) {
-                sharedWebSocketContext = webSocketContext;
-                sharedWebSocketContextType = &sharedWebSocketContextTag<UserData>;
+            if (sharedContextKey) {
+                sharedWebSocketContexts.emplace_back(sharedContextKey, webSocketContext);
             }
 
             /* We need to clear this later on */

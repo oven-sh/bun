@@ -83,7 +83,8 @@ fn parse_rfc850(value: &[u8]) -> Option<Civil> {
     p.literal(b"-")?;
     let month = p.one_of(&MONTH_NAMES)? + 1;
     p.literal(b"-")?;
-    let year = two_digit_year(p.digits(2)?);
+    let now_year = civil_year_from_unix_seconds(bun_core::time::timestamp());
+    let year = two_digit_year(p.digits(2)?, now_year);
     p.literal(b" ")?;
     let (hour, minute, second) = p.time_of_day()?;
     p.literal(b" GMT")?;
@@ -111,12 +112,14 @@ fn parse_asctime(value: &[u8]) -> Option<Civil> {
 }
 
 /// §5.6.7: a two-digit year that appears to be more than 50 years in the
-/// future is the most recent past year with the same last two digits.
-fn two_digit_year(yy: u32) -> u32 {
-    let now_year = civil_year_from_unix_seconds(bun_core::time::timestamp());
+/// future is the most recent past year with the same last two digits. The
+/// result is the year with those digits in the window `(now - 50, now + 50]`.
+fn two_digit_year(yy: u32, now_year: u32) -> u32 {
     let year = now_year - now_year % 100 + yy;
     if year > now_year + 50 {
         year - 100
+    } else if year + 50 <= now_year {
+        year + 100
     } else {
         year
     }
@@ -310,15 +313,21 @@ mod tests {
 
     #[test]
     fn two_digit_year_is_never_more_than_50_years_ahead() {
-        let now = civil_year_from_unix_seconds(bun_core::time::timestamp());
-        for yy in 0..100 {
-            let year = two_digit_year(yy);
-            assert_eq!(year % 100, yy);
-            assert!(
-                year <= now + 50 && year > now - 50,
-                "{yy} -> {year} (now {now})"
-            );
+        for now in [2000, 2026, 2049, 2050, 2051, 2099, 2100] {
+            for yy in 0..100 {
+                let year = two_digit_year(yy, now);
+                assert_eq!(year % 100, yy);
+                assert!(
+                    year <= now + 50 && year > now - 50,
+                    "{yy} -> {year} (now {now})"
+                );
+            }
         }
+        assert_eq!(two_digit_year(94, 2026), 1994);
+        assert_eq!(two_digit_year(76, 2026), 2076);
+        assert_eq!(two_digit_year(77, 2026), 1977);
+        assert_eq!(two_digit_year(0, 2050), 2100);
+        assert_eq!(two_digit_year(0, 2049), 2000);
     }
 
     #[test]

@@ -606,6 +606,24 @@ struct PosixSpawnFdGuard {
 }
 
 #[cfg(unix)]
+impl PosixSpawnFdGuard {
+    /// The fd to pass to `dup2` as the source for a stdio slot. File actions
+    /// run in slot order in the child, so a source that sits at or below the
+    /// highest slot (`max_slot`) can be closed or overwritten by an earlier
+    /// slot's action (the `close` of an "ignore" slot, another slot's `dup2`)
+    /// before its own `dup2` runs. Move such a source above every slot first,
+    /// like libuv does.
+    fn source_above_slots(&mut self, max_slot: i32, src: Fd) -> bun_sys::Result<Fd> {
+        if src.native() > max_slot {
+            return Ok(src);
+        }
+        let moved = bun_sys::dup_at_least(src, max_slot + 1)?;
+        self.to_close_at_end.push(moved);
+        Ok(moved)
+    }
+}
+
+#[cfg(unix)]
 impl Drop for PosixSpawnFdGuard {
     fn drop(&mut self) {
         if self.on_error {
@@ -725,6 +743,9 @@ pub unsafe fn spawn_process_posix(
     let _ = attr.set(flags as _);
     let _ = attr.reset_signals();
 
+    // Highest child fd that a file action targets: stderr, or the last extra slot.
+    let max_slot: FdT = FdT::try_from(2 + options.extra_fds.len()).unwrap();
+
     if let Some(ipc) = options.ipc {
         actions.inherit(ipc)?;
         spawned.ipc = Some(ipc);
@@ -763,14 +784,21 @@ pub unsafe fn spawn_process_posix(
                     actions.dup2(dup2.to.to_fd(), dup2.out.to_fd())?;
                 }
             }
-            PosixStdio::Inherit => {
+            PosixStdio::Inherit => match bun_sys::get_fcntl_flags(fileno) {
                 // A closed slot would inherit whatever fd is created later at that number (e.g. the ipc socketpair); libuv gives it /dev/null.
-                if bun_sys::get_fcntl_flags(fileno).is_err() {
+                Err(_) => {
                     actions.open_z(fileno, c"/dev/null", flag | bun_sys::O::CREAT as u32, 0o664)?;
-                } else {
+                }
+                Ok(fl) => {
+                    // O_NONBLOCK lives on the open file description, so one that
+                    // `process.stdout` set on a pipe reaches the child, where a
+                    // plain write(2) then fails with EAGAIN. libuv clears it too.
+                    if fl & bun_sys::O::NONBLOCK as bun_sys::FcntlInt != 0 {
+                        let _ = bun_sys::update_nonblocking(fileno, false);
+                    }
                     actions.inherit(fileno)?;
                 }
-            }
+            },
             PosixStdio::Ipc | PosixStdio::Ignore => {
                 actions.open_z(fileno, c"/dev/null", flag | bun_sys::O::CREAT as u32, 0o664)?;
             }
@@ -797,7 +825,11 @@ pub unsafe fn spawn_process_posix(
 
                         cleanup.to_close_on_error.push(fd);
                         cleanup.to_set_cloexec.push(fd);
-                        actions.dup2(fd, fileno)?;
+                        let src = match cleanup.source_above_slots(max_slot, fd) {
+                            Ok(src) => src,
+                            Err(e) => return Ok(Err(e)),
+                        };
+                        actions.dup2(src, fileno)?;
                         set_spawned_stdio(&mut spawned, i, fd);
                         spawned.memfds[i] = true;
                         continue 'stdio;
@@ -878,15 +910,24 @@ pub unsafe fn spawn_process_posix(
                     }
                 }
 
-                actions.dup2(fds[1], fileno)?;
-                if fds[1] != fileno {
+                let src = match cleanup.source_above_slots(max_slot, fds[1]) {
+                    Ok(src) => src,
+                    Err(e) => return Ok(Err(e)),
+                };
+                actions.dup2(src, fileno)?;
+                if src == fds[1] {
                     actions.close(fds[1])?;
                 }
 
                 set_spawned_stdio(&mut spawned, i, fds[0]);
             }
             PosixStdio::Pipe(fd) => {
-                actions.dup2(*fd, fileno)?;
+                let _ = bun_sys::update_nonblocking(*fd, false);
+                let src = match cleanup.source_above_slots(max_slot, *fd) {
+                    Ok(src) => src,
+                    Err(e) => return Ok(Err(e)),
+                };
+                actions.dup2(src, fileno)?;
                 set_spawned_stdio(&mut spawned, i, *fd);
             }
             PosixStdio::SocketFd => {
@@ -928,24 +969,31 @@ pub unsafe fn spawn_process_posix(
                 extra_fds.push(ExtraPipe::Unavailable);
             }
             PosixStdio::Ipc | PosixStdio::Buffer | PosixStdio::SocketFd => {
-                let is_ipc = matches!(ipc, PosixStdio::Ipc);
+                // Both ends start blocking. Only the parent's end goes
+                // nonblocking: the child's end is handed over as is, so a
+                // child that is not bun or node (a plain write(2) on the IPC
+                // fd) gets a blocking socket, like libuv hands out.
                 let fds: [Fd; 2] =
-                    match bun_sys::socketpair(libc::AF_UNIX, libc::SOCK_STREAM, 0, is_ipc) {
+                    match bun_sys::socketpair(libc::AF_UNIX, libc::SOCK_STREAM, 0, false) {
                         Ok(p) => p,
                         Err(e) => return Ok(Err(e)),
                     };
 
-                if !options.sync && !is_ipc {
+                cleanup.to_close_at_end.push(fds[1]);
+                cleanup.to_close_on_error.push(fds[0]);
+
+                if !options.sync {
                     if let Err(e) = bun_sys::set_nonblocking(fds[0]) {
                         return Ok(Err(e));
                     }
                 }
 
-                cleanup.to_close_at_end.push(fds[1]);
-                cleanup.to_close_on_error.push(fds[0]);
-
-                actions.dup2(fds[1], fileno)?;
-                if fds[1] != fileno {
+                let src = match cleanup.source_above_slots(max_slot, fds[1]) {
+                    Ok(src) => src,
+                    Err(e) => return Ok(Err(e)),
+                };
+                actions.dup2(src, fileno)?;
+                if src == fds[1] {
                     actions.close(fds[1])?;
                 }
                 // SocketFd: push as OwnedFd here so every error path between
@@ -958,7 +1006,11 @@ pub unsafe fn spawn_process_posix(
                 extra_fds.push(ExtraPipe::OwnedFd(fds[0]));
             }
             PosixStdio::Pipe(fd) => {
-                actions.dup2(*fd, fileno)?;
+                let src = match cleanup.source_above_slots(max_slot, *fd) {
+                    Ok(src) => src,
+                    Err(e) => return Ok(Err(e)),
+                };
+                actions.dup2(src, fileno)?;
                 // The fd was supplied by the caller (a number in the stdio array) and is
                 // not owned by us. Record it so `stdio[N]` returns the caller's fd, but
                 // mark it unowned so finalizeStreams leaves it open.

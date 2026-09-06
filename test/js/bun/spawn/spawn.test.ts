@@ -1719,3 +1719,134 @@ it.if(parentThp() === "1")("spawned children keep the system THP policy", async 
   expect(thpEnabled(readFileSync("/proc/self/status", "utf8"))).toBe("1");
   expect(exitCode).toBe(0);
 });
+
+// O_NONBLOCK lives on the open file description, so a flag bun sets on its
+// own stdout or on a socketpair end reaches any child that shares it. A child
+// that is not bun or node then fails a plain write(2) with EAGAIN.
+describe.skipIf(!isPosix)("file status flags handed to the child", () => {
+  const probe = join(import.meta.dir, "fixtures", "fd-nonblock-probe.js");
+
+  it.concurrent("stdout and stderr inherited after the parent used process.stdout/stderr are blocking", async () => {
+    await using proc = spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `process.stdout.write("out\\n");
+         process.stderr.write("err\\n");
+         const r = Bun.spawnSync([process.execPath, ${JSON.stringify(probe)}, "1", "2"], { stdout: "inherit", stderr: "inherit" });
+         process.exit(r.exitCode);`,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout).toBe("out\n1:blocking 2:blocking\n");
+    expect(stderr).toBe("err\n");
+    expect(exitCode).toBe(0);
+  });
+
+  it.concurrent("the ipc fd is blocking", async () => {
+    await using proc = spawn({
+      cmd: [bunExe(), probe, "3"],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+      ipc() {},
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout).toBe("3:blocking\n");
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+  });
+
+  it.concurrent("a plain tool writing more than the pipe holds succeeds on inherited stdout", async () => {
+    // The user-visible shape of the test above: with fd 1 nonblocking, head
+    // gets EAGAIN as soon as it outruns this reader and exits 1 with a short
+    // count. (If the reader keeps up, head never sees a full pipe, so the
+    // flag probe above is the deterministic check.)
+    await using proc = spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `process.stdout.write("start\\n");
+         const r = Bun.spawnSync(["head", "-c", "1000000", "/dev/zero"], { stdout: "inherit", stderr: "inherit" });
+         process.stderr.write("rc=" + r.exitCode + "\\n");`,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.bytes(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("rc=0\n");
+    expect(stdout.byteLength).toBe("start\n".length + 1000000);
+    expect(exitCode).toBe(0);
+  });
+});
+
+describe.skipIf(!isPosix)("stdio source fds that are also slot numbers", () => {
+  // File actions run in slot order in the child. The source fd of a later
+  // slot must survive the actions of the slots before it (the close of an
+  // "ignore" slot, the dup2 onto another slot) even when its fd number is one
+  // of those slots. Each case runs in a fresh process so the source fds are
+  // low, known numbers.
+  async function run(script: string) {
+    await using proc = spawn({
+      cmd: [bunExe(), "-e", script],
+      env: bunEnv,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+
+  it.concurrent("a pipe after many ignore slots", async () => {
+    const slots = 60;
+    const result = await run(`
+      const fs = require("fs");
+      const proc = Bun.spawn({
+        cmd: [process.execPath, "-e", "require('fs').writeSync(${slots}, 'hi')"],
+        stdio: ["ignore", "inherit", "inherit", ...Array(${slots - 3}).fill("ignore"), "pipe"],
+      });
+      const fd = proc.stdio[${slots}];
+      const exitCode = await proc.exited;
+      const buf = Buffer.alloc(16);
+      const n = fs.readSync(fd, buf);
+      console.log(JSON.stringify({ sourceBelowSlot: fd < ${slots}, exitCode, data: buf.toString("utf8", 0, n) }));
+    `);
+    expect(result.stderr).toBe("");
+    expect(JSON.parse(result.stdout)).toEqual({ sourceBelowSlot: true, exitCode: 0, data: "hi" });
+    expect(result.exitCode).toBe(0);
+  });
+
+  it.concurrent("a caller fd after many ignore slots", async () => {
+    using dir = tempDir("spawn-high-slot", {});
+    const slots = 60;
+    const file = join(String(dir), "out.txt");
+    const result = await run(`
+      const fs = require("fs");
+      const fd = fs.openSync(${JSON.stringify(file)}, "w");
+      const proc = Bun.spawn({
+        cmd: [process.execPath, "-e", "require('fs').writeSync(${slots}, 'hi')"],
+        stdio: ["ignore", "inherit", "inherit", ...Array(${slots - 3}).fill("ignore"), fd],
+      });
+      console.log(JSON.stringify({ sourceBelowSlot: fd < ${slots}, exitCode: await proc.exited }));
+    `);
+    expect(result.stderr).toBe("");
+    expect(JSON.parse(result.stdout)).toEqual({ sourceBelowSlot: true, exitCode: 0 });
+    expect(readFileSync(file, "utf8")).toBe("hi");
+    expect(result.exitCode).toBe(0);
+  });
+
+  it.concurrent("fd 2 at stdout and fd 1 at stderr swap them", async () => {
+    const result = await run(`
+      const proc = Bun.spawn({
+        cmd: [process.execPath, "-e", "require('fs').writeSync(1, 'to-fd-1,'); require('fs').writeSync(2, 'to-fd-2,')"],
+        stdio: ["ignore", 2, 1],
+      });
+      await proc.exited;
+    `);
+    expect({ stdout: result.stdout, stderr: result.stderr }).toEqual({ stdout: "to-fd-2,", stderr: "to-fd-1," });
+    expect(result.exitCode).toBe(0);
+  });
+});

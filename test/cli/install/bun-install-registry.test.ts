@@ -9719,6 +9719,106 @@ describe("registry/token env var priority", () => {
   });
 });
 
+describe.concurrent("install.scopes rejects a scope that would fall back to the default registry", () => {
+  // A scope entry with an empty `url` (or a misspelt key, so `url` is
+  // missing and a stray key carries the registry) used to inherit the
+  // default registry and send the scope's token there.
+  async function installWithScopes(scopes: string) {
+    const received: { path: string; authorization: string | null }[] = [];
+    await using server = Bun.serve({
+      port: 0,
+      fetch(req) {
+        received.push({ path: new URL(req.url).pathname, authorization: req.headers.get("authorization") });
+        return new Response("not found", { status: 404 });
+      },
+    });
+
+    using dir = tempDir("scopes-empty-url", {
+      "bunfig.toml": `[install]\ncache = false\nregistry = "http://localhost:${server.port}/"\n\n[install.scopes]\n${scopes}\n`,
+      "package.json": JSON.stringify({ name: "foo", version: "1.0.0", dependencies: { "@corp/internal": "1.0.0" } }),
+    });
+
+    await using proc = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+      env,
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr: normalizeBunSnapshot(stderr, dir), exitCode, received };
+  }
+
+  test("object form with an empty url", async () => {
+    const { stderr, exitCode, received } = await installWithScopes(
+      `"@corp" = { url = "", token = "TOK_CORP_PRIVATE" }`,
+    );
+    expect(stderr).toContain('error: Expected a non-empty registry url for scope "@corp"');
+    expect(stderr).toContain("Invalid Bunfig");
+    expect(exitCode).toBe(1);
+    expect(received).toEqual([]);
+  });
+
+  test("object form with an unknown key instead of url", async () => {
+    const { stderr, exitCode, received } = await installWithScopes(
+      `"@corp" = { registry = "https://npm.corp.example/", token = "TOK_CORP_PRIVATE" }`,
+    );
+    expect(stderr).toContain(
+      'error: Unknown registry key "registry". Expected one of "url", "username", "password", "token"',
+    );
+    expect(stderr).toContain("Invalid Bunfig");
+    expect(exitCode).toBe(1);
+    expect(received).toEqual([]);
+  });
+
+  test("string form with an empty url", async () => {
+    const { stderr, exitCode, received } = await installWithScopes(`"@corp" = ""`);
+    expect(stderr).toContain('error: Expected a non-empty registry url for scope "@corp"');
+    expect(stderr).toContain("Invalid Bunfig");
+    expect(exitCode).toBe(1);
+    expect(received).toEqual([]);
+  });
+
+  test("an unknown key in [install] registry is still ignored", async () => {
+    await using server = Bun.serve({
+      port: 0,
+      fetch: () => new Response("not found", { status: 404 }),
+    });
+    using dir = tempDir("registry-unknown-key", {
+      "bunfig.toml": `[install]\ncache = false\nregistry = { url = "http://localhost:${server.port}/", foo = "bar" }\n`,
+      "package.json": JSON.stringify({ name: "foo", version: "1.0.0", dependencies: { "no-deps": "1.0.0" } }),
+    });
+    await using proc = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+      env,
+    });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    expect(stderr).not.toContain("Invalid Bunfig");
+    expect(stderr).toContain(`error: GET http://localhost:${server.port}/no-deps - 404`);
+    expect(exitCode).toBe(1);
+  });
+
+  test("object form with a url and a token only talks to the scope registry", async () => {
+    const scoped: { path: string; authorization: string | null }[] = [];
+    await using scopeServer = Bun.serve({
+      port: 0,
+      fetch(req) {
+        scoped.push({ path: new URL(req.url).pathname, authorization: req.headers.get("authorization") });
+        return new Response("not found", { status: 404 });
+      },
+    });
+    const { stderr, received } = await installWithScopes(
+      `"@corp" = { url = "http://localhost:${scopeServer.port}/", token = "TOK_CORP_PRIVATE" }`,
+    );
+    expect(stderr).not.toContain("Invalid Bunfig");
+    expect(scoped).toEqual([{ path: "/@corp%2finternal", authorization: "Bearer TOK_CORP_PRIVATE" }]);
+    expect(received).toEqual([]);
+  });
+});
+
 test("npm manifest cache entries with invalid package version records are treated as invalid", async () => {
   await write(
     packageJson,

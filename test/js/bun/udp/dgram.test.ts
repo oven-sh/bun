@@ -371,8 +371,8 @@ describe("bind()", () => {
   ] as const)("%s bound to %s emits EINVAL instead of 'listening'", async (type, address) => {
     await using socket = createSocket(type);
     const { promise, resolve, reject } = Promise.withResolvers<any>();
-    socket.on("error", resolve);
-    socket.on("listening", () => reject(new Error("listening")));
+    socket.once("error", resolve);
+    socket.once("listening", () => reject(new Error("listening")));
     socket.bind(0, address);
     const err = await promise;
     expect({ code: err.code, syscall: err.syscall, address: err.address, message: err.message }).toEqual({
@@ -381,10 +381,14 @@ describe("bind()", () => {
       address,
       message: `bind EINVAL ${address}`,
     });
-    // The failed bind leaves the socket unbound, so a correct bind still works.
-    const { promise: listening, resolve: onListening } = Promise.withResolvers<void>();
-    socket.removeAllListeners("listening");
-    socket.bind(0, type === "udp4" ? "127.0.0.1" : "::1", onListening);
+    // The failed bind leaves the socket unbound, so a bind of the right
+    // family still works. A udp6 bind needs an IPv6 loopback on the runner.
+    if (type === "udp6" && !hasIPv6Loopback()) return;
+    const { promise: listening, resolve: onListening, reject: onError } = Promise.withResolvers<void>();
+    socket.removeAllListeners();
+    socket.once("error", onError);
+    socket.once("listening", onListening);
+    socket.bind(0, type === "udp4" ? "127.0.0.1" : "::1");
     await listening;
   });
 });

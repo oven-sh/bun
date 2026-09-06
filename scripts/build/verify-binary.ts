@@ -605,16 +605,8 @@ function verifyPE(spec: VerifySpec): void {
 /** Windows' command line tops out at 32K characters; keep each nm invocation well inside it. */
 const NM_ARGV_BUDGET = 16_000;
 
-function verifyDuplicates(nm: string, rspfile: string, reportPath: string): number {
-  const inputs = readFileSync(rspfile, "utf8")
-    .split("\n")
-    .map(l => l.trim())
-    .filter(l => l.length > 0);
-  assert(inputs.length > 0, `duplicates: ${rspfile} lists no inputs`);
-  // symbol → [ [object, type, size] ]
-  const strong = new Map<string, string[]>();
-  const weakSizes = new Map<string, Map<string, string>>();
-  let scanned = 0;
+/** Run `tool args... <inputs>` over all inputs, chunked to stay under the argv limit. */
+function* chunkedRun(tool: string, args: string[], inputs: string[]): Generator<string> {
   for (let start = 0; start < inputs.length; ) {
     let end = start;
     let length = 0;
@@ -622,54 +614,126 @@ function verifyDuplicates(nm: string, rspfile: string, reportPath: string): numb
       length += inputs[end]!.length + 1;
       end++;
     } while (end < inputs.length && length + inputs[end]!.length < NM_ARGV_BUDGET);
-    // -A: prefix each line with the object (archive:member for archives).
-    // -S: print size. --extern-only --defined-only: what can collide.
-    // -m: Mach-O and LTO bitcode objects print the Darwin form, which is the
-    // only one that says whether a definition is weak ("weak external");
-    // ELF and COFF objects ignore it and print the BSD form, whose type
-    // letter (W/V) carries the same bit.
-    const r = spawnSync(
-      nm,
-      ["-A", "-S", "-m", "--extern-only", "--defined-only", "--no-demangle", ...inputs.slice(start, end)],
-      { encoding: "utf8", maxBuffer: 1 << 30 },
-    );
-    if (r.error) throw new BuildError(`duplicates: failed to run ${nm}`, { cause: r.error });
-    for (const line of r.stdout.split("\n")) {
-      let obj: string, size: string, weak: boolean, common: boolean, name: string;
+    const r = spawnSync(tool, [...args, ...inputs.slice(start, end)], { encoding: "utf8", maxBuffer: 1 << 30 });
+    if (r.error) throw new BuildError(`duplicates: failed to run ${tool}`, { cause: r.error });
+    yield r.stdout;
+    start = end;
+  }
+}
+
+interface Definition {
+  obj: string;
+  name: string;
+  size: string;
+  /** Weak, common or COMDAT: the linker folds duplicates by design. */
+  foldable: boolean;
+}
+
+/**
+ * COFF objects: llvm-nm shows a COMDAT definition (every inline function,
+ * template instantiation and vftable) exactly like a strong one, so COFF
+ * members are read with `llvm-objdump -t` instead, which prints each
+ * section's COMDAT selection. Returns the definitions plus the set of
+ * objects it covered (nm's lines for those are then ignored). Bitcode
+ * members are skipped by objdump and stay with nm.
+ */
+function coffDefinitions(objdump: string, inputs: string[]): { defs: Definition[]; objects: Set<string> } {
+  const defs: Definition[] = [];
+  const objects = new Set<string>();
+  const IMAGE_COMDAT_SELECT_NODUPLICATES = 1;
+  for (const out of chunkedRun(objdump, ["-t"], inputs)) {
+    // One block per object: `<path>:\tfile format coff-…` or `<archive>(<member>):…`.
+    for (const block of out.split(/^(?=\S.*:\tfile format )/m)) {
+      const header = block.match(/^(.*?)(?:\(([^()]*)\))?:\tfile format (\S+)/);
+      if (!header || !header[3]!.startsWith("coff")) continue;
+      const obj = header[2] !== undefined ? `${header[1]}:${header[2]}` : header[1]!; // nm -A's spelling
+      objects.add(obj);
+      const comdat = new Map<number, number>(); // section number → COMDAT selection (0 = not COMDAT)
+      const externals: { sec: number; name: string }[] = [];
+      const lines = block.split("\n");
+      for (let i = 0; i < lines.length; i++) {
+        const m = lines[i]!.match(
+          /^\[ *\d+\]\(sec +(-?\d+)\)\(fl 0x[0-9a-f]+\)\(ty +[0-9a-f]+\)\(scl +(\d+)\) \(nx (\d)\) 0x[0-9a-f]+ (.+)$/,
+        );
+        if (!m) continue;
+        const [sec, scl, nx, name] = [Number(m[1]), Number(m[2]), Number(m[3]), m[4]!];
+        if (scl === 3 && nx === 1) {
+          // Section definition symbol; its AUX record carries the selection.
+          const aux = lines[i + 1]?.match(/^AUX scnlen .* comdat (\d+)/);
+          if (aux) comdat.set(sec, Number(aux[1]));
+        } else if (scl === 2 && sec > 0) {
+          externals.push({ sec, name }); // IMAGE_SYM_CLASS_EXTERNAL, defined
+        }
+      }
+      for (const { sec, name } of externals) {
+        const selection = comdat.get(sec) ?? 0;
+        defs.push({ obj, name, size: "", foldable: selection !== 0 && selection !== IMAGE_COMDAT_SELECT_NODUPLICATES });
+      }
+    }
+  }
+  return { defs, objects };
+}
+
+function verifyDuplicates(nm: string, objdump: string | undefined, rspfile: string, reportPath: string): number {
+  const inputs = readFileSync(rspfile, "utf8")
+    .split("\n")
+    .map(l => l.trim())
+    .filter(l => l.length > 0);
+  assert(inputs.length > 0, `duplicates: ${rspfile} lists no inputs`);
+  const defs: Definition[] = [];
+  // --coff: the target is Windows. COFF members go through objdump (above);
+  // for the LTO bitcode members nm's Darwin form is right except for MS-ABI
+  // vftables/vbtables/RTTI descriptors (??_7 ??_8 ??_R): COMDAT by ABI, but
+  // with RTTI on clang models the vftable as an external *alias* into that
+  // COMDAT, which nm reports as a plain external definition.
+  const coff = objdump !== undefined ? coffDefinitions(objdump, inputs) : undefined;
+  if (coff) defs.push(...coff.defs);
+  const msAbiComdat = (name: string): boolean => coff !== undefined && /^\?\?_[78R]/.test(name);
+  // -A: prefix each line with the object (archive:member for archives).
+  // -S: print size. --extern-only --defined-only: what can collide.
+  // -m: Mach-O and LTO bitcode objects print the Darwin form, which is the
+  // only one that says whether a definition is weak ("weak external"); ELF
+  // objects ignore it and print the BSD form, whose type letter (W/V/C)
+  // carries the same bit.
+  for (const out of chunkedRun(nm, ["-A", "-S", "-m", "--extern-only", "--defined-only", "--no-demangle"], inputs)) {
+    for (const line of out.split("\n")) {
       // Darwin form: `<obj>: <value> (<segment>,<section>) [weak] [private] external [<attrs>] <name>`
       const d = line.match(
         /^(.*): +[-0-9a-fA-F]+ (\([^)]*\)(?: \([^)]*\))*) ((?:weak )?)(?:private )?external (?:\[[^\]]*\] )?(\S+)\s*$/,
       );
       if (d) {
-        [obj, size, weak, common, name] = [d[1]!, "", d[3] !== "", d[2]!.startsWith("(common)"), d[4]!];
-      } else {
-        // BSD form: `<obj>: <value> [<size>] <type> <name>`; value/size are hex, or dashes for bitcode.
-        const b = line.match(/^(.*): +[-0-9a-fA-F]* *([-0-9a-fA-F]*) +([A-Za-z]) (\S+)\s*$/);
-        if (!b) continue;
-        const type = b[3]!;
-        if (!/[TDBRSGWVC]/.test(type)) continue;
-        [obj, size, weak, common, name] = [
-          b[1]!,
-          b[2]!.replace(/^-+$/, ""),
-          type === "W" || type === "V",
-          type === "C",
-          b[4]!,
-        ];
+        const name = d[4]!;
+        defs.push({
+          obj: d[1]!,
+          name,
+          size: "",
+          foldable: d[3] !== "" || d[2]!.startsWith("(common)") || msAbiComdat(name),
+        });
+        continue;
       }
-      scanned++;
-      if (common) continue; // tentative definitions merge by design
-      if (weak) {
-        let sizes = weakSizes.get(name);
-        if (sizes === undefined) weakSizes.set(name, (sizes = new Map()));
-        if (size !== "" && !sizes.has(size)) sizes.set(size, obj);
-      } else {
-        const objs = strong.get(name);
-        if (objs === undefined) strong.set(name, [obj]);
-        else objs.push(obj);
-      }
+      // BSD form: `<obj>: <value> [<size>] <type> <name>`; value/size are hex, or dashes for bitcode.
+      const b = line.match(/^(.*): +[-0-9a-fA-F]* *([-0-9a-fA-F]*) +([A-Za-z]) (\S+)\s*$/);
+      if (!b) continue;
+      const [obj, type] = [b[1]!, b[3]!];
+      if (coff?.objects.has(obj) || !/[TDBRSGWVC]/.test(type)) continue;
+      defs.push({ obj, name: b[4]!, size: b[2]!.replace(/^-+$/, ""), foldable: "WVC".includes(type) });
     }
-    start = end;
   }
+
+  const strong = new Map<string, string[]>();
+  const weakSizes = new Map<string, Map<string, string>>();
+  for (const { obj, name, size, foldable } of defs) {
+    if (foldable) {
+      let sizes = weakSizes.get(name);
+      if (sizes === undefined) weakSizes.set(name, (sizes = new Map()));
+      if (size !== "" && !sizes.has(size)) sizes.set(size, obj);
+    } else {
+      const objs = strong.get(name);
+      if (objs === undefined) strong.set(name, [obj]);
+      else objs.push(obj);
+    }
+  }
+  const scanned = defs.length;
   const dups = [...strong].filter(([, objs]) => objs.length > 1);
   const odr = [...weakSizes].filter(([, sizes]) => sizes.size > 1);
   const lines: string[] = [];
@@ -718,14 +782,15 @@ function main(argv: string[]): number {
     return failed > 0 ? 1 : 0;
   }
   if (mode === "duplicates") {
-    const [nm, rspfile, reportPath] = args;
+    // duplicates <nm> <rspfile> <report> [<objdump, for a Windows target>]
+    const [nm, rspfile, reportPath, objdump] = args;
     assert(
       nm !== undefined && rspfile !== undefined && reportPath !== undefined,
       "duplicates: missing <nm> <rspfile> <report>",
     );
-    return verifyDuplicates(nm, rspfile, reportPath);
+    return verifyDuplicates(nm, objdump, rspfile, reportPath);
   }
-  console.error("usage: verify-binary.ts binary <spec.json> | duplicates <nm> <rspfile> <report>");
+  console.error("usage: verify-binary.ts binary <spec.json> | duplicates <nm> <rspfile> <report> [objdump]");
   return 2;
 }
 

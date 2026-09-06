@@ -890,10 +890,11 @@ function emitDuplicateSymbolCheck(
   strippedExe: string | undefined,
 ): string[] {
   const report = duplicateSymbolsReport(cfg, exeName);
-  if (report === undefined || cfg.nm === undefined) return [];
+  // COFF objects need llvm-objdump to tell COMDAT from strong (verify-binary.ts coffDefinitions).
+  if (report === undefined || cfg.nm === undefined || (cfg.windows && cfg.objdump === undefined)) return [];
   const q = (p: string) => quote(p, cfg.windows);
   n.rule("duplicate_symbols", {
-    command: `${cfg.jsRuntime} ${q(streamPath)} check --label=${exeName} --elapsed ${cfg.jsRuntime} ${q(verifyBinaryPath)} duplicates ${q(cfg.nm)} $out.rsp $out`,
+    command: `${cfg.jsRuntime} ${q(streamPath)} check --label=${exeName} --elapsed ${cfg.jsRuntime} ${q(verifyBinaryPath)} duplicates ${q(cfg.nm)} $out.rsp $out${cfg.windows ? ` ${q(cfg.objdump!)}` : ""}`,
     description: `check ${exeName} link inputs for duplicate definitions`,
     rspfile: "$out.rsp",
     rspfile_content: "$in_newline",

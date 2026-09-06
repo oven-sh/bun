@@ -1464,6 +1464,14 @@ function webkitFlags(wk: WebKitBuild): WebKitFlags {
         // is not part of the build.)
         "/W4",
         ...webkitWarningFlags,
+        // config.h's `#include "JSExportMacros.h"` (and a few like it) name a
+        // header in another JSC directory that the -I list resolves. clang-cl
+        // tries MSVC's rule first — the directories of every file on the
+        // include stack — and when the including .cpp happens to live in that
+        // directory it finds the same file there and warns, once per TU.
+        // JSC header names are unique (they flatten into one framework
+        // directory), so the MSVC rule can never pick a different file here.
+        "-Wno-microsoft-include",
       ]
     : [
         "-fno-strict-aliasing",

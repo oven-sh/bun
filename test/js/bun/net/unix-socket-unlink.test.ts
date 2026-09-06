@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { isLinux, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isLinux, isWindows, tempDir } from "harness";
 import { once } from "node:events";
 import { existsSync, writeFileSync } from "node:fs";
 import { createServer } from "node:net";
@@ -8,7 +8,28 @@ import { join } from "node:path";
 // Node.js/libuv behavior for unix domain sockets:
 // - bind() does NOT unlink an existing socket file (returns EADDRINUSE)
 // - close() DOES unlink the socket file it created
+// - a listener still open when the event loop runs dry is closed (and its
+//   file unlinked) by environment teardown; process.exit() skips that.
 // Bun previously had this inverted (unlinked before bind, leaked on close).
+
+// Runs `script` (which listens on process.argv[2] and prints "listening") in a
+// child and reports whether the socket file outlives the child.
+async function socketFileAfterExit(script: string, expectedExitCode = 0) {
+  using dir = tempDir("uds-unlink-exit", { "listen-fixture.mjs": script });
+  const sock = join(String(dir), "s.sock");
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "listen-fixture.mjs", sock],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(stdout).toBe("listening true\n");
+  expect(exitCode).toBe(expectedExitCode);
+  return existsSync(sock);
+}
 
 describe.skipIf(isWindows)("unix domain socket unlink", () => {
   test("Bun.listen removes the socket file on stop()", () => {
@@ -126,6 +147,101 @@ describe.skipIf(isWindows)("unix domain socket unlink", () => {
     expect(existsSync(sock)).toBe(true);
     b.stop();
     expect(existsSync(sock)).toBe(false);
+  });
+
+  describe("a listener left open at exit", () => {
+    test.concurrent("net.Server: unref'd server's socket file is removed on natural exit", async () => {
+      const left = await socketFileAfterExit(`
+        import { existsSync } from "node:fs";
+        import { createServer } from "node:net";
+        const path = process.argv[2];
+        const server = createServer(() => {}).listen(path, () => {
+          console.log("listening", existsSync(path));
+          server.unref();
+        });
+      `);
+      expect(left).toBe(false);
+    });
+
+    test.concurrent("net.Server: the same path can be listened on again by the next process", async () => {
+      using dir = tempDir("uds-unlink-relisten", {
+        "listen-fixture.mjs": `
+          import { createServer } from "node:net";
+          const server = createServer(() => {}).listen(process.argv[2], () => {
+            console.log("listening");
+            server.unref();
+          });
+        `,
+      });
+      const sock = join(String(dir), "s.sock");
+      for (let i = 0; i < 2; i++) {
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), "listen-fixture.mjs", sock],
+          env: bunEnv,
+          cwd: String(dir),
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect(stderr).toBe("");
+        expect(stdout).toBe("listening\n");
+        expect(exitCode).toBe(0);
+      }
+    });
+
+    test.concurrent("net.Server: natural exit with process.exitCode set still removes the file", async () => {
+      const left = await socketFileAfterExit(
+        `
+        import { existsSync } from "node:fs";
+        import { createServer } from "node:net";
+        const path = process.argv[2];
+        const server = createServer(() => {}).listen(path, () => {
+          console.log("listening", existsSync(path));
+          process.exitCode = 3;
+          server.unref();
+        });
+      `,
+        3,
+      );
+      expect(left).toBe(false);
+    });
+
+    test.concurrent("Bun.listen: unref'd listener's socket file is removed on natural exit", async () => {
+      const left = await socketFileAfterExit(`
+        import { existsSync } from "node:fs";
+        const path = process.argv[2];
+        const listener = Bun.listen({ unix: path, socket: { data() {}, open() {} } });
+        console.log("listening", existsSync(path));
+        listener.unref();
+      `);
+      expect(left).toBe(false);
+    });
+
+    test.concurrent("Bun.serve: unref'd server's socket file is removed on natural exit", async () => {
+      const left = await socketFileAfterExit(`
+        import { existsSync } from "node:fs";
+        const path = process.argv[2];
+        const server = Bun.serve({ unix: path, fetch: () => new Response("ok") });
+        console.log("listening", existsSync(path));
+        server.unref();
+      `);
+      expect(left).toBe(false);
+    });
+
+    // Node calls exit() directly for process.exit() without freeing the
+    // environment, so no handle is closed and the file stays.
+    test.concurrent("net.Server: process.exit() leaves the socket file, like node", async () => {
+      const left = await socketFileAfterExit(`
+        import { existsSync } from "node:fs";
+        import { createServer } from "node:net";
+        const path = process.argv[2];
+        createServer(() => {}).listen(path, () => {
+          console.log("listening", existsSync(path));
+          process.exit(0);
+        });
+      `);
+      expect(left).toBe(true);
+    });
   });
 
   test.skipIf(!isLinux)("abstract sockets are not unlinked", () => {

@@ -1533,6 +1533,7 @@ static __BUN_RUNTIME_HOOKS: RuntimeHooks = RuntimeHooks {
     cancel_all_timers,
     stop_dns_for_vm_teardown,
     stop_active_handles_for_vm_teardown: stop_active_handles_for_vm_teardown_hook,
+    unlink_unix_socket_paths_for_exit,
     disarm_all_timers_for_vm_teardown,
     close_timer_loop_handles_after_vm_destroyed,
 };
@@ -1708,6 +1709,23 @@ fn stop_dns_for_vm_teardown() -> SweepResult {
     #[cfg(target_os = "macos")]
     crate::dns_jsc::dns_sd::SharedConnection::close_for_terminate();
     result
+}
+
+/// `RuntimeHooks::unlink_unix_socket_paths_for_exit`. The listeners stay
+/// registered and open: the process is about to exit and nothing is closed,
+/// so no close handler can run after the `exit` event.
+fn unlink_unix_socket_paths_for_exit() {
+    let Some(handles) = active_handles() else {
+        return;
+    };
+    for handle in handles.keys() {
+        match *handle {
+            // SAFETY: live until it unregisters in `do_stop`/`finalize`.
+            ActiveHandle::Listener(l) => unsafe { l.as_ref() }.unlink_unix_socket_path_for_exit(),
+            ActiveHandle::Server(s) => s.unlink_unix_socket_path_for_exit(),
+            _ => {}
+        }
+    }
 }
 
 /// `--isolate` swap: a microtask still pending at end-of-file (queued by

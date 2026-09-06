@@ -1612,6 +1612,17 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         self.listener.is_some() || (Self::HAS_H3 && self.h3_listener.is_some())
     }
 
+    /// Match Node.js/libuv: remove the socket file of a `unix:` server when it
+    /// stops listening. Abstract sockets (leading NUL) have no file.
+    fn unlink_unix_socket_path(&self) {
+        if let server_config::Address::Unix(path) = &self.config.address {
+            let bytes = path.as_bytes();
+            if !bytes.is_empty() && bytes[0] != 0 {
+                let _ = bun_sys::unlink(path.as_zstr());
+            }
+        }
+    }
+
     pub(crate) fn set_flags(
         &mut self,
         require_host_header: bool,
@@ -1724,12 +1735,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         }
         self.notify_inspector_server_stopped();
 
-        if let server_config::Address::Unix(path) = &self.config.address {
-            let bytes = path.as_bytes();
-            if !bytes.is_empty() && bytes[0] != 0 {
-                let _ = bun_sys::unlink(path.as_zstr());
-            }
-        }
+        self.unlink_unix_socket_path();
 
         if !abrupt {
             // S012: `app::ListenSocket<SSL>` is a ZST opaque — safe deref.
@@ -3992,6 +3998,13 @@ impl AnyServer {
 
     pub(crate) fn stop(&mut self, abrupt: bool) {
         any_server_dispatch_mut!(self, |s| s.stop(abrupt))
+    }
+
+    /// See `RuntimeHooks::unlink_unix_socket_paths_for_exit`.
+    pub(crate) fn unlink_unix_socket_path_for_exit(&self) {
+        any_server_dispatch!(self, |s| if s.listener.is_some() {
+            s.unlink_unix_socket_path();
+        })
     }
 
     pub(crate) fn num_subscribers(&self, topic: &[u8]) -> u32 {

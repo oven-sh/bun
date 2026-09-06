@@ -575,6 +575,32 @@ impl PosixBufferedReader {
         self.limit = ReadLimit(len);
     }
 
+    // A parent that issues a read itself (FileReader reads a non-pollable fd
+    // on the thread pool) drives the same offset/limit bookkeeping as
+    // `read_once` through the three methods below.
+
+    /// The `pread` offset of the next read, when this reader tracks one.
+    pub fn pread_offset(&self) -> Option<u64> {
+        self.flags
+            .contains(PosixFlags::USE_PREAD)
+            .then_some(self._offset as u64)
+    }
+
+    /// `len` cut to the limit and the byte budget; 0 once the limit is used up.
+    pub fn clamp_read_len(&self, len: usize) -> usize {
+        if self.limit.reached() {
+            return 0;
+        }
+        MaxBuf::clamp_read_len(self.maxbuf, self.limit.clamp_len(len))
+    }
+
+    /// Accounts for `n` bytes read outside `read()`; `true` when that used up the limit or the byte budget, which is this reader's EOF.
+    pub fn advance(&mut self, n: usize) -> bool {
+        self._offset += n;
+        let limit_reached = self.limit.charge(n);
+        self.charge_max_buffer(n) || limit_reached
+    }
+
     // Exists for consistently with Windows.
     pub fn has_pending_read(&self) -> bool {
         // `is_watching()` (registered && !needs-rearm) rather than

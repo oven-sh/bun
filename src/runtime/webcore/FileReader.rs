@@ -66,6 +66,15 @@ pub struct FileReader {
     /// path; `pull_into_sink` is the drain-ack resume.
     pub(crate) sink: JsCell<SinkHandle>,
     pub(crate) sink_paused: Cell<bool>,
+    /// POSIX: a non-pollable fd (regular file, character device) is read on
+    /// the thread pool (`file_read`), one read at a time; this is set while
+    /// one is out. Its completion delivers through `on_read_chunk` like a
+    /// poll-driven read does.
+    #[cfg(unix)]
+    pub(crate) file_read_in_flight: Cell<bool>,
+    /// POSIX: the fd is a regular file, so a short read means EOF.
+    #[cfg(unix)]
+    pub(crate) regular_file: Cell<bool>,
 }
 
 impl Default for FileReader {
@@ -90,6 +99,10 @@ impl Default for FileReader {
             flowing: Cell::new(true),
             sink: JsCell::new(SinkHandle::None),
             sink_paused: Cell::new(false),
+            #[cfg(unix)]
+            file_read_in_flight: Cell::new(false),
+            #[cfg(unix)]
+            regular_file: Cell::new(false),
         }
     }
 }
@@ -107,6 +120,8 @@ pub struct OpenedFileBlob {
     pub(crate) nonblocking: bool,
     #[cfg(not(windows))]
     pub(crate) file_type: FileType,
+    #[cfg(not(windows))]
+    pub(crate) regular_file: bool,
 }
 
 impl Default for OpenedFileBlob {
@@ -117,6 +132,8 @@ impl Default for OpenedFileBlob {
             nonblocking: true,
             #[cfg(not(windows))]
             file_type: FileType::File,
+            #[cfg(not(windows))]
+            regular_file: false,
         }
     }
 }
@@ -217,6 +234,7 @@ impl Lazy {
 
             if sys::S::ISREG(mode) {
                 is_nonblocking = false;
+                this.regular_file = true;
             }
 
             // pollable: `S.ISFIFO(mode) or S.ISSOCK(mode)`
@@ -336,6 +354,7 @@ impl FileReader {
                             #[cfg(unix)]
                             {
                                 file_type = opened.file_type;
+                                self.regular_file.set(opened.regular_file);
                             }
                             #[cfg(unix)]
                             {
@@ -380,12 +399,13 @@ impl FileReader {
         if was_lazy {
             // The across-read ref roots the JS wrapper (`increment_count`
             // upgrades `this_jsvalue` to Strong) so an event-loop callback
-            // firing with no JS on the stack never lands on a freed box. For a
-            // POSIX non-pollable regular file every read is synchronous
-            // (`read_file` → `sys::pread`), so there is no such callback —
-            // holding the Strong there would root an abandoned reader forever
-            // and leak its fd. Windows file reads are async via libuv even for
-            // regular files, so the ref is always taken there.
+            // firing with no JS on the stack never lands on a freed box. A
+            // POSIX non-pollable fd is read on the thread pool one read at a
+            // time, and each read pins the source only while it is out
+            // (`schedule_file_read`), so an abandoned reader is not rooted
+            // between reads and its fd is not leaked. Windows file reads are
+            // async via libuv even for regular files, so the ref is always
+            // taken there.
             #[cfg(unix)]
             let need_io_ref = pollable;
             #[cfg(windows)]
@@ -578,11 +598,9 @@ impl FileReader {
             );
             return;
         }
-        if !self.reader().has_pending_read() {
+        if !self.has_pending_read() {
             self.reader().unpause();
-            // SAFETY: the reader cell is live for `self`'s lifetime; `read` is
-            // the raw re-entrancy-safe entry (its dispatch runs user JS).
-            unsafe { IOReader::read(self.reader.get()) };
+            self.read();
         }
     }
 
@@ -593,9 +611,37 @@ impl FileReader {
         }
         self.done.set(true);
         self.reader().update_ref(false);
+        // A thread-pool read that is still out owns the fd until it lands;
+        // `on_file_read` closes the reader then.
+        #[cfg(unix)]
+        if self.file_read_in_flight.get() {
+            return;
+        }
         if !self.reader().is_done() {
             self.reader().close();
         }
+    }
+
+    /// A read is out and will deliver through `on_read_chunk` / `on_reader_done`.
+    fn has_pending_read(&self) -> bool {
+        #[cfg(unix)]
+        if self.file_read_in_flight.get() {
+            return true;
+        }
+        self.reader().has_pending_read()
+    }
+
+    /// Issues the next read: poll-driven for a pollable fd, on the thread
+    /// pool for a POSIX non-pollable one.
+    fn read(&self) {
+        #[cfg(unix)]
+        if self.reads_on_thread_pool() {
+            self.schedule_file_read();
+            return;
+        }
+        // SAFETY: the reader cell is live for `self`'s lifetime; `read` is
+        // the raw re-entrancy-safe entry (its dispatch runs user JS).
+        unsafe { IOReader::read(self.reader.get()) };
     }
 
     // NOTE: not `impl Drop` — FileReader is embedded as `Source.context` and this is
@@ -808,6 +854,19 @@ impl FileReader {
             return self.end_of_reader();
         }
 
+        #[cfg(unix)]
+        if self.reads_on_thread_pool() {
+            if !self.file_read_in_flight.get() && self.flowing.get() {
+                // A used-up slice window ends here without a read, as `read_into` would.
+                if self.reader().clamp_read_len(buffer.len()) == 0 {
+                    self.reader().close();
+                    return self.end_of_reader();
+                }
+                self.schedule_file_read_of(buffer.len());
+            }
+            return self.park_pull(buffer, array);
+        }
+
         if !self.reader().has_pending_read() && self.flowing.get() {
             // SAFETY: the reader cell is live for `self`'s lifetime; `read_into` is the raw re-entrancy-safe entry (EOF/error dispatch runs user JS).
             let (amount_read, state) = unsafe { IOReader::read_into(self.reader.get(), buffer) };
@@ -838,17 +897,19 @@ impl FileReader {
             }
         }
 
-        let buffer_len = buffer.len();
-        let global = self.parent_global();
-        self.pending_value.with_mut(|p| p.set(&global, array));
-        self.pending_view.set(buffer);
         #[cfg(windows)]
         if self.flowing.get() {
             self.reader().unpause();
         }
+        self.park_pull(buffer, array)
+    }
 
-        bun_core::scoped_log!(FileReader, "onPull({}) = pending", buffer_len);
-
+    /// Parks the pull: the next delivery (`resolve_pending_read`) fills `buffer` and settles `pending`.
+    fn park_pull(&self, buffer: &'static mut [u8], array: JSValue) -> streams::Result {
+        bun_core::scoped_log!(FileReader, "onPull({}) = pending", buffer.len());
+        let global = self.parent_global();
+        self.pending_value.with_mut(|p| p.set(&global, array));
+        self.pending_view.set(buffer);
         streams::Result::Pending(self.pending.as_ptr())
     }
 
@@ -859,7 +920,7 @@ impl FileReader {
             return out;
         }
 
-        if self.reader().has_pending_read() {
+        if self.has_pending_read() {
             return Vec::<u8>::default();
         }
 
@@ -1016,11 +1077,8 @@ impl FileReader {
 
         if flag {
             self.reader().unpause();
-            if !self.reader().is_done() && !self.reader().has_pending_read() {
-                // Kick off a new read if needed
-                // SAFETY: the reader cell is live for `self`'s lifetime; `read` is
-                // the raw re-entrancy-safe entry (its dispatch runs user JS).
-                unsafe { IOReader::read(self.reader.get()) };
+            if !self.reader().is_done() && !self.has_pending_read() {
+                self.read();
             }
         } else {
             self.reader().pause();
@@ -1031,14 +1089,193 @@ impl FileReader {
         // ReadableStreamSource covers @sizeOf(FileReader)
         self.reader().memory_cost() + self.buffered.get().capacity()
     }
+
+    /// A regular file or a character device cannot be polled, and a `read`
+    /// on it can take arbitrarily long (disk, `/dev/urandom`) or never make
+    /// progress towards EOF (`/dev/zero`). Such an fd is read on the thread
+    /// pool so the event loop keeps turning between chunks.
+    #[cfg(unix)]
+    fn reads_on_thread_pool(&self) -> bool {
+        use bun_io::pipe_reader::PosixFlags;
+        self.started.get() && !self.reader().flags.contains(PosixFlags::POLLABLE)
+    }
+
+    #[cfg(unix)]
+    fn schedule_file_read(&self) {
+        self.schedule_file_read_of(FILE_READ_CHUNK_SIZE);
+    }
+
+    /// Puts one read of up to `len` bytes on the thread pool. `on_file_read`
+    /// runs on this thread when it lands.
+    #[cfg(unix)]
+    fn schedule_file_read_of(&self, len: usize) {
+        use bun_io::pipe_reader::PosixFlags;
+        debug_assert!(!self.file_read_in_flight.get());
+        let reader = self.reader();
+        // The same gate as `BufferedReader::read`: a paused reader reads nothing.
+        if reader.flags.contains(PosixFlags::IS_PAUSED) || reader.is_done() {
+            return;
+        }
+        let len = reader.clamp_read_len(len);
+        if len == 0 {
+            // The slice window is used up: EOF without a read.
+            reader.close();
+            return;
+        }
+        let read = FileRead {
+            fd: reader.get_fd(),
+            offset: reader.pread_offset(),
+            regular_file: self.regular_file.get(),
+            buf: Vec::with_capacity(len),
+            result: Ok(false),
+        };
+        self.file_read_in_flight.set(true);
+        let global = self.parent_global();
+        // SAFETY: see `parent()`. The pin keeps the source, and through
+        // `increment_count` its JS wrapper, alive until the read lands.
+        let pin = unsafe { SourcePin::new(self.parent()) };
+        jsc::Job::<FileRead>::schedule(&global.js_thread(), read, pin);
+    }
+
+    /// JS thread: a thread-pool read landed. `buf` holds what it read; `result`
+    /// is whether the source is at EOF, or the read error.
+    #[cfg(unix)]
+    fn on_file_read(&self, buf: Vec<u8>, result: sys::Result<bool>) {
+        bun_core::scoped_log!(
+            FileReader,
+            "onFileRead() = {} (eof: {})",
+            buf.len(),
+            matches!(result, Ok(true))
+        );
+        self.file_read_in_flight.set(false);
+        if self.done.get() {
+            // Cancelled while the read was out; `on_cancel` left the close to us.
+            if !self.reader().is_done() {
+                self.reader().close();
+            }
+            return;
+        }
+        let eof = match result {
+            Ok(eof) => eof,
+            Err(err) => {
+                // SAFETY: the reader cell is live for `self`'s lifetime; the
+                // error dispatch runs user JS and the caller's pin outlives it.
+                unsafe { IOReader::on_error(self.reader.get(), err) };
+                return;
+            }
+        };
+        let eof = self.reader().advance(buf.len()) || eof;
+        if buf.is_empty() {
+            // EOF with nothing read: `on_reader_done` settles the parked pull.
+            self.reader().close();
+            return;
+        }
+        let state = if eof { ReadState::Eof } else { ReadState::Progress };
+        let keep_going = self.on_read_chunk(Chunk::Owned(buf), state);
+        if eof {
+            // JS inside `on_read_chunk` may have pulled again and ended the reader already.
+            if !self.reader().is_done() {
+                self.reader().close();
+            }
+            return;
+        }
+        // Read one chunk ahead of the next pull; `on_read_chunk` stops asking
+        // once a chunk sits in `buffered` with no pull to take it.
+        if keep_going
+            && self.flowing.get()
+            && !self.done.get()
+            && !self.file_read_in_flight.get()
+            && !self.reader().is_done()
+        {
+            self.schedule_file_read();
+        }
+    }
+}
+
+#[cfg(unix)]
+const FILE_READ_CHUNK_SIZE: usize = 256 * 1024;
+
+/// One thread-pool read of a non-pollable fd for a `FileReader`.
+#[cfg(unix)]
+struct FileRead {
+    fd: Fd,
+    /// `pread` at this offset, or `read` at the fd's own.
+    offset: Option<u64>,
+    regular_file: bool,
+    /// Filled up to its capacity.
+    buf: Vec<u8>,
+    /// Whether the source is at EOF after this read.
+    result: sys::Result<bool>,
+}
+
+#[cfg(unix)]
+impl FileRead {
+    /// Pool thread. A regular file is read until the buffer is full or a read
+    /// returns 0, so its EOF arrives with the last bytes instead of one round
+    /// trip later. Anything else gets one `read`, which may block.
+    fn fill(&mut self) -> sys::Result<bool> {
+        let cap = self.buf.capacity();
+        loop {
+            let filled = self.buf.len();
+            // SAFETY: the syscall writes only into the spare capacity and
+            // reports how many bytes it wrote; exactly those are committed.
+            let read = unsafe {
+                let spare = bun_core::vec::spare_bytes_mut(&mut self.buf);
+                let read = match self.offset {
+                    Some(offset) => sys::pread(
+                        self.fd,
+                        spare,
+                        i64::try_from(offset + filled as u64).expect("int cast"),
+                    ),
+                    None => sys::read(self.fd, spare),
+                };
+                if let Ok(n) = read {
+                    bun_core::vec::commit_spare(&mut self.buf, n);
+                }
+                read
+            };
+            match read {
+                Ok(0) => return Ok(true),
+                Ok(_) if self.buf.len() < cap && self.regular_file => continue,
+                Ok(_) => return Ok(false),
+                // The bytes already read are delivered; the error comes back on the next read.
+                Err(_) if filled > 0 => return Ok(false),
+                Err(err) => return Err(err),
+            }
+        }
+    }
+}
+
+#[cfg(unix)]
+impl jsc::JobContext for FileRead {
+    type OffThread = FileRead;
+    type Js = SourcePin;
+
+    fn run(this: &mut FileRead, done: jsc::Completion<Self>) -> Option<jsc::Completion<Self>> {
+        this.result = this.fill();
+        Some(done)
+    }
+
+    fn then(this: FileRead, pin: SourcePin, _cx: &jsc::JsThread<'_>) -> jsc::JsResult<()> {
+        // SAFETY: the pin kept the source, which embeds the reader, alive across the read.
+        let reader = unsafe { &(*pin.0).context };
+        reader.on_file_read(this.buf, this.result);
+        drop(pin);
+        Ok(())
+    }
 }
 
 pub type Source = readable_stream::NewSource<FileReader>;
 
 /// Holds a ref on the `Source` that embeds a `FileReader` while a dispatch runs
-/// user JS. Dropping it releases the ref and can free the source, so a pin must
-/// outlive every use of the reader it protects.
+/// user JS or a thread-pool read is out. Dropping it releases the ref and can
+/// free the source, so a pin must outlive every use of the reader it protects.
 struct SourcePin(*mut Source);
+
+// SAFETY: a ref on a JS-thread object, taken and released on that thread only
+// (a job carries it as its `Js` half, which never leaves the thread).
+#[cfg(unix)]
+unsafe impl bun_jsc::job::JsAffine for SourcePin {}
 
 impl SourcePin {
     /// # Safety

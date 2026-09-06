@@ -54,6 +54,12 @@ extern "system" fn windows_ctrl_handler(ctrl: bun_sys::windows::DWORD) -> bun_sy
 #[cfg(unix)]
 const SIGNALS: [i32; 3] = [libc::SIGINT, libc::SIGTERM, libc::SIGHUP];
 
+/// Bit `i` is set when `SIGNALS[i]` was hooked. A signal the parent ignores
+/// (`nohup`, `trap "" HUP`) stays ignored: the children inherit that, and
+/// hooking it would turn a hangup they survive into an abort.
+#[cfg(unix)]
+static HOOKED: AtomicU8 = AtomicU8::new(0);
+
 /// `loop_` is the uws loop the run loop ticks. `SA_RESETHAND` and
 /// [`uninstall`] together make a second signal kill the runner at once, for
 /// a child that does not react to the forwarded signal.
@@ -68,9 +74,17 @@ pub(crate) fn install(loop_: *mut bun_uws::Loop) {
             action.sa_sigaction = posix_signal_handler as *const () as usize;
             libc::sigemptyset(&raw mut action.sa_mask);
             action.sa_flags = (libc::SA_SIGINFO | libc::SA_RESTART | libc::SA_RESETHAND) as _;
-            for sig in SIGNALS {
-                libc::sigaction(sig, &raw const action, core::ptr::null_mut());
+            let mut hooked: u8 = 0;
+            for (i, sig) in SIGNALS.into_iter().enumerate() {
+                let mut previous: libc::sigaction = bun_core::ffi::zeroed();
+                libc::sigaction(sig, &raw const action, &raw mut previous);
+                if previous.sa_sigaction == libc::SIG_IGN {
+                    libc::sigaction(sig, &raw const previous, core::ptr::null_mut());
+                } else {
+                    hooked |= 1 << i;
+                }
             }
+            HOOKED.store(hooked, Ordering::Release);
         }
     }
     #[cfg(windows)]
@@ -85,15 +99,19 @@ pub(crate) fn install(loop_: *mut bun_uws::Loop) {
     }
 }
 
-/// Restores the default disposition so the next signal ends the process at once.
+/// Restores the default disposition of each hooked signal so the next one
+/// ends the process at once.
 pub(crate) fn uninstall() {
     #[cfg(unix)]
     {
+        let hooked = HOOKED.load(Ordering::Acquire);
         // SAFETY: all-zero is a valid `libc::sigaction` and means SIG_DFL.
         unsafe {
             let action: libc::sigaction = bun_core::ffi::zeroed();
-            for sig in SIGNALS {
-                libc::sigaction(sig, &raw const action, core::ptr::null_mut());
+            for (i, sig) in SIGNALS.into_iter().enumerate() {
+                if hooked & (1 << i) != 0 {
+                    libc::sigaction(sig, &raw const action, core::ptr::null_mut());
+                }
             }
         }
     }

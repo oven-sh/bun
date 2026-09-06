@@ -2291,6 +2291,30 @@ describe.concurrent.skipIf(isWindows)("signals", () => {
     expect(r.exitCode).toBe(143);
   });
 
+  test("a SIGHUP the runner inherited as ignored stays ignored", async () => {
+    using dir = tempDir("mr-sig-nohup", trapPackage("SIGINT"));
+    // `trap "" HUP` makes the runner (and its scripts) start with SIGHUP ignored, like under nohup.
+    await using proc = Bun.spawn({
+      cmd: ["sh", "-c", 'trap "" HUP; exec "$0" run --parallel a b', bunExe()],
+      env: { ...bunEnv, NO_COLOR: "1" },
+      cwd: String(dir),
+      stderr: "pipe",
+      stdout: "pipe",
+    });
+    const ready = Promise.withResolvers<void>();
+    const stdoutPromise = collect(proc.stdout, text => {
+      if (text.split("ready").length - 1 >= 2) ready.resolve();
+    });
+    await ready.promise;
+    proc.kill("SIGHUP");
+    // The hangup must not abort the run: a SIGINT afterwards still reaches both scripts.
+    proc.kill("SIGINT");
+    const [stdout, , exitCode] = await Promise.all([stdoutPromise, proc.stderr.text(), proc.exited]);
+    expectPrefixed(stdout, "a", "got SIGINT");
+    expectPrefixed(stdout, "b", "got SIGINT");
+    expect(exitCode).toBe(130);
+  });
+
   test("sequential: SIGINT stops the chain and exits 130 even though the script exited 0", async () => {
     using dir = tempDir("mr-sig-seq", trapPackage("SIGINT"));
     const r = await runAndSignal(["--sequential", "a", "b"], String(dir), "SIGINT", 1);

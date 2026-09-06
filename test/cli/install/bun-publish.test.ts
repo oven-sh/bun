@@ -921,6 +921,136 @@ describe.concurrent("credentials in the registry url", () => {
     expect(mock.requests).toEqual([]);
     expect(exitCode).toBe(1);
   });
+
+  // `.npmrc` holds the default registry and a `//host/:_authToken` line for a
+  // second host. When the registry is switched to that second host, the token
+  // keyed to it must be sent there, as npm does.
+  async function packageDirWithNpmrc(name: string, defaultPort: number, targetPort: number, npmrcExtra = "") {
+    const packageDir = await packageDirFor(name);
+    await write(
+      join(packageDir, ".npmrc"),
+      `registry=http://localhost:${defaultPort}/\n` +
+        `//localhost:${defaultPort}/:_authToken=default-host-token\n` +
+        `//localhost:${targetPort}/:_authToken=target-host-token\n` +
+        npmrcExtra,
+    );
+    return packageDir;
+  }
+
+  test("--registry picks up the .npmrc token keyed to that host", async () => {
+    using defaultMock = registryMock();
+    using targetMock = registryMock();
+    const packageDir = await packageDirWithNpmrc("npmrc-flag-host-pkg", defaultMock.port, targetMock.port);
+
+    const { out, err, exitCode } = await publish(env, packageDir, "--registry", `http://localhost:${targetMock.port}/`);
+    expect(err).not.toContain("error:");
+    expect(out).toContain(`Registry: http://localhost:${targetMock.port}/\n`);
+    expect(out).toContain(" + npmrc-flag-host-pkg@1.0.0");
+    expect(defaultMock.requests).toEqual([]);
+    expect(targetMock.requests).toEqual([
+      { method: "PUT", pathname: "/npmrc-flag-host-pkg", authorization: "Bearer target-host-token" },
+    ]);
+    expect(exitCode).toBe(0);
+  });
+
+  test("--registry with an upper-case host still matches the .npmrc token", async () => {
+    using defaultMock = registryMock();
+    using targetMock = registryMock();
+    const packageDir = await packageDirWithNpmrc("npmrc-upper-host-pkg", defaultMock.port, targetMock.port);
+
+    const { out, err, exitCode } = await publish(env, packageDir, "--registry", `http://LOCALHOST:${targetMock.port}/`);
+    expect(err).not.toContain("error:");
+    expect(out).toContain(" + npmrc-upper-host-pkg@1.0.0");
+    expect(defaultMock.requests).toEqual([]);
+    expect(targetMock.requests).toEqual([
+      { method: "PUT", pathname: "/npmrc-upper-host-pkg", authorization: "Bearer target-host-token" },
+    ]);
+    expect(exitCode).toBe(0);
+  });
+
+  test("--registry with a path picks up the .npmrc token keyed to that path", async () => {
+    using defaultMock = registryMock();
+    using targetMock = registryMock();
+    const packageDir = await packageDirWithNpmrc(
+      "npmrc-path-pkg",
+      defaultMock.port,
+      targetMock.port,
+      `//localhost:${targetMock.port}/repository/npm-hosted/:_authToken=path-token\n`,
+    );
+
+    const { out, err, exitCode } = await publish(
+      env,
+      packageDir,
+      "--registry",
+      `http://localhost:${targetMock.port}/repository/npm-hosted/`,
+    );
+    expect(err).not.toContain("error:");
+    expect(out).toContain(" + npmrc-path-pkg@1.0.0");
+    expect(defaultMock.requests).toEqual([]);
+    expect(targetMock.requests).toEqual([
+      { method: "PUT", pathname: "/repository/npm-hosted/npmrc-path-pkg", authorization: "Bearer path-token" },
+    ]);
+    expect(exitCode).toBe(0);
+  });
+
+  test("--registry picks up a .npmrc _auth keyed to that host", async () => {
+    using defaultMock = registryMock();
+    using targetMock = registryMock();
+    const packageDir = await packageDirFor("npmrc-auth-host-pkg");
+    await write(
+      join(packageDir, ".npmrc"),
+      `registry=http://localhost:${defaultMock.port}/\n` +
+        `//localhost:${targetMock.port}/:_auth=${Buffer.from("pubuser:hunter2").toString("base64")}\n`,
+    );
+
+    const { out, err, exitCode } = await publish(env, packageDir, "--registry", `http://localhost:${targetMock.port}/`);
+    expect(err).not.toContain("error:");
+    expect(out).toContain(" + npmrc-auth-host-pkg@1.0.0");
+    expect(defaultMock.requests).toEqual([]);
+    expect(targetMock.requests).toEqual([
+      { method: "PUT", pathname: "/npmrc-auth-host-pkg", authorization: basicAuth },
+    ]);
+    expect(exitCode).toBe(0);
+  });
+
+  test.each(["npm_config_registry", "NPM_CONFIG_REGISTRY", "BUN_CONFIG_REGISTRY"])(
+    "%s picks up the .npmrc token keyed to that host",
+    async key => {
+      using defaultMock = registryMock();
+      using targetMock = registryMock();
+      const packageDir = await packageDirWithNpmrc("npmrc-env-host-pkg", defaultMock.port, targetMock.port);
+
+      const { out, err, exitCode } = await publish(
+        { ...env, [key]: `http://localhost:${targetMock.port}/` },
+        packageDir,
+      );
+      expect(err).not.toContain("error:");
+      expect(out).toContain(`Registry: http://localhost:${targetMock.port}/\n`);
+      expect(out).toContain(" + npmrc-env-host-pkg@1.0.0");
+      expect(defaultMock.requests).toEqual([]);
+      expect(targetMock.requests).toEqual([
+        { method: "PUT", pathname: "/npmrc-env-host-pkg", authorization: "Bearer target-host-token" },
+      ]);
+      expect(exitCode).toBe(0);
+    },
+  );
+
+  test("--registry host with no .npmrc entry does not inherit the default registry token", async () => {
+    using defaultMock = registryMock();
+    using targetMock = registryMock();
+    const packageDir = await packageDirFor("npmrc-unlisted-host-pkg");
+    await write(
+      join(packageDir, ".npmrc"),
+      `registry=http://localhost:${defaultMock.port}/\n` +
+        `//localhost:${defaultMock.port}/:_authToken=default-host-token\n`,
+    );
+
+    const { err, exitCode } = await publish(env, packageDir, "--registry", `http://127.0.0.1:${targetMock.port}/`);
+    expect(err).toBe("error: missing authentication (run `bunx npm login`)\n");
+    expect(defaultMock.requests).toEqual([]);
+    expect(targetMock.requests).toEqual([]);
+    expect(exitCode).toBe(1);
+  });
 });
 
 describe("lifecycle scripts", async () => {

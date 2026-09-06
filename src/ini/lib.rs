@@ -139,7 +139,6 @@ mod draft {
     use bun_core::ZStr;
     use bun_core::{Global, Output};
     use bun_dotenv::Loader as DotEnvLoader;
-    use bun_url::URL;
 
     use super::{
         ConfigItem, ConfigOpt, IniOption, NODE_LINKER_MAP, NodeLinker, is_quoted, next_dot,
@@ -1079,97 +1078,54 @@ mod draft {
     // RegistryAuth
     // ──────────────────────────────────────────────────────────────────────────
 
-    pub struct RegistryAuth {
-        host: Box<[u8]>,
-        pathname: Box<[u8]>,
-        credential: RegistryCredential,
-    }
+    pub use bun_api::NpmRegistryAuth as RegistryAuth;
+    use bun_api::NpmRegistryCredential as RegistryCredential;
 
-    enum RegistryCredential {
-        Token(Box<[u8]>),
-        Username(Box<[u8]>),
-        Password(Box<[u8]>),
-        UsernamePassword {
-            username: Box<[u8]>,
-            password: Box<[u8]>,
-        },
-        Email(Box<[u8]>),
-    }
-
-    impl RegistryAuth {
-        pub(crate) fn from_config_item(
-            item: ConfigItem,
-            log: &mut Log,
-            source: &Source,
-        ) -> Option<RegistryAuth> {
-            let ConfigItem {
-                registry_url,
-                optname,
-                value,
-                loc,
-                optname_loc: _,
-            } = item;
-            let credential = match optname {
-                ConfigOpt::_AuthToken => RegistryCredential::Token(value),
-                ConfigOpt::Username => RegistryCredential::Username(value),
-                ConfigOpt::Email => RegistryCredential::Email(value),
-                ConfigOpt::_Password => {
-                    if value.is_empty() {
-                        RegistryCredential::Password(Box::default())
-                    } else {
-                        let mut decoded = vec![0u8; bun_base64::decode_len(&value)];
-                        let result = bun_base64::decode(&mut decoded[..], &value);
-                        if !result.is_successful() {
-                            log.add_error_fmt_opts(
-                                format_args!(
-                                    "{} is not valid base64",
-                                    <&'static str>::from(optname)
-                                ),
-                                bun_ast::AddErrorOptions {
-                                    source: Some(source),
-                                    loc,
-                                    redact_sensitive_information: true,
-                                    ..Default::default()
-                                },
-                            );
-                            return None;
-                        }
-                        decoded.truncate(result.count);
-                        RegistryCredential::Password(decoded.into_boxed_slice())
+    fn registry_auth_from_config_item(
+        item: ConfigItem,
+        log: &mut Log,
+        source: &Source,
+    ) -> Option<RegistryAuth> {
+        let ConfigItem {
+            registry_url,
+            optname,
+            value,
+            loc,
+            optname_loc: _,
+        } = item;
+        let credential = match optname {
+            ConfigOpt::_AuthToken => RegistryCredential::Token(value),
+            ConfigOpt::Username => RegistryCredential::Username(value),
+            ConfigOpt::Email => RegistryCredential::Email(value),
+            ConfigOpt::_Password => {
+                if value.is_empty() {
+                    RegistryCredential::Password(Box::default())
+                } else {
+                    let mut decoded = vec![0u8; bun_base64::decode_len(&value)];
+                    let result = bun_base64::decode(&mut decoded[..], &value);
+                    if !result.is_successful() {
+                        log.add_error_fmt_opts(
+                            format_args!("{} is not valid base64", <&'static str>::from(optname)),
+                            bun_ast::AddErrorOptions {
+                                source: Some(source),
+                                loc,
+                                redact_sensitive_information: true,
+                                ..Default::default()
+                            },
+                        );
+                        return None;
                     }
+                    decoded.truncate(result.count);
+                    RegistryCredential::Password(decoded.into_boxed_slice())
                 }
-                ConfigOpt::_Auth => {
-                    let (username, password) = parse_auth(&value, loc, log, source)?;
-                    RegistryCredential::UsernamePassword { username, password }
-                }
-                ConfigOpt::Certfile | ConfigOpt::Keyfile => return None,
-            };
-            let url = URL::parse(&registry_url);
-            Some(RegistryAuth {
-                host: bun_core::without_trailing_slash(url.host).into(),
-                pathname: bun_core::without_trailing_slash(url.pathname).into(),
-                credential,
-            })
-        }
-
-        pub(crate) fn matches(&self, registry_url: &[u8]) -> bool {
-            let url = URL::parse(registry_url);
-            bun_core::without_trailing_slash(url.host) == &*self.host
-                && bun_core::without_trailing_slash(url.pathname) == &*self.pathname
-        }
-
-        pub(crate) fn apply_to(&self, registry: &mut NpmRegistry) {
-            match &self.credential {
-                RegistryCredential::Token(token) => registry.token.clone_from(token),
-                RegistryCredential::Username(username) => registry.username.clone_from(username),
-                RegistryCredential::Password(password) => registry.password.clone_from(password),
-                RegistryCredential::UsernamePassword { username, password } => {
-                    registry.username.clone_from(username);
-                    registry.password.clone_from(password);
-                }
-                RegistryCredential::Email(email) => registry.email.clone_from(email),
             }
-        }
+            ConfigOpt::_Auth => {
+                let (username, password) = parse_auth(&value, loc, log, source)?;
+                RegistryCredential::UsernamePassword { username, password }
+            }
+            ConfigOpt::Certfile | ConfigOpt::Keyfile => return None,
+        };
+        Some(RegistryAuth::new(&registry_url, credential))
     }
 
     // ──────────────────────────────────────────────────────────────────────────
@@ -1578,7 +1534,7 @@ mod draft {
                     );
                     continue;
                 }
-                if let Some(auth) = RegistryAuth::from_config_item(conf_item, iter.log, source) {
+                if let Some(auth) = registry_auth_from_config_item(conf_item, iter.log, source) {
                     configs.push(auth);
                 }
             }

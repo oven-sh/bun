@@ -615,6 +615,12 @@ impl Options {
             break 'brk Output::stderr_descriptor_type() != Output::DescriptorType::Terminal;
         };
 
+        // `//host/path/:_authToken=` lines in .npmrc that match the registry
+        // chosen by the environment or the CLI. `.npmrc` was matched against
+        // its own `registry=` only.
+        let npmrc_auth: &[Api::NpmRegistryAuth] =
+            bun_install_ref.map_or(&[], |config| &config.registry_auth);
+
         // technically, npm_config is case in-sensitive
         {
             const REGISTRY_KEYS: [&[u8]; 3] = [
@@ -630,7 +636,7 @@ impl Options {
                     {
                         let mut api_registry = Api::NpmRegistry::from_url(registry_);
                         // Credentials in the URL win, as they do for `registry=` in .npmrc.
-                        if !api_registry.has_credentials() {
+                        if !Api::NpmRegistryAuth::apply_matching(npmrc_auth, &mut api_registry) {
                             let prev_url = self.scope.url.url();
                             let new_url = bun_url::URL::parse(&api_registry.url);
                             if bun_core::without_trailing_slash(new_url.host)
@@ -649,8 +655,8 @@ impl Options {
 
         if let Some(cli) = &maybe_cli {
             if !cli.registry.is_empty() {
-                let api_registry = Api::NpmRegistry::from_url(cli.registry);
-                if api_registry.has_credentials() {
+                let mut api_registry = Api::NpmRegistry::from_url(cli.registry);
+                if Api::NpmRegistryAuth::apply_matching(npmrc_auth, &mut api_registry) {
                     self.scope = Npm::registry::Scope::from_api(b"", api_registry, env)?;
                 } else {
                     let new_url = bun_url::URL::parse(&api_registry.url);

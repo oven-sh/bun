@@ -771,6 +771,73 @@ describe("--registry override", () => {
     expect(stdout).toContain("+ no-deps@1.0.0");
     expect(exitCode).toBe(0);
   });
+
+  test("sends the .npmrc token keyed to the --registry host", async () => {
+    const tgz = join(import.meta.dir, "registry", "packages", "no-deps", "no-deps-1.0.0.tgz");
+
+    type Req = { path: string; auth: string | null };
+    const reqsA: Req[] = [];
+    const reqsB: Req[] = [];
+
+    await using serverA = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      fetch(req) {
+        reqsA.push({ path: new URL(req.url).pathname, auth: req.headers.get("authorization") });
+        return new Response("not found", { status: 404 });
+      },
+    });
+    await using serverB = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      fetch(req) {
+        const url = new URL(req.url);
+        reqsB.push({ path: url.pathname, auth: req.headers.get("authorization") });
+        if (url.pathname.endsWith(".tgz")) return new Response(Bun.file(tgz));
+        if (url.pathname === "/no-deps") {
+          return Response.json({
+            name: "no-deps",
+            "dist-tags": { latest: "1.0.0" },
+            versions: {
+              "1.0.0": {
+                name: "no-deps",
+                version: "1.0.0",
+                dist: { tarball: `http://127.0.0.1:${serverB.port}/no-deps/-/no-deps-1.0.0.tgz` },
+              },
+            },
+          });
+        }
+        return new Response("not found", { status: 404 });
+      },
+    });
+
+    using dir = tempDir("npmrc-registry-override-token", {
+      ".npmrc":
+        `registry=http://127.0.0.1:${serverA.port}/\n` +
+        `//127.0.0.1:${serverA.port}/:_authToken=first-host-SECRET-token\n` +
+        `//127.0.0.1:${serverB.port}/:_authToken=second-host-token\n`,
+      "package.json": JSON.stringify({
+        name: "app",
+        version: "1.0.0",
+        dependencies: { "no-deps": "1.0.0" },
+      }),
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "install", "--registry", `http://127.0.0.1:${serverB.port}/`],
+      cwd: String(dir),
+      env: { ...env, BUN_INSTALL_CACHE_DIR: join(String(dir), ".cache") },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(reqsA).toEqual([]);
+    expect(reqsB.map(r => r.auth)).toEqual(reqsB.map(() => "Bearer second-host-token"));
+    expect(reqsB.some(r => r.path === "/no-deps")).toBe(true);
+    expect(stdout).toContain("+ no-deps@1.0.0");
+    expect(exitCode).toBe(0);
+  });
 });
 
 describe.skipIf(!isIPv6())("registry on a bracketed IPv6 host", () => {

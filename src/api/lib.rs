@@ -9,7 +9,8 @@
 // ──────────────────────────────────────────────────────────────────────────
 
 pub use bun_options_types::schema::api::{
-    BunInstall, Ca, NodeLinker, NpmRegistry, NpmRegistryMap, PnpmMatcher,
+    BunInstall, Ca, NodeLinker, NpmRegistry, NpmRegistryAuth, NpmRegistryCredential,
+    NpmRegistryMap, PnpmMatcher,
 };
 
 // ──────────────────────────────────────────────────────────────────────────

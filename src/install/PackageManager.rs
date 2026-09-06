@@ -1382,6 +1382,7 @@ fn overlay_bunfig_install(install: &mut Api::BunInstall, bunfig: Api::BunInstall
     let Api::BunInstall {
         default_registry,
         scoped,
+        registry_auth,
         lockfile_path,
         save_lockfile_path,
         cache_directory,
@@ -1419,6 +1420,8 @@ fn overlay_bunfig_install(install: &mut Api::BunInstall, bunfig: Api::BunInstall
     if let Some(registry) = default_registry {
         install.default_registry = Some(registry);
     }
+
+    install.registry_auth.extend(registry_auth);
 
     if let Some(bunfig_scopes) = scoped {
         match install.scoped.as_mut().filter(|m| !m.scopes.is_empty()) {
@@ -1963,6 +1966,7 @@ pub fn init(
         };
 
         ini::apply_registry_auth(&mut bunfig_install, &registry_auth);
+        install.registry_auth = registry_auth;
         overlay_bunfig_install(&mut install, bunfig_install);
         ctx.install = Some(Box::new(install));
     }

@@ -179,6 +179,73 @@ pub mod api {
         }
     }
 
+    /// One `//host/path/:<option>=<value>` line from `.npmrc`. The
+    /// credential applies to any registry whose host and pathname match.
+    #[derive(Clone, Debug)]
+    pub struct NpmRegistryAuth {
+        host: Box<[u8]>,
+        pathname: Box<[u8]>,
+        credential: NpmRegistryCredential,
+    }
+
+    #[derive(Clone, Debug)]
+    pub enum NpmRegistryCredential {
+        Token(Box<[u8]>),
+        Username(Box<[u8]>),
+        Password(Box<[u8]>),
+        UsernamePassword {
+            username: Box<[u8]>,
+            password: Box<[u8]>,
+        },
+        Email(Box<[u8]>),
+    }
+
+    impl NpmRegistryAuth {
+        pub fn new(registry_url: &[u8], credential: NpmRegistryCredential) -> NpmRegistryAuth {
+            let url = bun_url::URL::parse(registry_url);
+            NpmRegistryAuth {
+                host: bun_core::without_trailing_slash(url.host).into(),
+                pathname: bun_core::without_trailing_slash(url.pathname).into(),
+                credential,
+            }
+        }
+
+        pub fn matches(&self, registry_url: &[u8]) -> bool {
+            let url = bun_url::URL::parse(registry_url);
+            bun_core::strings::eql_case_insensitive_ascii_check_length(
+                bun_core::without_trailing_slash(url.host),
+                &self.host,
+            ) && bun_core::without_trailing_slash(url.pathname) == &*self.pathname
+        }
+
+        pub fn apply_to(&self, registry: &mut NpmRegistry) {
+            match &self.credential {
+                NpmRegistryCredential::Token(token) => registry.token.clone_from(token),
+                NpmRegistryCredential::Username(username) => registry.username.clone_from(username),
+                NpmRegistryCredential::Password(password) => registry.password.clone_from(password),
+                NpmRegistryCredential::UsernamePassword { username, password } => {
+                    registry.username.clone_from(username);
+                    registry.password.clone_from(password);
+                }
+                NpmRegistryCredential::Email(email) => registry.email.clone_from(email),
+            }
+        }
+
+        /// Applies every entry in `auth` that matches `registry.url`.
+        /// Returns true when the registry has credentials afterwards.
+        pub fn apply_matching(auth: &[NpmRegistryAuth], registry: &mut NpmRegistry) -> bool {
+            if registry.has_credentials() {
+                return true;
+            }
+            for item in auth {
+                if item.matches(&registry.url) {
+                    item.apply_to(registry);
+                }
+            }
+            registry.has_credentials()
+        }
+    }
+
     /// Per-scope npm registry overrides, keyed by scope name.
     #[derive(Default)]
     pub struct NpmRegistryMap {
@@ -210,6 +277,9 @@ pub mod api {
         pub default_registry: Option<NpmRegistry>,
         /// scoped
         pub scoped: Option<NpmRegistryMap>,
+        /// Per-host credentials from `.npmrc`, kept so a registry chosen
+        /// later (`--registry`, `NPM_CONFIG_REGISTRY`) can pick up its own.
+        pub registry_auth: Vec<NpmRegistryAuth>,
         /// lockfile_path
         pub lockfile_path: Option<Box<[u8]>>,
         /// save_lockfile_path

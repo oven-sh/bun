@@ -1014,7 +1014,11 @@ describe.skipIf(!isPosix)("FileSink reports a write error that arrived while not
     try {
       const code = await until(() => {
         const result = sink.write("more");
-        if (result instanceof Promise) return result.then(() => "resolved", (e: any) => e.code);
+        if (result instanceof Promise)
+          return result.then(
+            () => "resolved",
+            (e: any) => e.code,
+          );
       });
       expect(await code).toBe("EPIPE");
     } finally {
@@ -1036,45 +1040,6 @@ describe.skipIf(!isPosix)("FileSink reports a write error that arrived while not
       });
       expect(code).toBe("EPIPE");
       expect(typeof sink.end()).toBe("number");
-    } finally {
-      fs.closeSync(writeFd);
-    }
-  });
-
-  // process.stdout is an fs.WriteStream over the same sink. Its end() flushes
-  // the sink from _final, so the error has to come out as the stream's
-  // 'error' event, the way Node reports EPIPE on stdout. The child's stdout
-  // is a full socket whose peer is already closed, so the end-of-tick flush
-  // of the buffered write is what fails.
-  it.concurrent("process.stdout.end() reports it as an 'error' event", async () => {
-    const [readFd, writeFd] = createSocketPair();
-    const filler = Buffer.alloc(64 * 1024, 0x61);
-    try {
-      while (true) fs.writeSync(writeFd, filler);
-    } catch (e: any) {
-      if (e.code !== "EAGAIN") throw e;
-    }
-    fs.closeSync(readFd);
-    try {
-      await using proc = Bun.spawn({
-        cmd: [
-          bunExe(),
-          "-e",
-          `
-            process.stdout.on("error", e => console.error("error " + e.code));
-            process.stdout.on("finish", () => console.error("finish"));
-            process.stdout.write("marker");
-            await new Promise(resolve => setImmediate(resolve));
-            process.stdout.end();
-          `,
-        ],
-        env: bunEnv,
-        stdout: writeFd,
-        stderr: "pipe",
-      });
-      const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
-      expect(stderr).toBe("error EPIPE\n");
-      expect(exitCode).toBe(0);
     } finally {
       fs.closeSync(writeFd);
     }

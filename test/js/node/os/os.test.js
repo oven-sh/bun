@@ -1,6 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import { realpathSync } from "fs";
-import { isWindows } from "harness";
+import { bunEnv, bunExe, isWindows } from "harness";
 import { isIPv4, isIPv6 } from "node:net";
 import * as os from "node:os";
 
@@ -231,6 +231,44 @@ it("devNull", () => {
 
 it("availableParallelism", () => {
   expect(os.availableParallelism()).toBeGreaterThan(0);
+});
+
+describe("WTF_numberOfProcessorCores override", () => {
+  const script = `
+    const os = require("os");
+    require("crypto").pbkdf2("p", "s", 1000, 32, "sha256", err => {
+      if (err) throw err;
+      console.log(JSON.stringify([os.availableParallelism(), navigator.hardwareConcurrency]));
+    });
+  `;
+  async function run(value) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: { ...bunEnv, WTF_numberOfProcessorCores: value },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+    return JSON.parse(stdout);
+  }
+
+  it.concurrent("0 is clamped to 1", async () => {
+    expect(await run("0")).toEqual([1, 1]);
+  });
+
+  it.concurrent("999999 is capped to 1024", async () => {
+    expect(await run("999999")).toEqual([1024, 1024]);
+  });
+
+  it.concurrent("4294967295 does not wrap negative", async () => {
+    expect(await run("4294967295")).toEqual([1024, 1024]);
+  });
+
+  it.concurrent("3 is honored", async () => {
+    expect(await run("3")).toEqual([3, 3]);
+  });
 });
 
 it("loadavg", () => {

@@ -495,7 +495,7 @@ impl WebWorker {
                     .raw_os_error()
                     .map(bun_errno::from_errno)
                     .unwrap_or(bun_errno::SystemErrno::EAGAIN);
-                *error_message = BunString::clone_utf8(errno.to_string().as_bytes());
+                *error_message = BunString::static_(<&'static str>::from(errno));
                 *spawn_failed = true;
                 core::ptr::null_mut()
             }

@@ -861,7 +861,9 @@ describe("worker thread limit", () => {
          console.log("started");
        } catch (e) {
          console.log(JSON.stringify({ code: e.code, message: e.message, name: e.name }));
-       }`,
+       }
+       // A normal exit runs a GC, and its collector thread would be refused too.
+       process.exit(0);`,
     ];
     if (isRoot) cmd.unshift(Bun.which("runuser")!, "-u", "nobody", "--");
     await using proc = Bun.spawn({

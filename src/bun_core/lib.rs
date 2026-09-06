@@ -1811,11 +1811,8 @@ pub(crate) mod strings_impl {
     }
 
     /// Port of `copyLatin1IntoUTF8` — encode Latin-1 into a fixed-size UTF-8 buffer.
-    ///
-    /// A Latin-1 byte encodes to at most 2 UTF-8 bytes, so the next
-    /// `remaining_buf / 2` input bytes always fit. Those go through simdutf,
-    /// and each round at least halves the space left, so only a short tail
-    /// takes the bounded scalar loop.
+    /// simdutf converts the `remaining_buf / 2` bytes that are sure to fit per
+    /// round; the scalar loop takes the short tail.
     pub fn copy_latin1_into_utf8(buf: &mut [u8], latin1: &[u8]) -> EncodeIntoResult {
         let mut read = 0usize;
         let mut written = 0usize;

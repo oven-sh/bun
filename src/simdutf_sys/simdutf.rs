@@ -158,9 +158,8 @@ pub mod convert {
             /// Returns the number of UTF-8 bytes written.
             ///
             /// # Safety
-            /// `output` must hold at least `length::utf8::from::latin1(input)`
-            /// bytes (at most `2 * input.len()`). simdutf writes that many
-            /// bytes without a bound check.
+            /// `output` must hold `length::utf8::from::latin1(input)` bytes
+            /// (at most `2 * input.len()`); simdutf does not bound-check.
             pub unsafe fn utf8(input: &[u8], output: &mut [u8]) -> usize {
                 debug_assert!(output.len() >= length::utf8::from::latin1(input));
                 // SAFETY: the caller upholds the capacity contract above.

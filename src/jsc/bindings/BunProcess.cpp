@@ -3340,11 +3340,23 @@ JSC_DEFINE_HOST_FUNCTION(Process_functiongetgroups, (JSGlobalObject * globalObje
         throwSystemError(throwScope, globalObject, "getgroups"_s, errno);
         return {};
     }
-    JSArray* groups = constructEmptyArray(globalObject, nullptr, ngroups);
-    RETURN_IF_EXCEPTION(throwScope, {});
     Vector<gid_t> groupVector(ngroups);
-    getgroups(ngroups, groupVector.begin());
-    for (unsigned i = 0; i < ngroups; i++) {
+    ngroups = getgroups(ngroups, groupVector.begin());
+    if (ngroups == -1) {
+        throwSystemError(throwScope, globalObject, "getgroups"_s, errno);
+        return {};
+    }
+    groupVector.shrink(ngroups);
+
+    // POSIX leaves it unspecified whether getgroups(2) includes the
+    // effective gid. Node always includes it, so we do the same.
+    gid_t egid = getegid();
+    if (!groupVector.contains(egid))
+        groupVector.append(egid);
+
+    JSArray* groups = constructEmptyArray(globalObject, nullptr, groupVector.size());
+    RETURN_IF_EXCEPTION(throwScope, {});
+    for (unsigned i = 0; i < groupVector.size(); i++) {
         groups->putDirectIndex(globalObject, i, jsNumber(groupVector[i]));
         RETURN_IF_EXCEPTION(throwScope, {});
     }

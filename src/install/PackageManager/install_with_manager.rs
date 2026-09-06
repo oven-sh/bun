@@ -1571,11 +1571,16 @@ fn enqueue_named_updates(
     direct: &DirectDependencies,
     lockfile_name: &'static str,
 ) -> crate::Result<NamedUpdates> {
-    let walkable = crate::update_scope::UpdateScope::of(&*manager).walkable_rows(&manager.lockfile);
+    let direct_only = manager.options.do_.update_direct_only();
+    let scope = crate::update_scope::UpdateScope::of(&*manager);
+    let walkable = if direct_only {
+        scope.direct_walkable_rows(&manager.lockfile)
+    } else {
+        scope.walkable_rows(&manager.lockfile)
+    };
     let plannable_peers = plannable_peer_rows(&manager.lockfile, direct);
     // `--depth 0` keeps the children of a moved package at their locked versions, so there is nothing to refresh.
-    let collect_latest_rows =
-        manager.options.do_.update_to_latest() && !manager.options.do_.update_direct_only();
+    let collect_latest_rows = manager.options.do_.update_to_latest() && !direct_only;
     let requests = manager.update_requests.len();
     let mut matched = DynamicBitSet::init_empty(requests).unwrap_or_oom();
     let mut matched_elsewhere = DynamicBitSet::init_empty(requests).unwrap_or_oom();

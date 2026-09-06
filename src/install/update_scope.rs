@@ -160,10 +160,28 @@ impl UpdateScope<'_> {
 
     /// One bit per dependency row; rows covered by no package's slice (orphans left by the differ) stay unset.
     pub fn walkable_rows(&self, lockfile: &Lockfile) -> DynamicBitSet {
+        self.walkable_rows_of(lockfile, false)
+    }
+
+    /// `bun update --depth 0`: only the rows the root and the workspaces own, so a transitive row that shares a name with a direct dependency stays locked.
+    pub fn direct_walkable_rows(&self, lockfile: &Lockfile) -> DynamicBitSet {
+        self.walkable_rows_of(lockfile, true)
+    }
+
+    fn walkable_rows_of(&self, lockfile: &Lockfile, direct_only: bool) -> DynamicBitSet {
         let mut walk =
             DynamicBitSet::init_empty(lockfile.buffers.dependencies.len()).unwrap_or_oom();
+        let pkg_res = lockfile.packages.items_resolution();
         for (id, slice) in lockfile.packages.items_dependencies().iter().enumerate() {
             if slice.len == 0 {
+                continue;
+            }
+            if direct_only
+                && !matches!(
+                    pkg_res[id].tag,
+                    ResolutionTag::Root | ResolutionTag::Workspace
+                )
+            {
                 continue;
             }
             if self.contains_package(lockfile, id) {

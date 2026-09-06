@@ -2241,6 +2241,40 @@ test.concurrent(
   },
 );
 
+// The root and parent both depend on leaf, on different majors; both rows are parked one release behind.
+const SHARED_NAME: Manifests = {
+  parent: { "1.0.0": { dependencies: { leaf: "^1.0.0" } } },
+  leaf: { "1.0.0": {}, "1.1.0": {}, "2.0.0": {}, "2.1.0": {} },
+};
+
+test.concurrent(
+  "`bun update --depth 0` leaves a transitive row alone even when it shares a name with a direct entry",
+  async () => {
+    using server = await serveRegistry(SHARED_NAME);
+    const dir = await installServed(server, "update-depth-shared-", pkgJson({ parent: "1.0.0", leaf: "1.0.0" }));
+    await reinstall(dir, pkgJson({ parent: "1.0.0", leaf: "2.0.0" }));
+    const packageJson = pkgJson({ parent: "1.0.0", leaf: "^2.0.0" });
+    await reinstall(dir, packageJson);
+    expect(await lockedVersions(dir, "leaf")).toStrictEqual(["1.0.0", "2.0.0"]);
+
+    const { stdout, stderr, exitCode } = await run(dir, "update", "--depth", "0");
+    expectSummary(stdout, movedRow("leaf", "2.0.0", "2.1.0"), "", installed(1));
+    expectCleanStderr(stderr);
+    expect(await packageJsonOf(dir)).toStrictEqual(pkgJson({ parent: "1.0.0", leaf: "^2.1.0" }));
+    expect(await lockedVersions(dir, "leaf")).toStrictEqual(["1.0.0", "2.1.0"]);
+    expect(await installedVersion(dir, "leaf")).toBe("2.1.0");
+    expect(await installedVersion(dir, "parent", "node_modules", "leaf")).toBe("1.0.0");
+    await frozen(dir);
+    expect(exitCode).toBe(0);
+
+    // Naming it moves every row of that name, in range: that is what --depth 0 opts out of.
+    const named = await run(dir, "update", "leaf");
+    expectMoved(named.stdout, "leaf", "1.0.0", "1.1.0");
+    expect(await lockedVersions(dir, "leaf")).toStrictEqual(["1.1.0", "2.1.0"]);
+    expect(named.exitCode).toBe(0);
+  },
+);
+
 test.concurrent("`bun update --depth 0 -r` moves every workspace's direct entries and nothing else", async () => {
   const { dir, locked, stale, texts, textsBefore } = await staleMemberGroups();
   const [rootBefore] = textsBefore;

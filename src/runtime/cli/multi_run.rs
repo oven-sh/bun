@@ -717,6 +717,7 @@ struct GroupInfo {
 /// workspace path (values are owned `Box<[u8]>` copies, see `MatchedPackage`)
 /// can share this code. The script bytes are only ever read here, never stored.
 fn add_script_configs<V: core::ops::Deref<Target = [u8]>>(
+    ctx: &Command::ContextData,
     configs: &mut Vec<ScriptConfig>,
     group_infos: &mut Vec<GroupInfo>,
     raw_name: &[u8],
@@ -773,6 +774,7 @@ fn add_script_configs<V: core::ops::Deref<Target = [u8]>>(
         {
             let mut cmd_buf: Vec<u8> = Vec::with_capacity(content.len() + 1);
             RunCommand::replace_package_manager_run(&mut cmd_buf, content)?;
+            RunCommand::forward_hot_reload_to_script_or_warn(ctx, raw_name, &mut cmd_buf);
             cmd_buf.push(0);
             configs.push(ScriptConfig {
                 label: label.clone(),

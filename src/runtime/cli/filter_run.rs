@@ -864,6 +864,9 @@ pub(crate) fn run_scripts_with_filter(
             let mut copy_script: Vec<u8> = Vec::with_capacity(copy_script_capacity);
 
             RunCommand::replace_package_manager_run(&mut copy_script, original_content)?;
+            if i == 1 {
+                RunCommand::forward_hot_reload_to_script_or_warn(&*ctx, name, &mut copy_script);
+            }
             let len_command_only = copy_script.len();
 
             for part in &ctx.passthrough {

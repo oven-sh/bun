@@ -8084,8 +8084,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Self::enum_members_metadata(map)
     }
 
-    /// Re-resolve the name from the class scope, as `visit_expr` does: the parse
-    /// pass bound it before a later declaration in a nested scope existed.
+    /// Re-resolve the name from the class scope like `visit_expr`, then follow symbol links.
     fn resolve_metadata_ref(&mut self, ref_: Ref) -> Option<Ref> {
         if ref_.tag() != js_ast::base::RefTag::Symbol {
             return None;

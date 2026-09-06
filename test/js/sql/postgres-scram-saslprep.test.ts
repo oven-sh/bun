@@ -176,6 +176,9 @@ const cases = [
   // U+FE12 is NFKC-mapped to U+3002 (Unicode 1.1), but pg_saslprep checks the
   // input before normalization, so the Unicode 4.1 input code point rejects it.
   { name: "vertical form U+FE12 (Unicode 4.1) keeps the raw password", password: "a\uFE12b", stored: "a\uFE12b" },
+  // The bidi check also runs on the input. U+FB1D is RandALCat there, while
+  // its NFKC form ends in U+05B4, which is not. PostgreSQL stores the NFKC form.
+  { name: "bidi is checked before NFKC", password: "\u05D0\uFB1D", stored: "\u05D0\u05D9\u05B4" },
   // pg_saslprep rejects a password that maps to nothing.
   { name: "a lone soft hyphen keeps the raw password", password: "\u00AD", stored: "\u00AD" },
 ];

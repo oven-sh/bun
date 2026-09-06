@@ -239,8 +239,6 @@ fn run_tasks_erased(
     let has_updated_this_run = Cell::new(false);
     let mut has_network_error = false;
 
-    let mut timestamp_this_tick: Option<u32> = None;
-
     // scopeguard captures `manager` via raw pointer because the loop
     // body holds `&mut` to it for the function's duration; `has_updated_this_run`
     // is a `Cell<bool>` so the guard captures it by shared ref. The guard runs
@@ -645,13 +643,8 @@ fn run_tasks_erased(
                         // If we requested extended manifest but we somehow got an abbreviated one, this is a bug
                         debug_assert!(!is_extended_manifest || manifest.pkg.has_extended_manifest);
 
-                        if timestamp_this_tick.is_none() {
-                            let now = u64::try_from(bun_core::time::timestamp().max(0))
-                                .expect("int cast");
-                            timestamp_this_tick = Some((now as u32).saturating_add(300));
-                        }
-
-                        manifest.pkg.public_max_age = timestamp_this_tick.unwrap();
+                        manifest.pkg.public_max_age =
+                            npm::Registry::manifest_expiry(&response.headers);
 
                         // reshaped for borrowck —
                         // `bun_collections::HashMap` lacks `get_or_put` for

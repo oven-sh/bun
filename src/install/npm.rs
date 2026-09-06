@@ -535,6 +535,48 @@ pub mod registry {
         NotFound,
     }
 
+    /// The longest a cached packument is trusted without a revalidation,
+    /// whatever `max-age` the registry sends. registry.npmjs.org sends
+    /// `public, max-age=300`.
+    pub(crate) const MANIFEST_MAX_AGE_SECONDS: u32 = 300;
+
+    /// Seconds the packument in `response` stays fresh, from its
+    /// `Cache-Control` header. `no-cache`, `no-store`, `max-age=0`, and a
+    /// missing header all mean 0: the cached copy is still written (so
+    /// `--offline` / `--prefer-offline` can use it) but the next install
+    /// revalidates it with `If-None-Match` / `If-Modified-Since`. `Age` is
+    /// ignored.
+    pub(crate) fn manifest_max_age(headers: &picohttp::HeaderList) -> u32 {
+        let Some(cache_control) = headers.get(b"cache-control") else {
+            return 0;
+        };
+        let mut max_age: u32 = 0;
+        for directive in strings::split(cache_control, b",") {
+            let directive = directive.trim_ascii();
+            if strings::eql_case_insensitive_ascii(directive, b"no-cache", true)
+                || strings::eql_case_insensitive_ascii(directive, b"no-store", true)
+            {
+                return 0;
+            }
+            if strings::has_prefix_case_insensitive(directive, b"max-age=") {
+                let value = directive[b"max-age=".len()..].trim_ascii_start();
+                let value = value.strip_prefix(b"\"").unwrap_or(value);
+                let value = value.strip_suffix(b"\"").unwrap_or(value);
+                max_age = match bun_core::parse_int::<u64>(value, 10) {
+                    Ok(seconds) => seconds.min(MANIFEST_MAX_AGE_SECONDS as u64) as u32,
+                    Err(_) => 0,
+                };
+            }
+        }
+        max_age
+    }
+
+    /// The unix time at which the packument in `response` expires.
+    pub(crate) fn manifest_expiry(headers: &picohttp::HeaderList) -> u32 {
+        let now = u64::try_from(bun_core::time::timestamp().max(0)).expect("int cast") as u32;
+        now.saturating_add(manifest_max_age(headers))
+    }
+
     pub(crate) fn get_package_metadata(
         scope: &Scope,
         response: picohttp::Response,
@@ -574,7 +616,7 @@ pub mod registry {
             package_name,
             newly_last_modified,
             new_etag,
-            (u64::try_from(bun_core::time::timestamp().max(0)).expect("int cast") as u32) + 300,
+            manifest_expiry(&response.headers),
             is_extended_manifest,
         )? {
             if package_manager.options.enable.manifest_cache() {

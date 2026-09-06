@@ -7168,9 +7168,10 @@ impl H2FrameParser {
             0
         };
 
-        // Checked against the pre-compression bound like nghttp2, before the encoder is touched.
+        // Checked against the pre-compression bound like nghttp2 (which always counts the
+        // priority fields for HEADERS), before the encoder is touched.
         if this.max_send_header_block_length.get() != 0
-            && pending.deflate_bound() + priority_overhead
+            && pending.deflate_bound() + StreamPriority::BYTE_SIZE
                 > this.max_send_header_block_length.get() as usize
         {
             stream.state = StreamState::CLOSED;

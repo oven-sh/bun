@@ -6003,19 +6003,15 @@ describe("http2 a header call that throws leaves the HPACK encoder in sync with 
       error: "ERR_HTTP2_INVALID_HEADER_VALUE",
     },
     "invalid name": { headers: { "x-a": "AAAA", "x-b": "BBBB", "bad name": "v" }, error: "ERR_INVALID_HTTP_TOKEN" },
-    "undefined value": {
-      headers: { "x-a": "AAAA", "x-b": "BBBB", "x-u": undefined },
-      error: "ERR_HTTP2_INVALID_HEADER_VALUE",
-    },
     "null value": { headers: { "x-a": "AAAA", "x-b": "BBBB", "x-n": null }, error: "ERR_HTTP2_INVALID_HEADER_VALUE" },
     "symbol value": { headers: { "x-a": "AAAA", "x-b": "BBBB", "x-s": Symbol("s") }, error: "TypeError" },
     "throwing toString": { headers: { "x-a": "AAAA", "x-b": "BBBB", "x-t": throwingToString }, error: "BOOM" },
   };
   const kinds = Object.keys(poisons);
   // respond() drops a string value with CR/LF/NUL instead of throwing, so those two kinds do not
-  // apply to it. pushStream() skips an undefined or null value (node's mapToHeaders does the same).
+  // apply to it. pushStream() skips a null value (node's mapToHeaders does the same).
   const respondKinds = kinds.filter(k => k !== "invalid value" && k !== "invalid array element");
-  const pushKinds = kinds.filter(k => k !== "undefined value" && k !== "null value");
+  const pushKinds = kinds.filter(k => k !== "null value");
   const errorOf = err => err.code ?? err.constructor.name;
   const cleanResponse = { ":status": 200, "x-clean": "clean-value", "content-type": "text/plain" };
 

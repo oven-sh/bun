@@ -6255,6 +6255,7 @@ class ClientHttp2Session extends Http2Session {
       // Nothing reached the wire, so the session stays usable and the throw is the only error channel.
       if (connectionsCounted) {
         this.#connections--;
+        if (this.#connections === 0 && this.#closed) setImmediate(destroyIfNotDestroyedNT, this);
       }
       throw e;
     }

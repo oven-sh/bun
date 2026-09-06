@@ -70,16 +70,12 @@ public:
 
     WTF::Function<void(EventEmitter&, const Identifier& eventName, bool isAdded)> onDidChangeListener = WTF::Function<void(EventEmitter&, const Identifier& eventName, bool isAdded)>(nullptr);
 
-    // The per-emitter limit, or the mirrored `events.defaultMaxListeners`
-    // when none was set, like node's `_maxListeners ?? defaultMaxListeners`.
     unsigned getMaxListeners() const { return m_maxListeners.value_or(m_defaultMaxListeners); }
 
     void setMaxListeners(unsigned count);
     void setDefaultMaxListeners(unsigned count) { m_defaultMaxListeners = count; }
 
-    // Returns true the first time an event type goes over the max listener
-    // count. Later calls return false until the type drops back to one
-    // listener, matching node's `existing.warned` flag.
+    // True on the first overflow of an event type, like node's `existing.warned`.
     bool markMaxListenersWarned(const Identifier& eventType);
 
     bool fireEventListeners(const Identifier& eventName, const MarkedArgumentBuffer& arguments);

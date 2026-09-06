@@ -309,8 +309,7 @@ void JSEventEmitter::emitMaxListenersExceededWarning(JSC::JSGlobalObject* lexica
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    // node prints `inspect(emitter, { depth: -1 })`, which is `[process]` for
-    // the process object. The toStringTag is the closest thing we have here.
+    // node prints `inspect(emitter, { depth: -1 })`, `[process]` here.
     String emitterName;
     if (JSObject* emitterObject = emitter.getObject()) {
         JSValue tag = emitterObject->get(lexicalGlobalObject, vm.propertyNames->toStringTagSymbol);
@@ -361,8 +360,7 @@ static inline JSC::EncodedJSValue jsEventEmitterPrototypeFunction_setMaxListener
     return JSC::JSValue::encode(callFrame->thisValue());
 }
 
-// Takes a validated non-negative number. 0 means no limit, so a count that
-// does not fit is the same as no limit.
+// 0 means no limit.
 unsigned JSEventEmitter::maxListenersFromNumber(double n)
 {
     if (!(n < static_cast<double>(std::numeric_limits<unsigned>::max())))
@@ -370,9 +368,7 @@ unsigned JSEventEmitter::maxListenersFromNumber(double n)
     return JSC::toUInt32(n);
 }
 
-// Called by `events.defaultMaxListeners = n` and `events.setMaxListeners(n)`
-// in events.ts, which validate `n` first. `process` is the only native
-// EventEmitter, so the mirrored default lives on it.
+// events.ts mirrors `defaultMaxListeners` onto process, the only native EventEmitter.
 JSC_DEFINE_HOST_FUNCTION(jsEventEmitterSetDefaultMaxListeners, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
     JSValue value = callFrame->argument(0);

@@ -82,8 +82,7 @@ bool EventEmitter::markMaxListenersWarned(const Identifier& eventType)
     return true;
 }
 
-// Node drops the `warned` flag with the array when a type is back to a single
-// listener, so the next overflow warns again.
+// Node clears `warned` once a type is back to one listener.
 void EventEmitter::clearMaxListenersWarnedIfBelowLimit(const Identifier& eventType)
 {
     if (m_maxListenersWarned.isEmpty())

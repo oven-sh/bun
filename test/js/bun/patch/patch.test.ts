@@ -738,21 +738,39 @@ describe("apply", () => {
       expect(await fs.readFile(join(String(dir), "index.js"), "utf8")).toBe("line 1\nline 2\n");
     });
 
-    test("a no-newline pragma in the middle of a hunk does not apply instead of crashing", async () => {
-      await using dir = tempDir("patch-pragma", { "index.js": "line 1\nline 2" });
-      const patchfile = [
-        "diff --git a/index.js b/index.js",
-        "--- a/index.js",
-        "+++ b/index.js",
-        "@@ -1,2 +1,1 @@",
-        "+X",
-        "\\ No newline at end of file",
-        "-line 1",
-        "-line 2",
-        "",
-      ].join("\n");
+    // `\ No newline at end of file` ends that side of the file, so context or
+    // deleted lines after it are malformed. These used to crash or drop a line.
+    test.each([
+      ["deletion after it", "line 1\nline 2", "@@ -1,2 +1,1 @@\n+X\n\\ No newline at end of file\n-line 1\n-line 2\n"],
+      ["context after it", "line 1\nline 2", "@@ -1,2 +1,3 @@\n+X\n\\ No newline at end of file\n line 1\n line 2\n"],
+      [
+        "context after it, trailing newline",
+        "line 1\nline 2\n",
+        "@@ -1,2 +1,3 @@\n+X\n\\ No newline at end of file\n line 1\n line 2\n",
+      ],
+      ["context after a deletion with it", "line 1\nline 2", "@@ -1,2 +1,1 @@\n-line 1\n\\ No newline at end of file\n line 2\n"],
+    ])("a no-newline pragma with %s does not apply", async (_name, before, hunk) => {
+      await using dir = tempDir("patch-pragma", { "index.js": before });
+      const patchfile = `diff --git a/index.js b/index.js\n--- a/index.js\n+++ b/index.js\n${hunk}`;
       expect(() => apply(patchfile, String(dir))).toThrow("hunk #1 does not apply to index.js (expected at line 1)");
-      expect(await fs.readFile(join(String(dir), "index.js"), "utf8")).toBe("line 1\nline 2");
+      expect(await fs.readFile(join(String(dir), "index.js"), "utf8")).toBe(before);
+    });
+
+    test.each([
+      ["old side had no newline", "a\nb", "@@ -1,2 +1,3 @@\n a\n-b\n\\ No newline at end of file\n+b\n+c\n", "a\nb\nc\n"],
+      ["new side has no newline", "a\nb\nc\n", "@@ -1,3 +1,2 @@\n a\n-b\n-c\n+b\n\\ No newline at end of file\n", "a\nb"],
+      [
+        "neither side has a newline",
+        "a\nb",
+        "@@ -1,2 +1,2 @@\n a\n-b\n\\ No newline at end of file\n+B\n\\ No newline at end of file\n",
+        "a\nB",
+      ],
+      ["unchanged last line without newline", "a\nb", "@@ -1,2 +1,3 @@\n+X\n a\n b\n\\ No newline at end of file\n", "X\na\nb"],
+    ])("a no-newline pragma where git puts it applies: %s", async (_name, before, hunk, after) => {
+      await using dir = tempDir("patch-pragma", { "index.js": before });
+      const patchfile = `diff --git a/index.js b/index.js\n--- a/index.js\n+++ b/index.js\n${hunk}`;
+      await apply(patchfile, String(dir));
+      expect(await fs.readFile(join(String(dir), "index.js"), "utf8")).toBe(after);
     });
 
     test("a header start far past the end of the file is still found or rejected quickly", async () => {

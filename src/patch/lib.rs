@@ -310,6 +310,16 @@ fn apply_patch(
     // Net lines added by earlier hunks; `-` line numbers refer to the original file.
     let mut line_delta: isize = 0;
     for (hunk_index, hunk) in patch.hunks.iter().enumerate() {
+        // `\ No newline at end of file` ends that side of the file: only an insertion may follow it.
+        if let Some(i) = hunk.parts.iter().position(|p| p.no_newline_at_end_of_file) {
+            if hunk.parts[i + 1..]
+                .iter()
+                .any(|p| p.ty != PartType::Insertion)
+            {
+                return Err(does_not_apply(hunk_index, hunk));
+            }
+        }
+
         let original_start = hunk.header.original.start as isize + line_delta;
         let mut line_cursor = if hunk.header.original.len == 0 {
             // `-N,0`: nothing to match; insert after line N (0 = top, trailing "" is no line).
@@ -325,11 +335,14 @@ fn apply_patch(
             }
         };
 
-        // Ranges stay checked: a misplaced `\ No newline at end of file` pops a line mid-hunk.
+        // The match and the pragma check above imply these bounds; keep them checked anyway.
         for part in &hunk.parts {
             let part: &PatchMutationPart = part;
             match part.ty {
                 PartType::Context => {
+                    if line_cursor + part.lines.len() > lines.len() {
+                        return Err(does_not_apply(hunk_index, hunk));
+                    }
                     line_cursor += part.lines.len();
                 }
                 PartType::Insertion => {

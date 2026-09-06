@@ -552,8 +552,7 @@ fn validate_route_name(global: &JSGlobalObject, path: &[u8]) -> JsResult<()> {
     Ok(())
 }
 
-/// Every key `SSLConfig::from_js` reads (see `SSLConfig.bindv2.ts`). The
-/// legacy form (Bun v0.x) read them from the top-level options object.
+/// The keys of `SSLConfig.bindv2.ts`.
 const TLS_OPTION_KEYS: &[&str] = &[
     "passphrase",
     "dhParamsFile",
@@ -582,8 +581,6 @@ const TLS_OPTION_KEYS: &[&str] = &[
     "ecdhCurve",
 ];
 
-/// The first legacy top-level TLS key that is set on the options object.
-/// `undefined` and `null` both mean unset, as they do inside `tls`.
 fn first_top_level_tls_key(
     global: &JSGlobalObject,
     arg: JSValue,
@@ -1287,9 +1284,6 @@ impl ServerConfig {
         }
 
         if let Some(tls) = arg.get_truthy(global, "tls")? {
-            // The legacy top-level keys are only read when `tls` is absent.
-            // A mix would silently drop the top-level ones (for example
-            // `requestCert` and `rejectUnauthorized`), so refuse it.
             if tls.is_object() {
                 if let Some(key) = first_top_level_tls_key(global, arg)? {
                     return Err(global.throw_invalid_arguments(format_args!(

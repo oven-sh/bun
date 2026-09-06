@@ -2157,6 +2157,20 @@ function parseOptions(
     max: max || 10,
   };
 
+  // `password` stays a plain enumerable property so that `new SQL(sql.options)`
+  // (which spreads the object) keeps working. Inspection prints "[REDACTED]"
+  // instead, the same as S3Client.
+  Object.defineProperty(ret, Symbol.for("nodejs.util.inspect.custom"), {
+    value: function inspect(this: typeof ret) {
+      const copy = { ...this };
+      if (copy.password) copy.password = "[REDACTED]";
+      return copy;
+    },
+    enumerable: false,
+    configurable: true,
+    writable: true,
+  });
+
   if (idleTimeout != null) {
     ret.idleTimeout = idleTimeout;
   }

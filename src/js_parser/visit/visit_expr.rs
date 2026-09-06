@@ -1726,8 +1726,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 has_spread = true;
             }
 
-            // Extract the initializer for expressions like "({ a: b = c } = d)"
+            // Extract the initializer for expressions like "({ a: b = c } = d)".
+            // A rest property "({ ...a } = d)" takes no initializer, so its
+            // "=" stays an assignment and fails the assignment target check.
             if in_.assign_target != js_ast::AssignTarget::None
+                && property.kind != G::PropertyKind::Spread
                 && property.initializer.is_none()
                 && property.value.is_some()
             {
@@ -1739,6 +1742,17 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         property.value = Some(bin.left);
                     }
                 }
+            }
+
+            // The target of a rest property must be a simple target, not a
+            // nested pattern: "({ ...[a] } = d)" is a syntax error.
+            if in_.assign_target != js_ast::AssignTarget::None
+                && property.kind == G::PropertyKind::Spread
+                && let Some(value) = &property.value
+                && matches!(value.data, Data::EArray(..) | Data::EObject(..))
+            {
+                p.log()
+                    .add_error(Some(p.source), value.loc, b"Invalid assignment target");
             }
 
             if let Some(value) = &mut property.value {

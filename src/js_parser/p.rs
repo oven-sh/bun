@@ -4143,6 +4143,15 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
+    /// Logs the errors that apply once an array or object literal is known to
+    /// be an assignment pattern.
+    pub(crate) fn log_pattern_errors(&mut self, errors: &DeferredErrors) {
+        if let Some(r) = errors.invalid_pattern_paren_assign {
+            self.log()
+                .add_range_error(Some(self.source), r, b"Invalid assignment target");
+        }
+    }
+
     pub(crate) fn log_expr_errors(&mut self, errors: &mut DeferredErrors) {
         if let Some(r) = errors.invalid_expr_default_value {
             self.log()

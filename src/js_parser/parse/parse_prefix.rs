@@ -44,12 +44,18 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Ok(p.new_expr(E::Super {}, loc))
     }
 
-    fn pfx_t_open_paren(p: &mut Self, level: Level, flags: EFlags) -> PResult<Expr> {
+    fn pfx_t_open_paren(
+        p: &mut Self,
+        level: Level,
+        errors: Option<&mut DeferredErrors>,
+        flags: EFlags,
+    ) -> PResult<Expr> {
         let loc = p.lexer.loc();
+        let paren_range = p.lexer.range();
         p.lexer.next()?;
 
         // Arrow functions aren't allowed in the middle of expressions
-        if level.gt(Level::Assign) {
+        let value = if level.gt(Level::Assign) {
             // Allow "in" inside parentheses
             let old_allow_in = p.allow_in;
             p.allow_in = true;
@@ -59,17 +65,31 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             p.lexer.expect(T::TCloseParen)?;
 
             p.allow_in = old_allow_in;
-            return Ok(value);
+            value
+        } else {
+            p.parse_paren_expr(
+                loc,
+                level,
+                ParenExprOpts {
+                    is_after_question_and_before_colon: flags
+                        == EFlags::AfterQuestionAndBeforeColon,
+                    ..Default::default()
+                },
+            )?
+        };
+
+        // "[(a = 1)] = []" is not "[a = 1] = []": a parenthesized assignment is
+        // not a valid destructuring target. The enclosing literal reports it if
+        // it turns out to be a pattern. `parse_expr_common` clears it again if
+        // a suffix such as "(a = {}).b" makes the item a valid target.
+        if let Some(errors) = errors
+            && let ExprData::EBinary(bin) = &value.data
+            && bin.op == OpCode::BinAssign
+        {
+            errors.invalid_pattern_paren_assign = Some(paren_range);
         }
 
-        p.parse_paren_expr(
-            loc,
-            level,
-            ParenExprOpts {
-                is_after_question_and_before_colon: flags == EFlags::AfterQuestionAndBeforeColon,
-                ..Default::default()
-            },
-        )
+        Ok(value)
     }
 
     #[inline]
@@ -781,7 +801,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         // Is this a binding pattern?
         if p.will_need_binding_pattern() {
-            // noop
+            p.log_pattern_errors(&self_errors);
         } else if errors.is_none() {
             // Is this an expression?
             p.log_expr_errors(&mut self_errors);
@@ -868,6 +888,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         if p.will_need_binding_pattern() {
             // Is this a binding pattern?
+            p.log_pattern_errors(&self_errors);
         } else if errors.is_none() {
             // Is this an expression?
             p.log_expr_errors(&mut self_errors);
@@ -1010,7 +1031,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             T::TOpenBrace => Self::pfx_t_open_brace(p, errors),
             T::TLessThan => Self::pfx_t_less_than(p, level, errors, flags),
             T::TImport => Self::pfx_t_import(p, level),
-            T::TOpenParen => Self::pfx_t_open_paren(p, level, flags),
+            T::TOpenParen => Self::pfx_t_open_paren(p, level, errors, flags),
             T::TPrivateIdentifier => Self::pfx_t_private_identifier(p, level),
             T::TIdentifier => Self::pfx_t_identifier(p, level, flags),
             T::TFalse => Self::pfx_t_false(p),

@@ -74,7 +74,18 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         let had_pure_comment_before =
             self.lexer.has_pure_comment_before && !self.options.ignore_dce_annotations;
+        let paren_assign_before = errors
+            .as_deref()
+            .and_then(|errors| errors.invalid_pattern_paren_assign);
         *expr = self.parse_prefix(level, errors.as_deref_mut(), flags)?;
+        // The prefix that recorded a parenthesized assignment, if any: the
+        // parenthesized assignment itself or the literal it was merged from.
+        let paren_assign_prefix = match errors.as_deref() {
+            Some(errors) if errors.invalid_pattern_paren_assign != paren_assign_before => {
+                Some(Self::pattern_item_ptr(expr))
+            }
+            _ => None,
+        };
         // `errors` is reborrowed via as_deref_mut for each call site.
 
         // There is no formal spec for "__PURE__" comments but from reverse-
@@ -95,8 +106,31 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
         }
 
-        self.parse_suffix(expr, level, errors, flags)?;
+        self.parse_suffix(expr, level, errors.as_deref_mut(), flags)?;
+
+        // A parenthesized assignment is only an invalid pattern item when it is
+        // the whole item, or the whole item before a default value. A suffix
+        // makes it a valid target: "[(a = {}).b] = [1]".
+        if let (Some(errors), Some(prefix)) = (errors, paren_assign_prefix) {
+            let is_whole_item = Self::pattern_item_ptr(expr) == prefix
+                || matches!(&expr.data, js_ast::ExprData::EBinary(bin)
+                    if bin.op == js_ast::OpCode::BinAssign
+                        && Self::pattern_item_ptr(&bin.left) == prefix);
+            if !is_whole_item {
+                errors.invalid_pattern_paren_assign = paren_assign_before;
+            }
+        }
         Ok(())
+    }
+
+    /// Identity of the nodes that can carry `invalid_pattern_paren_assign`.
+    fn pattern_item_ptr(expr: &Expr) -> *const u8 {
+        match &expr.data {
+            js_ast::ExprData::EBinary(e) => e.as_ptr().cast(),
+            js_ast::ExprData::EArray(e) => e.as_ptr().cast(),
+            js_ast::ExprData::EObject(e) => e.as_ptr().cast(),
+            _ => core::ptr::null(),
+        }
     }
 
     pub(crate) fn parse_yield_expr(&mut self, loc: bun_ast::Loc) -> Result<Expr, Error> {
@@ -577,6 +611,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             if is_arrow_fn || opts.force_arrow_fn {
                 p.maybe_comma_spread_error(comma_after_spread);
                 p.log_arrow_arg_errors(&mut arrow_arg_errors);
+                if let Some(r) = errors.invalid_pattern_paren_assign {
+                    p.log().add_range_error(
+                        Some(p.source),
+                        r,
+                        b"Unexpected parentheses in binding pattern",
+                    );
+                }
 
                 // Now that we've decided we're an arrow function, report binding pattern
                 // conversion errors

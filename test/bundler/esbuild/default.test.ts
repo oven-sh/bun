@@ -7112,9 +7112,10 @@ describe.concurrent("bundler", () => {
     },
   });
   // "{ __proto__: x }" sets the prototype while "{ __proto__ }" and
-  // "{ ['__proto__']: x }" define an own property. The renamer gives the
-  // nested locals new names, so a shorthand "__proto__" has to become a
-  // computed key instead of "__proto__: __proto__2".
+  // "{ ['__proto__']: x }" define an own property. A nested local keeps its
+  // name unless it would capture a reference (#41286). If the renamer does
+  // give it a new name, a shorthand "__proto__" has to become a computed key
+  // instead of "__proto__: __proto__2". It must never print as "__proto__: x".
   describe.each([false, true])("ObjectLiteralProtoSetterEdgeCases (minifySyntax: %p)", minifySyntax => {
     itBundled(`default/ObjectLiteralProtoSetterEdgeCases${minifySyntax ? "MinifySyntax" : ""}`, {
       files: {
@@ -7215,8 +7216,8 @@ describe.concurrent("bundler", () => {
             .split("\n")
             .map(line => line.trim())
             .find(line => line.startsWith("__proto__") || line.startsWith('["__proto__"]'));
-        expect(property("local-shorthand")).toMatch(/^\["__proto__"\]: __proto__\d+,$/);
-        expect(property("local-computed")).toMatch(/^\["__proto__"\]: __proto__\d+,$/);
+        expect(property("local-shorthand")).toMatch(/^(?:__proto__|\["__proto__"\]: __proto__\d+),$/);
+        expect(property("local-computed")).toMatch(/^\["__proto__"\]: __proto__\d*,$/);
         expect(property("local-normal")).toBe("__proto__: __proto__,");
         expect(property("import-shorthand")).toBe("__proto__,");
         expect(property("import-computed")).toBe('["__proto__"]: __proto__,');

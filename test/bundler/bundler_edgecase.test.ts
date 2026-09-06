@@ -1461,11 +1461,13 @@ describe("bundler", () => {
         "/entry.js": /* js */ `
           import { P, __proto__ } from "./esm.js";
           import { fromCjs } from "./from-cjs.js";
+          import { collideA } from "./collide-a.js";
+          import { collideB } from "./collide-b.js";
           function colon(__proto__) { return { __proto__: __proto__ }; }
           function quoted(__proto__) { return { "__proto__": __proto__ }; }
           function computed(__proto__) { return { ["__proto__"]: __proto__ }; }
           function shorthand(__proto__) { return { __proto__ }; }
-          // the nested locals collide with the import and get renamed
+          // nested locals: renamed under --minify-identifiers, kept otherwise
           function shorthandRenamed(proto) { { let __proto__ = proto; return { __proto__ }; } }
           function colonRenamed(proto) { { let __proto__ = proto; return { __proto__: __proto__ }; } }
           function method() { return { __proto__() { return 1; } }; }
@@ -1497,11 +1499,28 @@ describe("bundler", () => {
             importColon: describe({ __proto__: __proto__ }),
             importComputed: describe({ ["__proto__"]: __proto__ }),
             fromCjs,
+            collideA,
+            collideB,
           }));
         `,
         "/esm.js": /* js */ `
           export const P = { isP: true };
           export { P as __proto__ };
+        `,
+        // Two top-level "__proto__" bindings share the chunk scope, so one of
+        // them is renamed in every mode and its shorthand cannot print as
+        // "__proto__" any more.
+        "/collide-a.js": /* js */ `
+          import { P } from "./esm.js";
+          const __proto__ = P;
+          const describe = o => [Object.getPrototypeOf(o) === P, Object.hasOwn(o, "__proto__")];
+          export const collideA = [describe({ __proto__ }), describe({ __proto__: __proto__ })];
+        `,
+        "/collide-b.js": /* js */ `
+          import { P } from "./esm.js";
+          const __proto__ = P;
+          const describe = o => [Object.getPrototypeOf(o) === P, Object.hasOwn(o, "__proto__")];
+          export const collideB = [describe({ __proto__ }), describe({ __proto__: __proto__ })];
         `,
         "/from-cjs.js": /* js */ `
           import { P, __proto__ } from "./mod.cjs";
@@ -1543,6 +1562,14 @@ describe("bundler", () => {
             colon: [true, false],
             computed: [false, true],
           },
+          collideA: [
+            [false, true],
+            [true, false],
+          ],
+          collideB: [
+            [false, true],
+            [true, false],
+          ],
         }),
       },
     });
@@ -1654,6 +1681,44 @@ describe("bundler", () => {
     run: {
       stdout: JSON.stringify([true, true, true, { fromJson: true }, 1]),
     },
+  });
+  // With several data files in one bundle, every hoisted "__proto__" variable
+  // after the first is renamed ("__proto__2"), so the rebuilt default object
+  // cannot print as the shorthand. No minify flag is needed to hit this.
+  describe.each([
+    ["", {}],
+    ["MinifyAll", { minifySyntax: true, minifyIdentifiers: true, minifyWhitespace: true }],
+  ] as const)("DataFilesNamespaceProtoKey%s", (suffix, minify) => {
+    itBundled(`edgecase/DataFilesNamespaceProtoKey${suffix}`, {
+      ...minify,
+      files: {
+        "/entry.js": /* js */ `
+          import * as A from "./a.json";
+          import * as B from "./b.toml";
+          import * as C from "./c.yaml";
+          const inspect = ns => {
+            const o = ns.default;
+            return [
+              Object.keys(ns).includes("__proto__"),
+              Object.getPrototypeOf(o) === Object.prototype,
+              Object.hasOwn(o, "__proto__"),
+              JSON.stringify(o),
+            ];
+          };
+          console.log(JSON.stringify([inspect(A), inspect(B), inspect(C)]));
+        `,
+        "/a.json": `{ "__proto__": { "polluted": 1 }, "a": 1 }`,
+        "/b.toml": `__proto__ = "str"\nb = 1\n`,
+        "/c.yaml": `__proto__: null\nc: 1\n`,
+      },
+      run: {
+        stdout: JSON.stringify([
+          [true, true, true, '{"__proto__":{"polluted":1},"a":1}'],
+          [true, true, true, '{"__proto__":"str","b":1}'],
+          [true, true, true, '{"__proto__":null,"c":1}'],
+        ]),
+      },
+    });
   });
   itBundled("edgecase/ImportOptionsArgument", {
     files: {

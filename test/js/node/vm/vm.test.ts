@@ -9,6 +9,7 @@ import {
   runInThisContext,
   Script,
   SourceTextModule,
+  SyntheticModule,
 } from "node:vm";
 
 function capture(_: any, _1?: any) {}
@@ -931,6 +932,27 @@ test("SourceTextModule accepts the cachedData it produced", () => {
   expect(() => new SourceTextModule("export default 2;", { identifier: "m", cachedData })).toThrow(
     expect.objectContaining({ code: "ERR_VM_MODULE_CACHED_DATA_REJECTED" }),
   );
+});
+
+// JSC deduplicates requested modules by (specifier, type). A repeated specifier shifts every
+// later request when the import statements are index-aligned with that list.
+test("SourceTextModule.link gets each request's own import attributes", async () => {
+  const dep = new SyntheticModule(["default", "a"], function (this: any) {
+    this.setExport("default", 1);
+    this.setExport("a", 1);
+  });
+  const seen: Record<string, string | undefined> = {};
+  const m = new SourceTextModule(
+    `import 'a'; import 'a'; import j from 'j' with { type: 'json' }; import c from 'c' with { type: 'css' };
+     import { a } from 'x'; import 'x';
+     export * from 'e' with { type: 'css' };`,
+    { identifier: "root" },
+  );
+  await m.link((specifier: string, _referrer: any, extra: any) => {
+    seen[specifier] = extra.attributes.type;
+    return dep;
+  });
+  expect(seen).toEqual({ a: undefined, j: "json", c: "css", x: undefined, e: "css" });
 });
 
 describe("Script compiles its source once and links that in every context it runs in", () => {

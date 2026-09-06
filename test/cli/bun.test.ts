@@ -591,8 +591,9 @@ describe.concurrent("global flag before subcommand", () => {
         stdout: "pipe",
         stderr: "pipe",
       });
-      const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
       expect(stdout).toContain(usage);
+      expect(stderr).toBe("");
       expect(fs.readdirSync(String(dir))).toEqual([]);
       expect(exitCode).toBe(0);
     });

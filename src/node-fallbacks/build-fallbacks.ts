@@ -31,9 +31,7 @@ for (let fileIndex = 0; fileIndex < allFiles.length; fileIndex++) {
     .flatMap(b => [`--external:node:${b}`, `--external:${b}`])
     .join(" ");
 
-  // CommonJS packages whose `module.exports` is itself the API (readable-stream,
-  // assert). A `require()` of the polyfill must return that value, not an ESM
-  // namespace wrapped around it.
+  // `module.exports` is the API itself for these two; keep it callable from `require()`.
   const format = name === "stream.js" || name === "assert.js" ? "cjs" : "esm";
 
   const injectedGlobals = [
@@ -72,9 +70,7 @@ for (let fileIndex = 0; fileIndex < allFiles.length; fileIndex++) {
         outfile = outfile.slice(outfile.indexOf(";") + 1);
       }
 
-      // A browser has no `process` or `Buffer` global. The `--define`s above
-      // rename every free use to `__bun_process` / `__bun_Buffer`; bind those
-      // to the sibling polyfills so the output runs without node's globals.
+      // Bind the renamed free `process` / `Buffer` uses to the sibling polyfills.
       for (const { id, esm, cjs } of injectedGlobals) {
         if (!outfile.includes(id)) continue;
         outfile = (format === "cjs" ? cjs : esm) + outfile;

@@ -80,4 +80,26 @@ impl ManagedTask {
         }));
         ManagedTask::task(managed)
     }
+
+    /// As [`new`](Self::new), with a `cancel` hook that runs instead of
+    /// `callback` when the task is released without running (loop teardown),
+    /// so whatever `callback` would have released is not leaked.
+    pub fn new_cancellable<T>(
+        ctx: *mut T,
+        callback: fn(*mut T) -> JsResult<()>,
+        cancel: fn(*mut T),
+    ) -> Task {
+        let managed = bun_core::heap::into_raw(Box::new(ManagedTask {
+            // SAFETY: same fn-pointer ABI cast as `new`.
+            callback: unsafe {
+                bun_ptr::cast_fn_ptr::<fn(*mut T) -> JsResult<()>, fn(*mut c_void) -> JsResult<()>>(
+                    callback,
+                )
+            },
+            ctx: NonNull::new(ctx.cast::<c_void>()),
+            // SAFETY: same fn-pointer ABI cast as `new`.
+            cleanup: Some(unsafe { bun_ptr::cast_fn_ptr::<fn(*mut T), fn(*mut c_void)>(cancel) }),
+        }));
+        ManagedTask::task(managed)
+    }
 }

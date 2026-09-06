@@ -651,9 +651,12 @@ pub type HTMLRewriterTransform = RewriterPipe;
 /// to drain the output ([`Self::output_observed`]) the input is held whenever
 /// that reader falls a high-water mark behind, and its drain signal resumes
 /// it. While nothing is, the rewrite still runs to completion — its handlers
-/// are side effects callers rely on — but one upstream chunk per event-loop
+/// are side effects callers rely on — from the event loop. Either way one
+/// event-loop turn feeds lol-html at most [`Self::INPUT_CHUNK`] of input (one
+/// upstream chunk; `fed_since_yield`) and the rest continues from the next
 /// turn ([`Self::schedule_background_pull`]), so a synchronous source such as
-/// a regular file is never read through inside a single call.
+/// a regular file is never read through inside a single call and a large
+/// document never holds the JS thread for its whole rewrite, whoever reads it.
 /// `align(16)`: `NativePromiseContext`'s deferred-deref task packs a 4-bit
 /// type tag into the low bits of a pointer to this.
 #[derive(bun_ptr::CellRefCounted)]
@@ -683,8 +686,20 @@ pub struct RewriterPipe {
     /// its promise settles, so `end_from_stream` defers terminal work to the
     /// reaction while this is set.
     js_pump_reaction_pending: Cell<bool>,
-    /// Bytes accepted from the input while suspended or output-backpressured.
+    /// Bytes accepted from the input while suspended, output-backpressured, or
+    /// over this turn's [`Self::INPUT_CHUNK`] budget.
     pending_input: JsCell<Vec<u8>>,
+    /// How much of `pending_input` lol-html has consumed; the vec is cleared
+    /// once all of it is fed.
+    pending_input_offset: Cell<usize>,
+    /// An in-memory input body larger than [`Self::INPUT_CHUNK`], fed a chunk
+    /// at a time from `held_body_offset`. Dropped once consumed or on a
+    /// terminal path.
+    held_body: JsCell<Option<HeldBody>>,
+    held_body_offset: Cell<usize>,
+    /// Input bytes fed to lol-html since the pipe last yielded to the event
+    /// loop ([`Self::run_background_pull`] resets it).
+    fed_since_yield: Cell<usize>,
     /// A [`Self::run_background_pull`] task is in the event-loop queue.
     background_pull_queued: Cell<bool>,
     /// That task should pull the input when it runs; cleared when a reader
@@ -745,9 +760,16 @@ pub struct RewriterPipe {
 
 impl RewriterPipe {
     /// How far the output may run ahead of its reader before the input is
-    /// held (or, unobserved, before the turn is yielded). The same distance
-    /// `fetch()` lets a request-body stream run ahead of the socket.
+    /// held. The same distance `fetch()` lets a request-body stream run ahead
+    /// of the socket.
     const HIGH_WATER_MARK: BlobSizeType = 16384;
+
+    /// How much input one event-loop turn feeds through lol-html before the
+    /// rest is left for the next turn, whoever is reading the output. One
+    /// POSIX file read (`PIPE_READ_BUFFER_SIZE`) and the `fetch()` body
+    /// high-water mark, so a streamed input advances one upstream chunk per
+    /// turn.
+    const INPUT_CHUNK: usize = 256 * 1024;
 
     /// `JSHTMLRewriterTransform` finalizer. Runs during GC sweep: nothing
     /// here may touch other GC cells, and the other ref holders may still
@@ -952,9 +974,10 @@ impl RewriterPipe {
         self.output_observed() && self.unread_output() > Self::HIGH_WATER_MARK
     }
 
-    /// Nobody is draining the output: keep going, but not within this turn.
-    fn should_yield(&self) -> bool {
-        !self.output_observed() && self.unread_output() > Self::HIGH_WATER_MARK
+    /// This turn has fed its [`Self::INPUT_CHUNK`]; more input waits for the
+    /// next one ([`Self::schedule_background_pull`]).
+    fn budget_spent(&self) -> bool {
+        self.fed_since_yield.get() >= Self::INPUT_CHUNK
     }
 
     fn init(
@@ -972,6 +995,10 @@ impl RewriterPipe {
             input_ended: Cell::new(false),
             js_pump_reaction_pending: Cell::new(false),
             pending_input: JsCell::new(Vec::new()),
+            pending_input_offset: Cell::new(0),
+            held_body: JsCell::new(None),
+            held_body_offset: Cell::new(0),
+            fed_since_yield: Cell::new(0),
             background_pull_queued: Cell::new(false),
             background_pull_armed: Cell::new(false),
             output: Cell::new(None),
@@ -1136,11 +1163,17 @@ impl RewriterPipe {
             // lol-html consumes UTF-8; `use_as_any_blob()` encodes a non-ASCII
             // WTFStringImpl into an InternalBlob so `.slice()` is always UTF-8.
             let mut any_blob = value.use_as_any_blob();
-            let bytes = any_blob.slice();
             // Mark EOF first so a handler that suspends mid-feed resumes into
             // `end_rewrite` once its promise settles.
             this.input_ended.set(true);
-            if this.feed(bytes) {
+            if this.sync_only_noun.get().is_none() && any_blob.slice().len() > Self::INPUT_CHUNK {
+                // Fed like a streamed input: one chunk inside `transform()`,
+                // then a chunk per turn (or as the output's reader drains).
+                this.held_body.set(Some(HeldBody(any_blob)));
+                this.drain_pending_input();
+                return;
+            }
+            if this.feed(any_blob.slice()) {
                 this.end_rewrite();
             }
             // `blob::Any` has no `Drop`; release the WTFStringImpl/Blob `+1`
@@ -1233,7 +1266,8 @@ impl RewriterPipe {
     }
 
     /// `PendingValue::on_start_buffering` — `.text()`/`.json()`/`Bun.write`
-    /// want the whole output: pull the rest of the input now, unbounded.
+    /// want the whole output: pull the rest of the input with no high-water
+    /// mark (still [`Self::INPUT_CHUNK`] per turn).
     fn on_start_buffering(ctx: NonNull<c_void>) {
         // Same liveness argument as `on_start_streaming`.
         let this = bun_ptr::BackRef::from(ctx.cast::<RewriterPipe>());
@@ -1252,11 +1286,14 @@ impl RewriterPipe {
         PipePin(BackRef::new(self))
     }
 
-    /// Nothing is draining the output, so nothing will signal `resume()`:
-    /// continue the rewrite from the event loop instead, one upstream chunk
-    /// per turn. The queued task holds a pipe ref and protects the cell, which
-    /// roots the Response, both streams and the handlers until it runs — an
-    /// unobserved rewrite is otherwise reachable from nothing.
+    /// Continue the rewrite on the next event-loop turn: this turn's
+    /// [`Self::INPUT_CHUNK`] budget is spent, or nothing is draining the
+    /// output so nothing will signal `resume()`. Queued *after yield*, so the
+    /// loop polls I/O and fires timers before the task runs; the plain task
+    /// queue is drained until empty, and a task that re-posts itself there
+    /// never lets the loop poll. The queued task holds a pipe ref and protects
+    /// the cell, which roots the Response, both streams and the handlers until
+    /// it runs — an unobserved rewrite is otherwise reachable from nothing.
     fn schedule_background_pull(&self) {
         self.background_pull_armed.set(true);
         if self.background_pull_queued.replace(true) {
@@ -1272,18 +1309,19 @@ impl RewriterPipe {
             cell.protect();
         }
         self.ref_();
-        vm.as_mut()
-            .enqueue_task(bun_jsc::ManagedTask::ManagedTask::new(
+        vm.event_loop_mut().enqueue_task_after_yield(
+            bun_jsc::ManagedTask::ManagedTask::new_cancellable(
                 core::ptr::from_ref(self).cast_mut(),
                 Self::run_background_pull,
-            ));
+                Self::release_background_pull,
+            ),
+        );
     }
 
     fn run_background_pull(pipe: *mut RewriterPipe) -> bun_event_loop::JsResult<()> {
         // SAFETY: the task's ref (taken in `schedule_background_pull`) keeps
-        // the allocation live until the `deref_nn` below.
+        // the allocation live until `release_background_pull`.
         let this = BackRef::from(unsafe { NonNull::new_unchecked(pipe) });
-        let cell = this.cell.get();
         this.background_pull_queued.set(false);
         if this.background_pull_armed.replace(false)
             && !this.done.get()
@@ -1292,15 +1330,30 @@ impl RewriterPipe {
             && !this.is_suspended()
             && !this.output_backpressured()
         {
-            this.drain_pending_input(PullPacing::AlreadyYielded);
+            // A new turn, and this pipe's to use: its input budget starts
+            // over. Left spent while something else blocks the pipe, so that
+            // whatever unblocks it re-queues this task instead of feeding a
+            // chunk in the same turn as the one the task then feeds.
+            this.fed_since_yield.set(0);
+            this.drain_pending_input();
         }
+        Self::release_background_pull(pipe);
+        Ok(())
+    }
+
+    /// Drop what [`Self::schedule_background_pull`] took for the queued task:
+    /// after it ran, or unrun when a worker's loop is torn down mid-rewrite.
+    fn release_background_pull(pipe: *mut RewriterPipe) {
+        // SAFETY: the task's ref keeps the allocation live until the
+        // `deref_nn` below.
+        let this = BackRef::from(unsafe { NonNull::new_unchecked(pipe) });
+        let cell = this.cell.get();
         // The cell cannot have been swept while protected, so this balances
         // the `protect()` exactly.
         if cell.is_cell() {
             cell.unprotect();
         }
         Self::deref_nn(this.into());
-        Ok(())
     }
 
     /// `PendingValue::on_start_streaming` — the output Response's body is
@@ -1376,15 +1429,26 @@ impl RewriterPipe {
         if self.done.get() || self.phase.get() == RewritePhase::Done {
             return Writable::Done;
         }
+        // Queue behind anything still held so the input keeps its order.
         if self.driving.get()
             || self.is_suspended()
             || self.output_backpressured()
             || self.background_pull_armed.get()
+            || self.has_held_input()
         {
-            self.pending_input.with_mut(|v| v.extend_from_slice(bytes));
+            self.hold_input(bytes);
             return held(len);
         }
-        let fed = self.feed(bytes);
+        // Feed what is left of this turn's budget; the rest waits for the next
+        // turn.
+        if self.budget_spent() {
+            self.hold_input(bytes);
+            self.schedule_background_pull();
+            return held(len);
+        }
+        let budget = Self::INPUT_CHUNK - self.fed_since_yield.get();
+        let (now, later) = bytes.split_at(budget.min(bytes.len()));
+        let fed = self.feed(now);
         // `feed` ran user JS; a handler may have cancelled the output reader
         // (`cancel_from_output`). Return `Done` so the native caller detaches
         // its sink snapshot, even if the handler also suspended.
@@ -1393,11 +1457,18 @@ impl RewriterPipe {
         }
         if !fed {
             // `feed` returns false for both a handler suspension and a fatal
-            // error. Only the latter should detach the upstream sink.
+            // error. Only the latter should detach the upstream sink. lol-html
+            // kept the unconsumed tail of `now`; `later` it has not seen.
             if self.is_suspended() {
+                self.hold_input(later);
                 return held(len);
             }
             return Writable::Done;
+        }
+        if !later.is_empty() {
+            self.hold_input(later);
+            self.schedule_background_pull();
+            return held(len);
         }
         if data.is_done() {
             return Writable::Owned(len);
@@ -1405,11 +1476,75 @@ impl RewriterPipe {
         if self.is_suspended() || self.output_backpressured() {
             return Writable::Backpressure(len);
         }
-        if self.should_yield() {
+        if self.budget_spent() {
             self.schedule_background_pull();
             return Writable::Backpressure(len);
         }
         Writable::Owned(len)
+    }
+
+    fn hold_input(&self, bytes: &[u8]) {
+        if bytes.is_empty() {
+            return;
+        }
+        self.pending_input.with_mut(|v| v.extend_from_slice(bytes));
+    }
+
+    /// Input accepted but not yet fed to lol-html: the tail of an in-memory
+    /// body, or streamed bytes that arrived while blocked or over budget.
+    fn has_held_input(&self) -> bool {
+        self.held_body.get().is_some()
+            || self.pending_input_offset.get() < self.pending_input.get().len()
+    }
+
+    /// A terminal path: the held input will never be fed.
+    fn release_held_input(&self) {
+        self.held_body.set(None);
+        self.pending_input.set(Vec::new());
+        self.pending_input_offset.set(0);
+    }
+
+    /// Feed lol-html the next slice of held input, at most the rest of this
+    /// turn's budget (the caller checked some is left). `false` if the rewrite
+    /// suspended or failed. lol-html copies what it does not consume (a token
+    /// split at the slice end, the tail after a suspension), so the slice is
+    /// spent either way.
+    fn feed_held_input(&self) -> bool {
+        debug_assert!(!self.budget_spent());
+        let budget = Self::INPUT_CHUNK - self.fed_since_yield.get();
+        let terminal = |this: &Self| this.done.get() || this.phase.get() == RewritePhase::Done;
+        if let Some(body) = self.held_body.take() {
+            let bytes = body.0.slice();
+            let start = self.held_body_offset.get();
+            let end = start + budget.min(bytes.len() - start);
+            self.held_body_offset.set(end);
+            let fed = self.feed(&bytes[start..end]);
+            if end < bytes.len() && !terminal(self) {
+                self.held_body.set(Some(body));
+            }
+            return fed;
+        }
+        // Taken out across `feed`: a re-entrant `write()` appends to the (now
+        // empty) cell, and those bytes belong after what is still held here.
+        let mut held = self.pending_input.replace(Vec::new());
+        let start = self.pending_input_offset.get();
+        let end = start + budget.min(held.len() - start);
+        let fed = self.feed(&held[start..end]);
+        if terminal(self) {
+            self.pending_input_offset.set(0);
+            return fed;
+        }
+        self.pending_input.with_mut(|arrived| {
+            if end == held.len() {
+                held.clear();
+                self.pending_input_offset.set(0);
+            } else {
+                self.pending_input_offset.set(end);
+            }
+            held.extend_from_slice(arrived);
+            *arrived = held;
+        });
+        fed
     }
 
     /// `SinkHandle::end` entry — input EOF or terminal upstream error.
@@ -1438,8 +1573,7 @@ impl RewriterPipe {
                 StreamError::AbortReason(r) => webcore::body::ValueError::AbortReason(r),
             };
             self.fail(value_error);
-        } else if self.driving.get() || self.is_suspended() || !self.pending_input.get().is_empty()
-        {
+        } else if self.driving.get() || self.is_suspended() || self.has_held_input() {
             self.input_ended.set(true);
         } else {
             self.end_rewrite();
@@ -1458,7 +1592,7 @@ impl RewriterPipe {
             return;
         }
         let _pin = self.pin();
-        self.drain_pending_input(PullPacing::YieldIfUnobserved);
+        self.drain_pending_input();
     }
 
     /// `SourceHandle::on_close` entry — the output reader cancelled.
@@ -1468,6 +1602,7 @@ impl RewriterPipe {
         let src = self.detach_input_source(true);
         self.phase.set(RewritePhase::Done);
         self.done.set(true);
+        self.release_held_input();
         self.pending.with_mut(|p| {
             p.result = Writable::Done;
             p.run();
@@ -1510,6 +1645,8 @@ impl RewriterPipe {
     /// completed (`Ok` — possibly buffering output), `false` if the rewrite
     /// failed or suspended.
     fn feed(&self, bytes: &[u8]) -> bool {
+        self.fed_since_yield
+            .set(self.fed_since_yield.get().saturating_add(bytes.len()));
         match self.drive_rewriter(|r| r.write(bytes)) {
             None => false,
             Some(Ok(())) => true,
@@ -1568,22 +1705,34 @@ impl RewriterPipe {
         let _ = webcore::body::Value::resolve(&mut prev_value, body_value, &self.global, headers);
     }
 
-    /// Feed the accumulated `pending_input` once unblocked, then maybe end,
-    /// then signal the upstream source to resume.
-    fn drain_pending_input(&self, pacing: PullPacing) {
-        let pending = self.pending_input.replace(Vec::new());
-        if !pending.is_empty() && !self.feed(&pending) {
-            return;
+    /// Feed held input once unblocked, within this turn's budget, then maybe
+    /// end, then signal the upstream source to resume.
+    fn drain_pending_input(&self) {
+        loop {
+            // `feed` ran user JS; re-check the terminal state before
+            // `end_rewrite` would overwrite `phase = Done` set by
+            // `cancel_from_output`/`fail`.
+            if self.done.get() || self.phase.get() == RewritePhase::Done {
+                return;
+            }
+            if self.is_suspended() {
+                return;
+            }
+            if !self.has_held_input() {
+                break;
+            }
+            if self.budget_spent() {
+                self.schedule_background_pull();
+                return;
+            }
+            if self.output_backpressured() {
+                return;
+            }
+            if !self.feed_held_input() {
+                return;
+            }
         }
-        // `feed` ran user JS; re-check the terminal state before `end_rewrite`
-        // would overwrite `phase = Done` set by `cancel_from_output`/`fail`.
-        if self.done.get() || self.phase.get() == RewritePhase::Done {
-            return;
-        }
-        if self.is_suspended() {
-            return;
-        }
-        // Output backpressure only gates pulling more input; once the input
+        // Output backpressure only gates feeding more input; once the input
         // is exhausted, finishing frees the parser and settles the body.
         if self.input_ended.get() {
             self.end_rewrite();
@@ -1592,7 +1741,7 @@ impl RewriterPipe {
         if self.output_backpressured() {
             return;
         }
-        if pacing == PullPacing::YieldIfUnobserved && self.should_yield() {
+        if self.budget_spent() {
             self.schedule_background_pull();
             return;
         }
@@ -1619,7 +1768,7 @@ impl RewriterPipe {
             return self.on_rewriting_error(&e);
         }
         match self.phase.get() {
-            RewritePhase::WritePending => self.drain_pending_input(PullPacing::YieldIfUnobserved),
+            RewritePhase::WritePending => self.drain_pending_input(),
             RewritePhase::EndPending => self.finish(),
             RewritePhase::Done => {}
         }
@@ -1719,6 +1868,7 @@ impl RewriterPipe {
         self.phase.set(RewritePhase::Done);
         self.done.set(true);
         let src = self.detach_input_source(true);
+        self.release_held_input();
         // Settle any `flush(true)`/`write()` promise a direct-stream `pull()`
         // is parked on so the pump promise can settle (mirrors
         // `cancel_from_output`).
@@ -1751,6 +1901,17 @@ impl RewriterPipe {
     }
 }
 
+/// An in-memory input body held past `transform()`. Owns the `+1`
+/// (`WTFStringImpl` ref / blob store) that `use_as_any_blob` transferred;
+/// `blob::Any` has no `Drop` of its own for the string arm.
+struct HeldBody(webcore::AnyBlob);
+
+impl Drop for HeldBody {
+    fn drop(&mut self) {
+        self.0.detach();
+    }
+}
+
 /// Guard returned by [`RewriterPipe::pin`].
 #[must_use = "dropping immediately releases the ref"]
 struct PipePin(BackRef<RewriterPipe>);
@@ -1759,16 +1920,6 @@ impl Drop for PipePin {
     fn drop(&mut self) {
         self.0.deref_outside_caller();
     }
-}
-
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum PullPacing {
-    /// Entered from a reader's drain signal or a settled handler: if nobody is
-    /// reading and the output is already a high-water mark ahead, defer the
-    /// pull to the event loop.
-    YieldIfUnobserved,
-    /// Entered from that deferred task: this is the next turn, pull now.
-    AlreadyYielded,
 }
 
 impl Drop for RewriterPipe {
@@ -1860,7 +2011,8 @@ impl crate::webcore::sink::JsSinkType for RewriterPipe {
             && (self.driving.get()
                 || self.is_suspended()
                 || self.output_backpressured()
-                || self.background_pull_armed.get())
+                || self.background_pull_armed.get()
+                || self.has_held_input())
         {
             let prom = self.pending.with_mut(|p| {
                 p.result = Writable::Owned(0);

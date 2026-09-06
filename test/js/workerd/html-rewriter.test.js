@@ -2112,8 +2112,11 @@ describe("output ByteStream backpressured when a native sink is wired", () => {
 // A streamed input (file, fetch body, ReadableStream) is paced by the output's
 // reader: `transform()` itself feeds at most one upstream chunk, a reader that
 // falls behind holds the input, and with no reader at all the rewrite still
-// runs to completion from the event loop, one chunk per turn.
+// runs to completion from the event loop, one chunk per turn. Whoever reads,
+// one event-loop turn feeds at most one chunk (256 KiB) through the parser, and
+// an in-memory body larger than that is fed the same way.
 describe("streamed input pacing", () => {
+  const chunkSize = 256 * 1024;
   const text = Buffer.alloc(1000, "a").toString();
   const piece = `<p>${text}</p>`;
   const count = 2500; // ~2.4 MB of input: many upstream chunks
@@ -2226,6 +2229,80 @@ describe("streamed input pacing", () => {
     expect(seen()).toBe(count);
   });
 
+  // A body that is already in memory is fed like a streamed one once it is
+  // larger than a chunk: `transform()` returns after the first chunk and the
+  // rest follows from the event loop or the reader.
+  const inMemory = {
+    string: () => input,
+    Blob: () => new Blob([input]),
+    Uint8Array: () => Buffer.from(input),
+  };
+  it.each(Object.keys(inMemory))("transform() feeds at most one chunk of a large in-memory %s", async kind => {
+    const { res, seen } = transformInput(inMemory[kind]());
+    expect(seen()).toBeGreaterThan(0);
+    expect(seen()).toBeLessThanOrEqual(Math.ceil(chunkSize / piece.length));
+    expect(await res.text()).toBe(rewritten);
+    expect(seen()).toBe(count);
+  });
+
+  it.each(Object.keys(consumers))("held in-memory input completes via %s", async name => {
+    const { res, seen } = transformInput(input);
+    expect(await consumers[name](res)).toBe(rewritten);
+    expect(seen()).toBe(count);
+  });
+
+  // However the output is consumed, the parser (and so every handler) runs at
+  // most one chunk per event-loop turn, so timers and I/O get a turn between
+  // chunks of a large document instead of waiting for the whole rewrite.
+  // `setImmediate` runs once per turn: sampling the handler count from it
+  // bounds how much was parsed in any one turn.
+  const paced = {
+    "file, unread": [() => Bun.file(file), null],
+    "file, .text()": [() => Bun.file(file), res => res.text()],
+    "file, JS reader": [() => Bun.file(file), res => readAll(res.body)],
+    "file, returned from Bun.serve": [() => Bun.file(file), consumers["returned from Bun.serve"]],
+    "in-memory, unread": [() => input, null],
+    "in-memory, .text()": [() => input, res => res.text()],
+    "in-memory, JS reader": [() => input, res => readAll(res.body)],
+  };
+  it.each(Object.keys(paced))("feeds at most one chunk per event-loop turn (%s)", async name => {
+    const [body, consume] = paced[name];
+    let seen = 0;
+    const { promise: ended, resolve } = Promise.withResolvers();
+    const samples = [0];
+    let sampling = true;
+    (function sample() {
+      samples.push(seen);
+      if (sampling) setImmediate(sample);
+    })();
+    const res = new HTMLRewriter()
+      .on("p", {
+        element(e) {
+          seen++;
+          e.setAttribute("x", "1");
+        },
+      })
+      .onDocument({ end: () => resolve() })
+      .transform(new Response(body()));
+    samples.push(seen);
+    let text;
+    if (consume) {
+      text = await consume(res);
+    } else {
+      await ended;
+      text = await res.text();
+    }
+    sampling = false;
+    samples.push(seen);
+    expect(text).toBe(rewritten);
+    expect(seen).toBe(count);
+    // One chunk holds at most this many start tags; +1 for a tag split across two chunks.
+    const perTurn = Math.ceil(chunkSize / piece.length) + 1;
+    const largestStep = Math.max(...samples.slice(1).map((n, i) => n - samples[i]));
+    expect(largestStep).toBeGreaterThan(0);
+    expect(largestStep).toBeLessThanOrEqual(perTurn);
+  });
+
   // Progress is driven by the reader's pulls: one read yields one chunk and
   // leaves the rest of the document unread until the next.
   it("a locked reader paces the input by its reads", async () => {
@@ -2235,9 +2312,10 @@ describe("streamed input pacing", () => {
     const held = seen();
     expect(held).toBeLessThan(count);
     // Locked but not reading: give the loop real work to turn on and check the input did not advance meanwhile.
-    // (Windows reads are completions: the one already in flight when the sink pushed back still lands, nothing after it.)
+    // The pull that the first read asked for lands on a later turn (transform() already fed this turn's chunk;
+    // on Windows it is the read completion already in flight): that one chunk arrives, nothing after it.
     expect((await Bun.file(otherFile).bytes()).length).toBe(otherPiece.length * count);
-    expect(seen() - held).toBeLessThanOrEqual(isWindows ? (256 * 1024) / piece.length : 0);
+    expect(seen() - held).toBeLessThanOrEqual((256 * 1024) / piece.length);
     const second = await reader.read();
     expect(seen()).toBeGreaterThan(held);
     expect(seen()).toBeLessThan(count);

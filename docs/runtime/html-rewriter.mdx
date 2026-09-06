@@ -132,9 +132,15 @@ paces the rewrite: a streamed input (a file, a `fetch()` response, a
 `ReadableStream`) is pulled through only as fast as the returned body is
 consumed, so a slow reader does not accumulate the whole document in memory. If
 nothing reads the body, the rewrite still runs every handler to the end of the
-document and buffers the output until it is read. Because the rewrite outlives
-`transform()`, an error thrown by an async handler (or a Promise it returns that
-rejects) rejects the response body instead of throwing from `transform()`:
+document and buffers the output until it is read. Either way the document goes
+through the parser at most 256 KiB per turn of the event loop, so a large
+document does not keep timers and other connections waiting until its rewrite is
+done. A body that is already in memory (a string, `Blob`, or `ArrayBuffer` body)
+and fits in 256 KiB is rewritten before `transform()` returns; a larger one
+continues from the event loop like a streamed input. Because the rewrite
+outlives `transform()`, an error thrown by an async handler (or a Promise it
+returns that rejects) rejects the response body instead of throwing from
+`transform()`:
 
 ```ts
 try {
@@ -145,9 +151,10 @@ try {
 ```
 
 `transform()` on a `string` or `ArrayBuffer` has to return its result
-synchronously, so it cannot wait for a handler that needs the event loop to turn
-(a timer, I/O, a `fetch`). Such a handler makes `transform()` throw a
-`TypeError`, and the rewrite fails without running any further handlers:
+synchronously: the whole document is rewritten inside the call, however large it
+is, and it cannot wait for a handler that needs the event loop to turn (a timer,
+I/O, a `fetch`). Such a handler makes `transform()` throw a `TypeError`, and the
+rewrite fails without running any further handlers:
 
 ```ts
 new HTMLRewriter()

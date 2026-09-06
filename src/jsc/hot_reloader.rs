@@ -1081,8 +1081,7 @@ where
                             strings::paths::without_trailing_slash_windows_path(file_path),
                         );
 
-                        // A missing import is not in the watchlist. Its creation is
-                        // only visible as an event on the directory it belongs in.
+                        // A missing import is only visible as an event on its directory.
                         let satisfies_unresolved_import = if IS_KQUEUE {
                             event.op.contains(WatchOp::WRITE)
                                 // SAFETY: the Watcher outlives this call (it owns the

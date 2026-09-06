@@ -87,8 +87,7 @@ impl AnyResolveWatcher {
     }
 }
 
-/// An import the resolver could not find: the directory it searched and the
-/// stem of the name it tried (`a` for `a.js`).
+/// An import the resolver could not find: the directory and the name stem (`a` for `a.js`).
 struct UnresolvedImport {
     dir_hash: HashType,
     stem: Box<[u8]>,
@@ -1037,9 +1036,7 @@ impl Watcher {
         Self::get_hash(strings::without_trailing_slash(dir_path))
     }
 
-    /// Whether an entry in `dir_path` can satisfy a recorded unresolved import.
-    /// `None` lists the directory (kqueue and Windows report no entry name).
-    /// The caller must hold `mutex`.
+    /// `name: None` lists the directory (kqueue and Windows report no entry name). Caller holds `mutex`.
     pub fn unresolved_import_matches(&self, dir_path: &[u8], name: Option<&[u8]>) -> bool {
         debug_assert!(self.mutex.is_held_by_current_thread());
         let dir_hash = Self::unresolved_dir_hash(dir_path);

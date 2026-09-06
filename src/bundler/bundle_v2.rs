@@ -5465,8 +5465,7 @@ pub mod bv2_impl {
             }
         }
 
-        /// Under `bun build --watch` the imports that did resolve are still
-        /// parsed, so they are watched. The dev server tracks failures itself.
+        /// `bun build --watch` still parses (and so watches) the imports that did resolve.
         fn keeps_scanning_after_resolve_error(&self) -> bool {
             self.bun_watcher.is_some() && self.dev_server.is_none()
         }

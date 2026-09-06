@@ -407,6 +407,17 @@ struct ClusterWidthAccumulator {
         return startsCluster;
     }
 
+    // True when `cp` would join the pending cluster instead of starting a new
+    // one (a Prepend before it, GB9b). The bulk paths check their first unit
+    // with this before they count it as a cluster of its own.
+    bool joinsPendingCluster(char32_t cp) const
+    {
+        if (!hasPrevVisible)
+            return false;
+        GraphemeBreakState state = breakState;
+        return !graphemeBreakClasses(prevClass, graphemeBreakClassFromFused(classifyFromTable(cp)), state);
+    }
+
     // Seed the cluster state from the last codepoint of a bulk-counted run,
     // flushing whatever cluster was pending before it. The codepoint's own
     // width is not added here: a combining mark, jamo or ZWJ right after the
@@ -586,10 +597,11 @@ static const uint8_t* findEscapeIntroducerUTF8(const uint8_t* p, const uint8_t* 
 }
 
 // Grapheme-cluster-aware walk of UTF-8 text with ANSI escape sequences
-// treated as zero-width. Every cluster start is reported to `onCluster`
-// (byte offset of the cluster, width of the completed clusters before it);
-// a false return stops the walk.
-template<typename OnCluster>
+// treated as zero-width. With `kReportClusters`, every cluster start is
+// reported to `onCluster` (byte offset of the cluster, width of the completed
+// clusters before it) and a false return stops the walk; without it, ASCII
+// runs are counted with the SIMD kernel.
+template<bool kReportClusters, typename OnCluster>
 static ClusterWidthAccumulator walkUTF8ExcludeANSI(std::span<const uint8_t> input, OnCluster onCluster)
 {
     ClusterWidthAccumulator accumulator { /* ambiguousAsWide */ false };
@@ -606,32 +618,42 @@ static ClusterWidthAccumulator walkUTF8ExcludeANSI(std::span<const uint8_t> inpu
             // the non-printable ones are width-0 controls, so all but the last
             // byte are counted in bulk. The last one seeds the cluster state:
             // a combining mark right after the run still joins it.
-            if (*p <= 0x7F) {
+            if (*p <= 0x7F && !accumulator.joinsPendingCluster(*p)) {
                 const size_t asciiLen = highway_first_non_ascii8(p, static_cast<size_t>(runEnd - p));
                 if (asciiLen > 1) {
                     if (accumulator.graphemeState.count > 0)
                         accumulator.len += accumulator.graphemeState.width();
                     accumulator.graphemeState = GraphemeState {};
-                    for (const uint8_t* q = p; q != p + asciiLen - 1; q++) {
-                        if (!onCluster(static_cast<size_t>(q - begin), accumulator.len))
-                            return accumulator;
-                        accumulator.len += visibleLatin1WidthScalar(*q);
+                    if constexpr (kReportClusters) {
+                        for (const uint8_t* q = p; q != p + asciiLen - 1; q++) {
+                            if (!onCluster(static_cast<size_t>(q - begin), accumulator.len))
+                                return accumulator;
+                            accumulator.len += visibleLatin1WidthScalar(*q);
+                        }
+                    } else {
+                        accumulator.len += visibleLatin1Width({ p, asciiLen - 1 });
                     }
                     p += asciiLen - 1;
                 }
                 const char32_t cp = *p;
                 const uint8_t packed = classifyFromTable(cp);
-                if (!onCluster(static_cast<size_t>(p - begin), accumulator.len + accumulator.graphemeState.width()))
-                    return accumulator;
+                if constexpr (kReportClusters) {
+                    if (!onCluster(static_cast<size_t>(p - begin), accumulator.len + accumulator.graphemeState.width()))
+                        return accumulator;
+                }
                 accumulator.seedFromBulkRun(cp, packed);
                 p++;
                 continue;
             }
 
             const auto [cp, length] = decodeWTF8At(p, runEnd);
-            const size_t widthBefore = accumulator.finish();
-            if (accumulator.addCodepoint(cp) && !onCluster(static_cast<size_t>(p - begin), widthBefore))
-                return accumulator;
+            if constexpr (kReportClusters) {
+                const size_t widthBefore = accumulator.finish();
+                if (accumulator.addCodepoint(cp) && !onCluster(static_cast<size_t>(p - begin), widthBefore))
+                    return accumulator;
+            } else {
+                accumulator.addCodepoint(cp);
+            }
             p += length;
         }
 
@@ -645,7 +667,7 @@ static ClusterWidthAccumulator walkUTF8ExcludeANSI(std::span<const uint8_t> inpu
 
 size_t visibleUTF8WidthExcludeANSI(std::span<const uint8_t> input)
 {
-    return walkUTF8ExcludeANSI(input, [](size_t, size_t) { return true; }).finish();
+    return walkUTF8ExcludeANSI<false>(input, [](size_t, size_t) { return true; }).finish();
 }
 
 size_t utf8IndexAtWidthExcludeANSI(std::span<const uint8_t> input, size_t maxWidth)
@@ -655,7 +677,7 @@ size_t utf8IndexAtWidthExcludeANSI(std::span<const uint8_t> input, size_t maxWid
     // the input unless the final cluster overflows it.
     size_t stopAt = input.size();
     size_t lastClusterStart = 0;
-    const auto accumulator = walkUTF8ExcludeANSI(input, [&](size_t offset, size_t widthBefore) {
+    const auto accumulator = walkUTF8ExcludeANSI<true>(input, [&](size_t offset, size_t widthBefore) {
         if (widthBefore > maxWidth) {
             stopAt = lastClusterStart;
             return false;
@@ -737,6 +759,15 @@ struct UTF16WidthAccumulator : ClusterWidthAccumulator {
             // Ambiguous); the first-unit check skips the call when the next
             // codepoint (surrogate pair, control) clearly needs the scalar
             // path anyway.
+            // A unit that joins the pending cluster (after a Prepend) goes
+            // through the scalar path: both bulk kernels below would count it
+            // as a cluster of its own.
+            if (!input.empty() && !U16_IS_SURROGATE(input[0]) && joinsPendingCluster(input[0])) {
+                addCodepoint(input[0]);
+                input = input.subspan(1);
+                continue;
+            }
+
             if (!ambiguousAsWide && !input.empty() && input[0] >= 0x20 && !U16_IS_SURROGATE(input[0])) {
                 size_t bulkWidth = 0;
                 const size_t consumed = highway_visible_utf16_width(

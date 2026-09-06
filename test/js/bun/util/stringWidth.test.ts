@@ -1989,6 +1989,24 @@ describe("grapheme cluster width rules", () => {
     expect(Bun.stringWidth("\u00A9")).toBe(1);
   });
 
+  test("a Prepend joins the codepoint after it on every path", () => {
+    // GB9b: U+0600 ARABIC NUMBER SIGN x anything. The digit that follows is
+    // not a cluster start, so it is not a keycap base, and the ASCII / bulk
+    // fast paths must not count it as a cluster of its own.
+    const cases = ["\u0600" + "1\u20E3", "\u06001", "\u0600a", "a\u0600" + "1\u20E3", "\u0600\u0661", "\u0600\u4E2D"];
+    for (const s of cases) {
+      const width = Bun.stringWidth(s);
+      const top = Bun.inspect.table([{ s }], { colors: false }).split("\n")[0];
+      const column = top.slice(top.lastIndexOf("\u252C") + 1, top.lastIndexOf("\u2510"));
+      expect({ s, width, slice: Bun.stringWidth(Bun.sliceAnsi(s, 0, width)), table: column.length }).toEqual({
+        s,
+        width: s.startsWith("a") ? 2 : s.endsWith("\u4E2D") ? 2 : 1,
+        slice: width,
+        table: width + 2,
+      });
+    }
+  });
+
   test("controls, CR and LF end a cluster on both sides", () => {
     expect(Bun.stringWidth("\n\u{1F3FB}")).toBe(2);
     expect(Bun.stringWidth("\r\n\u0301")).toBe(0);

@@ -100,11 +100,28 @@ describe("Bun.wrapAnsi", () => {
         expect(Bun.wrapAnsi(input, columns, { hard: true })).toBe(expected);
       });
 
-      test("family emoji hard-wrapped at columns=1 keeps every ZWJ", () => {
+      test("family emoji hard-wrapped at columns=1 stays one cluster", () => {
+        // A hard wrap advances by grapheme cluster: the ZWJ sequence is one
+        // 2-column cluster that does not fit in 1 column, so it moves to its
+        // own row whole instead of being cut between codepoints.
         const fam = "\u{1F469}\u200D\u{1F469}\u200D\u{1F467}\u200D\u{1F466}";
-        expect(Bun.wrapAnsi(fam, 1, { hard: true })).toBe(
-          "\n\u{1F469}\n\u200D\n\u{1F469}\n\u200D\n\u{1F467}\n\u200D\n\u{1F466}",
+        expect(Bun.wrapAnsi(fam, 1, { hard: true })).toBe("\n" + fam);
+      });
+
+      test("hard wrap never splits a flag, keycap or modifier sequence", () => {
+        expect(Bun.wrapAnsi("\u{1F1FA}\u{1F1F8}abc", 2, { hard: true })).toBe("\u{1F1FA}\u{1F1F8}\nab\nc");
+        expect(Bun.wrapAnsi("ab\u{1F1FA}\u{1F1F8}cd", 3, { hard: true })).toBe("ab\n\u{1F1FA}\u{1F1F8}c\nd");
+        expect(Bun.wrapAnsi("x1\uFE0F\u20E3y", 2, { hard: true })).toBe("x\n1\uFE0F\u20E3\ny");
+        expect(Bun.wrapAnsi("\u{1F44B}\u{1F3FD}\u{1F44B}\u{1F3FD}", 2, { hard: true })).toBe(
+          "\u{1F44B}\u{1F3FD}\n\u{1F44B}\u{1F3FD}",
         );
+        // An SGR sequence inside the cluster travels with it (the style is
+        // reopened on the next row as for any wrapped word).
+        expect(Bun.wrapAnsi("a\x1b[31m\u0301\x1b[39mb", 1, { hard: true })).toBe(
+          "a\x1b[31m\u0301\x1b[39m\n\x1b[31m\x1b[39mb",
+        );
+        // Each lone regional indicator is a 2-column emoji.
+        expect(Bun.wrapAnsi("\u{1F1E6}\u{1F1E7}\u{1F1E8}", 2, { hard: true })).toBe("\u{1F1E6}\u{1F1E7}\n\u{1F1E8}");
       });
     });
 
@@ -640,110 +657,174 @@ describe("Bun.wrapAnsi", () => {
           true,
           "\u001B[31maa\u001B[39m \u20E3bb \u001B[31mcc\u001B[39m",
         ],
-        ["aa\tz ️bb cc", 8, false, false, false, "aa\tz ️bb c\nc"],
-        ["aa\tz ️bb cc", 8, false, false, true, "aa\tz ️bb c\nc"],
-        ["aa\tz ️bb cc", 8, false, true, false, "aa\tz ️bb \ncc"],
-        ["aa\tz ️bb cc", 8, false, true, true, "aa\tz ️bb\ncc"],
-        ["aa\tz ️bb cc", 8, true, false, false, "aa\tz ️bb c\nc"],
-        ["aa\tz ️bb cc", 8, true, false, true, "aa\tz ️bb c\nc"],
-        ["aa\tz ️bb cc", 8, true, true, false, "aa\tz ️bb \ncc"],
-        ["aa\tz ️bb cc", 8, true, true, true, "aa\tz ️bb\ncc"],
-        ["aa ́bb cc", 8, false, false, false, "aa ́bb cc"],
-        ["aa ́bb cc", 8, false, false, true, "aa ́bb cc"],
-        ["aa ́bb cc", 8, false, true, false, "aa ́bb cc"],
-        ["aa ́bb cc", 8, false, true, true, "aa ́bb cc"],
-        ["aa ́bb cc", 8, true, false, false, "aa ́bb cc"],
-        ["aa ́bb cc", 8, true, false, true, "aa ́bb cc"],
-        ["aa ́bb cc", 8, true, true, false, "aa ́bb cc"],
-        ["aa ́bb cc", 8, true, true, true, "aa ́bb cc"],
-        ["\u0600 👍🏿ab cd", 7, false, false, false, "\u0600 👍🏿ab c\nd"],
-        ["\u0600 👍🏿ab cd", 7, false, false, true, "\u0600👍🏿ab cd"],
-        ["\u0600 👍🏿ab cd", 7, false, true, false, "\u0600 👍🏿ab \ncd"],
-        ["\u0600 👍🏿ab cd", 7, false, true, true, "\u0600👍🏿ab cd"],
-        ["\u0600 👍🏿ab cd", 7, true, false, false, "\u0600 👍🏿ab c\nd"],
-        ["\u0600 👍🏿ab cd", 7, true, false, true, "\u0600👍🏿ab cd"],
-        ["\u0600 👍🏿ab cd", 7, true, true, false, "\u0600 👍🏿ab \ncd"],
-        ["\u0600 👍🏿ab cd", 7, true, true, true, "\u0600👍🏿ab cd"],
-        ["\u0600 👍🏿ab cd", 8, false, false, false, "\u0600 👍🏿ab cd"],
-        ["\u0600 👍🏿ab cd", 8, false, false, true, "\u0600👍🏿ab cd"],
-        ["\u0600 👍🏿ab cd", 8, false, true, false, "\u0600 👍🏿ab cd"],
-        ["\u0600 👍🏿ab cd", 8, false, true, true, "\u0600👍🏿ab cd"],
-        ["\u0600 👍🏿ab cd", 8, true, false, false, "\u0600 👍🏿ab cd"],
-        ["\u0600 👍🏿ab cd", 8, true, false, true, "\u0600👍🏿ab cd"],
-        ["\u0600 👍🏿ab cd", 8, true, true, false, "\u0600 👍🏿ab cd"],
-        ["\u0600 👍🏿ab cd", 8, true, true, true, "\u0600👍🏿ab cd"],
-        ["\u001B[31m\u0600\u001B[39m 👍🏿ab cd", 7, false, false, false, "\u001B[31m\u0600\u001B[39m 👍🏿ab c\nd"],
-        ["\u001B[31m\u0600\u001B[39m 👍🏿ab cd", 7, false, false, true, "\u001B[31m\u0600\u001B[39m👍🏿ab cd"],
-        ["\u001B[31m\u0600\u001B[39m 👍🏿ab cd", 7, false, true, false, "\u001B[31m\u0600\u001B[39m 👍🏿ab \ncd"],
-        ["\u001B[31m\u0600\u001B[39m 👍🏿ab cd", 7, false, true, true, "\u001B[31m\u0600\u001B[39m👍🏿ab cd"],
-        ["\u001B[31m\u0600\u001B[39m 👍🏿ab cd", 7, true, false, false, "\u001B[31m\u0600\u001B[39m 👍🏿ab c\nd"],
-        ["\u001B[31m\u0600\u001B[39m 👍🏿ab cd", 7, true, false, true, "\u001B[31m\u0600\u001B[39m👍🏿ab cd"],
-        ["\u001B[31m\u0600\u001B[39m 👍🏿ab cd", 7, true, true, false, "\u001B[31m\u0600\u001B[39m 👍🏿ab \ncd"],
-        ["\u001B[31m\u0600\u001B[39m 👍🏿ab cd", 7, true, true, true, "\u001B[31m\u0600\u001B[39m👍🏿ab cd"],
+        ["aa\tz \uFE0Fbb cc", 8, false, false, false, "aa\tz \uFE0Fbb c\nc"],
+        ["aa\tz \uFE0Fbb cc", 8, false, false, true, "aa\tz \uFE0Fbb c\nc"],
+        ["aa\tz \uFE0Fbb cc", 8, false, true, false, "aa\tz \uFE0Fbb \ncc"],
+        ["aa\tz \uFE0Fbb cc", 8, false, true, true, "aa\tz \uFE0Fbb\ncc"],
+        ["aa\tz \uFE0Fbb cc", 8, true, false, false, "aa\tz \uFE0Fbb c\nc"],
+        ["aa\tz \uFE0Fbb cc", 8, true, false, true, "aa\tz \uFE0Fbb c\nc"],
+        ["aa\tz \uFE0Fbb cc", 8, true, true, false, "aa\tz \uFE0Fbb \ncc"],
+        ["aa\tz \uFE0Fbb cc", 8, true, true, true, "aa\tz \uFE0Fbb\ncc"],
+        ["aa \u0301bb cc", 8, false, false, false, "aa \u0301bb cc"],
+        ["aa \u0301bb cc", 8, false, false, true, "aa \u0301bb cc"],
+        ["aa \u0301bb cc", 8, false, true, false, "aa \u0301bb cc"],
+        ["aa \u0301bb cc", 8, false, true, true, "aa \u0301bb cc"],
+        ["aa \u0301bb cc", 8, true, false, false, "aa \u0301bb cc"],
+        ["aa \u0301bb cc", 8, true, false, true, "aa \u0301bb cc"],
+        ["aa \u0301bb cc", 8, true, true, false, "aa \u0301bb cc"],
+        ["aa \u0301bb cc", 8, true, true, true, "aa \u0301bb cc"],
+        // U+0600 (Prepend) is a width-0 first word; with trim the next word is
+        // appended with no separator space and fuses with it across the rows.
+        ["\u0600 \u{1F44D}\u{1F3FF}ab cd", 7, false, false, false, "\u0600 \u{1F44D}\u{1F3FF}ab c\nd"],
+        ["\u0600 \u{1F44D}\u{1F3FF}ab cd", 7, false, false, true, "\u0600\u{1F44D}\u{1F3FF}ab cd"],
+        ["\u0600 \u{1F44D}\u{1F3FF}ab cd", 7, false, true, false, "\u0600 \u{1F44D}\u{1F3FF}ab \ncd"],
+        ["\u0600 \u{1F44D}\u{1F3FF}ab cd", 7, false, true, true, "\u0600\u{1F44D}\u{1F3FF}ab cd"],
+        ["\u0600 \u{1F44D}\u{1F3FF}ab cd", 7, true, false, false, "\u0600 \u{1F44D}\u{1F3FF}ab c\nd"],
+        ["\u0600 \u{1F44D}\u{1F3FF}ab cd", 7, true, false, true, "\u0600\u{1F44D}\u{1F3FF}ab cd"],
+        ["\u0600 \u{1F44D}\u{1F3FF}ab cd", 7, true, true, false, "\u0600 \u{1F44D}\u{1F3FF}ab \ncd"],
+        ["\u0600 \u{1F44D}\u{1F3FF}ab cd", 7, true, true, true, "\u0600\u{1F44D}\u{1F3FF}ab cd"],
+        ["\u0600 \u{1F44D}\u{1F3FF}ab cd", 8, false, false, false, "\u0600 \u{1F44D}\u{1F3FF}ab cd"],
+        ["\u0600 \u{1F44D}\u{1F3FF}ab cd", 8, false, false, true, "\u0600\u{1F44D}\u{1F3FF}ab cd"],
+        ["\u0600 \u{1F44D}\u{1F3FF}ab cd", 8, false, true, false, "\u0600 \u{1F44D}\u{1F3FF}ab cd"],
+        ["\u0600 \u{1F44D}\u{1F3FF}ab cd", 8, false, true, true, "\u0600\u{1F44D}\u{1F3FF}ab cd"],
+        ["\u0600 \u{1F44D}\u{1F3FF}ab cd", 8, true, false, false, "\u0600 \u{1F44D}\u{1F3FF}ab cd"],
+        ["\u0600 \u{1F44D}\u{1F3FF}ab cd", 8, true, false, true, "\u0600\u{1F44D}\u{1F3FF}ab cd"],
+        ["\u0600 \u{1F44D}\u{1F3FF}ab cd", 8, true, true, false, "\u0600 \u{1F44D}\u{1F3FF}ab cd"],
+        ["\u0600 \u{1F44D}\u{1F3FF}ab cd", 8, true, true, true, "\u0600\u{1F44D}\u{1F3FF}ab cd"],
+        // Same no-space seam with the Prepend hidden behind a trailing escape:
+        // the cluster still fuses across the escape sequence.
         [
-          "\u001B[31m\u0600\u001B[39m \u001B[31m👍🏿\u001B[39mab cd",
+          "\u001B[31m\u0600\u001B[39m \u{1F44D}\u{1F3FF}ab cd",
           7,
           false,
           false,
           false,
-          "\u001B[31m\u0600\u001B[39m \u001B[31m👍🏿\u001B[39mab c\nd",
+          "\u001B[31m\u0600\u001B[39m \u{1F44D}\u{1F3FF}ab c\nd",
         ],
         [
-          "\u001B[31m\u0600\u001B[39m \u001B[31m👍🏿\u001B[39mab cd",
+          "\u001B[31m\u0600\u001B[39m \u{1F44D}\u{1F3FF}ab cd",
           7,
           false,
           false,
           true,
-          "\u001B[31m\u0600\u001B[39m\u001B[31m👍🏿\u001B[39mab cd",
+          "\u001B[31m\u0600\u001B[39m\u{1F44D}\u{1F3FF}ab cd",
         ],
         [
-          "\u001B[31m\u0600\u001B[39m \u001B[31m👍🏿\u001B[39mab cd",
+          "\u001B[31m\u0600\u001B[39m \u{1F44D}\u{1F3FF}ab cd",
           7,
           false,
           true,
           false,
-          "\u001B[31m\u0600\u001B[39m \u001B[31m👍🏿\u001B[39mab \ncd",
+          "\u001B[31m\u0600\u001B[39m \u{1F44D}\u{1F3FF}ab \ncd",
         ],
         [
-          "\u001B[31m\u0600\u001B[39m \u001B[31m👍🏿\u001B[39mab cd",
+          "\u001B[31m\u0600\u001B[39m \u{1F44D}\u{1F3FF}ab cd",
           7,
           false,
           true,
           true,
-          "\u001B[31m\u0600\u001B[39m\u001B[31m👍🏿\u001B[39mab cd",
+          "\u001B[31m\u0600\u001B[39m\u{1F44D}\u{1F3FF}ab cd",
         ],
         [
-          "\u001B[31m\u0600\u001B[39m \u001B[31m👍🏿\u001B[39mab cd",
+          "\u001B[31m\u0600\u001B[39m \u{1F44D}\u{1F3FF}ab cd",
           7,
           true,
           false,
           false,
-          "\u001B[31m\u0600\u001B[39m \u001B[31m👍🏿\u001B[39mab c\nd",
+          "\u001B[31m\u0600\u001B[39m \u{1F44D}\u{1F3FF}ab c\nd",
         ],
         [
-          "\u001B[31m\u0600\u001B[39m \u001B[31m👍🏿\u001B[39mab cd",
+          "\u001B[31m\u0600\u001B[39m \u{1F44D}\u{1F3FF}ab cd",
           7,
           true,
           false,
           true,
-          "\u001B[31m\u0600\u001B[39m\u001B[31m👍🏿\u001B[39mab cd",
+          "\u001B[31m\u0600\u001B[39m\u{1F44D}\u{1F3FF}ab cd",
         ],
         [
-          "\u001B[31m\u0600\u001B[39m \u001B[31m👍🏿\u001B[39mab cd",
+          "\u001B[31m\u0600\u001B[39m \u{1F44D}\u{1F3FF}ab cd",
           7,
           true,
           true,
           false,
-          "\u001B[31m\u0600\u001B[39m \u001B[31m👍🏿\u001B[39mab \ncd",
+          "\u001B[31m\u0600\u001B[39m \u{1F44D}\u{1F3FF}ab \ncd",
         ],
         [
-          "\u001B[31m\u0600\u001B[39m \u001B[31m👍🏿\u001B[39mab cd",
+          "\u001B[31m\u0600\u001B[39m \u{1F44D}\u{1F3FF}ab cd",
           7,
           true,
           true,
           true,
-          "\u001B[31m\u0600\u001B[39m\u001B[31m👍🏿\u001B[39mab cd",
+          "\u001B[31m\u0600\u001B[39m\u{1F44D}\u{1F3FF}ab cd",
         ],
+        // ANSI-prefixed words: an SGR sequence (ESC is ASCII) at the start of a word
+        // must not hide the cluster-fusing codepoint that actually lands on the seam.
+        // Escape-wrapped emoji+modifier word after an escape-wrapped width-0 Prepend row.
+        [
+          "\u001B[31m\u0600\u001B[39m \u001B[31m\u{1F44D}\u{1F3FF}\u001B[39mab cd",
+          7,
+          false,
+          false,
+          false,
+          "\u001B[31m\u0600\u001B[39m \u001B[31m\u{1F44D}\u{1F3FF}\u001B[39mab c\nd",
+        ],
+        [
+          "\u001B[31m\u0600\u001B[39m \u001B[31m\u{1F44D}\u{1F3FF}\u001B[39mab cd",
+          7,
+          false,
+          false,
+          true,
+          "\u001B[31m\u0600\u001B[39m\u001B[31m\u{1F44D}\u{1F3FF}\u001B[39mab cd",
+        ],
+        [
+          "\u001B[31m\u0600\u001B[39m \u001B[31m\u{1F44D}\u{1F3FF}\u001B[39mab cd",
+          7,
+          false,
+          true,
+          false,
+          "\u001B[31m\u0600\u001B[39m \u001B[31m\u{1F44D}\u{1F3FF}\u001B[39mab \ncd",
+        ],
+        [
+          "\u001B[31m\u0600\u001B[39m \u001B[31m\u{1F44D}\u{1F3FF}\u001B[39mab cd",
+          7,
+          false,
+          true,
+          true,
+          "\u001B[31m\u0600\u001B[39m\u001B[31m\u{1F44D}\u{1F3FF}\u001B[39mab cd",
+        ],
+        [
+          "\u001B[31m\u0600\u001B[39m \u001B[31m\u{1F44D}\u{1F3FF}\u001B[39mab cd",
+          7,
+          true,
+          false,
+          false,
+          "\u001B[31m\u0600\u001B[39m \u001B[31m\u{1F44D}\u{1F3FF}\u001B[39mab c\nd",
+        ],
+        [
+          "\u001B[31m\u0600\u001B[39m \u001B[31m\u{1F44D}\u{1F3FF}\u001B[39mab cd",
+          7,
+          true,
+          false,
+          true,
+          "\u001B[31m\u0600\u001B[39m\u001B[31m\u{1F44D}\u{1F3FF}\u001B[39mab cd",
+        ],
+        [
+          "\u001B[31m\u0600\u001B[39m \u001B[31m\u{1F44D}\u{1F3FF}\u001B[39mab cd",
+          7,
+          true,
+          true,
+          false,
+          "\u001B[31m\u0600\u001B[39m \u001B[31m\u{1F44D}\u{1F3FF}\u001B[39mab \ncd",
+        ],
+        [
+          "\u001B[31m\u0600\u001B[39m \u001B[31m\u{1F44D}\u{1F3FF}\u001B[39mab cd",
+          7,
+          true,
+          true,
+          true,
+          "\u001B[31m\u0600\u001B[39m\u001B[31m\u{1F44D}\u{1F3FF}\u001B[39mab cd",
+        ],
+        // Escape-prefixed keycap word: SPACE + U+20E3 still fuses across the escape.
         ["aa \u001B[31m\u20E3bb\u001B[39m cc", 7, false, false, false, "aa \u001B[31m\u20E3bb\u001B[39m c\nc"],
         ["aa \u001B[31m\u20E3bb\u001B[39m cc", 7, false, false, true, "aa \u001B[31m\u20E3bb\u001B[39m c\nc"],
         ["aa \u001B[31m\u20E3bb\u001B[39m cc", 7, false, true, false, "aa \u001B[31m\u20E3bb\u001B[39m \ncc"],
@@ -752,6 +833,8 @@ describe("Bun.wrapAnsi", () => {
         ["aa \u001B[31m\u20E3bb\u001B[39m cc", 7, true, false, true, "aa \u001B[31m\u20E3bb\u001B[39m c\nc"],
         ["aa \u001B[31m\u20E3bb\u001B[39m cc", 7, true, true, false, "aa \u001B[31m\u20E3bb\u001B[39m \ncc"],
         ["aa \u001B[31m\u20E3bb\u001B[39m cc", 7, true, true, true, "aa \u001B[31m\u20E3bb\u001B[39m\ncc"],
+        // At 9 columns the fused row fits exactly (real width 9); the stale additive
+        // width (10) would wrongly wrap it.
         ["aa \u001B[31m\u20E3bb\u001B[39m cc", 9, false, false, false, "aa \u001B[31m\u20E3bb\u001B[39m cc"],
         ["aa \u001B[31m\u20E3bb\u001B[39m cc", 9, false, false, true, "aa \u001B[31m\u20E3bb\u001B[39m cc"],
         ["aa \u001B[31m\u20E3bb\u001B[39m cc", 9, false, true, false, "aa \u001B[31m\u20E3bb\u001B[39m cc"],

@@ -349,15 +349,11 @@ unsafe extern "C" {
     ) -> JSValue;
 }
 
-/// How `Bun.markdown.react` shapes the elements it creates.
 #[derive(Clone, Copy)]
 struct ReactMode {
-    /// 0: `Symbol.for("react.element")` (React 18 and older).
-    /// 1: `Symbol.for("react.transitional.element")` (React 19+).
+    /// 0 for `react.element` (React 18 and older), 1 for `react.transitional.element`.
     version: u8,
-    /// Add the fields React's development build puts on every element
-    /// (`_owner`, `_store`, `_debugInfo`, `_debugStack`, `_debugTask`).
-    /// React's development renderers read them without guards.
+    /// Add the `_store` / `_owner` / `_debug*` fields React's development build expects.
     development: bool,
 }
 

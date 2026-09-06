@@ -2126,8 +2126,9 @@ declare module "bun" {
    *
    * An existing file is overwritten in place and truncated to the new length. It keeps its inode, hard links, and
    * permissions. A file descriptor destination (`Bun.file(fd)`) is written at its current position and is not
-   * truncated. The write is not atomic: concurrent writers to one path can interleave. For an atomic replace, write
-   * to a temporary path and `rename()` it over the destination.
+   * truncated, except that an empty `input` truncates it to zero length. The write is not atomic: concurrent writers
+   * to one path can interleave. For an atomic replace, write to a temporary path and `rename()` it over the
+   * destination.
    *
    * @category File System
    *

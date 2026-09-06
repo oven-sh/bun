@@ -163,7 +163,7 @@ await Bun.write("out/other/file.txt", "data", { createPath: false }); // rejects
 
 When the destination is a path or a `Bun.file(path)`, `Bun.write` replaces the file's contents: after the write, the file holds exactly the bytes of `data`, even if it was longer before. The file is written in place, so it keeps its inode, hard links, and permissions.
 
-When the destination is a file descriptor (`Bun.file(fd)`), `Bun.write` writes at the descriptor's current position and does not truncate the file. Open the descriptor with the flags you need (for example `"a"` to append) and close it yourself.
+When the destination is a file descriptor (`Bun.file(fd)`), `Bun.write` writes at the descriptor's current position and leaves the rest of the file as it is. One exception: an empty `data` (an empty string, `TypedArray`, or `Blob`) truncates the file to zero length. Open the descriptor with the flags you need (for example `"a"` to append) and close it yourself.
 
 `Bun.write` is not atomic. Another process can observe a partially written file, and two writes to the same path at the same time can interleave their bytes. This is not specific to Bun. It is how writes to a shared path work. When readers must never see a partial file, write to a temporary path in the same directory and rename it over the destination:
 

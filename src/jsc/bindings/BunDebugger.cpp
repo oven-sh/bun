@@ -956,18 +956,13 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_closeNodeInspector, (JSGlobalObject*, CallFr
     return JSValue::encode(jsUndefined());
 }
 
-// Handshake between the inspected thread, which is about to exit, and the
-// debugger thread, which still holds outgoing protocol messages: in the
-// connection's queue, in internal/debugger.ts's per-client buffer, and in the
-// socket's write buffer. The inspected thread posts a task behind every
-// queued message and blocks until internal/debugger.ts reports that every
-// client transport has written its pending bytes.
+// Exit-time handshake: the inspected thread blocks here until
+// internal/debugger.ts reports that every client transport is drained.
 struct ExitFlushState {
     WTF::Lock lock;
     WTF::Condition condition;
     bool done { false };
-    // Owned by the debugger thread's VM; process-lifetime once set (the
-    // debugger thread is never joined).
+    // Owned by the debugger thread's VM, which is never torn down.
     JSC::Strong<JSC::Unknown> flushCallback {};
 };
 
@@ -1024,9 +1019,8 @@ extern "C" void Bun__Debugger__flushBeforeExit(Zig::GlobalObject* globalObject)
         state.done = false;
     }
 
-    // The debugger thread runs its concurrent tasks in order, so this task
-    // runs after every receiveMessagesOnDebuggerThread task posted before it
-    // has handed its messages to internal/debugger.ts.
+    // Concurrent tasks run in order: this one runs after every queued
+    // receiveMessagesOnDebuggerThread task has handed its messages to JS.
     debuggerScriptExecutionContext->postTaskConcurrently([](ScriptExecutionContext& context) {
         auto& state = exitFlushState();
         JSC::JSValue flushCallback;
@@ -1052,8 +1046,7 @@ extern "C" void Bun__Debugger__flushBeforeExit(Zig::GlobalObject* globalObject)
         }
     });
 
-    // A client that stops reading never drains. Bound the wait so such a
-    // client delays exit instead of preventing it.
+    // A client that stops reading never drains: bound the wait.
     auto deadline = MonotonicTime::now() + Seconds(2);
     Locker<Lock> locker(state.lock);
     while (!state.done) {

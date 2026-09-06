@@ -188,9 +188,7 @@ struct DebuggerThreadInit {
 
 impl Debugger {
     /// Block until the debugger thread has written every queued protocol
-    /// message to its connected frontends, or until a short deadline. Called
-    /// right before the process exits so events emitted by the last test
-    /// (`TestReporter.end`, `LifecycleReporter.error`) reach the client.
+    /// message to the connected frontends, or until a short deadline.
     pub fn flush_before_exit(global: &JSGlobalObject) {
         Bun__Debugger__flushBeforeExit(global);
     }

@@ -11,8 +11,7 @@ class SocketFramer {
   sizeBuffer: Buffer = Buffer.alloc(4);
   sizeBufferIndex: number = 0;
   bufferedData: Buffer = Buffer.alloc(0);
-  // True while the socket holds bytes from `send` that it has not written yet.
-  // The socket's `drain` handler clears it.
+  // Set by a partial `$write`, cleared by the socket's `drain` handler.
   hasUnsentData = false;
 
   constructor(private onMessage: (message: string | string[]) => void) {
@@ -30,7 +29,6 @@ class SocketFramer {
     this.hasUnsentData = false;
   }
 
-  // The socket's `drain` handler fires once every buffered byte is written.
   didDrain(): void {
     this.hasUnsentData = false;
     reportExitFlushIfDrained();
@@ -144,14 +142,11 @@ export default function (
   return flushBeforeExit;
 }
 
-// Client transports that can still hold bytes the inspected thread expects to
-// be delivered. Checked when the inspected thread flushes before it exits.
+// Transports that may still hold bytes not yet written to their client.
 const activeTransports = new Set<Transport>();
 let exitFlushDone: (() => void) | undefined;
 
-// Called from the debugger thread's C++ side right before the inspected thread
-// exits, after every queued protocol message has been handed to the
-// transports. `done` unblocks the inspected thread.
+// Called on the debugger thread right before the inspected thread exits.
 function flushBeforeExit(done: () => void): void {
   exitFlushDone = done;
   reportExitFlushIfDrained();

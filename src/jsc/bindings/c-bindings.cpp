@@ -111,39 +111,12 @@ extern "C" int32_t bun_sysconf__SC_NPROCESSORS_ONLN()
 #endif
 }
 
-#if OS(LINUX)
-#include <sched.h>
-// WTF/wtf/uv_get_constrained_memory.cpp (Bun's WebKit fork). The header is not installed.
-int uv_get_constrained_cpu();
-#endif
-
-// os.availableParallelism(): like WTF::numberOfProcessorCores() but, on Linux, read fresh on
-// every call as libuv's uv_available_parallelism() does, so an affinity change (taskset) or a
+// os.availableParallelism(): the same count as WTF::numberOfProcessorCores() but read fresh on
+// every call, as libuv's uv_available_parallelism() does, so an affinity change (taskset) or a
 // cgroup cpu.max change made after startup is observed. Thread pools keep the cached startup value.
 extern "C" int32_t Bun__availableParallelism()
 {
-#if OS(LINUX)
-    static const bool overridden = getenv("WTF_numberOfProcessorCores") != nullptr;
-    if (overridden)
-        return std::max(1, WTF::numberOfProcessorCores());
-
-    long result = sysconf(_SC_NPROCESSORS_ONLN);
-
-    cpu_set_t set;
-    CPU_ZERO(&set);
-    if (sched_getaffinity(0, sizeof(set), &set) == 0) {
-        long affinity = CPU_COUNT(&set);
-        if (affinity > 0 && (result < 1 || affinity < result))
-            result = affinity;
-    }
-
-    if (int constrained = uv_get_constrained_cpu(); constrained > 0 && (result < 1 || constrained < result))
-        result = constrained;
-
-    return result < 1 ? 1 : static_cast<int32_t>(result);
-#else
-    return std::max(1, WTF::numberOfProcessorCores());
-#endif
+    return std::max(1, WTF::numberOfProcessorCoresUncached());
 }
 
 #if OS(DARWIN) && BUN_DEBUG

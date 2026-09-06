@@ -231,6 +231,7 @@ it("devNull", () => {
 
 it("availableParallelism", () => {
   expect(os.availableParallelism()).toBeGreaterThan(0);
+  expect(os.availableParallelism()).toBe(navigator.hardwareConcurrency);
 });
 
 // Node reads the affinity mask and the cgroup cpu quota on every call, so a

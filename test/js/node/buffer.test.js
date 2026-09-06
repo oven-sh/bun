@@ -5,6 +5,7 @@ import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import os from "node:os";
 import { join } from "node:path";
+import { inspect } from "node:util";
 import vm from "node:vm";
 
 const BufferModule = await import("buffer");
@@ -5432,5 +5433,153 @@ describe("read*/write* after JIT tier-up", () => {
     // Out-of-range integral offsets, including |offset| > 2**53, get the bounds message.
     expect(() => scratch.readIntLE(2 ** 53, 2)).toThrow(">= 0 and <= 14");
     expect(() => scratch.readIntLE(1.5, 2)).toThrow("an integer");
+  });
+});
+
+describe("fill() and compare() offsets past the end of the buffer", () => {
+  // Node bounds a start offset only by its kMaxLength (2**53 - 1). A start at or past
+  // the end is an empty range: fill() is a no-op and compare() sees an empty side.
+  const MAX = 2 ** 53 - 1;
+
+  it("fill() with an offset past the end is a no-op", () => {
+    for (const offset of [3, 4, 2 ** 32, 2 ** 32 + 1, 2 ** 40, MAX]) {
+      const buf = Buffer.alloc(3);
+      expect(buf.fill(1, offset)).toBe(buf);
+      expect([...buf]).toEqual([0, 0, 0]);
+    }
+    expect([...Buffer.alloc(3).fill(1, 2 ** 33, 1)]).toEqual([0, 0, 0]);
+  });
+
+  it("fill() rejects an offset above 2**53 - 1 and an end above the length", () => {
+    expect(() => Buffer.alloc(3).fill(1, 2 ** 53)).toThrow(
+      expect.objectContaining({
+        code: "ERR_OUT_OF_RANGE",
+        message: `The value of "offset" is out of range. It must be >= 0 && <= ${MAX}. Received 9_007_199_254_740_992`,
+      }),
+    );
+    expect(() => Buffer.alloc(3).fill(1, 0, 2 ** 33)).toThrow(
+      expect.objectContaining({
+        code: "ERR_OUT_OF_RANGE",
+        message: 'The value of "end" is out of range. It must be >= 0 && <= 3. Received 8_589_934_592',
+      }),
+    );
+  });
+
+  it("compare() with a start past the end compares against an empty range", () => {
+    const buf = Buffer.alloc(3);
+    const target = Buffer.alloc(3);
+    for (const start of [3, 4, 2 ** 32, 2 ** 32 + 1, MAX]) {
+      expect(buf.compare(target, start)).toBe(1);
+      expect(buf.compare(target, 0, 3, start)).toBe(-1);
+      expect(buf.compare(target, start, 3, start)).toBe(0);
+    }
+  });
+
+  it("compare() rejects a start above 2**53 - 1 and an end above the length", () => {
+    const buf = Buffer.alloc(3);
+    const target = Buffer.alloc(3);
+    expect(() => buf.compare(target, 2 ** 53)).toThrow(
+      expect.objectContaining({
+        code: "ERR_OUT_OF_RANGE",
+        message: `The value of "targetStart" is out of range. It must be >= 0 && <= ${MAX}. Received 9_007_199_254_740_992`,
+      }),
+    );
+    expect(() => buf.compare(target, 0, 3, 2 ** 53)).toThrow(
+      expect.objectContaining({
+        code: "ERR_OUT_OF_RANGE",
+        message: `The value of "sourceStart" is out of range. It must be >= 0 && <= ${MAX}. Received 9_007_199_254_740_992`,
+      }),
+    );
+    expect(() => buf.compare(target, 0, 4)).toThrow(
+      expect.objectContaining({
+        code: "ERR_OUT_OF_RANGE",
+        message: 'The value of "targetEnd" is out of range. It must be >= 0 && <= 3. Received 4',
+      }),
+    );
+    expect(() => buf.compare(target, 0, 2 ** 33)).toThrow(
+      expect.objectContaining({
+        code: "ERR_OUT_OF_RANGE",
+        message: 'The value of "targetEnd" is out of range. It must be >= 0 && <= 3. Received 8_589_934_592',
+      }),
+    );
+    expect(() => buf.compare(target, 0, 3, 0, 2 ** 33)).toThrow(
+      expect.objectContaining({
+        code: "ERR_OUT_OF_RANGE",
+        message: 'The value of "sourceEnd" is out of range. It must be >= 0 && <= 3. Received 8_589_934_592',
+      }),
+    );
+  });
+});
+
+describe("indexOf(), lastIndexOf() and includes() on a detached buffer", () => {
+  const detached = () => {
+    const buf = Buffer.alloc(8).fill(1);
+    buf.buffer.transfer();
+    return buf;
+  };
+
+  it("finds an empty needle at 0 and nothing else, like an empty buffer", () => {
+    const results = buf => [
+      buf.indexOf(""),
+      buf.lastIndexOf(""),
+      buf.includes(""),
+      buf.indexOf(Buffer.alloc(0)),
+      buf.lastIndexOf(Buffer.alloc(0)),
+      buf.includes(Buffer.alloc(0)),
+      buf.indexOf("", 5),
+      buf.indexOf("", "utf8"),
+      buf.indexOf("", 0, "ucs2"),
+      buf.indexOf(1),
+      buf.lastIndexOf(1),
+      buf.includes(1),
+      buf.indexOf("a"),
+      buf.lastIndexOf("a"),
+      buf.indexOf(Buffer.from([1])),
+      buf.includes(Buffer.from([1])),
+    ];
+    const expected = [0, 0, true, 0, 0, true, 0, 0, 0, -1, -1, false, -1, -1, -1, false];
+    expect(results(Buffer.alloc(0))).toEqual(expected);
+    expect(results(detached())).toEqual(expected);
+  });
+});
+
+describe("util.inspect(buffer) with extra own properties", () => {
+  const custom = Symbol.for("nodejs.util.inspect.custom");
+
+  it("formats the extra properties like util.inspect does for an object", () => {
+    const buf = Buffer.from([3]);
+    buf.x = "y";
+    buf["a-b"] = [1, "two"];
+    buf[Symbol("s")] = { a: { b: { c: 1 } } };
+    const expected = "<Buffer 03, x: 'y', 'a-b': [ 1, 'two' ], Symbol(s): { a: { b: [Object] } }>";
+    expect(inspect(buf)).toBe(expected);
+    // The native formatter (console.log, Bun.inspect) calls the same hook with its own depth.
+    expect(Bun.inspect(buf, { depth: 2 })).toBe(expected);
+    expect(inspect({ nested: buf })).toBe(`{\n  nested: ${expected}\n}`);
+    expect(inspect(buf, { depth: 0 })).toBe("<Buffer 03, x: 'y', 'a-b': [Array], Symbol(s): [Object]>");
+    expect(inspect(buf, { colors: true })).toBe(
+      "<Buffer 03, x: \x1b[32m'y'\x1b[39m, \x1b[32m'a-b'\x1b[39m: [ \x1b[33m1\x1b[39m, \x1b[32m'two'\x1b[39m ], \x1b[32mSymbol(s)\x1b[39m: { a: { b: \x1b[36m[Object]\x1b[39m } }>",
+    );
+    // Called directly, with no inspect function as the third argument.
+    expect(buf[custom](0, {})).toBe(expected);
+  });
+
+  it("shows non-enumerable properties only with showHidden", () => {
+    const buf = Buffer.from([3]);
+    buf.x = "y";
+    buf.list = [1, "two"];
+    Object.defineProperty(buf, "hidden", { value: "h", enumerable: false });
+    expect(inspect(buf)).toBe("<Buffer 03, x: 'y', list: [ 1, 'two' ]>");
+    expect(inspect(buf, { showHidden: true })).toBe(
+      "<Buffer 03, x: 'y', list: [ 1, 'two', [length]: 2 ], hidden: 'h'>",
+    );
+    expect(buf[custom](0, { showHidden: true })).toBe(
+      "<Buffer 03, x: 'y', list: [ 1, 'two', [length]: 2 ], hidden: 'h'>",
+    );
+  });
+
+  it("keeps the Node layout for an empty buffer", () => {
+    expect(inspect(Buffer.alloc(0))).toBe("<Buffer >");
+    expect(inspect(Object.assign(Buffer.alloc(0), { q: "z" }))).toBe("<Buffer q: 'z'>");
   });
 });

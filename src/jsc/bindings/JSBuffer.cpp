@@ -81,6 +81,7 @@
 #include <JavaScriptCore/JSArray.h>
 #include <JavaScriptCore/JSGenericTypedArrayViewInlines.h>
 #include <JavaScriptCore/JSObjectInlines.h>
+#include <JavaScriptCore/ObjectConstructor.h>
 
 extern "C" bool Bun__Node__ZeroFillBuffers;
 
@@ -95,9 +96,6 @@ extern "C" void highway_bswap64(uint8_t* data, size_t len);
 extern "C" size_t highway_index_of_char(const uint8_t* haystack, size_t haystack_len, uint8_t needle);
 extern "C" size_t highway_last_index_of_char(const uint8_t* haystack, size_t haystack_len, uint8_t needle);
 static constexpr size_t kHighwayNotFound = ~static_cast<size_t>(0);
-
-// export fn Bun__inspect_singleline(globalThis: *JSGlobalObject, value: JSValue) bun.String
-extern "C" BunString Bun__inspect_singleline(JSC::JSGlobalObject* globalObject, JSC::JSValue value);
 
 using namespace JSC;
 using namespace WebCore;
@@ -1149,48 +1147,41 @@ static JSC::EncodedJSValue jsBufferPrototypeFunction_compareBody(JSC::JSGlobalOb
     JSValue sourceStartValue = jsUndefined();
     JSValue sourceEndValue = jsUndefined();
 
+    // Node's validateOffset: a start is any integer in [0, 2**53 - 1] (a start
+    // past the end is an empty range below, not an error), an end is bounded by
+    // its own buffer's length.
     switch (callFrame->argumentCount()) {
     default:
         sourceEndValue = callFrame->uncheckedArgument(4);
         if (sourceEndValue != jsUndefined()) {
-            Bun::V::validateInteger(throwScope, lexicalGlobalObject, sourceEndValue, "sourceEnd"_s, jsNumber(0), jsNumber(Bun::Buffer::kMaxLength), &sourceEnd);
+            Bun::V::validateInteger(throwScope, lexicalGlobalObject, sourceEndValue, "sourceEnd"_s, jsNumber(0), jsNumber(sourceEndInit), &sourceEnd);
             RETURN_IF_EXCEPTION(throwScope, {});
         }
         [[fallthrough]];
     case 4:
         sourceStartValue = callFrame->uncheckedArgument(3);
         if (sourceStartValue != jsUndefined()) {
-            Bun::V::validateInteger(throwScope, lexicalGlobalObject, sourceStartValue, "sourceStart"_s, jsNumber(0), jsNumber(Bun::Buffer::kMaxLength), &sourceStart);
+            Bun::V::validateInteger(throwScope, lexicalGlobalObject, sourceStartValue, "sourceStart"_s, jsNumber(0), jsDoubleNumber(JSC::maxSafeInteger()), &sourceStart);
             RETURN_IF_EXCEPTION(throwScope, {});
         }
         [[fallthrough]];
     case 3:
         targetEndValue = callFrame->uncheckedArgument(2);
         if (targetEndValue != jsUndefined()) {
-            Bun::V::validateInteger(throwScope, lexicalGlobalObject, targetEndValue, "targetEnd"_s, jsNumber(0), jsNumber(Bun::Buffer::kMaxLength), &targetEnd);
+            Bun::V::validateInteger(throwScope, lexicalGlobalObject, targetEndValue, "targetEnd"_s, jsNumber(0), jsNumber(targetEndInit), &targetEnd);
             RETURN_IF_EXCEPTION(throwScope, {});
         }
         [[fallthrough]];
     case 2:
         targetStartValue = callFrame->uncheckedArgument(1);
         if (targetStartValue != jsUndefined()) {
-            Bun::V::validateInteger(throwScope, lexicalGlobalObject, targetStartValue, "targetStart"_s, jsNumber(0), jsNumber(Bun::Buffer::kMaxLength), &targetStart);
+            Bun::V::validateInteger(throwScope, lexicalGlobalObject, targetStartValue, "targetStart"_s, jsNumber(0), jsDoubleNumber(JSC::maxSafeInteger()), &targetStart);
             RETURN_IF_EXCEPTION(throwScope, {});
         }
         break;
     case 1:
     case 0:
         break;
-    }
-
-    // Validate end values against their respective buffer lengths to prevent OOB access.
-    // This matches Node.js behavior where targetEnd is validated against target.length
-    // and sourceEnd is validated against source.length.
-    if (targetEnd > targetEndInit) {
-        return Bun::ERR::OUT_OF_RANGE(throwScope, lexicalGlobalObject, "targetEnd"_s, 0, targetEndInit, targetEndValue);
-    }
-    if (sourceEnd > sourceEndInit) {
-        return Bun::ERR::OUT_OF_RANGE(throwScope, lexicalGlobalObject, "sourceEnd"_s, 0, sourceEndInit, sourceEndValue);
     }
 
     // When start >= end for either side, return early per Node.js semantics.
@@ -1439,14 +1430,16 @@ static JSC::EncodedJSValue jsBufferPrototypeFunction_fillBody(JSC::JSGlobalObjec
     // ── 2. Pure offset / end coercion (no user JS) ──────────────────────
     // Node routes both through validateOffset (= validateInteger), so a
     // fractional or NaN offset/end throws ERR_OUT_OF_RANGE "an integer"
-    // instead of being truncated. parseEncoding above may have
-    // detached/resized the buffer, but the `limit` captured pre-coercion
-    // is still the correct Node-compat upper bound for ERR_OUT_OF_RANGE;
-    // the final write range is clamped against a separate post-coercion
-    // byteLength read further down.
+    // instead of being truncated. The offset is bounded only by Node's
+    // kMaxLength (2**53 - 1): one past `end` is an empty range below, not
+    // an error. parseEncoding above may have detached/resized the buffer,
+    // but the `limit` captured pre-coercion is still the correct
+    // Node-compat upper bound for ERR_OUT_OF_RANGE; the final write range
+    // is clamped against a separate post-coercion byteLength read further
+    // down.
     //     https://github.com/nodejs/node/blob/v22.9.0/lib/buffer.js#L1066-L1079
     if (!offsetValue.isUndefined()) {
-        Bun::V::validateInteger(scope, lexicalGlobalObject, offsetValue, "offset"_s, jsNumber(0), jsNumber(Bun::Buffer::kMaxLength), &offset);
+        Bun::V::validateInteger(scope, lexicalGlobalObject, offsetValue, "offset"_s, jsNumber(0), jsDoubleNumber(JSC::maxSafeInteger()), &offset);
         RETURN_IF_EXCEPTION(scope, {});
         // Node only reads `end` once `offset` is present: fill(v, undefined, end)
         // ignores end (it is never validated) and fills the whole buffer.
@@ -1815,18 +1808,17 @@ static int64_t indexOf(JSC::JSGlobalObject* lexicalGlobalObject, ThrowScope& sco
     // and byteLength from the buffer right before use, and check for detachment
     // after all JS calls in each code path are complete.
 
-    // Helper: re-fetch buffer state after JS calls. Returns false if the buffer
-    // was detached; the caller returns -1 (matches Node.js for a detached
-    // haystack). A merely EMPTY haystack is not -1; see computeIndexOfRange.
-    auto refetchBufferState = [&](const uint8_t*& typedVector, size_t& len) -> bool {
+    // Helper: re-fetch buffer state after JS calls. A detached haystack is an
+    // empty one, like in Node: an empty needle is still found at 0, anything
+    // else is -1. computeIndexOfRange never reads the vector for length 0.
+    auto refetchBufferState = [&](const uint8_t*& typedVector, size_t& len) {
         if (buffer->isDetached()) [[unlikely]] {
             typedVector = nullptr;
             len = 0;
-            return false;
+            return;
         }
         typedVector = buffer->typedVector();
         len = buffer->byteLength();
-        return true;
     };
 
     if (std::isnan(byteOffsetD)) byteOffsetD = dir ? 0 : byteLength;
@@ -1835,7 +1827,7 @@ static int64_t indexOf(JSC::JSGlobalObject* lexicalGlobalObject, ThrowScope& sco
         auto byteValue = static_cast<uint8_t>((valueValue.toInt32(lexicalGlobalObject)) % 256);
         RETURN_IF_EXCEPTION(scope, -1);
         const uint8_t* typedVector;
-        if (!refetchBufferState(typedVector, byteLength)) return -1;
+        refetchBufferState(typedVector, byteLength);
         return indexOfNumber(lexicalGlobalObject, last, typedVector, byteLength, byteOffsetD, endD, byteValue);
     }
 
@@ -1855,14 +1847,14 @@ static int64_t indexOf(JSC::JSGlobalObject* lexicalGlobalObject, ThrowScope& sco
         auto* str = valueValue.toString(lexicalGlobalObject);
         RETURN_IF_EXCEPTION(scope, -1);
         const uint8_t* typedVector;
-        if (!refetchBufferState(typedVector, byteLength)) return -1;
+        refetchBufferState(typedVector, byteLength);
         return indexOfString(lexicalGlobalObject, last, typedVector, byteLength, byteOffsetD, endD, str, encoding.value());
     }
 
     if (auto* array = dynamicDowncast<JSC::JSUint8Array>(valueValue)) {
         if (!encoding.has_value()) encoding = BufferEncodingType::utf8;
         const uint8_t* typedVector;
-        if (!refetchBufferState(typedVector, byteLength)) return -1;
+        refetchBufferState(typedVector, byteLength);
         // A needle whose backing buffer was detached by a valueOf/toPrimitive
         // callback above reports byteLength()==0; computeIndexOfRange's
         // empty-needle path handles that (clamped to `end`) without touching
@@ -1952,17 +1944,41 @@ static JSC::EncodedJSValue jsBufferPrototypeFunction_inspectBody(JSC::JSGlobalOb
                 result.append(',');
             }
             result.append(' ');
-            size_t i = 0;
+
+            // Node's Buffer.prototype[inspect.custom] copies the extra
+            // properties onto a null-prototype object, runs util.inspect on
+            // it with the caller's options plus `breakLength: Infinity,
+            // compact: true`, and keeps the part between
+            // "[Object: null prototype] { " and " }". That is what gives
+            // the keys and values the same quoting, colors and depth as
+            // the surrounding output.
+            JSObject* extras = JSC::constructEmptyObject(vm, globalObject->nullPrototypeObjectStructure());
             for (auto ident : array) {
-                if (i > 0) result.append(", "_s);
-                result.append(ident.string());
-                result.append(": "_s);
                 auto value = castedThis->get(globalObject, ident);
                 RETURN_IF_EXCEPTION(scope, {});
-                auto inspected = Bun__inspect_singleline(globalObject, value).transferToWTFString();
+                extras->putDirect(vm, ident, value);
+            }
+
+            JSObject* options = JSC::constructEmptyObject(globalObject);
+            if (ctx.isObject()) {
+                JSC::objectAssignGeneric(globalObject, vm, options, asObject(ctx));
                 RETURN_IF_EXCEPTION(scope, {});
-                result.append(inspected);
-                i++;
+            }
+            options->putDirect(vm, Identifier::fromString(vm, "breakLength"_s), jsDoubleNumber(std::numeric_limits<double>::infinity()));
+            options->putDirect(vm, Identifier::fromString(vm, "compact"_s), jsBoolean(true));
+
+            JSFunction* inspectFn = globalObject->utilInspectFunction();
+            RETURN_IF_EXCEPTION(scope, {});
+            MarkedArgumentBuffer args;
+            args.append(extras);
+            args.append(options);
+            JSValue inspected = JSC::call(globalObject, inspectFn, ArgList(args), "util.inspect"_s);
+            RETURN_IF_EXCEPTION(scope, {});
+            auto inspectedString = inspected.toWTFString(globalObject);
+            RETURN_IF_EXCEPTION(scope, {});
+            constexpr size_t prefixLength = sizeof("[Object: null prototype] { ") - 1;
+            if (inspectedString.length() > prefixLength + 2) {
+                result.append(StringView(inspectedString).substring(prefixLength, inspectedString.length() - prefixLength - 2));
             }
         }
     }

@@ -536,7 +536,7 @@ impl PosixBufferedReader {
         }
 
         match poll.register_with_fd(lp.cast(), FilePollKind::Readable, poll.fd()) {
-            sys::Result::Err(err) if Self::is_unpollable(&err) => {
+            sys::Result::Err(err) if crate::pipes::is_unpollable(&err) => {
                 self.demote_to_unpollable();
                 Ok(())
             }
@@ -545,16 +545,9 @@ impl PosixBufferedReader {
         }
     }
 
-    /// The kernel refused to watch this fd: `epoll_ctl` returns `EPERM` and
-    /// kqueue `EINVAL` for a character device with no poll support
-    /// (`/dev/zero`, `/dev/null`, `/dev/urandom`). The shell's `IOWriter`
-    /// falls back on the same pair.
-    fn is_unpollable(err: &sys::Error) -> bool {
-        matches!(err.get_errno(), sys::E::EPERM | sys::E::EINVAL)
-    }
-
-    /// A read on such an fd never waits, so drop the poll and read it
-    /// synchronously like a regular file.
+    /// Drops the poll the kernel refused and reads the fd synchronously, like
+    /// a regular file. No poll callback will come, so a caller that waits for
+    /// one must issue the read itself: see [`Self::is_pollable`].
     fn demote_to_unpollable(&mut self) {
         self.flags.remove(PosixFlags::POLLABLE);
         let fd = self.handle.get_fd();
@@ -595,6 +588,12 @@ impl PosixBufferedReader {
     /// Ends the reader after the next `len` bytes of the source as if they were followed by EOF (`ReadLimit`); `None` reads to EOF. Set before starting.
     pub fn set_limit(&mut self, len: Option<usize>) {
         self.limit = ReadLimit(len);
+    }
+
+    /// False after `start(fd, true)` when the kernel refused the poll. Reads
+    /// then run synchronously, and nothing drives them until the parent reads.
+    pub fn is_pollable(&self) -> bool {
+        self.flags.contains(PosixFlags::POLLABLE)
     }
 
     // Exists for consistently with Windows.

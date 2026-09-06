@@ -8,6 +8,16 @@ use bun_sys::FdExt;
 use crate::FilePollFlag;
 use crate::{FilePollRef, Owner};
 
+/// The kernel refused to watch the fd because it has no poll support: a
+/// regular file, or a character device such as `/dev/null`, `/dev/zero` or
+/// `/dev/urandom`. `epoll_ctl` reports it as `EPERM`, kqueue as `EINVAL`.
+/// A read or write on such an fd never waits, so the caller continues
+/// without a poll.
+#[cfg(not(windows))]
+pub fn is_unpollable(err: &bun_sys::Error) -> bool {
+    matches!(err.get_errno(), bun_sys::E::EPERM | bun_sys::E::EINVAL)
+}
+
 pub enum PollOrFd {
     Poll(FilePollRef),
     Fd(Fd),

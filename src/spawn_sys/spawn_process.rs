@@ -793,7 +793,7 @@ pub unsafe fn spawn_process_posix(
                     // O_NONBLOCK lives on the open file description, so one that
                     // `process.stdout` set on a pipe reaches the child, where a
                     // plain write(2) then fails with EAGAIN. libuv clears it too.
-                    if fl & bun_sys::O::NONBLOCK as bun_sys::FcntlInt != 0 {
+                    if (fl & bun_sys::O::NONBLOCK as bun_sys::FcntlInt) != 0 {
                         let _ = bun_sys::update_nonblocking(fileno, false);
                     }
                     actions.inherit(fileno)?;

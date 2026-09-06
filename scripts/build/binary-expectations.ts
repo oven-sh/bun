@@ -158,42 +158,70 @@ export function binaryFormat(cfg: Config): BinaryFormat {
 }
 
 /**
- * Static initializers the runtime libraries contribute. bun, JSC and WTF add
- * none (WTF's NeverDestroyed / LazyNeverDestroyed exist so they don't have
- * to); a `_GLOBAL__sub_I_<file>` from one of ours is the thing to catch.
+ * Static initializers the runtime libraries contribute on each target — the
+ * allowlist for that target and nothing wider, so an entry that starts
+ * showing up somewhere new is noticed too. bun, JSC and WTF add none (WTF's
+ * NeverDestroyed / LazyNeverDestroyed exist so they don't have to); a
+ * `_GLOBAL__sub_I_<file>` from one of ours is the thing to catch, in debug
+ * builds as much as release.
  */
-const runtimeInitializers = [
-  "_ZL17mi_process_attachv", // mimalloc
-  "frame_dummy", // crtbegin
-  "register_classes", // freebsd crt
-  "__init_cpu_features*", // compiler-rt / bionic ifunc resolvers
-  "init_have_lse_atomics", // compiler-rt outline atomics (aarch64)
-  "__do_init", // crt
-  "_R*3std3sys4args4unix3imp15ARGV_INIT_ARRAY*", // Rust std: argv capture
-  "_R*3std3sys18configure_builtins13RUST_LSE_INIT*", // Rust std: aarch64 outline-atomics probe
-  // libstdc++ linked statically on glibc targets: its own iostream/locale tables.
-  "_GLOBAL__sub_I_eh_alloc.cc",
-  "_GLOBAL__sub_I_cxx11_locale_inst.cc",
-  "_GLOBAL__sub_I_cxx11_wlocale_inst.cc",
-  "_GLOBAL__sub_I_ios_errcat.cc",
-  "_GLOBAL__sub_I_locale_inst.cc",
-  "_GLOBAL__sub_I_system_error.cc",
-  "_GLOBAL__sub_I_wlocale_inst.cc",
-];
+function runtimeInitializers(cfg: Config): string[] {
+  const gnu = cfg.linux && cfg.abi === "gnu";
+  const musl = cfg.linux && cfg.abi === "musl";
+  const android = cfg.linux && cfg.abi === "android";
+  return [
+    // mimalloc's process attach hook: every target.
+    "_ZL17mi_process_attachv",
+    // crtbegin.o's frame_dummy: glibc and musl link GCC's crt objects.
+    ...(gnu || musl ? ["frame_dummy"] : []),
+    // FreeBSD's crtbegin registers Objective-C classes (a no-op for us).
+    ...(cfg.freebsd ? ["register_classes"] : []),
+    // Rust std captures argv from .init_array on glibc only.
+    ...(gnu ? ["_R*3std3sys4args4unix3imp15ARGV_INIT_ARRAY*"] : []),
+    // aarch64 outline-atomics probes: Rust std's on Linux (gnu/musl),
+    // compiler-rt's + bionic's cpu-feature init on Android.
+    ...(cfg.arm64 && (gnu || musl) ? ["_R*3std3sys18configure_builtins13RUST_LSE_INIT*"] : []),
+    ...(cfg.arm64 && android ? ["init_have_lse_atomics", "__init_cpu_features"] : []),
+    // libstdc++ is linked statically on glibc targets and brings its own
+    // iostream/locale/error-category tables (which ones depends on the
+    // libstdc++ version; the sysroot's gcc-13 has all seven).
+    ...(gnu
+      ? [
+          "_GLOBAL__sub_I_eh_alloc.cc",
+          "_GLOBAL__sub_I_cxx11_locale_inst.cc",
+          "_GLOBAL__sub_I_cxx11_wlocale_inst.cc",
+          "_GLOBAL__sub_I_ios_errcat.cc",
+          "_GLOBAL__sub_I_locale_inst.cc",
+          "_GLOBAL__sub_I_system_error.cc",
+          "_GLOBAL__sub_I_wlocale_inst.cc",
+        ]
+      : []),
+  ];
+}
 
 /**
- * Imports that would mean a toolchain feature we build without has crept in:
- * C++ exceptions/RTTI runtime from a shared libstdc++/libc++, the unwinder
- * driving them, libgcc's emulated TLS, libatomic.
+ * Imports that would mean a toolchain feature bun builds without has crept
+ * in. The C++ runtime is static on glibc/Android/Windows and libc++ is part
+ * of the OS on macOS, so there the exception machinery must not be imported
+ * at all; musl and FreeBSD load libstdc++/libc++ dynamically and legitimately
+ * import guard/pure-virtual/typeid helpers from it, so only the throw path is
+ * banned there. Emulated TLS and libatomic calls are banned everywhere.
  */
-const forbiddenImportsCommon = [
-  "__cxa_throw",
-  "__cxa_rethrow",
-  "__cxa_allocate_exception",
-  "__gxx_personality_*",
-  "__emutls_*",
-  "__atomic_*",
-];
+function forbiddenImports(cfg: Config): string[] {
+  const everywhere = ["__emutls_*", "__atomic_*"];
+  const throwing = [
+    "__cxa_throw",
+    "__cxa_rethrow",
+    "__cxa_allocate_exception",
+    "__cxa_begin_catch",
+    "__gxx_personality_*",
+  ];
+  if (cfg.windows) return [...everywhere, "_CxxThrowException", "__CxxFrameHandler*"];
+  if (cfg.darwin) return [...everywhere, ...throwing, "_Unwind_Resume"];
+  if (cfg.linux && (cfg.abi === "gnu" || cfg.abi === "android"))
+    return [...everywhere, ...throwing, "_Unwind_Resume", "__cxa_guard_*"];
+  return [...everywhere, ...throwing]; // musl, FreeBSD
+}
 
 export function binaryExpectations(cfg: Config): BinaryExpectations {
   const format = binaryFormat(cfg);
@@ -239,11 +267,8 @@ export function binaryExpectations(cfg: Config): BinaryExpectations {
             ? {}
             : { GLIBC: "2.17" },
       }),
-      // musl and FreeBSD link the C++ runtime dynamically, so the exception
-      // entry points are legitimately imported (libstdc++/libc++ reference
-      // them internally); the ban applies where we link it statically.
-      forbiddenImports: musl || freebsd ? ["__emutls_*"] : forbiddenImportsCommon,
-      ...(auditInitializers && { staticInitializers: runtimeInitializers }),
+      forbiddenImports: forbiddenImports(cfg),
+      ...(auditInitializers && { staticInitializers: runtimeInitializers(cfg) }),
       elf: {
         // Android requires PIE; everywhere else bun is a fixed-address
         // executable (-fno-pic, see flags.ts). No RELRO / BIND_NOW anywhere:
@@ -274,8 +299,8 @@ export function binaryExpectations(cfg: Config): BinaryExpectations {
         allowed: sanitizerLibs,
       },
       ...(cfg.osxDeploymentTarget !== undefined && { minOSVersion: cfg.osxDeploymentTarget }),
-      forbiddenImports: forbiddenImportsCommon,
-      ...(auditInitializers && { staticInitializers: runtimeInitializers }),
+      forbiddenImports: forbiddenImports(cfg),
+      ...(auditInitializers && { staticInitializers: runtimeInitializers(cfg) }),
       macho: {
         flags: ["PIE", "TWOLEVEL", "DYLDLINK"],
         segmentMaxProt: { __TEXT: "r-x", __DATA_CONST: "rw-", __DATA: "rw-", __LINKEDIT: "r--" },
@@ -316,7 +341,7 @@ export function binaryExpectations(cfg: Config): BinaryExpectations {
       ],
     },
     minOSVersion: "6.0",
-    forbiddenImports: [...forbiddenImportsCommon, "_CxxThrowException", "__CxxFrameHandler*"],
+    forbiddenImports: forbiddenImports(cfg),
     pe: {
       dllCharacteristics: ["DYNAMIC_BASE", "HIGH_ENTROPY_VA", "NX_COMPAT", "TERMINAL_SERVER_AWARE"],
       subsystem: "IMAGE_SUBSYSTEM_WINDOWS_CUI",

@@ -3,7 +3,7 @@ import { describe, expect, it, jest } from "bun:test";
 import { bunEnv, bunExe, bunRun, isGlibcVersionAtLeast, isMacOS, tempDir, tmpdirSync } from "harness";
 import { createReadStream, mkdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { Duplex, duplexPair, finished, PassThrough, Readable, Stream, Transform, Writable } from "node:stream";
+import { compose, Duplex, duplexPair, finished, PassThrough, Readable, Stream, Transform, Writable } from "node:stream";
 import { finished as finishedP } from "node:stream/promises";
 import { join } from "path";
 
@@ -1614,6 +1614,50 @@ describe("node v26 stream semantics", () => {
     const err = await promise;
     expect(err.name).toBe("AbortError");
     expect(err.code).toBe("ABORT_ERR");
+  });
+
+  // Upstream: nodejs/node#63593. compose consumes the tail in flowing mode, so
+  // the composed stream emits a chunk inside the tail's push() call.
+  it("compose emits tail output synchronously with its production", async () => {
+    const log = [];
+    const tail = new Transform({
+      transform(chunk, encoding, callback) {
+        log.push("transform:" + chunk);
+        this.push(chunk);
+        log.push("pushed:" + chunk);
+        callback();
+      },
+    });
+    const composed = compose(new PassThrough(), tail);
+    composed.on("data", chunk => log.push("data:" + chunk));
+    const ended = new Promise(resolve => composed.on("end", resolve));
+    // Let the composed stream and the tail start flowing before the first write.
+    await new Promise(resolve => setImmediate(resolve));
+    await new Promise(resolve => setImmediate(resolve));
+    composed.write("x");
+    composed.end("y");
+    await ended;
+    expect(log).toEqual(["transform:x", "data:x", "pushed:x", "transform:y", "data:y", "pushed:y"]);
+  });
+
+  it("compose delivers the chunks the tail pushed before it errored", async () => {
+    const log = [];
+    const tail = new Transform({
+      transform(chunk, encoding, callback) {
+        this.push(chunk);
+        callback(chunk.toString() === "boom" ? new Error("tail-boom") : null);
+      },
+    });
+    const composed = compose(new PassThrough(), tail);
+    composed.on("data", chunk => log.push("data:" + chunk));
+    composed.on("error", err => log.push("error:" + err.message));
+    const closed = new Promise(resolve => composed.on("close", resolve));
+    await new Promise(resolve => setImmediate(resolve));
+    await new Promise(resolve => setImmediate(resolve));
+    composed.write("ok");
+    composed.write("boom");
+    await closed;
+    expect(log).toEqual(["data:ok", "data:boom", "error:tail-boom"]);
   });
 
   // Upstream: v26 test-stream-writable-decoded-encoding.js.

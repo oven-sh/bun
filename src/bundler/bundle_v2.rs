@@ -6812,11 +6812,11 @@ pub mod bv2_impl {
                     }
                 }
 
+                let path_loader = path
+                    .loader(&transpiler.options.loaders)
+                    .unwrap_or(Loader::File);
                 let import_record_loader = 'brk: {
-                    let resolved_loader = import_record.loader.unwrap_or_else(|| {
-                        path.loader(&transpiler.options.loaders)
-                            .unwrap_or(Loader::File)
-                    });
+                    let resolved_loader = import_record.loader.unwrap_or(path_loader);
                     // When an HTML file references a URL asset (e.g. <link rel="manifest" href="./manifest.json" />),
                     // the file must be copied to the output directory as-is. If the resolved loader would
                     // parse/transform the file (e.g. .json, .toml) rather than copy it, force the .file loader
@@ -6834,12 +6834,19 @@ pub mod bv2_impl {
                     break 'brk resolved_loader;
                 };
                 import_record.loader = Some(import_record_loader);
+                let key = import_record_module_key(
+                    &mut module_key_buf,
+                    import_record,
+                    path.text,
+                    path_loader,
+                    for_dev_server,
+                );
 
                 let is_html_entrypoint = import_record_loader == Loader::Html
                     && target.is_server_side()
                     && self.dev_server.is_none();
 
-                if let Some(id) = self.path_to_source_index_map(target).get(path.text) {
+                if let Some(id) = self.path_to_source_index_map(target).get(key) {
                     if self.dev_server.is_some() && loader != Loader::Html {
                         import_record.path =
                             self.graph.input_files.items_source()[id as usize].path;
@@ -6853,7 +6860,7 @@ pub mod bv2_impl {
                     import_record.kind = ImportKind::HtmlManifest;
                 }
 
-                let resolve_entry = resolve_queue.get_or_put(path.text).expect("oom");
+                let resolve_entry = resolve_queue.get_or_put(key).expect("oom");
                 if resolve_entry.found_existing {
                     // SAFETY: arena-allocated `ParseTask` stored in the queue; arena outlives the pass.
                     import_record.path =
@@ -7109,11 +7116,22 @@ pub mod bv2_impl {
             // Inlined `self.path_to_source_index_map(ctx.target)` (== `&mut self.graph.build_graphs[target]`)
             // so borrowck sees it as disjoint from `self.graph.input_files` above.
             let path_to_source_index_map = &mut self.graph.build_graphs[ctx.target];
+            let mut module_key_buf: Vec<u8> = Vec::new();
             for (i, record) in import_records.as_mut_slice().iter_mut().enumerate() {
                 if !only_selected_record(ctx.only_records, i) {
                     continue;
                 }
-                if let Some(source_index) = path_to_source_index_map.get_path(&record.path) {
+                let key: &[u8] = match record.loader {
+                    Some(loader)
+                        if record
+                            .flags
+                            .contains(bun_ast::ImportRecordFlags::KEYED_BY_LOADER) =>
+                    {
+                        loader_module_key(&mut module_key_buf, record.path.text, loader)
+                    }
+                    _ => record.path.text,
+                };
+                if let Some(source_index) = path_to_source_index_map.get(key) {
                     if save_import_record_source_index
                         || input_file_loaders[source_index as usize].is_css()
                     {

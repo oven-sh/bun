@@ -22,7 +22,7 @@ This directory generates `build.ninja`. The scripts **describe** the build; ninj
 
 **Deps compile in our graph.** `BuildSpec` variants:
 
-- `direct` — the dep's sources, in one or more groups (each its own flags/includes/PCH), become first-class `cc`/`cxx` edges in our graph and the `.o`s go straight into bun's link; `steps` add generators (ruby/python/perl scripts, a host tool the dep built), host tools and target executables; `headers` writes config headers at configure. Every C/C++ dep, from zlib (one list) to WebKit (`deps/webkit.ts`: bmalloc/WTF/JSC groups, JSC's unified bundles from the checked-in `deps/webkit-jsc-sources.ts`, the DerivedSources generators, the LLInt extractor chain, testFFI) and ICU (`deps/icu.ts`: host `icupkg`, data filter/repack). No sub-process configure, no tree read at configure, and LTO sees across the dep boundary.
+- `direct` — the dep's sources, in one or more groups (each its own flags/includes/PCH), become first-class `cc`/`cxx` edges in our graph and the `.o`s go straight into bun's link; `steps` add generators (ruby/python/perl scripts, a host tool the dep built), host tools and target executables; `headers` writes config headers at configure. Every C/C++ dep, from zlib (one list) to WebKit (`deps/webkit.ts`: bmalloc/WTF/JSC groups, JSC's unified bundles from the checked-in `deps/webkit-jsc-sources.ts`, the DerivedSources generators, the LLInt extractor chain; testFFI and the `jsc` shell are bun.ts edges reusing its objects) and ICU (`deps/icu.ts`: host `icupkg`, data filter/repack). No sub-process configure, no tree read at configure, and LTO sees across the dep boundary.
 - `cargo` — invoke cargo build (lolhtml, rust-argon2). Cargo's incremental build is reliable; `restat = 1` keeps our downstream no-ops fast.
 - `prebuilt` — skip build entirely, download compiled `.a`/`.lib` (nodejs-headers; WebKit only with an explicit `--webkit=prebuilt`).
 
@@ -224,7 +224,7 @@ Split CI modes: `rust-only` (path deps+codegen+cargo → libbun_runtime.a), `cpp
 
 **`Dependency`** (`source.ts`) — `{name, source, patches?, fetchDeps?, build, provides, enabled?, versionMacro?}`. The `source`/`build`/`provides` fields are functions of `Config` so they vary per-target. `Source` variants: `github` (archive tarball, or sparse git fetch when `sparse` is set), `tarball`, `local` (`--local-deps`), `in-tree`, `prebuilt`. `BuildSpec` variants covered in Goals above.
 
-**`Ninja`** — Accumulates rules/builds/pools/defaults, emits `build.ninja`. All paths given absolute; converted to buildDir-relative at write time, and every build-dir output is also declared under its absolute spelling (implicit output) so compiler depfiles, which name headers by absolute path, resolve to the producing edge.
+**`Ninja`** — Accumulates rules/builds/pools/defaults, emits `build.ninja`. All paths given absolute; converted to buildDir-relative at write time, and every output whose relative and absolute spellings differ is also declared under the absolute one (implicit output) so compiler depfiles, which name headers by absolute path, resolve to the producing edge.
 
 ## registerXxxRules vs emitXxx
 

@@ -261,6 +261,10 @@ export function binaryExpectations(cfg: Config): BinaryExpectations {
   // the same list: an initializer that only -O2 folds away is still one we
   // wrote (make it constexpr/constinit instead).
   const sanitizerLibs = cfg.asan ? ["*clang_rt.asan*", "*asan-dyld-shim*", "libgcc_s.so.1"] : [];
+  // Android: -llog (WTF's logging goes to logcat) is linked --as-needed, so
+  // liblog.so is NEEDED exactly when a live __android_log_* reference
+  // survives — a system library either way, allowed rather than pinned.
+  const allowedLibs = [...sanitizerLibs, ...(cfg.abi === "android" ? ["liblog.so"] : [])];
   const staticInitializers = cfg.asan ? undefined : runtimeInitializers(cfg);
 
   switch (format) {
@@ -304,7 +308,7 @@ export function binaryExpectations(cfg: Config): BinaryExpectations {
       return {
         format,
         exports: { versionScript: src(cfg.freebsd ? "linker-freebsd.lds" : "linker.lds"), exact: [], patterns: [] },
-        neededLibs: { names: neededLibs, exact: pinned, allowed: sanitizerLibs },
+        neededLibs: { names: neededLibs, exact: pinned, allowed: allowedLibs },
         ...(pinned && { maxSymbolVersions }),
         forbiddenImports: forbiddenImports(cfg),
         ...(staticInitializers && { staticInitializers }),

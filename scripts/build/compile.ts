@@ -510,10 +510,11 @@ export function ar(n: Ninja, cfg: Config, out: string, objects: string[], valida
  * `obj/src/jsc/bindings/foo.cpp.o`. Generated sources (codegen .cpp
  * files under buildDir) go under `obj/codegen/` to keep a single tree.
  *
- * Ninja does NOT auto-create parent directories of outputs. Directories
- * are created at configure time — each `cxx()`/`cc()` call tracks its
- * object's parent dir, and `createObjectDirs()` is called once at the end
- * of configure to mkdir the whole tree. Same approach as CMake, which
+ * Ninja creates the parent directory of every declared output before it
+ * runs an edge; configure additionally pre-creates the whole object tree
+ * (`mkdirAll()` at the end of configure) so the directories exist for
+ * tools that look before any edge ran (clangd reading
+ * compile_commands.json, for one). Same approach as CMake, which
  * pre-creates `CMakeFiles/<target>.dir/` during its generate step.
  */
 function objectPath(cfg: Config, src: string): string {

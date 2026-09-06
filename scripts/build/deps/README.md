@@ -18,8 +18,8 @@ time, host tools built with the host compiler, target executables linked
 from groups), `headers` (config headers written at configure, `.h.in`
 substitution). `deps/tinycc.ts` (one host tool + one generated header),
 `deps/icu.ts` (two groups, host `icupkg`, data steps) and `deps/webkit.ts`
-(bmalloc/WTF/JSC groups, ~120 generators, the LLInt extractor executables,
-testFFI) are the examples, small to large.
+(bmalloc/WTF/JSC groups, ~120 generators, the LLInt extractor executables)
+are the examples, small to large.
 
 **`name` must match the directory on disk** (`vendor/<name>/`). If your repo
 is `oven-sh/WebKit`, name it `"WebKit"` — that's what `git clone` creates.
@@ -160,7 +160,7 @@ export const mydep: Dependency = {
 - **libuv.ts** — `enabled: cfg => cfg.windows` for a platform-only dep
 - **lolhtml.ts** — cargo build with rustflags
 - **icu.ts** — direct build with two source groups, a host tool (`icupkg`) and generator steps for the data object; tarball source
-- **webkit.ts** — direct build at full stretch: sparse github source read at configure time, three groups (bmalloc/WTF/JSC) with a PCH, ~120 generator steps, target executables (LLInt extractors, testFFI); also the `prebuilt` opt-in
+- **webkit.ts** — direct build at full stretch: sparse github source, checked-in file lists (`webkit-*-sources.ts`), three groups (bmalloc/WTF/JSC) with a PCH, ~120 generator steps, target executables (the LLInt extractors), checks that the fetched tree still matches the transcription (`webkit-check-sources.ts`, `webkit-check-cmake.ts`); also the `prebuilt` opt-in. (testFFI and the jsc shell are bun.ts edges that reuse its objects.)
 
 ## How the fetch works
 

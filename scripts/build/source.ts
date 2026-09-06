@@ -556,6 +556,15 @@ export interface ResolvedDep {
    */
   outputs: string[];
   /**
+   * A direct dep's generated headers (`headers` substitutions, the steps'
+   * `consumerOutputs`). Declared, restat outputs, so a consumer names them
+   * ORDER-ONLY — they exist before its first compile and its depfile tracks
+   * the ones it actually includes from then on — where `outputs` (fetch
+   * stamps, prebuilt/cargo libs: edges with undeclared header side effects)
+   * must be implicit. Empty for every other build kind.
+   */
+  generatedHeaders: string[];
+  /**
    * Stamps of this dep's `forbidUndefined` checks (static `nm` scans of its
    * objects). Ninja validations of whatever the objects go into next — the
    * per-dep archive here when cfg.archiveDeps, otherwise bun.ts's archive or
@@ -929,13 +938,14 @@ export function resolveDep(
   const fetchDepStamps = fetchDeps.flatMap(d => {
     const r = resolved.get(d);
     assert(r, `${dep.name}: fetchDeps references '${d}' but it wasn't resolved first — fix allDeps ordering`);
-    return r.outputs;
+    return [...r.outputs, ...r.generatedHeaders];
   });
 
   // ─── Step 2+3: build ───
   let libs: string[];
   let objects: string[] = [];
   let outputs: string[];
+  let generatedHeaders: string[] = [];
   let checks: string[] = [];
 
   if (buildSpec.kind === "cargo") {
@@ -947,10 +957,11 @@ export function resolveDep(
     libs = result.libs;
     objects = result.objects;
     checks = result.checks;
-    // outputs is the "downstream needs me built" signal — for direct deps
-    // that's the generated headers + source stamp, NOT the .o files (those
-    // are link inputs, not include-order dependencies).
-    outputs = result.headerOutputs;
+    // The "downstream needs me built" signal — for direct deps that's the
+    // source stamp and the generated headers, NOT the .o files (those are
+    // link inputs, not include-order dependencies).
+    outputs = result.stamps;
+    generatedHeaders = result.generatedHeaders;
   } else {
     // No build step. The fetch stamp (if any) is the only output. For deps
     // with provides.sources (picohttpparser), emitBun adds a phony pointing
@@ -980,6 +991,7 @@ export function resolveDep(
     defines: provides.defines ?? [],
     sources: resolvedSources,
     outputs,
+    generatedHeaders,
     checks,
   };
 }
@@ -1161,6 +1173,7 @@ function emitPrebuilt(
     defines: provides.defines ?? [],
     sources: [],
     outputs,
+    generatedHeaders: [],
   };
 }
 
@@ -1341,7 +1354,10 @@ interface EmitDirectInput {
 interface EmitDirectResult {
   libs: string[];
   objects: string[];
-  headerOutputs: string[];
+  /** Fetch stamps (own `.ref`, fetchDeps') — plus the archive with cfg.archiveDeps. Implicit inputs of consumers. */
+  stamps: string[];
+  /** Declared generated headers a consumer may include. Order-only inputs of consumers. */
+  generatedHeaders: string[];
   checks: string[];
 }
 
@@ -1566,10 +1582,9 @@ function emitDirect(n: Ninja, cfg: Config, name: string, spec: DirectBuild, inpu
       ? []
       : emitForbidUndefined(n, cfg, name, spec, objectsByGroup.get(name)!, buildDir);
 
-  // headerOutputs: what a consumer's compile waits on for HEADERS to be
-  // ready — the generated headers it may include plus the fetch stamp, not
-  // the .o files.
-  const headerOutputs = [...ready, ...substHeaders, ...(spec.consumerOutputs ?? [])];
+  // What a consumer's compile waits on for HEADERS to be ready — the fetch
+  // stamps and the generated headers it may include, not the .o files.
+  const generatedHeaders = [...substHeaders, ...(spec.consumerOutputs ?? [])];
 
   // Default: hand the objects straight to bun's link line — no intermediate
   // archive. With cfg.archiveDeps the old per-dep .a is produced instead
@@ -1580,10 +1595,10 @@ function emitDirect(n: Ninja, cfg: Config, name: string, spec: DirectBuild, inpu
     for (const o of linkObjects) mkdirSync(resolve(o, ".."), { recursive: true });
     const lib = ar(n, cfg, join("deps", name, `${cfg.libPrefix}${name}${cfg.libSuffix}`), linkObjects, checks);
     n.phony(name, [lib]);
-    return { libs: [lib], objects: [], headerOutputs: [...headerOutputs, lib], checks };
+    return { libs: [lib], objects: [], stamps: [...ready, lib], generatedHeaders, checks };
   }
   n.phony(name, [...linkObjects, ...checks]);
-  return { libs: [], objects: linkObjects, headerOutputs, checks };
+  return { libs: [], objects: linkObjects, stamps: ready, generatedHeaders, checks };
 }
 
 /**

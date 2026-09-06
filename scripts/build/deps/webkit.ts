@@ -649,8 +649,12 @@ function webkitBuildSpec(cfg: Config): DirectBuild {
     // includes them through the PrivateHeaders stubs) and WTF's MIG stubs.
     consumerOutputs: [...codegen.headers, ...wtf.migHeaders],
     // Read straight out of the source tree by edges bun.ts emits: the
-    // ClassInfo check script, testFFI's source.
-    treeFiles: ["Tools/Scripts/check-classinfo-uniqueness.py", "Source/JavaScriptCore/ffi/tests/testFFI.cpp"],
+    // ClassInfo check script and the standalone programs' sources (testFFI,
+    // the jsc shell) — declared fetch outputs so ninja knows their producer.
+    treeFiles: [
+      "Tools/Scripts/check-classinfo-uniqueness.py",
+      ...[...jscTestFFISources, ...jscShellSources].map(f => `Source/JavaScriptCore/${f}`),
+    ],
   };
 }
 
@@ -895,7 +899,11 @@ function bmallocGroup(wk: WebKitBuild, flags: WebKitFlags): SourceGroup {
       "-DBUILDING_bmalloc",
       "-D_GNU_SOURCE",
       ...(flags.useMimalloc ? ["-DUSE_MIMALLOC=1"] : []),
-      ...(usesMallocHeapBreakdown(cfg) ? ["-DBENABLE_MALLOC_HEAP_BREAKDOWN=1"] : []),
+      // bmalloc's own TUs never see cmakeconfig.h (BPlatform.h reads -D's), so
+      // what cmakeconfig.h tells every consumer — heap breakdown means system
+      // malloc, no libpas — has to be said here too (bmalloc/CMakeLists.txt's
+      // `if (USE_SYSTEM_MALLOC) add_definitions(-DUSE_SYSTEM_MALLOC=1)`).
+      ...(usesMallocHeapBreakdown(cfg) ? ["-DBENABLE_MALLOC_HEAP_BREAKDOWN=1", "-DUSE_SYSTEM_MALLOC=1"] : []),
       "-Wno-cast-align",
       "-Wno-missing-field-initializers",
       // libpas' 16-byte CAS on x64 (bmalloc/CMakeLists.txt, MSVC branch; the
@@ -1530,6 +1538,10 @@ function jscGroup(
 
 // ─── testFFI ───
 
+/** Standalone JSC programs' sources (relative to Source/JavaScriptCore); also fetch outputs via treeFiles. */
+const jscTestFFISources = ["ffi/tests/testFFI.cpp"];
+const jscShellSources = ["jsc.cpp", "tools/JSDollarVMShell.cpp"];
+
 /**
  * JSC's bun:ffi C++/ABI test program (ffi/tests/testFFI.cpp), run by
  * test/js/bun/jsc-stress/testFFI.test.ts. It is one of WebKit's own
@@ -1539,7 +1551,7 @@ function jscGroup(
  * the link flags a standalone JSC executable needs.
  */
 export function jscTestFFI(cfg: Config): JSCProgram {
-  return jscProgram(cfg, "testFFI", ["ffi/tests/testFFI.cpp"], []);
+  return jscProgram(cfg, "testFFI", jscTestFFISources, []);
 }
 
 /**
@@ -1548,7 +1560,7 @@ export function jscTestFFI(cfg: Config): JSCProgram {
  * `bun run build --target=jsc` / `ninja jsc` build it on demand.
  */
 export function jscShell(cfg: Config): JSCProgram {
-  return jscProgram(cfg, "jsc", ["jsc.cpp", "tools/JSDollarVMShell.cpp"], cfg.darwin ? ["-ledit"] : []);
+  return jscProgram(cfg, "jsc", jscShellSources, cfg.darwin ? ["-ledit"] : []);
 }
 
 export interface JSCProgram {

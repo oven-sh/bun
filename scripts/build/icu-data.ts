@@ -320,10 +320,18 @@ function main(): void {
   for (const bare of names) {
     if (!keepRaw(bare)) writeFileSync(join(trainDir, bare.replace(/\//g, "_")), readFileSync(join(itemsDir, bare)));
   }
+  // Trained into the work dir and copied out only if it changed, like the
+  // .dat and .S below, so a rerun that reproduces the same bytes leaves the
+  // outputs' mtimes alone (restat) and nothing downstream relinks.
   const dict = join(OUT, "icudt.zstdict");
+  const trainedDict = join(work, "icudt.zstdict");
   // --train-cover (exhaustive segment search) beats the default fastcover
   // for this corpus; build-time only.
-  run(["zstd", "-q", "--train", "--train-cover", "-r", trainDir, "-o", dict, `--maxdict=${DICT_SIZE}`], "zstd --train");
+  run(
+    ["zstd", "-q", "--train", "--train-cover", "-r", trainDir, "-o", trainedDict, `--maxdict=${DICT_SIZE}`],
+    "zstd --train",
+  );
+  writeIfChangedBuffer(dict, readFileSync(trainedDict));
 
   // One zstd invocation for all items (the train dir already holds them under
   // flat names): reads from disk so each frame header carries the content
@@ -403,11 +411,11 @@ function main(): void {
   ].join("\n");
   writeIfChanged(join(OUT, "icudata.S"), asm);
 
-  rmSync(work, { recursive: true, force: true });
   console.log(
     `${names.length} items (${removed.length} removed): ${compressed} compressed, ` +
       `${rawBytes}→${outBytes} bytes (${((100 * outBytes) / rawBytes).toFixed(0)}%), dict ${readFileSync(dict).length}`,
   );
+  rmSync(work, { recursive: true, force: true });
 }
 
 function writeIfChangedBuffer(path: string, data: Buffer): void {

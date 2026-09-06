@@ -319,7 +319,13 @@ export async function fetchDep(
 export function assertManagedSource(name: string, srcDir: string, refStamp: string): void {
   if (existsSync(refStamp) || !existsSync(join(srcDir, ".git"))) return;
   throw new BuildError(`${srcDir} is a git clone, not a source tree fetched by the build; refusing to replace it`, {
-    hint: `To build that clone, pass --local-deps=${name}=${srcDir}${name === "WebKit" ? " (bun run build:local does)" : ""}. To let the build fetch the pinned commit here instead, move or delete it.`,
+    hint:
+      name === "WebKit"
+        ? `vendor/WebKit is where the build fetches the pinned WebKit sources now. Move your clone out of the ` +
+          `repository (e.g. \`mv vendor/WebKit ../WebKit\`) and \`export BUN_WEBKIT_PATH=<that path>\` — every ` +
+          `worktree can then share the one clone: \`bun run build:local\` builds it ` +
+          `(--local-deps=WebKit=$BUN_WEBKIT_PATH), plain \`bun run build\` fetches the pinned commit here.`
+        : `To build that clone, pass --local-deps=${name}=${srcDir}. To let the build fetch the pinned commit here instead, move or delete it.`,
   });
 }
 

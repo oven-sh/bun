@@ -687,7 +687,19 @@ export function findRustLld(os: OS): {
     const started = performance.now();
     spawnSync(
       rustup,
-      ["-q", "toolchain", "install", channel, "--no-self-update", "--profile", "minimal", "--component", "rust-src"],
+      [
+        "-q",
+        "toolchain",
+        "install",
+        channel,
+        "--no-self-update",
+        "--profile",
+        "minimal",
+        "--component",
+        "rust-src",
+        "--component",
+        "llvm-tools",
+      ],
       {
         encoding: "utf8",
         timeout: 300_000,

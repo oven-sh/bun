@@ -27,7 +27,7 @@
  */
 
 import { existsSync, lstatSync, readdirSync, readFileSync, realpathSync } from "node:fs";
-import { dirname, relative, resolve, sep } from "node:path";
+import { basename, dirname, join, relative, resolve, sep } from "node:path";
 import type { Sources } from "../glob-sources.ts";
 import { binaryExpectations } from "./binary-expectations.ts";
 import { emitCodegen, type CodegenOutputs } from "./codegen.ts";
@@ -187,6 +187,11 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
   // no-op rebuild (ar has no restat) would otherwise cascade to a full PCH+cxx
   // rebuild. Link still gets every dep via depLibs/depObjects.
   const depHeaderSignal: string[] = [];
+  // Direct deps' generated headers (WebKit's DerivedSources, zlib's zlib.h…):
+  // declared restat outputs, so order-only — depfiles then track exactly
+  // which ones a TU includes, and regenerating one recompiles its includers
+  // rather than every file (and the PCH) that names the dep.
+  const depHeadersReady: string[] = [];
   // forbidUndefined stamps (source.ts): validations of whatever the dep
   // objects go into next, the archive or the link — a dep that regrows a
   // forbidden reference fails that build without delaying the link.
@@ -200,7 +205,10 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
     // d.outputs is the "headers are ready" signal: for prebuilt that's the
     // stamp (headers are undeclared side-effects), for direct deps
     // it's the generated-header set + source stamp.
-    if (d.includes.length > 0) depHeaderSignal.push(...d.outputs);
+    if (d.includes.length > 0) {
+      depHeaderSignal.push(...d.outputs);
+      depHeadersReady.push(...d.generatedHeaders);
+    }
   }
 
   // ─── Step 3: configure-time generated header + assemble flags ───
@@ -226,6 +234,8 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
   // idiom: order-only inputs never dirty an edge; depfiles track the reads).
   const codegenReady = resolve(cfg.buildDir, "obj", ".codegen-ready");
   n.phony(codegenReady, codegen.cppAll);
+  const depsReady = resolve(cfg.buildDir, "obj", ".dep-headers-ready");
+  n.phony(depsReady, depHeadersReady);
 
   // ─── Step 4: PCH ───
   // CI full mode (unused by the pipeline) skips the PCH; cpp-only/archive-link use it.
@@ -250,7 +260,7 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
     pchOut = pch(n, cfg, "src/jsc/bindings/root-pch.h", {
       flags: cxxFlagsFull,
       implicitInputs: depHeaderSignal,
-      orderOnlyInputs: [codegenReady],
+      orderOnlyInputs: [codegenReady, depsReady],
     });
   }
 
@@ -350,7 +360,7 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
       // No PCH (CI full mode, or per-file opt-out) — each cxx needs the dep
       // signal directly.
       opts.implicitInputs = depHeaderSignal;
-      opts.orderOnlyInputs = codegenOrderOnly;
+      opts.orderOnlyInputs = [...codegenOrderOnly, depsReady];
     }
     cxxObjects.push(cxx(n, cfg, src, opts));
   }
@@ -361,7 +371,7 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
     const obj = cc(n, cfg, src, {
       flags: cFlagsFull,
       implicitInputs: depHeaderSignal,
-      orderOnlyInputs: codegenOrderOnly,
+      orderOnlyInputs: [...codegenOrderOnly, depsReady],
     });
     cObjects.push(obj);
     return obj;
@@ -897,9 +907,25 @@ function emitDuplicateSymbolCheck(
   if (stamp === undefined) return [];
   const report = resolve(cfg.buildDir, `${exeName}.duplicate-symbols.txt`);
   const q = (p: string) => quote(p, cfg.windows);
+  // While rustc's LLVM is ahead of clang's (the rust-lld swap in config.ts),
+  // libbun_runtime's bitcode is unreadable by clang's llvm-nm/objdump; use the
+  // ones rustup ships beside rust-lld (component llvm-tools). If they are
+  // missing the scan reports every unreadable input and fails, with a hint.
+  const rustLldInUse = cfg.rustLld !== undefined && dirname(cfg.ld) === dirname(cfg.rustLld);
+  const rustBin = rustLldInUse
+    ? basename(dirname(cfg.rustLld!)) === "gcc-ld"
+      ? dirname(dirname(cfg.rustLld!))
+      : dirname(cfg.rustLld!)
+    : undefined;
+  const rustTool = (name: string, fallback: string): string => {
+    const p = rustBin !== undefined ? join(rustBin, name + cfg.host.exeSuffix) : undefined;
+    return p !== undefined && existsSync(p) ? p : fallback;
+  };
+  const nm = rustTool("llvm-nm", cfg.nm!);
+  const objdump = cfg.windows ? rustTool("llvm-objdump", cfg.objdump!) : undefined;
   // The report is always written; $out is the stamp, written only on success.
   n.rule("duplicate_symbols", {
-    command: `${cfg.jsRuntime} ${q(streamPath)} check --label=${exeName} --elapsed --stamp=$out ${cfg.jsRuntime} ${q(verifyBinaryPath)} duplicates ${q(cfg.nm!)} $out.rsp ${q(report)}${cfg.windows ? ` ${q(cfg.objdump!)}` : ""}`,
+    command: `${cfg.jsRuntime} ${q(streamPath)} check --label=${exeName} --elapsed --stamp=$out ${cfg.jsRuntime} ${q(verifyBinaryPath)} duplicates ${q(nm)} $out.rsp ${q(report)}${objdump !== undefined ? ` ${q(objdump)}` : ""}`,
     description: `check ${exeName} link inputs for duplicate definitions`,
     rspfile: "$out.rsp",
     rspfile_content: "$in_newline",
@@ -959,7 +985,13 @@ function emitJscProgram(
     return d === undefined ? [] : [...d.objects, ...d.libs];
   };
   n.comment(`─── ${name} (JSC standalone program) ───`);
-  const objects = spec.sources.map(src => cxx(n, cfg, src, { flags: spec.cxxflags, orderOnlyInputs: webkit.outputs }));
+  const objects = spec.sources.map(src =>
+    cxx(n, cfg, src, {
+      flags: spec.cxxflags,
+      implicitInputs: webkit.outputs,
+      orderOnlyInputs: webkit.generatedHeaders,
+    }),
+  );
   const shims = emitShims(n, cfg);
   const exe = link(n, cfg, name, [...objects, ...fromDep("WebKit"), ...fromDep("icu"), ...fromDep("mimalloc")], {
     libs: [],

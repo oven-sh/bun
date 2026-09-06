@@ -98,8 +98,12 @@ for (const partial of variants) {
   let cfg: Config;
   try {
     cfg = resolveConfig(partial, toolchain);
-  } catch {
-    continue; // e.g. asan+lto rejected — skip the combo.
+  } catch (err) {
+    // A variant this host cannot configure (a missing cross SDK, an option
+    // combination resolveConfig rejects) is skipped — loudly, so a bake that
+    // silently lost a target's sources is visible in the log.
+    console.warn(`prefetch: skipping ${JSON.stringify(partial)}: ${(err as Error).message}`);
+    continue;
   }
 
   for (const dep of allDeps) {

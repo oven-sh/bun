@@ -339,19 +339,37 @@ export async function configure(input: ConfigureInput, fromNinja = false): Promi
   generateCargoConfig(cfg);
   mark("generateCargoConfig");
 
-  // Perl check: LUT codegen (create-hash-table.ts) shells out to the
-  // perl script from JSC. If perl is missing, codegen fails cryptically.
-  // Check here so the error is at configure time with a clear hint.
-  // rust-only/link-only don't run LUT codegen — skip the check so split-CI
-  // steps don't require perl on the rust cross-compile box.
+  // Host tools the C++ side shells out to: perl (bun's LUT codegen and JSC's
+  // hash tables), and with JSC built from source ruby + python3 (its other
+  // generators) and zstd (packing the ICU data, where ICU is ours). Missing
+  // ones fail here with a hint rather than mid-build. rust-only/link-only run
+  // none of that — skip so split-CI steps don't need them on the rust box.
   if (cfg.mode === "full" || cfg.mode === "cpp-only" || cfg.mode === "archive-link") {
-    if (findSystemTool("perl") === undefined) {
-      throw new BuildError("perl not found in PATH", {
-        hint: "LUT codegen (create-hash-table.ts) needs perl. Install it: apt install perl / brew install perl",
+    const needed: [tool: string, why: string, when: boolean][] = [
+      ["perl", "LUT codegen (create-hash-table.ts) and JSC's hash tables", true],
+      ["ruby", "JavaScriptCore's offlineasm/bytecode generators", cfg.webkit === "source"],
+      [
+        "python3",
+        "JavaScriptCore's builtins/inspector/yarr generators",
+        cfg.webkit === "source" && cfg.host.os !== "windows",
+      ],
+      [
+        "python",
+        "JavaScriptCore's builtins/inspector/yarr generators",
+        cfg.webkit === "source" && cfg.host.os === "windows",
+      ],
+      ["zstd", "packing the ICU data (icu-data.ts)", cfg.webkit === "source" && !cfg.darwin],
+    ];
+    const missing = needed.filter(([tool, , when]) => when && findSystemTool(tool) === undefined);
+    if (missing.length > 0) {
+      throw new BuildError(`${missing.map(([t]) => t).join(", ")} not found in PATH`, {
+        hint:
+          missing.map(([tool, why]) => `${tool}: ${why}`).join("; ") +
+          `. Install with your package manager (e.g. apt install ${missing.map(([t]) => (t === "python" ? "python3" : t)).join(" ")} / brew install …); see CONTRIBUTING.md.`,
       });
     }
   }
-  mark("validate+perl");
+  mark("validate+host-tools");
 
   // Glob all source lists — one pass, consistent filesystem snapshot.
   const sources = globAllSources();

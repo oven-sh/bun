@@ -303,6 +303,14 @@ function verifyElf(spec: VerifySpec): void {
       if (cur === undefined || !versionLeq(ver, cur)) maxSeen.set(prefix, ver);
     }
     if (expect.maxSymbolVersions !== undefined) {
+      // Version nodes without a number are requirements too: GLIBC_ABI_DT_RELR
+      // (packed relative relocations, glibc >= 2.36) and GLIBC_PRIVATE would
+      // both raise or break the floor while passing a numeric ceiling.
+      for (const m of verneed.matchAll(/Name: (\S+)\s*$/gm)) {
+        const name = m[1]!;
+        if (!/^[A-Za-z+]+_[0-9][0-9.]*$/.test(name))
+          violations.push(`${name} required (not a numbered version: raises or breaks the libc floor)`);
+      }
       for (const [prefix, ver] of maxSeen) {
         const ceiling = expect.maxSymbolVersions[prefix];
         if (ceiling === undefined) violations.push(`+ ${prefix}_${ver} (no ${prefix} versioned imports expected)`);
@@ -606,7 +614,7 @@ function verifyPE(spec: VerifySpec): void {
 const NM_ARGV_BUDGET = 16_000;
 
 /** Run `tool args... <inputs>` over all inputs, chunked to stay under the argv limit. */
-function* chunkedRun(tool: string, args: string[], inputs: string[]): Generator<string> {
+function* chunkedRun(tool: string, args: string[], inputs: string[]): Generator<{ stdout: string; stderr: string }> {
   for (let start = 0; start < inputs.length; ) {
     let end = start;
     let length = 0;
@@ -616,8 +624,32 @@ function* chunkedRun(tool: string, args: string[], inputs: string[]): Generator<
     } while (end < inputs.length && length + inputs[end]!.length < NM_ARGV_BUDGET);
     const r = spawnSync(tool, [...args, ...inputs.slice(start, end)], { encoding: "utf8", maxBuffer: 1 << 30 });
     if (r.error) throw new BuildError(`duplicates: failed to run ${tool}`, { cause: r.error });
-    yield r.stdout;
+    if (r.signal) throw new BuildError(`duplicates: ${tool} died with ${r.signal}\n${r.stderr}`);
+    // A non-zero exit means some input could not be read; the caller turns
+    // the stderr lines into per-file diagnostics rather than dropping them.
+    yield { stdout: r.stdout, stderr: r.status === 0 ? "" : r.stderr || `${tool} exited ${r.status}` };
     start = end;
+  }
+}
+
+/** `llvm-nm: error: <file>: <why>` lines → readable one-liners. */
+function toolErrors(stderr: string): string[] {
+  return stderr
+    .split("\n")
+    .map(l => l.trim())
+    .filter(l => l.length > 0 && !/^\s*$/.test(l))
+    .map(l => l.replace(/^.*?(?:error|warning): /, ""));
+}
+
+/** True for LLVM bitcode (raw or wrapped), which llvm-objdump -t cannot read; those inputs stay with llvm-nm. */
+function isBitcode(path: string): boolean {
+  const fd = openSync(path, "r");
+  try {
+    const magic = Buffer.alloc(4);
+    readSync(fd, magic, 0, 4, 0);
+    return magic.equals(Buffer.from([0x42, 0x43, 0xc0, 0xde])) || magic.readUInt32LE(0) === 0x0b17c0de;
+  } finally {
+    closeSync(fd);
   }
 }
 
@@ -637,11 +669,19 @@ interface Definition {
  * objects it covered (nm's lines for those are then ignored). Bitcode
  * members are skipped by objdump and stay with nm.
  */
-function coffDefinitions(objdump: string, inputs: string[]): { defs: Definition[]; objects: Set<string> } {
+function coffDefinitions(
+  objdump: string,
+  allInputs: string[],
+  errors: string[],
+): { defs: Definition[]; objects: Set<string> } {
   const defs: Definition[] = [];
   const objects = new Set<string>();
   const IMAGE_COMDAT_SELECT_NODUPLICATES = 1;
-  for (const out of chunkedRun(objdump, ["-t"], inputs)) {
+  // A standalone bitcode .obj makes objdump stop at it ("not a valid object
+  // file"), so those go to nm only; inside archives objdump skips them itself.
+  const inputs = allInputs.filter(f => !isBitcode(f));
+  for (const { stdout: out, stderr } of chunkedRun(objdump, ["-t"], inputs)) {
+    errors.push(...toolErrors(stderr));
     // One block per object: `<path>:\tfile format coff-…` or `<archive>(<member>):…`.
     for (const block of out.split(/^(?=\S.*:\tfile format )/m)) {
       const header = block.match(/^(.*?)(?:\(([^()]*)\))?:\tfile format (\S+)/);
@@ -691,7 +731,8 @@ function verifyDuplicates(nm: string, objdump: string | undefined, rspfile: stri
   // vftables/vbtables/RTTI descriptors (??_7 ??_8 ??_R): COMDAT by ABI, but
   // with RTTI on clang models the vftable as an external *alias* into that
   // COMDAT, which nm reports as a plain external definition.
-  const coff = objdump !== undefined ? coffDefinitions(objdump, inputs) : undefined;
+  const errors: string[] = []; // inputs a tool could not read — reported, never skipped silently
+  const coff = objdump !== undefined ? coffDefinitions(objdump, inputs, errors) : undefined;
   for (const d of coff?.defs ?? []) defs.push(d); // not push(...): more entries than an argument list holds
   const msAbiComdat = (name: string): boolean => coff !== undefined && /^\?\?_[78R]/.test(name);
   // -A: prefix each line with the object (archive:member for archives).
@@ -700,7 +741,12 @@ function verifyDuplicates(nm: string, objdump: string | undefined, rspfile: stri
   // only one that says whether a definition is weak ("weak external"); ELF
   // objects ignore it and print the BSD form, whose type letter (W/V/C)
   // carries the same bit.
-  for (const out of chunkedRun(nm, ["-A", "-S", "-m", "--extern-only", "--defined-only", "--no-demangle"], inputs)) {
+  for (const { stdout: out, stderr } of chunkedRun(
+    nm,
+    ["-A", "-S", "-m", "--extern-only", "--defined-only", "--no-demangle"],
+    inputs,
+  )) {
+    errors.push(...toolErrors(stderr).filter(e => !/no symbols$/.test(e)));
     for (const line of out.split("\n")) {
       // Darwin form: `<obj>: <value> (<segment>,<section>) [weak] [private] external [<attrs>] <name>`
       const d = line.match(
@@ -747,6 +793,16 @@ function verifyDuplicates(nm: string, objdump: string | undefined, rspfile: stri
   lines.push("", `# weak definitions whose size differs between objects (${odr.length}) — informational`);
   for (const [name, sizes] of odr) lines.push(name, ...[...sizes].map(([sz, o]) => `    size 0x${sz} in ${o}`));
   writeFileSync(reportPath, lines.join("\n") + "\n");
+  if (errors.length > 0) {
+    console.log(`${errors.length} link inputs could not be scanned:`);
+    for (const e of errors.slice(0, 20)) console.log(`  ${e}`);
+    if (errors.length > 20) console.log(`  … ${errors.length - 20} more`);
+    console.log(
+      `  (an "Unknown attribute kind" / "Invalid record" here means the objects hold LLVM bitcode newer than ${nm};\n` +
+        `   the build passes rustc's own llvm-nm for that case — rustup component llvm-tools must be installed)`,
+    );
+    return 1;
+  }
   console.log(
     `${dups.length} duplicate strong symbols${dups.length ? ` in ${scanned} definitions across ${inputs.length} inputs` : ""}`,
   );

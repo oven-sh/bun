@@ -23,23 +23,23 @@ Using your system's package manager, install Bun's dependencies:
 {% codetabs group="os" %}
 
 ```bash#macOS (Homebrew)
-$ brew install automake ccache cmake coreutils gnu-sed go icu4c libiconv libtool ninja pkg-config rustup-init ruby
+$ brew install automake ccache cmake coreutils gnu-sed go icu4c libiconv libtool ninja pkg-config rustup-init ruby zstd
 ```
 
 ```bash#Ubuntu/Debian
-$ sudo apt install curl wget lsb-release software-properties-common cmake git golang libtool ninja-build pkg-config ruby-full xz-utils
+$ sudo apt install curl wget lsb-release software-properties-common cmake git golang libtool ninja-build pkg-config ruby-full python3 perl zstd xz-utils
 ```
 
 ```bash#Arch
-$ sudo pacman -S base-devel cmake git go libiconv libtool make ninja pkg-config python rustup sed unzip ruby
+$ sudo pacman -S base-devel cmake git go libiconv libtool make ninja pkg-config python rustup sed unzip ruby perl zstd
 ```
 
 ```bash#Fedora
-$ sudo dnf install clang21 llvm21 lld21 cmake git golang libtool ninja-build pkg-config ruby libatomic-static libstdc++-static sed unzip which libicu-devel 'perl(Math::BigInt)'
+$ sudo dnf install clang21 llvm21 lld21 cmake git golang libtool ninja-build pkg-config ruby python3 perl zstd libatomic-static libstdc++-static sed unzip which libicu-devel 'perl(Math::BigInt)'
 ```
 
 ```bash#openSUSE Tumbleweed
-$ sudo zypper install go cmake ninja automake git icu rustup
+$ sudo zypper install go cmake ninja automake git icu rustup ruby perl python3 zstd
 ```
 
 {% /codetabs %}
@@ -297,7 +297,7 @@ The build output goes to `./build/debug-local` (instead of `./build/debug`), so 
 - The `CompilationDatabase` line in [`.clangd` config](/.clangd) should be `CompilationDatabase: build/debug-local`
 - In [`.vscode/launch.json`](/.vscode/launch.json), many configurations use `./build/debug/`, change them as you see fit
 
-Note that the WebKit folder, including build artifacts, is 8GB+ in size.
+Note that a full WebKit clone is ~12 GB (its build artifacts go into `build/*-local`, not the clone).
 
 If you are using a JSC debug build and using VScode, make sure to run the `C/C++: Select a Configuration` command to configure intellisense to find the debug headers.
 

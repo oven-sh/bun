@@ -1853,9 +1853,10 @@ export function systemLibs(cfg: Config): string[] {
   if (cfg.linux) {
     if (cfg.abi === "android") {
       // bionic: pthread/dl/rt are folded into libc; no separate libatomic
-      // (compiler-rt builtins). No -llog: nothing references __android_log_*
-      // (WTF's calls are under USE(CF)).
-      libs.push("-lc", "-lm");
+      // (compiler-rt builtins). -llog for WTF's __android_log_* logging
+      // (Assertions.cpp under OS(ANDROID)); --as-needed drops it from release
+      // binaries, where those calls are dead.
+      libs.push("-lc", "-lm", "-llog");
     } else {
       libs.push("-lc", "-lpthread", "-ldl");
       // libatomic: static by default (CI distros ship it), dynamic on Arch-like.

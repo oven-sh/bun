@@ -31,8 +31,8 @@
 
 #include <algorithm>
 #include <array>
-#include <optional>
 #include <span>
+#include <utility>
 #include <wtf/text/WTFString.h>
 #include <unicode/utf16.h>
 
@@ -48,24 +48,10 @@ namespace Bun {
 namespace StringWidth {
 
 // ============================================================================
-// Codepoint classification (grapheme break class + width + emoji, one lookup)
+// Codepoint classification
 // ============================================================================
 
-// Each codepoint maps to one packed byte via the 3-stage table in
-// stringWidthTables.h (regenerate with scripts/generate-stringwidth-tables.mjs):
-//   bits 0-4  GraphemeBreakClass ordinal
-//   bits 5-6  width class: 0 zero-width, 1 narrow, 2 wide, 3 East Asian Ambiguous
-//   bit  7    Emoji property (with the isEmojiPresentation() early-outs baked in)
-// The generator derives all three fields from the Unicode Character
-// Database version pinned in the script (EastAsianWidth.txt,
-// DerivedGeneralCategory.txt, emoji-data.txt).
-static constexpr uint8_t kFusedClassMask = 0x1F;
-static constexpr uint8_t kFusedWidthShift = 5;
-static constexpr uint8_t kFusedWidthMask = 0x3;
-static constexpr uint8_t kFusedWidthAmbiguous = 3;
-static constexpr uint8_t kFusedEmojiBit = 0x80;
-
-static constexpr uint8_t fusedClassify(char32_t cp)
+static constexpr uint8_t classifyFromTable(char32_t cp)
 {
     const size_t high = cp >> 8;
     const size_t low = cp & 0xFF;
@@ -73,80 +59,57 @@ static constexpr uint8_t fusedClassify(char32_t cp)
     return StringWidthTables::kGraphemeBreakStage3[StringWidthTables::kGraphemeBreakStage2[stage2Index]];
 }
 
-// Terminal column width from a packed classification byte.
-static constexpr uint8_t widthFromFused(uint8_t packed, bool ambiguousAsWide)
-{
-    const uint8_t width = (packed >> kFusedWidthShift) & kFusedWidthMask;
-    if (width == kFusedWidthAmbiguous)
-        return ambiguousAsWide ? 2 : 1;
-    return width;
-}
-
 // Spot-check the generated table against known codepoints.
-static_assert(widthFromFused(fusedClassify(U'A'), false) == 1);
-static_assert(widthFromFused(fusedClassify(0x1B), false) == 0); // ESC: control, zero width
-static_assert(widthFromFused(fusedClassify(0xAD), false) == 0); // soft hyphen
-static_assert(widthFromFused(fusedClassify(0x202E), false) == 0); // RLO: bidi control, zero width
-static_assert(widthFromFused(fusedClassify(0x2069), false) == 0); // PDI: bidi isolate, zero width
-static_assert(widthFromFused(fusedClassify(0x61C), false) == 0); // arabic letter mark, zero width
-static_assert(widthFromFused(fusedClassify(0x1BCA0), false) == 0); // shorthand format control, zero width
-static_assert(widthFromFused(fusedClassify(0x1D173), false) == 0); // musical format control, zero width
-static_assert(widthFromFused(fusedClassify(0x4E2D), false) == 2); // CJK ideograph: wide
-static_assert(widthFromFused(fusedClassify(0xFF21), false) == 2); // fullwidth A: wide
-static_assert(widthFromFused(fusedClassify(0xA7), false) == 1); // section sign: ambiguous, narrow by default
-static_assert(widthFromFused(fusedClassify(0xA7), true) == 2); // section sign: ambiguous as wide
-static_assert((fusedClassify(0x1F600) & kFusedEmojiBit) != 0); // emoji
-static_assert((fusedClassify(U'#') & kFusedEmojiBit) == 0); // '#': below the U+203C early-out
-static_assert((fusedClassify(0xFE0F) & kFusedEmojiBit) == 0); // VS16 handled separately
-static_assert(widthFromFused(fusedClassify(0x0591), false) == 0); // hebrew accent (Mn): zero width
-static_assert(widthFromFused(fusedClassify(0x1161), false) == 0); // hangul jungseong: zero width
-static_assert(widthFromFused(fusedClassify(0x1112), false) == 2); // hangul choseong: wide
-static_assert(widthFromFused(fusedClassify(0x4DC0), false) == 2); // yijing hexagram: wide since Unicode 16
-static_assert((fusedClassify(0x1FA89) & kFusedEmojiBit) != 0); // Unicode 16 emoji
+static_assert(widthFromFused(classifyFromTable(U'A'), false) == 1);
+static_assert(widthFromFused(classifyFromTable(0x1B), false) == 0); // ESC: control, zero width
+static_assert(widthFromFused(classifyFromTable(0xAD), false) == 0); // soft hyphen
+static_assert(widthFromFused(classifyFromTable(0x202E), false) == 0); // RLO: bidi control, zero width
+static_assert(widthFromFused(classifyFromTable(0x2069), false) == 0); // PDI: bidi isolate, zero width
+static_assert(widthFromFused(classifyFromTable(0x61C), false) == 0); // arabic letter mark, zero width
+static_assert(widthFromFused(classifyFromTable(0x1BCA0), false) == 0); // shorthand format control, zero width
+static_assert(widthFromFused(classifyFromTable(0x1D173), false) == 0); // musical format control, zero width
+static_assert(widthFromFused(classifyFromTable(0xFFF9), false) == 0); // interlinear annotation anchor (Cf)
+static_assert(widthFromFused(classifyFromTable(0xFFF0), false) == 0); // unassigned default-ignorable
+static_assert(widthFromFused(classifyFromTable(0x4E2D), false) == 2); // CJK ideograph: wide
+static_assert(widthFromFused(classifyFromTable(0xFF21), false) == 2); // fullwidth A: wide
+static_assert(widthFromFused(classifyFromTable(0x1F1E6), false) == 2); // regional indicator: Emoji_Presentation
+static_assert(widthFromFused(classifyFromTable(0xA7), false) == 1); // section sign: ambiguous, narrow by default
+static_assert(widthFromFused(classifyFromTable(0xA7), true) == 2); // section sign: ambiguous as wide
+static_assert((classifyFromTable(0x1F600) & kFusedEmojiBit) != 0); // emoji
+static_assert((classifyFromTable(0xA9) & kFusedEmojiBit) != 0); // copyright sign: Emoji (text default)
+static_assert((classifyFromTable(U'#') & kFusedEmojiBit) == 0); // keycap base
+static_assert((classifyFromTable(0xFE0F) & kFusedEmojiBit) == 0); // VS16 handled separately
+static_assert(widthFromFused(classifyFromTable(0x0591), false) == 0); // hebrew accent (Mn): zero width
+static_assert(widthFromFused(classifyFromTable(0x093F), false) == 0); // devanagari vowel sign i (Mc): zero width
+static_assert(widthFromFused(classifyFromTable(0x0980), false) == 1); // bengali anji (Lo): narrow
+static_assert(widthFromFused(classifyFromTable(0x1161), false) == 0); // hangul jungseong: zero width
+static_assert(widthFromFused(classifyFromTable(0x1112), false) == 2); // hangul choseong: wide
+static_assert(widthFromFused(classifyFromTable(0x4DC0), false) == 2); // yijing hexagram: wide since Unicode 16
+static_assert((classifyFromTable(0x1FA89) & kFusedEmojiBit) != 0); // Unicode 16 emoji
+static_assert(graphemeBreakClassFromFused(classifyFromTable(0x1F3FB)) == GraphemeBreakClass::EmojiModifier);
+static_assert(graphemeBreakClassFromFused(classifyFromTable(0x0A)) == GraphemeBreakClass::Control);
+static_assert(graphemeBreakClassFromFused(classifyFromTable(0x1000)) == GraphemeBreakClass::IndicConjunctBreakConsonant); // Unicode 16 InCB
+static_assert(graphemeBreakClassFromFused(classifyFromTable(0x2605)) == GraphemeBreakClass::Other); // not Extended_Pictographic since Unicode 16
+
+uint8_t fusedClassify(char32_t cp)
+{
+    ASSERT(cp <= 0x10FFFF);
+    return classifyFromTable(cp);
+}
 
 uint8_t visibleCodepointWidth(char32_t cp, bool ambiguousAsWide)
 {
     ASSERT(cp <= 0x10FFFF);
-    return widthFromFused(fusedClassify(cp), ambiguousAsWide);
-}
-
-bool isEmojiPresentation(char32_t cp)
-{
-    ASSERT(cp <= 0x10FFFF);
-    return fusedClassify(cp) & kFusedEmojiBit;
+    return widthFromFused(classifyFromTable(cp), ambiguousAsWide);
 }
 
 // ============================================================================
 // Grapheme break (UAX #29 incl. GB9c Indic Conjunct Break, uucode algorithm)
 // ============================================================================
 
-// Grapheme break property for codepoints, excluding control/CR/LF which the
-// width loops handle before consulting the break algorithm. Ordinal values
-// must match the stage3 data in stringWidthTables.h.
-enum class GraphemeBreakClass : uint8_t {
-    Other,
-    Prepend,
-    RegionalIndicator,
-    SpacingMark,
-    L,
-    V,
-    T,
-    Lv,
-    Lvt,
-    Zwj,
-    Zwnj,
-    ExtendedPictographic,
-    EmojiModifierBase,
-    EmojiModifier,
-    IndicConjunctBreakExtend,
-    IndicConjunctBreakLinker,
-    IndicConjunctBreakConsonant,
-};
-static constexpr size_t kGraphemeBreakClassCount = 17;
-static_assert(kGraphemeBreakClassCount <= kFusedClassMask + 1);
 static_assert(static_cast<uint8_t>(GraphemeBreakClass::RegionalIndicator) == 2);
 static_assert(static_cast<uint8_t>(GraphemeBreakClass::Zwj) == 9);
-static_assert(static_cast<uint8_t>(GraphemeBreakClass::IndicConjunctBreakConsonant) == kGraphemeBreakClassCount - 1);
+static_assert(static_cast<uint8_t>(GraphemeBreakClass::Control) == kGraphemeBreakClassCount - 1);
 
 // State carried between sequential graphemeBreak() calls. Numeric values are
 // part of the `Bun__graphemeBreak` C ABI (opaque uint8_t, zero-initialized).
@@ -161,15 +124,10 @@ static constexpr size_t kGraphemeBreakStateCount = 5;
 // The state is packed into bits 0-2 of graphemeBreakKey().
 static_assert(kGraphemeBreakStateCount <= (1 << 3));
 
-static constexpr GraphemeBreakClass graphemeBreakClassFromFused(uint8_t packed)
-{
-    return static_cast<GraphemeBreakClass>(packed & kFusedClassMask);
-}
-
 static GraphemeBreakClass graphemeBreakClass(char32_t cp)
 {
     ASSERT(cp <= 0x10FFFF);
-    return graphemeBreakClassFromFused(fusedClassify(cp));
+    return graphemeBreakClassFromFused(classifyFromTable(cp));
 }
 
 static constexpr bool isIndicConjunctBreakExtend(GraphemeBreakClass gb)
@@ -177,11 +135,15 @@ static constexpr bool isIndicConjunctBreakExtend(GraphemeBreakClass gb)
     return gb == GraphemeBreakClass::IndicConjunctBreakExtend || gb == GraphemeBreakClass::Zwj;
 }
 
+// Grapheme_Cluster_Break=Extend: the emoji modifiers are Extend too (GB9
+// attaches them to any base; GB11 lets them sit between an Extended
+// Pictographic and its ZWJ).
 static constexpr bool isExtend(GraphemeBreakClass gb)
 {
     return gb == GraphemeBreakClass::Zwnj
         || gb == GraphemeBreakClass::IndicConjunctBreakExtend
-        || gb == GraphemeBreakClass::IndicConjunctBreakLinker;
+        || gb == GraphemeBreakClass::IndicConjunctBreakLinker
+        || gb == GraphemeBreakClass::EmojiModifier;
 }
 
 static constexpr bool isExtendedPictographic(GraphemeBreakClass gb)
@@ -190,12 +152,19 @@ static constexpr bool isExtendedPictographic(GraphemeBreakClass gb)
 }
 
 // Core grapheme break algorithm (ported from uucode's
-// computeGraphemeBreakNoControl). Only evaluated at compile time to build the
-// precomputed decision table below.
-static constexpr bool computeGraphemeBreakNoControl(GraphemeBreakClass gb1, GraphemeBreakClass gb2, GraphemeBreakState& state)
+// computeGraphemeBreakNoControl, plus GB4/GB5 for the Control class). Only
+// evaluated at compile time to build the precomputed decision table below.
+static constexpr bool computeGraphemeBreak(GraphemeBreakClass gb1, GraphemeBreakClass gb2, GraphemeBreakState& state)
 {
     using G = GraphemeBreakClass;
     using S = GraphemeBreakState;
+
+    // GB4, GB5: a control, CR or LF breaks on both sides. (CR x LF is not
+    // needed here: a CR LF pair is zero-width either way.)
+    if (gb1 == G::Control || gb2 == G::Control) {
+        state = S::Default;
+        return true;
+    }
 
     // Set state back to default when gb1 or gb2 is not expected in sequence.
     switch (state) {
@@ -205,9 +174,7 @@ static constexpr bool computeGraphemeBreakNoControl(GraphemeBreakClass gb1, Grap
         break;
     case S::ExtendedPictographic: {
         const auto expected = [](G gb) {
-            return gb == G::IndicConjunctBreakExtend || gb == G::IndicConjunctBreakLinker
-                || gb == G::Zwnj || gb == G::Zwj || gb == G::ExtendedPictographic
-                || gb == G::EmojiModifierBase || gb == G::EmojiModifier;
+            return isExtend(gb) || gb == G::Zwj || isExtendedPictographic(gb);
         };
         if (!expected(gb1))
             state = S::Default;
@@ -309,16 +276,10 @@ static constexpr bool computeGraphemeBreakNoControl(GraphemeBreakClass gb1, Grap
             return false;
         }
 
-        // emoji_modifier_sequence: emoji_modifier_base emoji_modifier
-        if (gb1 == G::EmojiModifierBase && gb2 == G::EmojiModifier) {
-            state = S::ExtendedPictographic;
-            return false;
-        }
-
         // else, not an Emoji ZWJ sequence
     } else if (state == S::ExtendedPictographic) {
         // continue or end sequence
-        if ((isExtend(gb1) || gb1 == G::EmojiModifier) && (isExtend(gb2) || gb2 == G::Zwj)) {
+        if (isExtend(gb1) && (isExtend(gb2) || gb2 == G::Zwj)) {
             // continue extend* ZWJ sequence
             return false;
         }
@@ -368,7 +329,7 @@ static constexpr auto kGraphemeBreakDecisions = []() constexpr {
                 const auto gb1 = static_cast<GraphemeBreakClass>(i1);
                 const auto gb2 = static_cast<GraphemeBreakClass>(i2);
                 const size_t key = graphemeBreakKey(gb1, gb2, state);
-                const bool shouldBreak = computeGraphemeBreakNoControl(gb1, gb2, state);
+                const bool shouldBreak = computeGraphemeBreak(gb1, gb2, state);
                 result[key] = static_cast<uint8_t>(shouldBreak) | (static_cast<uint8_t>(state) << 1);
             }
         }
@@ -378,9 +339,7 @@ static constexpr auto kGraphemeBreakDecisions = []() constexpr {
 
 // Returns true when there is a grapheme cluster break between two consecutive
 // codepoints with the given break classes. Must be called sequentially,
-// carrying `state` between calls. Control characters, CR and LF are not
-// handled here — callers treat them before consulting the break algorithm
-// (they always terminate a cluster).
+// carrying `state` between calls.
 static bool graphemeBreakClasses(GraphemeBreakClass gb1, GraphemeBreakClass gb2, GraphemeBreakState& state)
 {
     const uint8_t value = kGraphemeBreakDecisions[graphemeBreakKey(gb1, gb2, state)];
@@ -405,100 +364,65 @@ bool graphemeBreak(char32_t cp1, char32_t cp2, uint8_t& state)
 // Grapheme cluster width accumulator
 // ============================================================================
 
-// Accumulates the codepoints of one grapheme cluster and decides the cluster's
-// terminal width: flags (regional indicator pairs), keycap sequences, emoji
-// with skin tone / ZWJ, and variation selectors all override the plain sum of
-// codepoint widths.
-struct GraphemeState {
-    char32_t firstCp = 0;
-    uint16_t nonEmojiWidth = 0; // accumulated width, saturates at 1023
-    uint8_t baseWidth = 0; // width of the first codepoint (0, 1 or 2)
-    uint8_t count = 0; // number of codepoints in the cluster
-    bool emojiBase = false;
-    bool keycap = false;
-    bool regionalIndicator = false;
-    bool skinTone = false;
-    bool zwj = false;
-    bool vs15 = false;
-    bool vs16 = false;
+// Feeds decoded codepoints through the grapheme break algorithm and sums the
+// width of each completed cluster (GraphemeState decides a cluster's width).
+// Encoding-specific walkers own the decode and the escape-sequence handling;
+// state is carried across escape sequences so a combining mark that follows
+// an SGR code still joins the cluster before it.
+struct ClusterWidthAccumulator {
+    size_t len = 0; // width of the completed clusters
+    GraphemeState graphemeState; // the pending cluster
+    // Break class of the last *visible* codepoint, used for grapheme break
+    // decisions (carried so each codepoint is classified only once). Escape
+    // sequence bytes must not participate: a CSI final byte like 'm' would
+    // otherwise wrongly join to a following combining mark.
+    GraphemeBreakClass prevClass = GraphemeBreakClass::Other;
+    GraphemeBreakState breakState = GraphemeBreakState::Default;
+    bool hasPrevVisible = false;
+    const bool ambiguousAsWide;
 
-    static bool isRegionalIndicator(char32_t cp) { return cp >= 0x1F1E6 && cp <= 0x1F1FF; }
-    static bool isSkinToneModifier(char32_t cp) { return cp >= 0x1F3FB && cp <= 0x1F3FF; }
-
-    void reset(char32_t cp, uint8_t packed, bool ambiguousAsWide)
+    explicit ClusterWidthAccumulator(bool ambiguousAsWide)
+        : ambiguousAsWide(ambiguousAsWide)
     {
-        firstCp = cp;
+    }
 
-        // Fast path for ASCII - no emoji complexity, simple width calculation
-        if (cp < 0x80) {
-            const uint8_t w = (cp >= 0x20 && cp < 0x7F) ? 1 : 0;
-            *this = GraphemeState {};
-            firstCp = cp;
-            count = 1;
-            baseWidth = w;
-            nonEmojiWidth = w;
-            return;
+    // Returns true when `cp` starts a new cluster (the previous one, if any,
+    // has been added to `len`).
+    bool addCodepoint(char32_t cp)
+    {
+        const uint8_t packed = classifyFromTable(cp);
+        const GraphemeBreakClass cpClass = graphemeBreakClassFromFused(packed);
+        bool startsCluster = true;
+        if (!hasPrevVisible) {
+            graphemeState.reset(cp, packed, ambiguousAsWide);
+        } else if (graphemeBreakClasses(prevClass, cpClass, breakState)) {
+            len += graphemeState.width();
+            graphemeState.reset(cp, packed, ambiguousAsWide);
+        } else {
+            graphemeState.add(cp, packed, ambiguousAsWide);
+            startsCluster = false;
         }
-
-        const uint8_t w = widthFromFused(packed, ambiguousAsWide);
-        count = 1;
-        baseWidth = w;
-        nonEmojiWidth = w;
-        emojiBase = packed & kFusedEmojiBit;
-        keycap = (cp == 0x20E3);
-        regionalIndicator = isRegionalIndicator(cp);
-        skinTone = isSkinToneModifier(cp);
-        zwj = (cp == 0x200D);
-        vs15 = false;
-        vs16 = false;
+        hasPrevVisible = true;
+        prevClass = cpClass;
+        return startsCluster;
     }
 
-    void add(char32_t cp, uint8_t packed, bool ambiguousAsWide)
+    // Seed the cluster state from the last codepoint of a bulk-counted run,
+    // flushing whatever cluster was pending before it. The codepoint's own
+    // width is not added here: a combining mark, jamo or ZWJ right after the
+    // run still joins its cluster, so the caller counts every unit but the
+    // last and lets GraphemeState::width() settle the final one.
+    void seedFromBulkRun(char32_t cp, uint8_t packed)
     {
-        if (count < UINT8_MAX)
-            count++;
-        keycap = keycap || (cp == 0x20E3);
-        regionalIndicator = regionalIndicator || isRegionalIndicator(cp);
-        skinTone = skinTone || isSkinToneModifier(cp);
-        zwj = zwj || (cp == 0x200D);
-        vs15 = vs15 || (cp == 0xFE0E);
-        vs16 = vs16 || (cp == 0xFE0F);
-
-        // Zero-width codepoints contribute nothing here.
-        const uint32_t newWidth = static_cast<uint32_t>(nonEmojiWidth) + widthFromFused(packed, ambiguousAsWide);
-        nonEmojiWidth = static_cast<uint16_t>(std::min<uint32_t>(newWidth, 1023));
+        if (graphemeState.count > 0)
+            len += graphemeState.width();
+        graphemeState.reset(cp, packed, ambiguousAsWide);
+        hasPrevVisible = true;
+        prevClass = graphemeBreakClassFromFused(packed);
+        breakState = GraphemeBreakState::Default;
     }
 
-    size_t width() const
-    {
-        if (count == 0)
-            return 0;
-
-        // Regional indicator pair (flag emoji) → width 2
-        if (regionalIndicator && count >= 2)
-            return 2;
-        // Keycap sequence → width 2
-        if (keycap)
-            return 2;
-        // Single regional indicator → width 1
-        if (regionalIndicator)
-            return 1;
-        // Emoji with skin tone or ZWJ → width 2
-        if (emojiBase && (skinTone || zwj))
-            return 2;
-
-        // VS16 widens only a base with the Emoji property to emoji
-        // presentation; the fused emoji bit early-outs below U+203C, where
-        // (c) and (R) are the only non-keycap Emoji codepoints. Zero-width
-        // and narrow non-emoji bases keep their own width under VS15/VS16.
-        if (vs15 || vs16) {
-            if (baseWidth == 2 || (vs16 && (emojiBase || firstCp == 0xA9 || firstCp == 0xAE)))
-                return 2;
-            return baseWidth;
-        }
-
-        return nonEmojiWidth;
-    }
+    size_t finish() const { return len + graphemeState.width(); }
 };
 
 // ============================================================================
@@ -545,7 +469,7 @@ size_t visibleLatin1WidthExcludeANSI(std::span<const uint8_t> input)
 static constexpr auto kLatin1AmbiguousAsWideWidth = []() constexpr {
     std::array<uint8_t, 256> table {};
     for (size_t i = 0; i < table.size(); i++)
-        table[i] = widthFromFused(fusedClassify(static_cast<char32_t>(i)), /* ambiguousAsWide */ true);
+        table[i] = widthFromFused(classifyFromTable(static_cast<char32_t>(i)), /* ambiguousAsWide */ true);
     return table;
 }();
 static_assert(kLatin1AmbiguousAsWideWidth[0xA7] == 2); // section sign: ambiguous
@@ -630,40 +554,21 @@ static char32_t decodeWTF8RuneMultibyte(const std::array<uint8_t, 4>& p, uint8_t
     return cp;
 }
 
-// UTF-8 width of a run with no escape sequences in it: ASCII runs are counted
-// in bulk, non-ASCII codepoints are decoded and summed individually (no
-// grapheme clustering — keeps the historical behavior of the console.table /
-// markdown renderer callers).
-static size_t visibleUTF8Width(std::span<const uint8_t> input)
+// Decode the WTF-8 codepoint at `p` (p < end). Returns the codepoint and
+// the number of bytes it occupies (a truncated or invalid sequence decodes
+// to U+FFFD).
+static std::pair<char32_t, size_t> decodeWTF8At(const uint8_t* p, const uint8_t* end)
 {
-    std::span<const uint8_t> bytes = input;
-    size_t len = 0;
-
-    while (true) {
-        // Runs of non-ASCII codepoints are common (CJK text); peek before
-        // paying for a SIMD scan that would return 0.
-        const size_t i = (!bytes.empty() && bytes[0] > 0x7F) ? 0 : highway_first_non_ascii8(bytes.data(), bytes.size());
-        if (i == bytes.size())
-            break;
-        len += visibleLatin1Width(bytes.first(i));
-
-        const auto thisChunk = bytes.subspan(i);
-        const uint8_t byte = thisChunk[0];
-        const uint8_t skip = wtf8SequenceLength(byte);
-
-        std::array<uint8_t, 4> cpBytes { byte, 0, 0, 0 };
-        const size_t available = std::min<size_t>(skip, thisChunk.size());
-        for (size_t k = 1; k < available; k++)
-            cpBytes[k] = thisChunk[k];
-
-        const char32_t cp = (skip > 1) ? decodeWTF8RuneMultibyte(cpBytes, skip) : 0xFFFD;
-        len += visibleCodepointWidth(cp, false);
-
-        bytes = bytes.subspan(std::min<size_t>(i + skip, bytes.size()));
-    }
-
-    len += visibleLatin1Width(bytes);
-    return len;
+    const uint8_t byte = *p;
+    if (byte <= 0x7F)
+        return { byte, 1 };
+    const uint8_t skip = wtf8SequenceLength(byte);
+    std::array<uint8_t, 4> cpBytes { byte, 0, 0, 0 };
+    const size_t available = std::min<size_t>(skip, static_cast<size_t>(end - p));
+    for (size_t k = 1; k < available; k++)
+        cpBytes[k] = p[k];
+    const char32_t cp = (skip > 1) ? decodeWTF8RuneMultibyte(cpBytes, skip) : 0xFFFD;
+    return { cp, std::min<size_t>(skip, static_cast<size_t>(end - p)) };
 }
 
 // Start of the next escape sequence in UTF-8 text: ESC, or the two-byte
@@ -680,92 +585,87 @@ static const uint8_t* findEscapeIntroducerUTF8(const uint8_t* p, const uint8_t* 
     }
 }
 
-size_t visibleUTF8WidthExcludeANSI(std::span<const uint8_t> input)
+// Grapheme-cluster-aware walk of UTF-8 text with ANSI escape sequences
+// treated as zero-width. Every cluster start is reported to `onCluster`
+// (byte offset of the cluster, width of the completed clusters before it);
+// a false return stops the walk.
+template<typename OnCluster>
+static ClusterWidthAccumulator walkUTF8ExcludeANSI(std::span<const uint8_t> input, OnCluster onCluster)
 {
-    const uint8_t* p = input.data();
-    const uint8_t* const end = p + input.size();
-    size_t width = 0;
+    ClusterWidthAccumulator accumulator { /* ambiguousAsWide */ false };
+    const uint8_t* const begin = input.data();
+    const uint8_t* const end = begin + input.size();
+    const uint8_t* p = begin;
 
     while (p != end) {
         const uint8_t* const esc = findEscapeIntroducerUTF8(p, end);
-        width += visibleUTF8Width({ p, static_cast<size_t>((esc ? esc : end) - p) });
+        const uint8_t* const runEnd = esc ? esc : end;
+
+        while (p != runEnd) {
+            // ASCII runs: every printable byte is its own width-1 cluster and
+            // the non-printable ones are width-0 controls, so all but the last
+            // byte are counted in bulk. The last one seeds the cluster state:
+            // a combining mark right after the run still joins it.
+            if (*p <= 0x7F) {
+                const size_t asciiLen = highway_first_non_ascii8(p, static_cast<size_t>(runEnd - p));
+                if (asciiLen > 1) {
+                    if (accumulator.graphemeState.count > 0)
+                        accumulator.len += accumulator.graphemeState.width();
+                    accumulator.graphemeState = GraphemeState {};
+                    for (const uint8_t* q = p; q != p + asciiLen - 1; q++) {
+                        if (!onCluster(static_cast<size_t>(q - begin), accumulator.len))
+                            return accumulator;
+                        accumulator.len += visibleLatin1WidthScalar(*q);
+                    }
+                    p += asciiLen - 1;
+                }
+                const char32_t cp = *p;
+                const uint8_t packed = classifyFromTable(cp);
+                if (!onCluster(static_cast<size_t>(p - begin), accumulator.len + accumulator.graphemeState.width()))
+                    return accumulator;
+                accumulator.seedFromBulkRun(cp, packed);
+                p++;
+                continue;
+            }
+
+            const auto [cp, length] = decodeWTF8At(p, runEnd);
+            const size_t widthBefore = accumulator.finish();
+            if (accumulator.addCodepoint(cp) && !onCluster(static_cast<size_t>(p - begin), widthBefore))
+                return accumulator;
+            p += length;
+        }
+
         if (!esc)
             break;
         // *esc is an introducer, so consumeANSI() always makes progress.
         p = ANSI::consumeANSI<true>(esc, end);
     }
-    return width;
+    return accumulator;
 }
 
-// Walk `len` bytes of `input` starting at `start`, accumulating visible width
-// into `w`. Returns the absolute byte index at which adding the next codepoint
-// would exceed `maxWidth`, or nullopt if the whole run fits.
-static std::optional<size_t> utf8WalkRun(std::span<const uint8_t> input, size_t start, size_t len, size_t maxWidth, size_t& w)
+size_t visibleUTF8WidthExcludeANSI(std::span<const uint8_t> input)
 {
-    std::span<const uint8_t> bytes = input.subspan(start, len);
-
-    while (true) {
-        const size_t i = highway_first_non_ascii8(bytes.data(), bytes.size());
-        if (i == bytes.size())
-            break;
-
-        // ASCII run: each printable char is width 1.
-        for (size_t k = 0; k < i; k++) {
-            const size_t cw = visibleLatin1WidthScalar(bytes[k]);
-            if (w + cw > maxWidth)
-                return static_cast<size_t>(bytes.data() - input.data()) + k;
-            w += cw;
-        }
-
-        const auto thisChunk = bytes.subspan(i);
-        const uint8_t byte = thisChunk[0];
-        const uint8_t skip = wtf8SequenceLength(byte);
-
-        std::array<uint8_t, 4> cpBytes { byte, 0, 0, 0 };
-        const size_t available = std::min<size_t>(skip, thisChunk.size());
-        for (size_t k = 1; k < available; k++)
-            cpBytes[k] = thisChunk[k];
-
-        const char32_t cp = (skip > 1) ? decodeWTF8RuneMultibyte(cpBytes, skip) : 0xFFFD;
-        const size_t cw = visibleCodepointWidth(cp, false);
-        if (w + cw > maxWidth)
-            return static_cast<size_t>(bytes.data() - input.data()) + i;
-        w += cw;
-
-        bytes = bytes.subspan(std::min<size_t>(i + skip, bytes.size()));
-    }
-
-    for (size_t k = 0; k < bytes.size(); k++) {
-        const size_t cw = visibleLatin1WidthScalar(bytes[k]);
-        if (w + cw > maxWidth)
-            return static_cast<size_t>(bytes.data() - input.data()) + k;
-        w += cw;
-    }
-    return std::nullopt;
+    return walkUTF8ExcludeANSI(input, [](size_t, size_t) { return true; }).finish();
 }
 
 size_t utf8IndexAtWidthExcludeANSI(std::span<const uint8_t> input, size_t maxWidth)
 {
-    const uint8_t* const begin = input.data();
-    const uint8_t* const end = begin + input.size();
-    const uint8_t* p = begin;
-    size_t w = 0;
-
-    while (p != end) {
-        const uint8_t* const esc = findEscapeIntroducerUTF8(p, end);
-        // Walk the visible run before the introducer.
-        const size_t runStart = static_cast<size_t>(p - begin);
-        const size_t runLen = static_cast<size_t>((esc ? esc : end) - p);
-        if (const auto stop = utf8WalkRun(input, runStart, runLen, maxWidth, w))
-            return *stop;
-        if (!esc)
-            break;
-
-        // Escape sequences count as zero-width and are always included in the
-        // prefix; an unterminated one consumes the rest of the input.
-        p = ANSI::consumeANSI<true>(esc, end);
-    }
-    return input.size();
+    // The prefix ends at the first cluster whose predecessors already fill
+    // `maxWidth`, or, when every cluster starts within budget, at the end of
+    // the input unless the final cluster overflows it.
+    size_t stopAt = input.size();
+    size_t lastClusterStart = 0;
+    const auto accumulator = walkUTF8ExcludeANSI(input, [&](size_t offset, size_t widthBefore) {
+        if (widthBefore > maxWidth) {
+            stopAt = lastClusterStart;
+            return false;
+        }
+        lastClusterStart = offset;
+        return true;
+    });
+    if (stopAt == input.size() && accumulator.finish() > maxWidth)
+        return lastClusterStart;
+    return stopAt;
 }
 
 // ============================================================================
@@ -810,54 +710,11 @@ static UTF16Decoded decodeUTF16Codepoint(std::span<const char16_t> input)
 }
 
 // Grapheme-cluster-aware width accumulator for runs of UTF-16 text with no
-// escape sequences in them. State is carried between runs so a combining mark
-// that follows an escape sequence still joins the cluster before it.
-struct UTF16WidthAccumulator {
-    size_t len = 0;
-    GraphemeState graphemeState;
-    // Break class of the last *visible* codepoint, used for grapheme break
-    // decisions (carried so each codepoint is classified only once). Escape
-    // sequence bytes must not participate: a CSI final byte like 'm' would
-    // otherwise wrongly join to a following combining mark.
-    GraphemeBreakClass prevClass = GraphemeBreakClass::Other;
-    GraphemeBreakState breakState = GraphemeBreakState::Default;
-    bool hasPrevVisible = false;
-    const bool ambiguousAsWide;
-
+// escape sequences in them.
+struct UTF16WidthAccumulator : ClusterWidthAccumulator {
     explicit UTF16WidthAccumulator(bool ambiguousAsWide)
-        : ambiguousAsWide(ambiguousAsWide)
+        : ClusterWidthAccumulator(ambiguousAsWide)
     {
-    }
-
-    void addCodepoint(char32_t cp)
-    {
-        const uint8_t packed = fusedClassify(cp);
-        const GraphemeBreakClass cpClass = graphemeBreakClassFromFused(packed);
-        if (!hasPrevVisible) {
-            graphemeState.reset(cp, packed, ambiguousAsWide);
-        } else if (graphemeBreakClasses(prevClass, cpClass, breakState)) {
-            len += graphemeState.width();
-            graphemeState.reset(cp, packed, ambiguousAsWide);
-        } else {
-            graphemeState.add(cp, packed, ambiguousAsWide);
-        }
-        hasPrevVisible = true;
-        prevClass = cpClass;
-    }
-
-    // Seed the cluster state from the last codepoint of a bulk-counted run,
-    // flushing whatever cluster was pending before it. The codepoint's own
-    // width is not added here: a combining mark, jamo or ZWJ right after the
-    // run still joins its cluster, so the caller counts every unit but the
-    // last and lets GraphemeState::width() settle the final one.
-    void seedFromBulkRun(char32_t cp, uint8_t packed)
-    {
-        if (graphemeState.count > 0)
-            len += graphemeState.width();
-        graphemeState.reset(cp, packed, ambiguousAsWide);
-        hasPrevVisible = true;
-        prevClass = graphemeBreakClassFromFused(packed);
-        breakState = GraphemeBreakState::Default;
     }
 
     // Consumes text up to the end of `input`, or — when `stopAtEscape` — up to
@@ -886,7 +743,7 @@ struct UTF16WidthAccumulator {
                     reinterpret_cast<const uint16_t*>(input.data()), input.size(), &bulkWidth);
                 if (consumed > 0) {
                     const char32_t lastCp = input[consumed - 1];
-                    const uint8_t lastPacked = fusedClassify(lastCp);
+                    const uint8_t lastPacked = classifyFromTable(lastCp);
                     seedFromBulkRun(lastCp, lastPacked);
                     len += bulkWidth - widthFromFused(lastPacked, ambiguousAsWide);
                     input = input.subspan(consumed);
@@ -915,7 +772,7 @@ struct UTF16WidthAccumulator {
             }
             if (idx > 0) {
                 const char32_t lastCp = input[idx - 1];
-                const uint8_t lastPacked = fusedClassify(lastCp);
+                const uint8_t lastPacked = classifyFromTable(lastCp);
                 seedFromBulkRun(lastCp, lastPacked);
                 if (idx > 1)
                     len += countPrintableAscii16(input.first(idx - 1));
@@ -1007,13 +864,6 @@ extern "C" bool Bun__graphemeBreak(uint32_t cp1, uint32_t cp2, uint8_t* state)
     if (!state || cp1 > 0x10FFFF || cp2 > 0x10FFFF)
         return true;
     return StringWidth::graphemeBreak(cp1, cp2, *state);
-}
-
-extern "C" bool Bun__isEmojiPresentation(uint32_t cp)
-{
-    if (cp > 0x10FFFF)
-        return false;
-    return StringWidth::isEmojiPresentation(cp);
 }
 
 // ============================================================================

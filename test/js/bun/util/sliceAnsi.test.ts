@@ -357,9 +357,10 @@ describe("Bun.sliceAnsi", () => {
     test("counts emoji-style graphemes as fullwidth", () => {
       expect(Bun.sliceAnsi("A☺️B", 1, 3)).toBe("☺️");
       expect(Bun.sliceAnsi("A1️⃣B", 1, 3)).toBe("1️⃣");
-      // Single (unpaired) regional indicator is width 1 — matches Bun.stringWidth
-      expect(Bun.stringWidth("\u{1F1E6}")).toBe(1);
-      expect(Bun.sliceAnsi("A\u{1F1E6}B", 1, 2)).toBe("\u{1F1E6}");
+      // Single (unpaired) regional indicator is width 2 — matches Bun.stringWidth
+      expect(Bun.stringWidth("\u{1F1E6}")).toBe(2);
+      expect(Bun.sliceAnsi("A\u{1F1E6}B", 1, 3)).toBe("\u{1F1E6}");
+      expect(Bun.sliceAnsi("A\u{1F1E6}B", 3, 4)).toBe("B");
     });
 
     test("does not treat text-presentation pictographs as fullwidth", () => {
@@ -1267,10 +1268,12 @@ describe("Bun.sliceAnsi", () => {
       expect(Bun.sliceAnsi("abcX\u0600Y", 0, 4, { ellipsis: E })).toBe("abc" + E);
       expect(Bun.sliceAnsi("abcX\u0600YZ", 0, 4, { ellipsis: E })).toBe("abc" + E);
       expect(Bun.sliceAnsi("ЖЗИК\u0600\u0661", 0, 4, { ellipsis: E })).toBe("ЖЗИ" + E);
-      expect(Bun.sliceAnsi("ЖЗИК\u200b\u20E3", 0, 4, { ellipsis: E })).toBe("ЖЗИ" + E);
-      expect(Bun.sliceAnsi("ЖЗИК\n\u20E3", 0, 4, { ellipsis: E })).toBe("ЖЗИ" + E);
-      expect(Bun.sliceAnsi("ЖЗИК\u200b\u0903", 0, 4, { ellipsis: E })).toBe("ЖЗИ" + E);
+      expect(Bun.sliceAnsi("ЖЗИК\u200b\u102B", 0, 4, { ellipsis: E })).toBe("ЖЗИ" + E);
       expect(Bun.sliceAnsi("abcX\u0600", 0, 4, { ellipsis: E })).toBe("abcX");
+      // A lone keycap mark or Indic vowel sign after a control is zero-width.
+      expect(Bun.sliceAnsi("ЖЗИК\u200b\u20E3", 0, 4, { ellipsis: E })).toBe("ЖЗИК");
+      expect(Bun.sliceAnsi("ЖЗИК\n\u20E3", 0, 4, { ellipsis: E })).toBe("ЖЗИК");
+      expect(Bun.sliceAnsi("ЖЗИК\u200b\u0903", 0, 4, { ellipsis: E })).toBe("ЖЗИК");
       // start > 0 (start ellipsis budgeted) with a zero-width tail: spec
       // zone kept, no end ellipsis.
       expect(Bun.sliceAnsi("ЖЗИКЛ\n", 1, 5, { ellipsis: E })).toBe(E + "ИКЛ");

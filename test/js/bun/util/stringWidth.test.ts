@@ -262,7 +262,7 @@ describe("stringWidth extended", () => {
 
     test("combining diacritical marks extended", () => {
       expect(Bun.stringWidth("\u1AB0")).toBe(0);
-      expect(Bun.stringWidth("\u1AFF")).toBe(0);
+      expect(Bun.stringWidth("\u1ACE")).toBe(0);
     });
 
     test("combining diacritical marks supplement", () => {
@@ -272,7 +272,7 @@ describe("stringWidth extended", () => {
 
     test("combining diacritical marks for symbols", () => {
       expect(Bun.stringWidth("\u20D0")).toBe(0);
-      expect(Bun.stringWidth("\u20FF")).toBe(0);
+      expect(Bun.stringWidth("\u20F0")).toBe(0);
     });
 
     test("combining half marks", () => {
@@ -579,7 +579,7 @@ describe("stringWidth extended", () => {
       expect(Bun.stringWidth("🇺🇸")).toBe(2); // US flag
       expect(Bun.stringWidth("🇬🇧")).toBe(2); // UK flag
       expect(Bun.stringWidth("🇯🇵")).toBe(2); // Japan flag
-      expect(Bun.stringWidth("🇦")).toBe(1); // Single regional indicator
+      expect(Bun.stringWidth("🇦")).toBe(2); // Single regional indicator: Emoji_Presentation
     });
 
     test("skin tone modifiers", () => {
@@ -1886,5 +1886,182 @@ describe("width tables: combining marks, jamo, U16/17 emoji, VS after zero-width
     const wrapped = "\u001B" + "[31m" + "\u00B1\u00A7" + "\u001B" + "[0m";
     expect(Bun.stringWidth(wrapped, { ambiguousIsNarrow: false })).toBe(4);
     expect(Bun.stringWidth(wrapped, { ambiguousIsNarrow: false, countAnsiEscapeCodes: true })).toBe(11);
+  });
+});
+
+describe("width table derived from Unicode properties", () => {
+  const widths = (cps: number[]) => cps.map(cp => Bun.stringWidth(String.fromCodePoint(cp)));
+
+  test("every format character (Cf) is zero-width", () => {
+    const format = [
+      0x0890,
+      0x0891, // Arabic pound/piastre mark above (prepend)
+      0xfff9,
+      0xfffa,
+      0xfffb, // interlinear annotation anchor/separator/terminator
+      0x110bd,
+      0x110cd, // Kaithi number sign (prepend)
+      0x13430,
+      0x13437,
+      0x1343f, // Egyptian hieroglyph format controls
+      0x00ad,
+      0x061c,
+      0x180e,
+      0x200b,
+      0x2060,
+      0x2066,
+      0xfeff,
+      0xe0001,
+      0xe007f,
+    ];
+    expect(widths(format)).toEqual(format.map(() => 0));
+    expect(Bun.stringWidth("a\uFFF9b\uFFFAc\uFFFBd")).toBe(4);
+  });
+
+  test("unassigned default-ignorable codepoints are zero-width", () => {
+    // Reserved for future format characters (Default_Ignorable_Code_Point,
+    // General_Category Cn): a renderer shows nothing for them.
+    const reserved = [0xfff0, 0xfff8, 0xe0080, 0xe00ff, 0xe01f0, 0xe0fff];
+    expect(widths(reserved)).toEqual(reserved.map(() => 0));
+  });
+
+  test("other unassigned codepoints are narrow, even inside combining-mark blocks", () => {
+    const unassigned = [0x1aff, 0x20ff, 0x09ba, 0x09c5, 0x0a00, 0x0b80, 0x0d45];
+    expect(widths(unassigned)).toEqual(unassigned.map(() => 1));
+  });
+
+  test("Indic letters are narrow, Indic spacing vowel signs are zero-width", () => {
+    // U+0980 BENGALI ANJI, U+0C80 KANNADA SIGN SPACING CANDRABINDU and
+    // U+0D3A MALAYALAM LETTER TTTA are visible letters (Lo).
+    expect(widths([0x0980, 0x0c80, 0x0d3a])).toEqual([1, 1, 1]);
+    // The Mc vowel signs stay zero-width: consonant + vowel sign is one column.
+    expect(widths([0x093e, 0x093f, 0x09be, 0x0bbe, 0x0cc0, 0x0d3e])).toEqual([0, 0, 0, 0, 0, 0]);
+    expect(Bun.stringWidth("\u0915\u093E")).toBe(1);
+    // Kirat Rai vowel signs have Grapheme_Cluster_Break=V but are letters.
+    expect(widths([0x16d63, 0x16d67])).toEqual([1, 1]);
+  });
+
+  test("Emoji_Presentation codepoints are wide, including a lone regional indicator", () => {
+    expect(widths([0x1f1e6, 0x1f1ff, 0x1f3fb, 0x231a, 0x2b50, 0x1f600])).toEqual([2, 2, 2, 2, 2, 2]);
+  });
+});
+
+describe("grapheme cluster width rules", () => {
+  test("regional indicators: pairs are flags, a lone one is still a wide emoji", () => {
+    expect(Bun.stringWidth("\u{1F1E6}")).toBe(2);
+    expect(Bun.stringWidth("\u{1F1E6}\u0301")).toBe(2); // RI + combining mark
+    expect(Bun.stringWidth("\u{1F1E6}\uFE0F")).toBe(2); // RI + VS16
+    expect(Bun.stringWidth("\u{1F1E6}\u{1F1E7}")).toBe(2); // flag
+    expect(Bun.stringWidth("\u{1F1E6}\u{1F1E7}\u{1F1E8}")).toBe(4); // flag + lone RI
+    expect(Bun.stringWidth("A\u{1F1E6}")).toBe(3);
+    expect(Bun.stringWidth("\u{1F1E6}\u{1F1E7}\u{1F1E8}\u{1F1E9}")).toBe(4); // two flags
+  });
+
+  test("keycap: only [0-9#*] + U+20E3 is a keycap emoji", () => {
+    expect(Bun.stringWidth("\u20E3")).toBe(0); // lone enclosing keycap: a mark
+    expect(Bun.stringWidth("1\u20E3")).toBe(2);
+    expect(Bun.stringWidth("1\uFE0F\u20E3")).toBe(2);
+    expect(Bun.stringWidth("#\uFE0F\u20E3")).toBe(2);
+    expect(Bun.stringWidth("*\u20E3")).toBe(2);
+    expect(Bun.stringWidth("a\u20E3")).toBe(1); // not a keycap base
+    expect(Bun.stringWidth("\u0915\u20E3")).toBe(1);
+    expect(Bun.stringWidth("\u00A9\u20E3")).toBe(1);
+    expect(Bun.stringWidth("\u0301\u20E3")).toBe(0);
+    expect(Bun.stringWidth("\u20E3\u20E3")).toBe(0);
+  });
+
+  test("emoji modifiers extend any base and never widen it", () => {
+    expect(Bun.stringWidth("\u{1F3FB}")).toBe(2); // lone skin tone swatch
+    expect(Bun.stringWidth("\u{1F44B}\u{1F3FB}")).toBe(2); // modifier base + skin tone
+    expect(Bun.stringWidth("\u{1F600}\u{1F3FB}")).toBe(2); // not a modifier base, still one cluster
+    expect(Bun.stringWidth("\u{1F600}\u{1F3FB}\u200D\u{1F600}")).toBe(2); // GB11 with a modifier before the ZWJ
+    expect(Bun.stringWidth("\u{1F3FB}\u{1F3FB}")).toBe(2);
+    expect(Bun.stringWidth("A\u{1F3FB}")).toBe(1);
+    expect(Bun.stringWidth("\u4E2D\u{1F3FB}")).toBe(2);
+    expect(Bun.stringWidth("\u270C\u{1F3FD}")).toBe(2); // text-default emoji + skin tone
+    expect(Bun.stringWidth("\u0301\u{1F3FB}")).toBe(0);
+  });
+
+  test("copyright and registered signs are emoji bases", () => {
+    expect(Bun.stringWidth("\u00A9\uFE0F")).toBe(2);
+    expect(Bun.stringWidth("\u00A9\u200D\u{1F600}")).toBe(2); // ZWJ sequence
+    expect(Bun.stringWidth("\u00AE\u{1F3FB}")).toBe(2); // modifier sequence
+    expect(Bun.stringWidth("\u00A9")).toBe(1);
+  });
+
+  test("controls, CR and LF end a cluster on both sides", () => {
+    expect(Bun.stringWidth("\n\u{1F3FB}")).toBe(2);
+    expect(Bun.stringWidth("\r\n\u0301")).toBe(0);
+    expect(Bun.stringWidth("a\x01\u0301b")).toBe(2);
+    expect(Bun.stringWidth("\x1b\u{1F3FB}", { countAnsiEscapeCodes: true })).toBe(2);
+    expect(Bun.stringWidth("\u{1F600}\x00\u200D\u{1F600}")).toBe(4);
+  });
+
+  test("Extended_Pictographic and Indic_Conjunct_Break follow Unicode 17", () => {
+    // U+2605 BLACK STAR lost Extended_Pictographic in Unicode 16: no GB11.
+    expect(Bun.stringWidth("\u2605\u200D\u{1F600}")).toBe(3);
+    expect(Bun.stringWidth("\u2606\u200D\u{1F600}")).toBe(3);
+    // Myanmar consonant + virama + consonant is one conjunct cluster (InCB
+    // since Unicode 16); a combining mark after it still joins.
+    expect(Bun.stringWidth("\u1000\u1039\u1001\u{1F3FB}")).toBe(2);
+    expect(Bun.stringWidth("\u1000\u1039\u1001")).toBe(2);
+  });
+
+  test("sliceAnsi measures clusters exactly like stringWidth", () => {
+    const cases = [
+      "\u{1F1E6}x",
+      "\u{1F1E6}\u{1F1E7}\u{1F1E8}",
+      "1\u20E3a\u20E3\u20E3",
+      "A\u{1F3FB}\u{1F600}\u{1F3FB}",
+      "\u00A9\u200D\u{1F600}z",
+      "\u2605\u200D\u{1F600}",
+      "\n\u{1F3FB}",
+      "\u{1F600}\u{1F3FB}\u200D\u{1F600}!",
+    ];
+    const segmenter = new Intl.Segmenter("en", { granularity: "grapheme" });
+    for (const s of cases) {
+      const width = Bun.stringWidth(s);
+      // sliceAnsi(s, 0, k) keeps every cluster that starts before column k.
+      const clusters = [...segmenter.segment(s)].map(({ segment }) => Bun.stringWidth(segment));
+      expect(clusters.reduce((a, b) => a + b, 0)).toBe(width);
+      const expected: number[] = [];
+      for (let k = 0; k <= width; k++) {
+        let start = 0;
+        let kept = 0;
+        for (const w of clusters) {
+          if (start >= k) break;
+          kept += w;
+          start += w;
+        }
+        expected.push(kept);
+      }
+      const seen: number[] = [];
+      for (let k = 0; k <= width; k++) seen.push(Bun.stringWidth(Bun.sliceAnsi(s, 0, k)));
+      expect({ s, seen, neg: Bun.stringWidth(Bun.sliceAnsi(s, -width)) }).toEqual({ s, seen: expected, neg: width });
+    }
+  });
+
+  test("the UTF-8 path (console.table cells) clusters like stringWidth", () => {
+    // The column width of a one-cell table is the cell's visible width plus
+    // one space of padding on each side.
+    const cells = [
+      "\u{1F468}\u200D\u{1F469}\u200D\u{1F467}", // family ZWJ sequence
+      "\u{1F1FA}\u{1F1F8}", // flag
+      "\u{1F1E6}",
+      "1\uFE0F\u20E3",
+      "a\u20E3",
+      "\u{1F44B}\u{1F3FD}",
+      "A\u{1F3FB}",
+      "\u0915\u093F",
+      "\u1112\u1161\u11AB",
+      "e\u0301\u0301",
+      "\x1b[31m\u{1F468}\u200D\u{1F469}\x1b[0m",
+      "\uFFF9x\uFFFB",
+    ];
+    for (const s of cells) {
+      const top = Bun.inspect.table([{ s }], { colors: false }).split("\n")[0];
+      const column = top.slice(top.lastIndexOf("\u252C") + 1, top.lastIndexOf("\u2510"));
+      expect({ s, column: column.length }).toEqual({ s, column: Bun.stringWidth(s) + 2 });
+    }
   });
 });

@@ -1,6 +1,7 @@
 #include "root.h"
 #include "sliceAnsi.h"
 #include "ANSIHelpers.h"
+#include "stringWidth.h"
 
 #include <wtf/text/WTFString.h>
 #include <wtf/text/StringBuilder.h>
@@ -9,98 +10,26 @@
 // Native exports (implemented in stringWidth.cpp) for visible width and grapheme break
 extern "C" uint8_t Bun__codepointWidth(uint32_t cp, bool ambiguous_as_wide);
 extern "C" bool Bun__graphemeBreak(uint32_t cp1, uint32_t cp2, uint8_t* state);
-extern "C" bool Bun__isEmojiPresentation(uint32_t cp);
 extern "C" size_t Bun__visibleWidthExcludeANSI_latin1(const uint8_t* ptr, size_t len, bool ambiguous_as_wide);
 extern "C" size_t Bun__visibleWidthExcludeANSI_utf16(const uint16_t* ptr, size_t len, bool ambiguous_as_wide);
 
 namespace Bun {
 using namespace WTF;
 
-// Shared SIMD/SGR helpers live in ANSIHelpers.h. We keep a local
-// GraphemeWidthState mirror of stringWidth.cpp's GraphemeState because these are
-// called per-codepoint in the hot loop — extern-call overhead would hurt more
-// than the ~80 lines of duplication. Drift is caught by tests that assert
-// Bun.stringWidth(s) == width of Bun.sliceAnsi(s, 0, N) for edge cases.
+// Shared SIMD/SGR helpers live in ANSIHelpers.h. Cluster widths come from
+// StringWidth::GraphemeState (stringWidth.h), the same accumulator
+// Bun.stringWidth uses, so a slice is always measured the way the whole
+// string is.
 
-// ============================================================================
-// Grapheme-aware Visible Width (mirrors stringWidth.cpp GraphemeState; see above)
-// ============================================================================
-
-struct GraphemeWidthState {
-    uint32_t firstCp = 0;
-    uint32_t lastCp = 0;
-    uint16_t nonEmojiWidth = 0;
-    uint8_t baseWidth = 0;
-    uint8_t count = 0;
-    bool emojiBase = false;
-    bool keycap = false;
-    bool regionalIndicator = false;
-    bool skinTone = false;
-    bool zwj = false;
-    bool vs15 = false;
-    bool vs16 = false;
-
+struct GraphemeWidthState : StringWidth::GraphemeState {
     void reset(uint32_t cp, bool ambiguousIsWide)
     {
-        firstCp = cp;
-        lastCp = cp;
-        count = 1;
-        keycap = (cp == 0x20E3);
-        regionalIndicator = (cp >= 0x1F1E6 && cp <= 0x1F1FF);
-        skinTone = (cp >= 0x1F3FB && cp <= 0x1F3FF);
-        zwj = (cp == 0x200D);
-        vs15 = false;
-        vs16 = false;
-
-        uint8_t w = Bun__codepointWidth(cp, ambiguousIsWide);
-        baseWidth = w;
-        nonEmojiWidth = w;
-        emojiBase = Bun__isEmojiPresentation(cp);
+        StringWidth::GraphemeState::reset(cp, StringWidth::fusedClassify(cp), ambiguousIsWide);
     }
 
     void add(uint32_t cp, bool ambiguousIsWide)
     {
-        lastCp = cp;
-        if (count < 255)
-            count++;
-        keycap = keycap || (cp == 0x20E3);
-        regionalIndicator = regionalIndicator || (cp >= 0x1F1E6 && cp <= 0x1F1FF);
-        skinTone = skinTone || (cp >= 0x1F3FB && cp <= 0x1F3FF);
-        zwj = zwj || (cp == 0x200D);
-        vs15 = vs15 || (cp == 0xFE0E);
-        vs16 = vs16 || (cp == 0xFE0F);
-
-        uint8_t w = Bun__codepointWidth(cp, ambiguousIsWide);
-        if (w > 0) {
-            uint16_t newWidth = nonEmojiWidth + w;
-            nonEmojiWidth = newWidth < 1023 ? newWidth : 1023;
-        }
-    }
-
-    uint8_t width() const
-    {
-        if (count == 0)
-            return 0;
-        if (regionalIndicator && count >= 2)
-            return 2;
-        if (keycap)
-            return 2;
-        if (regionalIndicator)
-            return 1; // Single (unpaired) regional indicator is width 1
-        if (emojiBase && (skinTone || zwj))
-            return 2;
-        // VS16 widens only a base with the Emoji property to emoji
-        // presentation; the fused emoji bit early-outs below U+203C, where
-        // (c) and (R) are the only non-keycap Emoji codepoints. Zero-width
-        // and narrow non-emoji bases keep their own width under VS15/VS16.
-        if (vs15 || vs16) {
-            if (baseWidth == 2 || (vs16 && (emojiBase || firstCp == 0xA9 || firstCp == 0xAE)))
-                return 2;
-            return baseWidth;
-        }
-        // Match stringWidth.cpp GraphemeState::width() exactly: return accumulated width
-        // (may be 0 for zero-width-only clusters like U+200B ZWSP).
-        return static_cast<uint8_t>(nonEmojiWidth);
+        StringWidth::GraphemeState::add(cp, StringWidth::fusedClassify(cp), ambiguousIsWide);
     }
 };
 

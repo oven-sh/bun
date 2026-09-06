@@ -1475,6 +1475,7 @@ describe.concurrent("http.Server vs https.Server TLS mode", () => {
     try {
       const url = await listen(server);
       expect(server instanceof https.Server).toBe(true);
+      expect(server instanceof http.Server).toBe(true);
       expect(await plaintextGet(Number(url.port))).not.toStartWith("HTTP/1.1");
       await expect(fetch(`https://127.0.0.1:${url.port}/`, { tls: { rejectUnauthorized: false } })).rejects.toThrow();
     } finally {

@@ -368,8 +368,10 @@ namespace Bun {
       message: (ws: ServerWebSocket, message: string | ArrayBuffer | Uint8Array) => void;
       open?: (ws: ServerWebSocket) => void;
       close?: (ws: ServerWebSocket, code: number, reason: string) => void;
-      error?: (ws: ServerWebSocket, error: Error) => void;
+      error?: (error: unknown) => void; // called when one of the other handlers throws
       drain?: (ws: ServerWebSocket) => void;
+      ping?: (ws: ServerWebSocket, data: Buffer) => void;
+      pong?: (ws: ServerWebSocket, data: Buffer) => void;
 
       maxPayloadLength?: number; // default: 16 * 1024 * 1024 = 16 MB
       idleTimeout?: number; // default: 120 (seconds)

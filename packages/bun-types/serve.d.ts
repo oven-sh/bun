@@ -470,6 +470,16 @@ declare module "bun" {
     pong?(ws: ServerWebSocket<T>, data: Buffer): void | Promise<void>;
 
     /**
+     * Called when `open`, `message`, `drain`, `close`, `ping`, or `pong`
+     * throws.
+     *
+     * If `error` is not set, the exception is reported as an uncaught exception.
+     *
+     * @param error The thrown value
+     */
+    error?(error: unknown): void | Promise<void>;
+
+    /**
      * Sets the maximum size of a message, in bytes.
      *
      * @default 1024 * 1024 * 16 // 16 MB
@@ -1197,6 +1207,9 @@ declare module "bun" {
 
     /**
      * The hostname the server is listening on. Does not include the port.
+     *
+     * When no `hostname` option was given, the server listens on all
+     * interfaces and this is `"localhost"`.
      *
      * This is `undefined` when the server is listening on a unix socket.
      *

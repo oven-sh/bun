@@ -688,12 +688,6 @@ declare module "bun" {
     credentials?: import("undici-types").RequestCredentials | undefined;
 
     /**
-     * @default true
-     */
-    // trackUnmanagedFds?: boolean;
-    // resourceLimits?: import("worker_threads").ResourceLimits;
-
-    /**
      * An array of module specifiers to preload in the worker.
      *
      * These modules load before the worker's entry point is executed.
@@ -2941,7 +2935,12 @@ declare module "bun" {
      */
     define?: Record<string, string>;
 
-    /** What is the default loader used for this transpiler?  */
+    /**
+     * The loader used when `transform`, `transformSync`, and `scan` are not
+     * given one.
+     *
+     * @default "jsx"
+     */
     loader?: JavaScriptLoader;
 
     /**  What platform are we targeting? This may affect how import and/or require is used */
@@ -3077,12 +3076,16 @@ declare module "bun" {
      * Transpile code from TypeScript or JSX into valid JavaScript.
      * This function does not resolve imports.
      * @param code The code to transpile
+     * @param loader The loader for `code`. Defaults to the `loader` passed to
+     * the constructor, which defaults to `"jsx"`.
      */
     transform(code: Bun.StringOrBuffer, loader?: JavaScriptLoader): Promise<string>;
     /**
      * Transpile code from TypeScript or JSX into valid JavaScript.
      * This function does not resolve imports.
      * @param code The code to transpile
+     * @param loader The loader for `code`. Defaults to the `loader` passed to
+     * the constructor, which defaults to `"jsx"`.
      */
     transformSync(code: Bun.StringOrBuffer, loader: JavaScriptLoader, ctx: object): string;
     /**
@@ -3097,6 +3100,8 @@ declare module "bun" {
      * Transpile code from TypeScript or JSX into valid JavaScript.
      * This function does not resolve imports.
      * @param code The code to transpile
+     * @param loader The loader for `code`. Defaults to the `loader` passed to
+     * the constructor, which defaults to `"jsx"`.
      */
     transformSync(code: Bun.StringOrBuffer, loader?: JavaScriptLoader): string;
 
@@ -6322,14 +6327,14 @@ declare module "bun" {
     name: string;
 
     /**
-     * The target JavaScript environment the plugin should be applied to.
+     * The target JavaScript environment the plugin is intended for.
      * - `bun`: The default environment when using `bun run` or `bun` to load a script
-     * - `browser`: The plugin is applied to browser builds
-     * - `node`: The plugin is applied to Node.js builds
+     * - `browser`: Browser builds
+     * - `node`: Node.js builds
      *
-     * If unspecified, the plugin is assumed to be compatible with all targets.
-     *
-     * This field is not read by {@link Bun.plugin}, only {@link Bun.build} and `bun build`
+     * {@link Bun.plugin} validates this value but does not filter on it, and
+     * {@link Bun.build} does not read it: the plugin runs for every target.
+     * Check `build.config.target` inside `setup` to apply a plugin conditionally.
      */
     target?: Target;
 

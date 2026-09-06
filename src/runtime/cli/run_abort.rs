@@ -1,11 +1,9 @@
 //! Signal-driven abort for the multi-script runners: `bun run --filter` and
 //! `bun run --parallel` / `--sequential`.
 //!
-//! The handler records the signal and wakes the mini event loop. The poll
-//! retries on EINTR, so a flag alone is only seen when a child produces an
-//! event. The run loop reads [`pending`] between ticks, forwards the signal to
-//! the running scripts, and exits with `128 + signal` once they are gone.
-//! Linux PDEATHSIG covers the case where the runner cannot do this (SIGKILL).
+//! The handler records the signal and wakes the mini event loop, whose poll
+//! retries on EINTR. The run loop reads [`pending`] between ticks, forwards
+//! the signal to the running scripts, and exits with `128 + signal`.
 
 use core::sync::atomic::{AtomicPtr, AtomicU8, Ordering};
 
@@ -14,8 +12,7 @@ use bun_sys::SignalCode;
 /// Signal number that requested the abort. 0 while none did.
 static SIGNAL: AtomicU8 = AtomicU8::new(0);
 
-/// Set by [`install`], cleared by [`uninstall`]. The uws loop lives for the
-/// whole thread, so a handler that loads it after `uninstall` races nothing.
+/// Set by [`install`], cleared by [`uninstall`]. The uws loop is thread-lifetime.
 static LOOP: AtomicPtr<bun_uws::Loop> = AtomicPtr::new(core::ptr::null_mut());
 
 /// Signal context on POSIX; the console control thread on Windows.
@@ -54,15 +51,13 @@ extern "system" fn windows_ctrl_handler(ctrl: bun_sys::windows::DWORD) -> bun_sy
 #[cfg(unix)]
 const SIGNALS: [i32; 3] = [libc::SIGINT, libc::SIGTERM, libc::SIGHUP];
 
-/// Bit `i` is set when `SIGNALS[i]` was hooked. A signal the parent ignores
-/// (`nohup`, `trap "" HUP`) stays ignored: the children inherit that, and
-/// hooking it would turn a hangup they survive into an abort.
+/// Bit `i` is set when `SIGNALS[i]` was hooked. An inherited `SIG_IGN`
+/// (`nohup`) is left alone, since the children inherit it too.
 #[cfg(unix)]
 static HOOKED: AtomicU8 = AtomicU8::new(0);
 
-/// `loop_` is the uws loop the run loop ticks. `SA_RESETHAND` and
-/// [`uninstall`] together make a second signal kill the runner at once, for
-/// a child that does not react to the forwarded signal.
+/// `loop_` is the uws loop the run loop ticks. `SA_RESETHAND` makes a second
+/// signal kill the runner at once.
 pub(crate) fn install(loop_: *mut bun_uws::Loop) {
     LOOP.store(loop_, Ordering::Release);
     #[cfg(unix)]
@@ -99,8 +94,7 @@ pub(crate) fn install(loop_: *mut bun_uws::Loop) {
     }
 }
 
-/// Restores the default disposition of each hooked signal so the next one
-/// ends the process at once.
+/// Restores `SIG_DFL` for each hooked signal so the next one ends the process.
 pub(crate) fn uninstall() {
     #[cfg(unix)]
     {

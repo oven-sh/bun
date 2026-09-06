@@ -1761,6 +1761,18 @@ impl Package<u64> {
         version: &[u8],
         key_loc: bun_ast::Loc,
     ) -> crate::Result<Option<Dependency>> {
+        if external_alias.value.is_empty() {
+            log.add_error_fmt(
+                source,
+                key_loc,
+                format_args!(
+                    "Dependency name cannot be empty (in \"{}\")",
+                    bstr::BStr::new(group.prop)
+                ),
+            );
+            return Err(crate::Error::InstallFailed);
+        }
+
         #[cfg(windows)]
         let external_version = 'brk: {
             match tag.unwrap_or_else(|| dependency::version::Tag::infer(version)) {
@@ -1805,7 +1817,11 @@ impl Package<u64> {
             Some(&mut *log),
             Some(&mut *pm),
         )
-        .unwrap_or_default();
+        .unwrap_or_else(|| dependency::Version {
+            tag: dependency::version::Tag::Uninitialized,
+            literal: sliced.value(),
+            value: dependency::Value::default(),
+        });
         let mut workspace_range: Option<semver::query::Group> = None;
         #[allow(non_snake_case)]
         let FEATURES = features;

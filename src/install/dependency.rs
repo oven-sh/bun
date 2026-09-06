@@ -1116,6 +1116,41 @@ pub(crate) fn parse_with_optional_tag<'a, 'b>(
     )
 }
 
+/// Splits `npm:<name>@<version>` (the part after `npm:`) into the package name
+/// and the rest after the separating `@`. A leading `@` belongs to the scope.
+fn split_npm_alias(str: &[u8]) -> (&[u8], &[u8]) {
+    let mut i: usize = (!str.is_empty() && str[0] == b'@') as usize;
+    while i < str.len() {
+        if str[i] == b'@' {
+            return (&str[0..i], &str[i + 1..]);
+        }
+        i += 1;
+    }
+    (str, &str[i..])
+}
+
+/// Rejects a name that the registry cannot serve: empty, or `@` with a
+/// missing scope or package part. Such a name turns into a request for the
+/// registry root (`GET /`) or for `/@scope%2f`.
+fn invalid_package_name(
+    log_: Option<&mut bun_ast::Log>,
+    name: &[u8],
+    dependency: &[u8],
+) -> Option<Version> {
+    if let Some(log) = log_ {
+        log.add_error_fmt(
+            None,
+            bun_ast::Loc::EMPTY,
+            format_args!(
+                "invalid package name \"{}\" in dependency \"{}\"",
+                bstr::BStr::new(name),
+                bstr::BStr::new(dependency)
+            ),
+        );
+    }
+    None
+}
+
 pub(crate) fn parse_with_tag(
     alias: String,
     alias_hash: Option<PackageNameHash>,
@@ -1133,24 +1168,20 @@ pub(crate) fn parse_with_tag(
             let name = 'brk: {
                 if input.starts_with(b"npm:") {
                     is_alias = true;
-                    let str = &input[b"npm:".len()..];
-                    let mut i: usize = (!str.is_empty() && str[0] == b'@') as usize;
-
-                    while i < str.len() {
-                        if str[i] == b'@' {
-                            input = &str[i + 1..];
-                            break 'brk sliced.sub(&str[0..i]).value();
-                        }
-                        i += 1;
+                    let (name, rest) = split_npm_alias(&input[b"npm:".len()..]);
+                    if is_scoped_package_name(name).is_err() {
+                        return invalid_package_name(log_, name, dependency);
                     }
-
-                    input = &str[i..];
-
-                    break 'brk sliced.sub(&str[0..i]).value();
+                    input = rest;
+                    break 'brk sliced.sub(name).value();
                 }
 
                 alias
             };
+
+            if name.is_empty() {
+                return invalid_package_name(log_, b"", dependency);
+            }
 
             is_alias = is_alias && alias_hash.is_some();
 
@@ -1194,33 +1225,19 @@ pub(crate) fn parse_with_tag(
 
             let actual = if dependency.starts_with(b"npm:") && dependency.len() > b"npm:".len() {
                 // npm:@foo/bar@latest
-                sliced
-                    .sub('brk: {
-                        let mut i = b"npm:".len();
-
-                        // npm:@foo/bar@latest
-                        //     ^
-                        i += (dependency[i] == b'@') as usize;
-
-                        while i < dependency.len() {
-                            // npm:@foo/bar@latest
-                            //             ^
-                            if dependency[i] == b'@' {
-                                break;
-                            }
-                            i += 1;
-                        }
-
-                        tag_to_use = sliced.sub(&dependency[i + 1..]).value();
-                        break 'brk &dependency[b"npm:".len()..i];
-                    })
-                    .value()
+                let (name, rest) = split_npm_alias(&dependency[b"npm:".len()..]);
+                if is_scoped_package_name(name).is_err() {
+                    return invalid_package_name(log_, name, dependency);
+                }
+                tag_to_use = sliced.sub(rest).value();
+                sliced.sub(name).value()
             } else {
                 alias
             };
 
-            // name should never be empty
-            debug_assert!(!actual.is_empty());
+            if actual.is_empty() {
+                return invalid_package_name(log_, b"", dependency);
+            }
 
             Some(Version {
                 literal: sliced.value(),

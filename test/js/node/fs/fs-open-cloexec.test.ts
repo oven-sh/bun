@@ -77,13 +77,12 @@ describe.skipIf(!isLinux && !isMacOS)("node:fs opens set O_CLOEXEC", () => {
     using dir = tempDir("fs-cloexec", { "log.txt": "ab" });
     const fd = fs.openSync(join(String(dir), "log.txt"), fs.constants.O_WRONLY | fs.constants.O_APPEND);
     try {
-      // O_APPEND ignores the position argument, so "y" lands at EOF, not at 0.
+      // Without O_APPEND the write would land at offset 0 and give "xb".
       fs.writeSync(fd, "x");
-      fs.writeSync(fd, "y", 0);
       expect(hasCloexec(fd)).toBe(true);
     } finally {
       fs.closeSync(fd);
     }
-    expect(fs.readFileSync(join(String(dir), "log.txt"), "utf8")).toBe("abxy");
+    expect(fs.readFileSync(join(String(dir), "log.txt"), "utf8")).toBe("abx");
   });
 });

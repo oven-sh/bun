@@ -484,14 +484,17 @@ it("--watch restarts from the original cwd after the script calls process.chdir(
   using dir = tempDir("watch-chdir", {
     "sub/inner.txt": "",
     "dep.js": `export const V = "v0";`,
+    // The last generation exits on its own, which also ends the watch
+    // process, so nothing still holds the directory when it is removed.
     "app.mjs": `import { V } from "./dep.js";
 console.log("RUNNING " + V + " cwd=" + process.cwd());
 process.chdir("./sub");
+if (V === "v2") process.exit(0);
 setInterval(() => {}, 1000);
 `,
   });
   const cwd = String(dir);
-  watchee = spawn({
+  const proc = spawn({
     cwd,
     cmd: [bunExe(), "--watch", "--no-clear-screen", "app.mjs"],
     env: bunEnv,
@@ -499,7 +502,8 @@ setInterval(() => {}, 1000);
     stderr: "inherit",
     stdin: "ignore",
   });
-  const { waitUntil, release, output } = stdoutWaiter(watchee);
+  watchee = proc;
+  const { waitUntil, release, output } = stdoutWaiter(proc);
 
   await waitUntil(out => linesWith(out, "RUNNING").length >= 1);
   // Two restarts: the first must find the relative entry point again, the
@@ -515,6 +519,7 @@ setInterval(() => {}, 1000);
     `RUNNING v2 cwd=${cwd}`,
   ]);
   release();
+  expect(await proc.exited).toBe(0);
 }, 30000);
 
 it("--watch with a relative --cwd survives a restart", async () => {
@@ -522,11 +527,12 @@ it("--watch with a relative --cwd survives a restart", async () => {
     "w/dep.js": `export const V = "v0";`,
     "w/app.mjs": `import { V } from "./dep.js";
 console.log("RUNNING " + V + " cwd=" + process.cwd());
+if (V === "v1") process.exit(0);
 setInterval(() => {}, 1000);
 `,
   });
   const inner = join(String(dir), "w");
-  watchee = spawn({
+  const proc = spawn({
     cwd: String(dir),
     cmd: [bunExe(), "--watch", "--no-clear-screen", "--cwd", "w", "app.mjs"],
     env: bunEnv,
@@ -534,7 +540,8 @@ setInterval(() => {}, 1000);
     stderr: "inherit",
     stdin: "ignore",
   });
-  const { waitUntil, release, output } = stdoutWaiter(watchee);
+  watchee = proc;
+  const { waitUntil, release, output } = stdoutWaiter(proc);
 
   await waitUntil(out => linesWith(out, "RUNNING").length >= 1);
   await Bun.write(join(inner, "dep.js"), `export const V = "v1";`);
@@ -542,20 +549,26 @@ setInterval(() => {}, 1000);
 
   expect(linesWith(output(), "RUNNING")).toEqual([`RUNNING v0 cwd=${inner}`, `RUNNING v1 cwd=${inner}`]);
   release();
+  expect(await proc.exited).toBe(0);
 }, 30000);
 
 // `bun test` discovers test files from the cwd on every generation, so a
 // restart that kept a test's process.chdir() would run (and watch) some
-// other directory's suite instead of the project's.
-it("bun test --watch keeps running the project's tests after a test calls process.chdir()", async () => {
-  using dir = tempDir("watch-test-chdir", {
-    "other/other.test.ts": `import { test } from "bun:test";
+// other directory's suite instead of the project's. On Windows the restarts
+// come from a watcher-manager parent that never runs tests, so its cwd cannot
+// move; it is skipped there because killing the manager can leave its child
+// holding the temp dir while the test removes it.
+it.skipIf(isWindows)(
+  "bun test --watch keeps running the project's tests after a test calls process.chdir()",
+  async () => {
+    using dir = tempDir("watch-test-chdir", {
+      "other/other.test.ts": `import { test } from "bun:test";
 test("other", () => {
   console.log("OTHER RAN cwd=" + process.cwd());
 });
 `,
-    "proj/dep.ts": `export const V = "v0";`,
-    "proj/a.test.ts": `import { expect, test } from "bun:test";
+      "proj/dep.ts": `export const V = "v0";`,
+      "proj/a.test.ts": `import { expect, test } from "bun:test";
 import { V } from "./dep.ts";
 test("proj", () => {
   console.log("PROJ RAN " + V + " cwd=" + process.cwd());
@@ -563,22 +576,27 @@ test("proj", () => {
   expect(1).toBe(1);
 });
 `,
-  });
-  const proj = join(String(dir), "proj");
-  watchee = spawn({
-    cwd: proj,
-    cmd: [bunExe(), "test", "--watch", "--no-clear-screen"],
-    env: bunEnv,
-    stdout: "pipe",
-    stderr: "inherit",
-    stdin: "ignore",
-  });
-  const { waitUntil, release, output } = stdoutWaiter(watchee);
+    });
+    const proj = join(String(dir), "proj");
+    const proc = spawn({
+      cwd: proj,
+      cmd: [bunExe(), "test", "--watch", "--no-clear-screen"],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "inherit",
+      stdin: "ignore",
+    });
+    watchee = proc;
+    const { waitUntil, release, output } = stdoutWaiter(proc);
 
-  await waitUntil(out => linesWith(out, " RAN ").length >= 1);
-  await Bun.write(join(proj, "dep.ts"), `export const V = "v1";`);
-  await waitUntil(out => linesWith(out, " RAN ").length >= 2);
+    await waitUntil(out => linesWith(out, " RAN ").length >= 1);
+    await Bun.write(join(proj, "dep.ts"), `export const V = "v1";`);
+    await waitUntil(out => linesWith(out, " RAN ").length >= 2);
 
-  expect(linesWith(output(), " RAN ")).toEqual([`PROJ RAN v0 cwd=${proj}`, `PROJ RAN v1 cwd=${proj}`]);
-  release();
-}, 30000);
+    expect(linesWith(output(), " RAN ")).toEqual([`PROJ RAN v0 cwd=${proj}`, `PROJ RAN v1 cwd=${proj}`]);
+    release();
+    proc.kill("SIGKILL");
+    await proc.exited;
+  },
+  30000,
+);

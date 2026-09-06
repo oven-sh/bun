@@ -6866,7 +6866,8 @@ impl VirtualMachine {
         source_url: &[u8],
     ) -> Option<bun_core::String> {
         let display_url = lookup.display_source_url_if_needed(source_url)?;
-        self.source_mappings.trust_path(display_url.to_utf8().slice());
+        self.source_mappings
+            .trust_path(display_url.to_utf8().slice());
         Some(display_url)
     }
 

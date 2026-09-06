@@ -190,9 +190,11 @@ describe.concurrent("node-module-module", () => {
   });
 
   // A relative cache dir is joined onto cwd. A value that does not fit the
-  // path buffer after the join used to abort the process. The env var form
-  // stays under the Windows per-variable limit of 32767 characters.
-  test("NODE_COMPILE_CACHE with an over-long relative path does not crash startup", async () => {
+  // path buffer after the join used to abort the process. A Windows
+  // environment variable holds at most 32767 characters, which fits the
+  // Windows path buffer, so the env var form cannot reach the overflow path
+  // there. The API test below covers Windows.
+  test.skipIf(isWindows)("NODE_COMPILE_CACHE with an over-long relative path does not crash startup", async () => {
     using dir = tempDir("compile-cache-long-env", {});
     await using proc = Bun.spawn({
       cmd: [bunExe(), "-e", `console.log("user code ran")`],

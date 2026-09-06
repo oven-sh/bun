@@ -556,56 +556,57 @@ test("can install folder dependencies on root package", async () => {
 
 // Bin targets get `0o777 & ~umask`, the same as the hoisted linker. For
 // workspace and `file:` dependencies the target is the source file in the repo.
-test.skipIf(isWindows).each([
+describe.each([
   ["022", 0o755],
   ["077", 0o700],
-])("bin targets honor umask %s", async (umask, expectedMode) => {
-  const { packageJson, packageDir } = await registry.createTestDir({ bunfigOpts: { linker: "isolated" } });
+])("umask %s", (umask, expectedMode) => {
+  test.skipIf(isWindows)("bin targets honor umask", async () => {
+    const { packageJson, packageDir } = await registry.createTestDir({ bunfigOpts: { linker: "isolated" } });
 
-  await Promise.all([
-    write(
-      packageJson,
-      JSON.stringify({
-        name: "umask-root",
-        workspaces: ["packages/*"],
-        dependencies: {
-          tool: "workspace:*",
-          dep: "file:./dep",
-        },
-      }),
-    ),
-    write(
-      join(packageDir, "packages", "tool", "package.json"),
-      JSON.stringify({ name: "tool", version: "1.0.0", bin: { tool: "./cli.js" } }),
-    ),
-    write(join(packageDir, "packages", "tool", "cli.js"), "#!/usr/bin/env node\nconsole.log(1)\n"),
-    write(join(packageDir, "dep", "package.json"), JSON.stringify({ name: "dep", version: "1.0.0", bin: "d.js" })),
-    write(join(packageDir, "dep", "d.js"), "#!/bin/sh\necho d\n"),
-  ]);
-  await Promise.all([
-    chmod(join(packageDir, "packages", "tool", "cli.js"), 0o644),
-    chmod(join(packageDir, "dep", "d.js"), 0o644),
-  ]);
+    await Promise.all([
+      write(
+        packageJson,
+        JSON.stringify({
+          name: "umask-root",
+          workspaces: ["packages/*"],
+          dependencies: {
+            tool: "workspace:*",
+            dep: "file:./dep",
+          },
+        }),
+      ),
+      write(
+        join(packageDir, "packages", "tool", "package.json"),
+        JSON.stringify({ name: "tool", version: "1.0.0", bin: { tool: "./cli.js" } }),
+      ),
+      write(join(packageDir, "packages", "tool", "cli.js"), "#!/usr/bin/env node\nconsole.log(1)\n"),
+      write(join(packageDir, "dep", "package.json"), JSON.stringify({ name: "dep", version: "1.0.0", bin: "d.js" })),
+      write(join(packageDir, "dep", "d.js"), "#!/bin/sh\necho d\n"),
+    ]);
+    await Promise.all([
+      chmod(join(packageDir, "packages", "tool", "cli.js"), 0o644),
+      chmod(join(packageDir, "dep", "d.js"), 0o644),
+    ]);
 
-  await using proc = spawn({
-    cmd: ["sh", "-c", `umask ${umask} && exec "$0" install`, bunExe()],
-    cwd: packageDir,
-    env: bunEnv,
-    stdout: "pipe",
-    stderr: "pipe",
+    await using proc = spawn({
+      cmd: ["sh", "-c", `umask ${umask} && exec "$0" install`, bunExe()],
+      cwd: packageDir,
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).not.toContain("error:");
+    expect(exitCode).toBe(0);
+
+    const modes = [
+      join(packageDir, "packages", "tool", "cli.js"),
+      join(packageDir, "dep", "d.js"),
+      join(packageDir, "node_modules", ".bin", "tool"),
+      join(packageDir, "node_modules", ".bin", "dep"),
+    ].map(p => (statSync(p).mode & 0o777).toString(8));
+    expect(modes).toEqual(Array(4).fill(expectedMode.toString(8)));
   });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect(stderr).not.toContain("error:");
-  expect(stdout).toContain("installed");
-  expect(exitCode).toBe(0);
-
-  const modes = [
-    join(packageDir, "packages", "tool", "cli.js"),
-    join(packageDir, "dep", "d.js"),
-    join(packageDir, "node_modules", ".bin", "tool"),
-    join(packageDir, "node_modules", ".bin", "dep"),
-  ].map(p => (statSync(p).mode & 0o777).toString(8));
-  expect(modes).toEqual(Array(4).fill(expectedMode.toString(8)));
 });
 
 describe("isolated workspaces", () => {

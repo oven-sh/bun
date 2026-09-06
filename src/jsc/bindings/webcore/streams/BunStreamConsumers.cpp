@@ -1706,7 +1706,10 @@ JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_boundOneShotDirectClose, (JSGlobalO
             return {};
         }
         MarkedArgumentBuffer noArguments;
-        JSC::call(globalObject, closeFunction, callData, jsUndefined(), noArguments);
+        {
+            StreamAsyncContextScope asyncContextScope(globalObject, sink->m_stream.get());
+            JSC::call(globalObject, closeFunction, callData, jsUndefined(), noArguments);
+        }
         RETURN_IF_EXCEPTION(scope, {});
     }
     MarkedArgumentBuffer noArguments;

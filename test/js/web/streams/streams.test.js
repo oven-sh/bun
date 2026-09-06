@@ -649,6 +649,31 @@ it("ReadableStream (direct): the one-shot ArrayBuffer consumer runs pull() in th
   expect({ lengths, seen }).toEqual({ lengths: [1, 1, 1], seen: ["arrayBuffer:ctor", "bytes:ctor", "response:ctor"] });
 });
 
+it("ReadableStream (direct): the one-shot ArrayBuffer consumer runs close() in the AsyncLocalStorage context of the constructor", async () => {
+  const als = new AsyncLocalStorage();
+  const seen = [];
+  let controller;
+  const pulled = Promise.withResolvers();
+  const stream = als.run("ctor", () => {
+    return new ReadableStream({
+      type: "direct",
+      pull(c) {
+        controller = c;
+        pulled.resolve();
+        return pulled.promise;
+      },
+      close() {
+        seen.push(`close:${als.getStore()}`);
+      },
+    });
+  });
+  const result = readableStreamToArrayBuffer(stream);
+  await pulled.promise;
+  controller.write("x");
+  controller.close();
+  expect({ byteLength: (await result).byteLength, seen }).toEqual({ byteLength: 1, seen: ["close:ctor"] });
+});
+
 it("ReadableStream (bytes)", async () => {
   var stream = new ReadableStream({
     start(controller) {

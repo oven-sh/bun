@@ -2674,11 +2674,16 @@ impl TestCommand {
         vm.exit_handler.skip_exit_listeners = skip_exit_listeners(&reporter);
         // Must precede the GC-root release below: exit listeners are user JS and may touch still-live state.
         {
+            let unhandled_errors_before_exit = vm.unhandled_error_counter;
             let vm_ptr: *mut VirtualMachine = vm;
             // SAFETY: `vm_ptr` reborrows the live `&mut VirtualMachine`;
             // `run_with_api_lock` takes `&self` only, so the closure holds the
             // unique mutable access on this single-threaded path.
             vm.run_with_api_lock(|| unsafe { (*vm_ptr).on_exit() });
+            // An exit listener that throws has no test to fail. `bun run` exits 1 for it, so does node's test runner.
+            if vm.unhandled_error_counter != unhandled_errors_before_exit {
+                vm.exit_handler.exit_code = 1;
+            }
         }
         // on_exit() already set is_shutting_down; global_exit() asserts it.
         // Release `bun:test` GC roots before `global_exit()` so

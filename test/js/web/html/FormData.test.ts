@@ -38,7 +38,7 @@ describe("FormData", () => {
     const formData = new FormData();
     formData.append("foo", blob);
     // @ts-expect-error
-    expect(formData.get("foo").name).toBeUndefined();
+    expect(formData.get("foo").name).toBe("blob");
     formData.append("foo2", new File([blob], "foo.txt"));
     // @ts-expect-error
     expect(formData.get("foo2").name).toBe("foo.txt");
@@ -52,15 +52,79 @@ describe("FormData", () => {
 
     let b1 = form.get("foo") as any;
     expect(blob.name).toBeUndefined();
-    expect(b1.name).toBeUndefined();
+    expect(b1.name).toBe("blob");
 
     form.set("foo", b1, "foo.txt");
     expect(blob.name).toBeUndefined();
-    expect(b1.name).toBeUndefined();
+    expect(b1.name).toBe("blob");
 
     b1 = form.get("foo") as Blob;
     expect(blob.name).toBeUndefined();
     expect(b1.name).toBe("foo.txt");
+  });
+
+  // https://xhr.spec.whatwg.org/#create-an-entry
+  describe("entry File name", () => {
+    async function entry(form: FormData, key: string) {
+      const value = form.get(key) as File;
+      return { isFile: value instanceof File, name: value.name, type: value.type, text: await value.text() };
+    }
+
+    it("filename argument replaces the File's own name", async () => {
+      const file = new File(["abc"], "orig.txt", { type: "text/plain" });
+      const form = new FormData();
+      form.append("appended", file, "appended.txt");
+      form.set("set", file, "set.txt");
+
+      expect(await entry(form, "appended")).toEqual({
+        isFile: true,
+        name: "appended.txt",
+        type: "text/plain;charset=utf-8",
+        text: "abc",
+      });
+      expect(await entry(form, "set")).toEqual({
+        isFile: true,
+        name: "set.txt",
+        type: "text/plain;charset=utf-8",
+        text: "abc",
+      });
+      expect(form.getAll("appended").map(v => (v as File).name)).toEqual(["appended.txt"]);
+      expect([...form.entries()].map(([, v]) => (v as File).name)).toEqual(["appended.txt", "set.txt"]);
+      // The File passed in keeps its own name.
+      expect(file.name).toBe("orig.txt");
+    });
+
+    it("a Blob without a filename argument becomes a File named 'blob'", async () => {
+      const form = new FormData();
+      form.append("a", new Blob(["x"]));
+      form.set("b", new Blob(["y"], { type: "text/plain" }));
+      expect(await entry(form, "a")).toEqual({ isFile: true, name: "blob", type: "", text: "x" });
+      expect(await entry(form, "b")).toEqual({ isFile: true, name: "blob", type: "text/plain;charset=utf-8", text: "y" });
+    });
+
+    it("an empty filename argument gives the File an empty name", async () => {
+      const form = new FormData();
+      form.append("file", new File(["x"], "orig.txt"), "");
+      form.append("blob", new Blob(["y"]), "");
+      expect((form.get("file") as File).name).toBe("");
+      expect((form.get("blob") as File).name).toBe("");
+    });
+
+    it("an undefined filename argument keeps the File's own name", async () => {
+      const form = new FormData();
+      form.append("named", new File(["x"], "orig.txt"), undefined);
+      form.append("empty", new File(["x"], ""), undefined);
+      expect((form.get("named") as File).name).toBe("orig.txt");
+      expect((form.get("empty") as File).name).toBe("");
+    });
+
+    it("serializes the entry name, not the original File name", async () => {
+      const form = new FormData();
+      form.append("over", new File(["abc"], "orig.txt"), "override.txt");
+      form.append("blob", new Blob(["x"]));
+      const text = await new Response(form).text();
+      expect(text.match(/filename="[^"]*"/g)).toEqual(['filename="override.txt"', 'filename="blob"']);
+    });
   });
 
   const multipartFormDataFixturesRawBody = [

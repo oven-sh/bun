@@ -546,15 +546,11 @@ impl PosixBufferedReader {
     }
 
     /// The kernel refused to watch this fd: `epoll_ctl` returns `EPERM` and
-    /// kqueue `EINVAL` or `ENXIO` for a character device with no poll support
-    /// (`/dev/zero`, `/dev/null`, `/dev/urandom`).
+    /// kqueue `EINVAL` for a character device with no poll support
+    /// (`/dev/zero`, `/dev/null`, `/dev/urandom`). The shell's `IOWriter`
+    /// falls back on the same pair.
     fn is_unpollable(err: &sys::Error) -> bool {
-        match err.get_errno() {
-            sys::E::EPERM => true,
-            #[cfg(target_os = "macos")]
-            sys::E::EINVAL | sys::E::ENXIO => true,
-            _ => false,
-        }
+        matches!(err.get_errno(), sys::E::EPERM | sys::E::EINVAL)
     }
 
     /// A read on such an fd never waits, so drop the poll and read it

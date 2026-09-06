@@ -1,6 +1,6 @@
 import type { Server } from "bun";
 import { afterAll, beforeAll, describe, expect, it, mock, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, isWindows, rmScope, rss, tempDir, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, isASAN, isLinux, isWindows, rmScope, rss, tempDir, tempDirWithFiles } from "harness";
 import { mkfifo } from "mkfifo";
 import { closeSync, openSync, unlinkSync, writeSync } from "node:fs";
 import { join } from "node:path";
@@ -1223,6 +1223,63 @@ test.skipIf(isWindows)("Response(Bun.file(FIFO)) frames the body as chunked, not
   } finally {
     closeSync(writerFd);
   }
+});
+
+// The kernel refuses to poll these character devices (epoll_ctl EPERM). The
+// server must read them synchronously, not fail the response.
+describe.skipIf(isWindows)("Response(Bun.file(<character device>))", () => {
+  it("/dev/null ends as an empty body a keep-alive client can frame", async () => {
+    await using server = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      fetch() {
+        return new Response(Bun.file("/dev/null"));
+      },
+    });
+    const res = await fetch(`http://127.0.0.1:${server.port}/`);
+    expect({
+      status: res.status,
+      contentLength: res.headers.get("content-length"),
+      body: (await res.arrayBuffer()).byteLength,
+    }).toEqual({ status: 200, contentLength: "0", body: 0 });
+  });
+
+  it("/dev/urandom slice delivers the slice", async () => {
+    await using server = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      fetch() {
+        return new Response(Bun.file("/dev/urandom").slice(0, 200_000));
+      },
+    });
+    const res = await fetch(`http://127.0.0.1:${server.port}/`);
+    expect(res.status).toBe(200);
+    expect((await res.arrayBuffer()).byteLength).toBe(200_000);
+  });
+});
+
+// A FIFO whose writer closes without a byte ends the reader at EOF before the
+// first write. The response must still frame its empty body. Linux only: the
+// server does not see a FIFO hangup on macOS yet.
+test.skipIf(!isLinux)("Response(Bun.file(FIFO)) with no data frames an empty body", async () => {
+  using dir = tempDir("serve-fifo-empty", {});
+  const fifoPath = join(String(dir), "body.fifo");
+  mkfifo(fifoPath);
+
+  await using server = Bun.serve({
+    port: 0,
+    hostname: "127.0.0.1",
+    fetch() {
+      // The writer opens the FIFO, which lets the server's open proceed, and closes it at once.
+      Bun.spawn({ cmd: ["sh", "-c", `: > "${fifoPath}"`], env: bunEnv });
+      return new Response(Bun.file(fifoPath));
+    },
+  });
+  const res = await fetch(`http://127.0.0.1:${server.port}/`);
+  expect({
+    status: res.status,
+    body: (await res.arrayBuffer()).byteLength,
+  }).toEqual({ status: 200, body: 0 });
 });
 
 // A file route serves the window of the Bun.file() slice it was built from,

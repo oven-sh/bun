@@ -2005,6 +2005,9 @@ where
             offset: sendfile.offset as u64,
             length: if is_regular {
                 Some(sendfile.remain as u64)
+            } else if original_size != crate::webcore::blob::MAX_SIZE {
+                // A `.slice()` bounds a device or pipe body. Without one the reader runs to EOF.
+                Some(original_size as u64)
             } else {
                 None
             },

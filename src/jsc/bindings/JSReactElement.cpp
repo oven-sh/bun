@@ -17,10 +17,7 @@ static constexpr PropertyOffset keyOffset = 2;
 static constexpr PropertyOffset refOffset = 3;
 static constexpr PropertyOffset propsOffset = 4;
 
-// Development structure only. These are the fields React's development
-// build adds in `ReactElement()` (react.development.js). React's development
-// renderers read and write them without guards, for example
-// `element._store.validated = 1` in react-server-dom-webpack.
+// Development structure only: the fields React's development build adds in `ReactElement()`.
 static constexpr PropertyOffset ownerOffset = 5;
 static constexpr PropertyOffset storeOffset = 6;
 static constexpr PropertyOffset debugInfoOffset = 7;
@@ -119,8 +116,7 @@ static JSObject* createElement(Zig::GlobalObject* global, uint8_t reactVersion, 
         return element;
     }
 
-    // `validated` is 1, the value React's JSX runtime gives static children.
-    // The markdown tree is static, so React must not ask for keys on it.
+    // `validated = 1` is what React's JSX runtime gives static children, so React does not ask for keys.
     JSObject* store = constructEmptyObject(vm, global->JSReactElementStoreStructure());
     store->putDirectOffset(vm, Bun::JSReactElement::storeValidatedOffset, jsNumber(1));
 

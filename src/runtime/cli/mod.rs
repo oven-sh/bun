@@ -966,7 +966,7 @@ pub mod command {
             return Tag::RunAsNodeCommand;
         }
 
-        // A bare word spliced in from BUN_OPTIONS is a positional, not the keyword.
+        // BUN_OPTIONS supplies flags and their values. A bare word there is an error.
         let bun_options_end = 1 + bun::bun_options_argc();
         let mut idx: usize = 1;
         let Some(mut first_arg_name) = iter.next() else {
@@ -979,13 +979,21 @@ pub mod command {
             if !is_flag && idx >= bun_options_end {
                 break;
             }
-            if is_flag {
+            if !is_flag {
+                Output::err_generic(
+                    "BUN_OPTIONS may only contain flags, found {}",
+                    format_args!("{}", bun_core::fmt::quote(first_arg_name)),
+                );
+                Global::exit(1);
+            }
+            {
                 // `--interactive` stays on AutoCommand: Arguments.rs parses it and the no-target check
                 // routes to RunCommand::exec_node_repl. An early ReplCommand return here would bypass
                 // that and boot the legacy `bun repl` implementation instead.
-                let next_is_keyword = argv
-                    .get(idx + 1)
-                    .is_some_and(|next| keyword_tag(next).is_some());
+                let next_is_keyword = idx + 1 >= bun_options_end
+                    && argv
+                        .get(idx + 1)
+                        .is_some_and(|next| keyword_tag(next).is_some());
                 match arguments::LeadingFlag::classify(first_arg_name, next_is_keyword) {
                     arguments::LeadingFlag::Program => return Tag::AutoCommand,
                     arguments::LeadingFlag::Flag {
@@ -1563,6 +1571,16 @@ pub mod command {
         Ok(())
     }
 
+    /// `bun --help init`: a help flag in front of the keyword, for the commands
+    /// that parse their own argv instead of a clap table.
+    fn help_requested_before_keyword() -> bool {
+        bun::argv()
+            .iter()
+            .skip(1)
+            .take(subcommand_argv_index().saturating_sub(1))
+            .any(|a| matches!(a, b"--help" | b"-h"))
+    }
+
     #[cold]
     #[inline(never)]
     fn exec_init() -> CmdResult {
@@ -1570,11 +1588,7 @@ pub mod command {
         apply_leading_cwd();
         let argv = argv_zslice();
         let keyword = subcommand_argv_index();
-        // `bun --help init` prints init's help.
-        if argv[1..keyword.min(argv.len())]
-            .iter()
-            .any(|a| matches!(a.as_bytes(), b"--help" | b"-h"))
-        {
+        if help_requested_before_keyword() {
             tag_print_help(Tag::InitCommand, true);
             Global::exit(0);
         }
@@ -1589,11 +1603,13 @@ pub mod command {
         // exec handles both the non-tty path (dump the embedded completion
         // script to stdout) and the tty install path (bunx symlink, fpath/XDG
         // dir search, profile patching).
-        for a in bun::argv().iter().skip(subcommand_argv_index() + 1) {
-            if matches!(a, b"--help" | b"-h") {
-                tag_print_help(Tag::InstallCompletionsCommand, true);
-                Global::exit(0);
-            }
+        let help_after_keyword = bun::argv()
+            .iter()
+            .skip(subcommand_argv_index() + 1)
+            .any(|a| matches!(a, b"--help" | b"-h"));
+        if help_after_keyword || help_requested_before_keyword() {
+            tag_print_help(Tag::InstallCompletionsCommand, true);
+            Global::exit(0);
         }
         super::install_completions_command::InstallCompletionsCommand::exec()?;
         Global::exit(0);

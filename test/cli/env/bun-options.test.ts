@@ -146,12 +146,17 @@ describe("BUN_OPTIONS contributes flags, not the subcommand", () => {
   // The tokens are spliced into argv after argv[0]. A bare word there used
   // to be read as the subcommand: BUN_OPTIONS=test turned `bun app.ts` into
   // `bun test app.ts`, and BUN_OPTIONS=build printed the bundled source.
-  test.concurrent.each(["test", "build"])("a bare %s does not select the subcommand", word => {
+  test.concurrent.each([
+    ["test", ["app.ts"]],
+    ["build", ["app.ts"]],
+    ["foo", ["run", "hello"]],
+    ["--smol foo", ["test"]],
+  ])("a bare word (BUN_OPTIONS=%p) is an error, not the subcommand: bun %p", (options, cmd) => {
     using dir = tempDir("bun-options-bare-word", files);
-    const { stdout, stderr, exitCode } = run(String(dir), ["app.ts"], word);
-    expect(stdout).not.toContain("bun test v");
-    expect(stdout).not.toContain("// app.ts");
-    expect(stderr).toContain(`error: Script not found "${word}"`);
+    const { stdout, stderr, exitCode } = run(String(dir), cmd, options);
+    const word = options.split(" ").at(-1);
+    expect(stdout).toBe("");
+    expect(stderr).toContain(`error: BUN_OPTIONS may only contain flags, found "${word}"`);
     expect(exitCode).toBe(1);
   });
 

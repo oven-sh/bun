@@ -576,13 +576,18 @@ describe.concurrent("global flag before subcommand", () => {
     });
   }
 
-  test("bun --help init prints init's help and writes nothing", async () => {
-    using dir = tempDir("which-help-before-init", {});
-    const { stdout, exitCode } = await run(String(dir), ["--help", "init"]);
-    expect(stdout).toContain("Usage: bun init");
-    expect(fs.readdirSync(String(dir))).toEqual([]);
-    expect(exitCode).toBe(0);
-  });
+  for (const [keyword, usage] of [
+    ["init", "Usage: bun init"],
+    ["completions", "Usage: bun completions"],
+  ] as const) {
+    test(`bun --help ${keyword} prints the command's help and writes nothing`, async () => {
+      using dir = tempDir("which-help-before-keyword", {});
+      const { stdout, exitCode } = await run(String(dir), ["--help", keyword]);
+      expect(stdout).toContain(usage);
+      expect(fs.readdirSync(String(dir))).toEqual([]);
+      expect(exitCode).toBe(0);
+    });
+  }
 
   // Shebang + chmod bin stub is Unix-only; see test/regression/issue/26207.test.ts.
   test.skipIf(isWindows)("bun --bun x <bin> still passes --bun through", async () => {

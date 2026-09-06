@@ -1514,12 +1514,29 @@ const WATCHER_CHILD_ENV_Z: &[u16] = bun_core::w!("_BUN_WATCHER_CHILD\0");
 // this was randomly generated - we need to avoid using a common exit code that might be used by the script itself
 pub(crate) const WATCHER_RELOAD_EXIT: DWORD = 3224497970;
 
-pub fn is_watcher_child() -> bool {
+static WAS_WATCHER_CHILD: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
+
+/// Startup hook, before the environment is snapshotted: reads and removes the
+/// marker that [`become_watcher_manager`] sets on its child. The marker is a
+/// handshake with the direct parent only. Left in the environment it leaks
+/// into every process this one spawns, and a descendant started with
+/// `--watch` would then skip becoming its own manager and exit for good on
+/// its first reload.
+pub fn take_watcher_child_marker() {
     let mut buf: [u16; 1] = [0];
-    // SAFETY: buf valid for 1 element
-    unsafe {
+    // SAFETY: buf valid for 1 element; name is NUL-terminated.
+    let present = unsafe {
         kernel32_2::GetEnvironmentVariableW(WATCHER_CHILD_ENV_Z.as_ptr(), buf.as_mut_ptr(), 1) > 0
+    };
+    if present {
+        // SAFETY: name is NUL-terminated; a null value deletes the variable.
+        unsafe { SetEnvironmentVariableW(WATCHER_CHILD_ENV_Z.as_ptr(), core::ptr::null()) };
     }
+    WAS_WATCHER_CHILD.store(present, core::sync::atomic::Ordering::Relaxed);
+}
+
+pub fn is_watcher_child() -> bool {
+    WAS_WATCHER_CHILD.load(core::sync::atomic::Ordering::Relaxed)
 }
 
 pub fn become_watcher_manager() -> ! {

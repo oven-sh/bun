@@ -3636,19 +3636,10 @@ impl<'a> HTTPClient<'a> {
             }};
         }
 
-        // `MAX_HTTP_HEADER_SIZE` (default 16 KB) is the *server*/
-        // request-side knob (Node `--max-http-header-size`); reusing
-        // it here rejects legitimate responses with large
-        // `Location`/`Set-Cookie` headers. The intent is to bound
-        // `response_message_buffer` growth, so use a generous fixed
-        // cap independent of that knob.
-        //
-        // The cap is a property of the head, not of where the reads end:
-        // checked on a short read (incomplete head) and on the parsed
-        // length (complete head). Checking only the short-read arm lets a
-        // head through when the read that crosses the cap also delivers
-        // the blank line, so the same response flaps with the peer's
-        // write sizes.
+        // Bounds `response_message_buffer`. Independent of the 16 KB
+        // server-side `MAX_HTTP_HEADER_SIZE`, which would reject legitimate
+        // large `Location`/`Set-Cookie` responses. Applied to the head
+        // length, whether the head is complete or not.
         const MAX_RESPONSE_HEADER_BUFFER: usize = 1024 * 1024;
 
         let shared_resp = scratch::response_headers();

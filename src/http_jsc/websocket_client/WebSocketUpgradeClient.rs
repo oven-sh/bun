@@ -704,10 +704,7 @@ where
         };
 
         match parsed {
-            // The cap is a property of the head, not of how the peer's
-            // writes lined up with our reads: a complete head over the cap
-            // is rejected even when the read that crossed the cap also
-            // delivered the blank line.
+            // The cap applies to the head length, complete or not.
             Ok(HeadParse::Done { head_len, .. }) if head_len > bun_http::max_http_header_size() => {
                 HeadParse::Invalid
             }

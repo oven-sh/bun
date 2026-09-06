@@ -17,9 +17,13 @@ import { bunEnv, bunExe, tempDir } from "harness";
 
 const TOO_DEEP = "JSON document is too deeply nested";
 
+// `Buffer.alloc` fill over `.repeat`: the latter is very slow in debug JSC.
 function nested(depth: number): string {
-  return "[".repeat(depth) + "1" + "]".repeat(depth);
+  return Buffer.alloc(depth, "[").toString() + "1" + Buffer.alloc(depth, "]").toString();
 }
+
+// The same helper as source text for the child's `-e` script.
+const NESTED_FN = `const nested = d => Buffer.alloc(d, "[").toString() + "1" + Buffer.alloc(d, "]").toString();`;
 
 describe("deeply nested define value does not overflow the stack", () => {
   for (const depth of [700, 1000, 1300, 5000, 20000, 30000]) {
@@ -28,8 +32,9 @@ describe("deeply nested define value does not overflow the stack", () => {
         cmd: [
           bunExe(),
           "-e",
-          `try {
-            new Bun.Transpiler({ define: { DEEPX: "[".repeat(${depth}) + "1" + "]".repeat(${depth}) } });
+          `${NESTED_FN}
+          try {
+            new Bun.Transpiler({ define: { DEEPX: nested(${depth}) } });
             console.log("ok");
           } catch (e) {
             console.log("error: " + e.message);
@@ -56,9 +61,10 @@ describe("deeply nested define value does not overflow the stack", () => {
         cmd: [
           bunExe(),
           "-e",
-          `const result = await Bun.build({
+          `${NESTED_FN}
+          const result = await Bun.build({
             entrypoints: ["./entry.ts"],
-            define: { DEEPX: "[".repeat(${depth}) + "1" + "]".repeat(${depth}) },
+            define: { DEEPX: nested(${depth}) },
             throw: false,
           });
           console.log(result.success ? "ok" : "error: " + result.logs.map(String).join("\\n"));`,

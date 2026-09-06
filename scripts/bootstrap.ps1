@@ -751,7 +751,12 @@ Install-Make
 Install-Llvm
 Install-Cygwin
 Install-Nssm
+# perl/ruby/python: JavaScriptCore's code generators; zstd: packs the ICU
+# data. CI cross-compiles the Windows targets on Linux, so these serve
+# native builds on the image.
 Install-Scoop-Package perl
+Install-Scoop-Package ruby
+Install-Scoop-Package zstd
 
 # x64-only packages (not needed on ARM64)
 if (-not $script:IsARM64) {

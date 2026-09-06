@@ -139,15 +139,15 @@ extern "C" fn on_conn_close(qs: *mut quic::Socket) {
         st,
         BStr::new(bun_core::slice_to_nul(&buf)),
     );
-    // See `ClientSession::retry_or_fail` for how these gate the retry budget.
+    // See `ClientSession::retry_or_fail` for how this gates the retry budget.
     let fast = st != quic::CONN_STATUS_TIMED_OUT;
-    let not_applied = !session.handshake_done;
     if let Some(ctx) = ClientContext::get() {
         ClientContext::as_mut(ctx).unregister(session);
     }
     while !session.pending.is_empty() {
         // lsquic fires on_stream_close for every bound stream before
-        // on_conn_closed, so anything still here never got a qstream.
+        // on_conn_closed, so anything still here never got a qstream and no
+        // request byte of it ever left the client: `not_applied` is true.
         let stream = session.pending[0];
         // pending holds live Stream pointers owned by the session.
         debug_assert!(stream_ref(stream).qstream.is_none());
@@ -159,7 +159,7 @@ extern "C" fn on_conn_close(qs: *mut quic::Socket) {
                 crate::Error::HTTP3HandshakeFailed
             },
             fast,
-            not_applied,
+            true,
         );
     }
     let _ = H3::live_sessions.fetch_sub(1, Ordering::Relaxed);

@@ -354,19 +354,29 @@ function hasKeywordAt(query: string, start: number, keyword: string): boolean {
   return true;
 }
 
+// Index of the first character at or after `start` that is not space, \t,
+// \n, \v, \f or \r: the whitespace the Postgres and MySQL lexers skip.
+function skipWhitespace(query: string, start: number): number {
+  const len = query.length;
+  let i = start;
+  while (i < len) {
+    const c = query.charCodeAt(i);
+    if (c === 32 || (c >= 9 && c <= 13)) i++;
+    else break;
+  }
+  return i;
+}
+
 // True when the query starts a transaction (BEGIN or START TRANSACTION, any
 // case, after leading whitespace). Only reads the prefix: this runs on every
 // pooled query, and ORM generated queries are long.
 function startsTransaction(query: string): boolean {
-  const len = query.length;
-  let i = 0;
-  while (i < len) {
-    const c = query.charCodeAt(i);
-    // space, \t, \n, \v, \f, \r
-    if (c === 32 || (c >= 9 && c <= 13)) i++;
-    else break;
-  }
-  return hasKeywordAt(query, i, "BEGIN") || hasKeywordAt(query, i, "START TRANSACTION");
+  const i = skipWhitespace(query, 0);
+  if (hasKeywordAt(query, i, "BEGIN")) return true;
+  if (!hasKeywordAt(query, i, "START")) return false;
+  const afterStart = i + 5;
+  const j = skipWhitespace(query, afterStart);
+  return j > afterStart && hasKeywordAt(query, j, "TRANSACTION");
 }
 
 function getHelperCommandFromDetect(query: string, anyAndAllMeanIn: boolean): SQLCommand {

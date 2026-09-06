@@ -1666,8 +1666,9 @@ async function getPipeline(options = {}) {
   const includeASAN = !isMainBranch();
 
   // verify-baseline / trace-order: checks that run on a built binary on a
-  // test-fleet host. They are drawn in that host's test group (or a group of
-  // their own when the target has no test lane, e.g. android) rather than in
+  // test-fleet host. They are drawn in that host's test group (or a
+  // lane-style group of their own when the target has no test lane, e.g.
+  // android) rather than in
   // the build group — Buildkite's canvas draws every edge into a group as
   // leaving after the whole group, so nesting them with build-bun made
   // test-bun look like it waited on them — and rather than top-level, where
@@ -1678,19 +1679,32 @@ async function getPipeline(options = {}) {
   /** @type {Step[]} */
   const binaryCheckSteps = [];
   /**
+   * The group a binary check is drawn in: the host's test group when the
+   * target has a test lane there (returned via binaryCheckSteps, emitted after
+   * the test groups), else a lane-style group of its own for that target on
+   * that host — `<host distro> <release> <arch>-<abi>` — returned for the
+   * caller to emit next to the build group.
    * @param {Target} target
    * @param {Platform} host
    * @param {Step} step
+   * @returns {Step[]}
    */
-  const pushBinaryCheck = (target, host, step) => {
+  const placeBinaryCheck = (target, host, step) => {
     const inTestLane = testPlatforms.some(
       p => getPlatformKey(p) === getPlatformKey(host) && (p.abi ?? null) === (target.abi ?? null),
     );
-    binaryCheckSteps.push(
-      inTestLane
-        ? { key: `${getPlatformKey(host)}`, group: getPlatformLabel(host), steps: [step] }
-        : { key: `${getTargetKey(target)}-checks`, group: `${getTargetLabel(target)} checks`, steps: [step] },
-    );
+    if (inTestLane) {
+      binaryCheckSteps.push({ key: getPlatformKey(host), group: getPlatformLabel(host), steps: [step] });
+      return [];
+    }
+    const lane = { ...host, abi: target.abi, baseline: target.baseline, profile: target.profile };
+    return [
+      {
+        key: getPlatformKey(lane),
+        group: getPlatformLabel({ ...lane, arch: `${lane.arch}-${target.abi}` }),
+        steps: [step],
+      },
+    ];
   };
 
   if (!buildId) {
@@ -1723,10 +1737,12 @@ async function getPipeline(options = {}) {
           const verifyHost = getVerifyBaselineHost(target);
           const verifyImageKey = getImageKey(verifyHost);
           const verifyDeps = imagePlatforms.has(verifyImageKey) ? [`${verifyImageKey}-build-image`] : [];
-          pushBinaryCheck(
-            target,
-            verifyHost,
-            getStepWithDependsOn(getVerifyBaselineStep(target, options), ...verifyDeps),
+          steps.push(
+            ...placeBinaryCheck(
+              target,
+              verifyHost,
+              getStepWithDependsOn(getVerifyBaselineStep(target, options), ...verifyDeps),
+            ),
           );
         }
 
@@ -1744,10 +1760,12 @@ async function getPipeline(options = {}) {
           // Darwin has no cloud image.
           const traceImageKey = getImageKey(traceOn.on);
           const traceDeps = imagePlatforms.has(traceImageKey) ? [`${traceImageKey}-build-image`] : [];
-          pushBinaryCheck(
-            target,
-            traceOn.on,
-            getStepWithDependsOn(getTraceOrderStep(target, traceOn.on, options), ...traceDeps),
+          steps.push(
+            ...placeBinaryCheck(
+              target,
+              traceOn.on,
+              getStepWithDependsOn(getTraceOrderStep(target, traceOn.on, options), ...traceDeps),
+            ),
           );
         }
 

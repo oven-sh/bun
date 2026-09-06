@@ -5,12 +5,16 @@ import { bunEnv, bunExe, expectRssDeltaBelow, isASAN, isDebug, tempDir } from "h
 // `wire_input`'s materialized-body path transfers the body's `+1` (a
 // `WTFStringImpl` for an all-ASCII `new Response("...")`) into an `AnyBlob`
 // that it must `.detach()` after feeding. `WTFStringImpl` is native-heap, so
-// the Response-count tests below would not catch this.
-test("transform(new Response(ascii)) releases the input WTFStringImpl", async () => {
+// the Response-count tests below would not catch this. A body over 256 KiB is
+// held by the pipe and fed a chunk per turn, and released by a different path.
+test.each([
+  [64, 200],
+  [320, 40],
+])("transform(new Response(ascii)) releases the input WTFStringImpl (%d KiB)", async (kib, perPass) => {
   const code = /* js */ `
     const rss = process.memoryUsage.rss;
-    // ~64 KB of ASCII so the leak dominates allocator noise.
-    const html = "<!doctype html>" + Buffer.alloc(64 * 1024, "x").toString() + "<p>.</p>";
+    // Enough ASCII that the leak dominates allocator noise.
+    const html = "<!doctype html>" + Buffer.alloc(${kib} * 1024, "x").toString() + "<p>.</p>";
     const rw = new HTMLRewriter().on("p", { element() {} });
 
     async function pass(n) {
@@ -19,10 +23,10 @@ test("transform(new Response(ascii)) releases the input WTFStringImpl", async ()
       return rss();
     }
 
-    await pass(200); // warmup
-    const before = await pass(200);
-    await pass(200); await pass(200);
-    const after = await pass(200);
+    await pass(${perPass}); await pass(${perPass}); // warmup
+    const before = await pass(${perPass});
+    await pass(${perPass}); await pass(${perPass});
+    const after = await pass(${perPass});
     process.stdout.write(JSON.stringify({ deltaMB: (after - before) / 1024 / 1024 }) + "\\n");
   `;
 
@@ -54,7 +58,7 @@ test("transform(new Response(ascii)) releases the input WTFStringImpl", async ()
     exitCode: 0,
   });
   const { deltaMB } = JSON.parse(stdout.trim());
-  // Unfixed: ~38 MB (3 × 200 × 64 KB). Fixed: ~0.
+  // Unfixed: ~38 MB (3 × 200 × 64 KB, 3 × 40 × 320 KB). Fixed: ~0.
   expect(deltaMB).toBeLessThan(15);
 }, 30_000);
 

@@ -2251,6 +2251,34 @@ describe("streamed input pacing", () => {
     expect(seen()).toBe(count);
   });
 
+  // The chunk boundary falls inside a start tag (`<p` | ` class...`) and, with
+  // an async handler, the rewrite also suspends inside the first chunk.
+  it.each(["sync", "async"])("a tag split across two chunks is rewritten whole (%s handler)", async mode => {
+    const pad = Buffer.alloc(chunkSize - 2, "x").toString();
+    const html = `<p>first</p>${pad.slice(12)}<p class="a">second</p><p>third</p>`;
+    expect(html.indexOf('<p class="a"')).toBe(chunkSize - 2);
+    const seen = [];
+    const record = e => {
+      seen.push(e.getAttribute("class"));
+      e.setAttribute("x", "1");
+    };
+    const res = new HTMLRewriter()
+      .on("p", {
+        element:
+          mode === "sync"
+            ? record
+            : async e => {
+                await Bun.sleep(0);
+                record(e);
+              },
+      })
+      .transform(new Response(html));
+    expect(await res.text()).toBe(
+      `<p x="1">first</p>${pad.slice(12)}<p class="a" x="1">second</p><p x="1">third</p>`,
+    );
+    expect(seen).toEqual([null, "a", null]);
+  });
+
   // However the output is consumed, the parser (and so every handler) runs at
   // most one chunk per event-loop turn, so timers and I/O get a turn between
   // chunks of a large document instead of waiting for the whole rewrite.

@@ -1530,17 +1530,14 @@ impl RewriterPipe {
         let start = self.pending_input_offset.get();
         let end = start + budget.min(held.len() - start);
         let fed = self.feed(&held[start..end]);
-        if terminal(self) {
+        if end == held.len() || terminal(self) {
+            // All of `held` is fed (or never will be): the cell keeps only
+            // what arrived meanwhile, and `held`'s allocation goes.
             self.pending_input_offset.set(0);
             return fed;
         }
+        self.pending_input_offset.set(end);
         self.pending_input.with_mut(|arrived| {
-            if end == held.len() {
-                held.clear();
-                self.pending_input_offset.set(0);
-            } else {
-                self.pending_input_offset.set(end);
-            }
             held.extend_from_slice(arrived);
             *arrived = held;
         });

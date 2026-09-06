@@ -1,10 +1,4 @@
 //! RFC 9110 §5.6.7 `HTTP-date` parser: IMF-fixdate, rfc850-date, asctime-date.
-//!
-//! ```text
-//! Sun, 06 Nov 1994 08:49:37 GMT
-//! Sunday, 06-Nov-94 08:49:37 GMT
-//! Sun Nov  6 08:49:37 1994
-//! ```
 
 use bun_core::strings;
 
@@ -35,8 +29,7 @@ struct Civil {
     second: u32,
 }
 
-/// Parse an `HTTP-date` into milliseconds since the Unix epoch. `None` for
-/// any other grammar, a calendar date that does not exist, or a date before 1970.
+/// Parse an `HTTP-date` into Unix milliseconds. `None` for any other grammar or a date before 1970.
 pub fn parse(value: &[u8]) -> Option<u64> {
     let value = strings::trim(value, b" \t");
     let civil = parse_imf_fixdate(value)

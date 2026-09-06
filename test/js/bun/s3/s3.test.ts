@@ -2181,17 +2181,21 @@ describe("presigned url signature", () => {
   });
 });
 
-describe("s3:// url key encoding", () => {
+describe.concurrent("s3:// url key encoding", () => {
   // fetch("s3://..."), fetch(new Request("s3://...")), Bun.file("s3://...")
   // and S3Client.file(key) must address the same object: the key bytes after
   // "s3://bucket/" are taken as written and percent-encoded once on the wire.
+  // fetch signs an "S3://" URL too, so the scheme check is case-insensitive
+  // there. Bun.file("S3://...") is a local path, so that row skips it.
   it.each([
-    ["my file.txt", "/bkt/my%20file.txt"],
-    ["\u00fc.txt", "/bkt/%C3%BC.txt"],
-    ["my%20file.txt", "/bkt/my%2520file.txt"],
-    ["dir/../x.txt", "/bkt/dir/../x.txt"],
-    ["a\tb", "/bkt/a%09b"],
-  ])("fetch, Request, Bun.file and S3Client.file send the same path for key %j", async (key, expectedPath) => {
+    ["s3://", "my file.txt", "/bkt/my%20file.txt"],
+    ["s3://", "\u00fc.txt", "/bkt/%C3%BC.txt"],
+    ["s3://", "my%20file.txt", "/bkt/my%2520file.txt"],
+    ["s3://", "dir/../x.txt", "/bkt/dir/../x.txt"],
+    ["s3://", "a\tb", "/bkt/a%09b"],
+    ["S3://", "my file.txt", "/bkt/my%20file.txt"],
+  ])("fetch, Request, Bun.file and S3Client.file send the same path for %s%j", async (scheme, key, expectedPath) => {
+    const viaFile = scheme === "s3://";
     const fixture = `
       const http = require("node:http");
       const seen = [];
@@ -2213,11 +2217,13 @@ describe("s3:// url key encoding", () => {
         virtualHostedStyle: false,
       };
       const key = ${JSON.stringify(key)};
-      const url = "s3://bkt/" + key;
+      const url = ${JSON.stringify(scheme)} + "bkt/" + key;
       await (await fetch(url, { s3: options })).text();
       await (await fetch(new Request(url), { s3: options })).text();
-      await Bun.file(url, options).text();
-      await new Bun.S3Client({ ...options, bucket: "bkt" }).file(key).text();
+      if (${viaFile}) {
+        await Bun.file(url, options).text();
+        await new Bun.S3Client({ ...options, bucket: "bkt" }).file(key).text();
+      }
       server.close();
       console.log(JSON.stringify(seen));
     `;
@@ -2230,7 +2236,7 @@ describe("s3:// url key encoding", () => {
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).toBe("");
-    expect(JSON.parse(stdout.trim())).toEqual([expectedPath, expectedPath, expectedPath, expectedPath]);
+    expect(JSON.parse(stdout.trim())).toEqual(Array(viaFile ? 4 : 2).fill(expectedPath));
     expect(exitCode).toBe(0);
   });
 });

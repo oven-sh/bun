@@ -191,12 +191,15 @@ pub use whatwg::{
 
 /// `s3://bucket/key` is a bucket and key bytes, not a WHATWG URL. The key is
 /// taken as written (spaces, non-ASCII, `%XX`, `.`/`..` segments, tabs) and
-/// the S3 signer percent-encodes it once. `fetch`, `Request` and `Bun.file`
-/// all use this check, so the same string addresses the same object. The
-/// scheme match is case-sensitive, the same as `Bun.file`.
+/// the S3 signer percent-encodes it once. `fetch` and `Request` skip the
+/// WHATWG serializer when this is true, so the string reaches the signer
+/// with the same key bytes as `Bun.file("s3://...")`, which checks the
+/// `s3://` prefix of its path bytes. The scheme match is case-insensitive,
+/// the same as [`URL::is_s3`], which decides whether `fetch` signs the
+/// request.
 #[inline]
 pub fn is_s3_url(input: &BunString) -> bool {
-    input.starts_with_ascii(b"s3://")
+    input.starts_with_ascii(b"s3://") || input.starts_with_ascii(b"S3://")
 }
 
 // URL is a pure view struct — every field is a slice into `href` (or a

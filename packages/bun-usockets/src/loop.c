@@ -55,6 +55,10 @@ void sweep_timer_cb(struct us_internal_callback_t *cb);
 // when the sweep timer is disabled, we don't need to do anything
 void sweep_timer_noop(struct us_timer_t *timer) {}
 
+uint64_t us_internal_monotonic_ns(void) {
+    return uv_hrtime();
+}
+
 void us_internal_enable_sweep_timer(struct us_loop_t *loop) {
     loop->data.sweep_timer_count++;
     if (loop->data.sweep_timer_count == 1) {
@@ -118,7 +122,87 @@ void us_internal_sweep_if_due(struct us_loop_t *loop) {
     us_internal_timer_sweep(loop);
 }
 
+long long us_internal_connect_attempt_timeout_ns(struct us_loop_t *loop) {
+    if (loop->data.connect_next_attempt_ns < 0) {
+        return -1;
+    }
+    long long diff = loop->data.connect_next_attempt_ns - (long long) us_internal_monotonic_ns();
+    return diff > 0 ? diff : 0;
+}
+
 #endif
+
+/* ── Connection attempt delay (RFC 8305 §5) ─────────────────────────────── */
+
+#ifdef LIBUS_USE_LIBUV
+static void connect_timer_cb(struct us_internal_callback_t *cb) {
+    us_internal_connect_attempts_if_due(cb->loop);
+}
+
+/* Arm (or re-arm) the uv timer for loop->data.connect_next_attempt_ns. */
+static void us_internal_connect_timer_arm(struct us_loop_t *loop) {
+    long long deadline = loop->data.connect_next_attempt_ns;
+    if (deadline < 0) {
+        us_timer_set(loop->data.connect_timer, (void (*)(struct us_timer_t *)) connect_timer_cb, 0, 0);
+        return;
+    }
+    long long ms = (deadline - (long long) us_internal_monotonic_ns()) / 1000000LL;
+    us_timer_set(loop->data.connect_timer, (void (*)(struct us_timer_t *)) connect_timer_cb, ms > 0 ? (int) ms : 1, 0);
+}
+#endif
+
+void us_internal_connect_attempt_schedule(struct us_connecting_socket_t *c) {
+    if (c->addrinfo_head == NULL) {
+        c->next_attempt_ns = 0;
+        return;
+    }
+    struct us_loop_t *loop = c->loop;
+    c->next_attempt_ns = (long long) us_internal_monotonic_ns() + LIBUS_CONNECT_ATTEMPT_DELAY_NS;
+    /* Every delay is the same length, so a new deadline is never earlier than
+     * one already armed. */
+    if (loop->data.connect_next_attempt_ns < 0) {
+        loop->data.connect_next_attempt_ns = c->next_attempt_ns;
+#ifdef LIBUS_USE_LIBUV
+        us_internal_connect_timer_arm(loop);
+#endif
+    }
+}
+
+void us_internal_connect_attempts_if_due(struct us_loop_t *loop) {
+    if (loop->data.connect_next_attempt_ns < 0) {
+        return;
+    }
+    long long now = (long long) us_internal_monotonic_ns();
+    if (now < loop->data.connect_next_attempt_ns) {
+        return;
+    }
+    long long next = -1;
+    for (struct us_socket_group_t *group = loop->data.head; group; group = group->next) {
+        for (struct us_connecting_socket_t *c = group->head_connecting_sockets; c; c = c->next_pending) {
+            if (c->next_attempt_ns <= 0) {
+                continue;
+            }
+            /* A connecting socket with a scheduled attempt always has at least
+             * one attempt pending: the failure path of the last pending
+             * attempt starts the next address itself and decides the outcome.
+             * So nothing here can close `c` or dispatch to the owner, and the
+             * lists stay intact while they are walked. */
+            if (c->next_attempt_ns <= now && c->connecting_head != NULL) {
+                c->next_attempt_ns = 0;
+                if (us_internal_socket_start_next_attempt(c)) {
+                    us_internal_connect_attempt_schedule(c);
+                }
+            }
+            if (c->next_attempt_ns > 0 && (next < 0 || c->next_attempt_ns < next)) {
+                next = c->next_attempt_ns;
+            }
+        }
+    }
+    loop->data.connect_next_attempt_ns = next;
+#ifdef LIBUS_USE_LIBUV
+    us_internal_connect_timer_arm(loop);
+#endif
+}
 
 
 void us_internal_loop_data_init(struct us_loop_t *loop, void (*wakeup_cb)(struct us_loop_t *loop),
@@ -126,9 +210,11 @@ void us_internal_loop_data_init(struct us_loop_t *loop, void (*wakeup_cb)(struct
     // We allocate with calloc, so we only need to initialize the specific fields in use.
 #ifdef LIBUS_USE_LIBUV
     loop->data.sweep_timer = us_create_timer(loop, 1, 0);
+    loop->data.connect_timer = us_create_timer(loop, 1, 0);
 #else
     loop->data.sweep_next_tick_ns = -1;
 #endif
+    loop->data.connect_next_attempt_ns = -1;
     loop->data.sweep_timer_count = 0;
     loop->data.recv_buf = us_malloc(LIBUS_RECV_BUFFER_LENGTH + LIBUS_RECV_BUFFER_PADDING * 2);
     loop->data.send_buf = us_malloc(LIBUS_SEND_BUFFER_LENGTH);
@@ -156,6 +242,7 @@ void us_internal_loop_data_free(struct us_loop_t *loop) {
 
 #ifdef LIBUS_USE_LIBUV
     us_timer_close(loop->data.sweep_timer, 0);
+    us_timer_close(loop->data.connect_timer, 0);
     if (loop->data.quic_timer) us_timer_close(loop->data.quic_timer, 0);
 #endif
     us_internal_async_close(loop->data.wakeup_async);

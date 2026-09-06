@@ -24,7 +24,6 @@
 #include <arpa/inet.h>
 #include <netinet/in.h>
 #endif
-#define CONCURRENT_CONNECTIONS 4
 
 #if defined(BUN_DEBUG) || (defined(__has_feature) && __has_feature(address_sanitizer)) || defined(__SANITIZE_ADDRESS__)
 #include <assert.h>
@@ -688,11 +687,17 @@ struct us_socket_t *us_socket_group_connect_unix(struct us_socket_group_t *group
     return connect_socket;
 }
 
-int start_connections(struct us_connecting_socket_t *c, int count) {
+/* One address at a time, the way RFC 8305 §5 dials: the next address starts
+ * LIBUS_CONNECT_ATTEMPT_DELAY_NS after the previous one, or at once when an
+ * attempt fails. The first to connect wins and the rest are reset. Opening
+ * every address at once instead would park the dial on the kernel's SYN
+ * retries (about two minutes) whenever the first few are black holes, and
+ * would cost the server one accepted connection per address. */
+int us_internal_socket_start_next_attempt(struct us_connecting_socket_t *c) {
     int opened = 0;
     struct us_socket_group_t *group = c->group;
     struct us_loop_t *loop = group->loop;
-    for (; c->addrinfo_head != NULL && opened < count; c->addrinfo_head = c->addrinfo_head->ai_next) {
+    for (; c->addrinfo_head != NULL && opened < 1; c->addrinfo_head = c->addrinfo_head->ai_next) {
         struct sockaddr_storage addr;
         init_addr_with_port(c->addrinfo_head, c->port, &addr);
         /* The deferred-DNS path does not carry a local binding. */
@@ -761,13 +766,14 @@ void us_internal_socket_after_resolve(struct us_connecting_socket_t *c) {
 
     c->addrinfo_head = &result->entries->info;
 
-    int opened = start_connections(c, CONCURRENT_CONNECTIONS);
-    if (opened == 0) {
+    if (!us_internal_socket_start_next_attempt(c)) {
         /* Same as the exhausted path in us_internal_socket_after_open: a
          * real connect failure must not be reported as a caller abort. */
         c->error = ECONNREFUSED;
         us_connecting_socket_close(c);
+        return;
     }
+    us_internal_connect_attempt_schedule(c);
 }
 
 void us_internal_socket_after_open(struct us_socket_t *s, int error) {
@@ -799,16 +805,16 @@ void us_internal_socket_after_open(struct us_socket_t *s, int error) {
             }
             us_socket_close(s, LIBUS_SOCKET_CLOSE_CODE_CONNECTION_RESET, 0);
 
-            if (c->connecting_head == NULL || c->connecting_head->connect_next == NULL) {
-                int opened = start_connections(c, c->connecting_head == NULL ? CONCURRENT_CONNECTIONS : 1);
-                if (opened == 0 && c->connecting_head == NULL) {
-                    /* Every resolved address failed to connect. Without this,
-                     * us_connecting_socket_close defaults c->error to
-                     * ECONNABORTED (caller abort) and never invalidates the
-                     * DNS cache entry for the dead host. */
-                    c->error = ECONNREFUSED;
-                    us_connecting_socket_close(c);
-                }
+            /* A failure advances to the next address at once. */
+            if (!us_internal_socket_start_next_attempt(c) && c->connecting_head == NULL) {
+                /* Every resolved address failed to connect. Without this,
+                 * us_connecting_socket_close defaults c->error to
+                 * ECONNABORTED (caller abort) and never invalidates the
+                 * DNS cache entry for the dead host. */
+                c->error = ECONNREFUSED;
+                us_connecting_socket_close(c);
+            } else {
+                us_internal_connect_attempt_schedule(c);
             }
         } else {
             us_dispatch_connect_error(s, error);

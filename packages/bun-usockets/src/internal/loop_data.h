@@ -82,6 +82,13 @@ struct us_internal_loop_data_t {
     int low_prio_budget;
     struct us_connecting_socket_t *dns_ready_head;
     struct us_connecting_socket_t *closed_connecting_head;
+    /* Absolute monotonic ns of the earliest us_connecting_socket_t::next_attempt_ns
+     * on this loop, or -1. POSIX folds it into the poll timeout next to the
+     * sweep deadline; libuv arms connect_timer to it. */
+    long long connect_next_attempt_ns;
+#ifdef LIBUS_USE_LIBUV
+    struct us_timer_t *connect_timer;
+#endif
     zig_mutex_t mutex;
     void *parent_ptr;
     char parent_tag;

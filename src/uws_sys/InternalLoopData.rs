@@ -49,6 +49,11 @@ pub struct InternalLoopData {
     pub low_prio_budget: i32,
     pub dns_ready_head: *mut ConnectingSocket,
     pub closed_connecting_head: *mut ConnectingSocket,
+    /// Earliest scheduled connect attempt (monotonic ns) on this loop, or -1.
+    /// Owned by `loop.c`. Never read here.
+    pub(crate) connect_next_attempt_ns: i64,
+    #[cfg(windows)]
+    pub(crate) connect_timer: *mut Timer,
     /// `bun.Mutex.ReleaseImpl.Type` — must match the C-side `zig_mutex_t`
     /// (`packages/bun-usockets/src/internal/loop_data.h`). `Bun__lock`/`Bun__unlock`
     /// are called on this field by C, and `loop.c` runtime-checks

@@ -313,4 +313,42 @@ JSC_DEFINE_HOST_FUNCTION(setDefaultCiphers, (JSC::JSGlobalObject * globalObject,
     return Bun__setTLSDefaultCiphers(globalObject, callFrame);
 }
 
+// Backs tls.getCiphers(): every cipher a fresh SSL_CTX ("ALL") can negotiate.
+// BoringSSL keeps the TLS 1.3 suites out of the cipher list, so they are
+// appended by hand, the way Node does.
+JSC_DEFINE_HOST_FUNCTION(getSSLCiphers, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    ncrypto::MarkPopErrorOnReturn mark_pop_error_on_return;
+
+    ncrypto::DeleteFnPtr<SSL_CTX, SSL_CTX_free> ctx(SSL_CTX_new(TLS_method()));
+    if (!ctx) {
+        throwOutOfMemoryError(globalObject, scope);
+        return {};
+    }
+
+    JSC::MarkedArgumentBuffer results;
+    STACK_OF(SSL_CIPHER)* ciphers = SSL_CTX_get_ciphers(ctx.get());
+    size_t count = sk_SSL_CIPHER_num(ciphers);
+    for (size_t i = 0; i < count; i++) {
+        results.append(JSC::jsString(vm, WTF::String::fromLatin1(SSL_CIPHER_get_name(sk_SSL_CIPHER_value(ciphers, i)))));
+    }
+    static constexpr ASCIILiteral tls13Ciphers[] = {
+        "TLS_AES_128_GCM_SHA256"_s,
+        "TLS_AES_256_GCM_SHA384"_s,
+        "TLS_CHACHA20_POLY1305_SHA256"_s,
+    };
+    for (auto name : tls13Ciphers) {
+        results.append(JSC::jsString(vm, WTF::String(name)));
+    }
+    if (results.hasOverflowed()) {
+        throwOutOfMemoryError(globalObject, scope);
+        return {};
+    }
+    auto* array = JSC::constructArray(globalObject, static_cast<JSC::ArrayAllocationProfile*>(nullptr), results);
+    RETURN_IF_EXCEPTION(scope, {});
+    RELEASE_AND_RETURN(scope, JSValue::encode(array));
+}
+
 } // namespace Bun

@@ -124,4 +124,25 @@ describe("tls.createSecureContext pfx argument", () => {
       expect(() => tls.createSecureContext({ pfx: view, passphrase: "sample" })).not.toThrow();
     }
   });
+
+  // Option-normalising code branches on `x instanceof tls.SecureContext`, so
+  // the export must be the class createSecureContext() instantiates.
+  it("tls.SecureContext is the class of the objects createSecureContext returns", () => {
+    expect(typeof tls.SecureContext).toBe("function");
+    expect(typeof tls.SecureContext.prototype).toBe("object");
+    expect(tls.SecureContext.name).toBe("SecureContext");
+
+    const ctx = tls.createSecureContext({});
+    expect(ctx instanceof tls.SecureContext).toBe(true);
+    expect(Object.getPrototypeOf(ctx)).toBe(tls.SecureContext.prototype);
+    expect(ctx.constructor).toBe(tls.SecureContext);
+    expect({} instanceof tls.SecureContext).toBe(false);
+
+    // A user-constructed context is the same kind of object and works as
+    // `secureContext`.
+    const own = new tls.SecureContext({ ciphers: "ECDHE-RSA-AES128-GCM-SHA256" });
+    expect(own instanceof tls.SecureContext).toBe(true);
+    expect(typeof own.context.addCACert).toBe("function");
+    expect(tls.createSecureContext(own)).toBe(own);
+  });
 });

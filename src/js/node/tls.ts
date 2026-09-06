@@ -32,6 +32,7 @@ const parseCACertificates = $newCppFunction("NodeTLS.cpp", "parseCACertificates"
 
 const getTLSDefaultCiphers = $newCppFunction("NodeTLS.cpp", "getDefaultCiphers", 0);
 const setTLSDefaultCiphers = $newCppFunction("NodeTLS.cpp", "setDefaultCiphers", 1);
+const getSSLCiphers = $newCppFunction("NodeTLS.cpp", "getSSLCiphers", 0);
 let _VALID_CIPHERS_SET: Set<string> | undefined;
 function getValidCiphersSet() {
   if (!_VALID_CIPHERS_SET) {
@@ -298,8 +299,11 @@ const ObjectPrototypeHasOwnProperty = Object.prototype.hasOwnProperty;
 const StringPrototypeEndsWith = String.prototype.endsWith;
 const StringFromCharCode = String.fromCharCode;
 const StringPrototypeCharCodeAt = String.prototype.charCodeAt;
+const StringPrototypeToLowerCase = String.prototype.toLowerCase;
 
 const ArrayPrototypeIncludes = Array.prototype.includes;
+const ArrayPrototypeSlice = Array.prototype.slice;
+const ArrayPrototypeSort = Array.prototype.sort;
 const ArrayPrototypeJoin = Array.prototype.join;
 const ArrayPrototypeForEach = Array.prototype.forEach;
 const ArrayPrototypePush = Array.prototype.push;
@@ -616,11 +620,17 @@ function newNativeSecureContext(options, cached = false) {
   return ctx;
 }
 
-var InternalSecureContext = class SecureContext {
+// Internal construction paths pass this marker as the second argument to
+// share the memoised native SSL_CTX. User code (`new tls.SecureContext(opts)`)
+// cannot produce it, so a user context always owns its handle.
+const kCachedContext = Symbol("kCachedContext");
+
+class SecureContext {
   context;
   servername;
 
-  constructor(options, cached = false) {
+  constructor(options, cachedMarker?) {
+    const cached = cachedMarker === kCachedContext;
     // When tls.setDefaultCACertificates() has installed an override and no
     // explicit `ca` was given, use the override as the default CA set so the
     // process-wide default applies on every construction path (the public
@@ -670,22 +680,18 @@ var InternalSecureContext = class SecureContext {
     this.context = newNativeSecureContext(options, cached);
     this.servername = options?.servername;
   }
-};
-
-function SecureContext(options): void {
-  return createSecureContext(options) as never;
 }
 
 function createSecureContext(options) {
-  if (options instanceof InternalSecureContext) return options;
+  if (options instanceof SecureContext) return options;
   // The setDefaultCACertificates() override is applied inside the
-  // InternalSecureContext constructor so every construction path honors it.
+  // SecureContext constructor so every construction path honors it.
   // The native handle (SSL_CTX) is memoised inside `NativeSecureContext.intern`
   // by the per-VM `SSLContextCache`, so no JS-side hashing here. The JS wrapper
   // is built fresh because it carries the per-call `servername`.
   // The user-facing constructor owns its SSL_CTX exclusively so addCACert
   // cannot leak across contexts; internal connect/listen paths stay cached.
-  return new InternalSecureContext(options);
+  return new SecureContext(options);
 }
 
 // Translate some fields from the handle's C-friendly format into more idiomatic
@@ -801,7 +807,7 @@ function TLSSocket(socket?, options?) {
   }
   // Internal path: keep the per-digest cache (the user-facing constructors,
   // createSecureContext() and new tls.SecureContext(), own theirs exclusively).
-  this[ksecureContext] = options.secureContext || new InternalSecureContext(options, true);
+  this[ksecureContext] = options.secureContext || new SecureContext(options, kCachedContext);
   this.authorized = false;
   this.secureConnecting = true;
   this._secureEstablished = false;
@@ -1005,7 +1011,7 @@ TLSSocket.prototype.setKeyCert = function setKeyCert(context) {
   // Serve this connection's identity from the given context (Node calls this
   // from ALPNCallback/SNICallback before the certificate is sent). Accepts a
   // SecureContext or the same options object createSecureContext takes.
-  const ctx = context?.context ? context : new InternalSecureContext(context, true);
+  const ctx = context?.context ? context : new SecureContext(context, kCachedContext);
   this._handle?.setKeyCert?.(ctx.context);
 };
 
@@ -1141,7 +1147,7 @@ let CLIENT_RENEG_LIMIT = 3,
   CLIENT_RENEG_WINDOW = 600;
 
 function buildSharedCreds(server) {
-  return (server._sharedCreds = new InternalSecureContext(
+  return (server._sharedCreds = new SecureContext(
     {
       ...server[ksharedCredsOptions],
       pfx: undefined,
@@ -1161,7 +1167,7 @@ function buildSharedCreds(server) {
       minVersion: server.minVersion,
       maxVersion: server.maxVersion,
     },
-    true,
+    kCachedContext,
   ));
 }
 
@@ -1217,25 +1223,25 @@ function Server(options, secureConnectionListener): void {
   // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L1367-L1368
   // NODE_TLS_REJECT_UNAUTHORIZED is a client-side switch; a server's default
   // is unconditionally true.
-  const serverOptions = options instanceof InternalSecureContext ? undefined : options;
+  const serverOptions = options instanceof SecureContext ? undefined : options;
   this._requestCert = serverOptions?.requestCert === true ? true : undefined;
   this._rejectUnauthorized = serverOptions?.rejectUnauthorized !== false;
   this.servername = undefined;
   this.ALPNProtocols = undefined;
   this._sharedCreds = undefined;
 
-  let contexts: Map<string, typeof InternalSecureContext> | null = null;
+  let contexts: Map<string, SecureContext> | null = null;
 
   this.addContext = function (hostname, context) {
     if (typeof hostname !== "string") {
       throw new TypeError("hostname must be a string");
     }
-    if (!(context instanceof InternalSecureContext)) {
-      context = new InternalSecureContext(context, true);
+    if (!(context instanceof SecureContext)) {
+      context = new SecureContext(context, kCachedContext);
     }
     const handle = this._handle;
     if (handle) {
-      // Pass the native SSL_CTX wrapper, not the JS InternalSecureContext —
+      // Pass the native SSL_CTX wrapper, not the JS SecureContext —
       // the native side detects it via SecureContext.fromJS and up_refs.
       addServerName(handle, hostname, context.context);
     } else {
@@ -1247,7 +1253,7 @@ function Server(options, secureConnectionListener): void {
   this.setSecureContext = function (options) {
     const serverTLSOptions = options;
     const next: Record<string, any> = { __proto__: null };
-    if (options instanceof InternalSecureContext) {
+    if (options instanceof SecureContext) {
       options = options.context;
     }
     if (options) {
@@ -1315,7 +1321,7 @@ function Server(options, secureConnectionListener): void {
       // The process-wide default-CA override (tls.setDefaultCACertificates)
       // applies here too when no explicit `ca` was given: this path hands raw
       // {key, cert, ca} to the native listener and never goes through
-      // InternalSecureContext, so without this an mTLS server would verify
+      // SecureContext, so without this an mTLS server would verify
       // client certificates against the bundled roots instead of the
       // overridden defaults.
       if (_defaultCACertificatesOverride !== undefined && ca == null) {
@@ -1413,9 +1419,9 @@ function Server(options, secureConnectionListener): void {
       this.minVersion = next.minVersion;
       this.maxVersion = next.maxVersion;
     }
-    this._sharedCreds = serverTLSOptions instanceof InternalSecureContext ? serverTLSOptions : null;
+    this._sharedCreds = serverTLSOptions instanceof SecureContext ? serverTLSOptions : null;
     this[ksharedCredsOptions] =
-      serverTLSOptions == null || serverTLSOptions instanceof InternalSecureContext
+      serverTLSOptions == null || serverTLSOptions instanceof SecureContext
         ? serverTLSOptions
         : { ...serverTLSOptions };
   };
@@ -1634,8 +1640,19 @@ function connect(...args) {
   return tlssock.connect(normal);
 }
 
+// Node: cachedResult(() => filterDuplicateStrings(getSSLCiphers(), true)),
+// the supported cipher names lower-cased, de-duplicated and sorted.
+let cachedCipherList: string[] | undefined;
 function getCiphers() {
-  return getDefaultCiphers().split(":");
+  if (cachedCipherList === undefined) {
+    const names = getSSLCiphers();
+    const unique = new Set<string>();
+    for (let i = 0; i < names.length; i++) {
+      unique.add(StringPrototypeToLowerCase.$call(names[i]));
+    }
+    cachedCipherList = ArrayPrototypeSort.$call(Array.from(unique));
+  }
+  return ArrayPrototypeSlice.$call(cachedCipherList);
 }
 
 // Convert protocols array into valid OpenSSL protocols list

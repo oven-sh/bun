@@ -1017,3 +1017,109 @@ describe.concurrent("diagnostic markup", () => {
     expect(stderr).not.toContain("\x1b[");
   });
 });
+
+describe.concurrent("a bare entry point", () => {
+  // `bun build src/index.ts` spells the entry point without a leading "./". The
+  // bundler resolved it as a package path first, so it walked node_modules from
+  // the cwd up to the root looking for a package named "src". A planted
+  // `<ancestor>/node_modules/src/index.ts` replaced the project's own file.
+  // The project lives one directory below the planted node_modules here.
+  const shadowedSource = {
+    "node_modules/src/package.json": JSON.stringify({ name: "src", version: "1.0.0" }),
+    "node_modules/src/index.ts": `console.log("from node_modules");`,
+    "proj/package.json": JSON.stringify({ name: "proj", version: "1.0.0" }),
+    "proj/src/index.ts": `console.log("from the project");`,
+  };
+
+  async function buildIn(cwd: string, args: string[]) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", ...args],
+      env: bunEnv,
+      cwd,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+
+  test("bundles the file", async () => {
+    using dir = tempDir("build-bare-entry", shadowedSource);
+    const cwd = path.join(String(dir), "proj");
+    const { stderr, exitCode } = await buildIn(cwd, ["src/index.ts", "--outfile", "out.js"]);
+    expect(stderr).not.toContain("error");
+    expect(exitCode).toBe(0);
+    const out = await Bun.file(path.join(cwd, "out.js")).text();
+    expect(out).toContain("from the project");
+    expect(out).not.toContain("from node_modules");
+  });
+
+  test("bundles the file when the entry point has no extension", async () => {
+    using dir = tempDir("build-bare-entry-noext", shadowedSource);
+    const cwd = path.join(String(dir), "proj");
+    const { stderr, exitCode } = await buildIn(cwd, ["src/index", "--outfile", "out.js"]);
+    expect(stderr).not.toContain("error");
+    expect(exitCode).toBe(0);
+    const out = await Bun.file(path.join(cwd, "out.js")).text();
+    expect(out).toContain("from the project");
+    expect(out).not.toContain("from node_modules");
+  });
+
+  test("puts the file in the compiled executable", async () => {
+    using dir = tempDir("build-bare-entry-compile", shadowedSource);
+    const cwd = path.join(String(dir), "proj");
+    const { stderr, exitCode } = await buildIn(cwd, ["src/index.ts", "--compile", "--outfile", "app.exe"]);
+    expect(stderr).not.toContain("error");
+    expect(exitCode).toBe(0);
+
+    await using app = Bun.spawn({
+      cmd: [path.join(cwd, "app.exe")],
+      env: bunEnv,
+      cwd,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [appStdout, appStderr, appExit] = await Promise.all([app.stdout.text(), app.stderr.text(), app.exited]);
+    expect(appStderr).toBe("");
+    expect(appStdout).toBe("from the project\n");
+    expect(appExit).toBe(0);
+  });
+
+  test("Bun.build writes the output inside the outdir", async () => {
+    using dir = tempDir("build-bare-entry-api", shadowedSource);
+    const cwd = path.join(String(dir), "proj");
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const result = await Bun.build({ entrypoints: ["src/index.ts"], outdir: "o" });
+         console.log(result.outputs.map(o => o.path).join("\\n"));`,
+      ],
+      env: bunEnv,
+      cwd,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    // Resolving through node_modules used to escape the outdir, giving a path
+    // such as "o/_.._/_.._/node_modules/src/index.js".
+    expect(stdout.trim().split("\n").map(p => path.relative(cwd, p).replaceAll(path.sep, "/"))).toEqual([
+      "o/index.js",
+    ]);
+    expect(exitCode).toBe(0);
+  });
+
+  test("still resolves a package when no file matches", async () => {
+    using dir = tempDir("build-bare-entry-package", {
+      "node_modules/dep/package.json": JSON.stringify({ name: "dep", version: "1.0.0", main: "index.js" }),
+      "node_modules/dep/index.js": `console.log("from the dep package");`,
+      "proj/package.json": JSON.stringify({ name: "proj", version: "1.0.0" }),
+    });
+    const cwd = path.join(String(dir), "proj");
+    const { stderr, exitCode } = await buildIn(cwd, ["dep", "--outfile", "out.js"]);
+    expect(stderr).not.toContain("error");
+    expect(exitCode).toBe(0);
+    expect(await Bun.file(path.join(cwd, "out.js")).text()).toContain("from the dep package");
+  });
+});

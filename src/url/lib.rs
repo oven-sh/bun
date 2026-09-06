@@ -1431,8 +1431,7 @@ impl PercentEncoding {
         Self::decode(&mut w, input)
     }
 
-    /// Decodes each `%XX` and keeps every other byte as written, a `%` without two hex digits
-    /// after it included (the WHATWG percent-decode).
+    /// Decodes each `%XX` and keeps every other byte, a lone `%` included (WHATWG percent-decode).
     pub fn decode_lenient_alloc(input: &[u8]) -> Box<[u8]> {
         let mut out: Vec<u8> = Vec::with_capacity(input.len());
         let mut rest = input;

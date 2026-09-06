@@ -155,9 +155,7 @@ pub mod api {
     }
 
     impl NpmRegistry {
-        /// `[scheme://][user[:password]@|:token@]host[:port][/path]`. With a scheme, the
-        /// registry is what `new URL(str)` reads. Without one, or when WTF::URL rejects the
-        /// string, the lenient parser reads it as before.
+        /// `[scheme://][user[:pass]@|:token@]host[:port][/path]`; with a scheme, what `new URL()` reads.
         pub fn from_url(str: &[u8]) -> NpmRegistry {
             if let Some(registry) = Self::from_whatwg(str) {
                 return registry;
@@ -180,8 +178,7 @@ pub mod api {
             registry
         }
 
-        /// `None` when WTF::URL rejects `str` or finds no host in it (`localhost:4873` is the
-        /// scheme `localhost` to it).
+        /// `None` when WTF::URL rejects `str` or finds no host in it (`localhost:4873`).
         fn from_whatwg(str: &[u8]) -> Option<NpmRegistry> {
             let url = bun_url::whatwg::Parsed::from_utf8(str)?;
             if url.hostname().is_empty() {
@@ -190,15 +187,13 @@ pub mod api {
             let username = url.username();
             let password = url.password();
             if username.is_empty() && password.is_empty() {
-                // Kept as written: `.npmrc` `//host/` credential keys are matched against
-                // these bytes, and `Scope::set_url` normalizes the href later.
+                // As written, since `.npmrc` `//host/` credential keys match these bytes.
                 return Some(NpmRegistry {
                     url: Box::from(str),
                     ..Default::default()
                 });
             }
-            // The serialized href is `scheme://user:pass@host...`; the credentials have every
-            // `@` of their own encoded, so the first one ends them.
+            // WTF::URL encodes every `@` inside the credentials, so the first `@` ends them.
             let mut href = url.href().to_owned_slice();
             let authority = bun_core::strings::index_of(&href, b"://").map_or(0, |i| i + 3);
             if let Some(at) = bun_core::strings::index_of_char_usize(&href[authority..], b'@') {

@@ -563,10 +563,7 @@ pub mod registry {
         Some(max_age)
     }
 
-    /// Stamps the packument's expiry from the 200 or 304 `response` that
-    /// delivered it. A 304 without `Cache-Control` reuses the `max-age` of the
-    /// stored 200. A cache file written before `max_age_seconds` existed
-    /// reads it as 0, so the first install revalidates it once.
+    /// Stamps the expiry from a 200 or 304. A 304 without `Cache-Control` reuses the stored max-age.
     pub(crate) fn refresh_manifest_expiry(pkg: &mut NpmPackage, headers: &picohttp::HeaderList) {
         if let Some(max_age) = manifest_max_age(headers) {
             pkg.max_age_seconds = max_age;
@@ -888,9 +885,7 @@ pub struct NpmPackage {
     pub(crate) modified: SemverString,
     /// Unix time at which the cached copy stops being fresh.
     pub(crate) public_max_age: u32,
-    /// The capped `Cache-Control: max-age` of the last 200 response. It sits
-    /// in what used to be explicit padding, so the on-disk layout (size=120,
-    /// align=8) is unchanged and older cache files read it as 0.
+    /// Capped `Cache-Control: max-age` of the last 200. Was padding: older cache files read 0.
     pub(crate) max_age_seconds: u32,
 
     pub(crate) name: ExternalString,
@@ -908,12 +903,11 @@ pub struct NpmPackage {
 }
 
 // Compile-time proof that `NpmPackage` has no implicit padding gaps (so
-// `&NpmPackage as &[u8]` reads only initialized bytes; `Serializer::write`
-// reinterprets the whole struct as `&[u8]`). Mirrors the per-field-gap check
-// documented in `padding_checker.rs`.
+// `&NpmPackage as &[u8]` reads only initialized bytes). Mirrors the
+// per-field-gap check documented in `padding_checker.rs`.
 const _: () = {
     use core::mem::{offset_of, size_of};
-    // `public_max_age` (u32, ends at 28) and `max_age_seconds` fill up to `name` (align 8 → 32)
+    // `public_max_age` (u32, ends at 28) + `max_age_seconds` reach `name` (align 8 → 32)
     assert!(
         offset_of!(NpmPackage, max_age_seconds)
             == offset_of!(NpmPackage, public_max_age) + size_of::<u32>()

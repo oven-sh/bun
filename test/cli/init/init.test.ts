@@ -1,6 +1,6 @@
 import { beforeAll, describe, expect, test } from "bun:test";
 import fs, { readdirSync } from "fs";
-import { bunEnv, bunExe, isWindows, tempDir, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir, tempDirWithFiles, withFileSizeLimit } from "harness";
 import path from "path";
 
 // Whether `bun init` emits CLAUDE.md depends on a `claude` binary being on
@@ -134,6 +134,33 @@ const initEnv = { ...bunEnv, BUN_AGENT_RULE_DISABLED: "1" };
     expect(await exited).not.toBe(0);
     expect(readdirSync(temp).sort()).toEqual(["mydir"]);
     expect(await Bun.file(path.join(temp, "mydir")).text()).toBe("don't delete me!!!");
+  });
+
+  // The existing package.json already has every dependency `-y` would add, so
+  // this run does not install anything. It only rewrites package.json, and the
+  // file size limit makes that write fail after the first block.
+  test.skipIf(isWindows)("bun init keeps the old package.json when the write fails", async () => {
+    const original =
+      JSON.stringify({
+        name: "keep-me",
+        devDependencies: { "@types/bun": "latest" },
+        peerDependencies: { typescript: "^7" },
+        description: Buffer.alloc(3000, "x").toString(),
+      }) + "\n";
+    await using temp = tempDir("bun-init-write-fails", { "package.json": original });
+
+    await using proc = Bun.spawn({
+      cmd: withFileSizeLimit(1, [bunExe(), "init", "-y"]),
+      cwd: temp,
+      stdio: ["ignore", "pipe", "pipe"],
+      env: initEnv,
+    });
+    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toContain("package.json failed to write due to error EFBIG");
+    // bun init reports the failed write and still creates the other files.
+    expect(exitCode).toBe(0);
+    expect(await Bun.file(path.join(temp, "package.json")).text()).toBe(original);
+    expect(readdirSync(temp).filter(name => name.endsWith(".tmp"))).toEqual([]);
   });
 
   test("bun init utf-8", async () => {

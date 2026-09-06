@@ -158,7 +158,7 @@ pub struct Route {
     pub(crate) dev_server_id: Cell<Option<route_bundle::Index>>,
     /// When state == .pending, incomplete responses are stored here.
     pending_responses: JsCell<Vec<PendingResponse>>,
-    /// The static routes the last successful bundle appended to the server.
+    /// The chunk routes the last successful bundle appended to the server.
     /// `server.reload()` replaces that list; `adopt_assets` carries these over.
     assets: JsCell<Vec<(Box<[u8]>, RefPtr<StaticRoute>)>>,
 }
@@ -225,7 +225,7 @@ impl Route {
         assets
     }
 
-    /// Registers one output of the bundle on the server and records it in
+    /// Registers one chunk of the bundle on the server and records it in
     /// `assets`.
     fn append_asset(&self, server: AnyServer, path: &[u8], route: StaticRoute) {
         let route = RefPtr::new(route);
@@ -665,7 +665,23 @@ impl Route {
                 let (mut html_route, html_route_path) =
                     this_html_route.expect("the loop above visited html_index");
                 let html_route_clone = html_route.clone(global_this);
-                self.append_asset(server, &html_route_path, html_route);
+                // The page is also served at its output path, unless an html
+                // route is mounted there: a static route at the same path
+                // would replace it in the route list, and the page would
+                // never bundle again. Not an asset either way, so a reload
+                // drops it and the new html route bundles.
+                let html_path_has_html_route =
+                    server.config().static_routes.iter().any(|entry| {
+                        matches!(entry.route, AnyRoute::Html(_))
+                            && *entry.path == *html_route_path
+                    });
+                if !html_path_has_html_route {
+                    bun_core::handle_oom(server.append_static_route(
+                        &html_route_path,
+                        AnyRoute::Static(RefPtr::new(html_route)),
+                        MethodOptional::Any,
+                    ));
+                }
                 self.state.set(State::Html(html_route_clone));
 
                 if !bun_core::handle_oom(server.reload_static_routes()) {

@@ -1103,16 +1103,21 @@ test.concurrent("server.reload() while an html route's first bundle is still in 
 // held fell through to fetch() until some client requested the page again.
 // The page itself still bundles again on the next request after a reload, so
 // a reload picks up an edit on disk. The chunks of the previous build stay
-// served next to the new ones until the following reload.
-describe.each([false, { hmr: false }])(
-  "server.reload() keeps the chunks of a built html route (development: %p)",
-  development => {
-    const files = {
-      "index.html": `<!DOCTYPE html><html><head><link rel="stylesheet" href="./style.css"></head><body><script type="module" src="./app.ts"></script></body></html>`,
-      "style.css": `body { color: red; }`,
-      "app.ts": `console.log("app v1");`,
-    };
-    const serveHead = /*ts*/ `
+// served next to the new ones until the following reload. "/index.html" is
+// also the bundler's output path for the page, so that route checks that the
+// previous page does not shadow the new route.
+describe.each([
+  { development: false, route: "/" },
+  { development: false, route: "/index.html" },
+  { development: { hmr: false }, route: "/" },
+  { development: { hmr: false }, route: "/index.html" },
+])("server.reload() keeps the chunks of a built html route (%p)", ({ development, route }) => {
+  const files = {
+    "index.html": `<!DOCTYPE html><html><head><link rel="stylesheet" href="./style.css"></head><body><script type="module" src="./app.ts"></script></body></html>`,
+    "style.css": `body { color: red; }`,
+    "app.ts": `console.log("app v1");`,
+  };
+  const serveHead = /*ts*/ `
     import html from "./index.html";
     import { writeFileSync } from "node:fs";
 
@@ -1120,10 +1125,11 @@ describe.each([false, { hmr: false }])(
       port: 0,
       hostname: "127.0.0.1",
       development: ${JSON.stringify(development)},
-      routes: { "/": html },
+      routes: { ${JSON.stringify(route)}: html },
       fetch: () => new Response("fallback", { status: 404 }),
     });
     const server = Bun.serve(options());
+    const route = ${JSON.stringify(route)};
     const get = async (path) => {
       const res = await fetch(new URL(path, server.url));
       return { status: res.status, body: await res.text() };
@@ -1132,62 +1138,61 @@ describe.each([false, { hmr: false }])(
     const chunks = (page) => [/src="([^"]+\\.js)"/.exec(page)[1], /href="([^"]+\\.css)"/.exec(page)[1]];
   `;
 
-    test.concurrent("chunk urls stay served after reload until the page is requested again", async () => {
-      using dir = tempDir("bun-serve-html-reload-chunks", {
-        ...files,
-        "serve.ts": /*ts*/ `
+  test.concurrent("chunk urls stay served after reload until the page is requested again", async () => {
+    using dir = tempDir("bun-serve-html-reload-chunks", {
+      ...files,
+      "serve.ts": /*ts*/ `
         ${serveHead}
-        const [js, css] = chunks((await get("/")).body);
+        const [js, css] = chunks((await get(route)).body);
 
         const before = [await status(js), await status(css)];
         server.reload(options());
         const afterReload = [await status(js), await status(css)];
-        const pageAfterReload = await status("/");
+        const pageAfterReload = await status(route);
         const afterPage = [await status(js), await status(css)];
 
         console.log(JSON.stringify({ before, afterReload, pageAfterReload, afterPage }));
         server.stop(true);
       `,
-      });
-      const { stdout, stderr, exitCode } = await runServeFixture(dir);
-      expect({ stdout, exitCode }, stderr).toEqual({
-        stdout: JSON.stringify({
-          before: [200, 200],
-          afterReload: [200, 200],
-          pageAfterReload: 200,
-          afterPage: [200, 200],
-        }),
-        exitCode: 0,
-      });
     });
+    const { stdout, stderr, exitCode } = await runServeFixture(dir);
+    expect({ stdout, exitCode }, stderr).toEqual({
+      stdout: JSON.stringify({
+        before: [200, 200],
+        afterReload: [200, 200],
+        pageAfterReload: 200,
+        afterPage: [200, 200],
+      }),
+      exitCode: 0,
+    });
+  });
 
-    test.concurrent("the page bundles again after reload and the previous chunks stay served", async () => {
-      using dir = tempDir("bun-serve-html-reload-rebuild", {
-        ...files,
-        "serve.ts": /*ts*/ `
+  test.concurrent("the page bundles again after reload and the previous chunks stay served", async () => {
+    using dir = tempDir("bun-serve-html-reload-rebuild", {
+      ...files,
+      "serve.ts": /*ts*/ `
         ${serveHead}
-        const [js1] = chunks((await get("/")).body);
+        const [js1] = chunks((await get(route)).body);
         const v1 = (await get(js1)).body.includes("app v1");
 
         writeFileSync("app.ts", 'console.log("app v2");');
         server.reload(options());
 
-        const [js2] = chunks((await get("/")).body);
+        const [js2] = chunks((await get(route)).body);
         const v2 = (await get(js2)).body.includes("app v2");
         const oldChunkAfterRebuild = await status(js1);
 
         console.log(JSON.stringify({ v1, v2, sameChunk: js1 === js2, oldChunkAfterRebuild }));
         server.stop(true);
       `,
-      });
-      const { stdout, stderr, exitCode } = await runServeFixture(dir);
-      expect({ stdout, exitCode }, stderr).toEqual({
-        stdout: JSON.stringify({ v1: true, v2: true, sameChunk: false, oldChunkAfterRebuild: 200 }),
-        exitCode: 0,
-      });
     });
-  },
-);
+    const { stdout, stderr, exitCode } = await runServeFixture(dir);
+    expect({ stdout, exitCode }, stderr).toEqual({
+      stdout: JSON.stringify({ v1: true, v2: true, sameChunk: false, oldChunkAfterRebuild: 200 }),
+      exitCode: 0,
+    });
+  });
+});
 
 // process.chdir() leaves the cached top-level directory with a trailing slash,
 // which the dev server then used as its root. Reporting a bundle failure

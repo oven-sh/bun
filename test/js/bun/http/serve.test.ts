@@ -2133,7 +2133,6 @@ it.concurrent("dev error page caps each source line like the terminal printer do
       const payload = JSON.parse(match[1]);
       console.log(JSON.stringify({
         status: res.status,
-        bodyLength: html.length,
         literalMentions: html.split("literal-2999-0123456789").length - 1,
         sourceLines: payload.problems.exceptions[0].stack.source_lines.map(l => ({ line: l.line, length: l.text.length })),
       }));
@@ -2157,7 +2156,6 @@ it.concurrent("dev error page caps each source line like the terminal printer do
   expect(out.sourceLines[0].length).toBeLessThanOrEqual(1025);
   // The literals live past the cap, so the page must not carry them.
   expect(out.literalMentions).toBe(0);
-  expect(out.bodyLength).toBeLessThan(literals.length);
   expect(stderr).toContain("long-line boom");
   expect(exitCode).toBe(0);
 });

@@ -197,16 +197,18 @@ impl<const SSL: bool> HasAutoFlusher for streams::HTTPServerWritable<SSL> {
     }
     #[inline]
     fn auto_flush_ctx(&self) -> *mut Self {
-        // Registered from the `&mut self` its RequestContext drives it through;
-        // `on_auto_flush` never frees the sink (its RequestContext does).
-        core::ptr::from_ref(self).cast_mut()
+        self.root
+            .get()
+            .expect("HTTPServerWritable::root is set at allocation, before any write")
+            .as_ptr()
     }
     /// # Safety
     /// See [`HasAutoFlusher::on_auto_flush`].
     unsafe fn on_auto_flush(this: *mut Self) -> bool {
-        // SAFETY: `this` is the live sink registered via `auto_flush_ctx` and
-        // unregistered before it is destroyed; `DeferredTaskQueue::run` is
-        // single-threaded, so no other borrow of it is live across the call.
+        // SAFETY: `this` is the sink's root pointer (`auto_flush_ctx`),
+        // registered while live and unregistered before its RequestContext
+        // destroys it; `DeferredTaskQueue::run` is single-threaded, so no
+        // other borrow of it is live across the call.
         unsafe { (*this).on_auto_flush() }
     }
 }

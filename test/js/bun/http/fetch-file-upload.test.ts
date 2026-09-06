@@ -368,8 +368,10 @@ describe.skipIf(isWindows)("Bun.file(fifo) upload", () => {
               return false;
             }
           }).length;
+        // Ends only once the FIFO fd is closed. A leak keeps the fixture here
+        // until the test times out.
         while (fdsOnFifo() > 0) await Bun.sleep(1);
-        console.log(JSON.stringify({ outcome, writerAlive: writer.exitCode === null, fdsOnFifo: fdsOnFifo() }));
+        console.log(JSON.stringify({ outcome, writerAlive: writer.exitCode === null }));
         writer.kill();
       `,
     });
@@ -383,7 +385,7 @@ describe.skipIf(isWindows)("Bun.file(fifo) upload", () => {
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).toBe("");
-    expect(stdout).toBe(JSON.stringify({ outcome: "AbortError", writerAlive: true, fdsOnFifo: 0 }) + "\n");
+    expect(stdout).toBe(JSON.stringify({ outcome: "AbortError", writerAlive: true }) + "\n");
     expect(exitCode).toBe(0);
   });
 

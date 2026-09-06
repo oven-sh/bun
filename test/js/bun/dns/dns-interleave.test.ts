@@ -53,6 +53,49 @@ async function run(body: string, timeoutMs = 10_000) {
   return { out, stderr, exitCode, signal: proc.signalCode };
 }
 
+// The backlog-0 trick and 127.0.0.0/8-on-lo are Linux-specific; the raw setup
+// dlopens glibc. listen(fd, 0) + a full one-slot accept queue makes the kernel
+// drop every further SYN to ip:port, the same EINPROGRESS-forever a filtered
+// network produces.
+const blackholePrelude = /* js */ `
+const { dlopen } = require("bun:ffi");
+const libc = dlopen("libc.so.6", {
+  socket:   { args: ["int","int","int"],           returns: "int" },
+  bind:     { args: ["int","ptr","int"],           returns: "int" },
+  listen:   { args: ["int","int"],                 returns: "int" },
+  connect:  { args: ["int","ptr","int"],           returns: "int" },
+  close:    { args: ["int"],                       returns: "int" },
+  setsockopt:{args: ["int","int","int","ptr","int"],returns:"int" },
+});
+const AF_INET=2, SOCK_STREAM=1, SOCK_NONBLOCK=0o4000, SOL_SOCKET=1, SO_REUSEADDR=2;
+function sockaddr_in(ip, port) {
+  const b = new Uint8Array(16);
+  new DataView(b.buffer).setUint16(0, AF_INET, true);
+  b[2] = (port>>8)&0xff; b[3] = port&0xff;
+  const o = ip.split(".").map(Number); b[4]=o[0]; b[5]=o[1]; b[6]=o[2]; b[7]=o[3];
+  return b;
+}
+const fds = [];
+// listen(fd, 0) + fill the one-slot accept queue so further SYNs to
+// ip:port are silently dropped (same EINPROGRESS a filtered network
+// produces).
+function blackhole(ip, port) {
+  const fd = libc.symbols.socket(AF_INET, SOCK_STREAM, 0);
+  if (fd < 0) throw new Error("socket() failed");
+  fds.push(fd);
+  const one = new Int32Array([1]);
+  libc.symbols.setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, one, 4);
+  if (libc.symbols.bind(fd, sockaddr_in(ip, port), 16) !== 0)
+    throw new Error("bind(" + ip + ":" + port + ") failed");
+  if (libc.symbols.listen(fd, 0) !== 0) throw new Error("listen() failed");
+  for (let i = 0; i < 8; i++) {
+    const c = libc.symbols.socket(AF_INET, SOCK_STREAM | SOCK_NONBLOCK, 0);
+    fds.push(c);
+    libc.symbols.connect(c, sockaddr_in(ip, port), 16);
+  }
+}
+`;
+
 describe.concurrent("getaddrinfo interleave (RFC 8305)", () => {
   test("fetch() through a seeded 4xAAAA + 4xA entry connects via the interleaved order", async () => {
     const { out, stderr, exitCode, signal } = await run(/* js */ `
@@ -114,52 +157,13 @@ describe.concurrent("getaddrinfo interleave (RFC 8305)", () => {
 
   // End-to-end proof: with the first family blackholed (SYNs silently dropped,
   // connect() stuck in EINPROGRESS until kernel SYN-retry exhaustion), fetch()
-  // must still succeed because the interleave put the other family in the
-  // first CONCURRENT_CONNECTIONS batch. Without the fix all four initial
-  // attempts are blackholed and the fetch hangs. The backlog-0 trick and
-  // 127.0.0.0/8-on-lo are Linux-specific; the raw setup dlopens glibc.
+  // must still succeed because the interleave put the other family second.
   test.skipIf(!isLinux || isMusl)(
     "fetch() succeeds when the first family is blackholed and only the other family is reachable",
     async () => {
       const { out, stderr, exitCode, signal } = await run(
         /* js */ `
-        const { dlopen } = require("bun:ffi");
-        const libc = dlopen("libc.so.6", {
-          socket:   { args: ["int","int","int"],           returns: "int" },
-          bind:     { args: ["int","ptr","int"],           returns: "int" },
-          listen:   { args: ["int","int"],                 returns: "int" },
-          connect:  { args: ["int","ptr","int"],           returns: "int" },
-          close:    { args: ["int"],                       returns: "int" },
-          setsockopt:{args: ["int","int","int","ptr","int"],returns:"int" },
-        });
-        const AF_INET=2, SOCK_STREAM=1, SOCK_NONBLOCK=0o4000, SOL_SOCKET=1, SO_REUSEADDR=2;
-        function sockaddr_in(ip, port) {
-          const b = new Uint8Array(16);
-          new DataView(b.buffer).setUint16(0, AF_INET, true);
-          b[2] = (port>>8)&0xff; b[3] = port&0xff;
-          const o = ip.split(".").map(Number); b[4]=o[0]; b[5]=o[1]; b[6]=o[2]; b[7]=o[3];
-          return b;
-        }
-        const fds = [];
-        // listen(fd, 0) + fill the one-slot accept queue so further SYNs to
-        // ip:port are silently dropped (same EINPROGRESS a filtered network
-        // produces).
-        function blackhole(ip, port) {
-          const fd = libc.symbols.socket(AF_INET, SOCK_STREAM, 0);
-          if (fd < 0) throw new Error("socket() failed");
-          fds.push(fd);
-          const one = new Int32Array([1]);
-          libc.symbols.setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, one, 4);
-          if (libc.symbols.bind(fd, sockaddr_in(ip, port), 16) !== 0)
-            throw new Error("bind(" + ip + ":" + port + ") failed");
-          if (libc.symbols.listen(fd, 0) !== 0) throw new Error("listen() failed");
-          for (let i = 0; i < 8; i++) {
-            const c = libc.symbols.socket(AF_INET, SOCK_STREAM | SOCK_NONBLOCK, 0);
-            fds.push(c);
-            libc.symbols.connect(c, sockaddr_in(ip, port), 16);
-          }
-        }
-
+        ${blackholePrelude}
         using server = Bun.serve({ port: 0, hostname: "::1", fetch: () => new Response("ok via ::1") });
         const port = server.port;
         const dead = ["127.0.0.2","127.0.0.3","127.0.0.4","127.0.0.5"];
@@ -185,12 +189,65 @@ describe.concurrent("getaddrinfo interleave (RFC 8305)", () => {
       `,
         20_000,
       );
-      // With the broken interleave the order is [4,4,4,4,6]: all four initial
+      // With the broken interleave the order is [4,4,4,4,6]: the first
       // attempts sit in EINPROGRESS and the fetch aborts at 4s with
-      // TimeoutError. With the fix the order is [4,6,4,4,4]: ::1 is attempted
-      // in the first batch and connects immediately.
+      // TimeoutError. With the fix the order is [4,6,4,4,4]: ::1 is the
+      // second attempt and connects.
       expect({ out, stderr, exitCode, signal }).toEqual({
         out: { ok: true, ms: expect.any(Number), order: [4, 6, 4, 4, 4], body: "ok via ::1" },
+        stderr: expect.any(String),
+        exitCode: 0,
+        signal: null,
+      });
+      expect(out.ms).toBeLessThan(4000);
+    },
+    20_000,
+  );
+});
+
+// usockets dials the addresses of a name the way RFC 8305 §5 does: one
+// attempt, the next address 250 ms later while the earlier ones are still
+// pending, or at once when one fails. Before, it opened the first four at once
+// and only went on once at most one of them was left pending, so two black
+// holes plus two refused addresses in the first four parked the dial on the
+// kernel's SYN retries (about two minutes) with a reachable fifth address
+// never tried.
+describe.concurrent("connection attempt delay (RFC 8305 §5)", () => {
+  test.skipIf(!isLinux || isMusl)(
+    "fetch() reaches the fifth address when two of the first four hang and two are refused",
+    async () => {
+      const { out, stderr, exitCode, signal } = await run(
+        /* js */ `
+        ${blackholePrelude}
+        using server = Bun.serve({ port: 0, hostname: "127.0.0.6", fetch: () => new Response("ok via 127.0.0.6") });
+        const port = server.port;
+        blackhole("127.0.0.2", port);
+        blackhole("127.0.0.3", port);
+        // Nothing listens on 127.0.0.4 / 127.0.0.5: connect() fails at once.
+        const host = "he-stagger-" + port + ".test";
+        const order = dnsCacheSeed(host, ["127.0.0.2", "127.0.0.3", "127.0.0.4", "127.0.0.5", "127.0.0.6"]);
+
+        const t0 = performance.now();
+        let result;
+        try {
+          const res = await fetch("http://" + host + ":" + port + "/", {
+            signal: AbortSignal.timeout(4000),
+          });
+          result = { ok: true, ms: Math.round(performance.now() - t0), order, body: await res.text() };
+        } catch (e) {
+          result = { ok: false, ms: Math.round(performance.now() - t0), order, err: e?.name ?? String(e) };
+        }
+        console.log(JSON.stringify(result));
+        for (const fd of fds) libc.symbols.close(fd);
+        process.exit(0);
+      `,
+        20_000,
+      );
+      // All five are IPv4, so the interleave leaves the order alone. The two
+      // refused attempts fail at once and advance to the next address each
+      // time, so 127.0.0.6 is dialed about 500 ms after the first attempt.
+      expect({ out, stderr, exitCode, signal }).toEqual({
+        out: { ok: true, ms: expect.any(Number), order: [4, 4, 4, 4, 4], body: "ok via 127.0.0.6" },
         stderr: expect.any(String),
         exitCode: 0,
         signal: null,

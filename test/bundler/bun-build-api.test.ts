@@ -328,7 +328,9 @@ describe("Bun.build", () => {
         stderr: "pipe",
       });
       const [cliStdout, cliStderr, cliExitCode] = await Promise.all([cli.stdout.text(), cli.stderr.text(), cli.exited]);
-      // A depth the native stack can hold builds; a deeper one is a parse error.
+      // A depth the native stack can hold builds; a deeper one is a parse
+      // error. The CLI and the bundler thread reach the limit at different
+      // depths, so each outcome is checked on its own.
       if (cliExitCode === 0) {
         expect(cliStdout).toContain(value);
       } else {
@@ -345,8 +347,9 @@ describe("Bun.build", () => {
       });
       const [apiStdout, apiStderr, apiExitCode] = await Promise.all([api.stdout.text(), api.stderr.text(), api.exited]);
       expect(apiStderr).toBe("");
-      expect(JSON.parse(apiStdout)).toEqual(
-        cliExitCode === 0
+      const apiResult = JSON.parse(apiStdout);
+      expect(apiResult).toEqual(
+        apiResult.success
           ? { success: true, logs: [] }
           : { success: false, logs: ["JSON document is too deeply nested"] },
       );

@@ -214,7 +214,7 @@ impl WorkspacePackageJSONCache {
         };
 
         let value = MapEntry {
-            root: bun_core::handle_oom(parsed.root.deep_clone(&json_bump)),
+            root: parsed.root,
             source,
             indentation: parsed.indentation,
             indentation_guessed: opts.guess_indentation,

@@ -776,7 +776,9 @@ impl ByteRangeMapping {
         // `ControlFlowProfiler::findBasicBlockAtTextOffset`. It is what keeps a
         // never-called function dead when an enclosing block executed.
         let mut order: Vec<u32> = (0..ranges.len()).map(|i| i as u32).collect();
-        order.sort_by_key(|&i| core::cmp::Reverse(ranges[i as usize].end - ranges[i as usize].start));
+        order.sort_by_key(|&i| {
+            core::cmp::Reverse(ranges[i as usize].end - ranges[i as usize].start)
+        });
         let mut owner: Vec<u32> = vec![u32::MAX; byte_count];
         for i in order {
             let range = &ranges[i as usize];
@@ -813,9 +815,8 @@ impl ByteRangeMapping {
                     if owner_index == u32::MAX || !self.significant_bytes.is_set(byte_offset) {
                         continue;
                     }
-                    let generated = Ordinal::from_zero_based(
-                        i32::try_from(generated_line).expect("int cast"),
-                    );
+                    let generated =
+                        Ordinal::from_zero_based(i32::try_from(generated_line).expect("int cast"));
                     let column = Ordinal::from_zero_based(
                         i32::try_from(byte_offset - line_start).expect("int cast"),
                     );
@@ -899,8 +900,8 @@ impl ByteRangeMapping {
         source_id: i32,
         source_url: Utf8Bytes<'static>,
     ) -> ByteRangeMapping {
-        let mut significant_bytes =
-            Bitset::init_empty(source_contents.len()).unwrap_or_else(|_| bun_alloc::out_of_memory());
+        let mut significant_bytes = Bitset::init_empty(source_contents.len())
+            .unwrap_or_else(|_| bun_alloc::out_of_memory());
         let mut i = 0;
         let mut at_line_start = true;
         while i < source_contents.len() {

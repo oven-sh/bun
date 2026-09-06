@@ -766,7 +766,7 @@ describe("bundler", () => {
         const out = {};
         out.globals = [typeof process, typeof Buffer, typeof globalThis.Buffer, typeof globalThis.setImmediate];
         out.stream = await new Promise(r => Readable.from(["a", "b"]).on("data", c => r("data:" + c)));
-        try { assert.strictEqual(1, 2); } catch (e) { out.assert = e.constructor.name + ":" + e.code; }
+        try { assert.strictEqual(1, 2); } catch (e) { out.assert = (e instanceof assert.AssertionError) + ":" + e.code; }
         out.util = await new Promise(r => callbackify(async () => 5)((e, v) => r([e, v])));
         out.inspect = inspect({ a: [1, "b"] });
         out.path = resolve("x");
@@ -785,7 +785,7 @@ describe("bundler", () => {
       stdout: JSON.stringify({
         globals: ["undefined", "function", "undefined", "undefined"],
         stream: "data:a",
-        assert: "AssertionError:ERR_ASSERTION",
+        assert: "true:ERR_ASSERTION",
         util: [null, 5],
         inspect: "{ a: [ 1, 'b' ] }",
         path: "/x",

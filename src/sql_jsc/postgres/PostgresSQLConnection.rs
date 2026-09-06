@@ -647,21 +647,42 @@ impl PostgresSQLConnection {
 
         self.status.set(status);
         self.reset_connection_timeout();
-        match status {
-            Status::Connected => {
-                let Some(on_connect) = self.consume_on_connect_callback(self.global()) else {
-                    self.update_has_pending_activity();
-                    return;
-                };
-                let js_value = self.js_value.get().get();
-                js_value.ensure_still_alive();
-                self.global()
-                    .queue_microtask(on_connect, &[JSValue::NULL, js_value]);
-                self.poll_ref.with_mut(|r| r.unref(self.vm_ctx()));
-            }
-            _ => {}
+        if status == Status::Connected {
+            self.update_flags(|f| f.insert(ConnectionFlags::ON_CONNECT_PENDING));
+            self.poll_ref.with_mut(|r| r.unref(self.vm_ctx()));
         }
         self.update_has_pending_activity();
+    }
+
+    /// Delivers `onconnect` once the read that established the connection has
+    /// been fully processed. Running it from here rather than from inside the
+    /// message parser keeps JS out of the parser, and running it synchronously
+    /// (like `onclose`) keeps the two callbacks ordered: a connection that
+    /// fails later in the same read reports `onclose` alone, never `onclose`
+    /// followed by a stale `onconnect` for an already-dead connection.
+    fn notify_connected(&self) {
+        if !self
+            .flags
+            .get()
+            .contains(ConnectionFlags::ON_CONNECT_PENDING)
+        {
+            return;
+        }
+        self.update_flags(|f| f.remove(ConnectionFlags::ON_CONNECT_PENDING));
+        if self.status.get() != Status::Connected {
+            return;
+        }
+        let Some(on_connect) = self.consume_on_connect_callback(self.global()) else {
+            return;
+        };
+        let js_value = self.js_value.get().get();
+        js_value.ensure_still_alive();
+        self.event_loop().run_callback(
+            on_connect,
+            self.global(),
+            JSValue::UNDEFINED,
+            &[JSValue::NULL, js_value],
+        );
     }
 
     pub fn finalize(&self) {
@@ -1033,6 +1054,7 @@ impl PostgresSQLConnection {
             }
         }
 
+        self.notify_connected();
         event_loop.exit();
         // === defer block ===
         if self.status.get() == Status::Connected
@@ -2929,8 +2951,13 @@ impl PostgresSQLConnection {
                 }
 
                 let Some(request) = self.current() else {
-                    debug!("ErrorResponse: {}", err);
-                    return Err(AnyPostgresError::ExpectedRequest);
+                    // No query in flight: the server is terminating the
+                    // session (admin shutdown, idle_session_timeout, ...).
+                    let v =
+                        crate::postgres::protocol::error_response_jsc::to_js(&err, self.global());
+                    drop(err);
+                    self.fail_with_js_value(v);
+                    return Ok(());
                 };
                 // Convert to JS while we still own `err` — materialize the JS value once and route through
                 // `on_js_error` to avoid double-ownership of the non-Clone ErrorResponse.

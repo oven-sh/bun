@@ -1502,7 +1502,11 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
             // non-regular file with chunked transfer encoding instead: the
             // stream reader opens the fd itself and polls it. A stat error is
             // left for the open below, which reports it.
-            let is_regular_file = {
+            //
+            // On macOS a named pipe read through the event loop never sees
+            // EOF (#40099 fixes that), so a FIFO keeps the buffered read there
+            // until that lands. The read then blocks but delivers every byte.
+            let stream_body = {
                 let store = body.store().expect("needs_to_read_file implies store");
                 let stat = match &store.data.as_file().pathlike {
                     PathOrFileDescriptor::Fd(fd) => bun_sys::fstat(*fd),
@@ -1511,11 +1515,15 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                     }
                 };
                 match stat {
-                    Ok(stat) => bun_sys::S::ISREG(stat.st_mode as u32),
-                    Err(_) => true,
+                    Ok(stat) => {
+                        let mode = stat.st_mode as u32;
+                        !bun_sys::S::ISREG(mode)
+                            && !(cfg!(target_os = "macos") && bun_sys::S::ISFIFO(mode))
+                    }
+                    Err(_) => false,
                 }
             };
-            if !is_regular_file {
+            if stream_body {
                 if !stream_blob_body(global_this, &mut body, 0)? {
                     let rejected_value =
                         JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(

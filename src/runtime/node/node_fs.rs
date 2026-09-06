@@ -6982,7 +6982,10 @@ impl NodeFS {
         // For certain files, the size might be 0 but the file might still have contents.
         // https://github.com/oven-sh/bun/issues/1220
         let max_size: u64 = args.max_size.map(|v| v as u64).unwrap_or(BLOB_SIZE_MAX);
-        let has_max_size = args.max_size.is_some();
+        // A blob whose size is still unknown passes `BLOB_SIZE_MAX`. That is
+        // not a bound: a FIFO or device must be read to EOF, not to the
+        // first buffer's capacity.
+        let has_max_size = max_size != BLOB_SIZE_MAX;
 
         let size: u64 = (stat_.st_size as i64)
             .min(max_size as i64) // Only used in DOMFormData

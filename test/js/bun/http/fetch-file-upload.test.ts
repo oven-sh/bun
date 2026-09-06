@@ -227,10 +227,10 @@ describe("Bun.file().slice() upload sends the slice's Content-Length", () => {
 // The body must be streamed with chunked transfer encoding, and the read
 // must not block the JS thread.
 //
-// todo on macOS: a named pipe read through the event loop never reaches EOF
-// there (#30520), so the chunked body never ends. The same todo covers
-// "Bun.file() read text from pipe" in test/js/web/streams/streams.test.js.
-describe.skipIf(isWindows).todoIf(isMacOS)("Bun.file(fifo) upload", () => {
+// On macOS a named pipe read through the event loop never reaches EOF
+// (#40099 fixes that), so fetch keeps the buffered read for a FIFO there:
+// the body arrives whole with a Content-Length, and the read still blocks.
+describe.skipIf(isWindows)("Bun.file(fifo) upload", () => {
   const SIZE = 1024 * 1024;
   const payload = Buffer.alloc(SIZE);
   for (let i = 0; i < SIZE; i++) payload[i] = (i * 7) & 0xff;
@@ -278,9 +278,48 @@ describe.skipIf(isWindows).todoIf(isMacOS)("Bun.file(fifo) upload", () => {
       });
       expect(await res.text()).toBe("ok");
       expect(res.status).toBe(200);
-      expect(seen).toEqual({ contentLength: null, transferEncoding: "chunked", hash: payloadHash });
+      expect(seen).toEqual(
+        isMacOS
+          ? { contentLength: String(SIZE), transferEncoding: null, hash: payloadHash }
+          : { contentLength: null, transferEncoding: "chunked", hash: payloadHash },
+      );
       expect(await writer.exited).toBe(0);
     });
+  });
+
+  // FormData reads each file part into memory. A FIFO part must be read to
+  // EOF, not to the first buffer's capacity.
+  test.concurrent("a FormData part backed by a FIFO arrives whole", async () => {
+    using dir = tempDir("fetch-fifo-formdata", { "payload.bin": payload });
+    const fifo = join(String(dir), "fifo");
+    mkfifo(fifo);
+
+    await using writer = Bun.spawn({
+      cmd: ["sh", "-c", `cat payload.bin > fifo`],
+      cwd: String(dir),
+      env: bunEnv,
+    });
+
+    let seen = { size: -1, hash: "" };
+    await using server = Bun.serve({
+      port: 0,
+      development: false,
+      maxRequestBodySize: SIZE * 2,
+      async fetch(req) {
+        const part = (await req.formData()).get("f") as Blob;
+        const bytes = await part.bytes();
+        seen = { size: bytes.byteLength, hash: Bun.CryptoHasher.hash("sha256", bytes, "hex") };
+        return new Response("ok");
+      },
+    });
+
+    const form = new FormData();
+    form.append("f", Bun.file(fifo), "f.bin");
+    const res = await fetch(server.url, { method: "POST", body: form });
+    expect(await res.text()).toBe("ok");
+    expect(res.status).toBe(200);
+    expect(seen).toEqual({ size: SIZE, hash: payloadHash });
+    expect(await writer.exited).toBe(0);
   });
 
   // The writer opens the FIFO only after it reads a line from stdin, and the
@@ -288,7 +327,7 @@ describe.skipIf(isWindows).todoIf(isMacOS)("Bun.file(fifo) upload", () => {
   // blocks the JS thread inside a read of the FIFO, so the line is never
   // written and the fixture never prints. It runs in a child process so the
   // hang cannot take the test runner with it.
-  test.concurrent("fetch() returns before the writer has produced any bytes", async () => {
+  test.concurrent.todoIf(isMacOS)("fetch() returns before the writer has produced any bytes", async () => {
     using dir = tempDir("fetch-fifo-upload-wait", {
       "payload.bin": payload,
       "fixture.ts": `

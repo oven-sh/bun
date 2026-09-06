@@ -2989,6 +2989,46 @@ console.log(<div {...obj} key="after" />);`),
       // );
     });
 
+    it("yield* requires an operand", () => {
+      expectPrinted_("function* g() { yield* a }", "function* g() {\n  yield* a;\n}");
+      expectPrinted_("function* g() { yield }", "function* g() {\n  yield;\n}");
+      expectPrinted_("function* g() { var a = yield; }", "function* g() {\n  var a = yield;\n}");
+      expectPrinted_("function* g() { f(yield, yield) }", "function* g() {\n  f(yield, yield);\n}");
+
+      expectParseError("function* g() { yield* ; }", "Unexpected ;");
+      expectParseError("function* g() { yield* }", "Unexpected }");
+      expectParseError("function* g() { (yield*) }", "Unexpected )");
+      expectParseError("function* g() { f(yield*) }", "Unexpected )");
+      expectParseError("function* g() { f(yield*, a) }", "Unexpected ,");
+      expectParseError("function* g() { var a = yield * ; }", "Unexpected ;");
+      expectParseError("function* g() { yield * * 1 }", "Unexpected *");
+      expectParseError("function* g() { return yield*\n; }", "Unexpected ;");
+    });
+
+    it("parenthesized arrow parameters", () => {
+      expectPrinted_("var f = (a) => a", "var f = (a) => a");
+      expectPrinted_("var f = (a = (b)) => a", "var f = (a = b) => a");
+      expectPrinted_("var f = (a = (b, c)) => a", "var f = (a = (b, c)) => a");
+      expectPrinted_("var f = ([a] = (b)) => a", "var f = ([a] = b) => a");
+      expectPrinted_("var f = ({ a = (b) }) => a", "var f = ({ a = b }) => a");
+      expectPrinted_("var f = ((a), b)", "var f = (a, b)");
+      expectPrinted_("var f = [(a)] = [1]", "var f = [a] = [1]");
+      expectPrinted_("var f = async((a))", "var f = async(a)");
+
+      const message = "Unexpected parentheses in binding pattern";
+      expectParseError("var f = ((a)) => a", message);
+      expectParseError("var f = ((a), b) => b", message);
+      expectParseError("var f = (a, (b)) => b", message);
+      expectParseError("var f = ((a) = 1) => a", message);
+      expectParseError("var f = (...(a)) => a", message);
+      expectParseError("var f = ([(a)]) => a", message);
+      expectParseError("var f = ([...(a)]) => a", message);
+      expectParseError("var f = ({ a: (b) }) => b", message);
+      expectParseError("var f = ({ ...(a) }) => a", message);
+      expectParseError("var f = async ((a)) => a", message);
+      expectParseError("var f = (((a))) => a", message);
+    });
+
     it("import assert", () => {
       expectPrinted_(`import json from "./foo.json" assert { type: "json" };`, `import json from "./foo.json"`);
       expectPrinted_(`import json from "./foo.json";`, `import json from "./foo.json"`);

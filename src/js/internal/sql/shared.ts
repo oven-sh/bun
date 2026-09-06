@@ -1850,6 +1850,8 @@ function parseOptions(
   let bigint: boolean | undefined;
   let path: string;
   let prepare: boolean = true;
+  // the URL pathname is the database name, except for unix:// where it is the socket path
+  let urlDatabase: string | null = null;
 
   if (url !== null) {
     url = url instanceof URL ? url : new URL(url);
@@ -1863,7 +1865,12 @@ function parseOptions(
     username ||= options.user || options.username || decodeIfValid(url.username);
     password ||= options.pass || options.password || decodeIfValid(url.password);
 
-    path ||= options.path || (url.hostname ? "" : url.pathname);
+    if (url.protocol === "unix:") {
+      path ||= options.path || url.pathname;
+    } else {
+      path ||= options.path;
+      urlDatabase = decodeIfValid(url.pathname.slice(1));
+    }
 
     const queryObject = url.searchParams.toJSON();
     for (const key in queryObject) {
@@ -1881,7 +1888,7 @@ function parseOptions(
           sslMode = normalizeSSLMode(value);
         }
       } else if (lowerKey === "path") {
-        path = queryObject[key];
+        path ||= queryObject[key];
       } else {
         // this is valid for postgres for other databases it might not be valid
         // check adapter then implement for other databases
@@ -1930,15 +1937,12 @@ function parseOptions(
   path ||= options.path || "";
 
   if (adapter === "postgres") {
-    // add /.s.PGSQL.${port} if the unix domain socket is listening on that path
-    if (path && Number.isSafeInteger(port) && path?.indexOf("/.s.PGSQL.") === -1) {
-      const pathWithSocket = `${path}/.s.PGSQL.${port}`;
-
-      // Only add the path if it actually exists. It would be better to just
-      // always respect whatever the user passes in, but that would technically
-      // be a breakpoint change at this point.
-      if (require("node:fs").existsSync(pathWithSocket)) {
-        path = pathWithSocket;
+    // libpq semantics: a directory names the socket dir, the socket file inside
+    // it is /.s.PGSQL.${port}
+    const portNumber = Number(port);
+    if (path && Number.isSafeInteger(portNumber) && path.indexOf("/.s.PGSQL.") === -1) {
+      if (require("node:fs").statSync(path, { throwIfNoEntry: false })?.isDirectory()) {
+        path = `${path}/.s.PGSQL.${portNumber}`;
       }
     }
   }
@@ -1978,35 +1982,18 @@ function parseOptions(
 
   switch (adapter) {
     case "postgres": {
-      database ||=
-        options.database ||
-        options.db ||
-        env.PG_DATABASE ||
-        env.PGDATABASE ||
-        decodeIfValid((url?.pathname ?? "").slice(1)) ||
-        username;
+      database ||= options.database || options.db || urlDatabase || env.PG_DATABASE || env.PGDATABASE || username;
       break;
     }
 
     case "mysql": {
-      database ||=
-        options.database ||
-        options.db ||
-        env.MYSQL_DATABASE ||
-        env.MYSQLDATABASE ||
-        decodeIfValid((url?.pathname ?? "").slice(1)) ||
-        "mysql";
+      database ||= options.database || options.db || urlDatabase || env.MYSQL_DATABASE || env.MYSQLDATABASE || "mysql";
       break;
     }
 
     case "mariadb": {
       database ||=
-        options.database ||
-        options.db ||
-        env.MARIADB_DATABASE ||
-        env.MARIADBDATABASE ||
-        decodeIfValid((url?.pathname ?? "").slice(1)) ||
-        "mariadb";
+        options.database || options.db || urlDatabase || env.MARIADB_DATABASE || env.MARIADBDATABASE || "mariadb";
       break;
     }
   }
@@ -2178,9 +2165,7 @@ function parseOptions(
   }
 
   if (path) {
-    if (require("node:fs").existsSync(path)) {
-      ret.path = path;
-    }
+    ret.path = path;
   }
 
   return ret;

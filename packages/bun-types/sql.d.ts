@@ -361,7 +361,10 @@ declare module "bun" {
         | undefined;
 
       /**
-       * Unix domain socket path for connection
+       * Unix domain socket path for connection. When set, the connection uses
+       * the socket and ignores hostname and port. For PostgreSQL, a directory
+       * resolves to `<path>/.s.PGSQL.<port>`. A path that does not exist fails
+       * the connection.
        * @default undefined
        */
       path?: string | undefined;

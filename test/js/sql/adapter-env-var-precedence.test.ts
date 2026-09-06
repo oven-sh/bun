@@ -768,5 +768,102 @@ describe("SQL adapter environment variable precedence", () => {
         expect(options.options.database).toBe("urldb"); // URL database should remain
       });
     });
+
+    describe("URL parameters override environment variables", () => {
+      test.each([
+        ["postgres", "PGDATABASE"],
+        ["postgres", "PG_DATABASE"],
+        ["mysql", "MYSQL_DATABASE"],
+        ["mariadb", "MARIADB_DATABASE"],
+      ])("%s URL database beats %s", (adapter, envVar) => {
+        process.env[envVar] = "envdb";
+        const options = new SQL(`${adapter}://urluser@urlhost/urldb`);
+        expect(options.options.adapter).toBe(adapter);
+        expect(options.options.database).toBe("urldb");
+      });
+
+      test("env database applies when the URL has no pathname", () => {
+        process.env.PGDATABASE = "envdb";
+        const options = new SQL("postgres://urluser@urlhost");
+        expect(options.options.database).toBe("envdb");
+      });
+
+      test("every connection field resolves as option > URL > env > default", () => {
+        process.env.PGHOST = "envhost";
+        process.env.PGPORT = "9999";
+        process.env.PGUSER = "envuser";
+        process.env.PGPASSWORD = "envpass";
+        process.env.PGDATABASE = "envdb";
+
+        const fromUrl = new SQL("postgres://urluser:urlpass@urlhost:1234/urldb").options;
+        expect([fromUrl.hostname, fromUrl.port, fromUrl.username, fromUrl.password, fromUrl.database]).toEqual([
+          "urlhost",
+          1234,
+          "urluser",
+          "urlpass",
+          "urldb",
+        ]);
+
+        const fromEnv = new SQL({ adapter: "postgres" }).options;
+        expect([fromEnv.hostname, fromEnv.port, fromEnv.username, fromEnv.password, fromEnv.database]).toEqual([
+          "envhost",
+          9999,
+          "envuser",
+          "envpass",
+          "envdb",
+        ]);
+      });
+    });
+
+    describe.skipIf(isWindows)("unix socket path resolution", () => {
+      test("a path that does not exist is kept, not dropped in favour of TCP", () => {
+        const options = new SQL({ adapter: "postgres", path: "/nonexistent/dir/socket.sock", hostname: "dbhost" });
+        expect(options.options.path).toBe("/nonexistent/dir/socket.sock");
+        expect(options.options.hostname).toBe("dbhost");
+
+        const mysql = new SQL({ adapter: "mysql", path: "/nonexistent/dir/mysqld.sock" });
+        expect(mysql.options.path).toBe("/nonexistent/dir/mysqld.sock");
+      });
+
+      test("explicit path option beats the URL ?path= query parameter", () => {
+        const options = new SQL("postgres://dbhost/db?path=/from/url.sock", { path: "/from/option.sock" });
+        expect(options.options.path).toBe("/from/option.sock");
+      });
+
+      test("URL ?path= is used when no path option is given", () => {
+        const options = new SQL("postgres://dbhost/db?path=/from/url.sock");
+        expect(options.options.path).toBe("/from/url.sock");
+        expect(options.options.database).toBe("db");
+      });
+
+      test("postgres: a directory path gets /.s.PGSQL.<port> appended even when the socket is not there yet", () => {
+        using dir = tempDir("sql-pg-socket-dir", { placeholder: "" });
+        const options = new SQL({ adapter: "postgres", path: String(dir), port: 5433 });
+        expect(options.options.path).toBe(`${dir}/.s.PGSQL.5433`);
+
+        const fromUrl = new SQL(`postgres://dbhost:5434/db?path=${dir}`);
+        expect(fromUrl.options.path).toBe(`${dir}/.s.PGSQL.5434`);
+      });
+
+      test("postgres: a socket file path is used as is", () => {
+        using dir = tempDir("sql-pg-socket-file", { "custom.sock": "" });
+        const options = new SQL({ adapter: "postgres", path: `${dir}/custom.sock` });
+        expect(options.options.path).toBe(`${dir}/custom.sock`);
+      });
+
+      test("unix:// URL pathname is the socket path and not the database name", () => {
+        process.env.MYSQL_DATABASE = "envdb";
+        const options = new SQL("unix:///nonexistent/mysqld.sock", { adapter: "mysql" });
+        expect(options.options.path).toBe("/nonexistent/mysqld.sock");
+        expect(options.options.database).toBe("envdb");
+      });
+
+      test("a host-less postgres URL names the database, not a socket path", () => {
+        const options = new SQL("postgres:///urldb");
+        expect(options.options.database).toBe("urldb");
+        expect(options.options.path).toBeUndefined();
+        expect(options.options.hostname).toBe("localhost");
+      });
+    });
   });
 });

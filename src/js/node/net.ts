@@ -138,8 +138,7 @@ const bunTLSConnectOptions = Symbol.for("::buntlsconnectoptions::");
 // binding to the constructor.
 const kNativeSecureContextCtor = Symbol.for("::buntlsnativesecurecontextctor::");
 const kReinitializeHandle = Symbol("kReinitializeHandle");
-// Set on the native handle while a connect is in flight (libuv's
-// `connect_req`): a second connect on the same handle fails with EALREADY.
+// The handle's in-flight connect, like libuv's `connect_req`.
 const kConnectReq = Symbol("kConnectReq");
 
 const kRealListen = Symbol("kRealListen");
@@ -1492,8 +1491,7 @@ function traceConnectEnd(req) {
 
 function kConnectTcp(self, addressType, req, address, port) {
   $debug("SocketHandle.kConnectTcp", addressType, address, port);
-  // Node's TCPWrap parses the address with uv_ip4_addr/uv_ip6_addr for the
-  // requested family and returns EINVAL when it does not parse.
+  // uv_ip4_addr/uv_ip6_addr reject an address of the other family.
   if (isIP(address) !== addressType) return uv().UV_EINVAL;
   return kConnectDispatch(self, req, {
     hostname: address,
@@ -1526,10 +1524,8 @@ function kConnectPipe(self, req, address) {
     data: { self, req },
     socket: self[khandlers],
   });
-  // uv_pipe_connect never fails synchronously: a connect(2) error is stored
-  // as delayed_error and reported through the connect callback on the next
-  // loop turn. Defer the same way so 'error' follows the events a caller
-  // queued right after connect() (http's 'socket', for one).
+  // uv_pipe_connect reports a connect(2) error through the callback on the
+  // next loop turn, never synchronously.
   if (errno) {
     const handle = self._handle;
     handle[kConnectReq] = req;

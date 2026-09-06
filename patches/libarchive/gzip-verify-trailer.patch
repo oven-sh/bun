@@ -20,14 +20,14 @@
  
  	/*
  	 * Initialize compression library. next_in / avail_in are
-@@ -469,7 +475,17 @@ consume_trailer(struct archive_read_filter *self)
- 	if (p == NULL || avail == 0)
- 		return (ARCHIVE_FATAL);
+@@ -473,6 +479,18 @@ consume_trailer(struct archive_read_filter *self)
  
--	/* XXX TODO: Verify the length and CRC. */
+ 	/* We've verified the trailer, so consume it now. */
+ 	__archive_read_filter_consume(self->upstream, 8);
 +	/*
-+	 * BUN PATCH: verify the trailer. Upstream leaves this as a TODO,
-+	 * which lets a corrupted member decompress without any error.
++	 * BUN PATCH: compare the trailer with what was inflated. Upstream
++	 * skips this, so a corrupted member decompressed without any
++	 * error. `p` is still readable: consume only moves the cursor.
 +	 */
 +	if (archive_le32dec(p) != (uint32_t)state->crc ||
 +	    archive_le32dec(p + 4) != state->member_isize) {
@@ -36,10 +36,10 @@
 +		    "gzip trailer mismatch: bad CRC32 or uncompressed size");
 +		return (ARCHIVE_FATAL);
 +	}
+ 	state->trailer_pending = 0;
  
- 	/* We've verified the trailer, so consume it now. */
- 	__archive_read_filter_consume(self->upstream, 8);
-@@ -484,6 +500,8 @@ gzip_filter_read(struct archive_read_filter *self, const void **p)
+ 	return (ARCHIVE_OK);
+@@ -484,6 +502,8 @@ gzip_filter_read(struct archive_read_filter *self, const void **p)
  	struct private_data *state;
  	size_t decompressed;
  	ssize_t avail_in, max_in;
@@ -48,7 +48,7 @@
  	int ret;
  
  	state = (struct private_data *)self->data;
-@@ -548,7 +566,11 @@ gzip_filter_read(struct archive_read_filter *self, const void **p)
+@@ -548,7 +568,11 @@ gzip_filter_read(struct archive_read_filter *self, const void **p)
  		state->stream.avail_in = (uInt)avail_in;
  
  		/* Decompress and consume some of that data. */

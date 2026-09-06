@@ -2269,8 +2269,9 @@ test.concurrent(
 
     // Naming it moves every row of that name, in range: that is what --depth 0 opts out of.
     const named = await run(dir, "update", "leaf");
-    expectMoved(named.stdout, "leaf", "1.0.0", "1.1.0");
+    expect(named.stderr).not.toContain("error:");
     expect(await lockedVersions(dir, "leaf")).toStrictEqual(["1.1.0", "2.1.0"]);
+    expect(await installedVersion(dir, "parent", "node_modules", "leaf")).toBe("1.1.0");
     expect(named.exitCode).toBe(0);
   },
 );

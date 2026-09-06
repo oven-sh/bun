@@ -155,7 +155,13 @@ pub mod api {
     }
 
     impl NpmRegistry {
+        /// `[scheme://][user[:password]@|:token@]host[:port][/path]`. With a scheme, the
+        /// registry is what `new URL(str)` reads. Without one, or when WTF::URL rejects the
+        /// string, the lenient parser reads it as before.
         pub fn from_url(str: &[u8]) -> NpmRegistry {
+            if let Some(registry) = Self::from_whatwg(str) {
+                return registry;
+            }
             let url = bun_url::URL::parse(str);
             let mut registry = NpmRegistry::default();
 
@@ -172,6 +178,41 @@ pub mod api {
             }
 
             registry
+        }
+
+        /// `None` when WTF::URL rejects `str` or finds no host in it (`localhost:4873` is the
+        /// scheme `localhost` to it).
+        fn from_whatwg(str: &[u8]) -> Option<NpmRegistry> {
+            let url = bun_url::whatwg::Parsed::from_utf8(str)?;
+            if url.hostname().is_empty() {
+                return None;
+            }
+            let username = url.username();
+            let password = url.password();
+            let mut href = url.href().to_owned_slice();
+            if !username.is_empty() || !password.is_empty() {
+                // The serialized href is `scheme://user:pass@host...`; the credentials have
+                // every `@` of their own encoded, so the first one ends them.
+                let authority = bun_core::strings::index_of(&href, b"://").map_or(0, |i| i + 3);
+                if let Some(at) = bun_core::strings::index_of_char_usize(&href[authority..], b'@') {
+                    href.drain(authority..=authority + at);
+                }
+            }
+            let mut registry = NpmRegistry {
+                url: href.into_boxed_slice(),
+                ..Default::default()
+            };
+            // WTF::URL serializes the credentials percent-encoded; `p@ss` comes back as `p%40ss`.
+            let decode = |s: &bun_core::String| -> Box<[u8]> {
+                bun_url::PercentEncoding::decode_lenient_alloc(&s.to_utf8())
+            };
+            if username.is_empty() {
+                registry.token = decode(&password);
+            } else {
+                registry.username = decode(&username);
+                registry.password = decode(&password);
+            }
+            Some(registry)
         }
 
         pub fn has_credentials(&self) -> bool {

@@ -934,10 +934,9 @@ impl<const SSL: bool> NewSocket<SSL> {
             return Ok(());
         }
         let handlers = this.get_handlers();
+        // The flush below runs even without a `drain` handler: the tail of an
+        // `end(data)` waits in `buffered_data_for_node_net` for this event.
         let callback = handlers.on_writable();
-        if callback.is_empty() {
-            return Ok(());
-        }
 
         // Hold the socket alive for the rest of the dispatch: `internal_flush`
         // and the drain callback can both re-enter JS and close it.
@@ -988,7 +987,10 @@ impl<const SSL: bool> NewSocket<SSL> {
             this.buffered_data_for_node_net.get().len()
         );
         // is not writable if we have buffered data or if we are already detached
-        if this.buffered_data_for_node_net.get().len() > 0 || this.socket.get().is_detached() {
+        if callback.is_empty()
+            || this.buffered_data_for_node_net.get().len() > 0
+            || this.socket.get().is_detached()
+        {
             return Ok(());
         }
 
@@ -2818,7 +2820,8 @@ impl<const SSL: bool> NewSocket<SSL> {
             return WriteResult::Success { wrote: 0, total: 0 };
         }
 
-        debug_assert!(self.buffered_data_for_node_net.get().len() == 0);
+        let ended = self.flags.get().contains(Flags::END_AFTER_FLUSH);
+        debug_assert!(ended || self.buffered_data_for_node_net.get().len() == 0);
         let mut encoding_value: JSValue = args[3];
         if args[2].is_string() {
             encoding_value = args[2];
@@ -2960,7 +2963,9 @@ impl<const SSL: bool> NewSocket<SSL> {
         }
 
         let socket = self.socket.get();
-        if socket.is_shutdown() || socket.is_closed() {
+        // `ended`: a prior `end(data)` is still draining its tail. Nothing
+        // more is accepted after `end()`.
+        if ended || socket.is_shutdown() || socket.is_closed() {
             return WriteResult::Success {
                 wrote: -1,
                 total: bytes.len(),
@@ -3232,13 +3237,20 @@ impl<const SSL: bool> NewSocket<SSL> {
 
         // `write_or_end` reaches `internal_flush`, which re-enters JS.
         let _guard = this.ref_guard();
-        let result = match this.write_or_end::<true>(global, args.mut_(), false) {
+        // The final chunk is accepted whole: the part the kernel does not take
+        // in one send waits in `buffered_data_for_node_net`, `on_writable`
+        // retries it, and the FIN follows once it drains.
+        let result = match this.write_or_end::<true>(global, args.mut_(), true) {
             WriteResult::Fail => JSValue::ZERO,
             WriteResult::Success { wrote, total } => {
-                if wrote >= 0 && usize::try_from(wrote).expect("int cast") == total {
-                    let _ = this.internal_flush();
+                if wrote < 0 {
+                    JSValue::js_number(wrote as f64)
+                } else {
+                    if usize::try_from(wrote).expect("int cast") == total {
+                        let _ = this.internal_flush();
+                    }
+                    JSValue::js_number(total as f64)
                 }
-                JSValue::js_number(wrote as f64)
             }
         };
         Ok(result)

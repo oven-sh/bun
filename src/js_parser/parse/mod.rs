@@ -1342,8 +1342,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             p.lexer.expect(T::TStringLiteral)?;
         }
 
-        // Import attributes ("with") and the deprecated import assertions ("assert")
-        // are treated identically. Only "assert" has a [no LineTerminator here] restriction.
+        // Only the deprecated "assert" form has a [no LineTerminator here] restriction.
         if p.lexer.token == T::TWith
             || (!p.lexer.has_newline_before && p.lexer.is_contextual_keyword(b"assert"))
         {

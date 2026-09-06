@@ -30,10 +30,11 @@ use crate::postgres::postgres_request as PostgresRequest;
 use crate::postgres::postgres_request::MessageType;
 use crate::postgres::postgres_sql_query::{self, RequestCounter, Status as QueryStatus};
 use crate::postgres::postgres_sql_statement::{Error as StatementError, Status as StatementStatus};
-use crate::postgres::sasl::SASLStatus;
+use crate::postgres::sasl::{ChannelBindingFlag, SASLStatus};
 use crate::shared::CachedStructure as PostgresCachedStructure;
 use crate::shared::connection_ctor_args::ConnectionCtorArgs;
 use bun_sql::postgres::AnyPostgresError;
+use bun_sql::postgres::ChannelBinding;
 use bun_sql::postgres::PostgresErrorOptions;
 use bun_sql::postgres::PostgresProtocol as protocol;
 use bun_sql::postgres::SSLMode;
@@ -154,6 +155,7 @@ pub struct PostgresSQLConnection {
     pub(crate) tls_config: jsc::api::ServerConfig::SSLConfig,
     pub(crate) tls_status: Cell<TLSStatus>,
     pub(crate) ssl_mode: SSLMode,
+    pub(crate) channel_binding: ChannelBinding,
 
     pub(crate) idle_timeout_interval_ms: u32,
     pub(crate) connection_timeout_ms: u32,
@@ -298,6 +300,25 @@ impl PostgresSQLConnection {
             AuthenticationState::Sasl(s) => Some(s),
             _ => None,
         }
+    }
+
+    fn tls_in_use(&self) -> bool {
+        matches!(self.socket.get(), Socket::SocketTls(_))
+    }
+
+    /// RFC 5929 `tls-server-end-point` binding data for the current TLS
+    /// session. `None` on a plaintext socket, when the peer sent no
+    /// certificate, or when its signature algorithm has no usable digest.
+    fn peer_certificate_hash(
+        &self,
+        out: &mut [u8; BoringSSL::c::EVP_MAX_MD_SIZE as usize],
+    ) -> Option<usize> {
+        let Socket::SocketTls(tls) = self.socket.get() else {
+            return None;
+        };
+        tls.ssl_mut()?
+            .peer_leaf_certificate()?
+            .tls_server_end_point_hash(out)
     }
 }
 
@@ -1158,6 +1179,10 @@ pub(crate) fn call(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsR
     let connection_timeout = arguments[12].to_int32();
     let max_lifetime = arguments[13].to_int32();
     let use_unnamed_prepared_statements = arguments[14].as_boolean();
+    let channel_binding = match callframe.argument(16) {
+        v if v.is_number() => ChannelBinding::from_int(v.to_int32()),
+        _ => ChannelBinding::Prefer,
+    };
 
     let ptr: *mut PostgresSQLConnection =
         bun_core::heap::into_raw(Box::new(PostgresSQLConnection {
@@ -1198,6 +1223,7 @@ pub(crate) fn call(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsR
                 TLSStatus::None
             }),
             ssl_mode: args.ssl_mode,
+            channel_binding,
             idle_timeout_interval_ms: u32::try_from(idle_timeout).expect("int cast"),
             connection_timeout_ms: u32::try_from(connection_timeout).expect("int cast"),
             flags: Cell::new(if use_unnamed_prepared_statements {
@@ -2582,7 +2608,7 @@ impl PostgresSQLConnection {
                 let auth = protocol::Authentication::decode_internal(&mut reader)?;
 
                 match &auth {
-                    protocol::Authentication::SASL => {
+                    protocol::Authentication::SASL(mechanisms) => {
                         // libpq: "duplicate SASL authentication request".
                         if !matches!(
                             self.authentication_state.get(),
@@ -2591,8 +2617,68 @@ impl PostgresSQLConnection {
                             debug!("duplicate AuthenticationSASL");
                             return Err(AnyPostgresError::UnexpectedMessage);
                         }
+
+                        let tls_in_use = self.tls_in_use();
+                        if self.channel_binding == ChannelBinding::Require && !tls_in_use {
+                            self.fail(
+                                b"channel binding required, but SSL not in use",
+                                AnyPostgresError::ChannelBindingRequired,
+                            );
+                            return Ok(());
+                        }
+
+                        // Mechanism selection follows libpq's pg_SASL_init:
+                        // SCRAM-SHA-256-PLUS whenever the connection is TLS,
+                        // the server offers it, and binding is not disabled;
+                        // otherwise SCRAM-SHA-256.
+                        let mut sasl = crate::postgres::sasl::SASL::default();
+                        let binding_allowed =
+                            tls_in_use && self.channel_binding != ChannelBinding::Disable;
+                        if binding_allowed && mechanisms.scram_sha_256_plus {
+                            match self.peer_certificate_hash(&mut sasl.peer_cert_hash) {
+                                Some(len) => {
+                                    sasl.peer_cert_hash_len = u8::try_from(len).expect("int cast");
+                                    sasl.channel_binding = ChannelBindingFlag::TlsServerEndPoint;
+                                }
+                                None => {
+                                    debug!("could not get the server certificate hash");
+                                    if self.channel_binding == ChannelBinding::Require {
+                                        self.fail(
+                                            b"channel binding required, but could not get the server certificate hash",
+                                            AnyPostgresError::ChannelBindingRequired,
+                                        );
+                                        return Ok(());
+                                    }
+                                    if !mechanisms.scram_sha_256 {
+                                        self.fail(
+                                            b"none of the server's SASL authentication mechanisms are supported",
+                                            AnyPostgresError::SASL_NO_KNOWN_MECHANISM,
+                                        );
+                                        return Ok(());
+                                    }
+                                }
+                            }
+                        } else if mechanisms.scram_sha_256 {
+                            if self.channel_binding == ChannelBinding::Require {
+                                self.fail(
+                                    b"channel binding is required, but server did not offer an authentication method that supports channel binding",
+                                    AnyPostgresError::ChannelBindingRequired,
+                                );
+                                return Ok(());
+                            }
+                            if binding_allowed {
+                                sasl.channel_binding = ChannelBindingFlag::SupportedNotOffered;
+                            }
+                        } else {
+                            self.fail(
+                                b"none of the server's SASL authentication mechanisms are supported",
+                                AnyPostgresError::SASL_NO_KNOWN_MECHANISM,
+                            );
+                            return Ok(());
+                        }
+                        let binding = sasl.channel_binding;
                         self.authentication_state
-                            .set(AuthenticationState::Sasl(Default::default()));
+                            .set(AuthenticationState::Sasl(sasl));
 
                         let mut mechanism_buf = [0u8; 128];
                         // `sasl` borrow ends before `self.writer()`/`self.flush_data()`
@@ -2603,18 +2689,25 @@ impl PostgresSQLConnection {
                         let mechanism = {
                             use std::io::Write as _;
                             let mut cursor = &mut mechanism_buf[..];
-                            let _ = write!(cursor, "n,,n=*,r={}", bstr::BStr::new(sasl.nonce()));
+                            let _ = write!(
+                                cursor,
+                                "{}n=*,r={}",
+                                bstr::BStr::new(binding.gs2_header()),
+                                bstr::BStr::new(sasl.nonce())
+                            );
                             let written = 128 - cursor.len();
                             mechanism_buf[written] = 0;
                             &mechanism_buf[..written]
                         };
                         let response = protocol::SASLInitialResponse {
-                            mechanism: Data::Temporary(bun_ptr::RawSlice::new(b"SCRAM-SHA-256")),
+                            mechanism: Data::Temporary(bun_ptr::RawSlice::new(
+                                binding.mechanism_name(),
+                            )),
                             data: Data::Temporary(bun_ptr::RawSlice::new(mechanism)),
                         };
 
                         response.write_internal(self.writer())?;
-                        debug!("SASL");
+                        debug!("SASL {}", bstr::BStr::new(binding.mechanism_name()));
                         self.flush_data();
                     }
                     protocol::Authentication::SASLContinue(cont) => {
@@ -2686,16 +2779,21 @@ impl PostgresSQLConnection {
                         .map_err(pg_err)?;
                         drop(server_salt_decoded_base64);
 
+                        let mut cbind_buf = [0u8; crate::postgres::sasl::CBIND_BASE64_MAX_LEN];
+                        let cbind_len = sasl.cbind_base64(&mut cbind_buf);
+                        let cbind = bstr::BStr::new(&cbind_buf[..cbind_len]);
+
                         let mut auth_string: Vec<u8> = Vec::new();
                         {
                             use std::io::Write as _;
                             let _ = write!(
                                 &mut auth_string,
-                                "n=*,r={},r={},s={},i={},c=biws,r={}",
+                                "n=*,r={},r={},s={},i={},c={},r={}",
                                 bstr::BStr::new(sasl.nonce()),
                                 bstr::BStr::new(cont.r.slice()),
                                 bstr::BStr::new(cont.s.slice()),
                                 bstr::BStr::new(cont.i.slice()),
+                                cbind,
                                 bstr::BStr::new(cont.r.slice()),
                             );
                         }
@@ -2727,7 +2825,8 @@ impl PostgresSQLConnection {
                             use std::io::Write as _;
                             let _ = write!(
                                 &mut payload,
-                                "c=biws,r={},p={}",
+                                "c={},r={},p={}",
+                                cbind,
                                 bstr::BStr::new(cont.r.slice()),
                                 bstr::BStr::new(&client_key_xor_base64_buf[..xor_base64_len]),
                             );
@@ -2781,6 +2880,9 @@ impl PostgresSQLConnection {
                             );
                         } else {
                             debug!("SASLFinal - SASL Server signature match");
+                            if sasl.channel_binding == ChannelBindingFlag::TlsServerEndPoint {
+                                self.update_flags(|f| f.insert(ConnectionFlags::CHANNEL_BOUND));
+                            }
                             self.authentication_state.with_mut(|s| s.zero());
                         }
                     }
@@ -2797,6 +2899,15 @@ impl PostgresSQLConnection {
                         ) {
                             debug!("AuthenticationOk before SASL exchange completed");
                             return Err(AnyPostgresError::UnexpectedMessage);
+                        }
+                        if self.channel_binding == ChannelBinding::Require
+                            && !self.flags.get().contains(ConnectionFlags::CHANNEL_BOUND)
+                        {
+                            self.fail(
+                                b"channel binding required, but server authenticated client without channel binding",
+                                AnyPostgresError::ChannelBindingRequired,
+                            );
+                            return Ok(());
                         }
                         debug!("Authentication OK");
                         self.authentication_state.with_mut(|s| s.zero());
@@ -2818,6 +2929,13 @@ impl PostgresSQLConnection {
                             debug!("duplicate AuthenticationCleartextPassword");
                             return Err(AnyPostgresError::UnexpectedMessage);
                         }
+                        if self.channel_binding == ChannelBinding::Require {
+                            self.fail(
+                                b"channel binding required but not supported by server's authentication request",
+                                AnyPostgresError::ChannelBindingRequired,
+                            );
+                            return Ok(());
+                        }
                         debug!("ClearTextPassword");
                         let response = protocol::PasswordMessage {
                             // password is a valid slice into options_buf.
@@ -2837,6 +2955,13 @@ impl PostgresSQLConnection {
                         ) {
                             debug!("duplicate AuthenticationMD5Password");
                             return Err(AnyPostgresError::UnexpectedMessage);
+                        }
+                        if self.channel_binding == ChannelBinding::Require {
+                            self.fail(
+                                b"channel binding required but not supported by server's authentication request",
+                                AnyPostgresError::ChannelBindingRequired,
+                            );
+                            return Ok(());
                         }
                         debug!("MD5Password");
                         // Format is: md5 + md5(md5(password + username) + salt)

@@ -27,8 +27,14 @@ macro_rules! opaque {
 /// `#define EVP_MAX_MD_SIZE 64` — SHA-512 is the longest digest.
 pub const EVP_MAX_MD_SIZE: c_int = 64;
 
+/// `#define NID_undef 0`
+pub(crate) const NID_undef: c_int = 0;
+/// `#define NID_md5 4`
+pub(crate) const NID_md5: c_int = 4;
 /// `#define NID_commonName 13`
 pub(crate) const NID_commonName: c_int = 13;
+/// `#define NID_sha1 64`
+pub(crate) const NID_sha1: c_int = 64;
 /// `#define NID_subject_alt_name 85`
 pub(crate) const NID_subject_alt_name: c_int = 85;
 
@@ -413,6 +419,45 @@ impl X509 {
         }
     }
 
+    /// The RFC 5929 §4.1 `tls-server-end-point` channel binding data: the
+    /// certificate's DER encoding hashed with the digest of its signature
+    /// algorithm, where MD5 and SHA-1 are replaced by SHA-256. Returns the
+    /// digest length, or `None` when the signature algorithm has no usable
+    /// digest (for example RSASSA-PSS or Ed25519).
+    pub fn tls_server_end_point_hash(
+        &self,
+        out: &mut [u8; EVP_MAX_MD_SIZE as usize],
+    ) -> Option<usize> {
+        // SAFETY: `self` is a live certificate; `out` is writable for
+        // `EVP_MAX_MD_SIZE` bytes, the documented upper bound of `X509_digest`.
+        unsafe {
+            let sig_nid = X509_get_signature_nid(self);
+            if sig_nid == NID_undef {
+                return None;
+            }
+            let mut digest_nid: c_int = NID_undef;
+            if OBJ_find_sigid_algs(sig_nid, &raw mut digest_nid, core::ptr::null_mut()) != 1
+                || digest_nid == NID_undef
+            {
+                return None;
+            }
+            let md = match digest_nid {
+                NID_md5 | NID_sha1 => EVP_sha256(),
+                nid => EVP_get_digestbynid(nid),
+            };
+            if md.is_null() {
+                return None;
+            }
+            let mut len: c_uint = 0;
+            if X509_digest(self, md, out.as_mut_ptr(), &raw mut len) != 1 {
+                return None;
+            }
+            usize::try_from(len)
+                .ok()
+                .filter(|n| *n > 0 && *n <= out.len())
+        }
+    }
+
     /// Iterates this certificate's Subject Common Names in order.
     pub fn common_names(&mut self) -> CommonNames<'_> {
         // SAFETY: `self` is a live certificate; a null subject yields an
@@ -669,6 +714,19 @@ unsafe extern "C" {
     pub fn d2i_X509(out: *mut *mut X509, inp: *mut *const u8, len: c_long) -> *mut X509;
     pub fn i2d_X509(x: *mut X509, outp: *mut *mut u8) -> c_int;
     pub fn X509_free(x509: *mut X509);
+    pub fn X509_get_signature_nid(x509: *const X509) -> c_int;
+    pub fn X509_digest(
+        x509: *const X509,
+        md: *const EVP_MD,
+        out: *mut u8,
+        out_len: *mut c_uint,
+    ) -> c_int;
+    pub fn OBJ_find_sigid_algs(
+        sign_nid: c_int,
+        out_digest_nid: *mut c_int,
+        out_pkey_nid: *mut c_int,
+    ) -> c_int;
+    pub fn EVP_get_digestbynid(nid: c_int) -> *const EVP_MD;
     pub fn X509_get_subject_name(x509: *const X509) -> *mut X509_NAME;
     pub fn X509_get_ext_by_NID(x: *const X509, nid: c_int, lastpos: c_int) -> c_int;
     pub fn X509_get_ext(x: *const X509, loc: c_int) -> *mut X509_EXTENSION;

@@ -11,6 +11,45 @@ const SERVER_SIGNATURE_BASE64_LEN: usize =
 
 const SALTED_PASSWORD_BYTE_LEN: usize = 32;
 
+/// RFC 5802 §7 GS2 header flag: what the client tells the server about
+/// channel binding in the client-first-message.
+#[derive(Copy, Clone, Eq, PartialEq, Debug)]
+pub enum ChannelBindingFlag {
+    /// `n,,`: the client does not support channel binding (no TLS, or
+    /// `channel_binding=disable`).
+    NotSupported,
+    /// `y,,`: the client supports channel binding but the server did not
+    /// offer `SCRAM-SHA-256-PLUS`. The server detects a downgrade from this.
+    SupportedNotOffered,
+    /// `p=tls-server-end-point,,`: `SCRAM-SHA-256-PLUS` with the peer
+    /// certificate hash as the binding data.
+    TlsServerEndPoint,
+}
+
+impl ChannelBindingFlag {
+    pub(crate) fn gs2_header(self) -> &'static [u8] {
+        match self {
+            Self::NotSupported => b"n,,",
+            Self::SupportedNotOffered => b"y,,",
+            Self::TlsServerEndPoint => b"p=tls-server-end-point,,",
+        }
+    }
+
+    pub(crate) fn mechanism_name(self) -> &'static [u8] {
+        match self {
+            Self::TlsServerEndPoint => b"SCRAM-SHA-256-PLUS",
+            _ => b"SCRAM-SHA-256",
+        }
+    }
+}
+
+/// RFC 5802 §5.1 `c=` attribute: base64 of the GS2 header followed by the
+/// channel binding data (empty unless `TlsServerEndPoint`). The header is at
+/// most 24 bytes and the certificate hash at most `EVP_MAX_MD_SIZE`.
+pub(crate) const CBIND_INPUT_MAX_LEN: usize = 24 + EVP_MAX_MD_SIZE;
+pub(crate) const CBIND_BASE64_MAX_LEN: usize =
+    bun_base64::encode_len_from_size(CBIND_INPUT_MAX_LEN);
+
 pub struct SASL {
     pub(crate) nonce_base64_bytes: [u8; NONCE_BASE64_LEN],
     pub(crate) nonce_len: u8,
@@ -20,6 +59,10 @@ pub struct SASL {
 
     pub(crate) salted_password_bytes: [u8; SALTED_PASSWORD_BYTE_LEN],
     pub(crate) salted_password_created: bool,
+
+    pub(crate) channel_binding: ChannelBindingFlag,
+    pub(crate) peer_cert_hash: [u8; EVP_MAX_MD_SIZE],
+    pub(crate) peer_cert_hash_len: u8,
 
     pub(crate) status: SASLStatus,
 }
@@ -33,6 +76,9 @@ impl Default for SASL {
             server_signature_len: 0,
             salted_password_bytes: [0; SALTED_PASSWORD_BYTE_LEN],
             salted_password_created: false,
+            channel_binding: ChannelBindingFlag::NotSupported,
+            peer_cert_hash: [0; EVP_MAX_MD_SIZE],
+            peer_cert_hash_len: 0,
             status: SASLStatus::Init,
         }
     }
@@ -141,6 +187,20 @@ impl SASL {
         // SAFETY: engine is null (default).
         unsafe { SHA256::hash(client_key, &mut sha_digest, core::ptr::null_mut()) };
         hmac(&sha_digest, auth_string).unwrap()
+    }
+
+    /// Writes the `c=` attribute value into `out` and returns its length.
+    pub(crate) fn cbind_base64(&self, out: &mut [u8; CBIND_BASE64_MAX_LEN]) -> usize {
+        let mut input = [0u8; CBIND_INPUT_MAX_LEN];
+        let header = self.channel_binding.gs2_header();
+        input[..header.len()].copy_from_slice(header);
+        let mut len = header.len();
+        if self.channel_binding == ChannelBindingFlag::TlsServerEndPoint {
+            let hash = &self.peer_cert_hash[..self.peer_cert_hash_len as usize];
+            input[len..len + hash.len()].copy_from_slice(hash);
+            len += hash.len();
+        }
+        bun_base64::encode(out, &input[..len])
     }
 
     pub(crate) fn nonce(&mut self) -> &[u8] {

@@ -943,6 +943,22 @@ const sql = new SQL("postgres://user:password@localhost/mydb?sslmode=prefer");
 const sql = new SQL("postgres://user:password@localhost/mydb?sslmode=verify-full");
 ```
 
+### Channel binding (PostgreSQL)
+
+Over TLS, Bun authenticates with `SCRAM-SHA-256-PLUS` (RFC 5802 channel binding, `tls-server-end-point`) when the server offers it. This ties the password exchange to the server's certificate, so a relay that terminates TLS with its own certificate cannot complete the login. The `channel_binding` parameter follows libpq:
+
+| Value     | Description                                                                                                        |
+| --------- | ------------------------------------------------------------------------------------------------------------------ |
+| `prefer`  | Use channel binding when the connection is TLS and the server offers `SCRAM-SHA-256-PLUS`. Default.                |
+| `require` | Fail with `ERR_POSTGRES_CHANNEL_BINDING_REQUIRED` unless the server authenticates the client with channel binding. |
+| `disable` | Never use channel binding.                                                                                         |
+
+```ts
+const sql = new SQL("postgres://user:password@db.example.com/mydb?sslmode=require&channel_binding=require");
+```
+
+`PGCHANNELBINDING` in the environment sets the default, and `?channel_binding=` in the URL overrides it.
+
 ---
 
 ## Connection Pooling
@@ -1144,15 +1160,17 @@ try {
 
 ### Authentication Errors
 
-| Authentication Errors                            | Description                              |
-| ------------------------------------------------ | ---------------------------------------- |
-| `ERR_POSTGRES_AUTHENTICATION_FAILED_PBKDF2`      | Password authentication failed           |
-| `ERR_POSTGRES_UNKNOWN_AUTHENTICATION_METHOD`     | Server requested unknown auth method     |
-| `ERR_POSTGRES_UNSUPPORTED_AUTHENTICATION_METHOD` | Server requested unsupported auth method |
-| `ERR_POSTGRES_INVALID_SERVER_KEY`                | Invalid server key during authentication |
-| `ERR_POSTGRES_INVALID_SERVER_SIGNATURE`          | Invalid server signature                 |
-| `ERR_POSTGRES_SASL_SIGNATURE_INVALID_BASE64`     | Invalid SASL signature encoding          |
-| `ERR_POSTGRES_SASL_SIGNATURE_MISMATCH`           | SASL signature verification failed       |
+| Authentication Errors                            | Description                                                                                                                                        |
+| ------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `ERR_POSTGRES_AUTHENTICATION_FAILED_PBKDF2`      | Password authentication failed                                                                                                                     |
+| `ERR_POSTGRES_UNKNOWN_AUTHENTICATION_METHOD`     | Server requested unknown auth method                                                                                                               |
+| `ERR_POSTGRES_UNSUPPORTED_AUTHENTICATION_METHOD` | Server requested unsupported auth method                                                                                                           |
+| `ERR_POSTGRES_INVALID_SERVER_KEY`                | Invalid server key during authentication                                                                                                           |
+| `ERR_POSTGRES_INVALID_SERVER_SIGNATURE`          | Invalid server signature                                                                                                                           |
+| `ERR_POSTGRES_SASL_NO_KNOWN_MECHANISM`           | The server offered no supported SASL mechanism (`SCRAM-SHA-256` or `SCRAM-SHA-256-PLUS`)                                                           |
+| `ERR_POSTGRES_SASL_SIGNATURE_INVALID_BASE64`     | Invalid SASL signature encoding                                                                                                                    |
+| `ERR_POSTGRES_SASL_SIGNATURE_MISMATCH`           | SASL signature verification failed                                                                                                                 |
+| `ERR_POSTGRES_CHANNEL_BINDING_REQUIRED`          | `channel_binding=require` was set but the server did not authenticate with channel binding (no TLS, no `SCRAM-SHA-256-PLUS`, or a non-SASL method) |
 
 ### Query Errors
 

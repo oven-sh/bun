@@ -337,11 +337,8 @@ impl<'a> Printer<'a> {
             .map(|resolved| resolved.url)
     }
 
-    /// The url to print for an import record, and whether it is a bundler
-    /// placeholder (a unique key) that the bundler replaces with the final
-    /// output path after printing. A placeholder has to be printed inside a
-    /// quoted string: the final path is spliced in verbatim, and an unquoted
-    /// `url()` cannot hold a space, a quote or a parenthesis.
+    /// The url to print for an import record. `is_placeholder` means the
+    /// bundler replaces it with the final output path after printing.
     pub(crate) fn resolve_import_record_url(
         &mut self,
         import_record_idx: u32,

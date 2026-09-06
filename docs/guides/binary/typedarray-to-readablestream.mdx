@@ -31,8 +31,8 @@ const stream = blob.stream();
 To control the chunk size yourself, enqueue slices of the `Uint8Array`.
 
 ```ts
-const arr = new Uint8Array(64);
-const chunkSize = 1024;
+const arr = new Uint8Array(64 * 1024); // 64 KB
+const chunkSize = 16 * 1024; // four 16 KB chunks
 
 const stream = new ReadableStream({
   start(controller) {

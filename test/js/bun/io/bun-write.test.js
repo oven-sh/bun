@@ -627,6 +627,41 @@ const IS_UV_FS_COPYFILE_DISABLED =
         content: original,
       });
     });
+
+    // A Bun.file(fd) source is never opened by Bun, so the first thing that
+    // can fail is the fstat. Runs in a fresh process so the fd is known to be
+    // closed. Windows validates an fd source with GetFileType() before either
+    // copy path runs, and its flag-only read/write fallback has no fstat step.
+    it.skipIf(isWindows)("closed file descriptor source", async () => {
+      using dir = tempDir("bun-write-bad-fd-src", { "important.db": original });
+      const destPath = join(String(dir), "important.db");
+      const fixture = `
+        const fs = require("fs");
+        const fd = 987;
+        let precondition;
+        try {
+          fs.fstatSync(fd);
+          precondition = "fd " + fd + " is unexpectedly open";
+        } catch (e) {
+          precondition = e.code;
+        }
+        const outcome = await Bun.write(${JSON.stringify(destPath)}, Bun.file(fd)).then(
+          value => ({ resolved: value }),
+          error => ({ rejected: error.code, syscall: error.syscall }),
+        );
+        console.log(JSON.stringify({ precondition, outcome }));
+      `;
+      await using proc = Bun.spawn({ cmd: [bunExe(), "-e", fixture], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      expect({ ...JSON.parse(stdout.trim() || "{}"), stderr, content: fs.readFileSync(destPath, "utf8") }).toEqual({
+        precondition: "EBADF",
+        outcome: { rejected: "EBADF", syscall: "fstat" },
+        stderr: "",
+        content: original,
+      });
+      expect(exitCode).toBe(0);
+    });
   });
 
   it("Bun.file(0) survives GC", async () => {

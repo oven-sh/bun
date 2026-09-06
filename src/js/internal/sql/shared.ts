@@ -1705,8 +1705,7 @@ function parseConnectionDetailsFromOptionsOrEnvironment(
       resolvedUrl = optionsUrl;
     }
   } else {
-    // SQLite or unknown adapter - check both, filename first (more specific).
-    // { adapter: "sqlite", url } must open the same database that { url } alone does.
+    // SQLite or unknown adapter - filename first (more specific), then url
     if ("filename" in options && (optionsFilename = options.filename)) {
       resolvedUrl = optionsFilename;
     } else if ("url" in options && (optionsUrl = options.url)) {

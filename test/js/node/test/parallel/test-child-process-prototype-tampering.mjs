@@ -64,7 +64,9 @@ for (const shellCommandArgument of ['-L && echo "tampered"']) {
   let cmdExitCode = '';
 
   const program = cp.spawn(cmd, [shellCommandArgument], { cwd: expectedCWD });
-  program.stderr.on('data', common.mustCall());
+  // BusyBox pwd writes the error and the usage text in separate chunks, so
+  // the stream may emit more than one 'data' event on Alpine.
+  program.stderr.on('data', common.mustCallAtLeast(1));
   program.stdout.on('data', common.mustNotCall());
 
   program.on('exit', common.mustCall((code) => {

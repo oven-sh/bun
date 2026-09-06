@@ -641,11 +641,16 @@ impl MultiPartUpload {
         let _guard = unsafe { RefPtr::from_raw(this) };
         // SAFETY: `this` is live for at least the guard's duration.
         let self_ = unsafe { &*this };
-        if self_.state.get() == State::Finished {
-            return Ok(());
-        }
+        // `fail` ran while this request was in flight (the writer was
+        // collected, or the source stream errored). Its deref already
+        // released the owner ref, so there is nothing to finish here, but an
+        // upload the server did create must still be aborted.
+        let failed = self_.state.get() == State::Finished;
         match result {
             S3DownloadResult::Failure(err) => {
+                if failed {
+                    return Ok(());
+                }
                 scoped_log!(
                     S3MultiPartUpload,
                     "startMultiPartRequestResult {} failed {}: {}",
@@ -678,6 +683,20 @@ impl MultiPartUpload {
                 if let Some(upload_id) = upload_id {
                     self_.upload_id.set(upload_id);
                 }
+                if failed {
+                    if valid {
+                        scoped_log!(
+                            S3MultiPartUpload,
+                            "startMultiPartRequestResult {} aborting after fail id: {}",
+                            BStr::new(&self_.path),
+                            BStr::new(self_.upload_id.get())
+                        );
+                        // The rollback callback releases this ref.
+                        self_.ref_();
+                        self_.rollback_multi_part_request()?;
+                    }
+                    return Ok(());
+                }
                 if !valid {
                     // Unknown type of response error from AWS
                     scoped_log!(
@@ -702,10 +721,15 @@ impl MultiPartUpload {
                 self_.drain_enqueued_parts(0)
             }
             // this is "unreachable" but we cover in case AWS returns 404
-            S3DownloadResult::NotFound(_) => self_.fail(S3Error {
-                code: b"UnknownError",
-                message: b"Failed to initiate multipart upload",
-            }),
+            S3DownloadResult::NotFound(_) => {
+                if failed {
+                    return Ok(());
+                }
+                self_.fail(S3Error {
+                    code: b"UnknownError",
+                    message: b"Failed to initiate multipart upload",
+                })
+            }
         }
     }
 

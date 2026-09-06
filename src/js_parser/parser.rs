@@ -1313,9 +1313,7 @@ pub struct DeferredErrors {
     pub(crate) invalid_expr_default_value: Option<bun_ast::Range>,
     pub(crate) invalid_expr_after_question: Option<bun_ast::Range>,
 
-    /// A parenthesized assignment used as a whole item, such as `[(a = 1)] = []`.
-    /// It is an error only if the literal turns out to be a pattern. Without
-    /// the parentheses the `= 1` is a default value.
+    /// A parenthesized assignment used as a whole item: `[(a = 1)] = []`.
     pub(crate) invalid_pattern_paren_assign: Option<bun_ast::Range>,
 }
 

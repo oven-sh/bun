@@ -78,10 +78,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             )?
         };
 
-        // "[(a = 1)] = []" is not "[a = 1] = []": a parenthesized assignment is
-        // not a valid destructuring target. The enclosing literal reports it if
-        // it turns out to be a pattern. `parse_expr_common` clears it again if
-        // a suffix such as "(a = {}).b" makes the item a valid target.
+        // "[(a = 1)] = []" is not the pattern "[a = 1] = []".
         if let Some(errors) = errors
             && let ExprData::EBinary(bin) = &value.data
             && bin.op == OpCode::BinAssign

@@ -4050,7 +4050,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         invalid_loc,
                         is_spread,
                     );
-                    // An object rest binding must be an identifier: "({ ...[a] }) => 0"
+                    // "({ ...[a] }) => 0"
                     if is_spread
                         && let Some(binding) = &tup.binding
                         && matches!(binding.data, js_ast::b::B::BArray(_) | js_ast::b::B::BObject(_))
@@ -4156,8 +4156,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
-    /// Logs the errors that apply once an array or object literal is known to
-    /// be an assignment pattern.
+    /// The literal turned out to be an assignment pattern.
     pub(crate) fn log_pattern_errors(&mut self, errors: &DeferredErrors) {
         if let Some(r) = errors.invalid_pattern_paren_assign {
             self.log()

@@ -78,8 +78,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             .as_deref()
             .and_then(|errors| errors.invalid_pattern_paren_assign);
         *expr = self.parse_prefix(level, errors.as_deref_mut(), flags)?;
-        // The prefix that recorded a parenthesized assignment, if any: the
-        // parenthesized assignment itself or the literal it was merged from.
         let paren_assign_prefix = match errors.as_deref() {
             Some(errors) if errors.invalid_pattern_paren_assign != paren_assign_before => {
                 Some(Self::pattern_item_ptr(expr))
@@ -108,9 +106,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         self.parse_suffix(expr, level, errors.as_deref_mut(), flags)?;
 
-        // A parenthesized assignment is only an invalid pattern item when it is
-        // the whole item, or the whole item before a default value. A suffix
-        // makes it a valid target: "[(a = {}).b] = [1]".
+        // "[(a = 1)] = []" is an error, "[(a = {}).b] = [1]" is not.
         if let (Some(errors), Some(prefix)) = (errors, paren_assign_prefix) {
             let is_whole_item = Self::pattern_item_ptr(expr) == prefix
                 || matches!(&expr.data, js_ast::ExprData::EBinary(bin)

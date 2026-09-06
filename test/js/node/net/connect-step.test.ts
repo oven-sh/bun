@@ -3,9 +3,10 @@ import { isWindows, tmpdirSync } from "harness";
 import { connect, createConnection, createServer } from "node:net";
 import { join } from "node:path";
 
-// The lookup-result to connect step mirrors node's TCPWrap/PipeWrap: one
-// connect per handle, the address must parse in the family the lookup named,
-// and a pipe connect failure is reported on the next loop turn.
+// The lookup-result to connect step mirrors node's TCPWrap/PipeWrap: the
+// address must parse in the family the lookup named, and a pipe connect
+// failure is reported on the next loop turn. The one-connect-per-handle
+// (EALREADY) cases are in socket-reconnect-live.test.ts.
 describe.concurrent("connect step semantics", () => {
   const socketDir = tmpdirSync();
 
@@ -19,42 +20,6 @@ describe.concurrent("connect step semantics", () => {
     const port = (server.address() as import("node:net").AddressInfo).port;
     return { server, port, connections: () => connections };
   }
-
-  it("a lookup callback that fires twice fails the second connect with EALREADY", async () => {
-    const { server, port, connections } = await listenCounting();
-    try {
-      const events: string[] = [];
-      const err = await new Promise<NodeJS.ErrnoException>(resolve => {
-        const c = connect({
-          host: "example.invalid",
-          port,
-          autoSelectFamily: false,
-          lookup(_host, _opts, cb) {
-            cb(null, "127.0.0.1", 4);
-            cb(null, "127.0.0.1", 4);
-          },
-        });
-        c.on("connect", () => {
-          events.push("connect");
-          c.destroy();
-          resolve(Object.assign(new Error("connected"), { code: "CONNECTED" }));
-        });
-        c.on("error", e => {
-          events.push("error");
-          c.once("close", () => {
-            events.push("close");
-            resolve(e);
-          });
-        });
-      });
-      expect(err.code).toBe("EALREADY");
-      expect(err.syscall).toBe("connect");
-      expect(events).toEqual(["error", "close"]);
-      expect(connections()).toBeLessThanOrEqual(1);
-    } finally {
-      server.close();
-    }
-  });
 
   it("an address that does not parse in the looked-up family fails with EINVAL and opens no connection", async () => {
     const { server, port, connections } = await listenCounting();

@@ -407,8 +407,14 @@ describe("web worker", () => {
     for (const [name, body] of [
       ["throw at evaluation", `throw new Error("WEB-WORKER-UNCAUGHT")`],
       ["rejection at evaluation", `Promise.reject(new Error("WEB-WORKER-UNCAUGHT"))`],
-      ["throw in a timer", `setInterval(() => {}, 1000); setTimeout(() => { throw new Error("WEB-WORKER-UNCAUGHT") }, 1)`],
-      ["rejection in a timer", `setInterval(() => {}, 1000); setTimeout(() => { Promise.reject(new Error("WEB-WORKER-UNCAUGHT")) }, 1)`],
+      [
+        "throw in a timer",
+        `setInterval(() => {}, 1000); setTimeout(() => { throw new Error("WEB-WORKER-UNCAUGHT") }, 1)`,
+      ],
+      [
+        "rejection in a timer",
+        `setInterval(() => {}, 1000); setTimeout(() => { Promise.reject(new Error("WEB-WORKER-UNCAUGHT")) }, 1)`,
+      ],
     ]) {
       test.concurrent(`with no listener is reported to the parent (${name})`, async () => {
         await using proc = Bun.spawn({

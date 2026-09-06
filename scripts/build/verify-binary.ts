@@ -384,7 +384,7 @@ function verifyElf(spec: VerifySpec): void {
     const bindNow = /BIND_NOW|\bNOW\b/.test(info.match(/DynamicSection \[[\s\S]*?\n\]/)?.[0] ?? "");
     if (bindNow !== expect.elf.bindNow) violations.push(`BIND_NOW ${bindNow}, expected ${expect.elf.bindNow}`);
     const props = [type, "nx-stack", "no-rwx", ...(relro ? ["relro"] : []), ...(bindNow ? ["bind-now"] : [])];
-    report("hardening", `${props.length} properties`, violations, props);
+    report("hardening", `${props.length} hardening properties`, violations, props);
   }
 
   // 8. debug info / symtab
@@ -523,7 +523,7 @@ function verifyMachO(spec: VerifySpec): void {
       if (/w/.test(maxprot) && /x/.test(maxprot)) violations.push(`${segname} is RWX`);
     }
     const props = [...flagLine.trim().split(/\s+/).slice(7), ...seen];
-    report("hardening", `${props.length} properties`, violations, props);
+    report("hardening", `${props.length} hardening properties`, violations, props);
   }
 }
 
@@ -585,7 +585,7 @@ function verifyPE(spec: VerifySpec): void {
     if (expect.minOSVersion !== undefined && ver !== expect.minOSVersion)
       violations.push(`subsystem version ${ver}, expected ${expect.minOSVersion}`);
     const props = [...chars, `subsystem ${ver}`];
-    report("hardening", `${props.length} properties`, violations, props);
+    report("hardening", `${props.length} hardening properties`, violations, props);
   }
 }
 
@@ -670,7 +670,7 @@ function verifyDuplicates(nm: string, rspfile: string, reportPath: string): numb
   for (const [name, sizes] of odr) lines.push(name, ...[...sizes].map(([sz, o]) => `    size 0x${sz} in ${o}`));
   writeFileSync(reportPath, lines.join("\n") + "\n");
   console.log(
-    `duplicate symbols: ${scanned} definitions across ${inputs.length} inputs${dups.length ? ` — ${dups.length} duplicated` : ""}`,
+    `${dups.length} duplicate strong symbols${dups.length ? ` in ${scanned} definitions across ${inputs.length} inputs` : ""}`,
   );
   for (const [name, objs] of dups.slice(0, 50)) console.log(`  ${name}\n${objs.map(o => `      ${o}`).join("\n")}`);
   if (dups.length > 50) console.log(`  … ${dups.length - 50} more in ${reportPath}`);
@@ -693,7 +693,7 @@ function main(argv: string[]): number {
     let failed = 0;
     for (const r of results) {
       console.log(
-        `${r.name}: ${r.summary}${r.violations.length ? ` — ${r.violations.length} violation(s)` : ""} (${formatMs(r.ms)})`,
+        `${r.summary}${r.violations.length ? ` — ${r.name}: ${r.violations.length} violation(s)` : ""} (${formatMs(r.ms)})`,
       );
       if (r.violations.length > 0) {
         failed++;

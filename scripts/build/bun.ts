@@ -935,14 +935,14 @@ function emitClassInfoCheck(n: Ninja, cfg: Config, exe: string, exeName: string)
   const stamp = classInfoStamp(cfg, exeName);
   if (script === undefined || stamp === undefined) return [];
   // NM: the toolchain's llvm-nm (the script otherwise searches PATH). On
-  // success the script's report is reduced to one `ClassInfo uniqueness: N
-  // ClassInfo` line like the other checks; on failure it is shown whole.
+  // success the script's report is reduced to one `N distinct ClassInfo`
+  // line like the other checks; on failure it is shown whole.
   // ($$1/$$2: ninja's escape for the shell's positional parameters.)
   const nmEnv = cfg.nm === undefined ? "" : ` --env=NM=${quote(cfg.nm, false)}`;
   n.rule("classinfo_check", {
     command:
       `${cfg.jsRuntime} ${quote(streamPath, false)} check --label=${exeName} --elapsed --stamp=$out${nmEnv} sh -c ` +
-      `'python3 ${quote(script, false)} "$$1" > "$$2.log" 2>&1 && sed -n "s/^check-classinfo-uniqueness: [^:]*: \\([0-9]*\\) ClassInfo.*/ClassInfo uniqueness: \\1 ClassInfo/p" "$$2.log" || { cat "$$2.log"; exit 1; }' sh $in $out`,
+      `'python3 ${quote(script, false)} "$$1" > "$$2.log" 2>&1 && sed -n "s/^check-classinfo-uniqueness: [^:]*: \\([0-9]*\\) ClassInfo.*/\\1 distinct ClassInfo/p" "$$2.log" || { cat "$$2.log"; exit 1; }' sh $in $out`,
     description: `check ${exeName} JSC ClassInfo uniqueness`,
   });
   n.build({ outputs: [stamp], rule: "classinfo_check", inputs: [exe], implicitInputs: [script] });

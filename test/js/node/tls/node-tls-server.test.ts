@@ -2741,7 +2741,11 @@ async function runBadRecordExchange(server: Server, proxy: net.Server, inject: (
 
   inject(BAD_RECORD);
 
-  const [err] = await serverError;
+  // A regression closes without an error: fail on the close, not the timeout.
+  const closedWithoutError = (close: Promise<boolean>) =>
+    close.then(hadError => Promise.reject(new Error(`closed without an error (hadError=${hadError})`)));
+
+  const [err] = await Promise.race([serverError, closedWithoutError(serverClose)]);
   expect(err.code).toBe("ERR_SSL_DECRYPTION_FAILED_OR_BAD_RECORD_MAC");
   expect(err.library).toBe("SSL routines");
   expect(err.reason).toBe("DECRYPTION_FAILED_OR_BAD_RECORD_MAC");
@@ -2749,7 +2753,7 @@ async function runBadRecordExchange(server: Server, proxy: net.Server, inject: (
   expect(await serverClose).toBe(true);
 
   // The server's fatal alert reaches the client as its own SSL error.
-  const [clientErr] = await clientError;
+  const [clientErr] = await Promise.race([clientError, closedWithoutError(clientClose)]);
   expect(clientErr.code).toBe("ERR_SSL_SSLV3_ALERT_BAD_RECORD_MAC");
   expect(await clientClose).toBe(true);
 }

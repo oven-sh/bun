@@ -401,6 +401,20 @@ function tlsHandshakeError(verifyError) {
   return new ConnResetException("socket hang up");
 }
 
+// A fatal TLS protocol error after the handshake (EPROTO carrying the OpenSSL
+// reason, see NewSocket::on_close). Node destroys the socket with the
+// ERR_SSL_* error, listener or not. A write parked on the native drain can
+// never complete: fail it with the same error, like the native error dispatch.
+function destroyWithTLSError(self, err) {
+  const error = tlsHandshakeError(err);
+  const pendingWrite = self[kwriteCallback];
+  if (pendingWrite) {
+    self[kwriteCallback] = null;
+    pendingWrite(error);
+  }
+  self.destroy(error);
+}
+
 const SocketHandlers: SocketHandler = {
   close(socket, err) {
     const self = socket.data;
@@ -644,10 +658,8 @@ function SocketEmitEndNT(self, _err?) {
   // merely called): a peer reset while queued data is still unflushed is the
   // peer aborting mid-transfer and must surface (test-net-error-twice).
   const teardownNoise = self[kended] && self.writableFinished;
-  // Fatal post-handshake TLS error (EPROTO with the OpenSSL reason): node
-  // destroys the socket with the ERR_SSL_* error, listener or not.
   if (_err && _err.code === "EPROTO" && !self.destroyed && !self._hadError) {
-    self.destroy(tlsHandshakeError(_err));
+    destroyWithTLSError(self, _err);
     return;
   }
   // _hadError: the failure already reached JS through the error dispatch
@@ -1334,9 +1346,8 @@ const SocketHandlers2: SocketHandler<NonNullable<import("node:net").Socket["_han
     if (err) $debug(err);
     if (self[kclosed]) return;
     self[kclosed] = true;
-    // Fatal post-handshake TLS error: same as SocketEmitEndNT.
     if (err && err.code === "EPROTO" && !self.destroyed && !self._hadError && socket === self._handle) {
-      self.destroy(tlsHandshakeError(err));
+      destroyWithTLSError(self, err);
       return;
     }
     // A received RST surfacing as ECONNRESET with the close is not a clean

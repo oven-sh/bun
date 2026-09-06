@@ -388,7 +388,7 @@ it("treats a bare <file>.tsx / <file>.jsx that exists in the cwd as a component,
     });
 
     const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(err).toContain(`No component export found in "${file}"`);
+    expect(err).toContain(`No component export found in "${join(x_dir, file)}"`);
     expect(err).not.toContain("create-");
     expect(exitCode).toBe(1);
   }

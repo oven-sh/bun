@@ -3146,11 +3146,15 @@ it.concurrent(
 // never timed out. Both are separate Windows issues.
 describe.concurrent.skipIf(isWindows)("idleTimeout and a slow reader", () => {
   const TOTAL = 64 << 20;
+  // uSockets keeps timeouts in 4 s ticks ((seconds + 3) >> 2): 8 s is 2 ticks
+  // and fires after 4 to 8 s without a re-arm.
   const IDLE_S = 8;
   // Read this many bytes per second: below the rate that frees a writable
   // event (so the old code times out), above the 16 KB/s receive floor.
   const RATE = 64 * 1024;
-  const RCVBUF = 128 * 1024;
+  // Small enough that one data event (Linux doubles SO_RCVBUF, so up to about
+  // 128 KB) is at most a 2 s pause at RATE, half the 4 s minimum idle window.
+  const RCVBUF = 64 * 1024;
 
   function pinRecvBuffer(sock: net.Socket) {
     const libc = dlopen(libcPathForDlopen(), {
@@ -3165,6 +3169,26 @@ describe.concurrent.skipIf(isWindows)("idleTimeout and a slow reader", () => {
     const rc = libc.symbols.setsockopt((sock as any)._handle.fd, SOL_SOCKET, SO_RCVBUF, ptr(value), 4);
     libc.close();
     if (rc !== 0) throw new Error("setsockopt(SO_RCVBUF) failed");
+  }
+
+  // Pace reads against a schedule (bytes so far / RATE) rather than a fixed
+  // pause per chunk: a timer that fires late shortens the next pause instead
+  // of lowering the rate, so the acked bytes per idle period stay near RATE on
+  // a loaded host. One pause is still at most one chunk / RATE.
+  function paceReads(sock: net.Socket, untilMs: number) {
+    const start = performance.now();
+    let received = 0;
+    sock.on("data", (d: Buffer) => {
+      received += d.length;
+      const elapsed = performance.now() - start;
+      if (elapsed >= untilMs) return;
+      const lag = (received / RATE) * 1000 - elapsed;
+      if (lag > 1) {
+        sock.pause();
+        setTimeout(() => sock.resume(), lag);
+      }
+    });
+    return () => received;
   }
 
   function serveBody(kind: "bytes" | "stream" | "file", onAbort: () => void) {
@@ -3208,25 +3232,17 @@ describe.concurrent.skipIf(isWindows)("idleTimeout and a slow reader", () => {
       using server = serveBody(kind, () => (aborted = true));
       const RUN_MS = IDLE_S * 1000 + 8_000;
       const { promise, resolve } = Promise.withResolvers<void>();
-      let received = 0;
-      const start = performance.now();
       const sock = net.connect(server.port, "127.0.0.1", () => {
         pinRecvBuffer(sock);
         sock.write("GET / HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n");
       });
-      sock.on("data", (d: Buffer) => {
-        received += d.length;
-        if (performance.now() - start < RUN_MS) {
-          sock.pause();
-          setTimeout(() => sock.resume(), Math.max(1, Math.round((d.length / RATE) * 1000)));
-        }
-      });
+      const received = paceReads(sock, RUN_MS);
       sock.on("error", () => resolve());
       sock.on("close", () => resolve()); // the server aborting fires this early
       const deadline = setTimeout(() => resolve(), RUN_MS + 2_000);
       await promise;
       clearTimeout(deadline);
-      expect({ aborted, receivedSomething: received > 0 }).toEqual({ aborted: false, receivedSomething: true });
+      expect({ aborted, receivedSomething: received() > 0 }).toEqual({ aborted: false, receivedSomething: true });
       sock.destroy();
     }, 30_000);
   }

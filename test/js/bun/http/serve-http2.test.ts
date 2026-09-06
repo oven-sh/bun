@@ -898,7 +898,7 @@ describe("Bun.serve http2 in-process", () => {
         });
         const SOL_SOCKET = process.platform === "darwin" ? 0xffff : 1;
         const SO_RCVBUF = process.platform === "darwin" ? 0x1002 : 8;
-        const value = new Int32Array([128 * 1024]);
+        const value = new Int32Array([64 * 1024]); // one data event is then at most a ~2 s pause at RATE
         const rc = libc.symbols.setsockopt((raw.socket as any)._handle.fd, SOL_SOCKET, SO_RCVBUF, ptr(value), 4);
         libc.close();
         if (rc !== 0) throw new Error("setsockopt(SO_RCVBUF) failed");
@@ -907,11 +907,19 @@ describe("Bun.serve http2 in-process", () => {
       inc.writeUInt32BE(64 << 20, 0);
       raw.write(frame(T.WINDOW_UPDATE, 0, 0, inc));
       const RUN_MS = IDLE_S * 1000 + 8_000;
+      // Pace against a schedule (bytes so far / RATE) so a late timer shortens
+      // the next pause instead of lowering the rate; one pause is still at
+      // most one chunk / RATE.
       const start = performance.now();
+      let received = 0;
       raw.socket.on("data", (d: Buffer) => {
-        if (performance.now() - start < RUN_MS) {
+        received += d.length;
+        const elapsed = performance.now() - start;
+        if (elapsed >= RUN_MS) return;
+        const lag = (received / RATE) * 1000 - elapsed;
+        if (lag > 1) {
           raw.socket.pause();
-          setTimeout(() => raw.socket.resume(), Math.max(1, Math.round((d.length / RATE) * 1000)));
+          setTimeout(() => raw.socket.resume(), lag);
         }
       });
       raw.headers(1, baseHeaders("/"));

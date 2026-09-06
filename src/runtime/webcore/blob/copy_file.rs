@@ -1335,7 +1335,7 @@ impl CopyFileWindows {
     /// the read/write loop handles those.
     fn resolve_copy_path<'a>(
         pathlike: &'a PathOrFileDescriptor,
-        buf: &'a mut PathBuffer,
+        buf: &'a mut bun_paths::PathBuffer,
     ) -> bun_sys::Result<Option<&'a bun_core::ZStr>> {
         match pathlike {
             PathOrFileDescriptor::Path(_) => Ok(Some(pathlike.path().slice_z(buf))),

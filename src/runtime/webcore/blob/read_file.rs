@@ -887,7 +887,7 @@ impl ReadFileUV {
             return Self::on_file_open(this);
         }
         use crate::node::types::PathLikeExt as _;
-        let mut buf = bun_paths::PathBuffer::uninit();
+        let mut buf = bun_paths::path_buffer_pool::get();
         // Force-copied so the result lives in `buf`, not `this`.
         let len = this
             .file_store()

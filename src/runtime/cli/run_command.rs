@@ -389,6 +389,23 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         #[cfg(windows)]
         let ipc_fd: Option<bun_sys::Fd> = None; // TODO: implement on Windows
 
+        // The env loader strips NODE_CHANNEL_FD and
+        // NODE_CHANNEL_SERIALIZATION_MODE, so no spawned process inherits the
+        // parent IPC channel by default. Running a package script forwards the
+        // channel on purpose (so e.g. `bun run start` where `start` is
+        // `bun app.js` gives that script process.send to the launcher's parent,
+        // #11132). Re-add the two variables for this one spawn to match the
+        // forwarded `ipc_fd`.
+        #[cfg(not(windows))]
+        if ipc_fd.is_some() {
+            if let Some(fd_s) = bun_core::env_var::NODE_CHANNEL_FD.get() {
+                env.map.put(b"NODE_CHANNEL_FD", fd_s)?;
+            }
+            if let Some(mode) = bun_core::env_var::NODE_CHANNEL_SERIALIZATION_MODE.get() {
+                env.map.put(b"NODE_CHANNEL_SERIALIZATION_MODE", mode)?;
+            }
+        }
+
         // TODO: remember to free this when we add --filter or --concurrent
         // in the meantime we don't need to free it.
         let envp = env.map.create_null_delimited_env_map()?;

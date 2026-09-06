@@ -622,6 +622,18 @@ impl Loader {
                 let key = &env[..i as usize];
                 let value = &env[i as usize + 1..];
                 if !key.is_empty() {
+                    // NODE_CHANNEL_FD and NODE_CHANNEL_SERIALIZATION_MODE name
+                    // the IPC channel this process inherited. Bun consumes them
+                    // for its own process.send(). A spawned script, tool, or
+                    // lifecycle step must not inherit the channel (Node marks
+                    // the fd close-on-exec and deletes the variables before it
+                    // spawns). Keeping them out of the loader is what stops
+                    // every CLI spawn path from forwarding the channel.
+                    if strings::eql(key, b"NODE_CHANNEL_FD")
+                        || strings::eql(key, b"NODE_CHANNEL_SERIALIZATION_MODE")
+                    {
+                        continue;
+                    }
                     self.map.put(key, value)?;
                 }
             } else {

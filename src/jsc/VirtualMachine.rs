@@ -3670,7 +3670,7 @@ impl VirtualMachine {
         // `&'static mut Loader` is independent of `&self`, so `map` may be held
         // across the `&mut self` writes below.
         let env = self.transpiler.env_mut();
-        let map = &mut env.map;
+        let map = &env.map;
 
         ensure_source_code_printer();
         // The runtime VM owns the printer from here on — even if a macro had
@@ -3687,23 +3687,22 @@ impl VirtualMachine {
             self.transpiler_store.enabled = false;
         }
 
-        if let Some(idx) = map.map.get_index(b"NODE_CHANNEL_FD") {
-            let (_, kv) = map.map.swap_remove_at(idx);
-            let fd_s = kv.value;
-            let advanced = map
-                .map
-                .get_index(b"NODE_CHANNEL_SERIALIZATION_MODE")
-                .map(|i| map.map.swap_remove_at(i).1)
-                .is_some_and(|v| &v.value[..] == b"advanced");
-            // Accept only
-            // non-negative values that fit in i31 (i.e. `0..=i32::MAX`).
-            // Parsing as `u32` then `as i32` would silently wrap values in
-            // `2^31..2^32` to a negative fd instead of taking the warn branch.
-            // The channel belongs to the process (its main thread). A worker
-            // sees the same inherited variables but must not open a second
-            // endpoint over the same fd (Node: no process.send() in workers).
-            if self.is_main_thread() {
-                match bun_core::fmt::parse_int::<i32>(&fd_s, 10)
+        // `NODE_CHANNEL_FD` names the IPC channel this process inherited.
+        // `Loader::load_process` strips it from the env map so no spawned child
+        // inherits the channel, so read it from the environment directly. The
+        // channel belongs to the process (its main thread). A worker sees the
+        // same inherited variable but must not open a second endpoint over the
+        // same fd (Node: no process.send() in workers).
+        if self.is_main_thread() {
+            if let Some(fd_s) = bun_core::env_var::NODE_CHANNEL_FD.get() {
+                let advanced = bun_core::env_var::NODE_CHANNEL_SERIALIZATION_MODE
+                    .get()
+                    .is_some_and(|v| bun_core::strings::eql(v, b"advanced"));
+                // Accept only non-negative values that fit in i31 (i.e.
+                // `0..=i32::MAX`). Parsing as `u32` then `as i32` would silently
+                // wrap values in `2^31..2^32` to a negative fd instead of taking
+                // the warn branch.
+                match bun_core::fmt::parse_int::<i32>(fd_s, 10)
                     .ok()
                     .filter(|&n| n >= 0)
                 {
@@ -3715,7 +3714,7 @@ impl VirtualMachine {
                     }
                     None => bun_core::warn!(
                         "Failed to parse IPC channel number '{}'",
-                        bstr::BStr::new(&fd_s[..])
+                        bstr::BStr::new(fd_s)
                     ),
                 }
             }

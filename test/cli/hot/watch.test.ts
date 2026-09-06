@@ -55,13 +55,15 @@ class LineReader {
   constructor(stream: ReadableStream<Uint8Array>) {
     this.#lines = forEachLine(stream);
   }
+  /** The read in flight. It stays in flight across a timed-out `within` so no line is lost. */
   #next(): Promise<IteratorResult<string>> {
-    this.#pending ??= this.#lines.next().finally(() => (this.#pending = undefined));
+    this.#pending ??= this.#lines.next();
     return this.#pending;
   }
   async until(predicate: (line: string) => boolean): Promise<string> {
     while (true) {
       const { value, done } = await this.#next();
+      this.#pending = undefined;
       if (done) throw new Error("stream ended before the expected line");
       if (predicate(value)) return value;
     }
@@ -74,7 +76,9 @@ class LineReader {
       const left = deadline - Date.now();
       if (left <= 0) return out;
       const result = await Promise.race([this.#next(), Bun.sleep(left).then(() => undefined)]);
-      if (result === undefined || result.done) return out;
+      if (result === undefined) return out;
+      this.#pending = undefined;
+      if (result.done) return out;
       out.push(result.value);
     }
   }

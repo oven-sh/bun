@@ -175,6 +175,8 @@ pub struct Watcher {
 
     /// Imports the resolver could not find. Guarded by `mutex`.
     unresolved_imports: Vec<UnresolvedImport>,
+    /// Set by the hot reloader, the only consumer of `unresolved_imports`.
+    track_unresolved_imports: bool,
 
     /// Scratch snapshot of `watchlist.eventlist_index` used by
     /// `watch_loop_cycle`; owned by the watcher thread.
@@ -256,6 +258,7 @@ impl Watcher {
             evict_list: [0; MAX_EVICTION_COUNT],
             evict_list_i: 0,
             unresolved_imports: Vec::new(),
+            track_unresolved_imports: false,
             #[cfg(any(target_os = "linux", target_os = "android"))]
             eventlist_index_scratch: Vec::new(),
             thread_lock: ThreadLock::init_unlocked(),
@@ -1026,8 +1029,12 @@ impl Watcher {
     }
 
     /// Called once the whole resolution missed, not on every `load_as_file` miss.
+    pub fn enable_unresolved_import_tracking(&mut self) {
+        self.track_unresolved_imports = true;
+    }
+
     pub(crate) fn on_unresolved_import(&mut self, dir_path: &[u8], base: &[u8]) {
-        if !self.is_watchable_directory(dir_path) {
+        if !self.track_unresolved_imports || !self.is_watchable_directory(dir_path) {
             return;
         }
         let stem = UnresolvedImport::stem_of(base);

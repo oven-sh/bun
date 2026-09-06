@@ -760,6 +760,8 @@ where
 
         // SAFETY: see above.
         let watcher_ptr = unsafe { (*this).install_bun_watcher(watcher, RELOAD_IMMEDIATELY) };
+        // SAFETY: `watcher_ptr` was just installed into the ctx and is live.
+        unsafe { (*watcher_ptr).enable_unresolved_import_tracking() };
 
         // SAFETY: single-threaded init; watcher thread not yet started.
         CLEAR_SCREEN.store(

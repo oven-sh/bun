@@ -832,8 +832,8 @@ describe("unreadable config files", () => {
   const canUseRunuser = isLinux && isRoot && !!Bun.which("runuser") && hasNobody;
   const canTriggerEACCES = !isWindows && (!isRoot || canUseRunuser);
 
-  /** Runs `bun install` in `dir` (no dependencies, so no network) and returns stderr. */
-  async function installStderr(dir: string, home: string): Promise<string> {
+  /** Runs `bun install` in `dir` (no dependencies, so no network). `home` is both HOME and XDG_CONFIG_HOME. */
+  async function install(dir: string, home: string) {
     const bunCmd = [bunExe(), "install"];
     const cmd = canUseRunuser ? ["runuser", "-m", "-u", "nobody", "--", ...bunCmd] : bunCmd;
     await using proc = Bun.spawn({
@@ -850,8 +850,7 @@ describe("unreadable config files", () => {
       stderr: "pipe",
     });
     const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(exitCode).toBe(0);
-    return stderr;
+    return { stderr, exitCode };
   }
 
   function makeDir(files: Record<string, string>) {
@@ -879,46 +878,61 @@ describe("unreadable config files", () => {
   test.skipIf(!canTriggerEACCES)("warns when the project .npmrc cannot be read", async () => {
     using dir = makeDir({ "proj/.npmrc": "registry=http://127.0.0.1:1/\n" });
     chmodSync(join(dir, "proj", ".npmrc"), 0o000);
-    const stderr = await installStderr(join(dir, "proj"), join(dir, "home"));
+    const { stderr, exitCode } = await install(join(dir, "proj"), join(dir, "home"));
     expect(stderr).toContain("EACCES");
     expect(stderr).toContain("The registry and auth settings in .npmrc are not applied");
+    expect(exitCode).toBe(0);
   });
 
   test.skipIf(!canTriggerEACCES)("warns when ~/.npmrc cannot be read", async () => {
     using dir = makeDir({ "home/.npmrc": "registry=http://127.0.0.1:1/\n" });
     chmodSync(join(dir, "home", ".npmrc"), 0o000);
-    const stderr = await installStderr(join(dir, "proj"), join(dir, "home"));
+    const { stderr, exitCode } = await install(join(dir, "proj"), join(dir, "home"));
     expect(stderr).toContain("EACCES");
     expect(stderr).toContain(`The registry and auth settings in ${join(dir, "home", ".npmrc")} are not applied`);
+    expect(exitCode).toBe(0);
   });
 
   test.skipIf(!canTriggerEACCES)("warns when the project bunfig.toml cannot be read", async () => {
     using dir = makeDir({ "proj/bunfig.toml": '[install]\nregistry = "http://127.0.0.1:1/"\n' });
     chmodSync(join(dir, "proj", "bunfig.toml"), 0o000);
-    const stderr = await installStderr(join(dir, "proj"), join(dir, "home"));
+    const { stderr, exitCode } = await install(join(dir, "proj"), join(dir, "home"));
     expect(stderr).toContain("EACCES");
     expect(stderr).toContain(`The settings in ${join(dir, "proj", "bunfig.toml")} are not applied`);
+    expect(exitCode).toBe(0);
   });
 
   test.skipIf(!canTriggerEACCES)("warns when the global .bunfig.toml cannot be read", async () => {
     using dir = makeDir({ "home/.bunfig.toml": '[install]\nregistry = "http://127.0.0.1:1/"\n' });
     chmodSync(join(dir, "home", ".bunfig.toml"), 0o000);
-    const stderr = await installStderr(join(dir, "proj"), join(dir, "home"));
+    const { stderr, exitCode } = await install(join(dir, "proj"), join(dir, "home"));
     expect(stderr).toContain("EACCES");
     expect(stderr).toContain(`The settings in ${join(dir, "home", ".bunfig.toml")} are not applied`);
+    expect(exitCode).toBe(0);
   });
 
   test.skipIf(isWindows)("warns when .npmrc is a dangling symlink", async () => {
     using dir = makeDir({});
     symlinkSync("missing-target", join(dir, "proj", ".npmrc"));
-    const stderr = await installStderr(join(dir, "proj"), join(dir, "home"));
+    const { stderr, exitCode } = await install(join(dir, "proj"), join(dir, "home"));
     expect(stderr).toContain("ENOENT");
     expect(stderr).toContain("The registry and auth settings in .npmrc are not applied");
+    expect(exitCode).toBe(0);
+  });
+
+  test.skipIf(isWindows)("warns when $XDG_CONFIG_HOME/.npmrc is a dangling symlink", async () => {
+    using dir = makeDir({});
+    symlinkSync("missing-target", join(dir, "home", ".npmrc"));
+    const { stderr, exitCode } = await install(join(dir, "proj"), join(dir, "home"));
+    expect(stderr).toContain("ENOENT");
+    expect(stderr).toContain(`The registry and auth settings in ${join(dir, "home", ".npmrc")} are not applied`);
+    expect(exitCode).toBe(0);
   });
 
   test.skipIf(isWindows)("stays silent when no config file exists", async () => {
     using dir = makeDir({});
-    const stderr = await installStderr(join(dir, "proj"), join(dir, "home"));
+    const { stderr, exitCode } = await install(join(dir, "proj"), join(dir, "home"));
     expect(stderr).not.toContain("not applied");
+    expect(exitCode).toBe(0);
   });
 });

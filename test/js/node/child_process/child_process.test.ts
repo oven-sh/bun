@@ -1640,3 +1640,33 @@ describe("spawn().unref() with piped stdio", () => {
     });
   });
 });
+
+it("probe: un-read stdout backpressure numbers", async () => {
+  const SIZE = 1024 * 1024;
+  const c = spawn("sh", ["-c", `head -c ${SIZE} /dev/zero; echo rc=$? >&2`], {
+    stdio: ["ignore", "pipe", "pipe"],
+    env: bunEnv,
+  });
+  let err = "";
+  c.stderr!.on("data", d => (err += d));
+  const deadline = Date.now() + 1000;
+  while (c.exitCode === null && Date.now() < deadline) {
+    await new Promise(r => setImmediate(r));
+  }
+  const s: any = c.stdout!;
+  const before = {
+    exitCode: c.exitCode,
+    signalCode: c.signalCode,
+    err: err.trim(),
+    readableLength: s.readableLength,
+    readableFlowing: s.readableFlowing,
+    ended: s._readableState.ended,
+    reading: s._readableState.reading,
+    hwm: s.readableHighWaterMark,
+  };
+  let got = 0;
+  s.on("data", (d: Buffer) => (got += d.length));
+  await once(s, "end");
+  await once(c, "close");
+  console.log("PROBE", JSON.stringify({ ...before, got, exitCodeAfter: c.exitCode, errAfter: err.trim() }));
+});

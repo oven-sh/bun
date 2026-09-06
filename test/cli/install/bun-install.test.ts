@@ -9799,8 +9799,8 @@ describe.concurrent("bun-install", () => {
           "bunfig.toml": Bun.TOML.stringify({ install: { registry: { url: spell(origin), token } } }),
         }));
         expect(result).toEqual(installedFrom(directory, `Bearer ${token}`));
-        // The cache folder is named after the hostname of the tarball URL and,
-        // with no integrity in the manifest, the hash of that URL.
+        // The cache folder is named after the registry's hostname and the hash
+        // of its URL.
         expect(cache).toContainEqual(expect.stringMatching(/^no-deps@1\.0\.0@@127\.0\.0\.1__[0-9a-f]{16}@@@1$/));
       });
 
@@ -9829,8 +9829,8 @@ describe.concurrent("bun-install", () => {
       });
     });
 
-    // The extraction cache slot of an npm package is named by its tarball URL,
-    // not by the hostname of the configured registry. Two registries on one
+    // The extraction cache slot of an npm package is named by the registry URL
+    // it came from, not by the registry's hostname alone. Two registries on one
     // host (a repository path on Nexus or Artifactory, two Verdaccio ports)
     // serving different bytes for the same name@version must not share a slot.
     describe.concurrent("registries that share a hostname", () => {
@@ -9952,10 +9952,15 @@ describe.concurrent("bun-install", () => {
         expect(slots[0]).not.toBe(slots[1]);
         expect(await file(join(String(dir), "b", "bun.lock")).text()).toContain(priv.integrity);
 
-        // A reinstall from b's lockfile keeps linking the private bytes.
+        // A reinstall from b's lockfile links the private bytes from the same
+        // slot: no second tarball request.
         await rm(join(String(dir), "b", "node_modules"), { recursive: true });
         await install(join(String(dir), "b"), cacheDir, "--frozen-lockfile");
         expect(await installedVariant(join(String(dir), "b"))).toBe("private");
+        expect(priv.requests.filter(request => request.endsWith(".tgz"))).toEqual([
+          "/npm-private/no-deps/-/no-deps-1.0.0.tgz",
+        ]);
+        expect(await cacheSlots(cacheDir)).toEqual(slots);
       });
 
       it("tells two ports on one host apart", async () => {
@@ -9982,9 +9987,9 @@ describe.concurrent("bun-install", () => {
 
       // A lockfile records the tarball URL of the registry it was written
       // against, and an install honors that URL even when bunfig.toml now names
-      // another registry. The slot is named by that URL, so a later project
-      // configured for the other registry does not link it.
-      it("names the slot by the tarball the lockfile pointed at, not the configured registry", async () => {
+      // another registry. That tarball must not land in the configured
+      // registry's slot, where a later project configured for it would link it.
+      it("keeps a tarball the lockfile pins to another registry out of the configured registry's slot", async () => {
         const pub = await startRegistries({ "/": "public" });
         const priv = await startRegistries({ "/": "private" });
         await using _pub = pub.server;
@@ -10003,13 +10008,15 @@ describe.concurrent("bun-install", () => {
         expect(publicSlot).toMatch(slotPattern);
 
         // a switches to the private registry, but its lockfile still pins the
-        // public tarball, which is what gets downloaded, into the same slot.
+        // public tarball, which is what gets downloaded, into a slot keyed by
+        // that URL.
         await rm(cacheDir, { recursive: true });
         await rm(join(String(dir), "a", "node_modules"), { recursive: true });
         await writeFile(join(String(dir), "a", "bunfig.toml"), `[install]\nregistry = "${priv.private.url}"\n`);
         await install(join(String(dir), "a"), cacheDir);
         expect(await installedVariant(join(String(dir), "a"))).toBe("public");
-        expect(await cacheSlots(cacheDir)).toEqual([publicSlot]);
+        const [pinnedSlot] = await cacheSlots(cacheDir);
+        expect(pinnedSlot).toMatch(slotPattern);
 
         // b, configured for the private registry, fetches the private tarball
         // instead of linking the slot a just filled.
@@ -10017,6 +10024,10 @@ describe.concurrent("bun-install", () => {
         expect(priv.private.requests).toContain("/no-deps/-/no-deps-1.0.0.tgz");
         expect(await installedVariant(join(String(dir), "b"))).toBe("private");
         expect(await file(join(String(dir), "b", "bun.lock")).text()).toContain(priv.private.integrity);
+        const slots = await cacheSlots(cacheDir);
+        expect(slots).toEqual([expect.stringMatching(slotPattern), expect.stringMatching(slotPattern)]);
+        expect(slots).toContain(pinnedSlot);
+        expect(slots[0]).not.toBe(slots[1]);
       });
     });
   });

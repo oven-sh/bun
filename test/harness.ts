@@ -1973,7 +1973,7 @@ export class VerdaccioRegistry {
   /**
    * The extraction cache folder of a package served by this registry, found
    * in `cacheDir`: `<name>@<version>@@localhost__<16 hex>@@@1`, where the hex
-   * is the hash of the tarball URL. Packages from registry.npmjs.org use
+   * is the hash of the registry URL. Packages from registry.npmjs.org use
    * `<name>@<version>@@@1` instead. Throws unless exactly one folder matches.
    */
   cacheFolderName(cacheDir: string, name: string, version: string) {

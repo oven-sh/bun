@@ -918,11 +918,14 @@ impl JunitReporter {
             return File::open(&dest, flags, 0o664).and_then(|file| file.write_all(contents));
         }
 
+        let mut rand = [0u8; 8];
+        bun_boringssl_sys::rand_bytes(&mut rand);
         let mut tmp: Vec<u8> = path.to_vec();
-        let _ = write!(&mut tmp, ".{}.tmp", std::process::id());
+        let _ = write!(&mut tmp, ".{}.tmp", bun_core::fmt::hex_lower(&rand));
         let tmp = bun_core::ZBox::from_vec(tmp);
         // `make_open` creates a missing parent directory, as jest-junit does.
-        let file = File::make_open(tmp.as_bytes(), flags, 0o664)?;
+        // `O_EXCL`: the temp name is ours alone; nothing already there is opened.
+        let file = File::make_open(tmp.as_bytes(), flags | bun_sys::O::EXCL, 0o664)?;
         let written = file.write_all(contents);
         drop(file);
         let moved = written.and_then(|()| bun_sys::renameat(Fd::cwd(), &tmp, Fd::cwd(), &dest));

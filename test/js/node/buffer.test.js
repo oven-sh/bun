@@ -5509,6 +5509,24 @@ describe("fill() and compare() offsets past the end of the buffer", () => {
       }),
     );
   });
+
+  it("compare() names the first invalid offset in argument order", () => {
+    const buf = Buffer.alloc(3);
+    const target = Buffer.alloc(3);
+    const named = f => {
+      try {
+        f();
+      } catch (e) {
+        return e.message.match(/"(\w+)"/)[1];
+      }
+    };
+    expect([
+      named(() => buf.compare(target, 0, 4, 0, 4)),
+      named(() => buf.compare(target, 2 ** 53, 4, 0, 4)),
+      named(() => buf.compare(target, 0, 3, 2 ** 53, 4)),
+      named(() => buf.compare(target, 1.5, 4)),
+    ]).toEqual(["targetEnd", "targetStart", "sourceStart", "targetStart"]);
+  });
 });
 
 describe("indexOf(), lastIndexOf() and includes() on a detached buffer", () => {
@@ -5576,6 +5594,29 @@ describe("util.inspect(buffer) with extra own properties", () => {
     expect(buf[custom](0, { showHidden: true })).toBe(
       "<Buffer 03, x: 'y', list: [ 1, 'two', [length]: 2 ], hidden: 'h'>",
     );
+  });
+
+  it("builds its inspect options without running setters on Object.prototype", () => {
+    Object.defineProperty(Object.prototype, "depth", {
+      configurable: true,
+      set() {
+        throw new Error("polluted depth");
+      },
+    });
+    Object.defineProperty(Object.prototype, "x", {
+      configurable: true,
+      set() {
+        throw new Error("polluted x");
+      },
+    });
+    try {
+      const buf = Buffer.from([3]);
+      Object.defineProperty(buf, "x", { value: "y", enumerable: true });
+      expect(inspect(buf)).toBe("<Buffer 03, x: 'y'>");
+    } finally {
+      delete Object.prototype.depth;
+      delete Object.prototype.x;
+    }
   });
 
   it("keeps the Node layout for an empty buffer", () => {

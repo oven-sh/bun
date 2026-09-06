@@ -1142,46 +1142,29 @@ static JSC::EncodedJSValue jsBufferPrototypeFunction_compareBody(JSC::JSGlobalOb
     size_t sourceEndInit = castedThis->byteLength();
     size_t sourceEnd = sourceEndInit;
 
-    JSValue targetStartValue = jsUndefined();
-    JSValue targetEndValue = jsUndefined();
-    JSValue sourceStartValue = jsUndefined();
-    JSValue sourceEndValue = jsUndefined();
-
-    // Node's validateOffset: a start is any integer in [0, 2**53 - 1] (a start
-    // past the end is an empty range below, not an error), an end is bounded by
-    // its own buffer's length.
-    switch (callFrame->argumentCount()) {
-    default:
-        sourceEndValue = callFrame->uncheckedArgument(4);
-        if (sourceEndValue != jsUndefined()) {
-            Bun::V::validateInteger(throwScope, lexicalGlobalObject, sourceEndValue, "sourceEnd"_s, jsNumber(0), jsNumber(sourceEndInit), &sourceEnd);
-            RETURN_IF_EXCEPTION(throwScope, {});
-        }
-        [[fallthrough]];
-    case 4:
-        sourceStartValue = callFrame->uncheckedArgument(3);
-        if (sourceStartValue != jsUndefined()) {
-            Bun::V::validateInteger(throwScope, lexicalGlobalObject, sourceStartValue, "sourceStart"_s, jsNumber(0), jsDoubleNumber(JSC::maxSafeInteger()), &sourceStart);
-            RETURN_IF_EXCEPTION(throwScope, {});
-        }
-        [[fallthrough]];
-    case 3:
-        targetEndValue = callFrame->uncheckedArgument(2);
-        if (targetEndValue != jsUndefined()) {
-            Bun::V::validateInteger(throwScope, lexicalGlobalObject, targetEndValue, "targetEnd"_s, jsNumber(0), jsNumber(targetEndInit), &targetEnd);
-            RETURN_IF_EXCEPTION(throwScope, {});
-        }
-        [[fallthrough]];
-    case 2:
-        targetStartValue = callFrame->uncheckedArgument(1);
-        if (targetStartValue != jsUndefined()) {
-            Bun::V::validateInteger(throwScope, lexicalGlobalObject, targetStartValue, "targetStart"_s, jsNumber(0), jsDoubleNumber(JSC::maxSafeInteger()), &targetStart);
-            RETURN_IF_EXCEPTION(throwScope, {});
-        }
-        break;
-    case 1:
-    case 0:
-        break;
+    // Node validates the offsets in argument order, each through validateOffset:
+    // a start is any integer in [0, 2**53 - 1] (a start past the end is an
+    // empty range below, not an error), an end is bounded by its own buffer's
+    // length. The first invalid one is the one the error names.
+    JSValue targetStartValue = callFrame->argument(1);
+    if (!targetStartValue.isUndefined()) {
+        Bun::V::validateInteger(throwScope, lexicalGlobalObject, targetStartValue, "targetStart"_s, jsNumber(0), jsDoubleNumber(JSC::maxSafeInteger()), &targetStart);
+        RETURN_IF_EXCEPTION(throwScope, {});
+    }
+    JSValue targetEndValue = callFrame->argument(2);
+    if (!targetEndValue.isUndefined()) {
+        Bun::V::validateInteger(throwScope, lexicalGlobalObject, targetEndValue, "targetEnd"_s, jsNumber(0), jsNumber(targetEndInit), &targetEnd);
+        RETURN_IF_EXCEPTION(throwScope, {});
+    }
+    JSValue sourceStartValue = callFrame->argument(3);
+    if (!sourceStartValue.isUndefined()) {
+        Bun::V::validateInteger(throwScope, lexicalGlobalObject, sourceStartValue, "sourceStart"_s, jsNumber(0), jsDoubleNumber(JSC::maxSafeInteger()), &sourceStart);
+        RETURN_IF_EXCEPTION(throwScope, {});
+    }
+    JSValue sourceEndValue = callFrame->argument(4);
+    if (!sourceEndValue.isUndefined()) {
+        Bun::V::validateInteger(throwScope, lexicalGlobalObject, sourceEndValue, "sourceEnd"_s, jsNumber(0), jsNumber(sourceEndInit), &sourceEnd);
+        RETURN_IF_EXCEPTION(throwScope, {});
     }
 
     // When start >= end for either side, return early per Node.js semantics.
@@ -1959,10 +1942,20 @@ static JSC::EncodedJSValue jsBufferPrototypeFunction_inspectBody(JSC::JSGlobalOb
                 extras->putDirect(vm, ident, value);
             }
 
+            // Spread defines the copies, so not objectAssignGeneric: its [[Set]]
+            // would run a setter that userland put on Object.prototype under one
+            // of the option names.
             JSObject* options = JSC::constructEmptyObject(globalObject);
-            if (ctx.isObject()) {
-                JSC::objectAssignGeneric(globalObject, vm, options, asObject(ctx));
+            if (auto* ctxObject = dynamicDowncast<JSObject>(ctx)) {
+                PropertyNameArrayBuilder names(vm, PropertyNameMode::StringsAndSymbols, PrivateSymbolMode::Exclude);
+                ctxObject->methodTable()->getOwnPropertyNames(ctxObject, globalObject, names, DontEnumPropertiesMode::Exclude);
                 RETURN_IF_EXCEPTION(scope, {});
+                for (const auto& name : names) {
+                    JSValue value = ctxObject->get(globalObject, name);
+                    RETURN_IF_EXCEPTION(scope, {});
+                    options->putDirectMayBeIndex(globalObject, name, value);
+                    RETURN_IF_EXCEPTION(scope, {});
+                }
             }
             options->putDirect(vm, Identifier::fromString(vm, "breakLength"_s), jsDoubleNumber(std::numeric_limits<double>::infinity()));
             options->putDirect(vm, Identifier::fromString(vm, "compact"_s), jsBoolean(true));

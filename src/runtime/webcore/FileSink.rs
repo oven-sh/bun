@@ -1645,8 +1645,6 @@ impl FileSink {
         }
     }
 
-    /// Returns the JS pump's promise (`UNDEFINED` on the native path). An already-rejected promise
-    /// is marked handled and the sink torn down; the caller throws its reason.
     pub fn assign_to_stream(
         &mut self,
         stream: &mut ReadableStream,

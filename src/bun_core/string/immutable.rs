@@ -2534,6 +2534,27 @@ pub fn to_utf8_list_with_type(mut list: Vec<u8>, utf16: &[u16]) -> Result<Vec<u8
     Ok(list)
 }
 
+/// Appends `bytes` to `out` as well-formed UTF-8: each ill-formed sequence (including an encoded
+/// surrogate) becomes one U+FFFD per maximal subpart, where `TextDecoder` puts them, and every
+/// well-formed sequence is copied through unchanged.
+pub fn append_well_formed_utf8(out: &mut Vec<u8>, bytes: &[u8]) {
+    out.reserve(bytes.len());
+    let mut remaining = bytes;
+    while let Some(i) = first_non_ascii_usize(remaining) {
+        out.extend_from_slice(&remaining[..i]);
+        remaining = &remaining[i..];
+        let decoded = unicode_draft::convert_utf8_bytes_into_utf16(remaining);
+        let len = (decoded.len as usize).max(1);
+        if decoded.fail {
+            out.extend_from_slice("\u{FFFD}".as_bytes());
+        } else {
+            out.extend_from_slice(&remaining[..len]);
+        }
+        remaining = &remaining[len..];
+    }
+    out.extend_from_slice(remaining);
+}
+
 /// Errors from `to_utf16_alloc`. `InvalidByteSequence` is only returned when
 /// `fail_if_invalid = true`; `OutOfMemory` can be returned by any call.
 ///
@@ -2757,6 +2778,50 @@ mod tests {
         assert_eq!(super::first_non_ascii(b"ab\xC3"), Some(2));
         assert!(super::eql_case_insensitive_ascii(b"A", b"a", true));
         assert!(!super::eql_case_insensitive_ascii(b"Ab", b"a", true));
+    }
+
+    #[test]
+    fn append_well_formed_utf8_replaces_each_maximal_subpart() {
+        const R: &[u8] = "\u{FFFD}".as_bytes();
+        let fixed = |input: &[u8]| {
+            let mut out = Vec::new();
+            super::append_well_formed_utf8(&mut out, input);
+            out
+        };
+        let cat = |parts: &[&[u8]]| parts.concat();
+
+        // appends
+        let mut out = b"> ".to_vec();
+        super::append_well_formed_utf8(&mut out, b"a\xFFb");
+        assert_eq!(out, cat(&[b"> a", R, b"b"]));
+        // well-formed input is copied through
+        assert_eq!(fixed(b""), b"");
+        assert_eq!(fixed(b"plain ascii\r\n\0"), b"plain ascii\r\n\0");
+        assert_eq!(
+            fixed(b"\xC3\xA9\xE2\x82\xAC\xF0\x9F\x98\x80\xEF\xBF\xBD"),
+            cat(&[b"\xC3\xA9\xE2\x82\xAC\xF0\x9F\x98\x80\xEF\xBF\xBD"])
+        );
+        // Latin-1 bytes: one U+FFFD each, neighbours kept
+        assert_eq!(fixed(b"Jos\xE9 P\xE9rez"), cat(&[b"Jos", R, b" P", R, b"rez"]));
+        // bad lead byte, then ASCII
+        assert_eq!(fixed(b"\xE2AB"), cat(&[R, b"AB"]));
+        assert_eq!(fixed(b"\xF5A\xFFB"), cat(&[R, b"A", R, b"B"]));
+        // lone continuation byte, invalid lead bytes
+        assert_eq!(fixed(b"\x80A"), cat(&[R, b"A"]));
+        assert_eq!(fixed(b"\xC0\xAFA"), cat(&[R, R, b"A"]));
+        // surrogate, overlong, above U+10FFFF: every byte replaced separately
+        assert_eq!(fixed(b"\xED\xA0\x80A"), cat(&[R, R, R, b"A"]));
+        assert_eq!(fixed(b"\xE0\x80\x80A"), cat(&[R, R, R, b"A"]));
+        assert_eq!(fixed(b"\xF4\x90\x80\x80A"), cat(&[R, R, R, R, b"A"]));
+        // truncated sequence: one replacement for the whole prefix
+        assert_eq!(fixed(b"\xE2\x82A"), cat(&[R, b"A"]));
+        assert_eq!(fixed(b"\xF0\x9F\x98A"), cat(&[R, b"A"]));
+        assert_eq!(fixed(b"A\xE2\x82"), cat(&[b"A", R]));
+        // well-formed neighbours are copied through
+        assert_eq!(
+            fixed(b"a\xC3\xA9\xFF\xF0\x9F\x98\x80z"),
+            cat(&[b"a\xC3\xA9", R, b"\xF0\x9F\x98\x80z"])
+        );
     }
 
     #[test]

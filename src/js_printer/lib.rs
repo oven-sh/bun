@@ -2622,7 +2622,7 @@ pub(crate) mod __gated_printer {
                 &mut writer,
                 quote,
                 ASCII_ONLY,
-                false,
+                IS_JSON,
             );
         }
 
@@ -2635,7 +2635,7 @@ pub(crate) mod __gated_printer {
                 &mut writer,
                 quote,
                 ASCII_ONLY,
-                false,
+                IS_JSON,
             );
         }
 

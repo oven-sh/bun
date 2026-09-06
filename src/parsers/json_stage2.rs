@@ -35,6 +35,9 @@ pub(crate) struct Parser<'a, 's, 'i> {
     dup_hashes: Vec<u64>,
     dup_maps: Vec<DupMap>,
     spill_depth: usize,
+    /// The document is not well-formed UTF-8, so an unescaped string body cannot be handed out
+    /// as a source slice without checking it first.
+    ill_formed_utf8: bool,
 }
 
 impl<'s> LexerLog<'s> for Parser<'_, 's, '_> {
@@ -127,6 +130,7 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
             dup_hashes: Vec::new(),
             dup_maps: Vec::new(),
             spill_depth: 0,
+            ill_formed_utf8: !strings::is_valid_utf8(&source.contents),
         }
     }
 
@@ -505,11 +509,31 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
         if dirty {
             return Ok(self.parse_string_slow(body)?.data);
         }
+        if self.ill_formed_utf8 {
+            return Ok(self.well_formed_str(body));
+        }
         Ok(E::Str::new(body))
     }
 
     fn alloc_owned_str(&mut self, bytes: &[u8]) -> E::Str {
         self.tape_mut().alloc_str(bytes)
+    }
+
+    /// An unescaped string body from a document that failed UTF-8 validation: borrow it when this
+    /// body is fine, otherwise store a copy with each ill-formed sequence replaced by U+FFFD, the
+    /// string `TextDecoder` or node's `fs.readFileSync(path, "utf8")` would produce for it.
+    #[cold]
+    #[inline(never)]
+    fn well_formed_str(&mut self, body: &'s [u8]) -> E::Str {
+        if strings::is_valid_utf8(body) {
+            return E::Str::new(body);
+        }
+        let mut buf = core::mem::take(&mut self.scratch_str);
+        buf.clear();
+        strings::append_well_formed_utf8(&mut buf, body);
+        let owned = self.alloc_owned_str(&buf);
+        self.scratch_str = buf;
+        owned
     }
 
     #[cold]
@@ -522,6 +546,9 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
             }
         }
         let Some(k) = first_special else {
+            if self.ill_formed_utf8 {
+                return Ok(E::EString::init(self.well_formed_str(body).slice()));
+            }
             return Ok(E::EString::init(body));
         };
         if body[k] != b'\\' {
@@ -529,7 +556,13 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
         }
         let mut buf = core::mem::take(&mut self.scratch_str);
         buf.clear();
-        self.decode_escapes(body, &mut buf)?;
+        if self.ill_formed_utf8 && !strings::is_valid_utf8(body) {
+            let mut well_formed = Vec::with_capacity(body.len());
+            strings::append_well_formed_utf8(&mut well_formed, body);
+            self.decode_escapes(&well_formed, &mut buf)?;
+        } else {
+            self.decode_escapes(body, &mut buf)?;
+        }
         let owned = self.alloc_owned_str(&buf);
         self.scratch_str = buf;
         Ok(E::EString::init(owned.slice()))

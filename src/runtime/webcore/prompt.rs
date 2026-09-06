@@ -6,12 +6,9 @@ use bun_core::EncodedSlice;
 use bun_core::Output;
 use bun_jsc::EncodedSliceJsc as _;
 
-/// Blocks until stdin has data, and runs queued JS signal listeners in the
-/// meantime. `process.on("SIGINT")` installs its handler with SA_RESTART, so a
-/// plain `read(2)` never returns EINTR and the listener could only run after
-/// the user typed a line. `pselect(2)` is not restarted. Signals are blocked
-/// between the queue check and the wait, so a signal that lands in that gap
-/// is delivered inside `pselect` and still ends the wait with EINTR.
+/// Waits until stdin is readable and runs queued JS signal listeners meanwhile.
+/// Signal handlers are SA_RESTART, so `read(2)` never sees EINTR; `pselect(2)`
+/// does, and the mask closes the gap between the queue check and the wait.
 #[cfg(unix)]
 fn wait_for_stdin(global: &JSGlobalObject) {
     use bun_jsc::PosixSignalHandle;
@@ -239,8 +236,7 @@ pub mod prompt {
         fn read_byte(&mut self) -> Result<u8, Self::Error>;
     }
 
-    /// The process-global `BufferedStdin`, with [`wait_for_stdin`] before
-    /// every refill from the fd.
+    /// The process-global `BufferedStdin`; calls [`wait_for_stdin`] before each refill.
     pub(crate) struct InterruptibleStdin<'a> {
         global: &'a JSGlobalObject,
         reader: &'a mut bun_core::output::BufferedStdin,

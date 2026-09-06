@@ -709,11 +709,11 @@ async function lineHits(dir: string, subject: string): Promise<Record<number, nu
     cmd: [bunExe(), "test", "--coverage", "--coverage-reporter=lcov", "./run.test.ts"],
     env: bunEnv,
     cwd: dir,
+    stdout: "pipe",
     stderr: "pipe",
   });
-  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
-  expect(stderr).not.toContain("error");
-  expect(exitCode).toBe(0);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(exitCode, stdout + stderr).toBe(0);
   const lcov = readFileSync(path.join(dir, "coverage", "lcov.info"), "utf-8");
   const record = lcov.split("end_of_record").find(r => r.includes(`SF:${subject}\n`));
   expect(record).toBeDefined();

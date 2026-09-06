@@ -66,15 +66,15 @@ build ../../vendor/zstd/.ref: dep_fetch | ../../scripts/build/fetch-cli.ts
   commit = abc123...
 ```
 
-`restat = 1`: if fetch was a no-op (`.ref` unchanged), prune everything downstream. `pool = dep` throttles to 4 concurrent fetches.
+`restat = 1`: if fetch was a no-op (`.ref` unchanged), prune everything downstream; after a version bump the dep's sources are declared outputs too, so the ones the in-place sync left untouched are pruned the same way. `pool = dep` throttles to 4 concurrent fetches.
 
 All rules and edges are written to `build/<profile>/build.ninja` by `n.write()` at the end of configure. `compile_commands.json` (for clangd/LSP) is written alongside it.
 
 Edge dependency types:
 
 - **explicit inputs** (`$in`) — listed on the build line, passed to the command
-- **implicit inputs** (`| foo`) — tracked for rebuild but not in `$in`. Use for the PCH, dep lib outputs (invalidation signal for their headers), or a per-file generated header this source is known to read
-- **order-only inputs** (`|| stamp`) — must exist before this edge runs, but mtime doesn't trigger rebuild. Use for bulk codegen headers: "must be generated first, but the compiler's `.d` depfile will track which ones I actually read". A group of them goes behind one phony (`obj/.codegen-ready`, a dep group's `.<group>-ready`) so each compile edge names one input, not the list
+- **implicit inputs** (`| foo`) — tracked for rebuild but not in `$in`. Use for the PCH, prebuilt/cargo dep outputs (invalidation signal for headers rewritten mid-build), or a per-file generated header this source is known to read
+- **order-only inputs** (`|| stamp`) — must exist before this edge runs, but mtime doesn't trigger rebuild. Use for bulk codegen headers and fetched dep trees: "must be generated/fetched first, but the compiler's `.d` depfile will track which ones I actually read". A group of them goes behind one phony (`obj/.codegen-ready`, `obj/.dep-headers-ready`, a dep group's `.<group>-ready`) so each compile edge names one input, not the list
 - **validations** (`|@ check`) — built whenever this edge is, but not an input of it or of anything downstream. The smoke test and the ClassInfo check are validations of bun's link: relinking runs them, nothing waits on them
 
 **`restat = 1`** — after the command runs, re-stat outputs; if mtime didn't change, prune downstream. Critical for idempotent steps (fetch no-op, codegen unchanged).
@@ -172,6 +172,7 @@ Split CI modes: `rust-only` (path deps+codegen+cargo → libbun_runtime.a), `cpp
 
 ### Phase 3 — Execute
 
+- **Fetch pre-pass (both):** if configure reported dependencies whose pinned version changed under an existing `vendor/` tree (`ConfigureResult.fetchFirst`), run `ninja <their .ref stamps>` first so the trees are synced in place before the main pass stats them.
 - **CI:** collapsible log groups, spawn ninja with `spawnWithAnnotations` (parses compiler errors into Buildkite annotations), upload/download artifacts.
 - **Local:** spawn ninja with FD 3 dup'd to stderr — `stream.ts`-wrapped commands write to FD 3, bypassing ninja's per-job output buffering so dep/cargo build progress streams live. If positionals given, exec the built binary with them.
 
@@ -241,7 +242,9 @@ Why not auto-register in emit functions? Some rules are shared (`cc`/`cxx` by `b
 
 **Dep order in `allDeps` matters.** `fetchDeps: ["X"]` means X must come first (its `.ref` stamp node must exist). Link order matters too: static linking resolves left→right, providers after users.
 
-**PCH, cc, and no-PCH cxx need implicit dep on `depHeaderSignal`**, not order-only. A prebuilt or cargo dep rewrites its headers as an undeclared side effect (only the stamp / `lib*.a` are declared outputs). Depfiles record those headers, but ninja stats them before that edge runs — order-only lags one build. The declared output is the invalidation signal. Codegen headers and the direct WebKit build's generated headers stay exact: they're declared outputs with restat.
+**PCH, cc, and no-PCH cxx need implicit dep on `depHeaderSignal`**, not order-only — for prebuilt and cargo deps (`ResolvedDep.headerSignal === "implicit"`). Those rewrite their headers as an undeclared side effect (only the stamp / `lib*.a` are declared outputs). Depfiles record those headers, but ninja stats them before that edge runs — order-only lags one build. The declared output is the invalidation signal. Fetched source trees (github/tarball deps, `direct` or `none`) are order-only instead: they are final before the main ninja pass stats them — absent (every file missing → dependents dirty anyway), current, or synced to the new pin by the fetch-only pass `build.ts` runs first (`ConfigureResult.fetchFirst`; configure never deletes a stale tree except when running as ninja's own regen edge, where no pre-pass exists). Codegen headers and the direct WebKit build's generated headers stay exact: they're declared outputs with restat.
+
+**A dependency bump is incremental.** `fetch-cli.ts` extracts the new version beside `vendor/<name>` and syncs it in (unchanged bytes keep their mtime; changed/added files are replaced; removed ones deleted; `.ref` written last), so only what the bump touched recompiles. Anything that reintroduces "wipe the tree" or makes a fetched dep's stamp an implicit compile input turns every bump back into a full rebuild of that dep and of every TU that includes it.
 
 **`isExecutable` must check `isFile()`.** `X_OK` on a directory means traversable — a `cmake/` dir in PATH would shadow the real cmake binary.
 

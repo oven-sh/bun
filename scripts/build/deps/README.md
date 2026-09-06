@@ -39,8 +39,14 @@ Case-sensitive filesystems enforce this.
 ## Updating a commit
 
 Change the `commit` field. That's it. The build system computes a source
-identity hash from `sha256(commit + patch_contents)` — changing the commit
-invalidates `.ref`, triggers re-fetch, and everything downstream rebuilds.
+identity hash from `sha256(commit + sparse set + patch_contents)` — changing
+the commit invalidates `.ref` and triggers a re-fetch. The new version is
+extracted beside the old tree and synced into it in place (`fetch-cli.ts`
+`syncTree`): a file whose bytes did not change keeps its mtime, so a bump
+recompiles only the sources and header-includers the bump actually touched,
+in the same build (`bun run build` runs the changed fetches in a first ninja
+pass so the main pass stats the final tree; raw `ninja` falls back to a clean
+re-fetch of that dep).
 
 The `.github/workflows/update-<name>.yml` jobs do this automatically by
 sed'ing the `const <NAME>_COMMIT = "..."` line. If you rename that
@@ -76,7 +82,8 @@ every TU that sees the dep's headers; after that, edits are picked up
 incrementally: `direct` deps through the compiler depfiles,
 `cargo` deps by re-invoking cargo every run. The build banner shows
 `local:<name>` while this is on. Don't edit `vendor/<name>/` in place
-instead — it is wiped whenever the pin or patches change. For WebKit this is
+instead — it is overwritten (synced back to the pinned tree) whenever the pin
+or patches change. For WebKit this is
 what `bun run build:local` does (`--local-deps=WebKit`, shorthand for
 `--local-deps=WebKit=$BUN_WEBKIT_PATH`).
 

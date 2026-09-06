@@ -22,8 +22,8 @@
 
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { createReadStream, existsSync, readFileSync } from "node:fs";
-import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { createReadStream, existsSync, lstatSync, readFileSync, type Stats } from "node:fs";
+import { lstat, mkdir, readdir, readFile, readlink, rename, rm, writeFile } from "node:fs/promises";
 import { basename, join } from "node:path";
 import { downloadWithRetry, extractTarGz, fetchPrebuilt, gitArchive, parseGitArchiveUrl } from "./download.ts";
 import { BuildError, assert } from "./error.ts";
@@ -212,7 +212,7 @@ function checkUndefined(name: string, nm: string, rspfile: string, stamp: string
  * if the tarball already exists. Useful when re-extraction is needed after
  * a failed patch (you don't re-download).
  */
-async function fetchDep(
+export async function fetchDep(
   name: string,
   url: string,
   ref: string,
@@ -249,7 +249,6 @@ async function fetchDep(
       console.log(`up to date`);
       return;
     }
-    // Identity mismatch. Blow it away.
     console.log(`source identity changed (was ${existing.slice(0, 8)}, now ${identity.slice(0, 8)})`);
   }
 
@@ -281,33 +280,127 @@ async function fetchDep(
     }
   }
 
-  // ─── Extract ───
-  // Wipe dest first — we don't want leftover files from a previous version.
-  await rm(dest, { recursive: true, force: true });
-  await mkdir(dest, { recursive: true });
-
-  // Github archives (and release tarballs) have one top-level directory. Strip it.
-  await extractTarGz(tarballPath, dest);
-
-  // ─── Apply patches / overlays ───
+  // ─── Extract + patch into a staging tree ───
+  // The new tree is prepared complete (github archives and release tarballs
+  // have one top-level directory, stripped) next to dest, then synced into it.
+  // An existing dest is not wiped: files whose content is unchanged between
+  // the two versions keep their inode and mtime, so the objects compiled from
+  // them stay valid and a version bump recompiles only what actually changed.
+  const staging = `${dest}.staging`;
+  await rm(staging, { recursive: true, force: true });
+  await mkdir(staging, { recursive: true });
+  await extractTarGz(tarballPath, staging);
   for (let i = 0; i < patches.length; i++) {
     const p = patches[i]!;
     const name = basename(p);
     if (p.endsWith(".patch")) {
       console.log(`applying ${name}`);
-      applyPatch(dest, p, patchContents[i]!);
+      applyPatch(staging, p, patchContents[i]!);
     } else {
       // Overlay file: copy into source root. Used for e.g. injecting a
       // CMakeLists.txt into a project that doesn't have one (tinycc).
       console.log(`overlay ${name}`);
-      await writeFile(join(dest, name), patchContents[i]!);
+      await writeFile(join(staging, name), patchContents[i]!);
     }
+  }
+
+  // ─── Sync into dest ───
+  // The old .ref goes first: until the new one is written at the end, dest
+  // carries no identity, so an interrupted sync is redone by the next build.
+  await rm(refPath, { force: true });
+  let stats: SyncStats | undefined;
+  if (existsSync(dest)) {
+    stats = await syncTree(staging, dest);
+    await rm(staging, { recursive: true, force: true });
+  } else {
+    await rename(staging, dest);
   }
 
   // ─── Write stamp ───
   // Written LAST — if anything above failed, no stamp means next build retries.
   await writeFile(refPath, identity + "\n");
-  console.log(`done → ${dest} (${formatElapsed(performance.now() - started)})`);
+  const summary =
+    stats === undefined
+      ? ""
+      : `: ${stats.changed} changed, ${stats.added} added, ${stats.removed} removed, ${stats.kept} unchanged`;
+  console.log(`done → ${dest}${summary} (${formatElapsed(performance.now() - started)})`);
+}
+
+interface SyncStats {
+  kept: number;
+  changed: number;
+  added: number;
+  removed: number;
+}
+
+/**
+ * Make `dest` identical to `src` (a freshly extracted tree) while touching as
+ * little as possible: a file whose bytes already match is left alone (same
+ * mtime, so ninja keeps the objects built from it), a differing or new file
+ * is moved in from `src`, anything in `dest` that `src` does not have is
+ * deleted. Symlinks compare by target. `src` is consumed.
+ */
+export async function syncTree(src: string, dest: string): Promise<SyncStats> {
+  const stats: SyncStats = { kept: 0, changed: 0, added: 0, removed: 0 };
+  const walk = async (rel: string): Promise<void> => {
+    const from = join(src, rel);
+    const to = join(dest, rel);
+    const wanted = new Map((await readdir(from, { withFileTypes: true })).map(e => [e.name, e]));
+    // Removals first, so a name that changes kind (dir ⇄ file) is gone before
+    // its replacement arrives.
+    for (const e of existsSync(to) ? await readdir(to, { withFileTypes: true }) : []) {
+      const w = wanted.get(e.name);
+      if (w === undefined || kindOf(w) !== kindOf(e)) {
+        await rm(join(to, e.name), { recursive: true, force: true });
+        if (w === undefined) stats.removed++;
+      }
+    }
+    await mkdir(to, { recursive: true });
+    for (const [name, e] of wanted) {
+      const f = join(from, name);
+      const t = join(to, name);
+      if (e.isDirectory()) {
+        await walk(join(rel, name));
+      } else if (lstatOrUndefined(t) === undefined) {
+        await rename(f, t);
+        stats.added++;
+      } else if (await sameContent(f, t, e.isSymbolicLink())) {
+        stats.kept++;
+      } else {
+        await rm(t, { force: true });
+        await rename(f, t);
+        stats.changed++;
+      }
+    }
+  };
+  await walk(".");
+  return stats;
+}
+
+function kindOf(e: { isDirectory(): boolean; isSymbolicLink(): boolean }): "dir" | "link" | "file" {
+  return e.isDirectory() ? "dir" : e.isSymbolicLink() ? "link" : "file";
+}
+
+function lstatOrUndefined(path: string): Stats | undefined {
+  try {
+    return lstatSync(path);
+  } catch {
+    return undefined;
+  }
+}
+
+async function sameContent(a: string, b: string, symlink: boolean): Promise<boolean> {
+  if (symlink) {
+    try {
+      return (await readlink(a)) === (await readlink(b));
+    } catch {
+      return false;
+    }
+  }
+  const [sa, sb] = await Promise.all([lstat(a), lstat(b)]);
+  if (!sb.isFile() || sa.size !== sb.size) return false;
+  const [ca, cb] = await Promise.all([readFile(a), readFile(b)]);
+  return ca.equals(cb);
 }
 
 /**
@@ -418,9 +511,8 @@ function applyPatch(dest: string, patchPath: string, patchBody: string): void {
   }
 
   if (result.status !== 0) {
-    // If the patch was already applied, the source dir must have been
-    // partially fetched, which means .ref shouldn't exist, which means
-    // we should have rm'd the dir. A "cleanly" error here = logic bug.
+    // Patches apply to a freshly extracted staging tree, so "already applied"
+    // cannot happen; a failure here means the patch no longer matches the pin.
     throw new BuildError(`Patch failed: ${result.stderr}`, {
       file: patchPath,
       hint: "The patch may be out of date with the pinned commit",

@@ -31,36 +31,6 @@ import { quote, quoteArgs } from "./shell.ts";
 import { emitShims } from "./shims.ts";
 import { streamPath } from "./stream.ts";
 
-/**
- * If the source dir exists with a stale (or missing) identity stamp,
- * delete it. Called at configure time so ninja's startup stat sees the
- * headers as missing — correctly marking dependent .o files dirty.
- *
- * See emitFetch() comment for the full why.
- *
- * Only called for github deps (via emitFetch). Local-mode deps never go
- * through here — their source is user-managed. Identity is commit + sparse
- * set + patch-content, NOT disk content, so hand-edits to vendor/<dep>/*.c
- * are preserved (identity still matches, no wipe).
- */
-function invalidateStaleSource(
-  name: string,
-  srcDir: string,
-  refStamp: string,
-  ref: string,
-  sparse: string[],
-  patchPaths: string[],
-): void {
-  if (!existsSync(srcDir)) return;
-  assertManagedSource(name, srcDir, refStamp);
-  // .ref missing counts as stale: can't verify what's there (previous commit,
-  // manual rm) — untrusted, wipe. A missing patch file also mismatches; the
-  // fetch then fails with the clearer "patch file not found".
-  if (!sourceIsCurrent(srcDir, ref, sparse, patchPaths)) {
-    rmSync(srcDir, { recursive: true, force: true });
-  }
-}
-
 // ───────────────────────────────────────────────────────────────────────────
 // Types
 // ───────────────────────────────────────────────────────────────────────────
@@ -565,6 +535,24 @@ export interface ResolvedDep {
    */
   generatedHeaders: string[];
   /**
+   * How a consumer's compile edges name `outputs`. "order-only" when the
+   * dep's source tree is final before ninja's startup stat — a github/tarball
+   * fetch: either the tree is absent (every file missing, so dependents are
+   * dirty anyway) or an older tree was synced to the new version by the
+   * fetch pre-pass build.ts runs first (changed files carry new mtimes,
+   * unchanged ones keep theirs). "implicit" when the edge behind `outputs`
+   * rewrites headers during the main pass as undeclared side effects
+   * (prebuilt tarballs, cargo builds): depfiles would lag one build.
+   */
+  headerSignal: "implicit" | "order-only";
+  /**
+   * The fetch stamp, when vendor/<name> holds an older version of this dep
+   * (identity mismatch or an interrupted sync): build.ts builds these before
+   * the main ninja pass so the tree is brought to the new version, in place,
+   * before ninja stats it. Undefined when the tree is current or absent.
+   */
+  staleFetch?: string | undefined;
+  /**
    * Stamps of this dep's `forbidUndefined` checks (static `nm` scans of its
    * objects). Ninja validations of whatever the objects go into next — the
    * per-dep archive here when cfg.archiveDeps, otherwise bun.ts's archive or
@@ -896,8 +884,11 @@ export function resolveDep(
   // For local/in-tree: source is already on disk; we use a sentinel file
   //   (CMakeLists.txt) as the stamp. Editing it → reconfigure.
   let sourceStamp: string | undefined;
+  let staleFetch: string | undefined;
   if (source.kind === "github" || source.kind === "tarball") {
-    sourceStamp = emitFetch(n, cfg, dep.name, source, patches, [...resolvedSources, ...directSources]);
+    const fetch = emitFetch(n, cfg, dep.name, source, patches, [...resolvedSources, ...directSources]);
+    sourceStamp = fetch.refStamp;
+    if (fetch.stale) staleFetch = fetch.refStamp;
   } else {
     // Local/in-tree: no .ref to write. Use the build system's manifest file
     // as the stamp — touching it triggers reconfigure/rebuild.
@@ -992,6 +983,8 @@ export function resolveDep(
     sources: resolvedSources,
     outputs,
     generatedHeaders,
+    headerSignal: buildSpec.kind === "cargo" ? "implicit" : "order-only",
+    staleFetch,
     checks,
   };
 }
@@ -1045,11 +1038,14 @@ export function computeDepLibs(cfg: Config, dep: Dependency): string[] {
 }
 
 /**
- * Emit a ninja fetch rule. Returns absolute path to the .ref stamp.
+ * Emit a ninja fetch rule. Returns the absolute path to the .ref stamp and
+ * whether an older tree is on disk.
  *
- * The .ref stamp contains the "source identity": hash(commit + patch contents).
- * If the identity matches what's on disk, fetch is a no-op (and restat kicks in).
- * If it doesn't match, fetch blows away the source dir and re-extracts.
+ * The .ref stamp contains the "source identity": hash(commit + sparse set +
+ * patch contents). If the identity matches what's on disk, fetch is a no-op
+ * (and restat kicks in). If it doesn't, fetch extracts the new version beside
+ * the old tree and syncs it in place (fetch-cli.ts syncTree): unchanged files
+ * keep their mtimes, so only what changed recompiles.
  */
 function emitFetch(
   n: Ninja,
@@ -1058,27 +1054,29 @@ function emitFetch(
   source: Extract<Source, { kind: "github" | "tarball" }>,
   patches: string[],
   compiledSources: string[],
-): string {
+): { refStamp: string; stale: boolean } {
   const srcDir = depSourceDir(cfg, name);
   const refStamp = resolve(srcDir, ".ref");
   const patchPaths = patches.map(p => resolve(cfg.cwd, p));
   const { url, ref, sparse } = fetchSpec(source);
 
-  // ─── Preemptive stale-source cleanup ───
-  // If vendor/<dep>/ exists but .ref is missing OR doesn't match the
-  // expected identity, wipe the source dir NOW (configure-time, before
-  // ninja starts). This forces header files to be missing when ninja does
-  // its startup stat, correctly marking .o files that depend on them as
-  // dirty — so they recompile on THIS build, not the next one.
-  //
-  // Without this: ninja stats everything at startup. Stale headers still
-  // have OLD mtimes. .o files look clean. Fetch runs, headers get NEW
-  // mtimes. Too late — ninja already scheduled .o as clean. You'd need
-  // a SECOND build to pick up the header changes. This closes that gap.
-  //
-  // Only deletes when identity is demonstrably wrong — normal no-op
-  // builds skip it (identity matches, nothing touched).
-  invalidateStaleSource(name, srcDir, refStamp, ref, sparse, patchPaths);
+  // ─── Stale-source detection ───
+  // A tree on disk whose .ref is missing or names another identity is an
+  // older version (or an interrupted sync). It is NOT wiped: the fetch edge
+  // syncs it to the new version in place. But that must happen before the
+  // main ninja pass stats the tree — ninja stats every input once at startup,
+  // so a header rewritten mid-build by the fetch edge would leave the objects
+  // that include it looking clean until the NEXT build. build.ts therefore
+  // builds the stale stamps first (ConfigureResult.fetchFirst); when configure
+  // runs as ninja's own regen edge there is no such pre-pass, and configure.ts
+  // falls back to deleting the tree (ninja re-stats after a regen, sees the
+  // files missing, and rebuilds their dependents in the same invocation).
+  // A git clone in the dep's place is refused either way.
+  let stale = false;
+  if (existsSync(srcDir)) {
+    assertManagedSource(name, srcDir, refStamp);
+    stale = !sourceIsCurrent(srcDir, ref, sparse, patchPaths);
+  }
 
   n.build({
     outputs: [refStamp],
@@ -1107,7 +1105,7 @@ function emitFetch(
   // Phony convenience target: `ninja clone-<name>`
   n.phony(`clone-${name}`, [refStamp]);
 
-  return refStamp;
+  return { refStamp, stale };
 }
 
 /**
@@ -1174,6 +1172,7 @@ function emitPrebuilt(
     sources: [],
     outputs,
     generatedHeaders: [],
+    headerSignal: "implicit",
   };
 }
 

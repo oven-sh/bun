@@ -181,614 +181,471 @@ set(ENABLE_SWIFT_DEMO_URI_SCHEME_DEFAULT ${_swift_features_default})
 set(ENABLE_BACK_FORWARD_LIST_SWIFT_DEFAULT ${_swift_features_default})
 
 # in macro(WEBKIT_OPTION_BEGIN)
-webkit_option_define(
-    ENABLE_ACCESSIBILITY_ISOLATED_TREE "Toggle accessibility isolated tree support" PRIVATE OFF
-)
+webkit_option_define(ENABLE_ACCESSIBILITY_ISOLATED_TREE PRIVATE OFF)
 
 # in macro(WEBKIT_OPTION_BEGIN)
-webkit_option_define(ENABLE_API_TESTS "Enable public API unit tests" PRIVATE OFF)
+webkit_option_define(ENABLE_API_TESTS PRIVATE OFF)
 
 # in macro(WEBKIT_OPTION_BEGIN)
-webkit_option_define(ENABLE_APPLE_PAY "Toggle Apple Pay support" PRIVATE OFF)
+webkit_option_define(ENABLE_APPLE_PAY PRIVATE OFF)
 
 # in macro(WEBKIT_OPTION_BEGIN)
-webkit_option_define(
-    ENABLE_APPLE_PAY_AUTOMATIC_RELOAD_LINE_ITEM "Toggle Apple Pay automatic reload line item support"
-       PRIVATE OFF
-)
+webkit_option_define(ENABLE_APPLE_PAY_AUTOMATIC_RELOAD_LINE_ITEM PRIVATE OFF)
 
 # in macro(WEBKIT_OPTION_BEGIN)
-webkit_option_define(
-    ENABLE_APPLE_PAY_AUTOMATIC_RELOAD_PAYMENTS "Toggle Apple Pay automatic reload payments support"
-       PRIVATE OFF
-)
+webkit_option_define(ENABLE_APPLE_PAY_AUTOMATIC_RELOAD_PAYMENTS PRIVATE OFF)
 
 # in macro(WEBKIT_OPTION_BEGIN)
-webkit_option_define(
-    ENABLE_APPLE_PAY_COUPON_CODE "Toggle Apple Pay coupon code support" PRIVATE OFF
-)
+webkit_option_define(ENABLE_APPLE_PAY_COUPON_CODE PRIVATE OFF)
 
 # in macro(WEBKIT_OPTION_BEGIN)
-webkit_option_define(
-    ENABLE_APPLE_PAY_DEFERRED_LINE_ITEM "Toggle Apple Pay deferred line item support" PRIVATE OFF
-)
+webkit_option_define(ENABLE_APPLE_PAY_DEFERRED_LINE_ITEM PRIVATE OFF)
 
 # in macro(WEBKIT_OPTION_BEGIN)
-webkit_option_define(
-    ENABLE_APPLE_PAY_DEFERRED_PAYMENTS "Toggle Apple Pay deferred payments support" PRIVATE OFF
-)
+webkit_option_define(ENABLE_APPLE_PAY_DEFERRED_PAYMENTS PRIVATE OFF)
 
 # in macro(WEBKIT_OPTION_BEGIN)
-webkit_option_define(
-    ENABLE_APPLE_PAY_DELEGATED_REQUEST "Toggle Apple Pay delegated request support" PRIVATE OFF
-)
+webkit_option_define(ENABLE_APPLE_PAY_DELEGATED_REQUEST PRIVATE OFF)
 
 # in macro(WEBKIT_OPTION_BEGIN)
-webkit_option_define(
-    ENABLE_APPLE_PAY_DISBURSEMENTS "Toggle Apple Pay disbursements support" PRIVATE OFF
-)
+webkit_option_define(ENABLE_APPLE_PAY_DISBURSEMENTS PRIVATE OFF)
 
 # in macro(WEBKIT_OPTION_BEGIN)
-webkit_option_define(
-    ENABLE_APPLE_PAY_INSTALLMENTS "Toggle Apple Pay installments support" PRIVATE OFF
-)
+webkit_option_define(ENABLE_APPLE_PAY_INSTALLMENTS PRIVATE OFF)
 
 # in macro(WEBKIT_OPTION_BEGIN)
-webkit_option_define(ENABLE_APPLE_PAY_LATER "Toggle Apple Pay Later support" PRIVATE OFF)
+webkit_option_define(ENABLE_APPLE_PAY_LATER PRIVATE OFF)
 
 # in macro(WEBKIT_OPTION_BEGIN)
-webkit_option_define(
-    ENABLE_APPLE_PAY_LATER_AVAILABILITY "Toggle Apple Pay Later availability support" PRIVATE OFF
-)
+webkit_option_define(ENABLE_APPLE_PAY_LATER_AVAILABILITY PRIVATE OFF)
 
 # in macro(WEBKIT_OPTION_BEGIN)
-webkit_option_define(
-    ENABLE_APPLE_PAY_MERCHANT_CATEGORY_CODE "Toggle Apple Pay merchant category code support" PRIVATE OFF
-)
+webkit_option_define(ENABLE_APPLE_PAY_MERCHANT_CATEGORY_CODE PRIVATE OFF)
 
 # in macro(WEBKIT_OPTION_BEGIN)
-webkit_option_define(
-    ENABLE_APPLE_PAY_MULTI_MERCHANT_PAYMENTS "Toggle Apple Pay multi-merchant payments support" PRIVATE
-       OFF
-)
+webkit_option_define(ENABLE_APPLE_PAY_MULTI_MERCHANT_PAYMENTS PRIVATE OFF)
 
 # in macro(WEBKIT_OPTION_BEGIN)
-webkit_option_define(
-    ENABLE_APPLE_PAY_PAYMENT_ORDER_DETAILS "Toggle Apple Pay payment order details support" PRIVATE OFF
-)
+webkit_option_define(ENABLE_APPLE_PAY_PAYMENT_ORDER_DETAILS PRIVATE OFF)
 
 # in macro(WEBKIT_OPTION_BEGIN)
-webkit_option_define(
-    ENABLE_APPLE_PAY_RECURRING_LINE_ITEM "Toggle Apple Pay recurring line item support" PRIVATE OFF
-)
+webkit_option_define(ENABLE_APPLE_PAY_RECURRING_LINE_ITEM PRIVATE OFF)
 
 # in macro(WEBKIT_OPTION_BEGIN)
-webkit_option_define(
-    ENABLE_APPLE_PAY_RECURRING_PAYMENTS "Toggle Apple Pay recurring payments support" PRIVATE OFF
-)
+webkit_option_define(ENABLE_APPLE_PAY_RECURRING_PAYMENTS PRIVATE OFF)
 
 # in macro(WEBKIT_OPTION_BEGIN)
-webkit_option_define(
-    ENABLE_APPLE_PAY_SELECTED_SHIPPING_METHOD "Toggle Apple Pay selected shipping method support" PRIVATE
-       OFF
-)
+webkit_option_define(ENABLE_APPLE_PAY_SELECTED_SHIPPING_METHOD PRIVATE OFF)
 
 # in macro(WEBKIT_OPTION_BEGIN)
-webkit_option_define(
-    ENABLE_APPLE_PAY_SHIPPING_CONTACT_EDITING_MODE
-       "Toggle Apple Pay shipping contact editing mode support" PRIVATE OFF
-)
+webkit_option_define(ENABLE_APPLE_PAY_SHIPPING_CONTACT_EDITING_MODE PRIVATE OFF)
 
 # in macro(WEBKIT_OPTION_BEGIN)
-webkit_option_define(
-    ENABLE_APPLE_PAY_SHIPPING_METHOD_DATE_COMPONENTS_RANGE
-       "Toggle Apple Pay shipping method date range support" PRIVATE OFF
-)
+webkit_option_define(ENABLE_APPLE_PAY_SHIPPING_METHOD_DATE_COMPONENTS_RANGE PRIVATE OFF)
 
 # in macro(WEBKIT_OPTION_BEGIN)
-webkit_option_define(ENABLE_APPLICATION_MANIFEST "Toggle Application Manifest support" PRIVATE OFF)
+webkit_option_define(ENABLE_APPLICATION_MANIFEST PRIVATE OFF)
 
 # in macro(WEBKIT_OPTION_BEGIN)
-webkit_option_define(ENABLE_ASYNC_SCROLLING "Enable asynchronous scrolling" PRIVATE OFF)
+webkit_option_define(ENABLE_ASYNC_SCROLLING PRIVATE OFF)
 
 # in macro(WEBKIT_OPTION_BEGIN)
-webkit_option_define(ENABLE_ATTACHMENT_ELEMENT "Toggle Attachment Element support" PRIVATE OFF)
+webkit_option_define(ENABLE_ATTACHMENT_ELEMENT PRIVATE OFF)
 
 # in macro(WEBKIT_OPTION_BEGIN)
-webkit_option_define(ENABLE_AUTOCAPITALIZE "Toggle autocapitalize support" PRIVATE OFF)
+webkit_option_define(ENABLE_AUTOCAPITALIZE PRIVATE OFF)
 
 # in macro(WEBKIT_OPTION_BEGIN)
-webkit_option_define(ENABLE_AV1 "Toggle AV1 codec support" PRIVATE OFF)
+webkit_option_define(ENABLE_AV1 PRIVATE OFF)
 
 # in macro(WEBKIT_OPTION_BEGIN)
-webkit_option_define(ENABLE_AVF_CAPTIONS "Toggle AVFoundation caption support" PRIVATE OFF)
+webkit_option_define(ENABLE_AVF_CAPTIONS PRIVATE OFF)
 
 # in macro(WEBKIT_OPTION_BEGIN)
 webkit_option_define(
-    ENABLE_BACK_FORWARD_LIST_SWIFT "Toggle Swift back forward list" PRIVATE
-       ${ENABLE_BACK_FORWARD_LIST_SWIFT_DEFAULT}
+    ENABLE_BACK_FORWARD_LIST_SWIFT PRIVATE ${ENABLE_BACK_FORWARD_LIST_SWIFT_DEFAULT}
 )
 
 # in macro(WEBKIT_OPTION_BEGIN)
-webkit_option_define(ENABLE_BREAKPAD "Toggle breakpad minidump support." PRIVATE OFF)
+webkit_option_define(ENABLE_BREAKPAD PRIVATE OFF)
 
 # in macro(WEBKIT_OPTION_BEGIN)
-webkit_option_define(ENABLE_BUBBLEWRAP_SANDBOX "Toggle Bubblewrap sandboxing support" PRIVATE OFF)
+webkit_option_define(ENABLE_BUBBLEWRAP_SANDBOX PRIVATE OFF)
 
 # in macro(WEBKIT_OPTION_BEGIN)
-webkit_option_define(ENABLE_CACHE_PARTITIONING "Toggle cache partitioning support" PRIVATE OFF)
+webkit_option_define(ENABLE_CACHE_PARTITIONING PRIVATE OFF)
 
 # in macro(WEBKIT_OPTION_BEGIN)
-webkit_option_define(ENABLE_CONTENT_EXTENSIONS "Toggle Content Extensions support" PRIVATE OFF)
+webkit_option_define(ENABLE_CONTENT_EXTENSIONS PRIVATE OFF)
 
 # in macro(WEBKIT_OPTION_BEGIN)
-webkit_option_define(ENABLE_CONTENT_FILTERING "Toggle content filtering support" PRIVATE OFF)
+webkit_option_define(ENABLE_CONTENT_FILTERING PRIVATE OFF)
 
 # in macro(WEBKIT_OPTION_BEGIN)
-webkit_option_define(ENABLE_CONTEXT_MENUS "Toggle Context Menu support" PRIVATE ON)
+webkit_option_define(ENABLE_CONTEXT_MENUS PRIVATE ON)
 
 # in macro(WEBKIT_OPTION_BEGIN)
-webkit_option_define(
-    ENABLE_CSS_TAP_HIGHLIGHT_COLOR "Toggle CSS -webkit-tap-highlight-color support" PRIVATE OFF
-)
+webkit_option_define(ENABLE_CSS_TAP_HIGHLIGHT_COLOR PRIVATE OFF)
 
 # in macro(WEBKIT_OPTION_BEGIN)
-webkit_option_define(ENABLE_CURSOR_VISIBILITY "Toggle cursor visibility support" PRIVATE OFF)
+webkit_option_define(ENABLE_CURSOR_VISIBILITY PRIVATE OFF)
 
 # in macro(WEBKIT_OPTION_BEGIN)
-webkit_option_define(ENABLE_C_LOOP "Enable CLoop interpreter" PRIVATE ${ENABLE_C_LOOP_DEFAULT})
+webkit_option_define(ENABLE_C_LOOP PRIVATE ${ENABLE_C_LOOP_DEFAULT})
 
 # in macro(WEBKIT_OPTION_BEGIN)
-webkit_option_define(ENABLE_DARK_MODE_CSS "Toggle Dark Mode CSS support" PRIVATE OFF)
+webkit_option_define(ENABLE_DARK_MODE_CSS PRIVATE OFF)
 
 # in macro(WEBKIT_OPTION_BEGIN)
-webkit_option_define(ENABLE_DATACUE_VALUE "Toggle datacue value support" PRIVATE OFF)
+webkit_option_define(ENABLE_DATACUE_VALUE PRIVATE OFF)
 
 # in macro(WEBKIT_OPTION_BEGIN)
-webkit_option_define(ENABLE_DEVICE_ORIENTATION "Toggle Device Orientation support" PRIVATE OFF)
+webkit_option_define(ENABLE_DEVICE_ORIENTATION PRIVATE OFF)
 
 # in macro(WEBKIT_OPTION_BEGIN)
-webkit_option_define(ENABLE_DFG_JIT "Toggle data flow graph JIT tier" PRIVATE ${ENABLE_JIT_DEFAULT})
+webkit_option_define(ENABLE_DFG_JIT PRIVATE ${ENABLE_JIT_DEFAULT})
 
 # in macro(WEBKIT_OPTION_BEGIN)
-webkit_option_define(
-    ENABLE_DRAG_SUPPORT "Toggle support of drag actions (including selection of text with mouse)" PRIVATE
-       OFF
-)
+webkit_option_define(ENABLE_DRAG_SUPPORT PRIVATE OFF)
 
 # in macro(WEBKIT_OPTION_BEGIN)
-webkit_option_define(ENABLE_ENCRYPTED_MEDIA "Toggle EME V3 support" PRIVATE OFF)
+webkit_option_define(ENABLE_ENCRYPTED_MEDIA PRIVATE OFF)
 
 # in macro(WEBKIT_OPTION_BEGIN)
-webkit_option_define(ENABLE_EXPERIMENTAL_FEATURES "Enable experimental features" PRIVATE OFF)
+webkit_option_define(ENABLE_EXPERIMENTAL_FEATURES PRIVATE OFF)
 
 # in macro(WEBKIT_OPTION_BEGIN)
-webkit_option_define(ENABLE_FTL_JIT "Toggle FTL JIT support" PRIVATE ${ENABLE_FTL_DEFAULT})
+webkit_option_define(ENABLE_FTL_JIT PRIVATE ${ENABLE_FTL_DEFAULT})
 
 # in macro(WEBKIT_OPTION_BEGIN)
-webkit_option_define(ENABLE_FULLSCREEN_API "Toggle Fullscreen API support" PRIVATE ON)
+webkit_option_define(ENABLE_FULLSCREEN_API PRIVATE ON)
 
 # in macro(WEBKIT_OPTION_BEGIN)
-webkit_option_define(ENABLE_GAMEPAD "Toggle Gamepad support" PRIVATE OFF)
+webkit_option_define(ENABLE_GAMEPAD PRIVATE OFF)
 
 # in macro(WEBKIT_OPTION_BEGIN)
-webkit_option_define(ENABLE_GEOLOCATION "Toggle Geolocation support" PRIVATE ON)
+webkit_option_define(ENABLE_GEOLOCATION PRIVATE ON)
 
 # in macro(WEBKIT_OPTION_BEGIN)
-webkit_option_define(ENABLE_GPU_PROCESS "Toggle GPU Process support" PRIVATE OFF)
+webkit_option_define(ENABLE_GPU_PROCESS PRIVATE OFF)
 
 # in macro(WEBKIT_OPTION_BEGIN)
-webkit_option_define(ENABLE_IMAGE_DIFF "Toggle image diff support for layout tests" PRIVATE ON)
+webkit_option_define(ENABLE_IMAGE_DIFF PRIVATE ON)
 
 # in macro(WEBKIT_OPTION_BEGIN)
-webkit_option_define(
-    ENABLE_INSPECTOR_ALTERNATE_DISPATCHERS "Toggle inspector alternate dispatchers support" PRIVATE OFF
-)
+webkit_option_define(ENABLE_INSPECTOR_ALTERNATE_DISPATCHERS PRIVATE OFF)
 
 # in macro(WEBKIT_OPTION_BEGIN)
-webkit_option_define(
-    ENABLE_INSPECTOR_EXTENSIONS "Toggle inspector web extensions support" PRIVATE OFF
-)
+webkit_option_define(ENABLE_INSPECTOR_EXTENSIONS PRIVATE OFF)
 
 # in macro(WEBKIT_OPTION_BEGIN)
-webkit_option_define(ENABLE_INSPECTOR_TELEMETRY "Toggle inspector telemetry support" PRIVATE OFF)
+webkit_option_define(ENABLE_INSPECTOR_TELEMETRY PRIVATE OFF)
 
 # in macro(WEBKIT_OPTION_BEGIN)
-webkit_option_define(ENABLE_IOS_GESTURE_EVENTS "Toggle iOS gesture events support" PRIVATE OFF)
+webkit_option_define(ENABLE_IOS_GESTURE_EVENTS PRIVATE OFF)
 
 # in macro(WEBKIT_OPTION_BEGIN)
-webkit_option_define(ENABLE_IOS_TOUCH_EVENTS "Toggle iOS touch events support" PRIVATE OFF)
+webkit_option_define(ENABLE_IOS_TOUCH_EVENTS PRIVATE OFF)
 
 # in macro(WEBKIT_OPTION_BEGIN)
-webkit_option_define(ENABLE_IPC_TESTING_SWIFT "Toggle Swift-based IPC testing support" PRIVATE OFF)
+webkit_option_define(ENABLE_IPC_TESTING_SWIFT PRIVATE OFF)
 
 # in macro(WEBKIT_OPTION_BEGIN)
-webkit_option_define(
-    ENABLE_JAVASCRIPT_SHELL "Toggle JavaScript shell and testing support" PRIVATE ON
-)
+webkit_option_define(ENABLE_JAVASCRIPT_SHELL PRIVATE ON)
 
 # in macro(WEBKIT_OPTION_BEGIN)
-webkit_option_define(
-    ENABLE_JIT "Toggle JustInTime JavaScript support" PRIVATE ${ENABLE_JIT_DEFAULT}
-)
+webkit_option_define(ENABLE_JIT PRIVATE ${ENABLE_JIT_DEFAULT})
 
 # in macro(WEBKIT_OPTION_BEGIN)
-webkit_option_define(
-    ENABLE_LAYOUT_TESTS "Toggle layout test support (DumpRenderTree/WebkitTestRunner)" PRIVATE OFF
-)
+webkit_option_define(ENABLE_LAYOUT_TESTS PRIVATE OFF)
 
 # in macro(WEBKIT_OPTION_BEGIN)
-webkit_option_define(
-    ENABLE_LEGACY_CUSTOM_PROTOCOL_MANAGER "Toggle legacy protocol manager support" PRIVATE OFF
-)
+webkit_option_define(ENABLE_LEGACY_CUSTOM_PROTOCOL_MANAGER PRIVATE OFF)
 
 # in macro(WEBKIT_OPTION_BEGIN)
-webkit_option_define(ENABLE_LEGACY_ENCRYPTED_MEDIA "Toggle Legacy EME V2 support" PRIVATE OFF)
+webkit_option_define(ENABLE_LEGACY_ENCRYPTED_MEDIA PRIVATE OFF)
 
 # in macro(WEBKIT_OPTION_BEGIN)
-webkit_option_define(
-    ENABLE_LLVM_PROFILE_GENERATION "Include LLVM's instrumentation to generate profiles for PGO" PRIVATE
-       OFF
-)
+webkit_option_define(ENABLE_LLVM_PROFILE_GENERATION PRIVATE OFF)
 
 # in macro(WEBKIT_OPTION_BEGIN)
-webkit_option_define(
-    ENABLE_MALLOC_HEAP_BREAKDOWN "Whether to enable malloc heap breakdown." PRIVATE OFF
-)
+webkit_option_define(ENABLE_MALLOC_HEAP_BREAKDOWN PRIVATE OFF)
 
 # in macro(WEBKIT_OPTION_BEGIN)
-webkit_option_define(ENABLE_MATHML "Toggle MathML support" PRIVATE ON)
+webkit_option_define(ENABLE_MATHML PRIVATE ON)
 
 # in macro(WEBKIT_OPTION_BEGIN)
-webkit_option_define(ENABLE_MEDIA_CAPTURE "Toggle Media Capture support" PRIVATE OFF)
+webkit_option_define(ENABLE_MEDIA_CAPTURE PRIVATE OFF)
 
 # in macro(WEBKIT_OPTION_BEGIN)
-webkit_option_define(
-    ENABLE_MEDIA_CONTROLS_CONTEXT_MENUS "Toggle Media controls context menus." PRIVATE OFF
-)
+webkit_option_define(ENABLE_MEDIA_CONTROLS_CONTEXT_MENUS PRIVATE OFF)
 
 # in macro(WEBKIT_OPTION_BEGIN)
-webkit_option_define(ENABLE_MEDIA_RECORDER "Toggle Media Recorder support" PRIVATE OFF)
+webkit_option_define(ENABLE_MEDIA_RECORDER PRIVATE OFF)
 
 # in macro(WEBKIT_OPTION_BEGIN)
-webkit_option_define(ENABLE_MEDIA_SESSION "Toggle Media Session support" PRIVATE OFF)
+webkit_option_define(ENABLE_MEDIA_SESSION PRIVATE OFF)
 
 # in macro(WEBKIT_OPTION_BEGIN)
-webkit_option_define(
-    ENABLE_MEDIA_SESSION_COORDINATOR "Toggle Media Session Coordinator support" PRIVATE OFF
-)
+webkit_option_define(ENABLE_MEDIA_SESSION_COORDINATOR PRIVATE OFF)
 
 # in macro(WEBKIT_OPTION_BEGIN)
-webkit_option_define(
-    ENABLE_MEDIA_SESSION_PLAYLIST "Toggle Media Session Playlist support" PRIVATE OFF
-)
+webkit_option_define(ENABLE_MEDIA_SESSION_PLAYLIST PRIVATE OFF)
 
 # in macro(WEBKIT_OPTION_BEGIN)
-webkit_option_define(ENABLE_MEDIA_SOURCE "Toggle Media Source support" PRIVATE OFF)
+webkit_option_define(ENABLE_MEDIA_SOURCE PRIVATE OFF)
 
 # in macro(WEBKIT_OPTION_BEGIN)
-webkit_option_define(
-    ENABLE_MEDIA_SOURCE_IN_WORKERS "Toggle Media Source in Workers support" PRIVATE OFF
-)
+webkit_option_define(ENABLE_MEDIA_SOURCE_IN_WORKERS PRIVATE OFF)
 
 # in macro(WEBKIT_OPTION_BEGIN)
-webkit_option_define(ENABLE_MEDIA_STATISTICS "Toggle Media Statistics support" PRIVATE OFF)
+webkit_option_define(ENABLE_MEDIA_STATISTICS PRIVATE OFF)
 
 # in macro(WEBKIT_OPTION_BEGIN)
-webkit_option_define(ENABLE_MEDIA_STREAM "Toggle Media Stream support" PRIVATE OFF)
+webkit_option_define(ENABLE_MEDIA_STREAM PRIVATE OFF)
 
 # in macro(WEBKIT_OPTION_BEGIN)
-webkit_option_define(ENABLE_MEMORY_SAMPLER "Toggle Memory Sampler support" PRIVATE OFF)
+webkit_option_define(ENABLE_MEMORY_SAMPLER PRIVATE OFF)
 
 # in macro(WEBKIT_OPTION_BEGIN)
-webkit_option_define(ENABLE_MHTML "Toggle MHTML support" PRIVATE OFF)
+webkit_option_define(ENABLE_MHTML PRIVATE OFF)
 
 # in macro(WEBKIT_OPTION_BEGIN)
-webkit_option_define(ENABLE_MINIBROWSER "Toggle MiniBrowser compilation." PRIVATE OFF)
+webkit_option_define(ENABLE_MINIBROWSER PRIVATE OFF)
 
 # in macro(WEBKIT_OPTION_BEGIN)
-webkit_option_define(ENABLE_MODEL_ELEMENT "Toggle Model Element support" PRIVATE OFF)
+webkit_option_define(ENABLE_MODEL_ELEMENT PRIVATE OFF)
 
 # in macro(WEBKIT_OPTION_BEGIN)
-webkit_option_define(ENABLE_MOUSE_CURSOR_SCALE "Toggle Scaled mouse cursor support" PRIVATE OFF)
+webkit_option_define(ENABLE_MOUSE_CURSOR_SCALE PRIVATE OFF)
 
 # in macro(WEBKIT_OPTION_BEGIN)
-webkit_option_define(ENABLE_NAVIGATOR_STANDALONE "Toogle standalone navigator support" PRIVATE OFF)
+webkit_option_define(ENABLE_NAVIGATOR_STANDALONE PRIVATE OFF)
 
 # in macro(WEBKIT_OPTION_BEGIN)
-webkit_option_define(ENABLE_NOTIFICATIONS "Toggle Notifications support" PRIVATE ON)
+webkit_option_define(ENABLE_NOTIFICATIONS PRIVATE ON)
 
 # in macro(WEBKIT_OPTION_BEGIN)
-webkit_option_define(ENABLE_OFFSCREEN_CANVAS "Toggle OffscreenCanvas support" PRIVATE OFF)
+webkit_option_define(ENABLE_OFFSCREEN_CANVAS PRIVATE OFF)
 
 # in macro(WEBKIT_OPTION_BEGIN)
-webkit_option_define(
-    ENABLE_OFFSCREEN_CANVAS_IN_WORKERS "Toggle OffscreenCanvas in Workers support" PRIVATE OFF
-)
+webkit_option_define(ENABLE_OFFSCREEN_CANVAS_IN_WORKERS PRIVATE OFF)
 
 # in macro(WEBKIT_OPTION_BEGIN)
-webkit_option_define(ENABLE_ORIENTATION_EVENTS "Toggle Orientation Events support" PRIVATE OFF)
+webkit_option_define(ENABLE_ORIENTATION_EVENTS PRIVATE OFF)
 
 # in macro(WEBKIT_OPTION_BEGIN)
-webkit_option_define(ENABLE_PAYMENT_REQUEST "Toggle Payment Request support" PRIVATE OFF)
+webkit_option_define(ENABLE_PAYMENT_REQUEST PRIVATE OFF)
 
 # in macro(WEBKIT_OPTION_BEGIN)
-webkit_option_define(ENABLE_PDFJS "Toggle PDF documents support using PDF.js" PRIVATE OFF)
+webkit_option_define(ENABLE_PDFJS PRIVATE OFF)
 
 # in macro(WEBKIT_OPTION_BEGIN)
-webkit_option_define(ENABLE_PDF_HUD "Toggle PDF HUD support" PRIVATE OFF)
+webkit_option_define(ENABLE_PDF_HUD PRIVATE OFF)
 
 # in macro(WEBKIT_OPTION_BEGIN)
-webkit_option_define(ENABLE_PDF_PLUGIN "Toggle PDF plugin support" PRIVATE OFF)
+webkit_option_define(ENABLE_PDF_PLUGIN PRIVATE OFF)
 
 # in macro(WEBKIT_OPTION_BEGIN)
-webkit_option_define(ENABLE_PDFKIT_PLUGIN "Toggle PDFKit plugin support" PRIVATE OFF)
+webkit_option_define(ENABLE_PDFKIT_PLUGIN PRIVATE OFF)
 
 # in macro(WEBKIT_OPTION_BEGIN)
-webkit_option_define(ENABLE_UNIFIED_PDF "Toggle unified PDF support" PRIVATE OFF)
+webkit_option_define(ENABLE_UNIFIED_PDF PRIVATE OFF)
 
 # in macro(WEBKIT_OPTION_BEGIN)
-webkit_option_define(
-    ENABLE_PERIODIC_MEMORY_MONITOR "Toggle periodical memory monitor support" PRIVATE OFF
-)
+webkit_option_define(ENABLE_PERIODIC_MEMORY_MONITOR PRIVATE OFF)
 
 # in macro(WEBKIT_OPTION_BEGIN)
-webkit_option_define(
-    ENABLE_PICTURE_IN_PICTURE_API "Toggle Picture-in-Picture API support" PRIVATE OFF
-)
+webkit_option_define(ENABLE_PICTURE_IN_PICTURE_API PRIVATE OFF)
 
 # in macro(WEBKIT_OPTION_BEGIN)
-webkit_option_define(ENABLE_POINTER_LOCK "Toggle pointer lock support" PRIVATE OFF)
+webkit_option_define(ENABLE_POINTER_LOCK PRIVATE OFF)
 
 # in macro(WEBKIT_OPTION_BEGIN)
-webkit_option_define(
-    ENABLE_PREDEFINED_COLOR_SPACE_DISPLAY_P3 "Toggle display-p3 PredefinedColorSpace enum values" PRIVATE
-       OFF
-)
+webkit_option_define(ENABLE_PREDEFINED_COLOR_SPACE_DISPLAY_P3 PRIVATE OFF)
 
 # in macro(WEBKIT_OPTION_BEGIN)
-webkit_option_define(
-    ENABLE_REFTRACKER "Enable debugging tools for tracking RAII objects" PRIVATE OFF
-)
+webkit_option_define(ENABLE_REFTRACKER PRIVATE OFF)
 
 # in macro(WEBKIT_OPTION_BEGIN)
-webkit_option_define(ENABLE_RELEASE_LOG "Toggle release log support" PRIVATE OFF)
+webkit_option_define(ENABLE_RELEASE_LOG PRIVATE OFF)
 
 # in macro(WEBKIT_OPTION_BEGIN)
-webkit_option_define(ENABLE_REMOTE_INSPECTOR "Toggle remote inspector support" PRIVATE ON)
+webkit_option_define(ENABLE_REMOTE_INSPECTOR PRIVATE ON)
 
 # in macro(WEBKIT_OPTION_BEGIN)
-webkit_option_define(ENABLE_RESOURCE_USAGE "Toggle resource usage support" PRIVATE OFF)
+webkit_option_define(ENABLE_RESOURCE_USAGE PRIVATE OFF)
 
 # in macro(WEBKIT_OPTION_BEGIN)
-webkit_option_define(
-    ENABLE_SAMPLING_PROFILER "Toggle sampling profiler support" PRIVATE
-       ${ENABLE_SAMPLING_PROFILER_DEFAULT}
-)
+webkit_option_define(ENABLE_SAMPLING_PROFILER PRIVATE ${ENABLE_SAMPLING_PROFILER_DEFAULT})
 
 # in macro(WEBKIT_OPTION_BEGIN)
-webkit_option_define(ENABLE_SANDBOX_EXTENSIONS "Toggle sandbox extensions support" PRIVATE OFF)
+webkit_option_define(ENABLE_SANDBOX_EXTENSIONS PRIVATE OFF)
 
 # in macro(WEBKIT_OPTION_BEGIN)
-webkit_option_define(ENABLE_SERVICE_CONTROLS "Toggle service controls support" PRIVATE OFF)
+webkit_option_define(ENABLE_SERVICE_CONTROLS PRIVATE OFF)
 
 # in macro(WEBKIT_OPTION_BEGIN)
-webkit_option_define(
-    ENABLE_SHAREABLE_RESOURCE "Toggle network shareable resources support" PRIVATE OFF
-)
+webkit_option_define(ENABLE_SHAREABLE_RESOURCE PRIVATE OFF)
 
 # in macro(WEBKIT_OPTION_BEGIN)
-webkit_option_define(ENABLE_SMOOTH_SCROLLING "Toggle smooth scrolling" PRIVATE ON)
+webkit_option_define(ENABLE_SMOOTH_SCROLLING PRIVATE ON)
 
 # in macro(WEBKIT_OPTION_BEGIN)
-webkit_option_define(ENABLE_SPATIAL_PORTAL "Toggle Spatial CSS Portal support" PRIVATE OFF)
+webkit_option_define(ENABLE_SPATIAL_PORTAL PRIVATE OFF)
 
 # in macro(WEBKIT_OPTION_BEGIN)
-webkit_option_define(ENABLE_SPEECH_SYNTHESIS "Toggle Speech Synthesis API support" PRIVATE OFF)
+webkit_option_define(ENABLE_SPEECH_SYNTHESIS PRIVATE OFF)
 
 # in macro(WEBKIT_OPTION_BEGIN)
-webkit_option_define(
-    ENABLE_SPELLCHECK "Toggle Spellchecking support (requires Enchant)" PRIVATE OFF
-)
+webkit_option_define(ENABLE_SPELLCHECK PRIVATE OFF)
 
 # in macro(WEBKIT_OPTION_BEGIN)
-webkit_option_define(
-    ENABLE_STREAMING_IPC_IN_LOG_FORWARDING "Toggle streaming connection in WebKit::LogStream" PRIVATE OFF
-)
+webkit_option_define(ENABLE_STREAMING_IPC_IN_LOG_FORWARDING PRIVATE OFF)
 
 # in macro(WEBKIT_OPTION_BEGIN)
-webkit_option_define(
-    ENABLE_SWIFT_DEMO_URI_SCHEME "Toggle Swift demo URI feature" PRIVATE
-       ${ENABLE_SWIFT_DEMO_URI_SCHEME_DEFAULT}
-)
+webkit_option_define(ENABLE_SWIFT_DEMO_URI_SCHEME PRIVATE ${ENABLE_SWIFT_DEMO_URI_SCHEME_DEFAULT})
 
 # in macro(WEBKIT_OPTION_BEGIN)
-webkit_option_define(
-    ENABLE_TELEPHONE_NUMBER_DETECTION "Toggle telephone number detection support" PRIVATE OFF
-)
+webkit_option_define(ENABLE_TELEPHONE_NUMBER_DETECTION PRIVATE OFF)
 
 # in macro(WEBKIT_OPTION_BEGIN)
-webkit_option_define(
-    ENABLE_TEXT_AUTOSIZING "Toggle automatic text size adjustment support" PRIVATE OFF
-)
+webkit_option_define(ENABLE_TEXT_AUTOSIZING PRIVATE OFF)
 
 # in macro(WEBKIT_OPTION_BEGIN)
-webkit_option_define(ENABLE_THUNDER "Toggle EME V3 Thunder support" PRIVATE OFF)
+webkit_option_define(ENABLE_THUNDER PRIVATE OFF)
 
 # in macro(WEBKIT_OPTION_BEGIN)
-webkit_option_define(ENABLE_TOUCH_EVENTS "Toggle Touch Events support" PRIVATE OFF)
+webkit_option_define(ENABLE_TOUCH_EVENTS PRIVATE OFF)
 
 # in macro(WEBKIT_OPTION_BEGIN)
-webkit_option_define(
-    ENABLE_UNIFIED_BUILDS "Toggle unified builds" PRIVATE ${ENABLE_UNIFIED_BUILDS_DEFAULT}
-)
+webkit_option_define(ENABLE_UNIFIED_BUILDS PRIVATE ${ENABLE_UNIFIED_BUILDS_DEFAULT})
 
 # in macro(WEBKIT_OPTION_BEGIN)
-webkit_option_define(
-    ENABLE_USER_MESSAGE_HANDLERS "Toggle user script message handler support" PRIVATE ON
-)
+webkit_option_define(ENABLE_USER_MESSAGE_HANDLERS PRIVATE ON)
 
 # in macro(WEBKIT_OPTION_BEGIN)
-webkit_option_define(ENABLE_VARIATION_FONTS "Toggle variation fonts support" PRIVATE OFF)
+webkit_option_define(ENABLE_VARIATION_FONTS PRIVATE OFF)
 
 # in macro(WEBKIT_OPTION_BEGIN)
-webkit_option_define(ENABLE_VIDEO "Toggle Video support" PRIVATE ON)
+webkit_option_define(ENABLE_VIDEO PRIVATE ON)
 
 # in macro(WEBKIT_OPTION_BEGIN)
-webkit_option_define(
-    ENABLE_VIDEO_PRESENTATION_MODE "Toggle Video presentation mode support" PRIVATE OFF
-)
+webkit_option_define(ENABLE_VIDEO_PRESENTATION_MODE PRIVATE OFF)
 
 # in macro(WEBKIT_OPTION_BEGIN)
-webkit_option_define(
-    ENABLE_VIDEO_USES_ELEMENT_FULLSCREEN "Toggle video element fullscreen support" PRIVATE ON
-)
+webkit_option_define(ENABLE_VIDEO_USES_ELEMENT_FULLSCREEN PRIVATE ON)
 
 # in macro(WEBKIT_OPTION_BEGIN)
-webkit_option_define(
-    ENABLE_WEBASSEMBLY "Toggle WebAssembly support" PRIVATE ${ENABLE_WEBASSEMBLY_DEFAULT}
-)
+webkit_option_define(ENABLE_WEBASSEMBLY PRIVATE ${ENABLE_WEBASSEMBLY_DEFAULT})
 
 # in macro(WEBKIT_OPTION_BEGIN)
-webkit_option_define(
-    ENABLE_WEBASSEMBLY_BBQJIT "Toggle WebAssembly BBQ JIT support" PRIVATE ${ENABLE_FTL_DEFAULT}
-)
+webkit_option_define(ENABLE_WEBASSEMBLY_BBQJIT PRIVATE ${ENABLE_FTL_DEFAULT})
 
 # in macro(WEBKIT_OPTION_BEGIN)
-webkit_option_define(
-    ENABLE_WEBASSEMBLY_OMGJIT "Toggle WebAssembly OMG JIT support" PRIVATE ${ENABLE_FTL_DEFAULT}
-)
+webkit_option_define(ENABLE_WEBASSEMBLY_OMGJIT PRIVATE ${ENABLE_FTL_DEFAULT})
 
 # in macro(WEBKIT_OPTION_BEGIN)
-webkit_option_define(ENABLE_WEBDRIVER "Toggle WebDriver service process" PRIVATE OFF)
+webkit_option_define(ENABLE_WEBDRIVER PRIVATE OFF)
 
 # in macro(WEBKIT_OPTION_BEGIN)
-webkit_option_define(ENABLE_WEBDRIVER_BIDI "Toggler WebDriver BiDi protocol support" PRIVATE OFF)
+webkit_option_define(ENABLE_WEBDRIVER_BIDI PRIVATE OFF)
 
 # in macro(WEBKIT_OPTION_BEGIN)
-webkit_option_define(
-    ENABLE_WEBDRIVER_KEYBOARD_GRAPHEME_CLUSTERS
-       "Toggle WebDriver allowing grapheme clusters to be sent as a series of characters to a single action step"
-       PRIVATE OFF
-)
+webkit_option_define(ENABLE_WEBDRIVER_KEYBOARD_GRAPHEME_CLUSTERS PRIVATE OFF)
 
 # in macro(WEBKIT_OPTION_BEGIN)
-webkit_option_define(
-    ENABLE_WEBDRIVER_KEYBOARD_INTERACTIONS "Toggle WebDriver keyboard interactions" PRIVATE OFF
-)
+webkit_option_define(ENABLE_WEBDRIVER_KEYBOARD_INTERACTIONS PRIVATE OFF)
 
 # in macro(WEBKIT_OPTION_BEGIN)
-webkit_option_define(
-    ENABLE_WEBDRIVER_MOUSE_INTERACTIONS "Toggle WebDriver mouse interactions" PRIVATE OFF
-)
+webkit_option_define(ENABLE_WEBDRIVER_MOUSE_INTERACTIONS PRIVATE OFF)
 
 # in macro(WEBKIT_OPTION_BEGIN)
-webkit_option_define(
-    ENABLE_WEBDRIVER_TOUCH_INTERACTIONS "Toggle WebDriver touch interactions" PRIVATE OFF
-)
+webkit_option_define(ENABLE_WEBDRIVER_TOUCH_INTERACTIONS PRIVATE OFF)
 
 # in macro(WEBKIT_OPTION_BEGIN)
-webkit_option_define(
-    ENABLE_WEBDRIVER_WHEEL_INTERACTIONS "Toggle WebDriver wheel interactions" PRIVATE OFF
-)
+webkit_option_define(ENABLE_WEBDRIVER_WHEEL_INTERACTIONS PRIVATE OFF)
 
 # in macro(WEBKIT_OPTION_BEGIN)
-webkit_option_define(ENABLE_WEBGL "Toggle WebGL support" PRIVATE ON)
+webkit_option_define(ENABLE_WEBGL PRIVATE ON)
 
 # in macro(WEBKIT_OPTION_BEGIN)
-webkit_option_define(ENABLE_WEBGPU "Toggle WebGPU support" PRIVATE OFF)
+webkit_option_define(ENABLE_WEBGPU PRIVATE OFF)
 
 # in macro(WEBKIT_OPTION_BEGIN)
-webkit_option_define(
-    ENABLE_WEBKIT_OVERFLOW_SCROLLING_CSS_PROPERTY "Toggle accelerated scrolling support" PRIVATE OFF
-)
+webkit_option_define(ENABLE_WEBKIT_OVERFLOW_SCROLLING_CSS_PROPERTY PRIVATE OFF)
 
 # in macro(WEBKIT_OPTION_BEGIN)
-webkit_option_define(
-    ENABLE_WEBKIT_TOUCH_CALLOUT_CSS_PROPERTY "Toggle -webkit-touch-callout CSS property" PRIVATE OFF
-)
+webkit_option_define(ENABLE_WEBKIT_TOUCH_CALLOUT_CSS_PROPERTY PRIVATE OFF)
 
 # in macro(WEBKIT_OPTION_BEGIN)
-webkit_option_define(ENABLE_WEBXR "Toggle WebXR support" PRIVATE OFF)
+webkit_option_define(ENABLE_WEBXR PRIVATE OFF)
 
 # in macro(WEBKIT_OPTION_BEGIN)
-webkit_option_define(ENABLE_WEBXR_HIT_TEST "Toggle WebXR Hit Test Module support" PRIVATE OFF)
+webkit_option_define(ENABLE_WEBXR_HIT_TEST PRIVATE OFF)
 
 # in macro(WEBKIT_OPTION_BEGIN)
-webkit_option_define(ENABLE_WEBXR_LAYERS "Toggle WebXR Layers support" PRIVATE OFF)
+webkit_option_define(ENABLE_WEBXR_LAYERS PRIVATE OFF)
 
 # in macro(WEBKIT_OPTION_BEGIN)
-webkit_option_define(ENABLE_WEB_API_STATISTICS "Toggle Web API statistics support" PRIVATE OFF)
+webkit_option_define(ENABLE_WEB_API_STATISTICS PRIVATE OFF)
 
 # in macro(WEBKIT_OPTION_BEGIN)
-webkit_option_define(ENABLE_WEB_AUDIO "Toggle Web Audio support" PRIVATE ON)
+webkit_option_define(ENABLE_WEB_AUDIO PRIVATE ON)
 
 # in macro(WEBKIT_OPTION_BEGIN)
-webkit_option_define(ENABLE_WEB_AUTHN "Toggle Web AuthN support" PRIVATE OFF)
+webkit_option_define(ENABLE_WEB_AUTHN PRIVATE OFF)
 
 # in macro(WEBKIT_OPTION_BEGIN)
-webkit_option_define(ENABLE_WEB_CODECS "Toggle WebCodecs support" PRIVATE OFF)
+webkit_option_define(ENABLE_WEB_CODECS PRIVATE OFF)
 
 # in macro(WEBKIT_OPTION_BEGIN)
-webkit_option_define(ENABLE_WEB_RTC "Toggle WebRTC support" PRIVATE OFF)
+webkit_option_define(ENABLE_WEB_RTC PRIVATE OFF)
 
 # in macro(WEBKIT_OPTION_BEGIN)
-webkit_option_define(
-    ENABLE_WIRELESS_PLAYBACK_TARGET "Toggle wireless playback target support" PRIVATE OFF
-)
+webkit_option_define(ENABLE_WIRELESS_PLAYBACK_TARGET PRIVATE OFF)
 
 # in macro(WEBKIT_OPTION_BEGIN)
-webkit_option_define(ENABLE_WK_WEB_EXTENSIONS "Toggle WebExtensions support" PRIVATE OFF)
+webkit_option_define(ENABLE_WK_WEB_EXTENSIONS PRIVATE OFF)
 
 # in macro(WEBKIT_OPTION_BEGIN)
-webkit_option_define(ENABLE_WRITING_TOOLS "Toggle Writing Tools support" PRIVATE OFF)
+webkit_option_define(ENABLE_WRITING_TOOLS PRIVATE OFF)
 
 # in macro(WEBKIT_OPTION_BEGIN)
-webkit_option_define(ENABLE_XSLT "Toggle XSLT support" PRIVATE ON)
+webkit_option_define(ENABLE_XSLT PRIVATE ON)
 
 # in macro(WEBKIT_OPTION_BEGIN)
-webkit_option_define(USE_AVIF "Toggle support for AVIF images." PRIVATE ON)
+webkit_option_define(USE_AVIF PRIVATE ON)
 
 # in macro(WEBKIT_OPTION_BEGIN)
-webkit_option_define(USE_LCMS "Toggle support for image color management using libcms2" PRIVATE ON)
+webkit_option_define(USE_LCMS PRIVATE ON)
 
 # in macro(WEBKIT_OPTION_BEGIN)
-webkit_option_define(USE_ISO_MALLOC "Toggle IsoMalloc support" PRIVATE ${USE_ISO_MALLOC_DEFAULT})
+webkit_option_define(USE_ISO_MALLOC PRIVATE ${USE_ISO_MALLOC_DEFAULT})
 
 # in macro(WEBKIT_OPTION_BEGIN)
-webkit_option_define(USE_JPEGXL "Toggle support for JPEG XL images" PRIVATE ON)
+webkit_option_define(USE_JPEGXL PRIVATE ON)
 
 # in macro(WEBKIT_OPTION_BEGIN)
-webkit_option_define(USE_SKIA "Whether to use Skia instead of Cairo." PRIVATE OFF)
+webkit_option_define(USE_SKIA PRIVATE OFF)
 
 # in macro(WEBKIT_OPTION_BEGIN)
-webkit_option_define(USE_SKIA_ENCODERS "Whether to use Skia image encoders" PRIVATE ON)
+webkit_option_define(USE_SKIA_ENCODERS PRIVATE ON)
 
 # in macro(WEBKIT_OPTION_BEGIN)
-webkit_option_define(
-    USE_SYSTEM_MALLOC "Toggle system allocator instead of WebKit's custom allocator" PRIVATE
-       ${USE_SYSTEM_MALLOC_DEFAULT}
-)
+webkit_option_define(USE_SYSTEM_MALLOC PRIVATE ${USE_SYSTEM_MALLOC_DEFAULT})
 
 # in macro(WEBKIT_OPTION_BEGIN)
-webkit_option_define(
-    USE_MIMALLOC "Toggle mimalloc instead of WebKit's custom allocator" PRIVATE ${USE_MIMALLOC_DEFAULT}
-)
+webkit_option_define(USE_MIMALLOC PRIVATE ${USE_MIMALLOC_DEFAULT})
 
 # in macro(WEBKIT_OPTION_BEGIN)
-webkit_option_define(
-    USE_EXTERNAL_MIMALLOC
-       "Compile against mimalloc headers but leave mi_* symbols unresolved in the static archives (caller links its own mimalloc). Requires USE_MIMALLOC."
-       PRIVATE OFF
-)
+webkit_option_define(USE_EXTERNAL_MIMALLOC PRIVATE OFF)
 
 # in macro(WEBKIT_OPTION_BEGIN)
-webkit_option_define(
-    USE_PGO_PROFILE "Use PGO profile data for optimization (set PGO_PROFILE_PATH)" PRIVATE OFF
-)
+webkit_option_define(USE_PGO_PROFILE PRIVATE OFF)
 
 # in macro(WEBKIT_OPTION_BEGIN)
-webkit_option_define(USE_WOFF2 "Toggle support for WOFF2 Web Fonts through libwoff2" PRIVATE ON)
+webkit_option_define(USE_WOFF2 PRIVATE ON)
 
 # in macro(WEBKIT_OPTION_BEGIN)
 webkit_option_conflict(ENABLE_JIT ENABLE_C_LOOP)
@@ -941,43 +798,28 @@ set_and_expose_to_build(HAVE_STD_EXPERIMENTAL_FILESYSTEM TRUE)
 
 add_definitions(-DBUILDING_JSCONLY__)
 
-webkit_option_define(USE_BUN_JSC_ADDITIONS "Whether to enable Bun's JSC additions" PUBLIC OFF)
+webkit_option_define(USE_BUN_JSC_ADDITIONS PUBLIC OFF)
 
-webkit_option_define(
-    ENABLE_MALLOC_HEAP_BREAKDOWN "Whether to enable MALLOC_HEAP_BREAKDOWN" PUBLIC OFF
-)
+webkit_option_define(ENABLE_MALLOC_HEAP_BREAKDOWN PUBLIC OFF)
 
-webkit_option_define(
-    ENABLE_STATIC_JSC "Whether to build JavaScriptCore as a static library." PUBLIC OFF
-)
+webkit_option_define(ENABLE_STATIC_JSC PUBLIC OFF)
 
-webkit_option_define(USE_LIBBACKTRACE "Whether to enable usage of libbacktrace." PUBLIC OFF)
+webkit_option_define(USE_LIBBACKTRACE PUBLIC OFF)
 
 webkit_option_default_port_value(ENABLE_REMOTE_INSPECTOR PRIVATE OFF)
 
 # in if(NOT WIN32)
-webkit_option_define(
-    ENABLE_FUZZILLI "Whether to build JavaScriptCore with support for Fuzzilli." PUBLIC OFF
-)
+webkit_option_define(ENABLE_FUZZILLI PUBLIC OFF)
 
-webkit_option_define(
-    ENABLE_JSC_GLIB_API "Whether to enable the JavaScriptCore GLib API." PUBLIC OFF
-)
+webkit_option_define(ENABLE_JSC_GLIB_API PUBLIC OFF)
 
-webkit_option_define(USE_SYSTEM_UNIFDEF "Whether to use a system-provided unifdef" PRIVATE OFF)
+webkit_option_define(USE_SYSTEM_UNIFDEF PRIVATE OFF)
 
-webkit_option_define(
-    ALLOW_LINE_AND_COLUMN_NUMBER_IN_BUILTINS "Whether to allow line numbers & column numbers in builtins"
-       PUBLIC OFF
-)
+webkit_option_define(ALLOW_LINE_AND_COLUMN_NUMBER_IN_BUILTINS PUBLIC OFF)
 
-webkit_option_define(
-    ENABLE_REMOTE_INSPECTOR "Whether to build JavaScriptCore with remote inspector support" PUBLIC OFF
-)
+webkit_option_define(ENABLE_REMOTE_INSPECTOR PUBLIC OFF)
 
-webkit_option_define(
-    ENABLE_BUN_SKIP_FAILING_ASSERTIONS "Skip failing ASSERT when targeting Bun" PUBLIC OFF
-)
+webkit_option_define(ENABLE_BUN_SKIP_FAILING_ASSERTIONS PUBLIC OFF)
 
 # in if(USE_BUN_JSC_ADDITIONS)
 set_and_expose_to_build(USE_BUN_JSC_ADDITIONS 1)

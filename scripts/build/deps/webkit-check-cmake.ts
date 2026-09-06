@@ -180,7 +180,10 @@ function extract(rootDir: string): string {
       const filter = assignedVariables(inv)
         .map(v => watchedVariables.get(v))
         .find(f => f !== undefined);
-      if (filter) {
+      if (inv.name === "webkit_option_define") {
+        // (name "description" PUBLIC|PRIVATE default): the description is prose.
+        blocks.push(renderInvocation({ ...inv, args: inv.args.filter((_a, i) => i !== 1) }, keywords));
+      } else if (filter) {
         const named = inv.name === "set" ? 1 : 2; // leading name / keyword+name arguments
         const kept = inv.args.filter((a, i) => i < named || filter(a.text));
         if (kept.length === named) continue; // nothing transcribed from this statement

@@ -75,9 +75,7 @@ public:
     void set(const String& name, RefPtr<Blob>, const String& filename = {});
 
     size_t count() const { return m_items.size(); }
-    // Heap bytes the entries hold outside the JS heap. Counts each StringImpl
-    // header, not just its characters: a body of a million tiny pairs is
-    // dominated by per-entry overhead.
+    // Native bytes the entries hold, including each StringImpl header.
     size_t memoryCost() const;
     static size_t stringMemoryCost(const String& string)
     {

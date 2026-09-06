@@ -83,8 +83,7 @@ impl DOMFormData {
         WebCore__DOMFormData__count(self)
     }
 
-    /// Report the native byte cost of the wrapper to the GC. Call after a batch
-    /// of native appends so the allocation-driven GC trigger can see the bytes.
+    /// Report the wrapper's native byte cost to the GC after native appends.
     pub fn report_memory_cost(value: JSValue) {
         WebCore__DOMFormData__reportMemoryCost(value);
     }

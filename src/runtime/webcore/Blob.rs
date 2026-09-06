@@ -3435,9 +3435,7 @@ impl BlobExt for Blob {
     }
 
     fn estimated_size(&self) -> usize {
-        // A Blob held natively (a multipart FormData file part) has no JS
-        // wrapper yet, so `to_js` has not computed the size. Compute it here so
-        // the owner can report the store bytes.
+        // A natively held Blob (a multipart file part) has no wrapper, so `to_js` has not run.
         if self.reported_estimated_size.get() == 0 {
             self.calculate_estimated_byte_size();
         }

@@ -60,10 +60,7 @@ public:
     static size_t estimatedSize(JSCell* cell, JSC::VM& vm);
 
     size_t m_memoryCost { 0 };
-    // Recompute from the wrapped object (O(entries)). Use after a bulk fill
-    // or an O(entries) mutation such as set or delete.
-    void computeMemoryCost();
-    // Add one appended entry without walking the whole list.
+    void computeMemoryCost(); // O(entries); append uses reportAppendedEntry
     void reportAppendedEntry(size_t bytes);
 
 protected:

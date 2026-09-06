@@ -1101,8 +1101,9 @@ export const linkerFlags: Flag[] = [
     // TU per hook references them in source; ThinLTO importing
     // RunLoop::TimerBase::start() into a JSC module makes it two. This is
     // lld-link's own switch for exactly that check (its MinGW-mode default):
-    // duplicate *strong* definitions still error. workarounds.ts:
-    // lld-coff-duplicate-weak.
+    // duplicate *strong* definitions still error. A no-op once lld-link
+    // accepts several weak references to one symbol (fixed in bun's LLVM
+    // toolchain); drop it when CI links with that.
     flag: "/lld-allow-duplicate-weak",
     when: c => c.windows,
     desc: "Several TUs may weak-reference the same bun hook (COFF weak externals)",

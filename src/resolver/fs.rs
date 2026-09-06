@@ -166,9 +166,10 @@ impl Entry {
     }
 
     /// The real path a resolution followed this symlink to. Empty when the
-    /// entry is not a symlink or was never stat'd. No I/O.
-    #[inline]
+    /// entry is not a symlink or was never stat'd. No I/O. Safe from any
+    /// thread: every `cache` rewrite holds `mutex`.
     pub fn followed_symlink(&self) -> &'static [u8] {
+        let _guard = self.mutex.lock_guard();
         self.cache().symlink.as_bytes()
     }
 

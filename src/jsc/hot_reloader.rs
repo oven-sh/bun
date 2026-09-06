@@ -845,9 +845,8 @@ where
         true
     }
 
-    /// Keeps the cached listing of `dir` reachable for later events on that
-    /// directory after the resolver cache for it is busted, as the Directory
-    /// arm of `on_file_update` does for the directory the event is for.
+    /// Keeps the listing of `dir` reachable for later events on it after
+    /// the resolver cache is busted.
     #[cfg(not(windows))]
     fn tombstone_entries(&mut self, dir: &[u8]) {
         let rfs: &mut Fs::file_system::RealFS = &mut FileSystem::instance().fs;
@@ -1196,23 +1195,17 @@ where
                             }
                         }
 
-                        // A changed entry can be a directory the module graph
-                        // resolved through: a retargeted directory symlink
-                        // (`cur -> v1` becomes `cur -> v2`), a replaced
-                        // directory, or a followed file symlink. The resolver
-                        // caches the old real path under the entry's own path
-                        // and nothing watches the new target, so bust that
-                        // cache and reload.
+                        // A changed entry the module graph resolved through
+                        // (a retargeted symlink, a replaced directory) has a
+                        // stale real path in the resolver cache.
                         if IS_KQUEUE {
-                            // kqueue names no entry. Check every symlink the
-                            // resolver followed inside this directory.
+                            // kqueue names no entry: check every followed symlink.
                             if let Some(dir_ent) = entries_option {
                                 // SAFETY: dir_ent points into rfs.entries (or a
                                 // tombstoned copy); both outlive this loop
                                 // iteration. Shared access only.
                                 let dir_ent = unsafe { &*dir_ent };
-                                // Collected under the lock, checked after it:
-                                // `bust_dir_cache` takes the same lock.
+                                // `bust_dir_cache` takes `entries_mutex` too.
                                 let mut followed: Vec<&'static Fs::Entry> = Vec::new();
                                 {
                                     let _entries_lock = rfs.entries_mutex.lock_guard();

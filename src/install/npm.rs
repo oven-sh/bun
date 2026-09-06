@@ -535,17 +535,11 @@ pub mod registry {
         NotFound,
     }
 
-    /// The longest a cached packument is trusted without a revalidation,
-    /// whatever `max-age` the registry sends. registry.npmjs.org sends
-    /// `public, max-age=300`.
+    /// Cap on `Cache-Control: max-age` for a cached packument (registry.npmjs.org sends 300).
     pub(crate) const MANIFEST_MAX_AGE_SECONDS: u32 = 300;
 
-    /// Seconds the packument in `response` stays fresh, from its
-    /// `Cache-Control` header. `no-cache`, `no-store`, `max-age=0`, and a
-    /// missing header all mean 0: the cached copy is still written (so
-    /// `--offline` / `--prefer-offline` can use it) but the next install
-    /// revalidates it with `If-None-Match` / `If-Modified-Since`. `Age` is
-    /// ignored.
+    /// Seconds a packument stays fresh before the next install revalidates it
+    /// with `If-None-Match`. No `Cache-Control` means 0: Verdaccio sends only an ETag.
     pub(crate) fn manifest_max_age(headers: &picohttp::HeaderList) -> u32 {
         let Some(cache_control) = headers.get(b"cache-control") else {
             return 0;

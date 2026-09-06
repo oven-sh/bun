@@ -777,6 +777,13 @@ export const dnsIsAllLoopbackOfOneFamily = $newRustFunction(
   1,
 ) as (addresses: string[]) => boolean;
 
+/** The error a getaddrinfo lookup of `hostname` reports when getaddrinfo(3) returns the `EAI_*` status named `code` (`"EAI_AGAIN"`, `"EAI_FAIL"`, `"EAI_NONAME"`). */
+export const dnsGetaddrinfoError = $newRustFunction(
+  "runtime/dns_jsc/dns.rs",
+  "internal.getaddrinfoErrorForTesting",
+  2,
+) as (code: string, hostname: string) => Error & { code: string; errno: number; syscall: string; hostname: string };
+
 export const fetchH2Internals = {
   liveCounts: $newRustFunction("http/H2Client.rs", "TestingAPIs.liveCounts", 0) as () => {
     sessions: number;

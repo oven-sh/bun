@@ -2972,6 +2972,39 @@ pub mod internal {
         Ok(out)
     }
 
+    /// `bun:internal-for-testing`: the error a `getaddrinfo` lookup of
+    /// `hostname` reports when getaddrinfo(3) returns the `EAI_*` status named
+    /// `code`, built by the same [`c_ares::Error::init_eai`] mapping the real
+    /// system-backend, `fetch()` and `Bun.connect()` paths use.
+    pub(crate) fn getaddrinfo_error_for_testing(
+        global: &JSGlobalObject,
+        frame: &CallFrame,
+    ) -> JsResult<JSValue> {
+        let args = frame.arguments();
+        if args.len() < 2 || !args[0].is_string() || !args[1].is_string() {
+            return Err(global.throw_invalid_arguments(format_args!(
+                "expected (code: string, hostname: string)"
+            )));
+        }
+        let code = args[0].to_utf8(global)?;
+        let hostname = args[1].to_utf8(global)?;
+        let Some(rc) = c_ares::Error::eai_raw_by_name(code.slice()) else {
+            return Err(global.throw_invalid_arguments(format_args!(
+                "unknown getaddrinfo status name: {}",
+                bstr::BStr::new(code.slice())
+            )));
+        };
+        match c_ares::Error::init_eai(rc) {
+            Some(err) => crate::dns_jsc::cares_jsc::error_to_js_with_syscall_and_hostname(
+                err,
+                global,
+                b"getaddrinfo",
+                hostname.slice(),
+            ),
+            None => Ok(JSValue::UNDEFINED),
+        }
+    }
+
     pub(crate) fn getaddrinfo(
         loop_: *mut Loop,
         host: Option<&ZStr>,
@@ -6083,4 +6116,8 @@ export_host_fn!(
 export_host_fn!(
     internal::is_all_loopback_of_one_family_for_testing,
     "JS2Rust___src_runtime_dns_jsc_dns_rs__internal_isAllLoopbackOfOneFamilyForTesting"
+);
+export_host_fn!(
+    internal::getaddrinfo_error_for_testing,
+    "JS2Rust___src_runtime_dns_jsc_dns_rs__internal_getaddrinfoErrorForTesting"
 );

@@ -1084,3 +1084,179 @@ test("bun pm cache rm does not create the directory named by a project-local .en
   expect(stderr).not.toContain("error");
   expect(exitCode).toBe(0);
 });
+
+test("bun pm cache rm --dry-run leaves the cache and the bunx temp dirs in place", async () => {
+  using dir = tempDir("pm-cache-rm-dry-run", {
+    "package.json": JSON.stringify({ name: "cache-rm-dry-run", version: "1.0.0" }),
+    "cache/cached-package.txt": "cached artifact",
+  });
+  const cacheDir = join(String(dir), "cache");
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "pm", "cache", "rm", "--dry-run"],
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+    env: { ...env, BUN_INSTALL_CACHE_DIR: cacheDir },
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stdout).toContain(`Would clear 'bun install' cache at ${cacheDir}`);
+  expect(stdout).toMatch(/Would clear \d+ cached 'bunx' packages/);
+  expect(stdout).not.toContain("Cleared");
+  expect(stderr).not.toContain("error");
+  expect(await exists(join(cacheDir, "cached-package.txt"))).toBeTrue();
+  expect(exitCode).toBe(0);
+});
+
+const npmLockfileWithLocalDep = {
+  "package.json": JSON.stringify({
+    name: "app",
+    version: "1.0.0",
+    dependencies: { dep: "file:./dep" },
+  }),
+  "dep/package.json": JSON.stringify({ name: "dep", version: "1.0.0" }),
+  "package-lock.json": JSON.stringify({
+    name: "app",
+    version: "1.0.0",
+    lockfileVersion: 3,
+    packages: {
+      "": { dependencies: { dep: "file:./dep" } },
+      "dep": { version: "1.0.0" },
+      "node_modules/dep": { resolved: "dep", link: true },
+    },
+  }),
+};
+
+test("bun pm migrate --dry-run does not write bun.lock", async () => {
+  using dir = tempDir("pm-migrate-dry-run", npmLockfileWithLocalDep);
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "pm", "migrate", "--dry-run"],
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+    env,
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stdout).toBe("");
+  expect(stderr).toContain("migrated lockfile from package-lock.json");
+  expect(stderr).toContain("Would save bun.lock");
+  expect(await exists(join(String(dir), "bun.lock"))).toBeFalse();
+  expect(await exists(join(String(dir), "bun.lockb"))).toBeFalse();
+  expect(exitCode).toBe(0);
+});
+
+test("bun install --dry-run does not write a migrated bun.lock", async () => {
+  using dir = tempDir("install-migrate-dry-run", npmLockfileWithLocalDep);
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "install", "--dry-run"],
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+    env,
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stderr).toContain("migrated lockfile from package-lock.json");
+  expect(stderr).not.toContain("Saved lockfile");
+  expect(stdout).toContain("dep@dep");
+  expect(await exists(join(String(dir), "bun.lock"))).toBeFalse();
+  expect(await exists(join(String(dir), "node_modules"))).toBeFalse();
+  expect(exitCode).toBe(0);
+});
+
+function projectWithBlockedPostinstall() {
+  return {
+    "package.json": JSON.stringify({ name: "app", dependencies: { dep: "file:./dep" } }),
+    "dep/package.json": JSON.stringify({
+      name: "dep",
+      version: "1.0.0",
+      scripts: { postinstall: "echo ran > postinstall-ran.txt" },
+    }),
+  };
+}
+
+async function installWithBlockedPostinstall(dir: string) {
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "install"],
+    cwd: dir,
+    stdout: "pipe",
+    stderr: "pipe",
+    env,
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).not.toContain("error:");
+  expect(stdout).toContain("Blocked 1 postinstall");
+  expect(exitCode).toBe(0);
+  expect(await exists(join(dir, "node_modules", "dep", "postinstall-ran.txt"))).toBeFalse();
+}
+
+test("bun pm trust --dry-run lists the scripts, runs none, and writes nothing", async () => {
+  using dir = tempDir("pm-trust-dry-run", projectWithBlockedPostinstall());
+  const dirStr = String(dir);
+  await installWithBlockedPostinstall(dirStr);
+  const packageJsonBefore = await Bun.file(join(dirStr, "package.json")).text();
+  const lockfileBefore = await Bun.file(join(dirStr, "bun.lock")).text();
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "pm", "trust", "dep", "--dry-run"],
+    cwd: dirStr,
+    stdout: "pipe",
+    stderr: "pipe",
+    env,
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stderr).toContain("bun pm trust");
+  expect(stderr).not.toContain("error:");
+  expect(stdout).toContain("[postinstall]: echo ran > postinstall-ran.txt");
+  expect(stdout).toContain("1 script would run across 1 package (dry run)");
+  expect(stdout).not.toContain("ran across");
+  expect(await exists(join(dirStr, "node_modules", "dep", "postinstall-ran.txt"))).toBeFalse();
+  expect(await Bun.file(join(dirStr, "package.json")).text()).toBe(packageJsonBefore);
+  expect(await Bun.file(join(dirStr, "bun.lock")).text()).toBe(lockfileBefore);
+  expect(exitCode).toBe(0);
+});
+
+test("bun pm trust --ignore-scripts records the trust without running the scripts", async () => {
+  using dir = tempDir("pm-trust-ignore-scripts", projectWithBlockedPostinstall());
+  const dirStr = String(dir);
+  await installWithBlockedPostinstall(dirStr);
+
+  {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "pm", "trust", "dep", "--ignore-scripts"],
+      cwd: dirStr,
+      stdout: "pipe",
+      stderr: "pipe",
+      env,
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr).not.toContain("error:");
+    expect(stdout).toContain("1 script skipped across 1 package (--ignore-scripts)");
+    expect(await exists(join(dirStr, "node_modules", "dep", "postinstall-ran.txt"))).toBeFalse();
+    expect((await Bun.file(join(dirStr, "package.json")).json()).trustedDependencies).toEqual(["dep"]);
+    expect(await Bun.file(join(dirStr, "bun.lock")).text()).toContain('"trustedDependencies"');
+    expect(exitCode).toBe(0);
+  }
+
+  // The next install sees the new trust and runs the script.
+  {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "install"],
+      cwd: dirStr,
+      stdout: "pipe",
+      stderr: "pipe",
+      env,
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).not.toContain("error:");
+    expect(stdout).not.toContain("Blocked");
+    expect(await exists(join(dirStr, "node_modules", "dep", "postinstall-ran.txt"))).toBeTrue();
+    expect(exitCode).toBe(0);
+  }
+});

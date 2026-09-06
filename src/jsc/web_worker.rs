@@ -1175,9 +1175,7 @@ fn on_unhandled_rejection(
     if !vm.script_allowed() {
         return;
     }
-    // The worker dies from this error: Node's exit code 1, which the 'exit' handlers run
-    // below may still change. `uncaught_exception` already set it on its way here; a
-    // rejection reported from an event-loop turn (`unhandled_rejection`) arrives with 0.
+    // The worker dies from this error: exit code 1, as in Node. The 'exit' listeners below may change it.
     vm.exit_handler.exit_code = 1;
 
     let mut error_instance = error_instance_or_exception

@@ -6687,6 +6687,24 @@ pub mod bv2_impl {
                     continue;
                 }
 
+                // `Path::set_realpath` keeps the path before symlink resolution
+                // in `pretty`. `path_with_pretty_initialized` below replaces it,
+                // so tell DevServer now: a retarget of the link must resolve
+                // this import again.
+                if path.is_symlink {
+                    if let Some(dev) = self.dev_server {
+                        dev.track_symlink_resolution(
+                            source.path.text,
+                            import_record.path.text,
+                            import_record.kind,
+                            path.pretty,
+                            path.text,
+                            ctx.target.bake_graph(),
+                        )
+                        .expect("oom");
+                    }
+                }
+
                 if let Some(dev_server) = self.dev_server_handle() {
                     'brk: {
                         if path.loader(&self.transpiler.options.loaders) == Some(Loader::Html)

@@ -202,6 +202,7 @@ pub(crate) fn memory_cost_detailed(dev: &DevServer) -> MemoryCost {
     other_bytes += memory_cost_array_hash_map(&dev.directory_watchers.watches);
     for dep in dev.directory_watchers.dependencies.iter() {
         other_bytes += dep.specifier.len();
+        other_bytes += dep.previous_target.as_ref().map_or(0, |t| t.len());
     }
     for dir_name in dev.directory_watchers.watches.keys() {
         other_bytes += dir_name.len();

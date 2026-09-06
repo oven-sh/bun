@@ -1,6 +1,6 @@
 // Hot tests ensure that the `import.meta.hot` interface is functional
 import { expect } from "bun:test";
-import { renameSync, unlinkSync, writeFileSync } from "node:fs";
+import { mkdirSync, renameSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
 import { devTest, emptyHtmlFile } from "../bake-harness";
 
 devTest("import.meta.hot.accept basic", {
@@ -640,5 +640,128 @@ devTest("dev.write resolves only after the new module body has run", {
     // dev.write resolves on bun:afterUpdate, i.e. after replaceModules has
     // awaited the 500ms TLA. Acking on WS receipt would see "initial" here.
     expect(await c.js`globalThis.marker`).toBe("updated");
+  },
+});
+
+// The resolver keys a module by its real path. An import that goes through
+// a symlink has to follow the link when the link changes, not the file it
+// pointed to when it was first bundled.
+devTest("import through a file symlink follows the link when it is retargeted", {
+  skip: ["win32"],
+  files: {
+    "index.html": emptyHtmlFile({ scripts: ["app.ts"] }),
+    "v1/app.ts": `console.log("MARK_V1");`,
+    "v2/app.ts": `console.log("MARK_V2");`,
+  },
+  async test(dev) {
+    symlinkSync("v1/app.ts", dev.join("app.ts"));
+    await using c = await dev.client("/");
+    await c.expectMessage("MARK_V1");
+
+    // Retarget the link with a rename over it, as `ln -sfn` does.
+    await c.expectReload(async () => {
+      await using _wait = await dev.batchChanges();
+      symlinkSync("v2/app.ts", dev.join("app.ts.tmp"));
+      renameSync(dev.join("app.ts.tmp"), dev.join("app.ts"));
+    });
+    await c.expectMessage("MARK_V2");
+
+    // An edit to the new target is seen.
+    await c.expectReload(async () => {
+      await dev.write("v2/app.ts", `console.log("MARK_V2_EDITED");`);
+    });
+    await c.expectMessage("MARK_V2_EDITED");
+
+    // Replacing the link with a regular file is seen too.
+    await c.expectReload(async () => {
+      await using _wait = await dev.batchChanges();
+      unlinkSync(dev.join("app.ts"));
+      writeFileSync(dev.join("app.ts"), `console.log("MARK_REGULAR");`);
+    });
+    await c.expectMessage("MARK_REGULAR");
+  },
+});
+
+devTest("import through a directory symlink follows the link when it is retargeted", {
+  skip: ["win32"],
+  files: {
+    "index.html": emptyHtmlFile({ scripts: ["links/cur/app.ts"] }),
+    "v1/app.ts": `console.log("MARK_V1");`,
+    "v2/app.ts": `console.log("MARK_V2");`,
+  },
+  async test(dev) {
+    // The link lives in a directory the server has not listed yet, so the
+    // resolver sees it as a link on the first resolution.
+    mkdirSync(dev.join("links"));
+    symlinkSync("../v1", dev.join("links/cur"));
+    await using c = await dev.client("/");
+    await c.expectMessage("MARK_V1");
+
+    await c.expectReload(async () => {
+      await using _wait = await dev.batchChanges();
+      symlinkSync("../v2", dev.join("links/cur.tmp"));
+      renameSync(dev.join("links/cur.tmp"), dev.join("links/cur"));
+    });
+    await c.expectMessage("MARK_V2");
+
+    await c.expectReload(async () => {
+      await dev.write("v2/app.ts", `console.log("MARK_V2_EDITED");`);
+    });
+    await c.expectMessage("MARK_V2_EDITED");
+  },
+});
+
+devTest("import that names a directory symlink follows the link when it is retargeted", {
+  skip: ["win32"],
+  files: {
+    "index.html": emptyHtmlFile({ scripts: ["entry.ts"] }),
+    "entry.ts": `import "./links/cur";`,
+    "v1/index.ts": `console.log("MARK_V1");`,
+    "v2/index.ts": `console.log("MARK_V2");`,
+  },
+  async test(dev) {
+    mkdirSync(dev.join("links"));
+    symlinkSync("../v1", dev.join("links/cur"));
+    await using c = await dev.client("/");
+    await c.expectMessage("MARK_V1");
+
+    await c.expectReload(async () => {
+      await using _wait = await dev.batchChanges();
+      symlinkSync("../v2", dev.join("links/cur.tmp"));
+      renameSync(dev.join("links/cur.tmp"), dev.join("links/cur"));
+    });
+    await c.expectMessage("MARK_V2");
+  },
+});
+
+devTest("tsconfig paths alias through a symlink is resolved again with the alias", {
+  skip: ["win32"],
+  files: {
+    "tsconfig.json": `{ "compilerOptions": { "paths": { "@/*": ["./links/*"] } } }`,
+    "index.html": emptyHtmlFile({ scripts: ["entry.ts"] }),
+    "entry.ts": `import "@/cur/app.ts";`,
+    "v1/app.ts": `console.log("MARK_V1");`,
+    "v2/app.ts": `console.log("MARK_V2");`,
+  },
+  async test(dev) {
+    mkdirSync(dev.join("links"));
+    symlinkSync("../v1", dev.join("links/cur"));
+    await using c = await dev.client("/");
+    await c.expectMessage("MARK_V1");
+
+    // An unrelated change in a watched directory must not rebuild the
+    // importer: the alias still resolves to the same file.
+    const linesBefore = dev.output.lines.length;
+    await c.expectNoWebSocketActivity(async () => {
+      await dev.write("links/unrelated.txt", "x");
+    });
+    expect(dev.output.lines.slice(linesBefore).join("\n")).not.toContain("Reloaded");
+
+    await c.expectReload(async () => {
+      await using _wait = await dev.batchChanges();
+      symlinkSync("../v2", dev.join("links/cur.tmp"));
+      renameSync(dev.join("links/cur.tmp"), dev.join("links/cur"));
+    });
+    await c.expectMessage("MARK_V2");
   },
 });

@@ -722,6 +722,7 @@ exit 1
 // bun scheme in the wrong case (`NPM:`, `FILE:`, `Workspace:`) is not a git
 // remote at all. In the CLI, `mydep@gitlab:o/r` is the alias `mydep` onto the
 // `gitlab:` shortcut, not the ssh user `mydep` on a host named `gitlab`.
+// `bun install <spec>` parses the positional the same way `bun add` does.
 describe.skipIf(isWindows)("dependency specifiers that name a hosted-git shortcut", () => {
   // A fake git: it appends its argv to `log` and fails, so bun tries every
   // clone URL it has (https first, then ssh) and never touches the network.
@@ -813,7 +814,7 @@ describe.skipIf(isWindows)("dependency specifiers that name a hosted-git shortcu
     ["@s/n@gitlab:o/r", "https://gitlab.com/o/r", "ssh://git@gitlab.com/o/r"],
     ["mydep@git+https://example.com/o/r", "https://example.com/o/r"],
     ["mydep@git+ssh://git@example.com/o/r", "https://git@example.com/o/r", "ssh://git@example.com/o/r"],
-  ])("bun add %s keeps the alias and clones the shortcut's host", async (spec, ...urls) => {
+  ])("bun install %s keeps the alias and clones the shortcut's host", async (spec, ...urls) => {
     using dir = tempDir("git-dep-add-alias", {});
     const root = String(dir);
     const { bin, log } = fakeGit(root);
@@ -824,7 +825,7 @@ describe.skipIf(isWindows)("dependency specifiers that name a hosted-git shortcu
     expect(cloneUrls(log)).toEqual(urls);
   });
 
-  test.concurrent("bun add git@host.tld:path still reads the name before @ as the ssh user", async () => {
+  test.concurrent("bun install git@host.tld:path still reads the name before @ as the ssh user", async () => {
     using dir = tempDir("git-dep-add-scp", {});
     const root = String(dir);
     const { bin, log } = fakeGit(root);

@@ -904,11 +904,28 @@ describe.concurrent("gzip trailer verification", () => {
   // goes through libarchive's streaming gzip filter.
   const badIsizeTgz = Buffer.from(goodTgz);
   badIsizeTgz.writeUInt32LE(100 * 1024 * 1024, badIsizeTgz.length - 4);
+  // A tar whose end-of-archive blocks end exactly at the 64 KiB boundary of
+  // libarchive's gzip output buffer. The tar reader must still read on to
+  // the end of the gzip member, or the trailer is never checked.
+  const alignedBody = Buffer.alloc(2 * 65536 - 512 - 512 - 512 - 1024, "x");
+  const alignedTar = Buffer.concat([
+    ...tarFile("package/package.json", Buffer.from(JSON.stringify({ name: "pkg", version: "1.0.0" }))),
+    ...tarFile("package/big.txt", alignedBody),
+    Buffer.alloc(1024, 0),
+  ]);
+  expect(alignedTar.length).toBe(2 * 65536);
+  const badCrcAlignedTgz = gzipSync(alignedTar, { level: 0 });
+  {
+    const i = badCrcAlignedTgz.indexOf("xxxxxxxx");
+    expect(i).toBeGreaterThan(0);
+    badCrcAlignedTgz[i + 1000] ^= 0x04;
+  }
 
   async function install(name: string, tgz: Buffer, extraEnv: Record<string, string> = {}) {
     using dir = tempDir(name, {
       "pkg.tgz": tgz,
       "package.json": JSON.stringify({ name: "app", dependencies: { pkg: "file:./pkg.tgz" } }),
+      ".tmp/.keep": "",
     });
     await using proc = spawn({
       cmd: [bunExe(), "install"],
@@ -925,7 +942,7 @@ describe.concurrent("gzip trailer verification", () => {
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     const installed = await file(join(String(dir), "node_modules", "pkg", "index.js")).exists();
     // A failed extraction must not leave its temp directory behind.
-    const leftovers = await readdirSorted(join(String(dir), ".tmp")).catch(() => []);
+    const leftovers = (await readdirSorted(join(String(dir), ".tmp"))).filter(e => e !== ".keep");
     return { stdout, stderr, exitCode, installed, leftovers };
   }
 
@@ -947,6 +964,17 @@ describe.concurrent("gzip trailer verification", () => {
 
   it("rejects a CRC32 mismatch on the streaming path", async () => {
     const { stdout, stderr, exitCode, installed, leftovers } = await install("gzip-trailer-crc-stream", badCrcTgz, {
+      BUN_FEATURE_FLAG_NO_LIBDEFLATE: "1",
+    });
+    expect(stderr).toContain("extracting tarball from pkg");
+    expect(stdout).not.toContain("1 package installed");
+    expect(exitCode).toBe(1);
+    expect(installed).toBe(false);
+    expect(leftovers).toEqual([]);
+  });
+
+  it("rejects a CRC32 mismatch when the tar ends on the filter buffer boundary", async () => {
+    const { stdout, stderr, exitCode, installed, leftovers } = await install("gzip-trailer-aligned", badCrcAlignedTgz, {
       BUN_FEATURE_FLAG_NO_LIBDEFLATE: "1",
     });
     expect(stderr).toContain("extracting tarball from pkg");

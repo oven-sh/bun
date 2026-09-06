@@ -192,22 +192,6 @@ impl GitEnv {
     }
 }
 
-bun_core::comptime_string_map! {
-    /// TLD appended to the shorthand git hosts. The length dispatch rejects
-    /// everything that isn't 6 or 9 bytes (the common case: real hostnames
-    /// like `git.company.io`) before any byte compare.
-    static HOST_TLDS: &'static [u8] = {
-        b"github" => b".com",
-        b"gitlab" => b".com",
-        b"bitbucket" => b".org",
-    };
-}
-
-#[inline]
-fn host_tld(host: &[u8]) -> Option<&'static [u8]> {
-    HOST_TLDS.get(host).copied()
-}
-
 /// `resolved` is the `.bun-tag` value persisted to the lockfile (a commit SHA for
 /// `git`, or `<owner>-<repo>-<sha>` for `github`). It is concatenated into a cache
 /// directory name and passed to `git checkout`, so it must be a single safe path
@@ -417,17 +401,18 @@ impl RepositoryExt for Repository {
     }
 }
 
-/// `host:path` → `<prefix>host/path`; a shorthand host gets its TLD (`github` → `github.com`).
+/// `host:path` → `<prefix>host/path`; a shortcut word becomes its domain
+/// (`github` → `github.com`, `gist` → `gist.github.com`).
 fn scp_like_to_url(prefix: &[u8], url: &[u8]) -> Vec<u8> {
-    let mut out = Vec::with_capacity(prefix.len() + url.len() + b".org".len());
+    let mut out = Vec::with_capacity(prefix.len() + url.len() + b"gist.github.com".len());
     out.extend_from_slice(prefix);
     match strings::index_of_char(url, b':') {
         Some(colon) => {
             let colon = colon as usize;
-            out.extend_from_slice(&url[..colon]);
-            if let Some(tld) = host_tld(&url[..colon]) {
-                out.extend_from_slice(tld);
-            }
+            let host = &url[..colon];
+            out.extend_from_slice(
+                hosted_git_info::HostProvider::shortcut_domain(host).unwrap_or(host),
+            );
             out.push(b'/');
             out.extend_from_slice(&url[colon + 1..]);
         }

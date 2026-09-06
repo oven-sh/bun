@@ -241,7 +241,14 @@ impl UpdateRequest {
 
                 return Err(crate::Error::UnrecognizedDependencyFormat);
             };
-            if alias.is_some() && version.tag == dependency::version::Tag::Git {
+            // `git@github.com:o/r.git` splits as alias `git` + value
+            // `github.com:o/r.git`. Re-parse the whole positional as one
+            // scp-style remote only in that shape. `mydep@gitlab:o/r` keeps
+            // its alias: `gitlab` is a shortcut, not a host.
+            if alias.is_some()
+                && version.tag == dependency::version::Tag::Git
+                && dependency::is_scp_like_path_with_dotted_host(input)
+            {
                 if let Some(ver) = Dependency::parse_with_optional_tag(
                     placeholder,
                     None,

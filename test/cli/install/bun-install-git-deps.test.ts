@@ -4,7 +4,7 @@
 // transitively (issues #10915, #8501, #11348, #28284). Everything is local:
 // a bare repo on disk (served over git's dumb HTTP protocol by Bun.serve
 // when an http URL is needed) or tarballs built in memory.
-import { afterAll, beforeAll, expect, test } from "bun:test";
+import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, isLinux, isWindows, normalizeBunSnapshot, tempDir } from "harness";
 import { join } from "path";
@@ -715,3 +715,122 @@ exit 1
     }
   },
 );
+
+// Hosted-git shortcuts and scheme words must never become a bare single-label
+// host. `gist:` and `sourcehut:` are real hosts (gist.github.com, git.sr.ht),
+// a shortcut word in the wrong case (`GitHub:`) is the same shortcut, and a
+// bun scheme in the wrong case (`NPM:`, `FILE:`, `Workspace:`) is not a git
+// remote at all. In the CLI, `mydep@gitlab:o/r` is the alias `mydep` onto the
+// `gitlab:` shortcut, not the ssh user `mydep` on a host named `gitlab`.
+describe.skipIf(isWindows)("dependency specifiers that name a hosted-git shortcut", () => {
+  // A fake git: it appends its argv to `log` and fails, so bun tries every
+  // clone URL it has (https first, then ssh) and never touches the network.
+  function fakeGit(root: string) {
+    const bin = join(root, "bin");
+    mkdirSync(bin, { recursive: true });
+    const log = join(root, "git-argv");
+    writeFileSync(join(bin, "git"), `#!/bin/sh\necho "$*" >> '${log}'\nexit 128\n`, { mode: 0o755 });
+    return { bin, log };
+  }
+
+  // The clone URLs the fake git saw, in order. Other argv (`-C <dir> fetch`)
+  // is dropped.
+  function cloneUrls(log: string): string[] {
+    if (!existsSync(log)) return [];
+    return readFileSync(log, "utf8")
+      .split("\n")
+      .filter(line => line.startsWith("clone "))
+      .map(line => line.split(" ").at(-2)!);
+  }
+
+  // A registry that knows nothing: the dist-tag fallback asks it and stops.
+  let registry: ReturnType<typeof Bun.serve>;
+  beforeAll(() => {
+    registry = Bun.serve({ port: 0, fetch: () => new Response("not found", { status: 404 }) });
+  });
+  afterAll(() => registry.stop(true));
+
+  async function install(root: string, bin: string, ...args: string[]) {
+    return runInstall(
+      join(root, "project"),
+      join(root, "cache"),
+      { PATH: `${bin}:${gitEnv.PATH}`, NPM_CONFIG_REGISTRY: registry.url.href, GIT_SSH_COMMAND: "false" },
+      ...args,
+    );
+  }
+
+  test.concurrent("package.json: gist, sourcehut and a miscased shortcut clone from the real host", async () => {
+    using dir = tempDir("git-dep-shortcut-host", {});
+    const root = String(dir);
+    const { bin, log } = fakeGit(root);
+    writeProject(root, {
+      a: "gist:abcd1234",
+      b: "sourcehut:~u/r",
+      c: "GitHub:u/r",
+      d: "gitlab:o/r",
+      e: "bitbucket:o/r",
+    });
+    const { exitCode } = await install(root, bin);
+    expect(exitCode).not.toBe(0);
+    expect(cloneUrls(log).sort()).toEqual(
+      [
+        "https://gist.github.com/abcd1234",
+        "ssh://git@gist.github.com/abcd1234",
+        "https://git.sr.ht/~u/r",
+        "ssh://git@git.sr.ht/~u/r",
+        "https://github.com/u/r",
+        "ssh://git@github.com/u/r",
+        "https://gitlab.com/o/r",
+        "ssh://git@gitlab.com/o/r",
+        "https://bitbucket.org/o/r",
+        "ssh://git@bitbucket.org/o/r",
+      ].sort(),
+    );
+  });
+
+  test.concurrent("package.json: a bun scheme in the wrong case is not a git host", async () => {
+    using dir = tempDir("git-dep-scheme-word", {});
+    const root = String(dir);
+    const { bin, log } = fakeGit(root);
+    writeProject(root, {
+      a: "NPM:other@1",
+      b: "FILE:./d",
+      c: "LINK:x",
+      d: "Workspace:*",
+      e: "CATALOG:",
+      f: "PATCH:x@1",
+    });
+    const { exitCode } = await install(root, bin);
+    expect(exitCode).not.toBe(0);
+    expect(cloneUrls(log)).toEqual([]);
+  });
+
+  test.concurrent.each([
+    ["mydep@gitlab:o/r", "https://gitlab.com/o/r", "ssh://git@gitlab.com/o/r"],
+    ["mydep@bitbucket:o/r", "https://bitbucket.org/o/r", "ssh://git@bitbucket.org/o/r"],
+    ["mydep@gist:abcd1234", "https://gist.github.com/abcd1234", "ssh://git@gist.github.com/abcd1234"],
+    ["mydep@sourcehut:~u/r", "https://git.sr.ht/~u/r", "ssh://git@git.sr.ht/~u/r"],
+    ["@s/n@gitlab:o/r", "https://gitlab.com/o/r", "ssh://git@gitlab.com/o/r"],
+    ["mydep@git+https://example.com/o/r", "https://example.com/o/r"],
+    ["mydep@git+ssh://git@example.com/o/r", "https://git@example.com/o/r", "ssh://git@example.com/o/r"],
+  ])("bun add %s keeps the alias and clones the shortcut's host", async (spec, ...urls) => {
+    using dir = tempDir("git-dep-add-alias", {});
+    const root = String(dir);
+    const { bin, log } = fakeGit(root);
+    writeProject(root, {});
+    const { stderr, exitCode } = await install(root, bin, spec);
+    expect(stderr).not.toContain("unrecognised dependency format");
+    expect(exitCode).not.toBe(0);
+    expect(cloneUrls(log)).toEqual(urls);
+  });
+
+  test.concurrent("bun add git@host.tld:path still reads the name before @ as the ssh user", async () => {
+    using dir = tempDir("git-dep-add-scp", {});
+    const root = String(dir);
+    const { bin, log } = fakeGit(root);
+    writeProject(root, {});
+    const { exitCode } = await install(root, bin, "git@example.com:o/r.git");
+    expect(exitCode).not.toBe(0);
+    expect(cloneUrls(log)).toEqual(["https://git@example.com/o/r.git", "git@example.com:o/r.git"]);
+  });
+});

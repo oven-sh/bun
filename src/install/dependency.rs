@@ -385,6 +385,38 @@ pub(crate) fn is_scp_like_path(dependency: &[u8]) -> bool {
     false
 }
 
+/// `user@host:path` with a dot in `host`: npm's shape for an scp-style git
+/// remote. `mydep@gitlab:o/r` fails it. That is the alias `mydep` onto the
+/// `gitlab:` shortcut, not a user and a host.
+pub(crate) fn is_scp_like_path_with_dotted_host(dependency: &[u8]) -> bool {
+    if !is_scp_like_path(dependency) {
+        return false;
+    }
+    let Some(at) = strings::index_of_char_usize(dependency, b'@') else {
+        return false;
+    };
+    let rest = &dependency[at + 1..];
+    let Some(colon) = strings::index_of_char_usize(rest, b':') else {
+        return false;
+    };
+    strings::contains_char(&rest[..colon], b'.')
+}
+
+/// `<scheme>:<rest>` where `scheme` is one of bun's own specifier schemes in
+/// the wrong case (`NPM:other@1`, `FILE:./d`, `Workspace:*`). The scheme
+/// checks in `Tag::infer` are case-sensitive, so the word would otherwise
+/// pass for an scp-style host and reach git.
+fn has_miscased_scheme(dependency: &[u8]) -> bool {
+    const SCHEMES: [&[u8]; 6] = [b"npm", b"file", b"link", b"workspace", b"catalog", b"patch"];
+    let Some(colon) = strings::index_of_char_usize(dependency, b':') else {
+        return false;
+    };
+    let word = &dependency[..colon];
+    SCHEMES
+        .iter()
+        .any(|scheme| word.eq_ignore_ascii_case(scheme))
+}
+
 /// Github allows for the following format of URL:
 /// https://github.com/<org>/<repo>/tarball/<ref>
 /// This is a legacy (but still supported) method of retrieving a tarball of an
@@ -1031,7 +1063,7 @@ impl TagExt for Tag {
         }
 
         // git@example.com:path/to/repo.git
-        if is_scp_like_path(dependency) {
+        if is_scp_like_path(dependency) && !has_miscased_scheme(dependency) {
             if let Ok(Some(info)) = hosted_git_info::HostedGitInfo::from_url(dependency) {
                 return hgi_to_tag(&info);
             }

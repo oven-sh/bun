@@ -930,6 +930,16 @@ impl HostProvider {
         None
     }
 
+    /// The domain behind a shortcut word (`github` → `github.com`, `gist` →
+    /// `gist.github.com`). Case-insensitive: npm parses the shortcut as a URL
+    /// scheme, and a URL scheme has no case.
+    pub(crate) fn shortcut_domain(word: &[u8]) -> Option<&'static [u8]> {
+        Self::ALL
+            .into_iter()
+            .find(|provider| provider.shortcut_without_colon().eq_ignore_ascii_case(word))
+            .map(HostProvider::domain)
+    }
+
     /// Find the appropriate host provider by its domain (e.g. "github.com").
     fn from_domain(domain_str: &[u8]) -> Option<HostProvider> {
         Self::ALL

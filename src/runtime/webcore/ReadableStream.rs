@@ -527,7 +527,13 @@ impl ReadableStream {
                         event_loop: core::cell::Cell::new(jsc::EventLoopHandle::init(
                             global_this.bun_vm().as_mut().event_loop().cast(),
                         )),
-                        start_offset: Some(blob.offset.get() as usize),
+                        // A slice with a nonzero offset pins the reader to its
+                        // window with pread. Otherwise read(2) from the fd's
+                        // current position, which advances it: an inherited fd
+                        // (Bun.stdin on a regular file) may already be past a
+                        // prefix the parent consumed, and the next reader must
+                        // continue where this one stopped, like Bun.stdin.text().
+                        start_offset: (blob.offset.get() != 0).then_some(blob.offset.get() as usize),
                         max_size: if blob.size.get() != webcore::blob::MAX_SIZE {
                             Some(blob.size.get() as usize)
                         } else {

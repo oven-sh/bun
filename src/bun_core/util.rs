@@ -5354,23 +5354,9 @@ pub mod form_data {
         }
     }
 
-    /// `FormData.getBoundary` — the `boundary=` value out of a
-    /// `Content-Type` header. Returns `None` when there is no boundary or
-    /// the boundary is empty.
-    ///
-    /// Parameters are `;`-delimited per RFC 7231 and the parameter *name* must
-    /// be exactly `boundary`, so a different parameter (`xboundary=FAKE`) or a
-    /// `boundary=` substring inside another parameter's value is not picked up
-    /// by an unanchored substring search. A `;` inside a quoted parameter
-    /// value (RFC 7230 quoted-string, `\` escapes the next byte) does not
-    /// delimit parameters.
-    ///
-    /// The value follows WHATWG "parse a MIME type": an unquoted value runs
-    /// to the next `;` with trailing HTTP whitespace removed (`boundary=abc ;
-    /// charset=utf-8` is `abc`, not `abc `). A quoted value is unescaped
-    /// (`"ab\c"` is `abc`), runs to the end of the header when the closing
-    /// quote is missing, and anything between the closing quote and the next
-    /// `;` is discarded. The first `boundary` parameter with a value wins.
+    /// `FormData.getBoundary` — the `boundary` parameter of a `Content-Type`
+    /// header, read per WHATWG "parse a MIME type". `None` when there is no
+    /// boundary or it is empty.
     pub fn get_boundary(content_type: &[u8]) -> Option<std::borrow::Cow<'_, [u8]>> {
         use std::borrow::Cow;
         let mut rest = content_type;
@@ -5413,9 +5399,8 @@ pub mod form_data {
             }
             let end = crate::strings::index_of_char_usize(begin, b';').unwrap_or(begin.len());
             let value = crate::strings_impl::trim_right(&begin[..end], b" \t\r\n");
-            // An empty unquoted value does not set the parameter, so a later
-            // `boundary=` still counts. An empty quoted value (`""`) does set
-            // it, and an empty boundary is rejected.
+            // An empty unquoted value does not set the parameter (a later
+            // `boundary=` still counts), unlike an empty quoted value.
             if value.is_empty() {
                 continue;
             }

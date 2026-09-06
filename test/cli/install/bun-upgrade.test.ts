@@ -3,7 +3,7 @@ import { upgrade_test_helpers } from "bun:internal-for-testing";
 import { describe, expect, it } from "bun:test";
 import { bunExe, bunEnv as env, isMusl, isWindows, tempDir, tls, tmpdirSync } from "harness";
 import { existsSync, statSync } from "node:fs";
-import { copyFile, writeFile } from "node:fs/promises";
+import { copyFile, mkdir, writeFile } from "node:fs/promises";
 import { basename, join } from "path";
 const { openTempDirWithoutSharingDelete, closeTempDirHandle } = upgrade_test_helpers;
 
@@ -98,15 +98,21 @@ function makeZipStored(entryName: string, data: Buffer, unixMode: number): Buffe
   return buf;
 }
 
+// The directory name inside the release archive for the current target. It is
+// also the directory `bun upgrade` runs the downloaded binary from.
+function releaseFolderName(): string {
+  const os = process.platform === "win32" ? "windows" : process.platform === "darwin" ? "darwin" : "linux";
+  const arch = process.arch === "arm64" ? "aarch64" : "x64";
+  const abi = isMusl ? "-musl" : "";
+  return `bun-${os}-${arch}${abi}`;
+}
+
 // Write a release zip for the current target that, once unpacked, yields an
 // executable at the path `bun upgrade` verifies. On POSIX a shell script is
 // enough because `unzip` preserves the mode bits; on Windows the verify step
 // spawns `bun.exe` directly, so the archive has to carry a real PE image.
 async function writeFakeReleaseZip(outPath: string, version: string): Promise<void> {
-  const os = process.platform === "win32" ? "windows" : process.platform === "darwin" ? "darwin" : "linux";
-  const arch = process.arch === "arm64" ? "aarch64" : "x64";
-  const abi = isMusl ? "-musl" : "";
-  const folder = `bun-${os}-${arch}${abi}`;
+  const folder = releaseFolderName();
   if (isWindows) {
     const exe = Buffer.from(await Bun.file(bunExe()).arrayBuffer());
     await writeFile(outPath, makeZipStored(`${folder}/bun.exe`, exe, 0o755));
@@ -383,4 +389,76 @@ it("verifies the downloaded release archive against the digest reported by the r
   expect(matched.stderr).toContain("9.9.8");
   expect(matched.stderr).not.toContain("did not match the checksum reported by the GitHub API for this release");
   expect(matched.exitCode).toBe(1);
+});
+
+it.skipIf(isWindows)("runs the unpacked release from the staging directory it created, not from a re-resolved path", async () => {
+  const folder = releaseFolderName();
+  // The version each binary reports. Both differ from the served tag, so the
+  // upgrade stops at the version check: it neither replaces this build nor
+  // runs `bun completions`.
+  const unpackedVersion = "6.6.6";
+  const lookAlikeVersion = "7.7.7";
+
+  // $TMPDIR for the upgrade. Another user of this directory may rename the
+  // entries in it, so the path of the staging directory is not stable.
+  using tmpRoot = tempDir("bun-upgrade-hostile-tmpdir", {});
+  const tmpRootPath = String(tmpRoot);
+  const ranMarker = join(tmpRootPath, "look-alike-ran.txt");
+
+  // A look-alike staging directory, ready to be renamed into place.
+  await mkdir(join(tmpRootPath, "look-alike", folder), { recursive: true });
+  await writeFile(
+    join(tmpRootPath, "look-alike", folder, "bun"),
+    `#!/bin/sh\nprintf 'ran\\n' > '${ranMarker}'\nprintf '%s\\n' '${lookAlikeVersion}'\n`,
+    { mode: 0o755 },
+  );
+
+  // `bun upgrade` looks up `unzip` in PATH and runs it in the staging
+  // directory. This stand-in writes what the real unzip would produce, then
+  // renames the staging directory away and puts the look-alike at the path
+  // that bun created.
+  const binDir = join(tmpRootPath, "bin");
+  await mkdir(binDir, { recursive: true });
+  await writeFile(
+    join(binDir, "unzip"),
+    `#!/bin/sh
+set -e
+staging=$(pwd -P)
+parent=$(dirname "$staging")
+mkdir -p '${folder}'
+cat > '${folder}/bun' <<'SCRIPT'
+#!/bin/sh
+printf '%s\\n' '${unpackedVersion}'
+SCRIPT
+chmod 755 '${folder}/bun'
+mv "$staging" "$parent/renamed-away"
+mv "$parent/look-alike" "$staging"
+`,
+    { mode: 0o755 },
+  );
+
+  using server = startReleaseServer({ tagName: "bun-v9.9.9" });
+
+  await using proc = Bun.spawn({
+    // --stable forces the GitHub-release code path even on a canary build.
+    cmd: [bunExe(), "upgrade", "--stable"],
+    cwd: tmpdirSync(),
+    stdout: null,
+    stdin: "pipe",
+    stderr: "pipe",
+    env: {
+      ...server.env,
+      BUN_TMPDIR: tmpRootPath,
+      PATH: `${binDir}:${server.env.PATH}`,
+    },
+  });
+
+  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+
+  // bun must verify the binary it unpacked itself. The look-alike binary at
+  // the old path belongs to whoever renamed the directory.
+  expect(existsSync(ranMarker)).toBe(false);
+  // The reported version keeps the trailing newline the binary printed.
+  expect(stderr).toMatch(new RegExp(`The downloaded version of Bun \\(${unpackedVersion}\\s*\\) doesn't match`));
+  expect(exitCode).toBe(1);
 });

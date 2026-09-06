@@ -258,10 +258,9 @@ pub struct ValkeyClient {
     // when constructing/duplicating clients.
     pub(crate) password: Box<[u8]>,
     pub(crate) username: Box<[u8]>,
-    /// The database from the URL. `duplicate()` copies it.
+    /// From the URL. `duplicate()` copies it.
     pub(crate) database: u32,
-    /// The database this client's session is on: the URL database until a
-    /// `SELECT` is acknowledged. The reconnect handshake replays it.
+    /// Follows an acknowledged `SELECT`. The reconnect handshake replays it.
     pub(crate) selected_database: u32,
     pub(crate) address: Address,
     pub(crate) protocol: Protocol,

@@ -92,9 +92,7 @@ impl<'a> Command<'a> {
         Ok(buf.into_boxed_slice())
     }
 
-    /// The database index this command selects, when it is a `SELECT <n>`.
-    /// The index is remembered once the server replies `OK`, so a reconnect
-    /// and `duplicate()` land on the same database.
+    /// `Some(n)` for a `SELECT n` command.
     pub(crate) fn selected_db(&self) -> Option<u32> {
         if !bun_core::strings::eql_case_insensitive_ascii(self.command, b"SELECT", true)
             || self.args.len() != 1

@@ -8,11 +8,8 @@ const net = require("node:net");
 const { TTY } = process.binding("tty_wrap");
 
 // https://github.com/nodejs/node/blob/v26.3.0/lib/tty.js#L50
-//
-// A net.Socket over a native TTY handle. readableHighWaterMark: 0 makes every
-// push() report backpressure, so the handle stops reading after each chunk
-// and only reads again when a consumer pulls. That is what lets a stopped
-// stdin hand fd 0 to a child.
+// readableHighWaterMark: 0 makes every push() report backpressure, so the
+// handle only reads while a consumer pulls.
 function ReadStream(fd, options): void {
   if (!(this instanceof ReadStream)) {
     return new ReadStream(fd, options);

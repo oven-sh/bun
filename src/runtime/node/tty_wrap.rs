@@ -1,17 +1,11 @@
 //! `process.binding("tty_wrap").TTY`: the native handle behind
-//! `tty.ReadStream`, shaped like Node's `LibuvStreamWrap`.
+//! `tty.ReadStream`, with Node's `LibuvStreamWrap` surface (`readStart`,
+//! `readStop`, `onread(nread, buffer)`; `nread < 0` is a libuv errno, `UV_EOF`
+//! ends the stream). `readStop()` unregisters the poll, so a stopped stdin
+//! releases fd 0.
 //!
-//! `net.Socket` drives it with `readStart()` / `readStop()` and receives bytes
-//! through `handle.onread(nread, buffer)`, where `nread < 0` is a negative
-//! libuv errno and `UV_EOF` ends the stream. Reads come from a
-//! `bun_io::BufferedReader` polling the fd. `readStop()` unregisters that
-//! poll, so a stopped stdin releases fd 0 to a child spawned with
-//! `stdio: "inherit"`.
-//!
-//! Lifecycle: the JS wrapper holds one ref, released in `finalize`. The reader
-//! holds a second ref from `start()` until its terminal callback. `this_value`
-//! is strong while reading so the wrapper (and the `onread` callback it
-//! roots) survives GC while the poll is live, and weak otherwise.
+//! Refs: the JS wrapper (released in `finalize`) and the reader (released by
+//! its terminal callback). `this_value` is strong only while reading.
 
 use core::cell::Cell;
 use core::ffi::c_void;
@@ -60,9 +54,8 @@ bitflags::bitflags! {
         /// JS called `unref()`; `readStart()` must not re-ref the loop.
         const UNREFFED       = 1 << 4;
         const FINALIZED      = 1 << 5;
-        /// The event loop refused to poll the fd (kqueue and the macOS
-        /// `/dev/tty` alias). The handle still serves raw mode, window size
-        /// and ref/unref; `readStart()` reports `ENOTSUP`.
+        /// The loop refused to poll the fd (kqueue on the macOS `/dev/tty`
+        /// alias): `readStart()` reports `ENOTSUP`, everything else works.
         const UNPOLLABLE     = 1 << 6;
     }
 }
@@ -75,9 +68,8 @@ pub struct TTY {
     /// The fd JS passed in. `setRawMode`/`getWindowSize` act on it.
     fd: Fd,
 
-    /// What the reader polls. On POSIX a nonblocking reopen of the terminal
-    /// (or a dup of `fd` when that fails) that the reader owns and closes; on
-    /// Windows `fd` itself.
+    /// What the reader polls and closes: a nonblocking reopen of the
+    /// terminal (or a dup of `fd`) on POSIX, `fd` itself on Windows.
     read_fd: Cell<Fd>,
 
     reader: JsCell<BufferedReader>,
@@ -152,9 +144,8 @@ impl TTY {
         unsafe { bun_ptr::RefCount::<TTY>::deref(self.as_ctx_ptr()) };
     }
 
-    /// `new TTY(fd, ctx)`. Like Node, an fd `uv_tty_init` rejects does not
-    /// throw: the failure is reported on `ctx` and a closed handle is returned
-    /// so `tty.ReadStream` can raise `ERR_TTY_INIT_FAILED`.
+    /// `new TTY(fd, ctx)`. An fd `uv_tty_init` rejects reports through `ctx`
+    /// and yields a closed handle, as in Node.
     pub(crate) fn constructor(
         global_object: &JSGlobalObject,
         callframe: &CallFrame,
@@ -234,10 +225,8 @@ impl TTY {
     fn start_reader(&self) -> Result<(), StartError> {
         #[cfg(unix)]
         let (read_fd, nonblocking) = {
-            // Like libuv, read through a fresh nonblocking open of the
-            // terminal so this handle never flips O_NONBLOCK on a shared
-            // stdin. The fallback dup shares the description, so it keeps the
-            // caller's blocking mode and is only read when poll says ready.
+            // Like libuv: a fresh nonblocking open never flips O_NONBLOCK on a
+            // shared stdin. The dup fallback keeps the caller's blocking mode.
             let reopened = open_as_nonblocking_tty(self.fd.native(), sys::O::RDONLY);
             if reopened > -1 {
                 (Fd::from_native(reopened), true)
@@ -268,8 +257,7 @@ impl TTY {
             self.read_fd.set(Fd::INVALID);
             return Err(StartError::Sys(err));
         }
-        // A poll the loop refused is reported through `on_reader_error`, which
-        // already closed the reader and its fd: nothing holds a ref to release.
+        // `on_reader_error` already closed a reader whose poll the loop refused.
         if self.flags.get().contains(Flags::READER_DONE) {
             self.read_fd.set(Fd::INVALID);
             return Err(StartError::Unpollable);
@@ -328,8 +316,7 @@ impl TTY {
 
     pub(crate) fn do_ref(&self, _g: &JSGlobalObject, _f: &CallFrame) -> JsResult<JSValue> {
         self.update_flags(|f| f.remove(Flags::UNREFFED));
-        // A ref'd but idle handle does not hold the loop (libuv: ref'd *and*
-        // active); `readStart()` adds the hold once reading.
+        // Only an active handle holds the loop; `readStart()` adds the hold.
         if self.flags.get().contains(Flags::READING) {
             self.reader.with_mut(|r| r.update_ref(true));
         }
@@ -368,9 +355,7 @@ impl TTY {
         }
         #[cfg(windows)]
         {
-            // stdin shares one process-wide `uv_tty_t`; its raw mode is VT
-            // (control sequences stay sequences) so readline sees the same
-            // bytes as on POSIX.
+            // stdin's process-wide `uv_tty_t` uses VT raw mode (see source.rs).
             if self.fd == Fd::stdin() {
                 let rc = Source__setRawModeStdin(self.event_loop_handle.uv_loop(), raw);
                 return Ok(JSValue::js_number_from_int32(-rc));
@@ -448,8 +433,7 @@ impl TTY {
             f.remove(Flags::READING);
         });
         if self.flags.get().contains(Flags::READER_STARTED) {
-            // Closes the poll and `read_fd`, then reports through
-            // `on_reader_done`, which releases the reader's ref.
+            // `on_reader_done` releases the reader's ref once the poll and fd close.
             self.reader.with_mut(|r| r.close());
         }
         self.read_fd.set(Fd::INVALID);
@@ -578,8 +562,7 @@ impl Drop for TTY {
     fn drop(&mut self) {
         bun_output::scoped_log!(TTYWrap, "deinit");
         self.update_flags(|f| f.insert(Flags::FINALIZED));
-        // The reader's ref is already gone by the time the count reaches zero;
-        // this only releases fds on the constructor's failure paths.
+        // Only the constructor's failure paths still own an fd here.
         self.update_flags(|f| f.remove(Flags::READER_STARTED));
         self.reader.with_mut(|r| r.deinit());
     }
@@ -615,9 +598,7 @@ impl BufferedReaderParent for TTY {
         // SAFETY: see `on_read_chunk`.
         unsafe { &*this }.event_loop_handle.as_event_loop_ctx()
     }
-    // The read loop touches the reader after `on_read_chunk` returns, and that
-    // callback runs JS which can `close()` the handle: keep the struct alive
-    // for the loop's duration.
+    // `on_read_chunk` runs JS that may `close()` the handle mid read loop.
     unsafe fn ref_(this: *mut Self) {
         // SAFETY: see `on_read_chunk`.
         unsafe { bun_ptr::RefCount::<TTY>::ref_(this) };

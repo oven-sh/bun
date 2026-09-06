@@ -141,8 +141,7 @@ export function getStdinStream(
     // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/bootstrap/switches/is_main_thread.js#L190
     const stdin = new (require("node:tty").ReadStream)(fd);
 
-    // stdin starts out paused, but the handle does not know yet: stop it so
-    // nothing reads fd 0 until a consumer shows up.
+    // stdin starts out paused; tell the handle so nothing reads fd 0 yet.
     const handle = stdin._handle;
     if (handle?.readStop) {
       handle.reading = false;
@@ -150,9 +149,7 @@ export function getStdinStream(
       handle.readStop();
     }
 
-    // pause() leaves the handle reading; stop it one tick later (once the
-    // stream itself has settled) so the process can exit and a child can
-    // take over the terminal.
+    // pause() leaves the handle reading; stop it once the stream has settled.
     stdin.on("pause", () => {
       process.nextTick(onpause);
     });

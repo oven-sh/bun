@@ -567,13 +567,9 @@ const SocketHandlers: SocketHandler = {
   binaryType: "buffer",
 } as const;
 
+// Stream-wrap handles (`tty_wrap.TTY`) follow Node's LibuvStreamWrap contract:
+// readStart()/readStop() return a libuv errno, reads arrive as onread(nread, buffer).
 // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/stream_base_commons.js
-//
-// A stream-wrap handle (`process.binding("tty_wrap").TTY`) is Node's
-// LibuvStreamWrap shape: `readStart()`/`readStop()` return a libuv errno,
-// bytes arrive through `handle.onread(nread, buffer)` with `nread < 0` an
-// errno and `UV_EOF` the end of the stream. The usockets handles Bun creates
-// itself expose `pause()`/`resume()` and push through the `data` handler.
 const UV_EOF = -4095;
 function isStreamWrapHandle(handle) {
   return $isCallable(handle.readStart);
@@ -611,8 +607,7 @@ function onStreamRead(nread, buffer) {
   }
   finishSocketEnd(self);
 }
-// The handle carries no writer: write(2) straight to its fd, as the fd
-// adoption path does. The fd stays the handle's to close.
+// The handle has no writer: write(2) to its fd, as fdSyncWrite does.
 function streamWrapSyncWrite(chunk, encoding, callback) {
   const handle = this._handle;
   if (!handle) return callback($ERR_SOCKET_CLOSED());

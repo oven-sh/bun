@@ -341,6 +341,37 @@ fn reject_on_exception(
     Ok(JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(global_this, err))
 }
 
+/// Replace a blob body that has a file or S3 store with a `ReadableStream`
+/// over the same store. The HTTP client then sends it chunked. Returns
+/// `Ok(false)` when no stream could be created. `body` is detached on an
+/// error so the store ref is not leaked (`HTTPRequestBody` has no `Drop`).
+fn stream_blob_body(
+    global_this: &JSGlobalObject,
+    body: &mut HTTPRequestBody,
+    recommended_chunk_size: blob::SizeType,
+) -> JsResult<bool> {
+    let stream = ReadableStream::from_blob_copy_ref(
+        global_this,
+        body.any_blob().blob(),
+        recommended_chunk_size,
+    )
+    .and_then(|value| ReadableStream::from_js(value, global_this));
+    let stream = match stream {
+        Ok(Some(stream)) => stream,
+        Ok(None) => return Ok(false),
+        Err(err) => {
+            body.detach();
+            return Err(err);
+        }
+    };
+    let mut old = core::mem::replace(
+        body,
+        HTTPRequestBody::ReadableStream(readable_stream::Strong::init(stream, global_this)),
+    );
+    old.detach();
+    Ok(true)
+}
+
 // ──────────────────────────────────────────────────────────────────────────
 // URLType
 // ──────────────────────────────────────────────────────────────────────────
@@ -1440,29 +1471,12 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
     // *moved* into `FetchOptions`.
 
     if body.is_s3() {
-        'prepare_body: {
-            // is a S3 file we can use chunked here
-
-            if let Some(stream) = ReadableStream::from_js(
-                ReadableStream::from_blob_copy_ref(
-                    global_this,
-                    body.any_blob().blob(),
-                    s3::MultiPartUploadOptions::DEFAULT_PART_SIZE as crate::webcore::blob::SizeType,
-                )?,
-                global_this,
-            )? {
-                let mut old = core::mem::replace(
-                    &mut body,
-                    HTTPRequestBody::ReadableStream(readable_stream::Strong::init(
-                        stream,
-                        global_this,
-                    )),
-                );
-                // HTTPRequestBody has no Drop
-                // impl, so a bare `drop(old)` would leak the S3 Blob.Store ref.
-                old.detach();
-                break 'prepare_body;
-            }
+        // is a S3 file we can use chunked here
+        if !stream_blob_body(
+            global_this,
+            &mut body,
+            s3::MultiPartUploadOptions::DEFAULT_PART_SIZE as crate::webcore::blob::SizeType,
+        )? {
             let rejected_value =
                 JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
                     global_this,
@@ -1480,6 +1494,41 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
             // `path.slice_z()` (the `vm.node_fs()` accessor is gated behind a
             // jsc↔runtime cycle).
             let mut open_path_buf = PathBuffer::uninit();
+
+            // A FIFO, socket, or character device has no size. Opening a FIFO
+            // blocks until a writer appears, reading it into memory blocks the
+            // JS thread until the writer closes, and one buffer's worth would
+            // ship as the Content-Length. So stat before open, and stream a
+            // non-regular file with chunked transfer encoding instead: the
+            // stream reader opens the fd itself and polls it. A stat error is
+            // left for the open below, which reports it.
+            let is_regular_file = {
+                let store = body.store().expect("needs_to_read_file implies store");
+                let stat = match &store.data.as_file().pathlike {
+                    PathOrFileDescriptor::Fd(fd) => bun_sys::fstat(*fd),
+                    PathOrFileDescriptor::Path(path) => {
+                        bun_sys::stat(path.slice_z(&mut open_path_buf))
+                    }
+                };
+                match stat {
+                    Ok(stat) => bun_sys::S::ISREG(stat.st_mode as u32),
+                    Err(_) => true,
+                }
+            };
+            if !is_regular_file {
+                if !stream_blob_body(global_this, &mut body, 0)? {
+                    let rejected_value =
+                        JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
+                            global_this,
+                            global_this
+                                .create_error_instance(format_args!("Failed to start file stream")),
+                        );
+                    body.detach();
+                    return Ok(rejected_value);
+                }
+                break 'prepare_body;
+            }
+
             let opened_fd_res: bun_sys::Result<bun_sys::Fd> = {
                 let store = body.store().expect("needs_to_read_file implies store");
                 match &store.data.as_file().pathlike {
@@ -1520,12 +1569,10 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                         Err(_) => break 'use_sendfile,
                     };
 
-                    #[cfg(target_os = "macos")]
-                    {
-                        // macOS only supports regular files for sendfile()
-                        if !bun_sys::S::ISREG(stat.st_mode as u32) {
-                            break 'use_sendfile;
-                        }
+                    // The path was a regular file at the stat above. If it
+                    // was replaced since, sendfile is the wrong tool.
+                    if !bun_sys::S::ISREG(stat.st_mode as u32) {
+                        break 'use_sendfile;
                     }
 
                     // if it's < 32 KB, it's not worth it
@@ -1539,25 +1586,20 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
 
                     // `http::SendFile` fields are `usize`; blob sizes/offsets
                     // are `blob::SizeType` (u64) — hence the `as usize` casts.
-                    let mut sf = http::SendFile {
+                    // The slice window is clamped to the file: `remain` is the
+                    // exact byte count we will send, and that is the Content-Length.
+                    let stat_size_usize = stat_size as usize;
+                    let offset = (blob_offset as usize).min(stat_size_usize);
+                    let remain = ((blob_offset + original_size) as usize)
+                        .max(offset)
+                        .min(stat_size_usize)
+                        .saturating_sub(offset);
+                    let sf = http::SendFile {
                         fd: opened_fd,
-                        remain: (blob_offset + original_size) as usize,
-                        offset: blob_offset as usize,
-                        content_size: original_size.min(stat_size) as usize,
+                        remain,
+                        offset,
+                        content_size: remain,
                     };
-
-                    if bun_sys::S::ISREG(stat.st_mode as u32) {
-                        let stat_size_usize = stat_size as usize;
-                        sf.offset = sf.offset.min(stat_size_usize);
-                        sf.remain = sf
-                            .remain
-                            .max(sf.offset)
-                            .min(stat_size_usize)
-                            .saturating_sub(sf.offset);
-                        // `remain` is now the exact byte count we will send (the slice
-                        // window clamped to the file); that is the Content-Length.
-                        sf.content_size = sf.remain;
-                    }
                     body.detach();
                     body = HTTPRequestBody::Sendfile(sf);
 

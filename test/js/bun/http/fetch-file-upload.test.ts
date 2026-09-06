@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { isBroken, isWindows, tempDir, withoutAggressiveGC } from "harness";
+import { bunEnv, bunExe, isBroken, isWindows, tempDir, tls, withoutAggressiveGC } from "harness";
+import { mkfifo } from "mkfifo";
 import { tmpdir } from "os";
 import { join } from "path";
 
@@ -219,6 +220,123 @@ describe("Bun.file().slice() upload sends the slice's Content-Length", () => {
     expect(await res.text()).toBe("ok");
     expect(res.status).toBe(200);
     expect({ contentLength, received }).toEqual({ contentLength: String(fileSize - 10), received: fileSize - 10 });
+  });
+});
+
+// A FIFO has no size, so its bytes cannot be read into memory up front.
+// The body must be streamed with chunked transfer encoding, and the read
+// must not block the JS thread.
+describe.skipIf(isWindows)("Bun.file(fifo) upload", () => {
+  const SIZE = 1024 * 1024;
+  const payload = Buffer.alloc(SIZE);
+  for (let i = 0; i < SIZE; i++) payload[i] = (i * 7) & 0xff;
+  const payloadHash = Bun.CryptoHasher.hash("sha256", payload, "hex");
+
+  function newSeen() {
+    return { contentLength: "?" as string | null, transferEncoding: "?" as string | null, hash: "" };
+  }
+
+  function startOrigin(seen: ReturnType<typeof newSeen>, tlsOptions?: object) {
+    return Bun.serve({
+      port: 0,
+      development: false,
+      maxRequestBodySize: SIZE * 2,
+      ...(tlsOptions ? { tls: tlsOptions } : {}),
+      async fetch(req) {
+        seen.contentLength = req.headers.get("content-length");
+        seen.transferEncoding = req.headers.get("transfer-encoding");
+        const hasher = new Bun.CryptoHasher("sha256");
+        for await (const chunk of req.body!) hasher.update(chunk);
+        seen.hash = hasher.digest("hex");
+        return new Response("ok");
+      },
+    });
+  }
+
+  for (const scheme of ["http", "https"] as const) {
+    test.concurrent(`${scheme}: every byte arrives, chunked`, async () => {
+      using dir = tempDir("fetch-fifo-upload", { "payload.bin": payload });
+      const fifo = join(String(dir), "fifo");
+      mkfifo(fifo);
+
+      await using writer = Bun.spawn({
+        cmd: ["sh", "-c", `cat payload.bin > fifo`],
+        cwd: String(dir),
+        env: bunEnv,
+      });
+
+      const seen = newSeen();
+      await using server = startOrigin(seen, scheme === "https" ? tls : undefined);
+      const res = await fetch(server.url, {
+        method: "POST",
+        body: Bun.file(fifo),
+        tls: { rejectUnauthorized: false },
+      });
+      expect(await res.text()).toBe("ok");
+      expect(res.status).toBe(200);
+      expect(seen).toEqual({ contentLength: null, transferEncoding: "chunked", hash: payloadHash });
+      expect(await writer.exited).toBe(0);
+    });
+  }
+
+  // The writer opens the FIFO only after it reads a line from stdin, and the
+  // fixture writes that line after fetch() returns. With the bug, fetch()
+  // blocks the JS thread inside a read of the FIFO, so the line is never
+  // written and the fixture never prints. It runs in a child process so the
+  // hang cannot take the test runner with it.
+  test.concurrent("fetch() returns before the writer has produced any bytes", async () => {
+    using dir = tempDir("fetch-fifo-upload-wait", {
+      "payload.bin": payload,
+      "fixture.ts": `
+        const writer = Bun.spawn({
+          cmd: ["sh", "-c", "read go; cat payload.bin > fifo"],
+          stdin: "pipe",
+          stdout: "inherit",
+          stderr: "inherit",
+        });
+        const seen = { contentLength: "?", transferEncoding: "?", hash: "" };
+        using server = Bun.serve({
+          port: 0,
+          development: false,
+          maxRequestBodySize: ${SIZE * 2},
+          async fetch(req) {
+            seen.contentLength = req.headers.get("content-length");
+            seen.transferEncoding = req.headers.get("transfer-encoding");
+            const hasher = new Bun.CryptoHasher("sha256");
+            for await (const chunk of req.body) hasher.update(chunk);
+            seen.hash = hasher.digest("hex");
+            return new Response("ok");
+          },
+        });
+        const pending = fetch(server.url, { method: "POST", body: Bun.file("fifo") });
+        console.log("fetch-called");
+        writer.stdin.write("go\\n");
+        await writer.stdin.end();
+        const res = await pending;
+        console.log(JSON.stringify({ status: res.status, text: await res.text(), seen, writerExit: await writer.exited }));
+      `,
+    });
+    mkfifo(join(String(dir), "fifo"));
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "fixture.ts"],
+      cwd: String(dir),
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe(
+      "fetch-called\n" +
+        JSON.stringify({
+          status: 200,
+          text: "ok",
+          seen: { contentLength: null, transferEncoding: "chunked", hash: payloadHash },
+          writerExit: 0,
+        }) +
+        "\n",
+    );
+    expect(exitCode).toBe(0);
   });
 });
 

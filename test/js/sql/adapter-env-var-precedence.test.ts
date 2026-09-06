@@ -803,7 +803,8 @@ describe("SQL adapter environment variable precedence", () => {
       });
       expect((sql.options.tls as Bun.TLSOptions).passphrase).toBe("sekret-passphrase");
       for (const printed of [Bun.inspect(sql.options), util.inspect(sql.options, { depth: 4 })]) {
-        expect(printed).toContain('passphrase: "[REDACTED]"');
+        expect(printed).toMatch(/passphrase: ["']\[REDACTED\]["']/);
+        expect(printed).toMatch(/key: ["']\[REDACTED\]["']/);
         expect(printed).not.toContain("sekret-passphrase");
         expect(printed).not.toContain("sekret-password");
         expect(printed).not.toContain(Bun.inspect(Buffer.from("sekret-key")));

@@ -32,6 +32,8 @@ pub mod util;
 
 #[path = "Builtin.rs"]
 pub mod builtin;
+#[path = "forward_signals.rs"]
+pub(crate) mod forward_signals;
 #[path = "interpreter.rs"]
 pub mod interpreter;
 #[path = "IO.rs"]

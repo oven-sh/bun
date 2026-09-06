@@ -200,13 +200,27 @@ describe("Bun.serve top-level TLS options mixed with tls", () => {
     });
   }
 
-  test("top-level TLS keys set to undefined are not a mix", async () => {
+  test("top-level TLS keys set to undefined or null are not a mix", async () => {
     using server = Bun.serve({
       port: 0,
       fetch,
       ca: undefined,
       requestCert: undefined,
+      cert: null,
+      rejectUnauthorized: null,
       tls: { key: serverKey, cert: serverCert },
+    } as any);
+    const res = await globalThis.fetch(server.url, { tls: { rejectUnauthorized: false } });
+    expect(await res.text()).toBe("Hello, world!");
+  });
+
+  test("tls: false next to top-level keys is not a mix", async () => {
+    using server = Bun.serve({
+      port: 0,
+      fetch,
+      key: serverKey,
+      cert: serverCert,
+      tls: false,
     } as any);
     const res = await globalThis.fetch(server.url, { tls: { rejectUnauthorized: false } });
     expect(await res.text()).toBe("Hello, world!");

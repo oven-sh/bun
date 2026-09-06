@@ -582,14 +582,16 @@ const TLS_OPTION_KEYS: &[&str] = &[
     "ecdhCurve",
 ];
 
-/// The first legacy top-level TLS key that is set (not `undefined`) on the
-/// options object.
+/// The first legacy top-level TLS key that is set on the options object.
+/// `undefined` and `null` both mean unset, as they do inside `tls`.
 fn first_top_level_tls_key(
     global: &JSGlobalObject,
     arg: JSValue,
 ) -> JsResult<Option<&'static str>> {
     for &key in TLS_OPTION_KEYS {
-        if arg.get(global, key)?.is_some() {
+        if let Some(value) = arg.get(global, key)?
+            && !value.is_null()
+        {
             return Ok(Some(key));
         }
     }
@@ -1288,11 +1290,13 @@ impl ServerConfig {
             // The legacy top-level keys are only read when `tls` is absent.
             // A mix would silently drop the top-level ones (for example
             // `requestCert` and `rejectUnauthorized`), so refuse it.
-            if let Some(key) = first_top_level_tls_key(global, arg)? {
-                return Err(global.throw_invalid_arguments(format_args!(
-                    "Bun.serve() received both \"tls\" and the top-level TLS option \"{key}\". \
-                     Move \"{key}\" into the \"tls\" object.",
-                )));
+            if tls.is_object() {
+                if let Some(key) = first_top_level_tls_key(global, arg)? {
+                    return Err(global.throw_invalid_arguments(format_args!(
+                        "Bun.serve() received both \"tls\" and the top-level TLS option \"{key}\". \
+                         Move \"{key}\" into the \"tls\" object.",
+                    )));
+                }
             }
             if tls.is_falsey() {
                 args.ssl_config = None;

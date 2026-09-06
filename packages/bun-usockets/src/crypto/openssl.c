@@ -1921,6 +1921,26 @@ struct us_bun_verify_error_t us_internal_ssl_verify_error(struct us_socket_t *s)
 
 /* ── Handshake state machine ─────────────────────────────────────────────── */
 
+/* Drain the thread's error queue and return the entry that names the failure
+ * the way node reports it: the OLDEST entry is the root cause
+ * (https://github.com/nodejs/node/blob/v26.3.0/src/crypto/crypto_tls.cc#L860),
+ * except that BoringSSL queues a lower layer's entry first for some failures
+ * (a record that fails to authenticate is "Cipher functions:BAD_DECRYPT"
+ * under "SSL routines:DECRYPTION_FAILED_OR_BAD_RECORD_MAC") where OpenSSL
+ * queues only the SSL one. The oldest SSL-library entry wins, then the oldest
+ * overall. 0 when nothing was queued. */
+static unsigned long ssl_take_root_cause_error(void) {
+  unsigned long root = 0;
+  unsigned long ssl_queue_err;
+  while ((ssl_queue_err = ERR_get_error()) != 0) {
+    if (root == 0 || (ERR_GET_LIB(root) != ERR_LIB_SSL &&
+                      ERR_GET_LIB(ssl_queue_err) == ERR_LIB_SSL)) {
+      root = ssl_queue_err;
+    }
+  }
+  return root;
+}
+
 /* Park the fatal OpenSSL reason behind a failed SSL_* call where the
  * handshake-failure dispatch can find it, then drain the queue and mark the
  * socket fatal. Only parks while the handshake is unfinished: that dispatch is
@@ -1930,10 +1950,7 @@ static void ssl_park_fatal_reason(struct us_socket_t *s) {
   struct loop_ssl_data *loop_ssl_data =
       (struct loop_ssl_data *) s->group->loop->data.ssl_data;
   if (loop_ssl_data && s->ssl_handshake_state != HANDSHAKE_COMPLETED) {
-    /* The OLDEST queued entry is the root cause and is what node reports
-     * (https://github.com/nodejs/node/blob/v26.3.0/src/crypto/crypto_tls.cc#L860);
-     * later entries wrap it or belong to another socket on this thread. */
-    unsigned long ssl_queue_err = ERR_peek_error();
+    unsigned long ssl_queue_err = ssl_take_root_cause_error();
     if (ssl_queue_err != 0) {
       ERR_error_string_n(ssl_queue_err, loop_ssl_data->ssl_last_fatal_error,
                          sizeof(loop_ssl_data->ssl_last_fatal_error));
@@ -1942,6 +1959,24 @@ static void ssl_park_fatal_reason(struct us_socket_t *s) {
   }
   ERR_clear_error();
   s->ssl_fatal_error = 1;
+}
+
+/* The post-handshake counterpart of ssl_park_fatal_reason: the handshake
+ * dispatch that would consume a parked reason has already run, so the reason
+ * travels with the close instead (on_close's `reason`, which node surfaces
+ * as the socket's ERR_SSL_* 'error' before 'close'). Copies the root-cause
+ * reason into `out` and returns 1, or returns 0 with nothing queued (a
+ * renegotiation-limit close, a BIO write that failed with no SSL error).
+ * Drains the queue and marks the socket fatal either way. */
+static int ssl_take_fatal_reason(struct us_socket_t *s, char *out, size_t out_len) {
+  int taken = 0;
+  unsigned long ssl_queue_err = ssl_take_root_cause_error();
+  if (ssl_queue_err != 0) {
+    ERR_error_string_n(ssl_queue_err, out, out_len);
+    taken = 1;
+  }
+  s->ssl_fatal_error = 1;
+  return taken;
 }
 
 /* The on_handshake callback runs JS which may us_socket_close(s) — that frees
@@ -2619,7 +2654,19 @@ restart:
         }
 
         if (err == SSL_ERROR_SSL || err == SSL_ERROR_SYSCALL) {
-          ssl_park_fatal_reason(s);
+          if (s->ssl_handshake_state == HANDSHAKE_COMPLETED) {
+            /* A bad record, a peer alert, an unexpected message after the
+             * handshake: BoringSSL already sealed the fatal alert into the
+             * wire via the BIO. Close with the reason so the owner reports
+             * it, instead of a clean EOF that hides the protocol failure. */
+            char reason[US_SSL_FATAL_ERROR_REASON_MAX];
+            if (ssl_take_fatal_reason(s, reason, sizeof(reason))) {
+              ssl_close(s, 0, reason);
+              return NULL;
+            }
+          } else {
+            ssl_park_fatal_reason(s);
+          }
         }
         ssl_close(s, 0, NULL);
         loop_ssl_data->ssl_last_fatal_error[0] = 0;

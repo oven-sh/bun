@@ -4706,3 +4706,75 @@ it("concurrent end() on two allowHalfOpen TLS peers closes both sockets", async 
 
   await Promise.all([serverClosed.promise, clientClosed.promise]);
 });
+
+it("a TLS record that fails to decrypt after the handshake closes both peers with an EPROTO error", async () => {
+  // A TCP proxy between client and server injects an application_data
+  // record that cannot authenticate once the server has completed its
+  // handshake. The server's SSL_read fails, it sends a bad_record_mac alert,
+  // and both peers close with the OpenSSL reason (node: ERR_SSL_*) instead
+  // of a clean EOF.
+  const badRecord = Buffer.concat([Buffer.from([0x17, 0x03, 0x03, 0x00, 0x20]), Buffer.alloc(32, 0x42)]);
+  const { promise: serverClosed, resolve: resolveServerClosed } = Promise.withResolvers<Error | undefined>();
+  const { promise: clientClosed, resolve: resolveClientClosed } = Promise.withResolvers<Error | undefined>();
+  const { promise: serverOpen, resolve: resolveServerOpen } = Promise.withResolvers<void>();
+
+  using server = Bun.listen({
+    hostname: "127.0.0.1",
+    port: 0,
+    tls,
+    socket: {
+      open() {
+        resolveServerOpen();
+      },
+      data() {},
+      close(_socket, err) {
+        resolveServerClosed(err);
+      },
+      error() {},
+    },
+  });
+
+  let upstream: net.Socket | undefined;
+  const proxy = net.createServer(c => {
+    upstream = net.connect(server.port, "127.0.0.1");
+    c.pipe(upstream);
+    upstream.pipe(c);
+    c.on("error", () => {});
+    upstream.on("error", () => {});
+  });
+  proxy.listen(0, "127.0.0.1");
+  await new Promise<void>(resolve => proxy.once("listening", resolve));
+
+  const client = await Bun.connect({
+    hostname: "127.0.0.1",
+    port: (proxy.address() as net.AddressInfo).port,
+    tls: { rejectUnauthorized: false },
+    socket: {
+      open() {},
+      data() {},
+      close(_socket, err) {
+        resolveClientClosed(err);
+      },
+      error() {},
+    },
+  });
+  await serverOpen;
+
+  upstream!.write(badRecord);
+
+  const serverErr = await serverClosed;
+  expect(serverErr).toMatchObject({
+    code: "EPROTO",
+    syscall: "read",
+    message: expect.stringMatching(/^error:[0-9a-f]+:SSL routines:[^:]*:DECRYPTION_FAILED_OR_BAD_RECORD_MAC$/),
+  });
+
+  const clientErr = await clientClosed;
+  expect(clientErr).toMatchObject({
+    code: "EPROTO",
+    message: expect.stringMatching(/^error:[0-9a-f]+:SSL routines:[^:]*:SSLV3_ALERT_BAD_RECORD_MAC$/),
+  });
+
+  client.end();
+  proxy.close();
+});

@@ -81,6 +81,24 @@ fn read_error_from_close_code(code: c_int) -> sys::Error {
     }
 }
 
+/// The OpenSSL reason string uSockets attaches to the close of a TLS socket
+/// that hit a fatal SSL error after its handshake (`us_internal_ssl_on_data`).
+/// Only the SSL data path ever passes a close reason, and it is a stack
+/// buffer that lives for the duration of the close dispatch.
+fn tls_close_reason<'a, const SSL: bool>(reason: Option<*mut c_void>) -> Option<&'a [u8]> {
+    if !SSL {
+        return None;
+    }
+    let ptr = reason?.cast::<core::ffi::c_char>();
+    if ptr.is_null() {
+        return None;
+    }
+    // SAFETY: the caller (uSockets) passes a NUL-terminated C string that
+    // outlives this close dispatch.
+    let bytes = unsafe { core::ffi::CStr::from_ptr(ptr) }.to_bytes();
+    (!bytes.is_empty()).then_some(bytes)
+}
+
 // ──────────────────────────────────────────────────────────────────────────
 // Re-exports
 // ──────────────────────────────────────────────────────────────────────────
@@ -2124,8 +2142,9 @@ impl<const SSL: bool> NewSocket<SSL> {
             // hand over the raw pointer rather than letting `RefPtr::drop`
             // release it a second time. This frame is the twin's trampoline for
             // the event, so what its handlers left pending is folded here and
-            // this socket's own close proceeds regardless.
-            crate::dispatch::fold(Self::on_close(raw.into_this_ptr(), socket, err, reason));
+            // this socket's own close proceeds regardless. A TLS reason is the
+            // encrypted half's to report: the raw half sees a plain close.
+            crate::dispatch::fold(Self::on_close(raw.into_this_ptr(), socket, err, None));
         }
         let cleanup = CloseTeardown {
             socket: this,
@@ -2177,6 +2196,19 @@ impl<const SSL: bool> NewSocket<SSL> {
         if err > 2 {
             js_error =
                 <sys::Error as jsc::SysErrorJsc>::to_js(&read_error_from_close_code(err), &global);
+        } else if let Some(reason) = tls_close_reason::<SSL>(reason) {
+            // uSockets closed a TLS socket on a fatal post-handshake SSL
+            // error (bad record, peer alert) and passed the OpenSSL reason
+            // string. Same shape as the handshake-failure EPROTO verdict, so
+            // node:tls decomposes both into ERR_SSL_<REASON> the same way.
+            js_error = SystemError {
+                errno: -(sys::SystemErrno::EPROTO as c_int),
+                code: BunString::static_("EPROTO"),
+                message: BunString::clone_utf8(reason),
+                syscall: BunString::static_("read"),
+                ..Default::default()
+            }
+            .to_error_instance(&global);
         }
 
         if let Err(e) = callback.call(&global, this_value, &[this_value, js_error]) {

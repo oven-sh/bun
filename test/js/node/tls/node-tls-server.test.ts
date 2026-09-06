@@ -2685,3 +2685,66 @@ describe("pauseOnConnect", () => {
     }
   });
 });
+
+// A TLS record that fails to decrypt after the handshake is a fatal protocol
+// error. Node surfaces it as the socket's ERR_SSL_<REASON> 'error' (and the
+// peer, which receives the fatal alert, gets its own), then 'close' with
+// hadError. A TCP proxy between client and server injects the record once the
+// server has completed its handshake, so the bytes land in a known state.
+function injectingProxy(upstreamPort: number) {
+  let upstream: net.Socket | undefined;
+  const proxy = net.createServer(c => {
+    upstream = net.connect(upstreamPort, "127.0.0.1");
+    c.pipe(upstream);
+    upstream.pipe(c);
+    c.on("error", () => {});
+    upstream.on("error", () => {});
+  });
+  return {
+    proxy,
+    inject(bytes: Buffer) {
+      upstream!.write(bytes);
+    },
+  };
+}
+
+// application_data, legacy version TLS 1.2, 32 bytes of ciphertext that cannot
+// authenticate: the server fails the AEAD open and alerts bad_record_mac.
+const BAD_RECORD = Buffer.concat([Buffer.from([0x17, 0x03, 0x03, 0x00, 0x20]), Buffer.alloc(32, 0x42)]);
+
+it("a bad record after the handshake surfaces as ERR_SSL_* on both peers", async () => {
+  const server: Server = createServer(COMMON_CERT);
+  server.listen(0, "127.0.0.1");
+  await once(server, "listening");
+  const { proxy, inject } = injectingProxy((server.address() as AddressInfo).port);
+  proxy.listen(0, "127.0.0.1");
+  await once(proxy, "listening");
+
+  const serverSocket = new Promise<TLSSocket>(resolve => server.once("secureConnection", resolve));
+  const client = connect({ port: (proxy.address() as AddressInfo).port, host: "127.0.0.1", rejectUnauthorized: false });
+  const clientError = once(client, "error");
+  await once(client, "secureConnect");
+  const socket = await serverSocket;
+  const serverError = once(socket, "error");
+  // Not events.once: it rejects when 'error' fires first, and here it must.
+  const serverClose = new Promise<boolean>(resolve => socket.once("close", resolve));
+  const clientClose = new Promise<boolean>(resolve => client.once("close", resolve));
+
+  inject(BAD_RECORD);
+
+  const [err] = await serverError;
+  expect(err.code).toBe("ERR_SSL_DECRYPTION_FAILED_OR_BAD_RECORD_MAC");
+  expect(err.library).toBe("SSL routines");
+  expect(err.reason).toBe("DECRYPTION_FAILED_OR_BAD_RECORD_MAC");
+  expect(err.message).toMatch(/^error:[0-9a-f]+:SSL routines:[^:]*:DECRYPTION_FAILED_OR_BAD_RECORD_MAC$/);
+  expect(await serverClose).toBe(true);
+
+  // The server's fatal alert reaches the client as its own SSL error.
+  const [clientErr] = await clientError;
+  expect(clientErr.code).toBe("ERR_SSL_SSLV3_ALERT_BAD_RECORD_MAC");
+  expect(await clientClose).toBe(true);
+
+  proxy.close();
+  server.close();
+  await once(server, "close");
+});

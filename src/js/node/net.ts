@@ -644,6 +644,14 @@ function SocketEmitEndNT(self, _err?) {
   // merely called): a peer reset while queued data is still unflushed is the
   // peer aborting mid-transfer and must surface (test-net-error-twice).
   const teardownNoise = self[kended] && self.writableFinished;
+  // A fatal TLS protocol error after the handshake (a bad record, a peer
+  // alert) arrives as EPROTO carrying the OpenSSL reason. Node's TLSWrap
+  // reports it as the socket's ERR_SSL_<REASON> 'error' whether or not a
+  // listener exists, so it is never downgraded to a silent EOF below.
+  if (_err && _err.code === "EPROTO" && !self.destroyed && !self._hadError) {
+    self.destroy(tlsHandshakeError(_err));
+    return;
+  }
   // _hadError: the failure already reached JS through the error dispatch
   // (native on_error / a fatal write); node emits a socket error exactly
   // once, so the close that follows it is delivered plain.
@@ -1328,6 +1336,12 @@ const SocketHandlers2: SocketHandler<NonNullable<import("node:net").Socket["_han
     if (err) $debug(err);
     if (self[kclosed]) return;
     self[kclosed] = true;
+    // A fatal TLS protocol error after the handshake (see SocketEmitEndNT):
+    // node reports it as the ERR_SSL_<REASON> 'error' even with no listener.
+    if (err && err.code === "EPROTO" && !self.destroyed && !self._hadError && socket === self._handle) {
+      self.destroy(tlsHandshakeError(err));
+      return;
+    }
     // A received RST surfacing as ECONNRESET with the close is not a clean
     // EOF - Node destroys the socket with "read ECONNRESET" instead of a
     // graceful 'end'. Only surface it when the closing handle is still the

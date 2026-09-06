@@ -121,7 +121,12 @@ interface CppSQL {
   isInTransaction(handle: TODO): boolean;
   loadExtension(handle: TODO, name: string, entryPoint: string): void;
   serialize(handle: TODO, name: string): Buffer;
-  deserialize(serialized: NodeJS.TypedArray | ArrayBufferLike, openFlags: number, deserializeFlags: number): TODO;
+  deserialize(
+    serialized: NodeJS.TypedArray | ArrayBufferLike,
+    openFlags: number,
+    deserializeFlags: number,
+    db: Database,
+  ): TODO;
   fcntl(handle: TODO, ...args: TODO[]): TODO;
   close(handle: TODO, throwOnError: boolean): void;
   setCustomSQLite(path: string): void;
@@ -369,7 +374,7 @@ class Database implements SqliteTypes.Database {
           }
         }
 
-        this.#handle = Database.#deserialize(filenameGiven, this.#internalFlags, deserializeFlags);
+        this.#handle = Database.#deserialize(filenameGiven, this.#internalFlags, deserializeFlags, this);
         this.filename = ":memory:";
 
         return;
@@ -452,12 +457,17 @@ class Database implements SqliteTypes.Database {
     return SQL.serialize(this.#handle, optionalName || "main");
   }
 
-  static #deserialize(serialized: NodeJS.TypedArray | ArrayBufferLike, openFlags: number, deserializeFlags: number) {
+  static #deserialize(
+    serialized: NodeJS.TypedArray | ArrayBufferLike,
+    openFlags: number,
+    deserializeFlags: number,
+    finalizationTarget: Database,
+  ) {
     if (!SQL) {
       initializeSQL();
     }
 
-    return SQL.deserialize(serialized, openFlags, deserializeFlags);
+    return SQL.deserialize(serialized, openFlags, deserializeFlags, finalizationTarget);
   }
 
   static deserialize(

@@ -2,7 +2,7 @@ import { spawnSync } from "bun";
 import { constants, Database, SQLiteError } from "bun:sqlite";
 import { describe, expect, it } from "bun:test";
 import { existsSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from "fs";
-import { bunEnv, bunExe, isMacOS, isMacOSVersionAtLeast, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, expectRssDeltaBelow, isMacOS, isMacOSVersionAtLeast, isWindows, tempDir } from "harness";
 import { tmpdir } from "os";
 import path from "path";
 
@@ -2771,4 +2771,41 @@ it("exec/run with an embedded NUL byte in the SQL string does not hang", async (
     signalCode: null,
     exitCode: 0,
   });
+});
+
+it("a deserialized Database that is never closed releases its connection when collected", async () => {
+  const code = /* js */ `
+    import { Database } from "bun:sqlite";
+    const src = new Database(":memory:");
+    src.exec("create table t(a)");
+    for (let i = 0; i < 1000; i++) src.exec("insert into t values (randomblob(1000))");
+    const serialized = src.serialize();
+    src.close();
+
+    function dropOne() {
+      const db = Database.deserialize(serialized);
+      db.query("select count(*) from t").get();
+    }
+    async function settle() {
+      for (let i = 0; i < 3; i++) {
+        Bun.gc(true);
+        await Bun.sleep(1);
+      }
+    }
+    // Collect after every few drops so the assertion sees steady state and not
+    // the peak of 100 live images, which the allocator would keep mapped.
+    async function batch(n) {
+      for (let i = 0; i < n; i++) {
+        for (let j = 0; j < 5; j++) dropOne();
+        await settle();
+      }
+    }
+    await batch(4);
+    const before = process.memoryUsage.rss();
+    await batch(20);
+    console.log(JSON.stringify({ deltaMiB: (process.memoryUsage.rss() - before) / 1024 / 1024 }));
+  `;
+
+  // Unfixed: every dropped 1 MB image stays allocated, about 230 MiB. Fixed: under 5 MiB.
+  await expectRssDeltaBelow(["-e", code], { release: 60, debug: 80 });
 });

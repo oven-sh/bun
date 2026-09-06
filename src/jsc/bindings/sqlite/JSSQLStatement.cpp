@@ -276,6 +276,22 @@ static VersionSqlite3* databaseForHandle(int32_t handle)
     return dbs[static_cast<size_t>(handle)];
 }
 
+// Registers a freshly opened connection. The JS Database object that owns the
+// handle is the finalization target: its GC finalizer drops the entry's initial
+// ref, so a Database that is dropped without close() still releases the
+// connection.
+static size_t registerDatabase(JSC::VM& vm, sqlite3* db, JSC::JSValue finalizationTarget)
+{
+    auto* versionDB = new VersionSqlite3(db, &vm);
+    size_t index = registerDatabase(versionDB);
+    if (finalizationTarget.isObject()) {
+        vm.heap.addFinalizer(finalizationTarget.getObject(), [versionDB](JSC::JSCell*) -> void {
+            versionDB->release();
+        });
+    }
+    return index;
+}
+
 // Shared with node:sqlite's termination path (Bun__closeAllNodeSqliteDatabasesForTermination):
 // with unfinalized statements close_v2 only zombifies the connection and
 // defers the WAL checkpoint to a finalize that never comes, so flush the WAL
@@ -1324,8 +1340,8 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementDeserialize, (JSC::JSGlobalObject * lexic
         return {};
     }
 
-    auto count = registerDatabase(new VersionSqlite3(db, &vm));
-    RELEASE_AND_RETURN(scope, JSValue::encode(jsNumber(count)));
+    auto index = registerDatabase(vm, db, callFrame->argument(3));
+    RELEASE_AND_RETURN(scope, JSValue::encode(jsNumber(index)));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsSQLStatementSerialize, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
@@ -1805,13 +1821,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementOpenStatementFunction, (JSC::JSGlobalObje
     if (status != SQLITE_OK) {
         // TODO: log a warning here that defensive mode is unsupported.
     }
-    auto* versionDB = new VersionSqlite3(db, &vm);
-    auto index = registerDatabase(versionDB);
-    if (finalizationTarget.isObject()) {
-        vm.heap.addFinalizer(finalizationTarget.getObject(), [versionDB](JSC::JSCell* ptr) -> void {
-            versionDB->release();
-        });
-    }
+    auto index = registerDatabase(vm, db, finalizationTarget);
     RELEASE_AND_RETURN(scope, JSValue::encode(jsNumber(index)));
 }
 

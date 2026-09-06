@@ -507,7 +507,9 @@ pub(crate) fn migrate_pnpm_lockfile<'a>(
         Err(bun_ast::DeepCloneError::StackOverflow) => {
             return Err(MigratePnpmLockfileError::YamlParseError);
         }
-        Err(bun_ast::DeepCloneError::Alloc(_)) => return Err(MigratePnpmLockfileError::OutOfMemory),
+        Err(bun_ast::DeepCloneError::Alloc(_)) => {
+            return Err(MigratePnpmLockfileError::OutOfMemory);
+        }
     };
 
     // pnpm 11 writes `---<env lockfile>---<lockfile>`; the last document is the lockfile.

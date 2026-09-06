@@ -676,7 +676,7 @@ describe("Bun.markdown.react renderToString with component overrides", () => {
 
 describe("Bun.markdown.react development fields", () => {
   const script = `
-    const root = Bun.markdown.react("- a\\n- b\\n");
+    const root = Bun.markdown.react("- a\\n- b\\n", undefined, { reactVersion: Number(process.env.MD_REACT_VERSION) });
     const list = root.props.children[0];
     const item = list.props.children[0];
     const describeEl = el => ({
@@ -691,8 +691,8 @@ describe("Bun.markdown.react development fields", () => {
     console.log(JSON.stringify({ root: describeEl(root), list: describeEl(list), item: describeEl(item) }));
   `;
 
-  async function run(NODE_ENV: string | undefined) {
-    const env = { ...bunEnv };
+  async function run(NODE_ENV: string | undefined, reactVersion = 19) {
+    const env = { ...bunEnv, MD_REACT_VERSION: String(reactVersion) };
     if (NODE_ENV === undefined) delete env.NODE_ENV;
     else env.NODE_ENV = NODE_ENV;
     await using proc = Bun.spawn({ cmd: [bunExe(), "-e", script], env, stderr: "pipe" });
@@ -721,6 +721,13 @@ describe("Bun.markdown.react development fields", () => {
       expect(item).toEqual(devShape);
     },
   );
+
+  test("reactVersion: 18 gets the same development fields", async () => {
+    const { root, list, item } = await run("development", 18);
+    expect(root).toEqual(devShape);
+    expect(list).toEqual(devShape);
+    expect(item).toEqual(devShape);
+  });
 
   test("NODE_ENV=production keeps the production shape", async () => {
     const { root, list, item } = await run("production");

@@ -46,7 +46,6 @@
 #include <JavaScriptCore/ArrayBuffer.h>
 #include <JavaScriptCore/ArrayBufferView.h>
 #include <JavaScriptCore/ScriptCallStack.h>
-#include <JavaScriptCore/StrongInlines.h>
 #include <wtf/HashSet.h>
 #include <wtf/HexNumber.h>
 #include <wtf/TZoneMallocInlines.h>
@@ -305,7 +304,7 @@ ExceptionOr<Ref<WebSocket>> WebSocket::create(ScriptExecutionContext& context, c
     return socket;
 }
 
-ExceptionOr<Ref<WebSocket>> WebSocket::create(ScriptExecutionContext& context, const String& url, const Vector<String>& protocols, std::optional<FetchHeaders::Init>&& headers, const String& proxyUrl, std::optional<FetchHeaders::Init>&& proxyHeaders, WebSocketSSLConfigPtr&& sslConfig, bool offerPerMessageDeflate, JSC::Strong<JSC::Unknown>&& checkServerIdentity)
+ExceptionOr<Ref<WebSocket>> WebSocket::create(ScriptExecutionContext& context, const String& url, const Vector<String>& protocols, std::optional<FetchHeaders::Init>&& headers, const String& proxyUrl, std::optional<FetchHeaders::Init>&& proxyHeaders, WebSocketSSLConfigPtr&& sslConfig, bool offerPerMessageDeflate)
 {
     if (url.isNull())
         return Exception { SyntaxError };
@@ -320,7 +319,6 @@ ExceptionOr<Ref<WebSocket>> WebSocket::create(ScriptExecutionContext& context, c
     if (socket->m_state == CLOSED)
         return socket;
     socket->m_sslConfig = WTF::move(sslConfig); // Set BEFORE connect() so it's available during connection
-    socket->m_checkServerIdentity = WTF::move(checkServerIdentity);
     socket->setOfferPerMessageDeflate(offerPerMessageDeflate);
 
     auto result = socket->connect(url, protocols, WTF::move(headers), proxyConfigResult.releaseReturnValue());
@@ -330,7 +328,7 @@ ExceptionOr<Ref<WebSocket>> WebSocket::create(ScriptExecutionContext& context, c
     return socket;
 }
 
-ExceptionOr<Ref<WebSocket>> WebSocket::create(ScriptExecutionContext& context, const String& url, const Vector<String>& protocols, std::optional<FetchHeaders::Init>&& headers, bool rejectUnauthorized, const String& proxyUrl, std::optional<FetchHeaders::Init>&& proxyHeaders, WebSocketSSLConfigPtr&& sslConfig, bool offerPerMessageDeflate, JSC::Strong<JSC::Unknown>&& checkServerIdentity)
+ExceptionOr<Ref<WebSocket>> WebSocket::create(ScriptExecutionContext& context, const String& url, const Vector<String>& protocols, std::optional<FetchHeaders::Init>&& headers, bool rejectUnauthorized, const String& proxyUrl, std::optional<FetchHeaders::Init>&& proxyHeaders, WebSocketSSLConfigPtr&& sslConfig, bool offerPerMessageDeflate)
 {
     if (url.isNull())
         return Exception { SyntaxError };
@@ -346,7 +344,6 @@ ExceptionOr<Ref<WebSocket>> WebSocket::create(ScriptExecutionContext& context, c
         return socket;
     socket->setRejectUnauthorized(rejectUnauthorized);
     socket->m_sslConfig = WTF::move(sslConfig); // Set BEFORE connect() so it's available during connection
-    socket->m_checkServerIdentity = WTF::move(checkServerIdentity);
     socket->setOfferPerMessageDeflate(offerPerMessageDeflate);
 
     auto result = socket->connect(url, protocols, WTF::move(headers), proxyConfigResult.releaseReturnValue());
@@ -612,10 +609,6 @@ __attribute__((minsize)) ExceptionOr<void> WebSocket::connect(const String& url,
     // Pass SSLConfig pointer to the upgrade client (ownership transferred - it is freed when the connection closes)
     // After this call, m_sslConfig should not be used by C++ anymore
     void* sslConfig = m_sslConfig.release();
-    // The upgrade client takes its own strong ref; drop ours so a callback
-    // that captures this WebSocket cannot root it for the connection's life.
-    JSC::EncodedJSValue checkServerIdentity = JSC::JSValue::encode(m_checkServerIdentity ? m_checkServerIdentity.get() : JSC::jsUndefined());
-    m_checkServerIdentity.clear();
 
     // Use TLS client based on connection type:
     // - TLS/ProxyTLS: use TLS socket
@@ -633,8 +626,7 @@ __attribute__((minsize)) ExceptionOr<void> WebSocket::connect(const String& url,
             sslConfig, is_secure,
             targetAuthorization.isEmpty() ? nullptr : &targetAuth,
             is_unix ? &unixSocketPath : nullptr,
-            m_offerPerMessageDeflate,
-            checkServerIdentity);
+            m_offerPerMessageDeflate);
     } else {
         this->m_upgradeClient = Bun__WebSocketHTTPClient__connect(
             scriptExecutionContext()->jsGlobalObject(), reinterpret_cast<CppWebSocket*>(this),
@@ -646,8 +638,7 @@ __attribute__((minsize)) ExceptionOr<void> WebSocket::connect(const String& url,
             sslConfig, is_secure,
             targetAuthorization.isEmpty() ? nullptr : &targetAuth,
             is_unix ? &unixSocketPath : nullptr,
-            m_offerPerMessageDeflate,
-            checkServerIdentity);
+            m_offerPerMessageDeflate);
     }
 
     proxyHeaderValues.clear();
@@ -1799,6 +1790,11 @@ extern "C" void WebSocket__didReceiveBytes(WebCore::WebSocket* webSocket, WebCor
 extern "C" bool WebSocket__rejectUnauthorized(WebCore::WebSocket* webSocket)
 {
     return webSocket->rejectUnauthorized();
+}
+
+extern "C" JSC::EncodedJSValue WebSocket__checkServerIdentity(WebCore::WebSocket* webSocket)
+{
+    return JSC::JSValue::encode(webSocket->checkServerIdentity().getValue(JSC::jsUndefined()));
 }
 
 // The native client keeps this object (and its wrapper) alive across work it has queued that will

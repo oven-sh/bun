@@ -32,7 +32,7 @@ use bun_core::strings;
 use bun_core::{String as BunString, Utf8Bytes};
 use bun_http::{HeaderValueIterator, Headers};
 use bun_io::KeepAlive;
-use bun_jsc::{JSGlobalObject, JSValue, StrongOptional, VirtualMachineRef};
+use bun_jsc::{JSGlobalObject, JSValue, VirtualMachineRef};
 use bun_picohttp as picohttp;
 use bun_ptr::{BackRef, JsCell, RefPtr, ThisPtr};
 
@@ -124,10 +124,6 @@ pub struct HTTPClient<const SSL: bool> {
     /// Owned NUL-terminated hostname for SNI and certificate verification;
     /// empty when unset. `tls.serverName` when given, else the dialed host.
     hostname: JsCell<ZBox>,
-    /// The user's `tls.checkServerIdentity` callback. Released right after
-    /// the handshake verdict so it cannot keep the `WebSocket` alive through
-    /// a closure that captures it.
-    check_server_identity: JsCell<StrongOptional>,
     poll_ref: JsCell<KeepAlive>,
     state: Cell<State>,
     subprotocols: JsCell<StringSet>,
@@ -201,8 +197,6 @@ where
         // Whether to advertise `permessage-deflate` in the upgrade request
         // (ws.WebSocket's `perMessageDeflate` option; true by default).
         offer_permessage_deflate: bool,
-        // `tls.checkServerIdentity` (callable), or empty/undefined.
-        check_server_identity: JSValue,
     ) -> Option<*mut Self> {
         let vm = global.bun_vm().as_mut();
 
@@ -396,15 +390,6 @@ where
             headers_buf: JsCell::new([picohttp::Header::ZERO; 128]),
             body: JsCell::new(Vec::new()),
             hostname: JsCell::new(ZBox::default()),
-            check_server_identity: JsCell::new(
-                if !check_server_identity.is_empty_or_undefined_or_null()
-                    && check_server_identity.is_callable()
-                {
-                    StrongOptional::create(check_server_identity, global)
-                } else {
-                    StrongOptional::empty()
-                },
-            ),
             poll_ref: JsCell::new(poll_ref),
             state: Cell::new(State::Initializing),
             proxy: JsCell::new(proxy_state),
@@ -705,18 +690,15 @@ where
         ssl: &mut boringssl::c::SSL,
         hostname: &[u8],
     ) -> bool {
-        let Some(callback) = this.check_server_identity.get().get() else {
+        let callback = this
+            .cpp_websocket()
+            .map(|ws| ws.check_server_identity())
+            .filter(|cb| !cb.is_empty_or_undefined_or_null() && cb.is_callable());
+        let Some(callback) = callback else {
             return !hostname.is_empty() && boringssl::check_server_identity(ssl, hostname);
         };
-        // Keeps `this` alive across the callback so the `deinit` below is
-        // sound even if the callback releases every other ref.
-        let _guard = RefPtr::from_this(this);
         let global = VirtualMachineRef::get().global();
-        let verdict = call_check_server_identity(global, callback, ssl, hostname);
-        // Single use. Release the root now so a callback that captures the
-        // WebSocket does not keep it alive for the life of the connection.
-        this.check_server_identity.with_mut(StrongOptional::deinit);
-        verdict
+        call_check_server_identity(global, callback, ssl, hostname)
     }
 
     /// Takes `ThisPtr<Self>` because `terminate` may free `this`; see `fail`.
@@ -1555,7 +1537,6 @@ impl<const SSL: bool> HTTPClient<SSL> {
         if !self.hostname.get().is_empty() {
             self.hostname.set(ZBox::default());
         }
-        self.check_server_identity.with_mut(StrongOptional::deinit);
 
         // Clean up proxy state. Null the field and detach the tunnel's
         // back-reference before deinit so that SSLWrapper shutdown callbacks
@@ -1980,7 +1961,6 @@ pub fn bun__websockethttpclient__connect(
     target_authorization: Option<&BunString>,
     unix_socket_path: Option<&BunString>,
     offer_permessage_deflate: bool,
-    check_server_identity: JSValue,
 ) -> *mut crate::websocket_client::websocket_upgrade_client::HttpUpgradeClient {
     HttpUpgradeClient::connect(
         global,
@@ -2001,7 +1981,6 @@ pub fn bun__websockethttpclient__connect(
         target_authorization,
         unix_socket_path,
         offer_permessage_deflate,
-        check_server_identity,
     )
     .unwrap_or(ptr::null_mut())
 }
@@ -2041,7 +2020,6 @@ pub fn bun__websockethttpsclient__connect(
     target_authorization: Option<&BunString>,
     unix_socket_path: Option<&BunString>,
     offer_permessage_deflate: bool,
-    check_server_identity: JSValue,
 ) -> *mut crate::websocket_client::websocket_upgrade_client::HttpsUpgradeClient {
     HttpsUpgradeClient::connect(
         global,
@@ -2062,7 +2040,6 @@ pub fn bun__websockethttpsclient__connect(
         target_authorization,
         unix_socket_path,
         offer_permessage_deflate,
-        check_server_identity,
     )
     .unwrap_or(ptr::null_mut())
 }

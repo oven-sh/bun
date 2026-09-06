@@ -41,7 +41,6 @@
 #include "JSDOMConvertBoolean.h"
 #include "JSDOMConvertRecord.h"
 #include "JSDOMConvertUnion.h"
-#include <JavaScriptCore/StrongInlines.h>
 #include "JSDOMExceptionHandling.h"
 #include "JSDOMGlobalObjectInlines.h"
 #include "JSDOMIterator.h"
@@ -222,7 +221,9 @@ static inline JSC::EncodedJSValue constructJSWebSocket3(JSGlobalObject* lexicalG
     // Native heap SSLConfig. RAII — freed on any early return, moved into
     // WebSocket::create() on success.
     WebSocketSSLConfigPtr sslConfig;
-    JSC::Strong<JSC::Unknown> checkServerIdentity;
+    // Stored on the wrapper after creation (see below); the options object
+    // on the caller's frame keeps it alive until then.
+    JSValue checkServerIdentity;
     auto headersInit = std::optional<Converter<IDLUnion<IDLSequence<IDLSequence<IDLByteString>>, IDLRecord<IDLByteString, IDLByteString>>>::ReturnType>();
     // Default true — matches Bun's existing behavior of always offering permessage-deflate.
     // ws.WebSocket passes `perMessageDeflate: false` to opt out.
@@ -280,7 +281,7 @@ static inline JSC::EncodedJSValue constructJSWebSocket3(JSGlobalObject* lexicalG
             auto checkServerIdentityValue = Bun::getOwnPropertyIfExists(globalObject, tlsOptions, PropertyName(Identifier::fromString(vm, "checkServerIdentity"_s)));
             RETURN_IF_EXCEPTION(throwScope, {});
             if (checkServerIdentityValue && checkServerIdentityValue.isCallable()) {
-                checkServerIdentity = JSC::Strong<JSC::Unknown>(vm, checkServerIdentityValue);
+                checkServerIdentity = checkServerIdentityValue;
             }
         }
 
@@ -342,8 +343,8 @@ static inline JSC::EncodedJSValue constructJSWebSocket3(JSGlobalObject* lexicalG
     }
 
     auto object = (rejectUnauthorized == -1)
-        ? WebSocket::create(*context, WTF::move(url), protocols, WTF::move(headersInit), WTF::move(proxyUrl), WTF::move(proxyHeadersInit), WTF::move(sslConfig), offerPerMessageDeflate, WTF::move(checkServerIdentity))
-        : WebSocket::create(*context, WTF::move(url), protocols, WTF::move(headersInit), rejectUnauthorized ? true : false, WTF::move(proxyUrl), WTF::move(proxyHeadersInit), WTF::move(sslConfig), offerPerMessageDeflate, WTF::move(checkServerIdentity));
+        ? WebSocket::create(*context, WTF::move(url), protocols, WTF::move(headersInit), WTF::move(proxyUrl), WTF::move(proxyHeadersInit), WTF::move(sslConfig), offerPerMessageDeflate)
+        : WebSocket::create(*context, WTF::move(url), protocols, WTF::move(headersInit), rejectUnauthorized ? true : false, WTF::move(proxyUrl), WTF::move(proxyHeadersInit), WTF::move(sslConfig), offerPerMessageDeflate);
 
     if constexpr (IsExceptionOr<decltype(object)>)
         RETURN_IF_EXCEPTION(throwScope, {});
@@ -352,6 +353,10 @@ static inline JSC::EncodedJSValue constructJSWebSocket3(JSGlobalObject* lexicalG
     auto jsValue = toJSNewlyCreated<IDLInterface<WebSocket>>(*lexicalGlobalObject, *globalObject, throwScope, WTF::move(object));
     if constexpr (IsExceptionOr<decltype(object)>)
         RETURN_IF_EXCEPTION(throwScope, {});
+    if (checkServerIdentity) {
+        auto* wrapper = uncheckedDowncast<JSWebSocket>(asObject(jsValue));
+        wrapper->wrapped().setCheckServerIdentity(vm, wrapper, checkServerIdentity);
+    }
     setSubclassStructureIfNeeded<WebSocket>(lexicalGlobalObject, callFrame, asObject(jsValue));
     RETURN_IF_EXCEPTION(throwScope, {});
     return JSValue::encode(jsValue);
@@ -999,6 +1004,36 @@ JSC::GCClient::IsoSubspace* JSWebSocket::subspaceForImpl(JSC::VM& vm)
 {
     return WebCore::subspaceForImpl<JSWebSocket, UseCustomHeapCellType::No>(vm, BUN_SUBSPACE_SLOTS(m_clientSubspaceForWebSocket, m_subspaceForWebSocket));
 }
+
+template<typename Visitor>
+void JSWebSocket::visitChildrenImpl(JSCell* cell, Visitor& visitor)
+{
+    auto* thisObject = uncheckedDowncast<JSWebSocket>(cell);
+    ASSERT_GC_OBJECT_INHERITS(thisObject, info());
+    Base::visitChildren(thisObject, visitor);
+    thisObject->visitAdditionalChildrenInGCThread(visitor);
+}
+
+DEFINE_VISIT_CHILDREN(JSWebSocket);
+
+template<typename Visitor>
+void JSWebSocket::visitOutputConstraintsImpl(JSCell* cell, Visitor& visitor)
+{
+    auto* thisObject = uncheckedDowncast<JSWebSocket>(cell);
+    ASSERT_GC_OBJECT_INHERITS(thisObject, info());
+    Base::visitOutputConstraints(thisObject, visitor);
+    thisObject->visitAdditionalChildrenInGCThread(visitor);
+}
+
+DEFINE_VISIT_OUTPUT_CONSTRAINTS(JSWebSocket);
+
+template<typename Visitor>
+void JSWebSocket::visitAdditionalChildrenInGCThread(Visitor& visitor)
+{
+    wrapped().checkServerIdentity().visit(visitor);
+}
+
+DEFINE_VISIT_ADDITIONAL_CHILDREN_IN_GC_THREAD(JSWebSocket);
 
 size_t JSWebSocket::estimatedSize(JSCell* cell, JSC::VM& vm)
 {

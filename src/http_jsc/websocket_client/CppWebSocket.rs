@@ -11,6 +11,7 @@
 use bun_boringssl::c::OwnedSslCtx;
 use bun_core::ffi::FfiSlice;
 use bun_core::{EncodedSlice, String as BunString};
+use bun_jsc::JSValue;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_ptr::ThisPtr;
 use bun_uws_sys::Socket;
@@ -74,6 +75,7 @@ unsafe extern "C" {
         opcode: u8,
     );
     safe fn WebSocket__rejectUnauthorized(websocket_context: &CppWebSocket) -> bool;
+    safe fn WebSocket__checkServerIdentity(websocket_context: &CppWebSocket) -> JSValue;
     safe fn WebSocket__holdPendingActivityForClient(websocket_context: &CppWebSocket);
     safe fn WebSocket__releasePendingActivityForClient(websocket_context: &CppWebSocket);
     safe fn WebSocket__setProtocol(websocket_context: &CppWebSocket, protocol: BunString);
@@ -143,6 +145,13 @@ impl CppWebSocket {
         let result = WebSocket__rejectUnauthorized(self);
         event_loop.exit();
         result
+    }
+
+    /// The user's `tls.checkServerIdentity`, or `undefined`. Held weakly on
+    /// the C++ object and marked through the JS wrapper, so it is only valid
+    /// while the wrapper is alive (it is, while the upgrade is pending).
+    pub(crate) fn check_server_identity(&self) -> JSValue {
+        WebSocket__checkServerIdentity(self)
     }
 
     /// `buffered_data` and `secure` are handed on to the connected client.

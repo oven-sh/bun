@@ -418,6 +418,7 @@ pub(super) fn convert_utf8_bytes_into_utf16(bytes: &[u8]) -> UTF16Replacement {
 /// lead byte plus every following byte that was still valid in its position, at least one byte.
 /// That run never includes an ASCII byte, so a caller that emits one U+FFFD and skips `len`
 /// bytes cannot lose a quote, backslash or newline that follows the bad bytes.
+#[inline]
 pub fn decode_wtf8_with_fffd(bytes: &[u8]) -> UTF16Replacement {
     debug_assert!(!bytes.is_empty() && bytes[0] >= 0x80);
     if bytes[0] == 0xED && bytes.len() >= 2 && (0xA0..=0xBF).contains(&bytes[1]) {

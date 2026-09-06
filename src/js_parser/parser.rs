@@ -1313,8 +1313,7 @@ pub struct DeferredErrors {
     pub(crate) invalid_expr_default_value: Option<bun_ast::Range>,
     pub(crate) invalid_expr_after_question: Option<bun_ast::Range>,
 
-    /// A parenthesized item such as `((a)) => a`. It is an error only if the
-    /// expression turns out to be the parameter list of an arrow function.
+    /// A parenthesized item, an error only in an arrow parameter list: `((a)) => a`
     pub(crate) invalid_paren: Option<bun_ast::Range>,
 }
 

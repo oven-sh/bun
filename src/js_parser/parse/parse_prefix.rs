@@ -789,8 +789,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         // Is this a binding pattern?
         if p.will_need_binding_pattern() {
-            // "[(a)] = b" is a valid assignment target, but "([(a)] = b) => c"
-            // is not.
+            // Only an arrow parameter list rejects "[(a)] = b"
             if let Some(errors) = errors {
                 errors.invalid_paren = self_errors.invalid_paren.or(errors.invalid_paren);
             }
@@ -879,8 +878,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         p.allow_in = old_allow_in;
 
         if p.will_need_binding_pattern() {
-            // Is this a binding pattern? "{a: (b)} = c" is a valid assignment
-            // target, but "({a: (b)} = c) => d" is not.
+            // Only an arrow parameter list rejects "{a: (b)} = c"
             if let Some(errors) = errors {
                 errors.invalid_paren = self_errors.invalid_paren.or(errors.invalid_paren);
             }

@@ -799,11 +799,14 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
     lto = false;
   }
 
-  // Cross-language LTO normally tracks `lto`. Gated off only for native
-  // Windows hosts — there `ld` is the host LLVM's lld-link and no rust-lld
-  // swap is wired up, so rustc's newer-LLVM bitcode would be unreadable at
-  // link time. Both halves still LTO independently when this is false — only
-  // the Rust↔C++ inlining is lost.
+  // Cross-language LTO normally tracks `lto`. Gated off where the link
+  // could not read rustc's bitcode: on a native Windows host `ld` is the
+  // host LLVM's lld-link with no rust-lld swap wired up, and on a native
+  // macOS host Apple's ld runs LTO through clang's libLTO (no linker to swap),
+  // which cannot read bitcode from an LLVM newer than itself — so there only
+  // while rustc's LLVM is ahead of clang's. Both halves still LTO
+  // independently when this is false — only the Rust↔C++ inlining is lost.
+  // CI cross-compiles both from Linux, where the swap below applies.
   // (aarch64-musl used to be gated too: LLVM's `globalopt` segfaulted on the
   // per-crate `bun_runtime` bitcode module during the merged link, CI build
   // #53109. That bitcode shape no longer exists — the Rust side is one fat,
@@ -816,7 +819,10 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
   // newer-LLVM bitcode rustc emits under -Clinker-plugin-lto is readable at
   // link time. Windows cross does the same with the `gcc-ld/lld-link`
   // sibling (COFF flavor) — see the wantRustLld swap below.
-  const crossLangLto = lto && !(windows && host.os === "windows");
+  const clangMajor = majorOf(toolchain.clangVersion);
+  const rustLlvmMajor = majorOf(toolchain.rustLlvmVersion);
+  const rustLlvmNewer = clangMajor !== undefined && rustLlvmMajor !== undefined && rustLlvmMajor > clangMajor;
+  const crossLangLto = lto && !(windows && host.os === "windows") && !(darwin && !darwinCross && rustLlvmNewer);
 
   // Cross-language LTO bitcode-version skew: `-Clinker-plugin-lto` makes
   // rustc emit raw LLVM bitcode into libbun_runtime.a. LLVM bitcode is
@@ -831,23 +837,10 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
   // Tracked in workarounds.ts ("rust-lld-for-crosslang-lto") so this
   // branch self-obsoletes once clang's LLVM catches up to rustc's.
   let ld = toolchain.ld;
-  const clangMajor = majorOf(toolchain.clangVersion);
-  const rustLlvmMajor = majorOf(toolchain.rustLlvmVersion);
   // Shared with the darwin-cross ld64 swap below: for darwin targets
   // findRustLld() resolves rustc's `gcc-ld/ld64.lld` (the Mach-O flavor of
   // the same rust-lld), so the swap composes with the cross toolchain.
-  // Not on a native macOS host: that link goes through Apple's ld, which
-  // runs LTO with the libLTO the clang driver hands it and takes no
-  // --ld-path, so there is nothing to swap (and libLTO has read rustc's
-  // newer bitcode in practice); the configure-time skew check in bun.ts
-  // exempts it for the same reason.
-  const wantRustLld =
-    crossLangLto &&
-    !(darwin && !darwinCross) &&
-    toolchain.rustLld !== undefined &&
-    clangMajor !== undefined &&
-    rustLlvmMajor !== undefined &&
-    rustLlvmMajor > clangMajor;
+  const wantRustLld = crossLangLto && toolchain.rustLld !== undefined && rustLlvmNewer;
   if (wantRustLld) {
     if (windows) {
       // Windows cross: `ld` must stay a COFF driver. `toolchain.rustLld` is

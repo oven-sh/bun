@@ -726,14 +726,24 @@ pub fn cached_npm_package_folder_print_basename<'a>(
     w.finish_z()
 }
 
+/// `@T@<32 hex>@@@<cache version>`: the first 16 bytes of `sha256(url)`.
+///
+/// A 64-bit wyhash has cheap multicollisions, so two distinct tarball URLs
+/// could share one extraction folder and the second extraction overwrote the
+/// first. A truncated SHA-256 has no such pairs.
 pub fn cached_tarball_folder_name_print<'a>(
     buf: &'a mut [u8],
     url: &[u8],
     patch_hash: Option<u64>,
 ) -> &'a ZStr {
+    use bun_sha_hmac::sha::hashers::SHA256;
+    let mut digest = [0u8; SHA256::DIGEST];
+    SHA256::hash(url, &mut digest);
+    let (hi, lo) = digest[..16].split_at(8);
     let mut w = ByteCursor::new(buf);
     w.put(b"@T@");
-    w.put_u64_hex16::<true>(Semver::semver_string::Builder::string_hash(url));
+    w.put_u64_hex16::<true>(u64::from_be_bytes(hi.try_into().expect("8 bytes")));
+    w.put_u64_hex16::<true>(u64::from_be_bytes(lo.try_into().expect("8 bytes")));
     w.put_cache_version(Some(CacheVersion::CURRENT));
     w.put_patch_hash(patch_hash);
     w.finish_z()

@@ -784,7 +784,7 @@ impl Value {
             Value::InternalBlob(_) | Value::Blob(_) | Value::WTFStringImpl(_) => {
                 // `deinit` must run on every exit incl. `?` paths.
                 let blob = scopeguard::guard(self.use_(), |mut b| b.deinit());
-                blob.resolve_size();
+                blob.resolve_size_for_stream();
                 let blob_size = blob.size.get();
                 let value = ReadableStream::from_blob_copy_ref(global_this, &blob, blob_size)?;
 
@@ -842,7 +842,7 @@ impl Value {
             Value::Blob(_) => {
                 let stream = {
                     let blob = scopeguard::guard(self.use_(), |mut b| b.deinit());
-                    blob.resolve_size();
+                    blob.resolve_size_for_stream();
                     if blob.needs_to_read_file() || blob.is_s3() {
                         let blob_size = blob.size.get();
                         let bytes =

@@ -262,6 +262,13 @@ pub trait BlobExt {
     fn get_stat(&self, global_this: &JSGlobalObject, callback: &CallFrame) -> JsResult<JSValue>;
     fn get_size(&self, _: &JSGlobalObject) -> JSValue;
     fn resolve_size(&self);
+    /// [`resolve_size`] for a blob that is about to become a `ReadableStream`.
+    /// A file-backed blob is left as it is: its `st_size` is not a byte
+    /// budget (0 on procfs, the directory size on sysfs), so an unsliced file
+    /// keeps `MAX_SIZE` and the stream reads to EOF, like `Blob.stream()`.
+    ///
+    /// [`resolve_size`]: Self::resolve_size
+    fn resolve_size_for_stream(&self);
     fn resolved_size(&self) -> (SizeType, SizeType);
     fn constructor(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<*mut Blob>
     where
@@ -2218,6 +2225,13 @@ impl BlobExt for Blob {
             }
             store::DataTag::S3 => self.size.set(0),
         }
+    }
+
+    fn resolve_size_for_stream(&self) {
+        if self.needs_to_read_file() {
+            return;
+        }
+        self.resolve_size();
     }
 
     /// Non-mutating variant of [`resolve_size`]: returns the `(offset, size)` that

@@ -1,6 +1,6 @@
 import { file, spawn, version, type Socket } from "bun";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, exampleSite, tempDir } from "harness";
+import { bunEnv, bunExe, exampleSite, isLinux, tempDir } from "harness";
 import net from "net";
 
 const exampleServer = exampleSite("http");
@@ -347,6 +347,39 @@ for (const { body, fn } of bodyTypes) {
           const subject = fn(Bun.file(`${dir}/data.txt`).slice(3, 8));
           expect(subject.body).toBeInstanceOf(ReadableStream);
           expect([Buffer.from(await subject.bytes()).toString(), subject.bodyUsed]).toEqual(["defgh", true]);
+        });
+      });
+
+      // procfs files are regular files whose st_size is 0, so a stream that
+      // trusts stat as a byte budget ends before it reads anything. The body
+      // getter must read to EOF like Bun.file().stream() does.
+      describe.skipIf(!isLinux)("made from a procfs Bun.file()", () => {
+        const path = "/proc/version";
+
+        test("the body stream reads the whole file", async () => {
+          const expected = await Bun.file(path).text();
+          expect(expected.length).toBeGreaterThan(0);
+          const drain = async (stream: ReadableStream<Uint8Array>) => {
+            let text = "";
+            for await (const chunk of stream) text += Buffer.from(chunk).toString();
+            return text;
+          };
+          expect({
+            "for await": await drain(fn(Bun.file(path)).body!),
+            "Bun.readableStreamToText": await Bun.readableStreamToText(fn(Bun.file(path)).body!),
+            "new Response(body).text()": await new Response(fn(Bun.file(path)).body).text(),
+          }).toEqual({
+            "for await": expected,
+            "Bun.readableStreamToText": expected,
+            "new Response(body).text()": expected,
+          });
+        });
+
+        test("the body getter does not make a later text() on the same Bun.file() empty", async () => {
+          const expected = await Bun.file(path).text();
+          const file = Bun.file(path);
+          expect(fn(file).body).toBeInstanceOf(ReadableStream);
+          expect(await file.text()).toBe(expected);
         });
       });
     });

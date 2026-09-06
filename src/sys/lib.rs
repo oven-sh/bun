@@ -8926,7 +8926,11 @@ pub(crate) fn copy_file_z_slow_with_handle(
         let _ = safe_libc::fchmod(dst.native(), st.st_mode);
         let _ = safe_libc::fchown(dst.native(), st.st_uid, st.st_gid);
     }
-    let _ = close(dst);
+    // Some filesystems (NFS) report a deferred write error only here.
+    let closed = close(dst);
+    if r.is_ok() {
+        r = closed;
+    }
     if r.is_ok() {
         r = renameat(to_dir, tmp, to_dir, destination);
     }
@@ -9080,16 +9084,23 @@ pub(crate) fn renameat_concurrently_without_fallback(
             }
         }
 
-        //  sad path: let's try to delete the folder and then rename it
+        // Sad path: the flagged renames are unsupported (FreeBSD, NFS,
+        // Windows) or the exchange failed. A plain rename still replaces a
+        // file atomically. Only when that fails too (a directory is in the
+        // way) is `to` deleted first.
+        let err = match renameat(from_dir_fd, from, to_dir_fd, to) {
+            Ok(()) => break 'attempt,
+            Err(err) => err,
+        };
+        if matches!(err.get_errno(), E::ENOENT | E::EXDEV) {
+            return Err(err);
+        }
         if to_dir_fd.is_valid() {
             let _ = Dir::borrow(&to_dir_fd).delete_tree(to.as_bytes());
         } else {
             let _ = delete_tree_absolute(to.as_bytes());
         }
-        match renameat(from_dir_fd, from, to_dir_fd, to) {
-            Err(err) => return Err(err),
-            Ok(()) => {}
-        }
+        renameat(from_dir_fd, from, to_dir_fd, to)?;
     }
 
     Ok(())

@@ -1163,6 +1163,14 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
         }
 
         if let Some(user_agent) = args.option(b"--user-agent") {
+            // Sent verbatim in `User-Agent`, so CR/LF/NUL would inject header lines into every request.
+            if strings::contains_any(user_agent, b"\r\n\0") {
+                Output::err_generic(
+                    "the value of --user-agent contains a newline or NUL byte\n",
+                    (),
+                );
+                Global::exit(1);
+            }
             // argv slices returned by `clap::Args::option` borrow
             // process-lifetime `argv` storage.
             let _ = bun_http::OVERRIDDEN_DEFAULT_USER_AGENT.set(user_agent);

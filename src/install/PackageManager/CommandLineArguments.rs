@@ -1459,6 +1459,11 @@ Full documentation is available at <magenta>https://bun.com/docs/pm/cli/prune<r>
             }
 
             if let Some(otp) = args.option(b"--otp") {
+                // Sent verbatim in `npm-otp`, so CR/LF/NUL would inject header lines into the publish request.
+                if strings::contains_any(otp, b"\r\n\0") {
+                    Output::err_generic("the value of --otp contains a newline or NUL byte", ());
+                    Global::crash();
+                }
                 cli.publish_config.otp = otp;
             }
 

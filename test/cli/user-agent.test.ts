@@ -76,4 +76,56 @@ try {
     const exitCode = await proc.exited;
     expect(exitCode).toBe(0);
   });
+
+  // The value is copied into every request head as-is, so CR, LF or NUL
+  // would end the User-Agent line and inject header lines or a second request.
+  describe.concurrent("rejects a value containing CR, LF or NUL", () => {
+    async function run(userAgent: string, viaEnv: boolean) {
+      const seen: string[] = [];
+      await using server = Bun.serve({
+        port: 0,
+        hostname: "127.0.0.1",
+        fetch(req) {
+          seen.push(req.headers.get("user-agent") ?? "");
+          return new Response("ok");
+        },
+      });
+      const script = `await fetch("http://127.0.0.1:${server.port}/")`;
+      await using proc = Bun.spawn({
+        cmd: viaEnv ? [bunExe(), "-e", script] : [bunExe(), `--user-agent=${userAgent}`, "-e", script],
+        env: viaEnv ? { ...bunEnv, BUN_OPTIONS: `--user-agent="${userAgent}"` } : bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { seen, stdout, stderr, exitCode };
+    }
+
+    for (const [name, userAgent] of [
+      ["CRLF", "evil\r\nInjected: 1"],
+      ["bare CR", "evil\rInjected: 1"],
+      ["bare LF", "evil\nInjected: 1"],
+    ] as const) {
+      test(name, async () => {
+        const { seen, stdout, stderr, exitCode } = await run(userAgent, false);
+        expect(stdout).toBe("");
+        expect(stderr).toContain("--user-agent");
+        expect(stderr).toContain("newline or NUL");
+        expect(seen).toEqual([]);
+        expect(exitCode).toBe(1);
+      });
+    }
+
+    test("via BUN_OPTIONS", async () => {
+      const { seen, stdout, stderr, exitCode } = await run(
+        "evil\r\n\r\nGET /smuggled HTTP/1.1\r\nHost: x\r\n\r\n",
+        true,
+      );
+      expect(stdout).toBe("");
+      expect(stderr).toContain("--user-agent");
+      expect(stderr).toContain("newline or NUL");
+      expect(seen).toEqual([]);
+      expect(exitCode).toBe(1);
+    });
+  });
 });

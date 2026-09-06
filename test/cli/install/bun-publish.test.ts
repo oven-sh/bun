@@ -923,6 +923,52 @@ describe.concurrent("credentials in the registry url", () => {
   });
 });
 
+describe.concurrent("--otp containing CR or LF", () => {
+  // The value is written into `npm-otp: <otp>` as-is, so CR/LF would end the
+  // header line and inject header lines or a second request into the PUT.
+  async function publishWithOtp(otp: string) {
+    const requests: { method: string; pathname: string; otp: string | null; injected: string | null }[] = [];
+    await using server = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      fetch(req) {
+        requests.push({
+          method: req.method,
+          pathname: new URL(req.url).pathname,
+          otp: req.headers.get("npm-otp"),
+          injected: req.headers.get("x-injected"),
+        });
+        return new Response("{}", { status: 200 });
+      },
+    });
+    const packageDir = tmpdirSync();
+    await write(join(packageDir, "package.json"), JSON.stringify({ name: "otp-crlf-pkg", version: "1.0.0" }));
+    const { out, err, exitCode } = await publish(
+      env,
+      packageDir,
+      "--registry",
+      `http://:publish-token@127.0.0.1:${server.port}/`,
+      `--otp=${otp}`,
+    );
+    return { requests, out, err, exitCode };
+  }
+
+  for (const [name, otp] of [
+    ["CRLF", "123456\r\nX-Injected: otp"],
+    ["bare CR", "123456\rX-Injected: otp"],
+    ["bare LF", "123456\nX-Injected: otp"],
+    ["smuggled request", "1\r\n\r\nPUT /-/user/evil HTTP/1.1\r\nHost: x\r\n\r\n"],
+  ] as const) {
+    test(name, async () => {
+      const { requests, err, exitCode } = await publishWithOtp(otp);
+      expect(err).toContain("--otp");
+      expect(err).toContain("newline or NUL");
+      expect(requests).toEqual([]);
+      expect(exitCode).toBe(1);
+    });
+  }
+});
+
 describe("lifecycle scripts", async () => {
   const script = `const fs = require("fs");
     fs.writeFileSync(process.argv[2] + ".txt", \`

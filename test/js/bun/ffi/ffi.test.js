@@ -1874,3 +1874,80 @@ describe.skipIf(!ABI_FIXTURE_PATH)("ABI conformance", () => {
     }
   });
 });
+
+describe("Symbol.dispose", () => {
+  it("JSCallback closes at the end of a `using` block", () => {
+    let callback;
+    {
+      using cb = new JSCallback(() => 42, { returns: "int32_t", args: [] });
+      callback = cb;
+      expect(typeof cb[Symbol.dispose]).toBe("function");
+      expect(cb.ptr > 0).toBe(true);
+    }
+    expect(callback.ptr).toBeNull();
+    // Disposing twice is a no-op, like close().
+    expect(callback[Symbol.dispose]()).toBeUndefined();
+  });
+
+  it("CFunction disposes at the end of a `using` block", () => {
+    const callback = new JSCallback(() => 42, { returns: "int32_t", args: [] });
+    try {
+      {
+        using fn = new CFunction({ ptr: callback.ptr, returns: "int32_t", args: [] });
+        expect(typeof fn[Symbol.dispose]).toBe("function");
+        expect(fn()).toBe(42);
+      }
+    } finally {
+      callback.close();
+    }
+  });
+
+  it.skipIf(!FFI_FIXTURE_PATH)("dlopen() library closes at the end of a `using` block", () => {
+    let library;
+    {
+      using lib = dlopen(FFI_FIXTURE_PATH, {
+        returns_true: { args: [], returns: "bool" },
+        add_int32_t: { args: ["i32", "i32"], returns: "i32" },
+      });
+      library = lib;
+      expect(typeof lib[Symbol.dispose]).toBe("function");
+      expect(lib.symbols.returns_true()).toBe(true);
+      expect(lib.symbols.add_int32_t(40, 2)).toBe(42);
+    }
+    // Disposing twice is a no-op, like close().
+    expect(library[Symbol.dispose]()).toBeUndefined();
+    expect(library.close()).toBeUndefined();
+  });
+
+  it.skipIf(!FFI_FIXTURE_PATH)("dlopen() library is still closed when the `using` block throws", () => {
+    let library;
+    expect(() => {
+      using lib = dlopen(FFI_FIXTURE_PATH, {
+        returns_true: { args: [], returns: "bool" },
+      });
+      library = lib;
+      throw new Error("boom");
+    }).toThrow("boom");
+    expect(library[Symbol.dispose]()).toBeUndefined();
+  });
+
+  it.skipIf(!FFI_FIXTURE_PATH)("linkSymbols() library closes at the end of a `using` block", () => {
+    const {
+      symbols: { add_int32_t },
+      close,
+    } = dlopen(FFI_FIXTURE_PATH, {
+      add_int32_t: { args: ["i32", "i32"], returns: "i32" },
+    });
+    try {
+      {
+        using linked = linkSymbols({
+          sum: { ptr: add_int32_t.ptr, args: ["i32", "i32"], returns: "i32" },
+        });
+        expect(typeof linked[Symbol.dispose]).toBe("function");
+        expect(linked.symbols.sum(40, 2)).toBe(42);
+      }
+    } finally {
+      close();
+    }
+  });
+});

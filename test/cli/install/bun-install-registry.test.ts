@@ -278,7 +278,10 @@ describe("certificate authority", () => {
     const out = await stdout.text();
     expect(out).not.toContain("no-deps");
     const err = await stderr.text();
-    expect(err).toContain(`HTTPThread: could not find CA file: '${cafile}'`);
+    // The Windows path buffer is ~98 KB, so the join succeeds there and the
+    // HTTP thread reports the joined absolute path instead.
+    const expectedPath = isWindows ? join(packageDir, cafile) : cafile;
+    expect(err).toContain(`HTTPThread: could not find CA file: '${expectedPath}'`);
     expect(await exited).toBe(1);
   });
 

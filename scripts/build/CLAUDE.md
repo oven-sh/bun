@@ -159,16 +159,16 @@ Tables: `cpuTargetFlags` (`-march`/`-mcpu`/`-mtune` — also translated for rust
 For `mode: "full"` (the normal case):
 
 1. **Codegen** — `emitCodegen(n, cfg, sources)` emits ~20 generation steps (bindgen, `.classes.ts` → C++, bundled modules, LUTs). Returns grouped outputs.
-2. **Rust** — `emitRust(n, cfg, {...})` emits `cargo build -p bun_runtime` → `libbun_runtime.a` (after resolving its path deps, lolhtml and rust-argon2). Codegen and cargo are emitted before the deps on purpose. Scheduling: with no `.ninja_log` (every CI build) ninja weighs each edge as 1 and runs the longest remaining chain first, ties in emission order — so cargo ties with `cc → link` in full mode and wins on emission order, but in `archive-link` mode `cc → ar → link` outranks it and cargo would start only after every compile had been dispatched (~50s into a CI build). The `compile` pool in `compile.ts` (depth = core count, below ninja's default `-j` of cores+2) is what actually guarantees cargo a slot the moment it is ready.
+2. **Rust** — `emitRust(n, cfg, {...})` emits `cargo build -p bun_runtime` → `libbun_runtime.a` (after resolving its path deps, lolhtml and rust-argon2). Codegen and cargo are emitted before the deps on purpose. Scheduling: with no `.ninja_log` (every CI build) ninja weighs each edge as 1 and runs the longest remaining chain first, ties in emission order — cargo ties with `cc → link` and wins on emission order, and the `compile` pool in `compile.ts` (depth = core count, below ninja's default `-j` of cores+2) guarantees cargo a slot the moment it is ready even in `cpp-only`-style graphs where `cc → ar` chains outrank it.
 3. **Deps** — loop `allDeps`, call `resolveDep(n, cfg, dep)`. Each emits fetch → direct compile/step edges, or fetch → cargo, or prebuilt download. Collects objects, lib paths, include dirs, outputs.
 4. **Flags** — `computeFlags(cfg)` evaluates flag tables → cflags/cxxflags/defines/ldflags/stripflags.
-5. **PCH** — compile `root-pch.h` → PCH (skipped in CI full mode).
+5. **PCH** — compile `root-pch.h` → PCH.
 6. **Compile** — loop sources, `cxx()`/`cc()` per file.
 7. **Link** — `emitShims(n, cfg)` for platform workaround dylibs, then `link(n, cfg, exeName, objects, {libs, flags})`.
 8. **Post-link** — strip (release only), dsymutil (darwin release only).
 9. **Checks** — validations of the link edge (`ninja check` names them too), all static except the first: `<exe> --revision` (load-time failures; only when the host can run the target), the JSC ClassInfo audit, `verify-binary.ts binary` (exported symbols vs the lists in src/, exact NEEDED/dylib/DLL set and glibc/FBSD symbol-version ceilings, forbidden imports, static-initializer allowlist, W^X / nx-stack / PIE / DllCharacteristics, debug-info shape — expectations in `binary-expectations.ts`), and `verify-binary.ts duplicates` (no symbol strongly defined by two link inputs).
 
-Split CI modes: `rust-only` (path deps+codegen+cargo → libbun_runtime.a), `cpp-only` (deps+codegen+compile → archive), `link-only` (download artifacts → link), `rust-and-link` (cargo + poll build-cpp + download archive → link). The pipeline's `build-bun` step uses `archive-link` (`ci-build` profile): the full graph on one agent, linking from the same archive `cpp-only` produces, with the archive, libbun_runtime.a and dep libs uploaded from ninja edges as soon as each exists.
+Split CI modes: `rust-only` (path deps+codegen+cargo → libbun_runtime.a), `cpp-only` (deps+codegen+compile → archive), `link-only` (download artifacts → link), `rust-and-link` (cargo + poll build-cpp + download archive → link). The pipeline's `build-bun` step is a plain `full` build (`ci-build` profile) on one agent that then packages and uploads the zips; the split modes remain for running the halves on separate machines.
 
 ### Phase 3 — Execute
 

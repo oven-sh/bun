@@ -344,7 +344,7 @@ export async function configure(input: ConfigureInput, fromNinja = false): Promi
   // generators) and zstd (packing the ICU data, where ICU is ours). Missing
   // ones fail here with a hint rather than mid-build. rust-only/link-only run
   // none of that — skip so split-CI steps don't need them on the rust box.
-  if (cfg.mode === "full" || cfg.mode === "cpp-only" || cfg.mode === "archive-link") {
+  if (cfg.mode === "full" || cfg.mode === "cpp-only") {
     const needed: [tool: string, why: string, when: boolean][] = [
       ["perl", "LUT codegen (create-hash-table.ts) and JSC's hash tables", true],
       ["ruby", "JavaScriptCore's offlineasm/bytecode generators", cfg.webkit === "source"],
@@ -397,7 +397,6 @@ export async function configure(input: ConfigureInput, fromNinja = false): Promi
     const defaultTarget = output.strippedExe !== undefined ? n.rel(output.strippedExe) : "bun";
     const targets = [defaultTarget];
     if (output.dsym !== undefined) targets.push(n.rel(output.dsym));
-    for (const stamp of output.uploadStamps ?? []) targets.push(n.rel(stamp));
     if (output.testFFI !== undefined) targets.push(n.rel(output.testFFI));
     n.default(targets);
   }

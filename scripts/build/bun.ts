@@ -18,7 +18,6 @@
  *   - "rust-only": codegen + cargo → libbun_runtime.a (CI upstream)
  *   - "link-only": link pre-built artifacts (CI downstream)
  *   - "rust-and-link": cargo + link; downloads cpp-only's archive (CI)
- *   - "archive-link": full build on one agent, linked from the cpp-only-style archive; uploads it + libbun_runtime.a (CI)
  *
  * The split modes are for CI where C++ and Rust build in parallel on
  * separate machines. rust-and-link folds the rust + link steps onto one
@@ -97,8 +96,6 @@ export interface BunOutput {
   rustObjects: string[];
   /** All compiled .o files. Empty in link-only/rust-only. */
   objects: string[];
-  /** Stamps of the buildkite artifact-upload edges; archive-link adds them to the default targets. */
-  uploadStamps?: string[];
   /** JSC's testFFI executable (webkit source mode), built next to bun for the test suite; a default target. */
   testFFI?: string;
 }
@@ -238,31 +235,25 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
   n.phony(depsReady, depHeadersReady);
 
   // ─── Step 4: PCH ───
-  // CI full mode (unused by the pipeline) skips the PCH; cpp-only/archive-link use it.
-  const usePch = !cfg.ci || cfg.mode !== "full";
-  let pchOut: { pch: string; wrapperHeader: string } | undefined;
-
-  if (usePch) {
-    n.comment("─── PCH ───");
-    n.blank();
-    // Dep outputs are IMPLICIT inputs (not order-only): a prebuilt/cargo dep's
-    // headers are undeclared side effects of its output, and ninja stats the
-    // PCH depfile's headers at startup — before that edge rewrites them. As
-    // implicit inputs, restat sees the output changed → PCH rebuilds in the
-    // same run. See the pch() docstring.
-    //
-    // Codegen stays order-only: those outputs only change if inputs change,
-    // and inputs don't change mid-build. cppAll (not all) — bake/.rs outputs
-    // are rust-only; pulling them here would run bake-codegen in cpp-only CI
-    // mode where it fails on the pinned bun version (see cppAll docstring).
-    // Scripts that emit undeclared .h also emit a .cpp/.h in cppAll, so they
-    // still run. cxx transitively waits: cxx → PCH → deps+cppAll.
-    pchOut = pch(n, cfg, "src/jsc/bindings/root-pch.h", {
-      flags: cxxFlagsFull,
-      implicitInputs: depHeaderSignal,
-      orderOnlyInputs: [codegenReady, depsReady],
-    });
-  }
+  n.comment("─── PCH ───");
+  n.blank();
+  // Dep outputs are IMPLICIT inputs (not order-only): a prebuilt/cargo dep's
+  // headers are undeclared side effects of its output, and ninja stats the
+  // PCH depfile's headers at startup — before that edge rewrites them. As
+  // implicit inputs, restat sees the output changed → PCH rebuilds in the
+  // same run. See the pch() docstring.
+  //
+  // Codegen stays order-only: those outputs only change if inputs change,
+  // and inputs don't change mid-build. cppAll (not all) — bake/.rs outputs
+  // are rust-only; pulling them here would run bake-codegen in cpp-only CI
+  // mode where it fails on the pinned bun version (see cppAll docstring).
+  // Scripts that emit undeclared .h also emit a .cpp/.h in cppAll, so they
+  // still run. cxx transitively waits: cxx → PCH → deps+cppAll.
+  const pchOut = pch(n, cfg, "src/jsc/bindings/root-pch.h", {
+    flags: cxxFlagsFull,
+    implicitInputs: depHeaderSignal,
+    orderOnlyInputs: [codegenReady, depsReady],
+  });
 
   // ─── Step 5: compile C/C++ ───
   n.comment("─── C/C++ compilation ───");
@@ -351,14 +342,13 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
     const opts: Parameters<typeof cxx>[3] = {
       flags: [...cxxFlagsFull, ...extraFlags],
     };
-    if (pchOut !== undefined && !noPchSources.has(src)) {
+    if (!noPchSources.has(src)) {
       // PCH has implicit deps on depHeaderSignal. cxx has implicit dep on PCH.
       // Transitively: cxx waits for deps. No need to repeat them here.
       opts.pch = pchOut.pch;
       opts.pchHeader = pchOut.wrapperHeader;
     } else {
-      // No PCH (CI full mode, or per-file opt-out) — each cxx needs the dep
-      // signal directly.
+      // Per-file PCH opt-out — this cxx needs the dep signal directly.
       opts.implicitInputs = depHeaderSignal;
       opts.orderOnlyInputs = [...codegenOrderOnly, depsReady];
     }
@@ -421,42 +411,28 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
   const jscShellEdge = emitJscShell(n, cfg, depsByName);
   const sideObjects = [...(testFFIEdge?.objects ?? []), ...(jscShellEdge?.objects ?? [])];
 
-  // ─── Step 6: cpp-only / archive-link → archive (cpp-only returns here) ───
-  // CI's build-cpp step: archive all .o into libbun.a, stop. The sibling
-  // build-rust step produces libbun_runtime.a independently; build-bun
-  // downloads both artifacts and links them. Archive name uses the exe
-  // name (not just "libbun") so asan/debug variants are distinguishable.
-  const archived = cfg.mode === "cpp-only" || cfg.mode === "archive-link";
-  let archive: string | undefined;
-  const uploadStamps: string[] = [];
-  if (archived) {
-    n.comment(`─── Archive (${cfg.mode}) ───`);
+  // ─── Step 6: cpp-only → archive and stop ───
+  // CI's split build-cpp step: archive all .o into libbun-<exe>.a (the exe
+  // name so asan/debug variants are distinguishable) for a link-only /
+  // rust-and-link step to download and link against libbun_runtime.a.
+  if (cfg.mode === "cpp-only") {
+    n.comment("─── Archive (cpp-only) ───");
     n.blank();
-    archive = ar(n, cfg, `${cfg.libPrefix}${exeName}${cfg.libSuffix}`, allObjects, depChecks);
-
-    // Upload dep libs as soon as they're built — they're ready ~minutes
-    // before the archive (WebKit copies from prefetch in seconds; lolhtml
-    // builds in ~30s), so the upload overlaps the cxx compile instead of
-    // waiting for it. Own pool so it doesn't take a compile slot. ci.ts's
-    // uploadArtifacts() then only handles the archive.
+    const archive = ar(n, cfg, `${cfg.libPrefix}${exeName}${cfg.libSuffix}`, allObjects, depChecks);
+    // Dep libs upload as soon as they're built (minutes before the archive),
+    // overlapping the compile; own pool so it doesn't take a compile slot.
+    // ci.ts's uploadArtifacts() then only handles the archive. depLibs are
+    // explicit in the phony: deps with no provided includes (tinycc, lolhtml)
+    // aren't in depHeaderSignal, so the archive doesn't pull them
+    // transitively — but link-only still needs them uploaded.
+    const uploadStamps: string[] = [];
     if (cfg.buildkite) {
       registerBkUploadRules(n, cfg);
       if (depLibs.length > 0) uploadStamps.push(emitBkUpload(n, cfg, ".dep-libs-uploaded", depLibs));
-      // archive-link: each upload edge depends only on its input, so it starts the moment the archive / staticlib exists and overlaps the link.
-      if (cfg.mode === "archive-link") {
-        uploadStamps.push(emitBkUpload(n, cfg, ".archive-uploaded", [archive], { gzip: !cfg.windows }));
-        uploadStamps.push(emitBkUpload(n, cfg, ".rust-lib-uploaded", rustObjects, { gzip: !cfg.windows }));
-      }
     }
-
-    // depLibs explicit in the phony: deps with no provided includes (tinycc,
-    // lolhtml) aren't in depHeaderSignal, so the archive doesn't pull them
-    // transitively — but link-only still needs them uploaded.
-    if (cfg.mode === "cpp-only") {
-      n.phony("bun", [archive, ...depLibs, ...(testFFI !== undefined ? [testFFI] : []), ...uploadStamps]);
-      n.default(["bun"]);
-      return { archive, deps, codegen, rustObjects, objects: [...allObjects, ...sideObjects] };
-    }
+    n.phony("bun", [archive, ...depLibs, ...(testFFI !== undefined ? [testFFI] : []), ...uploadStamps]);
+    n.default(["bun"]);
+    return { archive, deps, codegen, rustObjects, objects: [...allObjects, ...sideObjects] };
   }
 
   // ─── Step 6: link ───
@@ -478,7 +454,7 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
   // reached transitively from those roots, so no `--whole-archive` wrapping
   // is needed; if a member ever isn't, `rustLinkFlags()` in rust.ts is the
   // wrapping helper.
-  const linkObjects = [...(archive !== undefined ? [archive] : allObjects), ...rustObjects, ...windowsRes];
+  const linkObjects = [...allObjects, ...rustObjects, ...windowsRes];
   const ldflags = [...flags.ldflags, ...systemLibs(cfg), ...shims.ldflags];
   const exe = link(n, cfg, exeName, linkObjects, {
     libs: depLibs,
@@ -489,7 +465,7 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
     linkerMapOutputs: linkerMapOutputs(cfg),
     // Static scans: the deps' forbidden-symbol checks on the objects going
     // in, the smoke test / ClassInfo audit on the executable coming out.
-    validations: [...(archive === undefined ? depChecks : []), ...postLinkChecks(cfg, exeName)],
+    validations: [...depChecks, ...postLinkChecks(cfg, exeName)],
   });
 
   // ─── Step 7: post-link (strip, dsymutil, smoke test) ───
@@ -503,7 +479,6 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
     codegen,
     rustObjects,
     objects: [...allObjects, ...sideObjects],
-    uploadStamps,
     ...(testFFI !== undefined && { testFFI }),
   };
 }
@@ -519,24 +494,15 @@ function registerBkUploadRules(n: Ninja, cfg: Config): void {
     description: "buildkite upload $out",
     pool: "bk_upload",
   });
-  if (!win) {
-    n.rule("bk_upload_gz", {
-      command: `gzip -1 -k -f $in && buildkite-agent artifact upload '$paths' && touch $out`,
-      description: "gzip + buildkite upload $out",
-      pool: "bk_upload",
-    });
-  }
 }
 
-function emitBkUpload(n: Ninja, cfg: Config, stamp: string, files: string[], { gzip = false } = {}): string {
-  const useGz = gzip && cfg.host.os !== "windows";
-  const rel = files.map(p => relative(cfg.buildDir, p));
+function emitBkUpload(n: Ninja, cfg: Config, stamp: string, files: string[]): string {
   const out = resolve(cfg.buildDir, stamp);
   n.build({
     outputs: [out],
-    rule: useGz ? "bk_upload_gz" : "bk_upload",
+    rule: "bk_upload",
     inputs: files,
-    vars: { paths: (useGz ? rel.map(p => `${p}.gz`) : rel).join(";") },
+    vars: { paths: files.map(p => relative(cfg.buildDir, p)).join(";") },
   });
   return out;
 }

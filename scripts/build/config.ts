@@ -21,10 +21,10 @@ export type OS = "linux" | "darwin" | "windows" | "freebsd";
 export type Arch = "x64" | "aarch64";
 export type Abi = "gnu" | "musl" | "android";
 export type BuildType = "Debug" | "Release" | "RelWithDebInfo" | "MinSizeRel";
-export type BuildMode = "full" | "cpp-only" | "rust-only" | "link-only" | "rust-and-link" | "archive-link";
+export type BuildMode = "full" | "cpp-only" | "rust-only" | "link-only" | "rust-and-link";
 /** Modes that compile C/C++ (and therefore resolve, fetch and build the deps); the others only run cargo and/or link downloaded artifacts. */
 export function modeCompilesCpp(mode: BuildMode): boolean {
-  return mode === "full" || mode === "cpp-only" || mode === "archive-link";
+  return mode === "full" || mode === "cpp-only";
 }
 /** How WebKit (JavaScriptCore) is obtained — see deps/webkit.ts. */
 export type WebKitMode = "prebuilt" | "source";

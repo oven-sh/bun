@@ -184,10 +184,9 @@ export const profiles = {
     buildkite: true,
   },
 
-  /** CI: deps + C++ + cargo + link on one agent; libbun-*.a, libbun_runtime.a and dep libs are uploaded as artifacts. */
+  /** CI's build-bun step: the full build (deps + C++ + cargo + link) on one agent, then package + upload the zips. */
   "ci-build": {
     buildType: "Release",
-    mode: "archive-link",
     ci: true,
     buildkite: true,
   },

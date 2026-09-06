@@ -6049,6 +6049,30 @@ pub mod bv2_impl {
             Ok(out)
         }
 
+        /// A `KEYED_BY_LOADER` module shares its file path with the module the
+        /// path gets by default. Name it `d.json with { type: "text" }` in
+        /// comments, errors and the metafile, so the two stay apart there too.
+        fn append_loader_to_pretty_path(&self, path: &mut Fs::Path<'_>, import_record: &ImportRecord) {
+            if !import_record
+                .flags
+                .contains(bun_ast::ImportRecordFlags::KEYED_BY_LOADER)
+            {
+                return;
+            }
+            let Some(loader) = import_record.loader else {
+                return;
+            };
+            let loader_name: &'static str = loader.into();
+            let mut pretty: Vec<u8> =
+                Vec::with_capacity(path.pretty.len() + loader_name.len() + 20);
+            pretty.extend_from_slice(path.pretty);
+            pretty.extend_from_slice(b" with { type: \"");
+            pretty.extend_from_slice(loader_name.as_bytes());
+            pretty.extend_from_slice(b"\" }");
+            // SAFETY: arena outlives the bundle pass; see `path_with_pretty_initialized`.
+            path.pretty = unsafe { bun_ptr::detach_lifetime(self.arena().alloc_slice_copy(&pretty)) };
+        }
+
         fn reserve_source_indexes_for_bake(&mut self) -> Result<(), Error> {
             let Some(fw) = &self.framework else {
                 return Ok(());
@@ -6497,6 +6521,7 @@ pub mod bv2_impl {
                                 self.arena().alloc_slice_copy(path_primary.text),
                             )
                         };
+                        self.append_loader_to_pretty_path(&mut path_primary, import_record);
                         import_record.path = path_as_static(&path_primary);
                         let _ = path_primary.text; // key already interned by get_or_put
                         bun_core::scoped_log!(
@@ -6871,6 +6896,7 @@ pub mod bv2_impl {
                 *path = self
                     .path_with_pretty_initialized(path, target)
                     .expect("oom");
+                self.append_loader_to_pretty_path(path, import_record);
 
                 import_record.path = path_as_static(path);
                 // key already interned by get_or_put — no key_ptr on StringHashMapGetOrPut

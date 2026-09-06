@@ -532,9 +532,7 @@ fn iterate_included_project_tree(
                         continue;
                     }
 
-                    // include patterns are matched against the root-relative path, so
-                    // `index.js` only matches at the root and `**/index.js` matches at
-                    // any depth (unlike ignore files, where both mean the same).
+                    // `index.js` matches only at the root, `**/index.js` at any depth
                     if glob::r#match(include.glob.slice(), entry_subpath.as_bytes()).matches() {
                         included = true;
                     }
@@ -3518,9 +3516,6 @@ impl Pattern {
                 return Ok(None);
             }
 
-            // A leading `**/` is kept. The glob matcher treats it as zero or more
-            // directories, so `**/foo/bar` matches `foo/bar` at any depth when the
-            // pattern is matched against a relative path (the middle slash sets REL_PATH).
             let trailing_slash = remain[remain.len() - 1] == b'/';
             if trailing_slash {
                 // trim trailing slash
@@ -3649,8 +3644,7 @@ impl IgnorePatterns {
         Global::crash();
     }
 
-    /// Strips unescaped trailing spaces, like git's `trim_trailing_spaces` in dir.c.
-    /// A backslash escapes the next byte, so `foo\ ` keeps its space.
+    /// Same as git's `trim_trailing_spaces` in dir.c: `foo\ ` keeps its space.
     fn trim_trailing_spaces(line: &[u8]) -> &[u8] {
         let mut last_space: Option<usize> = None;
         let mut i = 0;

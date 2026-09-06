@@ -60,41 +60,50 @@ const CANARY = "SECRET_CANARY_DO_NOT_LEAK_8f2a";
 // that throws choose that source URL. The printer must not open a file the
 // module loader never loaded.
 describe.concurrent("error printer does not read attacker-named source files", () => {
-  for (const caught of [true, false]) {
-    for (const nul of [false, true]) {
-      const label = `${caught ? "caught" : "uncaught"}${nul ? " with interior NUL in the path" : ""}`;
-      test(`vm sourceURL does not leak a file's contents (${label})`, async () => {
-        using dir = tempDir("vm-sourceurl-leak", {
-          "secret.txt": CANARY + "\n",
-          "run.js": `
-            const vm = require("node:vm");
-            const target = process.env.CANARY_PATH + ${JSON.stringify(nul ? "\0.js" : "")};
-            const code = 'function f(){ throw new Error("boom") }; f()\\n//# sourceURL=' + target;
-            ${
-              caught
-                ? `try { vm.runInNewContext(code, {}, { filename: "sandbox.js" }); } catch (e) { console.error(e); }`
-                : `vm.runInNewContext(code, {}, { filename: "sandbox.js" });`
-            }
-          `,
-        });
+  for (const via of ["sourceURL", "filename"] as const) {
+    for (const caught of [true, false]) {
+      for (const nul of [false, true]) {
+        const label = `${via}, ${caught ? "caught" : "uncaught"}${nul ? ", interior NUL in the path" : ""}`;
+        test(`vm code does not leak a named file's contents (${label})`, async () => {
+          using dir = tempDir("vm-sourceurl-leak", {
+            "secret.txt": CANARY + "\n",
+            "run.js": `
+              const vm = require("node:vm");
+              const target = process.env.CANARY_PATH + ${JSON.stringify(nul ? "\0.js" : "")};
+              const code = 'function f(){ throw new Error("boom") }; f()' ${
+                via === "sourceURL" ? `+ '\\n//# sourceURL=' + target` : ""
+              };
+              const options = { filename: ${via === "filename" ? "target" : '"sandbox.js"'} };
+              ${
+                caught
+                  ? `try { vm.runInNewContext(code, {}, options); } catch (e) { console.error(e); }`
+                  : `vm.runInNewContext(code, {}, options);`
+              }
+            `,
+          });
 
-        await using proc = Bun.spawn({
-          cmd: [bunExe(), path.join(String(dir), "run.js")],
-          env: { ...bunEnv, CANARY_PATH: path.join(String(dir), "secret.txt") },
-          stdout: "pipe",
-          stderr: "pipe",
-        });
-        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-        const output = stdout + stderr;
+          await using proc = Bun.spawn({
+            cmd: [bunExe(), path.join(String(dir), "run.js")],
+            env: { ...bunEnv, CANARY_PATH: path.join(String(dir), "secret.txt") },
+            stdout: "pipe",
+            stderr: "pipe",
+          });
+          const [stdout, stderr, exitCode] = await Promise.all([
+            proc.stdout.text(),
+            proc.stderr.text(),
+            proc.exited,
+          ]);
+          const output = stdout + stderr;
 
-        // The error is still reported.
-        expect(output).toContain("boom");
-        // The file's contents are never shown.
-        expect(output).not.toContain(CANARY);
-        // An interior NUL in the name must not crash the printer.
-        if (caught) expect(exitCode).toBe(0);
-        else expect(exitCode).not.toBe(134); // SIGABRT
-      });
+          // The error is still reported.
+          expect(output).toContain("boom");
+          // The file's contents are never shown.
+          expect(output).not.toContain(CANARY);
+          // An interior NUL in the name must not crash the printer. An
+          // uncaught error exits 1, a caught one exits 0.
+          expect(exitCode).toBe(caught ? 0 : 1);
+        });
+      }
     }
   }
 });

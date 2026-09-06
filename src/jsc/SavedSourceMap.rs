@@ -3,7 +3,7 @@
 use core::ffi::c_void;
 use std::sync::Arc;
 
-use bun_collections::{HashMap, IdentityContext, TaggedPtrUnion};
+use bun_collections::{HashMap, IdentityContext, StringArrayHashMap, TaggedPtrUnion};
 use bun_core::MutableString;
 use bun_core::Ordinal;
 use bun_ptr::tagged_pointer::TagType;
@@ -16,6 +16,9 @@ use bun_wyhash::hash;
 pub struct SavedSourceMap {
     /// Only accessed between [`Self::lock`] and [`Self::unlock`].
     map: HashTable,
+    /// Every path ever inserted into `map`, by bytes. `map` keys are hashes,
+    /// so a membership test for an untrusted path must not go through it.
+    paths: StringArrayHashMap<()>,
     mutex: Mutex,
 }
 
@@ -141,6 +144,7 @@ impl SavedSourceMap {
         };
         if refers_to_provider {
             self.map.remove(&key);
+            self.paths.swap_remove(path);
             // SAFETY: `old_value` was stored by us; the table's ownership of
             // it ends here.
             unsafe { Self::release_value(old_value) };
@@ -248,15 +252,17 @@ impl SavedSourceMap {
                 v.insert(value.ptr());
             }
         }
+        if !self.paths.contains(path) {
+            self.paths.insert(path, ());
+        }
         self.unlock();
         Ok(())
     }
 
-    /// Whether the module loader registered a source map for `path`.
+    /// Whether the module loader registered a source map for exactly `path`.
     pub(crate) fn has_mapping(&mut self, path: &[u8]) -> bool {
-        let h = hash(path);
         self.lock();
-        let found = self.map.contains_key(&h);
+        let found = self.paths.contains(path);
         self.unlock();
         found
     }

@@ -197,6 +197,67 @@ describe("WebSocket upgrade split across reads", () => {
     }
   });
 
+  test("completed header larger than the cap is rejected even when split under the cap", async () => {
+    // A full 101 head (terminated with \r\n\r\n) whose total size is over the
+    // default cap (16384). The server splits it so the first write stays under
+    // the cap. The old code only checked the cap in the ShortRead arm, so the
+    // head completed on the second read with no size check and was accepted.
+    using server = Bun.listen<{ buf: string; done: boolean }>({
+      hostname: "127.0.0.1",
+      port: 0,
+      socket: {
+        open(socket) {
+          socket.data = { buf: "", done: false };
+        },
+        data(socket, chunk) {
+          const st = socket.data;
+          if (st.done) return;
+          st.buf += chunk.toString("latin1");
+          if (!st.buf.includes("\r\n\r\n")) return;
+          st.done = true;
+          const m = /Sec-WebSocket-Key:\s*(\S+)/i.exec(st.buf);
+          if (!m) {
+            socket.end();
+            return;
+          }
+          const accept = makeAccept(m[1]);
+          const head =
+            "HTTP/1.1 101 Switching Protocols\r\n" +
+            "Upgrade: websocket\r\n" +
+            "Connection: Upgrade\r\n" +
+            `Sec-WebSocket-Accept: ${accept}\r\n` +
+            "X-Pad: " +
+            Buffer.alloc(21000, "p").toString("latin1") + // head_len > 16384
+            "\r\n\r\n";
+          const bytes = Buffer.from(head, "latin1");
+          // First write stays under the cap so the ShortRead arm never rejects.
+          socket.write(bytes.subarray(0, 16000));
+          socket.flush();
+          setTimeout(() => {
+            socket.write(bytes.subarray(16000));
+            socket.flush();
+          }, 50);
+        },
+      },
+    });
+
+    const { promise, resolve, reject } = Promise.withResolvers<string>();
+    const ws = new globalThis.WebSocket(`ws://127.0.0.1:${server.port}`);
+    ws.onopen = () => reject(new Error("unexpected open"));
+    ws.onmessage = () => reject(new Error("unexpected message"));
+    ws.onerror = ev => resolve((ev as ErrorEvent).message ?? "error");
+    ws.onclose = ev => {
+      if (ev.wasClean) reject(new Error("unexpected clean close"));
+    };
+
+    try {
+      const msg = await promise;
+      expect(msg).toContain("Invalid response");
+    } finally {
+      ws.close();
+    }
+  });
+
   test("incomplete header larger than the cap is still rejected", async () => {
     // >16KB of header bytes with no terminating blank line must still fail.
     using server = Bun.listen<{ buf: string; done: boolean }>({

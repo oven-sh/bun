@@ -80,6 +80,7 @@ public:
 
     bool invalid = false;
 
+    /* Returns 0 at the end of the input, and also for the value "0" (see the parameter loop) */
     int getToken(const char *&in, const char *stop) {
         while (in != stop && !isalnum(*in)) {
             in++;
@@ -104,12 +105,19 @@ public:
         return hashedToken;
     }
 
+    /* Like getToken, but tells the end of the input apart from the value "0" */
+    bool nextToken(const char *&in, const char *stop, int &token) {
+        const char *before = in;
+        token = getToken(in, stop);
+        return token || (in != before && isalnum(in[-1]));
+    }
+
     ExtensionsParser(const char *data, size_t length) {
         const char *stop = data + length;
-        int token = 1;
+        int token = 0;
 
         /* Ignore anything before permessage-deflate or x-webkit-deflate-frame */
-        for (; token && token != TOK_PERMESSAGE_DEFLATE && token != TOK_X_WEBKIT_DEFLATE_FRAME; token = getToken(data, stop));
+        while (nextToken(data, stop, token) && token != TOK_PERMESSAGE_DEFLATE && token != TOK_X_WEBKIT_DEFLATE_FRAME);
 
         /* What protocol are we going to use? */
         perMessageDeflate = (token == TOK_PERMESSAGE_DEFLATE);
@@ -123,7 +131,7 @@ public:
             }
         }
 
-        while ((token = getToken(data, stop))) {
+        while (nextToken(data, stop, token)) {
             switch (token) {
             case TOK_NO_CONTEXT_TAKEOVER:
                 setFlag(noContextTakeover, xWebKitDeflateFrame);
@@ -144,8 +152,10 @@ public:
                 setWindow(clientMaxWindowBits, perMessageDeflate);
                 break;
             default:
-                /* An integer is the value of the window parameter right before it; anything else is unknown */
-                if (token < 0 && lastInteger) {
+                /* An integer is the value of the window parameter right before it; anything else is unknown.
+                 * Every window parameter takes 8..15, so a smaller value can never collide with the
+                 * "no value" marker 1 (the upper bound is checked where the window is used). */
+                if (token < 0 && -token >= 8 && lastInteger) {
                     *lastInteger = -token;
                     lastInteger = nullptr;
                 } else {
@@ -226,9 +236,6 @@ static inline std::tuple<bool, int, int, std::string_view> negotiateCompression(
         response = "permessage-deflate";
 
         /* client_max_window_bits may come without a value (stored as 1); with one it must be 8..15 */
-        if (ep.clientMaxWindowBits > 1 && ep.clientMaxWindowBits < 8) {
-            return {false, 0, 0, ""};
-        }
         if (ep.clientMaxWindowBits > 15) {
             return {false, 0, 0, ""};
         }

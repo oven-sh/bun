@@ -815,6 +815,48 @@ describe("SQL adapter environment variable precedence", () => {
       });
     });
 
+    describe("an options-object url beats the environment", () => {
+      test.each([
+        ["MYSQL_URL", "mysql://envhost/envdb"],
+        ["MARIADB_URL", "mariadb://envhost/envdb"],
+        ["DATABASE_URL", "mysql://envhost/envdb"],
+        ["SQLITE_URL", "sqlite://env.db"],
+      ])("%s does not pick the adapter for new SQL({ url })", (envVar, value) => {
+        process.env[envVar] = value;
+        const options = new SQL({ url: "postgres://urluser@urlhost/urldb" }).options;
+        expect([options.adapter, options.hostname, options.port, options.database]).toEqual([
+          "postgres",
+          "urlhost",
+          5432,
+          "urldb",
+        ]);
+      });
+
+      test("POSTGRES_URL does not pick the adapter for a mysql options url", () => {
+        process.env.POSTGRES_URL = "postgres://envhost/envdb";
+        const options = new SQL({ url: "mysql://urlhost/urldb" }).options;
+        expect([options.adapter, options.hostname, options.port]).toEqual(["mysql", "urlhost", 3306]);
+      });
+
+      test.each(["TLS_DATABASE_URL", "TLS_POSTGRES_DATABASE_URL", "TLS_MYSQL_DATABASE_URL"])(
+        "%s does not force TLS on an options url",
+        envVar => {
+          process.env[envVar] = "postgres://envhost/envdb";
+          const options = new SQL({ url: "postgres://urlhost/urldb" }).options;
+          expect(options.adapter).toBe("postgres");
+          expect(options.hostname).toBe("urlhost");
+          expect(options.sslMode).toBe(0);
+          expect(options.tls).toBeUndefined();
+        },
+      );
+
+      test("the environment url still applies when the options object has no url", () => {
+        process.env.MYSQL_URL = "mysql://envhost/envdb";
+        const options = new SQL({ hostname: "opthost" }).options;
+        expect([options.adapter, options.hostname, options.database]).toEqual(["mysql", "opthost", "envdb"]);
+      });
+    });
+
     describe.skipIf(isWindows)("unix socket path resolution", () => {
       test("a path that does not exist is kept, not dropped in favour of TCP", () => {
         const options = new SQL({ adapter: "postgres", path: "/nonexistent/dir/socket.sock", hostname: "dbhost" });

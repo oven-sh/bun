@@ -1683,7 +1683,6 @@ function parseConnectionDetailsFromOptionsOrEnvironment(
     options = stringOrUrlOrOptions
       ? { ...stringOrUrlOrOptions, ...definitelyOptionsButMaybeEmpty }
       : definitelyOptionsButMaybeEmpty;
-    [stringOrUrl, sslMode, adapter] = getConnectionDetailsFromEnvironment(options.adapter);
   }
 
   // Resolve URL based on adapter type
@@ -1708,6 +1707,12 @@ function parseConnectionDetailsFromOptionsOrEnvironment(
     if ("url" in options && (optionsUrl = options.url)) {
       resolvedUrl = optionsUrl;
     }
+  }
+
+  // The environment only supplies a connection URL (and with it an adapter and
+  // TLS mode) when neither the arguments nor the options object name one.
+  if (resolvedUrl === null) {
+    [resolvedUrl, sslMode, adapter] = getConnectionDetailsFromEnvironment(options.adapter);
   }
 
   if (options.adapter === "sqlite") {

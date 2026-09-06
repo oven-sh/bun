@@ -2658,10 +2658,7 @@ where
                     ); // TODO: properly propagate exception upwards
                     return;
                 }
-                // A file body resolves exactly like GET (open + fstat), so a
-                // missing file or a directory reaches `error()` with the same
-                // status, and Content-Length is the fstat size rather than a
-                // bare stat. `do_sendfile` ends a HEAD response after the headers.
+                // Same open + fstat as GET; `do_sendfile` ends HEAD after the headers.
                 if shim::blob_needs_to_read_file(blob) {
                     this.blob
                         .set(body_value.use_as_any_blob_allow_non_utf8_string());

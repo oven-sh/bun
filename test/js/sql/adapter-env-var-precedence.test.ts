@@ -569,6 +569,31 @@ describe("SQL adapter environment variable precedence", () => {
     });
   });
 
+  describe("tls given as a BunFile", () => {
+    test("tls: Bun.file(path) is the CA to verify the server against, like tls: { ca }", () => {
+      using dir = tempDir("sql-tls-bunfile", { "ca.pem": "" });
+      const ca = Bun.file(`${dir}/ca.pem`);
+
+      for (const key of ["tls", "ssl"] as const) {
+        const options = new SQL({ adapter: "postgres", hostname: "h", [key]: ca });
+        expect(options.options.sslMode).toBe(4); // SSLMode.verify_full
+        expect(options.options.tls).toEqual({ ca, serverName: "h" });
+        expect((options.options.tls as Bun.TLSOptions).ca).toBe(ca);
+      }
+
+      const mysqlOptions = new SQL("mysql://u:p@h/db", { tls: ca });
+      expect(mysqlOptions.options.adapter).toBe("mysql");
+      expect(mysqlOptions.options.sslMode).toBe(4);
+      expect((mysqlOptions.options.tls as Bun.TLSOptions).ca).toBe(ca);
+
+      // An sslmode that already verifies the chain is kept; the file is still the CA.
+      const fromUrl = new SQL("postgres://u@h:5432/db?sslmode=verify-ca", { tls: ca });
+      expect(fromUrl.options.sslMode).toBe(3);
+      expect(fromUrl.options.tls).toEqual({ ca, serverName: "h" });
+      expect((fromUrl.options.tls as Bun.TLSOptions).ca).toBe(ca);
+    });
+  });
+
   describe("Adapter-Protocol Validation", () => {
     test("should work with explicit adapter and URL without protocol", () => {
       const options = new SQL("user:pass@host:3306/db", { adapter: "mysql" });

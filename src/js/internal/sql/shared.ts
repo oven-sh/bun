@@ -2031,6 +2031,9 @@ function parseOptions(
   } else if (!tlsOption && (options.tls === false || options.ssl === false)) {
     sslMode = SSLMode.disable;
     tls = undefined;
+  } else if ($inheritsBlob(tlsOption)) {
+    // A `Bun.file()` is the CA bundle to verify the server certificate against.
+    tls = { ca: tlsOption };
   } else {
     tls = tlsOption || tls;
   }

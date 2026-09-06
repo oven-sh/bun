@@ -2678,12 +2678,14 @@ impl PostgresSQLConnection {
                             );
                             return Err(AnyPostgresError::InvalidMessage);
                         }
+                        let prepared_password = crate::postgres::sasl::saslprep(password);
                         sasl.compute_salted_password(
                             &server_salt_decoded_base64,
                             iteration_count,
-                            password,
+                            prepared_password.as_deref().unwrap_or(password),
                         )
                         .map_err(pg_err)?;
+                        drop(prepared_password);
                         drop(server_salt_decoded_base64);
 
                         let mut auth_string: Vec<u8> = Vec::new();

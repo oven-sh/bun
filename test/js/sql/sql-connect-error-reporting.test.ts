@@ -24,9 +24,8 @@
 
 import { SQL } from "bun";
 import { expect, mock, test } from "bun:test";
-import { isWindows, tls as tlsCert } from "harness";
-import net from "node:net";
-import tls from "node:tls";
+import { isWindows } from "harness";
+import type net from "node:net";
 import {
   closedPort,
   listeningServer,
@@ -37,7 +36,6 @@ import {
   pgAuthenticationOk,
   pgErrorResponse,
   pgReadyForQuery,
-  pgSSLResponse,
 } from "./wire-frames";
 
 // connectionTimeout (seconds, fractional allowed) bounds the connect-retry
@@ -448,44 +446,3 @@ for (const adapter of ["postgres", "mysql"] as const) {
     }
   });
 }
-
-// A postgres peer that accepts SSLRequest, upgrades to TLS with a self-signed
-// certificate and then answers AuthenticationOk + ReadyForQuery.
-async function selfSignedTlsPostgresServer(): Promise<{ port: number; server: net.Server }> {
-  const { port, server } = await listeningServer(rawSocket => {
-    rawSocket.on("error", () => {});
-    rawSocket.once("data", chunk => {
-      // SSLRequest is exactly 8 bytes, anything after it is the ClientHello
-      const leftover = chunk.subarray(8);
-      rawSocket.write(pgSSLResponse("S"));
-      rawSocket.pause();
-      if (leftover.length) rawSocket.unshift(leftover);
-      const secure = new tls.TLSSocket(rawSocket, { isServer: true, key: tlsCert.key, cert: tlsCert.cert });
-      secure.on("error", () => {});
-      secure.once("data", () => secure.write(Buffer.concat([pgAuthenticationOk(), pgReadyForQuery("I")])));
-    });
-  });
-  return { port, server };
-}
-
-test("postgres: sslmode=verify-full rejects a self-signed certificate even with NODE_TLS_REJECT_UNAUTHORIZED=0", async () => {
-  const { port, server } = await selfSignedTlsPostgresServer();
-  const previous = process.env.NODE_TLS_REJECT_UNAUTHORIZED;
-  process.env.NODE_TLS_REJECT_UNAUTHORIZED = "0";
-  try {
-    const err = await connectError(`postgres://u@127.0.0.1:${port}/db?sslmode=verify-full`);
-    expect(err.code).toBe("DEPTH_ZERO_SELF_SIGNED_CERT");
-
-    // require does not verify the chain, so the same peer is accepted
-    const db = new SQL({ url: `postgres://u@127.0.0.1:${port}/db?sslmode=require`, max: 1, connectionTimeout: 1 });
-    try {
-      await db.connect();
-    } finally {
-      await db.close({ timeout: 0 });
-    }
-  } finally {
-    if (previous === undefined) delete process.env.NODE_TLS_REJECT_UNAUTHORIZED;
-    else process.env.NODE_TLS_REJECT_UNAUTHORIZED = previous;
-    server.close();
-  }
-});

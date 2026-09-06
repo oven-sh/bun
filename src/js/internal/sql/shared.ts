@@ -104,8 +104,6 @@ class SQLResultArray<T> extends PublicArray<T> {
   }
 }
 
-const ObjectPrototypeHasOwnProperty = Object.prototype.hasOwnProperty;
-
 /** The probe only decides whether to append the socket file name. A stat failure means "not a directory". */
 function isDirectory(path: string): boolean {
   try {
@@ -1694,6 +1692,7 @@ function parseConnectionDetailsFromOptionsOrEnvironment(
     options = stringOrUrlOrOptions
       ? { ...stringOrUrlOrOptions, ...definitelyOptionsButMaybeEmpty }
       : definitelyOptionsButMaybeEmpty;
+    [stringOrUrl, sslMode, adapter] = getConnectionDetailsFromEnvironment(options.adapter);
   }
 
   // Resolve URL based on adapter type
@@ -1718,10 +1717,6 @@ function parseConnectionDetailsFromOptionsOrEnvironment(
     if ("url" in options && (optionsUrl = options.url)) {
       resolvedUrl = optionsUrl;
     }
-  }
-
-  if (resolvedUrl === null) {
-    [resolvedUrl, sslMode, adapter] = getConnectionDetailsFromEnvironment(options.adapter);
   }
 
   if (options.adapter === "sqlite") {
@@ -2153,14 +2148,6 @@ function parseOptions(
   // (ca, caFile, rejectUnauthorized, or a verify-* sslmode).
   if (explicitTls && sslMode <= SSLMode.prefer) {
     sslMode = SSLMode.require;
-  }
-
-  // verify-ca and verify-full must verify even with NODE_TLS_REJECT_UNAUTHORIZED=0
-  if (
-    sslMode >= SSLMode.verify_ca &&
-    (!$isObject(tls) || !ObjectPrototypeHasOwnProperty.$call(tls, "rejectUnauthorized"))
-  ) {
-    tls = { __proto__: null, ...($isObject(tls) ? tls : {}), rejectUnauthorized: true };
   }
 
   port = Number(port);

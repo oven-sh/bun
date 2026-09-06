@@ -2211,7 +2211,8 @@ describe("auto-discovered bunfig.toml [run] section", () => {
 
 // A script that reports the signal it receives and then exits 0. The sleep is
 // long enough that a run which only reacts once its children exit on their own
-// shows up as the wrong exit code, not as a slow pass.
+// shows up as the wrong exit code, not as a slow pass. With a third argument it
+// prints "tick" every 20ms so a test can see that it is still alive.
 const TRAP_FIXTURE = `
   const sig = process.argv[2];
   process.on(sig, () => {
@@ -2219,8 +2220,13 @@ const TRAP_FIXTURE = `
     process.exit(0);
   });
   console.log("ready");
-  setTimeout(() => {}, 30_000);
+  if (process.argv[3] === "heartbeat") setInterval(() => console.log("tick"), 20);
+  else setTimeout(() => {}, 30_000);
 `;
+
+function count(text: string, needle: string) {
+  return text.split(needle).length - 1;
+}
 
 /** Reads `stream` to the end. `onChunk` sees the text read so far after each chunk. */
 async function collect(stream: ReadableStream<Uint8Array>, onChunk: (text: string) => void): Promise<string> {
@@ -2253,21 +2259,22 @@ async function runAndSignal(
   });
   const ready = Promise.withResolvers<void>();
   const stdoutPromise = collect(proc.stdout, text => {
-    if (text.split("ready").length - 1 >= readyCount) ready.resolve();
+    if (count(text, "ready") >= readyCount) ready.resolve();
   });
+  stdoutPromise.then(text => ready.reject(new Error(`stdout ended before ${readyCount} ready lines:\n${text}`)));
   await ready.promise;
   proc.kill(signal);
   const [stdout, stderr, exitCode] = await Promise.all([stdoutPromise, proc.stderr.text(), proc.exited]);
   return { stdout, stderr, exitCode };
 }
 
-function trapPackage(signal: string) {
+function trapPackage(signal: string, extraArg = "") {
   return {
     "trap.js": TRAP_FIXTURE,
     "package.json": JSON.stringify({
       scripts: {
-        a: `${bunExe()} trap.js ${signal}`,
-        b: `${bunExe()} trap.js ${signal}`,
+        a: `${bunExe()} trap.js ${signal} ${extraArg}`,
+        b: `${bunExe()} trap.js ${signal} ${extraArg}`,
       },
     }),
   };
@@ -2292,7 +2299,7 @@ describe.concurrent.skipIf(isWindows)("signals", () => {
   });
 
   test("a SIGHUP the runner inherited as ignored stays ignored", async () => {
-    using dir = tempDir("mr-sig-nohup", trapPackage("SIGINT"));
+    using dir = tempDir("mr-sig-nohup", trapPackage("SIGINT", "heartbeat"));
     // `trap "" HUP` makes the runner (and its scripts) start with SIGHUP ignored, like under nohup.
     await using proc = Bun.spawn({
       cmd: ["sh", "-c", 'trap "" HUP; exec "$0" run --parallel a b', bunExe()],
@@ -2302,12 +2309,24 @@ describe.concurrent.skipIf(isWindows)("signals", () => {
       stdout: "pipe",
     });
     const ready = Promise.withResolvers<void>();
+    const alive = Promise.withResolvers<void>();
+    let seen = "";
+    let ticksAtHangup = Infinity;
     const stdoutPromise = collect(proc.stdout, text => {
-      if (text.split("ready").length - 1 >= 2) ready.resolve();
+      seen = text;
+      if (count(text, "ready") >= 2) ready.resolve();
+      if (count(text, "a | tick") >= ticksAtHangup + 5 && count(text, "b | tick") >= ticksAtHangup + 5) alive.resolve();
+    });
+    stdoutPromise.then(text => {
+      const err = new Error(`stdout ended early:\n${text}`);
+      ready.reject(err);
+      alive.reject(err);
     });
     await ready.promise;
+    ticksAtHangup = Math.max(count(seen, "a | tick"), count(seen, "b | tick"));
     proc.kill("SIGHUP");
-    // The hangup must not abort the run: a SIGINT afterwards still reaches both scripts.
+    // The hangup must not abort the run: both scripts keep ticking, and a SIGINT still reaches them.
+    await alive.promise;
     proc.kill("SIGINT");
     const [stdout, , exitCode] = await Promise.all([stdoutPromise, proc.stderr.text(), proc.exited]);
     expectPrefixed(stdout, "a", "got SIGINT");

@@ -72,10 +72,9 @@ pub(crate) fn install(loop_: *mut bun_uws::Loop) {
             let mut hooked: u8 = 0;
             for (i, sig) in SIGNALS.into_iter().enumerate() {
                 let mut previous: libc::sigaction = bun_core::ffi::zeroed();
-                libc::sigaction(sig, &raw const action, &raw mut previous);
-                if previous.sa_sigaction == libc::SIG_IGN {
-                    libc::sigaction(sig, &raw const previous, core::ptr::null_mut());
-                } else {
+                libc::sigaction(sig, core::ptr::null(), &raw mut previous);
+                if previous.sa_sigaction != libc::SIG_IGN {
+                    libc::sigaction(sig, &raw const action, core::ptr::null_mut());
                     hooked |= 1 << i;
                 }
             }

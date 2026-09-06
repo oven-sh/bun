@@ -10300,26 +10300,29 @@ describe("manifest conditional requests", () => {
   // A registry that sends `no-cache`, or no Cache-Control at all (Verdaccio
   // sends only an ETag), wants every install to revalidate. The 304 is cheap
   // and keeps a version published a moment ago from being invisible.
-  test.each([
+  describe.each([
     ["no-cache", "no-cache"],
     ["no-store", "no-store"],
     ["max-age=0", "max-age=0"],
     ["private, no-cache, max-age=600", "private, no-cache, max-age=600"],
+    ["max-age=600, max-age=600", "max-age=600, max-age=600"],
     ["(absent)", undefined],
-  ])("Cache-Control %s: every install revalidates the cached manifest", async (_label, cacheControl) => {
-    const { server, requests, tarballRequests } = startRegistry({ etag, cacheControl });
-    using _ = server;
-    await setup(server.port);
+  ])("Cache-Control %s", (_label, cacheControl) => {
+    test("every install revalidates the cached manifest", async () => {
+      const { server, requests, tarballRequests } = startRegistry({ etag, cacheControl });
+      using _ = server;
+      await setup(server.port);
 
-    await install();
-    await install();
-    await install();
-    expect(requests).toStrictEqual([
-      { accept, authorization, ifNoneMatch: null, ifModifiedSince: null, status: 200 },
-      { accept, authorization, ifNoneMatch: etag, ifModifiedSince: null, status: 304 },
-      { accept, authorization, ifNoneMatch: etag, ifModifiedSince: null, status: 304 },
-    ]);
-    expect(tarballRequests()).toBe(1);
+      await install();
+      await install();
+      await install();
+      expect(requests).toStrictEqual([
+        { accept, authorization, ifNoneMatch: null, ifModifiedSince: null, status: 200 },
+        { accept, authorization, ifNoneMatch: etag, ifModifiedSince: null, status: 304 },
+        { accept, authorization, ifNoneMatch: etag, ifModifiedSince: null, status: 304 },
+      ]);
+      expect(tarballRequests()).toBe(1);
+    });
   });
 
   test("a version published to a no-cache registry is installable right away", async () => {

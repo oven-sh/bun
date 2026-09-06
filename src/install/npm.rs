@@ -542,7 +542,7 @@ pub mod registry {
     /// with `If-None-Match`. `None` when the response has no `Cache-Control`.
     fn manifest_max_age(headers: &picohttp::HeaderList) -> Option<u32> {
         let cache_control = headers.get(b"cache-control")?;
-        let mut max_age: u32 = 0;
+        let mut max_age: Option<u32> = None;
         for directive in strings::split(cache_control, b",") {
             let directive = directive.trim_ascii();
             if strings::eql_case_insensitive_ascii(directive, b"no-cache", true)
@@ -551,16 +551,20 @@ pub mod registry {
                 return Some(0);
             }
             if strings::has_prefix_case_insensitive(directive, b"max-age=") {
+                // RFC 9111 §4.2.1: a repeated `max-age` makes the freshness stale.
+                if max_age.is_some() {
+                    return Some(0);
+                }
                 let value = directive[b"max-age=".len()..].trim_ascii_start();
                 let value = value.strip_prefix(b"\"").unwrap_or(value);
                 let value = value.strip_suffix(b"\"").unwrap_or(value);
-                max_age = match bun_core::parse_int::<u64>(value, 10) {
+                max_age = Some(match bun_core::parse_int::<u64>(value, 10) {
                     Ok(seconds) => seconds.min(MANIFEST_MAX_AGE_SECONDS as u64) as u32,
                     Err(_) => 0,
-                };
+                });
             }
         }
-        Some(max_age)
+        Some(max_age.unwrap_or(0))
     }
 
     /// Stamps the expiry from a 200 or 304. A 304 without `Cache-Control` reuses the stored max-age.
@@ -569,7 +573,7 @@ pub mod registry {
             pkg.max_age_seconds = max_age;
         }
         let now = u64::try_from(bun_core::time::timestamp().max(0)).expect("int cast") as u32;
-        pkg.public_max_age = now.saturating_add(pkg.max_age_seconds);
+        pkg.public_max_age = now.saturating_add(pkg.max_age_seconds.min(MANIFEST_MAX_AGE_SECONDS));
     }
 
     pub(crate) fn get_package_metadata(

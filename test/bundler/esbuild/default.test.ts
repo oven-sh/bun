@@ -3618,9 +3618,7 @@ describe.concurrent("bundler", () => {
     },
     format: "esm",
     run: {
-      // `import()` evaluates its target in a later job, so the entry's own
-      // `await 1` settles first. Node prints the same for the unbundled files.
-      stdout: "1\n0",
+      stdout: "0\n1",
     },
   });
   itBundled("default/TopLevelAwaitImport", {

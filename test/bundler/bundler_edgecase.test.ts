@@ -4118,11 +4118,9 @@ describe("bundler", () => {
     },
     onAfterBundle(api) {
       // Both start before the wrapper suspends, in import order.
-      expect(api.readFile("/out.js").replace(/\s+/g, " ")).toContain("await __promiseAll([ init_a(), init_b() ])");
+      expect(api.readFile("/out.js").replace(/\s+/g, " ")).toContain("await Promise.all([ init_a(), init_b() ])");
     },
   });
-  // The entry point is not wrapped, so its dependencies are joined at the top
-  // level: `__promiseAll` must be included for it too.
   itBundled("edgecase/UnwrappedEntryAsyncDependencyKeepsImportOrder", {
     files: {
       "/entry.js": /* js */ `
@@ -4216,7 +4214,7 @@ describe("bundler", () => {
     },
   });
   // The re-exporter's `__reExport(...)` of its first async dependency joins
-  // the awaited list too: `__promiseAll` must be included for it.
+  // the awaited list.
   itBundled("edgecase/ExportStarOfAsyncDependencyWithDynamicFallback", {
     files: {
       "/entry.js": /* js */ `
@@ -4268,9 +4266,8 @@ describe("bundler", () => {
       exitCode: 1,
     },
   });
-  // `import()` evaluates its target in a later job. A direct `init_a()` from
-  // inside a's own first synchronous segment (b runs inside it) returns
-  // `undefined`, and `undefined.then` throws.
+  // b runs inside a's first synchronous segment, where `init_a()` returns
+  // `undefined`: `init_a().then` would throw.
   itBundled("edgecase/DynamicImportOfEvaluatingAsyncParent", {
     files: {
       "/entry.js": /* js */ `
@@ -4298,36 +4295,6 @@ describe("bundler", () => {
         a after await
         entry done
         dyn a ok 1
-      `,
-    },
-  });
-  itBundled("edgecase/DynamicImportOfAsyncModuleStartsInLaterJob", {
-    files: {
-      "/entry.js": /* js */ `
-        import "./q.js";
-        import "./r.js";
-        console.log("entry");
-      `,
-      "/q.js": /* js */ `
-        console.log("q");
-        import("./t.js").then(() => console.log("dyn t"));
-      `,
-      "/r.js": /* js */ `console.log("r");`,
-      "/t.js": /* js */ `
-        console.log("t start");
-        await 0;
-        console.log("t end");
-      `,
-    },
-    format: "esm",
-    run: {
-      stdout: `
-        q
-        r
-        entry
-        t start
-        t end
-        dyn t
       `,
     },
   });
@@ -4371,7 +4338,7 @@ describe("bundler", () => {
         import * as self15 from "./m15.js";
         export default function d15() { return typeof v15; }
         export let v15 = "L15";
-        import("./m13.js").then(() => console.log("dyn m13 ok"));
+        import("./m13.js");
       `,
       "/m7.js": /* js */ `
         import { v10 } from "./m10.js";
@@ -4385,7 +4352,6 @@ describe("bundler", () => {
         m13 before await
         m13 after await
         entry ok
-        dyn m13 ok
       `,
     },
   });

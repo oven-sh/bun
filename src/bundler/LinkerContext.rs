@@ -95,8 +95,8 @@ pub struct LinkerContext<'a> {
     /// We may need to refer to the CommonJS "module" symbol for exports
     pub(crate) unbound_module_ref: Ref,
 
-    /// We may need to refer to the "__promiseAll" runtime symbol
-    pub(crate) promise_all_runtime_ref: Ref,
+    /// The unbound `Promise` whose `all` joins async dependencies (`InsideWrapperPrefix`).
+    pub(crate) promise_ref: Ref,
     /// `__preload` / `__chunks`: modulepreload for split browser `import()`s.
     pub(crate) preload_runtime_ref: Ref,
     pub(crate) chunks_runtime_ref: Ref,
@@ -161,7 +161,7 @@ impl<'a> Default for LinkerContext<'a> {
             cjs_runtime_ref: Ref::NONE,
             esm_runtime_ref: Ref::NONE,
             unbound_module_ref: Ref::NONE,
-            promise_all_runtime_ref: Ref::NONE,
+            promise_ref: Ref::NONE,
             preload_runtime_ref: Ref::NONE,
             chunks_runtime_ref: Ref::NONE,
             options: Default::default(),
@@ -552,10 +552,6 @@ impl<'a> LinkerContext<'a> {
             .get(b"__commonJS")
             .expect("infallible: runtime export")
             .ref_;
-        self.promise_all_runtime_ref = runtime_named_exports
-            .get(b"__promiseAll")
-            .expect("infallible: runtime export")
-            .ref_;
         // Browser runtime only (`RUNTIME_PRELOAD_BROWSER`).
         self.preload_runtime_ref = runtime_named_exports
             .get(b"__preload")
@@ -563,6 +559,12 @@ impl<'a> LinkerContext<'a> {
         self.chunks_runtime_ref = runtime_named_exports
             .get(b"__chunks")
             .map_or(Ref::NONE, |export| export.ref_);
+
+        self.promise_ref = self.graph.generate_new_symbol(
+            Index::RUNTIME.get(),
+            bun_ast::symbol::Kind::Unbound,
+            b"Promise",
+        );
 
         if self.options.output_format == Format::Cjs {
             self.unbound_module_ref = self.graph.generate_new_symbol(
@@ -2301,7 +2303,7 @@ impl<'a> LinkerContext<'a> {
                 stmts.inside_wrapper_prefix.append_dependency(
                     init_call,
                     other_flags.is_async_or_has_async_dependency,
-                    self.promise_all_runtime_ref,
+                    self.promise_ref,
                 )?;
             }
         }
@@ -5103,13 +5105,13 @@ pub struct StmtList {
 
 /// The dependency statements that run inside a wrapper before the module
 /// body, in source order. From the first async dependency on they share one
-/// `await __promiseAll([init_a(), init_b(), ns = require_c()])`, so each one
+/// `await Promise.all([init_a(), init_b(), ns = require_c()])`, so each one
 /// starts before the wrapper suspends.
 pub struct InsideWrapperPrefix {
     pub(crate) stmts: Vec<Stmt>,
     /// Index in `stmts` of the `await` statement, once one exists.
     await_index: Option<usize>,
-    promise_all_ref: Ref,
+    promise_ref: Ref,
 }
 
 impl InsideWrapperPrefix {
@@ -5117,7 +5119,7 @@ impl InsideWrapperPrefix {
         Self {
             stmts: Vec::new(),
             await_index: None,
-            promise_all_ref: Ref::NONE,
+            promise_ref: Ref::NONE,
         }
     }
 
@@ -5189,12 +5191,12 @@ impl InsideWrapperPrefix {
         &mut self,
         init_call: Expr,
         is_async: bool,
-        promise_all_ref: Ref,
+        promise_ref: Ref,
     ) -> Result<(), AllocError> {
         match self.await_index {
             Some(await_index) => self.join_awaited(await_index, init_call),
             None if is_async => {
-                self.promise_all_ref = promise_all_ref;
+                self.promise_ref = promise_ref;
                 self.await_index = Some(self.stmts.len());
                 self.stmts.push(Stmt::alloc(
                     S::SExpr {
@@ -5215,7 +5217,7 @@ impl InsideWrapperPrefix {
         Ok(())
     }
 
-    /// `await init_a()` becomes `await __promiseAll([init_a(), expr])`.
+    /// `await init_a()` becomes `await Promise.all([init_a(), expr])`.
     fn join_awaited(&mut self, await_index: usize, expr: Expr) {
         let awaited: &mut Expr = &mut self.stmts[await_index]
             .data
@@ -5231,17 +5233,17 @@ impl InsideWrapperPrefix {
             .data
             .e_call_mut()
             .expect("infallible: the awaited expression is a call");
-        if call
-            .target
-            .data
-            .e_identifier()
-            .is_some_and(|id| id.ref_.eql(self.promise_all_ref))
-        {
+        if call.target.data.e_dot().is_some_and(|dot| {
+            dot.target
+                .data
+                .e_identifier()
+                .is_some_and(|id| id.ref_.eql(self.promise_ref))
+        }) {
             call.args
                 .mut_(0)
                 .data
                 .e_array_mut()
-                .expect("infallible: __promiseAll takes an array")
+                .expect("infallible: Promise.all takes an array")
                 .items
                 .push(expr);
             return;
@@ -5261,7 +5263,15 @@ impl InsideWrapperPrefix {
 
         *awaited = Expr::init(
             E::Call {
-                target: Expr::init_identifier(self.promise_all_ref, Loc::EMPTY),
+                target: Expr::init(
+                    E::Dot {
+                        target: Expr::init_identifier(self.promise_ref, Loc::EMPTY),
+                        name: b"all".into(),
+                        name_loc: Loc::EMPTY,
+                        ..Default::default()
+                    },
+                    Loc::EMPTY,
+                ),
                 args,
                 ..Default::default()
             },

@@ -997,8 +997,7 @@ impl FetchTasklet {
         if self.is_waiting_request_stream_start && self.result.can_stream {
             // start streaming
             let started = self.start_request_stream();
-            // The reader dup'd the sendfile fd when it started. Either way the
-            // sendfile body is done with it.
+            // The reader has its own dup of the fd now.
             if let Some(mut body) = refused_sendfile.take() {
                 body.detach();
             }

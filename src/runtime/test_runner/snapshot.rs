@@ -103,9 +103,32 @@ impl InlineSnapshotToWrite {
     }
 }
 
+/// The `.snap` file of the test file that is running. `write_snapshot_file`
+/// creates or replaces it on disk once entries were added.
 pub struct File {
     pub(crate) id: FileId,
-    pub(crate) file: bun_sys::File,
+    /// Directory of the test file, with a trailing slash. Borrowed from the
+    /// runner's `File::source.path`, a `Path<'static>`.
+    test_dir: &'static [u8],
+    /// NUL-terminated path of the `.snap` file: `test_dir`, `__snapshots__/`, the file name.
+    path: Vec<u8>,
+    /// `file_buf` holds entries the file on disk does not have.
+    dirty: bool,
+}
+
+impl File {
+    fn path_z(&self) -> &ZStr {
+        ZStr::from_slice_with_nul(&self.path)
+    }
+
+    /// The `__snapshots__` directory, NUL-terminated.
+    fn snapshots_dir_z(&self) -> Vec<u8> {
+        let len = self.test_dir.len() + Snapshots::SNAPSHOTS_DIR_NAME.len();
+        let mut dir = Vec::with_capacity(len + 1);
+        dir.extend_from_slice(&self.path[..len]);
+        dir.push(0);
+        dir
+    }
 }
 
 impl Snapshots {
@@ -145,19 +168,8 @@ impl Snapshots {
             .bun_test()
             .ok_or(crate::Error::SnapshotFailed)?;
         let bun_test = buntest_strong.get();
-        match self.get_snapshot_file(bun_test.file_id)? {
-            bun_sys::Result::Ok(()) => {}
-            bun_sys::Result::Err(err) => {
-                // `bun_sys::Tag` is a newtype-struct with assoc consts (lowercase),
-                // not an enum — match arms require structural-eq; use if-chain instead.
-                return Err(if err.syscall == bun_sys::Tag::mkdir {
-                    crate::Error::FailedToMakeSnapshotDirectory
-                } else if err.syscall == bun_sys::Tag::open {
-                    crate::Error::FailedToOpenSnapshotFile
-                } else {
-                    crate::Error::SnapshotFailed
-                });
-            }
+        if self.get_snapshot_file(bun_test.file_id)?.is_err() {
+            return Err(crate::Error::FailedToOpenSnapshotFile);
         }
 
         let (name, counter) = self.add_count(expect, hint)?;
@@ -216,6 +228,9 @@ impl Snapshots {
         .map_err(|_| crate::Error::WriteError)?;
 
         self.added += 1;
+        if let Some(file) = self._current_file.as_mut() {
+            file.dirty = true;
+        }
         self.values
             .insert(name_hash, Box::<[u8]>::from(target_value));
         Ok(None)
@@ -237,38 +252,8 @@ impl Snapshots {
         let arena = bun_alloc::Arena::new();
         let mut temp_log = bun_ast::Log::init();
 
-        // do NOT call `Jest::runner()` here — it hands out an exclusive ref to the global TestRunner,
-        // and `self: &mut Snapshots` is a live borrow of that same TestRunner's `.snapshots`
-        // field. Retagging the whole TestRunner would invalidate `self` under Stacked Borrows.
-        // Project the disjoint `.files` sibling through the raw `RUNNER` pointer instead.
-        // SAFETY: single-threaded JS VM; RUNNER is set before any Snapshots method runs
-        // (Snapshots is a field of TestRunner). Raw-pointer place projection touches only
-        // `.files` bytes, disjoint from `&mut self`.
-        let test_file_source = unsafe {
-            let p = Jest::RUNNER.read().expect("Jest runner not set").as_ptr();
-            &(*p).files.items_source()[file.id as usize]
-        };
-        let name = test_file_source.path.name();
-        let test_filename = name.filename;
-        let dir_path = name.dir_with_trailing_slash();
-
-        let mut snapshot_file_path_buf = bun_paths::path_buffer_pool::get();
-        let buf = snapshot_file_path_buf.0.as_mut_slice();
-        let mut pos = 0usize;
-        buf[pos..pos + dir_path.len()].copy_from_slice(dir_path);
-        pos += dir_path.len();
-        buf[pos..pos + Self::SNAPSHOTS_DIR_NAME.len()].copy_from_slice(Self::SNAPSHOTS_DIR_NAME);
-        pos += Self::SNAPSHOTS_DIR_NAME.len();
-        buf[pos..pos + test_filename.len()].copy_from_slice(test_filename);
-        pos += test_filename.len();
-        buf[pos..pos + b".snap".len()].copy_from_slice(b".snap");
-        pos += b".snap".len();
-        buf[pos] = 0;
-        // SAFETY: buf[pos] == 0 written above
-        let snapshot_file_path = ZStr::from_buf(&buf[..], pos);
-
         let source = bun_ast::Source::init_path_string(
-            snapshot_file_path.as_bytes(),
+            file.path_z().as_bytes(),
             self.file_buf.as_slice(),
         );
 
@@ -345,19 +330,50 @@ impl Snapshots {
     }
 
     pub(crate) fn write_snapshot_file(&mut self) -> Result<(), Error> {
-        if let Some(file) = self._current_file.take() {
-            file.file
-                .write_all(&self.file_buf)
-                .map_err(|_| crate::Error::FailedToWriteSnapshotFile)?;
-            let _ = file.file.close();
-            self.file_buf.clear();
-            self.file_buf.shrink_to_fit();
+        let Some(file) = self._current_file.take() else {
+            return Ok(());
+        };
+        let result = if file.dirty {
+            self.create_snapshot_file(&file)
+        } else {
+            Ok(())
+        };
+        self.file_buf.clear();
+        self.file_buf.shrink_to_fit();
 
-            self.values.clear();
+        self.values.clear();
 
-            self.counts.clear();
+        self.counts.clear();
+
+        result.map_err(|err| {
+            bun_output::err(
+                err,
+                "Failed to write snapshot file: {}",
+                (bstr::BStr::new(file.path_z().as_bytes()),),
+            );
+            crate::Error::FailedToWriteSnapshotFile
+        })
+    }
+
+    /// Creates `__snapshots__/` if needed, then replaces the `.snap` file with `file_buf`.
+    fn create_snapshot_file(&mut self, file: &File) -> bun_sys::Result<()> {
+        let cached_dir = self.snapshot_dir_path;
+        if cached_dir.is_none() || !strings::eql_long(file.test_dir, cached_dir.unwrap(), true) {
+            let dir = file.snapshots_dir_z();
+            match bun_sys::mkdir(ZStr::from_slice_with_nul(&dir), 0o777) {
+                bun_sys::Result::Ok(()) => {}
+                bun_sys::Result::Err(err) if err.get_errno() == bun_sys::Errno::EEXIST => {}
+                bun_sys::Result::Err(err) => return Err(err),
+            }
+            self.snapshot_dir_path = Some(file.test_dir);
         }
-        Ok(())
+
+        let out = bun_sys::File::open(
+            file.path_z(),
+            bun_sys::O::CREAT | bun_sys::O::WRONLY | bun_sys::O::TRUNC,
+            0o644,
+        )?;
+        out.write_all(&self.file_buf)
     }
 
     pub(crate) fn add_inline_snapshot_to_write(
@@ -444,12 +460,9 @@ impl Snapshots {
                     continue;
                 }
             };
-            let file = File {
-                id: file_id,
-                file: bun_sys::File::from_fd(fd),
-            };
+            let file = bun_sys::File::from_fd(fd);
 
-            let file_text: Vec<u8> = file.file.read_to_end().map_err(Error::from)?;
+            let file_text: Vec<u8> = file.read_to_end().map_err(Error::from)?;
 
             let source =
                 bun_ast::Source::init_path_string(test_filename_z.as_bytes(), file_text.as_slice());
@@ -798,7 +811,7 @@ impl Snapshots {
             }
 
             // 4. write out result_text to the file
-            if let Err(e) = file.file.seek_to(0) {
+            if let Err(e) = file.seek_to(0) {
                 log.add_error_fmt(
                     &source,
                     bun_ast::Loc { start: 0 },
@@ -810,7 +823,7 @@ impl Snapshots {
                 continue;
             }
 
-            if let Err(e) = file.file.write_all(&result_text) {
+            if let Err(e) = file.write_all(&result_text) {
                 log.add_error_fmt(
                     &source,
                     bun_ast::Loc { start: 0 },
@@ -822,7 +835,7 @@ impl Snapshots {
                 continue;
             }
             if result_text.len() < file_text.len() {
-                if bun_sys::ftruncate(file.file.handle, result_text.len() as i64).is_err() {
+                if bun_sys::ftruncate(file.handle, result_text.len() as i64).is_err() {
                     panic!("Failed to update inline snapshot: File was left in an invalid state");
                 }
             }
@@ -831,88 +844,69 @@ impl Snapshots {
     }
 
     fn get_snapshot_file(&mut self, file_id: FileId) -> Result<bun_sys::Result<()>, Error> {
-        if self._current_file.is_none() || self._current_file.as_ref().unwrap().id != file_id {
-            self.write_snapshot_file()?;
-
-            // avoid `Jest::runner()` (aliases `&mut TestRunner` over live `&mut self`).
-            // SAFETY: see `parse_file` — raw-pointer projection to disjoint `.files` field.
-            let test_file_source = unsafe {
-                let p = Jest::RUNNER.read().expect("Jest runner not set").as_ptr();
-                &(*p).files.items_source()[file_id as usize]
-            };
-            let name = test_file_source.path.name();
-            let test_filename = name.filename;
-            let dir_path = name.dir_with_trailing_slash();
-
-            let mut snapshot_file_path_buf = bun_paths::path_buffer_pool::get();
-            let buf = snapshot_file_path_buf.0.as_mut_slice();
-            let mut pos = 0usize;
-            buf[pos..pos + dir_path.len()].copy_from_slice(dir_path);
-            pos += dir_path.len();
-            buf[pos..pos + Self::SNAPSHOTS_DIR_NAME.len()]
-                .copy_from_slice(Self::SNAPSHOTS_DIR_NAME);
-            pos += Self::SNAPSHOTS_DIR_NAME.len();
-
-            let cached_dir = self.snapshot_dir_path;
-            if cached_dir.is_none() || !strings::eql_long(dir_path, cached_dir.unwrap(), true) {
-                buf[pos] = 0;
-                // SAFETY: buf[pos] == 0 written above
-                let snapshot_dir_path = ZStr::from_buf(&buf[..], pos);
-                match bun_sys::mkdir(snapshot_dir_path, 0o777) {
-                    bun_sys::Result::Ok(()) => {
-                        self.snapshot_dir_path = Some(dir_path);
-                    }
-                    bun_sys::Result::Err(err) => match err.get_errno() {
-                        bun_sys::Errno::EEXIST => {
-                            self.snapshot_dir_path = Some(dir_path);
-                        }
-                        _ => return Ok(bun_sys::Result::Err(err)),
-                    },
-                }
-            }
-
-            buf[pos..pos + test_filename.len()].copy_from_slice(test_filename);
-            pos += test_filename.len();
-            buf[pos..pos + b".snap".len()].copy_from_slice(b".snap");
-            pos += b".snap".len();
-            buf[pos] = 0;
-            // SAFETY: buf[pos] == 0 written above
-            let snapshot_file_path = ZStr::from_buf(&buf[..], pos);
-
-            let mut flags: i32 = bun_sys::O::CREAT | bun_sys::O::RDWR;
-            if self.update_snapshots {
-                flags |= bun_sys::O::TRUNC;
-            }
-            let fd = match bun_sys::open(snapshot_file_path, flags, 0o644) {
-                bun_sys::Result::Ok(fd) => fd,
-                bun_sys::Result::Err(err) => return Ok(bun_sys::Result::Err(err)),
-            };
-
-            let file = File {
-                id: file_id,
-                file: bun_sys::File::from_fd(fd),
-            };
-
-            if self.update_snapshots {
-                self.file_buf.extend_from_slice(Self::FILE_HEADER);
-            } else {
-                let length = file.file.get_end_pos().map_err(Error::from)?;
-                if length == 0 {
-                    self.file_buf.extend_from_slice(Self::FILE_HEADER);
-                } else {
-                    let mut tmp = vec![0u8; length];
-                    let _ = file.file.pread_all(&mut tmp, 0).map_err(Error::from)?;
-                    #[cfg(windows)]
-                    {
-                        file.file.seek_to(0).map_err(Error::from)?;
-                    }
-                    self.file_buf.extend_from_slice(&tmp);
-                }
-            }
-
-            self.parse_file(&file)?;
-            self._current_file = Some(file);
+        if self._current_file.as_ref().is_some_and(|file| file.id == file_id) {
+            return Ok(bun_sys::Result::Ok(()));
         }
+        self.write_snapshot_file()?;
+
+        // do NOT call `Jest::runner()` here — it hands out an exclusive ref to the global TestRunner,
+        // and `self: &mut Snapshots` is a live borrow of that same TestRunner's `.snapshots`
+        // field. Retagging the whole TestRunner would invalidate `self` under Stacked Borrows.
+        // Project the disjoint `.files` sibling through the raw `RUNNER` pointer instead.
+        // SAFETY: single-threaded JS VM; RUNNER is set before any Snapshots method runs
+        // (Snapshots is a field of TestRunner). Raw-pointer place projection touches only
+        // `.files` bytes, disjoint from `&mut self`.
+        let test_file_source = unsafe {
+            let p = Jest::RUNNER.read().expect("Jest runner not set").as_ptr();
+            &(*p).files.items_source()[file_id as usize]
+        };
+        let name = test_file_source.path.name();
+        let test_filename = name.filename;
+        let test_dir = name.dir_with_trailing_slash();
+
+        let mut path: Vec<u8> = Vec::with_capacity(
+            test_dir.len()
+                + Self::SNAPSHOTS_DIR_NAME.len()
+                + test_filename.len()
+                + b".snap".len()
+                + 1,
+        );
+        path.extend_from_slice(test_dir);
+        path.extend_from_slice(Self::SNAPSHOTS_DIR_NAME);
+        path.extend_from_slice(test_filename);
+        path.extend_from_slice(b".snap");
+        path.push(0);
+
+        let file = File {
+            id: file_id,
+            test_dir,
+            path,
+            dirty: false,
+        };
+
+        // The file is read here and created in `write_snapshot_file`, once an
+        // entry was added. A run that adds nothing (for example in CI, where
+        // new snapshots are refused) leaves the disk as it found it.
+        let existing: Vec<u8> = if self.update_snapshots {
+            Vec::new()
+        } else {
+            match bun_sys::File::open(file.path_z(), bun_sys::O::RDONLY, 0)
+                .and_then(|existing| existing.read_to_end())
+            {
+                bun_sys::Result::Ok(contents) => contents,
+                bun_sys::Result::Err(err) if err.get_errno() == bun_sys::Errno::ENOENT => Vec::new(),
+                bun_sys::Result::Err(err) => return Ok(bun_sys::Result::Err(err)),
+            }
+        };
+
+        if existing.is_empty() {
+            self.file_buf.extend_from_slice(Self::FILE_HEADER);
+        } else {
+            self.file_buf = existing;
+        }
+
+        self.parse_file(&file)?;
+        self._current_file = Some(file);
 
         Ok(bun_sys::Result::Ok(()))
     }

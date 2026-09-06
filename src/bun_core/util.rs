@@ -4252,6 +4252,22 @@ pub fn is_process_reload_in_progress_on_another_thread() -> bool {
         && !RELOAD_IN_PROGRESS_ON_CURRENT_THREAD.with(|c| c.get())
 }
 
+static RELOAD_CWD: Once<ZBox> = Once::new();
+
+/// Records the directory a `--watch` restart starts in: the one the process was
+/// started in, captured before `--cwd` or the script's `process.chdir()` moves
+/// it. The restarted process re-resolves the same argv (entry point, `--cwd`,
+/// `--preload`, test discovery), so it has to do that from the same place.
+/// node's `--watch` supervisor likewise spawns every restart from its own cwd.
+pub fn set_reload_cwd(cwd: &ZStr) {
+    let _ = RELOAD_CWD.set(ZBox::from_bytes(cwd.as_bytes()));
+}
+
+#[inline]
+pub fn reload_cwd() -> Option<&'static ZStr> {
+    RELOAD_CWD.get().map(ZBox::as_zstr)
+}
+
 /// Terminate the current OS thread without unwinding.
 /// POSIX `pthread_exit`; Windows `ExitThread`. Called from worker `shutdown()`.
 pub(crate) fn exit_thread() -> ! {
@@ -4405,6 +4421,11 @@ pub fn reload_process(clear_terminal: bool, may_return: bool) {
 
         // we must clone selfExePath in case argv[0] was not an absolute path
         let exec_path = self_exe_path().expect("unreachable").as_ptr();
+
+        if let Some(cwd) = RELOAD_CWD.get() {
+            // Best effort: if that directory is gone, restart from here.
+            let _ = libc::chdir(cwd.as_ptr());
+        }
 
         libc::execve(exec_path, newargv.as_ptr().cast(), envp.as_ptr().cast());
         // execve only returns on error.

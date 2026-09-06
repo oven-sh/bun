@@ -3502,8 +3502,12 @@ function escapeXml(str) {
  * at 220 to 290 seconds against the 300 second per-file cap. Turning the policy
  * off takes effect at once and needs no reboot. scripts/bootstrap.ps1 does the
  * same at image bake time; this covers images baked before that change.
+ *
+ * Only on Buildkite: the policy cannot be turned on again without a reinstall,
+ * so a developer's machine running with CI=true must not get this.
  */
 async function disableSmartAppControl() {
+  if (!isBuildkite) return;
   const script = [
     "$p = 'HKLM:\\SYSTEM\\CurrentControlSet\\Control\\CI\\Policy'",
     "if (-not (Test-Path $p)) { exit 0 }",

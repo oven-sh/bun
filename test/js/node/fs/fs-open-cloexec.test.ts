@@ -61,8 +61,8 @@ describe.skipIf(!isLinux && !isMacOS)("node:fs opens set O_CLOEXEC", () => {
     const rs = fs.createReadStream(join(String(dir), "a.txt"));
     const ws = fs.createWriteStream(join(String(dir), "b.txt"));
     const [rfd, wfd] = await Promise.all([
-      new Promise<number>(resolve => rs.once("open", resolve)),
-      new Promise<number>(resolve => ws.once("open", resolve)),
+      new Promise<number>((resolve, reject) => rs.once("open", resolve).once("error", reject)),
+      new Promise<number>((resolve, reject) => ws.once("open", resolve).once("error", reject)),
     ]);
     try {
       expect(hasCloexec(rfd)).toBe(true);
@@ -74,18 +74,16 @@ describe.skipIf(!isLinux && !isMacOS)("node:fs opens set O_CLOEXEC", () => {
   });
 
   test("user flags are kept", () => {
-    using dir = tempDir("fs-cloexec", {});
-    const fd = fs.openSync(
-      join(String(dir), "new.txt"),
-      fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_APPEND,
-    );
+    using dir = tempDir("fs-cloexec", { "log.txt": "ab" });
+    const fd = fs.openSync(join(String(dir), "log.txt"), fs.constants.O_WRONLY | fs.constants.O_APPEND);
     try {
+      // O_APPEND ignores the position argument, so "y" lands at EOF, not at 0.
       fs.writeSync(fd, "x");
-      fs.writeSync(fd, "y");
+      fs.writeSync(fd, "y", 0);
       expect(hasCloexec(fd)).toBe(true);
     } finally {
       fs.closeSync(fd);
     }
-    expect(fs.readFileSync(join(String(dir), "new.txt"), "utf8")).toBe("xy");
+    expect(fs.readFileSync(join(String(dir), "log.txt"), "utf8")).toBe("abxy");
   });
 });

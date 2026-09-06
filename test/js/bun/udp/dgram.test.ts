@@ -359,6 +359,34 @@ describe("bind()", () => {
     await listening;
     expect(onError).not.toHaveBeenCalled();
   });
+
+  // Node's handle binds through uv_ip4_addr/uv_ip6_addr for the socket's
+  // `type`, so a literal of the other family emits EINVAL. Bun used to bind
+  // the literal's family and report 'listening'.
+  test.each([
+    ["udp6", "127.0.0.1"],
+    ["udp6", "0.0.0.0"],
+    ["udp4", "::1"],
+    ["udp4", "::"],
+  ] as const)("%s bound to %s emits EINVAL instead of 'listening'", async (type, address) => {
+    await using socket = createSocket(type);
+    const { promise, resolve, reject } = Promise.withResolvers<any>();
+    socket.on("error", resolve);
+    socket.on("listening", () => reject(new Error("listening")));
+    socket.bind(0, address);
+    const err = await promise;
+    expect({ code: err.code, syscall: err.syscall, address: err.address, message: err.message }).toEqual({
+      code: "EINVAL",
+      syscall: "bind",
+      address,
+      message: `bind EINVAL ${address}`,
+    });
+    // The failed bind leaves the socket unbound, so a correct bind still works.
+    const { promise: listening, resolve: onListening } = Promise.withResolvers<void>();
+    socket.removeAllListeners("listening");
+    socket.bind(0, type === "udp4" ? "127.0.0.1" : "::1", onListening);
+    await listening;
+  });
 });
 
 // _createSocketHandle's three return shapes, from node's

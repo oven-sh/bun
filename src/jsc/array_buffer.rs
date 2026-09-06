@@ -820,6 +820,27 @@ impl BinaryType {
         }
     }
 
+    /// The lowercase `BINARY_TYPE_MAP` key for this variant, as a
+    /// `binaryType` getter reports it.
+    pub fn lowercase_name(self) -> &'static str {
+        match self {
+            BinaryType::Buffer => "buffer",
+            BinaryType::ArrayBuffer => "arraybuffer",
+            BinaryType::Uint8Array => "uint8array",
+            BinaryType::Uint8ClampedArray => "uint8clampedarray",
+            BinaryType::Uint16Array => "uint16array",
+            BinaryType::Uint32Array => "uint32array",
+            BinaryType::Int8Array => "int8array",
+            BinaryType::Int16Array => "int16array",
+            BinaryType::Int32Array => "int32array",
+            BinaryType::Float16Array => "float16array",
+            BinaryType::Float32Array => "float32array",
+            BinaryType::Float64Array => "float64array",
+            BinaryType::BigInt64Array => "bigint64array",
+            BinaryType::BigUint64Array => "biguint64array",
+        }
+    }
+
     pub fn from_js_value(global: &JSGlobalObject, input: JSValue) -> JsResult<Option<BinaryType>> {
         if input.is_string() {
             return BINARY_TYPE_MAP.from_js(global, input);

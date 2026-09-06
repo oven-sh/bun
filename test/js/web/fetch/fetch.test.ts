@@ -1655,6 +1655,38 @@ describe("Request", () => {
   });
 
   testBlobInterface(data => new Request("https://hello.com", { body: data }), true);
+
+  it("constructor throws a TypeError for a missing, empty, or non-object input", () => {
+    const cases: Array<[string, () => Request]> = [
+      // @ts-expect-error
+      ["no arguments", () => new Request()],
+      ["undefined", () => new Request(undefined as any)],
+      ["null", () => new Request(null as any)],
+      ["number", () => new Request(5 as any)],
+      ["symbol", () => new Request(Symbol() as any)],
+      ["empty string", () => new Request("")],
+      ["object without url", () => new Request({} as any)],
+      ["relative url", () => new Request("/rel")],
+    ];
+    const results = cases.map(([label, f]) => {
+      try {
+        f();
+        return [label, "constructed"];
+      } catch (e) {
+        return [label, e instanceof TypeError, (e as Error).message];
+      }
+    });
+    expect(results).toEqual([
+      ["no arguments", true, "Failed to construct 'Request': 1 argument required, but only 0 present."],
+      ["undefined", true, "Failed to construct 'Request': expected non-empty string or object, got undefined"],
+      ["null", true, "Failed to construct 'Request': expected non-empty string or object, got null"],
+      ["number", true, "Failed to construct 'Request': expected non-empty string or object, got number"],
+      ["symbol", true, "Failed to construct 'Request': expected non-empty string or object"],
+      ["empty string", true, "Failed to construct 'Request': url is required."],
+      ["object without url", true, "Failed to construct 'Request': url is required."],
+      ["relative url", true, `Failed to construct 'Request': Invalid URL "/rel"`],
+    ]);
+  });
 });
 
 describe("Headers", () => {

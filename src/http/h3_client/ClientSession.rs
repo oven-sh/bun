@@ -84,6 +84,18 @@ impl ClientSession {
         self.qsocket.map(|qs| quic_socket_mut(qs.as_ptr()))
     }
 
+    /// The lsquic status of the live connection, or `-1` when `qsocket` is
+    /// unset. Feeds [`status_is_retry_worthy`].
+    fn conn_status(&self) -> core::ffi::c_int {
+        match self.qsocket_mut() {
+            Some(qs) => {
+                let mut buf = [0u8; 16];
+                qs.status(&mut buf)
+            }
+            None => -1,
+        }
+    }
+
     pub(crate) fn has_headroom(&self) -> bool {
         if self.closed {
             return false;
@@ -354,7 +366,10 @@ impl ClientSession {
 
         if client.state.response_stage != HTTPStage::Body {
             if done {
-                // Peer reset before headers: fast, but the request was sent.
+                // A timeout also closes every bound stream, so read the
+                // connection status rather than assuming a fast reset. The
+                // request bytes already went out, so it is not `not_applied`.
+                let fast = status_is_retry_worthy(self.conn_status());
                 return self.retry_or_fail(
                     stream,
                     if st.status_code == 0 {
@@ -362,7 +377,7 @@ impl ClientSession {
                     } else {
                         crate::Error::ConnectionClosed
                     },
-                    true,
+                    fast,
                     false,
                 );
             }
@@ -493,6 +508,17 @@ pub(super) fn stream_ref(p: *mut Stream) -> bun_ptr::ParentRef<Stream> {
 pub(super) fn session_mut<'a>(p: *mut ClientSession) -> &'a mut ClientSession {
     // SAFETY: see INVARIANT above.
     unsafe { &mut *p }
+}
+
+/// Whether a terminal connection status is worth more than the first retry.
+/// Excludes the deterministic no-retry outcomes, where a fresh session fails
+/// the same way: a timeout (the peer never answered), a handshake failure, and
+/// a version-negotiation failure. A reset, a GOAWAY, or a peer close stays
+/// retry-worthy because a new connection to the origin can still succeed.
+pub(super) fn status_is_retry_worthy(st: core::ffi::c_int) -> bool {
+    st != quic::CONN_STATUS_TIMED_OUT
+        && st != quic::CONN_STATUS_HSK_FAILURE
+        && st != quic::CONN_STATUS_VERNEG_FAILURE
 }
 
 fn finish(client: &mut HTTPClient) {

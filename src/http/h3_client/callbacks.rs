@@ -13,7 +13,9 @@ use bstr::BStr;
 use bun_uws::quic;
 
 use super::client_context::ClientContext;
-use super::client_session::{ClientSession, session_mut, stream_mut, stream_ref};
+use super::client_session::{
+    ClientSession, session_mut, status_is_retry_worthy, stream_mut, stream_ref,
+};
 use super::encode;
 use super::stream::Stream;
 use crate::h2_client::dispatch::{is_malformed_response_field, is_malformed_response_value};
@@ -139,15 +141,14 @@ extern "C" fn on_conn_close(qs: *mut quic::Socket) {
         st,
         BStr::new(bun_core::slice_to_nul(&buf)),
     );
-    // See `ClientSession::retry_or_fail` for how this gates the retry budget.
-    let fast = st != quic::CONN_STATUS_TIMED_OUT;
+    let fast = status_is_retry_worthy(st);
     if let Some(ctx) = ClientContext::get() {
         ClientContext::as_mut(ctx).unregister(session);
     }
     while !session.pending.is_empty() {
         // lsquic fires on_stream_close for every bound stream before
-        // on_conn_closed, so anything still here never got a qstream and no
-        // request byte of it ever left the client: `not_applied` is true.
+        // on_conn_closed, so anything still here never got a qstream: its
+        // request never left the client, hence the `not_applied` argument.
         let stream = session.pending[0];
         // pending holds live Stream pointers owned by the session.
         debug_assert!(stream_ref(stream).qstream.is_none());

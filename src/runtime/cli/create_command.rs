@@ -298,8 +298,8 @@ impl CreateCommand {
                 filesystem.top_level_dir, &mut *destination_buf, &[dirname]
             ) else {
                 Output::err_generic(
-                    "destination path too long: \"{}\"",
-                    format_args!("{}", bstr::BStr::new(dirname)),
+                    "destination path too long: {}",
+                    format_args!("{}", bun_core::fmt::quote(dirname)),
                 );
                 Global::crash();
             };

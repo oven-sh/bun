@@ -145,6 +145,31 @@ describe("SQL adapter environment variable precedence", () => {
       expect(sql.options).toMatchObject({ adapter: "postgres", hostname: "127.0.0.1", port: 1 });
     });
 
+    test.each(["DATABASE_URL", "POSTGRES_URL"])("credentials in %s do not go to a host named in the options", name => {
+      process.env[name] = "postgres://envuser:ENVSECRET@10.9.9.9:7/envdb";
+      process.env.USER = "shelluser";
+      delete process.env.PASSWORD;
+
+      const noCreds = new SQL({ hostname: "127.0.0.1", port: 1 });
+      expect(noCreds.options).toMatchObject({
+        adapter: "postgres",
+        hostname: "127.0.0.1",
+        port: 1,
+        username: "shelluser",
+        password: "",
+        database: "shelluser",
+      });
+
+      const withUser = new SQL({ hostname: "127.0.0.1", port: 1, username: "optuser" });
+      expect(withUser.options).toMatchObject({ username: "optuser", password: "", database: "optuser" });
+
+      // The host-agnostic per-field variables still fill in what is missing.
+      process.env.PGPASSWORD = "pgpw";
+      process.env.PGDATABASE = "pgdb";
+      const withPgVars = new SQL({ hostname: "127.0.0.1", port: 1, username: "optuser" });
+      expect(withPgVars.options).toMatchObject({ username: "optuser", password: "pgpw", database: "pgdb" });
+    });
+
     test("a unix socket path is a connection target", () => {
       process.env.SQLITE_URL = "sqlite://envfile.db";
 

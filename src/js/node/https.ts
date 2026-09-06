@@ -2,12 +2,12 @@
 // The client portions (Agent, request, get) are a port of Node.js's lib/https.js
 // https://github.com/nodejs/node/blob/v26.3.0/lib/https.js
 const http = require("node:http");
-const { HttpsServer } = require("node:_http_server");
+const { httpsServerTlsOptions } = require("internal/tls");
 const { isIP } = require("internal/net/isIP");
 const { urlToHttpOptions } = require("internal/url");
 const { kEmptyObject, once } = require("internal/shared");
 const { validateObject } = require("internal/validators");
-const { kProxyConfig, checkShouldUseProxy, kWaitForProxyTunnel } = require("internal/http");
+const { kProxyConfig, checkShouldUseProxy, kWaitForProxyTunnel, tlsSymbol, optionsSymbol } = require("internal/http");
 const { validateHeaderValue } = require("node:_http_common");
 
 const ArrayPrototypeShift = Array.prototype.shift;
@@ -495,6 +495,16 @@ Agent.prototype._evictSession = function _evictSession(key) {
 
 const { shouldUseEnvProxy } = require("node:_http_agent");
 
+// Node's https.Server is a tls.Server: it always speaks TLS, and it reads the TLS
+// options that http.Server ignores.
+function Server(options, requestListener): void {
+  if (!(this instanceof Server)) return new Server(options, requestListener);
+  http.Server.$call(this, options, requestListener);
+  this[tlsSymbol] = httpsServerTlsOptions(this[optionsSymbol]);
+  return this;
+}
+$toClass(Server, "Server", http.Server);
+
 // Like Node's https.Server constructor: default ALPNProtocols to ['http/1.1']
 // when neither ALPNProtocols nor ALPNCallback was given, and store the
 // normalized protocol list / callback on the server instance the way
@@ -515,7 +525,7 @@ function createServer(options, requestListener) {
     // ALPN requests are always answered with http/1.1.
     options.ALPNProtocols = ["http/1.1"];
   }
-  const server = new HttpsServer(options, requestListener);
+  const server = new Server(options, requestListener);
   const optionsALPNProtocols = options.ALPNProtocols;
   if (optionsALPNProtocols) {
     require("node:tls").convertALPNProtocols(optionsALPNProtocols, server);
@@ -532,7 +542,7 @@ var https = {
     timeout: 5000,
     proxyEnv: shouldUseEnvProxy() ? process.env : undefined,
   }),
-  Server: HttpsServer,
+  Server,
   createServer,
   get,
   request,

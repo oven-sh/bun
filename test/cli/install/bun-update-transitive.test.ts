@@ -1000,6 +1000,8 @@ test.concurrent("`bun up --help` prints the update help", async () => {
   expect(stdout).toContain("--no-optional");
   expect(stdout).toContain("Only update dependencies and optionalDependencies");
   expect(stdout).toContain("bun update --prod");
+  expect(stdout).toContain("--depth <NUM>");
+  expect(stdout).toContain("bun update --depth 0");
   expect(stdout).not.toContain("--transitive");
   expect(stdout).not.toContain("Don't install devDependencies");
   expect(stdout).toContain("-p, --production");
@@ -2096,7 +2098,7 @@ test.concurrent("a version cannot be combined with a selector", async () => {
   const { dir } = await staleSiblings(DEV_A_DEP);
   await expectRejected(
     dir,
-    "a version cannot be combined with --dev, --prod or --no-optional: a-dep@1",
+    "a version cannot be combined with --dev, --prod, --no-optional or --depth 0: a-dep@1",
     "--dev",
     "a-dep@1",
   );
@@ -2107,6 +2109,156 @@ test.concurrent.each([
   ["a pattern", "a-*"],
 ])("`bun update -D` with %s that hits moves only that entry", async (_, arg) => {
   await expectOnlyADepMoved(await staleSiblings(DEV_A_DEP), "-D", arg);
+});
+
+// a-dep is a stale direct entry; no-deps is parked one release behind under one-range-dep's `^1.0.0`.
+async function staleDirectAndTransitive() {
+  const dir = await setup({
+    "package.json": pkgJson({ "one-range-dep": "1.0.0", "no-deps": "1.0.0", "a-dep": "1.0.1" }),
+  });
+  const packageJson = pkgJson({ "one-range-dep": "1.0.0", "a-dep": "^1.0.1" });
+  await reinstall(dir, packageJson);
+  expect(await lockedVersions(dir, "no-deps")).toStrictEqual(["1.0.0"]);
+  expect(await lockedVersions(dir, "a-dep")).toStrictEqual(["1.0.1"]);
+  return { dir, packageJson };
+}
+
+test.concurrent("`bun update --depth 0` moves direct entries and keeps transitive rows locked", async () => {
+  const { dir } = await staleDirectAndTransitive();
+  const { stdout, stderr, exitCode } = await run(dir, "update", "--depth", "0");
+  expectSummary(stdout, A_DEP_ROW, "", installed(1));
+  expectCleanStderr(stderr);
+  expect(await packageJsonOf(dir)).toStrictEqual(pkgJson({ "one-range-dep": "1.0.0", "a-dep": "^1.0.10" }));
+  expect(await lockedVersions(dir, "a-dep")).toStrictEqual(["1.0.10"]);
+  expect(await lockedVersions(dir, "no-deps")).toStrictEqual(["1.0.0"]);
+  expect(await installedVersion(dir, "no-deps")).toBe("1.0.0");
+  await frozen(dir);
+  expect(exitCode).toBe(0);
+
+  // The transitive row is still stale: a bare update is what moves it.
+  const bare = await run(dir, "update");
+  expectSummary(bare.stdout, NO_DEPS_ROW_HINTED, "", installed(1));
+  expect(await lockedVersions(dir, "no-deps")).toStrictEqual(["1.1.0"]);
+  expect(bare.exitCode).toBe(0);
+});
+
+test.concurrent("`bun update --depth=0` is `--depth 0`", async () => {
+  const { dir } = await staleDirectAndTransitive();
+  const { stdout, stderr, exitCode } = await run(dir, "update", "--depth=0");
+  expectSummary(stdout, A_DEP_ROW, "", installed(1));
+  expectCleanStderr(stderr);
+  expect(await lockedVersions(dir, "no-deps")).toStrictEqual(["1.0.0"]);
+  expect(exitCode).toBe(0);
+});
+
+test.concurrent("`bun update --depth 0 <name>` matches the name against direct entries only", async () => {
+  const { dir } = await staleDirectAndTransitive();
+  await expectRejected(dir, 'error: no direct dependencies match "no-deps"', "--depth", "0", "no-deps");
+  const { stdout, stderr, exitCode } = await run(dir, "update", "--depth", "0", "a-dep");
+  expectSummary(stdout, A_DEP_ROW, "", installed(1));
+  expectCleanStderr(stderr);
+  expect(await lockedVersions(dir, "no-deps")).toStrictEqual(["1.0.0"]);
+  expect(exitCode).toBe(0);
+});
+
+test.concurrent("`bun update --depth 0` with nothing stale is a no-op that shows its work", async () => {
+  const dir = await setup({ "package.json": pkgJson({ "one-range-dep": "1.0.0" }) });
+  await expectNothingToUpdate(dir, noneSelected(1, "selected by --depth 0"), "--depth", "0");
+});
+
+test.concurrent.each(["1", "x"])("`bun update --depth %s` is rejected", async depth => {
+  const { dir } = await staleDirectAndTransitive();
+  const { stdout } = await expectRejected(dir, "bun update --depth only accepts 0", "--depth", depth);
+  expect(stdout).not.toContain("^ ");
+});
+
+test.concurrent("a version cannot be combined with `--depth 0`", async () => {
+  const { dir } = await staleDirectAndTransitive();
+  await expectRejected(
+    dir,
+    "a version cannot be combined with --dev, --prod, --no-optional or --depth 0: a-dep@1",
+    "--depth",
+    "0",
+    "a-dep@1",
+  );
+});
+
+// parent has a newer major whose range still admits the parked leaf.
+const LATEST_PARENT_SAME_RANGE: Manifests = {
+  parent: { "1.0.0": { dependencies: { leaf: "^1.0.0" } }, "2.0.0": { dependencies: { leaf: "^1.0.0" } } },
+  leaf: { "1.0.0": {}, "1.1.0": {} },
+};
+
+test.concurrent("`bun update --depth 0 --latest` moves the direct entry and keeps its child locked", async () => {
+  using server = await serveRegistry(LATEST_PARENT_SAME_RANGE);
+  const dir = await setupServed(
+    server,
+    "update-depth-latest-",
+    pkgJson({ parent: "1.0.0", leaf: "1.0.0" }),
+    pkgJson({ parent: "^1.0.0" }),
+  );
+  expect(await lockedVersions(dir, "leaf")).toStrictEqual(["1.0.0"]);
+
+  const { stdout, stderr, exitCode } = await run(dir, "update", "--depth", "0", "--latest");
+  expectSummary(stdout, movedRow("parent", "1.0.0", "2.0.0"), "", installed(1));
+  expectCleanStderr(stderr);
+  expect(await packageJsonOf(dir)).toStrictEqual(pkgJson({ parent: "^2.0.0" }));
+  expect(await lockedVersions(dir, "parent")).toStrictEqual(["2.0.0"]);
+  expect(await lockedVersions(dir, "leaf")).toStrictEqual(["1.0.0"]);
+  expect(await installedVersion(dir, "leaf")).toBe("1.0.0");
+  await frozen(dir);
+  expect(exitCode).toBe(0);
+});
+
+// parent's newer release narrows its range past the parked leaf, so that one child has to move.
+const PARENT_NARROWS_RANGE: Manifests = {
+  parent: { "1.0.0": { dependencies: { leaf: "^1.0.0" } }, "1.1.0": { dependencies: { leaf: "^1.1.0" } } },
+  leaf: { "1.0.0": {}, "1.1.0": {} },
+};
+
+test.concurrent(
+  "`bun update --depth 0` re-resolves a child the moved parent's new range no longer admits",
+  async () => {
+    using server = await serveRegistry(PARENT_NARROWS_RANGE);
+    const dir = await setupServed(
+      server,
+      "update-depth-narrowed-",
+      pkgJson({ parent: "1.0.0", leaf: "1.0.0" }),
+      pkgJson({ parent: "^1.0.0" }),
+    );
+    expect(await lockedVersions(dir, "leaf")).toStrictEqual(["1.0.0"]);
+
+    const { stdout, stderr, exitCode } = await run(dir, "update", "--depth", "0");
+    expectMoved(stdout, "parent", "1.0.0", "1.1.0");
+    expectCleanStderr(stderr);
+    expect(await packageJsonOf(dir)).toStrictEqual(pkgJson({ parent: "^1.1.0" }));
+    expect(await lockedVersions(dir, "parent")).toStrictEqual(["1.1.0"]);
+    expect(await lockedVersions(dir, "leaf")).toStrictEqual(["1.1.0"]);
+    expect(await installedVersion(dir, "leaf")).toBe("1.1.0");
+    await frozen(dir);
+    expect(exitCode).toBe(0);
+  },
+);
+
+test.concurrent("`bun update --depth 0 -r` moves every workspace's direct entries and nothing else", async () => {
+  const { dir, locked, stale, texts, textsBefore } = await staleMemberGroups();
+  const [rootBefore] = textsBefore;
+  const { stdout, stderr, exitCode } = await run(dir, "update", "--depth", "0", "-r");
+  expect(movedRows(stdout).sort()).toStrictEqual([A_DEP_ROW, movedRow("dep-with-tags", "1.0.0", "1.0.1"), NO_DEPS_ROW]);
+  expectCleanStderr(stderr);
+  expect(await texts()).toStrictEqual([
+    rootBefore,
+    stringify(PKG1_GROUPS("^1.1.0", "^1.0.0", "^1.0.10")),
+    stringify(PKG2_GROUPS("^1.0.1", "^1.0.0")),
+  ]);
+  expect(await locked()).toStrictEqual({
+    ...stale,
+    "no-deps": ["1.1.0"],
+    "a-dep": ["1.0.10"],
+    "dep-with-tags": ["1.0.1"],
+  });
+  await frozen(dir);
+  expect(exitCode).toBe(0);
 });
 
 async function staleAlias() {

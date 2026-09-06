@@ -479,9 +479,6 @@ declare module "bun" {
     /**
      * Sets the maximum number of bytes that can be buffered on a single connection.
      *
-     * The limit is checked before a message is queued. A connection that is
-     * under the limit accepts the whole message, even one larger than the limit.
-     *
      * @default 1024 * 1024 * 16 // 16 MB
      */
     backpressureLimit?: number;

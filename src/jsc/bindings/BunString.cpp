@@ -648,7 +648,10 @@ extern "C" BunString URL__getHrefJoin(const BunString* baseStr, const BunString*
 {
     auto base = baseStr->toWTFString();
     auto relative = relativeStr->toWTFString();
-    auto url = WTF::URL(WTF::URL(base), relative);
+    auto baseURL = WTF::URL(base);
+    if (!baseURL.isValid() || !Bun::hasValidParsedHost(baseURL, base))
+        return { BunStringTag::Dead };
+    auto url = WTF::URL(baseURL, relative);
     if (!url.isValid() || url.isEmpty() || !Bun::hasValidParsedHost(url, relative))
         return { BunStringTag::Dead };
 

@@ -632,10 +632,9 @@ impl PosixBufferedReader {
             if fd == Fd::INVALID {
                 return None;
             }
-            let len = MaxBuf::clamp_read_len((*this).maxbuf, (*this).limit.clamp_len(max_len));
-            if len == 0 {
-                return None;
-            }
+            // Never an empty read: that would read as EOF, and a `None` here would park the pull.
+            let len =
+                MaxBuf::clamp_read_len((*this).maxbuf, (*this).limit.clamp_len(max_len.max(1)));
             (*this).flags.insert(PosixFlags::ASYNC_READ_IN_FLIGHT);
             let offset = (*this)
                 .flags

@@ -52,7 +52,7 @@ import type { BuildNode, Ninja } from "./ninja.ts";
 import { emitRust, rustLibPath } from "./rust.ts";
 import { quote, slash } from "./shell.ts";
 import { emitShims, machoPostlinkCommand, machoPostlinkImplicitInputs } from "./shims.ts";
-import { computeDepLibs, resolveDep, type ResolvedDep, writeFetchStaticOutputs } from "./source.ts";
+import { computeDepLibs, resolveDep, writeFetchStaticOutputs, type ResolvedDep } from "./source.ts";
 import { streamPath } from "./stream.ts";
 import { generateUnifiedSources } from "./unified.ts";
 

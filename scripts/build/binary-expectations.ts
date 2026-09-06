@@ -77,6 +77,15 @@ export interface BinaryExpectations {
    * the older symbol version, not here.
    */
   maxSymbolVersions?: Record<string, string>;
+  /**
+   * Version nodes without a number that the binary may require, exact names.
+   * Bionic tags its symbols by the API level that introduced them (LIBC,
+   * LIBC_N, LIBC_O, LIBC_P, …), so on Android this list is the API floor the
+   * way maxSymbolVersions is glibc's; on glibc any un-numbered node
+   * (GLIBC_ABI_DT_RELR = a 2.36+ loader, GLIBC_PRIVATE) is a violation.
+   * Judged only where maxSymbolVersions is.
+   */
+  versionNames?: string[];
   /** Mach-O `minos`, PE subsystem version ("6.0"); exact. */
   minOSVersion?: string;
   /** Undefined dynamic symbols that must not appear (`*` wildcards). */
@@ -279,6 +288,7 @@ export function binaryExpectations(cfg: Config): BinaryExpectations {
 
       let neededLibs: string[];
       let maxSymbolVersions: Record<string, string>;
+      let versionNames: string[] = [];
       if (gnu) {
         neededLibs = ["libc.so.6", "libdl.so.2", "libm.so.6", "libpthread.so.0"];
         // The static ASan runtime links librt/libresolv; without it bun
@@ -298,6 +308,8 @@ export function binaryExpectations(cfg: Config): BinaryExpectations {
       } else if (android) {
         neededLibs = ["libc.so", "libdl.so", "libm.so"];
         maxSymbolVersions = {};
+        // API 28 (Android 9): bionic's version nodes up to P.
+        versionNames = ["LIBC", "LIBC_N", "LIBC_O", "LIBC_P"];
       } else {
         // FreeBSD 13's libc is FBSD_1.7; its libc++/libcxxrt carry
         // GLIBCXX_3.4 / CXXABI_1.3 tags for the libstdc++-compatible subset.
@@ -309,7 +321,7 @@ export function binaryExpectations(cfg: Config): BinaryExpectations {
         format,
         exports: { versionScript: src(cfg.freebsd ? "linker-freebsd.lds" : "linker.lds"), exact: [], patterns: [] },
         neededLibs: { names: neededLibs, exact: pinned, allowed: allowedLibs },
-        ...(pinned && { maxSymbolVersions }),
+        ...(pinned && { maxSymbolVersions, versionNames }),
         forbiddenImports: forbiddenImports(cfg),
         ...(staticInitializers && { staticInitializers }),
         elf: {

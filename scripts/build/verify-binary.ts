@@ -305,11 +305,14 @@ function verifyElf(spec: VerifySpec): void {
     if (expect.maxSymbolVersions !== undefined) {
       // Version nodes without a number are requirements too: GLIBC_ABI_DT_RELR
       // (packed relative relocations, glibc >= 2.36) and GLIBC_PRIVATE would
-      // both raise or break the floor while passing a numeric ceiling.
+      // both raise or break the floor while passing a numeric ceiling; bionic
+      // names all of its nodes that way (LIBC_N, LIBC_O, …), listed in
+      // versionNames.
+      const allowedNames = new Set(expect.versionNames ?? []);
       for (const m of verneed.matchAll(/^\s*Name: (\S+)\s*$/gm)) {
         const name = m[1]!;
-        if (!/^[A-Za-z+]+_[0-9][0-9.]*$/.test(name))
-          violations.push(`${name} required (not a numbered version: raises or breaks the libc floor)`);
+        if (!/^[A-Za-z+]+_[0-9][0-9.]*$/.test(name) && !allowedNames.has(name))
+          violations.push(`${name} required (not an expected version node: raises or breaks the libc floor)`);
       }
       for (const [prefix, ver] of maxSeen) {
         const ceiling = expect.maxSymbolVersions[prefix];
@@ -720,10 +723,12 @@ function coffDefinitions(
 }
 
 function verifyDuplicates(nm: string, objdump: string | undefined, rspfile: string, reportPath: string): number {
+  // .res (compiled Windows resources) is a link input with no symbols and
+  // no object format nm reads; everything else on the line must scan.
   const inputs = readFileSync(rspfile, "utf8")
     .split("\n")
     .map(l => l.trim())
-    .filter(l => l.length > 0);
+    .filter(l => l.length > 0 && !l.endsWith(".res"));
   assert(inputs.length > 0, `duplicates: ${rspfile} lists no inputs`);
   const defs: Definition[] = [];
   // --coff: the target is Windows. COFF members go through objdump (above);

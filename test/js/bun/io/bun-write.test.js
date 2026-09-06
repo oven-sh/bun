@@ -434,16 +434,74 @@ const IS_UV_FS_COPYFILE_DISABLED =
       using dir = tempDir("bun-write-empty-fd", { "out.txt": "" });
       const p = path.join(String(dir), "out.txt");
       const results = [];
-      for (const src of emptySources()) {
-        fs.writeFileSync(p, "EXISTING");
-        const fd = fs.openSync(p, "r+");
-        try {
-          results.push({ ret: await Bun.write(Bun.file(fd), src), contents: fs.readFileSync(p, "utf8") });
-        } finally {
-          fs.closeSync(fd);
+      for (const flags of ["r+", "a"]) {
+        for (const src of emptySources()) {
+          fs.writeFileSync(p, "EXISTING");
+          const fd = fs.openSync(p, flags);
+          try {
+            results.push({
+              flags,
+              ret: await Bun.write(Bun.file(fd), src),
+              size: fs.fstatSync(fd).size,
+              contents: fs.readFileSync(p, "utf8"),
+            });
+          } finally {
+            fs.closeSync(fd);
+          }
         }
       }
-      expect(results).toEqual(emptySourceExprs.map(() => ({ ret: 0, contents: "EXISTING" })));
+      expect(results).toEqual(
+        ["r+", "a"].flatMap(flags => emptySourceExprs.map(() => ({ flags, ret: 0, size: 8, contents: "EXISTING" }))),
+      );
+    });
+
+    // The `bun app.js >> app.log 2>> err.log` shape: fd 1 and fd 2 arrive already open in
+    // append mode on files that hold an earlier process's output.
+    it("to inherited O_APPEND stdout/stderr leaves earlier content intact", async () => {
+      using dir = tempDir("bun-write-empty-append-stdio", {
+        "out.log": "line1\nline2\nline3\n",
+        "err.log": "err1\nerr2\n",
+        "results.json": "",
+      });
+      const outLog = path.join(String(dir), "out.log");
+      const errLog = path.join(String(dir), "err.log");
+      const resultsPath = path.join(String(dir), "results.json");
+      // A Response body is single-use, so build a fresh source for each destination.
+      const script = `
+        const mk = () => [${emptySourceExprs.join(", ")}];
+        const results = [];
+        for (let i = 0; i < ${emptySourceExprs.length}; i++) {
+          results.push([await Bun.write(Bun.stdout, mk()[i]), await Bun.write(Bun.stderr, mk()[i])]);
+        }
+        require("fs").writeFileSync(process.env.RESULTS_PATH, JSON.stringify(results));
+      `;
+      const outFd = fs.openSync(outLog, "a");
+      const errFd = fs.openSync(errLog, "a");
+      let exitCode;
+      try {
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), "-e", script],
+          env: { ...bunEnv, RESULTS_PATH: resultsPath },
+          stdin: "ignore",
+          stdout: outFd,
+          stderr: errFd,
+        });
+        exitCode = await proc.exited;
+      } finally {
+        fs.closeSync(outFd);
+        fs.closeSync(errFd);
+      }
+      expect({
+        out: fs.readFileSync(outLog, "utf8"),
+        err: fs.readFileSync(errLog, "utf8"),
+        results: JSON.parse(fs.readFileSync(resultsPath, "utf8") || "null"),
+        exitCode,
+      }).toEqual({
+        out: "line1\nline2\nline3\n",
+        err: "err1\nerr2\n",
+        results: emptySourceExprs.map(() => [0, 0]),
+        exitCode: 0,
+      });
     });
 
     it("to a regular-file path still empties the file", async () => {

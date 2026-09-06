@@ -8098,9 +8098,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Some(ref_)
     }
 
-    /// A computed member (`A = f()`) counts as a number, the only type tsc allows there.
-    /// A namespace merged into the enum adds `Property` entries that do not count.
-    /// A map with no enum members and some other entry is a plain namespace.
+    /// Computed members count as numbers (tsc allows no other), merged namespace entries do not.
     fn enum_members_metadata(
         members: &js_ast::TSNamespaceMemberMap,
     ) -> Option<bun_ast::ts::Metadata> {

@@ -636,14 +636,18 @@ impl Subprocess<'_> {
             return;
         }
         self.event_loop_timer_refd.set(refd);
-        let uws_loop = self.global_this().bun_vm().uws_loop();
         let delta: i32 = if refd { 1 } else { -1 };
-        Self::timer_all().increment_timer_ref(delta, uws_loop);
+        Self::timer_all().increment_timer_ref(delta);
     }
 
     #[inline]
-    fn timer_all() -> &'static mut crate::timer::All {
-        crate::jsc_hooks::timer_all_mut()
+    fn timer_all() -> &'static crate::timer::All {
+        crate::jsc_hooks::timer_all()
+    }
+
+    #[inline]
+    fn timer_ref(&self) -> crate::timer::TimerRef {
+        crate::timer::TimerRef::new(self, |p| &p.event_loop_timer)
     }
 
     pub(crate) fn timeout_callback(&self) {
@@ -959,7 +963,7 @@ impl Subprocess<'_> {
         // kept explicit at the tail for now (no early returns in this body).
 
         if self.event_loop_timer.get().state == EventLoopTimerState::ACTIVE {
-            Self::timer_all().remove(self.event_loop_timer.as_ptr());
+            Self::timer_all().remove(self.timer_ref());
         }
         self.set_event_loop_timer_refd(false);
 
@@ -1331,7 +1335,7 @@ impl Subprocess<'_> {
             self.deref();
         }
         if self.event_loop_timer.get().state == EventLoopTimerState::ACTIVE {
-            Self::timer_all().remove(self.event_loop_timer.as_ptr());
+            Self::timer_all().remove(self.timer_ref());
         }
         self.set_event_loop_timer_refd(false);
 

@@ -14,7 +14,7 @@ use bun_jsc::{
 use bun_lsquic_sys as lsquic;
 use bun_uws as uws;
 
-use crate::jsc_hooks::timer_all_mut as timer_all;
+use crate::jsc_hooks::timer_all;
 use crate::timer::{EventLoopTimer, EventLoopTimerState, EventLoopTimerTag};
 
 use super::callbacks;
@@ -287,6 +287,11 @@ unsafe extern "C" {
 }
 
 impl QuicEndpoint {
+    #[inline]
+    fn timer_ref(&self) -> crate::timer::TimerRef {
+        crate::timer::TimerRef::new(self, |e| &e.event_loop_timer)
+    }
+
     /// Links this endpoint into the loop's driver list. Idempotent.
     fn link_loop_driver(&self) {
         if self.nq_registered.replace(true) {
@@ -1581,12 +1586,7 @@ impl QuicEndpoint {
         // time-driven state (RTO, ACK delay, idle) and the deferred close.
         self.mark_driver_pending();
         let next = bun_core::Timespec::ms_from_now(bun_core::TimespecMockMode::ForceRealTime, 1);
-        timer_all().update(
-            core::ptr::addr_of!(self.event_loop_timer)
-                .cast::<bun_event_loop::EventLoopTimer::EventLoopTimer>()
-                .cast_mut(),
-            &next,
-        );
+        timer_all().update(self.timer_ref(), &next);
     }
 
     fn rearm_timer(&self) {
@@ -1624,12 +1624,7 @@ impl QuicEndpoint {
                 bun_core::TimespecMockMode::ForceRealTime,
                 ms as i64,
             );
-            timer_all().update(
-                core::ptr::addr_of!(self.event_loop_timer)
-                    .cast::<bun_event_loop::EventLoopTimer::EventLoopTimer>()
-                    .cast_mut(),
-                &next,
-            );
+            timer_all().update(self.timer_ref(), &next);
         }
     }
 
@@ -2077,7 +2072,7 @@ impl QuicEndpoint {
         // Unlink first: the driver walk must never reach a freed endpoint.
         self.unlink_loop_driver();
         if self.event_loop_timer.get().state == EventLoopTimerState::ACTIVE {
-            timer_all().remove(self.event_loop_timer.as_ptr());
+            timer_all().remove(self.timer_ref());
         }
         for engine in [
             self.server_engine.replace(null_mut()),
@@ -2125,12 +2120,7 @@ impl QuicEndpoint {
         self.poll_ref.with_mut(|p| p.ref_(bun_io::js_vm_ctx()));
         self.pending_endpoint_close.set(true);
         let next = bun_core::Timespec::ms_from_now(bun_core::TimespecMockMode::ForceRealTime, 1);
-        timer_all().update(
-            core::ptr::addr_of!(self.event_loop_timer)
-                .cast::<bun_event_loop::EventLoopTimer::EventLoopTimer>()
-                .cast_mut(),
-            &next,
-        );
+        timer_all().update(self.timer_ref(), &next);
     }
 
     fn apply_server_session_options(
@@ -2652,7 +2642,7 @@ impl QuicEndpoint {
         // Remove the timer before the backing storage drops, or a later heap
         // operation dereferences the freed node.
         if self.event_loop_timer.get().state == EventLoopTimerState::ACTIVE {
-            timer_all().remove(self.event_loop_timer.as_ptr());
+            timer_all().remove(self.timer_ref());
         }
         self.release_native();
     }

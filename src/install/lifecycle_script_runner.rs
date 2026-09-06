@@ -316,21 +316,15 @@ pub type List<'a> = io_heap::Intrusive<LifecycleScriptSubprocess<'a>, StartedAtC
 
 impl<'a> io_heap::HeapNode for LifecycleScriptSubprocess<'a> {
     #[inline]
-    fn heap(&mut self) -> &mut io_heap::IntrusiveField<Self> {
-        &mut self.heap
+    fn heap(&self) -> &io_heap::IntrusiveField<Self> {
+        &self.heap
     }
 }
 
 impl<'a> io_heap::HeapContext<LifecycleScriptSubprocess<'a>> for StartedAtCtx {
     #[inline]
-    unsafe fn less(
-        &self,
-        a: *mut LifecycleScriptSubprocess<'a>,
-        b: *mut LifecycleScriptSubprocess<'a>,
-    ) -> bool {
-        // SAFETY: `a`/`b` are live heap nodes owned by the intrusive heap; the
-        // heap only calls `less` on nodes it has been handed via `insert`.
-        unsafe { (*a).started_at < (*b).started_at }
+    fn less(&self, a: &LifecycleScriptSubprocess<'a>, b: &LifecycleScriptSubprocess<'a>) -> bool {
+        a.started_at < b.started_at
     }
 }
 
@@ -437,18 +431,15 @@ impl<'a> LifecycleScriptSubprocess<'a> {
         // SAFETY: caller contract — `this` is non-null and live.
         unsafe {
             let manager: *mut PackageManager = (*this).manager.as_ptr();
-            let heap = core::ptr::addr_of_mut!((*this).heap);
+            let heap = core::ptr::addr_of!((*this).heap);
             // SAFETY: `manager` is non-null and outlives every subprocess (see
             // `Self::manager`); the install loop is single-threaded here.
-            let active = &mut (*manager).active_lifecycle_scripts;
-            if !(*heap).child.is_null()
-                || !(*heap).next.is_null()
-                || !(*heap).prev.is_null()
-                || core::ptr::eq(active.root, this as *const _)
-            {
+            let this = this.cast::<LifecycleScriptSubprocess<'static>>();
+            let active = &(*manager).active_lifecycle_scripts;
+            if (*heap).is_linked() || active.is_root(this) {
                 // SAFETY: `this` was inserted via `insert(this)` with allocation-
                 // rooted provenance; the heap holds no other live `&mut` to it here.
-                active.remove(this.cast::<LifecycleScriptSubprocess<'static>>());
+                active.remove(this);
             }
         }
     }

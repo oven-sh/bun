@@ -1,4 +1,5 @@
 import { bunEnv, bunExe, isASAN, isWindows } from "harness";
+import EventEmitter from "node:events";
 import vm from "node:vm";
 
 describe.each([true, false])("Bun.deepEquals(a, b, strict: %p)", strict => {
@@ -217,6 +218,19 @@ describe("Bun.deepEquals with mixed enumerability", () => {
     expect(Bun.deepEquals(Object.freeze({ a: 1, nested: { d: 1 } }), frozen)).toBe(true);
     expect(Bun.deepEquals(withGetter({ a: 1, x: undefined }), withGetter({ a: 1 }))).toBe(true);
     expect(Bun.deepEquals(withGetter({ a: 1 }), withGetter({ a: 1, x: undefined }))).toBe(true);
+  });
+
+  // getPropertyNames lists EventEmitter.prototype.constructor (enumerable) for a
+  // subclass instance, although the subclass prototype shadows it with a
+  // non-enumerable constructor. Both sides must treat that name the same way.
+  it("treats a chain name shadowed by a non-enumerable property the same on both sides", () => {
+    class Foo extends EventEmitter {}
+    const a = withGetter(new Foo());
+    const b = withGetter(new Foo());
+    expect(Bun.deepEquals(a, b)).toBe(true);
+    expect(Bun.deepEquals(a, b, true)).toBe(true);
+    const c = Object.create(Object.getPrototypeOf(process));
+    expect(Bun.deepEquals(c, Object.getPrototypeOf(process))).toBe(true);
   });
 
   it("still ignores non-enumerable properties present on both sides", () => {

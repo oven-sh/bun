@@ -519,6 +519,13 @@ const cases: Case[] = [
     looseBug: "reports equal",
   },
   {
+    name: "{ x: 1 } and a Proxy of an object with a non-enumerable x",
+    a: () => ({ x: 1 }),
+    b: () => new Proxy(withHiddenProperty({ y: 1 }, "x", 1), {}),
+    strict: false,
+    loose: false,
+  },
+  {
     name: "an object with a non-enumerable x and { x: 1 }",
     a: () => withHiddenProperty({}, "x", 1),
     b: () => ({ x: 1 }),

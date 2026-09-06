@@ -799,13 +799,12 @@ static bool findEnumerableProperty(JSC::JSGlobalObject* globalObject, JSC::JSObj
     if (!hasProperty)
         return false;
 
-    // A Proxy reports no attributes. Its properties count as enumerable.
-    bool opaque = slot.isTaintedByOpaqueObject();
-    if (!opaque && (slot.attributes() & PropertyAttribute::DontEnum))
+    if (slot.attributes() & PropertyAttribute::DontEnum)
         return false;
 
     if (value) {
-        *value = opaque ? object->get(globalObject, propertyName) : slot.getValue(globalObject, propertyName);
+        // A Proxy slot carries no value. Read it through the get trap, like getIfPropertyExists().
+        *value = slot.isTaintedByOpaqueObject() ? object->get(globalObject, propertyName) : slot.getValue(globalObject, propertyName);
         RETURN_IF_EXCEPTION(scope, false);
     }
     return true;
@@ -829,21 +828,18 @@ static bool enumerablePropertiesEqual(const DeepEqualsMode& mode, JSC::JSGlobalO
         JSValue prop1;
         bool has1 = findEnumerableProperty(globalObject, o1, propertyName1, ownOnly, &prop1);
         RETURN_IF_EXCEPTION(scope, false);
-        if (!has1) {
-            if (mode.isStrict) {
-                return false;
-            }
-            continue;
-        }
-
         JSValue prop2;
         bool has2 = findEnumerableProperty(globalObject, o2, propertyName1, ownOnly, &prop2);
         RETURN_IF_EXCEPTION(scope, false);
-        if (!has2) {
-            if (!mode.isStrict && prop1.isUndefined()) {
-                continue;
-            }
+        if (!mode.isStrict) {
+            if (has1 && prop1.isUndefined()) has1 = false;
+            if (has2 && prop2.isUndefined()) has2 = false;
+        }
+        if (has1 != has2) {
             return false;
+        }
+        if (!has1) {
+            continue;
         }
 
         bool eql = mode.deepEquals(globalObject, prop1, prop2, gcBuffer, stack, scope, true);
@@ -860,6 +856,7 @@ static bool enumerablePropertiesEqual(const DeepEqualsMode& mode, JSC::JSGlobalO
         if (skipName && i2 == *skipName) continue;
         PropertyName propertyName2 = PropertyName(i2);
 
+        // A name o1 has was compared in the first loop.
         bool has1 = findEnumerableProperty(globalObject, o1, propertyName2, ownOnly, nullptr);
         RETURN_IF_EXCEPTION(scope, false);
         if (has1) continue;
@@ -1190,12 +1187,10 @@ bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
                     return true;
                 });
             } else {
-                size_t count = 0;
                 o1Structure->forEachProperty(vm, [&](const PropertyTableEntry& entry) -> bool {
                     if (entry.attributes() & PropertyAttribute::DontEnum || PropertyName(entry.key()).isPrivateName()) {
                         return true;
                     }
-                    count++;
 
                     JSValue left = o1->getDirect(entry.offset());
                     JSValue right;
@@ -1223,7 +1218,6 @@ bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
                 });
 
                 if (result) {
-                    size_t remain = count;
                     o2Structure->forEachProperty(vm, [&](const PropertyTableEntry& entry) -> bool {
                         if (entry.attributes() & PropertyAttribute::DontEnum || PropertyName(entry.key()).isPrivateName()) {
                             return true;
@@ -1243,12 +1237,6 @@ bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
                             return false;
                         }
 
-                        if (remain == 0) {
-                            result = false;
-                            return false;
-                        }
-
-                        remain--;
                         return true;
                     });
                 }

@@ -432,7 +432,7 @@ impl PosixBufferedReader {
     /// the struct embedding `*this` — a free must never run under a live
     /// receiver protector.
     unsafe fn close_handle(this: *mut Self) {
-        // The pool thread still reads the fd: closing it now would hand the descriptor number to the next `open`. `complete_async_read` finishes the close.
+        // A read is out on the pool thread: `complete_async_read` finishes the close.
         // SAFETY: caller contract; borrow ends at `;`.
         if unsafe { (*this).flags.contains(PosixFlags::ASYNC_READ_IN_FLIGHT) } {
             // SAFETY: caller contract; borrow ends at `;`.
@@ -606,8 +606,8 @@ impl PosixBufferedReader {
     }
 
     /// Reserves one read of up to `max_len` bytes for the parent to perform off the event loop.
-    /// `None` when the reader is paused, done, or already has a read out, or when the byte
-    /// budget is used up: that is this reader's EOF, reported through `on_reader_done` here.
+    /// `None` when paused, done, a read is already out, or the budget is used up (this reader's
+    /// EOF, reported through `on_reader_done` here).
     ///
     /// # Safety
     /// `this` is the live reader; the `on_reader_done` dispatch may free the parent.
@@ -645,15 +645,13 @@ impl PosixBufferedReader {
         }
     }
 
-    /// Delivers the read reserved by [`Self::begin_async_read`]: the bytes go to the parent the way
-    /// a synchronous read's do, an empty read or a used-up budget ends the reader, and an error is
-    /// reported through `on_reader_error`. A `close()` that landed while the read was out is
-    /// finished here and the bytes are dropped. Returns whether the parent wants the next read
-    /// (it asked to keep going, and the reader is neither paused nor done).
+    /// Delivers the read reserved by [`Self::begin_async_read`] the way a synchronous read is
+    /// delivered (chunk, EOF, or error). A `close()` that landed meanwhile is finished here and the
+    /// bytes are dropped. Returns whether the parent wants the next read.
     ///
     /// # Safety
-    /// `this` is the live reader; the dispatches may free the parent, so the caller must hold
-    /// its own reference across this call.
+    /// `this` is the live reader; the dispatches may free the parent, so the caller holds its own
+    /// reference across this call.
     pub unsafe fn complete_async_read(this: *mut Self, result: sys::Result<Vec<u8>>) -> bool {
         // SAFETY: caller contract; borrows end at each `;`.
         let vtable = unsafe {

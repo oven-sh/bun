@@ -464,6 +464,11 @@ impl us_socket_t {
     pub(crate) fn is_established(&self) -> bool {
         c::us_socket_is_established(self) > 0
     }
+
+    /// Always true for a plain TCP socket.
+    pub(crate) fn is_ssl_handshake_finished(&self) -> bool {
+        c::us_socket_is_ssl_handshake_finished(self) > 0
+    }
 }
 
 /// Raw externs. Private — every operation has a typed method on `us_socket_t`.
@@ -576,6 +581,7 @@ mod c {
         pub(super) safe fn us_socket_verify_error(s: &us_socket_t) -> us_bun_verify_error_t;
         pub(super) safe fn us_socket_get_error(s: &us_socket_t) -> c_int;
         pub(super) safe fn us_socket_is_established(s: &us_socket_t) -> i32;
+        pub(super) safe fn us_socket_is_ssl_handshake_finished(s: &us_socket_t) -> i32;
 
         /// ssl_ctx is required (the whole point); sni may be null.
         pub(super) fn us_socket_adopt_tls(

@@ -41,6 +41,7 @@ use crate::mysql::js_mysql_connection::JSMySQLConnection;
 use crate::mysql::js_mysql_query::JSMySQLQuery;
 use crate::mysql::my_sql_request_queue::MySQLRequestQueue;
 use crate::mysql::my_sql_statement::{self as mysql_statement, MySQLStatement, Param};
+use crate::shared::socket_teardown;
 use bun_ptr::RefPtr;
 
 pub use bun_sql::mysql::protocol::error_packet::ErrorPacket;
@@ -282,8 +283,10 @@ impl MySQLConnection {
     }
 
     pub(crate) fn close(&mut self) {
-        self.socket.close(uws::CloseKind::Normal);
         self.write_buffer = OffsetByteList::default();
+        // A copy: the close dispatches `on_close`, which detaches `self.socket`.
+        let socket = self.socket;
+        socket_teardown::close_now(&socket);
     }
 
     pub(crate) fn clean_queue_and_close(

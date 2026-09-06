@@ -1,6 +1,7 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from "bun:test";
 import { randomBytes } from "crypto";
-import { bunEnv, bunExe, isWindows, tempDir, tls as tlsCert } from "harness";
+import { dlopen, FFIType, ptr } from "bun:ffi";
+import { bunEnv, bunExe, isWindows, libcPathForDlopen, tempDir, tls as tlsCert } from "harness";
 import http2 from "node:http2";
 import net from "node:net";
 import { join } from "node:path";
@@ -862,14 +863,17 @@ describe("Bun.serve http2 in-process", () => {
   // stays full, yet the peer keeps taking bytes and must not be aborted. The
   // client reads at a fixed low rate for longer than one idle period; the body
   // is larger than the window so it never completes here, surviving the window
-  // is the point. Skipped on Windows (the buffered remainder gets no writable
-  // event there while the peer reads slowly, a separate Windows issue).
+  // is the point. The client pins its SO_RCVBUF so the kernel does not autotune
+  // it large (then one read would not reopen the peer window and the server
+  // would see no acked bytes for a whole period on some hosts). Skipped on
+  // Windows (the buffered remainder gets no writable event there while the
+  // peer reads slowly, a separate Windows issue).
   test.skipIf(isWindows)(
     "idleTimeout keeps a slow reader alive",
     async () => {
       const TOTAL = 64 << 20;
       const IDLE_S = 8;
-      const RATE = 128 * 1024; // bytes/sec, below the writable-event rate, above the 16 KB/s floor
+      const RATE = 64 * 1024; // bytes/sec, below the writable-event rate, above the 16 KB/s floor
       let aborted = false;
       await using server = Bun.serve({
         hostname: "127.0.0.1",
@@ -885,14 +889,26 @@ describe("Bun.serve http2 in-process", () => {
       settings.writeUInt16BE(4, 0); // INITIAL_WINDOW_SIZE
       settings.writeUInt32BE(64 << 20, 2);
       const raw = await RawH2.connect(server.port, false, { settings });
+      {
+        const libc = dlopen(libcPathForDlopen(), {
+          setsockopt: {
+            args: [FFIType.int, FFIType.int, FFIType.int, FFIType.ptr, FFIType.u32],
+            returns: FFIType.int,
+          },
+        });
+        const SOL_SOCKET = process.platform === "darwin" ? 0xffff : 1;
+        const SO_RCVBUF = process.platform === "darwin" ? 0x1002 : 8;
+        const value = new Int32Array([128 * 1024]);
+        const rc = libc.symbols.setsockopt((raw.socket as any)._handle.fd, SOL_SOCKET, SO_RCVBUF, ptr(value), 4);
+        libc.close();
+        if (rc !== 0) throw new Error("setsockopt(SO_RCVBUF) failed");
+      }
       const inc = Buffer.alloc(4);
       inc.writeUInt32BE(64 << 20, 0);
       raw.write(frame(T.WINDOW_UPDATE, 0, 0, inc));
       const RUN_MS = IDLE_S * 1000 + 8_000;
       const start = performance.now();
-      let received = 0;
       raw.socket.on("data", (d: Buffer) => {
-        received += d.length;
         if (performance.now() - start < RUN_MS) {
           raw.socket.pause();
           setTimeout(() => raw.socket.resume(), Math.max(1, Math.round((d.length / RATE) * 1000)));

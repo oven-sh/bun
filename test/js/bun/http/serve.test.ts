@@ -14,6 +14,7 @@ import {
   isIPv6,
   isPosix,
   isWindows,
+  libcPathForDlopen,
   runFixtureMaxRSS,
   tempDir,
   tls,
@@ -23,6 +24,7 @@ import { connect } from "net";
 import { join, resolve } from "path";
 // import { renderToReadableStream } from "react-dom/server";
 // import app_jsx from "./app.jsx";
+import { dlopen, FFIType, ptr } from "bun:ffi";
 import { heapStats } from "bun:jsc";
 import { spawn } from "child_process";
 import net from "node:net";
@@ -3133,6 +3135,12 @@ it.concurrent(
 // request stays open and keeps receiving data; without it the server aborts
 // within idleTimeout.
 //
+// The client pins its SO_RCVBUF. That turns off the kernel's receive buffer
+// autotuning, so a read always frees more than a sixteenth of the buffer and
+// the peer window reopens on every read. With autotuning the buffer can grow
+// past 8 MB on some kernels and then a single read opens nothing, which makes
+// the server's view of the peer (bytes acked per period) depend on the host.
+//
 // Skipped on Windows: a remainder held in the uWS buffer gets no writable
 // event there while the peer reads slowly, and a peer that stops reading is
 // never timed out. Both are separate Windows issues.
@@ -3141,7 +3149,23 @@ describe.concurrent.skipIf(isWindows)("idleTimeout and a slow reader", () => {
   const IDLE_S = 8;
   // Read this many bytes per second: below the rate that frees a writable
   // event (so the old code times out), above the 16 KB/s receive floor.
-  const RATE = 128 * 1024;
+  const RATE = 64 * 1024;
+  const RCVBUF = 128 * 1024;
+
+  function pinRecvBuffer(sock: net.Socket) {
+    const libc = dlopen(libcPathForDlopen(), {
+      setsockopt: {
+        args: [FFIType.int, FFIType.int, FFIType.int, FFIType.ptr, FFIType.u32],
+        returns: FFIType.int,
+      },
+    });
+    const SOL_SOCKET = process.platform === "darwin" ? 0xffff : 1;
+    const SO_RCVBUF = process.platform === "darwin" ? 0x1002 : 8;
+    const value = new Int32Array([RCVBUF]);
+    const rc = libc.symbols.setsockopt((sock as any)._handle.fd, SOL_SOCKET, SO_RCVBUF, ptr(value), 4);
+    libc.close();
+    if (rc !== 0) throw new Error("setsockopt(SO_RCVBUF) failed");
+  }
 
   function serveBody(kind: "bytes" | "stream" | "file", onAbort: () => void) {
     return Bun.serve({
@@ -3183,6 +3207,7 @@ describe.concurrent.skipIf(isWindows)("idleTimeout and a slow reader", () => {
       let received = 0;
       const start = performance.now();
       const sock = net.connect(server.port, "127.0.0.1", () => {
+        pinRecvBuffer(sock);
         sock.write("GET / HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n");
       });
       sock.on("data", (d: Buffer) => {
@@ -3210,6 +3235,7 @@ describe.concurrent.skipIf(isWindows)("idleTimeout and a slow reader", () => {
     using server = serveBody("bytes", () => (aborted = true));
     const { promise, resolve } = Promise.withResolvers<void>();
     const sock = net.connect(server.port, "127.0.0.1", () => {
+      pinRecvBuffer(sock);
       sock.write("GET / HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n");
     });
     // Read one chunk to open the response, then never read again.

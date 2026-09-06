@@ -702,6 +702,11 @@ fn fetch_registry_tree(
 ) -> Result<Tree, crate::Error> {
     let bump = Bump::new();
     let scope = pm.scope_for_package_name(name);
+    if let Err(err) = scope.check_url_protocol() {
+        Status::clear();
+        Output::err_generic("{}", (err,));
+        Global::exit(1);
+    }
 
     let mut url_buf = bun_paths::path_buffer_pool::get();
     let encoded_name = buf_print(

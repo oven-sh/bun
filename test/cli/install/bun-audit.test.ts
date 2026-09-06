@@ -599,6 +599,48 @@ describe("`bun audit`", () => {
     expect(exitCode).toBe(0);
   });
 
+  // A scheme that is not http or https (a typo such as `htps://`) must not fall back to plaintext HTTP with the
+  // token attached. The mock is a plain HTTP listener, so a downgraded request shows up in `requests`.
+  test.each(["default", "scoped"] as const)(
+    "a %s registry whose url scheme is not http or https is rejected before any request",
+    async kind => {
+      const requests: string[] = [];
+      using mock = Bun.serve({
+        port: 0,
+        fetch(req) {
+          requests.push(`${req.method} ${new URL(req.url).pathname} ${req.headers.get("authorization")}`);
+          return Response.json({});
+        },
+      });
+      const bad = `{ url = "htps://localhost:${mock.port}/", token = "secret-token" }`;
+      using dir = tempDir("bun-test-audit-bad-scheme-" + kind, {
+        "package.json": JSON.stringify({ name: "test", version: "1.0.0", dependencies: { "@foo/bar": "1.0.0" } }),
+        "bun.lock": JSON.stringify({
+          lockfileVersion: 1,
+          workspaces: { "": { name: "test", dependencies: { "@foo/bar": "1.0.0" } } },
+          packages: { "@foo/bar": ["@foo/bar@1.0.0", "", {}, fakeIntegrity] },
+        }),
+        "bunfig.toml":
+          kind === "default"
+            ? `[install]\nregistry = ${bad}\n`
+            : `[install]\nregistry = "${mock.url.href}"\n[install.scopes]\nfoo = ${bad}\n`,
+      });
+
+      await using proc = spawn({
+        cmd: [bunExe(), "audit"],
+        stdout: "pipe",
+        stderr: "pipe",
+        cwd: String(dir),
+        env: bunEnv,
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe(`error: Registry URL must be http:// or https://\nReceived: "htps://localhost:${mock.port}/"\n`);
+      expect(normalizeBunSnapshot(stdout)).toBe("bun audit <version> (<revision>)");
+      expect(requests).toEqual([]);
+      expect(exitCode).toBe(1);
+    },
+  );
+
   doAuditTest("workspaces print the path to the vulnerable package and include workspace:pkg in the name", {
     exitCode: 1,
     files: {

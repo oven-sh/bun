@@ -468,6 +468,34 @@ diffme@1.0.0 → diffme@2.0.0
     expect(hits.some(h => h.endsWith(" /@priv/diffme"))).toBe(true);
   });
 
+  // A scheme that is not http or https (a typo such as `htps://`) must not fall back to plaintext HTTP with the
+  // token attached. The mock is a plain HTTP listener, so a downgraded request shows up in `requests`.
+  test("a registry url scheme that is not http or https is rejected before any request", async () => {
+    const requests: string[] = [];
+    using mock = Bun.serve({
+      port: 0,
+      fetch(req) {
+        requests.push(`${req.method} ${new URL(req.url).pathname} ${req.headers.get("authorization")}`);
+        return Response.json({});
+      },
+    });
+    using dir = tempDir("pm-diff-bad-scheme", {
+      "bunfig.toml": `[install]\nregistry = { url = "htps://localhost:${mock.port}/", token = "sekrit" }\n`,
+    });
+    await using p = Bun.spawn({
+      cmd: [bunExe(), "pm", "diff", "diffme@1.0.0", "2.0.0", "--name-only"],
+      cwd: String(dir),
+      env: { ...bunEnv, NO_COLOR: "1" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([p.stdout.text(), p.stderr.text(), p.exited]);
+    expect(stderr).toBe(`error: Registry URL must be http:// or https://\nReceived: "htps://localhost:${mock.port}/"\n`);
+    expect(stdout).toBe("");
+    expect(requests).toEqual([]);
+    expect(exitCode).toBe(1);
+  });
+
   test("errors: unknown package, no matching version; a third argument is a file filter", async () => {
     const unknown = await diff(["nope-nope@1.0.0", "2.0.0"]);
     expect(unknown.exitCode).toBe(1);

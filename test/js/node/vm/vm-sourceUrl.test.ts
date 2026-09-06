@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
-import { runInNewContext } from "node:vm";
 import path from "node:path";
+import { runInNewContext } from "node:vm";
 
 test("can get sourceURL from eval inside node:vm", () => {
   try {

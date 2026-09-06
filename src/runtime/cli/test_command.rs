@@ -1436,10 +1436,8 @@ impl CommandLineReporter {
         }
     }
 
-    /// Writes the JUnit reporter output file if a JUnit reporter is active and
-    /// an outfile path was configured. This must be called before any early exit
-    /// (e.g. bail) so that the report is not lost. Returns `false` when the
-    /// file could not be written; the run must then exit non-zero.
+    /// Writes the JUnit report to `--reporter-outfile` when one is configured.
+    /// Returns `false` when the file could not be written.
     pub(crate) fn write_junit_report_if_needed(&mut self) -> bool {
         if let Some(junit) = self.reporters.junit.as_mut() {
             if let Some(outfile) = self.jest.test_options.reporter_outfile.as_deref() {

@@ -3722,6 +3722,16 @@ class Foo {
     );
   });
 
+  it("top-level this in an ES module is undefined", () => {
+    expectPrinted_("console.log(this); export {}", "console.log(undefined);\n\nexport {};\n");
+    expectPrinted_(
+      "console.log(typeof this, this === undefined); export {}",
+      'console.log("undefined", true);\n\nexport {};\n',
+    );
+    expectPrinted_("const t = this; export {}", "const t = undefined;\n\nexport {};\n");
+    expectPrinted_("function f() { return this } export {}", "function f() {\n  return this;\n}\n\nexport {};\n");
+  });
+
   it("declarations named eval or arguments, and reserved words, in strict mode", () => {
     expectParseError(
       '"use strict"; var arguments = 1',

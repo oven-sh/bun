@@ -428,8 +428,7 @@ JSPromise* invokeCallbackReturningPromiseFast(JSGlobalObject* globalObject, JSOb
 
 bool errorCodeIs(VM& vm, JSValue error, ASCIILiteral code)
 {
-    // Own or inherited *data* property only; structures' stored prototypes are followed, so no
-    // getter or proxy trap runs.
+    // Data properties only (getDirect along the stored prototypes): no getter or proxy trap runs.
     JSValue codeValue;
     for (JSObject* object = error ? error.getObject() : nullptr; object && !codeValue; object = object->getPrototypeDirect().getObject())
         codeValue = object->getDirect(vm, WebCore::builtinNames(vm).codePublicName());

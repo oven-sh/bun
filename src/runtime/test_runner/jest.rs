@@ -725,9 +725,20 @@ fn js_parse_float(s: &[u8]) -> f64 {
     bun_core::fmt::parse_double(s).unwrap_or(f64::NAN)
 }
 
-/// Writes `value` the way the title formatter renders a substituted value:
-/// a primitive string as its raw text, anything else through the matcher
-/// formatter (`1`, `-0`, `10n`, `Symbol(x)`, `null`, `{ a: 1 }`).
+/// Pretty-prints `value` on one line through the matcher formatter
+/// (`1`, `-0`, `10n`, `"x"`, `Symbol(x)`, `null`, `{ a: 1 }`).
+fn write_pretty_value(
+    global_this: &JSGlobalObject,
+    value: JSValue,
+    list: &mut Vec<u8>,
+) -> JsResult<()> {
+    let mut formatter = crate::test_runner::expect::make_formatter(global_this);
+    formatter.single_line = true;
+    formatter.format_value::<false>(value, list)
+}
+
+/// Writes `value` the way `String(value)` reads in a title: a primitive
+/// string as its raw text, anything else pretty-printed.
 fn write_title_value(
     global_this: &JSGlobalObject,
     value: JSValue,
@@ -736,12 +747,9 @@ fn write_title_value(
     if value.is_string() {
         let owned_slice = value.to_utf8(global_this)?;
         list.extend_from_slice(owned_slice.slice());
-    } else {
-        let mut formatter = crate::test_runner::expect::make_formatter(global_this);
-        formatter.single_line = true;
-        formatter.format_value::<false>(value, list)?;
+        return Ok(());
     }
-    Ok(())
+    write_pretty_value(global_this, value, list)
 }
 
 /// Writes one positional argument for a `%<spec>` placeholder with the
@@ -755,7 +763,8 @@ fn write_placeholder_arg(
     list: &mut Vec<u8>,
 ) -> JsResult<()> {
     let number = match spec {
-        b's' | b'p' | b'O' => return write_title_value(global_this, arg, list),
+        b's' => return write_title_value(global_this, arg, list),
+        b'p' | b'O' => return write_pretty_value(global_this, arg, list),
         b'j' | b'o' => {
             let str = arg.json_stringify_fast(global_this)?;
             list.extend_from_slice(&str.to_owned_slice());

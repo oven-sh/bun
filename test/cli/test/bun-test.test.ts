@@ -1059,6 +1059,7 @@ describe("bun test", () => {
           test.each([[1]])("%s %s %d", () => {});
           test.each([[]])("empty %s %% %#", () => {});
           test.each([[1, "x%sy", 3]])("%s %s %s", () => {});
+          test.each([["x", { a: "y" }]])("p=%p O=%O", () => {});
         `,
       });
       const titles = stderr
@@ -1097,6 +1098,7 @@ describe("bun test", () => {
         "1 %s %d",
         "empty %s % 0",
         "1 x%sy 3",
+        'p="x" O={ a: "y" }',
       ]);
     });
 

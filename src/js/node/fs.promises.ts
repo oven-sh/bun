@@ -339,14 +339,11 @@ const exports = {
       options = { ...options };
     }
     if (!options?.force || !options?.recursive) {
-      // node validates in JS with an lstat first: it reports ERR_FS_EISDIR for
-      // directories and rethrows lstat errors (ENOTDIR, EACCES, ...) as-is
-      // (same check as rmSync)
+      // node lstats first: ERR_FS_EISDIR for directories, other lstat errors rethrown as-is
       let stats;
       try {
         stats = await fs.lstat(path);
       } catch (err) {
-        // let the native call produce ENOENT (respects force)
         if (err?.code !== "ENOENT") throw err;
       }
       if (stats?.isDirectory() && !options?.recursive) {

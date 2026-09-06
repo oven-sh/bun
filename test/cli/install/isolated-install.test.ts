@@ -554,6 +554,67 @@ test("can install folder dependencies on root package", async () => {
   ]);
 });
 
+test("a folder dependency declared by the root and by another folder dependency is one package", async () => {
+  // Both `root -> d1` and `d2 -> d1` resolve to the folder `deps/d1`. A fresh
+  // resolve used to append a second package for the transitive edge, so the
+  // store got two entries with the same path `d1@file+deps+d1`. Their install
+  // tasks raced, one failed with EEXIST, and when the loser was the entry
+  // that carried the trusted scripts the postinstall never ran.
+  const { packageDir, packageJson } = await registry.createTestDir({ bunfigOpts: { linker: "isolated" } });
+
+  await Promise.all([
+    write(
+      packageJson,
+      JSON.stringify({
+        name: "shared-folder-dep",
+        dependencies: {
+          d2: "file:./deps/d2",
+          d1: "file:./deps/d1",
+        },
+        trustedDependencies: ["d1"],
+      }),
+    ),
+    write(
+      join(packageDir, "deps", "d1", "package.json"),
+      JSON.stringify({
+        name: "d1",
+        version: "1.0.0",
+        scripts: {
+          postinstall: `bun -e "require('fs').writeFileSync('postinstall.txt', 'ran')"`,
+        },
+      }),
+    ),
+    write(
+      join(packageDir, "deps", "d2", "package.json"),
+      JSON.stringify({
+        name: "d2",
+        version: "1.0.0",
+        dependencies: {
+          d1: "file:../d1",
+        },
+      }),
+    ),
+  ]);
+
+  const { out } = await runBunInstall(bunEnv, packageDir);
+  expect(out).toContain("2 packages installed");
+
+  const bunDir = join(packageDir, "node_modules", ".bun");
+  expect(
+    await Promise.all([
+      readdirSorted(bunDir),
+      readlink(join(packageDir, "node_modules", "d1")),
+      readlink(join(bunDir, "d2@file+deps+d2", "node_modules", "d1")),
+      file(join(packageDir, "node_modules", "d1", "postinstall.txt")).text(),
+    ]),
+  ).toEqual([
+    ["d1@file+deps+d1", "d2@file+deps+d2"],
+    join(".bun", "d1@file+deps+d1", "node_modules", "d1"),
+    join("..", "..", "d1@file+deps+d1", "node_modules", "d1"),
+    "ran",
+  ]);
+});
+
 describe("isolated workspaces", () => {
   test("basic", async () => {
     const { packageJson, packageDir } = await registry.createTestDir({ bunfigOpts: { linker: "isolated" } });

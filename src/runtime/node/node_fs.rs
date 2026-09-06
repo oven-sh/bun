@@ -7451,8 +7451,7 @@ impl NodeFS {
     pub(crate) fn rm(&mut self, args: &args::Rm, _: Flavor) -> Maybe<ret::Rm> {
         // We cannot use removefileat() on macOS because it does not handle write-protected files as expected.
         if args.recursive {
-            // Syscall::*at does not add the cwd drive to a rooted path
-            // ("/tmp/foo"); slice_z does.
+            // slice_z adds the cwd drive to a rooted path; Syscall::*at does not.
             #[cfg(windows)]
             let resolved = args.path.slice_z(&mut self.sync_error_buf).as_bytes();
             #[cfg(not(windows))]
@@ -9187,12 +9186,10 @@ pub(crate) unsafe extern "C" fn Bun__mkdirp(
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// zig_delete_tree — recursive delete-tree. Errors carry the raw errno and the
-// path of the entry that failed. ENOENT is only returned for the root.
+// zig_delete_tree — recursive delete-tree. ENOENT is only returned for the root.
 // ──────────────────────────────────────────────────────────────────────────
 
-/// Retries `remove` on the errors Node's rimraf retries, `maxRetries` times,
-/// sleeping `retryDelay * attempt` ms. A retry that finds the path gone succeeds.
+/// Retries `remove` on the errors Node's rimraf retries, `maxRetries` times.
 fn rm_with_retries(
     opts: &args::RmDir,
     mut remove: impl FnMut() -> sys::Maybe<()>,
@@ -9648,8 +9645,7 @@ fn zig_delete_tree_open_initial_subpath(
     }
 }
 
-/// One open directory at a time, for trees deeper than the stack above.
-/// Errors name `sub_path`: the chain of names below it is not kept.
+/// Deletes a tree deeper than the stack above with one open directory at a time.
 fn zig_delete_tree_min_stack_size_with_kind_hint(
     self_: &sys::Dir,
     sub_path: &[u8],

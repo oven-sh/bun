@@ -180,9 +180,7 @@ impl ShellSubprocess {
             handle.id
         );
         // No borrow of `this` or the Cmd is live here; the Yield may free `this`.
-        handle
-            .buffered_input_close()
-            .run(handle.interp.get());
+        handle.buffered_input_close().run(handle.interp.get());
     }
 
     pub(crate) fn has_exited(&self) -> bool {

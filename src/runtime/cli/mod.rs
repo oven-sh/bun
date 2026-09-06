@@ -966,9 +966,7 @@ pub mod command {
             return Tag::RunAsNodeCommand;
         }
 
-        // The tokens BUN_OPTIONS splices in sit at argv[1..bun_options_end].
-        // They supply flags and flag values only: a bare word there is a
-        // positional of the selected command, never the keyword.
+        // A bare word spliced in from BUN_OPTIONS is a positional, not the keyword.
         let bun_options_end = 1 + bun::bun_options_argc();
         let mut idx: usize = 1;
         let Some(mut first_arg_name) = iter.next() else {
@@ -1572,8 +1570,7 @@ pub mod command {
         apply_leading_cwd();
         let argv = argv_zslice();
         let keyword = subcommand_argv_index();
-        // `bun --help init`: the flags before the keyword are not init's, but
-        // a help request among them is answered with init's help.
+        // `bun --help init` prints init's help.
         if argv[1..keyword.min(argv.len())]
             .iter()
             .any(|a| matches!(a.as_bytes(), b"--help" | b"-h"))

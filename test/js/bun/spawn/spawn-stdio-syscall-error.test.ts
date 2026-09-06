@@ -175,6 +175,19 @@ const exitCode = await p.exited;
 console.log(JSON.stringify({ code, exited: typeof exitCode === "number" }));
 `;
 
+// Bun.spawn stdout piped into a native sink: Bun.write rejects with the read error.
+const STDOUT_WRITE_FIXTURE = /* js */ `
+const p = Bun.spawn(${JSON.stringify(WRITER_CMD)}, { stdout: "pipe", stderr: "inherit" });
+let code = null;
+try {
+  await Bun.write("stdout-write.out", p.stdout);
+} catch (e) {
+  code = e.code;
+}
+const exitCode = await p.exited;
+console.log(JSON.stringify({ code, exited: typeof exitCode === "number" }));
+`;
+
 // node:child_process: stdout emits 'error' then 'close', and the ChildProcess
 // still emits 'close'.
 const CHILD_PROCESS_FIXTURE = /* js */ `
@@ -224,6 +237,7 @@ beforeAll(async () => {
     "stdin-stream.mjs": STDIN_STREAM_FIXTURE,
     "stdout-stream.mjs": STDOUT_STREAM_FIXTURE,
     "stdout-text.mjs": STDOUT_TEXT_FIXTURE,
+    "stdout-write.mjs": STDOUT_WRITE_FIXTURE,
     "child-process.mjs": CHILD_PROCESS_FIXTURE,
     "spawn-sync.mjs": SPAWN_SYNC_FIXTURE,
   });
@@ -294,6 +308,14 @@ describe.skipIf(!isLinux || !cc)("subprocess stdio syscall errors", () => {
 
     test.concurrent("Bun.spawn: stdout.text() rejects and exited settles", async () => {
       expect(await runWithFault("stdout-text.mjs", { SPAWN_FAULT_RECV_AT: at })).toEqual({
+        parsed: { code: "EIO", exited: true },
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+
+    test.concurrent("Bun.spawn: Bun.write(file, stdout) rejects and exited settles", async () => {
+      expect(await runWithFault("stdout-write.mjs", { SPAWN_FAULT_RECV_AT: at })).toEqual({
         parsed: { code: "EIO", exited: true },
         stderr: "",
         exitCode: 0,

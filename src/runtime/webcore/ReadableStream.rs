@@ -618,6 +618,8 @@ impl ReadableStream {
                 )),
                 buffered: bun_jsc::JsCell::new(bytes),
                 read_error: bun_jsc::JsCell::new(Some(err)),
+                // The reader never starts: a sink attached later ends with the error.
+                done: Cell::new(true),
                 ..Default::default()
             },
             ..Default::default()

@@ -204,7 +204,7 @@ impl Readable {
                 }
                 Self::pipe_reader_mut(&pipe).process = None;
             }
-            Readable::Buffer(_) => {
+            Readable::Buffer(_) | Readable::Errored(..) => {
                 // Dropping the CowString (via the overwrite) frees the buffer;
                 // finalize is terminal.
                 *self = Readable::Closed;

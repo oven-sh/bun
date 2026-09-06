@@ -50,6 +50,9 @@ pub struct InternalState<'a> {
     pub(crate) request_stage: HTTPStage,
     pub(crate) response_stage: HTTPStage,
     pub(crate) certificate_info: Option<CertificateInfo>,
+    /// Set when `sendfile(2)` refused the request body fd. `to_result` moves
+    /// it into the next progress update for the JS thread.
+    pub(crate) sendfile_fallback: Option<crate::send_file::SendfileFallback>,
 }
 
 // Struct-of-bools so the
@@ -122,6 +125,7 @@ impl Default for InternalState<'_> {
             request_stage: HTTPStage::Pending,
             response_stage: HTTPStage::Pending,
             certificate_info: None,
+            sendfile_fallback: None,
         }
     }
 }

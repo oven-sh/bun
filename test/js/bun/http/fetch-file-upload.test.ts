@@ -161,8 +161,8 @@ test.todoIf(isBroken && isWindows)(
 
 // The plain-HTTP upload path uses sendfile(2) on Linux for files >= 32 KiB.
 // The fixture installs a seccomp filter that refuses sendfile with one errno
-// and checks the body still arrives, byte-exact, through read+write.
-describe.skipIf(!isLinux)("Bun.file() upload falls back to read+write when sendfile(2) is refused", () => {
+// and checks the body still arrives, byte-exact, through the stream path.
+describe.skipIf(!isLinux)("Bun.file() upload falls back to a stream when sendfile(2) is refused", () => {
   for (const errno of ["EINVAL", "ENOSYS", "EOPNOTSUPP", "EPERM"]) {
     test.concurrent(errno, async () => {
       using dir = tempDir("fetch-sendfile-refused", {});
@@ -178,14 +178,14 @@ describe.skipIf(!isLinux)("Bun.file() upload falls back to read+write when sendf
         return;
       }
       expect(stderr).toBe("");
-      const upload = {
+      const upload = (bytes: number) => ({
         status: 200,
         ok: true,
-        contentLength: String(256 * 1024 + 123),
-        received: 256 * 1024 + 123,
-        expected: 256 * 1024 + 123,
-      };
-      expect(JSON.parse(stdout)).toEqual([upload, upload]);
+        contentLength: String(bytes),
+        received: bytes,
+        expected: bytes,
+      });
+      expect(JSON.parse(stdout)).toEqual([upload(256 * 1024 + 123), upload(256 * 1024 + 123), upload(100_000)]);
       expect(exitCode).toBe(0);
     });
   }

@@ -57,7 +57,16 @@ const bytes = Buffer.alloc(size);
 for (let i = 0; i < size; i++) bytes[i] = (i * 7) & 0xff;
 const path = join(process.argv[3], "upload.bin");
 await Bun.write(path, bytes);
-const expectedHash = Bun.CryptoHasher.hash("sha256", bytes, "hex");
+const sliceStart = 12345;
+const sliceEnd = sliceStart + 100_000;
+
+// The whole file, then the same file again after the first refusal, then a
+// slice so the fallback has to start at an offset other than 0.
+const uploads = [
+  { body: Bun.file(path), bytes },
+  { body: Bun.file(path), bytes },
+  { body: Bun.file(path).slice(sliceStart, sliceEnd), bytes: bytes.subarray(sliceStart, sliceEnd) },
+];
 
 await using server = Bun.serve({
   port: 0,
@@ -78,17 +87,16 @@ await using server = Bun.serve({
   },
 });
 
-// Two uploads: the second one runs after the first refusal was observed.
 const results = [];
-for (let i = 0; i < 2; i++) {
-  const res = await fetch(server.url, { method: "PUT", body: Bun.file(path) });
+for (const upload of uploads) {
+  const res = await fetch(server.url, { method: "PUT", body: upload.body });
   const body = await res.json();
   results.push({
     status: res.status,
-    ok: body.hash === expectedHash,
+    ok: body.hash === Bun.CryptoHasher.hash("sha256", upload.bytes, "hex"),
     contentLength: body.contentLength,
     received: body.received,
-    expected: size,
+    expected: upload.bytes.length,
   });
 }
 console.log(JSON.stringify(results));

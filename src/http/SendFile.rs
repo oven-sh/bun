@@ -1,16 +1,9 @@
 #[cfg(all(unix, not(any(target_os = "linux", target_os = "android"))))]
 use core::ptr;
 
-use core::sync::atomic::{AtomicBool, Ordering};
-
 use bun_core::feature_flags;
 use bun_sys::{self, Fd};
 use bun_url::URL;
-
-/// Set once `sendfile(2)` answers `ENOSYS`. The JS thread reads it in
-/// `is_eligible`, so later uploads skip the missing syscall and read the
-/// file into memory as on other platforms.
-static SENDFILE_UNAVAILABLE: AtomicBool = AtomicBool::new(false);
 
 #[derive(Copy, Clone)]
 pub struct SendFile {
@@ -18,19 +11,23 @@ pub struct SendFile {
     pub remain: usize,
     pub offset: usize,
     pub content_size: usize,
-    /// Set once `sendfile(2)` refuses the fd (seccomp, a filesystem without
-    /// `splice_read`, an old kernel). The rest of the body goes through
-    /// `pread` + `write` from `offset`, so nothing already sent is repeated.
-    pub use_read_write: bool,
+}
+
+/// Handed to the JS thread when `sendfile(2)` refused the fd after the request
+/// head went out. The JS thread streams the rest of the file from `offset`
+/// into `buffer`, which the HTTP thread drains as a `HTTPRequestBody::Stream`.
+pub struct SendfileFallback {
+    /// The JS side's ref. The HTTP thread holds the other one in
+    /// `http_request_body::Stream::buffer`.
+    pub buffer: bun_ptr::RefPtr<crate::ThreadSafeStreamBuffer>,
+    pub offset: usize,
+    pub remain: usize,
 }
 
 impl SendFile {
     pub fn is_eligible(url: &URL) -> bool {
         // `if cfg!()` is fine here: both branches type-check (no platform-only items referenced).
         if cfg!(windows) || !feature_flags::STREAMING_FILE_UPLOADS_FOR_HTTP_CLIENT {
-            return false;
-        }
-        if SENDFILE_UNAVAILABLE.load(Ordering::Relaxed) {
             return false;
         }
         url.is_http() && url.href.len() > 0
@@ -48,9 +45,6 @@ impl SendFile {
         #[cfg(any(target_os = "linux", target_os = "android"))]
         {
             let _ = adjusted_count; // unused on Linux path
-            if self.use_read_write {
-                return self.write_with_read_write(socket_fd);
-            }
             let mut signed_offset: i64 = i64::try_from(self.offset).expect("int cast");
             let begin = self.offset;
             // this does the syscall directly, without libc
@@ -84,13 +78,7 @@ impl SendFile {
                 bun_sys::E::EINVAL
                 | bun_sys::E::ENOSYS
                 | bun_sys::E::EOPNOTSUPP
-                | bun_sys::E::EPERM => {
-                    if errcode == bun_sys::E::ENOSYS {
-                        SENDFILE_UNAVAILABLE.store(true, Ordering::Relaxed);
-                    }
-                    self.use_read_write = true;
-                    return self.write_with_read_write(socket_fd);
-                }
+                | bun_sys::E::EPERM => return Status::Refused,
                 _ => return Status::Err(bun_errno::from_errno(errcode as i32).into()),
             }
         }
@@ -163,44 +151,6 @@ impl SendFile {
 
         Status::Again
     }
-
-    /// Copy from `offset` to the socket until the socket would block, the
-    /// window is sent, or the file ends early. `pread` keeps the fd's file
-    /// position untouched, so a partial socket write is resumed at `offset`
-    /// on the next writable event.
-    #[cfg(any(target_os = "linux", target_os = "android"))]
-    fn write_with_read_write(&mut self, socket_fd: Fd) -> Status {
-        let mut stack_buf = bun_core::vec::UninitBuf::<{ 16 * 4096 }>::uninit();
-        // SAFETY: `pread` is the only writer of `buf`; only `buf[..read]` is read back.
-        let buf = unsafe { stack_buf.as_bytes_mut() };
-        loop {
-            if self.remain == 0 {
-                return Status::Done;
-            }
-            let want = buf.len().min(self.remain);
-            let Ok(signed_offset) = i64::try_from(self.offset) else {
-                return Status::Err(bun_errno::SystemErrno::EOVERFLOW.into());
-            };
-            let read = match bun_sys::pread(self.fd, &mut buf[..want], signed_offset) {
-                Ok(0) => return Status::Done,
-                Ok(n) => n,
-                Err(err) => return Status::Err(crate::Error::Sys(err.into())),
-            };
-            let mut sent = 0;
-            while sent < read {
-                match bun_sys::write(socket_fd, &buf[sent..read]) {
-                    Ok(0) => return Status::Again,
-                    Ok(n) => {
-                        sent += n;
-                        self.offset += n;
-                        self.remain -= n;
-                    }
-                    Err(err) if err.get_errno() == bun_sys::E::EAGAIN => return Status::Again,
-                    Err(err) => return Status::Err(crate::Error::Sys(err.into())),
-                }
-            }
-        }
-    }
 }
 
 pub(crate) enum Status {
@@ -208,5 +158,10 @@ pub(crate) enum Status {
     Done,
     #[cfg(not(windows))]
     Err(crate::Error),
+    /// The kernel, a seccomp policy, or the filesystem refused `sendfile(2)`
+    /// for this fd. Nothing was sent by this call. The caller hands the rest
+    /// of the body to the JS thread as a `SendfileFallback`.
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    Refused,
     Again,
 }

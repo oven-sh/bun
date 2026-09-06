@@ -25,9 +25,11 @@ use bun_threading::Mutex;
 use bun_url::URL as ZigURL;
 
 use crate::api::bun_x509 as X509;
+use crate::webcore::blob::store::StoreExt as _;
 use crate::webcore::blob::{Any as AnyBlob, Blob, SizeType as BlobSizeType, Store as BlobStore};
 use crate::webcore::body::{self, Body, Value as BodyValue, ValueError as BodyValueError};
 use crate::webcore::fetch::fetch_request_body_sink::{FetchRequestBodySink, RequestBodyChunk};
+use crate::webcore::node_types::PathOrFileDescriptor;
 use crate::webcore::readable_stream::{ReadableStream, Strong as ReadableStreamStrong};
 use crate::webcore::response::HeadersRef;
 use crate::webcore::sink::JSSink;
@@ -145,6 +147,9 @@ pub struct FetchTasklet {
     pub(crate) is_waiting_body: bool,
     pub(crate) is_waiting_abort: bool,
     pub(crate) is_waiting_request_stream_start: bool,
+    /// The request body started as sendfile and its head carries a
+    /// Content-Length. The stream that replaced it writes raw bytes.
+    pub(crate) sendfile_fallback_active: bool,
     pub(crate) mutex: Mutex,
 
     pub(crate) tracker: AsyncTaskTracker,
@@ -585,6 +590,60 @@ impl FetchTasklet {
         self.get_current_response().map(|r| unsafe { &mut *r })
     }
 
+    /// The HTTP thread reports that `sendfile(2)` refused the body fd after
+    /// the head went out. Replace the sendfile body with a `FileReader`
+    /// stream over the same file from `fallback.offset`, limited to
+    /// `fallback.remain` bytes, so the next `can_stream` starts it like a
+    /// `Bun.file().stream()` body. Returns the sendfile body: the reader dups
+    /// the fd when it starts, so the caller closes this one afterwards.
+    fn adopt_sendfile_fallback(
+        &mut self,
+        fallback: http::SendfileFallback,
+    ) -> JsResult<Option<HTTPRequestBody>> {
+        let HTTPRequestBody::Sendfile(sendfile) = self.request_body else {
+            return Ok(None);
+        };
+        bun_output::scoped_log!(
+            FetchTasklet,
+            "sendfile refused, streaming offset={} remain={}",
+            fallback.offset,
+            fallback.remain
+        );
+        let global_this = self.global_this;
+        let http::SendfileFallback {
+            buffer,
+            offset,
+            remain,
+        } = fallback;
+        // SAFETY: `buffer` is our ref on the live buffer; the HTTP thread holds
+        // the other one. The setter takes the buffer's mutex.
+        unsafe {
+            (*buffer.as_ptr()).set_drain_callback_shared::<FetchTasklet>(
+                FetchTasklet::on_write_request_data_drain,
+                std::ptr::from_mut(self),
+            );
+        }
+        self.request_body_streaming_buffer = Some(buffer);
+        self.sendfile_fallback_active = true;
+
+        let store = bun_core::handle_oom(BlobStore::init_file(
+            PathOrFileDescriptor::Fd(sendfile.fd),
+            None,
+        ));
+        let blob = Blob::init_with_store(store, &global_this);
+        blob.offset.set(offset as BlobSizeType);
+        blob.size.set(remain as BlobSizeType);
+        let stream_value = ReadableStream::from_blob_copy_ref(&global_this, &blob, 0)?;
+        let stream = ReadableStream::from_js(stream_value, &global_this)?
+            .expect("from_blob_copy_ref returns a ReadableStream");
+        let old = core::mem::replace(
+            &mut self.request_body,
+            HTTPRequestBody::ReadableStream(ReadableStreamStrong::init(stream, &global_this)),
+        );
+        self.is_waiting_request_stream_start = true;
+        Ok(Some(old))
+    }
+
     fn start_request_stream(&mut self) -> JsResult<()> {
         self.is_waiting_request_stream_start = false;
         debug_assert!(matches!(
@@ -924,9 +983,30 @@ impl FetchTasklet {
             }
         };
 
+        let mut refused_sendfile: Option<HTTPRequestBody> = None;
+        if let Some(fallback) = self.result.sendfile_fallback.take() {
+            match self.adopt_sendfile_fallback(fallback) {
+                Ok(old) => refused_sendfile = old,
+                Err(err) => {
+                    self.mutex.unlock();
+                    if is_done {
+                        // SAFETY: `self` is the live heap tasklet; we hold a ref.
+                        FetchTasklet::deref(std::ptr::from_mut(self));
+                    }
+                    return Err(err);
+                }
+            }
+        }
+
         if self.is_waiting_request_stream_start && self.result.can_stream {
             // start streaming
-            if let Err(err) = self.start_request_stream() {
+            let started = self.start_request_stream();
+            // The reader dup'd the sendfile fd when it started. Either way the
+            // sendfile body is done with it.
+            if let Some(mut body) = refused_sendfile.take() {
+                body.detach();
+            }
+            if let Err(err) = started {
                 // The VM is being stopped: leave like the `!script_allowed()` gate above does.
                 self.mutex.unlock();
                 if is_done {
@@ -961,6 +1041,9 @@ impl FetchTasklet {
             if self.metadata.is_some() && !self.is_waiting_body {
                 vm.jsc_vm().drain_microtasks();
             }
+        }
+        if let Some(mut body) = refused_sendfile {
+            body.detach();
         }
         // if we already respond the metadata and still need to process the body
         if self.is_waiting_body {
@@ -1879,6 +1962,7 @@ impl FetchTasklet {
             is_waiting_body: false,
             is_waiting_abort: false,
             is_waiting_request_stream_start: false,
+            sendfile_fallback_active: false,
             mutex: Mutex::new(),
             // SAFETY: jsc_vm derived from FFI ptr above; AsyncTaskTracker::init only
             // bumps a counter on the VM.
@@ -2123,6 +2207,7 @@ impl FetchTasklet {
     pub(crate) fn skip_chunked_framing(&self) -> bool {
         self.upgraded_connection
             || self.result.is_http2
+            || self.sendfile_fallback_active
             || (self.request_headers.get(b"content-length").is_some()
                 && self.request_headers.get(b"transfer-encoding").is_none())
     }
@@ -2368,6 +2453,7 @@ impl FetchTasklet {
         let prev_metadata = task_ref.result.metadata.take();
         let prev_cert_info = task_ref.result.certificate_info.take();
         let prev_can_stream = task_ref.result.can_stream;
+        let prev_sendfile_fallback = task_ref.result.sendfile_fallback.take();
         // `result.body` borrows the HTTP thread's scratch buffer on non-terminal
         // callbacks; the terminal callback carries the bytes in `body_owned`
         // instead. Capture both before `detach_lifetime` clears them in the
@@ -2380,6 +2466,10 @@ impl FetchTasklet {
         // can_stream is a one-shot signal to start the request body stream; don't let a
         // later coalesced result clobber it before the JS thread sees it.
         task_ref.result.can_stream = task_ref.result.can_stream || prev_can_stream;
+        // Same one-shot rule for the sendfile fallback handoff.
+        if task_ref.result.sendfile_fallback.is_none() {
+            task_ref.result.sendfile_fallback = prev_sendfile_fallback;
+        }
 
         // Preserve pending certificate info if it was preovided in the previous update.
         if task_ref.result.certificate_info.is_none() {

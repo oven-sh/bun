@@ -1865,7 +1865,7 @@ function parseOptions(
   let path: string;
   let prepare: boolean = true;
   // the URL pathname is the database name, except for unix:// where it is the socket path
-  let urlDatabase: string | null = null;
+  let urlPathname = "";
 
   if (url !== null) {
     url = url instanceof URL ? url : new URL(url);
@@ -1883,7 +1883,7 @@ function parseOptions(
       path ||= options.path || url.pathname;
     } else {
       path ||= options.path;
-      urlDatabase = decodeIfValid(url.pathname.slice(1));
+      urlPathname = url.pathname.slice(1);
     }
 
     const queryObject = url.searchParams.toJSON();
@@ -2003,18 +2003,30 @@ function parseOptions(
 
   switch (adapter) {
     case "postgres": {
-      database ||= options.database || options.db || urlDatabase || env.PG_DATABASE || env.PGDATABASE || username;
+      database ||=
+        options.database || options.db || decodeIfValid(urlPathname) || env.PG_DATABASE || env.PGDATABASE || username;
       break;
     }
 
     case "mysql": {
-      database ||= options.database || options.db || urlDatabase || env.MYSQL_DATABASE || env.MYSQLDATABASE || "mysql";
+      database ||=
+        options.database ||
+        options.db ||
+        decodeIfValid(urlPathname) ||
+        env.MYSQL_DATABASE ||
+        env.MYSQLDATABASE ||
+        "mysql";
       break;
     }
 
     case "mariadb": {
       database ||=
-        options.database || options.db || urlDatabase || env.MARIADB_DATABASE || env.MARIADBDATABASE || "mariadb";
+        options.database ||
+        options.db ||
+        decodeIfValid(urlPathname) ||
+        env.MARIADB_DATABASE ||
+        env.MARIADBDATABASE ||
+        "mariadb";
       break;
     }
   }

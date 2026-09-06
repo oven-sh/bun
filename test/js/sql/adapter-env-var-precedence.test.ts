@@ -814,6 +814,11 @@ describe("SQL adapter environment variable precedence", () => {
         expect(options.options.hostname).toBe("localhost");
       });
 
+      test("an explicit database skips the decode of a malformed URL pathname", () => {
+        expect(new SQL("postgres://urluser@urlhost/db%", { database: "real" }).options.database).toBe("real");
+        expect(() => new SQL("postgres://urluser@urlhost/db%")).toThrow(URIError);
+      });
+
       test("env database applies when the URL has no pathname", () => {
         process.env.PGDATABASE = "envdb";
         const options = new SQL("postgres://urluser@urlhost");

@@ -10896,6 +10896,113 @@ it("fails when a transitive file: dependency's folder does not exist", async () 
   expect(exitCode).toBe(1);
 });
 
+describe.concurrent("file: dependency named in two dependency groups", () => {
+  // The same name in `dependencies` and `devDependencies` is a warning, not an
+  // error. The folder package must still land in the tree (and so in bun.lock
+  // and node_modules) once, like an npm range listed twice does. The folders
+  // sit outside the project so that the root install uses the symlink backend.
+  const fixture = (devTarget: string) => ({
+    "project/package.json": JSON.stringify({
+      name: "my-app",
+      dependencies: { x: "file:../x1" },
+      devDependencies: { x: devTarget },
+    }),
+    "x1/package.json": JSON.stringify({ name: "x", version: "1.0.0" }),
+    "x2/package.json": JSON.stringify({ name: "x", version: "2.0.0" }),
+  });
+
+  async function installTwice(projectDir: string) {
+    const install = async (...args: string[]) => {
+      await using proc = spawn({
+        cmd: [bunExe(), "install", ...args],
+        cwd: projectDir,
+        stdout: "pipe",
+        stdin: "ignore",
+        stderr: "pipe",
+        env,
+      });
+      return await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    };
+
+    // Fresh install: no lockfile and no node_modules yet.
+    let [, err, exitCode] = await install();
+    expect(err).toContain("warn: Duplicate dependency");
+    expect(err).toContain("Saved lockfile");
+    expect(err).not.toContain("error:");
+    expect(exitCode).toBe(0);
+
+    const lock = await file(join(projectDir, "bun.lock")).text();
+    // A second install pass over the same destination used to leave
+    // `node_modules/x/package.json` as a symlink to itself (ELOOP).
+    const installed = await file(join(projectDir, "node_modules", "x", "package.json")).json();
+
+    // The lockfile that install wrote must be one it accepts unchanged.
+    [, err, exitCode] = await install("--frozen-lockfile");
+    expect(err).not.toContain("Duplicate package path");
+    expect(err).not.toContain("Ignoring lockfile");
+    expect(err).not.toContain("error:");
+    expect(exitCode).toBe(0);
+    expect(await file(join(projectDir, "node_modules", "x", "package.json")).json()).toEqual(installed);
+
+    return { lock, installed };
+  }
+
+  it("same folder", async () => {
+    using dir = tempDir("file-dep-two-groups", fixture("file:../x1"));
+    const { lock, installed } = await installTwice(join(String(dir), "project"));
+    expect(installed).toEqual({ name: "x", version: "1.0.0" });
+    expect(lock).toMatchInlineSnapshot(`
+      "{
+        "lockfileVersion": 2,
+        "configVersion": 1,
+        "workspaces": {
+          "": {
+            "name": "my-app",
+            "dependencies": {
+              "x": "file:../x1",
+            },
+            "devDependencies": {
+              "x": "file:../x1",
+            },
+          },
+        },
+        "packages": {
+          "x": ["x@file:../x1", {}],
+        }
+      }
+      "
+    `);
+  });
+
+  it("different folders", async () => {
+    // Same rule as an npm range listed in both groups: the devDependencies entry wins.
+    using dir = tempDir("file-dep-two-groups", fixture("file:../x2"));
+    const { lock, installed } = await installTwice(join(String(dir), "project"));
+    expect(installed).toEqual({ name: "x", version: "2.0.0" });
+    expect(lock).toMatchInlineSnapshot(`
+      "{
+        "lockfileVersion": 2,
+        "configVersion": 1,
+        "workspaces": {
+          "": {
+            "name": "my-app",
+            "dependencies": {
+              "x": "file:../x1",
+            },
+            "devDependencies": {
+              "x": "file:../x2",
+            },
+          },
+        },
+        "packages": {
+          "x": ["x@file:../x2", {}],
+        }
+      }
+      "
+    `);
+  });
+});
+
 describe.concurrent("file: tarball declared by a file: folder dependency", () => {
   // `bar-0.0.2.tgz` is planted at the path the declaration means and
   // `baz-0.0.3.tgz` at the other candidate path, so reading the tarball

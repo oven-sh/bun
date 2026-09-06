@@ -822,10 +822,17 @@ impl Tree {
                         }
                         tree_id = tree.parent;
                     }
-                    break 'hoisted HoistDependencyResult::Placement(Placement {
-                        id: next_id,
-                        bundled: false,
-                    });
+                    // `next_id` as the hoist root keeps the folder package in this tree while
+                    // still deduping against a same-name edge already placed here (the same
+                    // name listed in two dependency groups).
+                    break 'hoisted Tree::hoist_dependency::<true, METHOD>(
+                        next_id,
+                        next_id,
+                        pkg_id,
+                        dep_id,
+                        resolution_list,
+                        builder,
+                    );
                 }
 
                 Tree::hoist_dependency::<true, METHOD>(

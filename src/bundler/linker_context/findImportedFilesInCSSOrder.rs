@@ -145,16 +145,23 @@ pub(crate) fn find_imported_files_in_css_order<'a>(
             };
             let top_level_rules = &repr.rules;
 
-            // TODO: should we even do this? @import rules have to be the first rules in the stylesheet, why even allow pre-import layers?
-            // Any pre-import layers come first
-            // if len(repr.AST.LayersPreImport) > 0 {
-            //     order = append(order, cssImportOrder{
-            //         kind:                   cssImportLayers,
-            //         layers:                 repr.AST.LayersPreImport,
-            //         conditions:             wrappingConditions,
-            //         conditionImportRecords: wrappingImportRecords,
-            //     })
-            // }
+            // `@layer` statements may precede `@import` (css-cascade-5) so
+            // that a file can pin the order of the layers its imports create.
+            // Emit them before the imported files.
+            if !repr.layers_pre_import.is_empty() {
+                // See the LayerName nominal-type note at `Layers::borrow`.
+                let layers_ptr =
+                    core::ptr::NonNull::from(&repr.layers_pre_import).cast::<Vec<LayerName>>();
+                self.order.push(CssImportOrder {
+                    kind: CssImportOrderKind::Layers(Layers::borrow(layers_ptr)),
+                    // SAFETY: arena-backed `Vec` header; `CssImportOrder`
+                    // suppresses `Drop` on it (see the note at `bitwise_copy`),
+                    // so the aliased buffer is freed once with the arena.
+                    conditions: unsafe { bitwise_copy(wrapping_conditions) },
+                    // SAFETY: same single-free invariant as `conditions`.
+                    condition_import_records: unsafe { bitwise_copy(wrapping_import_records) },
+                });
+            }
 
             // `visited.pop()` happens at the end of this function; the early
             // return above intentionally skips it.

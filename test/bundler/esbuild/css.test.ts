@@ -2116,6 +2116,90 @@ c {
     outfile: "/out.css",
   });
 
+  // "@layer" statements may precede "@import" so that a file can pin the
+  // order of the layers its imports create. They have to come out before the
+  // imported files, not after them with the rest of the importer's body.
+  itBundled("css/CSSAtLayerStatementBeforeAtImport", {
+    files: {
+      "/entry.css": /* css */ `
+        @layer first;
+        @import "./imported.css" layer(second);
+        @layer third { .t { c: d } }
+      `,
+      "/imported.css": `.i { c: d }`,
+    },
+    outfile: "/out.css",
+    onAfterBundle(api) {
+      api.expectFile("/out.css").toEqualIgnoringWhitespace(/* css */ `
+        @layer first;
+
+        /* imported.css */
+        @layer second {
+          .i {
+            c: d;
+          }
+        }
+
+        /* entry.css */
+        @layer third {
+          .t {
+            c: d;
+          }
+        }
+      `);
+    },
+  });
+
+  itBundled("css/CSSAtLayerStatementBeforeAtImportTailwind", {
+    files: {
+      "/entry.css": /* css */ `
+        @import "./tailwind/index.css";
+        @layer components { .card { c: e } }
+      `,
+      "/tailwind/index.css": /* css */ `
+        @layer theme, base, components, utilities;
+        @import "./theme.css" layer(theme);
+        @import "./utilities.css" layer(utilities);
+      `,
+      "/tailwind/theme.css": `:root { --x: 1 }`,
+      "/tailwind/utilities.css": `.u { c: d }`,
+    },
+    outfile: "/out.css",
+    minifyWhitespace: true,
+    onAfterBundle(api) {
+      api
+        .expectFile("/out.css")
+        .toEqualIgnoringWhitespace(
+          "@layer theme,base,components,utilities;@layer theme{:root{--x:1}}@layer utilities{.u{c:d}}@layer components{.card{c:e}}",
+        );
+    },
+  });
+
+  itBundled("css/CSSAtLayerStatementBeforeAtImportNested", {
+    files: {
+      "/entry.css": /* css */ `
+        @layer outer;
+        @import "./mid.css" layer(wrap) supports(display: flex);
+      `,
+      "/mid.css": /* css */ `
+        @layer inner;
+        @import "./leaf.css" layer(leafy);
+        @layer after;
+        .mid { c: d }
+      `,
+      "/leaf.css": `.leaf { c: d }`,
+    },
+    outfile: "/out.css",
+    minifyWhitespace: true,
+    onAfterBundle(api) {
+      api
+        .expectFile("/out.css")
+        .toEqualIgnoringWhitespace(
+          "@layer outer;@supports (display:flex){@layer wrap{@layer inner;}}@supports (display:flex){@layer wrap{@layer leafy{.leaf{c:d}}}}@supports (display:flex){@layer wrap{@layer after;.mid{c:d}}}",
+        );
+    },
+  });
+
   // This test mainly just makes sure that this scenario doesn't crash
   itBundled("css/CSSAndJavaScriptCodeSplittingESBuildIssue1064", {
     files: {

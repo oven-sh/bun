@@ -3639,3 +3639,87 @@ it("verbose fetch logging prints [redacted] in place of Authorization credential
   expect(stderr).not.toContain("sekret-token");
   expect(exitCode).toBe(0);
 });
+
+describe("response header size cap", () => {
+  // The fetch client rejects a response head larger than 1 MiB with
+  // ResponseHeadersTooLarge. The decision must depend on the size of the
+  // head only, not on how the peer's writes line up with the client's reads.
+  const MAX_RESPONSE_HEAD = 1024 * 1024;
+
+  function buildHead(totalBytes: number): Uint8Array {
+    const prefix = "HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n";
+    const lines: string[] = [];
+    let size = prefix.length + 2; // trailing CRLF
+    let i = 0;
+    while (totalBytes - size > 100_000 + 16) {
+      const line = `x-${String(i++).padStart(3, "0")}: ${"a".repeat(100_000)}\r\n`;
+      lines.push(line);
+      size += line.length;
+    }
+    const padName = "x-pad: ";
+    const padLen = totalBytes - size - padName.length - 2;
+    expect(padLen).toBeGreaterThanOrEqual(0);
+    lines.push(`${padName}${"b".repeat(padLen)}\r\n`);
+    const head = prefix + lines.join("") + "\r\n";
+    expect(head.length).toBe(totalBytes);
+    return Buffer.from(head + "ok", "latin1");
+  }
+
+  async function fetchFromRawServer(payload: Uint8Array, writeSize: number): Promise<string> {
+    // Raw TCP origin: one request, one canned response, then close.
+    await using listener = Bun.listen<{ queue: Uint8Array[]; responded: boolean }>({
+      hostname: "127.0.0.1",
+      port: 0,
+      socket: {
+        open(socket) {
+          socket.data = { queue: [], responded: false };
+        },
+        data(socket) {
+          if (socket.data.responded) return;
+          socket.data.responded = true;
+          for (let off = 0; off < payload.length; off += writeSize) {
+            socket.data.queue.push(payload.subarray(off, Math.min(off + writeSize, payload.length)));
+          }
+          pump(socket);
+        },
+        drain(socket) {
+          pump(socket);
+        },
+        error() {},
+      },
+    });
+
+    function pump(socket: Bun.Socket<{ queue: Uint8Array[]; responded: boolean }>) {
+      const { queue } = socket.data;
+      while (queue.length > 0) {
+        const chunk = queue[0];
+        const written = socket.write(chunk);
+        if (written < chunk.length) {
+          queue[0] = chunk.subarray(Math.max(written, 0));
+          return;
+        }
+        queue.shift();
+      }
+      socket.end();
+    }
+
+    try {
+      const res = await fetch(`http://127.0.0.1:${listener.port}/`, { keepalive: false });
+      return await res.text();
+    } catch (e: any) {
+      return `error:${e.code}`;
+    }
+  }
+
+  it("accepts a head of exactly 1 MiB sent in 4 KiB writes", async () => {
+    expect(await fetchFromRawServer(buildHead(MAX_RESPONSE_HEAD), 4096)).toBe("ok");
+  });
+
+  it("rejects a head of 1 MiB + 1 byte sent in one write", async () => {
+    expect(await fetchFromRawServer(buildHead(MAX_RESPONSE_HEAD + 1), 1 << 30)).toBe("error:ResponseHeadersTooLarge");
+  });
+
+  it("rejects a head of 1 MiB + 1 byte sent in 4 KiB writes", async () => {
+    expect(await fetchFromRawServer(buildHead(MAX_RESPONSE_HEAD + 1), 4096)).toBe("error:ResponseHeadersTooLarge");
+  });
+});

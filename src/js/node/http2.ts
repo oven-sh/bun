@@ -3045,9 +3045,7 @@ function doSendFileFD(options, fd, headers, err, stat) {
       statOptions.length < 0
         ? stat.size - +statOptions.offset
         : Math.min(stat.size - +statOptions.offset, statOptions.length);
-    // An offset past the end of the file (or a non-integer offset/length) has no valid byte
-    // range: reset this stream instead of letting the read stream validator throw from the
-    // fstat callback, where nothing can catch it.
+    // Validated here: a throw from fs.createReadStream inside this fstat callback is uncatchable.
     let rangeError;
     if (!Number.isInteger(statOptions.offset) || statOptions.offset > stat.size) {
       rangeError = $ERR_OUT_OF_RANGE("options.offset", `>= 0 && <= ${stat.size}`, statOptions.offset);

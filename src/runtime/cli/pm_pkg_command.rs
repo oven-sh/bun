@@ -41,6 +41,10 @@ impl SubCommand {
     }
 }
 
+/// How many `null` slots `set` may add past the end of an array for one
+/// index. A larger index is a typo, not a request for a dense array.
+const MAX_ARRAY_EXTENSION: usize = 1024;
+
 /// One step of a `bun pm pkg` key path such as `contributors[0].name`.
 #[derive(Copy, Clone)]
 enum Segment<'a> {
@@ -598,7 +602,15 @@ impl PmPkgCommand {
                     Segment::Key(part) => bun_core::fmt::parse_decimal::<usize>(part)
                         .ok_or(crate::Error::ExpectedObject)?,
                 };
-                if index >= arr.items.len() {
+                let len = arr.items.len();
+                if index >= len {
+                    if index - len >= MAX_ARRAY_EXTENSION {
+                        Output::err_generic(
+                            "Array index {} is too far past the end of the array ({} items)",
+                            (index, len),
+                        );
+                        Global::exit(1);
+                    }
                     arr.items.resize(index + 1, Expr::init(E::Null, Loc::EMPTY));
                 }
                 let slot = &mut arr.items[index];

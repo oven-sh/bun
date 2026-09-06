@@ -13,6 +13,7 @@ use bun_paths::PathBuffer;
 use bun_paths::resolve_path::{self, platform};
 use bun_standalone_graph::StandaloneModuleGraph::StandaloneModuleGraph;
 
+use crate::ConfigScope;
 use crate::bunfig::Bunfig;
 
 // ─── bunfig loading ──────────────────────────────────────────────────────────
@@ -39,6 +40,7 @@ fn load_bunfig(
     cmd: CommandTag,
     auto_loaded: bool,
     config_path: &ZStr,
+    scope: ConfigScope,
     ctx: Context<'_>,
 ) -> Result<(), crate::Error> {
     let source =
@@ -77,7 +79,7 @@ fn load_bunfig(
         unsafe { (*log_ptr).level = lvl };
     });
     ctx.debug.loaded_bunfig = true;
-    Bunfig::parse(cmd, &source, ctx)
+    Bunfig::parse(cmd, &source, scope, ctx)
 }
 
 fn load_global_bunfig(cmd: CommandTag, ctx: Context<'_>) -> Result<(), crate::Error> {
@@ -88,7 +90,7 @@ fn load_global_bunfig(cmd: CommandTag, ctx: Context<'_>) -> Result<(), crate::Er
 
     let mut config_buf = bun_paths::path_buffer_pool::get();
     if let Some(path) = get_home_config_path(&mut config_buf) {
-        load_bunfig(cmd, true, path, ctx)?;
+        load_bunfig(cmd, true, path, ConfigScope::User, ctx)?;
     }
     Ok(())
 }
@@ -97,6 +99,7 @@ pub fn load_config_path(
     cmd: CommandTag,
     auto_loaded: bool,
     config_path: &ZStr,
+    scope: ConfigScope,
     ctx: Context<'_>,
 ) -> Result<(), crate::Error> {
     // `cmd.read_global_config()` is evaluated at runtime (see
@@ -118,7 +121,7 @@ pub fn load_config_path(
         }
     }
 
-    load_bunfig(cmd, auto_loaded, config_path, ctx)
+    load_bunfig(cmd, auto_loaded, config_path, scope, ctx)
 }
 
 #[cold]
@@ -156,7 +159,7 @@ pub fn load_config(
             ctx.has_loaded_global_config = true;
 
             if let Some(path) = get_home_config_path(&mut config_buf) {
-                if let Err(err) = load_config_path(cmd, true, path, ctx) {
+                if let Err(err) = load_config_path(cmd, true, path, ConfigScope::User, ctx) {
                     report_bunfig_load_failure(ctx.log, err);
                 }
             }
@@ -226,7 +229,14 @@ pub fn load_config(
     // `config_buf` outlives the call.
     let config_path = ZStr::from_buf(&config_buf[..], config_path_len);
 
-    if let Err(err) = load_config_path(cmd, auto_loaded, config_path, ctx) {
+    // A path the user spelled out with `--config` carries the user's own
+    // trust. The auto-discovered `bunfig.toml` is part of the project tree.
+    let scope = if auto_loaded {
+        ConfigScope::Project
+    } else {
+        ConfigScope::User
+    };
+    if let Err(err) = load_config_path(cmd, auto_loaded, config_path, scope, ctx) {
         report_bunfig_load_failure(ctx.log, err);
     }
     Ok(())

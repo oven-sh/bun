@@ -1,5 +1,6 @@
 import { file, spawn } from "bun";
 import { afterAll, afterEach, beforeAll, beforeEach, expect, it } from "bun:test";
+import { lstatSync, readFileSync } from "fs";
 import { access, mkdir, writeFile } from "fs/promises";
 import {
   bunExe,
@@ -7,6 +8,7 @@ import {
   isWindows,
   readdirSorted,
   runBunInstall,
+  tempDir,
   tmpdirSync,
   toBeValidBin,
   toHaveBins,
@@ -470,4 +472,94 @@ it("should link dependency without crashing", async () => {
 
   // This should fail with a non-zero exit code.
   expect(await exited4).toBe(1);
+});
+
+// A project `bunfig.toml` is part of the checkout. It must not point `bun link`
+// at a directory outside the project: the global bin linker replaces whatever
+// is already at each destination.
+it("ignores [install] globalDir and globalBinDir from a project bunfig.toml", async () => {
+  using dir = tempDir("bun-link-project-bunfig", {
+    "lib/package.json": JSON.stringify({
+      name: "hostile-lib",
+      version: "1.0.0",
+      bin: { "victim-file": "entry.js", "new-name": "entry.js" },
+    }),
+    "lib/entry.js": "#!/bin/sh\necho linked\n",
+    "lib/bunfig.toml": ({ root }) =>
+      `[install]\n` +
+      `globalBinDir = '${join(root, "outside").replaceAll("\\", "/")}'\n` +
+      `globalDir = '${join(root, "outside", "global").replaceAll("\\", "/")}'\n`,
+    "outside/victim-file": "do not touch\n",
+    "home/.keep": "",
+  });
+
+  const bunInstall = join(String(dir), "bun-install");
+  const linkEnv: NodeJS.Dict<string> = {
+    ...env,
+    BUN_INSTALL: bunInstall,
+    HOME: join(String(dir), "home"),
+    XDG_CONFIG_HOME: join(String(dir), "home"),
+  };
+  delete linkEnv.BUN_INSTALL_BIN;
+  delete linkEnv.BUN_INSTALL_GLOBAL_DIR;
+
+  await using proc = spawn({
+    cmd: [bunExe(), "link"],
+    cwd: join(String(dir), "lib"),
+    stdout: "pipe",
+    stderr: "pipe",
+    env: linkEnv,
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toContain('"globalBinDir" is ignored in a project bunfig.toml');
+  expect(stderr).toContain('"globalDir" is ignored in a project bunfig.toml');
+  expect(stdout).toContain('Success! Registered "hostile-lib"');
+  expect(exitCode).toBe(0);
+
+  // The file the "bin" map named is untouched, and no new name appeared.
+  expect(readFileSync(join(String(dir), "outside", "victim-file"), "utf8")).toBe("do not touch\n");
+  expect(lstatSync(join(String(dir), "outside", "victim-file")).isSymbolicLink()).toBe(false);
+  expect(await readdirSorted(join(String(dir), "outside"))).toEqual(["victim-file"]);
+
+  // The bins go to $BUN_INSTALL/bin, which is where they belong.
+  expect(await readdirSorted(join(bunInstall, "bin"))).toHaveBins(["new-name", "victim-file"]);
+});
+
+it("honors [install] globalDir and globalBinDir from the user bunfig", async () => {
+  using dir = tempDir("bun-link-user-bunfig", {
+    "lib/package.json": JSON.stringify({
+      name: "user-lib",
+      version: "1.0.0",
+      bin: { "user-bin": "entry.js" },
+    }),
+    "lib/entry.js": "#!/bin/sh\necho linked\n",
+    "home/.bunfig.toml": ({ root }) =>
+      `[install]\n` +
+      `globalBinDir = '${join(root, "user-bin-dir").replaceAll("\\", "/")}'\n` +
+      `globalDir = '${join(root, "user-global").replaceAll("\\", "/")}'\n`,
+  });
+
+  const linkEnv: NodeJS.Dict<string> = {
+    ...env,
+    BUN_INSTALL: join(String(dir), "bun-install"),
+    HOME: join(String(dir), "home"),
+    XDG_CONFIG_HOME: join(String(dir), "home"),
+  };
+  delete linkEnv.BUN_INSTALL_BIN;
+  delete linkEnv.BUN_INSTALL_GLOBAL_DIR;
+
+  await using proc = spawn({
+    cmd: [bunExe(), "link"],
+    cwd: join(String(dir), "lib"),
+    stdout: "pipe",
+    stderr: "pipe",
+    env: linkEnv,
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(stdout).toContain('Success! Registered "user-lib"');
+  expect(exitCode).toBe(0);
+
+  expect(await readdirSorted(join(String(dir), "user-bin-dir"))).toHaveBins(["user-bin"]);
+  expect(await readdirSorted(join(String(dir), "user-global", "node_modules"))).toEqual(["user-lib"]);
 });

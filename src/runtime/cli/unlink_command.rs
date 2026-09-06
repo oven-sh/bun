@@ -47,6 +47,15 @@ fn unlink(ctx: &mut ContextData) -> crate::Result<()> {
         Output::flush();
     }
 
+    // `bun unlink` never reaches the install path that prints the log, so a
+    // bunfig warning would go nowhere.
+    if manager.log_mut().has_any() {
+        let _ = manager
+            .log_mut()
+            .print(std::ptr::from_mut(Output::error_writer()));
+        manager.log_mut().reset();
+    }
+
     if manager.options.positionals.len() == 1 {
         // bun unlink
 

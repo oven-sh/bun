@@ -102,6 +102,7 @@ const SHARED_TAIL_PARAMS: &[ParamType] = &[
     ),
     clap::param!("-g, --global                          Install globally"),
     clap::param!("--cwd <STR>                           Set a specific cwd"),
+    clap::param!("--env-file <STR>..."),
     BACKEND_PARAM,
     clap::param!(
         "--registry <STR>                      Use a specific registry by default, overriding .npmrc, bunfig.toml and environment variables"
@@ -1287,8 +1288,24 @@ Full documentation is available at <magenta>https://bun.com/docs/pm/cli/prune<r>
             Global::exit(0);
         }
 
-        let mut cli = CommandLineArguments::default();
-        cli.positionals = args.positionals();
+        let mut positionals = args.positionals();
+        // `Command::which()` stepped past the values of the runtime flags in
+        // front of the keyword (`bun --preload ./x.ts install`). This table
+        // does not declare those flags, so their values come back as
+        // positionals. Drop everything before the keyword so it stays at [0].
+        // Positionals borrow argv, so the keyword is found by identity.
+        if let Some(keyword) = bun_core::argv().get(crate::subcommand_argv_index()) {
+            if let Some(k) = positionals
+                .iter()
+                .position(|p| core::ptr::eq(p.as_ptr(), keyword.as_bytes().as_ptr()))
+            {
+                positionals = &positionals[k..];
+            }
+        }
+        let mut cli = CommandLineArguments {
+            positionals,
+            ..Default::default()
+        };
         cli.yarn = args.flag(b"--yarn");
         cli.production = args.flag(b"--production") || args.flag(b"--prod");
         cli.frozen_lockfile = args.flag(b"--frozen-lockfile")

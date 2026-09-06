@@ -469,3 +469,255 @@ describe("bun", () => {
     });
   });
 });
+
+// `Command::which()` scans argv for the first non-dash token to pick the
+// subcommand. It must step past the value of `--cwd` / `--env-file` so that
+// value isn't misread as the subcommand name.
+describe.concurrent("global flag before subcommand", () => {
+  async function run(cwd: string, argv: string[]) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), ...argv],
+      env: bunEnv,
+      cwd,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+
+  const files = {
+    "package.json": JSON.stringify({ name: "p", scripts: { greet: "echo hello-from-script" } }),
+    "app.ts": `console.log("ran:" + (process.env.FROM_ENV_FILE ?? "unset"));`,
+    "pass.test.ts": `import {test,expect} from "bun:test"; test("t", () => expect(1).toBe(1));`,
+    "my.env": "FROM_ENV_FILE=loaded\n",
+    "sub/package.json": JSON.stringify({
+      name: "sub",
+      scripts: { greet: "echo hello-from-sub" },
+      dependencies: {},
+    }),
+  };
+
+  for (const pre of [
+    ["--cwd", "."],
+    ["--env-file", "my.env"],
+    ["--cwd", ".", "--env-file", "my.env"],
+  ] as const) {
+    test(`bun ${pre.join(" ")} run <script> dispatches RunCommand`, async () => {
+      using dir = tempDir("which-run", files);
+      const { stdout, stderr, exitCode } = await run(String(dir), [...pre, "run", "greet"]);
+      expect(stderr).not.toContain("Script not found");
+      // Misroute to AutoCommand prints the `bun run` help with exit 0.
+      expect(stdout).not.toContain("Usage:");
+      expect(stdout).toContain("hello-from-script");
+      expect(exitCode).toBe(0);
+    });
+
+    test(`bun ${pre.join(" ")} test <file> dispatches TestCommand`, async () => {
+      using dir = tempDir("which-test", files);
+      const { stderr, exitCode } = await run(String(dir), [...pre, "test", "pass.test.ts"]);
+      expect(stderr).not.toContain("Script not found");
+      expect(stderr).toContain("1 pass");
+      expect(exitCode).toBe(0);
+    });
+  }
+
+  test("bun --env-file my.env run app.ts loads the env file", async () => {
+    using dir = tempDir("which-env", files);
+    const { stdout, stderr, exitCode } = await run(String(dir), ["--env-file", "my.env", "run", "app.ts"]);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "ran:loaded\n", stderr: "", exitCode: 0 });
+  });
+
+  test("bun --cwd sub run <script> resolves scripts from the --cwd dir", async () => {
+    using dir = tempDir("which-cwd", files);
+    const { stdout, stderr, exitCode } = await run(String(dir), ["--cwd", "sub", "run", "greet"]);
+    expect(stderr).not.toContain("Script not found");
+    expect(stdout).not.toContain("Usage:");
+    expect(stdout).toContain("hello-from-sub");
+    expect(exitCode).toBe(0);
+  });
+
+  test("bun --cwd sub install dispatches InstallCommand (not add 'sub')", async () => {
+    using dir = tempDir("which-install", files);
+    const { stdout, stderr, exitCode } = await run(String(dir), ["--cwd", "sub", "install", "--dry-run"]);
+    expect(stderr).not.toContain("Script not found");
+    // A misroute to `bun add` would print "installed <pkg>" / hit the registry;
+    // a misroute to AutoCommand would print "Script not found".
+    expect(stdout + stderr).not.toMatch(/\badd\b.*\binstall\b/);
+    expect(stdout + stderr).not.toContain('"sub"');
+    expect(exitCode).toBe(0);
+  });
+
+  test("bun --env-file my.env install does not treat the path as a package", async () => {
+    using dir = tempDir("which-install-env", files);
+    const { stdout, stderr, exitCode } = await run(String(dir), [
+      "--env-file",
+      "my.env",
+      "install",
+      "--dry-run",
+      "--cwd",
+      "sub",
+    ]);
+    // Regression guard for the #34983 revert: `.env` must not leak as a
+    // positional and `install` must not be treated as a package name.
+    expect(stdout + stderr).not.toContain("my.env");
+    expect(stderr).not.toContain("Script not found");
+    expect(exitCode).toBe(0);
+  });
+
+  for (const cwd of [["--cwd", "target"], ["--cwd=target"]] as const) {
+    test(`bun ${cwd.join(" ")} init -y -m dispatches InitCommand in target`, async () => {
+      using dir = tempDir("which-init", { "target/.gitkeep": "" });
+      const { stderr, exitCode } = await run(String(dir), [...cwd, "init", "-y", "-m"]);
+      expect(stderr).not.toContain("Script not found");
+      expect(fs.existsSync(`${dir}/target/package.json`)).toBe(true);
+      expect(fs.existsSync(`${dir}/package.json`)).toBe(false);
+      expect(exitCode).toBe(0);
+    });
+  }
+
+  // Shebang + chmod bin stub is Unix-only; see test/regression/issue/26207.test.ts.
+  test.skipIf(isWindows)("bun --bun x <bin> still passes --bun through", async () => {
+    // `--bun` is handled by bunx's own parser; stepping past leading flags
+    // to find the `x` keyword must not strip it.
+    using dir = tempDir("which-bunx-bun", {
+      "node_modules/.bin/probe": `#!/usr/bin/env node\nconsole.log(process.isBun ? "under-bun" : "under-node");`,
+      "package.json": JSON.stringify({ name: "p" }),
+    });
+    fs.chmodSync(`${dir}/node_modules/.bin/probe`, 0o755);
+    const baseline = await run(String(dir), ["x", "--bun", "probe"]);
+    expect(baseline.stdout.trim()).toBe("under-bun");
+    const { stdout, stderr, exitCode } = await run(String(dir), ["--bun", "x", "probe"]);
+    expect(stderr).not.toContain("Script not found");
+    expect(stdout.trim()).toBe("under-bun");
+    expect(exitCode).toBe(0);
+  });
+
+  test("bun --cwd . exec <cmd> dispatches ExecCommand", async () => {
+    using dir = tempDir("which-exec", files);
+    const { stdout, stderr, exitCode } = await run(String(dir), ["--cwd", ".", "exec", "echo from-exec"]);
+    expect(stderr).not.toContain("Script not found");
+    expect(stdout).toContain("from-exec");
+    expect(exitCode).toBe(0);
+  });
+
+  test("bun --cwd . build app.ts dispatches BuildCommand", async () => {
+    using dir = tempDir("which-build", files);
+    const { stdout, stderr, exitCode } = await run(String(dir), ["--cwd", ".", "build", "./app.ts"]);
+    expect(stderr).not.toContain("Script not found");
+    expect(stdout).toContain("FROM_ENV_FILE");
+    expect(exitCode).toBe(0);
+  });
+
+  test("bun --cwd sub add --dry-run does not misread 'sub' as a package", async () => {
+    using dir = tempDir("which-add", files);
+    const { stdout, stderr } = await run(String(dir), ["--cwd", "sub", "add", "--dry-run"]);
+    expect(stdout + stderr).not.toMatch(/GET .*\/(sub|add)\b/);
+    expect(stderr).not.toContain("Script not found");
+    // Dispatching AddCommand with zero positionals prints this diagnostic;
+    // any other route (AutoCommand, or 'sub'/'add' leaking as a package name)
+    // would not.
+    expect(stderr).toContain("no package specified to add");
+  });
+
+  // The skip takes the flag's arity from the auto flag table, so every
+  // value-taking global flag in space form steps over its value.
+  const valueFlags = {
+    "pre.ts": `console.log("preloaded")`,
+    "app.ts": `console.log("ran")`,
+    "pass.test.ts": `import {test,expect} from "bun:test"; test("t", () => expect(1).toBe(1));`,
+    "package.json": JSON.stringify({ name: "p", scripts: { greet: "echo hello-from-script" } }),
+  };
+
+  for (const pre of [
+    ["--preload", "./pre.ts"],
+    ["-r", "./pre.ts"],
+    ["--require", "./pre.ts"],
+    ["--import", "./pre.ts"],
+  ]) {
+    test(`bun ${pre.join(" ")} test <file> dispatches TestCommand and preloads`, async () => {
+      using dir = tempDir("which-preload-test", valueFlags);
+      const { stdout, stderr, exitCode } = await run(String(dir), [...pre, "test", "pass.test.ts"]);
+      expect(stderr).not.toContain("Script not found");
+      expect(stdout).toContain("preloaded");
+      expect(stderr).toContain("1 pass");
+      expect(exitCode).toBe(0);
+    });
+  }
+
+  for (const pre of [
+    ["--define", "X=1"],
+    ["-d", "X=1"],
+    ["-r", "./pre.ts"],
+  ]) {
+    test(`bun ${pre.join(" ")} build <file> dispatches BuildCommand`, async () => {
+      using dir = tempDir("which-value-build", valueFlags);
+      const { stderr } = await run(String(dir), [...pre, "build", "./app.ts"]);
+      // `-r` is not a build flag: the build parser rejects it, which proves
+      // the dispatch reached BuildCommand.
+      expect(stderr).not.toContain("Script not found");
+    });
+  }
+
+  test("bun --console-depth 5 run <file> dispatches RunCommand", async () => {
+    using dir = tempDir("which-console-depth", valueFlags);
+    const { stdout, stderr, exitCode } = await run(String(dir), ["--console-depth", "5", "run", "app.ts"]);
+    expect(stdout).not.toContain("Usage:");
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "ran\n", stderr: "", exitCode: 0 });
+  });
+
+  test("bun --preload ./pre.ts install does not treat the path or 'install' as a package", async () => {
+    using dir = tempDir("which-preload-install", valueFlags);
+    const { stderr, exitCode } = await run(String(dir), ["--preload", "./pre.ts", "install", "--dry-run"]);
+    expect(stderr).not.toContain("Script not found");
+    expect(await Bun.file(`${dir}/package.json`).text()).toBe(valueFlags["package.json"]);
+    expect(exitCode).toBe(0);
+  });
+
+  // `-`, `--`, `-e` and `-p` end the flag scan: the rest of argv belongs to
+  // the program, even when a token spells a subcommand.
+  for (const argv of [["i"], ["a"], ["x"], ["test"], ["init"], ["pm", "ls"], ["help"]]) {
+    test(`bun - ${argv.join(" ")} runs the stdin program`, async () => {
+      using dir = tempDir("which-stdin", valueFlags);
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-", ...argv],
+        env: bunEnv,
+        cwd: String(dir),
+        stdin: new Blob([`console.log(JSON.stringify(process.argv.slice(2)))`]),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout, stderr, exitCode }).toEqual({ stdout: JSON.stringify(argv) + "\n", stderr: "", exitCode: 0 });
+      expect(fs.readdirSync(String(dir)).sort()).toEqual(Object.keys(valueFlags).sort());
+    });
+  }
+
+  for (const pre of [["-p"], ["--print"], ["-pe"]]) {
+    test(`bun ${pre.join(" ")} <code> test evaluates the code`, async () => {
+      using dir = tempDir("which-print", valueFlags);
+      const { stdout, stderr, exitCode } = await run(String(dir), [...pre, "1+1", "test"]);
+      expect({ stdout, stderr, exitCode }).toEqual({ stdout: "2\n", stderr: "", exitCode: 0 });
+    });
+  }
+
+  test("bun -- <file> test runs the file", async () => {
+    using dir = tempDir("which-dashdash", valueFlags);
+    const { stdout, stderr, exitCode } = await run(String(dir), ["--", "app.ts", "test"]);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "ran\n", stderr: "", exitCode: 0 });
+  });
+
+  // A filter flag in front of `test` names the package script.
+  const workspace = {
+    "package.json": JSON.stringify({ name: "ws", workspaces: ["packages/*"] }),
+    "packages/pkga/package.json": JSON.stringify({ name: "pkga", scripts: { test: "echo test-from-pkga" } }),
+  };
+  for (const pre of [["--filter", "pkga"], ["-F", "pkga"], ["--filter=pkga"], ["-Fpkga"]]) {
+    test(`bun ${pre.join(" ")} test runs the package test script`, async () => {
+      using dir = tempDir("which-filter-test", workspace);
+      const { stdout, exitCode } = await run(String(dir), [...pre, "test"]);
+      expect(stdout).toContain("test-from-pkga");
+      expect(exitCode).toBe(0);
+    });
+  }
+});

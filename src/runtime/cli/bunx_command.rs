@@ -5,6 +5,7 @@ use std::io::Write as _;
 
 use bstr::BStr;
 
+use crate::cli::arguments::LeadingFlag;
 use crate::cli::command::ContextData;
 use crate::cli::{self, Command};
 use crate::run_command::{ConfigureEnvOptions, RunCommand as Run};
@@ -79,7 +80,11 @@ impl Options {
     /// - `--revision` or `--version` flags are passed without a target
     ///   command also being provided. This is not a failure.
     /// - Incorrect arguments are passed. Prints usage and exits with a failure code.
-    fn parse(ctx: &mut ContextData, argv: &[&'static ZStr]) -> Result<Options, AllocError> {
+    fn parse(
+        ctx: &mut ContextData,
+        argv: &[&'static ZStr],
+        keyword_index: usize,
+    ) -> Result<Options, AllocError> {
         let mut found_subcommand_name = false;
         let mut maybe_package_name: Option<&'static [u8]> = None;
         let mut has_version = false; //  --version
@@ -115,6 +120,17 @@ impl Options {
                     ctx.debug.run_in_bun = true;
                 } else if positional == b"--no-install" {
                     opts.no_install = true;
+                } else if i < keyword_index {
+                    // A global flag in front of `x`: its value is not the
+                    // package name. `--cwd` was applied by the caller's
+                    // `apply_leading_cwd()`.
+                    if let LeadingFlag::Flag {
+                        consumes_value: true,
+                        ..
+                    } = LeadingFlag::classify(positional)
+                    {
+                        i += 1;
+                    }
                 } else if positional == b"--package" || positional == b"-p" {
                     // Next argument should be the package name
                     i += 1;
@@ -668,11 +684,16 @@ impl BunxCommand {
         Global::exit(1);
     }
 
-    pub(crate) fn exec(ctx: &mut ContextData, argv: &[&'static ZStr]) -> crate::Result<()> {
+    /// `argv[keyword_index]` is the `x` keyword (or the `bunx` executable).
+    pub(crate) fn exec(
+        ctx: &mut ContextData,
+        argv: &[&'static ZStr],
+        keyword_index: usize,
+    ) -> crate::Result<()> {
         // Don't log stuff
         ctx.debug.silent = true;
 
-        let opts = Options::parse(ctx, argv)?;
+        let opts = Options::parse(ctx, argv, keyword_index)?;
 
         let mut requests_buf = update_request::Array::with_capacity(64);
         // SAFETY: CLI dispatch is single-threaded and `ctx_log` is consumed by

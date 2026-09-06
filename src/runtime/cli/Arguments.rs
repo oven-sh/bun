@@ -772,6 +772,83 @@ pub use bun_bunfig::arguments::{load_config_path, load_config_with_cmd_args};
 /// the attached value `e`. Bun's `-p` takes the code, so `-pe X` is `-p X`.
 pub const NODE_SHORT_ALIASES: &[(&[u8], &[u8])] = &[(b"-pe", b"-p")];
 
+/// How `Command::which()` treats a `-`-prefixed token in front of the
+/// subcommand keyword. The arity comes from `AUTO_PARAMS`, the table that
+/// parses `bun [flags] <file>`, so the sniffer and clap agree on which token
+/// is a flag's value and which is the keyword.
+pub(crate) enum LeadingFlag {
+    /// Every token after this one belongs to the program: `-` (stdin),
+    /// `--`, and the code of `-e` / `--eval` / `-p` / `--print`.
+    Program,
+    Flag {
+        /// The next argv token is this flag's value, not the keyword.
+        consumes_value: bool,
+        /// `--filter` / `-F` / `--workspaces`.
+        filter: bool,
+    },
+}
+
+impl LeadingFlag {
+    pub(crate) fn classify(arg: &[u8]) -> Self {
+        if arg == b"-" || arg == b"--" {
+            return Self::Program;
+        }
+        if let Some(long) = arg.strip_prefix(b"--") {
+            let (name, has_attached_value) = match strings::index_of_char_usize(long, b'=') {
+                Some(i) => (&long[..i], true),
+                None => (long, false),
+            };
+            let Some(param) = AUTO_PARAMS.iter().find(|p| p.names.matches_long(name)) else {
+                return Self::Flag {
+                    consumes_value: false,
+                    filter: false,
+                };
+            };
+            if Self::is_eval(param) {
+                return Self::Program;
+            }
+            return Self::Flag {
+                consumes_value: !has_attached_value && Self::takes_value(param),
+                filter: Self::is_filter_long(name),
+            };
+        }
+        // A short chain (`-abc`): boolean flags share the token, the first
+        // value-taking flag claims the rest of it (`-Fpat`, `-F=pat`) or, when
+        // it is the last character, the next token (`-F pat`).
+        let chain = &arg[1..];
+        for (i, &c) in chain.iter().enumerate() {
+            let Some(param) = AUTO_PARAMS.iter().find(|p| p.names.short == Some(c)) else {
+                break;
+            };
+            if Self::is_eval(param) {
+                return Self::Program;
+            }
+            if Self::takes_value(param) {
+                return Self::Flag {
+                    consumes_value: i + 1 == chain.len(),
+                    filter: c == b'F',
+                };
+            }
+        }
+        Self::Flag {
+            consumes_value: false,
+            filter: false,
+        }
+    }
+
+    fn takes_value(param: &ParamType) -> bool {
+        matches!(param.takes_value, clap::Values::One | clap::Values::Many)
+    }
+
+    fn is_eval(param: &ParamType) -> bool {
+        matches!(param.names.long, Some(b"eval") | Some(b"print"))
+    }
+
+    fn is_filter_long(name: &[u8]) -> bool {
+        name == b"filter" || name == b"workspaces"
+    }
+}
+
 /// Parse `argv` into `api::TransformOptions` for the given subcommand.
 ///
 /// `command::tag_params(cmd)` does a runtime lookup of the per-subcommand

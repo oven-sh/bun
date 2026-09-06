@@ -200,7 +200,7 @@ pub struct Names {
 
 impl Names {
     /// Check if the given name matches the primary long name or any alias
-    pub(crate) fn matches_long(&self, name: &[u8]) -> bool {
+    pub fn matches_long(&self, name: &[u8]) -> bool {
         if let Some(l) = self.long {
             if name == l {
                 return true;

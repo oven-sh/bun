@@ -396,6 +396,17 @@ pub struct RunCommand;
 pub static PRETEND_TO_BE_NODE: core::sync::atomic::AtomicBool =
     core::sync::atomic::AtomicBool::new(false);
 
+/// argv index of the subcommand keyword as located by `Command::which()`
+/// in `bun_runtime::cli`: `bun test …` → 1; `bun --cwd ./dir test …` → 3.
+/// Lives here so `CommandLineArguments::parse` can read it.
+pub static SUBCOMMAND_ARGV_INDEX: core::sync::atomic::AtomicUsize =
+    core::sync::atomic::AtomicUsize::new(1);
+
+#[inline]
+pub fn subcommand_argv_index() -> usize {
+    SUBCOMMAND_ARGV_INDEX.load(core::sync::atomic::Ordering::Relaxed)
+}
+
 #[cfg(not(windows))]
 use bun_core::ZStr;
 

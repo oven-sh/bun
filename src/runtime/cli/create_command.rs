@@ -232,11 +232,13 @@ impl CreateOptions {
             ..Default::default()
         };
 
-        if opts.positionals.len() >= 1
-            && (opts.positionals[0] == b"c" || opts.positionals[0] == b"create")
+        if let Some(i) = opts
+            .positionals
+            .iter()
+            .position(|&p| p == b"c" || p == b"create")
         {
             let mut v = core::mem::take(&mut opts.positionals).into_vec();
-            v.remove(0);
+            v.drain(..=i);
             opts.positionals = v.into_boxed_slice();
         }
 

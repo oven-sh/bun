@@ -321,6 +321,8 @@ export default [
       symlinkSync: { async: false, fn: "symlinkSync", length: 3 },
       truncate: { async: true, fn: "truncate", length: 3 },
       truncateSync: { async: false, fn: "truncateSync", length: 2 },
+      trackFd: { async: false, fn: "trackFd", length: 1 },
+      untrackFd: { async: false, fn: "untrackFd", length: 1 },
       unlink: { async: true, fn: "unlink", length: 2 },
       unlinkSync: { async: false, fn: "unlinkSync", length: 1 },
       utimes: { async: true, fn: "utimes", length: 4 },

@@ -1,6 +1,15 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isLinux, isMacOS, isWindows, tempDir } from "harness";
-import { chmodSync, existsSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  copyFileSync,
+  existsSync,
+  linkSync,
+  mkdirSync,
+  readFileSync,
+  unlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { join } from "node:path";
 
 const crontabPath = Bun.which("crontab");
@@ -145,6 +154,12 @@ describe("Bun.cron API", () => {
     expect(() => Bun.cron("./test.ts", "* * *", "test-bad")).toThrow(/cron expression/i);
     expect(() => Bun.cron("./test.ts", "* * * * * *", "test-bad")).toThrow(/cron expression/i);
     expect(() => Bun.cron("./test.ts", "abc * * * *", "test-bad")).toThrow(/cron expression/i);
+  });
+
+  test("throws for a schedule with no future occurrence, like the in-process form", () => {
+    // The check runs before any OS backend is called, so it applies on every platform.
+    expect(() => Bun.cron("./test.ts", "0 0 30 2 *", "feb30")).toThrow(/no future occurrences/);
+    expect(() => Bun.cron("0 0 30 2 *", () => {})).toThrow(/no future occurrences/);
   });
 
   test("throws with percent sign in path", async () => {
@@ -2003,5 +2018,35 @@ describe.skipIf(!isLinux)("crontab read-modify-write (stub crontab)", () => {
     expect(stdout).toBe("rejected:crontab not found in PATH\n");
     expect(exitCode).toBe(0);
     expect(readLog(String(dir))).toEqual(["-l"]);
+  });
+
+  test.concurrent("rejects a bun executable path that contains a line break", async () => {
+    using dir = stubDir();
+    const evilDir = join(String(dir), "evil\n* * * * * touch INJECTED #");
+    mkdirSync(evilDir);
+    const evilBun = join(evilDir, "bun");
+    try {
+      linkSync(bunExe(), evilBun);
+    } catch {
+      copyFileSync(bunExe(), evilBun);
+    }
+    await using proc = Bun.spawn({
+      cmd: [
+        evilBun,
+        "-e",
+        `try { await Bun.cron("./w.ts", "@hourly", "nl"); console.log("resolved"); }
+         catch (e) { console.log("rejected: " + e.message); }`,
+      ],
+      cwd: String(dir),
+      env: stubEnv(String(dir)),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toMatch(/^rejected: Bun executable path '.*' contains characters/s);
+    expect(exitCode).toBe(0);
+    expect(existsSync(join(String(dir), "crontab.txt"))).toBe(false);
+    expect(readLog(String(dir))).toEqual([]);
   });
 });

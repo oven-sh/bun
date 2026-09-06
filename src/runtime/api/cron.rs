@@ -794,6 +794,13 @@ pub(crate) fn cron_register(global: &JSGlobalObject, frame: &CallFrame) -> JsRes
             )));
         }
     };
+    let now_ms = bun_core::time::milli_timestamp() as f64;
+    if parsed.next(global, now_ms, CronTz::Local)?.is_none() {
+        return Err(global.throw_invalid_arguments(format_args!(
+            "Cron expression '{}' has no future occurrences",
+            bstr::BStr::new(schedule_slice.slice())
+        )));
+    }
     let mut fmt_buf = [0u8; 512];
     let normalized_schedule = parsed.format_numeric(&mut fmt_buf);
 
@@ -830,9 +837,9 @@ pub(crate) fn cron_register(global: &JSGlobalObject, frame: &CallFrame) -> JsRes
             return Err(global.throw(format_args!("Failed to get bun executable path")));
         }
     };
-    if bun_core::strings::index_of_any(bun_exe.as_bytes(), b"'%").is_some() {
+    if bun_core::strings::index_of_any(bun_exe.as_bytes(), b"'%\n\r").is_some() {
         return Err(global.throw_invalid_arguments(format_args!(
-                "Bun executable path '{}' contains characters (' or %) that cannot be safely embedded in a crontab entry",
+                "Bun executable path '{}' contains characters (', % or a line break) that cannot be safely embedded in a crontab entry",
                 bstr::BStr::new(bun_exe.as_bytes())
             )));
     }

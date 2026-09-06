@@ -593,12 +593,17 @@ static termios termios_to_restore_later[3];
 // from normal execution; sig_atomic_t is the only integral type POSIX
 // guarantees can be accessed atomically across that boundary.
 extern "C" volatile sig_atomic_t bun_stdio_modified[3] = { 0, 0, 0 };
+extern "C" int uv_tty_reset_mode(void);
 #endif
 
 extern "C" void bun_restore_stdio()
 {
 
 #if !OS(WINDOWS)
+    // A tty that setRawMode() touched and that is not one of fds 0-2 (for
+    // example `fs.openSync("/dev/tty")`) is only known to the libuv-style
+    // snapshot. Node's ResetStdio() does the same call first.
+    uv_tty_reset_mode();
 
     // Only suppress the restore when Bun is a pipeline producer (stdout is a
     // pipe, not a TTY) and it didn't touch termios itself. That's the #29592

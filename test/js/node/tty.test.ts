@@ -192,6 +192,78 @@ describe("ReadStream.prototype.setRawMode", () => {
   });
 });
 
+// A raw tty that is not one of fds 0-2 (fs.openSync("/dev/tty")) is only
+// known to the libuv-style snapshot that uv_tty_reset_mode() restores. The
+// SIGINT/SIGTERM exit path restored fds 0-2 only, so the terminal stayed raw
+// after Ctrl-C. Node's ResetStdio() calls uv_tty_reset_mode() first.
+describe.skipIf(isWindows)("setRawMode on a tty opened on fd >= 3", () => {
+  const ICANON = process.platform === "darwin" ? 0x100 : 0x2;
+  const ECHO = 0x8;
+
+  // `shell` wraps the bun child so that its stdout is a pipe (the
+  // pipeline-producer case that skips the fds 0-2 restore) while the pty
+  // stays its controlling terminal.
+  async function run(shell: string, signal: "SIGINT" | "SIGTERM") {
+    const decoder = new TextDecoder();
+    let buffer = "";
+    const ready = Promise.withResolvers<void>();
+    const script = `
+      const fs = require("node:fs");
+      const tty = require("node:tty");
+      const fd = fs.openSync("/dev/tty", "r+");
+      new tty.ReadStream(fd).setRawMode(true);
+      fs.writeSync(fd, "RAW " + process.pid + " " + fd + "\\n");
+      setInterval(() => {}, 1000);
+    `;
+
+    const proc = Bun.spawn({
+      cmd: ["sh", "-c", shell, "sh", bunExe(), script],
+      env: bunEnv,
+      terminal: {
+        data(_terminal, chunk: Uint8Array) {
+          buffer += decoder.decode(chunk, { stream: true });
+          if (/RAW \d+ \d+\r?\n/.test(buffer)) ready.resolve();
+        },
+      },
+    });
+    const terminal = proc.terminal!;
+    try {
+      const isRaw = () => (terminal.localFlags & (ICANON | ECHO)) === 0;
+      const observed: Record<string, boolean> = { beforeRaw: isRaw() };
+
+      let signaled = false;
+      const exitedEarly = proc.exited.then(code => {
+        if (!signaled) {
+          throw new Error(`child exited early with code ${code}; output: ${JSON.stringify(buffer)}`);
+        }
+      });
+      await Promise.race([ready.promise, exitedEarly]);
+
+      const [, pid, fd] = buffer.match(/RAW (\d+) (\d+)\r?\n/)!;
+      expect(Number(fd)).toBeGreaterThanOrEqual(3);
+      observed.afterRaw = isRaw();
+
+      signaled = true;
+      process.kill(Number(pid), signal);
+      await proc.exited;
+      observed.afterSignal = isRaw();
+      return observed;
+    } finally {
+      terminal.close();
+    }
+  }
+
+  const cooked = { beforeRaw: false, afterRaw: true, afterSignal: false };
+
+  test("SIGINT restores cooked mode when stdout is a pipe", async () => {
+    expect(await run('"$1" -e "$2" | cat', "SIGINT")).toEqual(cooked);
+  });
+
+  test("SIGTERM restores cooked mode when stdout is a pipe", async () => {
+    expect(await run('"$1" -e "$2" | cat', "SIGTERM")).toEqual(cooked);
+  });
+});
+
 describe("WriteStream.prototype.getColorDepth", () => {
   const getColorDepth = (env: Record<string, string>) => WriteStream.prototype.getColorDepth.call(undefined, env);
 

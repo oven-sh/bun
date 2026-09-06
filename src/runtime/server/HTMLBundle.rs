@@ -668,11 +668,9 @@ impl Route {
                 // Not an asset: a reload drops this alias so the page bundles
                 // again. An html route mounted at this path would be replaced
                 // by the alias in the route list and never bundle again.
-                let html_path_has_html_route =
-                    server.config().static_routes.iter().any(|entry| {
-                        matches!(entry.route, AnyRoute::Html(_))
-                            && *entry.path == *html_route_path
-                    });
+                let html_path_has_html_route = server.config().static_routes.iter().any(|entry| {
+                    matches!(entry.route, AnyRoute::Html(_)) && *entry.path == *html_route_path
+                });
                 if !html_path_has_html_route {
                     bun_core::handle_oom(server.append_static_route(
                         &html_route_path,

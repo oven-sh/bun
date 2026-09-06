@@ -865,7 +865,10 @@ impl IntermediateOutput {
                                     )
                                 },
                             );
-                            count += cheap_normalizer[0].len() + cheap_normalizer[1].len();
+                            count += cheap_normalizer
+                                .iter()
+                                .map(|part| part.len())
+                                .sum::<usize>();
                         }
                         QueryKind::None => {}
                     }
@@ -1064,21 +1067,14 @@ impl IntermediateOutput {
                                 },
                             );
 
-                            if !cheap_normalizer[0].is_empty() {
-                                remain[..cheap_normalizer[0].len()]
-                                    .copy_from_slice(cheap_normalizer[0]);
-                                remain = &mut remain[cheap_normalizer[0].len()..];
-                                if ENABLE_SOURCE_MAP_SHIFTS {
-                                    shift.after.advance(cheap_normalizer[0]);
+                            for part in cheap_normalizer {
+                                if part.is_empty() {
+                                    continue;
                                 }
-                            }
-
-                            if !cheap_normalizer[1].is_empty() {
-                                remain[..cheap_normalizer[1].len()]
-                                    .copy_from_slice(cheap_normalizer[1]);
-                                remain = &mut remain[cheap_normalizer[1].len()..];
+                                remain[..part.len()].copy_from_slice(part);
+                                remain = &mut remain[part.len()..];
                                 if ENABLE_SOURCE_MAP_SHIFTS {
-                                    shift.after.advance(cheap_normalizer[1]);
+                                    shift.after.advance(part);
                                 }
                             }
 

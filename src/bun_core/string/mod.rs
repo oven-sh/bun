@@ -2021,12 +2021,19 @@ pub use printer::quote_for_json;
 
 pub use crate::ffi::slice_to_nul;
 
-/// Pure path-string helper used by the bundler chunk writer and `css::printer`.
-/// Returns `[prefix', suffix']` such that concatenating them produces a
-/// reasonably-normalized path (collapses `./` leading and avoids `//`).
-/// The two-element-array return shape lets bundler call-sites index it
-/// directly.
-pub fn cheap_prefix_normalizer<'a>(prefix: &'a [u8], suffix: &'a [u8]) -> [&'a [u8]; 2] {
+/// Joins a public path (`prefix`) with an output-relative path (`suffix`) the
+/// way esbuild's `joinWithPublicPath` does. Returns `[prefix', sep, suffix']`;
+/// concatenate the three parts. A leading `./` on `suffix` is dropped, and
+/// exactly one `/` separates a non-empty `prefix` from `suffix`.
+///
+/// ```text
+/// ["", "./out.js"]                      => "./out.js"
+/// ["", "../out.js"]                     => "../out.js"
+/// ["https://example.com/", "/out.js"]   => "https://example.com/out.js"
+/// ["https://example.com", "./out.js"]   => "https://example.com/out.js"
+/// ["/foo/", "bar.js"]                   => "/foo/bar.js"
+/// ```
+pub fn cheap_prefix_normalizer<'a>(prefix: &'a [u8], suffix: &'a [u8]) -> [&'a [u8]; 3] {
     if prefix.is_empty() {
         let suffix_no_slash = strings::remove_leading_dot_slash(suffix);
         return [
@@ -2035,23 +2042,23 @@ pub fn cheap_prefix_normalizer<'a>(prefix: &'a [u8], suffix: &'a [u8]) -> [&'a [
             } else {
                 b"./"
             },
+            b"",
             suffix_no_slash,
         ];
     }
 
-    // ["https://example.com/", "/out.js"]  => "https://example.com/out.js"
-    // ["/foo/", "/bar.js"]                 => "/foo/bar.js"
     let win = crate::Environment::IS_WINDOWS;
-    if strings::ends_with_char(prefix, b'/') || (win && strings::ends_with_char(prefix, b'\\')) {
-        if strings::starts_with_char(suffix, b'/')
-            || (win && strings::starts_with_char(suffix, b'\\'))
-        {
-            return [prefix, &suffix[1..]];
-        }
-        // It gets really complicated if we try to deal with URLs more than this.
-    }
+    let is_sep = |c: u8| c == b'/' || (win && c == b'\\');
 
-    [prefix, strings::remove_leading_dot_slash(suffix)]
+    let suffix = strings::remove_leading_dot_slash(suffix);
+    let prefix_has_sep = prefix.last().is_some_and(|&c| is_sep(c));
+    let suffix_has_sep = suffix.first().is_some_and(|&c| is_sep(c));
+
+    match (prefix_has_sep, suffix_has_sep) {
+        (true, true) => [prefix, b"", &suffix[1..]],
+        (false, false) => [prefix, b"/", suffix],
+        _ => [prefix, b"", suffix],
+    }
 }
 
 // Re-export `wtf::parse_double` at crate root (callers spell it `bun_core::parse_double`).

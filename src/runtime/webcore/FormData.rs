@@ -319,26 +319,22 @@ pub(crate) fn for_each_multipart_entry<C>(
                         value = &value[1..];
                     }
 
-                    let mut field_value = value;
-                    {
-                        let mut i: usize = 0;
-                        while i < field_value.len() {
-                            match field_value[i] {
-                                b'"' => {
-                                    field_value = &field_value[..i];
-                                    break;
-                                }
-                                b'\\' => {
-                                    i += (field_value.len() > i + 1 && field_value[i + 1] == b'"')
-                                        as usize;
-                                }
-                                // the spec requires a end quote, but some browsers don't send it
-                                _ => {}
-                            }
-                            i += 1;
+                    // The multipart/form-data serializer (HTML spec, browsers, undici)
+                    // percent-encodes `"`, CR and LF and writes `\` verbatim, so the
+                    // first `"` always ends the value: there are no quoted-pairs here.
+                    let field_value = match strings::index_of_char_usize(value, b'"') {
+                        Some(end) => {
+                            let field_value = &value[..end];
+                            value = &value[end + 1..];
+                            field_value
                         }
-                        value = &value[(i + 1).min(value.len())..];
-                    }
+                        // the spec requires an end quote, but some browsers don't send it
+                        None => {
+                            let field_value = value;
+                            value = b"";
+                            field_value
+                        }
+                    };
 
                     if strings::eql_case_insensitive_ascii(eql_key, b"name", true) {
                         name = subslicer.sub(field_value).value();

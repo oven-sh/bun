@@ -951,3 +951,63 @@ test("streaming extract skips a damaged header block and extracts the entries af
   }
   expect(exitCode).toBe(0);
 });
+
+// -------------------------------------------------------------------
+// A tarball is extracted into a staging directory under the temp dir
+// and then renamed into the cache. When the cache already holds that
+// entry, the rename swaps the two directories, so the staging name now
+// holds the replaced cache entry. It must be removed, or every warm
+// install leaves a full package copy behind in $TMPDIR.
+// -------------------------------------------------------------------
+test("extracting over an existing cache entry leaves nothing behind in the temp dir", async () => {
+  const pkgJson = Buffer.from(JSON.stringify({ name: "warm-pkg", version: "1.0.0", main: "index.js" }) + "\n");
+  const body = Buffer.from("module.exports = 1;\n");
+  const tar = Buffer.concat([
+    tarHeader("package/package.json", pkgJson.length, "0"),
+    pkgJson,
+    pad512(pkgJson.length),
+    tarHeader("package/index.js", body.length, "0"),
+    body,
+    pad512(body.length),
+    Buffer.alloc(1024, 0),
+  ]);
+  const tgz = gzipSync(tar);
+
+  const manifest = JSON.stringify({
+    name: "app",
+    version: "1.0.0",
+    dependencies: { "warm-pkg": "file:../warm-pkg.tgz" },
+  });
+  using dir = tempDir("warm-cache-tmp", {
+    "a/package.json": manifest,
+    "b/package.json": manifest,
+    "tmp/.keep": "",
+  });
+  writeFileSync(join(String(dir), "warm-pkg.tgz"), tgz);
+
+  const tmp = join(String(dir), "tmp");
+  const env = {
+    BUN_INSTALL_CACHE_DIR: join(String(dir), ".cache"),
+    BUN_TMPDIR: tmp,
+    TMPDIR: tmp,
+    TEMP: tmp,
+    TMP: tmp,
+  };
+
+  // Cold cache: the staging dir is renamed into the cache.
+  const cold = await runInstall(join(String(dir), "a"), env);
+  expect(cold.stderr).not.toContain("error:");
+  expect(cold.exitCode).toBe(0);
+  expect(await readdirSorted(tmp)).toEqual([".keep"]);
+
+  // Warm cache, no lockfile: the tarball is extracted again and the new
+  // extraction replaces the cache entry.
+  const warm = await runInstall(join(String(dir), "b"), env);
+  expect(warm.stderr).not.toContain("error:");
+  expect(warm.exitCode).toBe(0);
+  expect(await readdirSorted(tmp)).toEqual([".keep"]);
+
+  expect(readFileSync(join(String(dir), "b", "node_modules", "warm-pkg", "index.js"), "utf8")).toBe(
+    "module.exports = 1;\n",
+  );
+});

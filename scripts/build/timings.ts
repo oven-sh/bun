@@ -66,7 +66,11 @@ function classify(cfg: Config, output: BunOutput, edge: Edge): Phase {
   if (o === rel(output.exe) || o === rel(output.testFFI) || o.endsWith(".linker-map")) return "link";
   // strip/dsymutil, and the post-link validations + artifact uploads keyed off the executable
   // (bun-profile.binary-verified, .smoke-test-passed, .duplicate-symbols-checked, …).
-  if (o === rel(output.strippedExe) || o === rel(output.dsym) || (output.exe !== undefined && o.startsWith(rel(output.exe) + ".")))
+  if (
+    o === rel(output.strippedExe) ||
+    o === rel(output.dsym) ||
+    (output.exe !== undefined && o.startsWith(rel(output.exe) + "."))
+  )
     return "strip + post-link";
   if (o === rel(output.archive) || /^lib[^/]*\.(a|lib)$/.test(o)) return "archive";
   if (o.startsWith("rust-target/") || output.rustObjects.map(rel).includes(o)) return "cargo";

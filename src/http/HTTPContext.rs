@@ -718,12 +718,13 @@ impl<const SSL: bool> HTTPContext<SSL> {
                     .set(ssl_config_hash(ssl_config.map(|c| &**c)));
                 // Pool owns the tunnel ref transferred by the caller.
                 *slot.proxy_tunnel.borrow_mut() = tunnel;
-                *slot.target_hostname.borrow_mut() =
-                    if (had_tunnel || transport == Transport::Unix) && !target_hostname.is_empty() {
-                        Box::<[u8]>::from(target_hostname)
-                    } else {
-                        Box::default()
-                    };
+                *slot.target_hostname.borrow_mut() = if (had_tunnel || transport == Transport::Unix)
+                    && !target_hostname.is_empty()
+                {
+                    Box::<[u8]>::from(target_hostname)
+                } else {
+                    Box::default()
+                };
                 slot.target_port.set(target_port);
                 slot.proxy_auth_hash.set(proxy_auth_hash);
                 *slot.h2_session.borrow_mut() = h2_session;

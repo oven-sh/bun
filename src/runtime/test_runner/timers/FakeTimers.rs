@@ -410,7 +410,26 @@ fn use_real_timers(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSVal
 fn advance_timers_to_next_timer(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     error_unless_fake_timers(global)?;
 
-    FakeTimers::execute_next(global)?;
+    // `steps` defaults to 1 and is counted down like Jest does
+    // (`for (let i = steps; i > 0; i--)`), so NaN or a negative value fires
+    // nothing and a fraction rounds up.
+    let steps_arg = frame.arguments_as_array::<1>()[0];
+    let mut steps = if steps_arg.is_undefined() {
+        1.0
+    } else {
+        steps_arg.to_number(global)?
+    };
+    while steps > 0.0 {
+        if !FakeTimers::execute_next(global)? {
+            break;
+        }
+        // One step also fires every other timer due at the same time, as
+        // Jest's `clock.next()` followed by `clock.tick(0)` does.
+        if let Some(now) = CURRENT_TIME.get_timespec_now() {
+            FakeTimers::execute_until(global, now)?;
+        }
+        steps -= 1.0;
+    }
 
     Ok(frame.this())
 }

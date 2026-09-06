@@ -115,6 +115,50 @@ describe("advanceTimersToNextTimer", () => {
     expect(order.takeOrderMessages()).toEqual(["setInterval 2"]);
     vi.useRealTimers();
   });
+  test("steps argument fires that many timers", () => {
+    vi.useFakeTimers();
+    const order = new Order();
+    setTimeout(() => order.add("a"), 10);
+    setTimeout(() => order.add("b"), 20);
+    setTimeout(() => order.add("c"), 30);
+    setTimeout(() => order.add("d"), 40);
+    vi.advanceTimersToNextTimer(3);
+    expect(order.takeOrderMessages()).toEqual(["a", "b", "c"]);
+    expect(Date.now() - order.startDate).toBe(30);
+    // more steps than timers stops when the queue is empty
+    vi.advanceTimersToNextTimer(5);
+    expect(order.takeOrderMessages()).toEqual(["d"]);
+    expect(Date.now() - order.startDate).toBe(40);
+    vi.useRealTimers();
+  });
+  test("one step fires every timer due at the same time", () => {
+    vi.useFakeTimers();
+    const order = new Order();
+    setTimeout(() => order.add("a"), 10);
+    setTimeout(() => order.add("b"), 10);
+    setTimeout(() => {
+      order.add("c");
+      setTimeout(() => order.add("c0"), 0);
+    }, 10);
+    setTimeout(() => order.add("d"), 20);
+    vi.advanceTimersToNextTimer();
+    expect(order.takeOrderMessages()).toEqual(["a", "b", "c"]);
+    vi.advanceTimersToNextTimer();
+    expect(order.takeOrderMessages()).toEqual(["c0"]);
+    vi.advanceTimersToNextTimer();
+    expect(order.takeOrderMessages()).toEqual(["d"]);
+    vi.useRealTimers();
+  });
+  test("steps that count down to nothing fire no timer", () => {
+    vi.useFakeTimers();
+    const order = new Order();
+    setTimeout(() => order.add("a"), 10);
+    for (const steps of [0, -1, NaN]) {
+      vi.advanceTimersToNextTimer(steps);
+      expect(order.takeOrderMessages()).toEqual([]);
+    }
+    vi.useRealTimers();
+  });
 });
 describe("advanceTimersByTime", () => {
   test("setInterval", () => {

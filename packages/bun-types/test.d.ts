@@ -97,7 +97,7 @@ declare module "bun:test" {
     function useFakeTimers(options?: { now?: number | Date } | "modern" | "legacy"): typeof vi;
     function useRealTimers(): typeof vi;
     function advanceTimersByTime(milliseconds: number): typeof vi;
-    function advanceTimersToNextTimer(): typeof vi;
+    function advanceTimersToNextTimer(steps?: number): typeof vi;
     function runAllTimers(): typeof vi;
     function runOnlyPendingTimers(): typeof vi;
     function getTimerCount(): number;

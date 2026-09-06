@@ -1311,6 +1311,56 @@ it("throws when an ArrayBufferView is used for stdout or stderr", async () => {
   expect(exitCode).toBe(0);
 });
 
+it("throws when a ReadableStream, Request, or Response is used for stdout or stderr", () => {
+  const pullStream = () =>
+    new ReadableStream({
+      pull(c) {
+        c.enqueue(new Uint8Array([1]));
+        c.close();
+      },
+    });
+  // These can only be read from, and the parent reads stdout/stderr. A bare
+  // ReadableStream used to be accepted and wired the child to a socket that
+  // nothing drained; a Request/Response without a body silently became "ignore".
+  const sources = [
+    ["ReadableStream", () => pullStream()],
+    ["Request", () => new Request("http://example.com")],
+    ["Request", () => new Request("http://example.com", { method: "POST", body: "body" })],
+    ["Response", () => new Response(null)],
+    ["Response", () => new Response("body")],
+    ["Response", () => new Response(pullStream())],
+  ] as const;
+  for (const name of ["stdout", "stderr"] as const) {
+    for (const [kind, make] of sources) {
+      const message = `${kind} cannot be used for ${name}. To read the subprocess's ${name}, use 'pipe' and read from subprocess.${name}`;
+      for (const fn of [spawn, spawnSync]) {
+        expect(() => fn({ cmd: [bunExe(), "-e", ""], env: bunEnv, [name]: make() })).toThrow(message);
+      }
+    }
+  }
+});
+
+it("names the stdio slot when the value is not a supported kind", () => {
+  const stdin =
+    "stdin must be one of 'pipe', 'inherit', 'ignore', null, a file descriptor, Bun.file(), a Blob, Request, Response, ReadableStream, or a TypedArray";
+  const stdout = "stdout must be one of 'pipe', 'inherit', 'ignore', null, a file descriptor, or Bun.file()";
+  const stderr = "stderr must be one of 'pipe', 'inherit', 'ignore', null, a file descriptor, or Bun.file()";
+  const extra = "stdio[3] must be one of 'pipe', 'inherit', 'ignore', 'socket-fd', null, a file descriptor, or Bun.file()";
+  const cmd = [bunExe(), "-e", ""];
+  for (const value of ["bogus", true, {}, new URL("file:///tmp/x"), new Proxy(Bun.file(import.meta.path), {})]) {
+    // @ts-expect-error intentionally invalid
+    expect(() => spawn({ cmd, env: bunEnv, stdin: value })).toThrow(stdin);
+    // @ts-expect-error intentionally invalid
+    expect(() => spawn({ cmd, env: bunEnv, stdout: value })).toThrow(stdout);
+    // @ts-expect-error intentionally invalid
+    expect(() => spawnSync({ cmd, env: bunEnv, stderr: value })).toThrow(stderr);
+    // @ts-expect-error intentionally invalid
+    expect(() => spawn({ cmd, env: bunEnv, stdio: [value, "pipe", "pipe"] })).toThrow(stdin);
+    // @ts-expect-error intentionally invalid
+    expect(() => spawn({ cmd, env: bunEnv, stdio: ["ignore", "pipe", "pipe", value] })).toThrow(extra);
+  }
+});
+
 it.skipIf(isWindows)("leaves a caller-supplied stdout fd open when stdin stream setup fails", async () => {
   const file = join(tmp, "stdin-setup-failure.txt");
   const fixture = `

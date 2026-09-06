@@ -1,5 +1,6 @@
 import { describe, expect, it, test } from "bun:test";
 import { bunEnv, bunExe, isWindows } from "harness";
+import { join } from "node:path";
 import { WriteStream } from "node:tty";
 
 describe("ReadStream.prototype.setRawMode", () => {
@@ -507,6 +508,142 @@ describe.skipIf(isWindows)("tty.ReadStream is a net.Socket over a native TTY han
     ).toBe("abc\n");
     expect(result.events.every(e => e[2])).toBe(true);
     expect(result).toMatchObject({ bytesRead: 4, fd: 0 });
+  });
+
+  // https://github.com/oven-sh/bun/issues/33580: Node emits errnoException(err,
+  // "setRawMode"), so code/errno/syscall are set. A pipe is accepted by
+  // uv_tty_init, and tcgetattr on it fails with ENOTTY.
+  test("setRawMode failure emits an ErrnoException", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          const tty = require("node:tty");
+          const s = new tty.ReadStream(0);
+          s.on("error", err => {
+            console.log(JSON.stringify({ code: err.code, errno: err.errno, syscall: err.syscall, message: err.message, isRaw: s.isRaw }));
+            s.destroy();
+          });
+          s.setRawMode(true);
+        `,
+      ],
+      env: bunEnv,
+      stdin: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({
+      code: "ENOTTY",
+      errno: -25,
+      syscall: "setRawMode",
+      message: "setRawMode ENOTTY",
+      isRaw: false,
+    });
+    expect(exitCode).toBe(0);
+  });
+});
+
+// node-pty sets O_NONBLOCK on the pty master and wraps it in tty.ReadStream
+// (https://github.com/oven-sh/bun/issues/41414). A read with no data then
+// fails with EAGAIN. The stream must wait for data, as Node's does. libuv
+// cannot reopen a pty master by name, so it owns that fd and closes it on
+// close(); node-pty relies on that.
+describe.skipIf(isWindows)("ReadStream on a non-blocking pty master", () => {
+  // A separate process opens the path and writes one chunk. The fixture issues
+  // its next read as soon as it says READY, and that read completes long
+  // before a new process can start. So every chunk lands after a read that
+  // found no data, which is the read the bug turned into EAGAIN.
+  async function writeFromAnotherProcess(path: string, chunk: string) {
+    await using writer = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const fs = require("fs");
+         const fd = fs.openSync(process.argv[1], fs.constants.O_WRONLY | fs.constants.O_NOCTTY | fs.constants.O_NONBLOCK);
+         fs.writeSync(fd, process.argv[2]);
+         fs.closeSync(fd);`,
+        path,
+        chunk,
+      ],
+      env: bunEnv,
+    });
+    expect(await writer.exited).toBe(0);
+  }
+
+  // Runs the fixture, writes "one" and "two" to the slave after each READY,
+  // then ends the stream the requested way. Returns the fixture's event log.
+  async function runFixture(end: "destroy" | "hangup") {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), join(import.meta.dir, "tty-readstream-nonblocking.fixture.ts")],
+      env: bunEnv,
+      stdin: "pipe",
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    // Drain stderr from the start so a chatty fixture cannot block on it.
+    const stderr = proc.stderr.text();
+    const chunks = ["one", "two"];
+    const lines: string[] = [];
+    let slavePath = "";
+    let buffered = "";
+    for await (const chunk of proc.stdout) {
+      buffered += Buffer.from(chunk).toString();
+      let newline: number;
+      while ((newline = buffered.indexOf("\n")) !== -1) {
+        const line = buffered.slice(0, newline);
+        buffered = buffered.slice(newline + 1);
+        if (line.startsWith("SLAVE ")) {
+          slavePath = line.slice("SLAVE ".length);
+          continue;
+        }
+        if (line !== "READY") {
+          lines.push(line);
+          continue;
+        }
+        const next = chunks.shift();
+        if (next !== undefined) {
+          await writeFromAnotherProcess(slavePath, next);
+          continue;
+        }
+        proc.stdin.write(end + "\n");
+        proc.stdin.end();
+      }
+    }
+
+    const [, exitCode] = await Promise.all([stderr, proc.exited]);
+    return { lines, exitCode };
+  }
+
+  // After each chunk the fixture resizes the pty through the master, as
+  // node-pty's pty.resize() does. That ioctl failed with EBADF when the stream
+  // had closed the fd on the first EAGAIN.
+  test.concurrent("delivers data written after the first EAGAIN and destroy() closes the fd", async () => {
+    const { lines, exitCode } = await runFixture("destroy");
+    expect(lines).toEqual([
+      'DATA "one"',
+      "RESIZE ok",
+      'DATA "two"',
+      "RESIZE ok",
+      "CLOSE destroyed=true masterOpen=false",
+    ]);
+    expect(exitCode).toBe(0);
+  });
+
+  test.concurrent("ends when the slave side hangs up", async () => {
+    const { lines, exitCode } = await runFixture("hangup");
+    // Linux reports the hangup as EIO, macOS as end of file.
+    expect(["ERROR EIO", "END"]).toContain(lines[4]);
+    expect([...lines.slice(0, 4), ...lines.slice(5)]).toEqual([
+      'DATA "one"',
+      "RESIZE ok",
+      'DATA "two"',
+      "RESIZE ok",
+      "CLOSE destroyed=true masterOpen=false",
+    ]);
+    expect(exitCode).toBe(0);
   });
 });
 

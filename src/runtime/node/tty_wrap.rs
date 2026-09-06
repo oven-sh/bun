@@ -57,6 +57,9 @@ bitflags::bitflags! {
         /// The loop refused to poll the fd (kqueue on the macOS `/dev/tty`
         /// alias): `readStart()` reports `ENOTSUP`, everything else works.
         const UNPOLLABLE     = 1 << 6;
+        /// `close()` closes `fd` too. libuv owns a tty fd it could not reopen
+        /// (a pty master, a pipe) and closes it unless it is stdio.
+        const OWNS_FD        = 1 << 7;
     }
 }
 
@@ -88,6 +91,19 @@ pub struct TTY {
 enum StartError {
     Sys(sys::Error),
     Unpollable,
+}
+
+/// The code `onread`, `readStart()` and `setRawMode()` report: libuv's
+/// negative errno, which is the `UV_E*` value on Windows.
+fn uv_errno(errno: u16) -> i32 {
+    #[cfg(windows)]
+    {
+        sys::windows::libuv::e_discriminant_to_uv(errno).unwrap_or(-i32::from(errno))
+    }
+    #[cfg(not(windows))]
+    {
+        -i32::from(errno)
+    }
 }
 
 /// libuv's `uv_tty_init` accepts a tty, pipe or socket fd and rejects a
@@ -224,22 +240,22 @@ impl TTY {
     /// registered by `readStart()`. On success the reader holds a ref.
     fn start_reader(&self) -> Result<(), StartError> {
         #[cfg(unix)]
-        let (read_fd, nonblocking) = {
+        let (read_fd, nonblocking, owns_fd) = {
             // Like libuv: a fresh nonblocking open never flips O_NONBLOCK on a
             // shared stdin. The dup fallback keeps the caller's blocking mode.
             let reopened = open_as_nonblocking_tty(self.fd.native(), sys::O::RDONLY);
             if reopened > -1 {
-                (Fd::from_native(reopened), true)
+                (Fd::from_native(reopened), true, false)
             } else {
                 let duped = sys::dup_with_flags(self.fd, 0).map_err(StartError::Sys)?;
                 let nonblocking = sys::get_fcntl_flags(duped)
                     .map(|flags| flags & sys::O::NONBLOCK as isize != 0)
                     .unwrap_or(false);
-                (duped, nonblocking)
+                (duped, nonblocking, self.fd.native() > 2)
             }
         };
         #[cfg(windows)]
-        let read_fd = self.fd;
+        let (read_fd, owns_fd) = (self.fd, false);
 
         self.read_fd.set(read_fd);
 
@@ -263,7 +279,10 @@ impl TTY {
             return Err(StartError::Unpollable);
         }
         self.ref_();
-        self.update_flags(|f| f.insert(Flags::READER_STARTED));
+        self.update_flags(|f| {
+            f.insert(Flags::READER_STARTED);
+            f.set(Flags::OWNS_FD, owns_fd);
+        });
 
         self.reader.with_mut(|r| {
             #[cfg(unix)]
@@ -283,7 +302,9 @@ impl TTY {
         bun_output::scoped_log!(TTYWrap, "readStart");
         let flags = self.flags.get();
         if flags.contains(Flags::UNPOLLABLE) {
-            return Ok(JSValue::js_number_from_int32(-(sys::E::ENOTSUP as i32)));
+            return Ok(JSValue::js_number_from_int32(uv_errno(
+                sys::E::ENOTSUP as u16,
+            )));
         }
         if flags.intersects(Flags::CLOSED | Flags::READER_DONE) {
             return Ok(JSValue::js_number_from_int32(0));
@@ -336,7 +357,9 @@ impl TTY {
     ) -> JsResult<JSValue> {
         let raw = callframe.argument(0).to_boolean();
         if self.flags.get().contains(Flags::CLOSED) {
-            return Ok(JSValue::js_number_from_int32(-(sys::E::EBADF as i32)));
+            return Ok(JSValue::js_number_from_int32(uv_errno(
+                sys::E::EBADF as u16,
+            )));
         }
         #[cfg(unix)]
         {
@@ -357,12 +380,14 @@ impl TTY {
         {
             // stdin's process-wide `uv_tty_t` uses VT raw mode (see source.rs).
             if self.fd == Fd::stdin() {
+                // It returns a positive `E` discriminant, 0 on success.
                 let rc = Source__setRawModeStdin(self.event_loop_handle.uv_loop(), raw);
-                return Ok(JSValue::js_number_from_int32(-rc));
+                let rc = if rc == 0 { 0 } else { uv_errno(rc as u16) };
+                return Ok(JSValue::js_number_from_int32(rc));
             }
             let rc = match self.reader.with_mut(|r| r.set_raw_mode(raw)) {
                 Ok(()) => 0,
-                Err(err) => -(err.errno as i32),
+                Err(err) => uv_errno(err.errno),
             };
             Ok(JSValue::js_number_from_int32(rc))
         }
@@ -437,6 +462,11 @@ impl TTY {
             self.reader.with_mut(|r| r.close());
         }
         self.read_fd.set(Fd::INVALID);
+        #[cfg(unix)]
+        if self.flags.get().contains(Flags::OWNS_FD) {
+            // JS may have closed it first: EBADF is not an invariant violation here.
+            let _ = self.fd.close_allowing_bad_file_descriptor(None);
+        }
         self.this_value.with_mut(|v| v.downgrade());
     }
 
@@ -523,7 +553,7 @@ impl TTY {
             r.update_ref(false);
         });
         if !was_closed {
-            self.call_onread(-(err.errno as i32), JSValue::UNDEFINED);
+            self.call_onread(uv_errno(err.errno), JSValue::UNDEFINED);
         }
         self.this_value.with_mut(|v| v.downgrade());
         // Releases the poll and fd; `on_reader_done` then drops the reader's ref.

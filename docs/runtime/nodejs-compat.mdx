@@ -85,7 +85,7 @@ We update this page regularly. It reflects the latest version of Bun's compatibi
 
 ### [`node:tty`](https://nodejs.org/api/tty.html)
 
-🟢 Fully implemented. `ReadStream` and `WriteStream` extend the `fs` streams rather than `net.Socket`, and constructing them on a non-TTY fd returns a stream with `isTTY` set to `false` instead of throwing.
+🟢 Fully implemented. `ReadStream` extends `net.Socket` over a native TTY handle, as in Node. `WriteStream` extends `fs.WriteStream` rather than `net.Socket`, and constructing it on a non-TTY fd returns a stream with `isTTY` set to `false` instead of throwing.
 
 ### [`node:url`](https://nodejs.org/api/url.html)
 

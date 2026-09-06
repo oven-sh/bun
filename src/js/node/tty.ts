@@ -3,8 +3,8 @@
 const { isatty, getWindowSize: _getWindowSize } = $cpp("ProcessBindingTTYWrap.cpp", "createBunTTYFunctions");
 
 const { validateInteger } = require("internal/validators");
+const { ErrnoException } = require("internal/shared");
 const fs = require("internal/fs/streams");
-const net = require("node:net");
 const { TTY } = process.binding("tty_wrap");
 
 // https://github.com/nodejs/node/blob/v26.3.0/lib/tty.js#L50
@@ -25,7 +25,7 @@ function ReadStream(fd, options): void {
     throw $ERR_TTY_INIT_FAILED(`${ctx.syscall} returned ${code} (${ctx.message})`);
   }
 
-  net.Socket.$call(this, {
+  require("node:net").Socket.$call(this, {
     readableHighWaterMark: 0,
     handle: tty,
     manualStart: true,
@@ -36,19 +36,35 @@ function ReadStream(fd, options): void {
   this.isRaw = false;
   this.isTTY = true;
 }
-$toClass(ReadStream, "ReadStream", net.Socket);
 
-ReadStream.prototype.setRawMode = function (flag) {
-  flag = !!flag;
-  // Node does not throw when setting the mode fails: an error event is emitted.
-  const err = this._handle?.setRawMode(flag);
-  if (err) {
-    this.emit("error", new Error("setRawMode failed with errno: " + -err));
-    return this;
-  }
-  this.isRaw = flag;
-  return this;
-};
+// The base class is net.Socket, loaded on first use so that a TTY stdout
+// (tty.WriteStream) does not pay for node:net. Same trick as WriteStream below.
+Object.defineProperty(ReadStream, "prototype", {
+  get() {
+    const { Socket } = require("node:net");
+    const Real = Object.create(Socket.prototype, {
+      constructor: { value: ReadStream, writable: true, configurable: true },
+    });
+    Object.defineProperty(ReadStream, "prototype", { value: Real });
+    Object.setPrototypeOf(ReadStream, Socket);
+
+    Real.setRawMode = function (flag) {
+      flag = !!flag;
+      // Node does not throw when setting the mode fails: an error event is emitted.
+      const err = this._handle?.setRawMode(flag);
+      if (err) {
+        this.emit("error", new ErrnoException(err, "setRawMode"));
+        return this;
+      }
+      this.isRaw = flag;
+      return this;
+    };
+
+    return Real;
+  },
+  enumerable: true,
+  configurable: true,
+});
 
 function WriteStream(fd): void {
   if (!(this instanceof WriteStream)) return new WriteStream(fd);

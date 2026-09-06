@@ -7,12 +7,10 @@
 
 #include <JavaScriptCore/ObjectConstructor.h>
 
-#include "BunTTYState.h"
 #include "ProcessBindingTTYWrap.h"
 #include "NodeTTYModule.h"
 #include "WebCoreJSBuiltins.h"
 #include <JavaScriptCore/FunctionPrototype.h>
-#include <JavaScriptCore/JSTypedArrays.h>
 
 #ifndef WIN32
 #include <errno.h>
@@ -27,10 +25,6 @@
 #include <io.h>
 #include <fcntl.h>
 
-#endif
-
-#if OS(WINDOWS)
-extern "C" int Source__setRawModeStdin(uv_loop_t* uv_loop, bool raw);
 #endif
 
 namespace Bun {
@@ -86,53 +80,6 @@ extern "C" bool Bun__ttyGetWindowSize(int fd, size_t* width, size_t* height)
     return getWindowSize(fd, width, height);
 }
 
-JSC_DEFINE_HOST_FUNCTION(jsTTYSetMode, (JSC::JSGlobalObject * globalObject, CallFrame* callFrame))
-{
-#if OS(WINDOWS)
-    ASSERT(callFrame->argumentCount() == 1);
-    auto flag = callFrame->argument(0);
-    bool raw = flag.asBoolean();
-
-    Zig::GlobalObject* global = uncheckedDowncast<Zig::GlobalObject>(globalObject);
-
-    return JSValue::encode(jsNumber(Source__setRawModeStdin(global->uvLoop(), raw)));
-#else
-    auto& vm = JSC::getVM(globalObject);
-    auto scope = DECLARE_THROW_SCOPE(vm);
-
-    if (callFrame->argumentCount() != 3) {
-        throwTypeError(globalObject, scope, "Expected 3 arguments"_s);
-        return {};
-    }
-
-    JSValue fd = callFrame->argument(0);
-    if (!fd.isNumber()) {
-        throwTypeError(globalObject, scope, "fd must be a number"_s);
-        return {};
-    }
-
-    JSValue mode = callFrame->argument(1);
-
-    auto fdToUse = fd.toInt32(globalObject);
-    RETURN_IF_EXCEPTION(scope, {});
-
-    // Nodejs does not throw when ttySetMode fails. An Error event is emitted instead.
-    int mode_ = mode.toInt32(globalObject);
-    RETURN_IF_EXCEPTION(scope, {});
-
-    // The per-stream state buffer node:tty hands back on every call. Holding it
-    // in JS keeps its lifetime tied to the stream that owns the mode. Validated
-    // after the coercions above so a detach triggered from inside them is caught.
-    auto* state = dynamicDowncast<JSC::JSUint8Array>(callFrame->argument(2));
-    if (!state || state->isDetached() || state->length() < Bun__ttyStateSize()) {
-        throwTypeError(globalObject, scope, "state must be a Uint8Array of rawModeStateSize bytes"_s);
-        return {};
-    }
-    int err = Bun__ttySetMode(fdToUse, mode_, state->typedVector(), 1);
-    return JSValue::encode(jsNumber(err));
-#endif
-}
-
 JSC_DEFINE_HOST_FUNCTION(Process_functionInternalGetWindowSize,
     (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
@@ -172,11 +119,7 @@ JSValue createBunTTYFunctions(Zig::GlobalObject* globalObject)
 
     obj->putDirect(vm, PropertyName(Identifier::fromString(vm, "isatty"_s)), JSFunction::create(vm, globalObject, 0, "isatty"_s, Zig::jsFunctionTty_isatty, ImplementationVisibility::Public), 0);
 
-    obj->putDirect(vm, PropertyName(Identifier::fromString(vm, "setRawMode"_s)), JSFunction::create(vm, globalObject, 0, "ttySetMode"_s, jsTTYSetMode, ImplementationVisibility::Public), 0);
-
     obj->putDirect(vm, PropertyName(Identifier::fromString(vm, "getWindowSize"_s)), JSFunction::create(vm, globalObject, 0, "getWindowSize"_s, Bun::Process_functionInternalGetWindowSize, ImplementationVisibility::Public), 0);
-
-    obj->putDirect(vm, PropertyName(Identifier::fromString(vm, "rawModeStateSize"_s)), jsNumber(static_cast<unsigned>(Bun__ttyStateSize())), 0);
 
     return obj;
 }

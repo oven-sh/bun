@@ -342,6 +342,33 @@ function detectCommand(query: string, anyAndAllMeanIn: boolean): SQLCommand {
   return command;
 }
 
+function hasKeywordAt(query: string, start: number, keyword: string): boolean {
+  const len = keyword.length;
+  if (query.length - start < len) return false;
+  for (let i = 0; i < len; i++) {
+    let c = query.charCodeAt(start + i);
+    // ASCII lowercase to uppercase
+    if (c >= 97 && c <= 122) c -= 32;
+    if (c !== keyword.charCodeAt(i)) return false;
+  }
+  return true;
+}
+
+// True when the query starts a transaction (BEGIN or START TRANSACTION, any
+// case, after leading whitespace). Only reads the prefix: this runs on every
+// pooled query, and ORM generated queries are long.
+function startsTransaction(query: string): boolean {
+  const len = query.length;
+  let i = 0;
+  while (i < len) {
+    const c = query.charCodeAt(i);
+    // space, \t, \n, \v, \f, \r
+    if (c === 32 || (c >= 9 && c <= 13)) i++;
+    else break;
+  }
+  return hasKeywordAt(query, i, "BEGIN") || hasKeywordAt(query, i, "START TRANSACTION");
+}
+
 function getHelperCommandFromDetect(query: string, anyAndAllMeanIn: boolean): SQLCommand {
   const command = detectCommand(query, anyAndAllMeanIn);
   // only selectIn, insert, update, updateSet are allowed
@@ -988,11 +1015,8 @@ abstract class BaseSQLAdapter<PooledConnection extends BasePooledConnection, Con
 
   protected checkUnsafeTransaction(sql: string, flags: number) {
     if (!(flags & SQLQueryFlags.allowUnsafeTransaction)) {
-      if (this.connectionInfo.max !== 1) {
-        const upperCaseSqlString = sql.toUpperCase().trim();
-        if (upperCaseSqlString.startsWith("BEGIN") || upperCaseSqlString.startsWith("START TRANSACTION")) {
-          throw this.unsafeTransactionError();
-        }
+      if (this.connectionInfo.max !== 1 && startsTransaction(sql)) {
+        throw this.unsafeTransactionError();
       }
     }
   }

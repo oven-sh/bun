@@ -1597,11 +1597,22 @@ describe("bundler", () => {
     for (\u2118q of [6]) out.push(\u2118q);
     out.push(caf\u00E9 in { 2: 1 }, x\u0967 instanceof Number, _\u200C in { 4: 1 });
     out.push(\u03C0 in { k: 1 }, \u00D1.has(new \u00D1()), new \u00D1() instanceof \u00D1);
+    out.push(lib.check({ k: 1 }));
     console.log(JSON.stringify(out));
   `;
-  const nonAsciiIdentifierStdout = '[4,"2",5,6,true,false,true,true,true,true]';
+  // A wrapped CommonJS module prints `exports.café` for this export. That path
+  // prints the name on its own, so it needs the same space handling.
+  const nonAsciiIdentifierFiles = {
+    "/entry.js": `import lib from "./lib.cjs";\n${nonAsciiIdentifierSource}`,
+    "/lib.cjs": /* js */ `
+      exports.caf\u00E9 = "k";
+      exports.check = function (o) { return exports.caf\u00E9 in o; };
+      module.exports = module.exports;
+    `,
+  };
+  const nonAsciiIdentifierStdout = '[4,"2",5,6,true,false,true,true,true,true,true]';
   itBundled("minify/SpaceBetweenNonAsciiIdentifierAndKeyword", {
-    files: { "/entry.js": nonAsciiIdentifierSource },
+    files: nonAsciiIdentifierFiles,
     minifyWhitespace: true,
     target: "browser",
     onAfterBundle(api) {
@@ -1611,11 +1622,12 @@ describe("bundler", () => {
       expect(code).toContain("x\u0967 instanceof Number");
       expect(code).toContain("#\u00E9 in o");
       expect(code).toContain("new \u00D1 instanceof \u00D1");
+      expect(code).toContain("exports.caf\u00E9 in o");
     },
     run: { stdout: nonAsciiIdentifierStdout },
   });
   itBundled("minify/SpaceBetweenEscapedIdentifierAndKeyword", {
-    files: { "/entry.js": nonAsciiIdentifierSource },
+    files: nonAsciiIdentifierFiles,
     minifyWhitespace: true,
     target: "bun",
     onAfterBundle(api) {
@@ -1625,6 +1637,7 @@ describe("bundler", () => {
       expect(code).toContain("x\\u{967} instanceof Number");
       expect(code).toContain("#\\u{e9} in o");
       expect(code).toContain("new \\u{d1} instanceof \\u{d1}");
+      expect(code).toContain("exports.caf\\u{e9} in o");
     },
     run: { stdout: nonAsciiIdentifierStdout },
   });

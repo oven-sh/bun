@@ -4672,7 +4672,7 @@ pub(crate) mod __gated_printer {
             let key: &[u8] = key.get();
             if lexer::is_identifier(key) {
                 self.print(b".");
-                self.print(key);
+                self.print_identifier(key);
             } else {
                 self.print(b"[");
                 self.print_string_literal_utf8(key, false);

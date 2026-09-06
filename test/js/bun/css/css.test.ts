@@ -187,6 +187,41 @@ describe("css tests", () => {
     minify_test(`a { rotate: calc(NaN * 1deg) }`, `a{rotate:0deg}`);
     minify_test(`a { transition-duration: calc(NaN * 1s) }`, `a{transition-duration:0s}`);
   });
+  describe("clamp() simplification", () => {
+    // The cases lightningcss asserts in its calc tests.
+    minify_test(`.foo { border-width: clamp(1px, 2px, 3px) }`, `.foo{border-width:2px}`);
+    minify_test(`.foo { border-width: clamp(1px, 10px, 3px) }`, `.foo{border-width:3px}`);
+    minify_test(`.foo { border-width: clamp(5px, 2px, 10px) }`, `.foo{border-width:5px}`);
+    minify_test(`.foo { border-width: clamp(100px, 2px, 10px) }`, `.foo{border-width:100px}`);
+    minify_test(`.foo { border-width: clamp(5px + 5px, 5px + 7px, 10px + 20px) }`, `.foo{border-width:12px}`);
+    minify_test(`.foo { border-width: clamp(1px, 2pt, 1in) }`, `.foo{border-width:2pt}`);
+    minify_test(`.foo { border-width: clamp(1em, 2px, 4vh) }`, `.foo{border-width:clamp(1em,2px,4vh)}`);
+    minify_test(`.foo { border-width: clamp(1em, 2em, 4vh) }`, `.foo{border-width:clamp(1em,2em,4vh)}`);
+    minify_test(`.foo { border-width: clamp(1em, 2vh, 4vh) }`, `.foo{border-width:max(1em,2vh)}`);
+    minify_test(`.foo { border-width: clamp(1px, 1px + 2em, 4px) }`, `.foo{border-width:clamp(1px,1px + 2em,4px)}`);
+    minify_test(`.foo { width: clamp(-100px, 0px, 50% - 50vw) }`, `.foo{width:clamp(-100px,0px,50% - 50vw)}`);
+    // The center is equal to one of the bounds.
+    minify_test(`a { width: clamp(2px, 2px, 3px) }`, `a{width:2px}`);
+    minify_test(`a { width: clamp(1px, 2px, 2px) }`, `a{width:2px}`);
+    // The minimum wins over a smaller maximum. The two WPT rows only pass when the minimum is
+    // compared with the center after the maximum has replaced it.
+    minify_test(`a { width: clamp(20px, 15px, 10px) }`, `a{width:20px}`);
+    minify_test(`a { width: clamp(30px, 100px, 20px) }`, `a{width:30px}`);
+    minify_test(`a { width: clamp(-10px, 100px, -30px) }`, `a{width:-10px}`);
+    // A lower bound that cannot be compared at parse time is kept, whether or not the center
+    // was above the maximum.
+    minify_test(`a { width: clamp(10vw, 5px, 20px) }`, `a{width:max(10vw,5px)}`);
+    minify_test(`a { width: clamp(10vw, 30px, 20px) }`, `a{width:max(10vw,20px)}`);
+    // A center that cannot be compared with the maximum leaves the clamp() alone, even when
+    // it could be compared with the minimum.
+    minify_test(`a { width: clamp(10px, 5px, 20vw) }`, `a{width:clamp(10px,5px,20vw)}`);
+    // Other value types.
+    minify_test(`a { width: clamp(10%, 5%, 20%) }`, `a{width:10%}`);
+    minify_test(`a { width: clamp(10%, 25%, 20%) }`, `a{width:20%}`);
+    minify_test(`a { rotate: clamp(0deg, 45deg, 30deg) }`, `a{rotate:30deg}`);
+    minify_test(`a { transition-duration: clamp(1s, 500ms, 2s) }`, `a{transition-duration:1s}`);
+    minify_test(`a { width: calc(clamp(1px, 2px, 3px) + 1px) }`, `a{width:3px}`);
+  });
   describe("calc stack overflow", () => {
     // https://github.com/oven-sh/bun/issues/20128
     minify_test(`a { width: calc(100% - 2 - 1) }`, `a{width:calc(100% - 2 - 1)}`); // ideally 100% - 3

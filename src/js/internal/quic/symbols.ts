@@ -30,7 +30,6 @@ const kPrivateConstructor = Symbol("kPrivateConstructor");
 const kRemoveSession = Symbol("kRemoveSession");
 const kRemoveStream = Symbol("kRemoveStream");
 const kReset = Symbol("kReset");
-const kSendHeaders = Symbol("kSendHeaders");
 const kSessionTicket = Symbol("kSessionTicket");
 const kTrailers = Symbol("kTrailers");
 const kVersionNegotiation = Symbol("kVersionNegotiation");
@@ -65,7 +64,6 @@ export default {
   kRemoveSession,
   kRemoveStream,
   kReset,
-  kSendHeaders,
   kSessionTicket,
   kTrailers,
   kVersionNegotiation,

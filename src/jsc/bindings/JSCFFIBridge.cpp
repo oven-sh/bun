@@ -23,7 +23,7 @@ static_assert(static_cast<uint8_t>(JSC::FFI::Type::BufferLength) == 21, "FFI::Ty
 
 extern "C" JSC::EncodedJSValue Bun__CreateJSCFFIFunction(
     Zig::GlobalObject* globalObject,
-    const ZigString* symbolName,
+    const EncodedSlice* symbolName,
     const uint8_t* argTypes,
     unsigned argCount,
     uint8_t returnType,
@@ -59,7 +59,7 @@ static void Bun__jscFFIThreadsafeDispatch(JSC::FFI::ThreadsafeInvocation& invoca
 {
     static_assert(sizeof(WebCore::ScriptExecutionContextIdentifier) <= sizeof(void*));
     auto contextId = static_cast<WebCore::ScriptExecutionContextIdentifier>(reinterpret_cast<uintptr_t>(invocation.embedderContext()));
-    WebCore::ScriptExecutionContext::postTaskTo(contextId, [protectedInvocation = Ref { invocation }](WebCore::ScriptExecutionContext&) mutable { JSC::FFI::runThreadsafeInvocation(protectedInvocation.get()); });
+    WebCore::ScriptExecutionContext::postTaskTo(contextId, BunLoopKind::Regular, [protectedInvocation = Ref { invocation }](WebCore::ScriptExecutionContext&) mutable { JSC::FFI::runThreadsafeInvocation(protectedInvocation.get()); });
 }
 
 extern "C" JSC::EncodedJSValue Bun__CreateJSCFFICallback(

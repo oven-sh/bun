@@ -41,7 +41,6 @@ use crate::webcore::blob::store::Bytes as BlobStoreBytes;
 // through `StdAllocator.ptr`) cross threads, so the single-threaded `RefCount`
 // flavor would data-race on ref/deref.
 #[derive(bun_ptr::ThreadSafeRefCounted)]
-#[ref_count(destroy = Self::deinit)]
 pub struct LinuxMemFdAllocator {
     ref_count: bun_ptr::ThreadSafeRefCount<LinuxMemFdAllocator>,
     pub(crate) fd: Fd,
@@ -49,16 +48,9 @@ pub struct LinuxMemFdAllocator {
     pub(crate) size: usize,
 }
 
-impl LinuxMemFdAllocator {
-    /// Close the fd, then free the allocation.
-    ///
-    /// # Safety
-    /// Refcount hit 0; `this` came from `heap::alloc` in `RefPtr::new`.
-    unsafe fn deinit(this: *mut Self) {
-        // SAFETY: sole owner — close fd before reclaiming the Box.
-        unsafe { (*this).fd.close() };
-        // SAFETY: sole owner; reconstruct the Box so the allocation is freed.
-        drop(unsafe { bun_core::heap::take(this) });
+impl Drop for LinuxMemFdAllocator {
+    fn drop(&mut self) {
+        self.fd.close();
     }
 }
 
@@ -73,14 +65,6 @@ impl LinuxMemFdAllocator {
             fd,
             size,
         })
-    }
-
-    pub fn ref_(&self) {
-        // SAFETY: `self` is a live `Self`; `ThreadSafeRefCount::ref_` only
-        // touches the interior-mutable atomic `ref_count` field.
-        unsafe {
-            bun_ptr::ThreadSafeRefCount::<Self>::ref_(std::ptr::from_ref::<Self>(self).cast_mut())
-        };
     }
 
     /// # Safety
@@ -249,23 +233,13 @@ impl LinuxMemFdAllocator {
             }
         }
 
-        // `Self::new` returns refcount=1; `into_raw()` extracts the
-        // `heap::alloc` pointer and transfers the +1 to us (RefPtr has no
-        // `Drop`). On `Ok` that ref moves into `res.allocator`; on `Err`
-        // we `deref` it explicitly.
-        let memfd: *mut Self = Self::new(fd, bytes.len()).into_raw();
-
-        // SAFETY: `memfd` is the `heap::alloc` pointer
-        // (full provenance) with one live ref — required by `Self::alloc`.
-        match unsafe { Self::alloc(memfd, bytes.len(), 0, libc::MAP_SHARED) } {
-            Ok(res) => Ok(res),
-            Err(err) => {
-                // SAFETY: we still own the +1 from `into_raw()`; release it
-                // (closes the fd and frees the Box on hitting zero).
-                unsafe { Self::deref(memfd) };
-                Err(err)
-            }
-        }
+        let memfd = Self::new(fd, bytes.len());
+        // SAFETY: `memfd` is the `heap::alloc` pointer (full provenance) with
+        // one live ref — required by `Self::alloc`.
+        let res = unsafe { Self::alloc(memfd.as_ptr(), bytes.len(), 0, libc::MAP_SHARED) }?;
+        // That ref now lives in `res.allocator`.
+        let _ = memfd.into_raw();
+        Ok(res)
     }
 }
 

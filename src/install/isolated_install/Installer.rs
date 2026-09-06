@@ -209,20 +209,26 @@ impl<'a> Installer<'a> {
                 let pkg_name_hash = pkg_name_hashes[pkg_id as usize];
                 let pkg_res = &pkg_resolutions[pkg_id as usize];
 
-                let patch_info =
-                    bun_core::handle_oom(self.package_patch_info(pkg_name, pkg_name_hash, pkg_res));
+                let patched = self
+                    .package_patch_info(pkg_name, pkg_name_hash, pkg_res)
+                    .and_then(|patch_info| {
+                        let PatchInfo::Patch(patch) = patch_info else {
+                            return Ok(());
+                        };
+                        let mut log = Log::init();
+                        self.apply_package_patch(entry_id, &patch, &mut log);
+                        if log.has_errors() {
+                            return Err(TaskError::Patching(log));
+                        }
+                        Ok(())
+                    });
 
-                if let PatchInfo::Patch(patch) = &patch_info {
-                    let mut log = Log::init();
-                    self.apply_package_patch(entry_id, patch, &mut log);
-                    if log.has_errors() {
-                        // monotonic is okay because we haven't started the task yet (it isn't running
-                        // on another thread)
-                        entry_steps[entry_id.get() as usize]
-                            .store(Step::Done as u32, Ordering::Relaxed);
-                        self.on_task_fail(entry_id, &TaskError::Patching(log));
-                        continue;
-                    }
+                if let Err(err) = patched {
+                    // .monotonic is okay because the task isn't running on another thread.
+                    entry_steps[entry_id.get() as usize]
+                        .store(Step::Done as u32, Ordering::Relaxed);
+                    self.on_task_fail(entry_id, &err);
+                    continue;
                 }
 
                 self.start_task(entry_id);
@@ -693,34 +699,6 @@ pub enum TaskError {
     Download(DownloadError),
 }
 
-impl TaskError {
-    pub(crate) fn clone(&self) -> TaskError {
-        match self {
-            TaskError::LinkPackage(err) => TaskError::LinkPackage(err.clone()),
-            TaskError::SymlinkDependencies(err) => TaskError::SymlinkDependencies(err.clone()),
-            TaskError::Binaries(err) => TaskError::Binaries(*err),
-            TaskError::RunScripts(err) => TaskError::RunScripts(*err),
-            TaskError::Patching(_log) => {
-                // `bun_ast::Log` is non-Clone; the only caller of
-                // `TaskError::clone()` is the `Result::Err(err) => err.clone()`
-                // task-batch drain in PackageManager/runTasks.rs, and
-                // `Task::result` is only set to `Result::Err` from the
-                // `Yield::Fail` arm in `Task::run`. No `Yield::Fail` /
-                // `Yield::failure` site ever constructs `TaskError::Patching` —
-                // it is built only for direct `on_task_fail` calls (Installer.rs
-                // and isolated_install.rs patch paths), so this arm is
-                // unreachable in practice. Preserve a fresh Log so we don't UAF
-                // a borrowed one.
-                TaskError::Patching(Log::init())
-            }
-            TaskError::Download(dl) => TaskError::Download(DownloadError {
-                err: dl.err,
-                url: dl.url.clone(),
-            }),
-        }
-    }
-}
-
 #[repr(u8)]
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Step {
@@ -1035,19 +1013,17 @@ impl Task {
                                             };
 
                                             if src_path_len == 0 || src_path_len as usize >= cap {
-                                                use bun_sys::windows::Win32ErrorExt as _;
-                                                let err: sys::SystemErrno = if src_path_len == 0 {
-                                                    bun_sys::windows::Win32Error::get()
-                                                        .to_system_errno()
-                                                        .unwrap_or(sys::SystemErrno::EUNKNOWN)
-                                                } else {
-                                                    sys::SystemErrno::ENAMETOOLONG
-                                                };
                                                 return Ok(Yield::failure(TaskError::LinkPackage(
-                                                    sys::Error {
-                                                        errno: err as _,
-                                                        syscall: sys::Tag::copyfile,
-                                                        ..Default::default()
+                                                    if src_path_len == 0 {
+                                                        sys::Error::from_win32(
+                                                            sys::windows::Win32Error::get(),
+                                                            sys::Tag::copyfile,
+                                                        )
+                                                    } else {
+                                                        sys::Error::from_code(
+                                                            sys::E::ENAMETOOLONG,
+                                                            sys::Tag::copyfile,
+                                                        )
                                                     },
                                                 )));
                                             }
@@ -1108,8 +1084,14 @@ impl Task {
                         }
 
                         tag => {
-                            let patch_info =
-                                installer.package_patch_info(pkg_name, pkg_name_hash, &pkg_res)?;
+                            let patch_info = match installer.package_patch_info(
+                                pkg_name,
+                                pkg_name_hash,
+                                &pkg_res,
+                            ) {
+                                Ok(patch_info) => patch_info,
+                                Err(err) => return Ok(Yield::failure(err)),
+                            };
 
                             let manager = manager_ref.get();
                             // SAFETY: `tag` discriminates the active `Resolution.value` variant
@@ -2062,12 +2044,13 @@ impl PatchInfo {
 }
 
 impl<'a> Installer<'a> {
+    /// A patch entry without a hash is an error, not `PatchInfo::None`.
     pub(crate) fn package_patch_info(
         &self,
         pkg_name: SemverString,
         pkg_name_hash: PackageNameHash,
         pkg_res: &Resolution,
-    ) -> core::result::Result<PatchInfo, bun_alloc::AllocError> {
+    ) -> core::result::Result<PatchInfo, TaskError> {
         if self.lockfile().patched_dependencies.len() == 0
             && self.manager().patched_dependencies_to_remove.len() == 0
         {
@@ -2083,7 +2066,7 @@ impl<'a> Installer<'a> {
             "{}@",
             bstr::BStr::new(pkg_name.slice(string_buf))
         )
-        .map_err(|_| bun_alloc::AllocError)?;
+        .expect("unreachable");
 
         match pkg_res.tag {
             ResolutionTag::Workspace => {
@@ -2091,7 +2074,7 @@ impl<'a> Installer<'a> {
                     self.lockfile().workspace_versions.get(&pkg_name_hash)
                 {
                     write!(&mut version_buf, "{}", workspace_version.fmt(string_buf))
-                        .map_err(|_| bun_alloc::AllocError)?;
+                        .expect("unreachable");
                 }
             }
             _ => {
@@ -2100,7 +2083,7 @@ impl<'a> Installer<'a> {
                     "{}",
                     pkg_res.fmt(string_buf, bun_core::fmt::PathSep::Posix),
                 )
-                .map_err(|_| bun_alloc::AllocError)?;
+                .expect("unreachable");
             }
         }
 
@@ -2111,9 +2094,20 @@ impl<'a> Installer<'a> {
             .patched_dependencies
             .get(&name_and_version_hash)
         {
+            let Some(contents_hash) = patch.patchfile_hash() else {
+                let mut log = Log::init();
+                log.add_error_fmt_opts(
+                    format_args!(
+                        "the hash of patch file {} was not calculated before install, this is a bug in Bun",
+                        bun_core::fmt::quote(patch.path.slice(string_buf)),
+                    ),
+                    Default::default(),
+                );
+                return Err(TaskError::Patching(log));
+            };
             return Ok(PatchInfo::Patch(PatchInfoPatch {
                 name_and_version_hash,
-                contents_hash: patch.patchfile_hash().unwrap(),
+                contents_hash,
             }));
         }
 

@@ -1,7 +1,7 @@
 //! `bun_jsc` re-export façade for the SQL bindings.
 //!
 //! All core handle types (`JSValue`, `JSGlobalObject`, `CallFrame`, `JsError`,
-//! `JsResult`, `JSObject`, `JSCell`, `JSType`, [`VirtualMachine`],
+//! `JsResult`, `JSObject`, `JSType`, [`VirtualMachine`],
 //! [`EventLoop`], [`KeepAlive`], …) are **re-exported from `bun_jsc` /
 //! `bun_io`** so the `#[bun_jsc::JsClass]` / `#[bun_jsc::host_fn]` proc-macros
 //! see identical types. SQL-specific helpers that `bun_jsc` doesn't expose at
@@ -27,10 +27,9 @@ use core::ptr::NonNull;
 // ──────────────────────────────────────────────────────────────────────────
 
 pub use bun_jsc::{
-    ArrayBuffer, CallFrame, CoerceTo, ErrorBuilder, ErrorCode, ExternColumnIdentifier,
-    ExternColumnIdentifierValue, GlobalRef, JSArrayIterator, JSCell, JSGlobalObject, JSObject,
-    JSType, JSValue, JsCell, JsError, JsRef, JsResult, MarkedArgumentBuffer, StringJsc, Strong,
-    StrongOptional, ThrowFmtArgs, ZigStringJsc, bun_string_jsc, host_fn,
+    CallFrame, ErrorBuilder, ErrorCode, ExternColumnIdentifier, GlobalRef, JSArrayIterator,
+    JSGlobalObject, JSObject, JSType, JSValue, JsCell, JsError, JsRef, JsResult,
+    MarkedArgumentBuffer, StringJsc, Strong, StrongOptional, bun_string_jsc,
 };
 
 /// Re-export — `bun_jsc` now defines `IntegerRange` at its crate root and the
@@ -50,7 +49,7 @@ pub use bun_jsc::IntegerRange;
 pub(crate) fn js_error_to_postgres(e: JsError) -> bun_sql::postgres::AnyPostgresError {
     use bun_sql::postgres::AnyPostgresError as E;
     match e {
-        JsError::Thrown => E::JSError,
+        JsError::Thrown | JsError::Terminated => E::JSError,
         JsError::OutOfMemory => E::OutOfMemory,
     }
 }
@@ -58,7 +57,7 @@ pub(crate) fn js_error_to_postgres(e: JsError) -> bun_sql::postgres::AnyPostgres
 pub(crate) fn js_error_to_mysql(e: JsError) -> bun_sql::mysql::protocol::any_mysql_error::Error {
     use bun_sql::mysql::protocol::any_mysql_error::Error as E;
     match e {
-        JsError::Thrown => E::JSError,
+        JsError::Thrown | JsError::Terminated => E::JSError,
         JsError::OutOfMemory => E::OutOfMemory,
     }
 }
@@ -231,7 +230,7 @@ pub struct SqlRuntimeHooks {
         cache: *mut c_void,
         opts: &bun_uws::us_bun_socket_context_options_t,
         err: &mut bun_uws::create_bun_socket_error_t,
-    ) -> *mut bun_uws::SslCtx,
+    ) -> Option<OwnedSslCtx>,
     /// `SSLConfig::fromJS` — parse a JS TLS-options object. Returns a boxed
     /// `bun_runtime::socket::SSLConfig` (caller frees via `ssl_config_free`),
     /// or null when the value contained no TLS config / threw (caller checks
@@ -521,7 +520,6 @@ pub mod api {
                 }
             }
         }
-        pub use SSLConfig as SslConfig;
     }
     /// PascalCase namespace alias.
     #[allow(non_snake_case)]
@@ -771,7 +769,7 @@ unsafe extern "C" {
     // preconditions remain → `safe fn`.
     safe fn JSFunction__createFromZig(
         global: &JSGlobalObject,
-        fn_name: bun_core::String,
+        fn_name: &bun_core::String,
         implementation: JSHostFn,
         arg_count: u32,
         implementation_visibility: ImplementationVisibility,
@@ -813,10 +811,10 @@ impl JSFunction {
         opts: CreateJSFunctionOptions,
     ) -> JSValue {
         let implementation: JSHostFn = implementation.into_js_host_fn();
-        let fn_name = bun_core::String::init(name);
+        let fn_name = bun_core::String::from_bytes(name.as_bytes());
         JSFunction__createFromZig(
             global,
-            fn_name,
+            &fn_name,
             implementation,
             arg_count,
             opts.implementation_visibility,
@@ -868,18 +866,18 @@ pub(crate) mod call_frame {
 // Opaque handle to `bun_runtime::api::SSLContextCache` (owned by
 // `RuntimeState`). Reached via [`VirtualMachineSqlExt::ssl_ctx_cache`]; backed
 // by [`SqlRuntimeHooks::ssl_ctx_cache`] / `ssl_ctx_get_or_create`.
+use bun_boringssl_sys::OwnedSslCtx;
+
 bun_opaque::opaque_ffi! { pub struct SslCtxCache; }
 impl SslCtxCache {
     pub(crate) fn get_or_create_opts(
         &mut self,
         opts: &bun_uws::us_bun_socket_context_options_t,
         err: &mut bun_uws::create_bun_socket_error_t,
-    ) -> Option<*mut bun_uws::SslCtx> {
+    ) -> Option<OwnedSslCtx> {
         // SAFETY: `self` is `&mut runtime_state().ssl_ctx_cache`; `opts`/`err`
         // are caller stack locals.
-        let p =
-            unsafe { (hooks().ssl_ctx_get_or_create)(self._p.get().cast::<c_void>(), opts, err) };
-        if p.is_null() { None } else { Some(p) }
+        unsafe { (hooks().ssl_ctx_get_or_create)(self._p.get().cast::<c_void>(), opts, err) }
     }
 }
 

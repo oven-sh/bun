@@ -12,6 +12,7 @@ use crate::css_properties::Property;
 use crate::css_properties::PropertyId;
 use crate::css_properties::masking;
 use crate::css_values::easing::EasingFunction;
+use crate::css_values::ident::CustomIdent;
 use crate::css_values::time::Time;
 
 use crate::VendorPrefix;
@@ -107,6 +108,36 @@ impl Transition {
         }
         Ok(())
     }
+}
+
+/// A value for the [view-transition-name](https://drafts.csswg.org/css-view-transitions-1/#view-transition-name-prop) property.
+///
+/// Under CSS modules the `<custom-ident>` is scoped with the same hash as the
+/// `::view-transition-*(<name>)` pseudo-element selectors, so the two keep
+/// matching after renaming.
+#[derive(Clone, Copy, crate::Parse, crate::ToCss, crate::CssEql, crate::DeepClone)]
+pub enum ViewTransitionName {
+    /// The `none` keyword.
+    None,
+    /// The `auto` keyword.
+    Auto,
+    /// The `match-element` keyword.
+    MatchElement,
+    /// A custom name.
+    Custom(CustomIdent),
+}
+
+/// A value for the [view-transition-group](https://drafts.csswg.org/css-view-transitions-2/#view-transition-group-prop) property.
+#[derive(Clone, Copy, crate::Parse, crate::ToCss, crate::CssEql, crate::DeepClone)]
+pub enum ViewTransitionGroup {
+    /// The `normal` keyword.
+    Normal,
+    /// The `contain` keyword.
+    Contain,
+    /// The `nearest` keyword.
+    Nearest,
+    /// A custom group, the `view-transition-name` of an ancestor.
+    Custom(CustomIdent),
 }
 
 #[derive(Default)]

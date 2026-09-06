@@ -117,9 +117,9 @@ void CryptoAlgorithmX25519::deriveBits(const CryptoAlgorithmParameters& paramete
     // the result validation and callback dispatch into unifiedCallback.
     workQueue.dispatch(
         context.globalObject(),
-        [baseKey = WTF::move(baseKey), publicKey = ecParameters.publicKey, unifiedCallback = WTF::move(unifiedCallback), contextIdentifier = context.identifier()]() mutable {
+        [baseKey = WTF::move(baseKey), publicKey = ecParameters.publicKey, unifiedCallback = WTF::move(unifiedCallback), contextIdentifier = context.identifier(), loopKind = context.currentLoopKind()]() mutable {
             auto derivedKey = platformDeriveBits(downcast<CryptoKeyOKP>(baseKey.get()), downcast<CryptoKeyOKP>(*publicKey));
-            ScriptExecutionContext::postTaskTo(contextIdentifier, [derivedKey = WTF::move(derivedKey), unifiedCallback = WTF::move(unifiedCallback)](auto&) mutable {
+            ScriptExecutionContext::postTaskTo(contextIdentifier, loopKind, [derivedKey = WTF::move(derivedKey), unifiedCallback = WTF::move(unifiedCallback)](auto&) mutable {
                 unifiedCallback(WTF::move(derivedKey));
             });
         });

@@ -223,7 +223,7 @@ public:
     using Base = JSC::JSNonFinalObject;
     static JSMessageEventPrototype* create(JSC::VM& vm, JSDOMGlobalObject* globalObject, JSC::Structure* structure)
     {
-        JSMessageEventPrototype* ptr = new (NotNull, JSC::allocateCell<JSMessageEventPrototype>(vm)) JSMessageEventPrototype(vm, globalObject, structure);
+        JSMessageEventPrototype* ptr = new (NotNull, Bun::allocatePlainObjectCell(vm, sizeof(JSMessageEventPrototype))) JSMessageEventPrototype(vm, globalObject, structure);
         ptr->finishCreation(vm);
         return ptr;
     }
@@ -237,7 +237,7 @@ public:
     }
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
     {
-        return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
+        return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
     }
 
 private:
@@ -288,11 +288,7 @@ template<> JSValue JSMessageEventDOMConstructor::prototypeForStructure(JSC::VM& 
 
 template<> void JSMessageEventDOMConstructor::initializeProperties(VM& vm, JSDOMGlobalObject& globalObject)
 {
-    putDirect(vm, vm.propertyNames->length, jsNumber(1), JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontEnum);
-    JSString* nameString = jsNontrivialString(vm, "MessageEvent"_s);
-    m_originalName.set(vm, this, nameString);
-    putDirect(vm, vm.propertyNames->name, nameString, JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontEnum);
-    putDirect(vm, vm.propertyNames->prototype, JSMessageEvent::prototype(vm, globalObject), JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::DontDelete);
+    initializeBaseProperties(vm, 1, "MessageEvent"_s, JSMessageEvent::prototype(vm, globalObject));
 }
 
 /* Hash table for prototype */
@@ -312,8 +308,8 @@ const ClassInfo JSMessageEventPrototype::s_info = { "MessageEvent"_s, &Base::s_i
 void JSMessageEventPrototype::finishCreation(VM& vm)
 {
     Base::finishCreation(vm);
-    reifyStaticProperties(vm, JSMessageEvent::info(), JSMessageEventPrototypeTableValues, *this);
-    JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
+    Bun::reifyStaticPropertyTable(vm, JSMessageEvent::info(), JSMessageEventPrototypeTableValues, *this);
+    Bun::putToStringTagWithoutTransition(vm, this, info());
 }
 
 const ClassInfo JSMessageEvent::s_info = { "MessageEvent"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSMessageEvent) };
@@ -462,12 +458,7 @@ JSC_DEFINE_HOST_FUNCTION(jsMessageEventPrototypeFunction_initMessageEvent, (JSGl
 
 JSC::GCClient::IsoSubspace* JSMessageEvent::subspaceForImpl(JSC::VM& vm)
 {
-    return WebCore::subspaceForImpl<JSMessageEvent, UseCustomHeapCellType::No>(
-        vm,
-        [](auto& spaces) { return spaces.m_clientSubspaceForMessageEvent.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForMessageEvent = std::forward<decltype(space)>(space); },
-        [](auto& spaces) { return spaces.m_subspaceForMessageEvent.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_subspaceForMessageEvent = std::forward<decltype(space)>(space); });
+    return WebCore::subspaceForImpl<JSMessageEvent, UseCustomHeapCellType::No>(vm, BUN_SUBSPACE_SLOTS(m_clientSubspaceForMessageEvent, m_subspaceForMessageEvent));
 }
 
 template<typename Visitor>

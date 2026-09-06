@@ -1189,3 +1189,121 @@ describe.skipIf(isASAN)("compiler runtime header directory under BUN_TMPDIR", ()
     expect(exitCode).toBe(0);
   });
 });
+
+// The gate runs before any option is read or any C is compiled, so these do
+// not need a working TinyCC and run under ASan too. Without the gate, the
+// empty `symbols` object makes cc() fail with a plain validation error, which
+// is the control for "cc() was not blocked".
+describe.concurrent("disabling cc()", () => {
+  // `report` receives one string: the error code, or the message for an
+  // error without a code, or "no-error".
+  const probeWith = (report: string) => /* js */ `
+    const { cc } = require("bun:ffi");
+    try {
+      cc({ source: "does-not-exist.c", symbols: {} });
+      ${report}("no-error");
+    } catch (e) {
+      ${report}(e.code ?? e.message);
+    }
+  `;
+  const probe = probeWith("console.log");
+
+  async function run(...args: string[]): Promise<[stdout: string, stderr: string, exitCode: number]> {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), ...args],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    return await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  }
+
+  it("cc() is allowed by default", async () => {
+    const [stdout, stderr, exitCode] = await run("-e", probe);
+    expect(stdout).toBe("Expected at least one exported symbol\n");
+    expect(exitCode).toBe(0);
+  });
+
+  it("--no-ffi-cc makes cc() throw ERR_FFI_CC_DISABLED", async () => {
+    const [stdout, stderr, exitCode] = await run("--no-ffi-cc", "-e", probe);
+    expect(stdout).toBe("ERR_FFI_CC_DISABLED\n");
+    expect(exitCode).toBe(0);
+  });
+
+  it("--no-addons makes cc() throw ERR_FFI_CC_DISABLED", async () => {
+    const [stdout, stderr, exitCode] = await run("--no-addons", "-e", probe);
+    expect(stdout).toBe("ERR_FFI_CC_DISABLED\n");
+    expect(exitCode).toBe(0);
+  });
+
+  it("the error message names the disabled compiler", async () => {
+    const [stdout, stderr, exitCode] = await run(
+      "--no-ffi-cc",
+      "-p",
+      'require("bun:ffi").cc({ source: "does-not-exist.c", symbols: {} })',
+    );
+    expect(stdout).toBe("");
+    expect(stderr).toContain("error: Cannot compile C code because the bun:ffi C compiler is disabled.");
+    expect(stderr).toContain('code: "ERR_FFI_CC_DISABLED"');
+    expect(exitCode).toBe(1);
+  });
+
+  it("BUN_OPTIONS=--no-ffi-cc makes cc() throw ERR_FFI_CC_DISABLED", async () => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", probe],
+      env: { ...bunEnv, BUN_OPTIONS: "--no-ffi-cc" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout).toBe("ERR_FFI_CC_DISABLED\n");
+    expect(exitCode).toBe(0);
+  });
+
+  // The Worker runs the probe and posts its one line back to the parent. A
+  // worker that fails before it posts is reported on stdout instead of
+  // hanging the process.
+  const workerHost = (execArgv: string) => /* js */ `
+    const { Worker } = require("node:worker_threads");
+    const source = ${JSON.stringify(probeWith("require('node:worker_threads').parentPort.postMessage"))};
+    const worker = new Worker(source, { eval: true, execArgv: ${execArgv} });
+    let reported = false;
+    worker.on("message", msg => {
+      reported = true;
+      console.log(msg);
+      worker.terminate();
+    });
+    worker.on("error", e => {
+      reported = true;
+      console.log("worker error: " + (e.code ?? e.message));
+      worker.terminate();
+    });
+    worker.on("exit", code => {
+      if (!reported) console.log("worker exited with " + code + " before posting");
+    });
+  `;
+
+  it("--no-ffi-cc stays in effect inside a Worker with an empty execArgv", async () => {
+    const [stdout, stderr, exitCode] = await run("--no-ffi-cc", "-e", workerHost("[]"));
+    expect(stdout).toBe("ERR_FFI_CC_DISABLED\n");
+    expect(exitCode).toBe(0);
+  });
+
+  it("--no-addons stays in effect inside a Worker with an empty execArgv", async () => {
+    const [stdout, stderr, exitCode] = await run("--no-addons", "-e", workerHost("[]"));
+    expect(stdout).toBe("ERR_FFI_CC_DISABLED\n");
+    expect(exitCode).toBe(0);
+  });
+
+  it("a Worker can disable cc() for itself with execArgv", async () => {
+    const [stdout, stderr, exitCode] = await run("-e", workerHost('["--no-ffi-cc"]'));
+    expect(stdout).toBe("ERR_FFI_CC_DISABLED\n");
+    expect(exitCode).toBe(0);
+  });
+
+  it("a Worker cannot re-enable cc() that its parent disabled", async () => {
+    const [stdout, stderr, exitCode] = await run("--no-ffi-cc", "-e", workerHost('["--smol"]'));
+    expect(stdout).toBe("ERR_FFI_CC_DISABLED\n");
+    expect(exitCode).toBe(0);
+  });
+});

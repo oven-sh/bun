@@ -91,12 +91,4 @@ void JSAbortAlgorithm::visitJSFunction(JSC::SlotVisitor& visitor)
     m_data->visitJSFunction(visitor);
 }
 
-JSC::JSValue toJS(AbortAlgorithm& impl)
-{
-    if (!static_cast<JSAbortAlgorithm&>(impl).callbackData())
-        return jsNull();
-
-    return static_cast<JSAbortAlgorithm&>(impl).callbackData()->callback();
-}
-
 } // namespace WebCore

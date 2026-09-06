@@ -115,12 +115,6 @@ pub mod options {
         MaxPathExceeded,
     }
 
-    impl From<Error> for crate::Error {
-        fn from(_e: Error) -> Self {
-            crate::Error::MaxPathExceeded
-        }
-    }
-
     // Rust cannot vary a fn's return type on a const-generic value, so all
     // `Result(T)` call sites below return `Result<T, Error>` unconditionally;
     // callers configured with `AssumeAlwaysLessThanMaxPath` should treat the

@@ -32,6 +32,11 @@ pub mod windows_named_pipe;
 #[path = "WindowsNamedPipeContext.rs"]
 pub mod windows_named_pipe_context;
 
+mod bundled_root_certs;
+mod cert_files;
+#[cfg(all(unix, not(target_vendor = "apple")))]
+mod system_certs;
+
 /// Re-export of the canonical `bun_uws::ssl_wrapper` plus the runtime-tier
 /// `init(&SSLConfig, ..)` constructor that the lower tier can't see (it would
 /// need to name `crate::server::server_config::SSLConfig`). The body is the

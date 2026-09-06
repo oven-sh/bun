@@ -184,7 +184,6 @@ impl Async {
             drop(unsafe { bun_core::heap::take(me.task) });
             me.task = core::ptr::null_mut();
         }
-        me.base.end_scope();
     }
 
     pub(crate) fn run_from_main_thread(interp: &Interpreter, this: NodeId) {

@@ -15,17 +15,18 @@ interface PropertyAttribute {
  * Specifies what happens when a method is called with `this` set to a value that is not an instance
  * of the class.
  */
-export enum InvalidThisBehavior {
+export const InvalidThisBehavior = {
   /**
    * Default. Throws a `TypeError`.
    */
-  Throw,
+  Throw: 0,
   /**
    * Do not call the native implementation; return `undefined`. Some Node.js methods are supposed to
    * work like this.
    */
-  NoOp,
-}
+  NoOp: 1,
+} as const;
+export type InvalidThisBehavior = (typeof InvalidThisBehavior)[keyof typeof InvalidThisBehavior];
 
 export type Field =
   | ({
@@ -153,40 +154,21 @@ export class ClassDefinition {
    */
   prototypeBase?: "Error";
   /**
-   * ## IMPORTANT
-   * You _must_ free the pointer to your native class!
-   *
-   * Example for pointers only owned by JavaScript classes:
-   * ```rust
-   * impl NativeClass {
-   *     pub fn constructor(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<Box<Self>> {
-   *         // do stuff
-   *         Ok(Box::new(NativeClass {
-   *             // ...
-   *         }))
-   *     }
-   *
-   *     pub fn finalize(self: Box<Self>) {
-   *         // free allocations owned by this class; Box drop frees the struct itself.
-   *     }
-   * }
-   * ```
-   * Example with ref counting:
-   * ```rust
-   * impl RefCountedNativeClass {
-   *     pub fn constructor(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<*mut Self> {
-   *         // do stuff; refcount starts at 1
-   *         Ok(Self::new(...).into_raw())
-   *     }
-   *
-   *     pub fn finalize(&mut self) {
-   *         self.deref(); // GC drops its ref; frees when the count hits zero.
-   *     }
-   * }
-   * ```
+   * The JS wrapper owns the payload: when it is collected the payload is
+   * handed to `fn finalize(self: Box<Self>)` (an inherent method if the type
+   * has one, else `bun_jsc::JsFinalize`'s default, which drops the Box).
+   * For a payload the wrapper only holds one ref on, set `refCounted` instead.
    * @todo remove this and require all classes to implement `finalize`.
    */
   finalize?: boolean;
+  /**
+   * The payload is intrusively refcounted (`CellRefCounted` /
+   * `ThreadSafeRefCounted` / `RefCounted`) and the JS wrapper holds one ref.
+   * Collection runs `fn finalize(&self)` (inherent if present — e.g. to clear
+   * a `this_value` — else `bun_jsc::JsFinalizeRefCounted`'s no-op) and then drops
+   * the wrapper's ref; the payload's `Drop` runs when the last ref goes.
+   */
+  refCounted?: boolean;
   overridesToJS?: boolean;
   /**
    * Static properties and methods.
@@ -277,6 +259,8 @@ export function define(
   }
   return new ClassDefinition({
     ...rest,
+    // `refCounted` is a kind of finalize as far as the C++ wrapper is concerned.
+    finalize: rest.finalize || rest.refCounted,
     call,
     overridesToJS,
     construct,

@@ -86,7 +86,7 @@ fn load_global_bunfig(cmd: CommandTag, ctx: Context<'_>) -> Result<(), crate::Er
     }
     ctx.has_loaded_global_config = true;
 
-    let mut config_buf = PathBuffer::uninit();
+    let mut config_buf = bun_paths::path_buffer_pool::get();
     if let Some(path) = get_home_config_path(&mut config_buf) {
         load_bunfig(cmd, true, path, ctx)?;
     }
@@ -141,9 +141,8 @@ pub fn load_config(
     // If running as a standalone executable with autoloadBunfig disabled, skip config loading
     // unless an explicit config path was provided via --config
     if user_config_path_.is_none() {
-        if let Some(graph) = StandaloneModuleGraph::get() {
-            // SAFETY: `get()` returns a non-null process-global pointer when Some.
-            if unsafe { (*graph).flags }.contains(
+        if let Some(graph) = StandaloneModuleGraph::get_ref() {
+            if graph.flags.contains(
                 bun_standalone_graph::StandaloneModuleGraph::Flags::DISABLE_AUTOLOAD_BUNFIG,
             ) {
                 return Ok(());
@@ -151,7 +150,7 @@ pub fn load_config(
         }
     }
 
-    let mut config_buf = PathBuffer::uninit();
+    let mut config_buf = bun_paths::path_buffer_pool::get();
     if cmd.read_global_config() {
         if !ctx.has_loaded_global_config {
             ctx.has_loaded_global_config = true;
@@ -178,7 +177,14 @@ pub fn load_config(
                         || (!ctx.positionals.is_empty()
                             && options::DEFAULT_LOADERS
                                 .contains_key(bun_paths::extension(&ctx.positionals[0])))
-                )))
+                ))
+            // "bun [run] --filter/--workspaces/--parallel/--sequential": these
+            // dispatch to their own runners right after argument parsing and
+            // never reach the lazy load in `RunCommand::exec_with_cfg`. Loading
+            // here keeps the `[run]` flags applied later in `Arguments::parse`
+            // (`--bun`, `--elide-lines`, ...) ahead of the file.
+            || (matches!(cmd, CommandTag::RunCommand | CommandTag::AutoCommand)
+                && (ctx.parallel || ctx.sequential || ctx.workspaces || !ctx.filters.is_empty())))
     {
         config_path_ = b"bunfig.toml";
         auto_loaded = true;
@@ -194,7 +200,7 @@ pub fn load_config(
         config_path_len = config_path_.len();
     } else {
         if ctx.args.absolute_working_dir.is_none() {
-            let mut secondbuf = PathBuffer::uninit();
+            let mut secondbuf = bun_paths::path_buffer_pool::get();
             let cwd_len = match bun_sys::getcwd(&mut *secondbuf) {
                 Ok(n) => n,
                 Err(_) => return Ok(()),

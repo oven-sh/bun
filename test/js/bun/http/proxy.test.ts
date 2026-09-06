@@ -781,6 +781,45 @@ test("HTTPS proxy tunnel keep-alive does not share tunnel across different targe
   expect(connects.sort()).toEqual([`CONNECT localhost:${serverA.port}`, `CONNECT localhost:${serverB.port}`].sort());
 });
 
+// The TLS handshake inside a CONNECT tunnel is keyed to the URL host like a
+// direct connection: the ClientHello SNI and the certificate verification use
+// the URL host, and a caller-supplied Host header only travels as an HTTP
+// field on the tunneled request.
+test("HTTPS proxy tunnel keeps a caller-supplied Host header out of SNI and certificate verification", async () => {
+  const seen: { sni: string | null; host: string | undefined }[] = [];
+  const target = tls.createServer(
+    {
+      ...tlsCert,
+      SNICallback(servername, cb) {
+        if (servername !== "localhost") return cb(new Error(`unexpected SNI ${servername}`));
+        cb(null, tls.createSecureContext(tlsCert));
+      },
+    },
+    socket => {
+      socket.once("data", data => {
+        const host = /^host:\s*(.*)\r\n/im.exec(data.toString())?.[1];
+        seen.push({ sni: socket.servername || null, host });
+        socket.end("HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok");
+      });
+    },
+  );
+  target.listen(0);
+  await once(target, "listening");
+  try {
+    const port = (target.address() as net.AddressInfo).port;
+    const res = await fetch(`https://localhost:${port}/`, {
+      proxy: httpProxyServer.url,
+      keepalive: false,
+      headers: { Host: "other.example" },
+      tls: { ca: tlsCert.cert },
+    });
+    expect(`${res.status} ${await res.text()}`).toBe("200 ok");
+    expect(seen).toEqual([{ sni: "localhost", host: "other.example" }]);
+  } finally {
+    target.close();
+  }
+});
+
 test("HTTPS proxy tunnel keep-alive does not share tunnel across different credentials", async () => {
   using target = Bun.serve({ port: 0, tls: tlsCert, fetch: () => new Response("ok") });
 
@@ -854,6 +893,42 @@ test("HTTPS target through proxy with passing checkServerIdentity round-trips", 
   });
   expect(response.status).toBe(200);
   expect(await response.text()).toBe("tunneled body");
+  expect(verified).toEqual(["localhost"]);
+});
+
+test("HTTPS target through proxy reuses the tunnel across checkServerIdentity requests", async () => {
+  using target = Bun.serve({ port: 0, tls: tlsCert, fetch: () => new Response("ok") });
+  httpProxyServer.log.length = 0;
+  const verified: string[] = [];
+  const withCallback = () => ({
+    proxy: httpProxyServer.url,
+    tls: {
+      ca: tlsCert.cert,
+      checkServerIdentity(hostname: string) {
+        verified.push(hostname);
+        return undefined;
+      },
+    },
+  });
+  const connects = () => httpProxyServer.log.filter(l => l.startsWith("CONNECT")).length;
+
+  for (let i = 0; i < 3; i++) {
+    expect(await fetch(target.url, withCallback()).then(r => r.text())).toBe("ok");
+  }
+  expect(verified).toEqual(["localhost"]);
+  expect(connects()).toBe(1);
+
+  // A strict request without a callback does not inherit the callback-approved
+  // tunnel, and vice versa.
+  expect(await fetch(target.url, { proxy: httpProxyServer.url, tls: { ca: tlsCert.cert } }).then(r => r.text())).toBe(
+    "ok",
+  );
+  expect(connects()).toBe(2);
+  expect(await fetch(target.url, withCallback()).then(r => r.text())).toBe("ok");
+  expect(await fetch(target.url, { proxy: httpProxyServer.url, tls: { ca: tlsCert.cert } }).then(r => r.text())).toBe(
+    "ok",
+  );
+  expect(connects()).toBe(2);
   expect(verified).toEqual(["localhost"]);
 });
 

@@ -53,14 +53,6 @@ public:
             m_variant);
     }
 
-    void* mutableData() const
-    {
-        return std::visit([](auto& buffer) -> void* {
-            return buffer->data();
-        },
-            m_variant);
-    }
-
     size_t length() const
     {
         return std::visit([](auto& buffer) -> size_t {
@@ -104,11 +96,6 @@ std::optional<BufferSource> BufferSource::decode(Decoder& decoder)
     if (!data)
         return std::nullopt;
     return BufferSource(JSC::ArrayBuffer::tryCreate({ static_cast<const uint8_t*>(data), dataSize.value() }));
-}
-
-inline BufferSource toBufferSource(const uint8_t* data, size_t length)
-{
-    return BufferSource(JSC::ArrayBuffer::tryCreate({ data, length }));
 }
 
 } // namespace WebCore

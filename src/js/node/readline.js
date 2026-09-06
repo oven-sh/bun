@@ -37,15 +37,12 @@ const {
 
 const { clearLine, clearScreenDown, cursorTo, moveCursor } = require("internal/readline/callbacks");
 const emitKeypressEvents = require("internal/readline/emitKeypressEvents");
-const promises = require("node:readline/promises");
 
 const { AbortError } = require("internal/repl/node-errors");
 // Don't destructure `inspect` — reading it loads internal/util/inspect (99 KB).
 const nodeInspect = require("internal/repl/node-inspect");
-// node-shims eagerly loads node:{util,module,path,vm}; readline only needs
-// kEmptyObject/promisify, so import from their tiny sources.
 const { kEmptyObject } = require("internal/shared");
-const { promisify } = require("internal/promisify");
+const kCustomPromisifiedSymbol = Symbol.for("nodejs.util.promisify.custom");
 const { validateAbortSignal } = require("internal/validators");
 
 /**
@@ -152,7 +149,7 @@ Interface.prototype.question = function question(query, options, cb) {
     this[kQuestion](query, cb);
   }
 };
-Interface.prototype.question[promisify.custom] = function question(query, options) {
+Interface.prototype.question[kCustomPromisifiedSymbol] = function question(query, options) {
   if (options === null || typeof options !== "object") {
     options = kEmptyObject;
   }
@@ -510,8 +507,20 @@ __node_module__.exports = {
   cursorTo,
   emitKeypressEvents,
   moveCursor,
-  promises,
 };
+
+let promises;
+Object.defineProperty(__node_module__.exports, "promises", {
+  __proto__: null,
+  configurable: true,
+  enumerable: true,
+  get() {
+    return (promises ??= require("node:readline/promises"));
+  },
+  set(value) {
+    Object.defineProperty(__node_module__.exports, "promises", { value, writable: true, enumerable: true, configurable: true });
+  },
+});
 
 // Bun-internal hook consumed by pre-existing readline tests/utilities.
 // Non-enumerable so it stays off the public node:readline surface.
@@ -532,6 +541,6 @@ Object.defineProperty(__node_module__.exports, Symbol.for("__BUN_INTERNALS_DO_NO
 
 // The builtin bundler dedupe-renames the second `function question`;
 // promisify(question).name must stay 'question' (test-util-promisify-custom-names).
-Object.defineProperty(Interface.prototype.question[promisify.custom], "name", { value: "question" });
+Object.defineProperty(Interface.prototype.question[kCustomPromisifiedSymbol], "name", { value: "question" });
 
 export default __node_module__.exports;

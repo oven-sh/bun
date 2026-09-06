@@ -205,3 +205,76 @@ test("re-wrapped native entries, timing and observer keep JS identity", async ()
   performance.mark(name + "-2");
   expect(await promise).toBe(true);
 });
+
+test("mark/measure toJSON and inspection include detail without perf_hooks being loaded", async () => {
+  // These used to be patched onto the prototypes when node:perf_hooks was first required,
+  // so JSON.stringify(performance.mark(...)) dropped `detail` until then.
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `const mark = performance.mark("m", { detail: { a: 1 } });
+       const measure = performance.measure("mm", { start: 0, end: 1, detail: [1, 2] });
+       const json = [JSON.parse(JSON.stringify(mark)), JSON.parse(JSON.stringify(measure))];
+       const { inspect } = require("node:util");
+       const custom = Symbol.for("nodejs.util.inspect.custom");
+       const result = {
+         json,
+         inspected: [inspect(mark), inspect(measure, { depth: 0 }), inspect(mark, { depth: -1 })],
+         nativeInspected: Bun.inspect(mark),
+         // util.inspect never calls the hook on a prototype object. Bun.inspect / console.log do,
+         // and the hook has to fall back to the default formatting there instead of throwing
+         // from the brand-checked toJSON.
+         protos: [
+           inspect(PerformanceMark.prototype),
+           Bun.inspect(PerformanceEntry.prototype).split("\\n")[0],
+           Bun.inspect(PerformanceMark.prototype).split("\\n")[0],
+           Bun.inspect(PerformanceMeasure.prototype).split("\\n")[0],
+         ],
+         descriptor: { ...Object.getOwnPropertyDescriptor(PerformanceEntry.prototype, custom), value: PerformanceEntry.prototype[custom].name },
+         toJSONEnumerable: Object.getOwnPropertyDescriptor(PerformanceMark.prototype, "toJSON").enumerable,
+         generic: PerformanceEntry.prototype[custom].call({ constructor: { name: "Fake" }, toJSON: () => ({ z: 1 }) }, 1, {}, inspect),
+       };
+       // util.inspect forwards an option it does not know to the hook as-is, so the hook's copy
+       // of the options has to cope with an index key.
+       result.indexOption = inspect(mark, { 0: 1 }).split("\\n")[0];
+       // The hook copies the options the way { ...options } does: a setter that userland put on
+       // Object.prototype under one of the option names must not run.
+       Object.defineProperty(Object.prototype, "showHidden", { configurable: true, set() { throw new Error("setter ran"); } });
+       result.polluted = inspect(mark).split("\\n")[0];
+       console.log(JSON.stringify(result));`,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  const result = JSON.parse(stdout);
+  expect(result.json).toEqual([
+    { name: "m", entryType: "mark", startTime: expect.any(Number), duration: 0, detail: { a: 1 } },
+    { name: "mm", entryType: "measure", startTime: 0, duration: 1, detail: [1, 2] },
+  ]);
+  expect(result.inspected[0]).toStartWith("PerformanceMark {\n  name: 'm',");
+  expect(result.inspected[0]).toContain("detail: { a: 1 }");
+  expect(result.inspected[1]).toBe("PerformanceMeasure [Object]");
+  expect(result.inspected[2]).toBe("PerformanceMark {}");
+  expect(result.nativeInspected).toStartWith("PerformanceMark {\n  name: 'm',");
+  expect(result.protos).toEqual([
+    "PerformanceEntry [PerformanceMark] { detail: [Getter] }",
+    "PerformanceEntry {",
+    "PerformanceMark {",
+    "PerformanceMeasure {",
+  ]);
+  expect(result.descriptor).toEqual({
+    value: "[nodejs.util.inspect.custom]",
+    writable: true,
+    enumerable: false,
+    configurable: true,
+  });
+  expect(result.toJSONEnumerable).toBe(false);
+  expect(result.generic).toBe("Fake { z: 1 }");
+  expect(result.indexOption).toBe("PerformanceMark {");
+  expect(result.polluted).toBe("PerformanceMark {");
+  expect(exitCode).toBe(0);
+});

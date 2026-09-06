@@ -237,9 +237,7 @@ pub mod expect {
             )?;
             // `FormatOptions.flush` is false, so the formatter does not flush
             // internally; a buffered `out` would otherwise drop trailing
-            // snapshot bytes. Propagate the writer error as a thrown JS error
-            // so the caller's `.is_err()` branch
-            // (expect.rs `to_match_snapshot_value_kind`) fires.
+            // snapshot bytes.
             out.flush().map_err(|e| global.throw_error(e, "snapshot writer flush failed"))?;
             Ok(())
         }

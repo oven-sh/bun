@@ -161,6 +161,50 @@ describe.each([
   });
 });
 
+// A name that cannot be a host name (a space, a colon, an empty label,
+// brackets around anything but an IPv6 literal) is rejected in-process with the
+// resolver's ENOTFOUND, the error Bun.connect reports for the same name. The
+// system resolver is never asked: some DNS servers never answer a query for
+// such a label, and the synchronous getaddrinfo behind listen() then blocks
+// startup for its full timeout.
+describe.each([
+  ["http", {}],
+  ["https", { tls }],
+] as const)("Bun.serve() %s with a hostname that is not a hostname", (_, options) => {
+  test.each(["this is not a hostname", "localhost:80", "a..b", "[not-an-ipv6]"])(
+    "%p throws getaddrinfo ENOTFOUND",
+    hostname => {
+      let error: any;
+      try {
+        serve({ ...options, hostname, port: 0, fetch: () => new Response() }).stop(true);
+      } catch (e) {
+        error = e;
+      }
+      const { name, code, syscall, hostname: errHostname, message } = error ?? {};
+      expect({ name, code, syscall, hostname: errHostname, message }).toEqual({
+        name: "Error",
+        code: "ENOTFOUND",
+        syscall: "getaddrinfo",
+        hostname,
+        message: `getaddrinfo ENOTFOUND ${hostname}`,
+      });
+    },
+  );
+
+  test("a later Bun.serve() still binds", () => {
+    using server = serve({ ...options, port: 0, fetch: () => new Response() });
+    expect(server.port).toBeInteger();
+  });
+});
+
+test.skipIf(!hasIPv6)("Bun.serve() binds a bracketed IPv6 literal hostname", () => {
+  using server = serve({ hostname: "[::1]", port: 0, fetch: () => new Response() });
+  expect({ hostname: server.hostname, urlHostname: server.url.hostname }).toEqual({
+    hostname: "[::1]",
+    urlHostname: "[::1]",
+  });
+});
+
 // Linux-only: uses /proc/self/fd to find the listen socket and close it from
 // under the server so getsockname() fails with EBADF.
 test.skipIf(!isLinux)("server.address / server.port do not panic when getsockname() fails", async () => {

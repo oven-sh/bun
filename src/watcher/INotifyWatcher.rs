@@ -11,6 +11,7 @@ use bun_sys::{self, Fd};
 use bun_threading::Futex;
 
 use crate::watcher_impl::{MAX_COUNT as max_count, Op, WatchEvent, WatchItemIndex, Watcher};
+use bun_collections::index_sort;
 
 bun_core::declare_scope!(watcher, visible);
 
@@ -487,7 +488,7 @@ fn process_inotify_event_batch(
 
     let mut name_off: u8 = 0;
     let watch_events = &mut this.watch_events[..event_count];
-    watch_events.sort_unstable_by(|a, b| WatchEvent::sort_by_index(*a, *b));
+    index_sort::sort_slice_unstable_by(watch_events, |a, b| WatchEvent::sort_by_index(*a, *b));
 
     let mut last_event_index: usize = 0;
     let mut last_event_id: WatchItemIndex = WatchItemIndex::MAX;

@@ -136,7 +136,7 @@ impl AuditCommand {
             Ok(v) => v,
             Err(err) => {
                 if err == bun_install::Error::MissingPackageJSON {
-                    let mut cwd_buf = bun_paths::PathBuffer::uninit();
+                    let mut cwd_buf = bun_paths::path_buffer_pool::get();
                     if let Ok(cwd) = bun_core::getcwd(&mut cwd_buf) {
                         Output::err_generic(
                             "No package.json was found for directory \"{s}\"",
@@ -697,9 +697,8 @@ fn send_audit_request(
     libdeflate::load();
     let mut compressor = libdeflate::OwnedCompressor::new(6).ok_or(bun_alloc::AllocError)?;
 
-    let max_compressed_size = compressor.max_bytes_needed(body, libdeflate::Encoding::Gzip);
-    let mut compressed_body = Vec::with_capacity(max_compressed_size);
-    let _ = compressor.compress_to_vec(body, &mut compressed_body, libdeflate::Encoding::Gzip);
+    let mut compressed_body = Vec::new();
+    let _ = compressor.compress_to_vec(body, &mut compressed_body, libdeflate::Encoding::Gzip)?;
     drop(compressor);
     let final_compressed_body = compressed_body;
 
@@ -753,7 +752,6 @@ fn send_audit_request(
         headers_buf,
         &final_compressed_body,
         http_proxy,
-        None,
         http::FetchRedirect::Follow,
     );
     let reason = match req.send_sync(&mut response_buf) {

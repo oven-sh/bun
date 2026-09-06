@@ -38,17 +38,12 @@ JSStreamFromIterableContext* JSStreamFromIterableContext::create(VM& vm, Structu
 
 Structure* JSStreamFromIterableContext::createStructure(VM& vm, JSGlobalObject* globalObject, JSValue prototype)
 {
-    return Structure::create(vm, globalObject, prototype, TypeInfo(ObjectType, StructureFlags), info());
+    return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(ObjectType, StructureFlags), info());
 }
 
 GCClient::IsoSubspace* JSStreamFromIterableContext::subspaceForImpl(VM& vm)
 {
-    return WebCore::subspaceForImpl<JSStreamFromIterableContext, UseCustomHeapCellType::No>(
-        vm,
-        [](auto& spaces) { return spaces.m_clientSubspaceForStreamFromIterableContext.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForStreamFromIterableContext = std::forward<decltype(space)>(space); },
-        [](auto& spaces) { return spaces.m_subspaceForStreamFromIterableContext.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_subspaceForStreamFromIterableContext = std::forward<decltype(space)>(space); });
+    return WebCore::subspaceForImpl<JSStreamFromIterableContext, UseCustomHeapCellType::No>(vm, BUN_SUBSPACE_SLOTS(m_clientSubspaceForStreamFromIterableContext, m_subspaceForStreamFromIterableContext));
 }
 
 DEFINE_VISIT_CHILDREN(JSStreamFromIterableContext);

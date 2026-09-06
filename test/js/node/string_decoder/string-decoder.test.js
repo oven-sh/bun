@@ -264,6 +264,50 @@ it("normalizes the encoding name like Node", () => {
   });
 });
 
+// A call resolved through a binding that a closure captures (or through a module binding) is
+// compiled with the scope object itself in the this slot, and native callees see it raw.
+// StringDecoder called without new used to mistake that scope object for a body-parser style
+// receiver: it wrote the decoder state onto it and returned it instead of a decoder.
+describe("StringDecoder called without new", () => {
+  it("returns a decoder when the callee is resolved through a captured binding", () => {
+    const StringDecoder = RealStringDecoder;
+    function keep() {
+      return StringDecoder;
+    }
+    const decoder = StringDecoder("latin1");
+    expect(decoder).toBeInstanceOf(RealStringDecoder);
+    expect(decoder.encoding).toBe("latin1");
+    expect(decoder.write(Buffer.from([0xe9]))).toBe("é");
+    expect(keep()).toBe(RealStringDecoder);
+  });
+
+  it("still initializes an explicit object receiver (body-parser style)", () => {
+    const receiver = {};
+    expect(RealStringDecoder.call(receiver, "latin1")).toBe(receiver);
+    expect(receiver.encoding).toBe("latin1");
+  });
+
+  // The constructor used to call asObject() on the receiver before checking that it is one, which
+  // aborts a debug build for any non-object receiver. Run it in a child so the abort shows up as a
+  // failed assertion instead of taking the test runner down.
+  it("returns a decoder for an undefined or primitive receiver", async () => {
+    const src = `
+      const { StringDecoder } = require("node:string_decoder");
+      const local = StringDecoder;
+      const results = [local("utf8"), StringDecoder.call(undefined, "utf8"), StringDecoder.call("x", "utf8")];
+      console.log(results.every(d => d instanceof StringDecoder && d.encoding === "utf8"));
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", src],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "true\n", stderr: "", exitCode: 0 });
+  });
+});
+
 // Node's lastTotal getter is MissingBytes + BufferedBytes; Node clears BufferedBytes when a buffered
 // partial is emitted so lastTotal returns to 0. end() resets lastNeed/lastTotal but leaves lastChar.
 // Decoded output was always correct; this is purely about the observable legacy state triple.

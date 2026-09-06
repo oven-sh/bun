@@ -12,7 +12,7 @@ use core::sync::atomic::{AtomicPtr, Ordering};
 
 use bun_core::{Timespec, TimespecMockMode};
 
-use crate::jsc::virtual_machine::{IS_BUNDLER_THREAD_FOR_BYTECODE_CACHE, VirtualMachine};
+use crate::jsc::virtual_machine::VirtualMachine;
 use crate::webcore::script_execution_context::Identifier as ScriptExecutionContextIdentifier;
 
 use super::{
@@ -236,16 +236,18 @@ impl WTFTimer {
     }
 }
 
+/// A `WTF::RunLoop` timer on this thread, backed by this thread's event loop. Null when the thread has no Bun
+/// `VirtualMachine` (a `JSC::VM` on a bundler thread generating bytecode, say): the timer then never fires, which
+/// `RunLoop::TimerBase` accepts.
+///
 /// # Safety
 /// `run_loop_timer` must be a non-null, live `WTF::RunLoop::TimerBase` owned
 /// by the caller for the lifetime of the returned `WTFTimer`.
 #[unsafe(no_mangle)]
 unsafe extern "C" fn WTFTimer__create(run_loop_timer: *mut RunLoopTimer) -> *mut c_void {
-    if IS_BUNDLER_THREAD_FOR_BYTECODE_CACHE.get() {
+    let Some(vm) = VirtualMachine::get_or_null() else {
         return ptr::null_mut();
-    }
-
-    let vm = VirtualMachine::get_mut_ptr();
+    };
 
     // SAFETY: `vm` is the thread-local VirtualMachine; `run_loop_timer` is
     // non-null per caller contract; `event_loop().imminent_gc_timer` lives as

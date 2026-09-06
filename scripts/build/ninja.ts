@@ -64,6 +64,13 @@ export interface BuildNode {
    * but their mtime is ignored. Use for: directory creation, phony groupings.
    */
   orderOnlyInputs?: string[];
+  /**
+   * Validations (ninja `|@ target` syntax, 1.11+). Built whenever this edge
+   * is, without being inputs of it or of anything downstream. Use for:
+   * checks on an output (smoke test, symbol audits) that should run with
+   * every build of it but block nothing.
+   */
+  validations?: string[];
   /** Variable bindings local to this build statement. */
   vars?: Record<string, string>;
   /** Job pool override (overrides rule's pool). */
@@ -103,6 +110,7 @@ export class Ninja {
 
   private readonly lines: string[] = [];
   private readonly ruleNames = new Set<string>();
+  private readonly generatorRules = new Set<string>();
   private readonly outputSet = new Set<string>();
   private readonly pools = new Map<string, number>();
   private readonly defaults: string[] = [];
@@ -111,10 +119,9 @@ export class Ninja {
   constructor(opts: NinjaOptions) {
     assert(isAbsolute(opts.buildDir), `Ninja buildDir must be absolute, got: ${opts.buildDir}`);
     this.buildDir = resolve(opts.buildDir);
-    // 1.9 is the minimum we need — implicit outputs (1.7), console pool
-    // (1.5), restat (1.0). We don't use dyndep (1.10's headline feature).
-    // Some CI agents (darwin) ship 1.9 and we don't control their image.
-    this.ninjaVersion = opts.ninjaVersion ?? "1.9";
+    // 1.11: validations (`|@`). Below that: implicit outputs (1.7),
+    // console pool (1.5), restat (1.0). No dyndep.
+    this.ninjaVersion = opts.ninjaVersion ?? "1.11";
   }
 
   /**
@@ -131,7 +138,7 @@ export class Ninja {
   /** Define a top-level ninja variable. */
   variable(name: string, value: string): void {
     assert(/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(name), `Invalid ninja variable name: ${name}`);
-    this.lines.push(`${name} = ${ninjaEscapeVarValue(value)}`);
+    this.lines.push(`${name} = ${ninjaEscapeVarValue(name, value)}`);
   }
 
   /** Add a comment line to the output. */
@@ -175,6 +182,7 @@ export class Ninja {
     }
     if (spec.generator === true) {
       this.lines.push(`  generator = 1`);
+      this.generatorRules.add(name);
     }
     if (spec.pool !== undefined) {
       this.lines.push(`  pool = ${spec.pool}`);
@@ -214,9 +222,25 @@ export class Ninja {
 
     const outs = node.outputs.map(p => ninjaEscapePath(this.rel(p)));
     const implOuts = (node.implicitOutputs ?? []).map(p => ninjaEscapePath(this.rel(p)));
+    // Ninja matches paths textually: `codegen/X.h` (how edges name files under
+    // buildDir) and `/abs/build/codegen/X.h` (how a compiler's depfile names
+    // the same file, found through an absolute -I) are two nodes, and only
+    // the first would have this edge as its producer — so a TU whose depfile
+    // names a generated header would not be recompiled in the build that
+    // regenerates it, only in the next one. Declaring the absolute spelling
+    // as an implicit output of the same edge makes both names resolve here
+    // (CMake's Ninja generator does the same for custom-command outputs).
+    // Not for phonies (no file) or the generator edge (build.ninja: ninja
+    // knows its manifest by the relative name only).
+    if (node.rule !== "phony" && !this.generatorRules.has(node.rule)) {
+      for (const p of allOuts) {
+        if (isAbsolute(p) && this.rel(p) !== resolve(p)) implOuts.push(ninjaEscapePath(resolve(p)));
+      }
+    }
     const ins = node.inputs.map(p => ninjaEscapePath(this.rel(p)));
     const implIns = (node.implicitInputs ?? []).map(p => ninjaEscapePath(this.rel(p)));
     const orderIns = (node.orderOnlyInputs ?? []).map(p => ninjaEscapePath(this.rel(p)));
+    const validations = (node.validations ?? []).map(p => ninjaEscapePath(this.rel(p)));
 
     let line = `build ${outs.join(" ")}`;
     if (implOuts.length > 0) {
@@ -232,6 +256,9 @@ export class Ninja {
     if (orderIns.length > 0) {
       line += ` || ${orderIns.join(" ")}`;
     }
+    if (validations.length > 0) {
+      line += ` |@ ${validations.join(" ")}`;
+    }
 
     // Wrap long lines with $\n continuations for readability
     this.lines.push(wrapLongLine(line));
@@ -241,7 +268,7 @@ export class Ninja {
     }
     if (node.vars !== undefined) {
       for (const [k, v] of Object.entries(node.vars)) {
-        this.lines.push(`  ${k} = ${ninjaEscapeVarValue(v)}`);
+        this.lines.push(`  ${k} = ${ninjaEscapeVarValue(k, v)}`);
       }
     }
     this.lines.push("");
@@ -254,25 +281,6 @@ export class Ninja {
       rule: "phony",
       inputs: deps,
     });
-  }
-
-  /**
-   * Returns an always-dirty phony target. Depending on this forces a rule
-   * to re-run every build. Useful for nested builds (cmake/cargo) where the
-   * inner build system tracks its own staleness — we always invoke it, it
-   * no-ops if nothing changed, `restat=1` on the outer rule prunes downstream.
-   *
-   * Emitted lazily on first call; subsequent calls return the same name.
-   */
-  always(): string {
-    const name = "always";
-    // outputSet stores absolute paths; phony targets resolve relative to buildDir.
-    const abs = resolve(this.buildDir, name);
-    if (!this.outputSet.has(abs)) {
-      // A phony with no inputs is always dirty (its output file never exists).
-      this.phony(name, []);
-    }
-    return name;
   }
 
   /** Mark targets as default (built when running `ninja` with no args). */
@@ -325,12 +333,10 @@ export class Ninja {
   async write(): Promise<boolean> {
     await mkdir(this.buildDir, { recursive: true });
 
-    // Only write files whose content actually changed — preserves mtimes
-    // for idempotent re-configures. A ninja run after an unchanged
-    // reconfigure sees nothing new and stays a true no-op. Without this,
-    // we'd touch build.ninja every time, which is harmless for ninja
-    // itself (it tracks content via .ninja_log) but wasteful and makes
-    // `ls -lt build/` less useful for debugging.
+    // Only write files whose content actually changed, so the return value
+    // (and compile_commands.json's mtime, which editors watch) means
+    // something. build.ninja's own mtime is configure.ts's business: it
+    // stamps it after every configure for the regen edge's sake.
     const changed = writeIfChanged(resolve(this.buildDir, "build.ninja"), this.toString());
 
     writeIfChanged(
@@ -352,11 +358,14 @@ export class Ninja {
 
 /** Escape a path for use in a `build` line. */
 function ninjaEscapePath(path: string): string {
+  assert(!path.includes("\n"), `Newline in ninja path: ${JSON.stringify(path)}`);
   return path.replace(/\$/g, "$$$$").replace(/ /g, "$ ").replace(/:/g, "$:");
 }
 
 /** Escape a value for use on the right side of `var = value`. */
-function ninjaEscapeVarValue(value: string): string {
+function ninjaEscapeVarValue(name: string, value: string): string {
+  // A newline ends the binding; ninja has no escape for one inside a value.
+  assert(!value.includes("\n"), `Newline in ninja variable '${name}': ${JSON.stringify(value)}`);
   return value.replace(/\$/g, "$$$$");
 }
 

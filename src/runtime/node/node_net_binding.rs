@@ -141,7 +141,7 @@ pub(crate) fn new_detached_socket(global: &JSGlobalObject, frame: &CallFrame) ->
             handlers: JsCell::new(None),
             local_binding: JsCell::new(None),
             // — defaults —
-            owned_ssl_ctx: Cell::new(None),
+            owned_ssl_ctx: JsCell::new(None),
             // node:net/node:tls own server-identity (`checkServerIdentity`)
             // policy in JS, so a hostname mismatch is never enforced natively.
             flags: Cell::new(SocketFlags::default() | SocketFlags::DEFERS_SERVER_IDENTITY),

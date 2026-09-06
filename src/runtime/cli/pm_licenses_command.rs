@@ -154,6 +154,15 @@ impl PmLicensesCommand {
             (selection.ids, false)
         };
 
+        // After the exits above so error output keeps a clean stdout.
+        if pm.options.should_print_command_name() && !json_output {
+            bun_core::pretty!(
+                "<r><b>bun pm licenses <r><d>v{}<r>\n\n",
+                Global::package_json_version_with_sha
+            );
+            Output::flush();
+        }
+
         let options = reachable::Options {
             root: 0,
             dev: features.dev_dependencies,
@@ -300,7 +309,12 @@ impl PmLicensesCommand {
         if json_output {
             print_json(&entries);
         } else {
-            print_text(&entries, flags.long, checked);
+            print_text(
+                &entries,
+                flags.long,
+                checked,
+                pm.options.should_print_command_name(),
+            );
         }
 
         Output::flush();
@@ -681,18 +695,29 @@ impl DiskIndex {
     }
 }
 
-fn print_text(entries: &[Entry], long: bool, checked: usize) {
+fn plural(n: usize) -> &'static str {
+    if n == 1 { "" } else { "s" }
+}
+
+fn print_text(entries: &[Entry], long: bool, checked: usize, summary: bool) {
     if entries.is_empty() {
-        bun_core::pretty!(
-            "No packages to list <d>(checked {} package{} in bun.lock)<r> ",
-            checked,
-            if checked == 1 { "" } else { "s" }
-        );
-        Output::print_start_end_stdout(bun_core::start_time(), bun_core::time::nano_timestamp());
+        bun_core::pretty!("No packages to list");
+        if summary {
+            bun_core::pretty!(
+                " <d>(checked {} package{} in bun.lock)<r> ",
+                checked,
+                plural(checked)
+            );
+            Output::print_start_end_stdout(
+                bun_core::start_time(),
+                bun_core::time::nano_timestamp(),
+            );
+        }
         bun_core::pretty!("\n");
         return;
     }
 
+    let mut licenses = 0;
     let mut start = 0;
     while start < entries.len() {
         let license = &entries[start].license;
@@ -704,6 +729,7 @@ fn print_text(entries: &[Entry], long: bool, checked: usize) {
         if start > 0 {
             Output::print(format_args!("\n"));
         }
+        licenses += 1;
         bun_core::prettyln!(
             "<b>{}<r> <d>({})<r>",
             BStr::new(&printable(license)),
@@ -736,6 +762,20 @@ fn print_text(entries: &[Entry], long: bool, checked: usize) {
         }
 
         start = end;
+    }
+
+    if summary {
+        bun_core::pretty!(
+            "\n<b>{}<r> package{} across {} license{} <d>(checked {} package{} in bun.lock)<r> ",
+            entries.len(),
+            plural(entries.len()),
+            licenses,
+            plural(licenses),
+            checked,
+            plural(checked)
+        );
+        Output::print_start_end_stdout(bun_core::start_time(), bun_core::time::nano_timestamp());
+        bun_core::pretty!("\n");
     }
 }
 

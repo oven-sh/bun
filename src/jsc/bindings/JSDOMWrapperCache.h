@@ -175,29 +175,17 @@ template<typename DOMClass> inline JSC::JSValue wrap(JSC::JSGlobalObject* lexica
     return toJSNewlyCreated(lexicalGlobalObject, globalObject, Ref<DOMClass>(domObject));
 }
 
+// The subclass path (`Reflect.construct` / `class extends`), shared across wrapper classes.
+void setSubclassStructure(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame*, JSC::JSObject*, JSC::Structure* (*baseStructure)(JSC::VM&, JSDOMGlobalObject&));
+
 template<typename DOMClass> inline void setSubclassStructureIfNeeded(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, JSC::JSObject* jsObject)
 {
     JSC::JSObject* newTarget = callFrame->newTarget().getObject();
-    JSC::JSObject* constructor = callFrame->jsCallee();
-    if (!newTarget || newTarget == constructor)
+    if (!newTarget || newTarget == callFrame->jsCallee())
         return;
 
     using WrapperClass = typename JSDOMWrapperConverterTraits<DOMClass>::WrapperClass;
-
-    auto& vm = JSC::getVM(lexicalGlobalObject);
-    auto scope = DECLARE_THROW_SCOPE(vm);
-
-    // If the new target isn't actually callable
-    if (!newTarget->isCallable()) [[unlikely]]
-        newTarget = constructor;
-
-    auto* functionGlobalObject = JSC::getFunctionRealm(lexicalGlobalObject, newTarget);
-    RETURN_IF_EXCEPTION(scope, void());
-    auto* newTargetGlobalObject = defaultGlobalObject(functionGlobalObject);
-    auto* baseStructure = getDOMStructure<WrapperClass>(vm, *newTargetGlobalObject);
-    auto* subclassStructure = JSC::InternalFunction::createSubclassStructure(lexicalGlobalObject, newTarget, baseStructure);
-    RETURN_IF_EXCEPTION(scope, void());
-    jsObject->setStructure(vm, subclassStructure);
+    setSubclassStructure(lexicalGlobalObject, callFrame, jsObject, getDOMStructure<WrapperClass>);
 }
 
 } // namespace WebCore

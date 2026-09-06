@@ -63,11 +63,6 @@ impl UUID {
 
         Ok(uuid)
     }
-
-    // Zero UUID
-    pub const ZERO: UUID = UUID { bytes: [0u8; 16] };
-
-    // Convenience function to return a new v4 UUID.
 }
 
 // Indices in the UUID string representation for each byte.

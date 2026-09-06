@@ -21,9 +21,14 @@ jobs:
         run: |
           ninety_days_ago=$(date -u -d '90 days ago' +%Y-%m-%dT%H:%M:%SZ)
 
+          # gh pr list sorts by creation date, so a client-side filter over
+          # --limit N never sees the oldest PRs once more than N are open.
+          # Filter and sort on the server. The jq select re-checks the live
+          # updatedAt in case the search index lags.
           gh pr list \
             --author robobun \
             --state open \
+            --search "updated:<$ninety_days_ago sort:updated-asc" \
             --json number,updatedAt \
             --limit 1000 \
             --jq ".[] | select(.updatedAt < \"$ninety_days_ago\") | .number" |

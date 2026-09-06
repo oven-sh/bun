@@ -295,7 +295,6 @@ void Bun__SecretsJobOptions__runFromJS(SecretsJobOptions* opts, JSGlobalObject* 
             if (opts->resultPassword.has_value()) {
                 auto resultPassword = WTF::move(opts->resultPassword.value());
                 result = jsString(vm, String::fromUTF8(resultPassword.span()));
-                RETURN_IF_EXCEPTION(scope, );
                 memsetSpan(resultPassword.mutableSpan(), 0);
             } else {
                 result = jsNull();
@@ -310,7 +309,6 @@ void Bun__SecretsJobOptions__runFromJS(SecretsJobOptions* opts, JSGlobalObject* 
             result = jsBoolean(opts->deleted);
             break;
         }
-        RETURN_IF_EXCEPTION(scope, );
         RELEASE_AND_RETURN(scope, promise->resolve(global, vm, result));
     }
 }

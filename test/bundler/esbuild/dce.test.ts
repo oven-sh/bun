@@ -1,5 +1,4 @@
 import { describe, expect } from "bun:test";
-import { isWindows } from "harness";
 import { dedent, itBundled } from "../expectBundled";
 
 // Tests ported from:
@@ -341,7 +340,6 @@ describe("bundler", () => {
     },
   });
   itBundled("dce/PackageJsonSideEffectsArrayKeep", {
-    todo: isWindows,
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
         import {foo} from "demo-pkg"
@@ -478,7 +476,6 @@ describe("bundler", () => {
     },
   });
   itBundled("dce/PackageJsonSideEffectsArrayKeepModuleUseModule", {
-    todo: isWindows,
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
         import {foo} from "demo-pkg"
@@ -506,7 +503,6 @@ describe("bundler", () => {
     },
   });
   itBundled("dce/PackageJsonSideEffectsArrayKeepModuleUseMain", {
-    todo: isWindows,
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
         import {foo} from "demo-pkg"
@@ -534,7 +530,6 @@ describe("bundler", () => {
     },
   });
   itBundled("dce/PackageJsonSideEffectsArrayKeepModuleImplicitModule", {
-    todo: isWindows,
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
         import {foo} from "demo-pkg"
@@ -1633,6 +1628,43 @@ describe("bundler", () => {
       stdout: `{"0":"FOO","1":"BAR","FOO":0,"BAR":1}`,
     },
   });
+  // https://github.com/oven-sh/bun/issues/40114
+  // A computed class member key that is a side-effect-free reference (a local
+  // const, an import item) must not block tree-shaking of the class.
+  itBundled("dce/TreeShakingClassComputedKeyReference", {
+    files: {
+      "/entry.js": /* js */ `
+        import { used } from './lib';
+        console.log(used);
+      `,
+      "/lib.js": /* js */ `
+        import * as Other from './other';
+        export const used = 1;
+        const TypeId = '~lib/TypeId';
+        class REMOVE1 { [TypeId]; }
+        class REMOVE2 { [TypeId] = 'x' }
+        class REMOVE3 { [TypeId]() {} }
+        class REMOVE4 { static [TypeId] = 'x' }
+        class REMOVE5 {
+          [TypeId];
+          [Other.TypeId];
+          constructor() {
+            this[TypeId] = TypeId;
+            this[Other.TypeId] = Other.TypeId;
+          }
+        }
+        export const makeREMOVE5 = () => new REMOVE5();
+        let keep1 = class { [unboundKEEP] = 'x' };
+      `,
+      "/other.js": /* js */ `
+        export const TypeId = '~other/TypeId';
+        export const REMOVE6 = 'only the tree-shaken class references this module';
+      `,
+    },
+    treeShaking: true,
+    dce: true,
+    dceKeepMarkerCount: 2,
+  });
   itBundled("dce/TreeShakingUnaryOperators", {
     files: {
       "/entry.js": /* js */ `
@@ -2099,6 +2131,205 @@ describe("bundler", () => {
         "let e = `${alsoKeep}`\n",
     },
     dce: true,
+  });
+  itBundled("dce/DCEOfDestructuring", {
+    files: {
+      "/entry.js": /* js */ `
+        // Identifier bindings
+        var remove1
+        var remove2 = null
+        var KEEP1 = x
+
+        // Array patterns over an array literal use the built-in array iterator
+        // and are side-effect free
+        var [remove3] = []
+        var [remove4 = 0] = [null]
+        var [remove5, , remove6] = [null, undefined, 0]
+        var [...remove7] = []
+        var [KEEP2] = x
+        var [KEEP3 = x] = [null]
+        var [[KEEP4]] = [[]]
+        var [{ KEEP5 }] = [{}]
+        var [KEEP6] = {}
+
+        // Object patterns over an object literal are side-effect free when
+        // every key names a data property of the literal
+        var { remove8 } = { remove8: 1 }
+        var { remove9 = 0 } = { remove9: 1 }
+        var { remove10: remove11 } = { remove10: 1 }
+        var { remove12 } = { remove12() {} }
+        var { remove13, remove14 } = { remove13: 1, remove14: 2, other: 3 }
+        var { remove15 } = { get remove15() { return 1 }, remove15: 1 }
+        var { remove16: { remove17 } } = { remove16: { remove17: 1 } }
+        var { remove18: [remove19] } = { remove18: [1] }
+
+        // Anything else in an object pattern can invoke a getter
+        var { KEEP7 } = {}
+        var { KEEP8 = 0 } = {}
+        var { KEEP9 } = x
+        var { KEEP10: { KEEP11 } } = {}
+        var { ...KEEP12 } = {}
+        var { KEEP13 } = { get KEEP13() { return 1 } }
+        var { KEEP14 } = { KEEP14: 1, get KEEP14() { return 1 } }
+        var { KEEP15 } = { __proto__: null }
+        var { KEEP16 } = { other: 1 }
+        var { ["KEEP17"]: KEEP18 } = { KEEP17: 1 }
+        var { ...KEEP19 } = { KEEP20: 1 }
+        var { KEEP21: { KEEP22 } } = { KEEP21: undefined }
+        var { KEEP23: [KEEP24] } = { KEEP23: null }
+        var { "0": KEEP25 } = { "0": 1, get 0() { return 2 } }
+      `,
+    },
+    dce: true,
+  });
+  itBundled("dce/DCEOfDestructuringSideEffects", {
+    files: {
+      "/entry.js": /* js */ `
+        const obj = { get x() { console.log("EFFECT1"); return 1 } }
+        const { x } = obj
+        const { y } = { get y() { console.log("EFFECT2"); return 2 } }
+        const iter = { [Symbol.iterator]() { console.log("EFFECT3"); return [][Symbol.iterator]() } }
+        const [a] = iter
+        const [[b]] = [iter]
+        const [{ x: c }] = [obj]
+        export function used() {}
+      `,
+    },
+    run: {
+      stdout: "EFFECT1\nEFFECT2\nEFFECT3\nEFFECT3\nEFFECT1",
+    },
+  });
+  itBundled("dce/DCEOfDestructuringOfImportNamespace", {
+    files: {
+      "/entry.js": /* js */ `
+        import * as ns from './lib.js'
+        import * as cjs from './cjs.js'
+        import { sub } from './reexport.js'
+        import * as ns2 from './lib3.js'
+
+        // An unused destructuring of a module namespace reads like a member
+        // access and is side-effect free
+        const { removeMe1 } = ns
+        const { shorthand: removeMe2, other: removeMe3 } = ns
+        var { x: removeMe4 } = cjs
+        let { inner: removeMe5 } = sub
+
+        // Anything that can run user code must stay
+        const { [KEEP0]: KEEP1 } = ns2
+        const { ...KEEP2 } = ns2
+        const { nested: { KEEP3 } } = ns2
+        const { withDefault: KEEP4 = keep4() } = ns2
+        const plain = keep5()
+        const { KEEP6 } = plain
+      `,
+      "/lib.js": /* js */ `
+        export const removeMe1 = 1
+        export const shorthand = 2, other = 3
+      `,
+      "/cjs.js": /* js */ `
+        exports.x = 1
+      `,
+      "/reexport.js": /* js */ `
+        export * as sub from './lib2.js'
+      `,
+      "/lib2.js": /* js */ `
+        export const inner = 7
+      `,
+      "/lib3.js": /* js */ `
+        export const nested = { a: 6 }, withDefault = 5
+      `,
+    },
+    dce: true,
+  });
+  itBundled("dce/DestructuringOfImportNamespaceRuntime", {
+    files: {
+      "/entry.js": /* js */ `
+        import * as ns from './lib.js'
+        const { one, two: renamed } = ns
+        const { unused } = ns
+        console.log(one(), renamed)
+      `,
+      "/lib.js": /* js */ `
+        export function one() { return 1 }
+        export const two = 2
+        export const unused = 3
+      `,
+    },
+    run: {
+      stdout: "1 2",
+    },
+  });
+  itBundled("dce/DCEOfDestructuringOfUnwrappedRequire", {
+    files: {
+      "/entry.js": /* js */ `
+        export {}
+        const { x: removeMe1 } = require('react')
+        KEEP1()
+      `,
+      "/node_modules/react/index.js": /* js */ `
+        exports.x = 1
+      `,
+      "/node_modules/react/package.json": `{ "name": "react", "version": "19.0.0" }`,
+    },
+    dce: true,
+  });
+  // A direct eval() pins every symbol-declaring part: the eval'd code can
+  // reference the destructured binding by name.
+  itBundled("dce/DestructuringOfImportNamespaceDirectEval", {
+    files: {
+      "/entry.js": /* js */ `
+        import * as ns from './lib.js'
+        const { helper } = ns
+        eval('helper()')
+      `,
+      "/lib.js": /* js */ `
+        export function helper() { console.log("HELPER RAN") }
+      `,
+    },
+    run: {
+      stdout: "HELPER RAN",
+    },
+  });
+  // A `for (var ns of ...)` head re-initializes the lifted namespace local
+  // without an assignment the parser records, so a hoisted symbol is never
+  // treated as a namespace and the destructuring stays.
+  itBundled("dce/DestructuringOfForOfReboundUnwrappedRequire", {
+    files: {
+      "/entry.js": /* js */ `
+        export {}
+        var ns = require('react')
+        for (var ns of [{ get x() { console.log("EFFECT") } }]) {}
+        const { x } = ns
+        console.log("entry")
+      `,
+      "/node_modules/react/index.js": /* js */ `
+        exports.x = 1
+      `,
+      "/node_modules/react/package.json": `{ "name": "react", "version": "19.0.0" }`,
+    },
+    run: {
+      stdout: "EFFECT\nentry",
+    },
+  });
+  // A lifted require() namespace is an ordinary local. When user code
+  // rebinds it, the value can hold getters, so the destructuring must stay.
+  itBundled("dce/DestructuringOfReboundUnwrappedRequire", {
+    files: {
+      "/entry.js": /* js */ `
+        export {}
+        var ns = require('react')
+        ns = { get x() { console.log("EFFECT"); return 2 } }
+        const { x } = ns
+        console.log("entry")
+      `,
+      "/node_modules/react/index.js": /* js */ `
+        exports.x = 1
+      `,
+      "/node_modules/react/package.json": `{ "name": "react", "version": "19.0.0" }`,
+    },
+    run: {
+      stdout: "EFFECT\nentry",
+    },
   });
   itBundled("dce/TreeShakingLoweredClassStaticField", {
     files: {
@@ -3282,7 +3513,7 @@ describe("bundler", () => {
   itBundled("dce/IgnoreAnnotationsDoesNotApplyToRuntime", {
     files: {
       "/entry.js": /* js */ `
-        import("./other.js");
+        import("./other.js").then(m => Object.keys(m));
       `,
       "/other.js": /* js */ `
         export function foo() { }

@@ -121,7 +121,8 @@ pub(crate) fn send_helper_primary(global: &JSGlobalObject, frame: &CallFrame) ->
             let peer_pid = subprocess.pid() as u32;
             let Some(hex) = crate::ipc_host::attach_windows_socket_payload(
                 global, message, native_fd, peer_pid,
-            ) else {
+            )?
+            else {
                 return Ok(JSValue::NULL);
             };
             let mut h = crate::ipc::Handle::init(native_fd, handle);
@@ -334,8 +335,7 @@ pub(crate) fn cluster_raw_bind(global: &JSGlobalObject, frame: &CallFrame) -> Js
         let atype = address_type.to_int32();
 
         let host_owned: Vec<u8> = if address.is_string() {
-            let s = bun_jsc::JSString::opaque_ref(address.as_string()).to_slice(global);
-            let mut v = s.slice().to_vec();
+            let mut v = address.to_js_string_view(global)?.to_owned_slice();
             v.push(0);
             v
         } else {
@@ -422,9 +422,12 @@ pub(crate) fn cluster_raw_bind(global: &JSGlobalObject, frame: &CallFrame) -> Js
         let mut is_udp = false;
         let atype: i32;
         if address_type.is_string() {
-            let s = bun_jsc::JSString::opaque_ref(address_type.as_string()).to_slice(global);
             is_udp = true;
-            atype = if s.slice() == b"udp6" { 6 } else { 4 };
+            atype = if address_type.to_js_string_view(global)?.eq_ascii(b"udp6") {
+                6
+            } else {
+                4
+            };
         } else {
             atype = address_type.to_int32();
         }
@@ -447,7 +450,8 @@ pub(crate) fn cluster_raw_bind(global: &JSGlobalObject, frame: &CallFrame) -> Js
             if !address.is_string() {
                 return Err(global.throw_invalid_argument_type_value("address", "string", address));
             }
-            let path_slice = bun_jsc::JSString::opaque_ref(address.as_string()).to_slice(global);
+            let path_view = address.to_js_string_view(global)?;
+            let path_slice = path_view.to_utf8();
             let path_bytes = path_slice.slice();
             // SAFETY: sockaddr_un is plain C data; all-zero is a valid value.
             let mut sun: libc::sockaddr_un = unsafe { bun_core::ffi::zeroed_unchecked() };
@@ -599,7 +603,8 @@ pub(crate) fn cluster_raw_bind(global: &JSGlobalObject, frame: &CallFrame) -> Js
         let fd: c_int;
         let bound_family: c_int;
         if address.is_string() {
-            let addr_slice = bun_jsc::JSString::opaque_ref(address.as_string()).to_slice(global);
+            let addr_view = address.to_js_string_view(global)?;
+            let addr_slice = addr_view.to_utf8();
             let addr_bytes = addr_slice.slice();
             let mut addr_z: [u8; 256] = [0; 256];
             if addr_bytes.len() >= addr_z.len() {

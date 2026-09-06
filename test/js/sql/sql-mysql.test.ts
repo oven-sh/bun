@@ -4,6 +4,7 @@ import { bunEnv, bunExe, bunRun, describeWithContainer, isDockerEnabled, tempDir
 import path from "path";
 import {
   listeningServer,
+  mysqlAckSessionSetup,
   mysqlColumnDefinition,
   mysqlHandshakeV10,
   mysqlLenencInt,
@@ -1250,6 +1251,7 @@ test("MySQL: binary TIME with a very large days field formats without integer wr
           socket.write(mysqlOkPacket(seq + 1));
           return;
         }
+        if (mysqlAckSessionSetup(socket, payload)) return;
         if (payload[0] === COM_STMT_PREPARE) {
           socket.write(mysqlStmtPrepareOk(1, 1, 0, 0));
         } else if (payload[0] === COM_STMT_EXECUTE) {
@@ -1332,6 +1334,7 @@ test("MySQL: a row split across several maximum-size wire packets is reassembled
           socket.write(mysqlOkPacket(seq + 1));
           return;
         }
+        if (mysqlAckSessionSetup(socket, payload)) return;
         if (payload[0] !== COM_QUERY || queryIndex >= lengths.length) {
           socket.end();
           return;

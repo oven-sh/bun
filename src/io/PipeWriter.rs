@@ -77,7 +77,7 @@ pub trait PosixPipeWriter {
                 self.try_write_with_write_fn(buf, sys::write)
             }
             FileType::Pipe => self.try_write_with_write_fn(buf, write_to_blocking_pipe),
-            FileType::Socket => self.try_write_with_write_fn(buf, sys::send_non_block),
+            FileType::Socket => self.try_write_with_write_fn(buf, write_to_socket),
         }
     }
 
@@ -230,6 +230,15 @@ fn write_to_blocking_pipe(fd: Fd, buf: &[u8]) -> sys::Result<usize> {
         bun_core::Pollable::Ready | bun_core::Pollable::Hup => sys::write(fd, buf),
         bun_core::Pollable::NotReady => sys::Result::Err(sys::Error::retry()),
     }
+}
+
+/// `send(2)` stands in for `write(2)` on the socketpair behind a child's stdio,
+/// only to pass `MSG_NOSIGNAL`. The error names `write`, as Node does.
+fn write_to_socket(fd: Fd, buf: &[u8]) -> sys::Result<usize> {
+    sys::send_non_block(fd, buf).map_err(|err| sys::Error {
+        syscall: sys::Tag::write,
+        ..err
+    })
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -518,6 +527,8 @@ impl<Parent: PosixBufferedWriterParent> PosixBufferedWriter<Parent> {
 
     /// On POSIX a `MovableIfWindowsFd` never transfers ownership, so callers
     /// pass the plain `Fd` (via `MovableIfWindowsFd::get_posix()` when needed).
+    ///
+    /// On `Err` the writer holds nothing; `fd` is still the caller's to close.
     pub fn start(&mut self, rawfd: Fd, pollable: bool) -> sys::Result<()> {
         let fd = rawfd;
         self.pollable = pollable;
@@ -526,7 +537,8 @@ impl<Parent: PosixBufferedWriterParent> PosixBufferedWriter<Parent> {
             self.handle = PollOrFd::Fd(fd);
             return sys::Result::Ok(());
         }
-        let poll = match self.get_poll() {
+        let existing_poll = self.get_poll();
+        let poll = match existing_poll {
             Some(p) => p,
             None => {
                 let p = self.create_poll(fd);
@@ -538,6 +550,10 @@ impl<Parent: PosixBufferedWriterParent> PosixBufferedWriter<Parent> {
 
         match poll.register_with_fd(loop_, FilePollKind::Writable, fd) {
             sys::Result::Err(err) => {
+                // A poll from an earlier start() still holds that start's fd.
+                if existing_poll.is_none() {
+                    self.handle.close_without_closing_fd();
+                }
                 return sys::Result::Err(err);
             }
             sys::Result::Ok(()) => {
@@ -571,7 +587,6 @@ pub trait PosixStreamingWriterParent {
     /// # Safety
     /// `this` must point to a live `Self`.
     unsafe fn on_error(this: *mut Self, err: sys::Error);
-    const HAS_ON_READY: bool;
     /// # Safety
     /// `this` must point to a live `Self`.
     unsafe fn on_ready(_this: *mut Self) {}
@@ -1034,6 +1049,7 @@ impl<Parent: PosixStreamingWriterParent> PosixStreamingWriter<Parent> {
         );
     }
 
+    /// On `Err` the writer holds nothing; `fd` is still the caller's to close.
     pub fn start(&mut self, fd: Fd, is_pollable: bool) -> sys::Result<()> {
         if !is_pollable {
             self.close();
@@ -1043,7 +1059,8 @@ impl<Parent: PosixStreamingWriterParent> PosixStreamingWriter<Parent> {
 
         // SAFETY: parent BACKREF set via set_parent; outlives this writer.
         let loop_ = unsafe { Parent::event_loop(self.parent()) };
-        let poll = match self.get_poll() {
+        let existing_poll = self.get_poll();
+        let poll = match existing_poll {
             Some(p) => p,
             None => {
                 let p = FilePollRef::init(
@@ -1058,6 +1075,10 @@ impl<Parent: PosixStreamingWriterParent> PosixStreamingWriter<Parent> {
 
         match poll.register_with_fd(loop_.loop_(), FilePollKind::Writable, fd) {
             sys::Result::Err(err) => {
+                // A poll from an earlier start() still holds that start's fd.
+                if existing_poll.is_none() {
+                    self.handle.close_without_closing_fd();
+                }
                 return sys::Result::Err(err);
             }
             sys::Result::Ok(()) => {}
@@ -1186,11 +1207,12 @@ pub trait BaseWindowsPipeWriter: Sized {
             }
             Source::Tty(tty) => {
                 let p = tty.as_ptr();
-                // SAFETY: tty is heap-allocated (via open_tty heap::alloc) or the
+                // SAFETY: tty is heap-allocated (via open_tty) or the
                 // process-static stdin tty; freed in on_tty_close (gated on is_stdin_tty).
-                unsafe { (*p).data = p.cast::<c_void>() };
-                // SAFETY: tty is a live uv handle; libuv calls on_tty_close after close completes.
-                unsafe { (*p).close(on_tty_close) };
+                unsafe { (*p).uv.data = p.cast::<c_void>() };
+                // SAFETY: tty is a live uv handle; `Tty::close` keeps
+                // whole-struct provenance so on_tty_close may reclaim the Box.
+                unsafe { crate::source::Tty::close(p, on_tty_close) };
             }
         }
         *self.source_mut() = None;
@@ -1322,11 +1344,12 @@ extern "C" fn on_pipe_close(handle: *mut uv::Pipe) {
 #[cfg(windows)]
 extern "C" fn on_tty_close(handle: *mut uv::uv_tty_t) {
     // `close()` set `handle.data = handle` and then called `uv_close(handle)`;
-    // libuv passes the same pointer back, so `handle` *is* the tty ptr.
-    // The stdin tty (fd 0) lives in static storage; never free it.
-    if !crate::source::stdin_tty::is_stdin_tty(handle) {
-        // SAFETY: non-stdin tty is heap-allocated (open_tty heap::alloc).
-        drop(unsafe { bun_core::heap::take(handle) });
+    // libuv passes the same pointer back; `Tty::from_uv` recovers the owning
+    // `Tty`. The stdin tty (fd 0) lives in static storage; never free it.
+    let tty = crate::source::Tty::from_uv(handle);
+    if !crate::source::stdin_tty::is_stdin_tty(tty) {
+        // SAFETY: non-stdin tty is heap-allocated (open_tty).
+        drop(unsafe { bun_core::heap::take(tty) });
     }
 }
 
@@ -2615,7 +2638,6 @@ macro_rules! impl_streaming_writer_parent {
         #[cfg(unix)]
         impl $($gen)* $crate::pipe_writer::PosixStreamingWriterParent for $Ty {
             const POLL_OWNER_TAG: $crate::PollTag = $poll_tag;
-            const HAS_ON_READY: bool = true;
             #[inline]
             unsafe fn on_write(this: *mut Self, amount: usize, status: $crate::WriteStatus) {
                 // SAFETY: `this` is the BACKREF set via `set_parent`; the

@@ -1,4 +1,4 @@
-import { define } from "../../codegen/class-definitions";
+import { define } from "../../codegen/class-definitions.ts";
 
 export default [
   define({
@@ -47,7 +47,7 @@ export default [
     sharedThis: true,
     construct: true,
     noConstructor: true,
-    finalize: true,
+    refCounted: true,
     configurable: false,
     memoryCost: true,
     klass: {},

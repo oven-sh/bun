@@ -21,7 +21,7 @@ main();`,
 
     const result = await Bun.build({
       entrypoints: [join(String(dir), "app.js")],
-      compile: true,
+      compile: { outfile: join(String(dir), "app") },
       sourcemap: sourcemapValue,
     });
 
@@ -66,7 +66,7 @@ main();`,
 
     const result = await Bun.build({
       entrypoints: [join(String(dir), "app.js")],
-      compile: true,
+      compile: { outfile: join(String(dir), "app") },
       // No sourcemap option
     });
 
@@ -99,7 +99,7 @@ main();`,
 
     const result = await Bun.build({
       entrypoints: [join(String(dir), "app.js")],
-      compile: true,
+      compile: { outfile: join(String(dir), "app") },
       sourcemap: "external",
     });
 
@@ -134,7 +134,7 @@ main();`,
 
     const result = await Bun.build({
       entrypoints: [join(String(dir), "nosourcemap_entry.js")],
-      compile: true,
+      compile: { outfile: join(String(dir), "nosourcemap_entry") },
     });
 
     expect(result.success).toBe(true);
@@ -163,7 +163,7 @@ export function greet() {
 
     const result = await Bun.build({
       entrypoints: [join(String(dir), "entry.js")],
-      compile: true,
+      compile: { outfile: join(String(dir), "entry") },
       splitting: true,
       sourcemap: "external",
     });
@@ -241,10 +241,10 @@ export function greet() {
     // The executable should be at subdir/myapp (with .exe on Windows)
     expect(await Bun.file(join(subdirPath, `myapp${exeSuffix}`)).exists()).toBe(true);
 
-    // The .map file should be in subdir/ (next to the executable)
+    // The .map file should be in subdir/ (next to the executable), named after the executable
     const glob = new Bun.Glob("*.map");
     const mapFiles = Array.from(glob.scanSync({ cwd: subdirPath }));
-    expect(mapFiles.length).toBe(1);
+    expect(mapFiles).toEqual(["myapp.map"]);
 
     // Validate the sourcemap is valid JSON
     const mapContent = JSON.parse(await Bun.file(join(subdirPath, mapFiles[0])).text());
@@ -275,7 +275,7 @@ main();`,
 
     const result = await Bun.build({
       entrypoints: [join(String(dir), "app.js")],
-      compile: true,
+      compile: { outfile: join(String(dir), "app") },
       sourcemap: "inline",
     });
 

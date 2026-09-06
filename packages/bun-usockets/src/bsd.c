@@ -64,6 +64,15 @@ static void init_debug_logging() {
 extern int Bun__doesMacOSVersionSupportSendRecvMsgX();
 #endif
 
+#if defined(_WIN32)
+/* libuv initializes Winsock on first use; every entry point below that creates
+ * a socket or resolves an address makes sure that has happened first. */
+extern void uv__winsock_ensure(void);
+#define bsd_winsock_ensure() uv__winsock_ensure()
+#else
+#define bsd_winsock_ensure() ((void)0)
+#endif
+
 
 /* We need to emulate sendmmsg, recvmmsg on platform who don't have it */
 int bsd_sendmmsg(LIBUS_SOCKET_DESCRIPTOR fd, struct udp_sendbuf* sendbuf, int flags) {
@@ -263,44 +272,6 @@ int bsd_udp_setup_sendbuf(struct udp_sendbuf *buf, size_t bufsize, void** payloa
     }
     buf->num = count;
     return count;
-#endif
-}
-
-// this one is needed for knowing the destination addr of udp packet
-// an udp socket can only bind to one port, and that port never changes
-// this function returns ONLY the IP address, not any port
-int bsd_udp_packet_buffer_local_ip(struct udp_recvbuf *msgvec, int index, char *ip) {
-#if defined(_WIN32) || defined(__APPLE__)
-    return 0; // not supported
-#else
-    struct msghdr *mh = &((struct mmsghdr *) msgvec)[index].msg_hdr;
-    for (struct cmsghdr *cmsg = CMSG_FIRSTHDR(mh); cmsg != NULL; cmsg = CMSG_NXTHDR(mh, cmsg)) {
-        // ipv6 or ipv4
-        if (cmsg->cmsg_level == IPPROTO_IP) {
-#if defined(IP_PKTINFO)
-            if (cmsg->cmsg_type == IP_PKTINFO) {
-                struct in_pktinfo *pi = (struct in_pktinfo *) CMSG_DATA(cmsg);
-                memcpy(ip, &pi->ipi_addr, 4);
-                return 4;
-            }
-#endif
-#if defined(IP_RECVDSTADDR)
-            if (cmsg->cmsg_type == IP_RECVDSTADDR) {
-                memcpy(ip, (struct in_addr *) CMSG_DATA(cmsg), 4);
-                return 4;
-            }
-#endif
-        }
-
-        if (cmsg->cmsg_level == IPPROTO_IPV6 && cmsg->cmsg_type == IPV6_PKTINFO) {
-            struct in6_pktinfo *pi6 = (struct in6_pktinfo *) CMSG_DATA(cmsg);
-            memcpy(ip, &pi6->ipi6_addr, 16);
-            return 16;
-        }
-    }
-
-    return 0; // no length
-
 #endif
 }
 
@@ -718,6 +689,7 @@ void bsd_socket_flush(LIBUS_SOCKET_DESCRIPTOR fd) {
 }
 
 LIBUS_SOCKET_DESCRIPTOR bsd_create_socket(int domain, int type, int protocol, int *err) {
+    bsd_winsock_ensure();
     if (err != NULL) {
         *err = 0;
     }
@@ -1238,6 +1210,7 @@ int bsd_socket_export(LIBUS_SOCKET_DESCRIPTOR fd, unsigned int target_pid, void 
 }
 
 LIBUS_SOCKET_DESCRIPTOR bsd_socket_import(void *info, int *err) {
+    bsd_winsock_ensure();
 #ifdef _WIN32
     SOCKET s = WSASocketW(FROM_PROTOCOL_INFO, FROM_PROTOCOL_INFO, FROM_PROTOCOL_INFO,
                           (WSAPROTOCOL_INFOW *) info, 0, WSA_FLAG_OVERLAPPED);
@@ -1271,6 +1244,7 @@ int bsd_socket_listen_error_is_benign(LIBUS_SOCKET_DESCRIPTOR fd) {
 }
 
 LIBUS_SOCKET_DESCRIPTOR bsd_create_bound_socket(const char *host, int port, int options, int *out_port, int *error) {
+    bsd_winsock_ensure();
     struct addrinfo hints, *result;
     memset(&hints, 0, sizeof(struct addrinfo));
     hints.ai_flags = AI_PASSIVE;
@@ -1352,6 +1326,7 @@ LIBUS_SOCKET_DESCRIPTOR bsd_create_bound_socket(const char *host, int port, int 
 }
 
 LIBUS_SOCKET_DESCRIPTOR bsd_create_listen_socket(const char *host, int port, int options, int* error) {
+    bsd_winsock_ensure();
     struct addrinfo hints, *result;
     memset(&hints, 0, sizeof(struct addrinfo));
 
@@ -1740,6 +1715,7 @@ int bsd_bind_udp_fd(LIBUS_SOCKET_DESCRIPTOR fd, const struct sockaddr *addr, int
 }
 
 LIBUS_SOCKET_DESCRIPTOR bsd_create_udp_socket(const char *host, int port, int options, int *err) {
+    bsd_winsock_ensure();
     if (err != NULL) {
         *err = 0;
     }
@@ -1829,6 +1805,7 @@ LIBUS_SOCKET_DESCRIPTOR bsd_create_udp_socket(const char *host, int port, int op
 }
 
 int bsd_connect_udp_socket(LIBUS_SOCKET_DESCRIPTOR fd, const char *host, int port) {
+    bsd_winsock_ensure();
     struct addrinfo hints, *result;
     memset(&hints, 0, sizeof(struct addrinfo));
 

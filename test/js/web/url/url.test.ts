@@ -175,6 +175,81 @@ describe("url", () => {
     expect(new URL("https://\u{1F4A9}.com/xn--a/%41").pathname).toBe("/xn--a/%41");
   });
 
+  it("judges literal punycode labels like Node (fast path and ICU path)", () => {
+    // [input, canParse] — expectations match Node 26 / ICU UTS #46 (CheckBidi, CheckJoiners, non-transitional).
+    const cases: [string, boolean][] = [
+      ["https://xn--ls8h.com/", true], // valid emoji label
+      ["https://XN--LS8H.com/", true], // case-insensitive prefix and digits
+      ["https://foo.xn--nxasmq6b/", true], // Greek
+      ["https://xn--mgbh0fb.xn--kgbechtv/", true], // RTL labels (BiDi rule, ICU path)
+      ["https://ab--cd.com/", true], // hyphens at 3-4 in a non-ACE label are allowed
+      ["https://xn--53h.example/", true], // single non-ASCII code point
+      ["https://xn--a.com/", false], // decodes to U+0080 (disallowed)
+      ["https://xn--/", false], // empty ACE label
+      ["https://xn---.com/", false], // fails Punycode decoding
+      ["https://xn--ascii-.com/", false], // alternate encoding of an ASCII label
+      ["https://xn--1ug.com/", false], // ZWJ alone (CONTEXTJ)
+      ["https://xn--u-ccb.com/", false], // leading combining mark
+      ["https://xn--0.com/", false], // truncated delta
+      ["https://xn--9999999999999999999999999b/", false], // overflow
+      ["https://xn--a-b.com/", false], // "a" + U+0080-ish: disallowed after decoding
+    ];
+    for (const [input, ok] of cases) {
+      expect([input, URL.canParse(input)]).toEqual([input, ok]);
+      expect([input, URL.parse(input)?.href ?? null]).toEqual([input, ok ? input.toLowerCase() : null]);
+      if (ok) expect(new URL(input).href).toBe(input.toLowerCase());
+      else expect(() => new URL(input)).toThrow(TypeError);
+    }
+  });
+
+  it("resolves against repeated, alternating and invalid string bases consistently", () => {
+    // The last successfully parsed base string is cached; make sure hits, misses and failures all behave.
+    const a = "https://a.example/dir/page";
+    const b = "http://b.example:8080/x/y/";
+    for (let i = 0; i < 3; i++) {
+      expect(new URL("rel", a).href).toBe("https://a.example/dir/rel");
+      expect(new URL("rel", a).href).toBe("https://a.example/dir/rel");
+      expect(new URL("../up", b).href).toBe("http://b.example:8080/x/up");
+      expect(URL.canParse("?q", a)).toBe(true);
+      expect(URL.parse("#f", b)!.href).toBe("http://b.example:8080/x/y/#f");
+      expect(() => new URL("rel", "not a url")).toThrow(TypeError);
+      expect(() => new URL("rel", "not a url")).toThrow(TypeError);
+      expect(URL.canParse("rel", "https://xn--a.example/")).toBe(false);
+      expect(URL.parse("rel", "")).toBe(null);
+      expect(new URL("rel", a + "\u00e9/").href).toBe("https://a.example/dir/page%C3%A9/rel");
+      expect(new URL("rel", "HTTPS://A.example/dir/page").href).toBe("https://a.example/dir/rel");
+    }
+    try {
+      new URL("http://[bad", a);
+      expect.unreachable();
+    } catch (e: any) {
+      expect(e.code).toBe("ERR_INVALID_URL");
+      expect(e.input).toBe("http://[bad");
+      expect(e.base).toBe(a);
+    }
+  });
+
+  it("href, toString and toJSON agree before and after mutation", () => {
+    const s = "https://example.com/a?b#c";
+    const u = new URL(s);
+    expect(u.href).toBe(s);
+    Bun.gc(true);
+    expect(u.toString()).toBe(s);
+    expect(u.toJSON()).toBe(s);
+    Bun.gc(true);
+    expect(`${u}`).toBe(s);
+    u.pathname = "/z";
+    Bun.gc(true);
+    expect(u.href).toBe("https://example.com/z?b#c");
+    expect(u.toString()).toBe(u.href);
+    u.searchParams.append("d", "1");
+    expect(u.toJSON()).toBe("https://example.com/z?b=&d=1#c");
+    u.href = "http://other/";
+    expect([u.href, String(u), JSON.stringify(u)]).toEqual(["http://other/", "http://other/", '"http://other/"']);
+    const v = new URL("HTTP://Example.COM");
+    expect(v.href).toBe("http://example.com/");
+  });
+
   it("prints", () => {
     // URL.prototype carries [Symbol.for("nodejs.util.inspect.custom")], so
     // Bun.inspect matches node's util.inspect output.

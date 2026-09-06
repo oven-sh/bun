@@ -167,7 +167,7 @@ impl InitCommand {
                     // ctrl+c, ctrl+d
                     reprint_menu = false;
                     finish!(reprint_menu, selected);
-                    return Err(crate::Error::EndOfStream);
+                    return Err(crate::Error::Core(bun_core::Error::EndOfStream));
                 }
                 b'1'..=b'9' => {
                     let choice = (byte - b'1') as usize;
@@ -201,13 +201,13 @@ impl InitCommand {
                         Err(_) => {
                             reprint_menu = false;
                             finish!(reprint_menu, selected);
-                            return Err(crate::Error::EndOfStream);
+                            return Err(crate::Error::Core(bun_core::Error::EndOfStream));
                         }
                     };
                     if next != b'[' {
                         reprint_menu = false;
                         finish!(reprint_menu, selected);
-                        return Err(crate::Error::EndOfStream);
+                        return Err(crate::Error::Core(bun_core::Error::EndOfStream));
                     }
 
                     // Read arrow key
@@ -216,7 +216,7 @@ impl InitCommand {
                         Err(_) => {
                             reprint_menu = false;
                             finish!(reprint_menu, selected);
-                            return Err(crate::Error::EndOfStream);
+                            return Err(crate::Error::Core(bun_core::Error::EndOfStream));
                         }
                     };
                     match arrow {
@@ -262,7 +262,7 @@ impl InitCommand {
 
         let selection = match Self::process_radio_button::<C>(label) {
             Ok(s) => s,
-            Err(crate::Error::EndOfStream) => {
+            Err(crate::Error::Core(bun_core::Error::EndOfStream)) => {
                 Output::flush();
                 // Add an "x" cancelled
                 bun_core::prettyln!("\n<r><red>x<r> Cancelled");
@@ -577,14 +577,16 @@ impl InitCommand {
                         fields.name = match Self::prompt("<r><cyan>package name<r> ", &fields.name)
                         {
                             Ok(v) => v,
-                            Err(crate::Error::EndOfStream) => return Ok(()),
+                            Err(crate::Error::Core(bun_core::Error::EndOfStream)) => return Ok(()),
                             Err(e) => return Err(e),
                         };
                         fields.name = Self::normalize_package_name(&fields.name)?;
                         fields.entry_point =
                             match Self::prompt("<r><cyan>entry point<r> ", &fields.entry_point) {
                                 Ok(v) => v,
-                                Err(crate::Error::EndOfStream) => return Ok(()),
+                                Err(crate::Error::Core(bun_core::Error::EndOfStream)) => {
+                                    return Ok(());
+                                }
                                 Err(e) => return Err(e),
                             };
                         fields.private = false;
@@ -740,45 +742,37 @@ impl InitCommand {
                 needs_dependencies || needs_dev_dependencies || needs_typescript_dependency;
 
             if needs_dependencies {
-                let mut dependencies_object = object.get(b"dependencies").unwrap_or_else(|| {
-                    bun_ast::Expr::init(bun_ast::E::Object::default(), bun_ast::Loc::EMPTY)
-                });
+                let mut dependencies_object = dependency_map(object, b"dependencies");
                 let mut iter = needed_dependencies.iter_set();
                 while let Some(index) = iter.next() {
                     let dep = &dependencies[index];
-                    dependencies_object
-                        .data
-                        .e_object_mut()
-                        .unwrap()
-                        .put_string(&bump, dep.name, dep.version)?;
+                    dependencies_object.data.as_e_object_mut().put_string(
+                        &bump,
+                        dep.name,
+                        dep.version,
+                    )?;
                 }
                 object.put(&bump, b"dependencies", dependencies_object)?;
             }
 
             if needs_dev_dependencies {
-                let mut obj = object.get(b"devDependencies").unwrap_or_else(|| {
-                    bun_ast::Expr::init(bun_ast::E::Object::default(), bun_ast::Loc::EMPTY)
-                });
+                let mut obj = dependency_map(object, b"devDependencies");
                 let mut iter = needed_dev_dependencies.iter_set();
                 while let Some(index) = iter.next() {
                     let dep = &dev_dependencies[index];
                     obj.data
-                        .e_object_mut()
-                        .unwrap()
+                        .as_e_object_mut()
                         .put_string(&bump, dep.name, dep.version)?;
                 }
                 object.put(&bump, b"devDependencies", obj)?;
             }
 
             if needs_typescript_dependency {
-                let mut peer_dependencies = object.get(b"peerDependencies").unwrap_or_else(|| {
-                    bun_ast::Expr::init(bun_ast::E::Object::default(), bun_ast::Loc::EMPTY)
-                });
-                peer_dependencies.data.e_object_mut().unwrap().put_string(
-                    &bump,
-                    b"typescript",
-                    b"^7",
-                )?;
+                let mut peer_dependencies = dependency_map(object, b"peerDependencies");
+                peer_dependencies
+                    .data
+                    .as_e_object_mut()
+                    .put_string(&bump, b"typescript", b"^7")?;
                 object.put(&bump, b"peerDependencies", peer_dependencies)?;
             }
         }
@@ -1911,6 +1905,17 @@ static REACT_SHADCN_FILES: &[TemplateFile] = &[
 #[inline]
 fn exists(path: &[u8]) -> bool {
     bun_sys::exists(path)
+}
+
+/// The object under `key` in `package_json`, or a new empty object when the
+/// key is absent or holds a value that is not an object (a string, an array,
+/// `null`). The caller `put`s the result back under `key`, which replaces a
+/// non-object value.
+fn dependency_map(package_json: &bun_ast::E::Object, key: &[u8]) -> bun_ast::Expr {
+    package_json
+        .get(key)
+        .filter(|value| value.data.is_e_object())
+        .unwrap_or_else(|| bun_ast::Expr::init(bun_ast::E::Object::default(), bun_ast::Loc::EMPTY))
 }
 
 /// Refuse entry-point paths that would escape the project directory

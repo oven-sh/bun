@@ -62,6 +62,130 @@ process.on('message', (m, server) => {
     });
   });
 
+  // The receiver's first poll of the adopted descriptor accepts everything queued in its backlog, so
+  // the 'message' listener has to hold the server before that poll. The server is emitted from its
+  // 'listening' event; while that was a 1ms timer, the poll ran first and the connections landed on a
+  // server nobody was listening on.
+  test.concurrent(
+    "connections queued before a net.Server handoff reach the receiver's 'connection' listener",
+    async () => {
+      using dir = tempDir("ipc-handle-server-backlog", {
+        "parent.js": `
+const { fork } = require('node:child_process');
+const net = require('node:net');
+const N = 20;
+const child = fork('child.js');
+const server = net.createServer();
+let served = 0;
+let report;
+
+function finish(extra) {
+  console.log(JSON.stringify({ served, ...report, ...extra }));
+  child.kill();
+  process.exit(0);
+}
+
+child.on('exit', code => finish({ childExit: code }));
+child.on('message', m => {
+  report = m;
+  // A connection accepted before the child held the server is never served: stop waiting for it.
+  if (m.acceptedBeforeDelivery !== 0 || served === N) finish();
+});
+
+server.listen(0, '127.0.0.1', () => {
+  const { port } = server.address();
+  child.send('srv', server);
+  // send() duplicated the descriptor, so the socket keeps listening after the parent closes its own
+  // copy: the connections below queue up in the backlog and only the child can accept them.
+  server.close();
+  for (let i = 0; i < N; i++) {
+    const client = net.connect(port, '127.0.0.1');
+    client.setEncoding('utf8');
+    let data = '';
+    client.on('data', c => (data += c));
+    client.on('end', () => {
+      if (data === 'C') served++;
+      if (served === N && report) finish();
+    });
+    client.on('error', e => finish({ clientError: e.message }));
+  }
+});
+`,
+        "child.js": `
+process.on('message', (m, server) => {
+  server.on('connection', s => s.end('C'));
+  process.send({ acceptedBeforeDelivery: server._connections });
+});
+`,
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "parent.js"],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ out: JSON.parse(stdout.trim()), stderr }).toEqual({
+        out: { served: 20, acceptedBeforeDelivery: 0 },
+        stderr: "",
+      });
+      expect(exitCode).toBe(0);
+    },
+  );
+
+  // A plain message sent after a handle is only written once the handle is acked, so the receiver
+  // has to emit the handle before it reads that message. A received net.Server is emitted from its
+  // 'listening' event; while that was a 1ms timer, it fired after the message behind it had been read.
+  test.concurrent("a net.Server handle is delivered before the message sent after it", async () => {
+    using dir = tempDir("ipc-handle-send-order", {
+      "parent.js": `
+const { fork } = require('node:child_process');
+const net = require('node:net');
+const child = fork('child.js');
+let report;
+child.on('message', m => { report = m; });
+child.on('close', code => console.log(JSON.stringify({ ...report, code })));
+const server = net.createServer().listen(0, '127.0.0.1', () => {
+  child.send('srv', server, () => server.close());
+  child.send('after-handle');
+});
+`,
+      "child.js": `
+const order = [];
+function record(event) {
+  order.push(event);
+  if (order.length === 3) {
+    process.send({ order });
+    process.disconnect();
+  }
+}
+process.on('message', (m, server) => {
+  if (server) {
+    server.close();
+    record('handle:' + m);
+    return;
+  }
+  record(m);
+  setImmediate(() => record('immediate'));
+});
+`,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "parent.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ out: JSON.parse(stdout.trim()), stderr }).toEqual({
+      out: { order: ["handle:srv", "after-handle", "immediate"], code: 0 },
+      stderr: "",
+    });
+    expect(exitCode).toBe(0);
+  });
+
   test
     .skipIf(!node)
     .concurrent("bun parent -> node child: the user message survives the NODE_HANDLE envelope", async () => {
@@ -608,10 +732,11 @@ process.on('disconnect', () => process.exit(sawQueued ? 0 : 3));
   );
 
   // The child sends a server and disconnects at once. node: process.connected drops immediately, a
-  // second disconnect() errors, and the parent still receives the server (its adoption completes a
-  // loop turn later, which must not lose it) as well as the message queued behind it. Order is not
-  // pinned: bun currently emits the late-adopted handle after 'disconnect', node before it.
-  test.concurrent("a handle sent right before the child's disconnect() is still delivered", async () => {
+  // second disconnect() errors, and the parent receives the server, then the message queued behind
+  // it (the child only sends it once the handle is acked), then 'disconnect'. The parent reports on
+  // 'close', which a fork()ed child reaches only after 'exit', the IPC 'disconnect' and the end of
+  // the stderr pipe; 'exit' alone can run before the other two.
+  test.concurrent("a handle sent right before the child's disconnect() is delivered, in send order", async () => {
     using dir = tempDir("ipc-handle-then-disconnect", {
       "parent.js": `
 const { fork } = require('node:child_process');
@@ -621,7 +746,7 @@ let childReport = '';
 child.stderr.on('data', d => { childReport += d; });
 child.on('message', (m, h) => { got.push(h ? 'handle:' + m : m); if (h) h.close(); });
 child.on('disconnect', () => got.push('disconnect'));
-child.on('exit', code => console.log(JSON.stringify({ got: got.sort(), code, child: JSON.parse(childReport) })));
+child.on('close', code => console.log(JSON.stringify({ got, code, child: JSON.parse(childReport) })));
 `,
       "child.js": `
 const net = require('node:net');
@@ -647,7 +772,7 @@ const server = net.createServer().listen(0, '127.0.0.1', () => {
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect({ out: JSON.parse(stdout.trim()), stderr }).toEqual({
       out: {
-        got: ["after-handle", "disconnect", "handle:srv"],
+        got: ["handle:srv", "after-handle", "disconnect"],
         code: 0,
         child: { connectedAfterDisconnect: false, secondDisconnect: "ERR_IPC_DISCONNECTED" },
       },

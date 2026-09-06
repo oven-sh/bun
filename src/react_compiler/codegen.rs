@@ -48,6 +48,7 @@ use crate::reactive_scopes::{
     rename_variables,
 };
 
+use crate::imports::ProgramContext;
 use crate::program::{Host, JsxImportKind};
 
 /// Result of code generation for a single function.
@@ -88,7 +89,6 @@ pub struct OutlinedFunction {
 
 #[derive(Clone, Copy)]
 enum WellKnown {
-    UseMemoCache,
     MemoCache,
     NaN,
     Infinity,
@@ -98,7 +98,7 @@ enum WellKnown {
 }
 
 impl WellKnown {
-    const COUNT: usize = 7;
+    const COUNT: usize = 6;
 }
 
 /// Host-side state shared across nested function-expression codegen so the
@@ -114,18 +114,12 @@ pub(crate) struct Codegen<'h> {
 }
 
 impl<'h> Codegen<'h> {
-    pub(crate) fn new(
-        host: &'h mut dyn Host,
-        arena: &'h Arena,
-        memo_cache_import: Option<Ref>,
-    ) -> Self {
-        let mut well_known = [None; WellKnown::COUNT];
-        well_known[WellKnown::UseMemoCache as usize] = memo_cache_import;
+    pub(crate) fn new(host: &'h mut dyn Host, arena: &'h Arena) -> Self {
         Codegen {
             host,
             arena,
             id_to_ref: IdMap::new(),
-            well_known,
+            well_known: [None; WellKnown::COUNT],
             name_to_ref: HashMap::new(),
             label_to_ref: IdMap::new(),
         }
@@ -218,6 +212,7 @@ pub(crate) fn codegen_function(
     func: &ReactiveFunction,
     env: &mut Environment,
     cg: &mut Codegen<'_>,
+    context: &mut ProgramContext,
     unique_identifiers: HashSet<String>,
 ) -> Result<CodegenFunction, CompilerError> {
     let mut cx = Context::new(env, cg, unique_identifiers);
@@ -245,15 +240,14 @@ pub(crate) fn codegen_function(
         let cache_name = cx.synthesize_name("$");
         let loc = Loc::EMPTY;
 
+        // The import declaration for `useMemoCache` is emitted by
+        // `add_imports_to_program`. Register it only here, so a function that
+        // compiles to zero memo slots does not pull in `react/compiler-runtime`.
+        let use_memo_cache_ref = context.add_memo_cache_import(cx.cg.host).name_ref;
+        cx.cg.host.record_usage(use_memo_cache_ref);
         // Synthesized AST is never re-visited by the parser's `EIdentifier→EImportIdentifier`
         // promotion, so emit `EImportIdentifier` directly.
-        let use_memo_cache = Expr::init(
-            E::ImportIdentifier::new(
-                cx.cg.well_known(WellKnown::UseMemoCache, b"useMemoCache"),
-                true,
-            ),
-            loc,
-        );
+        let use_memo_cache = Expr::init(E::ImportIdentifier::new(use_memo_cache_ref, true), loc);
         let call = Expr::init(
             E::Call {
                 target: use_memo_cache,
@@ -669,6 +663,7 @@ fn codegen_reactive_scope(
                 target: cache_ident(),
                 index: Expr::init(E::Number::new(index as f64), loc),
                 optional_chain: None,
+                is_import_property_use: false,
             },
             loc,
         )
@@ -1892,6 +1887,7 @@ fn codegen_base_instruction_value(
                         expr: it.next().unwrap_or(orig.expr),
                         options: it.next().unwrap_or(Expr::EMPTY),
                         import_record_index: orig.import_record_index,
+                        namespace_ref: orig.namespace_ref,
                     },
                     loc,
                 ));
@@ -2011,6 +2007,7 @@ fn codegen_base_instruction_value(
                     target: obj,
                     index: prop,
                     optional_chain: None,
+                    is_import_property_use: false,
                 },
                 loc,
             ))
@@ -2032,6 +2029,7 @@ fn codegen_base_instruction_value(
                             target: obj,
                             index: prop,
                             optional_chain: None,
+                            is_import_property_use: false,
                         },
                         loc,
                     ),
@@ -2053,6 +2051,7 @@ fn codegen_base_instruction_value(
                             target: obj,
                             index: prop,
                             optional_chain: None,
+                            is_import_property_use: false,
                         },
                         loc,
                     ),
@@ -2375,6 +2374,7 @@ fn codegen_function_expression(
                 ),
                 index: Expr::init(E::EString::init(hint.slice()), loc),
                 optional_chain: None,
+                is_import_property_use: false,
             },
             loc,
         );
@@ -3237,6 +3237,7 @@ fn property_access_expr(
                 target,
                 index: Expr::init(E::Number::new(n.value()), loc),
                 optional_chain,
+                is_import_property_use: false,
             },
             loc,
         ),

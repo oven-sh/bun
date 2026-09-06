@@ -39,17 +39,12 @@ JSStreamTeeState* JSStreamTeeState::create(VM& vm, Structure* structure)
 
 Structure* JSStreamTeeState::createStructure(VM& vm, JSGlobalObject* globalObject, JSValue prototype)
 {
-    return Structure::create(vm, globalObject, prototype, TypeInfo(ObjectType, StructureFlags), info());
+    return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(ObjectType, StructureFlags), info());
 }
 
 GCClient::IsoSubspace* JSStreamTeeState::subspaceForImpl(VM& vm)
 {
-    return WebCore::subspaceForImpl<JSStreamTeeState, UseCustomHeapCellType::No>(
-        vm,
-        [](auto& spaces) { return spaces.m_clientSubspaceForStreamTeeState.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForStreamTeeState = std::forward<decltype(space)>(space); },
-        [](auto& spaces) { return spaces.m_subspaceForStreamTeeState.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_subspaceForStreamTeeState = std::forward<decltype(space)>(space); });
+    return WebCore::subspaceForImpl<JSStreamTeeState, UseCustomHeapCellType::No>(vm, BUN_SUBSPACE_SLOTS(m_clientSubspaceForStreamTeeState, m_subspaceForStreamTeeState));
 }
 
 DEFINE_VISIT_CHILDREN(JSStreamTeeState);

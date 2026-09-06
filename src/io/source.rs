@@ -13,7 +13,7 @@ use bun_sys::ReturnCodeExt as _;
 bun_core::declare_scope!(PipeSource, hidden);
 
 pub type Pipe = uv::Pipe;
-pub type Tty = uv::uv_tty_t;
+pub use uv::Tty;
 
 pub enum Source {
     Pipe(Box<Pipe>),
@@ -253,10 +253,22 @@ impl Source {
         unsafe { tty.get_mut() }
     }
 
+    /// For a tty source, hand libuv the handle-owned read buffer with at
+    /// least `size` spare bytes (`uv::Tty::read_scratch`); `None` otherwise.
+    pub(crate) fn tty_read_scratch(&mut self, size: usize) -> Option<&mut [u8]> {
+        let Source::Tty(tty) = self else { return None };
+        let scratch = &mut Self::tty_mut(tty).read_scratch;
+        scratch.clear();
+        scratch.reserve(size);
+        // SAFETY: spare capacity handed to libuv to write into; the read
+        // callback copies out the written prefix.
+        Some(unsafe { bun_core::vec::spare_bytes_mut(scratch) })
+    }
+
     pub fn is_closed(&self) -> bool {
         match self {
             Source::Pipe(pipe) => pipe.is_closed(),
-            Source::Tty(tty) => tty.is_closed(),
+            Source::Tty(tty) => tty.uv.is_closed(),
             Source::SyncFile(file) | Source::File(file) => file.file == -1,
         }
     }
@@ -264,14 +276,15 @@ impl Source {
     pub(crate) fn is_active(&self) -> bool {
         match self {
             Source::Pipe(pipe) => pipe.is_active(),
-            Source::Tty(tty) => tty.is_active(),
+            Source::Tty(tty) => tty.uv.is_active(),
             Source::SyncFile(_) | Source::File(_) => true,
         }
     }
 
     pub(crate) fn to_stream(&mut self) -> *mut uv::uv_stream_t {
         match self {
-            // SAFETY: uv::Pipe / uv::uv_tty_t embed uv_stream_t as their first member.
+            // SAFETY: uv::Pipe / `Tty` (via its first field, `uv::uv_tty_t`) embed
+            // uv_stream_t as their first member.
             // `&mut self` so the returned `*mut` carries write provenance.
             Source::Pipe(pipe) => core::ptr::from_mut::<Pipe>(pipe.as_mut()).cast(),
             Source::Tty(tty) => tty.as_ptr().cast(),
@@ -285,7 +298,7 @@ impl Source {
             // Windows); tag kind=system so callers can round-trip through
             // `Fd::native()`.
             Source::Pipe(pipe) => Fd::from_system(pipe.fd()),
-            Source::Tty(tty) => Fd::from_system(tty.fd()),
+            Source::Tty(tty) => Fd::from_system(tty.uv.fd()),
             Source::SyncFile(file) | Source::File(file) => Fd::from_uv(file.file),
         }
     }
@@ -293,7 +306,7 @@ impl Source {
     pub fn set_data(&mut self, data: *mut c_void) {
         match self {
             Source::Pipe(pipe) => pipe.data = data,
-            Source::Tty(tty) => Self::tty_mut(tty).data = data,
+            Source::Tty(tty) => Self::tty_mut(tty).uv.data = data,
             Source::SyncFile(file) | Source::File(file) => file.fs.data = data,
         }
     }
@@ -339,7 +352,7 @@ impl Source {
     pub fn ref_(&mut self) {
         match self {
             Source::Pipe(pipe) => pipe.ref_(),
-            Source::Tty(tty) => Self::tty_mut(tty).ref_(),
+            Source::Tty(tty) => Self::tty_mut(tty).uv.ref_(),
             Source::SyncFile(_) | Source::File(_) => {}
         }
     }
@@ -347,7 +360,7 @@ impl Source {
     pub fn unref(&mut self) {
         match self {
             Source::Pipe(pipe) => pipe.unref(),
-            Source::Tty(tty) => Self::tty_mut(tty).unref(),
+            Source::Tty(tty) => Self::tty_mut(tty).uv.unref(),
             Source::SyncFile(_) | Source::File(_) => {}
         }
     }
@@ -385,7 +398,11 @@ impl Source {
             return stdin_tty::get_stdin_tty(loop_);
         }
 
-        let mut tty: Box<Tty> = bun_core::boxed_zeroed();
+        // Not `boxed_zeroed`: a zeroed `Vec` is UB.
+        let mut tty: Box<Tty> = Box::new(Tty {
+            uv: bun_core::ffi::zeroed(),
+            read_scratch: Vec::new(),
+        });
         if let Some(err) = tty.init(loop_, uv_fd).to_error(bun_sys::Tag::open) {
             drop(tty);
             return bun_sys::Result::Err(err);
@@ -429,13 +446,11 @@ impl Source {
             },
             uv::HandleType::File => bun_sys::Result::Ok(Source::File(Self::open_file(fd))),
             _ => {
-                let errno = bun_sys::windows::get_last_errno();
-
-                if errno == bun_sys::E::SUCCESS {
+                let err = bun_sys::windows::Win32Error::get();
+                if err == bun_sys::windows::Win32Error::SUCCESS {
                     return bun_sys::Result::Ok(Source::File(Self::open_file(fd)));
                 }
-
-                bun_sys::Result::Err(bun_sys::Error::from_code(errno, bun_sys::Tag::open))
+                bun_sys::Result::Err(bun_sys::Error::from_win32(err, bun_sys::Tag::open))
             }
         }
     }
@@ -453,6 +468,7 @@ impl Source {
         match self {
             Source::Tty(tty) => {
                 if let Some(err) = Self::tty_mut(tty)
+                    .uv
                     .set_mode(if value {
                         uv::TtyMode::Raw
                     } else {
@@ -480,14 +496,14 @@ pub(crate) mod stdin_tty {
 
     // PORTING.md §Global mutable state: init guarded by `LOCK` + `INITIALIZED`;
     // afterwards only accessed by uv on the loop thread. RacyCell.
-    static DATA: bun_core::RacyCell<MaybeUninit<uv::uv_tty_t>> =
+    static DATA: bun_core::RacyCell<MaybeUninit<Tty>> =
         bun_core::RacyCell::new(MaybeUninit::uninit());
     static LOCK: bun_threading::Mutex = bun_threading::Mutex::new();
     static INITIALIZED: AtomicBool = AtomicBool::new(false);
 
     #[inline]
-    fn value() -> *mut uv::uv_tty_t {
-        DATA.get().cast::<uv::uv_tty_t>()
+    fn value() -> *mut Tty {
+        DATA.get().cast::<Tty>()
     }
 
     pub(crate) fn is_stdin_tty(tty: *const Tty) -> bool {
@@ -503,12 +519,18 @@ pub(crate) mod stdin_tty {
         let _guard = LOCK.lock_guard();
 
         if !INITIALIZED.swap(true, Ordering::Relaxed) {
-            // SAFETY: value() points to static storage sized for uv_tty_t; lock held.
-            let rc = unsafe { uv::uv_tty_init(loop_, value(), 0, 0) };
+            let p = value();
+            // SAFETY: value() points to static storage sized for Tty; lock
+            // held. uv_tty_init fills the `uv` half; `read_scratch` starts
+            // empty via a raw write (the storage is uninit, so a plain
+            // assignment would drop garbage).
+            let rc = unsafe { uv::uv_tty_init(loop_, core::ptr::addr_of_mut!((*p).uv), 0, 0) };
             if let Some(err) = rc.to_error(bun_sys::Tag::open) {
                 INITIALIZED.store(false, Ordering::Relaxed);
                 return bun_sys::Result::Err(err);
             }
+            // SAFETY: as above; lock held, first initialization.
+            unsafe { core::ptr::addr_of_mut!((*p).read_scratch).write(Vec::new()) };
         }
 
         // Destroy path must gate `heap::take` on `!is_stdin_tty(ptr)`.
@@ -537,6 +559,7 @@ extern "C" fn Source__setRawModeStdin(uv_loop: *mut uv::Loop, raw: bool) -> c_in
     // process — same invariant the `Source::Tty` arm relies on, so reuse the
     // shared `tty_mut` accessor.
     if let Some(err) = Source::tty_mut(&mut tty)
+        .uv
         .set_mode(if raw {
             uv::TtyMode::Vt
         } else {

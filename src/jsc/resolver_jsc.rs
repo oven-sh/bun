@@ -5,7 +5,7 @@ use crate::HostReturn as _;
 use bstr::BStr;
 
 use crate::{CallFrame, JSGlobalObject, JSValue, JsResult};
-use bun_core::{OwnedString, String as BunString, strings};
+use bun_core::{String as BunString, strings};
 use bun_paths::resolve_path;
 use bun_paths::{Platform, SEP, SEP_STR};
 
@@ -18,34 +18,31 @@ fn node_module_paths_for_js(global: &JSGlobalObject, frame: &CallFrame) -> JsRes
         return Err(global.throw_invalid_argument_type("nodeModulePaths", "path", "string"));
     }
 
-    let in_str = OwnedString::new(argument.to_bun_string(global)?);
-    Ok(node_module_paths_js_value(in_str.get(), global, false))
+    let in_str = argument.to_bun_string(global)?;
+    Ok(node_module_paths_js_value(&in_str, global, false))
 }
 
 #[unsafe(no_mangle)]
 extern "C" fn Resolver__propForRequireMainPaths(global: &JSGlobalObject) -> JSValue {
     crate::mark_binding!();
 
-    let in_str = BunString::static_(b".");
-    node_module_paths_js_value(in_str, global, false)
+    node_module_paths_js_value(&BunString::static_("."), global, false)
 }
 
-// C++ callers pass `in_str` by value without transferring a ref:
-// `bun_core::String` is `Copy` with no `Drop` impl, so receiving it by value
-// never releases the caller's ref.
+// C++ callers pass a borrowed `const BunString*` (`Bun::toString`).
 #[unsafe(export_name = "Resolver__nodeModulePathsJSValue")]
 extern "C" fn node_module_paths_js_value(
-    in_str: BunString,
+    in_str: &BunString,
     global: &JSGlobalObject,
     use_dirname: bool,
 ) -> JSValue {
-    let mut list: Vec<OwnedString> = Vec::new();
+    let mut list: Vec<bun_core::String> = Vec::new();
 
-    let sliced = in_str.to_utf8();
+    let utf8 = in_str.to_utf8();
     let base_path: &[u8] = if use_dirname {
-        resolve_path::dirname::<bun_paths::platform::Auto>(sliced.slice())
+        resolve_path::dirname::<bun_paths::platform::Auto>(utf8.slice())
     } else {
-        sliced.slice()
+        utf8.slice()
     };
     let mut buf = bun_paths::path_buffer_pool::get();
 
@@ -98,12 +95,12 @@ extern "C" fn node_module_paths_js_value(
                 None => 0,
             } + part.len();
 
-            list.push(OwnedString::new(BunString::create_format(format_args!(
+            list.push(BunString::create_format(format_args!(
                 "{}{}{}node_modules",
                 BStr::new(root_path),
                 BStr::new(&suffix[..prefix_len]),
                 SEP_STR,
-            ))));
+            )));
         }
     }
 
@@ -111,34 +108,11 @@ extern "C" fn node_module_paths_js_value(
         root_path = &root_path[..root_path.len() - 1];
     }
 
-    list.push(OwnedString::new(BunString::create_format(format_args!(
+    list.push(BunString::create_format(format_args!(
         "{}{}node_modules",
         BStr::new(root_path),
         SEP_STR,
-    ))));
+    )));
 
-    OwnedString::as_raw_slice(&list)
-        .to_js_array(global)
-        .or_pending_exception()
-}
-
-/// `[bun.String]::to_js_array` lives on the `StringArrayJsc` ext trait below.
-trait StringArrayJsc {
-    fn to_js_array(&self, global: &JSGlobalObject) -> JsResult<JSValue>;
-}
-impl StringArrayJsc for [BunString] {
-    fn to_js_array(&self, global: &JSGlobalObject) -> JsResult<JSValue> {
-        unsafe extern "C" {
-            fn BunString__createArray(
-                global: &JSGlobalObject,
-                ptr: *const BunString,
-                len: usize,
-            ) -> JSValue;
-        }
-        // SAFETY: `self` is a live slice, so `self.as_ptr()` is valid for `self.len()`
-        // reads of `BunString` for the duration of the FFI call.
-        crate::host_fn::from_js_host_call(global, || unsafe {
-            BunString__createArray(global, self.as_ptr(), self.len())
-        })
-    }
+    crate::bun_string_jsc::to_js_array(global, &list).or_pending_exception()
 }

@@ -85,8 +85,6 @@ private:
     static bool isPlatformSupportedCurve(NamedCurve);
     static std::optional<CryptoKeyPair> platformGeneratePair(CryptoAlgorithmIdentifier, NamedCurve, bool extractable, CryptoKeyUsageBitmap);
     Vector<uint8_t> platformExportRaw() const;
-    Vector<uint8_t> platformExportSpki() const;
-    Vector<uint8_t> platformExportPkcs8() const;
 
     NamedCurve m_curve;
     KeyMaterial m_data;

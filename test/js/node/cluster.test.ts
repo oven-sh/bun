@@ -661,6 +661,52 @@ test.each(["net", "http"])("cluster 'listening' reports the address a %s server 
   }
 });
 
+// Node registers the listen() callback before the worker's own 'listening' listener that notifies
+// the primary. So the callback still sees worker.state 'online', and the primary receives what the
+// callback sends before cluster emits 'listening'.
+const listenCallbackOrderFixture = `
+const cluster = require("node:cluster");
+
+if (cluster.isPrimary) {
+  const order = [];
+  const worker = cluster.fork();
+  const done = () => {
+    if (order.length < 2) return;
+    console.log(JSON.stringify(order));
+    worker.kill();
+    process.exit(0);
+  };
+  worker.on("message", message => {
+    order.push("callback:" + message.state);
+    done();
+  });
+  cluster.on("listening", () => {
+    order.push("cluster:listening");
+    done();
+  });
+  worker.on("exit", (code, signal) => {
+    console.error("worker exited before it finished listening (" + code + ", " + signal + ")");
+    process.exit(1);
+  });
+} else {
+  const { createServer } = require("node:" + process.env.MODULE);
+  createServer(() => {}).listen(0, () => process.send({ state: cluster.worker.state }));
+}
+`;
+
+test.each(["net", "http"])(
+  "a %s server's listen() callback runs before the worker reports 'listening'",
+  async moduleName => {
+    const dir = tempDirWithFiles("cluster-listen-callback", { "fixture.js": listenCallbackOrderFixture });
+    const { stdout, stderr, exitCode } = await bunRun(joinP(dir, "fixture.js"), { MODULE: moduleName });
+    expect({ stdout, stderr, exitCode }).toEqual({
+      stdout: JSON.stringify(["callback:online", "cluster:listening"]),
+      stderr: "",
+      exitCode: 0,
+    });
+  },
+);
+
 test("round-robin worker connection socket has connecting=false and remoteAddress synchronously", async () => {
   const dir = tempDirWithFiles("bun-test", {
     "main.ts": `
@@ -1064,6 +1110,55 @@ if (cluster.isPrimary) {
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect({ out: JSON.parse(stdout.trim()), stderr }).toEqual({
     out: { paused: true, earlyData: false, _server: true },
+    stderr: expect.any(String),
+  });
+  expect(exitCode).toBe(0);
+}, 30_000);
+
+test("round-robin worker adopts a pauseOnConnect connection without reading from it", async () => {
+  using dir = tempDir("cluster-pauseonconnect-bytes", {
+    "main.ts": `
+const cluster = require("node:cluster");
+const net = require("node:net");
+if (cluster.isPrimary) {
+  const worker = cluster.fork();
+  worker.on("message", m => { console.log(JSON.stringify(m)); worker.kill(); process.exit(0); });
+  cluster.on("listening", (_w, addr) => {
+    // "early" is in the worker's receive buffer before the write callback runs.
+    const c = net.connect(addr.port, "127.0.0.1", () => c.write("early", () => worker.send("written")));
+    c.on("error", () => {});
+  });
+} else {
+  let sock, written = false, earlyData = false;
+  // The IPC message can be dispatched in the same poll as, and ahead of, the socket's
+  // readable event, so report after the poll between two immediates: a handle that
+  // reads has consumed "early" by then.
+  const report = () => {
+    if (!sock || !written) return;
+    setImmediate(() => setImmediate(() => {
+      process.send({ paused: sock.isPaused(), bytesRead: sock.bytesRead, earlyData, _server: sock._server === server });
+    }));
+  };
+  process.on("message", () => { written = true; report(); });
+  const server = net.createServer({ pauseOnConnect: true }, s => {
+    sock = s;
+    s.once("data", () => { earlyData = true; });
+    report();
+  });
+  server.listen(0, "127.0.0.1");
+}
+`,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "main.ts"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ out: JSON.parse(stdout.trim()), stderr }).toEqual({
+    out: { paused: true, bytesRead: 0, earlyData: false, _server: true },
     stderr: expect.any(String),
   });
   expect(exitCode).toBe(0);

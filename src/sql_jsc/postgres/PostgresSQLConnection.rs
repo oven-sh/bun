@@ -11,11 +11,12 @@ use crate::jsc::{
     VirtualMachine, VirtualMachineSqlExt as _, bun_string_jsc,
 };
 use bun_boringssl as BoringSSL;
+use bun_boringssl_sys::OwnedSslCtx;
 use bun_collections::{OffsetByteList, StringHashMap, StringMap};
 use bun_core::strings;
 use bun_core::{self};
 use bun_io::KeepAlive;
-use bun_ptr::{AsCtxPtr, BackRef, ParentRef};
+use bun_ptr::{AsCtxPtr, BackRef, ParentRef, RefPtr};
 use bun_uws as uws;
 use core::ptr::NonNull;
 
@@ -31,7 +32,7 @@ use crate::postgres::postgres_sql_query::{self, RequestCounter, Status as QueryS
 use crate::postgres::postgres_sql_statement::{Error as StatementError, Status as StatementStatus};
 use crate::postgres::sasl::SASLStatus;
 use crate::shared::CachedStructure as PostgresCachedStructure;
-use crate::shared::connection_ctor_args::{self, ConnectionCtorArgs};
+use crate::shared::connection_ctor_args::ConnectionCtorArgs;
 use bun_sql::postgres::AnyPostgresError;
 use bun_sql::postgres::PostgresErrorOptions;
 use bun_sql::postgres::PostgresProtocol as protocol;
@@ -53,7 +54,8 @@ bun_core::define_scoped_log!(debug, Postgres, visible);
 
 const MAX_PIPELINE_SIZE: usize = u16::MAX as usize; // about 64KB per connection
 
-type PreparedStatementsMap = StringHashMap<*mut PostgresSQLStatement>;
+/// `None` only transiently, inside `get_or_put` before the new statement is stored.
+type PreparedStatementsMap = StringHashMap<Option<RefPtr<PostgresSQLStatement>>>;
 
 pub mod js {
     pub use crate::jsc::codegen::JSPostgresSQLConnection::*;
@@ -91,7 +93,6 @@ use crate::jsc::verify_error_to_js;
 // emits `this: &mut PostgresSQLConnection`; `&mut T` reborrows to `&T` so the
 // impls below compile against either.
 #[derive(bun_ptr::CellRefCounted)]
-#[ref_count(destroy = Self::deinit)]
 pub struct PostgresSQLConnection {
     pub(crate) socket: JsCell<Socket>,
     pub(crate) status: Cell<Status>,
@@ -149,7 +150,7 @@ pub struct PostgresSQLConnection {
 
     /// `us_ssl_ctx_t` built from `tls_config` at construct time. Applied via
     /// `us_socket_adopt_tls` when the server replies `S` to the SSLRequest.
-    pub(crate) secure: Option<*mut uws::SslCtx>,
+    pub(crate) secure: Option<OwnedSslCtx>,
     pub(crate) tls_config: jsc::api::ServerConfig::SSLConfig,
     pub(crate) tls_status: Cell<TLSStatus>,
     pub(crate) ssl_mode: SSLMode,
@@ -188,6 +189,18 @@ bun_event_loop::impl_timer_owner!(PostgresSQLConnection;
     from_timer_ptr => timer,
     from_max_lifetime_timer_ptr => max_lifetime_timer,
 );
+
+impl Drop for PostgresSQLConnection {
+    fn drop(&mut self) {
+        self.disconnect();
+        self.stop_timers();
+        // `free_sensitive`: the connection options carry the password.
+        for b in self.options_buf.iter_mut() {
+            // SAFETY: plain byte write; volatile so it is not elided.
+            unsafe { core::ptr::write_volatile(b, 0) };
+        }
+    }
+}
 
 impl PostgresSQLConnection {
     // ─── R-2 interior-mutability helpers ─────────────────────────────────────
@@ -307,7 +320,7 @@ impl PostgresSQLConnection {
             // if we have backpressure, wait for onWritable
             return false;
         }
-        self.ref_();
+        let _guard = self.ref_guard();
         debug!("onAutoFlush: draining");
         // drain as much as we can
         self.drain_internal();
@@ -321,8 +334,6 @@ impl PostgresSQLConnection {
         );
         self.auto_flusher
             .with_mut(|a| a.registered = keep_flusher_registered);
-        // SAFETY: `self` is a live Box-allocated connection; this releases one ref.
-        unsafe { Self::deref(self.as_ctx_ptr()) };
         keep_flusher_registered
     }
 
@@ -447,7 +458,9 @@ impl PostgresSQLConnection {
         let ssl_ctx = unsafe {
             &mut *self
                 .secure
+                .as_ref()
                 .expect("secure SSL_CTX must be set before setupTLS")
+                .as_ptr()
         };
         let server_name = self.tls_config.server_name();
         let sni = if server_name.is_null() {
@@ -601,7 +614,7 @@ impl PostgresSQLConnection {
     }
 
     fn update_has_pending_activity(&self) {
-        let a: u32 = if self.requests.get().readable_length() > 0 {
+        let a: u32 = if !self.requests.get().is_empty() {
             1
         } else {
             0
@@ -651,16 +664,10 @@ impl PostgresSQLConnection {
         self.update_has_pending_activity();
     }
 
-    pub fn finalize(self: Box<Self>) {
+    pub fn finalize(&self) {
         debug!("PostgresSQLConnection finalize");
-        // Refcounted: release the JS wrapper's +1; allocation may outlive this
-        // call if other refs remain, so hand ownership back to the raw refcount
-        // FIRST so a panic in the work below leaks instead of UAF-ing siblings.
-        let this = bun_core::heap::release(self);
-        this.stop_timers();
-        this.js_value.with_mut(|r| r.finalize());
-        // SAFETY: `this` is the live m_ctx allocation; `deref` frees on count==0.
-        unsafe { Self::deref(this) };
+        self.stop_timers();
+        self.js_value.with_mut(|r| r.finalize());
     }
 
     pub(crate) fn flush_data_and_reset_timeout(&self) {
@@ -708,7 +715,7 @@ impl PostgresSQLConnection {
 
         self.status.set(Status::Failed);
 
-        self.ref_();
+        let _guard = self.ref_guard();
         // we defer the refAndClose so the on_close will be called first before we reject the pending requests
         let on_close_opt = self.consume_on_close_callback(self.global());
         if let Some(on_close) = on_close_opt {
@@ -732,8 +739,6 @@ impl PostgresSQLConnection {
             );
         }
         self.ref_and_close(Some(value));
-        // SAFETY: `self` is a live Box-allocated connection; this releases one ref.
-        unsafe { Self::deref(self.as_ctx_ptr()) };
         self.update_has_pending_activity();
     }
 
@@ -948,7 +953,7 @@ impl PostgresSQLConnection {
     }
 
     pub(crate) fn on_data(&self, data: &[u8]) {
-        self.ref_();
+        let _guard = self.ref_guard();
         self.update_flags(|f| f.insert(ConnectionFlags::IS_PROCESSING_DATA));
 
         if self.status.get() == Status::Connected {
@@ -1049,8 +1054,6 @@ impl PostgresSQLConnection {
         if self.status.get() == Status::Connected {
             self.reset_connection_timeout();
         }
-        // SAFETY: `self` is a live Box-allocated connection; this releases one ref.
-        unsafe { Self::deref(self.as_ctx_ptr()) };
     }
 
     pub fn constructor(
@@ -1075,11 +1078,7 @@ pub(crate) fn call(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsR
     else {
         return Ok(JSValue::ZERO);
     };
-    // Covers `try arguments[7/8].toBunString()` and the null-byte rejection
-    // below. Ownership passes into `ptr.*` once allocated — `into_inner`
-    // recovers them just before the Box is built so the connect-fail path's
-    // `ptr.deinit()` is the sole cleanup.
-    let errdefer_guard = connection_ctor_args::guard_tls(args.secure, args.tls_config);
+    let (secure, tls_config) = (args.secure, args.tls_config);
 
     // `StringBuilder::append` takes `&mut self` and returns a borrow
     // of the backing buffer, so successive appends can't keep their `&[u8]`
@@ -1093,9 +1092,9 @@ pub(crate) fn call(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsR
     let options: bun_ptr::RawSlice<u8>;
     let path: bun_ptr::RawSlice<u8>;
 
-    let options_str = bun_core::OwnedString::new(arguments[7].to_bun_string(global_object)?);
+    let options_str = arguments[7].to_bun_string(global_object)?;
 
-    let path_str = bun_core::OwnedString::new(arguments[8].to_bun_string(global_object)?);
+    let path_str = arguments[8].to_bun_string(global_object)?;
 
     let options_buf: Box<[u8]> = 'brk: {
         let mut b = bun_core::StringBuilder::default();
@@ -1111,23 +1110,23 @@ pub(crate) fn call(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsR
             + 1;
 
         let _ = b.allocate();
-        let u = args.username_str.to_utf8_without_ref();
+        let u = args.username_str.to_utf8();
         username = bun_ptr::RawSlice::new(b.append(u.slice()));
         drop(u);
 
-        let p = args.password_str.to_utf8_without_ref();
+        let p = args.password_str.to_utf8();
         password = bun_ptr::RawSlice::new(b.append(p.slice()));
         drop(p);
 
-        let d = args.database_str.to_utf8_without_ref();
+        let d = args.database_str.to_utf8();
         database = bun_ptr::RawSlice::new(b.append(d.slice()));
         drop(d);
 
-        let o = options_str.to_utf8_without_ref();
+        let o = options_str.to_utf8();
         options = bun_ptr::RawSlice::new(b.append(o.slice()));
         drop(o);
 
-        let _path = path_str.to_utf8_without_ref();
+        let _path = path_str.to_utf8();
         path = bun_ptr::RawSlice::new(b.append(_path.slice()));
         drop(_path);
 
@@ -1146,7 +1145,6 @@ pub(crate) fn call(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsR
         let entry = entry.slice();
         if !entry.is_empty() && strings::contains_char(entry, 0) {
             drop(options_buf);
-            // tls_config / secure released by the errdefer above.
             return Err(global_object.throw_invalid_arguments(format_args!(
                 "{} must not contain null bytes",
                 bstr::BStr::new(name)
@@ -1161,10 +1159,6 @@ pub(crate) fn call(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsR
     let max_lifetime = arguments[13].to_int32();
     let use_unnamed_prepared_statements = arguments[14].as_boolean();
 
-    // Ownership transferred into `ptr`; disarm the errdefer and recover the
-    // moved `secure`/`tls_config` for the struct literal below.
-    let (secure, tls_config) = scopeguard::ScopeGuard::into_inner(errdefer_guard);
-
     let ptr: *mut PostgresSQLConnection =
         bun_core::heap::into_raw(Box::new(PostgresSQLConnection {
             socket: JsCell::new(Socket::SocketTcp(uws::SocketTCP {
@@ -1175,7 +1169,7 @@ pub(crate) fn call(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsR
             write_buffer: JsCell::new(OffsetByteList::default()),
             read_buffer: JsCell::new(OffsetByteList::default()),
             last_message_start: Cell::new(0),
-            requests: JsCell::new(PostgresRequest::Queue::init()),
+            requests: JsCell::new(PostgresRequest::Queue::new()),
             pipelined_requests: Cell::new(0),
             nonpipelinable_requests: Cell::new(0),
             pending_requests: Cell::new(0),
@@ -1259,7 +1253,8 @@ pub(crate) fn call(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsR
         this.socket.set(Socket::SocketTcp(match result {
             Ok(s) => s,
             Err(err) => {
-                PostgresSQLConnection::deinit(ptr);
+                // SAFETY: fresh allocation, sole ref.
+                drop(unsafe { bun_core::heap::take(ptr) });
                 return Err(global_object.throw_error(
                     bun_jsc::CrateError::from(err),
                     "failed to connect to postgresql",
@@ -1328,6 +1323,11 @@ impl<const SSL: bool> SocketHandler<SSL> {
         _: i32,
         _: Option<*mut c_void>,
     ) {
+        // usockets frees this socket at end-of-tick; drop the stored pointer
+        // now so nothing (timer callbacks, ref()/unref()) dereferences it
+        // after the free.
+        this.socket
+            .set(Socket::SocketTcp(uws::SocketTCP::detached()));
         this.on_close();
     }
 
@@ -1336,6 +1336,10 @@ impl<const SSL: bool> SocketHandler<SSL> {
     }
 
     pub fn on_connect_error(this: &PostgresSQLConnection, _socket: SocketType<SSL>, _: i32) {
+        // The dispatch trampoline already closed the connecting socket; it is
+        // freed at end-of-tick, so detach before any user-visible callback.
+        this.socket
+            .set(Socket::SocketTcp(uws::SocketTCP::detached()));
         Self::guarded(this, |t| t.on_connect_error());
     }
 
@@ -1418,41 +1422,6 @@ impl PostgresSQLConnection {
         });
     }
 
-    // Raw-pointer receiver: this function ends in `heap::take(this)`. A `&mut self`
-    // argument would carry a Stacked Borrows protector for the whole frame, and freeing
-    // the allocation while that protector is live is UB ("deallocating while item is
-    // protected"). Taking `*mut Self` and reborrowing per-call keeps each `&mut` scoped
-    // strictly before the dealloc.
-    fn deinit(this: *mut Self) {
-        // SAFETY: sole remaining owner; `this` is a live Box-allocated connection.
-        unsafe {
-            (*this).disconnect();
-            (*this).stop_timers();
-            for stmt_ptr in (*this).statements.get().values() {
-                // statements map owns a ref to each statement.
-                PostgresSQLStatement::deref(*stmt_ptr);
-            }
-            // statements/requests/write_buffer/read_buffer/backend_parameters dropped below.
-
-            // `free_sensitive` is the C-string variant; here we
-            // volatile-zero the Box<[u8]> in place and let Box::drop free it.
-            {
-                let buf = &mut *core::ptr::addr_of_mut!((*this).options_buf);
-                for b in buf.iter_mut() {
-                    core::ptr::write_volatile(b, 0);
-                }
-            }
-
-            // tls_config dropped by Box drop below.
-            if let Some(s) = (*this).secure {
-                // SSL_CTX_free on a valid SSL_CTX*.
-                BoringSSL::c::SSL_CTX_free(s);
-            }
-            // Box-allocated in `call()`; ref_count is 0; reclaim.
-            drop(bun_core::heap::take(this));
-        }
-    }
-
     fn clean_up_requests(&self, js_reason: Option<JSValue>) {
         // R-2: `&self` carries no `noalias`; every field accessed below is
         // `Cell`/`JsCell`-backed, so re-entrant JS callbacks (promise reject →
@@ -1461,13 +1430,9 @@ impl PostgresSQLConnection {
         // black_box launder (b818e70e1c57-style) is no longer needed.
         // The connection is kept alive by the caller's `ref_and_close` ref
         // bracket for the duration of this loop, so re-entry never frees `*self`.
-        while self.requests.get().readable_length() > 0 {
-            let request_ptr: *mut PostgresSQLQuery = self.requests.get().peek_item(0);
-            // Queue invariant: every stored pointer is non-null and live
-            // (refcount ≥ 1 held by the queue). R-2: `ParentRef` yields `&T`
-            // only — `PostgresSQLQuery` is Cell/JsCell-backed. Raw `*mut`
-            // retained for `discard_request` below.
-            let request = ParentRef::from(NonNull::new(request_ptr).expect("queue item non-null"));
+        // The queue's `RefPtr` keeps the query live. R-2: `ParentRef` yields
+        // `&T` only — `PostgresSQLQuery` is Cell/JsCell-backed.
+        while let Some(request) = self.current() {
             match request.status.get() {
                 // pending we will fail the request and the stmt will be marked as error ConnectionClosed too
                 QueryStatus::Pending => {
@@ -1506,8 +1471,15 @@ impl PostgresSQLConnection {
                 // just ignore success and fail cases
                 QueryStatus::Success | QueryStatus::Fail => {}
             }
-            self.discard_request(request_ptr);
+            self.discard_request(&request);
         }
+    }
+
+    /// Hold a ref on `self` for the guard's lifetime (across re-entrant JS).
+    #[inline]
+    fn ref_guard(&self) -> RefPtr<Self> {
+        // SAFETY: `self` is the live heap allocation.
+        unsafe { RefPtr::init_ref(self.as_ctx_ptr()) }
     }
 
     fn ref_and_close(&self, js_reason: Option<JSValue>) {
@@ -1535,42 +1507,29 @@ impl PostgresSQLConnection {
 
     /// Shared borrow of the queue's head request, if any.
     ///
-    /// The queue holds an intrusive ref on every `*mut PostgresSQLQuery` it
-    /// stores; `PostgresSQLQuery` is `Cell`/`JsCell`-backed (R-2), so a shared
-    /// `&` is sound even across re-entrant JS. Returned as a [`ParentRef`]
-    /// (lifetime-erased `&T` via safe `Deref`) — same shape as
-    /// `clean_up_requests`/`advance` already use for queue items, so the
-    /// dozen-plus callers in `on()` need no per-site `unsafe`.
+    /// The queue's `RefPtr` keeps every stored query live; `PostgresSQLQuery`
+    /// is `Cell`/`JsCell`-backed (R-2), so a shared `&` is sound even across
+    /// re-entrant JS. Returned as a [`ParentRef`] (lifetime-erased `&T` via
+    /// safe `Deref`) so it survives the queue being mutated underneath.
     fn current(&self) -> Option<ParentRef<PostgresSQLQuery>> {
-        let q = self.requests.get();
-        if q.readable_length() == 0 {
-            return None;
-        }
-        // Queue invariant: every stored pointer is a live, heap-allocated
-        // `PostgresSQLQuery` with refcount ≥ 1 held by the queue itself; it
-        // cannot be freed while still enqueued — satisfies the `ParentRef`
-        // liveness contract for the duration of every caller's use.
-        Some(ParentRef::from(
-            NonNull::new(q.peek_item(0)).expect("queue item non-null"),
-        ))
+        self.requests
+            .get()
+            .front()
+            .map(|req| ParentRef::from(req.as_non_null()))
     }
 
-    /// Drop the queue-held intrusive ref on `request` and pop one entry from
-    /// the FIFO head. One audited `unsafe` here replaces the per-site
-    /// `unsafe { PostgresSQLQuery::deref(ptr) }; self.requests.with_mut(|q| q.discard(1));`
-    /// pair (16 callers in `clean_up_requests` / `advance`).
+    /// Pop the FIFO head if it is still `request` (re-entrant JS may already
+    /// have removed it), dropping the queue's ref.
     #[inline]
-    fn discard_request(&self, request: *mut PostgresSQLQuery) {
-        if self.requests.get().readable_length() == 0 || self.requests.get().peek_item(0) != request
+    fn discard_request(&self, request: &PostgresSQLQuery) {
+        if self
+            .requests
+            .get()
+            .front()
+            .is_some_and(|f| core::ptr::eq(f.as_ptr(), request))
         {
-            return;
+            self.requests.with_mut(|q| q.pop_front());
         }
-        // SAFETY: `request` was obtained via `self.requests.get().peek_item(_)`
-        // (queue invariant: every stored pointer is a live, heap-allocated
-        // `PostgresSQLQuery` with refcount ≥ 1 held by the queue itself); this
-        // releases exactly that ref. May free if no other refs remain.
-        unsafe { PostgresSQLQuery::deref(request) };
-        self.requests.with_mut(|q| q.discard(1));
     }
 
     pub(crate) fn has_query_running(&self) -> bool {
@@ -1833,21 +1792,18 @@ impl PostgresSQLConnection {
         // expanded as a closure called at every return point below.
         macro_rules! defer_cleanup {
             ($self:ident) => {{
-                while $self.requests.get().readable_length() > 0 {
-                    let result_ptr = $self.requests.get().peek_item(0);
-                    // Queue invariant: every stored pointer is non-null and
-                    // live (refcount ≥ 1 held by the queue). R-2: `ParentRef`
-                    // yields `&T` only — `PostgresSQLQuery` is Cell/JsCell-backed.
-                    let result = ParentRef::from(NonNull::new(result_ptr).expect("queue item non-null"));
+                // The queue's `RefPtr` keeps the query live. R-2: `ParentRef`
+                // yields `&T` only — `PostgresSQLQuery` is Cell/JsCell-backed.
+                while let Some(result) = $self.current() {
                     // An item may be in the success or failed state and still be inside the queue (see deinit later comments)
                     // so we do the cleanup here
                     match result.status.get() {
                         QueryStatus::Success => {
-                            $self.discard_request(result_ptr);
+                            $self.discard_request(&result);
                             continue;
                         }
                         QueryStatus::Fail => {
-                            $self.discard_request(result_ptr);
+                            $self.discard_request(&result);
                             continue;
                         }
                         _ => break, // truly current item
@@ -1856,14 +1812,12 @@ impl PostgresSQLConnection {
             }};
         }
 
-        while self.requests.get().readable_length() > offset
+        while self.requests.get().len() > offset
             && !self.flags.get().contains(ConnectionFlags::HAS_BACKPRESSURE)
         {
-            let req_ptr: *mut PostgresSQLQuery = self.requests.get().peek_item(offset);
-            // Queue invariant: every stored pointer is non-null and live
-            // (refcount ≥ 1 held by the queue). R-2: `ParentRef` yields `&T`
-            // only — `PostgresSQLQuery` is Cell/JsCell-backed.
-            let req = ParentRef::from(NonNull::new(req_ptr).expect("queue item non-null"));
+            // The queue's `RefPtr` keeps the query live. R-2: `ParentRef`
+            // yields `&T` only — `PostgresSQLQuery` is Cell/JsCell-backed.
+            let req = ParentRef::from(self.requests.get()[offset].as_non_null());
             match req.status.get() {
                 QueryStatus::Pending => {
                     // Optimistically account for this request leaving Pending; the
@@ -1904,7 +1858,7 @@ impl PostgresSQLConnection {
                                 req.on_write_fail(err, self.global(), self.get_queries_array());
                             }
                             if offset == 0 {
-                                self.discard_request(req_ptr);
+                                self.discard_request(&req);
                             } else {
                                 // deinit later
                                 req.status.set(QueryStatus::Fail);
@@ -1936,7 +1890,7 @@ impl PostgresSQLConnection {
                                         req.on_js_error(ev, self.global());
                                     }
                                     if offset == 0 {
-                                        self.discard_request(req_ptr);
+                                        self.discard_request(&req);
                                     } else {
                                         // deinit later
                                         req.status.set(QueryStatus::Fail);
@@ -1951,7 +1905,7 @@ impl PostgresSQLConnection {
                                             "query value was freed earlier than expected"
                                         );
                                         if offset == 0 {
-                                            self.discard_request(req_ptr);
+                                            self.discard_request(&req);
                                         } else {
                                             // deinit later
                                             req.status.set(QueryStatus::Fail);
@@ -2000,7 +1954,7 @@ impl PostgresSQLConnection {
                                                 );
                                             }
                                             if offset == 0 {
-                                                self.discard_request(req_ptr);
+                                                self.discard_request(&req);
                                             } else {
                                                 // deinit later
                                                 req.status.set(QueryStatus::Fail);
@@ -2032,7 +1986,7 @@ impl PostgresSQLConnection {
                                                 );
                                             }
                                             if offset == 0 {
-                                                self.discard_request(req_ptr);
+                                                self.discard_request(&req);
                                             } else {
                                                 // deinit later
                                                 req.status.set(QueryStatus::Fail);
@@ -2087,7 +2041,7 @@ impl PostgresSQLConnection {
                                                 "query value was freed earlier than expected"
                                             );
                                             if offset == 0 {
-                                                self.discard_request(req_ptr);
+                                                self.discard_request(&req);
                                             } else {
                                                 // deinit later
                                                 req.status.set(QueryStatus::Fail);
@@ -2123,7 +2077,7 @@ impl PostgresSQLConnection {
                                                 );
                                             }
                                             if offset == 0 {
-                                                self.discard_request(req_ptr);
+                                                self.discard_request(&req);
                                             } else {
                                                 // deinit later
                                                 req.status.set(QueryStatus::Fail);
@@ -2162,7 +2116,7 @@ impl PostgresSQLConnection {
                                                 "query value was freed earlier than expected"
                                             );
                                             debug_assert!(offset == 0);
-                                            self.discard_request(req_ptr);
+                                            self.discard_request(&req);
                                             continue;
                                         };
                                         let binding_value =
@@ -2197,7 +2151,7 @@ impl PostgresSQLConnection {
                                                 );
                                             }
                                             debug_assert!(offset == 0);
-                                            self.discard_request(req_ptr);
+                                            self.discard_request(&req);
                                             debug!(
                                                 "parseAndBindAndExecute failed: {}",
                                                 <&'static str>::from(err)
@@ -2243,7 +2197,7 @@ impl PostgresSQLConnection {
                                             );
                                         }
                                         debug_assert!(offset == 0);
-                                        self.discard_request(req_ptr);
+                                        self.discard_request(&req);
                                         debug!("write query failed: {}", <&'static str>::from(err));
                                         continue;
                                     }
@@ -2261,7 +2215,7 @@ impl PostgresSQLConnection {
                                             );
                                         }
                                         debug_assert!(offset == 0);
-                                        self.discard_request(req_ptr);
+                                        self.discard_request(&req);
                                         debug!(
                                             "write query (sync) failed: {}",
                                             <&'static str>::from(err)
@@ -2320,7 +2274,7 @@ impl PostgresSQLConnection {
                         offset += 1;
                         continue;
                     }
-                    self.discard_request(req_ptr);
+                    self.discard_request(&req);
                     continue;
                 }
                 QueryStatus::Fail => {
@@ -2329,7 +2283,7 @@ impl PostgresSQLConnection {
                         offset += 1;
                         continue;
                     }
-                    self.discard_request(req_ptr);
+                    self.discard_request(&req);
                     continue;
                 }
             }
@@ -2970,7 +2924,7 @@ impl PostgresSQLConnection {
                     self.fail_with_js_value(v);
 
                     // it shouldn't enqueue any requests while connecting
-                    debug_assert!(self.requests.get().readable_length() == 0);
+                    debug_assert!(self.requests.get().is_empty());
                     return Ok(());
                 }
 
@@ -2988,21 +2942,19 @@ impl PostgresSQLConnection {
                         stmt.error_response = Some(
                             crate::postgres::postgres_sql_statement::Error::Protocol(err),
                         );
-                        let owned_by_map = self.statements.with_mut(|m| {
+                        // The request still holds another ref; this cannot drop to 0.
+                        let stmt_ptr: *const PostgresSQLStatement = core::ptr::from_ref(&*stmt);
+                        self.statements.with_mut(|m| {
                             let name = &stmt.signature.name[..];
-                            if m.get(name)
-                                .is_some_and(|&p| core::ptr::eq(p, core::ptr::from_ref(&*stmt)))
-                            {
-                                m.remove(name).is_some()
-                            } else {
-                                false
+                            if m.get(name).is_some_and(|p| {
+                                core::ptr::eq(
+                                    p.as_ref().map_or(core::ptr::null(), |p| p.as_ptr()),
+                                    stmt_ptr,
+                                )
+                            }) {
+                                m.remove(name);
                             }
                         });
-                        if owned_by_map {
-                            // SAFETY: the map entry just removed was `stmt` itself, so the map
-                            // held one ref and the request still holds another; cannot drop to 0.
-                            unsafe { PostgresSQLStatement::deref(core::ptr::from_mut(stmt)) };
-                        }
                     }
                 }
                 // If `err` was not moved into stmt above, it drops here automatically.

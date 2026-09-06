@@ -237,7 +237,7 @@ pub(crate) fn address_to_js(
     address: &bun_dns::Address,
     global: &JSGlobalObject,
 ) -> JsResult<JSValue> {
-    address_to_string(address).transfer_to_js(global)
+    address_to_string(address).into_js(global)
 }
 
 fn addr_info_to_js_array(

@@ -36,14 +36,14 @@ extern "C" WebCore::URLSearchParams* URLSearchParams__fromJS(JSC::EncodedJSValue
     return WebCoreCast<WebCore::JSURLSearchParams, WebCore::URLSearchParams>(value);
 }
 
-// callback accepting a void* and a const ZigString*, returning void
-typedef void (*URLSearchParams__toStringCallback)(void* ctx, const ZigString* str);
+// callback accepting a void* and a const EncodedSlice*, returning void
+typedef void (*URLSearchParams__toStringCallback)(void* ctx, const EncodedSlice* str);
 
 extern "C" void URLSearchParams__toString(WebCore::URLSearchParams* urlSearchParams, void* ctx, URLSearchParams__toStringCallback callback)
 {
     String str = urlSearchParams->toString();
-    auto zig = Zig::toZigString(str);
-    callback(ctx, &zig);
+    auto slice = Zig::toEncodedSlice(str);
+    callback(ctx, &slice);
 }
 
 URLSearchParams::URLSearchParams(const String& init, DOMURL* associatedURL)

@@ -635,10 +635,8 @@ pub unsafe fn spawn_process_posix(
 ) -> crate::Result<bun_sys::Result<PosixSpawnResult>> {
     bun_analytics::features::spawn.fetch_add(1, Ordering::Relaxed);
     let mut actions = PosixSpawnActions::init()?;
-    // defer actions.deinit() — Drop
 
     let mut attr = PosixSpawnAttr::init()?;
-    // defer attr.deinit() — Drop
 
     // libc 0.2.x exposes the `POSIX_SPAWN_SETSIG*` flags for glibc/musl/macOS
     // but not for Android. Bionic's `<spawn.h>` uses the same values as glibc

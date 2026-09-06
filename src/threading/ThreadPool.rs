@@ -292,14 +292,6 @@ impl ThreadPool {
     }
 }
 
-impl Default for ThreadPool {
-    /// Default-initialised pool with zero `max_threads` (`init()` clamps to
-    /// ≥1 when actually started).
-    fn default() -> Self {
-        Self::init(Config::default())
-    }
-}
-
 /// Shut down the thread pool and stop the worker threads.
 impl Drop for ThreadPool {
     fn drop(&mut self) {
@@ -447,6 +439,11 @@ impl Batch {
     /// Create a batch from a single task.
     pub fn from(task: *mut Task) -> Batch {
         let task = NonNull::new(task);
+        if let Some(task) = task {
+            // A rescheduled task may still carry the link from its last batch.
+            // SAFETY: caller passes a live Task that is not currently queued.
+            unsafe { (*Task::node_of(task).as_ptr()).next = ptr::null_mut() };
+        }
         Batch {
             len: 1,
             head: task,

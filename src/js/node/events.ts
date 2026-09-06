@@ -564,13 +564,13 @@ async function once(emitter, type, options = kEmptyObject) {
   if (signal?.aborted) {
     throw $makeAbortError(undefined, { cause: signal?.reason });
   }
-  const { resolve, reject, promise } = $newPromiseCapability(Promise);
+  const promise = $newPromise();
   const errorListener = err => {
     emitter.removeListener(type, resolver);
     if (signal != null) {
       eventTargetAgnosticRemoveListener(signal, "abort", abortListener);
     }
-    reject(err);
+    $rejectPromiseWithFirstResolvingFunctionCallCheck(promise, err);
   };
   const resolver = (...args) => {
     if (typeof emitter.removeListener === "function") {
@@ -579,7 +579,7 @@ async function once(emitter, type, options = kEmptyObject) {
     if (signal != null) {
       eventTargetAgnosticRemoveListener(signal, "abort", abortListener);
     }
-    resolve(args);
+    $resolvePromiseWithFirstResolvingFunctionCallCheck(promise, args);
   };
   const opts = resistStopPropagation({ __proto__: null, once: true });
   eventTargetAgnosticAddListener(emitter, type, resolver, opts);
@@ -591,7 +591,7 @@ async function once(emitter, type, options = kEmptyObject) {
   function abortListener() {
     eventTargetAgnosticRemoveListener(emitter, type, resolver);
     eventTargetAgnosticRemoveListener(emitter, "error", errorListener);
-    reject($makeAbortError(undefined, { cause: signal?.reason }));
+    $rejectPromiseWithFirstResolvingFunctionCallCheck(promise, $makeAbortError(undefined, { cause: signal?.reason }));
   }
   if (signal != null) {
     eventTargetAgnosticAddListener(signal, "abort", abortListener, opts);

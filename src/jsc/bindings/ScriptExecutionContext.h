@@ -3,8 +3,8 @@
 #include "root.h"
 
 struct BunVmHandleRef;
+#include "BunLoopKind.h"
 #include "SharedEnvStore.h"
-#include <wtf/CrossThreadTask.h>
 #include <wtf/Function.h>
 #include <wtf/HashSet.h>
 #include <wtf/ObjectIdentifier.h>
@@ -98,15 +98,15 @@ public:
     // The owning Zig::GlobalObject cell is being destroyed; from here on there is no global/VM.
     void globalObjectDestroyed();
 
-    bool isDocument() { return false; }
-    bool isWorkerGlobalScope() { return true; }
     bool isJSExecutionForbidden();
     void reportException(const String& errorMessage, int lineNumber, int columnNumber, const String& sourceURL, JSC::Exception* exception, RefPtr<void*>&&, CachedScript* = nullptr, bool = false)
     {
     }
-    WEBCORE_EXPORT static bool postTaskTo(ScriptExecutionContextIdentifier identifier, Function<void(ScriptExecutionContext&)>&& task);
+    // `loopKind`: which of the target VM's loops the task joins — currentLoopKind() captured on the
+    // target's thread when the work whose completion this is was initiated, or Regular for work no
+    // script there initiated.
+    WEBCORE_EXPORT static bool postTaskTo(ScriptExecutionContextIdentifier identifier, BunLoopKind loopKind, Function<void(ScriptExecutionContext&)>&& task);
     WEBCORE_EXPORT static bool ensureOnContextThread(ScriptExecutionContextIdentifier, Function<void(ScriptExecutionContext&)>&& task);
-    WEBCORE_EXPORT static bool ensureOnMainThread(Function<void(ScriptExecutionContext&)>&& task);
 
     WEBCORE_EXPORT JSC::JSGlobalObject* globalObject();
 
@@ -126,16 +126,15 @@ public:
     void postTask(EventLoopTask* task);
     void postTaskAfterYield(Function<void(ScriptExecutionContext&)>&& lambda);
 
-    template<typename... Arguments>
-    void postCrossThreadTask(Arguments&&... arguments)
-    {
-        postTask([crossThreadTask = createCrossThreadTask(arguments...)](ScriptExecutionContext&) mutable {
-            crossThreadTask.performTask();
-        });
-    }
-
     JSC::VM& vm() { return *m_vm; }
     ScriptExecutionContextIdentifier identifier() const { return m_identifier; }
+    // This thread only: the loop the VM is running now. What an object that will later be posted to
+    // from another thread records alongside identifier() when script here sets it up.
+    BunLoopKind currentLoopKind()
+    {
+        ASSERT(isContextThread());
+        return Bun__VM__currentLoopKind(m_bunVM);
+    }
 
     bool isWorker = false;
 
@@ -182,7 +181,5 @@ public:
     bool m_inScriptExecutionContextDestructor = false;
 #endif
 };
-
-ScriptExecutionContext* executionContext(JSC::JSGlobalObject*);
 
 }

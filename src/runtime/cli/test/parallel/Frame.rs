@@ -10,9 +10,14 @@ pub enum Kind {
     Ready,
     /// u32 file_idx
     FileStart,
-    /// u32 file_idx, str formatted_line (ANSI included; printed verbatim)
+    /// u32 file_idx, str formatted_line (ANSI included; printed verbatim);
+    /// then, only when the worker runs with `--reporter`, the structured
+    /// result (`runner::encode_test_case`): u32 status, u32 assertions,
+    /// u64 elapsed_ns, u32 line, str name, u32 n × {str scope_name,
+    /// u32 scope_line}, u32 has_failure [, str name, str message, str body]
     TestDone,
-    /// 9 × u32: file_idx, pass, fail, skip, todo, expectations, skipped_label, files, unhandled
+    /// 9 × u32: file_idx, pass, fail, skip, todo, expectations, skipped_label,
+    /// files, unhandled; u64 elapsed_ns
     FileDone,
     /// 3 × str: failures, skips, todos (verbatim repeat-buffer bytes)
     RepeatBufs,
@@ -21,14 +26,10 @@ pub enum Kind {
     Run,
     /// (empty)
     Shutdown,
-    /// u32 file_idx, str xml — one file's completed <testsuite> element(s).
-    /// Workers never write reports to disk; the coordinator files chunks by
-    /// index and emits them in the run's canonical file order, so the merged
-    /// document is identical regardless of which worker finishes first.
-    JunitChunk,
-    /// str lcov — this worker's coverage data, sent at exit; the coordinator
-    /// merges every worker's into the one report it writes.
-    CoverageChunk,
+    /// str report — one source file's coverage from this worker, sent at exit
+    /// as `bun_sourcemap_jsc::code_coverage::wire`. The coordinator merges
+    /// every worker's per file and writes the one report.
+    CoverageFile,
 }
 
 impl TryFrom<u8> for Kind {
@@ -43,8 +44,7 @@ impl TryFrom<u8> for Kind {
             4 => Kind::RepeatBufs,
             5 => Kind::Run,
             6 => Kind::Shutdown,
-            7 => Kind::JunitChunk,
-            8 => Kind::CoverageChunk,
+            7 => Kind::CoverageFile,
             _ => return Err(()),
         })
     }
@@ -78,32 +78,30 @@ impl Frame {
         self.buf.extend_from_slice(&v.to_le_bytes());
     }
 
+    pub(crate) fn u64(&mut self, v: u64) {
+        self.buf.extend_from_slice(&v.to_le_bytes());
+    }
+
     pub(crate) fn str(&mut self, s: &[u8]) {
         // Never let a single frame exceed `MAX_PAYLOAD` — the receiver treats that
         // as a corrupt-channel signal and closes, which would surface as a spurious
-        // worker crash. Truncate the string in place instead. Leave a small
-        // headroom so a few following u32s/short paths in the same frame still fit.
+        // worker crash. Truncate the string in place instead. Leave headroom
+        // so the fixed-size tail of the frame (u32s, short paths, and the
+        // 4-byte prefixes of any further strings, which go empty) still fits.
         const TRUNC: &[u8] = b"\n... [output truncated: would exceed --parallel IPC frame limit]\n";
-        const HEADROOM: usize = 256;
+        const HEADROOM: usize = 4096;
         let used: usize = (self.buf.len() - 5) + 4; // current payload + str-len prefix
-        let room: usize = if (MAX_PAYLOAD as usize) > used + HEADROOM {
-            (MAX_PAYLOAD as usize) - used - HEADROOM
+        let room: usize = ((MAX_PAYLOAD as usize) - HEADROOM).saturating_sub(used);
+        let (keep, marker): (usize, &[u8]) = if s.len() <= room {
+            (s.len(), b"")
+        } else if room >= TRUNC.len() {
+            (room - TRUNC.len(), TRUNC)
         } else {
-            0
+            (0, b"")
         };
-        if s.len() <= room {
-            self.u32(u32::try_from(s.len()).unwrap());
-            self.buf.extend_from_slice(s);
-            return;
-        }
-        let keep: usize = if room > TRUNC.len() {
-            room - TRUNC.len()
-        } else {
-            0
-        };
-        self.u32(u32::try_from(keep + TRUNC.len()).unwrap());
+        self.u32(u32::try_from(keep + marker.len()).unwrap());
         self.buf.extend_from_slice(&s[0..keep]);
-        self.buf.extend_from_slice(TRUNC);
+        self.buf.extend_from_slice(marker);
     }
 
     /// Finalize the header and return the encoded bytes. Caller hands them to
@@ -130,6 +128,15 @@ impl<'a> Reader<'a> {
         }
         let v = u32::from_le_bytes(self.p[0..4].try_into().unwrap());
         self.p = &self.p[4..];
+        v
+    }
+
+    pub(crate) fn u64(&mut self) -> u64 {
+        if self.p.len() < 8 {
+            return 0;
+        }
+        let v = u64::from_le_bytes(self.p[0..8].try_into().unwrap());
+        self.p = &self.p[8..];
         v
     }
 

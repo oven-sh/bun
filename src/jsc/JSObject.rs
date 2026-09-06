@@ -2,7 +2,7 @@ use core::ffi::{c_uint, c_void};
 use core::mem::ManuallyDrop;
 
 use crate::{JSCell, JSGlobalObject, JSValue, JsError, JsResult};
-use bun_core::{String as BunString, ZigString};
+use bun_core::{EncodedSlice, String as BunString};
 
 unsafe extern "C" {
     // safe: read-only `const unsigned` exported by C++ (link-time constant).
@@ -152,19 +152,23 @@ impl JSObject {
         unsafe { JSC__createStructure(global.as_ptr(), owner_cell, length, names) }
     }
 
+    /// The C++ side returns the object even when `creator` threw inside
+    /// `initializer_call`, so the exception state is checked explicitly.
     pub fn create_with_initializer<Ctx: ObjectInitializer>(
         creator: &mut Ctx,
         global: &JSGlobalObject,
         length: usize,
-    ) -> JSValue {
+    ) -> JsResult<JSValue> {
         // `ctx` is the `&mut Ctx` round-tripped through `*mut c_void`;
         // `initializer_call::<Ctx>` casts it back. C++ only forwards it.
-        JSC__JSObject__create(
-            global,
-            length,
-            std::ptr::from_mut::<Ctx>(creator).cast::<c_void>(),
-            initializer_call::<Ctx>,
-        )
+        crate::call_check_slow(global, || {
+            JSC__JSObject__create(
+                global,
+                length,
+                std::ptr::from_mut::<Ctx>(creator).cast::<c_void>(),
+                initializer_call::<Ctx>,
+            )
+        })
     }
 
     #[track_caller]
@@ -184,8 +188,8 @@ impl JSObject {
     pub fn put_record(
         &mut self,
         global: &JSGlobalObject,
-        key: &mut ZigString,
-        values: &mut [ZigString],
+        key: &mut EncodedSlice,
+        values: &mut [EncodedSlice],
     ) -> JsResult<()> {
         // SAFETY: pointers are valid for the duration of the call; C++ does not
         // retain them.
@@ -234,20 +238,11 @@ impl Default for ExternColumnIdentifier {
     }
 }
 
-impl ExternColumnIdentifier {
-    pub(crate) fn string(&mut self) -> Option<&mut BunString> {
-        match self.tag {
-            // SAFETY: tag == 2 means `value.name` is the active union field.
-            2 => Some(unsafe { &mut *self.value.name }),
-            _ => None,
-        }
-    }
-}
-
 impl Drop for ExternColumnIdentifier {
     fn drop(&mut self) {
-        if let Some(str) = self.string() {
-            str.deref();
+        if self.tag == 2 {
+            // SAFETY: tag == 2 means `value.name` is the active union field.
+            unsafe { core::mem::ManuallyDrop::drop(&mut self.value.name) };
         }
     }
 }

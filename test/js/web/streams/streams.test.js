@@ -7,9 +7,9 @@ import {
   readableStreamToText,
 } from "bun";
 import { describe, expect, it, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, isDebug, isMacOS, isWindows, tempDir, tmpdirSync } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, isLinux, isMacOS, isWindows, tempDir, tmpdirSync } from "harness";
 import { mkfifo } from "mkfifo";
-import { createReadStream, realpathSync, unlinkSync, writeFileSync } from "node:fs";
+import { closeSync, createReadStream, openSync, realpathSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 it("TransformStream", async () => {
@@ -540,6 +540,59 @@ it("ReadableStream (direct)", async () => {
   const chunk = await reader.read();
   expect(chunk.value.join("")).toBe(Buffer.from("helloworld").join(""));
   expect((await reader.read()).done).toBe(true);
+  expect((await reader.read()).done).toBe(true);
+});
+
+it("ReadableStream (direct): an underlyingSource close() hook that throws is not swallowed", async () => {
+  // close() runs when the controller closes; its exception propagates out of controller.close()
+  // (here: out of pull), which errors the stream like any other pull() throw.
+  const stream = new ReadableStream({
+    type: "direct",
+    pull(controller) {
+      controller.write("hello");
+      controller.close();
+    },
+    close() {
+      throw new Error("close hook threw");
+    },
+  });
+  await expect(new Response(stream).text()).rejects.toThrow("close hook threw");
+
+  // Same through a reader: pull() (and so read()) fails with the hook's error.
+  const stream2 = new ReadableStream({
+    type: "direct",
+    pull(controller) {
+      controller.write("hello");
+      controller.close();
+    },
+    close() {
+      throw new Error("close hook threw");
+    },
+  });
+  await expect(stream2.getReader().read()).rejects.toThrow("close hook threw");
+});
+
+it("ReadableStream (direct): controller.close() outside pull with a throwing close() hook settles the pending read and throws to the closer", async () => {
+  let controller;
+  const pulled = Promise.withResolvers();
+  const stream = new ReadableStream({
+    type: "direct",
+    pull(c) {
+      controller = c;
+      pulled.resolve();
+    },
+    close() {
+      throw new Error("close hook threw");
+    },
+  });
+  const reader = stream.getReader();
+  const pending = reader.read();
+  await pulled.promise;
+  controller.write("late");
+  expect(() => controller.close()).toThrow("close hook threw");
+  const first = await pending;
+  expect(first.done).toBe(false);
+  expect(new TextDecoder().decode(first.value)).toBe("late");
   expect((await reader.read()).done).toBe(true);
 });
 
@@ -1893,6 +1946,115 @@ it("Bun.file().stream() read text from large file", async () => {
   }
 });
 
+// A POSIX file is read synchronously inside the stream's pull, so a failing
+// read(2) arrives with no pending read to reject. Windows reads files through
+// libuv, where the error always lands on a pending read.
+describe.skipIf(isWindows)("Bun.file().stream() surfaces read() errors", () => {
+  // read(2) on /proc/self/mem fails with EIO: nothing is mapped at address 0.
+  const eioPath = "/proc/self/mem";
+  const itEIO = isLinux ? it : it.skip;
+
+  async function expectReadError(promise, code) {
+    const err = await promise.then(
+      () => null,
+      e => e,
+    );
+    expect(err).toBeInstanceOf(Error);
+    expect(err.code).toBe(code);
+    return err;
+  }
+
+  itEIO("for await rejects with the read error", async () => {
+    const chunks = [];
+    await expectReadError(
+      (async () => {
+        for await (const chunk of Bun.file(eioPath).stream()) chunks.push(chunk);
+      })(),
+      "EIO",
+    );
+    expect(chunks).toHaveLength(0);
+  });
+
+  itEIO("getReader().read() rejects with the read error", async () => {
+    await expectReadError(Bun.file(eioPath).stream().getReader().read(), "EIO");
+  });
+
+  itEIO("pipeTo() rejects with the read error", async () => {
+    await expectReadError(
+      Bun.file(eioPath)
+        .stream()
+        .pipeTo(new WritableStream({ write() {} })),
+      "EIO",
+    );
+  });
+
+  itEIO("Bun.file().text() reports the same read error", async () => {
+    const err = await expectReadError(Bun.file(eioPath).text(), "EIO");
+    expect(err.syscall).toBe("read");
+  });
+
+  it("a stream over a write-only fd rejects with EBADF", async () => {
+    using dir = tempDir("file-stream-read-error", { "x.bin": "hello" });
+    const fd = openSync(join(String(dir), "x.bin"), "w");
+    try {
+      await expectReadError(Bun.file(fd).stream().getReader().read(), "EBADF");
+    } finally {
+      closeSync(fd);
+    }
+  });
+
+  // A pollable fd (here a non-blocking pty master, as node-pty sets it up) is
+  // read when its poll fires. A read error must release that poll, or the
+  // process never exits. The slave hangup fails the master read with EIO on
+  // Linux and ends it on macOS.
+  it("a read error on a pollable fd releases the poll so the process can exit", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        const { CString, dlopen } = require("bun:ffi");
+        const { closeSync, constants, openSync, writeSync } = require("node:fs");
+        const arch = process.arch === "x64" ? "x86_64" : process.arch === "arm64" ? "aarch64" : process.arch;
+        const candidates = process.platform === "darwin" ? ["libSystem.B.dylib"] : ["libc.so.6", "libc.musl-" + arch + ".so.1"];
+        let libc, lastError;
+        for (const lib of candidates) {
+          try {
+            libc = dlopen(lib, {
+              posix_openpt: { args: ["int"], returns: "int" },
+              grantpt: { args: ["int"], returns: "int" },
+              unlockpt: { args: ["int"], returns: "int" },
+              ptsname: { args: ["int"], returns: "ptr" },
+            }).symbols;
+            break;
+          } catch (err) {
+            lastError = err;
+          }
+        }
+        if (!libc) throw lastError;
+        const master = libc.posix_openpt(constants.O_RDWR | constants.O_NOCTTY | constants.O_NONBLOCK);
+        if (master < 0 || libc.grantpt(master) !== 0 || libc.unlockpt(master) !== 0) throw new Error("pty setup failed");
+        const slave = openSync(new CString(libc.ptsname(master)).toString(), constants.O_RDWR | constants.O_NOCTTY);
+        const reader = Bun.file(master).stream().getReader();
+        writeSync(slave, "x");
+        const first = await reader.read();
+        console.log("first", Buffer.from(first.value).toString());
+        // This read finds no data and waits on the poll. The hangup fires it.
+        const pending = reader.read();
+        closeSync(slave);
+        const result = await pending.then(r => (r.done ? "done" : "data"), e => e.code);
+        console.log("settled", result);
+        `,
+      ],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout).toMatch(/^first x\nsettled (EIO|done)\n$/);
+    expect(exitCode).toBe(0);
+  });
+});
+
 it("fs.createReadStream(filename) should be able to break inside async loop", async () => {
   for (let i = 0; i < 10; i++) {
     const fileStream = createReadStream(join(import.meta.dir, "..", "fetch", "fixture.png"));
@@ -2777,5 +2939,233 @@ describe("ReadableStream async iterator reentrancy", () => {
       { value: "d", done: false },
     ]);
     expect(await it.next()).toEqual({ value: undefined, done: true });
+  });
+});
+
+// Every native consumer of an iterator result ({value, done} from read()/next()) or of a
+// readMany() result ({value, size, done}). Results Bun itself produced, and the ones from
+// generators and the built-in iterators, are plain data objects; a custom next() can hand back
+// accessors instead, and those must still run exactly as often and in the same order as before.
+describe("iterator result consumers", () => {
+  const decode = chunks => chunks.map(c => (typeof c === "string" ? c : new TextDecoder().decode(c)));
+
+  test("readMany() continuing a pending read", async () => {
+    let controller;
+    const stream = new ReadableStream({
+      start(c) {
+        controller = c;
+      },
+    });
+    const reader = stream.getReader();
+    const pending = reader.readMany();
+    controller.enqueue("a");
+    controller.enqueue("b");
+    const first = await pending;
+    controller.close();
+    const last = await reader.readMany();
+    expect({ first: { value: first.value, done: first.done }, last }).toEqual({
+      first: { value: ["a", "b"], done: false },
+      last: { value: [], size: 0, done: true },
+    });
+  });
+
+  test("readMany() on a direct stream", async () => {
+    // The second write waits for the first readMany() to settle, so each call sees one chunk.
+    const secondWrite = Promise.withResolvers();
+    const stream = new ReadableStream({
+      type: "direct",
+      async pull(c) {
+        c.write("x");
+        await secondWrite.promise;
+        c.write("y");
+        c.close();
+      },
+    });
+    const reader = stream.getReader();
+    const first = await reader.readMany();
+    secondWrite.resolve();
+    const second = await reader.readMany();
+    const last = await reader.readMany();
+    expect({
+      first: decode(first.value),
+      firstDone: first.done,
+      second: decode(second.value),
+      secondDone: second.done,
+      last: { value: last.value, done: last.done },
+    }).toEqual({
+      first: ["x"],
+      firstDone: false,
+      second: ["y"],
+      secondDone: false,
+      last: { value: [], done: true },
+    });
+  });
+
+  test("readableStreamToArray over pending reads and over a direct stream", async () => {
+    // Each pull() runs when the consumer's pending read drained the queue.
+    let pulls = 0;
+    const queued = new ReadableStream({
+      pull(c) {
+        if (++pulls <= 2) c.enqueue(pulls);
+        else c.close();
+      },
+    });
+    const direct = new ReadableStream({
+      type: "direct",
+      pull(c) {
+        c.write("1");
+        c.write("2");
+        c.close();
+      },
+    });
+    expect({
+      queued: await readableStreamToArray(queued),
+      pulls,
+      direct: decode(await readableStreamToArray(direct)),
+    }).toEqual({
+      queued: [1, 2],
+      pulls: 3,
+      direct: ["1", "2"],
+    });
+  });
+
+  test("readableStreamToText over a direct stream", async () => {
+    const stream = new ReadableStream({
+      type: "direct",
+      pull(c) {
+        c.write("he");
+        c.write("llo");
+        c.close();
+      },
+    });
+    expect(await readableStreamToText(stream)).toBe("hello");
+  });
+
+  test("Response body from an async generator", async () => {
+    async function* gen() {
+      yield "g1";
+      yield "g2";
+    }
+    expect(await new Response(gen()).text()).toBe("g1g2");
+  });
+
+  test("Response body from an async iterator whose results have accessors", async () => {
+    const reads = [];
+    let i = 0;
+    const iterable = {
+      [Symbol.asyncIterator]() {
+        return {
+          next() {
+            const n = i++;
+            return Promise.resolve({
+              get done() {
+                reads.push(`done${n}`);
+                return n >= 2;
+              },
+              get value() {
+                reads.push(`value${n}`);
+                return n >= 2 ? undefined : `chunk${n}`;
+              },
+            });
+          },
+        };
+      },
+    };
+    const text = await new Response(iterable).text();
+    // IteratorStepValue: the value of a done result is never read.
+    expect({ text, reads }).toEqual({
+      text: "chunk0chunk1",
+      reads: ["done0", "value0", "done1", "value1", "done2"],
+    });
+  });
+
+  test("Response body from a {value, done} result given a done accessor afterwards", async () => {
+    let i = 0;
+    const iterable = {
+      [Symbol.asyncIterator]() {
+        return {
+          next() {
+            const n = i++;
+            const result = { value: `m${n}`, done: false };
+            Object.defineProperty(result, "done", { get: () => n >= 1 });
+            return Promise.resolve(result);
+          },
+        };
+      },
+    };
+    // The value of a done result is the iterator's return value, not a chunk.
+    expect(await new Response(iterable).text()).toBe("m0");
+  });
+
+  test("ReadableStream.from over generators", async () => {
+    async function* asyncGen() {
+      yield 1;
+      yield 2;
+      yield 3;
+    }
+    function* syncGen() {
+      yield "s1";
+      yield "s2";
+    }
+    expect({
+      async: await readableStreamToArray(ReadableStream.from(asyncGen())),
+      sync: await readableStreamToArray(ReadableStream.from(syncGen())),
+    }).toEqual({ async: [1, 2, 3], sync: ["s1", "s2"] });
+  });
+
+  test("ReadableStream.from over an async iterator whose results have accessors", async () => {
+    const reads = [];
+    let i = 0;
+    const iterable = {
+      [Symbol.asyncIterator]() {
+        return {
+          next() {
+            const n = i++;
+            return Promise.resolve({
+              get done() {
+                reads.push(`done${n}`);
+                return n >= 3;
+              },
+              get value() {
+                reads.push(`value${n}`);
+                // IteratorStepValue: the value of a done result is never read.
+                if (n >= 3) throw new Error("value read on a done result");
+                return n * 10;
+              },
+            });
+          },
+        };
+      },
+    };
+    const chunks = await readableStreamToArray(ReadableStream.from(iterable));
+    expect({ chunks, reads }).toEqual({
+      chunks: [0, 10, 20],
+      reads: ["done0", "value0", "done1", "value1", "done2", "value2", "done3"],
+    });
+  });
+
+  test("a ReadableStream response body is pumped into the HTTP sink", async () => {
+    // Each pull() runs when the sink drained the queue, so the body arrives in three batches.
+    let pulls = 0;
+    using server = Bun.serve({
+      port: 0,
+      fetch() {
+        const stream = new ReadableStream({
+          start(c) {
+            c.enqueue("part1-");
+          },
+          pull(c) {
+            if (++pulls === 1) {
+              c.enqueue("part2-");
+              c.enqueue("part3");
+            } else {
+              c.close();
+            }
+          },
+        });
+        return new Response(stream);
+      },
+    });
+    expect({ text: await (await fetch(server.url)).text(), pulls }).toEqual({ text: "part1-part2-part3", pulls: 2 });
   });
 });

@@ -67,9 +67,7 @@ JSC_HOST_CALL_ATTRIBUTES JSC::EncodedJSValue NapiClass_ConstructorFunction(JSC::
 
     JSValue ret = toJS(napi->constructor()(napi->env(), frame.toNapi()));
     napi_set_last_error(napi->env(), napi_ok);
-    if (napi->env()->throwPendingException()) {
-        return {};
-    }
+    napi->env()->throwPendingException();
     RETURN_IF_EXCEPTION(scope, {});
     if (ret.isEmpty()) {
         ret = jsUndefined();

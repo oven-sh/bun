@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isASAN, isDebug } from "harness";
+import path from "node:path";
 
 // bun_jsc::Strong handles now live in StrongRootBlock cells (rooted by a
 // per-VM marking constraint on JSVMClientData; slots re-visited on eden via the
@@ -9,6 +10,19 @@ import { bunEnv, bunExe, isASAN, isDebug } from "harness";
 // to keep protectedObjectTypeCounts/protectedObjectCount user-visible.
 
 describe.concurrent("Strong handles are backed by StrongRootBlock", () => {
+  // SQL statements drop their cached-Structure Strongs from JSCell destructors, i.e. mid-sweep;
+  // emptying and unlinking a block from there must not touch sibling cells (debug builds assert).
+  test("blocks emptied from sweep-time finalizers are released", async () => {
+    const fixture = path.join(import.meta.dir, "../../sql/postgres-statement-structure-gc.fixture.ts");
+    await using proc = Bun.spawn({ cmd: [bunExe(), fixture], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    const { count, protectedWhileHeld, protectedAfter } = JSON.parse(stdout.trim().split("\n").at(-1)!);
+    expect(protectedWhileHeld).toBeGreaterThanOrEqual(count);
+    expect(protectedAfter).toBeLessThan(10);
+    expect(exitCode).toBe(0);
+  });
+
   test("heapStats still reports protected Timeout counts", async () => {
     const src = `
       const { heapStats } = require("bun:jsc");

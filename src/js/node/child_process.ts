@@ -1254,18 +1254,7 @@ class ChildProcess extends EventEmitter {
               return stream;
             }
 
-            const nativePtr = value.$bunNativePtr;
-            let pipe;
-            if (typeof nativePtr === "object" && nativePtr !== null) {
-              pipe = require("internal/streams/native-readable").constructNativeReadable(value, {});
-            } else {
-              // No native handle: the pipe already closed empty (Readable::to_js
-              // returns ReadableStream::empty). The stream ends at once.
-              pipe = require("internal/streams/readable").fromWeb(value);
-              pipe.ref = pipe.unref = function () {
-                return this;
-              };
-            }
+            const pipe = require("internal/streams/native-readable").constructNativeReadable(value, {});
             this.#closesNeeded++;
             pipe.once("close", () => this.#maybeClose());
             if (autoResume) pipe.resume();

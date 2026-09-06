@@ -912,7 +912,15 @@ where
                                     .map(|st| st.st_nlink == 0)
                                     .unwrap_or(false));
                         if orphaned {
-                            ctx.remove_at_index(bun_watcher::Kind::File, event.index, 0, &[]);
+                            // SAFETY: same as the DELETE eviction above.
+                            unsafe {
+                                (*ctx).remove_at_index::<false>(
+                                    bun_watcher::Kind::File,
+                                    event.index,
+                                    0,
+                                    &[],
+                                )
+                            };
                             record_changed_path(file_path);
                             current_task.append(current_hash);
                             continue;

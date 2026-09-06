@@ -1,7 +1,7 @@
 import { spawn } from "bun";
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, forEachLine, isBroken, isWindows, tempDir } from "harness";
-import { rename, symlink, writeFile } from "node:fs/promises";
+import { mkdir, rename, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 describe.todoIf(isBroken && isWindows)("--watch works", async () => {
@@ -143,4 +143,50 @@ describe.skipIf(isWindows)("picks up atomic rename-save of a module outside cwd"
     proc.kill("SIGKILL");
     await proc.exited;
   });
+
+  // Workspace package imported by bare name from the workspace root: everything
+  // is inside cwd and the real-path parent dir IS watched, but the resolver's
+  // dir-entry cache is keyed by the `node_modules/lib/` spelling while the
+  // watchlist entry carries the real path, so the directory IN_MOVED_TO used to
+  // find no matching file entry and the rename-save was dropped. The per-file
+  // IN_ATTRIB (st_nlink == 0) eviction recovers it.
+  for (const flag of ["--watch", "--hot"] as const) {
+    test.concurrent(`${flag} a workspace package imported by bare name through node_modules`, async () => {
+      await using dir = tempDir("watch-workspace-bare-import", {
+        "package.json": JSON.stringify({ name: "root", private: true, workspaces: ["packages/*"] }),
+        "packages/app/package.json": JSON.stringify({ name: "app", dependencies: { lib: "workspace:*" } }),
+        "packages/app/entry.ts":
+          `import { sh } from "lib/index.js";\n` +
+          `globalThis.g = (globalThis.g ?? 0) + 1;\n` +
+          `console.log("EVAL g=" + globalThis.g + " shared=" + sh);\n`,
+        "packages/lib/package.json": JSON.stringify({ name: "lib", version: "1.0.0", main: "index.js" }),
+        "packages/lib/index.js": `export const sh = "V0";\n`,
+      });
+      const root = String(dir);
+      const libIndex = join(root, "packages", "lib", "index.js");
+      await mkdir(join(root, "packages", "app", "node_modules"), { recursive: true });
+      await symlink(join("..", "..", "lib"), join(root, "packages", "app", "node_modules", "lib"), "dir");
+
+      await using proc = spawn({
+        cmd: [bunExe(), flag, "--no-clear-screen", "packages/app/entry.ts"],
+        cwd: root,
+        env: bunEnv,
+        stdio: ["ignore", "pipe", "inherit"],
+      });
+      const iter = forEachLine(proc.stdout);
+
+      expect(await nextEval(iter)).toBe("EVAL g=1 shared=V0");
+
+      await renameSave(libIndex, `export const sh = "V1";\n`);
+      const g2 = flag === "--hot" ? "2" : "1";
+      expect(await nextEval(iter)).toBe(`EVAL g=${g2} shared=V1`);
+
+      await renameSave(libIndex, `export const sh = "V2";\n`);
+      const g3 = flag === "--hot" ? "3" : "1";
+      expect(await nextEval(iter)).toBe(`EVAL g=${g3} shared=V2`);
+
+      proc.kill("SIGKILL");
+      await proc.exited;
+    });
+  }
 });

@@ -1000,7 +1000,7 @@ test.concurrent("`bun up --help` prints the update help", async () => {
   expect(stdout).toContain("--no-optional");
   expect(stdout).toContain("Only update dependencies and optionalDependencies");
   expect(stdout).toContain("bun update --prod");
-  expect(stdout).toContain("--depth <NUM>");
+  expect(stdout).toContain("--depth=<val>");
   expect(stdout).toContain("bun update --depth 0");
   expect(stdout).not.toContain("--transitive");
   expect(stdout).not.toContain("Don't install devDependencies");

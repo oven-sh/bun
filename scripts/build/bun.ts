@@ -903,6 +903,7 @@ function emitTestFFI(
   };
   n.comment("─── testFFI (JSC's FFI test program) ───");
   const obj = cxx(n, cfg, spec.source, { flags: spec.cxxflags, orderOnlyInputs: webkit.outputs });
+  const shims = emitShims(n, cfg);
   const exe = link(n, cfg, "testFFI", [obj, ...fromDep("WebKit"), ...fromDep("icu"), ...fromDep("mimalloc")], {
     libs: [],
     // Debug info stripped at link: nothing symbolizes a testFFI crash, and
@@ -911,10 +912,11 @@ function emitTestFFI(
     flags: [
       ...computeTargetLinkFlags(cfg),
       ...(cfg.darwin ? ["-Wl,-dead_strip", "-Wl,-S"] : cfg.windows ? [] : ["-Wl,--gc-sections", "-Wl,--strip-debug"]),
+      ...shims.ldflags,
       ...spec.ldflags,
       ...systemLibs(cfg),
     ],
-    implicitInputs: machoPostlinkImplicitInputs(cfg),
+    implicitInputs: shims.implicitInputs,
   });
   // No phony: the file is `testFFI[.exe]` at the build root, so `ninja
   // testFFI` already names it (on Windows a `testFFI` alias would not clash,
@@ -1269,8 +1271,11 @@ export function validateBunConfig(cfg: Config): void {
   // without it), the build would proceed with the stale lld and fail at link
   // time with an opaque `error: ... .rcgu.o: Invalid record`. Fail at
   // configure time instead with a hint that points at the real problem.
+  // Native macOS links through Apple's ld + libLTO (no --ld-path), which is
+  // exempt: config.ts doesn't swap there and libLTO reads the newer bitcode.
   if (
     cfg.crossLangLto &&
+    !(cfg.darwin && cfg.crossTarget === undefined) &&
     cfg.rustToolchain !== undefined &&
     cfg.rustLlvmVersion !== undefined &&
     cfg.clangVersion !== undefined

@@ -28,7 +28,7 @@ import { computeDepFlags, computeTargetLinkFlags } from "./flags.ts";
 import { writeIfChanged } from "./fs.ts";
 import type { Ninja } from "./ninja.ts";
 import { quote, quoteArgs } from "./shell.ts";
-import { machoPostlinkImplicitInputs } from "./shims.ts";
+import { emitShims } from "./shims.ts";
 import { streamPath } from "./stream.ts";
 
 /**
@@ -1504,6 +1504,8 @@ function emitDirect(n: Ninja, cfg: Config, name: string, spec: DirectBuild, inpu
   linkObjects.push(...(spec.linkObjects ?? []).map(inBuild));
 
   // ─── Executables ───
+  // Target executables link in the same environment bun does (shims.ts).
+  const shims = steps.some(st => st.kind === "exe") ? emitShims(n, cfg) : { ldflags: [], implicitInputs: [] };
   for (const step of steps) {
     if (!isExe(step)) continue;
     let exe: string;
@@ -1552,9 +1554,10 @@ function emitDirect(n: Ninja, cfg: Config, name: string, spec: DirectBuild, inpu
         flags: [
           ...computeTargetLinkFlags(cfg),
           ...(cfg.darwin ? ["-Wl,-dead_strip"] : cfg.windows ? [] : ["-Wl,--gc-sections"]),
+          ...shims.ldflags,
           ...(step.ldflags ?? []),
         ],
-        implicitInputs: [...machoPostlinkImplicitInputs(cfg), ...(step.implicitInputs ?? []).map(inBuild)],
+        implicitInputs: [...shims.implicitInputs, ...(step.implicitInputs ?? []).map(inBuild)],
       });
     }
     n.phony(basename(inBuild(step.output)), [exe]);

@@ -836,8 +836,14 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
   // Shared with the darwin-cross ld64 swap below: for darwin targets
   // findRustLld() resolves rustc's `gcc-ld/ld64.lld` (the Mach-O flavor of
   // the same rust-lld), so the swap composes with the cross toolchain.
+  // Not on a native macOS host: that link goes through Apple's ld, which
+  // runs LTO with the libLTO the clang driver hands it and takes no
+  // --ld-path, so there is nothing to swap (and libLTO has read rustc's
+  // newer bitcode in practice); the configure-time skew check in bun.ts
+  // exempts it for the same reason.
   const wantRustLld =
     crossLangLto &&
+    !(darwin && !darwinCross) &&
     toolchain.rustLld !== undefined &&
     clangMajor !== undefined &&
     rustLlvmMajor !== undefined &&

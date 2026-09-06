@@ -6913,7 +6913,11 @@ pub(crate) mod __gated_printer {
 
         pub(crate) fn print_number(&mut self, value: f64, level: Level) {
             let abs_value = value.abs();
-            if value.is_nan() {
+            if IS_JSON && !value.is_finite() {
+                // JSON has no token for these. Match JSON.stringify.
+                self.print_space_before_identifier();
+                self.print(b"null");
+            } else if value.is_nan() {
                 self.print_space_before_identifier();
                 self.print(b"NaN");
             } else if value.is_infinite() {
@@ -6934,7 +6938,7 @@ pub(crate) mod __gated_printer {
                 }
 
                 // If we are not running the symbol renamer, we must not print "Infinity".
-                if IS_JSON || (!self.options.minify_syntax && self.options.has_run_symbol_renamer) {
+                if !self.options.minify_syntax && self.options.has_run_symbol_renamer {
                     self.print(b"Infinity");
                 } else if self.options.minify_whitespace {
                     self.print(b"1/0");

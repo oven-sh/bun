@@ -432,52 +432,25 @@ impl PmPkgCommand {
     }
 
     fn format_json(expr: Expr, initial_indent: Option<usize>) -> Result<Box<[u8]>, Error> {
-        match &expr.data {
-            ExprData::EBoolean(b) => Ok(Box::<[u8]>::from(if b.value {
-                &b"true"[..]
-            } else {
-                &b"false"[..]
-            })),
-            ExprData::ENumber(n) => {
-                let mut v = Vec::new();
-                if n.value().floor() == n.value() {
-                    write!(&mut v, "{:.0}", n.value()).map_err(|_| crate::Error::WriteFailed)?;
-                } else {
-                    write!(&mut v, "{}", n.value()).map_err(|_| crate::Error::WriteFailed)?;
-                }
-                Ok(v.into_boxed_slice())
-            }
-            ExprData::ENull(_) => Ok(Box::<[u8]>::from(&b"null"[..])),
-            _ => {
-                let buffer_writer = js_printer::BufferWriter::init();
-                let mut printer = js_printer::BufferPrinter::init(buffer_writer);
+        let buffer_writer = js_printer::BufferWriter::init();
+        let mut printer = js_printer::BufferPrinter::init(buffer_writer);
 
-                js_printer::print_json(
-                    &mut printer,
-                    expr,
-                    &Source::init_empty_file(b"expression.json"),
-                    js_printer::PrintJsonOptions {
-                        mangled_props: None,
-                        indent: match initial_indent {
-                            Some(indent) => bun_ast::Indentation {
-                                scalar: indent,
-                                count: 0,
-                                ..Default::default()
-                            },
-                            None => bun_ast::Indentation {
-                                scalar: 2,
-                                count: 0,
-                                ..Default::default()
-                            },
-                        },
-                        ..Default::default()
-                    },
-                )?;
+        js_printer::print_json(
+            &mut printer,
+            expr,
+            &Source::init_empty_file(b"expression.json"),
+            js_printer::PrintJsonOptions {
+                mangled_props: None,
+                indent: bun_ast::Indentation {
+                    scalar: initial_indent.unwrap_or(2),
+                    count: 0,
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+        )?;
 
-                let written = printer.ctx.get_written();
-                Ok(Box::<[u8]>::from(written))
-            }
-        }
+        Ok(Box::<[u8]>::from(printer.ctx.get_written()))
     }
 
     fn get_json_value(

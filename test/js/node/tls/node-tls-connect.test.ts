@@ -584,6 +584,86 @@ for (const { name, connect } of tests) {
   });
 }
 
+// A TLS record that fails after the handshake is a fatal protocol error. Node
+// surfaces it as the socket's ERR_SSL_<REASON> 'error'. Bun also destroys the
+// socket with that error (the engine's only exit is a close), so 'close'
+// follows with hadError. Over a generic Duplex the TLS engine is SSLWrapper,
+// a separate SSL_read driver from the uSockets one, so it gets its own
+// coverage. A TCP proxy between the Duplex and the server injects the bytes
+// once the handshake has completed on both sides.
+describe("tls.connect over a Duplex reports a fatal post-handshake SSL error", () => {
+  // application_data, legacy version TLS 1.2, 32 bytes of ciphertext that
+  // cannot authenticate: the receiver fails the AEAD open and alerts
+  // bad_record_mac.
+  const BAD_RECORD = Buffer.concat([Buffer.from([0x17, 0x03, 0x03, 0x00, 0x20]), Buffer.alloc(32, 0x42)]);
+
+  async function run(inject: (toClient: net.Socket, toServer: net.Socket) => void) {
+    await using server = tls.createServer(COMMON_CERT_);
+    server.on("secureConnection", s => s.on("error", () => {}));
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    const serverSecure = once(server, "secureConnection");
+
+    let toClient: net.Socket | undefined;
+    let toServer: net.Socket | undefined;
+    await using proxy = net.createServer(c => {
+      toClient = c;
+      toServer = net.connect((server.address() as AddressInfo).port, "127.0.0.1");
+      c.pipe(toServer);
+      toServer.pipe(c);
+      c.on("error", () => {});
+      toServer.on("error", () => {});
+    });
+    await once(proxy.listen(0, "127.0.0.1"), "listening");
+
+    const raw = net.connect((proxy.address() as AddressInfo).port, "127.0.0.1");
+    await once(raw, "connect");
+    const client = tls.connect({ socket: new SocketProxy(raw), rejectUnauthorized: false });
+    // A clean 'close' with no 'error' before it is the bug, so the result
+    // settles on 'close' either way instead of waiting on an 'error' that may
+    // never come.
+    let err: (Error & { library?: string; reason?: string }) | undefined;
+    client.once("error", e => (err = e));
+    const clientClose = new Promise<boolean>(resolve => client.once("close", resolve));
+    await once(client, "secureConnect");
+    await serverSecure;
+
+    inject(toClient!, toServer!);
+
+    const hadError = await clientClose;
+    return {
+      code: err?.code,
+      library: err?.library,
+      reason: err?.reason,
+      message: err?.message,
+      hadError,
+    };
+  }
+
+  it("a record that fails to decrypt surfaces as ERR_SSL_DECRYPTION_FAILED_OR_BAD_RECORD_MAC", async () => {
+    const result = await run(toClient => toClient.write(BAD_RECORD));
+    expect(result).toEqual({
+      code: "ERR_SSL_DECRYPTION_FAILED_OR_BAD_RECORD_MAC",
+      library: "SSL routines",
+      reason: "DECRYPTION_FAILED_OR_BAD_RECORD_MAC",
+      message: expect.stringMatching(/^error:[0-9a-f]+:SSL routines:[^:]*:DECRYPTION_FAILED_OR_BAD_RECORD_MAC$/),
+      hadError: true,
+    });
+  });
+
+  it("the peer's fatal alert surfaces as ERR_SSL_SSLV3_ALERT_BAD_RECORD_MAC", async () => {
+    // The bad record goes to the server, whose SSL_read fails and sends a
+    // bad_record_mac alert back. The client's SSL_read fails on that alert.
+    const result = await run((_toClient, toServer) => toServer.write(BAD_RECORD));
+    expect(result).toEqual({
+      code: "ERR_SSL_SSLV3_ALERT_BAD_RECORD_MAC",
+      library: "SSL routines",
+      reason: "SSLV3_ALERT_BAD_RECORD_MAC",
+      message: expect.stringMatching(/^error:[0-9a-f]+:SSL routines:[^:]*:SSLV3_ALERT_BAD_RECORD_MAC$/),
+      hadError: true,
+    });
+  });
+});
+
 it("setSession() should not leak the SSL_SESSION returned by d2i_SSL_SESSION", async () => {
   // d2i_SSL_SESSION returns an owned SSL_SESSION; SSL_set_session takes its own
   // reference ("the caller retains ownership"), so the caller's reference must

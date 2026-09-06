@@ -473,7 +473,7 @@ pub(crate) fn write_encrypted(ctx: *mut HTTPClient, encoded_data: &[u8]) {
     }
 }
 
-fn on_close(ctx: *mut HTTPClient) {
+fn on_close(ctx: *mut HTTPClient, _reason: Option<&core::ffi::CStr>) {
     // on_close is fired from inside SSLWrapper::shutdown (via close_raw) whose
     // caller may itself be a callback that already held `&mut *ctx`; that
     // outer borrow is required to be NLL-dead before close_raw is invoked

@@ -1961,6 +1961,19 @@ static void ssl_park_fatal_reason(struct us_socket_t *s) {
   s->ssl_fatal_error = 1;
 }
 
+/* Drain the queue into `out` as the root-cause reason string and return 1,
+ * or return 0 with nothing queued. Exported for the SSLWrapper engine
+ * (src/uws/lib.rs), which drives SSL_read itself for TLS over a duplex or a
+ * named pipe, so both engines pick the same entry. */
+int us_ssl_take_fatal_reason(char *out, size_t out_len) {
+  unsigned long ssl_queue_err = ssl_take_root_cause_error();
+  if (ssl_queue_err == 0) {
+    return 0;
+  }
+  ERR_error_string_n(ssl_queue_err, out, out_len);
+  return 1;
+}
+
 /* The post-handshake counterpart of ssl_park_fatal_reason: the handshake
  * dispatch that would consume a parked reason has already run, so the reason
  * travels with the close instead (on_close's `reason`, which node surfaces
@@ -1969,12 +1982,7 @@ static void ssl_park_fatal_reason(struct us_socket_t *s) {
  * renegotiation-limit close, a BIO write that failed with no SSL error).
  * Drains the queue and marks the socket fatal either way. */
 static int ssl_take_fatal_reason(struct us_socket_t *s, char *out, size_t out_len) {
-  int taken = 0;
-  unsigned long ssl_queue_err = ssl_take_root_cause_error();
-  if (ssl_queue_err != 0) {
-    ERR_error_string_n(ssl_queue_err, out, out_len);
-    taken = 1;
-  }
+  int taken = us_ssl_take_fatal_reason(out, out_len);
   s->ssl_fatal_error = 1;
   return taken;
 }

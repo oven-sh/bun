@@ -810,7 +810,11 @@ fn add_script_configs<V: core::ops::Deref<Target = [u8]>>(
             let mut v = Vec::with_capacity(bun_path.len() + raw_name.len() + 4);
             v.push(b'"');
             v.extend_from_slice(bun_path);
-            v.extend_from_slice(b"\" ");
+            v.push(b'"');
+            if let Some(flags) = RunCommand::hot_reload_flags(ctx) {
+                v.extend_from_slice(&flags);
+            }
+            v.push(b' ');
             v.extend_from_slice(raw_name);
             v.push(0);
             v.into_boxed_slice()
@@ -818,6 +822,7 @@ fn add_script_configs<V: core::ops::Deref<Target = [u8]>>(
             // allocator.dupeZ
             let mut v = Vec::with_capacity(raw_name.len() + 1);
             v.extend_from_slice(raw_name);
+            RunCommand::forward_hot_reload_to_script_or_warn(ctx, raw_name, &mut v);
             v.push(0);
             v.into_boxed_slice()
         };
@@ -998,6 +1003,7 @@ pub(crate) fn run(ctx: &mut Command::ContextData) -> Result<core::convert::Infal
                     index_sort::sort_slice_by(&mut matches, |a, b| a.cmp(b));
                     for matched_name in &matches {
                         add_script_configs(
+                            ctx,
                             &mut configs,
                             &mut group_infos,
                             matched_name,
@@ -1010,6 +1016,7 @@ pub(crate) fn run(ctx: &mut Command::ContextData) -> Result<core::convert::Infal
                 } else {
                     if pkg.scripts.get(raw_name).is_some() {
                         add_script_configs(
+                            ctx,
                             &mut configs,
                             &mut group_infos,
                             raw_name,
@@ -1086,6 +1093,7 @@ pub(crate) fn run(ctx: &mut Command::ContextData) -> Result<core::convert::Infal
 
                     for matched_name in &matches {
                         add_script_configs(
+                            ctx,
                             &mut configs,
                             &mut group_infos,
                             matched_name,
@@ -1104,6 +1112,7 @@ pub(crate) fn run(ctx: &mut Command::ContextData) -> Result<core::convert::Infal
                 }
             } else {
                 add_script_configs(
+                    ctx,
                     &mut configs,
                     &mut group_infos,
                     raw_name,

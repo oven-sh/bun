@@ -243,33 +243,41 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         script_name: &[u8],
         script: &mut Vec<u8>,
     ) {
-        let flag: &[u8] = match ctx.debug.hot_reload {
-            cli::command::HotReload::None => return,
-            cli::command::HotReload::Hot => b" --hot",
-            cli::command::HotReload::Watch => b" --watch",
+        let Some(flags) = Self::hot_reload_flags(ctx) else {
+            return;
         };
         let Some(at) = Self::single_bun_command_end(script) else {
             if !ctx.debug.silent {
                 bun_core::warn!(
                     "{} was not applied to script \"{}\". It is forwarded only when the script is a single bun command; add the flag inside the script instead.",
-                    bstr::BStr::new(&flag[1..]),
+                    if ctx.debug.hot_reload == cli::command::HotReload::Hot { "--hot" } else { "--watch" },
                     bstr::BStr::new(script_name),
                 );
                 Output::flush();
             }
             return;
         };
-        let mut insert: Vec<u8> = flag.to_vec();
+        script.splice(at..at, flags);
+    }
+
+    /// The `--watch` / `--hot` flags this process was started with, spelled
+    /// for a child `bun` command line (leading space included), or `None`.
+    pub(crate) fn hot_reload_flags(ctx: &ContextData) -> Option<Vec<u8>> {
+        let mut flags: Vec<u8> = match ctx.debug.hot_reload {
+            cli::command::HotReload::None => return None,
+            cli::command::HotReload::Hot => b" --hot".to_vec(),
+            cli::command::HotReload::Watch => b" --watch".to_vec(),
+        };
         if bun_dotenv::HAS_NO_CLEAR_SCREEN_CLI_FLAG.get().copied() == Some(true) {
-            insert.extend_from_slice(b" --no-clear-screen");
+            flags.extend_from_slice(b" --no-clear-screen");
         }
         if ctx.debug.hot_reload == cli::command::HotReload::Watch
             && ctx.debug.watch_kill_signal != bun_core::SignalCode::DEFAULT
         {
-            insert.extend_from_slice(b" --watch-kill-signal=");
-            insert.extend_from_slice(ctx.debug.watch_kill_signal.name().as_bytes());
+            flags.extend_from_slice(b" --watch-kill-signal=");
+            flags.extend_from_slice(ctx.debug.watch_kill_signal.name().as_bytes());
         }
-        script.splice(at..at, insert);
+        Some(flags)
     }
 
     /// If `script` is a single simple shell command whose program is `bun`

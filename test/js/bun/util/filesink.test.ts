@@ -983,12 +983,14 @@ describe("FileSink on a pipe stays alive until end() has drained the buffer", ()
     return { stdoutLength: stdout.length, stderr, exitCode };
   }
 
+  // On Windows uv_write takes the whole chunk at once and end() can return a
+  // plain number, hence Promise.resolve().
   it.concurrent("end() without await", async () => {
     expect(
       await run(`
         const w = Bun.stdout.writer();
         w.write(Buffer.alloc(${size}, 46));
-        w.end().then(() => { settled = "resolved"; }, e => { settled = "rejected: " + e.code; });
+        Promise.resolve(w.end()).then(() => { settled = "resolved"; }, e => { settled = "rejected: " + e.code; });
         console.error("ended");
       `),
     ).toEqual({
@@ -1024,24 +1026,36 @@ describe("FileSink on a pipe stays alive until end() has drained the buffer", ()
   // count arrives on the parent's stdout after it has read everything.
   it.concurrent("Bun.spawn stdin pipe with an unref'd child", async () => {
     const flag = join(tmpdirSync(), "ended");
+    // Polls for the flag with a deadline so that it cannot outlive a parent
+    // that died before writing it.
+    const reader = `
+      const fs = require("fs");
+      const deadline = Date.now() + 60_000;
+      while (!fs.existsSync(process.argv[1])) {
+        if (Date.now() > deadline) {
+          console.error("gave up waiting for " + process.argv[1]);
+          process.exit(3);
+        }
+        Bun.sleepSync(1);
+      }
+      console.log((await Bun.stdin.bytes()).length);
+    `;
     await using proc = Bun.spawn({
       cmd: [
         bunExe(),
         "-e",
         `
           const child = Bun.spawn(
-            [
-              process.execPath,
-              "-e",
-              'while (!require("fs").existsSync(process.argv[1])) Bun.sleepSync(1); console.log((await Bun.stdin.bytes()).length);',
-              ${JSON.stringify(flag)},
-            ],
+            [process.execPath, "-e", ${JSON.stringify(reader)}, ${JSON.stringify(flag)}],
             { stdin: "pipe", stdout: "inherit", stderr: "inherit" },
           );
-          child.stdin.write(Buffer.alloc(${size}, 65));
-          child.stdin.end();
-          child.unref();
-          require("fs").writeFileSync(${JSON.stringify(flag)}, "");
+          try {
+            child.stdin.write(Buffer.alloc(${size}, 65));
+            child.stdin.end();
+            child.unref();
+          } finally {
+            require("fs").writeFileSync(${JSON.stringify(flag)}, "");
+          }
         `,
       ],
       env: bunEnv,

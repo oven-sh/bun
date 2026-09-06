@@ -241,8 +241,7 @@ static inline JSC::EncodedJSValue constructJSWebSocket3(JSGlobalObject* lexicalG
             }
         }
 
-        // `protocols` takes the same `(DOMString or sequence<DOMString>)` union as the
-        // positional argument. `protocol` (singular) is the fallback when `protocols` is absent.
+        // `protocols` / `protocol`: (DOMString or sequence<DOMString>), like the positional argument.
         auto protocolsValue = Bun::getOwnPropertyIfExists(globalObject, options, PropertyName(Identifier::fromString(vm, "protocols"_s)));
         RETURN_IF_EXCEPTION(throwScope, {});
         if (protocolsValue.isUndefinedOrNull()) {

@@ -1201,6 +1201,29 @@ test("bun pm trust --dry-run lists the scripts, runs none, and writes nothing", 
   expect(exitCode).toBe(0);
 });
 
+test("bun pm trust runs the scripts when only .npmrc sets ignore-scripts", async () => {
+  using dir = tempDir("pm-trust-npmrc-ignore-scripts", {
+    ...projectWithBlockedPostinstall(),
+    ".npmrc": "ignore-scripts=true\n",
+  });
+  const dirStr = String(dir);
+  await installWithBlockedPostinstall(dirStr);
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "pm", "trust", "dep"],
+    cwd: dirStr,
+    stdout: "pipe",
+    stderr: "pipe",
+    env,
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stderr).not.toContain("error:");
+  expect(stdout).toContain("1 script ran across 1 package");
+  expect(await exists(join(dirStr, "node_modules", "dep", "postinstall-ran.txt"))).toBeTrue();
+  expect(exitCode).toBe(0);
+});
+
 test("bun pm trust --ignore-scripts records the trust without running the scripts", async () => {
   using dir = tempDir("pm-trust-ignore-scripts", projectWithBlockedPostinstall());
   const dirStr = String(dir);

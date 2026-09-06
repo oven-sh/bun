@@ -371,7 +371,7 @@ Options for the `trust` command:
 
 - `--all`: Trust all untrusted dependencies.
 - `--dry-run`: Print the scripts that would run. Run nothing and write nothing.
-- `--ignore-scripts`: Add the packages to `trustedDependencies` in `package.json` without running their scripts. The next `bun install` runs them and updates the lockfile.
+- `--ignore-scripts`: Add the packages to `trustedDependencies` in `package.json` without running their scripts. The next `bun install` runs them and updates the lockfile. Only the flag does this. `ignoreScripts` in `bunfig.toml` or `.npmrc` does not stop `bun pm trust` from running the scripts you name.
 
 ## default-trusted
 

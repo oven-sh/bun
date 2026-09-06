@@ -441,10 +441,11 @@ impl TrustCommand {
 
         // SAFETY: `pm_raw` singleton; `options` is CLI config set at init.
         let dry_run = unsafe { (*pm_raw).options.dry_run };
-        // `--ignore-scripts` (or `ignoreScripts` in config) still records the
-        // trust, so the next `bun install` runs the scripts.
-        // SAFETY: see above.
-        let run_scripts = !dry_run && unsafe { (*pm_raw).options.do_.run_scripts() };
+        // Only the flag skips the scripts. `ignoreScripts` in bunfig or
+        // `.npmrc` does not, because `bun pm trust <name>` is the explicit
+        // request to run them and there is no flag to override the config.
+        let ignore_scripts = strings::left_has_any_in_right(args, &[b"--ignore-scripts"]);
+        let run_scripts = !dry_run && !ignore_scripts;
 
         let mut scripts_node: Progress::Node;
         // SAFETY: `pm_raw` singleton; `progress` is owned inline.

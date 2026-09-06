@@ -6897,9 +6897,10 @@ declare module "bun" {
     getSession(): void;
 
     /**
-     * Sets the TLS session to resume. Call it before the handshake starts,
-     * for example inside the `open` handler. It throws once the handshake
-     * has started.
+     * Sets the TLS session to resume. Call it before the handshake starts.
+     * The `open` handler runs before the handshake only when a `handshake`
+     * handler is also registered. Without one, `open` runs after the
+     * handshake. It throws `Already started.` once the handshake has started.
      *
      * @param session The session to set.
      */

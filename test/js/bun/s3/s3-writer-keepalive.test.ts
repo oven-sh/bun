@@ -74,14 +74,15 @@ const cases: [string, string][] = [
   ],
 ];
 
-for (const [name, source] of cases) {
-  test.concurrent(`S3 writer() that is never ended does not keep the process alive (${name})`, async () => {
+test.concurrent.each(cases)(
+  "S3 writer() that is never ended does not keep the process alive (%s)",
+  async (_name, source) => {
     const { stdout, stderr, exitCode } = await run(source);
     expect(stderr).toBe("");
     expect(stdout).toBe("done\n");
     expect(exitCode).toBe(0);
-  });
-}
+  },
+);
 
 test.concurrent("S3 writer() end() keeps the process alive until the upload settles", async () => {
   const { stdout, stderr, exitCode } = await run(`

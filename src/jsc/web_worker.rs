@@ -313,10 +313,8 @@ impl WebWorker {
             unsafe { (*parent).transpiler.set_log(prev_log) };
             drop(log);
         });
-        // The log lives inside the guard. Point the resolver at that slot, not
-        // at a local that a later move would leave behind.
         let temp_log = &mut *restore;
-        // SAFETY: as above; the pointer is cleared by the guard before `restore` drops.
+        // SAFETY: as above; the guard restores `prev_log` before `temp_log` drops.
         unsafe { (*parent).transpiler.set_log(&raw mut *temp_log) };
 
         // SAFETY: caller passed valid (ptr,len) (or `(null,0)`); slice borrowed from C++.
@@ -1268,8 +1266,6 @@ fn on_unhandled_rejection(
     vm.handle_ref().request_termination();
 }
 
-/// Which worker specifier `resolve_entry_point_specifier` is resolving. A
-/// preload failure is reported to the `Worker` constructor as a plain string.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum SpecifierRole {
     EntryPoint,

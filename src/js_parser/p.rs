@@ -7643,7 +7643,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                     .alloc_slice_fill_default::<Expr>(constructor_args.len());
                                 for (i, ca) in constructor_args.iter().enumerate() {
                                     param_array[i] = self
-                                        .serialize_metadata(ca.ts_metadata.clone())
+                                        .serialize_metadata(ca.ts_metadata)
                                         .expect("unreachable");
                                 }
                                 let items = ExprNodeList::from_arena_slice(param_array);
@@ -7735,7 +7735,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 {
                     // design:type
                     let v = self
-                        .serialize_metadata(prop.ts_metadata.clone())
+                        .serialize_metadata(prop.ts_metadata)
                         .expect("unreachable");
                     push_metadata!(b"design:type", v);
                 }
@@ -7754,7 +7754,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 .alloc_slice_fill_default::<Expr>(method_args.len());
                             for (entry, method_arg) in args_array.iter_mut().zip(method_args) {
                                 *entry = self
-                                    .serialize_metadata(method_arg.ts_metadata.clone())
+                                    .serialize_metadata(method_arg.ts_metadata)
                                     .expect("unreachable");
                             }
                             let items = ExprNodeList::from_arena_slice(args_array);
@@ -7769,7 +7769,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         }
                         {
                             let v = self
-                                .serialize_metadata(func.func.return_ts_metadata.clone())
+                                .serialize_metadata(func.func.return_ts_metadata)
                                 .expect("unreachable");
                             push_metadata!(b"design:returntype", v);
                         }
@@ -7786,7 +7786,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             .expect("infallible: variant checked");
                         {
                             let v = self
-                                .serialize_metadata(func.func.return_ts_metadata.clone())
+                                .serialize_metadata(func.func.return_ts_metadata)
                                 .expect("unreachable");
                             push_metadata!(b"design:type", v);
                         }
@@ -7821,7 +7821,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 .alloc_slice_fill_default::<Expr>(method_args.len());
                             for (entry, method_arg) in args_array.iter_mut().zip(method_args) {
                                 *entry = self
-                                    .serialize_metadata(method_arg.ts_metadata.clone())
+                                    .serialize_metadata(method_arg.ts_metadata)
                                     .expect("unreachable");
                             }
                             let items = ExprNodeList::from_arena_slice(args_array);
@@ -7836,7 +7836,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         }
                         if !method_args.is_empty() {
                             let v = self
-                                .serialize_metadata(method_args[0].ts_metadata.clone())
+                                .serialize_metadata(method_args[0].ts_metadata)
                                 .expect("unreachable");
                             push_metadata!(b"design:type", v);
                         }

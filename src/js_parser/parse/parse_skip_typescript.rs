@@ -797,10 +797,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     self.lexer.next()?;
 
                     if GET_METADATA {
-                        let mut left = (**result
+                        let mut left = **result
                             .as_mut()
-                            .expect("infallible: GET_METADATA implies Some"))
-                        .clone();
+                            .expect("infallible: GET_METADATA implies Some");
                         if let Some(final_) =
                             Metadata::finish_union(&mut left, |r| self.load_name_from_ref(r))
                         {
@@ -842,10 +841,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     self.lexer.next()?;
 
                     if GET_METADATA {
-                        let mut left = (**result
+                        let mut left = **result
                             .as_mut()
-                            .expect("infallible: GET_METADATA implies Some"))
-                        .clone();
+                            .expect("infallible: GET_METADATA implies Some");
                         if let Some(final_) =
                             Metadata::finish_intersection(&mut left, |r| self.load_name_from_ref(r))
                         {
@@ -907,17 +905,23 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         match r {
                             Metadata::MIdentifier(id_ref) => {
                                 let id_ref = *id_ref;
-                                let mut dot: Vec<Ref> = Vec::with_capacity(2);
-                                dot.push(id_ref);
                                 let find_result = self.find_symbol(bun_ast::Loc::EMPTY, ident)?;
-                                dot.push(find_result.r#ref);
-                                *r = Metadata::MDot(dot);
+                                let dot: &mut [Ref] =
+                                    self.arena.alloc_slice_copy(&[id_ref, find_result.r#ref]);
+                                *r = Metadata::MDot(bun_ast::StoreSlice::new_mut(dot));
                             }
                             Metadata::MDot(dot) => {
                                 if self.lexer.is_identifier_or_keyword() {
                                     let find_result =
                                         self.find_symbol(bun_ast::Loc::EMPTY, ident)?;
-                                    dot.push(find_result.r#ref);
+                                    let old: &[Ref] = dot.slice();
+                                    let mut grown = bun_alloc::ArenaVec::<Ref>::with_capacity_in(
+                                        old.len() + 1,
+                                        self.arena,
+                                    );
+                                    grown.extend_from_slice(old);
+                                    grown.push(find_result.r#ref);
+                                    *r = Metadata::MDot(bun_ast::StoreSlice::from_bump(grown));
                                 }
                             }
                             _ => {}

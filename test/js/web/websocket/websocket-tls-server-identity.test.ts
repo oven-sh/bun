@@ -146,6 +146,25 @@ describe.concurrent("WebSocket tls.checkServerIdentity", () => {
     ]);
   });
 
+  test("drains microtasks queued by the callback before the open event", async () => {
+    using server = startSniServer();
+    const url = `wss://localhost:${await server.port}/`;
+    const order: string[] = [];
+    const ws = new WebSocket(url, {
+      tls: {
+        ca: tlsCerts.cert,
+        checkServerIdentity() {
+          order.push("callback");
+          queueMicrotask(() => order.push("microtask"));
+          return undefined;
+        },
+      },
+    });
+    ws.addEventListener("open", () => order.push("open"));
+    expect(await openSession(ws)).toEqual(opened);
+    expect(order).toEqual(["callback", "microtask", "open"]);
+  });
+
   test("rejects the connection when it returns an Error", async () => {
     using server = startSniServer();
     const url = `wss://localhost:${await server.port}/`;

@@ -312,20 +312,23 @@ describe("source map remapping of the printed stack", () => {
     expect(positions(out.deletedStack)).toEqual(expected("deleted.ts"));
 
     // For `throw new Error()`, error.stack reports the column of `Error` and
-    // the printer's own JSC frames report the column of `new`. Compare lines
-    // for the frames the printer computed itself: a second remap would move
-    // them to another line.
-    const lines = text => positions(text).map(frame => frame.replace(/:\d+\)$/, ")"));
+    // the printer's own JSC frames report the column of `new`, four columns
+    // to the left. Frames the printer copies from an already read error.stack
+    // keep that string's columns.
+    const printerColumns = text =>
+      positions(text).map(frame =>
+        frame.replace(/^(at thrower \(.*:5:)(\d+)\)$/, (_, prefix, col) => `${prefix}${col - "new ".length})`),
+      );
     expect({
-      presentInspect: lines(out.presentInspect),
+      presentInspect: positions(out.presentInspect),
       presentStackThenInspect: positions(out.presentStackThenInspect),
-      deletedInspect: lines(out.deletedInspect),
+      deletedInspect: positions(out.deletedInspect),
       deletedStackThenInspect: positions(out.deletedStackThenInspect),
       uncaughtAfterStack: positions(stderr),
     }).toEqual({
-      presentInspect: lines(out.presentStack),
+      presentInspect: printerColumns(out.presentStack),
       presentStackThenInspect: positions(out.presentStack),
-      deletedInspect: lines(out.deletedStack),
+      deletedInspect: printerColumns(out.deletedStack),
       deletedStackThenInspect: positions(out.deletedStack),
       uncaughtAfterStack: positions(out.presentStack),
     });

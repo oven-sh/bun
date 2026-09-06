@@ -30,7 +30,7 @@ async function run(source: string): Promise<string> {
   return stdout;
 }
 
-describe("runtime transpiler keeps stack frames", () => {
+describe.concurrent("runtime transpiler keeps stack frames", () => {
   test("a single-use const returned from a function keeps the function's frame", async () => {
     const stdout = await run(`\
 function g() { throw new Error("boom"); }
@@ -73,9 +73,9 @@ try { h(); } catch (e) { console.log((e as Error).stack); }
     expect(frames(stdout)).toEqual(["h 4:11", "<top> 6:7"]);
   });
 
-  test("the frame stays when a tail-position call is already in the source", async () => {
-    // `return g()` is a tail call in the source. The frame is absent with or
-    // without the transpiler, so the rewrite of `x.y()` is still allowed.
+  test("a binding is still inlined into a return that already holds a tail call", async () => {
+    // `return x.y()` is a tail call in the source, so `f` is absent with or
+    // without the transpiler. The substitution of `x` stays allowed.
     const stdout = await run(`\
 function g() { throw new Error("boom"); }
 function f() {
@@ -88,7 +88,7 @@ try { f(); } catch (e) { console.log((e as Error).stack); }
   });
 });
 
-describe("requested minify_syntax", () => {
+describe.concurrent("requested minify_syntax", () => {
   const source = `export function k() { return new Error("x"); }`;
 
   test("bun build --minify-syntax still drops new on a known constructor", async () => {

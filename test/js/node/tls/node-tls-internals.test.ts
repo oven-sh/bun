@@ -110,8 +110,10 @@ describe("NodeTLS.cpp", () => {
       tls.DEFAULT_CIPHERS = before;
     }
 
-    // Each call returns a fresh array.
+    // Each call returns a fresh array, so a caller cannot change the cached list.
+    const copy = [...ciphers];
+    expect(tls.getCiphers()).not.toBe(tls.getCiphers());
     tls.getCiphers().length = 0;
-    expect(tls.getCiphers()).toEqual(ciphers);
+    expect(tls.getCiphers()).toEqual(copy);
   });
 });

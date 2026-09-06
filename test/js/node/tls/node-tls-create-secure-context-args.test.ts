@@ -144,5 +144,11 @@ describe("tls.createSecureContext pfx argument", () => {
     expect(own instanceof tls.SecureContext).toBe(true);
     expect(typeof own.context.addCACert).toBe("function");
     expect(tls.createSecureContext(own)).toBe(own);
+
+    // Node's SecureContext returns an instance when called without `new`.
+    // @ts-expect-error the types only admit `new`
+    const called = tls.SecureContext({});
+    expect(called instanceof tls.SecureContext).toBe(true);
+    expect(typeof called.context.addCACert).toBe("function");
   });
 });

@@ -625,11 +625,13 @@ function newNativeSecureContext(options, cached = false) {
 // cannot produce it, so a user context always owns its handle.
 const kCachedContext = Symbol("kCachedContext");
 
-class SecureContext {
-  context;
-  servername;
-
-  constructor(options, cachedMarker?) {
+// A function, not a class: Node's SecureContext returns a new instance when it
+// is called without `new`.
+function SecureContext(options, cachedMarker?): void {
+  if (!(this instanceof SecureContext)) {
+    return new SecureContext(options) as never;
+  }
+  {
     const cached = cachedMarker === kCachedContext;
     // When tls.setDefaultCACertificates() has installed an override and no
     // explicit `ca` was given, use the override as the default CA set so the
@@ -681,6 +683,7 @@ class SecureContext {
     this.servername = options?.servername;
   }
 }
+$toClass(SecureContext, "SecureContext");
 
 function createSecureContext(options) {
   if (options instanceof SecureContext) return options;
@@ -1645,12 +1648,16 @@ function connect(...args) {
 let cachedCipherList: string[] | undefined;
 function getCiphers() {
   if (cachedCipherList === undefined) {
-    const names = getSSLCiphers();
-    const unique = new Set<string>();
+    const names: string[] = getSSLCiphers();
     for (let i = 0; i < names.length; i++) {
-      unique.add(StringPrototypeToLowerCase.$call(names[i]));
+      names[i] = StringPrototypeToLowerCase.$call(names[i]);
     }
-    cachedCipherList = ArrayPrototypeSort.$call(Array.from(unique));
+    ArrayPrototypeSort.$call(names);
+    const list: string[] = [];
+    for (let i = 0; i < names.length; i++) {
+      if (i === 0 || names[i] !== names[i - 1]) ArrayPrototypePush.$call(list, names[i]);
+    }
+    cachedCipherList = list;
   }
   return ArrayPrototypeSlice.$call(cachedCipherList);
 }

@@ -238,14 +238,18 @@ use `<rust-hash>` in place of the hash:
 Either form works (the tool canonicalizes both before comparing), but
 `<rust-hash>` survives toolchain bumps.
 
-**Windows `<lib:NAME.lib>`.** When PDB has no per-function record for a hit
-(stripped CRT objects, anonymized staticlib helpers), the tool falls back to
-section-contribution attribution: the linker-map "which `.lib` did this byte
-come from" data. These attributions are stable across link layout changes.
-Allowlist them literally:
+**Windows `<lib:NAME.lib>` / `<lib:NAME.obj>`.** When PDB has no per-function
+record for a hit (stripped CRT objects, anonymized staticlib helpers, an asm
+file's leading local routine with no PUBLIC record, the MSVC STL when its own
+PDB isn't in the sysroot), the tool falls back to section-contribution
+attribution: the linker-map "which `.lib`/`.obj` did this byte come from"
+data. A zero-size public's synthesized range is likewise cut at its own
+contribution, so it never absorbs the next object's unnamed code. These
+attributions are stable across link layout changes. Allowlist them literally:
 
 ```
 <lib:lolhtml.lib>  [AVX, AVX2]
+<lib:aesni-gcm-x86_64-win.asm.obj> [AES, AVX, MOVBE, PCLMULQDQ]
 ```
 
 **`<no-symbol@0x...>`** — the address fell in padding between functions or the

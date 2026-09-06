@@ -224,7 +224,11 @@ describe.concurrent("node-module-module", () => {
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(JSON.parse(stdout)).toEqual({
       status: Module.constants.compileCacheStatus.FAILED,
-      message: expect.stringContaining("Cannot create cache directory"),
+      // The Windows path buffer holds 32767 UTF-16 units, so an 8000 byte
+      // value fits and the failure comes from mkdir with an errno name.
+      message: isWindows
+        ? expect.stringContaining("Cannot create cache directory: ")
+        : "Cannot create cache directory: path too long",
     });
     expect(stderr).toBe("");
     expect(exitCode).toBe(0);

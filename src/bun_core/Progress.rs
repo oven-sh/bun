@@ -557,31 +557,11 @@ impl Progress {
                 }
                 need_ellipse = false;
                 if !name.is_empty() || eti > 0 {
-                    if !name.is_empty() {
-                        self.buf_write(&mut end, format_args!("{}", crate::fmt::s(name)));
-                        need_ellipse = true;
-                    }
+                    // Write counter first, then name — avoids the counter jumping
+                    // horizontally as package names vary in length.
                     if eti > 0 {
-                        if need_ellipse {
-                            self.buf_write(&mut end, format_args!(" "));
-                        }
-                        match unit {
-                            Unit::None => self
-                                .buf_write(&mut end, format_args!("[{}/{}] ", current_item, eti)),
-                            Unit::Files => self.buf_write(
-                                &mut end,
-                                format_args!("[{}/{} files] ", current_item, eti),
-                            ),
-                            // Raw byte counts are printed until an IEC-units
-                            // (KiB/MiB) formatting helper lands.
-                            Unit::Bytes => self
-                                .buf_write(&mut end, format_args!("[{}/{}] ", current_item, eti)),
-                        }
-                        need_ellipse = false;
+                        self.buf_write(&mut end, format_args!("[{}/{}] ", current_item, eti));
                     } else if completed_items != 0 {
-                        if need_ellipse {
-                            self.buf_write(&mut end, format_args!(" "));
-                        }
                         match unit {
                             Unit::None => {
                                 self.buf_write(&mut end, format_args!("[{}] ", current_item))
@@ -594,7 +574,13 @@ impl Progress {
                                 self.buf_write(&mut end, format_args!("[{}] ", current_item))
                             }
                         }
-                        need_ellipse = false;
+                    }
+                    if !name.is_empty() {
+                        if eti > 0 || completed_items != 0 {
+                            self.buf_write(&mut end, format_args!(" "));
+                        }
+                        self.buf_write(&mut end, format_args!("{}", crate::fmt::s(name)));
+                        need_ellipse = true;
                     }
                 }
             }

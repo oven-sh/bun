@@ -1267,9 +1267,10 @@ const server = Bun.serve({
   },
 });
 
-// Sends a request and resolves once \`until\` matches what arrived. A dead
-// client leaves as soon as the head is in, with the server's read parked.
-async function request(until) {
+// Sends a request, then \`marker\` into the pipe, and resolves once \`until\`
+// matches what arrived. The head goes to the wire with the first body chunk,
+// so a dead client leaves after its marker, with the server's read parked.
+async function request(until, marker) {
   const socket = connect({ port: server.port, host: "127.0.0.1" });
   socket.on("error", () => {});
   await new Promise(resolve => socket.once("connect", resolve));
@@ -1280,12 +1281,13 @@ async function request(until) {
     if (until.test(received)) resolve(received);
   });
   socket.write("GET / HTTP/1.1\\r\\nHost: 127.0.0.1\\r\\n\\r\\n");
+  if (marker) writeSync(writerFd, marker);
   const out = await promise;
   socket.destroy();
   return out;
 }
 
-for (let i = 0; i < 3; i++) await request(/\\r\\n\\r\\n/);
+for (let i = 0; i < 3; i++) await request(/dead-\\d/, "dead-" + i);
 
 // The producer writes after the dead clients left. Only the live client may
 // see these bytes.
@@ -1299,6 +1301,7 @@ const parked = connect({ port: server.port, host: "127.0.0.1" });
 parked.on("error", () => {});
 await new Promise(resolve => parked.once("connect", resolve));
 parked.write("GET / HTTP/1.1\\r\\nHost: 127.0.0.1\\r\\n\\r\\n");
+writeSync(writerFd, "parked");
 await new Promise(resolve => parked.once("data", resolve));
 server.stop(true);
 parked.destroy();

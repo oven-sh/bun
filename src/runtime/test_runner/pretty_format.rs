@@ -7,7 +7,7 @@ use bun_jsc::{
     self as jsc, ComptimeStringMapExt as _, JSGlobalObject, JSObject,
     JSPropertyIterator, JSType, JSValue, JsError, JsResult, VM,
 };
-use bun_core::{strings, EncodedSlice, Utf8Bytes};
+use bun_core::{strings, EncodedSlice, StackCheck, Utf8Bytes};
 
 use super::expect;
 use crate::webcore::BlobExt as _;
@@ -318,6 +318,9 @@ pub struct Formatter<'a> {
     pub(crate) failed: bool,
     pub(crate) estimated_line_length: usize,
     pub(crate) always_newline_scope: bool,
+    /// Bounds the recursion in `print_as`: a deeply nested value (an object
+    /// chain 1e4 levels deep) would otherwise overflow the native stack.
+    pub(crate) stack_check: StackCheck,
 }
 
 impl<'a> Formatter<'a> {
@@ -332,6 +335,7 @@ impl<'a> Formatter<'a> {
             failed: false,
             estimated_line_length: 0,
             always_newline_scope: false,
+            stack_check: StackCheck::init(),
         }
     }
 
@@ -1048,6 +1052,11 @@ impl<'a> Formatter<'a> {
         let mut writer = WrappedWriter::new(writer_);
 
         if FORMAT.can_have_circular_references() {
+            if !self.stack_check.is_safe_to_recurse() {
+                self.failed = true;
+                return Err(self.global_this.throw_stack_overflow());
+            }
+
             if self.map_node.is_none() {
                 // `visited::Pool::get()` returns an RAII `PoolGuard` that
                 // would release on scope exit; instead the raw node is stashed on

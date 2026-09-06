@@ -145,7 +145,15 @@ describe("SQL adapter environment variable precedence", () => {
       expect(sql.options).toMatchObject({ adapter: "postgres", hostname: "127.0.0.1", port: 1 });
     });
 
-    test.each([{ max: 1, username: "appuser" }, { port: 9 }, { path: "/tmp/sock" }])(
+    test("a unix socket path is a connection target", () => {
+      process.env.SQLITE_URL = "sqlite://envfile.db";
+
+      const sql = new SQL({ path: "/var/run/postgresql", database: "appdb" });
+      expect(sql.options).toMatchObject({ adapter: "postgres", database: "appdb" });
+      expect(sql.options.filename).toBeUndefined();
+    });
+
+    test.each([{ max: 1, username: "appuser" }, { port: 9 }])(
       "an options object without a target (%p) still falls back to the environment",
       options => {
         process.env.MYSQL_URL = "mysql://envuser:envpw@envhost:7/envdb";

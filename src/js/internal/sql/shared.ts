@@ -1640,14 +1640,14 @@ function getConnectionDetailsFromEnvironment(
 }
 
 /**
- * An options object that names where to connect (a URL, a file or a host) is
- * a complete connection target. The environment connection strings are a
- * fallback for when nothing names a target, so they must not supply the
- * adapter, the URL or the sslmode for such an object.
+ * An options object that names where to connect (a URL, a file, a host or a
+ * socket path) is a complete connection target. The environment connection
+ * strings are a fallback for when nothing names a target, so they must not
+ * supply the adapter, the URL or the sslmode for such an object.
  */
 function hasConnectionTarget(options: Bun.SQL.Options): boolean {
   const o = options as Record<string, unknown>;
-  return !!(o.url || o.filename || o.hostname || o.host);
+  return !!(o.url || o.filename || o.hostname || o.host || o.path);
 }
 
 function ensureUrlHasProtocol<T extends string | URL>(

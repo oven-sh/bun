@@ -98,7 +98,12 @@ impl<'a> Scanner<'a> {
         })
     }
 
+    /// A directory that vanished between readdir and open (or a dangling link
+    /// to one) is not an error; anything else is reported and fails the run.
     fn report_unreadable_dir(&mut self, path: &[u8], err: &bun_sys::Error) {
+        if err.get_errno() == bun_sys::E::ENOENT {
+            return;
+        }
         self.unreadable_dirs += 1;
         bun_core::pretty_errorln!(
             "<r><red>error<r>: could not scan {} for tests\n{}",
@@ -107,13 +112,31 @@ impl<'a> Scanner<'a> {
         );
     }
 
-    /// Returns `false` when `fd`'s directory was scanned before.
+    fn report_dir_read_error(&mut self, path: &[u8], err: bun_resolver::Error, tag: bun_sys::Tag) {
+        match err {
+            bun_resolver::Error::Sys(errno) => self.report_unreadable_dir(
+                path,
+                &bun_sys::Error::from_code_int(errno as core::ffi::c_int, tag),
+            ),
+            other => {
+                self.unreadable_dirs += 1;
+                bun_core::pretty_errorln!(
+                    "<r><red>error<r>: could not scan {} for tests\n{}",
+                    bun_core::fmt::quote(path),
+                    other
+                );
+            }
+        }
+    }
+
+    /// Returns `false` when `fd`'s directory was scanned before. A filesystem
+    /// that reports no inode number (`st_ino == 0`) gets no deduplication.
     fn mark_visited(&mut self, fd: Fd) -> bool {
         match bun_sys::fstat(fd) {
-            Ok(st) => self
+            Ok(st) if st.st_ino != 0 => self
                 .visited_dirs
                 .insert((st.st_dev as u64, st.st_ino as u64)),
-            Err(_) => true,
+            _ => true,
         }
     }
 
@@ -183,15 +206,7 @@ impl<'a> Scanner<'a> {
                     bstr::BStr::new(path),
                     root_err.original_err.name()
                 );
-                if let bun_resolver::Error::Sys(errno) = e {
-                    self.report_unreadable_dir(
-                        path,
-                        &bun_sys::Error::from_code_int(
-                            errno as core::ffi::c_int,
-                            bun_sys::Tag::open,
-                        ),
-                    );
-                }
+                self.report_dir_read_error(path, e, bun_sys::Tag::open);
             }
         } else {
             let zpath = bun_core::ZBox::from_bytes(path);
@@ -264,15 +279,7 @@ impl<'a> Scanner<'a> {
             let result = self.read_dir_with_name(path2, Some(child_dir.fd));
             self.current_dir = None;
             if let EntriesOption::Err(dir_err) = result.map_err(|_| ScanError::OutOfMemory)? {
-                if let bun_resolver::Error::Sys(errno) = dir_err.original_err {
-                    self.report_unreadable_dir(
-                        path2,
-                        &bun_sys::Error::from_code_int(
-                            errno as core::ffi::c_int,
-                            bun_sys::Tag::scandir,
-                        ),
-                    );
-                }
+                self.report_dir_read_error(path2, dir_err.original_err, bun_sys::Tag::scandir);
             }
         }
 

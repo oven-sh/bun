@@ -502,3 +502,68 @@ const initEnv = { ...bunEnv, BUN_AGENT_RULE_DISABLED: "1" };
     expect(fs.existsSync(path.join(temp, ".cursor"))).toBe(false);
   });
 });
+
+// A scaffold file that cannot be written (full disk) must fail `bun init`
+// instead of being left behind empty with exit code 0. bun ignores SIGXFSZ,
+// so under `ulimit -f <512-byte blocks>` a write past the limit fails with
+// EFBIG, which takes the same path as ENOSPC.
+describe.skipIf(isWindows)("bun init when a file cannot be written", () => {
+  async function init(cwd: string, fileSizeLimitBlocks?: number) {
+    const cmd =
+      fileSizeLimitBlocks === undefined
+        ? [bunExe(), "init", "-y"]
+        : ["sh", "-c", `ulimit -f ${fileSizeLimitBlocks} && exec "$@"`, "sh", bunExe(), "init", "-y"];
+    await using proc = Bun.spawn({ cmd, cwd, env: initEnv, stdin: "ignore", stdout: "pipe", stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+
+  function files(dir: string) {
+    return Object.fromEntries(readdirSync(dir).map(name => [name, fs.statSync(path.join(dir, name)).size]));
+  }
+
+  test.concurrent("package.json: reports the error, removes the empty file, exits 1", async () => {
+    using dir = tempDir("bun-init-enospc-package-json", {});
+    // No file may grow past 0 bytes: the very first write fails.
+    const { stderr, exitCode } = await init(String(dir), 0);
+    expect(stderr).toContain("EFBIG");
+    expect(stderr).toContain("failed to write package.json");
+    expect(files(String(dir))).toEqual({});
+    expect(exitCode).toBe(1);
+  });
+
+  test.concurrent(
+    "template file: reports the error, removes the partial file, exits 1, and a rerun completes the scaffold",
+    async () => {
+      using dir = tempDir("bun-init-enospc-template", {});
+      // 512 bytes per file: package.json, .gitignore and index.ts fit,
+      // tsconfig.json (735 bytes) does not.
+      {
+        const { stdout, stderr, exitCode } = await init(String(dir), 1);
+        expect(stderr).toContain("EFBIG");
+        expect(stderr).toContain("failed to write tsconfig.json");
+        expect(stdout).not.toContain("tsconfig.json");
+        const written = files(String(dir));
+        expect(written).toEqual({
+          ".gitignore": expect.any(Number),
+          "index.ts": expect.any(Number),
+          "package.json": expect.any(Number),
+        });
+        expect(Object.values(written)).not.toContain(0);
+        expect(exitCode).toBe(1);
+      }
+      // With space available again the missing files are created. package.json
+      // already lists the dependencies, so no `bun install` runs.
+      {
+        const { stdout, stderr, exitCode } = await init(String(dir));
+        expect(stderr).not.toContain("failed to write");
+        expect(stdout).toContain("+ tsconfig.json");
+        expect(stdout).toContain("+ README.md");
+        const written = files(String(dir));
+        expect(written).toMatchObject({ "tsconfig.json": expect.any(Number), "README.md": expect.any(Number) });
+        expect(Object.values(written)).not.toContain(0);
+        expect(exitCode).toBe(0);
+      }
+    },
+  );
+});

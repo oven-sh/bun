@@ -1337,12 +1337,7 @@ unsafe fn resolve_entry_point_specifier<'s>(
         Err(err) if role == SpecifierRole::Preload => {
             // The same wording as `--preload` on the CLI (`jsc_hooks.rs`).
             *error_message = BunString::clone_utf8(
-                format!(
-                    "{} resolving preload \"{}\"",
-                    err,
-                    bstr::BStr::new(str)
-                )
-                .as_bytes(),
+                format!("{} resolving preload \"{}\"", err, bstr::BStr::new(str)).as_bytes(),
             );
             return None;
         }

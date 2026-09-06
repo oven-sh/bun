@@ -2127,6 +2127,13 @@ function parseOptions(
     sslMode = SSLMode.require;
   }
 
+  // verify-ca and verify-full verify the certificate chain. Without an explicit
+  // rejectUnauthorized the TLS layer would take NODE_TLS_REJECT_UNAUTHORIZED=0
+  // as an opt out, which a verify-* mode must not allow.
+  if (sslMode >= SSLMode.verify_ca && (!$isObject(tls) || tls.rejectUnauthorized === undefined)) {
+    tls = { ...($isObject(tls) ? tls : {}), rejectUnauthorized: true };
+  }
+
   port = Number(port);
 
   if (!Number.isSafeInteger(port) || port < 1 || port > 65535) {

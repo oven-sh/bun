@@ -431,12 +431,12 @@ describe("SQL adapter environment variable precedence", () => {
       ["mysql://u:p@h/db?ssl-mode=DISABLED", 0, undefined],
       ["mysql://u:p@h/db?ssl_mode=preferred", 1, { serverName: "h" }],
       ["mysql://u:p@h/db?ssl-mode=REQUIRED", 2, { serverName: "h" }],
-      ["mysql://u:p@h/db?ssl-mode=VERIFY_CA", 3, { serverName: "h" }],
-      ["mysql://u:p@h/db?ssl-mode=VERIFY_IDENTITY", 4, { serverName: "h" }],
+      ["mysql://u:p@h/db?ssl-mode=VERIFY_CA", 3, { serverName: "h", rejectUnauthorized: true }],
+      ["mysql://u:p@h/db?ssl-mode=VERIFY_IDENTITY", 4, { serverName: "h", rejectUnauthorized: true }],
       ["postgres://u@h:5432/db?ssl=prefer", 1, { serverName: "h" }],
       ["postgres://u@h:5432/db?ssl=require", 2, { serverName: "h" }],
-      ["postgres://u@h:5432/db?tls=verify-ca", 3, { serverName: "h" }],
-      ["postgres://u@h:5432/db?ssl=verify-full", 4, { serverName: "h" }],
+      ["postgres://u@h:5432/db?tls=verify-ca", 3, { serverName: "h", rejectUnauthorized: true }],
+      ["postgres://u@h:5432/db?ssl=verify-full", 4, { serverName: "h", rejectUnauthorized: true }],
     ] as const)("%s selects sslMode %d", (url, expectedMode, expectedTls) => {
       const options = new SQL(url);
       expect(options.options.hostname).toBe("h");
@@ -455,7 +455,7 @@ describe("SQL adapter environment variable precedence", () => {
 
         const withExplicitTls = new SQL(url, { tls: { ca: "x" } });
         expect(withExplicitTls.options.sslMode).toBe(4);
-        expect(withExplicitTls.options.tls).toEqual({ ca: "x", serverName: "h" });
+        expect(withExplicitTls.options.tls).toEqual({ ca: "x", serverName: "h", rejectUnauthorized: true });
       },
     );
 
@@ -510,8 +510,8 @@ describe("SQL adapter environment variable precedence", () => {
       ["allow", 1, { serverName: "h" }],
       ["prefer", 1, { serverName: "h" }],
       ["require", 2, { serverName: "h" }],
-      ["verify-ca", 3, { serverName: "h" }],
-      ["verify-full", 4, { serverName: "h" }],
+      ["verify-ca", 3, { serverName: "h", rejectUnauthorized: true }],
+      ["verify-full", 4, { serverName: "h", rejectUnauthorized: true }],
     ] as const)("ssl: %p selects sslMode %d", (mode, expectedMode, expectedTls) => {
       const options = new SQL({ adapter: "postgres", hostname: "h", ssl: mode as any });
       expect(options.options.sslMode).toBe(expectedMode);
@@ -522,13 +522,13 @@ describe("SQL adapter environment variable precedence", () => {
       const options = new SQL({ adapter: "mysql", hostname: "h", tls: "verify-full" as any });
       expect(options.options.adapter).toBe("mysql");
       expect(options.options.sslMode).toBe(4);
-      expect(options.options.tls).toEqual({ serverName: "h" });
+      expect(options.options.tls).toEqual({ serverName: "h", rejectUnauthorized: true });
     });
 
     test("ssl: 'verify-full' takes priority over URL ?sslmode=require", () => {
       const options = new SQL("postgres://u@h:5432/db?sslmode=require", { ssl: "verify-full" as any });
       expect(options.options.sslMode).toBe(4);
-      expect(options.options.tls).toEqual({ serverName: "h" });
+      expect(options.options.tls).toEqual({ serverName: "h", rejectUnauthorized: true });
     });
 
     test("ssl: 'verify-ca' takes priority over PGSSLMODE=require", () => {
@@ -536,7 +536,7 @@ describe("SQL adapter environment variable precedence", () => {
 
       const options = new SQL({ adapter: "postgres", hostname: "h", ssl: "verify-ca" as any });
       expect(options.options.sslMode).toBe(3);
-      expect(options.options.tls).toEqual({ serverName: "h" });
+      expect(options.options.tls).toEqual({ serverName: "h", rejectUnauthorized: true });
     });
 
     test("an unrecognised ssl string throws", () => {
@@ -552,12 +552,12 @@ describe("SQL adapter environment variable precedence", () => {
 
       const options = new SQL({ adapter: "postgres", hostname: "h", tls: { caFile } });
       expect(options.options.sslMode).toBe(4);
-      expect(options.options.tls).toEqual({ caFile, serverName: "h" });
+      expect(options.options.tls).toEqual({ caFile, serverName: "h", rejectUnauthorized: true });
 
       const mysqlOptions = new SQL("mysql://u:p@h/db", { tls: { caFile } });
       expect(mysqlOptions.options.adapter).toBe("mysql");
       expect(mysqlOptions.options.sslMode).toBe(4);
-      expect(mysqlOptions.options.tls).toEqual({ caFile, serverName: "h" });
+      expect(mysqlOptions.options.tls).toEqual({ caFile, serverName: "h", rejectUnauthorized: true });
 
       const optedOut = new SQL({ adapter: "postgres", hostname: "h", tls: { caFile, rejectUnauthorized: false } });
       expect(optedOut.options.sslMode).toBe(2);
@@ -565,8 +565,22 @@ describe("SQL adapter environment variable precedence", () => {
 
       const fromUrl = new SQL("postgres://u@h:5432/db?sslmode=verify-ca", { tls: { caFile } });
       expect(fromUrl.options.sslMode).toBe(3);
-      expect(fromUrl.options.tls).toEqual({ caFile, serverName: "h" });
+      expect(fromUrl.options.tls).toEqual({ caFile, serverName: "h", rejectUnauthorized: true });
     });
+
+    test.each(["verify-ca", "verify-full"])(
+      "sslmode=%s sets rejectUnauthorized so NODE_TLS_REJECT_UNAUTHORIZED=0 cannot disable it",
+      mode => {
+        const options = new SQL(`postgres://u@h:5432/db?sslmode=${mode}`);
+        expect(options.options.tls).toEqual({ serverName: "h", rejectUnauthorized: true });
+
+        const optedOut = new SQL(`postgres://u@h:5432/db?sslmode=${mode}`, { tls: { rejectUnauthorized: false } });
+        expect(optedOut.options.tls).toMatchObject({ rejectUnauthorized: false });
+
+        const required = new SQL("postgres://u@h:5432/db?sslmode=require");
+        expect(required.options.tls).toEqual({ serverName: "h" });
+      },
+    );
   });
 
   describe("Adapter-Protocol Validation", () => {

@@ -502,9 +502,7 @@ impl CopyFile {
             }
         }
 
-        // `run_async` preallocates a destination Bun opened with O_TRUNC to the
-        // source's st_size. A source fd whose position is past 0 supplies fewer
-        // bytes than that, so trim the destination to what was copied.
+        // Trim the preallocated destination when the source fd started past 0.
         if !unknown_size
             && total_written < self.max_length
             && matches!(

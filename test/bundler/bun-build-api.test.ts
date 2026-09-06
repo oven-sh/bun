@@ -305,6 +305,55 @@ describe("Bun.build", () => {
     });
   });
 
+  // The JSON parser is depth-guarded, but the clone of the parsed define value
+  // out of the thread-local AST store recurses once per nesting level with
+  // larger frames. Each depth below fell into that window on one build flavor
+  // (release or ASAN). Spawned because the crash takes the test runner with it.
+  for (const depth of [1000, 10000]) {
+    test.concurrent(`a define value nested ${depth} levels deep is an error, not a crash`, async () => {
+      const value = Buffer.alloc(depth, "[").toString() + "1" + Buffer.alloc(depth, "]").toString();
+      using dir = tempDir("bun-build-deep-define", {
+        "entry.js": `console.log(X);`,
+        "build.js": `
+          const r = await Bun.build({ entrypoints: ["./entry.js"], define: { X: process.argv[2] }, throw: false });
+          console.log(JSON.stringify({ success: r.success, logs: r.logs.map(l => l.message) }));
+        `,
+      });
+
+      await using cli = Bun.spawn({
+        cmd: [bunExe(), "build", "entry.js", "--define", `X=${value}`],
+        cwd: String(dir),
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [cliStdout, cliStderr, cliExitCode] = await Promise.all([cli.stdout.text(), cli.stderr.text(), cli.exited]);
+      // A depth the native stack can hold builds; a deeper one is a parse error.
+      if (cliExitCode === 0) {
+        expect(cliStdout).toContain(value);
+      } else {
+        expect(cliStderr).toContain("JSON document is too deeply nested");
+        expect(cliExitCode).toBe(1);
+      }
+
+      await using api = Bun.spawn({
+        cmd: [bunExe(), "build.js", value],
+        cwd: String(dir),
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [apiStdout, apiStderr, apiExitCode] = await Promise.all([api.stdout.text(), api.stderr.text(), api.exited]);
+      expect(apiStderr).toBe("");
+      expect(JSON.parse(apiStdout)).toEqual(
+        cliExitCode === 0
+          ? { success: true, logs: [] }
+          : { success: false, logs: ["JSON document is too deeply nested"] },
+      );
+      expect(apiExitCode).toBe(0);
+    });
+  }
+
   // https://github.com/oven-sh/bun/issues/12818
   test("sourcemap + build error crash case", async () => {
     const dir = tempDirWithFiles("build", {

@@ -65,7 +65,7 @@ impl MapEntry {
     pub(crate) fn reparse_root(&mut self, log: &mut Log) -> Result<(), Error> {
         let json_bump = bun_alloc::Arena::new();
         let parsed = parse_package_json(&self.source, log, &json_bump, false)?;
-        self.root = bun_core::handle_oom(parsed.root.deep_clone(&json_bump));
+        self.root = parsed.root;
         self.json_arena = json_bump;
         Ok(())
     }
@@ -73,13 +73,17 @@ impl MapEntry {
 
 pub type Map = StringHashMap<MapEntry>;
 
+/// Parses `source` and clones the tree out of the thread-local `Store` into
+/// `bump`, so the result survives the `Store` resets that later lookups do.
+/// The clone recurses once per nesting level and reports a too-deep tree the
+/// same way the parser does.
 fn parse_package_json(
     source: &Source,
     log: &mut Log,
     bump: &bun_alloc::Arena,
     guess_indentation: bool,
 ) -> Result<json::JsonResult, crate::Error> {
-    Ok(json::parse_package_json_utf8_with_opts(
+    let mut parsed = json::parse_package_json_utf8_with_opts(
         json::JSONOptions {
             json_warn_duplicate_keys: false,
             guess_indentation,
@@ -88,7 +92,23 @@ fn parse_package_json(
         source,
         log,
         bump,
-    )?)
+    )?;
+    parsed.root = match parsed.root.deep_clone(bump) {
+        Ok(root) => root,
+        Err(bun_ast::DeepCloneError::StackOverflow) => {
+            log.add_error_fmt_opts(
+                format_args!("JSON document is too deeply nested"),
+                bun_ast::AddErrorOptions {
+                    source: Some(source),
+                    loc: parsed.root.loc,
+                    ..Default::default()
+                },
+            );
+            return Err(bun_parsers::Error::StackOverflow.into());
+        }
+        Err(bun_ast::DeepCloneError::Alloc(err)) => return Err(err.into()),
+    };
+    Ok(parsed)
 }
 
 #[derive(Clone, Copy)]

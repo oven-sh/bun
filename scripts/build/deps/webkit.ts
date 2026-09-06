@@ -1,6 +1,6 @@
 /**
- * WebKit commit — the tree `--webkit=source` fetches and the prebuilt
- * tarball's release tag. Override via `--webkit-version=<hash>` to test a
+ * WebKit commit — the tree the build fetches and compiles (and the
+ * prebuilt tarball's release tag). Override via `--webkit-version=<hash>` to test a
  * branch. From https://github.com/oven-sh/WebKit releases.
  */
 export const WEBKIT_VERSION = "2e2aa2290fac856d6f451ceacb58f7f5b44dd057";
@@ -1227,7 +1227,7 @@ const llintAsm: readonly string[] = [
 // Source mode: direct build
 //
 // WebKit (bmalloc + WTF + JavaScriptCore, JSCOnly port) built directly in our
-// ninja graph — no cmake. This is what `--webkit=source` uses.
+// ninja graph — no cmake. The default; `--webkit=prebuilt` skips it.
 //
 // What WebKit's cmake does, and where it lives here:
 //

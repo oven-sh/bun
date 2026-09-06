@@ -88,8 +88,8 @@ export const mydep: Dependency = {
 
   // A GitHub commit (no git history, just the files at `commit`). Fetched
   // from GitHub's archive endpoint, or — with `sparse: ["/dir/", ...]` —
-  // as a sparse git fetch of only those paths (WebKit `--webkit=source`:
-  // GitHub won't serve archives of a repo that size, and JSC is ~3% of it).
+  // as a sparse git fetch of only those paths (WebKit: GitHub won't serve
+  // archives of a repo that size, and JSC is ~3% of it).
   // Most deps use this.
   //
   // Other kinds: `tarball` (a release tarball by URL, e.g. ICU), `prebuilt`

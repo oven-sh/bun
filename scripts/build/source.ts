@@ -771,9 +771,7 @@ export function depSource(cfg: Config, dep: Dependency): Source {
   assert(
     source.kind === "github" || source.kind === "tarball",
     `--local-deps: ${dep.name} has a ${source.kind} source; only fetched (github/tarball) deps can be redirected`,
-    dep.name === "WebKit"
-      ? { hint: "WebKit is redirectable with --webkit=source (a prebuilt has no source tree)" }
-      : {},
+    dep.name === "WebKit" ? { hint: "drop --webkit=prebuilt: a prebuilt WebKit has no source tree to redirect" } : {},
   );
   return {
     kind: "local",

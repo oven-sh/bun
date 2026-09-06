@@ -75,12 +75,11 @@ export const allDeps: readonly Dependency[] = [
   // a DirectBuild dep its .o files go straight on the link line so static
   // link order doesn't apply.
   lsquic,
-  // icu before WebKit: --webkit=source compiles WTF/JSC against its headers
-  // (fetchDeps). Disabled otherwise (prebuilt WebKit bundles ICU; macOS uses
-  // the SDK's).
+  // icu before WebKit: WTF/JSC compile against its headers (fetchDeps).
+  // Disabled on macOS (the SDK's ICU) and with a prebuilt WebKit (bundles it).
   icu,
   // bootstrap_cmds before WebKit: source of the migcom host tool the macOS
-  // direct build runs (fetchDeps). macOS + --webkit=source only.
+  // source build runs (fetchDeps). macOS only; not with a prebuilt WebKit.
   bootstrapCmds,
   // WebKit LAST in link order — WTF/JSC provide symbols that everything
   // above might reference (via JavaScriptCore types in headers).

@@ -130,7 +130,7 @@ BIGNUMPtr convertToBigNumber(const Vector<uint8_t>& bytes)
 
 void generateKeyPairInWorkQueue(ScriptExecutionContext& context, Function<std::optional<EvpKeyPair>()>&& generate, Function<void(EvpKeyPair&&)>&& onKeys, Function<void()>&& onFailure)
 {
-    Bun::PhonyWorkQueue::create("KeyPairGenerationQueue"_s)->dispatch(context.globalObject(), [generate = WTF::move(generate), onKeys = WTF::move(onKeys), onFailure = WTF::move(onFailure), contextIdentifier = context.identifier(), loopKind = context.currentLoopKind()]() mutable {
+    Bun::PhonyWorkQueue::dispatch(context.globalObject(), [generate = WTF::move(generate), onKeys = WTF::move(onKeys), onFailure = WTF::move(onFailure), contextIdentifier = context.identifier(), loopKind = context.currentLoopKind()]() mutable {
         auto keys = generate();
         ScriptExecutionContext::postTaskTo(contextIdentifier, loopKind, [keys = WTF::move(keys), onKeys = WTF::move(onKeys), onFailure = WTF::move(onFailure)](auto&) mutable {
             if (!keys) {

@@ -2136,10 +2136,9 @@ where
         // SAFETY: just allocated; sole live mutable view (this.sink only stores the ptr).
         let response_stream = unsafe { &mut *response_stream_ptr.as_ptr() };
         // `JSSink<T>` is `repr(transparent)` over `T`: same address, root provenance.
-        response_stream
-            .sink
-            .root
-            .set(Some(response_stream_ptr.cast::<ResponseStream<SSL_ENABLED>>()));
+        response_stream.sink.root.set(Some(
+            response_stream_ptr.cast::<ResponseStream<SSL_ENABLED>>(),
+        ));
 
         // we need to render metadata before assignToStream because the stream can call res.end
         // and this would auto write an 200 status

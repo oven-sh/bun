@@ -6859,8 +6859,7 @@ impl VirtualMachine {
                 .is_some_and(|graph| graph.find_assume_standalone_path(path).is_some())
     }
 
-    /// The URL a frame at `source_url` displays after `lookup` remaps it, if it changes.
-    /// The new URL comes from a loaded module's own map, so the printer may read it later.
+    /// The URL `lookup` remaps `source_url` to, recorded as a path the printer may read.
     fn remapped_source_url(
         &mut self,
         lookup: &bun_sourcemap::mapping::Lookup,

@@ -265,6 +265,23 @@ describe("certificate authority", () => {
     expect(await exited).toBe(1);
   });
 
+  test("non-existent --cafile (relative path longer than PATH_MAX)", async () => {
+    await write(packageJson, JSON.stringify({ name: "foo", version: "1.0.0", "dependencies": { "no-deps": "1.1.1" } }));
+    const cafile = Buffer.alloc(4090, "a").toString();
+    const { stdout, stderr, exited } = spawn({
+      cmd: [bunExe(), "install", "--cafile", cafile],
+      cwd: packageDir,
+      stderr: "pipe",
+      stdout: "pipe",
+      env,
+    });
+    const out = await stdout.text();
+    expect(out).not.toContain("no-deps");
+    const err = await stderr.text();
+    expect(err).toContain(`HTTPThread: could not find CA file: '${cafile}'`);
+    expect(await exited).toBe(1);
+  });
+
   test("non-existent --cafile with workspaces exits 1 without crashing", async () => {
     // The workspace walk in `PackageManager::init()` populates the workspace
     // package.json cache before the HTTP thread starts. When the HTTP thread

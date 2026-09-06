@@ -579,14 +579,16 @@ These environment variables define the PostgreSQL connection:
 
 Without a connection URL, Bun checks these individual parameters:
 
-| Environment Variable | Fallback Variables           | Default Value | Description                                                                    |
-| -------------------- | ---------------------------- | ------------- | ------------------------------------------------------------------------------ |
-| `PGHOST`             | -                            | `localhost`   | Database host                                                                  |
-| `PGPORT`             | -                            | `5432`        | Database port                                                                  |
-| `PGUSERNAME`         | `PGUSER`, `USER`, `USERNAME` | `postgres`    | Database user                                                                  |
-| `PGPASSWORD`         | -                            | (empty)       | Database password                                                              |
-| `PGDATABASE`         | -                            | username      | Database name                                                                  |
-| `PGSSLMODE`          | -                            | `disable`     | SSL mode (`disable`, `allow`, `prefer`, `require`, `verify-ca`, `verify-full`) |
+| Environment Variable | Also Accepted     | Default Value | Description                                                                    |
+| -------------------- | ----------------- | ------------- | ------------------------------------------------------------------------------ |
+| `PGHOST`             | `PG_HOST`         | `localhost`   | Database host                                                                  |
+| `PGPORT`             | `PG_PORT`         | `5432`        | Database port                                                                  |
+| `PGUSER`             | `PG_USER`, `USER` | `postgres`    | Database user                                                                  |
+| `PGPASSWORD`         | `PG_PASSWORD`     | (empty)       | Database password                                                              |
+| `PGDATABASE`         | `PG_DATABASE`     | username      | Database name                                                                  |
+| `PGSSLMODE`          | `PG_SSLMODE`      | `disable`     | SSL mode (`disable`, `allow`, `prefer`, `require`, `verify-ca`, `verify-full`) |
+
+When both forms are set, the `PG_*` form wins. `USER` is read only when neither `PG_USER` nor `PGUSER` is set.
 
 ### SQLite Environment Variables
 

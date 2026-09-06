@@ -57,9 +57,15 @@ config.database.port; // => 5432
 
 ---
 
-For parsing YAML strings at runtime, use `Bun.YAML.parse()`:
+For parsing YAML strings at runtime, use `Bun.YAML.parse()`. It returns `unknown`, so give the result a type:
 
 ```ts config.ts icon="/icons/typescript.svg"
+interface Person {
+  name: string;
+  age: number;
+  hobbies: string[];
+}
+
 const yamlString = `
 name: John Doe
 age: 30
@@ -68,7 +74,7 @@ hobbies:
   - coding
 `;
 
-const data = Bun.YAML.parse(yamlString);
+const data = Bun.YAML.parse(yamlString) as Person;
 console.log(data.name); // => "John Doe"
 console.log(data.hobbies); // => ["reading", "coding"]
 ```

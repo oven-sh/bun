@@ -18,7 +18,7 @@ const stream = new ReadableStream({
 
 ---
 
-To stream the data in smaller chunks, first create a `Blob` instance from the `Buffer`, then use [`Blob.stream()`](https://developer.mozilla.org/en-US/docs/Web/API/Blob/stream) to create a `ReadableStream`.
+To stream the data in smaller chunks, first create a `Blob` instance from the `Buffer`, then use [`Blob.stream()`](https://developer.mozilla.org/en-US/docs/Web/API/Blob/stream) to create a `ReadableStream`. Bun picks the chunk size.
 
 ```ts
 const buf = Buffer.from("hello world");
@@ -28,14 +28,20 @@ const stream = blob.stream();
 
 ---
 
-Pass a number to `.stream()` to set the chunk size.
+To control the chunk size yourself, enqueue slices of the `Buffer`.
 
 ```ts
 const buf = Buffer.from("hello world");
-const blob = new Blob([buf]);
+const chunkSize = 1024;
 
-// set chunk size of 1024 bytes
-const stream = blob.stream(1024);
+const stream = new ReadableStream({
+  start(controller) {
+    for (let i = 0; i < buf.length; i += chunkSize) {
+      controller.enqueue(buf.subarray(i, i + chunkSize));
+    }
+    controller.close();
+  },
+});
 ```
 
 ---

@@ -1206,15 +1206,15 @@ A map of file extensions to built-in loader names. Use this to customize how cer
       entrypoints: ['./index.tsx'],
       outdir: './out',
       loader: {
-        ".png": "dataurl",
-        ".txt": "file",
+        ".svg": "text",
+        ".bin": "file",
       },
     })
     ```
   </Tab>
   <Tab title="CLI">
     ```bash terminal icon="terminal"
-    bun build ./index.tsx --outdir ./out --loader .png:dataurl --loader .txt:file
+    bun build ./index.tsx --outdir ./out --loader .svg:text --loader .bin:file
     ```
   </Tab>
 </Tabs>
@@ -1677,10 +1677,11 @@ The `bytecodeDepth: number` option (a non-negative integer) limits how many leve
     // ESM bytecode (requires compile)
     await Bun.build({
       entrypoints: ["./index.tsx"],
-      outfile: "./mycli",
       bytecode: true,
       format: "esm",
-      compile: true,
+      compile: {
+        outfile: "./mycli",
+      },
     })
     ```
 

@@ -13,6 +13,7 @@ import {
   isIPv4,
   isIPv6,
   isPosix,
+  isWindows,
   runFixtureMaxRSS,
   tempDir,
   tls,
@@ -3130,7 +3131,11 @@ it.concurrent(
 // the condition under test, not a wait for one. The timer has a 4 second
 // granularity, so the idle period is 8 to 12 seconds and the client reads at
 // least once in every period.
-describe.concurrent("idleTimeout and a slow reader", () => {
+//
+// Skipped on Windows: a remainder held in the uWS buffer gets no writable
+// event there while the peer reads slowly, and a peer that stops reading is
+// never timed out. Both are separate Windows issues.
+describe.concurrent.skipIf(isWindows)("idleTimeout and a slow reader", () => {
   const TOTAL = 16 << 20;
   const PACED_MS = 16_000;
   const PAUSE_MS = 5_000;

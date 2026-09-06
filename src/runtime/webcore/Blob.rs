@@ -3416,9 +3416,7 @@ impl BlobExt for Blob {
             match &store.data {
                 store::Data::Bytes(bytes) => {
                     size += bytes.stored_name.len();
-                    // The bytes belong to the shared store, not to this view.
-                    // Count them once, for the sole owner. A slice shares the
-                    // store and allocates nothing.
+                    // Slices share the store. Its bytes count once, for the sole owner.
                     if store.has_one_ref() {
                         size += bytes.len() as usize;
                     }

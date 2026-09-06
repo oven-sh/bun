@@ -5399,8 +5399,7 @@ pub mod form_data {
             }
             let end = crate::strings::index_of_char_usize(begin, b';').unwrap_or(begin.len());
             let value = crate::strings_impl::trim_right(&begin[..end], b" \t\r\n");
-            // An empty unquoted value does not set the parameter (a later
-            // `boundary=` still counts), unlike an empty quoted value.
+            // An empty unquoted value leaves the parameter unset.
             if value.is_empty() {
                 continue;
             }

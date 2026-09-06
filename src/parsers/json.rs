@@ -16,6 +16,11 @@ use crate::json_stage2::Parser;
 pub struct JSONOptions {
     pub allow_comments: bool,
     pub allow_trailing_commas: bool,
+    /// Reject the JavaScript lexical forms that `JSON.parse` rejects: single-quoted strings,
+    /// `0x10` / `010` / `1_000` / `.5` / `5.` / `- 5` numbers, `\x41` / `\v` escapes,
+    /// `\u`-escaped keywords, and whitespace other than space, tab, `\n` and `\r`.
+    /// Comments and trailing commas keep their own flags.
+    pub strict: bool,
     pub ignore_leading_escape_sequences: bool,
     pub json_warn_duplicate_keys: bool,
     pub was_originally_macro: bool,
@@ -27,6 +32,7 @@ impl JSONOptions {
     pub const DEFAULT: JSONOptions = JSONOptions {
         allow_comments: false,
         allow_trailing_commas: false,
+        strict: false,
         ignore_leading_escape_sequences: false,
         json_warn_duplicate_keys: true,
         was_originally_macro: false,
@@ -36,6 +42,11 @@ impl JSONOptions {
 }
 
 const JSON_OPTS: JSONOptions = JSONOptions::DEFAULT;
+
+const STRICT_JSON_OPTS: JSONOptions = JSONOptions {
+    strict: true,
+    ..JSONOptions::DEFAULT
+};
 
 const DOTENV_JSON_OPTS: JSONOptions = JSONOptions {
     allow_trailing_commas: true,
@@ -325,6 +336,17 @@ pub fn parse_utf8_impl<const CHECK_LEN: bool>(
     Ok(parse_classic(source, log, bump, JSON_OPTS, CHECK_LEN)?.root)
 }
 
+/// Parse exactly what `JSON.parse` accepts into the classic `E::Object` / `E::Array` AST.
+/// Unlike [`parse_utf8`], this rejects single-quoted strings, JavaScript number forms,
+/// content after the root value, and an empty document.
+pub fn parse_strict(
+    source: &bun_ast::Source,
+    log: &mut bun_ast::Log,
+    bump: &Bump,
+) -> crate::Result<Expr> {
+    Ok(parse_classic(source, log, bump, STRICT_JSON_OPTS, true)?.root)
+}
+
 fn parse_classic(
     source: &bun_ast::Source,
     log: &mut bun_ast::Log,
@@ -356,7 +378,7 @@ fn parse_classic(
 }
 
 impl ParsedJson {
-    /// Strict JSON.
+    /// Plain JSON: no comments or trailing commas.
     pub fn parse_json(
         source: &bun_ast::Source,
         log: &mut bun_ast::Log,
@@ -1061,6 +1083,8 @@ mod tests {
         errors: usize,
         warnings: usize,
         first_msg: String,
+        /// `(offset, length)` of the first message.
+        first_loc: Option<(usize, usize)>,
         _bump: Box<Bump>,
         _tape: Option<Box<E::JsonTape>>,
         _scope: js_ast::StoreResetGuard,
@@ -1075,6 +1099,7 @@ mod tests {
         let mut tape = None;
         let r = match which {
             Which::Utf8 => parse_utf8(&source, &mut log, &bump),
+            Which::Strict => parse_strict(&source, &mut log, &bump),
             Which::TsConfig => parse_ts_config(&source, &mut log, &bump),
             Which::Env => parse_env_json(&source, &mut log, &bump),
             Which::PackageJson => parse_package_json_utf8(&source, &mut log, &bump),
@@ -1094,11 +1119,17 @@ mod tests {
             .first()
             .map(|m| String::from_utf8_lossy(&m.data.text).into_owned())
             .unwrap_or_default();
+        let first_loc = log
+            .msgs
+            .first()
+            .and_then(|m| m.data.location.as_ref())
+            .map(|l| (l.offset, l.length));
         Parsed {
             root: r.ok(),
             errors: log.errors as usize,
             warnings: log.warnings as usize,
             first_msg,
+            first_loc,
             _bump: bump,
             _tape: tape,
             _scope: scope,
@@ -1108,6 +1139,7 @@ mod tests {
     #[derive(Clone, Copy)]
     enum Which {
         Utf8,
+        Strict,
         TsConfig,
         Env,
         PackageJson,
@@ -1408,6 +1440,102 @@ mod tests {
                 panic!("{src}")
             };
             assert_eq!(n.value(), want, "{src}");
+        }
+    }
+
+    #[test]
+    fn strict_mode_matches_json_parse() {
+        for (src, msg) in [
+            ("'a'", "JSON strings must use double quotes"),
+            ("{'a': 1}", "JSON strings must use double quotes"),
+            ("{\"a\": ['b']}", "JSON strings must use double quotes"),
+            ("0x10", "JSON does not support hexadecimal numbers"),
+            ("[0X1f]", "JSON does not support hexadecimal numbers"),
+            ("0b11", "JSON does not support binary numbers"),
+            ("0o17", "JSON does not support octal numbers"),
+            ("010", "JSON does not support numbers with leading zeros"),
+            ("08", "JSON does not support numbers with leading zeros"),
+            ("00", "JSON does not support numbers with leading zeros"),
+            ("[-01]", "JSON does not support numbers with leading zeros"),
+            ("0_1", "JSON does not support numeric separators"),
+            ("1_000", "JSON does not support numeric separators"),
+            ("1.0_1", "JSON does not support numeric separators"),
+            ("1e1_0", "JSON does not support numeric separators"),
+            (".5", "JSON numbers must have a digit before \".\""),
+            ("-.5", "JSON numbers must have a digit before \".\""),
+            ("5.", "JSON numbers must have a digit after \".\""),
+            ("[5.e1]", "JSON numbers must have a digit after \".\""),
+            ("- 5", "JSON numbers must have a digit after \"-\""),
+            ("[-\t5]", "JSON numbers must have a digit after \"-\""),
+            ("-Infinity", "Expected number"),
+            ("+1", "Operators are not allowed in JSON"),
+            ("1/0", "Operators are not allowed in JSON"),
+            ("\"\\v\"", "Syntax Error"),
+            ("\"\\x41\"", "Syntax Error"),
+            ("[\"\\8\"]", "Syntax Error"),
+            ("\"\\'\"", "Syntax Error"),
+            ("\"a\tb\"", "Syntax Error"),
+            ("[\\u0074rue]", "Unexpected \\u0074rue"),
+            ("\u{feff}1", "Unexpected \u{feff}1"),
+            ("[1,\u{a0}2]", "Unexpected \u{a0}2"),
+            ("{\x0b\"a\": 1}", "Expected string"),
+            ("{\"a\":1}\u{2028}", "Unexpected \u{2028}"),
+            ("undefined", "Unexpected undefined"),
+            ("NaN", "Unexpected NaN"),
+            ("1 2", "Unexpected 2"),
+            ("{} {}", "Unexpected {"),
+            ("\"a\" \"b\"", "Unexpected \"b\""),
+            ("", "Unexpected end of file"),
+            (" ", "Unexpected end of file"),
+            ("[1,]", "JSON does not support trailing commas"),
+            ("{\"a\":1,}", "JSON does not support trailing commas"),
+            ("[1] // c", "JSON does not support comments"),
+            ("/* c */ 1", "JSON does not support comments"),
+        ] {
+            let p = run(src.as_bytes(), Which::Strict);
+            assert!(p.root.is_none(), "{src:?}: expected an error");
+            assert!(p.errors > 0, "{src:?}: expected an error in the log");
+            assert!(
+                p.first_msg.contains(msg),
+                "{src:?}: expected {msg:?}, got {:?}",
+                p.first_msg
+            );
+        }
+        for (src, loc) in [
+            ("{\"a\": 0x10}", (6, 4)),
+            ("[1_0 , 2]", (1, 3)),
+            ("{\"a\": 'bc'}", (6, 4)),
+            ("[- 1]", (1, 1)),
+        ] {
+            let p = run(src.as_bytes(), Which::Strict);
+            assert_eq!(p.first_loc, Some(loc), "{src:?}");
+        }
+
+        for (src, want) in [
+            ("0", "0"),
+            ("-0", "-0"),
+            ("105", "105"),
+            ("-10.25e-1", "-1.025"),
+            ("[0.5,1E+2,1e400]", "[0.5,100,inf]"),
+            ("true", "true"),
+            ("null", "null"),
+            ("\"\"", "\"\""),
+            (
+                "\"\\u00e9\\n\\\"\\\\\\/\\b\\f\\r\\t \u{e9}\u{2028}\"",
+                "\"é\\n\\\"\\\\/\\u0008\\u000c\\u000d\\u0009 é\u{2028}\"",
+            ),
+            (r#""\ud83d\ude00""#, "\"😀\""),
+            (" \t\r\n[ 1 ,\n2 ]\r\n ", "[1,2]"),
+            (
+                "{\"a\":{\"b\":[false,{}],\"\":[]},\"a b\":\"c\"}",
+                "{\"a\":{\"b\":[false,{}],\"\":[]},\"a b\":\"c\"}",
+            ),
+        ] {
+            let p = run(src.as_bytes(), Which::Strict);
+            assert_eq!(p.errors, 0, "{src:?}: {}", p.first_msg);
+            let mut got = String::new();
+            to_json_string(p.root.as_ref().unwrap(), &mut got);
+            assert_eq!(got, want, "{src:?}");
         }
     }
 

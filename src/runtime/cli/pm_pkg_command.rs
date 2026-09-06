@@ -321,7 +321,8 @@ impl PmPkgCommand {
                 Global::exit(1);
             }
 
-            Self::set_value(&mut root, key, value, parse_json)?;
+            let expr = Self::parse_value(key, value, parse_json);
+            Self::set_value(&mut root, key, expr)?;
             modified = true;
         }
 
@@ -393,7 +394,8 @@ impl PmPkgCommand {
                 let lowercase: Vec<u8> = name_str.iter().map(|b| b.to_ascii_lowercase()).collect();
 
                 if !strings::eql(name_str, &lowercase) {
-                    Self::set_value(&mut root, b"name", &lowercase, false)?;
+                    let value = Self::parse_value(b"name", &lowercase, false);
+                    Self::set_value(&mut root, b"name", value)?;
                     modified = true;
                 }
             }
@@ -614,7 +616,7 @@ impl PmPkgCommand {
         Ok(path_parts)
     }
 
-    fn set_value(root: &mut Expr, key: &[u8], value: &[u8], parse_json: bool) -> Result<(), Error> {
+    fn set_value(root: &mut Expr, key: &[u8], value: Expr) -> Result<(), Error> {
         if !matches!(root.data, ExprData::EObject(_)) {
             return Err(crate::Error::InvalidRoot);
         }
@@ -626,25 +628,18 @@ impl PmPkgCommand {
         }
 
         if path_parts.len() == 1 {
-            let expr = Self::parse_value(value, parse_json)?;
-
             root.data
                 .e_object_mut()
                 .unwrap()
-                .put(dummy_bump(), path_parts[0], expr)?;
+                .put(dummy_bump(), path_parts[0], value)?;
 
             return Ok(());
         }
 
-        Self::set_nested(root, &path_parts, value, parse_json)
+        Self::set_nested(root, &path_parts, value)
     }
 
-    fn set_nested(
-        root: &mut Expr,
-        path: &[&[u8]],
-        value: &[u8],
-        parse_json: bool,
-    ) -> Result<(), Error> {
+    fn set_nested(root: &mut Expr, path: &[&[u8]], value: Expr) -> Result<(), Error> {
         if path.is_empty() {
             return Ok(());
         }
@@ -653,12 +648,10 @@ impl PmPkgCommand {
         let remaining_path = &path[1..];
 
         if remaining_path.is_empty() {
-            let expr = Self::parse_value(value, parse_json)?;
-
             root.data
                 .e_object_mut()
                 .unwrap()
-                .put(dummy_bump(), current_key, expr)?;
+                .put(dummy_bump(), current_key, value)?;
 
             return Ok(());
         }
@@ -682,40 +675,32 @@ impl PmPkgCommand {
         }
 
         let mut nested = nested_obj.unwrap();
-        Self::set_nested(&mut nested, remaining_path, value, parse_json)
+        Self::set_nested(&mut nested, remaining_path, value)
     }
 
-    fn parse_value(value: &[u8], parse_json: bool) -> Result<Expr, Error> {
-        if parse_json {
-            if value == b"true" {
-                return Ok(Expr::init(E::Boolean { value: true }, Loc::EMPTY));
-            } else if value == b"false" {
-                return Ok(Expr::init(E::Boolean { value: false }, Loc::EMPTY));
-            } else if value == b"null" {
-                return Ok(Expr::init(E::Null {}, Loc::EMPTY));
-            }
+    /// With `--json` the value must parse exactly as `JSON.parse` would, like `npm pkg set --json`.
+    fn parse_value(key: &[u8], value: &[u8], parse_json: bool) -> Expr {
+        let data: &[u8] = dummy_bump().alloc_slice_copy(value);
+        if !parse_json {
+            return Expr::init(E::String::init(data), Loc::EMPTY);
+        }
 
-            if let Some(int_val) = bun_core::fmt::parse_decimal::<i64>(value) {
-                return Ok(Expr::init(E::Number::new(int_val as f64), Loc::EMPTY));
+        let source = Source::init_path_string(key, data);
+        let mut log = Log::init();
+        match json::parse_strict(&source, &mut log, dummy_bump()) {
+            Ok(expr) => expr,
+            Err(_) => {
+                let reason: &[u8] = log
+                    .msgs
+                    .iter()
+                    .find(|msg| msg.kind == bun_ast::Kind::Err)
+                    .map_or(b"Syntax Error", |msg| &msg.data.text);
+                Output::err_generic(
+                    "Invalid JSON value for <b>\"{s}\"<r>: {s}",
+                    (bstr::BStr::new(key), bstr::BStr::new(reason)),
+                );
+                Global::exit(1);
             }
-
-            if let Some(float_val) = parse_f64(value) {
-                return Ok(Expr::init(E::Number::new(float_val), Loc::EMPTY));
-            }
-
-            let temp_source = Source::init_path_string(b"package.json", value);
-            let mut temp_log = Log::init();
-            if let Ok(json_expr) =
-                json::parse_package_json_utf8(&temp_source, &mut temp_log, dummy_bump())
-            {
-                return Ok(json_expr);
-            } else {
-                let data: &[u8] = dummy_bump().alloc_slice_copy(value);
-                return Ok(Expr::init(E::String::init(data), Loc::EMPTY));
-            }
-        } else {
-            let data: &[u8] = dummy_bump().alloc_slice_copy(value);
-            Ok(Expr::init(E::String::init(data), Loc::EMPTY))
         }
     }
 
@@ -864,7 +849,3 @@ impl PmPkgCommand {
         Ok(())
     }
 }
-
-// ───── helpers ────────────────────────────────────────────────────────────
-
-use bun_core::fmt::parse_f64;

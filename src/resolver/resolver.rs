@@ -1977,12 +1977,10 @@ impl<'a> Resolver<'a> {
                     let custom_dir: &[u8] = if bun_paths::is_absolute(custom_utf8.slice()) {
                         custom_utf8.slice()
                     } else {
-                        use bun_paths::resolve_path::{join_abs_string_buf_checked, platform};
-                        match join_abs_string_buf_checked::<platform::Auto>(
-                            self.fs_ref().top_level_dir,
-                            &mut *abs_buf,
-                            &[custom_utf8.slice()],
-                        ) {
+                        match self
+                            .fs_ref()
+                            .abs_buf_checked(&[custom_utf8.slice()], &mut *abs_buf)
+                        {
                             Some(dir) => dir,
                             None => continue,
                         }

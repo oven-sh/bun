@@ -343,6 +343,50 @@ describe("bun", () => {
       expect(stderr).toContain("Could not get current working directory");
       expect(exitCode).toBe(1);
     });
+
+    test("fish: creates the user completions dir under an existing fish config dir instead of falling through", async () => {
+      // A fresh fish setup has `fish/` but no `fish/completions/`. Without the user dir the probe list
+      // ends at /etc/fish/completions, which must never be the target when the user has a config dir.
+      using home = tempDir("completions-fish-home", { ".config": { fish: {} } });
+      using xdg = tempDir("completions-fish-xdg", { fish: {} });
+
+      async function run(env: Record<string, string | undefined>) {
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), "completions"],
+          // IS_BUN_AUTO_UPDATE is what `bun upgrade` sets. It makes `bun completions` install the file
+          // even though stdout is a pipe.
+          env: {
+            ...bunEnv,
+            HOME: String(home),
+            BUN_INSTALL: undefined,
+            XDG_CONFIG_HOME: undefined,
+            XDG_DATA_HOME: undefined,
+            SHELL: "/usr/bin/fish",
+            IS_BUN_AUTO_UPDATE: "true",
+            ...env,
+          },
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect(stdout).toBe("");
+        return { stderr, exitCode };
+      }
+
+      const viaHome = await run({});
+      expect(viaHome.stderr).toContain(
+        `Installed completions to ${join(String(home), ".config", "fish", "completions")}/bun.fish`,
+      );
+      expect(viaHome.exitCode).toBe(0);
+      expect(fs.readFileSync(join(String(home), ".config", "fish", "completions", "bun.fish"), "utf8")).toContain(
+        "bun",
+      );
+
+      const viaXdg = await run({ XDG_CONFIG_HOME: String(xdg) });
+      expect(viaXdg.stderr).toContain(`Installed completions to ${join(String(xdg), "fish", "completions")}/bun.fish`);
+      expect(viaXdg.exitCode).toBe(0);
+      expect(fs.existsSync(join(String(xdg), "fish", "completions", "bun.fish"))).toBe(true);
+    });
   });
   describe("--help preserves <placeholder> text", () => {
     const env = { ...bunEnv, NO_COLOR: "1" };

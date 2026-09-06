@@ -253,118 +253,127 @@ export function binaryExpectations(cfg: Config): BinaryExpectations {
   // the same list: an initializer that only -O2 folds away is still one we
   // wrote (make it constexpr/constinit instead).
   const sanitizerLibs = cfg.asan ? ["*libclang_rt.asan*", "*asan-dyld-shim*", "libresolv.so.2", "libgcc_s.so.1"] : [];
-  const auditInitializers = !cfg.asan;
+  const staticInitializers = cfg.asan ? undefined : runtimeInitializers(cfg);
 
-  if (format === "elf") {
-    const android = cfg.abi === "android";
-    const musl = cfg.abi === "musl";
-    const freebsd = cfg.freebsd;
-    // A sysroot pins the libc the binary is built against (every CI lane);
-    // without one the host's headers decide NEEDED and symbol versions.
-    const pinned = cfg.sysroot !== undefined;
-    const loader = cfg.x64 ? "ld-linux-x86-64.so.2" : "ld-linux-aarch64.so.1";
-    const neededLibs = freebsd
-      ? ["libc++.so.1", "libc.so.7", "libcxxrt.so.1", "libm.so.5", "libthr.so.3"]
-      : android
-        ? ["libc.so", "libdl.so", "libm.so"]
-        : musl
-          ? // libstdc++/libgcc stay dynamic on musl on purpose: an N-API addon built on
-            // Alpine links libstdc++.so.6, and it and bun must share one C++ runtime
-            // when it loads (node does the same). glibc builds link it statically.
-            [`libc.musl-${cfg.x64 ? "x86_64" : "aarch64"}.so.1`, "libstdc++.so.6"]
-          : [loader, "libc.so.6", "libdl.so.2", "libm.so.6", "libpthread.so.0"];
-    return {
-      format,
-      exports: { exact: [], ...versionScriptGlobals(src(freebsd ? "linker-freebsd.lds" : "linker.lds")) },
-      neededLibs: { names: neededLibs, exact: pinned, allowed: sanitizerLibs },
-      // glibc 2.17 = RHEL 7 / Amazon Linux 2, the oldest distro generation bun
-      // runs on. FreeBSD 13's libc is FBSD_1.7; its libc++ carries GLIBCXX_3.4
-      // version tags for the libstdc++-compatible subset.
-      ...(pinned && {
-        maxSymbolVersions: freebsd
-          ? { FBSD: "1.7", GLIBCXX: "3.4", CXXABI: "1.3" }
-          : android || musl
-            ? {}
-            : { GLIBC: "2.17" },
-      }),
-      forbiddenImports: forbiddenImports(cfg),
-      ...(auditInitializers && { staticInitializers: runtimeInitializers(cfg) }),
-      elf: {
-        // Android requires PIE; everywhere else bun is a fixed-address
-        // executable (-fno-pic, see flags.ts). No RELRO / BIND_NOW anywhere:
-        // flags.ts links `-z norelro -z lazy` (a startup-time choice from the
-        // CMake era, kept as is); this records it so a change is deliberate.
-        type: android ? "DYN" : "EXEC",
-        execStack: false,
-        rwxLoad: false,
-        relro: false,
-        bindNow: false,
-      },
-      debugInfo: { symtab: true, debugSections: true, compressed: cfg.release && !cfg.asan },
-    };
+  switch (format) {
+    case "elf": {
+      const gnu = cfg.linux && cfg.abi === "gnu";
+      const musl = cfg.linux && cfg.abi === "musl";
+      const android = cfg.linux && cfg.abi === "android";
+      // A sysroot pins the libc the binary is built against (every CI lane);
+      // without one the host's headers decide NEEDED and symbol versions, so
+      // the library set is a subset check and the version ceilings are off.
+      const pinned = cfg.sysroot !== undefined;
+
+      let neededLibs: string[];
+      let maxSymbolVersions: Record<string, string>;
+      if (gnu) {
+        const loader = cfg.x64 ? "ld-linux-x86-64.so.2" : "ld-linux-aarch64.so.1";
+        neededLibs = [loader, "libc.so.6", "libdl.so.2", "libm.so.6", "libpthread.so.0"];
+        // glibc 2.17 = RHEL 7 / Amazon Linux 2, the oldest distro generation
+        // bun runs on.
+        maxSymbolVersions = { GLIBC: "2.17" };
+      } else if (musl) {
+        // libstdc++/libgcc stay dynamic on musl on purpose: an N-API addon
+        // built on Alpine links libstdc++.so.6, and it and bun must share one
+        // C++ runtime when it loads (node does the same). glibc links it
+        // statically. musl has no symbol versioning.
+        neededLibs = [`libc.musl-${cfg.x64 ? "x86_64" : "aarch64"}.so.1`, "libstdc++.so.6"];
+        maxSymbolVersions = {};
+      } else if (android) {
+        neededLibs = ["libc.so", "libdl.so", "libm.so"];
+        maxSymbolVersions = {};
+      } else {
+        // FreeBSD 13's libc is FBSD_1.7; its libc++/libcxxrt carry
+        // GLIBCXX_3.4 / CXXABI_1.3 tags for the libstdc++-compatible subset.
+        neededLibs = ["libc++.so.1", "libc.so.7", "libcxxrt.so.1", "libm.so.5", "libthr.so.3"];
+        maxSymbolVersions = { FBSD: "1.7", GLIBCXX: "3.4", CXXABI: "1.3" };
+      }
+
+      return {
+        format,
+        exports: { exact: [], ...versionScriptGlobals(src(cfg.freebsd ? "linker-freebsd.lds" : "linker.lds")) },
+        neededLibs: { names: neededLibs, exact: pinned, allowed: sanitizerLibs },
+        ...(pinned && { maxSymbolVersions }),
+        forbiddenImports: forbiddenImports(cfg),
+        ...(staticInitializers && { staticInitializers }),
+        elf: {
+          // Android requires PIE; everywhere else bun is a fixed-address
+          // executable (-fno-pic, see flags.ts). No RELRO / BIND_NOW anywhere:
+          // flags.ts links `-z norelro -z lazy` (a startup-time choice from
+          // the CMake era, kept as is); recorded so a change is deliberate.
+          type: android ? "DYN" : "EXEC",
+          execStack: false,
+          rwxLoad: false,
+          relro: false,
+          bindNow: false,
+        },
+        debugInfo: { symtab: true, debugSections: true, compressed: cfg.release && !cfg.asan },
+      };
+    }
+
+    case "macho":
+      return {
+        format,
+        exports: { exact: symbolList(src("symbols.txt")), patterns: [], demangledPatterns: [] },
+        neededLibs: {
+          names: [
+            "/usr/lib/libSystem.B.dylib",
+            "/usr/lib/libc++.1.dylib",
+            "/usr/lib/libicucore.A.dylib",
+            "/usr/lib/libresolv.9.dylib",
+          ],
+          exact: true,
+          allowed: sanitizerLibs,
+        },
+        ...(cfg.osxDeploymentTarget !== undefined && { minOSVersion: cfg.osxDeploymentTarget }),
+        forbiddenImports: forbiddenImports(cfg),
+        ...(staticInitializers && { staticInitializers }),
+        macho: {
+          flags: ["PIE", "TWOLEVEL", "DYLDLINK"],
+          segmentMaxProt: { __TEXT: "r-x", __DATA_CONST: "rw-", __DATA: "rw-", __LINKEDIT: "r--" },
+        },
+      };
+
+    case "pe":
+      return {
+        format,
+        exports: {
+          exact: [...symbolList(src("symbols.def")), "node_module_register"],
+          // Node-API and the V8 / node C++ embedder API are exported from the
+          // source with __declspec(dllexport) (NAPI_EXTERN, BUN_EXPORT), the
+          // C++ ones under their MSVC-mangled names; symbols.def adds libuv.
+          patterns: ["napi_*", "node_api_*", "?*@v8@@*", "?*@node@@*"],
+          demangledPatterns: [],
+        },
+        neededLibs: {
+          names: [
+            "ADVAPI32.dll",
+            "CRYPT32.dll",
+            "IPHLPAPI.DLL",
+            "KERNEL32.dll",
+            "OLEAUT32.dll",
+            "SHELL32.dll",
+            "USER32.dll",
+            "USERENV.dll",
+            "WS2_32.dll",
+            "WSOCK32.dll",
+            "api-ms-win-core-synch-l1-2-0.dll",
+            "bcryptprimitives.dll",
+            "dbghelp.dll",
+            "ntdll.dll",
+            "ole32.dll",
+          ],
+          exact: true,
+          allowed: sanitizerLibs,
+        },
+        minOSVersion: "6.0",
+        forbiddenImports: forbiddenImports(cfg),
+        // No initializer audit: PE has no symbol table to name .CRT$XCU entries by.
+        pe: {
+          dllCharacteristics: ["DYNAMIC_BASE", "HIGH_ENTROPY_VA", "NX_COMPAT", "TERMINAL_SERVER_AWARE"],
+          subsystem: "IMAGE_SUBSYSTEM_WINDOWS_CUI",
+        },
+      };
   }
-
-  if (format === "macho") {
-    return {
-      format,
-      exports: { exact: symbolList(src("symbols.txt")), patterns: [], demangledPatterns: [] },
-      neededLibs: {
-        names: [
-          "/usr/lib/libSystem.B.dylib",
-          "/usr/lib/libc++.1.dylib",
-          "/usr/lib/libicucore.A.dylib",
-          "/usr/lib/libresolv.9.dylib",
-        ],
-        exact: true,
-        allowed: sanitizerLibs,
-      },
-      ...(cfg.osxDeploymentTarget !== undefined && { minOSVersion: cfg.osxDeploymentTarget }),
-      forbiddenImports: forbiddenImports(cfg),
-      ...(auditInitializers && { staticInitializers: runtimeInitializers(cfg) }),
-      macho: {
-        flags: ["PIE", "TWOLEVEL", "DYLDLINK"],
-        segmentMaxProt: { __TEXT: "r-x", __DATA_CONST: "rw-", __DATA: "rw-", __LINKEDIT: "r--" },
-      },
-    };
-  }
-
-  // pe
-  return {
-    format,
-    exports: {
-      exact: [...symbolList(src("symbols.def")), "node_module_register"],
-      // Node-API and the V8 / node C++ embedder API are exported from the
-      // source with __declspec(dllexport) (NAPI_EXTERN, BUN_EXPORT), the C++
-      // ones under their MSVC-mangled names; symbols.def adds libuv.
-      patterns: ["napi_*", "node_api_*", "?*@v8@@*", "?*@node@@*"],
-      demangledPatterns: [],
-    },
-    neededLibs: {
-      exact: true,
-      allowed: sanitizerLibs,
-      names: [
-        "ADVAPI32.dll",
-        "CRYPT32.dll",
-        "IPHLPAPI.DLL",
-        "KERNEL32.dll",
-        "OLEAUT32.dll",
-        "SHELL32.dll",
-        "USER32.dll",
-        "USERENV.dll",
-        "WS2_32.dll",
-        "WSOCK32.dll",
-        "api-ms-win-core-synch-l1-2-0.dll",
-        "bcryptprimitives.dll",
-        "dbghelp.dll",
-        "ntdll.dll",
-        "ole32.dll",
-      ],
-    },
-    minOSVersion: "6.0",
-    forbiddenImports: forbiddenImports(cfg),
-    pe: {
-      dllCharacteristics: ["DYNAMIC_BASE", "HIGH_ENTROPY_VA", "NX_COMPAT", "TERMINAL_SERVER_AWARE"],
-      subsystem: "IMAGE_SUBSYSTEM_WINDOWS_CUI",
-    },
-  };
 }

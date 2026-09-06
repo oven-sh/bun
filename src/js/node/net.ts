@@ -401,10 +401,8 @@ function tlsHandshakeError(verifyError) {
   return new ConnResetException("socket hang up");
 }
 
-// A fatal TLS protocol error after the handshake (EPROTO carrying the OpenSSL
-// reason, see NewSocket::on_close). Node destroys the socket with the
-// ERR_SSL_* error, listener or not. A write parked on the native drain can
-// never complete: fail it with the same error, like the native error dispatch.
+// Fatal post-handshake TLS error (EPROTO with the OpenSSL reason): fail the
+// parked write and destroy with the ERR_SSL_* error, like the native dispatch.
 function destroyWithTLSError(self, err) {
   const error = tlsHandshakeError(err);
   const pendingWrite = self[kwriteCallback];

@@ -2,9 +2,9 @@
  * Fetch CLI — the single entry point ninja invokes for all downloads.
  *
  * Ninja rules reference this file via `cfg.bun <this-file> <kind> <args...>`.
- * This is BUILD-time code (runs under ninja); the one configure-time caller
- * is source.ts prefetchConfigureSources, which runs the same `fetchDep` for
- * deps whose graph is read from their tree (WebKit, ICU).
+ * This is BUILD-time code (runs under ninja), not CONFIGURE-time. The
+ * configure-time modules (source.ts, deps/*.ts) emit ninja rules that call
+ * into here but don't execute any of it themselves.
  *
  * ## Adding a new fetch kind
  *
@@ -212,7 +212,7 @@ function checkUndefined(name: string, nm: string, rspfile: string, stamp: string
  * if the tarball already exists. Useful when re-extraction is needed after
  * a failed patch (you don't re-download).
  */
-export async function fetchDep(
+async function fetchDep(
   name: string,
   url: string,
   ref: string,

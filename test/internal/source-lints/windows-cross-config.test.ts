@@ -56,7 +56,7 @@ function mockToolchain(overrides: Partial<Toolchain> = {}): Toolchain {
 
 /**
  * Shorthand: resolve a config for a Windows target the way the CI cross lane
- * does (`--profile=ci-release --os=windows --arch=<arch>`): Release + ci so
+ * does (`--profile=ci-build --os=windows --arch=<arch>`): Release + ci so
  * the LTO default applies, with an explicit fake sysroot so the local-build
  * "create one with xwin" error never triggers.
  */

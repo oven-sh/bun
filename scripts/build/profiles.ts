@@ -184,19 +184,11 @@ export const profiles = {
     buildkite: true,
   },
 
-  /** CI's build-bun step: the full build (deps + C++ + cargo + link) on one agent, then package + upload the zips. */
+  /** CI's build-bun step: the full release build (LTO by default) on one agent, then package + upload the zips. */
   "ci-build": {
     buildType: "Release",
     ci: true,
     buildkite: true,
-  },
-
-  /** CI full build with LTO. */
-  "ci-release": {
-    buildType: "Release",
-    ci: true,
-    buildkite: true,
-    // lto default resolves to ON (release + !asan + !assertions)
   },
 } as const satisfies Record<string, PartialConfig>;
 

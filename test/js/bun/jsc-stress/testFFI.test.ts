@@ -27,7 +27,7 @@ if (isCI) {
   });
 }
 
-test.skipIf(!testFFI && !isCI)(
+test.skipIf(!testFFI)(
   "testFFI (JavaScriptCore FFI C++/ABI checks)",
   async () => {
     await using proc = Bun.spawn({

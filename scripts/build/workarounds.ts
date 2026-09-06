@@ -29,6 +29,7 @@
  *     ambiguous case.
  */
 
+import { spawnSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { Config } from "./config.ts";
@@ -40,6 +41,19 @@ function lockedCrateVersion(cfg: Config, name: string): string | undefined {
   const lock = readFileSync(join(cfg.cwd, "Cargo.lock"), "utf8");
   const m = lock.match(new RegExp(`\\nname = "${name}"\\nversion = "([^"]+)"`));
   return m?.[1];
+}
+
+/**
+ * bun's own LLVM toolchain builds (oven-sh/llvm-project) tag clang and lld
+ * with an orderable vendor string — `Bun toolchain r<N> LLD 22.1.8 (…)` — and
+ * bump N whenever a patch lands that a consumer may need to detect. The
+ * revision of the given tool, or undefined for any other toolchain (stock
+ * LLVM, distro clang, rustup's rust-lld, untagged earlier releases).
+ */
+function bunToolchainRevision(tool: string): number | undefined {
+  const r = spawnSync(tool, ["--version"], { encoding: "utf8", timeout: 10_000 });
+  const m = /^Bun toolchain r(\d+) /.exec(r.stdout ?? "");
+  return m ? Number(m[1]) : undefined;
 }
 
 export interface Workaround {
@@ -72,12 +86,10 @@ export const workarounds: Workaround[] = [
       "lld-link rejects two objects that weak-reference the same symbol (their per-TU absolute-0 defaults differ by name); " +
       "/lld-allow-duplicate-weak on every Windows link (flags.ts, deps/webkit.ts standaloneExeLinkFlags)",
     applies: cfg => cfg.windows,
-    expectedToBeFixed: cfg => {
-      // Fixed in bun's LLVM toolchain fork; not upstream as of LLVM 22. Best
-      // guess for an upstream release carrying it.
-      const FIXED_IN_LLVM = "23.1.0";
-      return cfg.clangVersion !== undefined && satisfiesRange(cfg.clangVersion, `>=${FIXED_IN_LLVM}`);
-    },
+    // Fixed in bun's LLVM toolchain from r2; in no upstream release. Keyed on
+    // the linker that performs the Windows link (rust-lld's lld-link under
+    // the LLVM-version skew, clang's otherwise), not on clang.
+    expectedToBeFixed: cfg => (bunToolchainRevision(cfg.ld) ?? 0) >= 2,
     cleanup:
       "Drop the /lld-allow-duplicate-weak entries from flags.ts (linkFlags, Windows) and deps/webkit.ts, and this workaround",
   },

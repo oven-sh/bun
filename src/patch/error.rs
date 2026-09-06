@@ -33,17 +33,15 @@ impl From<bun_sys::Error> for Error {
 
 pub type Result<T, E = Error> = core::result::Result<T, E>;
 
-/// Why `PatchFile::apply` stopped. A hunk whose context and deleted lines
-/// match nowhere in the target file is not a syscall failure: the patch was
-/// made against different contents.
 #[derive(Debug)]
 pub enum ApplyError {
     Sys(bun_sys::Error),
+    /// The hunk's context and deleted lines match nowhere in the target file.
     HunkDoesNotApply {
         path: Box<[u8]>,
-        /// 1-based index of the hunk within its file patch.
+        /// 1-based.
         hunk: usize,
-        /// The `-` side start line from the hunk header.
+        /// The `-` start from the hunk header.
         line: u32,
     },
 }

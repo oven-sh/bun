@@ -296,8 +296,7 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
         )
     }
 
-    /// Whether the TLS handshake has completed. Always true for a plain TCP
-    /// socket; false while connecting or once detached.
+    /// Always true for a plain TCP socket. False while connecting or once detached.
     pub fn is_ssl_handshake_finished(&self) -> bool {
         on_socket!(self.socket;
             connected s => s.is_ssl_handshake_finished(),

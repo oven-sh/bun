@@ -380,7 +380,7 @@ test.concurrent("postgres: a rejected certificate over a holding TLS peer does n
       bunExe(),
       "-e",
       `
-      const { SQL } = require("bun");
+      import { SQL } from "bun";
       const sql = new SQL("postgres://u:p@127.0.0.1:${server.port}/db?sslmode=verify-full", { max: 1 });
       const code = await sql.connect().then(() => "connected", e => e.code);
       console.log(code);

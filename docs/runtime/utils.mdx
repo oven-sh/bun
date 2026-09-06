@@ -624,7 +624,7 @@ const compressedAsync = await Bun.zstdCompress(buf);
 const compressedLevel = Bun.zstdCompressSync(buf, { level: 6 });
 ```
 
-When passing a `TypedArray`/`ArrayBuffer` to `Bun.zstdCompress()`, don't modify it until the promise settles. Compression runs off-thread and borrows the bytes. To reuse the buffer right away, pass a copy: `Buffer.from(buf)` or `new Uint8Array(buf)`. `Buffer#slice()` and `subarray()` return views, not copies.
+When passing a `TypedArray`/`ArrayBuffer` to `Bun.zstdCompress()`, don't modify it until the promise settles. Compression runs off-thread and borrows the bytes. To reuse the buffer right away, pass a copy: `new Uint8Array(buf)` for a `Uint8Array` or `Buffer`, `ab.slice(0)` for an `ArrayBuffer`. `Buffer#slice()`, `subarray()`, `Buffer.from(arrayBuffer)` and `new Uint8Array(arrayBuffer)` return views, not copies.
 
 ## `Bun.zstdDecompress()` / `Bun.zstdDecompressSync()`
 

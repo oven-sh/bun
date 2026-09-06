@@ -259,6 +259,80 @@ test.concurrent(
   },
 );
 
+test.concurrent(
+  "trustedDependencies added to a workspace member's package.json on a later install runs the scripts and is saved",
+  async () => {
+    using ctx = await setupTest();
+    const { packageDir, packageJson, env } = ctx;
+
+    await writeFile(packageJson, JSON.stringify({ name: "foo", version: "1.0.0", workspaces: ["packages/*"] }));
+    const memberDir = join(packageDir, "packages", "pkg1");
+    await mkdir(memberDir, { recursive: true });
+    const memberJson = { name: "pkg1", version: "1.0.0", dependencies: { "all-lifecycle-scripts": "1.0.0" } };
+    await writeFile(join(memberDir, "package.json"), JSON.stringify(memberJson));
+
+    async function install() {
+      await using proc = spawn({
+        cmd: [bunExe(), "install"],
+        cwd: packageDir,
+        stdout: "pipe",
+        stdin: "ignore",
+        stderr: "pipe",
+        env,
+      });
+      const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      const lockfile = await file(join(packageDir, "bun.lock")).text();
+      return { out, err, exitCode, lockfile };
+    }
+
+    const depDir = join(packageDir, "node_modules", "all-lifecycle-scripts");
+    async function scriptsThatRan() {
+      const names = ["preinstall", "install", "postinstall"];
+      const ran = await Promise.all(names.map(name => exists(join(depDir, `${name}.txt`))));
+      return names.filter((_, i) => ran[i]);
+    }
+
+    // The member's dependency is installed with its scripts blocked.
+    let result = await install();
+    expect(result.err).toContain("Saved lockfile");
+    expect(result.err).not.toContain("error:");
+    expect(result.out).toContain("Blocked 3 postinstalls. Run `bun pm untrusted` for details.");
+    expect(result.lockfile).not.toContain("trustedDependencies");
+    expect(await scriptsThatRan()).toEqual([]);
+    expect(result.exitCode).toBe(0);
+
+    // Trusting it in the member's package.json runs the scripts on the next install and records the entry in bun.lock.
+    await writeFile(
+      join(memberDir, "package.json"),
+      JSON.stringify({ ...memberJson, trustedDependencies: ["all-lifecycle-scripts"] }),
+    );
+    result = await install();
+    expect(result.err).toContain("Saved lockfile");
+    expect(result.err).not.toContain("error:");
+    expect(result.out).not.toContain("Blocked");
+    expect(result.out).toContain("Checked 2 installs across 3 packages (no changes)");
+    expect(result.lockfile).toContain(`"trustedDependencies": [\n    "all-lifecycle-scripts",\n  ],`);
+    expect(await scriptsThatRan()).toEqual(["preinstall", "install", "postinstall"]);
+    expect(await file(join(depDir, "postinstall.txt")).text()).toBe("postinstall!");
+    expect(result.exitCode).toBe(0);
+
+    // With nothing changed the lockfile is up to date.
+    result = await install();
+    expect(result.err).not.toContain("Saved lockfile");
+    expect(result.err).not.toContain("error:");
+    expect(result.out).toContain("Checked 2 installs across 3 packages (no changes)");
+    expect(result.exitCode).toBe(0);
+
+    // Removing the entry from the member's package.json removes it from bun.lock.
+    await writeFile(join(memberDir, "package.json"), JSON.stringify(memberJson));
+    result = await install();
+    expect(result.err).toContain("Saved lockfile");
+    expect(result.err).not.toContain("error:");
+    expect(result.lockfile).not.toContain("trustedDependencies");
+    expect(result.exitCode).toBe(0);
+  },
+);
+
 test.concurrent("node-gyp shim directory added to lifecycle script PATH gets a randomized name", async () => {
   using ctx = await setupTest();
   const { packageDir, packageJson, env } = ctx;

@@ -741,14 +741,15 @@ declare module "bun:ffi" {
    */
   function CFunction(fn: FFIFunction & { ptr: Pointer | number | bigint }): CallableFunction & {
     /**
-     * Free the memory allocated by the wrapping function
+     * Provided for symmetry with {@link Library.close}. The wrapping function is
+     * managed by the garbage collector, so this is currently a no-op.
      */
     close(): void;
 
     /**
-     * Frees the wrapping function at the end of a `using` block (explicit resource management).
+     * Lets a `CFunction` be declared with `using` (explicit resource management).
      *
-     * Equivalent to calling `close()`.
+     * Equivalent to calling `close()`, which is currently a no-op.
      */
     [Symbol.dispose](): void;
   };

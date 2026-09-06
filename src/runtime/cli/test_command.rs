@@ -911,8 +911,7 @@ impl JunitReporter {
         .and_then(|file| {
             let written = file.write_all(&self.contents);
             drop(file);
-            // A truncated report is worse than none. `lstat` so a symlink such
-            // as /dev/stdout, or a device, is never unlinked.
+            // Drop a truncated report. `lstat`: keep a symlink (/dev/stdout) or a device.
             if written.is_err()
                 && bun_sys::lstat(zpath)
                     .is_ok_and(|st| bun_sys::is_regular_file(st.st_mode as bun_sys::Mode))
@@ -1449,8 +1448,7 @@ impl CommandLineReporter {
         }
     }
 
-    /// Writes the JUnit report to `--reporter-outfile` when one is configured.
-    /// The error is already printed; the caller decides the exit code.
+    /// Writes the JUnit report to `--reporter-outfile`, if set. A failure is already printed.
     pub(crate) fn write_junit_report_if_needed(&mut self) -> crate::Result<()> {
         if let Some(junit) = self.reporters.junit.as_mut() {
             if let Some(outfile) = self.jest.test_options.reporter_outfile.as_deref() {

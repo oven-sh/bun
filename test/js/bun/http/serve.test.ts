@@ -1,5 +1,5 @@
 import { file, gc, Serve, serve, Server } from "bun";
-import { afterAll, afterEach, describe, expect, it, mock } from "bun:test";
+import { afterAll, afterEach, beforeAll, describe, expect, it, mock } from "bun:test";
 import { readFileSync, writeFileSync } from "fs";
 import {
   bunEnv,
@@ -3191,9 +3191,13 @@ describe.concurrent.skipIf(isWindows)("idleTimeout and a slow reader", () => {
     });
   }
 
-  const dir = tempDir("serve-slow-reader", { "big.bin": Buffer.alloc(TOTAL) });
-  const bigFile = join(String(dir), "big.bin");
-  afterAll(() => dir[Symbol.dispose]());
+  let dir: ReturnType<typeof tempDir> | undefined;
+  let bigFile = "";
+  beforeAll(() => {
+    dir = tempDir("serve-slow-reader", { "big.bin": Buffer.alloc(TOTAL) });
+    bigFile = join(String(dir), "big.bin");
+  });
+  afterAll(() => dir?.[Symbol.dispose]());
 
   for (const kind of ["bytes", "stream", "file"] as const) {
     // Read at RATE for longer than one idle period, then assert the request is

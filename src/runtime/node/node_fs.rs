@@ -7451,12 +7451,8 @@ impl NodeFS {
     pub(crate) fn rm(&mut self, args: &args::Rm, _: Flavor) -> Maybe<ret::Rm> {
         // We cannot use removefileat() on macOS because it does not handle write-protected files as expected.
         if args.recursive {
-            // On Windows a rooted-but-driveless path ("/tmp/foo") must resolve
-            // against the cwd drive. The dt_* helpers go through
-            // Syscall::*at -> to_nt_path / normalize_path_windows, which do not
-            // add the drive and would turn "/tmp/foo" into a nonexistent NT
-            // name (ENOENT). Pre-resolve with slice_z so the path carries a
-            // drive letter, the same way existsSync/statSync/unlinkSync see it.
+            // Syscall::*at does not add the cwd drive to a rooted path
+            // ("/tmp/foo"); slice_z does.
             #[cfg(windows)]
             let resolved = args.path.slice_z(&mut self.sync_error_buf).as_bytes();
             #[cfg(not(windows))]
@@ -9191,20 +9187,12 @@ pub(crate) unsafe extern "C" fn Bun__mkdirp(
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// zig_delete_tree — recursive delete-tree. An error names the entry that
-// failed (`sys::Error::path`) and carries the raw errno. ENOENT below the
-// root is not an error: another process removed the entry first. ENOENT
-// for the root itself is returned, which `fs.rm` with `force: false` needs.
+// zig_delete_tree — recursive delete-tree. Errors carry the raw errno and the
+// path of the entry that failed. ENOENT is only returned for the root.
 // ──────────────────────────────────────────────────────────────────────────
 
-// Implemented on top of `bun_sys` primitives (`openat` + `unlinkat`). The
-// structure: 16-slot stack, treat_as_dir flip-flop, close-then-deleteDir,
-// retry-on-DirNotEmpty.
-
-/// Runs `remove` up to `maxRetries + 1` times. A retry happens for the
-/// errors Node's rimraf retries (EBUSY, EMFILE, ENFILE, ENOTEMPTY, EPERM)
-/// after a sleep of `retryDelay * attempt` milliseconds. A retry that finds
-/// the path gone is a success: the first attempt proved the path existed.
+/// Retries `remove` on the errors Node's rimraf retries, `maxRetries` times,
+/// sleeping `retryDelay * attempt` ms. A retry that finds the path gone succeeds.
 fn rm_with_retries(
     opts: &args::RmDir,
     mut remove: impl FnMut() -> sys::Maybe<()>,
@@ -9231,9 +9219,7 @@ fn rm_with_retries(
     }
 }
 
-/// The path of the entry the walker is working on: `sub_path`, then the name
-/// of each directory entered below it (the stack items that own a name),
-/// then `name` when given.
+/// `sub_path` joined with the directory names on `stack`, then `name`.
 fn dt_entry_path(sub_path: &[u8], stack: &[DeleteTreeStackItem], name: Option<&[u8]>) -> Vec<u8> {
     let mut path = Vec::with_capacity(sub_path.len() + 64);
     path.extend_from_slice(sub_path);
@@ -9381,8 +9367,7 @@ pub(crate) fn zig_delete_tree(
             let entry = match stack[top_idx].iter.next() {
                 Ok(Some(e)) => e,
                 Ok(None) => break,
-                // Linux reports ENOENT from getdents64 on a directory that was
-                // removed while open. Nothing is left to delete in it.
+                // getdents64 on a directory removed while open: nothing left.
                 Err(err) if err.get_errno() == E::ENOENT => break,
                 Err(err) => return Err(err.with_path(&dt_entry_path(sub_path, stack, None))),
             };
@@ -9663,10 +9648,8 @@ fn zig_delete_tree_open_initial_subpath(
     }
 }
 
-/// Deletes `sub_path` (relative to `self_`) with one open directory at a
-/// time. The walker above switches to this once its stack is full. An error
-/// names `sub_path`, not the deeper entry that failed: this function does
-/// not keep the chain of directory names it descended through.
+/// One open directory at a time, for trees deeper than the stack above.
+/// Errors name `sub_path`: the chain of names below it is not kept.
 fn zig_delete_tree_min_stack_size_with_kind_hint(
     self_: &sys::Dir,
     sub_path: &[u8],
@@ -9699,7 +9682,7 @@ fn zig_delete_tree_min_stack_size_with_kind_hint(
                 let entry = match dir_it.next() {
                     Ok(Some(e)) => e,
                     Ok(None) => break 'dir_it,
-                    // See the main walker: the directory was removed while open.
+                    // The directory was removed while open: nothing left.
                     Err(err) if err.get_errno() == E::ENOENT => break 'dir_it,
                     Err(err) => break 'scan_dir Err(err.with_path(sub_path)),
                 };

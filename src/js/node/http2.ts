@@ -3020,7 +3020,7 @@ function doSendFileFD(options, fd, headers, err, stat) {
   if (statOptions.offset <= 0) {
     statOptions.offset = 0;
   }
-  if (statOptions.length <= 0) {
+  if (statOptions.length < 0) {
     if (stat.isFile()) {
       statOptions.length = stat.size;
     } else {
@@ -3045,6 +3045,20 @@ function doSendFileFD(options, fd, headers, err, stat) {
       statOptions.length < 0
         ? stat.size - +statOptions.offset
         : Math.min(stat.size - +statOptions.offset, statOptions.length);
+    // An offset past the end of the file (or a non-integer offset/length) has no valid byte
+    // range: reset this stream instead of letting the read stream validator throw from the
+    // fstat callback, where nothing can catch it.
+    let rangeError;
+    if (!Number.isInteger(statOptions.offset) || statOptions.offset > stat.size) {
+      rangeError = $ERR_OUT_OF_RANGE("options.offset", `>= 0 && <= ${stat.size}`, statOptions.offset);
+    } else if (!Number.isInteger(statOptions.length)) {
+      rangeError = $ERR_OUT_OF_RANGE("options.length", "an integer", statOptions.length);
+    }
+    if (rangeError) {
+      if (ownsFd) tryClose(fd);
+      this.destroy(rangeError);
+      return;
+    }
     // remove content-length header
     for (let i in headers) {
       if (i?.toLowerCase() === HTTP2_HEADER_CONTENT_LENGTH) {
@@ -3070,6 +3084,13 @@ function doSendFileFD(options, fd, headers, err, stat) {
   // The file is piped to the native stream directly below; its completion runs the regular
   // _final (END_STREAM / wantTrailers) logic returned here.
   const finishNativeStream = closeWritableForFileResponse(this);
+
+  if (statOptions.length === 0) {
+    // Nothing to read (empty file, or offset at the end): end the stream without a read stream.
+    if (ownsFd) tryClose(fd);
+    finishNativeStream(() => {});
+    return;
+  }
 
   const stream = this;
   const fileStream = fs.createReadStream(null, {

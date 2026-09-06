@@ -1,5 +1,5 @@
 import { jscDescribe } from "bun:jsc";
-import { bunEnv, bunExe, isASAN, isCI, isDebug, nodeExe } from "harness";
+import { bunEnv, bunExe, isASAN, isCI, isDebug, nodeExe, tempDir } from "harness";
 import { createTest } from "node-harness";
 import { AsyncLocalStorage } from "node:async_hooks";
 import dc from "node:diagnostics_channel";
@@ -4734,6 +4734,102 @@ it("http2 stream.respond accepts raw-headers arrays; respondWithFD/respondWithFi
     client.close();
     server.close();
   }
+});
+it("http2 respondWithFile/respondWithFD with an empty byte range or an offset past EOF does not kill the process", async () => {
+  // An empty file, offset === size, or length: 0 answers 200 with an empty body (node v26.3.0).
+  // An offset past EOF or a non-integer offset resets only that stream; the server survives.
+  // Both used to throw ERR_OUT_OF_RANGE from the fstat callback, which was uncaught.
+  using dir = tempDir("h2-respond-file-range", {
+    "empty.css": "",
+    "full.txt": "hello world",
+    "main.mjs": `
+      import http2 from "node:http2";
+      import fs from "node:fs";
+      process.on("uncaughtException", e => {
+        console.log("UNCAUGHT", e.code);
+        process.exit(70);
+      });
+      const cases = [
+        ["empty-file", "empty.css", {}],
+        ["empty-fd", "empty.css", { fd: true }],
+        ["offset=size", "full.txt", { offset: 11 }],
+        ["offset=size+1", "full.txt", { offset: 12 }],
+        ["offset=NaN", "full.txt", { offset: NaN }],
+        ["offset=1.5", "full.txt", { offset: 1.5 }],
+        ["length=0", "full.txt", { offset: 0, length: 0 }],
+        ["offset=6", "full.txt", { offset: 6 }],
+      ];
+      const results = {};
+      const server = http2.createServer();
+      server.on("stream", (stream, headers) => {
+        const [name, file, opts] = cases[+headers[":path"].slice(1)];
+        const result = (results[name] ??= {});
+        stream.on("error", e => (result.serverError = e.code));
+        const options = { ...opts, onError: e => (result.onError = e.code) };
+        if (opts.fd) {
+          delete options.fd;
+          const fd = fs.openSync(file, "r");
+          stream.on("close", () => fs.closeSync(fd));
+          stream.respondWithFD(fd, {}, options);
+        } else {
+          stream.respondWithFile(file, {}, options);
+        }
+      });
+      server.listen(0, async () => {
+        const client = http2.connect("http://127.0.0.1:" + server.address().port);
+        for (let i = 0; i < cases.length; i++) {
+          const result = (results[cases[i][0]] ??= {});
+          await new Promise(resolve => {
+            const req = client.request({ ":path": "/" + i });
+            let body = "";
+            req.setEncoding("utf8");
+            req.on("response", h => {
+              result.status = h[":status"];
+              result.contentLength = h["content-length"];
+            });
+            req.on("data", d => (body += d));
+            req.on("error", e => (result.clientError = e.code));
+            req.on("close", () => {
+              result.body = body;
+              result.rstCode = req.rstCode;
+              resolve();
+            });
+          });
+        }
+        client.close();
+        server.close();
+        console.log(JSON.stringify(results));
+      });
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "main.mjs"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(stdout).not.toStartWith("UNCAUGHT");
+  const ok = { status: 200, contentLength: "0", body: "", rstCode: 0 };
+  const reset = {
+    serverError: "ERR_OUT_OF_RANGE",
+    clientError: "ERR_HTTP2_STREAM_ERROR",
+    body: "",
+    rstCode: http2.constants.NGHTTP2_INTERNAL_ERROR,
+  };
+  expect(JSON.parse(stdout.trim())).toEqual({
+    "empty-file": ok,
+    "empty-fd": ok,
+    "offset=size": ok,
+    "offset=size+1": reset,
+    "offset=NaN": reset,
+    "offset=1.5": reset,
+    "length=0": ok,
+    "offset=6": { status: 200, contentLength: "5", body: "world", rstCode: 0 },
+  });
+  expect(exitCode).toBe(0);
 });
 it("http2 client.request() on a destroyed or closed session uses the right error codes", async () => {
   // Node: destroyed session -> ERR_HTTP2_INVALID_SESSION,

@@ -928,8 +928,16 @@ JSC::JSValue runVirtualModule(Zig::GlobalObject* globalObject, BunString* specif
     }
     auto& virtualModules = *globalObject->onLoadPlugins.virtualModules;
     WTF::String specifierString = specifier->toWTFString(BunString::ZeroCopy);
+    auto virtualModuleFn = virtualModules.get(specifierString);
+    if (!virtualModuleFn) {
+        if (specifierString.startsWith("node:"_s)) {
+            virtualModuleFn = virtualModules.get(specifierString.substring(5));
+        } else {
+            virtualModuleFn = virtualModules.get(makeString("node:"_s, specifierString));
+        }
+    }
 
-    if (auto virtualModuleFn = virtualModules.get(specifierString)) {
+    if (virtualModuleFn) {
         auto& vm = JSC::getVM(globalObject);
         JSC::JSObject* function = virtualModuleFn.get();
         auto throwScope = DECLARE_THROW_SCOPE(vm);

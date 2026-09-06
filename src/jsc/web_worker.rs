@@ -130,9 +130,8 @@ struct WorkerVmInit {
     transform_options: bun_options_types::schema::api::TransformOptions,
     env_loader: bun_dotenv::Loader,
     proxy_env_slots: jsc::rare_data::ProxyEnvSlots,
-    /// The entry point's Blob when the specifier is a `blob:` URL, captured
-    /// now so a later `URL.revokeObjectURL` cannot affect the load (the URL
-    /// spec resolves a blob URL's entry when the URL is parsed).
+    /// The entry point's Blob for a `blob:` specifier, captured at construction
+    /// as the URL spec requires (a parsed blob URL carries its blob).
     entry_blob: Option<jsc::module_loader::WorkerEntryBlob>,
 }
 
@@ -1271,11 +1270,8 @@ fn on_unhandled_rejection(
     vm.handle_ref().request_termination();
 }
 
-/// The `<uuid>` of a `blob:<uuid>` specifier. Mirrors
-/// `bun.webcore.ObjectURLRegistry.isBlobURL`: prefix `"blob:"` AND
-/// `len >= "blob:".len + UUID.stringLength` (41). A short `"blob:foo"` is
-/// `None`, so it falls through to the resolver instead of reporting
-/// "Blob URL is missing".
+/// The `<uuid>` of a `blob:<uuid>` specifier (`ObjectURLRegistry::is_blob_url`).
+/// A short `"blob:foo"` is `None` and falls through to the resolver.
 fn blob_url_id(specifier: &[u8]) -> Option<&[u8]> {
     const BLOB_SPECIFIER_LEN: usize = b"blob:".len() + crate::uuid::UUID::STRING_LENGTH;
     (specifier.len() >= BLOB_SPECIFIER_LEN)
@@ -1283,10 +1279,8 @@ fn blob_url_id(specifier: &[u8]) -> Option<&[u8]> {
         .flatten()
 }
 
-/// `new Worker("blob:<uuid>")` on the parent thread: dupe the registry entry
-/// now so the worker owns its entry point. `None` when the specifier is not a
-/// blob URL or the URL is already revoked (the worker thread then reports
-/// "Blob URL is missing").
+/// Dupe the registry entry behind a `blob:` specifier on the parent thread.
+/// `None` for a non-blob specifier or an already revoked URL.
 fn capture_blob_url_entry(specifier: &[u8]) -> Option<jsc::module_loader::WorkerEntryBlob> {
     let blob_id = blob_url_id(specifier)?;
     let uuid = crate::uuid::UUID::parse(blob_id).ok()?;

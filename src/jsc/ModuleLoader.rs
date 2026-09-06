@@ -28,14 +28,13 @@ pub struct ModuleLoader {
     pub eval_source: Option<Box<bun_ast::Source>>,
     /// User's `-e` bytes under `--interactive` (see `Eval::interactive_script`).
     pub interactive_eval_script: Option<Box<[u8]>>,
-    /// A worker's `blob:` entry point, captured by `new Worker()` on the parent
-    /// thread. The loader reads it ahead of the `ObjectURLRegistry`, so a
-    /// `URL.revokeObjectURL` after construction does not break the worker.
+    /// A worker's `blob:` entry point, captured by `new Worker()`. The loader
+    /// reads it ahead of the `ObjectURLRegistry`, so a later revoke is harmless.
     pub worker_entry_blob: Option<WorkerEntryBlob>,
 }
 
-/// The Blob behind a worker's `blob:<uuid>` entry point. `blob` is a dupe of
-/// the registry entry: null `global_this`, thread-shareable `name`.
+/// A dupe of the registry entry behind a worker's `blob:<uuid>` entry point
+/// (null `global_this`, thread-shareable `name`).
 pub struct WorkerEntryBlob {
     pub uuid: [u8; 16],
     pub blob: crate::webcore_types::Blob,

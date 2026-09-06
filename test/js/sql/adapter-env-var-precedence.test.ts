@@ -163,8 +163,15 @@ describe("SQL adapter environment variable precedence", () => {
       const withUser = new SQL({ hostname: "127.0.0.1", port: 1, username: "optuser" });
       expect(withUser.options).toMatchObject({ username: "optuser", password: "", database: "optuser" });
 
+      const withDatabase = new SQL({ hostname: "127.0.0.1", port: 1, database: "optdb" });
+      expect(withDatabase.options).toMatchObject({ username: "shelluser", password: "", database: "optdb" });
+
       // The host-agnostic per-field variables still fill in what is missing.
+      process.env.PGUSER = "pguser";
       process.env.PGPASSWORD = "pgpw";
+      const withPgUser = new SQL({ hostname: "127.0.0.1", port: 1 });
+      expect(withPgUser.options).toMatchObject({ username: "pguser", password: "pgpw", database: "pguser" });
+
       process.env.PGDATABASE = "pgdb";
       const withPgVars = new SQL({ hostname: "127.0.0.1", port: 1, username: "optuser" });
       expect(withPgVars.options).toMatchObject({ username: "optuser", password: "pgpw", database: "pgdb" });

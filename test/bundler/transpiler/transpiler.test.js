@@ -3032,6 +3032,8 @@ console.log(<div {...obj} key="after" />);`),
       expectParseError("[{ x: (a = 1) }] = [{}]", message);
       expectParseError("[...(a = 1)] = []", message);
       expectParseError("[((a = 1))] = []", message);
+      expectParseError("[(a = 1) = 2] = []", message);
+      expectParseError("({ x: (a = 1) = 2 } = {})", message);
       expectParseError("({ x: (a = 2) } = {})", message);
       expectParseError("({ ...(a = 3) } = {})", message);
       expectParseError("for ([(a = 1)] of x);", message);

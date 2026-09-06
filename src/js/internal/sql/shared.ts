@@ -104,6 +104,17 @@ class SQLResultArray<T> extends PublicArray<T> {
   }
 }
 
+const ObjectPrototypeHasOwnProperty = Object.prototype.hasOwnProperty;
+
+/** The probe only decides whether to append the socket file name. A stat failure means "not a directory". */
+function isDirectory(path: string): boolean {
+  try {
+    return require("node:fs").statSync(path, { throwIfNoEntry: false })?.isDirectory() === true;
+  } catch {
+    return false;
+  }
+}
+
 function decodeIfValid(value: string | null): string | null {
   if (value) {
     return decodeURIComponent(value);
@@ -1941,20 +1952,23 @@ function parseOptions(
 
   path ||= options.path || "";
 
+  if (path.includes("\0")) {
+    throw $ERR_INVALID_ARG_VALUE("options.path", path, "must not contain null bytes");
+  }
+
   // libpq semantics: a host that starts with "/" is the unix socket directory
   // for postgres, and the socket file for mysql and mariadb
   if (!path && hostname.startsWith("/")) {
     path = adapter === "postgres" ? `${hostname}/.s.PGSQL.${Number(port)}` : hostname;
+    hostname = "localhost";
   }
 
   if (adapter === "postgres") {
     // libpq semantics: a directory names the socket dir, the socket file inside
     // it is /.s.PGSQL.${port}
     const portNumber = Number(port);
-    if (path && Number.isSafeInteger(portNumber) && path.indexOf("/.s.PGSQL.") === -1) {
-      if (require("node:fs").statSync(path, { throwIfNoEntry: false })?.isDirectory()) {
-        path = `${path}/.s.PGSQL.${portNumber}`;
-      }
+    if (path && Number.isSafeInteger(portNumber) && path.indexOf("/.s.PGSQL.") === -1 && isDirectory(path)) {
+      path = `${path}/.s.PGSQL.${portNumber}`;
     }
   }
 
@@ -2136,8 +2150,11 @@ function parseOptions(
   // verify-ca and verify-full verify the certificate chain. Without an explicit
   // rejectUnauthorized the TLS layer would take NODE_TLS_REJECT_UNAUTHORIZED=0
   // as an opt out, which a verify-* mode must not allow.
-  if (sslMode >= SSLMode.verify_ca && (!$isObject(tls) || tls.rejectUnauthorized === undefined)) {
-    tls = { ...($isObject(tls) ? tls : {}), rejectUnauthorized: true };
+  if (
+    sslMode >= SSLMode.verify_ca &&
+    (!$isObject(tls) || !ObjectPrototypeHasOwnProperty.$call(tls, "rejectUnauthorized"))
+  ) {
+    tls = { __proto__: null, ...($isObject(tls) ? tls : {}), rejectUnauthorized: true };
   }
 
   port = Number(port);

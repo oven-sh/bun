@@ -920,6 +920,24 @@ describe("SQL adapter environment variable precedence", () => {
       ])("a host that starts with / is the socket directory (%s)", (_, make) => {
         const options = make().options;
         expect(options.path).toBe("/run/pg/.s.PGSQL.5433");
+        expect(options.hostname).toBe("localhost");
+      });
+
+      test("a / host with a verify mode does not use the directory as the TLS server name", () => {
+        const options = new SQL({ adapter: "postgres", hostname: "/run/pg", ssl: "verify-full" as any }).options;
+        expect(options.path).toBe("/run/pg/.s.PGSQL.5432");
+        expect(options.tls).toEqual({ serverName: "localhost", rejectUnauthorized: true });
+      });
+
+      test("a polluted Object.prototype.rejectUnauthorized does not disable a verify mode", () => {
+        (Object.prototype as any).rejectUnauthorized = false;
+        try {
+          const options = new SQL("postgres://u@h:5432/db?sslmode=verify-full").options;
+          expect(Object.hasOwn(options.tls as object, "rejectUnauthorized")).toBe(true);
+          expect((options.tls as any).rejectUnauthorized).toBe(true);
+        } finally {
+          delete (Object.prototype as any).rejectUnauthorized;
+        }
       });
 
       test("mysql: a host that starts with / is the socket path", () => {

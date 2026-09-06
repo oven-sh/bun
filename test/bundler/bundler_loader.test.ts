@@ -132,6 +132,27 @@ describe("bundler", async () => {
         },
         run: { stdout: '{"hello":"world"}' },
       });
+      // A file that is not UTF-8 (Latin-1 text, or binary imported as text)
+      // still prints as well-formed UTF-8: each ill-formed byte becomes U+FFFD
+      // and the bytes after a lead byte with no continuation bytes are kept.
+      itBundled("bun/loader-text-and-json-ill-formed-utf8", {
+        target,
+        files: {
+          "/entry.ts": /* js */ `
+        import text from './latin1.txt';
+        import json from './latin1.json';
+        console.write(JSON.stringify([[...text].map(c => c.codePointAt(0)), json.name]));
+      `,
+          // "a", a stray 0xFF, the 3-byte lead 0xE9 followed by ASCII, "bc"
+          "/latin1.txt": Buffer.from([0x61, 0xff, 0xe9, 0x62, 0x63]),
+          "/latin1.json": Buffer.concat([Buffer.from('{"name":"caf'), Buffer.from([0xe9]), Buffer.from('"}')]),
+        },
+        run: { stdout: '[[97,65533,65533,98,99],"caf\uFFFD"]' },
+        onAfterBundle(api) {
+          const bytes = fs.readFileSync(api.join("/out.js"));
+          expect(() => new TextDecoder("utf-8", { fatal: true }).decode(bytes)).not.toThrow();
+        },
+      });
       itBundled("bun/loader-xml-file", {
         target,
         files: {

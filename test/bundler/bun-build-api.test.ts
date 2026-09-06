@@ -2112,6 +2112,44 @@ test("sourcemap sourcesContent is valid JSON when source contains C0 control cha
   expect(parsed.sourcesContent[0]).toBe(source);
 });
 
+test("sourcemap sourcesContent is valid UTF-8 when a source file is not UTF-8", async () => {
+  // A Latin-1 file: 0xA9 is the copyright sign, 0xE9 is e-acute. As UTF-8,
+  // 0xA9 is a stray continuation byte and 0xE9 opens a 3-byte sequence that
+  // the ASCII after it does not continue. The map used to carry those bytes
+  // raw, so strict UTF-8 readers rejected the whole file.
+  const latin1 = (s: string) => Buffer.from(s, "latin1");
+  using dir = tempDir("sourcemap-latin1", {
+    "legacy.js": latin1('// \xA9 2020 Soci\xE9t\xE9, legacy latin-1 file\nexport const cafe = "caf\xE9";\n'),
+    "in.js": `import { cafe } from "./legacy.js";\nconsole.log(cafe);\n`,
+  });
+
+  for (const sourcemap of ["external", "inline"] as const) {
+    const res = await Bun.build({
+      entrypoints: [join(String(dir), "in.js")],
+      sourcemap,
+      outdir: join(String(dir), sourcemap),
+    });
+    expect(res.success).toBe(true);
+
+    let bytes: Uint8Array;
+    if (sourcemap === "external") {
+      bytes = new Uint8Array(await res.outputs.find(o => o.kind === "sourcemap")!.arrayBuffer());
+    } else {
+      const js = await res.outputs.find(o => o.kind === "entry-point")!.text();
+      const match = js.match(/\/\/# sourceMappingURL=data:application\/json;base64,([A-Za-z0-9+/=]+)/);
+      expect(match).not.toBeNull();
+      bytes = Buffer.from(match![1], "base64");
+    }
+
+    const text = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+    const parsed = JSON.parse(text);
+    const index = parsed.sources.findIndex((s: string) => s.endsWith("legacy.js"));
+    expect(parsed.sourcesContent[index]).toBe(
+      '// \uFFFD 2020 Soci\uFFFDt\uFFFD, legacy latin-1 file\nexport const cafe = "caf\uFFFD";\n',
+    );
+  }
+});
+
 // Bun.build's link step waited for the shared thread pool to go *idle* rather than for its
 // own tasks, so any unrelated pool work extended the build by its full duration — a
 // node:fs read parked on a FIFO nobody writes made every later build hang forever.

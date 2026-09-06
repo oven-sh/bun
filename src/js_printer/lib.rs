@@ -1036,6 +1036,9 @@ where
 /// monomorphizations keeps the hot transpile pages dense (see the facade above).
 /// `ENCODING` stays `const` — it changes the code-unit indexing structure of the
 /// loop, so a per-encoding copy is genuinely different code.
+///
+/// `Encoding::Utf8` input is WTF-8: an encoded surrogate is kept (escaped as
+/// `\uD800`), and each byte of an ill-formed sequence is written as U+FFFD.
 #[inline(never)]
 pub fn write_pre_quoted_string_inner<W, const ENCODING: Encoding>(
     text_in: &[u8],
@@ -1051,6 +1054,8 @@ where
         !(json && quote_char != b'"'),
         "for json, quote_char must be '\"'"
     );
+
+    const MALFORMED: i32 = -1;
 
     // this is a large hot-path function; logic is ported 1:1 but the
     // utf16 path needs &[u16] handling.
@@ -1083,14 +1088,24 @@ where
         let clamped_width = (width as usize).min(n.saturating_sub(i));
         let c: i32 = match ENCODING {
             Encoding::Utf8 => {
-                let bytes: [u8; 4] = match clamped_width {
-                    1 => [text[i], 0, 0, 0],
-                    2 => [text[i], text[i + 1], 0, 0],
-                    3 => [text[i], text[i + 1], text[i + 2], 0],
-                    4 => [text[i], text[i + 1], text[i + 2], text[i + 3]],
-                    _ => unreachable!(),
-                };
-                strings::decode_wtf8_rune_t::<i32>(bytes, width, 0)
+                if width == 1 {
+                    // Width 1 at or above 0x80 is a stray continuation byte or 0xF8..=0xFF.
+                    if text[i] < 0x80 {
+                        i32::from(text[i])
+                    } else {
+                        MALFORMED
+                    }
+                } else {
+                    let bytes: [u8; 4] = match clamped_width {
+                        2 => [text[i], text[i + 1], 0, 0],
+                        3 => [text[i], text[i + 1], text[i + 2], 0],
+                        4 => [text[i], text[i + 1], text[i + 2], text[i + 3]],
+                        // A lead byte cut off by the end of the input; the zero
+                        // padding fails the continuation-byte check.
+                        _ => [text[i], 0, 0, 0],
+                    };
+                    strings::decode_wtf8_rune_t::<i32>(bytes, width, MALFORMED)
+                }
             }
             Encoding::Ascii => {
                 debug_assert!(text[i] <= 0x7F);
@@ -1104,6 +1119,17 @@ where
                 code_unit_at!(i)
             }
         };
+
+        if matches!(ENCODING, Encoding::Utf8) && c == MALFORMED {
+            if ascii_only {
+                writer.write_all(&bmp_escape(0xFFFD))?;
+            } else {
+                writer.write_all("\u{FFFD}".as_bytes())?;
+            }
+            // One byte, not `width`, so the bytes after a truncated sequence survive.
+            i += 1;
+            continue;
+        }
 
         if can_print_without_escape(c, ascii_only) {
             match ENCODING {

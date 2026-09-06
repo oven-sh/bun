@@ -47,6 +47,39 @@ type GlobWalker = glob::GlobWalker<bun_resolver::DirEntryAccessor, false>;
 // Borrows the `OwnedWalker` stored next to it in `ActiveWalk`, with the lifetime erased.
 type GlobWalkerIterator = glob::walk::Iterator<'static, bun_resolver::DirEntryAccessor, false>;
 
+/// `lstat`, not `stat`: a symlink that another user points at one of your own
+/// manifests is theirs, not yours.
+#[cfg(unix)]
+fn package_json_owner(json_path: &ZStr) -> Option<u32> {
+    bun_sys::lstat(json_path).ok().map(|st| st.st_uid)
+}
+
+/// May a `package.json` above the current directory become the workspace root?
+///
+/// Its `workspaces` globs decide which directories `--filter` and `--workspaces`
+/// run scripts in. A directory that other local users can write to, `/tmp`
+/// above a `mktemp -d` build directory for example, lets one of them plant such
+/// a manifest, and member packages with scripts, above a project that is not
+/// theirs. So adopt an ancestor root only when the current user owns it, or
+/// when its owner also owns the current directory's `package.json` (`sudo`, and
+/// containers where one other user owns the whole checkout).
+#[cfg(unix)]
+fn ancestor_workspace_root_is_trusted(json_path: &ZStr, cwd_package_json_owner: Option<u32>) -> bool {
+    package_json_owner(json_path)
+        .is_some_and(|uid| uid == bun_sys::c::geteuid() || Some(uid) == cwd_package_json_owner)
+}
+
+// Windows has no `st_uid`, and `%TEMP%` there is per user.
+#[cfg(not(unix))]
+fn package_json_owner(_: &ZStr) -> Option<u32> {
+    None
+}
+
+#[cfg(not(unix))]
+fn ancestor_workspace_root_is_trusted(_: &ZStr, _: Option<u32>) -> bool {
+    true
+}
+
 fn get_candidate_package_patterns<'a>(
     log: &mut Log,
     out_patterns: &mut Vec<Box<[u8]>>,
@@ -58,6 +91,8 @@ fn get_candidate_package_patterns<'a>(
     let _store_guard = bun_ast::StoreResetGuard::new();
 
     let mut workdir = workdir_;
+    let mut in_cwd = true;
+    let mut cwd_package_json_owner = None;
 
     // Labeled loop with an inner labeled block; `continue` → `break 'body`,
     // `break` → `break 'walk`.
@@ -88,6 +123,10 @@ fn get_candidate_package_patterns<'a>(
             // `defer allocator.free(json_source.contents)` — deleted; `json_source` owns its
             // contents and drops at end of scope.
 
+            if in_cwd {
+                cwd_package_json_owner = package_json_owner(json_path);
+            }
+
             let parsed = json::ParsedJson::parse_package_json(&json_source, log)?;
             let json = parsed.root;
 
@@ -103,6 +142,19 @@ fn get_candidate_package_patterns<'a>(
                 },
                 _ => break 'walk,
             };
+
+            if !in_cwd && !ancestor_workspace_root_is_trusted(json_path, cwd_package_json_owner) {
+                bun_core::warn!(
+                    "another user owns <b>{}<r>, so bun ignored it as the workspace root",
+                    BStr::new(json_path.as_bytes()),
+                );
+                bun_core::note!(
+                    "bun looks for packages under <b>{}<r> only",
+                    BStr::new(strings::without_trailing_slash(workdir_)),
+                );
+                Output::flush();
+                break 'walk;
+            }
 
             for item in json_array.get().items() {
                 match item {
@@ -133,6 +185,7 @@ fn get_candidate_package_patterns<'a>(
             Some(d) => d,
             None => break 'walk,
         };
+        in_cwd = false;
     }
 
     // if we were not able to find a workspace root, we simply glob for all package.json files

@@ -1,7 +1,7 @@
 import { spawnSync } from "bun";
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir, tempDirWithFiles } from "harness";
-import { existsSync, symlinkSync } from "node:fs";
+import { chownSync, existsSync, lchownSync, symlinkSync } from "node:fs";
 import { setTimeout as sleep } from "node:timers/promises";
 import { join } from "path";
 
@@ -1309,5 +1309,102 @@ describe("auto-discovered bunfig.toml [run] section", () => {
     expect(r.stderr).toContain("Expected boolean");
     expect(r.stdout).not.toContain("Bun is");
     expect(r.exitCode).toBe(1);
+  });
+});
+
+// A package.json above the current directory that has `workspaces` becomes the workspace
+// root, and `--filter` runs scripts in every package its globs match. A directory that
+// other local users can write to, `/tmp` above a `mktemp -d` build directory for example,
+// lets one of them plant such a root, and packages with scripts, above a project that is
+// not theirs. So an ancestor root is adopted only when the current user owns it, or when
+// its owner also owns the current directory's package.json.
+//
+// Every case needs a second uid, so the tests run as root only.
+describe.concurrent("ancestor workspace root owned by another user", () => {
+  // "nobody" on Linux and macOS.
+  const OTHER_UID = 65534;
+  const notRoot = isWindows || process.getuid?.() !== 0;
+
+  const rootManifest = JSON.stringify({ name: "planted-root", workspaces: ["*"] });
+  const packages = {
+    "planted/package.json": JSON.stringify({ name: "planted", scripts: { present: "echo script-planted" } }),
+    "proj/package.json": JSON.stringify({ name: "proj", scripts: { present: "echo script-proj" } }),
+  };
+  const files = { "package.json": rootManifest, ...packages };
+
+  // The root manifest (a file or a symlink) and the package it lists next to `proj`.
+  function chownToOtherUser(root: string) {
+    lchownSync(join(root, "package.json"), OTHER_UID, OTHER_UID);
+    chownSync(join(root, "planted"), OTHER_UID, OTHER_UID);
+    chownSync(join(root, "planted", "package.json"), OTHER_UID, OTHER_UID);
+  }
+
+  async function runFilterInProject(root: string) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "run", "--filter", "*", "present"],
+      cwd: join(root, "proj"),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+
+  test.skipIf(notRoot)("is ignored, and scripts in the packages it lists do not run", async () => {
+    using dir = tempDir("filter-root-other-user", files);
+    const root = String(dir);
+    chownToOtherUser(root);
+
+    const { stdout, stderr, exitCode } = await runFilterInProject(root);
+
+    expect(stdout).not.toContain("script-planted");
+    expect(stdout).toContain("script-proj");
+    expect(stderr).toContain(`another user owns ${join(root, "package.json")}`);
+    expect(stderr).toContain(`looks for packages under ${join(root, "proj")} only`);
+    expect(exitCode).toBe(0);
+  });
+
+  // `lstat`, not `stat`: a symlink to one of your own manifests is owned by whoever made it.
+  test.skipIf(notRoot)("is ignored when it is another user's symlink to a manifest you own", async () => {
+    using dir = tempDir("filter-root-other-user-symlink", { "mine.json": rootManifest, ...packages });
+    const root = String(dir);
+    symlinkSync("mine.json", join(root, "package.json"));
+    chownToOtherUser(root);
+
+    const { stdout, stderr, exitCode } = await runFilterInProject(root);
+
+    expect(stdout).not.toContain("script-planted");
+    expect(stdout).toContain("script-proj");
+    expect(stderr).toContain(`another user owns ${join(root, "package.json")}`);
+    expect(exitCode).toBe(0);
+  });
+
+  test.skipIf(notRoot)("is adopted when the current user owns it", async () => {
+    using dir = tempDir("filter-root-same-user", files);
+    const root = String(dir);
+
+    const { stdout, stderr, exitCode } = await runFilterInProject(root);
+
+    expect(stderr).not.toContain("another user owns");
+    expect(stdout).toContain("script-proj");
+    expect(stdout).toContain("script-planted");
+    expect(exitCode).toBe(0);
+  });
+
+  // `sudo bun run --filter`, and container images where one other user owns the whole
+  // checkout: the root manifest and the current directory's manifest have the same owner.
+  test.skipIf(notRoot)("is adopted when its owner also owns the current directory's package.json", async () => {
+    using dir = tempDir("filter-root-one-other-user", files);
+    const root = String(dir);
+    chownToOtherUser(root);
+    chownSync(join(root, "proj", "package.json"), OTHER_UID, OTHER_UID);
+
+    const { stdout, stderr, exitCode } = await runFilterInProject(root);
+
+    expect(stderr).not.toContain("another user owns");
+    expect(stdout).toContain("script-proj");
+    expect(stdout).toContain("script-planted");
+    expect(exitCode).toBe(0);
   });
 });

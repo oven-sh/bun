@@ -2293,7 +2293,9 @@ test.concurrent(
     expect(await lockedVersions(dir, "leaf")).toStrictEqual(["1.0.0", "2.0.0"]);
 
     const { stdout, stderr, exitCode } = await run(dir, "update", "--depth", "0");
-    expectRowsAnd(stdout, [movedRow("leaf", "2.0.0", "2.1.0"), movedRow("parent", "1.0.0", "1.1.0")], installed(2));
+    // The nested leaf@1.0.0 is installed again under the new parent, so it counts as an install without a move row.
+    expect(movedRows(stdout)).toStrictEqual([movedRow("leaf", "2.0.0", "2.1.0"), movedRow("parent", "1.0.0", "1.1.0")]);
+    expect(normalize(stdout)).toEndWith(`\n\n${installed(3)}\n`);
     expectCleanStderr(stderr);
     expect(await packageJsonOf(dir)).toStrictEqual(pkgJson({ parent: "^1.1.0", leaf: "^2.1.0" }));
     expect(await lockedVersions(dir, "parent")).toStrictEqual(["1.1.0"]);

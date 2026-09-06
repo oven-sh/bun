@@ -1142,10 +1142,8 @@ static JSC::EncodedJSValue jsBufferPrototypeFunction_compareBody(JSC::JSGlobalOb
     size_t sourceEndInit = castedThis->byteLength();
     size_t sourceEnd = sourceEndInit;
 
-    // Node validates the offsets in argument order, each through validateOffset:
-    // a start is any integer in [0, 2**53 - 1] (a start past the end is an
-    // empty range below, not an error), an end is bounded by its own buffer's
-    // length. The first invalid one is the one the error names.
+    // Node's validateOffset, in argument order: a start is bounded by 2**53 - 1
+    // (past the end is an empty range, not an error), an end by its buffer.
     JSValue targetStartValue = callFrame->argument(1);
     if (!targetStartValue.isUndefined()) {
         Bun::V::validateInteger(throwScope, lexicalGlobalObject, targetStartValue, "targetStart"_s, jsNumber(0), jsDoubleNumber(JSC::maxSafeInteger()), &targetStart);
@@ -1413,13 +1411,12 @@ static JSC::EncodedJSValue jsBufferPrototypeFunction_fillBody(JSC::JSGlobalObjec
     // ── 2. Pure offset / end coercion (no user JS) ──────────────────────
     // Node routes both through validateOffset (= validateInteger), so a
     // fractional or NaN offset/end throws ERR_OUT_OF_RANGE "an integer"
-    // instead of being truncated. The offset is bounded only by Node's
-    // kMaxLength (2**53 - 1): one past `end` is an empty range below, not
-    // an error. parseEncoding above may have detached/resized the buffer,
-    // but the `limit` captured pre-coercion is still the correct
-    // Node-compat upper bound for ERR_OUT_OF_RANGE; the final write range
-    // is clamped against a separate post-coercion byteLength read further
-    // down.
+    // instead of being truncated. The offset is bounded by 2**53 - 1, not
+    // the buffer: past `end` is an empty range below. parseEncoding above
+    // may have detached/resized the buffer, but the `limit` captured
+    // pre-coercion is still the correct Node-compat upper bound for
+    // ERR_OUT_OF_RANGE; the final write range is clamped against a
+    // separate post-coercion byteLength read further down.
     //     https://github.com/nodejs/node/blob/v22.9.0/lib/buffer.js#L1066-L1079
     if (!offsetValue.isUndefined()) {
         Bun::V::validateInteger(scope, lexicalGlobalObject, offsetValue, "offset"_s, jsNumber(0), jsDoubleNumber(JSC::maxSafeInteger()), &offset);
@@ -1791,9 +1788,8 @@ static int64_t indexOf(JSC::JSGlobalObject* lexicalGlobalObject, ThrowScope& sco
     // and byteLength from the buffer right before use, and check for detachment
     // after all JS calls in each code path are complete.
 
-    // Helper: re-fetch buffer state after JS calls. A detached haystack is an
-    // empty one, like in Node: an empty needle is still found at 0, anything
-    // else is -1. computeIndexOfRange never reads the vector for length 0.
+    // Helper: re-fetch buffer state after JS calls. A detached haystack reads
+    // as empty, like in Node; computeIndexOfRange never touches a length-0 vector.
     auto refetchBufferState = [&](const uint8_t*& typedVector, size_t& len) {
         if (buffer->isDetached()) [[unlikely]] {
             typedVector = nullptr;
@@ -1928,13 +1924,8 @@ static JSC::EncodedJSValue jsBufferPrototypeFunction_inspectBody(JSC::JSGlobalOb
             }
             result.append(' ');
 
-            // Node's Buffer.prototype[inspect.custom] copies the extra
-            // properties onto a null-prototype object, runs util.inspect on
-            // it with the caller's options plus `breakLength: Infinity,
-            // compact: true`, and keeps the part between
-            // "[Object: null prototype] { " and " }". That is what gives
-            // the keys and values the same quoting, colors and depth as
-            // the surrounding output.
+            // Like Node: util.inspect a null-prototype copy of the extras with
+            // the caller's options, then strip "[Object: null prototype] { " and " }".
             JSObject* extras = JSC::constructEmptyObject(vm, globalObject->nullPrototypeObjectStructure());
             for (auto ident : array) {
                 auto value = castedThis->get(globalObject, ident);
@@ -1942,9 +1933,7 @@ static JSC::EncodedJSValue jsBufferPrototypeFunction_inspectBody(JSC::JSGlobalOb
                 extras->putDirect(vm, ident, value);
             }
 
-            // Spread defines the copies, so not objectAssignGeneric: its [[Set]]
-            // would run a setter that userland put on Object.prototype under one
-            // of the option names.
+            // Define the copies (like Node's spread), so no Object.prototype setter runs.
             JSObject* options = JSC::constructEmptyObject(globalObject);
             if (auto* ctxObject = dynamicDowncast<JSObject>(ctx)) {
                 PropertyNameArrayBuilder names(vm, PropertyNameMode::StringsAndSymbols, PrivateSymbolMode::Exclude);

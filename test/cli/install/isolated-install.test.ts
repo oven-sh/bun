@@ -676,6 +676,105 @@ describe("isolated workspaces", () => {
       { name: "pkg3", dependencies: { "different-name": "workspace:." } },
     ]);
   });
+
+  test("dependencies removed from a package are unlinked from its node_modules", async () => {
+    const { packageJson, packageDir } = await registry.createTestDir({
+      bunfigOpts: { linker: "isolated" },
+      files: {
+        "package.json": JSON.stringify({
+          name: "root",
+          workspaces: ["packages/*"],
+          dependencies: { "no-deps": "1.0.0" },
+        }),
+        "packages/m/package.json": JSON.stringify({
+          name: "m",
+          dependencies: {
+            "no-deps": "1.0.0",
+            "a-dep": "1.0.1",
+            "@types/is-number": "1.0.0",
+            "other": "workspace:*",
+            "what-bin": "1.0.0",
+          },
+        }),
+        "packages/other/package.json": JSON.stringify({
+          name: "other",
+          dependencies: { "a-dep": "1.0.1" },
+        }),
+        "linked/package.json": JSON.stringify({ name: "linked", version: "1.0.0" }),
+      },
+    });
+    const memberDir = join(packageDir, "packages", "m");
+    const memberModules = join(memberDir, "node_modules");
+
+    await runBunInstall(bunEnv, packageDir);
+    expect(await readdirSorted(memberModules)).toEqual([".bin", "@types", "a-dep", "no-deps", "other", "what-bin"]);
+    expect(await readdirSorted(join(memberModules, ".bin"))).not.toEqual([]);
+
+    // Entries the linker did not make are left alone, like the hoisted linker
+    // does: a directory, and a link that leaves the project (what `bun link
+    // <pkg>` without --save creates). A dangling link is removed.
+    await Promise.all([
+      write(join(memberModules, "manual", "package.json"), JSON.stringify({ name: "manual" })),
+      symlink(join("..", "..", "..", "linked"), join(memberModules, "linked"), "dir"),
+      symlink(join("..", "..", "..", "missing"), join(memberModules, "gone"), "dir"),
+    ]);
+
+    // `bun remove` inside the member. `a-dep` stays in the lockfile and the
+    // store because `other` still depends on it, so only m's link goes away.
+    {
+      await using proc = spawn({
+        cmd: [bunExe(), "remove", "a-dep"],
+        cwd: memberDir,
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(err).not.toContain("error:");
+      expect(err).toContain("Saved lockfile");
+      expect(out).toContain("- a-dep");
+      expect(exitCode).toBe(0);
+    }
+    expect(await file(join(memberDir, "package.json")).json()).toEqual({
+      name: "m",
+      dependencies: { "no-deps": "1.0.0", "@types/is-number": "1.0.0", "other": "workspace:*", "what-bin": "1.0.0" },
+    });
+    expect(await readdirSorted(memberModules)).toEqual([
+      ".bin",
+      "@types",
+      "linked",
+      "manual",
+      "no-deps",
+      "other",
+      "what-bin",
+    ]);
+    expect(await readdirSorted(join(packageDir, "packages", "other", "node_modules"))).toEqual(["a-dep"]);
+    expect(existsSync(join(packageDir, "node_modules", ".bun", "a-dep@1.0.1"))).toBeTrue();
+
+    // Editing package.json by hand and running `bun install` from the root
+    // unlinks the scoped package (and its now empty `@types` directory), the
+    // workspace link, and the package with a bin together with its `.bin` entry.
+    await write(join(memberDir, "package.json"), JSON.stringify({ name: "m", dependencies: { "no-deps": "1.0.0" } }));
+    await runBunInstall(bunEnv, packageDir);
+    expect(await readdirSorted(memberModules)).toEqual([".bin", "linked", "manual", "no-deps"]);
+    expect(await readdirSorted(join(memberModules, ".bin"))).toEqual([]);
+    expect(await file(join(memberModules, "manual", "package.json")).json()).toEqual({ name: "manual" });
+    expect(await file(join(memberModules, "linked", "package.json")).json()).toEqual({ name: "linked", version: "1.0.0" });
+
+    // Removing a root dependency that a workspace package still uses keeps
+    // the package in the store but unlinks it from the root.
+    await write(packageJson, JSON.stringify({ name: "root", workspaces: ["packages/*"] }));
+    await runBunInstall(bunEnv, packageDir);
+    expect(await readdirSorted(join(packageDir, "node_modules"))).toEqual([".bun"]);
+    expect(readlinkSync(join(memberModules, "no-deps"))).toBe(
+      join("..", "..", "..", "node_modules", ".bun", "no-deps@1.0.0", "node_modules", "no-deps"),
+    );
+
+    // A second install with nothing to do leaves everything in place.
+    await runBunInstall(bunEnv, packageDir, { savesLockfile: false });
+    expect(await readdirSorted(memberModules)).toEqual([".bin", "linked", "manual", "no-deps"]);
+    expect(await readdirSorted(join(packageDir, "node_modules"))).toEqual([".bun"]);
+  });
 });
 
 describe("optional peers", () => {

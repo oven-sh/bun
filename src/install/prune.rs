@@ -1950,7 +1950,7 @@ fn rmdir(dir: &Dir, name: &[u8]) {
     let _ = sys::rmdirat(dir.fd(), ZStr::from_slice_with_nul(&z));
 }
 
-fn is_dangling(dir: &Dir, name: &[u8]) -> bool {
+pub(crate) fn is_dangling(dir: &Dir, name: &[u8]) -> bool {
     let z = zname(name);
     match sys::fstatat(dir.fd(), ZStr::from_slice_with_nul(&z)) {
         Ok(_) => false,
@@ -1958,13 +1958,17 @@ fn is_dangling(dir: &Dir, name: &[u8]) -> bool {
     }
 }
 
-fn unlink_links(dir: &Dir, should_unlink: &dyn Fn(&Dir, &[u8], &[u8]) -> bool) {
+/// Unlinks each symlink in a `node_modules` folder (and one level down, in its
+/// `@scope` folders) for which `should_unlink(dir, alias, name)` holds, then
+/// removes the `@scope` folders this emptied. True when a link was removed.
+pub(crate) fn unlink_links(dir: &Dir, should_unlink: &dyn Fn(&Dir, &[u8], &[u8]) -> bool) -> bool {
+    let mut any = false;
     let mut alias = Vec::new();
     for (name, kind) in read_entries(dir) {
         match kind {
             EntryKind::SymLink => {
                 if should_unlink(dir, &name, &name) {
-                    let _ = remove_link(dir, &name);
+                    any |= remove_link(dir, &name).is_ok();
                 }
             }
             EntryKind::Directory if name.first() == Some(&b'@') => {
@@ -1986,16 +1990,19 @@ fn unlink_links(dir: &Dir, should_unlink: &dyn Fn(&Dir, &[u8], &[u8]) -> bool) {
                 }
                 drop(scope_dir);
                 if unlinked {
+                    any = true;
                     rmdir(dir, &name);
                 }
             }
             _ => {}
         }
     }
+    any
 }
 
+/// Removes the `.bin` entries of `dir` whose target no longer exists.
 #[cfg(not(windows))]
-fn prune_bins(dir: &Dir) {
+pub(crate) fn prune_bins(dir: &Dir) {
     let Some(bin) = open_real_subdir(dir, b".bin") else {
         return;
     };
@@ -2015,7 +2022,7 @@ fn prune_bins(dir: &Dir) {
 
 // `.bunx` layout: windows-shim/BinLinkingShim.rs (target path is relative to this node_modules folder).
 #[cfg(windows)]
-fn prune_bins(dir: &Dir) {
+pub(crate) fn prune_bins(dir: &Dir) {
     let Some(bin) = open_real_subdir(dir, b".bin") else {
         return;
     };

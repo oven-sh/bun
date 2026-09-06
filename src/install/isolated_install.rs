@@ -2056,6 +2056,9 @@ pub(crate) fn install_isolated_packages(
                 PackageInstall::supported_method() as u8
             ),
             is_new_bun_modules,
+            root_links_complete: install_root_dependencies
+                && workspace_filters.is_empty()
+                && packages_to_install.is_none(),
             global_store_path: global_store_path
                 .as_deref()
                 .map(|b: &[u8]| -> &bun_core::ZStr {

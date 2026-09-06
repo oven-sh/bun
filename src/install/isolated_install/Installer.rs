@@ -19,6 +19,7 @@ use crate::package_install::{Method as InstallMethod, Summary as InstallSummary}
 use crate::package_manager_real::Command;
 use crate::postinstall_optimizer;
 use crate::postinstall_optimizer::PostinstallOptimizer;
+use crate::prune;
 use crate::resolution;
 use crate::{
     self as install, DependencyID, Lockfile, PackageID, PackageManager, PackageNameHash,
@@ -77,6 +78,9 @@ pub struct Installer<'a> {
     pub(crate) installed: Bitset,
     pub(crate) install_node: Option<&'a mut ProgressNode>,
     pub(crate) is_new_bun_modules: bool,
+    /// False when `--filter` or a narrowed package set leaves links in the
+    /// root `node_modules` that the root entry's dependencies do not list.
+    pub(crate) root_links_complete: bool,
 
     /// BACKREF. Raw pointer (not `&'a mut`) because
     /// `Task::run`/`Task::callback` execute concurrently on the thread pool
@@ -1480,9 +1484,12 @@ impl Task {
                 Step::SymlinkDependencies => {
                     let current_step = Step::SymlinkDependencies;
                     let relinking = self.relink != Relink::Off;
-                    let strategy = if relinking
-                        || matches!(pkg_res.tag, ResolutionTag::Root | ResolutionTag::Workspace)
-                    {
+                    let importer = match pkg_res.tag {
+                        ResolutionTag::Root => dep_id == invalid_dependency_id,
+                        ResolutionTag::Workspace => true,
+                        _ => false,
+                    };
+                    let strategy = if relinking || importer {
                         symlinker::Strategy::ExpectExisting
                     } else {
                         symlinker::Strategy::ExpectMissing
@@ -1494,6 +1501,13 @@ impl Task {
                             return Ok(Yield::failure(TaskError::SymlinkDependencies(err)));
                         }
                     };
+
+                    if importer
+                        && !installer.is_new_bun_modules
+                        && (pkg_res.tag != ResolutionTag::Root || installer.root_links_complete)
+                    {
+                        installer.unlink_extraneous_dependencies(self.entry_id);
+                    }
 
                     if relinking {
                         if !changed {
@@ -2296,6 +2310,97 @@ impl<'a> Installer<'a> {
         }
 
         Ok(changed)
+    }
+
+    /// For the root and workspace entries: unlinks each `node_modules/<name>`
+    /// link that is not one of the entry's dependencies, so a dependency that
+    /// left package.json stops resolving. Only links this linker makes are
+    /// removed (into the store, at a workspace package, or dangling); a
+    /// directory is a `bun patch` checkout, and any other link is the user's
+    /// (`bun link <pkg>` without `--save` makes one).
+    fn unlink_extraneous_dependencies(&self, entry_id: StoreEntryId) {
+        let lockfile = self.lockfile();
+        let string_buf = lockfile.buffers.string_bytes.as_slice();
+        let dependencies = lockfile.buffers.dependencies.as_slice();
+
+        let mut path = AutoPath::init_top_level_dir();
+        self.append_store_node_modules_path(&mut path, entry_id);
+        let Ok(node_modules) = sys::Dir::open(path.slice()) else {
+            return;
+        };
+
+        let mut linked: StringHashMap<()> = StringHashMap::default();
+        for dep in self.store.entries.items_dependencies()[entry_id.get() as usize].slice() {
+            bun_core::handle_oom(
+                linked.put(dependencies[dep.dep_id as usize].name.slice(string_buf), ()),
+            );
+        }
+
+        let unlinked = prune::unlink_links(&node_modules, &|dir, alias, name| {
+            !linked.contains_key(alias) && self.is_dependency_link(entry_id, dir, alias, name)
+        });
+        if unlinked {
+            prune::prune_bins(&node_modules);
+        }
+    }
+
+    /// Whether the link `name` in `dir` (the entry's `node_modules[/@scope]`)
+    /// resolves into `node_modules/.bun`, to a workspace package, or to nothing.
+    fn is_dependency_link(
+        &self,
+        entry_id: StoreEntryId,
+        dir: &sys::Dir,
+        alias: &[u8],
+        name: &[u8],
+    ) -> bool {
+        // `alias` is `name` or `@scope/name`. A link named `@scope` is not a package link.
+        let scope_len = alias.len() - name.len();
+        if scope_len == 0 && name.first() == Some(&b'@') {
+            return false;
+        }
+
+        let mut name_z = Vec::with_capacity(name.len() + 1);
+        name_z.extend_from_slice(name);
+        name_z.push(0);
+        let name_z = ZStr::from_slice_with_nul(&name_z);
+        let mut link_buf = paths::path_buffer_pool::get();
+        let Ok(link_len) = sys::readlinkat(dir.fd(), name_z, &mut link_buf[..]) else {
+            return false;
+        };
+        let link = &link_buf[..link_len];
+
+        let mut parent = AutoPath::init_top_level_dir();
+        self.append_store_node_modules_path(&mut parent, entry_id);
+        if scope_len > 1 {
+            let _ = parent.append(&alias[..scope_len - 1]); // OOM/capacity: fire-and-forget
+        }
+        let mut target_buf = paths::path_buffer_pool::get();
+        let target = paths::resolve_path::join_abs_string_buf::<paths::platform::Auto>(
+            parent.slice(),
+            &mut target_buf[..],
+            &[link],
+        );
+        let target = strings::without_trailing_slash(target);
+
+        let mut store = AutoPath::init_top_level_dir();
+        let _ = store.append(NODE_MODULES_BUN.as_bytes()); // OOM/capacity: fire-and-forget
+        if target.len() > store.len()
+            && strings::has_prefix(target, store.slice())
+            && paths::is_sep_any(target[store.len()])
+        {
+            return true;
+        }
+
+        let string_buf = self.lockfile().buffers.string_bytes.as_slice();
+        for workspace_path in self.lockfile().workspace_paths.values() {
+            let mut workspace = AutoPath::init_top_level_dir();
+            let _ = workspace.append(workspace_path.slice(string_buf)); // OOM/capacity: fire-and-forget
+            if strings::eql_long(target, workspace.slice(), true) {
+                return true;
+            }
+        }
+
+        prune::is_dangling(dir, name)
     }
 
     pub(crate) fn link_dependency_bins(&self, parent_entry_id: StoreEntryId) -> crate::Result<()> {

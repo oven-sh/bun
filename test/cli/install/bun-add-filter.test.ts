@@ -1175,7 +1175,8 @@ test.concurrent("add/remove --filter with the isolated linker links only the tar
 
     expect(await pkg(dir, "api")).toStrictEqual({ name: "api" });
     expect(await pkg(dir, "web")).toStrictEqual(WEB);
-    // The isolated installer does not yet prune packages/api/node_modules/no-deps (same as unfiltered `bun remove`).
+    expect(await exists(join(dir, "packages", "api", "node_modules", "no-deps"))).toBeFalse();
+    expect(await file(stale).text()).toBe('{"name":"stale"}');
     expect(await file(join(dir, "bun.lock")).text()).not.toContain("no-deps");
   }
 

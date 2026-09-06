@@ -219,8 +219,7 @@ export function runSetupFunction(
 
     var callbacks = map.$get(namespace);
 
-    // The bundle thread dispatches onLoad/onResolve later, outside any JS frame. Capture the
-    // async context at registration so the callback runs in it (AsyncLocalStorage).
+    // The bundle thread dispatches the hook later, outside any async frame.
     var entry = isOnBeforeParse
       ? [filter, callback, symbol, external]
       : [filter, callback, $getInternalField($asyncContext, 0)];

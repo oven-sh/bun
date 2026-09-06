@@ -270,7 +270,7 @@ Bun.serve({
 
 `new Response(body)` copies an `ArrayBuffer` or typed array body at construction time, as the Fetch spec requires. A `fetch` handler that returns the same large `Uint8Array` on every request pays that copy per request. Each copy lives until the client reads the whole body. If clients are slow or stall, memory grows by the body size per connection.
 
-A `Blob` body is not copied. `Response` takes a reference to the `Blob`'s immutable bytes, so every connection shares one copy. The same is true for a `BunFile` and for a static route. A Latin-1 `string` body is sent from the string's own storage without a copy. A string with non-Latin-1 characters is transcoded once per response.
+A `Blob` body is not copied. `Response` takes a reference to the `Blob`'s immutable bytes, so every connection shares one copy. The same is true for a `BunFile`. A static route copies a typed array body once, when the route is registered, and every request reuses that one `Response`. An ASCII-only `string` body is sent from the string's own storage without a copy. A string with any non-ASCII character (including Latin-1 characters such as `é`) is transcoded to UTF-8 once per response.
 
 For a large payload that many requests share, build it once as a `Blob`, or register it as a static route:
 
@@ -280,7 +280,7 @@ const blob = new Blob([bytes], { type: "text/javascript" });
 
 Bun.serve({
   routes: {
-    // Shared by reference: the Response is built once.
+    // Copied once at startup. Every request reuses this Response.
     "/static/bundle.js": new Response(bytes, { headers: { "Content-Type": "text/javascript" } }),
   },
   fetch(req) {

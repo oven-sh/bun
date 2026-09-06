@@ -1762,8 +1762,6 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
             return false;
         }
 
-        // An explicit leading `.` opts the segment into dotfiles. Braces and
-        // classes decide per branch inside the matcher.
         if !self.dot && Self::starts_with_dot(filepath) {
             let pattern = pattern_component.pattern_slice(&self.pattern);
             if !Self::starts_with_dot(pattern) {

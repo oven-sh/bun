@@ -157,8 +157,7 @@ pub fn r#match(glob: &[u8], path: &[u8]) -> MatchResult {
     match_with_dot(glob, path, true)
 }
 
-/// [`match`](r#match) for one path segment with minimatch's `dot: false` rule:
-/// a leading `.` only matches an explicit `.`, `\.`, or `[.]`, per brace branch.
+/// One path segment. A leading `.` needs an explicit `.`, `\.`, or `[.]` in its branch.
 pub(crate) fn match_no_dot(glob: &[u8], name: &[u8]) -> MatchResult {
     debug_assert!(!strings::contains_char(name, b'/'));
     debug_assert!(!cfg!(windows) || !strings::contains_char(name, b'\\'));

@@ -35,6 +35,7 @@
 #include "headers.h"
 #include "blob.h"
 #include "BunString.h"
+#include "NodeURLHelpers.h"
 #include "ZigGeneratedClasses.h"
 #include "CloseEvent.h"
 #include <wtf/text/Base64.h>
@@ -215,7 +216,7 @@ static ExceptionOr<std::optional<ProxyConfig>> setupProxy(const String& proxyUrl
         return { std::nullopt };
 
     URL url { proxyUrl };
-    if (!url.isValid())
+    if (!url.isValid() || !Bun::hasValidParsedHost(url, proxyUrl))
         return Exception { SyntaxError, makeString("Invalid proxy URL: "_s, proxyUrl) };
 
     // Only HTTP CONNECT proxies are supported. Reject socks5://, ftp://, etc. up front
@@ -417,7 +418,7 @@ __attribute__((minsize)) ExceptionOr<void> WebSocket::connect(const String& url,
 
     ASSERT(scriptExecutionContext());
 
-    if (!m_url.isValid()) {
+    if (!m_url.isValid() || !Bun::hasValidParsedHost(m_url, url)) {
         // context.addConsoleMessage(MessageSource::JS, MessageLevel::Error, );
         m_state = CLOSED;
         return Exception { SyntaxError, makeString("Invalid url for WebSocket "_s, m_url.stringCenterEllipsizedToLength()) };

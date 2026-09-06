@@ -727,6 +727,14 @@ describe.concurrent("websocket in subprocess", () => {
     expect(await subprocess.exited).toBe(1);
   });
 
+  it("rejects a host with an invalid punycode label, like new URL", () => {
+    for (const host of ["xn--a.localhost", "xn--.localhost", "a.xn--0ug.localhost"]) {
+      const href = `ws://${host}/`;
+      expect(URL.canParse(href)).toBe(false);
+      expect(() => new WebSocket(href)).toThrow(SyntaxError);
+    }
+  });
+
   it("should exit after timeout", async () => {
     let messageReceived = false;
     let start = 0;

@@ -1416,9 +1416,7 @@ DHPointer::CheckResult DHPointer::check()
 {
     ClearErrorOnReturn clearErrorOnReturn;
     if (!dh_) return DHPointer::CheckResult::NONE;
-    // OpenSSL's DH_check reports no codes for a named group without running
-    // the primality tests. BoringSSL has no such shortcut, and testing the
-    // 8192-bit RFC 3526 prime takes tens of seconds. Match OpenSSL here.
+    // Like OpenSSL's DH_check: a named group needs no primality test.
     if (isNamedGroup()) return DHPointer::CheckResult::NONE;
     int codes = 0;
     if (DH_check(dh_.get(), &codes) != 1)

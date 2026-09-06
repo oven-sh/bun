@@ -2276,6 +2276,34 @@ test.concurrent(
   },
 );
 
+// parent has a newer release that keeps the same range on leaf; the root also depends on leaf, on another major.
+const SHARED_NAME_PARENT_MOVES: Manifests = {
+  parent: { "1.0.0": { dependencies: { leaf: "^1.0.0" } }, "1.1.0": { dependencies: { leaf: "^1.0.0" } } },
+  leaf: { "1.0.0": {}, "1.1.0": {}, "2.0.0": {}, "2.1.0": {} },
+};
+
+test.concurrent(
+  "`bun update --depth 0` keeps a moved parent's child locked even when the child shares a name with a direct entry",
+  async () => {
+    using server = await serveRegistry(SHARED_NAME_PARENT_MOVES);
+    const dir = await installServed(server, "update-depth-shared-moved-", pkgJson({ parent: "1.0.0", leaf: "1.0.0" }));
+    await reinstall(dir, pkgJson({ parent: "1.0.0", leaf: "2.0.0" }));
+    await reinstall(dir, pkgJson({ parent: "^1.0.0", leaf: "^2.0.0" }));
+    expect(await lockedVersions(dir, "parent")).toStrictEqual(["1.0.0"]);
+    expect(await lockedVersions(dir, "leaf")).toStrictEqual(["1.0.0", "2.0.0"]);
+
+    const { stdout, stderr, exitCode } = await run(dir, "update", "--depth", "0");
+    expectRowsAnd(stdout, [movedRow("leaf", "2.0.0", "2.1.0"), movedRow("parent", "1.0.0", "1.1.0")], installed(2));
+    expectCleanStderr(stderr);
+    expect(await packageJsonOf(dir)).toStrictEqual(pkgJson({ parent: "^1.1.0", leaf: "^2.1.0" }));
+    expect(await lockedVersions(dir, "parent")).toStrictEqual(["1.1.0"]);
+    expect(await lockedVersions(dir, "leaf")).toStrictEqual(["1.0.0", "2.1.0"]);
+    expect(await installedVersion(dir, "parent", "node_modules", "leaf")).toBe("1.0.0");
+    await frozen(dir);
+    expect(exitCode).toBe(0);
+  },
+);
+
 test.concurrent("`bun update --depth 0 -r` moves every workspace's direct entries and nothing else", async () => {
   const { dir, locked, stale, texts, textsBefore } = await staleMemberGroups();
   const [rootBefore] = textsBefore;

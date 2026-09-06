@@ -158,6 +158,24 @@ impl UpdateScope<'_> {
         }
     }
 
+    /// `bun update --depth 0`: only a row the root or a workspace owns may move; a moved package's own rows keep whatever bun.lock already resolves for them.
+    pub fn contains_direct_dependency(&self, lockfile: &Lockfile, dep_id: DependencyID) -> bool {
+        match lockfile
+            .packages
+            .items_dependencies()
+            .iter()
+            .position(|slice| slice.contains(dep_id))
+        {
+            Some(owner) => {
+                matches!(
+                    lockfile.packages.items_resolution()[owner].tag,
+                    ResolutionTag::Root | ResolutionTag::Workspace
+                ) && self.contains_package(lockfile, owner)
+            }
+            None => true,
+        }
+    }
+
     /// One bit per dependency row; rows covered by no package's slice (orphans left by the differ) stay unset.
     pub fn walkable_rows(&self, lockfile: &Lockfile) -> DynamicBitSet {
         self.walkable_rows_of(lockfile, false)

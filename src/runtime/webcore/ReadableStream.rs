@@ -527,8 +527,7 @@ impl ReadableStream {
                         event_loop: core::cell::Cell::new(jsc::EventLoopHandle::init(
                             global_this.bun_vm().as_mut().event_loop().cast(),
                         )),
-                        // pread only for a slice. An unsliced Blob over an inherited
-                        // fd (Bun.stdin) reads from the fd's current offset and advances it.
+                        // pread only for a slice. An unsliced Blob reads from the fd's current offset.
                         start_offset: (blob.offset.get() != 0)
                             .then_some(blob.offset.get() as usize),
                         max_size: if blob.size.get() != webcore::blob::MAX_SIZE {

@@ -587,7 +587,7 @@ describe.skipIf(isWindows)("regular-file stdin inherited at an offset", () => {
 
   test.concurrent("process.stdin advances the shared offset for the next reader", async () => {
     const js = `let n = 0; process.stdin.on("data", d => (n += d.length)).on("end", () => process.stdout.write("bun:" + n + "\\n"));`;
-    expect(await runAfterRead(js, 'echo "cat:$(cat | wc -c)";')).toEqual({
+    expect(await runAfterRead(js, 'echo "cat:$(cat | wc -c | tr -d ' ')";')).toEqual({
       stdout: "bun:12\ncat:0\n",
       stderr: "",
       exitCode: 0,

@@ -3348,8 +3348,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_functiongetgroups, (JSGlobalObject * globalObje
     }
     groupVector.shrink(ngroups);
 
-    // POSIX leaves it unspecified whether getgroups(2) includes the
-    // effective gid. Node always includes it, so we do the same.
+    // Node always includes the effective gid. getgroups(2) may not.
     gid_t egid = getegid();
     if (!groupVector.contains(egid))
         groupVector.append(egid);

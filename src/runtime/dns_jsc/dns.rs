@@ -2972,10 +2972,8 @@ pub mod internal {
         Ok(out)
     }
 
-    /// `bun:internal-for-testing`: the error a `getaddrinfo` lookup of
-    /// `hostname` reports when getaddrinfo(3) returns the `EAI_*` status named
-    /// `code`, built by the same [`c_ares::Error::init_eai`] mapping the real
-    /// system-backend, `fetch()` and `Bun.connect()` paths use.
+    /// `bun:internal-for-testing`: the error a lookup of `hostname` reports
+    /// when getaddrinfo(3) returns the `EAI_*` status named `code`.
     pub(crate) fn getaddrinfo_error_for_testing(
         global: &JSGlobalObject,
         frame: &CallFrame,

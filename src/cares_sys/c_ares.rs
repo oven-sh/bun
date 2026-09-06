@@ -1649,10 +1649,8 @@ pub enum Error {
     ECANCELLED = ARES_ECANCELLED,
     ESERVICE = ARES_ESERVICE,
     ENOSERVER = ARES_ENOSERVER,
-    /// getaddrinfo(3) `EAI_AGAIN`: the system resolver failed for now (every
-    /// nameserver timed out or answered SERVFAIL). Not a c-ares status, so
-    /// [`Error::get`] never produces it. Its JS-visible errno is
-    /// [`Error::errno`], not the discriminant.
+    /// getaddrinfo(3) `EAI_AGAIN`. Not a c-ares status: [`Error::get`] never
+    /// produces it, and its errno comes from [`Error::errno`].
     EAI_AGAIN = ARES_ENOSERVER + 1,
 }
 
@@ -1736,8 +1734,7 @@ impl Error {
         }
     }
 
-    /// The raw getaddrinfo(3) status this platform uses for the `EAI_*` code
-    /// named `name`. Lets a test feed `init_eai` without a failing resolver.
+    /// This platform's raw getaddrinfo(3) status for the `EAI_*` code named `name`.
     pub fn eai_raw_by_name(name: &[u8]) -> Option<i32> {
         #[cfg(windows)]
         {
@@ -1760,8 +1757,7 @@ impl Error {
         }
     }
 
-    /// The `errno` a JS error built from this status carries. c-ares statuses
-    /// keep their enum value. `EAI_AGAIN` reports libuv's negative code, like Node.
+    /// The JS-visible `errno` for this status.
     pub fn errno(self) -> i32 {
         match self {
             Error::EAI_AGAIN => UV_EAI_AGAIN,

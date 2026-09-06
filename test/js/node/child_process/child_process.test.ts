@@ -1297,13 +1297,17 @@ describe.skipIf(!isPosix)("piped stdio first touched after the child exits", () 
         `const { spawn } = require("child_process");
         const c = spawn("/bin/sh", ["-c", "echo hello"], { stdio: ["inherit", "pipe"] });
         c.stdout.on("data", d => process.stdout.write("OUT:" + d));
-        c.on("close", () => console.log("closed"));`,
+        c.on("close", () => {
+          c.stderr.unref();
+          c.stderr.ref();
+          console.log("closed", c.stderr.readableEnded, c.stderr.destroyed);
+        });`,
       ],
       env: bunEnv,
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stdout).toBe("OUT:hello\nclosed\n");
+    expect(stdout).toBe("OUT:hello\nclosed true true\n");
     expect(stderr).toBe("");
     expect(exitCode).toBe(0);
   });

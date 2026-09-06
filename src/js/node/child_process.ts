@@ -1258,10 +1258,17 @@ class ChildProcess extends EventEmitter {
             // native handle: the native side hands out a plain closed
             // ReadableStream. Readable.fromWeb ends that stream at once.
             const nativePtr = value.$bunNativePtr;
-            const pipe =
-              typeof nativePtr === "object" && nativePtr !== null
-                ? require("internal/streams/native-readable").constructNativeReadable(value, {})
-                : require("internal/streams/readable").fromWeb(value);
+            let pipe;
+            if (typeof nativePtr === "object" && nativePtr !== null) {
+              pipe = require("internal/streams/native-readable").constructNativeReadable(value, {});
+            } else {
+              pipe = require("internal/streams/readable").fromWeb(value);
+              // The native stream has ref()/unref(). Nothing is left to keep
+              // the event loop alive here, so both are no-ops.
+              pipe.ref = pipe.unref = function () {
+                return this;
+              };
+            }
             this.#closesNeeded++;
             pipe.once("close", () => this.#maybeClose());
             if (autoResume) pipe.resume();

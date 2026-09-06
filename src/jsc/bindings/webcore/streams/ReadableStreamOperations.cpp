@@ -477,8 +477,7 @@ JSPromise* readableStreamCancel(JSGlobalObject* globalObject, JSReadableStream* 
     return result;
 }
 
-// Bun: calls `updateRef(value)` on the native source handle of a default-controller stream.
-// A no-op for every other stream.
+// Bun: `updateRef(value)` on a default-controller native source handle; no-op otherwise.
 static void updateNativeSourceRef(JSGlobalObject* globalObject, JSReadableStream* stream, bool value)
 {
     auto& vm = getVM(globalObject);
@@ -514,8 +513,7 @@ void readableStreamReaderGenericInitialize(JSGlobalObject* globalObject, JSReada
     switch (stream->m_state) {
     case ReadableStreamState::Readable:
         reader->m_closedPromise.set(vm, reader, JSPromise::create(vm, globalObject->promiseStructure()));
-        // Bun: the previous reader's release dropped the native source's event-loop ref.
-        // This reader is going to read, so put it back.
+        // Bun: restore the event-loop ref that the previous reader's release dropped.
         if (stream->m_nativeRefDroppedOnRelease) {
             stream->m_nativeRefDroppedOnRelease = false;
             updateNativeSourceRef(globalObject, stream, true);
@@ -580,7 +578,6 @@ void readableStreamReaderGenericRelease(JSGlobalObject* globalObject, JSReadable
         auto* controller = defaultControllerOf(stream);
         controller->releaseSteps();
         // Bun: drop the native handle's event-loop ref when its consumer releases the lock.
-        // The next reader to lock the stream restores it (readableStreamReaderGenericInitialize).
         if (controller->m_algorithms.kind == SourceKind::Native) {
             stream->m_nativeRefDroppedOnRelease = true;
             updateNativeSourceRef(globalObject, stream, false);

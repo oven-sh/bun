@@ -64,10 +64,8 @@ public:
     // Body.textStream(): the native source adapter decodes each chunk as UTF-8
     // text before enqueue.
     bool m_nativeTextMode : 1 { false };
-    // Bun: releasing a reader calls updateRef(false) on the native source so an
-    // abandoned stream does not keep the process alive. The next reader to lock
-    // the stream restores that ref. Only a release sets this, so a source that was
-    // unref'd on purpose (proc.unref(), process.stdin.unref()) stays unref'd.
+    // Bun: reader release called updateRef(false) on the native source; the next
+    // reader lock calls updateRef(true). A deliberate unref() never sets this.
     bool m_nativeRefDroppedOnRelease : 1 { false };
 
     // [[reader]] — a default reader, a BYOB reader, or null (undefined).

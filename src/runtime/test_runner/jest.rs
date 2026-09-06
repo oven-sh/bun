@@ -653,8 +653,7 @@ pub(crate) mod on_unhandled_rejection {
     }
 }
 
-/// Skips the leading whitespace that `parseInt` / `parseFloat` ignore
-/// (ECMA-262 WhiteSpace and LineTerminator, as UTF-8).
+/// Skips the leading whitespace (ECMA-262 WhiteSpace and LineTerminator) that `parseInt` / `parseFloat` ignore.
 fn trim_js_leading_whitespace(s: &[u8]) -> &[u8] {
     let mut i = 0;
     while i < s.len() {
@@ -725,8 +724,7 @@ fn js_parse_float(s: &[u8]) -> f64 {
     bun_core::fmt::parse_double(s).unwrap_or(f64::NAN)
 }
 
-/// Pretty-prints `value` on one line through the matcher formatter
-/// (`1`, `-0`, `10n`, `"x"`, `Symbol(x)`, `null`, `{ a: 1 }`).
+/// Pretty-prints `value` on one line; a string keeps its quotes.
 fn write_pretty_value(
     global_this: &JSGlobalObject,
     value: JSValue,
@@ -737,8 +735,7 @@ fn write_pretty_value(
     formatter.format_value::<false>(value, list)
 }
 
-/// Writes `value` the way `String(value)` reads in a title: a primitive
-/// string as its raw text, anything else pretty-printed.
+/// Writes `value` as `String(value)` reads in a title: raw text for a string, pretty-printed otherwise.
 fn write_title_value(
     global_this: &JSGlobalObject,
     value: JSValue,
@@ -752,10 +749,7 @@ fn write_title_value(
     write_pretty_value(global_this, value, list)
 }
 
-/// Writes one positional argument for a `%<spec>` placeholder with the
-/// `util.format` coercions Jest applies: `%s` is `String()`, `%d` is
-/// `Number()`, `%i` is `parseInt()`, `%f` is `parseFloat()`, `%j`/`%o` are
-/// `JSON.stringify()`, `%p`/`%O` pretty-print.
+/// Writes one positional argument with the `util.format` coercion Jest applies to `%<spec>`.
 fn write_placeholder_arg(
     global_this: &JSGlobalObject,
     spec: u8,

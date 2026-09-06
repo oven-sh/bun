@@ -153,30 +153,28 @@ test.concurrent("URL ?sslmode=disable overrides PGSSLMODE=require", async () => 
 // A verify-ca / verify-full sslmode is an explicit request to verify the
 // server certificate. NODE_TLS_REJECT_UNAUTHORIZED=0 may relax a default, but
 // it must not silently turn that request off.
-for (const source of ["url", "PGSSLMODE"] as const) {
-  test.concurrent(
-    `sslmode=verify-full from the ${source} still verifies under NODE_TLS_REJECT_UNAUTHORIZED=0`,
-    async () => {
-      const { server, port } = await selfSignedTlsServer();
-      try {
-        const extra: Record<string, string> = { NODE_TLS_REJECT_UNAUTHORIZED: "0" };
-        if (source === "url") extra.POSTGRES_URL = `postgres://u:pw@localhost:${port}/db?sslmode=verify-full`;
-        else extra.PGSSLMODE = "verify-full";
-        await using proc = Bun.spawn({
-          cmd: [bunExe(), "-e", fixture],
-          env: pgEnv(port, extra),
-          stderr: "pipe",
-        });
-        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-        expect(stderr).toBe("");
-        expect(stdout.trim()).toBe("ERROR:DEPTH_ZERO_SELF_SIGNED_CERT");
-        expect(exitCode).toBe(0);
-      } finally {
-        await new Promise<void>(r => server.close(() => r()));
-      }
-    },
-  );
-}
+test.concurrent.each(["url", "PGSSLMODE"] as const)(
+  "sslmode=verify-full from the %s still verifies under NODE_TLS_REJECT_UNAUTHORIZED=0",
+  async source => {
+    const { server, port } = await selfSignedTlsServer();
+    try {
+      const extra: Record<string, string> = { NODE_TLS_REJECT_UNAUTHORIZED: "0" };
+      if (source === "url") extra.POSTGRES_URL = `postgres://u:pw@localhost:${port}/db?sslmode=verify-full`;
+      else extra.PGSSLMODE = "verify-full";
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", fixture],
+        env: pgEnv(port, extra),
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(stdout.trim()).toBe("ERROR:DEPTH_ZERO_SELF_SIGNED_CERT");
+      expect(exitCode).toBe(0);
+    } finally {
+      await new Promise<void>(r => server.close(() => r()));
+    }
+  },
+);
 
 test.concurrent("sslmode=require does not verify the certificate (the environment default applies)", async () => {
   const { server, port } = await selfSignedTlsServer();

@@ -1,53 +1,67 @@
 import * as fs from "fs";
 import * as Module from "module";
-import { basename, extname } from "path";
 import * as zlib from "zlib";
 
 const allFiles = fs.readdirSync(".").filter(f => f.endsWith(".js"));
 const outdir = process.argv[2];
-const builtins = Module.builtinModules;
+const builtins = new Set(Module.builtinModules);
+
+// Every node builtin stays a bare `require("x")` / `import "x"` in the output.
+// The user's `--target=browser` build resolves it to the matching polyfill, so
+// one `Buffer` (or `EventEmitter`, or `Stream`) is shared by all of them.
+//
+// The polyfills are bundled with `target: "browser"` so the npm packages
+// resolve through their `browser` field. `crypto-browserify` depends on it:
+// the node `main` of `randombytes`, `create-hash`, `create-hmac` and `pbkdf2`
+// is `require("crypto").X`, which in a browser bundle is the polyfill itself.
+//
+// `external` cannot express this: with the browser target the resolver picks
+// the polyfill before it checks the externals list. A plugin runs first.
+const keepBuiltinsExternal: Bun.BunPlugin = {
+  name: "keep node builtins external",
+  setup(build) {
+    build.onResolve({ filter: /^(node:)?[a-z0-9_]+(\/[a-z0-9_]+)*$/ }, args => {
+      const bare = args.path.startsWith("node:") ? args.path.slice("node:".length) : args.path;
+      if (builtins.has(bare) || builtins.has(`node:${bare}`)) {
+        return { path: args.path, external: true };
+      }
+      return undefined;
+    });
+  },
+};
+
+// `require` in the browser output is the runtime's `__require` shim. The text
+// is rewritten to a plain `require(...)` below, which leaves the shim unused.
+const requireShim = /var __require=\(\(x\)=>typeof require<"u"\?require:.*?is not supported'\)\}\);/;
+
 let commands: Promise<void>[] = [];
 
-let moduleFiles: string[] = [];
 for (const name of allFiles) {
-  const mod = basename(name, extname(name)).replaceAll(".", "/");
-  const file = allFiles.find(f => f.startsWith(mod));
-  moduleFiles.push(file as string);
-}
-
-for (let fileIndex = 0; fileIndex < allFiles.length; fileIndex++) {
-  const name = allFiles[fileIndex];
-  const mod = basename(name, extname(name)).replaceAll(".", "/");
-  const file = allFiles.find(f => f.startsWith(mod));
-  const externals = [...builtins];
-  const i = externals.indexOf(name);
-  if (i !== -1) {
-    externals.splice(i, 1);
-  }
-
-  // Build all files at once with specific options
-  const externalModules = builtins
-    .concat(moduleFiles.filter(f => f !== name))
-    .flatMap(b => [`--external:node:${b}`, `--external:${b}`])
-    .join(" ");
-
-  // Create the build command with all the specified options
-  const buildCommand =
-    Bun.$`bun build --define=process.env.NODE_DEBUG:"false" --define=process.env.READABLE_STREAM="'enable'" --define=global:globalThis --outdir=${outdir} ${name} --minify-syntax --minify-whitespace --format=${name.includes("stream") ? "cjs" : "esm"} --target=node ${{ raw: externalModules }}`.text();
-
   commands.push(
-    buildCommand.then(async text => {
+    Bun.build({
+      entrypoints: [name],
+      outdir,
+      target: "browser",
+      format: name.includes("stream") ? "cjs" : "esm",
+      minify: { syntax: true, whitespace: true },
+      define: {
+        "process.env.NODE_DEBUG": "false",
+        "process.env.READABLE_STREAM": "'enable'",
+        "global": "globalThis",
+      },
+      plugins: [keepBuiltinsExternal],
+      throw: true,
+    }).then(async () => {
       // This is very brittle. But that should be okay for our usecase
       let outfile = fs
         .readFileSync(`${outdir}/${name}`, "utf8")
         .replaceAll("__require(", "require(")
-        .replaceAll("import.meta.url", "''")
-        .replaceAll("createRequire", "")
+        .replace(requireShim, "")
         .replaceAll("global.process", "require('process')")
         .trim();
 
-      while (outfile.startsWith("import{")) {
-        outfile = outfile.slice(outfile.indexOf(";") + 1);
+      if (outfile.includes("__require")) {
+        throw new Error("Unexpected __require in " + name);
       }
 
       if (outfile.includes('"node:module"')) {

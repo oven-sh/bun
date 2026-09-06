@@ -1765,19 +1765,19 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
         // A pattern segment that itself starts with a literal `.` opts into
         // matching dotfiles for that segment, regardless of the `dot` flag.
         // Brace alternatives (`{.a,*}`) and classes (`[.]a`) decide per
-        // branch, so the general matcher applies the rule itself.
-        if !self.dot
-            && Self::starts_with_dot(filepath)
-            && !Self::starts_with_dot(pattern_component.pattern_slice(&self.pattern))
-        {
-            if pattern_component.syntax_hint == SyntaxHint::None {
-                return crate::matcher::match_no_dot(
-                    pattern_component.pattern_slice(&self.pattern),
-                    filepath,
-                )
-                .matches();
+        // branch, so the general matcher applies the rule itself. A negated
+        // segment (`!x`) keeps hiding dotfiles: its inner mismatch must not
+        // flip into a match.
+        if !self.dot && Self::starts_with_dot(filepath) {
+            let pattern = pattern_component.pattern_slice(&self.pattern);
+            if !Self::starts_with_dot(pattern) {
+                if pattern_component.syntax_hint == SyntaxHint::None
+                    && pattern.first() != Some(&b'!')
+                {
+                    return crate::matcher::match_no_dot(pattern, filepath).matches();
+                }
+                return false;
             }
-            return false;
         }
 
         match pattern_component.syntax_hint {

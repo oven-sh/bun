@@ -167,7 +167,8 @@ pub fn r#match(glob: &[u8], path: &[u8]) -> MatchResult {
 /// One segment only: on a full path, a `**` that restarts on a later hidden
 /// segment would be rejected instead of matching zero segments there.
 pub(crate) fn match_no_dot(glob: &[u8], name: &[u8]) -> MatchResult {
-    debug_assert!(strings::index_of_any(name, b"/\\").is_none());
+    debug_assert!(!strings::contains_char(name, b'/'));
+    debug_assert!(!cfg!(windows) || !strings::contains_char(name, b'\\'));
     match_with_dot(glob, name, false)
 }
 

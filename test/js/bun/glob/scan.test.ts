@@ -1011,10 +1011,19 @@ describe("explicit dotfile segments match without dot:true", () => {
     ["flat/{*,?a}", ["flat/a.b", "flat/c"]],
     ["flat/{[!x],c}a", []],
     ["flat/[.a]a", []],
+    // A negated segment never opts dotfiles in.
+    ["flat/!*", []],
+    ["flat/!{.a,c}", ["flat/a.b"]],
   ])("pattern %j applies the dotfile rule per brace alternative", (pattern, expected) => {
     using dir = tempDir("glob-scan-brace-dot", braceFiles);
     const result = Array.from(new Glob(pattern).scanSync({ cwd: String(dir) }));
     expect(norm(result)).toEqual(expected.sort());
+  });
+
+  test.skipIf(isWindows)("a dotfile with a backslash in its name is one segment", () => {
+    using dir = tempDir("glob-scan-brace-dot-backslash", { "flat/.a\\b": "x", "flat/c": "x" });
+    const result = Array.from(new Glob("flat/{.a*,c}").scanSync({ cwd: String(dir) }));
+    expect(result.sort()).toEqual(["flat/.a\\b", "flat/c"]);
   });
 });
 

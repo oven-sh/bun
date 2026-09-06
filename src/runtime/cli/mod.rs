@@ -966,31 +966,47 @@ pub mod command {
             return Tag::RunAsNodeCommand;
         }
 
+        // BUN_OPTIONS supplies flags and their values. A bare word there is an error.
+        let bun_options_end = 1 + bun::bun_options_argc();
         let mut idx: usize = 1;
         let Some(mut first_arg_name) = iter.next() else {
             return Tag::AutoCommand;
         };
         // `--filter`/`--workspaces` before `test` or `build` name a script.
         let mut saw_filter_flag = false;
-        while !first_arg_name.is_empty() && first_arg_name[0] == b'-' {
-            // `--interactive` stays on AutoCommand: Arguments.rs parses it and the no-target check
-            // routes to RunCommand::exec_node_repl. An early ReplCommand return here would bypass
-            // that and boot the legacy `bun repl` implementation instead.
-            let next_is_keyword = argv
-                .get(idx + 1)
-                .is_some_and(|next| keyword_tag(next).is_some());
-            match arguments::LeadingFlag::classify(first_arg_name, next_is_keyword) {
-                arguments::LeadingFlag::Program => return Tag::AutoCommand,
-                arguments::LeadingFlag::Flag {
-                    consumes_value,
-                    filter,
-                } => {
-                    saw_filter_flag |= filter;
-                    if consumes_value {
-                        if iter.next().is_none() {
-                            return Tag::AutoCommand;
+        loop {
+            let is_flag = !first_arg_name.is_empty() && first_arg_name[0] == b'-';
+            if !is_flag && idx >= bun_options_end {
+                break;
+            }
+            if !is_flag {
+                Output::err_generic(
+                    "BUN_OPTIONS may only contain flags, found {}",
+                    format_args!("{}", bun_core::fmt::quote(first_arg_name)),
+                );
+                Global::exit(1);
+            }
+            {
+                // `--interactive` stays on AutoCommand: Arguments.rs parses it and the no-target check
+                // routes to RunCommand::exec_node_repl. An early ReplCommand return here would bypass
+                // that and boot the legacy `bun repl` implementation instead.
+                let next_is_keyword = idx + 1 >= bun_options_end
+                    && argv
+                        .get(idx + 1)
+                        .is_some_and(|next| keyword_tag(next).is_some());
+                match arguments::LeadingFlag::classify(first_arg_name, next_is_keyword) {
+                    arguments::LeadingFlag::Program => return Tag::AutoCommand,
+                    arguments::LeadingFlag::Flag {
+                        consumes_value,
+                        filter,
+                    } => {
+                        saw_filter_flag |= filter;
+                        if consumes_value {
+                            if iter.next().is_none() {
+                                return Tag::AutoCommand;
+                            }
+                            idx += 1;
                         }
-                        idx += 1;
                     }
                 }
             }
@@ -1326,10 +1342,12 @@ pub mod command {
                 // table / rodata) or walks the per-tag dispatch `match` below.
                 // Dispatches to exactly the arm `which()` would have selected,
                 // so config loading / arg parsing / passthrough are unchanged.
-                if argv
-                    .get(1)
-                    .map(bun_core::ZStr::as_bytes)
-                    .is_some_and(looks_like_run_entrypoint)
+                // A BUN_OPTIONS token in argv[1] is for `which()` to judge.
+                if bun::bun_options_argc() == 0
+                    && argv
+                        .get(1)
+                        .map(bun_core::ZStr::as_bytes)
+                        .is_some_and(looks_like_run_entrypoint)
                 {
                     return exec_auto_or_run(Tag::AutoCommand, log);
                 }
@@ -1555,13 +1573,27 @@ pub mod command {
         Ok(())
     }
 
+    /// A help flag in front of the keyword (`bun --help init`).
+    fn help_requested_before_keyword() -> bool {
+        bun::argv()
+            .iter()
+            .skip(1)
+            .take(subcommand_argv_index().saturating_sub(1))
+            .any(|a| matches!(a, b"--help" | b"-h"))
+    }
+
     #[cold]
     #[inline(never)]
     fn exec_init() -> CmdResult {
         // InitCommand parses its own argv (no Context).
         apply_leading_cwd();
         let argv = argv_zslice();
-        let start = (subcommand_argv_index() + 1).min(argv.len());
+        let keyword = subcommand_argv_index();
+        if help_requested_before_keyword() {
+            tag_print_help(Tag::InitCommand, true);
+            Global::exit(0);
+        }
+        let start = (keyword + 1).min(argv.len());
         super::init_command::InitCommand::exec(&argv[start..])
     }
 
@@ -1572,11 +1604,13 @@ pub mod command {
         // exec handles both the non-tty path (dump the embedded completion
         // script to stdout) and the tty install path (bunx symlink, fpath/XDG
         // dir search, profile patching).
-        for a in bun::argv().iter().skip(subcommand_argv_index() + 1) {
-            if matches!(a, b"--help" | b"-h") {
-                tag_print_help(Tag::InstallCompletionsCommand, true);
-                Global::exit(0);
-            }
+        let help_after_keyword = bun::argv()
+            .iter()
+            .skip(subcommand_argv_index() + 1)
+            .any(|a| matches!(a, b"--help" | b"-h"));
+        if help_after_keyword || help_requested_before_keyword() {
+            tag_print_help(Tag::InstallCompletionsCommand, true);
+            Global::exit(0);
         }
         super::install_completions_command::InstallCompletionsCommand::exec()?;
         Global::exit(0);

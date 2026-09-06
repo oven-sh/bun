@@ -576,6 +576,29 @@ describe.concurrent("global flag before subcommand", () => {
     });
   }
 
+  for (const [keyword, usage] of [
+    ["init", "Usage: bun init"],
+    ["completions", "Usage: bun completions"],
+  ] as const) {
+    test(`bun --help ${keyword} prints the command's help and writes nothing`, async () => {
+      // The dir is also HOME: the completions installer writes there (bunx
+      // symlink, shell profile), so an empty dir after the run proves it did not run.
+      using dir = tempDir("which-help-before-keyword", {});
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "--help", keyword],
+        env: { ...bunEnv, HOME: String(dir), BUN_INSTALL: undefined },
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stdout).toContain(usage);
+      expect(stderr).toBe("");
+      expect(fs.readdirSync(String(dir))).toEqual([]);
+      expect(exitCode).toBe(0);
+    });
+  }
+
   // Shebang + chmod bin stub is Unix-only; see test/regression/issue/26207.test.ts.
   test.skipIf(isWindows)("bun --bun x <bin> still passes --bun through", async () => {
     // `--bun` is handled by bunx's own parser; stepping past leading flags

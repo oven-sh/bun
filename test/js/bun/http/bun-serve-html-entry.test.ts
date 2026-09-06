@@ -741,15 +741,17 @@ test.concurrent.skipIf(isWindows)("o + Enter without an opener on PATH keeps the
       },
     },
   });
-  await ready.promise;
+  // An early exit settles the wait with the captured output instead of hanging.
+  const exited = process.exited.then(code => `exited with ${code}:\n${text}`);
+  expect(await Promise.race([ready.promise.then(() => "printed the server url"), exited])).toBe(
+    "printed the server url",
+  );
   const serverUrl = text.match(/http:\/\/127\.0\.0\.1:\d+/)![0];
 
   process.terminal!.write("o\n");
-  const outcome = await Promise.race([
-    printedUrl.promise.then(() => "printed the url"),
-    process.exited.then(code => `exited with ${code}:\n${text}`),
-  ]);
-  expect(outcome).toBe("printed the url");
+  expect(await Promise.race([printedUrl.promise.then(() => "printed the open hint"), exited])).toBe(
+    "printed the open hint",
+  );
   expect(text).toContain(`Open ${serverUrl}/ in your browser`);
 
   // The server still answers after the failed open.

@@ -406,7 +406,7 @@ describe.concurrent("bun test --changed", () => {
       cmd: [bunExe(), "test", `--changed=--output=${outFile}`],
       cwd: String(dir),
       env: gitEnv,
-      stdout: "pipe",
+      stdout: "ignore",
       stderr: "pipe",
       stdin: "ignore",
     });

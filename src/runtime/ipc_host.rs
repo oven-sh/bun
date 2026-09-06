@@ -174,7 +174,7 @@ pub(crate) fn do_send(
             // SAFETY: from_js returned a non-null `*mut Listener`; the JS
             // wrapper holds it alive for the call.
             match unsafe { (*listener).listener.get() } {
-                crate::socket::listener::ListenerType::Uws(socket_uws) => {
+                &crate::socket::listener::ListenerType::Uws(socket_uws) => {
                     // may need to handle ssl case
                     // SAFETY: `socket_uws` is a live non-null `*mut ListenSocket`
                     // owned by uSockets; `get_socket` only reinterpret-casts to

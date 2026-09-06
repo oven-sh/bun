@@ -493,6 +493,27 @@ where
     }
 }
 
+/// Dynamic SNI (the JS `serverName` handler) for `.bun_socket_tls` sockets:
+/// `LISTENER = true` is the listener-level resolver `Bun.listen` registers on
+/// its listen socket, `false` the socket-level one an fd-adopted server socket
+/// carries on its SSL. Either way the ClientHello belongs to an accepted
+/// socket whose ext already holds its `TLSSocket` (stashed by `on_create` /
+/// the adopt path before the handshake is driven); a socket without one gets
+/// no JS callback (static tree / default context).
+pub(crate) struct BunServerName<const LISTENER: bool>;
+
+impl<const LISTENER: bool> bun_uws_sys::ServerNameHandler for BunServerName<LISTENER> {
+    fn resolve(s: &mut us_socket_t, hostname: &core::ffi::CStr) -> bun_uws_sys::SniDecision {
+        if s.kind() != bun_uws_sys::SocketKind::BunSocketTls {
+            return bun_uws_sys::SniDecision::Default;
+        }
+        match *s.ext::<Option<ThisPtr<api::TLSSocket>>>() {
+            Some(tls) => super::listener::resolve_server_name(tls, hostname, LISTENER),
+            None => bun_uws_sys::SniDecision::Default,
+        }
+    }
+}
+
 /// The callbacks live on a separate namespace `H` (the driver's pre-existing
 /// `SocketHandler(ssl)` adapter) rather than as methods on the owner type
 /// itself. Ext stores `*Owner`; it is optional because a connect/accept can

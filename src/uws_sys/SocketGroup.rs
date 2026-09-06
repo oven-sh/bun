@@ -122,6 +122,19 @@ impl SocketGroup {
         unsafe { us_socket_group_deinit(this) }
     }
 
+    /// Unlink this (empty) group from its loop ahead of the owner dropping
+    /// it. Every socket list must already be empty (`close_all` first); a
+    /// never-initialised or already-unlinked group is a no-op.
+    pub fn unlink(&mut self) {
+        debug_assert!(self.head_sockets.is_null());
+        debug_assert!(self.head_connecting_sockets.is_null());
+        debug_assert!(self.head_listen_sockets.is_null());
+        // SAFETY: `self` is a valid group; when `linked` is set it was
+        // `init`ed with the live loop it is linked into, which is all
+        // `us_socket_group_deinit` touches.
+        unsafe { us_socket_group_deinit(self) }
+    }
+
     pub fn close_all(&mut self) {
         // SAFETY: forwarding to C; `self` is a valid initialized group.
         unsafe { us_socket_group_close_all(self) }

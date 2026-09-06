@@ -2036,8 +2036,13 @@ function formatNumber(fn, number, numericSeparator) {
   if (NumberIsNaN(number)) {
     return fn(string, "number");
   }
+  const numberString = String(number);
+  // `MathTrunc` collapses e.g. -0.12 to -0, and `String(-0)` is "0" (no sign),
+  // so `string` can be missing the sign that `numberString` still has.
+  const sign = numberString[0] === "-" && string[0] !== "-" ? "-" : "";
+  const fractionStart = StringPrototypeIndexOf(numberString, ".") + 1;
   return fn(
-    `${addNumericSeparator(string)}.${addNumericSeparatorEnd(StringPrototypeSlice(String(number), string.length + 1))}`,
+    `${sign}${addNumericSeparator(string)}.${addNumericSeparatorEnd(StringPrototypeSlice(numberString, fractionStart))}`,
     "number",
   );
 }

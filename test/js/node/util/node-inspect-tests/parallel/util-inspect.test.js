@@ -3171,6 +3171,13 @@ test("no assertion failures 3", () => {
     assert.strictEqual(util.inspect(123456789.12345678, { numericSeparator: true }), "123_456_789.123_456_78");
 
     assert.strictEqual(util.inspect(-123456789.12345678, { numericSeparator: true }), "-123_456_789.123_456_78");
+
+    // Regression test for https://github.com/oven-sh/bun/issues/23098
+    // Negative fractional numbers whose magnitude is less than 1 truncate to
+    // -0, which must not lose the sign or duplicate the decimal point.
+    assert.strictEqual(util.inspect(-0.12, { numericSeparator: true }), "-0.12");
+    assert.strictEqual(util.inspect(-0.123, { numericSeparator: true }), "-0.123");
+    assert.strictEqual(util.inspect(-0.1234, { numericSeparator: true }), "-0.123_4");
   }
 
   // Regression test for https://github.com/nodejs/node/issues/41244

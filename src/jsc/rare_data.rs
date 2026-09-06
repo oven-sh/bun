@@ -1052,8 +1052,7 @@ enum StdinFdType {
     File = 0,
     Pipe = 1,
     Socket = 2,
-    /// Anything libuv's `uv_guess_handle` reports as `UV_UNKNOWN_HANDLE`: a
-    /// directory, a block device, or an fd that `fstat` rejects.
+    /// libuv's `UV_UNKNOWN_HANDLE`: a directory, a block device, or a failed `fstat`.
     Unknown = 3,
 }
 

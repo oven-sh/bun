@@ -140,9 +140,7 @@ export function getStdinStream(
   $assert(fd === 0);
 
   if (!isTTY && fdType === BunProcessStdinFdType.unknown) {
-    // Node's getStdin() default branch: an fd libuv cannot classify (a directory,
-    // for example) becomes an empty Readable that ends at once. The native stdin
-    // stream would instead throw EISDIR synchronously from the first read.
+    // Node's getStdin() default branch. The native stream would throw EISDIR on first read.
     const stream = require("internal/worker/stdio").makeEndedReadable();
     stream.fd = fd;
     return stream;

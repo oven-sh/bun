@@ -3009,9 +3009,7 @@ static JSValue constructStdioWriteStream(JSC::JSGlobalObject* globalObject, JSC:
     // Pipes (and sockets): synchronous on Windows, asynchronous on POSIX
     bool forceSync = false;
 #if OS(WINDOWS)
-    // `unknown` (an fstat failure or an unclassified handle) was `file` before the
-    // variant existed and keeps that synchronous behavior.
-    forceSync = fdType == BunProcessStdinFdType::file || fdType == BunProcessStdinFdType::pipe || fdType == BunProcessStdinFdType::unknown;
+    forceSync = fdType != BunProcessStdinFdType::socket;
 #else
     // Note: files are always sync anyway.
     // forceSync = fdType == BunProcessStdinFdType::file || bun_stdio_tty[fd];

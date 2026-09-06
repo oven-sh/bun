@@ -10275,7 +10275,7 @@ pub(crate) fn null_expr_data() -> js_ast::ExprData {
 pub(crate) fn null_stmt_data() -> js_ast::StmtData {
     js_ast::StmtData::SEmpty(S::Empty {})
 }
-#[inline]
+
 /// `require()` of an ES module returns a copy of the namespace with
 /// `__esModule` set, and reads `default` off `module.exports`: neither name is
 /// the export the linker would bind.

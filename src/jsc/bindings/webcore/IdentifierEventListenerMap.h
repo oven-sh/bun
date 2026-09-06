@@ -51,9 +51,13 @@ public:
 
     void clear();
 
-    bool add(const JSC::Identifier& eventType, Ref<EventListener>&&, bool once);
-    bool prepend(const JSC::Identifier& eventType, Ref<EventListener>&&, bool once);
+    // node:events semantics, not EventTarget's: the same function may be registered any number of times.
+    void add(const JSC::Identifier& eventType, Ref<EventListener>&&, bool once);
+    void prepend(const JSC::Identifier& eventType, Ref<EventListener>&&, bool once);
+    // Removes the most recently added registration of this callback.
     bool remove(const JSC::Identifier& eventType, EventListener&);
+    // Removes exactly this registration.
+    bool remove(const JSC::Identifier& eventType, SimpleRegisteredEventListener&);
     bool removeAll(const JSC::Identifier& eventType);
     WEBCORE_EXPORT SimpleEventListenerVector* find(const JSC::Identifier& eventType);
     const SimpleEventListenerVector* find(const JSC::Identifier& eventType) const { return const_cast<IdentifierEventListenerMap*>(this)->find(eventType); }

@@ -240,6 +240,30 @@ describe.concurrent("long import path overflow", () => {
     // Walk-up loop indexed into a fixed [256]DirEntryResolveQueueItem
     await run(String(dir), `\`/\${"a/".repeat(300)}x\``);
   });
+
+  // The other direction: a short import with a tsconfig whose `baseUrl` is
+  // itself longer than a PathBuffer (parse_tsconfig for a relative one,
+  // match_tsconfig_paths for an absolute one). Every component is a valid name.
+  it.each(["./", "/"])("tsconfig baseUrl longer than PATH_MAX (prefix %s)", async prefix => {
+    const baseUrl = prefix + Array(21).fill(Buffer.alloc(200, "a").toString()).join("/");
+    using dir = tempDir("resolve-long-baseurl", {
+      "package.json": `{"name": "test", "version": "0.0.0"}`,
+      "node_modules/.keep": "",
+      "tsconfig.json": JSON.stringify({ compilerOptions: { baseUrl, paths: { "somebare/*": ["./lib/*"] } } }),
+      "e.ts": `import x from "somebare/y"; console.log(x);`,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "e.ts"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toContain(`Cannot find module 'somebare/y'`);
+    expect(stdout).toBe("");
+    expect(exitCode).toBe(1);
+  });
 });
 
 // matchTSConfigPaths sliced `path[prefix.len()..path.len() - suffix.len()]`

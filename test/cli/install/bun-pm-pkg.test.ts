@@ -918,6 +918,20 @@ describe.concurrent("bun pm pkg", () => {
       expect((await readPkg(multiIssueDir)).name).toBe("multiple-issues-package");
     });
 
+    it("should warn instead of crashing on a bin path longer than PATH_MAX", async () => {
+      // 4220 bytes of valid components; joining it with the package directory
+      // into a fixed-size path buffer used to abort the process.
+      const binPath = "./" + Array(21).fill(Buffer.alloc(200, "a").toString()).join("/") + ".js";
+      using longBinDir = tempDir("pm-pkg-long-bin", {
+        "package.json": JSON.stringify({ name: "LONG-BIN-PACKAGE", version: "1.0.0", bin: { b: binPath } }, null, 2),
+      });
+
+      const { error, code } = await runPmPkg(["fix"], longBinDir);
+      expect(error).toContain(`bin path is too long: ${binPath}`);
+      expect(code).toBe(0);
+      expect((await readPkg(longBinDir)).name).toBe("long-bin-package");
+    });
+
     it("should not crash on empty bin object", async () => {
       using emptyBinDir = tempDir("pm-pkg-empty-bin", {
         "package.json": JSON.stringify({ name: "EMPTY-BIN-PACKAGE", version: "1.0.0", bin: {} }, null, 2),

@@ -608,6 +608,27 @@ describe("junit reporter", () => {
     expect(longPathCase.failure[0]._).toContain(`at fromLongPath (${longPath}:1:`);
     expect(pathCase.failure[0]._).toContain("at fromPath (generated.js:1:");
   });
+
+  it("reports a --reporter-outfile longer than PATH_MAX instead of crashing", async () => {
+    using dir = tempDir("junit-long-outfile", {
+      "package.json": "{}",
+      "a.test.js": `import { test, expect } from "bun:test"; test("ok", () => { expect(1).toBe(1); });`,
+    });
+    // 4220 bytes of valid components; copying it into the fixed-size path
+    // buffer used to abort the process after the tests had run.
+    const outfile = "./" + Array(21).fill(Buffer.alloc(200, "a").toString()).join("/") + ".xml";
+    await using proc = spawn([bunExe(), "test", "--reporter=junit", "--reporter-outfile", outfile, "a.test.js"], {
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toContain("1 pass");
+    expect(stderr).toContain("Failed to write JUnit report to ./aaaa");
+    expect(stderr).toContain("ENAMETOOLONG");
+    expect(exitCode).toBe(0);
+  });
 });
 
 function filterJunitXmlOutput(xmlContent) {

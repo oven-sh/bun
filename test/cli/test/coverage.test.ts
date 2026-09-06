@@ -57,6 +57,28 @@ export class Y {
   );
 });
 
+test("lcov reporter reports a --coverage-dir longer than PATH_MAX instead of crashing", async () => {
+  using dir = tempDir("cov-long-dir", {
+    "package.json": "{}",
+    "a.test.ts": `import { test, expect } from "bun:test"; test("ok", () => { expect(1).toBe(1); });`,
+  });
+  // 4220 bytes of valid components; joining `<dir>/lcov.info` into a
+  // fixed-size path buffer used to abort the process after the tests had run.
+  const coverageDir = Array(21).fill(Buffer.alloc(200, "a").toString()).join("/");
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test", "--coverage", "--coverage-reporter=lcov", `--coverage-dir=${coverageDir}`, "./a.test.ts"],
+    cwd: String(dir),
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toContain("(pass) ok");
+  expect(stderr).toContain("Failed to write lcov.info to aaaa");
+  expect(stderr).toContain("ENAMETOOLONG");
+  expect(exitCode).toBe(1);
+});
+
 test("coverage excludes node_modules directory", () => {
   using dir = tempDir("cov", {
     "node_modules/pi/index.js": `

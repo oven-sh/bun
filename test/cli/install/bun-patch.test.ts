@@ -11,6 +11,25 @@ const platformPath = (path: string) => path;
 setDefaultTimeout(1000 * 60 * 5);
 
 describe("error messages", () => {
+  test("'bun patch' with a path longer than PATH_MAX reports an error", async () => {
+    await using dir = tempDir("bun-patch-long-path", {
+      "package.json": JSON.stringify({ name: "t" }),
+    });
+    // 4220 bytes of valid components; joining `<arg>/package.json` into a
+    // fixed-size path buffer used to abort the process.
+    const arg = "node_modules/" + Array(21).fill(Buffer.alloc(200, "a").toString()).join("/");
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "patch", arg],
+      env: bunEnv,
+      cwd: dir,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toContain(`error: path is too long: "${arg}"`);
+    expect(exitCode).toBe(1);
+  });
+
   test("'bun patch' with no package name shows a usage example", async () => {
     await using dir = tempDir("bun-patch-noarg", {
       "package.json": JSON.stringify({ name: "t" }),

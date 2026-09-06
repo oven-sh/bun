@@ -5465,6 +5465,13 @@ pub mod bv2_impl {
             }
         }
 
+        /// `bun build --watch` watches every file it parses, so a file whose
+        /// import failed to resolve still schedules its other imports. The dev
+        /// server links failed files and tracks the failure itself.
+        fn keeps_scanning_after_resolve_error(&self) -> bool {
+            self.bun_watcher.is_some() && self.dev_server.is_none()
+        }
+
         /// Dev Server uses this instead to run a subset of the transpiler, and to run it asynchronously.
         pub fn start_from_bake_dev_server(
             &mut self,
@@ -6111,7 +6118,13 @@ pub mod bv2_impl {
 
             if let Some(err) = resolve_result.last_error {
                 bun_core::scoped_log!(Bundle, "failed with error: {}", err.name());
-                resolve_result.resolve_queue.clear();
+                // Under `bun build --watch` the imports that did resolve are
+                // still parsed, so an edit to any of them rebuilds while the
+                // failed one is missing. The build aborts before link time
+                // either way (`transpiler.log.errors > 0`).
+                if !this.keeps_scanning_after_resolve_error() {
+                    resolve_result.resolve_queue.clear();
+                }
 
                 // Preserve the parsed import_records on the graph so any plugin
                 // onResolve tasks already dispatched for *other* records in this
@@ -6650,7 +6663,7 @@ pub mod bv2_impl {
                 };
                 let mut resolve_result = resolve_result;
                 // if there were errors, lets go ahead and collect them all
-                if last_error.is_some() {
+                if last_error.is_some() && !self.keeps_scanning_after_resolve_error() {
                     continue;
                 }
 
@@ -7613,6 +7626,14 @@ pub mod bv2_impl {
                         debug_assert!(
                             this.graph.ast.items_parts()[err.source_index.get() as usize].len()
                                 == 0
+                        );
+                    }
+
+                    if !resolve_queue.is_empty() {
+                        diff += this.process_resolve_queue(
+                            &resolve_queue,
+                            err.target,
+                            err.source_index.get(),
                         );
                     }
                 }

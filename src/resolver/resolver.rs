@@ -5972,7 +5972,7 @@ impl<'a> Resolver<'a> {
             // Start watching it automatically,
             if let Some(watcher) = self.watcher.as_ref() {
                 if let Some((dir, fd)) = dir_entry.get().dir_and_fd() {
-                    watcher.watch(dir, fd);
+                    watcher.watch(dir, fd, base);
                 }
             }
         }

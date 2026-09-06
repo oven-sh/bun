@@ -579,7 +579,10 @@ where
         while self.pending_count().swap(0, Ordering::Relaxed) > 0 {
             let ctx = self.ctx_ptr();
             // SAFETY: ctx outlives reloader (BACKREF).
-            unsafe { (*ctx).reload(self) };
+            unsafe {
+                (*ctx).bun_watcher_mut().clear_unresolved_imports();
+                (*ctx).reload(self);
+            }
         }
     }
 
@@ -942,6 +945,10 @@ where
                     }
                 }
                 bun_watcher::Kind::Directory => {
+                    // A file the resolver could not find is not in the watchlist, so
+                    // its creation only shows up as an event on the directory the
+                    // resolver searched. The Windows watcher does not pass entry
+                    // names, so a new entry in that directory has to do.
                     #[cfg(windows)]
                     {
                         // on windows we receive file events for all items affected by a directory change
@@ -950,6 +957,13 @@ where
                         let _ = self.ctx_mut().bust_dir_cache(
                             strings::paths::without_trailing_slash_windows_path(file_path),
                         );
+                        if event.op.intersects(WatchOp::CREATE | WatchOp::MOVE_TO)
+                            // SAFETY: the Watcher outlives this call (it owns the
+                            // Reloader that calls us); the borrow is scoped to this call.
+                            && unsafe { (*ctx).unresolved_import_matches(file_path, None) }
+                        {
+                            current_task.append(current_hash);
+                        }
                         continue;
                     }
                     #[cfg(not(windows))]
@@ -1070,6 +1084,27 @@ where
                         let _ = self.ctx_mut().bust_dir_cache(
                             strings::paths::without_trailing_slash_windows_path(file_path),
                         );
+
+                        // A file the resolver could not find is not in the watchlist,
+                        // so its creation only shows up as an event on the directory
+                        // the resolver searched. kqueue reports a directory write
+                        // with no entry name; inotify names each entry.
+                        let satisfies_unresolved_import = if IS_KQUEUE {
+                            // SAFETY: the Watcher outlives this call (it owns the
+                            // Reloader that calls us); the borrow is scoped to this call.
+                            unsafe { (*ctx).unresolved_import_matches(file_path, None) }
+                        } else {
+                            affected_inotify.iter().any(|name| match name {
+                                // SAFETY: see the kqueue arm above.
+                                Some(z) => unsafe {
+                                    (*ctx).unresolved_import_matches(file_path, Some(z.as_bytes()))
+                                },
+                                None => false,
+                            })
+                        };
+                        if satisfies_unresolved_import {
+                            current_task.append(current_hash);
+                        }
 
                         // The watched entrypoint has a per-file inotify watch on its inode.
                         // An atomic rename (`rename(tmp, entrypoint)`) or a rm+recreate over

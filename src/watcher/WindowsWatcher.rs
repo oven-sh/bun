@@ -539,6 +539,12 @@ fn create_watch_event(event: &FileEvent, index: WatchItemIndex) -> WatchEvent {
     if event.action == Action::Modified {
         op |= Op::WRITE;
     }
+    if event.action == Action::Added {
+        op |= Op::CREATE;
+    }
+    if event.action == Action::RenamedNew {
+        op |= Op::MOVE_TO;
+    }
     WatchEvent {
         op,
         index,

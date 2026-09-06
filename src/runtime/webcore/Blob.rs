@@ -2214,9 +2214,7 @@ impl BlobExt for Blob {
             let converted = match strings::to_utf16_alloc(buf, false, false) {
                 Ok(converted) => converted,
                 Err(_) => {
-                    return Err(bun_string_jsc::throw_utf16_transcode_failure(
-                        global, buf,
-                    ));
+                    return Err(bun_string_jsc::throw_utf16_transcode_failure(global, buf));
                 }
             };
             if let Some(external) = converted {

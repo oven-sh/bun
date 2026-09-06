@@ -306,9 +306,7 @@ impl PmVersionCommand {
         let mut path_buf = bun_paths::path_buffer_pool::get();
         let git_dir_path =
             path::join_abs_string_buf_z::<path_platform::Auto>(cwd, &mut path_buf.0, &[b".git"]);
-        // A linked worktree, a submodule, and `git init --separate-git-dir` all
-        // make `.git` a file that holds `gitdir: <path>`, so a directory check
-        // reports no repository there.
+        // `.git` is a file, not a directory, in a linked worktree or a submodule.
         if !bun_sys::exists_z(git_dir_path) {
             pm.options.git_tag_version = false;
             return Ok(());

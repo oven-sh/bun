@@ -1,27 +1,27 @@
+import { dlopen, FFIType, ptr } from "bun:ffi";
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from "bun:test";
 import { randomBytes } from "crypto";
-import { dlopen, FFIType, ptr } from "bun:ffi";
 import { bunEnv, bunExe, isWindows, libcPathForDlopen, tempDir, tls as tlsCert } from "harness";
 import http2 from "node:http2";
 import net from "node:net";
 import { join } from "node:path";
 import tls from "node:tls";
 import {
-  F,
-  Fixture,
-  PREFACE,
-  RawH2,
-  SharedSession,
-  T,
   baseHeaders,
   connectH2,
   decodeStatus,
+  F,
+  Fixture,
   frame,
   hpackFields,
   hpackLiteral,
+  PREFACE,
+  RawH2,
   request,
   sha256,
+  SharedSession,
   startFixture,
+  T,
 } from "./serve-http2-helpers";
 
 /** One HTTP/1.1 request on the fixture's port, written byte-exact (no

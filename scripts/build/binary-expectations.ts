@@ -351,7 +351,14 @@ export function binaryExpectations(cfg: Config): BinaryExpectations {
         format,
         exports: {
           symbolList: src("symbols.def"),
-          exact: ["node_module_register"],
+          exact: [
+            "node_module_register",
+            // WTF's out-of-line currentStackPointer (StackPointer.cpp, used
+            // when NDEBUG is off) is assembly that carries its own
+            // `.drectve -export:` for WTF.dll's sake; statically linked, that
+            // directive exports it from bun-debug.exe. Debug builds only.
+            ...(cfg.debug ? ["currentStackPointer"] : []),
+          ],
           // Node-API and the V8 / node C++ embedder API are exported from the
           // source with __declspec(dllexport) (NAPI_EXTERN, BUN_EXPORT), the
           // C++ ones under their MSVC-mangled names; symbols.def adds libuv.

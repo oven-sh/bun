@@ -235,6 +235,7 @@ pub(crate) fn to_js_from_multipart_data(
         }
     }
 
+    DOMFormData::report_memory_cost(form_data_value);
     Ok(form_data_value)
 }
 

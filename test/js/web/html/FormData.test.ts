@@ -1004,3 +1004,66 @@ describe("USVString conversion of lone surrogates", () => {
     expect(formData.get("\uFFFD")).toBeNull();
   });
 });
+
+// A parsed FormData stores its entries as native WTF::String bytes outside the
+// JS heap. The JS wrapper must report those bytes to the GC, otherwise the
+// allocation-driven GC trigger never fires and the native memory accumulates
+// while requests keep arriving. See ledger #23371.
+describe.concurrent("FormData native memory is reported to the GC", () => {
+  async function extraMemoryDelta(buildBody: string, contentType: string, count: number): Promise<number> {
+    const script = `
+      const { heapStats } = require("bun:jsc");
+      const headers = { "content-type": ${JSON.stringify(contentType)} };
+      const buildBody = ${buildBody};
+
+      Bun.gc(true);
+      const before = heapStats().extraMemorySize;
+
+      const live = [];
+      for (let i = 0; i < ${count}; i++) {
+        live.push(await new Response(buildBody(), { headers }).formData());
+      }
+
+      // Collect the transient request bodies. Only the referenced FormData
+      // objects and their reported native bytes remain.
+      Bun.gc(true);
+      const after = heapStats().extraMemorySize;
+      process.stdout.write(String(after - before));
+      if (live.length !== ${count}) throw new Error("unreachable");
+    `;
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const delta = Number(stdout);
+    expect({ stderr, exitCode, delta }).toEqual({ stderr: expect.any(String), exitCode: 0, delta: expect.any(Number) });
+    expect(Number.isFinite(delta)).toBe(true);
+    return delta;
+  }
+
+  // Each body has one 8 MB field value, parsed into a native WTF::String entry
+  // the FormData owns. After the fix the GC sees those bytes and they survive a
+  // collection while the FormData is referenced. Without the fix the delta is
+  // near zero. A few large entries keep the debug+ASAN parse fast.
+  const valueSize = 8 * 1024 * 1024;
+  const count = 2;
+
+  test("urlencoded entries report their bytes", async () => {
+    const buildBody = `() => "a=" + Buffer.alloc(${valueSize}, "x").toString()`;
+    const delta = await extraMemoryDelta(buildBody, "application/x-www-form-urlencoded", count);
+    expect(delta).toBeGreaterThan(count * valueSize * 0.5);
+  });
+
+  test("multipart string fields report their bytes", async () => {
+    const buildBody = `() => {
+      const value = Buffer.alloc(${valueSize}, "x").toString();
+      return "--X\\r\\nContent-Disposition: form-data; name=\\"a\\"\\r\\n\\r\\n" + value + "\\r\\n--X--\\r\\n";
+    }`;
+    const delta = await extraMemoryDelta(buildBody, "multipart/form-data; boundary=X", count);
+    expect(delta).toBeGreaterThan(count * valueSize * 0.5);
+  });
+});

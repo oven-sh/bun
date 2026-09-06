@@ -6687,10 +6687,7 @@ pub mod bv2_impl {
                     continue;
                 }
 
-                // `Path::set_realpath` keeps the path before symlink resolution
-                // in `pretty`. `path_with_pretty_initialized` below replaces it,
-                // so tell DevServer now: a retarget of the link must resolve
-                // this import again.
+                // `pretty` holds the link path only until `path_with_pretty_initialized`.
                 if path.is_symlink {
                     if let Some(dev) = self.dev_server {
                         dev.track_symlink_resolution(

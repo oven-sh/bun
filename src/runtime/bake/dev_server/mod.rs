@@ -416,9 +416,7 @@ impl HotReloadEvent {
         // drop, so it does not hold a borrow of `dev` for the scope.
         let _g = dev.graph_safety_lock.guard();
 
-        // A changed entry can be a directory symlink (`cur -> v1`). Its own
-        // `DirInfo` caches the old real path, so bust it before anything
-        // below resolves through it.
+        // A changed entry can be a directory symlink whose `DirInfo` caches the old real path.
         for changed_entry in bun_core::strings::split(&self.extra_files, &[0]) {
             if !changed_entry.is_empty() {
                 // SAFETY: server_transpiler is initialized in DevServer::init before any
@@ -473,12 +471,8 @@ impl HotReloadEvent {
                     let specifier: &[u8] = unsafe { &*specifier };
 
                     if let Some(link_path) = link_path {
-                        // A directory on the way from the changed directory to
-                        // the link path can be the retargeted link. Each of
-                        // them caches its old real path, so bust them all. The
-                        // walk starts at the link path itself, which can name
-                        // the linked directory (`./links/cur` for its index
-                        // file). A bust of a file path is a no-op.
+                        // Any directory between the changed one and the link path
+                        // can be the link. A bust of a file path is a no-op.
                         // SAFETY: points into the dep's owned `Box<[u8]>`, not
                         // mutated until after `resolve` returns.
                         let mut dir: &[u8] = unsafe { &*link_path };
@@ -1136,9 +1130,7 @@ pub mod directory_watch_store {
         pub(crate) specifier: Box<[u8]>,
         /// The import kind the bundler resolved `specifier` with.
         pub(crate) import_kind: bun_ast::ImportKind,
-        /// `None` for a failed resolution. `Some` for a resolution that went
-        /// through a symlink, so a retarget of the link is detected as a
-        /// change in the resolved path.
+        /// `Some` for a resolution that went through a symlink.
         pub(crate) symlink: Option<SymlinkTarget>,
     }
     /// The two paths of a resolution that went through a symlink.
@@ -1334,10 +1326,7 @@ impl DirectoryWatchStore {
         )
     }
 
-    /// Registers directory watches so that an import that resolved through
-    /// a symlink is resolved again when the link changes. `link_path` is the
-    /// absolute path before symlink resolution, `real_path` the path after.
-    /// A later resolution that yields a different path rebuilds the importer.
+    /// Resolves `specifier` again when a directory on `link_path` changes.
     pub(crate) fn track_symlink_resolution(
         &mut self,
         import_source: &[u8],
@@ -1354,8 +1343,7 @@ impl DirectoryWatchStore {
         {
             return Ok(());
         }
-        // Same policy as the watcher: links inside node_modules (workspace
-        // packages, `bun link`) and links outside the project are not tracked.
+        // Same policy as the watcher: no node_modules, nothing outside the project.
         // SAFETY: `owner()` recovers the heap DevServer; `root` is disjoint
         // from `directory_watchers`.
         let root: &[u8] = unsafe { &(*self.owner()).root };
@@ -1363,8 +1351,7 @@ impl DirectoryWatchStore {
             return Ok(());
         }
 
-        // Any component of `link_path` from the first one that differs from
-        // `real_path` can be the link. Watch the parent of each of them.
+        // Watch the parent of every component that can be the link.
         let platform = bun_paths::Platform::AUTO;
         let mut first_differing_component = 0;
         let mut i = 0;
@@ -1479,9 +1466,7 @@ impl DirectoryWatchStore {
         let gop_index = gop.index;
         let found_existing = gop.found_existing;
 
-        // A failed resolution is retried as a relative `Stmt` import. A
-        // symlinked resolution is retried exactly as the bundler resolved it,
-        // so a tsconfig `paths` alias stays an alias.
+        // A symlinked resolution is retried with the specifier as the bundler resolved it.
         let specifier_cloned: Box<[u8]> =
             if symlink.is_some() || specifier[0] == b'.' || bun_paths::is_absolute(specifier) {
                 Box::<[u8]>::from(specifier)
@@ -1500,8 +1485,7 @@ impl DirectoryWatchStore {
         // errdefer free(specifier_cloned) — handled by Drop on `?` paths.
 
         if found_existing {
-            // Every rebuild of the importer reports its imports again. Update
-            // the dep it already has instead of growing the chain.
+            // A rebuild of the importer reports the same import again.
             let mut it = Some(self.watches.values()[gop_index].first_dep);
             while let Some(index) = it {
                 let dep = &mut self.dependencies[index as usize];

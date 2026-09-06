@@ -6604,8 +6604,11 @@ for (const connectionType of [ConnectionType.TLS, ConnectionType.TCP]) {
         const url = new URL(connectionType === ConnectionType.TLS ? TLS_REDIS_URL : DEFAULT_REDIS_URL);
         url.username = "badusername";
         url.password = "secretpassword";
+        // A rejected HELLO is retried like any other failed attempt; two
+        // retries keep this short, and the last rejection is what the command gets.
         const customRedis = new RedisClient(url.toString(), {
           tls: connectionType === ConnectionType.TLS ? TLS_REDIS_OPTIONS.tls : false,
+          maxRetries: 2,
         });
 
         expect(async () => {

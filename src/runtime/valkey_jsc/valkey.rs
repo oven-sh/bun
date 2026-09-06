@@ -582,6 +582,13 @@ impl ValkeyClient {
         if self.flags.failed {
             return Ok(());
         }
+        if self.attempt_will_be_retried() {
+            // The attempt ends here and `on_close` counts it against
+            // `max_retries`, as it does a refused dial. The queue waits for the
+            // next attempt; nothing is in flight before the handshake is accepted.
+            debug!("handshake not accepted, leaving the attempt to the retry policy");
+            return self.close(uws::CloseCode::Failure);
+        }
         self.flags.failed = true;
         self.flags.is_reconnecting = false;
         let val = Self::reject_all_pending_commands(
@@ -591,11 +598,26 @@ impl ValkeyClient {
             jsvalue,
         );
 
-        // A failure the client detected itself (idle timeout, protocol or
-        // handshake error) has always been a deliberate close; `on_close` reads
-        // `failed` and skips the retry policy.
+        // A failure the client detected on an established connection (idle
+        // timeout, protocol error, rejected SELECT), or one with no retry left
+        // to hand it to, is a deliberate close; `on_close` reads `failed` and
+        // skips the retry policy.
         let closed = self.close(uws::CloseCode::Failure); // unconditionally, whatever `val` is
         val.and(closed)
+    }
+
+    /// Whether a failure right now ends a connection attempt that `on_close`
+    /// will retry: the handshake has not been accepted (an error reply to
+    /// HELLO, the connection timeout, a failed TLS handshake), auto-reconnect
+    /// applies, and a retry is left. Mirrors the retry decision in `on_close`,
+    /// which runs from the `close()` that follows; with no retry left the
+    /// failure stays terminal so its own error, not "Max reconnection attempts
+    /// reached", is what the queued commands are rejected with.
+    fn attempt_will_be_retried(&self) -> bool {
+        self.status == Status::Connecting
+            && self.flags.enable_auto_reconnect
+            && !self.flags.is_manually_closed
+            && self.retry_attempts < self.max_retries
     }
 
     /// `fail()` passes `Failure`, the one code whose close callback has run by

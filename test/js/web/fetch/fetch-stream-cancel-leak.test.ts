@@ -240,7 +240,8 @@ describe("an abandoned fetch body stream is collected and its fetch is aborted",
         using server = Bun.serve({
           port: 0,
           fetch(req) {
-            req.signal.addEventListener("abort", () => aborted++);
+            // `/scrub` bodies are read and cancelled on purpose below; only the abandoned ones count.
+            if (new URL(req.url).pathname !== "/scrub") req.signal.addEventListener("abort", () => aborted++);
             return new Response(
               new ReadableStream({
                 async pull(controller) {
@@ -268,15 +269,25 @@ describe("an abandoned fetch body stream is collected and its fetch is aborted",
         }
         for (let i = 0; i < N; i++) await abandonOne();
 
+        // The native frames under this function (the microtask that ran the last stream's read)
+        // still hold that stream's controller in a stale slot, and the conservative stack scan
+        // keeps the stream alive through every collection below. Only the same code path writes
+        // that slot again: read one chunk of a throwaway body and cancel it, so the slot holds a
+        // stream nobody cares about before each collection.
+        async function scrub() {
+          const reader = (await fetch(new URL("/scrub", server.url))).body!.getReader();
+          await reader.read();
+          await reader.cancel();
+        }
         // Bounds the failing case only; the fixed build is done in well under a second.
         const deadline = performance.now() + (isASAN || isDebug ? 15_000 : 3000);
         while (aborted < N && performance.now() < deadline) {
+          await scrub();
           Bun.gc(true);
           await Bun.sleep(10);
         }
-        // A few can survive a collection through stale stack slots (conservative scanning);
-        // the rest must go. Unfixed, none of them do.
-        expect(N - aborted).toBeLessThan(N / 4);
+        // Unfixed, none of them are aborted: the fetch keeps its stream rooted until the body ends.
+        expect(aborted).toBe(N);
       },
       30_000,
     );

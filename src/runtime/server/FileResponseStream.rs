@@ -461,8 +461,6 @@ impl FileResponseStream {
                 }
                 sys::E::EINTR => continue,
                 sys::E::EAGAIN => return self.arm_sendfile_writable(),
-                // sendfile(2) is refused for this fd (the set `bun_sys::copy_file`
-                // falls back on): serve the rest of the body with read+write.
                 sys::E::EINVAL | sys::E::ENOSYS | sys::E::ENOTSUP | sys::E::EPERM => {
                     bun_output::scoped_log!(
                         FileResponseStream,

@@ -1558,8 +1558,6 @@ __attribute__((callback (corker, ctx)))
     }
   }
 
-  /* Terminates and flushes the header section; HTTP_WRITE_CALLED keeps a
-   * later write() (the fallback when sendfile is refused) from doing it again. */
   void uws_res_prepare_for_sendfile(int ssl, uws_res_r res)
   {
     if (ssl)

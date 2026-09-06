@@ -1,4 +1,5 @@
 import { describe, expect, it, test } from "bun:test";
+import { randomBytes } from "crypto";
 import fs, { mkdirSync } from "fs";
 import {
   bunEnv,
@@ -7,10 +8,12 @@ import {
   exampleSite,
   gcTick,
   isASAN,
+  isMacOS,
   isWindows,
   tempDir,
   withoutAggressiveGC,
 } from "harness";
+import { mkfifo } from "mkfifo";
 import { once } from "node:events";
 import http from "node:http";
 import path, { join } from "path";
@@ -537,6 +540,106 @@ const IS_UV_FS_COPYFILE_DISABLED =
       resolved: String(size),
     });
     expect(exitCode).toBe(0);
+  });
+
+  // A Bun.write() into a FIFO fills the pipe buffer and then waits for the
+  // reader. The payload is past the synchronous fast path's 256 KiB limit and
+  // many pipe buffers long, so the write waits several times however quickly
+  // the pipe is drained. The destination is the FIFO's write end as an fd: a
+  // path destination is opened (and, by the fast path, closed) by Bun.write()
+  // itself, which is a different set of problems (#36025).
+  describe.skipIf(isWindows)("Bun.write() into a FIFO that is full", () => {
+    const payload = randomBytes(1024 * 1024);
+
+    // Both ends of a fresh FIFO, read end first (opening the write end fails
+    // with ENXIO until a reader exists). Neither end blocks, so the test can
+    // probe the pipe from either side.
+    function openFifo(dir) {
+      const fifo = join(String(dir), "out.fifo");
+      mkfifo(fifo);
+      return {
+        reader: fs.openSync(fifo, fs.constants.O_RDONLY | fs.constants.O_NONBLOCK),
+        writer: fs.openSync(fifo, fs.constants.O_WRONLY | fs.constants.O_NONBLOCK),
+        closeReader() {
+          if (this.reader === -1) return;
+          fs.closeSync(this.reader);
+          this.reader = -1;
+        },
+        [Symbol.dispose]() {
+          this.closeReader();
+          fs.closeSync(this.writer);
+        },
+      };
+    }
+
+    function startWrite(writer) {
+      const dest = Bun.file(writer);
+      // fstat()s the fd: Bun.write() only waits on a destination it knows is not a regular file.
+      dest.size;
+      return Bun.write(dest, payload).then(
+        written => ({ written }),
+        err => ({ code: err.code, syscall: err.syscall }),
+      );
+    }
+
+    it("completes once the reader drains the pipe", async () => {
+      using dir = tempDir("bun-write-fifo-drain", {});
+      using fifo = openFifo(dir);
+      const settled = startWrite(fifo.writer);
+      let outcome;
+      settled.then(result => (outcome = result));
+
+      const chunks = [];
+      let received = 0;
+      const buffer = Buffer.alloc(64 * 1024);
+      while (received < payload.length) {
+        let n;
+        try {
+          n = fs.readSync(fifo.reader, buffer);
+        } catch (err) {
+          if (err.code !== "EAGAIN") throw err;
+          // An empty pipe after the write has settled is all we are getting.
+          if (outcome) break;
+          await Bun.sleep(1);
+          continue;
+        }
+        if (n === 0) throw new Error(`EOF after ${received} bytes, but the write end is still open`);
+        chunks.push(Buffer.from(buffer.subarray(0, n)));
+        received += n;
+      }
+
+      expect({ ...(await settled), received, intact: Buffer.concat(chunks).equals(payload) }).toEqual({
+        written: payload.length,
+        received: payload.length,
+        intact: true,
+      });
+    });
+
+    // Used to reject with a made-up "Unknown Error" (errno 0, syscall
+    // "epoll_ctl"): the io thread read epoll's events bitmask as an errno.
+    // Not on macOS: a named pipe's kqueue write filter only fires when the
+    // pipe gains free space, which a full pipe nobody reads from never does,
+    // so the write never settles there.
+    it.skipIf(isMacOS)("rejects with EPIPE when the last reader closes while it is waiting", async () => {
+      using dir = tempDir("bun-write-fifo-epipe", {});
+      using fifo = openFifo(dir);
+      const settled = startWrite(fifo.writer);
+
+      // Once a write of our own is refused, the pipe is full: Bun.write() has
+      // written as much as fits and is waiting for the reader.
+      for (;;) {
+        try {
+          fs.writeSync(fifo.writer, "x");
+        } catch (err) {
+          if (err.code !== "EAGAIN") throw err;
+          break;
+        }
+        await Bun.sleep(1);
+      }
+      fifo.closeReader();
+
+      expect(await settled).toEqual({ code: "EPIPE", syscall: "write" });
+    });
   });
 
   it("Bun.file(0) survives GC", async () => {

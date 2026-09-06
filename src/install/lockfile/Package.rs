@@ -2003,11 +2003,10 @@ impl Package<u64> {
                                 if strings::eql(joined, self_dir) {
                                     break 'brk b"*";
                                 }
-                                let rel =
-                                    resolve_path::relative_platform::<path::platform::Auto, false>(
-                                        top_level_dir,
-                                        joined,
-                                    );
+                                let rel = resolve_path::relative_platform::<
+                                    path::platform::Auto,
+                                    false,
+                                >(top_level_dir, joined);
                                 if rel.is_empty() {
                                     break 'brk b"*";
                                 }

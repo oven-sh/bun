@@ -483,8 +483,6 @@ await query;
 
 You can configure `sql` connection parameters with environment variables. The client checks them in order of precedence and detects the database type from the connection string format.
 
-A `verify-ca` or `verify-full` sslmode (from the connection string, `PGSSLMODE`, or the `tls` option) always verifies the server certificate. `NODE_TLS_REJECT_UNAUTHORIZED=0` relaxes the default for `require` and `prefer` only. Pass `tls: { rejectUnauthorized: false }` to opt out explicitly.
-
 ### Automatic Database Detection
 
 When you use `Bun.sql()` without arguments, or `new SQL()` with a connection string, Bun detects the adapter from the URL format:
@@ -932,6 +930,8 @@ const sql = new SQL({
 | `require`     | Requires SSL without certificate verification. Fails if SSL cannot be established.                                   |
 | `verify-ca`   | Verifies server certificate is signed by trusted CA. Fails if verification fails.                                    |
 | `verify-full` | Most secure mode. Verifies certificate and hostname match. Protects against untrusted certificates and MITM attacks. |
+
+A `verify-ca` or `verify-full` sslmode (from the connection string, `PGSSLMODE`, or the `tls` option) always verifies the server certificate. `NODE_TLS_REJECT_UNAUTHORIZED=0` relaxes the default for `require` and `prefer` only. Pass `tls: { rejectUnauthorized: false }` to opt out explicitly.
 
 ### Using With Connection Strings
 

@@ -575,6 +575,34 @@ describe("SQL adapter environment variable precedence", () => {
     });
   });
 
+  describe("verify-ca and verify-full set rejectUnauthorized", () => {
+    test.each(["verify-ca", "verify-full"])("sslmode=%s: only an own rejectUnauthorized: false opts out", mode => {
+      const url = `postgres://u@h:5432/db?sslmode=${mode}`;
+      expect(new SQL(url).options.tls).toEqual({ serverName: "h", rejectUnauthorized: true });
+      expect(new SQL(url, { tls: true }).options.tls).toEqual({ serverName: "h", rejectUnauthorized: true });
+      expect(new SQL(url, { tls: { rejectUnauthorized: undefined } }).options.tls).toEqual({
+        serverName: "h",
+        rejectUnauthorized: true,
+      });
+      expect(new SQL(url, { tls: { rejectUnauthorized: false } }).options.tls).toEqual({
+        serverName: "h",
+        rejectUnauthorized: false,
+      });
+      expect(new SQL("postgres://u@h:5432/db?sslmode=require").options.tls).toEqual({ serverName: "h" });
+    });
+
+    test("a polluted Object.prototype.rejectUnauthorized does not disable a verify mode", () => {
+      (Object.prototype as any).rejectUnauthorized = false;
+      try {
+        const tls = new SQL("postgres://u@h:5432/db?sslmode=verify-full").options.tls as object;
+        expect(Object.hasOwn(tls, "rejectUnauthorized")).toBe(true);
+        expect((tls as any).rejectUnauthorized).toBe(true);
+      } finally {
+        delete (Object.prototype as any).rejectUnauthorized;
+      }
+    });
+  });
+
   describe("Adapter-Protocol Validation", () => {
     test("should work with explicit adapter and URL without protocol", () => {
       const options = new SQL("user:pass@host:3306/db", { adapter: "mysql" });

@@ -337,8 +337,6 @@ impl<'a> Printer<'a> {
             .map(|resolved| resolved.url)
     }
 
-    /// The url to print for an import record. `is_placeholder` means the
-    /// bundler replaces it with the final output path after printing.
     pub(crate) fn resolve_import_record_url(
         &mut self,
         import_record_idx: u32,
@@ -404,9 +402,9 @@ impl<'a> Printer<'a> {
     }
 }
 
-/// See [`Printer::resolve_import_record_url`].
 pub(crate) struct ResolvedImportRecordUrl<'u> {
     pub(crate) url: &'u [u8],
+    /// A unique key the bundler replaces with the final output path after printing.
     pub(crate) is_placeholder: bool,
 }
 

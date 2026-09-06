@@ -101,6 +101,12 @@ ImportMetaObject* ImportMetaObject::createFromSpecifier(JSC::JSGlobalObject* glo
     return create(globalObject, url.string());
 }
 
+// The module resolver takes a filesystem path as the parent, so a file: URL becomes one.
+static JSC::JSValue parentValueFromURL(JSC::VM& vm, const WTF::URL& url)
+{
+    return jsString(vm, url.protocolIsFile() ? url.fileSystemPath() : url.string());
+}
+
 extern "C" JSC::EncodedJSValue functionImportMeta__resolveSync(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame)
 {
     auto* globalObject = uncheckedDowncast<Zig::GlobalObject>(lexicalGlobalObject);
@@ -130,9 +136,7 @@ extern "C" JSC::EncodedJSValue functionImportMeta__resolveSync(JSC::JSGlobalObje
         }
 
         if (WebCore::DOMURL* url = WebCoreCast<WebCore::JSDOMURL, WebCore::DOMURL>(JSValue::encode(fromValue))) {
-            // The resolver takes a filesystem path as the parent, so a file: URL is converted to one.
-            const WTF::URL& href = url->href();
-            fromValue = jsString(vm, href.protocolIsFile() ? href.fileSystemPath() : href.string());
+            fromValue = parentValueFromURL(vm, url->href());
         } else if (!fromValue.isUndefinedOrNull() && fromValue.isObject()) {
 
             auto pathsObject = fromValue.getObject()->getIfPropertyExists(globalObject, builtinNames(vm).pathsPublicName());
@@ -143,6 +147,9 @@ extern "C" JSC::EncodedJSValue functionImportMeta__resolveSync(JSC::JSGlobalObje
                     if (pathsArray->length() > 0) {
                         fromValue = pathsArray->getIndex(globalObject, 0);
                         RETURN_IF_EXCEPTION(scope, {});
+                        if (WebCore::DOMURL* url = WebCoreCast<WebCore::JSDOMURL, WebCore::DOMURL>(JSValue::encode(fromValue))) {
+                            fromValue = parentValueFromURL(vm, url->href());
+                        }
                     }
                 }
             }
@@ -360,9 +367,8 @@ JSC_DEFINE_HOST_FUNCTION(functionImportMeta__resolve,
         if (fromValue.isString()) {
             from = fromValue;
         } else if (WebCore::DOMURL* url = WebCoreCast<WebCore::JSDOMURL, WebCore::DOMURL>(JSValue::encode(fromValue))) {
-            // The resolver takes a filesystem path as the parent, so a file: URL is converted to one.
             parentURL = url->href();
-            from = jsString(vm, parentURL.protocolIsFile() ? parentURL.fileSystemPath() : parentURL.string());
+            from = parentValueFromURL(vm, parentURL);
         } else if (fromValue.isObject()) {
             // Bun extension: `{ paths: [dir] }`, like `require.resolve`.
             auto pathsObject = fromValue.getObject()->getIfPropertyExists(globalObject, builtinNames(vm).pathsPublicName());
@@ -378,10 +384,14 @@ JSC_DEFINE_HOST_FUNCTION(functionImportMeta__resolve,
                     RETURN_IF_EXCEPTION(scope, {});
                     if (firstPath.isString()) {
                         from = firstPath;
+                    } else if (WebCore::DOMURL* url = WebCoreCast<WebCore::JSDOMURL, WebCore::DOMURL>(JSValue::encode(firstPath))) {
+                        parentURL = url->href();
+                        from = parentValueFromURL(vm, parentURL);
                     }
                 }
             }
-        } else if (!fromValue.isUndefined()) {
+        } else if (!fromValue.isUndefinedOrNull()) {
+            // `null` falls back to this module like `undefined` does, as in Node (`parentURL ?? moduleURL`).
             Bun::ERR::INVALID_ARG_TYPE_INSTANCE(scope, globalObject, "parentURL"_s, "string"_s, "URL"_s, fromValue);
             return {};
         }

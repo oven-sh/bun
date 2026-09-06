@@ -204,14 +204,16 @@ bun_core::comptime_string_map! {
         b"disable" => 0,
         b"shared" => uws::SHARED_DECOMPRESSOR,
         b"dedicated" => uws::DEDICATED_DECOMPRESSOR,
-        b"3KB" => uws::DEDICATED_COMPRESSOR_3KB,
-        b"4KB" => uws::DEDICATED_COMPRESSOR_4KB,
-        b"8KB" => uws::DEDICATED_COMPRESSOR_8KB,
-        b"16KB" => uws::DEDICATED_COMPRESSOR_16KB,
-        b"32KB" => uws::DEDICATED_COMPRESSOR_32KB,
-        b"64KB" => uws::DEDICATED_COMPRESSOR_64KB,
-        b"128KB" => uws::DEDICATED_COMPRESSOR_128KB,
-        b"256KB" => uws::DEDICATED_COMPRESSOR_256KB,
+        // A size is the inflate window. Deflate windows stop at 32KB
+        // (15 bits), so the larger names get the largest window.
+        b"3KB" => uws::DEDICATED_DECOMPRESSOR_2KB,
+        b"4KB" => uws::DEDICATED_DECOMPRESSOR_4KB,
+        b"8KB" => uws::DEDICATED_DECOMPRESSOR_8KB,
+        b"16KB" => uws::DEDICATED_DECOMPRESSOR_16KB,
+        b"32KB" => uws::DEDICATED_DECOMPRESSOR_32KB,
+        b"64KB" => uws::DEDICATED_DECOMPRESSOR_32KB,
+        b"128KB" => uws::DEDICATED_DECOMPRESSOR_32KB,
+        b"256KB" => uws::DEDICATED_DECOMPRESSOR_32KB,
     };
 }
 
@@ -310,7 +312,12 @@ pub(crate) fn on_create(
             // `compress` off leaves the compressor bits zero: `WebSocket::send`
             // then never sets RSV1.
             server.compression = match (compress, decompress) {
-                (None, None) | (Some(0), None) | (_, Some(0)) => 0,
+                (None, None) | (Some(0), None) | (None | Some(0), Some(0)) => 0,
+                (Some(_), Some(0)) => {
+                    return Err(global_object.throw_invalid_arguments(format_args!(
+                        "websocket perMessageDeflate cannot enable compress and disable decompress: permessage-deflate negotiates both directions at once. Use decompress: \"shared\" or perMessageDeflate: false"
+                    )));
+                }
                 (compress, decompress) => {
                     compress.unwrap_or(uws::SHARED_COMPRESSOR)
                         | decompress.unwrap_or(uws::SHARED_DECOMPRESSOR)

@@ -533,9 +533,12 @@ declare module "bun" {
           /**
            * The decompressor for messages the server receives.
            *
-           * `false` or `"disable"` turns the extension off for the connection:
-           * permessage-deflate (RFC 7692) cannot be negotiated for one
-           * direction only, so outbound messages are not compressed either.
+           * `false` or `"disable"` turns the extension off. permessage-deflate
+           * (RFC 7692) cannot be negotiated for one direction only, so
+           * `Bun.serve()` throws when `compress` is on and `decompress` is off.
+           *
+           * A size is the inflate window. Windows stop at 32KB, so `"64KB"`
+           * and above use the 32KB window.
            *
            * @default "shared" when `compress` is set
            */

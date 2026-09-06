@@ -262,7 +262,8 @@ describe.concurrent("permessage-deflate RSV1 frames", () => {
 // `perMessageDeflate: { compress, decompress }` turns each direction off with
 // `false` or "disable". RFC 7692 negotiates both directions at once, so the
 // server can only honor "compress off" by never setting RSV1 on what it sends,
-// and "decompress off" by not negotiating the extension at all.
+// and "decompress off" by not negotiating the extension at all (and so it
+// refuses "compress on, decompress off").
 describe.concurrent("perMessageDeflate per-direction options", () => {
   // 320 repeated bytes deflate to a few bytes, so a compressed reply is short
   // and has RSV1 set, and a plain reply is 320 bytes with RSV1 clear.
@@ -281,10 +282,18 @@ describe.concurrent("perMessageDeflate per-direction options", () => {
   for (const perMessageDeflate of [
     { compress: "disable", decompress: "shared" },
     { compress: false, decompress: true },
+    { compress: false, decompress: "dedicated" },
+    // A sized decompressor must land in the decompressor bits, or the
+    // compressor bits it used to set would compress the reply.
+    { compress: "disable", decompress: "8KB" },
   ] as const) {
     it(`${JSON.stringify(perMessageDeflate)} inflates inbound messages and never compresses outbound ones`, async () => {
       using raw = await connectRaw({ perMessageDeflate, onMessage: echoCompressed });
       expect(raw.negotiated).toContain("permessage-deflate");
+      if (perMessageDeflate.decompress === "8KB") {
+        // An 8KB inflate window is 13 bits, and the server tells the client so.
+        expect(raw.negotiated).toContain("client_max_window_bits=13");
+      }
       raw.socket.write(frame(0x1, pmdDeflate(inbound), { rsv1: true }));
       expect(await Promise.race([raw.firstMessage, raw.serverClose])).toBe(`message:${inbound.toString("hex")}`);
       // A compressed reply is a few bytes with RSV1 set, so check the head
@@ -296,11 +305,29 @@ describe.concurrent("perMessageDeflate per-direction options", () => {
     });
   }
 
+  // The protocol cannot compress outbound without inflating inbound, so the
+  // server refuses the combination instead of silently picking one side.
   for (const perMessageDeflate of [
     { compress: "shared", decompress: "disable" },
     { compress: true, decompress: false },
+    { compress: "dedicated", decompress: false },
+  ] as const) {
+    it(`${JSON.stringify(perMessageDeflate)} is rejected by Bun.serve()`, () => {
+      expect(() =>
+        serve({
+          port: 0,
+          fetch: () => new Response(),
+          websocket: { message() {}, perMessageDeflate },
+        }),
+      ).toThrow("websocket perMessageDeflate cannot enable compress and disable decompress");
+    });
+  }
+
+  for (const perMessageDeflate of [
     { compress: "disable", decompress: "disable" },
     { compress: false, decompress: false },
+    { decompress: false },
+    { compress: "disable" },
   ] as const) {
     it(`${JSON.stringify(perMessageDeflate)} does not negotiate the extension`, async () => {
       using raw = await connectRaw({ perMessageDeflate, onMessage: echoCompressed });

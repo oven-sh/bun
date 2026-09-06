@@ -441,9 +441,7 @@ impl TrustCommand {
 
         // SAFETY: `pm_raw` singleton; `options` is CLI config set at init.
         let dry_run = unsafe { (*pm_raw).options.dry_run };
-        // Only the flag skips the scripts. `ignoreScripts` in bunfig or
-        // `.npmrc` does not, because `bun pm trust <name>` is the explicit
-        // request to run them and there is no flag to override the config.
+        // The config setting does not apply here: `bun pm trust <name>` is the explicit request to run them.
         let ignore_scripts = strings::left_has_any_in_right(args, &[b"--ignore-scripts"]);
         let run_scripts = !dry_run && !ignore_scripts;
 

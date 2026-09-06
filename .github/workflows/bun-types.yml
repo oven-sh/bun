@@ -41,3 +41,5 @@ jobs:
           bun install --cwd test
       - name: Check types
         run: bun test test/integration/bun-types/bun-types.test.ts
+      - name: Check the type inventory
+        run: bun test test/integration/bun-types/inventory.test.ts

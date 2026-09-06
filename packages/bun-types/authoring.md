@@ -108,6 +108,18 @@ Your type definitions must work properly in both environments. This ensures that
 
 For example, if you're adding types for a new API, you should just add code to `fixture/index.ts` that uses your new API. Doesn't need to work at runtime (e.g. you can fake api keys for example), it's just checking that the types are correct.
 
+## The type inventory
+
+`test/integration/bun-types/inventory/<preset>.txt` lists every global and every module export that bun-types contributes, with the shape the TypeScript checker resolves it to. Interface merging with `lib.dom.d.ts` and `@types/node`, `UseLibDomIfAvailable`, and every other conditional alias are resolved, so a file shows what a user sees, not what the `.d.ts` source says. There is one file per `lib` preset: `esnext`, `esnext-dom`, `es2022`, `es2022-dom`, and `no-lib`.
+
+`test/integration/bun-types/inventory.test.ts` fails when the files no longer match the package. After a change to `packages/bun-types`, regenerate them and commit the result:
+
+```sh
+bun packages/bun-types/scripts/inventory.ts
+```
+
+Read the diff before you commit it. A line that disappears from a preset, or a member whose type changed, is a breaking change for the users on that preset. A change that only moves declarations between files produces no diff.
+
 ## Questions
 
 Feel free to open an issue or speak to any of the more TypeScript-focused team members if you need help authoring types or fixing type tests.

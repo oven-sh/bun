@@ -66,6 +66,82 @@ declare module "bun" {
     type LibEmptyOrReadableStreamBYOBRequest = LibDomIsLoaded extends true
       ? {}
       : import("node:stream/web").ReadableStreamBYOBRequest;
+
+    /**
+     * The Node.js-flavored members of the global `Event`. The global interface
+     * picks them up only when lib.dom.d.ts is not loaded: lib.dom declares
+     * `composedPath(): EventTarget[]`, which is incompatible with the tuple
+     * type below, so when lib.dom is loaded its declarations win.
+     */
+    interface BunEvent {
+      /** This is not used in Node.js and is provided purely for completeness. */
+      readonly bubbles: boolean;
+      /** Alias for event.stopPropagation(). This is not used in Node.js and is provided purely for completeness. */
+      cancelBubble: boolean;
+      /** True if the event was created with the cancelable option */
+      readonly cancelable: boolean;
+      /** This is not used in Node.js and is provided purely for completeness. */
+      readonly composed: boolean;
+      /** Returns an array containing the current EventTarget as the only entry or empty if the event is not being dispatched. This is not used in Node.js and is provided purely for completeness. */
+      composedPath(): [EventTarget?];
+      /** Alias for event.target. */
+      readonly currentTarget: EventTarget | null;
+      /** `true` if `cancelable` is `true` and `event.preventDefault()` has been called. */
+      readonly defaultPrevented: boolean;
+      /** This is not used in Node.js and is provided purely for completeness. */
+      readonly eventPhase: number;
+      /** The `AbortSignal` "abort" event is emitted with `isTrusted` set to `true`. The value is `false` in all other cases. */
+      readonly isTrusted: boolean;
+      /** Sets the `defaultPrevented` property to `true` if `cancelable` is `true`. */
+      preventDefault(): void;
+      /** This is not used in Node.js and is provided purely for completeness. */
+      returnValue: boolean;
+      /** Alias for event.target. */
+      readonly srcElement: EventTarget | null;
+      /** Stops the invocation of event listeners after the current one completes. */
+      stopImmediatePropagation(): void;
+      /** This is not used in Node.js and is provided purely for completeness. */
+      stopPropagation(): void;
+      /** The `EventTarget` dispatching the event */
+      readonly target: EventTarget | null;
+      /** The millisecond timestamp when the Event object was created. */
+      readonly timeStamp: number;
+      /** The type of event, for example "click", "hashchange", or "submit". */
+      readonly type: string;
+    }
+
+    type LibEmptyOrBunEvent = LibDomIsLoaded extends true ? {} : BunEvent;
+
+    /**
+     * The Node.js-flavored members of the global `EventTarget`, used only when
+     * lib.dom.d.ts is not loaded, same as {@link BunEvent}.
+     */
+    interface BunEventTarget {
+      /**
+       * Adds a new handler for the `type` event. Any given `listener` is added only once per `type` and per `capture` option value.
+       *
+       * If the `once` option is true, the `listener` is removed after the next time a `type` event is dispatched.
+       *
+       * The `capture` option is not used by Node.js in any functional way other than tracking registered event listeners per the `EventTarget` specification.
+       * Specifically, the `capture` option is used as part of the key when registering a `listener`.
+       * Any individual `listener` may be added once with `capture = false`, and once with `capture = true`.
+       */
+      addEventListener(
+        type: string,
+        listener: Bun.EventListener | Bun.EventListenerObject,
+        options?: Bun.AddEventListenerOptions | boolean,
+      ): void;
+      /** Dispatches a synthetic event `event` to target and returns true if either event's cancelable attribute value is false or its preventDefault() method was not invoked, and false otherwise. */
+      dispatchEvent(event: Event): boolean;
+      /** Removes the event listener in target's event listener list with the same type, callback, and options. */
+      removeEventListener(
+        type: string,
+        listener: Bun.EventListener | Bun.EventListenerObject,
+        options?: Bun.EventListenerOptions | boolean,
+      ): void;
+    }
+
+    type LibEmptyOrBunEventTarget = LibDomIsLoaded extends true ? {} : BunEventTarget;
   }
 }
 
@@ -93,7 +169,13 @@ declare var CompressionStream: Bun.__internal.UseLibDomIfAvailable<
   "CompressionStream",
   {
     prototype: CompressionStream;
-    new (format: Bun.CompressionFormat): CompressionStream;
+    /**
+     * @param strategy Bun extension. Its `highWaterMark` (bytes, default 64 KiB) bounds how much
+     * output one input chunk produces per step: the largest piece a reader receives per `read()`,
+     * and how far decoding runs ahead of a slow reader. A chunk larger than that may produce up to
+     * its own size per step.
+     */
+    new (format: Bun.CompressionFormat, strategy?: { highWaterMark?: number }): CompressionStream;
   }
 >;
 
@@ -102,7 +184,13 @@ declare var DecompressionStream: Bun.__internal.UseLibDomIfAvailable<
   "DecompressionStream",
   {
     prototype: DecompressionStream;
-    new (format: Bun.CompressionFormat): DecompressionStream;
+    /**
+     * @param strategy Bun extension. Its `highWaterMark` (bytes, default 64 KiB) bounds how much
+     * output one input chunk produces per step: the largest piece a reader receives per `read()`,
+     * and how far decoding runs ahead of a slow reader. A chunk larger than that may produce up to
+     * its own size per step.
+     */
+    new (format: Bun.CompressionFormat, strategy?: { highWaterMark?: number }): DecompressionStream;
   }
 >;
 
@@ -240,8 +328,9 @@ declare var TextEncoder: Bun.__internal.UseLibDomIfAvailable<
 >;
 
 /**
- * An implementation of the [WHATWG Encoding Standard](https://encoding.spec.whatwg.org/) `TextDecoder` API. All
- * instances of `TextDecoder` only support UTF-8 decoding.
+ * An implementation of the [WHATWG Encoding Standard](https://encoding.spec.whatwg.org/) `TextDecoder` API.
+ * Supports every encoding label the standard defines, except the labels of the
+ * `replacement` encoding.
  *
  * ```js
  * const decoder = new TextDecoder();
@@ -257,42 +346,7 @@ declare var TextDecoder: Bun.__internal.UseLibDomIfAvailable<
   }
 >;
 
-interface Event {
-  /** This is not used in Node.js and is provided purely for completeness. */
-  readonly bubbles: boolean;
-  /** Alias for event.stopPropagation(). This is not used in Node.js and is provided purely for completeness. */
-  cancelBubble: boolean;
-  /** True if the event was created with the cancelable option */
-  readonly cancelable: boolean;
-  /** This is not used in Node.js and is provided purely for completeness. */
-  readonly composed: boolean;
-  /** Returns an array containing the current EventTarget as the only entry or empty if the event is not being dispatched. This is not used in Node.js and is provided purely for completeness. */
-  composedPath(): [EventTarget?];
-  /** Alias for event.target. */
-  readonly currentTarget: EventTarget | null;
-  /** `true` if `cancelable` is `true` and `event.preventDefault()` has been called. */
-  readonly defaultPrevented: boolean;
-  /** This is not used in Node.js and is provided purely for completeness. */
-  readonly eventPhase: number;
-  /** The `AbortSignal` "abort" event is emitted with `isTrusted` set to `true`. The value is `false` in all other cases. */
-  readonly isTrusted: boolean;
-  /** Sets the `defaultPrevented` property to `true` if `cancelable` is `true`. */
-  preventDefault(): void;
-  /** This is not used in Node.js and is provided purely for completeness. */
-  returnValue: boolean;
-  /** Alias for event.target. */
-  readonly srcElement: EventTarget | null;
-  /** Stops the invocation of event listeners after the current one completes. */
-  stopImmediatePropagation(): void;
-  /** This is not used in Node.js and is provided purely for completeness. */
-  stopPropagation(): void;
-  /** The `EventTarget` dispatching the event */
-  readonly target: EventTarget | null;
-  /** The millisecond timestamp when the Event object was created. */
-  readonly timeStamp: number;
-  /** The type of event, for example "click", "hashchange", or "submit". */
-  readonly type: string;
-}
+interface Event extends Bun.__internal.LibEmptyOrBunEvent {}
 declare var Event: {
   prototype: Event;
   readonly NONE: 0;
@@ -302,30 +356,7 @@ declare var Event: {
   new (type: string, eventInitDict?: Bun.EventInit): Event;
 };
 
-interface EventTarget {
-  /**
-   * Adds a new handler for the `type` event. Any given `listener` is added only once per `type` and per `capture` option value.
-   *
-   * If the `once` option is true, the `listener` is removed after the next time a `type` event is dispatched.
-   *
-   * The `capture` option is not used by Node.js in any functional way other than tracking registered event listeners per the `EventTarget` specification.
-   * Specifically, the `capture` option is used as part of the key when registering a `listener`.
-   * Any individual `listener` may be added once with `capture = false`, and once with `capture = true`.
-   */
-  addEventListener(
-    type: string,
-    listener: EventListener | EventListenerObject,
-    options?: AddEventListenerOptions | boolean,
-  ): void;
-  /** Dispatches a synthetic event `event` to target and returns true if either event's cancelable attribute value is false or its preventDefault() method was not invoked, and false otherwise. */
-  dispatchEvent(event: Event): boolean;
-  /** Removes the event listener in target's event listener list with the same type, callback, and options. */
-  removeEventListener(
-    type: string,
-    listener: EventListener | EventListenerObject,
-    options?: Bun.EventListenerOptions | boolean,
-  ): void;
-}
+interface EventTarget extends Bun.__internal.LibEmptyOrBunEventTarget {}
 declare var EventTarget: {
   prototype: EventTarget;
   new (): EventTarget;
@@ -2002,15 +2033,17 @@ interface BunFetchRequestInit extends RequestInit {
   /**
    * Force the underlying HTTP version. `"http2"` advertises only `h2` in
    * the TLS ALPN list and the request fails with `HTTP2Unsupported` if the
-   * server doesn't select it. `"http1.1"` pins the request to HTTP/1.1,
-   * overriding `--experimental-http2-fetch` /
+   * server doesn't select it. `"http3"` sends the request over HTTP/3
+   * (QUIC). `"http1.1"` pins the request to HTTP/1.1, overriding
+   * `--experimental-http2-fetch` /
    * `BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP2_CLIENT` if set. Omit to use the
-   * default (h2 is offered iff the flag is on).
+   * default (h2 is offered iff the flag is on). `"h2"`, `"h3"` and `"h1"`
+   * are aliases.
    *
    * Requires `https`. Not part of the Fetch API specification.
    * @experimental
    */
-  protocol?: "http2" | "http1.1" | "h2" | "h1";
+  protocol?: "http2" | "http1.1" | "http3" | "h2" | "h1" | "h3";
 
   /**
    * Control automatic decompression of the response body. When `false`, the

@@ -50,7 +50,8 @@ pub enum Loader {
     Yaml = 18,
     Json5 = 19,
     Md = 20,
-    Mdx = 21,
+    Xml = 21,
+    Mdx = 22,
 }
 
 // Crosses FFI as `uint8_t default_loader` / `uint8_t loader` in
@@ -63,6 +64,7 @@ bun_core::assert_ffi_discr!(
     Jsx = 0, Js = 1, Ts = 2, Tsx = 3, Css = 4, File = 5, Json = 6,
     Jsonc = 7, Toml = 8, Wasm = 9, Napi = 10, Base64 = 11, Dataurl = 12,
     Text = 13, Bunsh = 14, Sqlite = 15, SqliteEmbedded = 16, Html = 17,
+    Yaml = 18, Json5 = 19, Md = 20, Xml = 21, Mdx = 22,
 );
 
 // E0658: inherent assoc types are nightly-only; lifted to module scope.
@@ -85,6 +87,7 @@ bun_core::comptime_string_map! {
         b"toml" => Loader::Toml,
         b"yaml" => Loader::Yaml,
         b"json5" => Loader::Json5,
+        b"xml" => Loader::Xml,
         b"wasm" => Loader::Wasm,
         b"napi" => Loader::Napi,
         b"node" => Loader::Napi,
@@ -165,6 +168,7 @@ impl Loader {
             Loader::Toml => "input.toml",
             Loader::Yaml => "input.yaml",
             Loader::Json5 => "input.json5",
+            Loader::Xml => "input.xml",
             Loader::Wasm => "input.wasm",
             Loader::Napi => "input.node",
             Loader::Text => "input.txt",
@@ -232,10 +236,11 @@ impl Loader {
                 | Loader::Tsx
                 | Loader::Json
                 | Loader::Jsonc
-                // toml, yaml, and json5 are included because we can serialize to the same AST as JSON
+                // toml, yaml, json5, and xml are included because we can serialize to the same AST as JSON
                 | Loader::Toml
                 | Loader::Yaml
                 | Loader::Json5
+                | Loader::Xml
         )
     }
 
@@ -250,6 +255,7 @@ impl Loader {
             | Loader::Toml
             | Loader::Yaml
             | Loader::Json5
+            | Loader::Xml
             | Loader::File
             | Loader::Md => SideEffects::NoSideEffectsPureData,
             _ => SideEffects::HasSideEffects,
@@ -265,8 +271,15 @@ pub enum SideEffects {
     HasSideEffects,
 
     /// This file was listed as not having side effects by a "package.json"
-    /// file in one of our containing directories with a "sideEffects" field.
+    /// file in one of our containing directories with `"sideEffects": false`.
     NoSideEffectsPackageJson,
+
+    /// This file does not match any entry of a "sideEffects" array in a
+    /// "package.json" file in one of our containing directories. Unused
+    /// imports of this file can still be removed, but other files in the
+    /// same package can be side-effectful, so the barrel optimization must
+    /// not defer this file's re-exports without resolving them.
+    NoSideEffectsPackageJsonArray,
 
     /// This file is considered to have no side effects because the AST was empty
     /// after parsing finished. This should be the case for ".d.ts" files.

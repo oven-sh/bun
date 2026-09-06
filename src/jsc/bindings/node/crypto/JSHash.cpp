@@ -64,12 +64,7 @@ JSC::GCClient::IsoSubspace* JSHash::subspaceFor(JSC::VM& vm)
     if constexpr (mode == JSC::SubspaceAccess::Concurrently)
         return nullptr;
 
-    return WebCore::subspaceForImpl<JSHash, WebCore::UseCustomHeapCellType::No>(
-        vm,
-        [](auto& spaces) { return spaces.m_clientSubspaceForJSHash.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForJSHash = std::forward<decltype(space)>(space); },
-        [](auto& spaces) { return spaces.m_subspaceForJSHash.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_subspaceForJSHash = std::forward<decltype(space)>(space); });
+    return WebCore::subspaceForImpl<JSHash, WebCore::UseCustomHeapCellType::No>(vm, BUN_SUBSPACE_SLOTS(m_clientSubspaceForJSHash, m_subspaceForJSHash));
 }
 
 JSHash* JSHash::create(JSC::VM& vm, JSC::Structure* structure)
@@ -156,8 +151,8 @@ bool JSHash::update(std::span<const uint8_t> input)
 void JSHashPrototype::finishCreation(JSC::VM& vm)
 {
     Base::finishCreation(vm);
-    reifyStaticProperties(vm, JSHash::info(), JSHashPrototypeTableValues, *this);
-    JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
+    Bun::reifyStaticPropertyTable(vm, JSHash::info(), JSHashPrototypeTableValues, *this);
+    Bun::putToStringTagWithoutTransition(vm, this, info());
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsHashProtoFuncUpdate, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
@@ -249,7 +244,6 @@ JSC_DEFINE_HOST_FUNCTION(jsHashProtoFuncDigest, (JSC::JSGlobalObject * lexicalGl
         WTF::String encodingString = encodingValue.toWTFString(globalObject);
         RETURN_IF_EXCEPTION(scope, {});
         encoding = parseEnumerationFromString<BufferEncodingType>(encodingString).value_or(BufferEncodingType::buffer);
-        RETURN_IF_EXCEPTION(scope, {});
     }
 
     bool finalized = true;
@@ -261,13 +255,18 @@ JSC_DEFINE_HOST_FUNCTION(jsHashProtoFuncDigest, (JSC::JSGlobalObject * lexicalGl
     uint32_t len = hash->m_mdLen;
 
     if (hash->m_zigHasher) {
-        if (hash->m_digestBuffer.size() > 0 || len == 0) {
-            RELEASE_AND_RETURN(scope, StringBytes::encode(lexicalGlobalObject, scope, hash->m_digestBuffer.span().subspan(0, hash->m_mdLen), encoding));
+        if (hash->m_digest || len == 0) {
+            RELEASE_AND_RETURN(scope, StringBytes::encode(lexicalGlobalObject, scope, std::span<const uint8_t> { reinterpret_cast<const uint8_t*>(hash->m_digest.data()), hash->m_mdLen }, encoding));
         }
 
-        uint32_t maxDigestLen = std::max((uint32_t)EVP_MAX_MD_SIZE, len);
-        hash->m_digestBuffer.resizeToFit(maxDigestLen);
-        auto totalDigestLen = ExternZigHash::digest(hash->m_zigHasher, globalObject, hash->m_digestBuffer.mutableSpan());
+        size_t maxDigestLen = std::max((uint32_t)EVP_MAX_MD_SIZE, len);
+        auto data = ncrypto::DataPointer::Alloc(maxDigestLen);
+        if (!data) {
+            throwOutOfMemoryError(lexicalGlobalObject, scope);
+            return {};
+        }
+
+        auto totalDigestLen = ExternZigHash::digest(hash->m_zigHasher, globalObject, std::span { data.get<uint8_t>(), data.size() });
         if (!totalDigestLen) {
             throwCryptoError(lexicalGlobalObject, scope, ERR_get_error(), "Failed to finalize digest"_s);
             return {};
@@ -275,8 +274,9 @@ JSC_DEFINE_HOST_FUNCTION(jsHashProtoFuncDigest, (JSC::JSGlobalObject * lexicalGl
 
         hash->m_finalized = finalized;
         hash->m_mdLen = std::min(len, totalDigestLen);
+        hash->m_digest = ByteSource::allocated(data.release());
 
-        RELEASE_AND_RETURN(scope, StringBytes::encode(lexicalGlobalObject, scope, hash->m_digestBuffer.span().subspan(0, hash->m_mdLen), encoding));
+        RELEASE_AND_RETURN(scope, StringBytes::encode(lexicalGlobalObject, scope, std::span<const uint8_t> { reinterpret_cast<const uint8_t*>(hash->m_digest.data()), hash->m_mdLen }, encoding));
     }
 
     // Only compute the digest if it hasn't been cached yet
@@ -405,7 +405,7 @@ JSC_DEFINE_HOST_FUNCTION(callHash, (JSC::JSGlobalObject * globalObject, JSC::Cal
 
 JSC::Structure* JSHashConstructor::createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
 {
-    return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::InternalFunctionType, StructureFlags), info());
+    return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::InternalFunctionType, StructureFlags), info());
 }
 
 void setupJSHashClassStructure(JSC::LazyClassStructure::Initializer& init)

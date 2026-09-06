@@ -1,0 +1,5 @@
+{
+  "dependencies": {
+    "@isaacs/testing-peer-dep-conflict-chain-i": "^2.0.0"
+  }
+}

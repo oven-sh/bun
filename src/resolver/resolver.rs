@@ -269,8 +269,9 @@ pub use ::bun_options_types::global_cache::GlobalCache;
 // inside `impl Resolver` resolve unchanged.
 use crate::options;
 use crate::result::{
-    DebugLogs, DirEntryResolveQueueItem, FlushMode, LoadResult, MatchResult, MatchStatus, PathPair,
-    PendingResolution, PendingResolutionTag, Result, ResultFlags, ResultUnion,
+    DebugLogs, DirEntryResolveQueueItem, ExternalKind, FlushMode, LoadResult, MatchResult,
+    MatchStatus, PathPair, PendingResolution, PendingResolutionTag, Result, ResultFlags,
+    ResultUnion,
 };
 use crate::standalone_module_graph::StandaloneModuleGraph;
 use bun_alloc as allocators;
@@ -338,7 +339,6 @@ type Path = crate::fs::Path<'static>;
 pub struct Bufs {
     pub(crate) extension_path: PathBuffer,
     pub(crate) tsconfig_match_full_buf: PathBuffer,
-    pub(crate) tsconfig_match_full_buf2: PathBuffer,
     pub(crate) tsconfig_match_full_buf3: PathBuffer,
 
     pub(crate) esm_subpath: [u8; 512],
@@ -368,7 +368,6 @@ pub struct Bufs {
     pub(crate) remap_path_trailing_slash: PathBuffer,
     pub(crate) path_in_global_disk_cache: PathBuffer,
     pub(crate) abs_to_rel: PathBuffer,
-    pub(crate) import_path_for_standalone_module_graph: PathBuffer,
 
     #[cfg(windows)]
     pub(crate) win32_normalized_dir_info_cache: [u8; MAX_PATH_BYTES * 2],
@@ -414,15 +413,14 @@ fn bufs_storage_get() -> *mut Bufs {
 
 #[cold]
 fn bufs_storage_init() -> *mut Bufs {
-    // SAFETY: every field of `Bufs` is a byte/integer array
-    // (`PathBuffer` = `[u8; N]`, `[FD; 256]` where `Fd` is a
-    // `#[repr(C)]` integer newtype, `[MaybeUninit<_>; 256]` which has
-    // no validity requirement, `()`), so EVERY bit-pattern — not just
-    // all-zero — is a valid `Bufs`. Each
-    // field is scratch (write-then-read within a single resolve call,
-    // including `open_dirs` which is bounded by `open_dir_count`), so
-    // there is no need to pay for zero-filling ~100 KiB on first use.
-    let p: *mut Bufs = Box::leak(unsafe { Box::<Bufs>::new_uninit().assume_init() });
+    // SAFETY: every field of `Bufs` is a byte/integer array (`PathBuffer` =
+    // `[u8; N]`, `[u8; 512]`, `[FD; 256]` where `Fd` is a `#[repr(transparent)]`
+    // integer newtype with no niche) or `[MaybeUninit<_>; 256]`, so the
+    // all-zero bit-pattern is a valid `Bufs`. `new_zeroed` (not `new_uninit`)
+    // because integers must be initialized: a never-written `[u8; N]` is UB
+    // even though every bit pattern is a valid `u8`. Runs once per thread;
+    // `alloc_zeroed` of ~100 KiB is usually fresh OS-zeroed pages.
+    let p: *mut Bufs = Box::leak(unsafe { Box::<Bufs>::new_zeroed().assume_init() });
     BUFS_PTR.with(|s| s.0.set(p));
     p
 }
@@ -1171,8 +1169,7 @@ impl<'a> Resolver<'a> {
         // the alias first, but only follow it when it actually resolves to
         // a file on disk — a catch-all `"*": ["./types/*"]` for ambient
         // .d.ts stubs must still let real bare imports stay external.
-        if kind != ast::ImportKind::EntryPointBuild
-            && kind != ast::ImportKind::EntryPointRun
+        if !kind.is_entry_point()
             && self.opts.packages == options::Packages::External
             && is_package_path(import_path)
             && !self.matches_user_external_pattern(import_path)
@@ -1204,8 +1201,7 @@ impl<'a> Resolver<'a> {
 
         // Certain types of URLs default to being external for convenience,
         // while these rules should not be applied to the entrypoint as it is never external (#12734)
-        if kind != ast::ImportKind::EntryPointBuild
-            && kind != ast::ImportKind::EntryPointRun
+        if !kind.is_entry_point()
             && (self.is_external_pattern(import_path)
             // "fill: url(#filter);"
             || (kind.is_from_css() && import_path.starts_with(b"#"))
@@ -1295,13 +1291,17 @@ impl<'a> Resolver<'a> {
         let mut source_dir_resolver = bun_paths::PosixToWinNormalizer::default();
         let source_dir_normalized: &[u8] = 'brk: {
             if let Some(graph) = self.standalone_module_graph {
-                if ::bun_options_types::standalone_path::is_bun_standalone_file_path(import_path) {
-                    if graph.find_assume_standalone_path(import_path).is_some() {
+                let specifier_is_embedded_path =
+                    ::bun_options_types::standalone_path::is_bun_standalone_file_path(import_path);
+                if specifier_is_embedded_path
+                    || ::bun_options_types::standalone_path::is_bun_standalone_file_path(source_dir)
+                {
+                    if let Some(file_name) = graph.resolve(source_dir, import_path) {
                         self.extension_order = original_order;
                         return ResultUnion::Success(Result {
                             import_kind: kind,
                             path_pair: PathPair {
-                                primary: Path::init(import_path),
+                                primary: Path::init(file_name),
                                 secondary: None,
                             },
                             module_type: options::ModuleType::Esm,
@@ -1309,40 +1309,9 @@ impl<'a> Resolver<'a> {
                             ..Default::default()
                         });
                     }
-
-                    self.extension_order = original_order;
-                    return ResultUnion::NotFound;
-                } else if ::bun_options_types::standalone_path::is_bun_standalone_file_path(
-                    source_dir,
-                ) {
-                    if import_path.len() > 2 && is_dot_slash(&import_path[0..2]) {
-                        let buf = bufs!(import_path_for_standalone_module_graph);
-                        let joined = bun_paths::join_abs_string_buf(
-                            source_dir,
-                            buf,
-                            &[import_path],
-                            bun_paths::Platform::Loose,
-                        );
-
-                        // Support relative paths in the graph
-                        if let Some(file_name) = graph.find_assume_standalone_path(joined) {
-                            // Intern: trait borrows into the graph; `Path::init`
-                            // needs `'static` (DirnameStore-backed).
-                            let file_name = Fs::file_system::DirnameStore::instance()
-                                .append_slice(file_name)
-                                .expect("unreachable");
-                            self.extension_order = original_order;
-                            return ResultUnion::Success(Result {
-                                import_kind: kind,
-                                path_pair: PathPair {
-                                    primary: Path::init(file_name),
-                                    secondary: None,
-                                },
-                                module_type: options::ModuleType::Esm,
-                                flags: ResultFlags::IS_STANDALONE_MODULE,
-                                ..Default::default()
-                            });
-                        }
+                    if specifier_is_embedded_path {
+                        self.extension_order = original_order;
+                        return ResultUnion::NotFound;
                     }
                     break 'brk Fs::FileSystem::instance().top_level_dir;
                 }
@@ -1380,10 +1349,6 @@ impl<'a> Resolver<'a> {
                 .resolve_cwd(source_dir)
                 .unwrap_or_else(|_| panic!("Failed to query CWD"));
         };
-
-        // r.mutex.lock();
-        // defer r.mutex.unlock();
-        // errdefer (r.flushDebugLogs(.fail) catch {}) — handled at each error return below
 
         // A path with a null byte cannot exist on the filesystem. Continuing
         // anyways would cause assertion failures.
@@ -1554,11 +1519,21 @@ impl<'a> Resolver<'a> {
 
         let mut iter = result.path_pair.iter();
         let mut module_type = result.module_type;
+        let mut is_primary = true;
         while let Some(path) = iter.next() {
             let name = path.name();
+            let primary = core::mem::take(&mut is_primary);
             let Ok(Some(dir)) = self.read_dir_info(name.dir) else {
                 continue;
             };
+
+            // Node reads "type" from the nearest package.json, named or not.
+            if primary && !kind.is_from_css() && module_type == options::ModuleType::Unknown {
+                if let Some(pkg) = dir.package_json_for_module_type {
+                    module_type = pkg.module_type;
+                }
+            }
+
             let mut needs_side_effects = true;
             if let Some(existing) = Result::deref_package_json(result.package_json) {
                 // if we don't have it here, they might put it in a sideEfffects
@@ -1570,33 +1545,8 @@ impl<'a> Resolver<'a> {
                     PJSideEffects::Unspecified | PJSideEffects::Glob(_) | PJSideEffects::Mixed(_)
                 );
 
-                result.primary_side_effects_data = match &existing.side_effects {
-                    PJSideEffects::Unspecified => SideEffects::HasSideEffects,
-                    PJSideEffects::False => SideEffects::NoSideEffectsPackageJson,
-                    PJSideEffects::Map(map) => {
-                        if map.contains_key(&crate::package_json::StringHashMapUnownedKey::init(
-                            path.text(),
-                        )) {
-                            SideEffects::HasSideEffects
-                        } else {
-                            SideEffects::NoSideEffectsPackageJson
-                        }
-                    }
-                    PJSideEffects::Glob(_) => {
-                        if existing.side_effects.has_side_effects(path.text()) {
-                            SideEffects::HasSideEffects
-                        } else {
-                            SideEffects::NoSideEffectsPackageJson
-                        }
-                    }
-                    PJSideEffects::Mixed(_) => {
-                        if existing.side_effects.has_side_effects(path.text()) {
-                            SideEffects::HasSideEffects
-                        } else {
-                            SideEffects::NoSideEffectsPackageJson
-                        }
-                    }
-                };
+                result.primary_side_effects_data =
+                    primary_side_effects(&existing.side_effects, path.text());
 
                 if existing.name.is_empty() || self.care_about_bin_folder {
                     result.package_json = None;
@@ -1609,34 +1559,8 @@ impl<'a> Resolver<'a> {
 
             if needs_side_effects {
                 if let Some(package_json) = Result::deref_package_json(result.package_json) {
-                    use crate::package_json::SideEffects as PJSideEffects;
-                    result.primary_side_effects_data = match &package_json.side_effects {
-                        PJSideEffects::Unspecified => SideEffects::HasSideEffects,
-                        PJSideEffects::False => SideEffects::NoSideEffectsPackageJson,
-                        PJSideEffects::Map(map) => {
-                            if map.contains_key(
-                                &crate::package_json::StringHashMapUnownedKey::init(path.text()),
-                            ) {
-                                SideEffects::HasSideEffects
-                            } else {
-                                SideEffects::NoSideEffectsPackageJson
-                            }
-                        }
-                        PJSideEffects::Glob(_) => {
-                            if package_json.side_effects.has_side_effects(path.text()) {
-                                SideEffects::HasSideEffects
-                            } else {
-                                SideEffects::NoSideEffectsPackageJson
-                            }
-                        }
-                        PJSideEffects::Mixed(_) => {
-                            if package_json.side_effects.has_side_effects(path.text()) {
-                                SideEffects::HasSideEffects
-                            } else {
-                                SideEffects::NoSideEffectsPackageJson
-                            }
-                        }
-                    };
+                    result.primary_side_effects_data =
+                        primary_side_effects(&package_json.side_effects, path.text());
                 }
             }
 
@@ -1648,118 +1572,112 @@ impl<'a> Resolver<'a> {
                 result.flags.set_experimental_decorators(
                     result.flags.experimental_decorators() || tsconfig.experimental_decorators,
                 );
+                if let Some(v) = tsconfig.use_define_for_class_fields {
+                    result.flags.set_use_define_for_class_fields(v);
+                }
             }
 
-            // If you use mjs or mts, then you're using esm
-            // If you use cjs or cts, then you're using cjs
-            // This should win out over the module type from package.json
-            if !kind.is_from_css()
-                && module_type == options::ModuleType::Unknown
-                && name.ext.len() == 4
-            {
-                module_type =
-                    module_type_from_ext(name.ext).unwrap_or(options::ModuleType::Unknown);
-            }
+            // Probe the listing in one `entries_mutex` critical section: a
+            // concurrent resolver at a newer generation rewrites this `DirEntry`'s
+            // map in place under that lock. The entry pointer stays valid after
+            // unlock (EntryStore-owned).
+            if let Some(query) = dir.get_entry(self.generation, name.filename) {
+                // SAFETY: rfs points at the process-global RealFS; the lazy-stat
+                // rewrite inside `symlink()` is serialized on the per-entry mutex.
+                let symlink_path = unsafe { query.entry().symlink(self.rfs_ptr(), self.store_fd) };
+                if !symlink_path.is_empty() {
+                    path.set_realpath(symlink_path);
+                    if !result.file_fd.is_valid() {
+                        result.file_fd = query.entry().cache().fd;
+                    }
 
-            if let Some(entries) = dir.get_entries_ref(self.generation) {
-                if let Some(query) = entries.get(name.filename) {
-                    // SAFETY: entries_mutex held; rfs points at the process-global RealFS.
-                    let symlink_path =
-                        unsafe { query.entry().symlink(self.rfs_ptr(), self.store_fd) };
-                    if !symlink_path.is_empty() {
-                        path.set_realpath(symlink_path);
-                        if !result.file_fd.is_valid() {
-                            result.file_fd = query.entry().cache().fd;
-                        }
+                    if let Some(debug) = self.debug_logs.as_mut() {
+                        debug.add_note_fmt(format_args!(
+                            "Resolved symlink \"{}\" to \"{}\"",
+                            bstr::BStr::new(path.text()),
+                            bstr::BStr::new(symlink_path)
+                        ));
+                    }
+                } else if !dir.abs_real_path.is_empty() {
+                    // When the directory is a symlink, we don't need to call getFdPath.
+                    let parts = [dir.abs_real_path, query.entry().base()];
+                    let mut buf = bun_paths::path_buffer_pool::get();
 
-                        if let Some(debug) = self.debug_logs.as_mut() {
-                            debug.add_note_fmt(format_args!(
-                                "Resolved symlink \"{}\" to \"{}\"",
-                                bstr::BStr::new(path.text()),
-                                bstr::BStr::new(symlink_path)
-                            ));
-                        }
-                    } else if !dir.abs_real_path.is_empty() {
-                        // When the directory is a symlink, we don't need to call getFdPath.
-                        let parts = [dir.abs_real_path, query.entry().base()];
-                        let mut buf = bun_paths::PathBuffer::uninit();
+                    // NOTE: `abs_buf` returns a borrow of `buf`; capture only the
+                    // length so `buf` can be re-borrowed for null-termination below.
+                    let out_len = self.fs_ref().abs_buf(&parts, &mut buf).len();
 
-                        // NOTE: `abs_buf` returns a borrow of `buf`; capture only the
-                        // length so `buf` can be re-borrowed for null-termination below.
-                        let out_len = self.fs_ref().abs_buf(&parts, &mut buf).len();
+                    let store_fd = self.store_fd;
 
-                        let store_fd = self.store_fd;
-
-                        if !query.entry().cache().fd.is_valid() && store_fd {
-                            buf[out_len] = 0;
-                            // SAFETY: buf[out_len] == 0 written above
-                            let span = bun_core::ZStr::from_buf(&buf[..], out_len);
-                            // I/O errors propagate so `resolveAndAutoInstall` can
-                            // return them as `Result.Union.failure` — never
-                            // panic on EACCES/EMFILE/ELOOP here.
-                            let file = bun_sys::open(span, bun_sys::O::RDONLY, 0)
-                                .map_err(Into::<crate::Error>::into)?;
-                            {
-                                // Every cached-`Entry` rewrite takes the per-entry mutex.
-                                let _entry_guard = query.entry().mutex.lock_guard();
-                                query.entry().set_cache_fd(file);
-                            }
-                            Fs::FileSystem::set_max_fd(file.native());
-                        }
-
-                        // NOTE: snapshot `need_to_close_files` and raw-ptr the entry so
-                        // the closure captures only Copy values — keeps `self` and
-                        // `query.entry` reborrowable across the guard's lifetime.
-                        let need_close = self.fs_ref().fs.need_to_close_files();
-                        // ARENA — Entry lives in the BSSMap singleton; guard runs before
-                        // the slot is reused (resolver mutex held). Capture as `BackRef`
-                        // (Copy, Deref) so the closure stays Copy-only while the read is
-                        // a safe `BackRef::get()` instead of a raw-ptr deref.
-                        let entry_ref = bun_ptr::BackRef::<Fs::file_system::Entry>::from(
-                            core::ptr::NonNull::new(query.entry).expect("EntryStore slot"),
-                        );
-                        scopeguard::defer! {
-                            if need_close {
-                                let e = entry_ref.get();
-                                // Every cached-`Entry` rewrite takes the per-entry mutex.
-                                let _entry_guard = e.mutex.lock_guard();
-                                let fd = e.cache().fd;
-                                if fd.is_valid() {
-                                    fd.close();
-                                    e.set_cache_fd(FD::INVALID);
-                                }
-                            }
-                        }
-
-                        let symlink =
-                            Fs::FilenameStore::instance().append_slice(&buf[..out_len])?;
-                        if let Some(debug) = self.debug_logs.as_mut() {
-                            debug.add_note_fmt(format_args!(
-                                "Resolved symlink \"{}\" to \"{}\"",
-                                bstr::BStr::new(symlink),
-                                bstr::BStr::new(path.text())
-                            ));
-                        }
+                    if !query.entry().cache().fd.is_valid() && store_fd {
+                        buf[out_len] = 0;
+                        // SAFETY: buf[out_len] == 0 written above
+                        let span = bun_core::ZStr::from_buf(&buf[..], out_len);
+                        // I/O errors propagate so `resolveAndAutoInstall` can
+                        // return them as `Result.Union.failure` — never
+                        // panic on EACCES/EMFILE/ELOOP here.
+                        let file = bun_sys::open(span, bun_sys::O::RDONLY, 0)
+                            .map_err(Into::<crate::Error>::into)?;
                         {
                             // Every cached-`Entry` rewrite takes the per-entry mutex.
                             let _entry_guard = query.entry().mutex.lock_guard();
-                            query
-                                .entry()
-                                .set_cache_symlink(Interned::from_static(symlink));
+                            query.entry().set_cache_fd(file);
                         }
-                        if !result.file_fd.is_valid() && store_fd {
-                            result.file_fd = query.entry().cache().fd;
-                        }
-
-                        path.set_realpath(symlink);
+                        Fs::FileSystem::set_max_fd(file.native());
                     }
+
+                    // NOTE: snapshot `need_to_close_files` and raw-ptr the entry so
+                    // the closure captures only Copy values — keeps `self` and
+                    // `query.entry` reborrowable across the guard's lifetime.
+                    let need_close = self.fs_ref().fs.need_to_close_files();
+                    // ARENA — Entry lives in the BSSMap singleton; guard runs before
+                    // the slot is reused (resolver mutex held). Capture as `BackRef`
+                    // (Copy, Deref) so the closure stays Copy-only while the read is
+                    // a safe `BackRef::get()` instead of a raw-ptr deref.
+                    let entry_ref = bun_ptr::BackRef::<Fs::file_system::Entry>::from(
+                        core::ptr::NonNull::new(query.entry).expect("EntryStore slot"),
+                    );
+                    scopeguard::defer! {
+                        if need_close {
+                            let e = entry_ref.get();
+                            // Every cached-`Entry` rewrite takes the per-entry mutex.
+                            let _entry_guard = e.mutex.lock_guard();
+                            let fd = e.cache().fd;
+                            if fd.is_valid() {
+                                fd.close();
+                                e.set_cache_fd(FD::INVALID);
+                            }
+                        }
+                    }
+
+                    let symlink = Fs::FilenameStore::instance().append_slice(&buf[..out_len])?;
+                    if let Some(debug) = self.debug_logs.as_mut() {
+                        debug.add_note_fmt(format_args!(
+                            "Resolved symlink \"{}\" to \"{}\"",
+                            bstr::BStr::new(symlink),
+                            bstr::BStr::new(path.text())
+                        ));
+                    }
+                    {
+                        // Every cached-`Entry` rewrite takes the per-entry mutex.
+                        let _entry_guard = query.entry().mutex.lock_guard();
+                        query
+                            .entry()
+                            .set_cache_symlink(Interned::from_static(symlink));
+                    }
+                    if !result.file_fd.is_valid() && store_fd {
+                        result.file_fd = query.entry().cache().fd;
+                    }
+
+                    path.set_realpath(symlink);
                 }
             }
         }
 
-        if !kind.is_from_css() && module_type == options::ModuleType::Unknown {
-            if let Some(pkg) = result.package_json_ref() {
-                module_type = pkg.module_type;
+        // The extension wins over a package.json "type".
+        if !kind.is_from_css() {
+            if let Some(from_ext) = module_type_from_ext(result.path_pair.primary.name().ext) {
+                module_type = from_ext;
             }
         }
 
@@ -1802,19 +1720,17 @@ impl<'a> Resolver<'a> {
             // loose check to avoid always doing this copy, but avoid spending
             // too much time on the check.
             if strings::index_of(import_path, b"..").is_some() {
-                let platform = bun_paths::Platform::AUTO;
-                let ends_with_dir = platform.is_separator(import_path[import_path.len() - 1])
-                    || (import_path.len() > 3
-                        && platform.is_separator(import_path[import_path.len() - 3])
-                        && import_path[import_path.len() - 2] == b'.'
-                        && import_path[import_path.len() - 1] == b'.');
+                let ends_with_dir = Self::import_path_names_directory(import_path);
                 let buf = bufs!(relative_abs_path);
                 let Some(abs) = self.fs_ref().abs_buf_checked(&[import_path], buf) else {
                     return ResultUnion::NotFound;
                 };
                 let mut len = abs.len();
                 if ends_with_dir {
-                    buf[len] = platform.separator();
+                    if len >= buf.len() {
+                        return ResultUnion::NotFound;
+                    }
+                    buf[len] = bun_paths::Platform::AUTO.separator();
                     len += 1;
                 }
                 // `bufs!` hands out an unconstrained-lifetime `&mut PathBuffer`
@@ -1852,7 +1768,8 @@ impl<'a> Resolver<'a> {
                 }
             }
 
-            if self.opts.external.abs_paths.count() > 0
+            if !kind.is_entry_point()
+                && self.opts.external.abs_paths.count() > 0
                 && self.opts.external.abs_paths.contains(import_path)
             {
                 // If the string literal in the source text is an absolute path and has
@@ -1912,7 +1829,7 @@ impl<'a> Resolver<'a> {
                 // @branchHint(.unlikely)
                 bun_core::hint::cold();
                 for custom_path in custom_paths {
-                    let custom_utf8 = custom_path.to_utf8_without_ref();
+                    let custom_utf8 = custom_path.to_utf8();
                     match self.check_relative_path(
                         custom_utf8.slice(),
                         import_path,
@@ -2017,9 +1934,10 @@ impl<'a> Resolver<'a> {
             }
 
             // Check for external packages first
-            if self.opts.external.node_modules.count() > 0
-            // Imports like "process/" need to resolve to the filesystem, not a builtin
-            && !import_path.ends_with(b"/")
+            if !kind.is_entry_point()
+                && self.opts.external.node_modules.count() > 0
+                // Imports like "process/" need to resolve to the filesystem, not a builtin
+                && !import_path.ends_with(b"/")
             {
                 let mut query = import_path;
                 loop {
@@ -2052,7 +1970,7 @@ impl<'a> Resolver<'a> {
             if let Some(custom_paths) = self.custom_dir_paths {
                 bun_core::hint::cold();
                 for custom_path in custom_paths {
-                    let custom_utf8 = custom_path.to_utf8_without_ref();
+                    let custom_utf8 = custom_path.to_utf8();
                     match self.check_package_path(
                         custom_utf8.slice(),
                         import_path,
@@ -2078,6 +1996,25 @@ impl<'a> Resolver<'a> {
         ResultUnion::NotFound
     }
 
+    /// Whether an import specifier explicitly names a directory: a trailing
+    /// separator, `.`, `..`, or a path ending in `/.` or `/..`.
+    fn import_path_names_directory(import_path: &[u8]) -> bool {
+        let Some(&last) = import_path.last() else {
+            return false;
+        };
+        if ResolvePath::is_sep_any(last) {
+            return true;
+        }
+        let rest = if let Some(r) = import_path.strip_suffix(b"..") {
+            r
+        } else if let Some(r) = import_path.strip_suffix(b".") {
+            r
+        } else {
+            return false;
+        };
+        rest.is_empty() || ResolvePath::is_sep_any(rest[rest.len() - 1])
+    }
+
     pub(crate) fn check_relative_path(
         &mut self,
         source_dir: &[u8],
@@ -2092,7 +2029,8 @@ impl<'a> Resolver<'a> {
             return ResultUnion::NotFound;
         };
 
-        if self.opts.external.abs_paths.count() > 0
+        if !kind.is_entry_point()
+            && self.opts.external.abs_paths.count() > 0
             && self.opts.external.abs_paths.contains(abs_path)
         {
             // If the string literal in the source text is an absolute path and has
@@ -2163,8 +2101,11 @@ impl<'a> Resolver<'a> {
                             .is_success()
                         {
                             let mut flags = ResultFlags::default();
-                            flags.set_is_external(match_result.is_external);
-                            flags.set_is_external_and_rewrite_import_path(match_result.is_external);
+                            flags.set_external_kind(if match_result.is_external {
+                                ExternalKind::ExternalRewritePath
+                            } else {
+                                ExternalKind::NotExternal
+                            });
                             return ResultUnion::Success(Result {
                                 path_pair: match_result.path_pair,
                                 dirname_fd: match_result.dirname_fd,
@@ -2185,6 +2126,23 @@ impl<'a> Resolver<'a> {
         if strings::path_contains_node_modules_folder(abs_path) {
             self.extension_order = self.opts.extension_order.kind(kind, true);
         }
+
+        // Re-append the separator the join stripped so "." resolves like "./".
+        let abs_path: &[u8] = if Self::import_path_names_directory(import_path)
+            && !strings::ends_with_char(abs_path, SEP)
+        {
+            let len = abs_path.len();
+            let buf = bufs!(relative_abs_path);
+            if len >= buf.len() {
+                self.extension_order = prev_extension_order;
+                return ResultUnion::NotFound;
+            }
+            buf[len] = SEP;
+            &buf[..=len]
+        } else {
+            abs_path
+        };
+
         let mut res = MatchResult::default();
         let ret = if self
             .load_as_file_or_directory(abs_path, kind, &mut res)
@@ -2342,12 +2300,13 @@ impl<'a> Resolver<'a> {
                     result.flags.is_from_node_modules() || res.is_node_module,
                 );
                 result.module_type = res.module_type;
-                result.flags.set_is_external(res.is_external);
                 // Potentially rewrite the import path if it's external that
                 // was remapped to a different path
-                result
-                    .flags
-                    .set_is_external_and_rewrite_import_path(result.flags.is_external());
+                result.flags.set_external_kind(if res.is_external {
+                    ExternalKind::ExternalRewritePath
+                } else {
+                    ExternalKind::NotExternal
+                });
 
                 if result.path_pair.primary.is_disabled && result.path_pair.secondary.is_none() {
                     return ResultUnion::Success(result);
@@ -2389,13 +2348,14 @@ impl<'a> Resolver<'a> {
                                     result.file_fd = remapped.file_fd;
                                     result.package_json = remapped.package_json;
                                     result.module_type = remapped.module_type;
-                                    result.flags.set_is_external(remapped.is_external);
 
                                     // Potentially rewrite the import path if it's external that
                                     // was remapped to a different path
-                                    result.flags.set_is_external_and_rewrite_import_path(
-                                        result.flags.is_external(),
-                                    );
+                                    result.flags.set_external_kind(if remapped.is_external {
+                                        ExternalKind::ExternalRewritePath
+                                    } else {
+                                        ExternalKind::NotExternal
+                                    });
 
                                     result.flags.set_is_from_node_modules(
                                         result.flags.is_from_node_modules()
@@ -2663,7 +2623,6 @@ impl<'a> Resolver<'a> {
                             if let Some(package_json) = pkg_dir_info.package_json() {
                                 if let Some(exports_map) = package_json.exports.as_ref() {
                                     // The condition set is determined by the kind of import
-                                    let mut module_type = package_json.module_type;
                                     // NOTE: keeping a single
                                     // `ESModule` (which holds `&mut self.debug_logs`) alive across a
                                     // `&mut self` call is aliased-&mut UB. Build a fresh short-lived
@@ -2689,7 +2648,6 @@ impl<'a> Resolver<'a> {
                                                 _ => &self.opts.conditions.import,
                                             },
                                             debug_logs: self.debug_logs.as_mut(),
-                                            module_type: &mut module_type,
                                         }
                                         .resolve(b"/", esm.subpath, &exports_map.root);
                                         // ESModule temporary dropped here; `self` is unborrowed.
@@ -2706,7 +2664,6 @@ impl<'a> Resolver<'a> {
                                             .is_success()
                                         {
                                             out.is_node_module = true;
-                                            out.module_type = module_type;
                                             self.extension_order = prev_extension_order;
                                             if let Some(d) = self.debug_logs.as_mut() {
                                                 d.decrease_indent();
@@ -2746,7 +2703,6 @@ impl<'a> Resolver<'a> {
                                                 _ => &self.opts.conditions.import,
                                             },
                                             debug_logs: self.debug_logs.as_mut(),
-                                            module_type: &mut module_type,
                                         }
                                         .resolve(
                                             b"/",
@@ -2765,7 +2721,6 @@ impl<'a> Resolver<'a> {
                                             .is_success()
                                         {
                                             out.is_node_module = true;
-                                            out.module_type = module_type;
                                             self.extension_order = prev_extension_order;
                                             if let Some(d) = self.debug_logs.as_mut() {
                                                 d.decrease_indent();
@@ -3163,7 +3118,6 @@ impl<'a> Resolver<'a> {
                     Ok(dir_info_to_use_) => {
                         if let Some(pkg_dir_info) = dir_info_to_use_ {
                             let abs_package_path = pkg_dir_info.abs_path;
-                            let mut module_type = options::ModuleType::Unknown;
                             if let Some(package_json) = pkg_dir_info.package_json() {
                                 if let Some(exports_map) = package_json.exports.as_ref() {
                                     // The condition set is determined by the kind of import
@@ -3184,7 +3138,6 @@ impl<'a> Resolver<'a> {
                                                 _ => &self.opts.conditions.import,
                                             },
                                             debug_logs: self.debug_logs.as_mut(),
-                                            module_type: &mut module_type,
                                         }
                                         .resolve(b"/", esm.subpath, &exports_map.root);
 
@@ -3223,7 +3176,6 @@ impl<'a> Resolver<'a> {
                                                 _ => &self.opts.conditions.import,
                                             },
                                             debug_logs: self.debug_logs.as_mut(),
-                                            module_type: &mut module_type,
                                         }
                                         .resolve(
                                             b"/",
@@ -3483,7 +3435,7 @@ impl<'a> Resolver<'a> {
         .expect("unreachable");
 
         // `dir_path` is a slice into the threadlocal `bufs(.path_in_global_disk_cache)` buffer,
-        // which gets overwritten on the next auto-install resolution. `dirInfoUncached` stores
+        // which gets overwritten on the next auto-install resolution. `dir_info_uncached` stores
         // its `path` argument directly as `DirInfo.abs_path` in the permanent `dir_cache`, so
         // pass the interned copy from `DirEntry.dir` (always backed by `DirnameStore`) instead.
         // SAFETY: ARENA — `dir_entries_option` is a slot in `rfs.entries` (BSSMap) and
@@ -3586,7 +3538,7 @@ impl<'a> Resolver<'a> {
             }
         }
 
-        if self.opts.prefer_offline_install {
+        if self.opts.install_preference == bun_options_types::offline_mode::OfflineMode::Offline {
             if let Some(package_id) = pm!().resolve_from_disk_cache(esm.name, &version) {
                 *input_package_id_ = package_id;
                 return DependencyToResolve::Resolution(
@@ -3678,13 +3630,6 @@ impl<'a> Resolver<'a> {
                         return MatchStatus::NotFound;
                     }
                 };
-                let entries = match resolved_dir_info.get_entries_ref(self.generation) {
-                    Some(e) => e,
-                    None => {
-                        esm_resolution.status = Status::ModuleNotFound;
-                        return MatchStatus::NotFound;
-                    }
-                };
                 let extension_order: options::ExtOrder =
                     if kind == ast::ImportKind::At || kind == ast::ImportKind::AtConditional {
                         self.extension_order
@@ -3695,85 +3640,98 @@ impl<'a> Resolver<'a> {
                     };
 
                 let base = bun_paths::basename(abs_esm_path);
-                let entry_query = match entries.get(base) {
+                // One `entries_mutex` critical section for the probe and the
+                // listing fd: a concurrent resolver at a newer generation
+                // rewrites the `DirEntry` in place under that lock. The entry
+                // pointer stays valid after unlock (EntryStore-owned).
+                let looked_up = {
+                    let rfs = &mut Fs::FileSystem::instance().fs;
+                    let _entries_lock = rfs.entries_mutex.lock_guard();
+                    resolved_dir_info
+                        .get_entries_ref_locked(self.generation)
+                        .map(|entries| (entries.get(base), entries.fd))
+                };
+                let Some((entry_lookup, dirname_fd)) = looked_up else {
+                    esm_resolution.status = Status::ModuleNotFound;
+                    return MatchStatus::NotFound;
+                };
+                let entry_query = match entry_lookup {
                     Some(q) => q,
                     None => {
                         let ends_with_star = esm_resolution.status == Status::ExactEndsWithStar;
                         esm_resolution.status = Status::ModuleNotFound;
 
-                        // Try to have a friendly error message if people forget the extension
-                        if ends_with_star {
-                            let buf = bufs!(load_as_file);
-                            buf[..base.len()].copy_from_slice(base);
-                            for ext in self.opts.ext_order_slice(extension_order).iter() {
-                                let ext: &[u8] = ext;
-                                let file_name = &mut buf[0..base.len() + ext.len()];
-                                file_name[base.len()..].copy_from_slice(ext);
-                                if entries.get(&file_name[..]).is_some() {
-                                    if let Some(debug) = self.debug_logs.as_mut() {
-                                        let parts = [package_json.name.as_ref(), package_subpath];
-                                        debug.add_note_fmt(format_args!(
-                                            "The import {} is missing the extension {}",
-                                            bstr::BStr::new(ResolvePath::join(
-                                                &parts,
-                                                bun_paths::Platform::AUTO
-                                            )),
-                                            bstr::BStr::new(ext)
-                                        ));
-                                    }
-                                    esm_resolution.status = Status::ModuleNotFoundMissingExtension;
-                                    let _ = ext;
-                                    break;
-                                }
-                            }
+                        if self.probe_target_extensions(
+                            resolved_dir_info,
+                            dirname_fd,
+                            package_json,
+                            base,
+                            extension_order,
+                            ends_with_star,
+                            out,
+                        ) {
+                            return MatchStatus::Success;
                         }
                         return MatchStatus::NotFound;
                     }
                 };
 
-                // SAFETY: entries_mutex held; rfs points at the process-global RealFS.
+                // SAFETY: rfs points at the process-global RealFS; the lazy-stat
+                // rewrite inside `kind()` is serialized on the per-entry mutex.
                 if unsafe { entry_query.entry().kind(self.rfs_ptr(), self.store_fd) }
                     == Fs::file_system::EntryKind::Dir
                 {
                     let ends_with_star = esm_resolution.status == Status::ExactEndsWithStar;
+                    if ends_with_star
+                        && self.probe_target_extensions(
+                            resolved_dir_info,
+                            dirname_fd,
+                            package_json,
+                            base,
+                            extension_order,
+                            true,
+                            out,
+                        )
+                    {
+                        return MatchStatus::Success;
+                    }
                     esm_resolution.status = Status::UnsupportedDirectoryImport;
 
                     // Try to have a friendly error message if people forget the "/index.js" suffix
                     if ends_with_star {
                         if let Ok(Some(dir_info_ref)) = self.dir_info_cached(abs_esm_path) {
-                            if let Some(dir_entries) = dir_info_ref.get_entries_ref(self.generation)
-                            {
-                                let index = b"index";
-                                let buf = bufs!(load_as_file);
-                                buf[..index.len()].copy_from_slice(index);
-                                for ext in self.opts.ext_order_slice(extension_order).iter() {
-                                    let ext: &[u8] = ext;
-                                    let file_name = &mut buf[0..index.len() + ext.len()];
-                                    file_name[index.len()..].copy_from_slice(ext);
-                                    let index_query = dir_entries.get(&file_name[..]);
-                                    if let Some(iq) = index_query {
-                                        // SAFETY: entries_mutex held; rfs points at the process-global RealFS.
-                                        if unsafe { iq.entry().kind(self.rfs_ptr(), self.store_fd) }
-                                            == Fs::file_system::EntryKind::File
-                                        {
-                                            if let Some(debug) = self.debug_logs.as_mut() {
-                                                let mut ms =
-                                                    Vec::with_capacity(1 + file_name.len());
-                                                ms.push(b'/');
-                                                ms.extend_from_slice(&file_name[..]);
-                                                let parts =
-                                                    [package_json.name.as_ref(), package_subpath];
-                                                debug.add_note_fmt(format_args!(
-                                                    "The import {} is missing the suffix {}",
-                                                    bstr::BStr::new(ResolvePath::join(
-                                                        &parts,
-                                                        bun_paths::Platform::AUTO
-                                                    )),
-                                                    bstr::BStr::new(&ms)
-                                                ));
-                                            }
-                                            break;
+                            let index = b"index";
+                            let buf = bufs!(load_as_file);
+                            buf[..index.len()].copy_from_slice(index);
+                            for ext in self.opts.ext_order_slice(extension_order).iter() {
+                                let ext: &[u8] = ext;
+                                let file_name = &mut buf[0..index.len() + ext.len()];
+                                file_name[index.len()..].copy_from_slice(ext);
+                                let index_query =
+                                    dir_info_ref.get_entry(self.generation, &file_name[..]);
+                                if let Some(iq) = index_query {
+                                    // SAFETY: rfs points at the process-global RealFS; the
+                                    // lazy-stat rewrite inside `kind()` is serialized on the
+                                    // per-entry mutex.
+                                    if unsafe { iq.entry().kind(self.rfs_ptr(), self.store_fd) }
+                                        == Fs::file_system::EntryKind::File
+                                    {
+                                        if let Some(debug) = self.debug_logs.as_mut() {
+                                            let mut ms = Vec::with_capacity(1 + file_name.len());
+                                            ms.push(b'/');
+                                            ms.extend_from_slice(&file_name[..]);
+                                            let parts =
+                                                [package_json.name.as_ref(), package_subpath];
+                                            debug.add_note_fmt(format_args!(
+                                                "The import {} is missing the suffix {}",
+                                                bstr::BStr::new(ResolvePath::join(
+                                                    &parts,
+                                                    bun_paths::Platform::AUTO
+                                                )),
+                                                bstr::BStr::new(&ms)
+                                            ));
                                         }
+                                        break;
                                     }
                                 }
                             }
@@ -3807,7 +3765,7 @@ impl<'a> Resolver<'a> {
                         primary: Path::init_with_namespace(absolute_out_path, b"file"),
                         secondary: None,
                     },
-                    dirname_fd: entries.fd,
+                    dirname_fd,
                     file_fd: entry_query.entry().cache().fd,
                     dir_info: Some(resolved_dir_info),
                     is_node_module: true,
@@ -3841,6 +3799,154 @@ impl<'a> Resolver<'a> {
             }
             _ => unreachable!(),
         }
+    }
+
+    /// `exports`/`imports` target isn't a file: probe extensions like `load_as_file` does.
+    /// `is_wildcard` enables the extensionless probe (oven-sh/bun#29679). The
+    /// TypeScript rewrite (oven-sh/bun#10001) runs for every target, as in esbuild.
+    ///
+    /// Each probe goes through [`DirInfo::get_entry`] so the map walk happens
+    /// under `entries_mutex`; `dirname_fd` was captured under the caller's
+    /// critical section.
+    fn probe_target_extensions(
+        &mut self,
+        resolved_dir_info: DirInfoRef,
+        dirname_fd: FD,
+        package_json: &PackageJSON,
+        base: &[u8],
+        extension_order: options::ExtOrder,
+        is_wildcard: bool,
+        out: &mut MatchResult,
+    ) -> bool {
+        let rfs = self.rfs_ptr();
+
+        if is_wildcard && bun_paths::extension(base).is_empty() {
+            let buf = bufs!(load_as_file);
+            buf[..base.len()].copy_from_slice(base);
+            for ext in self.opts.ext_order_slice(extension_order).iter() {
+                let ext: &[u8] = ext;
+                let file_name = &mut buf[0..base.len() + ext.len()];
+                file_name[base.len()..].copy_from_slice(ext);
+                if let Some(ext_query) =
+                    resolved_dir_info.get_entry(self.generation, &file_name[..])
+                {
+                    // SAFETY: rfs points at the process-global RealFS; the lazy-stat
+                    // rewrite inside `kind()` is serialized on the per-entry mutex.
+                    if unsafe { ext_query.entry().kind(rfs, self.store_fd) }
+                        == Fs::file_system::EntryKind::File
+                    {
+                        if let Some(debug) = self.debug_logs.as_mut() {
+                            debug.add_note_fmt(format_args!(
+                                "Resolved to \"{}\" by adding extension \"{}\"",
+                                bstr::BStr::new(file_name),
+                                bstr::BStr::new(ext)
+                            ));
+                        }
+                        self.build_wildcard_match(
+                            resolved_dir_info,
+                            dirname_fd,
+                            package_json,
+                            &ext_query,
+                            out,
+                        );
+                        return true;
+                    }
+                }
+            }
+        }
+
+        if let Some(last_dot) = strings::last_index_of_char(base, b'.') {
+            let ext = &base[last_dot..];
+            let ts_exts = rewritten_file_extensions(ext, || {
+                resolved_dir_info.is_node_modules() || resolved_dir_info.is_inside_node_modules()
+            });
+
+            if !ts_exts.is_empty() {
+                let segment = &base[..last_dot];
+                let buf = bufs!(load_as_file);
+                buf[..segment.len()].copy_from_slice(segment);
+                for &replacement in ts_exts.iter() {
+                    let file_name = &mut buf[0..segment.len() + replacement.len()];
+                    file_name[segment.len()..].copy_from_slice(replacement);
+                    if let Some(ts_query) =
+                        resolved_dir_info.get_entry(self.generation, &file_name[..])
+                    {
+                        // SAFETY: rfs points at the process-global RealFS; the lazy-stat
+                        // rewrite inside `kind()` is serialized on the per-entry mutex.
+                        if unsafe { ts_query.entry().kind(rfs, self.store_fd) }
+                            == Fs::file_system::EntryKind::File
+                        {
+                            if let Some(debug) = self.debug_logs.as_mut() {
+                                debug.add_note_fmt(format_args!(
+                                    "Rewrote \"{}\" to \"{}\"",
+                                    bstr::BStr::new(base),
+                                    bstr::BStr::new(file_name)
+                                ));
+                            }
+                            self.build_wildcard_match(
+                                resolved_dir_info,
+                                dirname_fd,
+                                package_json,
+                                &ts_query,
+                                out,
+                            );
+                            return true;
+                        }
+                    }
+                }
+            }
+        }
+
+        false
+    }
+
+    fn build_wildcard_match(
+        &mut self,
+        resolved_dir_info: DirInfoRef,
+        dirname_fd: FD,
+        package_json: &PackageJSON,
+        query: &crate::fs::EntryLookup<'static>,
+        out: &mut MatchResult,
+    ) {
+        let abs_path: &[u8] = {
+            if query.entry().abs_path.is_empty() {
+                let parts = [query.entry().dir, query.entry().base()];
+                let abs = self.fs_ref().abs_buf(&parts, bufs!(remap_path));
+                // SAFETY: EntryStore-owned slot; resolver mutex held. RHS fully
+                // evaluated before LHS `&mut Entry` is materialized.
+                unsafe { &mut *query.entry }.abs_path = Interned::from_static(
+                    self.fs_ref()
+                        .dirname_store
+                        .append_slice(abs)
+                        .expect("unreachable"),
+                );
+            }
+            query.entry().abs_path.as_bytes()
+        };
+        let module_type = if let Some(pkg) = resolved_dir_info.package_json() {
+            pkg.module_type
+        } else {
+            options::ModuleType::Unknown
+        };
+
+        *out = MatchResult {
+            path_pair: PathPair {
+                primary: Path::init_with_namespace(abs_path, b"file"),
+                secondary: None,
+            },
+            dirname_fd,
+            file_fd: query.entry().cache().fd,
+            dir_info: Some(resolved_dir_info),
+            is_node_module: true,
+            package_json: Some(
+                resolved_dir_info
+                    .package_json()
+                    .map(std::ptr::from_ref)
+                    .unwrap_or_else(|| std::ptr::from_ref(package_json)),
+            ),
+            module_type,
+            ..Default::default()
+        };
     }
 
     pub(crate) fn resolve_without_remapping(
@@ -4300,7 +4406,6 @@ impl<'a> Resolver<'a> {
             let (qt_unsafe_path, qt_safe_path) = (queue_top.unsafe_path, queue_top.safe_path);
             let queue_top_unsafe_path: &[u8] = qt_unsafe_path.slice();
             let queue_top_safe_path: &[u8] = qt_safe_path.slice();
-            // defer top_parent = queue_top.result — done at end of loop body
             queue_slice_len -= 1;
 
             let open_dir: FD = if queue_top.fd.is_valid() {
@@ -4667,6 +4772,10 @@ impl<'a> Resolver<'a> {
             {
                 if strings::eql_long(key, path, true) {
                     for original_path in value.iter() {
+                        if self.is_type_only_tsconfig_path(original_path) {
+                            continue;
+                        }
+
                         let mut absolute_original_path: &[u8] = original_path;
 
                         if !bun_paths::is_absolute(absolute_original_path) {
@@ -4748,51 +4857,46 @@ impl<'a> Resolver<'a> {
             }
 
             for original_path in longest_match.original_paths.iter() {
+                if self.is_type_only_tsconfig_path(original_path) {
+                    continue;
+                }
+
                 // Swap out the "*" in the original path for whatever the "*" matched
                 let matched_text =
                     &path[longest_match.prefix.len()..path.len() - longest_match.suffix.len()];
 
-                let total_length: Option<u32> = strings::index_of_char(original_path, b'*');
-                let prefix_end = total_length
-                    .map(|v| v as usize)
-                    .unwrap_or(original_path.len());
-                let prefix_parts: [&[u8]; 2] = [abs_base_url, &original_path[0..prefix_end]];
-
-                // Concatenate the matched text with the suffix from the wildcard path
-                let matched_text_with_suffix = bufs!(tsconfig_match_full_buf3);
-                let mut matched_text_with_suffix_len: usize = 0;
-                if total_length.is_some() {
-                    let suffix = strings::trim_left(&original_path[prefix_end..], b"*");
-                    matched_text_with_suffix_len = matched_text.len() + suffix.len();
-                    if matched_text_with_suffix_len > matched_text_with_suffix.len() {
-                        continue;
-                    }
-                    ::bun_core::concat_into(matched_text_with_suffix, &[matched_text, suffix]);
-                }
-
-                // 1. Normalize the base path
-                // so that "/Users/foo/project/", "../components/*" => "/Users/foo/components/""
-                let Some(prefix) = self
-                    .fs_ref()
-                    .abs_buf_checked(&prefix_parts, bufs!(tsconfig_match_full_buf2))
-                else {
-                    continue;
-                };
-
-                // 2. Join the new base path with the matched result
-                // so that "/Users/foo/components/", "/foo/bar" => /Users/foo/components/foo/bar
-                let parts: [&[u8]; 3] = [
-                    prefix,
-                    if matched_text_with_suffix_len > 0 {
-                        strings::trim_left(
-                            &matched_text_with_suffix[0..matched_text_with_suffix_len],
-                            b"/",
-                        )
+                // Build the substituted target path as a contiguous string. The
+                // previous implementation split the target at '*' and rejoined
+                // the pieces via the path joiner, which inserts a separator
+                // between parts and so only worked when '*' sat on a segment
+                // boundary. Substitute textually instead, then resolve once.
+                let substituted_buf = bufs!(tsconfig_match_full_buf3);
+                let substituted: &[u8] =
+                    if let Some(star) = strings::index_of_char(original_path, b'*') {
+                        let star = star as usize;
+                        let before = &original_path[..star];
+                        let after = &original_path[star + 1..];
+                        let total = before.len() + matched_text.len() + after.len();
+                        if total > substituted_buf.len() {
+                            continue;
+                        }
+                        ::bun_core::concat_into(substituted_buf, &[before, matched_text, after]);
+                        &substituted_buf[..total]
                     } else {
-                        b""
-                    },
-                    strings::trim_left(longest_match.suffix, b"/"),
-                ];
+                        original_path
+                    };
+
+                // An absolute template (e.g. an expanded `${configDir}/src/*`)
+                // is normalized on its own; a relative one joins `baseUrl` —
+                // even when the substituted text happens to start with a
+                // separator (key "~*" → target "*", import "~/util" →
+                // matched_text "/util"), so strip leading separators first
+                // since the joiner resets on a rooted part.
+                let parts: [&[u8]; 2] = if bun_paths::is_absolute(original_path) {
+                    [substituted, b""]
+                } else {
+                    [abs_base_url, strings::trim_left(substituted, b"/\\")]
+                };
                 let Some(absolute_original_path) = self
                     .fs_ref()
                     .abs_buf_checked(&parts, bufs!(tsconfig_match_full_buf))
@@ -4810,6 +4914,30 @@ impl<'a> Resolver<'a> {
         }
 
         MatchStatus::NotFound
+    }
+
+    /// A `paths` substitution written as a declaration file exists for type checking
+    /// only. Skip it, like esbuild's `matchTSConfigPaths` (which checks `.d.ts` only).
+    /// This looks at the tsconfig text, not the `*` expansion: `"@/*": ["./src/*"]`
+    /// must still resolve `import "@/env.d.ts"`.
+    fn is_type_only_tsconfig_path(&mut self, substitution: &[u8]) -> bool {
+        const DECLARATION_EXTS: [&[u8]; 3] = [b".d.ts", b".d.mts", b".d.cts"];
+        let Some(ext) = DECLARATION_EXTS.iter().find(|ext| {
+            substitution
+                .len()
+                .checked_sub(ext.len())
+                .is_some_and(|start| substitution[start..].eq_ignore_ascii_case(ext))
+        }) else {
+            return false;
+        };
+        if let Some(debug) = self.debug_logs.as_mut() {
+            debug.add_note_fmt(format_args!(
+                "Ignoring substitution \"{}\" because it ends in \"{}\"",
+                bstr::BStr::new(substitution),
+                bstr::BStr::new(ext)
+            ));
+        }
+        true
     }
 
     pub(crate) fn load_package_imports(
@@ -4846,7 +4974,6 @@ impl<'a> Resolver<'a> {
             }
             return MatchStatus::NotFound;
         }
-        let mut module_type = options::ModuleType::Unknown;
 
         // NOTE: keeping the `ESModule`'s borrow of `self.debug_logs` alive
         // across the subsequent `&mut self` calls would be aliased-&mut UB, so
@@ -4860,10 +4987,8 @@ impl<'a> Resolver<'a> {
                 _ => &self.opts.conditions.import,
             },
             debug_logs: self.debug_logs.as_mut(),
-            module_type: &mut module_type,
         }
         .resolve_imports(import_path, &imports_map.root);
-        let _ = module_type;
 
         if esm_resolution.status == crate::package_json::Status::PackageResolve {
             // https://github.com/oven-sh/bun/issues/4972
@@ -5033,7 +5158,6 @@ impl<'a> Resolver<'a> {
             debug.increase_indent();
         }
 
-        // defer { debug.decreaseIndent() } — handled at returns
         macro_rules! dec_ret {
             ($e:expr) => {{
                 if let Some(d) = self.debug_logs.as_mut() {
@@ -5190,58 +5314,74 @@ impl<'a> Resolver<'a> {
         base[0..b"index".len()].copy_from_slice(b"index");
         base[b"index".len()..].copy_from_slice(ext);
 
-        if let Some(entries) = dir_info.get_entries_ref(self.generation) {
-            if let Some(lookup) = entries.get(&base[..]) {
-                // SAFETY: entries_mutex held; rfs points at the process-global RealFS.
-                if unsafe { lookup.entry().kind(rfs, self.store_fd) }
-                    == Fs::file_system::EntryKind::File
-                {
-                    let out_buf: &[u8] = {
-                        if lookup.entry().abs_path.is_empty() {
-                            let parts = [dir_info.abs_path, &base[..]];
-                            let out_buf_ = self.fs_ref().abs_buf(&parts, bufs!(index));
-                            // SAFETY: EntryStore-owned slot; resolver mutex held. RHS fully
-                            // evaluated before LHS `&mut Entry` is materialized.
-                            unsafe { &mut *lookup.entry }.abs_path = Interned::from_static(
-                                self.fs_ref()
-                                    .dirname_store
-                                    .append_slice(out_buf_)
-                                    .expect("unreachable"),
-                            );
-                        }
-                        lookup.entry().abs_path.as_bytes()
-                    };
-
-                    if let Some(debug) = self.debug_logs.as_mut() {
-                        debug.add_note_fmt(format_args!(
-                            "Found file: \"{}\"",
-                            bstr::BStr::new(out_buf)
-                        ));
+        // Lookup + listing fd in one critical section (see `DirInfo::get_entry`
+        // for the rewrite this guards against); the fd gate matches
+        // `DirInfo::get_file_descriptor`.
+        let looked_up = {
+            let realfs = &mut Fs::FileSystem::instance().fs;
+            let _entries_lock = realfs.entries_mutex.lock_guard();
+            dir_info
+                .get_entries_ref_locked(self.generation)
+                .map(|entries| {
+                    (
+                        entries.get(&base[..]),
+                        if FeatureFlags::STORE_FILE_DESCRIPTORS {
+                            entries.fd
+                        } else {
+                            FD::INVALID
+                        },
+                    )
+                })
+        };
+        if let Some((Some(lookup), dirname_fd)) = looked_up {
+            // SAFETY: rfs points at the process-global RealFS; the lazy-stat
+            // rewrite inside `kind()` is serialized on the per-entry mutex.
+            if unsafe { lookup.entry().kind(rfs, self.store_fd) }
+                == Fs::file_system::EntryKind::File
+            {
+                let out_buf: &[u8] = {
+                    if lookup.entry().abs_path.is_empty() {
+                        let parts = [dir_info.abs_path, &base[..]];
+                        let out_buf_ = self.fs_ref().abs_buf(&parts, bufs!(index));
+                        // SAFETY: EntryStore-owned slot; resolver mutex held. RHS fully
+                        // evaluated before LHS `&mut Entry` is materialized.
+                        unsafe { &mut *lookup.entry }.abs_path = Interned::from_static(
+                            self.fs_ref()
+                                .dirname_store
+                                .append_slice(out_buf_)
+                                .expect("unreachable"),
+                        );
                     }
+                    lookup.entry().abs_path.as_bytes()
+                };
 
-                    if let Some(package_json) = dir_info.package_json() {
-                        *out = MatchResult {
-                            path_pair: PathPair {
-                                primary: Path::init(out_buf),
-                                secondary: None,
-                            },
-                            package_json: Some(std::ptr::from_ref(package_json)),
-                            dirname_fd: dir_info.get_file_descriptor(),
-                            ..Default::default()
-                        };
-                        return MatchStatus::Success;
-                    }
+                if let Some(debug) = self.debug_logs.as_mut() {
+                    debug
+                        .add_note_fmt(format_args!("Found file: \"{}\"", bstr::BStr::new(out_buf)));
+                }
 
+                if let Some(package_json) = dir_info.package_json() {
                     *out = MatchResult {
                         path_pair: PathPair {
                             primary: Path::init(out_buf),
                             secondary: None,
                         },
-                        dirname_fd: dir_info.get_file_descriptor(),
+                        package_json: Some(std::ptr::from_ref(package_json)),
+                        dirname_fd,
                         ..Default::default()
                     };
                     return MatchStatus::Success;
                 }
+
+                *out = MatchResult {
+                    path_pair: PathPair {
+                        primary: Path::init(out_buf),
+                        secondary: None,
+                    },
+                    dirname_fd,
+                    ..Default::default()
+                };
+                return MatchStatus::Success;
             }
         }
 
@@ -5406,7 +5546,6 @@ impl<'a> Resolver<'a> {
             ));
             debug.increase_indent();
         }
-        // defer if (r.debug_logs) |*debug| debug.decreaseIndent();
         macro_rules! dec_ret {
             ($e:expr) => {{
                 if let Some(d) = self.debug_logs.as_mut() {
@@ -5644,7 +5783,7 @@ impl<'a> Resolver<'a> {
                 self.generation,
                 self.store_fd,
             ) {
-                Ok(e) => bun_ptr::BackRef::new_mut(e),
+                Ok(e) => bun_ptr::BackRef::new(&*e),
                 Err(_) => dec_ret!(None),
             };
 
@@ -5667,15 +5806,6 @@ impl<'a> Resolver<'a> {
             dec_ret!(None);
         }
 
-        // ARENA-backed `DirEntry` (see `dir_entry` note above) — `BackRef` so each
-        // `entries!()` is a fresh safe shared borrow instead of an open-coded raw deref.
-        let entries = bun_ptr::BackRef::new(dir_entry.entries());
-        macro_rules! entries {
-            () => {
-                entries.get()
-            };
-        }
-
         let base = bun_paths::basename(path);
 
         // Try the plain path without any extensions
@@ -5686,8 +5816,13 @@ impl<'a> Resolver<'a> {
             ));
         }
 
-        if let Some(query) = entries!().get(base) {
-            // SAFETY: entries_mutex held; rfs points at the process-global RealFS.
+        // Each probe of the listing goes through `EntriesOption::lookup`, a
+        // single `entries_mutex` critical section (see its doc for the
+        // in-place rewrite this guards against).
+        let (plain_query, plain_dirname_fd) = dir_entry.get().lookup(base);
+        if let Some(query) = plain_query {
+            // SAFETY: rfs points at the process-global RealFS; the lazy-stat
+            // rewrite inside `kind()` is serialized on the per-entry mutex.
             if unsafe { query.entry().kind(rfs, self.store_fd) } == Fs::file_system::EntryKind::File
             {
                 if let Some(debug) = self.debug_logs.as_mut() {
@@ -5712,7 +5847,7 @@ impl<'a> Resolver<'a> {
 
                 dec_ret!(Some(LoadResult {
                     path: abs_path,
-                    dirname_fd: entries!().fd,
+                    dirname_fd: plain_dirname_fd,
                     file_fd: query.entry().cache().fd,
                 }));
             }
@@ -5729,7 +5864,7 @@ impl<'a> Resolver<'a> {
             // body can take `&mut self`. Backing `Box<[u8]>` is owned by
             // `self.opts` and never mutated while the resolver runs.
             let ext = bun_ptr::RawSlice::new(&*self.opts.ext_order_slice(extension_order)[i]);
-            if let Some(result) = self.load_extension(base, path, &ext, entries!()) {
+            if let Some(result) = self.load_extension(base, path, &ext, dir_entry) {
                 dec_ret!(Some(result));
             }
         }
@@ -5742,51 +5877,29 @@ impl<'a> Resolver<'a> {
             // BACKREF: see `RawSlice` note above — backing `Box<[u8]>` in
             // `extra_cjs_extensions` is heap-stable for the resolver's life.
             let ext = bun_ptr::RawSlice::new(&*self.opts.extra_cjs_extensions[i]);
-            if let Some(result) = self.load_extension(base, path, &ext, entries!()) {
+            if let Some(result) = self.load_extension(base, path, &ext, dir_entry) {
                 dec_ret!(Some(result));
             }
         }
 
-        // TypeScript-specific behavior: if the extension is ".js" or ".jsx", try
-        // replacing it with ".ts" or ".tsx". At the time of writing this specific
-        // behavior comes from the function "loadModuleFromFile()" in the file
-        // "moduleNameThisResolver.ts" in the TypeScript compiler source code. It
-        // contains this comment:
-        //
-        //   If that didn't work, try stripping a ".js" or ".jsx" extension and
-        //   replacing it with a TypeScript one; e.g. "./foo.js" can be matched
-        //   by "./foo.ts" or "./foo.d.ts"
-        //
-        // We don't care about ".d.ts" files because we can't do anything with
-        // those, so we ignore that part of the behavior.
-        //
-        // See the discussion here for more historical context:
-        // https://github.com/microsoft/TypeScript/issues/4595
+        // TypeScript-specific behavior: try rewriting ".js" to ".ts".
         if let Some(last_dot) = strings::last_index_of_char(base, b'.') {
             let ext = &base[last_dot..base.len()];
-            // NOTE: the node_modules gate only applies to the `.mjs` arm.
-            if ext == b".js"
-                || ext == b".jsx"
-                || (ext == b".mjs"
-                    && (!FeatureFlags::DISABLE_AUTO_JS_TO_TS_IN_NODE_MODULES
-                        || !strings::path_contains_node_modules_folder(path)))
-            {
+            let exts =
+                rewritten_file_extensions(ext, || strings::path_contains_node_modules_folder(path));
+            if !exts.is_empty() {
                 let segment = &base[0..last_dot];
                 let tail = &mut bufs!(load_as_file)[path.len() - base.len()..];
                 tail[..segment.len()].copy_from_slice(segment);
-
-                let exts: &[&[u8]] = if ext == b".mjs" {
-                    &[b".mts"]
-                } else {
-                    &[b".ts", b".tsx", b".mts"]
-                };
 
                 for ext_to_replace in exts {
                     let buffer = &mut tail[0..segment.len() + ext_to_replace.len()];
                     buffer[segment.len()..].copy_from_slice(ext_to_replace);
 
-                    if let Some(query) = entries!().get(&buffer[..]) {
-                        // SAFETY: entries_mutex held; rfs points at the process-global RealFS.
+                    let (ts_query, ts_dirname_fd) = dir_entry.get().lookup(&buffer[..]);
+                    if let Some(query) = ts_query {
+                        // SAFETY: rfs points at the process-global RealFS; the lazy-stat
+                        // rewrite inside `kind()` is serialized on the per-entry mutex.
                         if unsafe { query.entry().kind(rfs, self.store_fd) }
                             == Fs::file_system::EntryKind::File
                         {
@@ -5831,7 +5944,7 @@ impl<'a> Resolver<'a> {
                                     }
                                     query.entry().abs_path.as_bytes()
                                 },
-                                dirname_fd: entries!().fd,
+                                dirname_fd: ts_dirname_fd,
                                 file_fd: query.entry().cache().fd,
                             }));
                         }
@@ -5857,7 +5970,9 @@ impl<'a> Resolver<'a> {
             // For existent directories which don't find a match
             // Start watching it automatically,
             if let Some(watcher) = self.watcher.as_ref() {
-                watcher.watch(entries!().dir, entries!().fd);
+                if let Some((dir, fd)) = dir_entry.get().dir_and_fd() {
+                    watcher.watch(dir, fd);
+                }
             }
         }
         dec_ret!(None);
@@ -5868,17 +5983,12 @@ impl<'a> Resolver<'a> {
         base: &[u8],
         path: &[u8],
         ext: &[u8],
-        entries: &Fs::file_system::DirEntry,
+        dir_entry: bun_ptr::BackRef<Fs::file_system::real_fs::EntriesOption>,
     ) -> Option<LoadResult> {
         // SAFETY: PORT — see load_as_file; derive `rfs` from the raw `*mut FileSystem`
         // field so `unsafe { &mut *self.fs() }` calls below (`filename_store.append_parts`) don't pop
         // its provenance under Stacked Borrows.
         let rfs: *mut Fs::file_system::RealFS = self.rfs_ptr();
-        // BACKREF — `entries` is a slot in the BSSMap-backed `DirEntry` arena
-        // (see `load_as_file`); detach the borrowck lifetime via `BackRef` so the
-        // `&mut self` calls below (debug_logs / fs_ref) don't conflict, while
-        // each read stays a safe `BackRef: Deref`.
-        let entries = bun_ptr::BackRef::new(entries);
         let buffer = &mut bufs!(load_as_file)[0..path.len() + ext.len()];
         buffer[path.len()..].copy_from_slice(ext);
         let file_name = &buffer[path.len() - base.len()..buffer.len()];
@@ -5890,8 +6000,10 @@ impl<'a> Resolver<'a> {
             ));
         }
 
-        if let Some(query) = entries.get().get(file_name) {
-            // SAFETY: entries_mutex held; rfs points at the process-global RealFS.
+        let (ext_query, dirname_fd) = dir_entry.get().lookup(file_name);
+        if let Some(query) = ext_query {
+            // SAFETY: rfs points at the process-global RealFS; the lazy-stat
+            // rewrite inside `kind()` is serialized on the per-entry mutex.
             if unsafe { query.entry().kind(rfs, self.store_fd) } == Fs::file_system::EntryKind::File
             {
                 if let Some(debug) = self.debug_logs.as_mut() {
@@ -5920,7 +6032,7 @@ impl<'a> Resolver<'a> {
                         };
                         query.entry().abs_path.as_bytes()
                     },
-                    dirname_fd: entries.fd,
+                    dirname_fd,
                     file_fd: query.entry().cache().fd,
                 });
             }
@@ -6149,13 +6261,12 @@ impl<'a> Resolver<'a> {
                         if !symlink.is_empty() {
                             if let Some(logs) = self.debug_logs.as_mut() {
                                 let mut buf = Vec::new();
-                                write!(
+                                let _ = write!(
                                     &mut buf,
                                     "Resolved symlink \"{}\" to \"{}\"",
                                     bstr::BStr::new(path),
                                     bstr::BStr::new(symlink)
-                                )
-                                .ok();
+                                );
                                 logs.add_note(buf);
                             }
                             info.abs_real_path = symlink;
@@ -6175,13 +6286,12 @@ impl<'a> Resolver<'a> {
 
                             if let Some(logs) = self.debug_logs.as_mut() {
                                 let mut buf = Vec::new();
-                                write!(
+                                let _ = write!(
                                     &mut buf,
                                     "Resolved symlink \"{}\" to \"{}\"",
                                     bstr::BStr::new(path),
                                     bstr::BStr::new(symlink)
-                                )
-                                .ok();
+                                );
                                 logs.add_note(buf);
                             }
                             {
@@ -6270,6 +6380,10 @@ impl<'a> Resolver<'a> {
                 }
             }
         }
+
+        info.package_json_for_module_type = info
+            .package_json()
+            .or_else(|| parent.and_then(|parent_| parent_.package_json_for_module_type));
 
         // Record if this directory has a tsconfig.json or jsconfig.json file
         if self.opts.load_tsconfig_json {
@@ -6420,6 +6534,9 @@ impl<'a> Resolver<'a> {
                         let mc = unsafe { &mut *merged_config };
                         mc.emit_decorator_metadata =
                             mc.emit_decorator_metadata || parent_config.emit_decorator_metadata;
+                        if let Some(v) = parent_config.use_define_for_class_fields {
+                            mc.use_define_for_class_fields = Some(v);
+                        }
                         if !parent_config.base_url.is_empty() {
                             mc.base_url = core::mem::take(&mut parent_config.base_url);
                         }
@@ -6454,8 +6571,8 @@ impl<'a> Resolver<'a> {
                         // (strings live in dirname_store or default_allocator and outlive the
                         // struct). The heap-allocated TSConfigJSON itself is no longer needed;
                         // without this, every intermediate config in an extends chain leaks on
-                        // each dirInfoUncached() call, which is especially bad under HMR where
-                        // bustDirCache triggers a re-parse of the whole chain on every reload.
+                        // each dir_info_uncached() call, which is especially bad under HMR where
+                        // bust_dir_cache triggers a re-parse of the whole chain on every reload.
                         // SAFETY: parent_config_ptr came from TSConfigJSON::new (heap::alloc)
                         TSConfigJSON::destroy(unsafe { bun_core::heap::take(parent_config_ptr) });
                     }
@@ -6583,6 +6700,19 @@ impl<'b> BrowserMapPath<'b> {
     }
 }
 
+fn primary_side_effects(
+    side_effects: &crate::package_json::SideEffects,
+    path: &[u8],
+) -> SideEffects {
+    if side_effects.has_side_effects(path) {
+        SideEffects::HasSideEffects
+    } else if matches!(side_effects, crate::package_json::SideEffects::False) {
+        SideEffects::NoSideEffectsPackageJson
+    } else {
+        SideEffects::NoSideEffectsPackageJsonArray
+    }
+}
+
 #[inline]
 fn is_dot_slash(path: &[u8]) -> bool {
     #[cfg(not(windows))]
@@ -6604,9 +6734,32 @@ bun_core::comptime_string_map! {
     };
 }
 
+/// `.mjs`/`.mts` are ESM, `.cjs`/`.cts` are CommonJS, anything else is `None`.
 #[inline]
-fn module_type_from_ext(ext: &[u8]) -> Option<options::ModuleType> {
+pub fn module_type_from_ext(ext: &[u8]) -> Option<options::ModuleType> {
     MODULE_TYPE_FROM_EXT.get(ext).copied()
+}
+
+/// TypeScript matches `./foo.js` with `./foo.ts` (microsoft/TypeScript#4595). This
+/// is esbuild's `rewrittenFileExtensions` table plus Bun's `.js` → `.mts`
+/// (oven-sh/bun#12580). `inside_node_modules` gates only `.mjs` and `.cjs`:
+/// `DISABLE_AUTO_JS_TO_TS_IN_NODE_MODULES` never applied to `.js`/`.jsx`.
+fn rewritten_file_extensions(
+    ext: &[u8],
+    inside_node_modules: impl Fn() -> bool,
+) -> &'static [&'static [u8]] {
+    match ext {
+        // tsc tries `.ts` before `.tsx` even for a `.jsx` import.
+        b".js" | b".jsx" => &[b".ts", b".tsx", b".mts"],
+        b".mjs" | b".cjs"
+            if FeatureFlags::DISABLE_AUTO_JS_TO_TS_IN_NODE_MODULES && inside_node_modules() =>
+        {
+            &[]
+        }
+        b".mjs" => &[b".mts"],
+        b".cjs" => &[b".cts"],
+        _ => &[],
+    }
 }
 
 pub struct Dirname;

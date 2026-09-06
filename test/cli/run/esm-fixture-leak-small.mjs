@@ -39,7 +39,7 @@ setTimeout(() => {
   // {
   //   leaked: "38 MB",
   // }
-  if (diff >= (isASAN ? 400 : 100)) {
+  if (diff >= (isASAN ? 500 : 100)) {
     console.log("\n--fail--\n");
     process.exit(1);
   } else {

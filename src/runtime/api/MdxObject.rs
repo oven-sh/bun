@@ -1,8 +1,7 @@
 //! `Bun.mdx` — compile MDX source to a JSX module via `bun_md::mdx`.
 
-use crate::api::MarkdownObject::{PinnedView, parser_err_to_js};
+use crate::api::markdown_object::{parser_err_to_js, pin};
 use crate::node::StringOrBuffer;
-use bun_core::OwnedString;
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
 use bun_md::mdx;
 use bun_md::root as md;
@@ -28,16 +27,16 @@ fn compile(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSVa
             .throw_invalid_arguments(format_args!("Expected a string or buffer to compile")));
     };
 
-    let pinned = PinnedView::pin(global_this, &buffer)?;
-    let input: &[u8] = match &pinned {
-        Some(p) => p.slice(),
-        None => buffer.slice(),
-    };
-
     let defaults = mdx::MdxOptions::default();
     let mut md_options = defaults.md_options;
     // Owns the bytes `options.jsx_import_source` borrows.
     let jsx_import_source = parse_options(global_this, opts_value, &mut md_options)?;
+
+    let pinned = pin(global_this, &buffer)?;
+    let input: &[u8] = match &pinned {
+        Some(p) => p.slice(),
+        None => buffer.slice(),
+    };
 
     let options = mdx::MdxOptions {
         jsx_import_source: match &jsx_import_source {
@@ -77,8 +76,7 @@ fn parse_options(
     }
 
     if let Some(import_source) = opts_value.get_stringish(global_this, "jsxImportSource")? {
-        let owned = OwnedString::new(import_source);
-        let utf8 = owned.to_utf8();
+        let utf8 = import_source.to_utf8();
         return Ok(Some(utf8.slice().to_vec()));
     }
 
@@ -96,11 +94,8 @@ fn mdx_err_to_js(
         // Propagates a pending JS exception, stack overflow, or input-size
         // range error unchanged.
         mdx::MdxError::Parser(err) => parser_err_to_js(global_this, err, input_len),
-        other => {
-            let name: &'static str = (&other).into();
-            global_this.throw_value(
-                global_this.create_syntax_error_instance(format_args!("MDX compile error: {name}")),
-            )
-        }
+        other => global_this.throw_value(
+            global_this.create_syntax_error_instance(format_args!("MDX compile error: {other}")),
+        ),
     }
 }

@@ -22,7 +22,6 @@
 
 #include "DOMFormData.h"
 #include "JSDOMWrapper.h"
-#include <wtf/NeverDestroyed.h>
 
 namespace WebCore {
 
@@ -45,7 +44,7 @@ public:
 
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
     {
-        return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::JSType(WebCore::JSDOMWrapperType), StructureFlags), info(), JSC::NonArray);
+        return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::JSType(WebCore::JSDOMWrapperType), StructureFlags), info(), JSC::NonArray);
     }
 
     static JSC::JSValue getConstructor(JSC::VM&, const JSC::JSGlobalObject*);
@@ -66,23 +65,6 @@ protected:
 };
 
 JSC::JSValue getInternalProperties(JSC::VM& vm, JSC::JSGlobalObject* lexicalGlobalObject, JSDOMFormData* castedThis);
-
-class JSDOMFormDataOwner final : public JSC::WeakHandleOwner {
-public:
-    bool isReachableFromOpaqueRoots(JSC::Handle<JSC::Unknown>, void* context, JSC::AbstractSlotVisitor&, ASCIILiteral*) final;
-    void finalize(JSC::Handle<JSC::Unknown>, void* context) final;
-};
-
-inline JSC::WeakHandleOwner* wrapperOwner(DOMWrapperWorld&, DOMFormData*)
-{
-    static NeverDestroyed<JSDOMFormDataOwner> owner;
-    return &owner.get();
-}
-
-inline void* wrapperKey(DOMFormData* wrappableObject)
-{
-    return wrappableObject;
-}
 
 JSC::JSValue toJS(JSC::JSGlobalObject*, JSDOMGlobalObject*, DOMFormData&);
 inline JSC::JSValue toJS(JSC::JSGlobalObject* lexicalGlobalObject, JSDOMGlobalObject* globalObject, DOMFormData* impl) { return impl ? toJS(lexicalGlobalObject, globalObject, *impl) : JSC::jsNull(); }

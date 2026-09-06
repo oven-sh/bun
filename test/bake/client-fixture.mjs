@@ -32,15 +32,17 @@ let expectingReload = false;
 let webSockets = [];
 let pendingReload = null;
 let pendingReloadTimer = null;
-let isUpdating = null;
+// Bumped when the current window is abandoned; acks captured by an older window are dropped.
+let windowGeneration = 0;
+// Acks the current window still owes the harness: builds it received and its page load.
+let pendingAcks = () => 0;
+// Every ack sent so far; with `pendingAcks()` it tells the harness how many acks to expect in total.
+let acksSent = 0;
 let objectURLRegistry = new Map();
 let internalAPIs;
 
 function reset() {
-  if (isUpdating !== null) {
-    clearImmediate(isUpdating);
-    isUpdating = null;
-  }
+  windowGeneration++;
   for (const ws of webSockets) {
     ws.onclose = () => {};
     ws.onerror = () => {};
@@ -71,16 +73,35 @@ function createWindow(windowUrl) {
     height: 768,
   });
 
+  // The harness counts one `received-hmr-event` per build per page. A page
+  // that reloads before its ack fires is abandoned, so the ack is dropped and
+  // the new window acks once it has loaded (see the socket-connected handler).
+  const generation = ++windowGeneration;
+  const ackToHarness = () => {
+    if (generation !== windowGeneration) return;
+    acksSent++;
+    process.send({ type: "received-hmr-event", args: [] });
+  };
+  let pageLoadAcked = false;
+  const ackPageLoad = () => {
+    if (pageLoadAcked) return;
+    pageLoadAcked = true;
+    ackToHarness();
+  };
+
   // The HMR runtime reads this symbol-keyed callback off `globalThis` (which is
   // `window` inside happy-dom's script context) and passes its internal hooks.
   let hmrEventHookInstalled = false;
-  let pendingHotUpdateAcks = 0;
-  let hmrScriptQueued = false;
-  const sendHmrAck = () => {
-    if (pendingHotUpdateAcks === 0) return;
-    pendingHotUpdateAcks--;
-    process.send({ type: "received-hmr-event", args: [] });
+  let pendingBuildAcks = 0;
+  // The update frame whose handlers are running. The HMR runtime appends a
+  // frame's script synchronously from its handler, so the flag lands on it.
+  let currentFrame = null;
+  const ackBuild = () => {
+    if (pendingBuildAcks === 0) return;
+    pendingBuildAcks--;
+    ackToHarness();
   };
+  pendingAcks = () => pendingBuildAcks + (pageLoadAcked ? 0 : 1);
   window[Symbol.for("bun testing api, may change at any time")] = internal => {
     window.internal = internal;
     if (typeof internal.onEvent === "function") {
@@ -88,9 +109,7 @@ function createWindow(windowUrl) {
       // Ack a hot update only once the new module code has actually run. Node's
       // Blob.arrayBuffer() resolves on a later macrotask than the WS listener's
       // setImmediate, so acking from the WS listener would race the eval.
-      // Full reloads are not acked here; the new window acks from the
-      // `[Bun] Hot-module-reloading socket connected` handler after loadPage.
-      internal.onEvent("bun:afterUpdate", sendHmrAck);
+      internal.onEvent("bun:afterUpdate", ackBuild);
     }
   };
 
@@ -110,25 +129,23 @@ function createWindow(windowUrl) {
       webSockets.push(this);
       this.addEventListener("message", event => {
         const data = new Uint8Array(event.data);
-        if (data[0] === "u".charCodeAt(0) && hmrEventHookInstalled) {
+        const kind = String.fromCharCode(data[0]);
+        // One ack per build, on the last frame the server sends this page for
+        // it: "u" for an HMR page (an "e" with the build's errors precedes it),
+        // "e" for the error page, which only subscribes to errors.
+        if (hmrEventHookInstalled ? kind === "u" : kind === "e" || kind === "u") {
           // JS updates queue a script tag and ack via bun:afterUpdate once it
           // evals; everything else (CSS, reloads, route reloads) acks here on
-          // the next tick when no script was queued.
-          pendingHotUpdateAcks++;
-          hmrScriptQueued = false;
-          isUpdating = setImmediate(() => {
-            isUpdating = null;
-            if (!hmrScriptQueued) sendHmrAck();
-          });
-        } else if (data[0] === "e".charCodeAt(0) || data[0] === "u".charCodeAt(0)) {
-          isUpdating = setImmediate(() => {
-            process.send({ type: "received-hmr-event", args: [] });
-            isUpdating = null;
+          // the next tick when this frame queued no script.
+          pendingBuildAcks++;
+          const frame = (currentFrame = { scriptQueued: false });
+          setImmediate(() => {
+            if (!frame.scriptQueued) ackBuild();
           });
         }
         if (!allowWebSocketMessages) {
           const allowedTypes = ["n", "r"];
-          if (allowedTypes.includes(String.fromCharCode(data[0]))) {
+          if (allowedTypes.includes(kind)) {
             return;
           }
           dumpWebSocketMessage("[E] WebSocket message received while messages are not allowed", data);
@@ -176,7 +193,7 @@ function createWindow(windowUrl) {
     value: function (element) {
       if (element instanceof ScriptTag) {
         assert(element.src.startsWith("blob:"));
-        hmrScriptQueued = true;
+        if (currentFrame) currentFrame.scriptQueued = true;
         const blob = objectURLRegistry.get(element.src);
         assert(blob);
         // Capture the window this script was appended to. Rapid HMR reloads
@@ -230,9 +247,7 @@ function createWindow(windowUrl) {
 
           // If no stylesheets of any kind, just emit the event
           if (styleLinks.length === 0 && styleTags.length === 0 && adoptedSheets.length === 0) {
-            process.nextTick(() => {
-              process.send({ type: "received-hmr-event", args: [] });
-            });
+            process.nextTick(ackPageLoad);
             return;
           }
 
@@ -270,9 +285,7 @@ function createWindow(windowUrl) {
             if (checkAttempts >= MAX_CHECK_ATTEMPTS && !allLoaded) {
               console.warn("[W] Reached maximum CSS load check attempts, proceeding anyway");
             }
-            process.nextTick(() => {
-              process.send({ type: "received-hmr-event", args: [] });
-            });
+            process.nextTick(ackPageLoad);
           } else {
             // Wait a bit and check again
             console.info(
@@ -430,6 +443,14 @@ process.on("message", async message => {
   }
   if (message.type === "set-allow-websocket-messages") {
     allowWebSocketMessages = message.args[0];
+  }
+  if (message.type === "ping") {
+    const [messageId] = message.args;
+    // Reply from the check phase: a frame received before this ping has then
+    // sent its ack, or is still counted in `pendingAcks`.
+    setImmediate(() => {
+      process.send({ type: `pong-${messageId}`, args: [{ value: acksSent + pendingAcks() }] });
+    });
   }
   if (message.type === "hard-reload") {
     expectingReload = true;

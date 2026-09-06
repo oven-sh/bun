@@ -101,9 +101,7 @@ impl CronExpression {
 
         let mut count: usize = 0;
         let mut fields: [&[u8]; 5] = [&[]; 5];
-        let mut iter = expr
-            .split(|b| *b == b' ' || *b == b'\t')
-            .filter(|s| !s.is_empty());
+        let mut iter = strings::tokenize_any(expr, b" \t");
         while let Some(field) = iter.next() {
             if count >= 5 {
                 return Err(CronError::TooManyFields);
@@ -403,13 +401,13 @@ fn parse_field<T: BitInt>(field: &[u8], min: u8, max: u8, kind: NameKind) -> Res
         return Err(CronError::InvalidField);
     }
     let mut result: T = T::ZERO;
-    let mut parts = field.split(|b| *b == b',');
+    let mut parts = strings::split(field, b",");
     while let Some(part) = parts.next() {
         if part.is_empty() {
             return Err(CronError::InvalidField);
         }
         // Split by / for step
-        let mut step_iter = part.split(|b| *b == b'/');
+        let mut step_iter = strings::split(part, b"/");
         let base = step_iter.next().ok_or(CronError::InvalidField)?;
         let step_str = step_iter.next();
         if step_iter.next().is_some() {

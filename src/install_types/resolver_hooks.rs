@@ -234,12 +234,6 @@ impl Behavior {
     }
 
     #[inline]
-    #[cfg(debug_assertions)]
-    pub fn eq(lhs: Behavior, rhs: Behavior) -> bool {
-        lhs.bits() == rhs.bits()
-    }
-
-    #[inline]
     pub fn add(self, kind: Behavior) -> Behavior {
         self | kind
     }
@@ -388,15 +382,6 @@ pub struct TagInfo {
 pub struct TarballInfo {
     pub uri: URI,
     pub package_name: SemverString,
-}
-
-impl Default for TarballInfo {
-    fn default() -> Self {
-        TarballInfo {
-            uri: URI::Local(SemverString::default()),
-            package_name: SemverString::default(),
-        }
-    }
 }
 
 impl TarballInfo {
@@ -1052,7 +1037,6 @@ impl Repository {
 // can name the `npm` arm's payload without an upward edge.
 
 pub type VersionedURL = VersionedURLType<u64>;
-pub type OldV2VersionedURL = VersionedURLType<u32>;
 
 #[repr(C)]
 pub struct VersionedURLType<SemverInt: bun_semver::version::VersionInt> {
@@ -1204,6 +1188,7 @@ pub struct Features {
     pub dependencies: bool,
     pub dev_dependencies: bool,
     pub is_main: bool,
+    pub is_workspace: bool,
     pub optional_dependencies: bool,
     pub peer_dependencies: bool,
     pub trusted_dependencies: bool,
@@ -1217,6 +1202,7 @@ impl Default for Features {
             dependencies: true,
             dev_dependencies: false,
             is_main: false,
+            is_workspace: false,
             optional_dependencies: false,
             peer_dependencies: true,
             trusted_dependencies: false,
@@ -1238,6 +1224,7 @@ impl Features {
             dependencies: true,
             dev_dependencies: false,
             is_main: false,
+            is_workspace: false,
             optional_dependencies: false,
             peer_dependencies: true,
             trusted_dependencies: false,
@@ -1266,6 +1253,7 @@ impl Features {
 
     pub const WORKSPACE: Self = Self {
         dev_dependencies: true,
+        is_workspace: true,
         optional_dependencies: true,
         trusted_dependencies: true,
         ..Self::base()
@@ -1344,6 +1332,11 @@ pub struct DependencyGroup {
     pub prop: &'static [u8],
     pub field: &'static [u8],
     pub behavior: Behavior,
+}
+impl Default for DependencyGroup {
+    fn default() -> Self {
+        Self::DEPENDENCIES
+    }
 }
 impl DependencyGroup {
     pub const DEPENDENCIES: Self = Self {

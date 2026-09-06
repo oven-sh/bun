@@ -21,7 +21,8 @@ typedef enum {
   BUN_LOADER_HTML = 17,
   BUN_LOADER_YAML = 18,
   BUN_LOADER_MD = 20,
-  BUN_LOADER_MDX = 21,
+  BUN_LOADER_XML = 21,
+  BUN_LOADER_MDX = 22,
 } BunLoader;
 
 const BunLoader BUN_LOADER_MAX = BUN_LOADER_MDX;

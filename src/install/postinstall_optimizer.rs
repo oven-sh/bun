@@ -95,13 +95,6 @@ impl PostinstallOptimizer {
         target_cpu: npm::Architecture,
         target_os: npm::OperatingSystem,
     ) -> Option<PackageID> {
-        // Windows needs file extensions.
-        // Wrap the raw bit in the newtype since `WIN32` is exported as the
-        // underlying `u16` repr, not `Self`.
-        if target_os.is_match(npm::OperatingSystem(npm::OperatingSystem::WIN32)) {
-            return None;
-        }
-
         // Loop through the list of optional dependencies with platform-specific constraints
         // Find a matching target-specific dependency.
         for &resolution in resolutions {

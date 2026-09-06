@@ -37,6 +37,7 @@
 #include <JavaScriptCore/JSFunction.h>
 #include <JavaScriptCore/LazyProperty.h>
 #include <JavaScriptCore/Structure.h>
+#include <utility>
 
 namespace WebCore {
 
@@ -326,6 +327,24 @@ class JSStreamsRuntime final {
     WTF_MAKE_NONCOPYABLE(JSStreamsRuntime);
 
 public:
+#define WEB_STREAMS_STRUCTURE_INDEX_ENTRY(memberName, ClassName) memberName,
+    enum class InternalStructure : uint8_t {
+        FOR_EACH_WEB_STREAMS_INTERNAL_STRUCTURE(WEB_STREAMS_STRUCTURE_INDEX_ENTRY)
+            Count
+    };
+#undef WEB_STREAMS_STRUCTURE_INDEX_ENTRY
+
+    // Index of every handler in m_handlers, in macro order (both lists).
+    // clang-format off
+#define WEB_STREAMS_HANDLER_INDEX_ENTRY(name) name,
+    enum class Handler : uint8_t {
+        FOR_EACH_WEB_STREAMS_REACTION_HANDLER(WEB_STREAMS_HANDLER_INDEX_ENTRY)
+        FOR_EACH_WEB_STREAMS_BOUND_HANDLER_TARGET(WEB_STREAMS_HANDLER_INDEX_ENTRY)
+        Count
+    };
+#undef WEB_STREAMS_HANDLER_INDEX_ENTRY
+    // clang-format on
+
     JSStreamsRuntime() = default;
     void initialize(Zig::GlobalObject*);
 
@@ -333,7 +352,7 @@ public:
     // behind a free function so streams .cpp files do not include ZigGlobalObject.h.
     static JSStreamsRuntime* from(JSC::JSGlobalObject*);
 
-    // Called from Zig::GlobalObject::visitChildren. MUST visit EVERY m_<handler>
+    // Called from Zig::GlobalObject::visitChildren. MUST visit EVERY handler
     // LazyProperty (both macro lists), the two size-function LazyProperties, and every
     // LazyProperty in FOR_EACH_WEB_STREAMS_INTERNAL_STRUCTURE. Safe on a
     // default-constructed instance (LazyProperty::visit is a no-op for m_pointer == 0).
@@ -343,7 +362,7 @@ public:
     // The shared handler functions. Each LazyProperty materializes the JSFunction on FIRST
     // use; the global is the owner passed to `init.owner`.
 #define WEB_STREAMS_DECLARE_HANDLER_ACCESSOR(name) \
-    JSC::JSFunction* name() const { return m_##name.getInitializedOnMainThread(m_globalObject); }
+    JSC::JSFunction* name() const { return m_handlers[static_cast<size_t>(Handler::name)].getInitializedOnMainThread(m_globalObject); }
     FOR_EACH_WEB_STREAMS_REACTION_HANDLER(WEB_STREAMS_DECLARE_HANDLER_ACCESSOR)
     FOR_EACH_WEB_STREAMS_BOUND_HANDLER_TARGET(WEB_STREAMS_DECLARE_HANDLER_ACCESSOR)
 #undef WEB_STREAMS_DECLARE_HANDLER_ACCESSOR
@@ -362,24 +381,37 @@ public:
     // The readMany `{value, size, done}` result shape, so results are built with
     // putDirectOffset instead of three transitioning putDirects.
     JSC::Structure* readManyResultStructure(const Zig::GlobalObject*);
+    static constexpr JSC::PropertyOffset readManyResultValueOffset = 0;
+    static constexpr JSC::PropertyOffset readManyResultSizeOffset = 1;
+    static constexpr JSC::PropertyOffset readManyResultDoneOffset = 2;
+
+    // `{ done, value }` of a readMany() result: the slots while `result` has readManyResultStructure, else `get(done)` then `get(value)` (both empty if either throws).
+    std::pair<JSC::JSValue, JSC::JSValue> readManyResult(JSC::JSGlobalObject*, JSC::JSObject* result) const;
 
 private:
     JSC::JSGlobalObject* m_globalObject { nullptr };
 
-#define WEB_STREAMS_DECLARE_HANDLER_MEMBER(name) \
-    JSC::LazyProperty<JSC::JSGlobalObject, JSC::JSFunction> m_##name;
-    FOR_EACH_WEB_STREAMS_REACTION_HANDLER(WEB_STREAMS_DECLARE_HANDLER_MEMBER)
-    FOR_EACH_WEB_STREAMS_BOUND_HANDLER_TARGET(WEB_STREAMS_DECLARE_HANDLER_MEMBER)
-#undef WEB_STREAMS_DECLARE_HANDLER_MEMBER
+    JSC::LazyProperty<JSC::JSGlobalObject, JSC::JSFunction> m_handlers[static_cast<size_t>(Handler::Count)];
 
     JSC::LazyProperty<JSC::JSGlobalObject, JSC::JSFunction> m_byteLengthQueuingStrategySizeFunction;
     JSC::LazyProperty<JSC::JSGlobalObject, JSC::JSFunction> m_countQueuingStrategySizeFunction;
 
-#define WEB_STREAMS_DECLARE_STRUCTURE_MEMBER(memberName, ClassName) \
-    JSC::LazyProperty<JSC::JSGlobalObject, JSC::Structure> m_##memberName;
-    FOR_EACH_WEB_STREAMS_INTERNAL_STRUCTURE(WEB_STREAMS_DECLARE_STRUCTURE_MEMBER)
-#undef WEB_STREAMS_DECLARE_STRUCTURE_MEMBER
+    JSC::LazyProperty<JSC::JSGlobalObject, JSC::Structure> m_internalStructures[static_cast<size_t>(InternalStructure::Count)];
     JSC::LazyProperty<JSC::JSGlobalObject, JSC::Structure> m_readManyResultStructure;
 };
+
+inline std::pair<JSC::JSValue, JSC::JSValue> JSStreamsRuntime::readManyResult(JSC::JSGlobalObject* globalObject, JSC::JSObject* result) const
+{
+    if (result->structureID() == m_readManyResultStructure.getInitializedOnMainThread(m_globalObject)->id()) [[likely]]
+        return { result->getDirect(readManyResultDoneOffset), result->getDirect(readManyResultValueOffset) };
+
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSC::JSValue done = result->get(globalObject, vm.propertyNames->done);
+    RETURN_IF_EXCEPTION(scope, {});
+    JSC::JSValue value = result->get(globalObject, vm.propertyNames->value);
+    RETURN_IF_EXCEPTION(scope, {});
+    return { done, value };
+}
 
 } // namespace WebCore

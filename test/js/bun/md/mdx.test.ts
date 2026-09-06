@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import fs from "node:fs";
 import path from "node:path";
 
@@ -45,12 +45,7 @@ const LAST_ROUTE_ENTRY = "\u2514\u2500\u2500";
 /** Matches a single route entry like "  ├── /docs  → docs/index.mdx". */
 const ROUTE_ENTRY_REGEX = /[├└]──\s+(\/\S*)\s+→\s+(\S+)/g;
 
-const Mdx = (Bun as any).mdx as {
-  compile(
-    input: string | Uint8Array,
-    options?: { jsxImportSource?: string; hardSoftBreaks?: boolean; hard_soft_breaks?: boolean },
-  ): string;
-};
+const Mdx = Bun.mdx;
 
 describe("Bun.mdx.compile", () => {
   test("compiles markdown to JSX module", () => {
@@ -60,6 +55,17 @@ describe("Bun.mdx.compile", () => {
     expect(output).toContain("Hello");
   });
 
+  test("compiles a buffer view and releases its pin", () => {
+    const source = "# Héllo";
+    const bytes = new TextEncoder().encode(`!!${source}??`);
+    const input = bytes.subarray(2, -2);
+
+    expect(Mdx.compile(input)).toBe(Mdx.compile(source));
+    const transferred = structuredClone(bytes.buffer, { transfer: [bytes.buffer] });
+    expect(input.byteLength).toBe(0);
+    expect(new TextDecoder().decode(transferred)).toBe(`!!${source}??`);
+  });
+
   test("supports frontmatter and top-level statements", () => {
     const output = Mdx.compile(
       ["---", "title: Demo", "---", 'import { X } from "./x"', "export const year = 2026", "", "# Heading"].join("\n"),
@@ -67,6 +73,55 @@ describe("Bun.mdx.compile", () => {
     expect(output).toContain('import { X } from "./x"');
     expect(output).toContain("export const year = 2026");
     expect(output).toContain('export const frontmatter = {"title": "Demo"}');
+  });
+
+  test("frontmatter accepts CRLF line endings", () => {
+    const source = "---\ntitle: Demo\n---\n# Heading";
+    expect(Mdx.compile(source.replaceAll("\n", "\r\n"))).toBe(Mdx.compile(source));
+  });
+
+  test("reads buffer bytes after option getters resize the input", () => {
+    const buffer = new ArrayBuffer(8, { maxByteLength: 16 });
+    const input = new Uint8Array(buffer);
+    input.set(new TextEncoder().encode("# Before"));
+    const output = Mdx.compile(input, {
+      get jsxImportSource() {
+        buffer.resize(3);
+        return "react";
+      },
+    });
+    expect(output).toBe(Mdx.compile("# B"));
+  });
+
+  test.each(["~~~js\n{unfinished\n~~~", "````js\n```\n{unfinished\n````", "``{unfinished``"])(
+    "preserves braces in code: %s",
+    source => {
+      const compiled = Mdx.compile(source);
+      expect(compiled).toContain("<_components.code");
+      expect(new Bun.Transpiler({ loader: "tsx" }).transformSync(compiled)).toContain("{unfinished");
+    },
+  );
+
+  test("preserves backtick runs inside expression strings", () => {
+    expect(Mdx.compile("Value: {'```'}")).toContain("{'```'}");
+  });
+
+  test("accepts escaped literal braces", () => {
+    const compiled = Mdx.compile("Literal: \\{unfinished");
+    expect(compiled).toContain("{'{'}unfinished");
+  });
+
+  test.each(["\x01", "\x01MDXE0\x01 after {props.value}", "\x01MDXE0:0\x01 \x01MDXE1:0\x01 {props.value}"])(
+    "preserves literal control characters: %j",
+    source => {
+      expect(Mdx.compile(source)).toContain(source);
+    },
+  );
+
+  test("keeps formatted image alt text inside its attribute", () => {
+    const compiled = Mdx.compile('![a **bold** and `code`](image.png "title")');
+    expect(compiled).toContain('alt="a bold and code" title="title"');
+    expect(new Bun.Transpiler({ loader: "tsx" }).transformSync(compiled)).toContain("a bold and code");
   });
 
   test("preserves inline expressions", () => {
@@ -238,6 +293,12 @@ describe("Bun.mdx.compile", () => {
     });
   });
 
+  test("rejects cyclic YAML aliases in frontmatter", () => {
+    const source = "---\nvalue: &value [*value]\n---\n# Heading";
+    expect(() => Mdx.compile(source)).toThrow(SyntaxError);
+    expect(() => Mdx.compile(source)).toThrow("MDX compile error: failed to parse YAML frontmatter");
+  });
+
   test("complex fixture compiles with deep frontmatter and no placeholder leakage", () => {
     const src = fs.readFileSync(path.join(fixtureDir, "complex-frontmatter.mdx"), "utf8");
     const output = Mdx.compile(src);
@@ -307,6 +368,92 @@ describe("Bun.mdx.compile", () => {
 });
 
 describe("MDX loader integration", () => {
+  test("preserves frontmatter properties and renders GFM and code contents", async () => {
+    using dir = tempDir("mdx-rendering", {
+      "entry.tsx": `
+        import React from "react";
+        import { renderToStaticMarkup } from "react-dom/server";
+        import Page, { frontmatter } from "./page.txt" with { type: "mdx" };
+        console.log(JSON.stringify({
+          own: Object.hasOwn(frontmatter, "__proto__"),
+          prototype: Object.getPrototypeOf(frontmatter) === Object.prototype,
+          value: frontmatter.__proto__.owned,
+          html: renderToStaticMarkup(React.createElement(Page)),
+        }));
+      `,
+      "page.txt": [
+        "---",
+        "__proto__:",
+        "  owned: true",
+        "---",
+        "",
+        "- [x] Done",
+        "- [ ] Pending",
+        "",
+        "| Left | Right |",
+        "| :--- | ---: |",
+        "| one | two |",
+        "",
+        "```txt",
+        "  &copy; {unfinished",
+        "    next line",
+        "```",
+      ].join("\n"),
+    });
+    linkNodeModules(String(dir));
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "entry.tsx"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout).not.toBe("");
+    const result = JSON.parse(stdout);
+    expect(result).toMatchObject({ own: true, prototype: true, value: true });
+    expect(result.html).toContain('type="checkbox" disabled="" checked=""');
+    expect(result.html).toContain('type="checkbox" disabled=""/>Pending');
+    expect(result.html).toContain('<th align="left">Left</th><th align="right">Right</th>');
+    expect(result.html).toContain('<code class="language-txt">  &amp;copy; {unfinished\n    next line\n</code>');
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+  });
+
+  test("Bun.build accepts MDX in extension maps and plugin results", async () => {
+    using dir = tempDir("mdx-build", {
+      "entry.tsx": 'export { default as File } from "./file.post"; export { default as Plugin } from "./plugin.note";',
+      "file.post": "# Extension mapping",
+      "plugin.note": "# Plugin result",
+    });
+    linkNodeModules(String(dir));
+    const result = await Bun.build({
+      entrypoints: [path.join(String(dir), "entry.tsx")],
+      target: "bun",
+      loader: { ".post": "mdx" },
+      plugins: [
+        {
+          name: "mdx-loader-test",
+          setup(build) {
+            build.onLoad({ filter: /\.post$/ }, async ({ path, loader }) => {
+              expect(loader).toBe("mdx");
+              return { contents: await Bun.file(path).text(), loader };
+            });
+            build.onLoad({ filter: /\.note$/ }, async ({ path }) => ({
+              contents: await Bun.file(path).text(),
+              loader: "mdx",
+            }));
+          },
+        },
+      ],
+    });
+    expect(result.logs).toEqual([]);
+    expect(result.success).toBe(true);
+    const output = await result.outputs[0].text();
+    expect(output).toContain("Extension mapping");
+    expect(output).toContain("Plugin result");
+  });
+
   test("imports mdx from tsx entrypoint", async () => {
     using dir = tempDir("mdx-loader", {
       "entry.tsx": `
@@ -521,6 +668,78 @@ describe("test helpers", () => {
 });
 
 describe("MDX direct serve mode", () => {
+  test("rebuilds native MDX dependencies after an edit", async () => {
+    using dir = tempDir("mdx-watch", { "index.mdx": "# Before edit" });
+    linkNodeModules(String(dir));
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "index.mdx", "--port=0"],
+      cwd: String(dir),
+      env: { ...bunEnv, NO_COLOR: "1" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const output = await readUntil(proc, text => URL_REGEX.test(text));
+    const base = output.match(URL_REGEX)![1];
+    async function bundle() {
+      const response = await fetch(base);
+      expect(response.status).toBe(200);
+      const html = await response.text();
+      const script = html.match(/<script type="module"[^>]*src="([^"]+)"/);
+      expect(script).not.toBeNull();
+      const scriptResponse = await fetch(new URL(script![1], base));
+      expect(scriptResponse.status).toBe(200);
+      return scriptResponse.text();
+    }
+    expect(await bundle()).toContain("Before edit");
+    await Bun.write(path.join(String(dir), "index.mdx"), "# After edit");
+    const deadline = performance.now() + 3000;
+    let source: string;
+    do {
+      source = await bundle();
+    } while (!source.includes("After edit") && performance.now() < deadline);
+    expect(source).toContain("After edit");
+  });
+
+  test("keeps shared filename prefixes in routes", async () => {
+    using dir = tempDir("mdx-route-prefix", {
+      "guide-a.mdx": "# First",
+      "guide-b.mdx": "# Second",
+    });
+    linkNodeModules(String(dir));
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "./*.mdx", "--port=0"],
+      cwd: String(dir),
+      env: { ...bunEnv, NO_COLOR: "1" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const output = await readUntil(proc, text => URL_REGEX.test(text) && text.includes(LAST_ROUTE_ENTRY));
+    expect([...output.matchAll(ROUTE_ENTRY_REGEX)].map(m => m[1])).toEqual(["/guide-a", "/guide-b"]);
+    const base = output.match(URL_REGEX)![1];
+    expect((await fetch(new URL("/guide-a", base))).status).toBe(200);
+    expect((await fetch(new URL("/guide-b", base))).status).toBe(200);
+  });
+
+  test.skipIf(isWindows)("resolves React from a parent directory and escapes import paths", async () => {
+    using dir = tempDir("mdx-path-escape", {
+      "docs/a'\nb.mdx": "# Escaped path",
+    });
+    linkNodeModules(String(dir));
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "./a'\nb.mdx", "--port=0"],
+      cwd: path.join(String(dir), "docs"),
+      env: { ...bunEnv, NO_COLOR: "1" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const output = await readUntil(proc, text => URL_REGEX.test(text));
+    const response = await fetch(output.match(URL_REGEX)![1]);
+    expect(response.status).toBe(200);
+    const html = await response.text();
+    expect(html).toContain('<div id="root"></div>');
+    expect(html).toContain('<script type="module"');
+  });
+
   test("bun file.mdx serves HTML shell", async () => {
     using dir = tempDir("mdx-serve", {
       "index.mdx": `# Hello`,

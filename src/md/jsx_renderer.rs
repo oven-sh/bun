@@ -3,15 +3,15 @@
 //! `components` prop; `mdx::compile` builds the `_components` object from
 //! [`JsxRenderer::component_names`].
 //!
-//! MDX `{...}` expressions are replaced with `\x01MDXE<n>\x01` placeholders
+//! MDX `{...}` expressions are replaced with `\x01MDXE<nonce>:<index>\x01` placeholders
 //! before parsing (see [`crate::mdx::replace_expressions`]) so the Markdown
 //! parser treats them as opaque text. This renderer restores them.
 
 use crate::helpers;
 use crate::output::OutputBuffer;
-use crate::parser::ParserError;
 use crate::types::{
-    BLOCK_FENCED_CODE, BlockType, JsResult, Renderer, RendererImpl, SpanDetail, SpanType, TextType,
+    self, BLOCK_FENCED_CODE, BlockType, JsResult, Renderer, RendererImpl, SpanDetail, SpanType,
+    TextType,
 };
 
 /// One `{...}` expression lifted out of the source before parsing.
@@ -35,10 +35,12 @@ pub(crate) struct JsxRenderer<'src> {
     pub out: OutputBuffer,
     src_text: &'src [u8],
     expression_slots: &'src [ExpressionSlot],
+    expression_prefix: &'src [u8],
     /// Insertion-ordered so generated `_components` objects are stable.
     /// Every tracked name is a literal below, so no ownership is needed.
     pub component_names: Vec<&'static [u8]>,
     image_nesting_level: u32,
+    in_code_block: bool,
     // Owned for the same reason as HtmlRenderer's: SpanDetail only borrows for
     // the duration of enter_span.
     saved_img_title: Box<[u8]>,
@@ -56,8 +58,12 @@ impl<'src> JsxRenderer<'src> {
             },
             src_text,
             expression_slots,
+            expression_prefix: expression_slots
+                .first()
+                .map_or(b"", |slot| &slot.placeholder[..slot.placeholder.len() - 2]),
             component_names: Vec::new(),
             image_nesting_level: 0,
+            in_code_block: false,
             saved_img_title: Box::default(),
         }
     }
@@ -152,31 +158,30 @@ impl<'src> JsxRenderer<'src> {
         }
     }
 
-    /// Writes `content`, swapping each `\x01MDXE<n>\x01` placeholder back for
+    /// Writes `content`, swapping each `\x01MDXE<nonce>:<index>\x01` placeholder back for
     /// the original expression wrapped in JSX braces.
     fn write_restoring_expressions(&mut self, content: &[u8], mode: ExprWriteMode) -> JsResult<()> {
         let mut i = 0usize;
         while i < content.len() {
-            if content[i] == 1 {
-                let sentinel_end = content[i + 1..]
-                    .iter()
-                    .position(|&c| c == 1)
-                    .map(|p| i + 1 + p)
-                    .ok_or(ParserError::JSError)?;
-                let placeholder = &content[i..=sentinel_end];
-                // Copy the slice reference out of `self` so the slot borrow is
-                // tied to 'src rather than to `self`, leaving `self` free to
-                // borrow mutably for the writes below.
-                let slots: &'src [ExpressionSlot] = self.expression_slots;
-                let slot = slots
-                    .iter()
-                    .find(|slot| *slot.placeholder == *placeholder)
-                    .ok_or(ParserError::JSError)?;
-                self.write(b"{");
-                self.write(&slot.original);
-                self.write(b"}");
-                i = sentinel_end + 1;
-                continue;
+            if !self.expression_prefix.is_empty()
+                && content[i..].starts_with(self.expression_prefix)
+            {
+                let mut end = i + self.expression_prefix.len();
+                let mut index = Some(0usize);
+                while let Some(c @ b'0'..=b'9') = content.get(end) {
+                    index = index.and_then(|n| n.checked_mul(10)?.checked_add((c - b'0') as usize));
+                    end += 1;
+                }
+                if content.get(end) == Some(&1)
+                    && let Some(slot) = index.and_then(|n| self.expression_slots.get(n))
+                    && *slot.placeholder == content[i..=end]
+                {
+                    self.write(b"{");
+                    self.write(&slot.original);
+                    self.write(b"}");
+                    i = end + 1;
+                    continue;
+                }
             }
             match mode {
                 ExprWriteMode::JsxText => self.write_jsx_escaped(&content[i..i + 1]),
@@ -209,10 +214,24 @@ impl<'src> JsxRenderer<'src> {
                 }
                 self.write(b">");
             }
-            BlockType::Li => self.write_component_tag_open(b"li"),
+            BlockType::Li => {
+                self.write_component_tag_open(b"li");
+                let task_mark = types::task_mark_from_data(data);
+                if task_mark != 0 {
+                    self.track_component(b"input");
+                    self.write(b"<_components.input type=\"checkbox\" disabled checked={");
+                    self.write(if types::is_task_checked(task_mark) {
+                        b"true"
+                    } else {
+                        b"false"
+                    });
+                    self.write(b"} />");
+                }
+            }
             BlockType::Hr => self.write_component_tag_self_close(b"hr"),
             BlockType::H => self.write_component_tag_open(heading_tag(data)),
             BlockType::Code => {
+                self.in_code_block = true;
                 self.track_component(b"pre");
                 self.track_component(b"code");
                 self.write(b"<_components.pre><_components.code");
@@ -242,8 +261,22 @@ impl<'src> JsxRenderer<'src> {
             BlockType::Thead => self.write_component_tag_open(b"thead"),
             BlockType::Tbody => self.write_component_tag_open(b"tbody"),
             BlockType::Tr => self.write_component_tag_open(b"tr"),
-            BlockType::Th => self.write_component_tag_open(b"th"),
-            BlockType::Td => self.write_component_tag_open(b"td"),
+            BlockType::Th | BlockType::Td => {
+                let name: &[u8] = if block_type == BlockType::Th {
+                    b"th"
+                } else {
+                    b"td"
+                };
+                self.track_component(name);
+                self.write(b"<_components.");
+                self.write(name);
+                if let Some(alignment) = types::alignment_name(types::alignment_from_data(data)) {
+                    self.write(b" align=\"");
+                    self.write(alignment);
+                    self.write(b"\"");
+                }
+                self.write(b">");
+            }
         }
     }
 
@@ -255,7 +288,10 @@ impl<'src> JsxRenderer<'src> {
             BlockType::Ol => self.write_component_tag_close(b"ol"),
             BlockType::Li => self.write_component_tag_close(b"li"),
             BlockType::H => self.write_component_tag_close(heading_tag(data)),
-            BlockType::Code => self.write(b"</_components.code></_components.pre>"),
+            BlockType::Code => {
+                self.in_code_block = false;
+                self.write(b"</_components.code></_components.pre>");
+            }
             BlockType::P => self.write_component_tag_close(b"p"),
             BlockType::Table => self.write_component_tag_close(b"table"),
             BlockType::Thead => self.write_component_tag_close(b"thead"),
@@ -271,6 +307,12 @@ impl<'src> JsxRenderer<'src> {
     // ========================================
 
     fn enter_span(&mut self, span_type: SpanType, detail: SpanDetail<'_>) {
+        if self.image_nesting_level > 0 {
+            if span_type == SpanType::Img {
+                self.image_nesting_level += 1;
+            }
+            return;
+        }
         match span_type {
             SpanType::Em => self.write_component_tag_open(b"em"),
             SpanType::Strong => self.write_component_tag_open(b"strong"),
@@ -347,6 +389,13 @@ impl<'src> JsxRenderer<'src> {
     fn text(&mut self, text_type: TextType, content: &[u8]) -> JsResult<()> {
         let in_image = self.image_nesting_level > 0;
 
+        if self.in_code_block && text_type != TextType::NullChar {
+            self.write(b"{\"");
+            self.write_js_string_escaped(content);
+            self.write(b"\"}");
+            return Ok(());
+        }
+
         match text_type {
             TextType::Normal => self.write_restoring_expressions(
                 content,
@@ -361,7 +410,7 @@ impl<'src> JsxRenderer<'src> {
                 if in_image {
                     self.write(b" ");
                 } else {
-                    self.write(b"<br />");
+                    self.write_component_tag_self_close(b"br");
                 }
             }
             TextType::Softbr => {
@@ -374,6 +423,10 @@ impl<'src> JsxRenderer<'src> {
             TextType::Html => self.write_restoring_expressions(content, ExprWriteMode::Raw)?,
             TextType::Entity => self.write(content),
             TextType::Code => {
+                if in_image {
+                    self.write_attr_escaped(content);
+                    return Ok(());
+                }
                 // Code spans become string expressions so JSX never reinterprets
                 // their contents.
                 self.write(b"{\"");

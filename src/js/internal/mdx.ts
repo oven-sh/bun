@@ -1,30 +1,4 @@
-// MDX Dev Server — loaded when you pass a '.mdx' entry point to Bun.
-//
-// Architecture overview:
-//   1. A Bun.plugin compiles .mdx → TSX in-memory via Bun.mdx.compile()
-//   2. For each .mdx file, a tiny HTML shell + entry.js scaffold is written
-//      to the system temp dir (os.tmpdir). entry.js imports the original .mdx
-//      by absolute path — the plugin intercepts the load and returns compiled
-//      TSX with loader:"tsx".
-//   3. The bundler resolves all imports within the compiled TSX relative to
-//      the original .mdx file's directory. This is critical: relative imports
-//      (e.g. '../components/Foo') and workspace package imports (e.g.
-//      '@org/pkg') resolve correctly because the resolution base is the .mdx
-//      file's location, not the temp directory.
-//   4. react/react-dom are resolved via a node_modules symlink in the temp dir
-//      pointing to the project's node_modules.
-//
-// Why a plugin instead of pre-compiling to a temp .tsx file?
-//   - Writing compiled TSX to a temp dir breaks import resolution (the bundler
-//     resolves relative to the temp dir, not the original source location).
-//   - Writing compiled TSX adjacent to the .mdx file pollutes the user's
-//     project with temporary artifacts.
-//   - The plugin approach keeps everything in-memory. The bundler sees the
-//     original .mdx path and resolves imports from its directory.
-//
-// HMR: the .mdx file is in the bundler's dependency graph (entry.js imports
-// it directly). The plugin re-compiles on each load, so file changes trigger
-// automatic re-bundling through the dev server's built-in file watcher.
+// Loaded when the CLI receives an MDX entry point.
 
 import type { HTMLBundle, Server } from "bun";
 const initial = performance.now();
@@ -44,15 +18,10 @@ function emitMdxWrapperScript(mdxAbsolutePath: string) {
   // Use string concatenation to avoid the build preprocessor's import-extraction regex
   // from matching import statements inside this template literal.
   const imp = "import";
-  // Import the original .mdx file by absolute path. A Bun.plugin registered
-  // before bundling intercepts .mdx loads, compiles to TSX in-memory, and
-  // returns it with loader:"tsx". The bundler resolves imports from the .mdx
-  // file's directory — no temp file written next to the source.
-  const escapedPath = mdxAbsolutePath.replace(/\\/g, "/").replace(/'/g, "\\'");
   return [
     imp + ' React from "react";',
     imp + ' { createRoot } from "react-dom/client";',
-    imp + " MDXContent from '" + escapedPath + "';",
+    imp + " MDXContent from " + JSON.stringify(mdxAbsolutePath) + ";",
     "",
     'const rootEl = document.getElementById("root");',
     "if (!rootEl) {",
@@ -251,43 +220,21 @@ Examples:
 
   args.sort((a, b) => a.localeCompare(b));
 
-  let needsPop = false;
-  if (args.length === 1) {
-    args.push(process.cwd());
-    needsPop = true;
-  }
-
-  let longestCommonPath = args.reduce((acc, curr) => {
-    if (!acc) return curr;
-    let i = 0;
-    while (i < acc.length && i < curr.length && acc[i] === curr[i]) i++;
-    return acc.slice(0, i);
-  });
-
-  if (process.platform === "win32") {
-    longestCommonPath = longestCommonPath.replaceAll("\\", "/");
-  }
-
-  if (needsPop) {
-    args.pop();
+  let commonDirectory = path.dirname(args[0]);
+  for (const arg of args.slice(1)) {
+    while (true) {
+      const relative = path.relative(commonDirectory, arg);
+      if (relative !== ".." && !relative.startsWith(".." + path.sep) && !path.isAbsolute(relative)) break;
+      const parent = path.dirname(commonDirectory);
+      if (parent === commonDirectory) throw new Error("MDX entries must share a filesystem root");
+      commonDirectory = parent;
+    }
   }
 
   const servePaths = args.map(arg => {
-    if (process.platform === "win32") {
-      arg = arg.replaceAll("\\", "/");
-    }
-    const basename = path.basename(arg);
-    const isIndexMdx = basename === "index.mdx";
-
-    let servePath = arg;
-    if (servePath.startsWith(longestCommonPath)) {
-      servePath = servePath.slice(longestCommonPath.length);
-    } else {
-      const relative = path.relative(longestCommonPath, servePath);
-      if (!relative.startsWith("..")) {
-        servePath = relative;
-      }
-    }
+    const isIndexMdx = path.basename(arg) === "index.mdx";
+    let servePath = path.relative(commonDirectory, arg);
+    if (process.platform === "win32") servePath = servePath.replaceAll("\\", "/");
 
     if (isIndexMdx && servePath.length === 0) {
       servePath = "/";
@@ -312,42 +259,7 @@ Examples:
     return servePath;
   });
 
-  const Mdx = (Bun as any).mdx as { compile(input: string): string };
-
-  // Register a plugin so the bake dev server can load .mdx files in-memory.
-  // The plugin compiles MDX → TSX on each load; the bundler resolves imports
-  // relative to the original .mdx file's directory automatically.
-  // Register for both targets: "browser" is used by the bake dev server's
-  // client bundler, "bun" covers runtime/SSR imports of .mdx files.
-  const mdxPlugin = {
-    name: "mdx-dev-server",
-    setup(build: { onLoad: Function }) {
-      build.onLoad({ filter: /\.mdx$/ }, (args: { path: string }) => {
-        const source = fs.readFileSync(args.path, "utf8");
-        const compiled = Mdx.compile(source);
-        return { contents: compiled, loader: "tsx" };
-      });
-    },
-  };
-  Bun.plugin({ ...mdxPlugin, target: "browser" });
-  Bun.plugin({ ...mdxPlugin, target: "bun" });
-
-  // HTML shells and entry scripts are scaffolding only — put them in the
-  // system temp dir to avoid polluting the project tree.
-  const uniqueId = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
-  const tmpRoot = path.join(os.tmpdir(), `.bun-mdx-${process.pid}-${uniqueId}`);
-  ensureDir(tmpRoot);
-
-  // Symlink node_modules so the bundler can resolve react/react-dom
-  // from entry.js in the temp directory.
-  const cwdNodeModules = path.join(cwd, "node_modules");
-  try {
-    if (fs.existsSync(cwdNodeModules)) {
-      fs.symlinkSync(cwdNodeModules, path.join(tmpRoot, "node_modules"), "junction");
-    }
-  } catch {}
-
-  // Clean up generated scaffolding on exit.
+  const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "bun-mdx-"));
   process.on("exit", () => {
     try {
       fs.rmSync(tmpRoot, { recursive: true, force: true });
@@ -362,7 +274,18 @@ Examples:
     const wrapperScriptPath = path.join(entryDir, wrapperScriptName);
     const htmlPath = path.join(entryDir, "index.html");
 
-    // entry.js imports the original .mdx — the plugin handles compilation.
+    let moduleDirectory = path.dirname(mdxPath);
+    while (true) {
+      const nodeModules = path.join(moduleDirectory, "node_modules");
+      if (fs.existsSync(nodeModules)) {
+        fs.symlinkSync(nodeModules, path.join(entryDir, "node_modules"), "junction");
+        break;
+      }
+      const parent = path.dirname(moduleDirectory);
+      if (parent === moduleDirectory) break;
+      moduleDirectory = parent;
+    }
+
     fs.writeFileSync(wrapperScriptPath, emitMdxWrapperScript(mdxPath), "utf8");
     const titleBase = path.basename(mdxPath, ".mdx");
     fs.writeFileSync(htmlPath, emitMdxHtmlShell(wrapperScriptName, titleBase), "utf8");
@@ -439,10 +362,6 @@ Examples:
       throw error;
     }
   }
-
-  // HMR: the .mdx files are now in the bundler's dependency graph (imported
-  // directly by entry.js). The plugin re-compiles on each load, so the dev
-  // server's built-in file watcher handles changes automatically.
 
   const elapsed = (performance.now() - initial).toFixed(2);
   const enableANSIColors = Bun.enableANSIColors;

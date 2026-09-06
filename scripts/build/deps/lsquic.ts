@@ -93,10 +93,9 @@ const liblsquic: string[] = [
 
 export const lsquic: Dependency = {
   name: "lsquic",
-  versionMacro: "LSQUIC",
 
   source: () => ({
-    kind: "github-archive",
+    kind: "github",
     repo: "litespeedtech/lsquic",
     commit: LSQUIC_COMMIT,
   }),

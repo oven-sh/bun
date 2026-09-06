@@ -6,7 +6,7 @@
 //!    `export const frontmatter = {...}`.
 //! 2. Top-level `import`/`export` statements are lifted out so they become
 //!    module-level statements rather than Markdown paragraphs.
-//! 3. `{...}` expressions are replaced with `\x01MDXE<n>\x01` placeholders so
+//! 3. `{...}` expressions are replaced with `\x01MDXE<nonce>:<index>\x01` placeholders so
 //!    the Markdown parser treats them as opaque text; [`jsx_renderer`] restores
 //!    them while rendering.
 //!
@@ -18,7 +18,7 @@ use crate::jsx_renderer::{ExpressionSlot, JsxRenderer};
 use crate::parser::ParserError;
 use crate::root as md;
 
-#[derive(Debug, thiserror::Error, strum::IntoStaticStr)]
+#[derive(Debug, thiserror::Error)]
 pub enum MdxError {
     #[error("out of memory")]
     OutOfMemory,
@@ -92,28 +92,21 @@ pub struct TopLevelStatement {
 
 /// Splits a leading `---` fenced YAML block off the front of `source`.
 pub fn extract_frontmatter(source: &[u8]) -> Option<FrontmatterResult<'_>> {
-    if !strings::has_prefix_comptime(source, b"---") {
+    let first_nl = source.iter().position(|&c| c == b'\n')?;
+    if source[..first_nl].trim_ascii_end() != b"---" {
         return None;
     }
 
-    let first_nl = strings::index_of_char(&source[3..], b'\n')? as usize;
-    let body_start = 3 + first_nl + 1;
-
-    let mut i = body_start;
-    while i < source.len() {
-        if source[i] == b'\n' || i == body_start {
-            let line_start = if source[i] == b'\n' { i + 1 } else { i };
-            if line_start + 3 <= source.len() && &source[line_start..line_start + 3] == b"---" {
-                let after_dashes = line_start + 3;
-                if after_dashes >= source.len() || source[after_dashes] == b'\n' {
-                    return Some(FrontmatterResult {
-                        yaml_content: &source[body_start..line_start],
-                        content_start: core::cmp::min(after_dashes + 1, source.len()) as u32,
-                    });
-                }
-            }
+    let body_start = first_nl + 1;
+    let mut line_start = body_start;
+    for line in source[body_start..].split_inclusive(|&c| c == b'\n') {
+        if line.trim_ascii_end() == b"---" {
+            return Some(FrontmatterResult {
+                yaml_content: &source[body_start..line_start],
+                content_start: (line_start + line.len()) as u32,
+            });
         }
-        i += 1;
+        line_start += line.len();
     }
 
     None
@@ -243,8 +236,22 @@ fn is_statement_complete(kind: StmtKind, line: &[u8], state: &StatementParseStat
 
     !matches!(
         last,
-        b',' | b'=' | b':' | b'+' | b'-' | b'*' | b'/' | b'%' | b'&' | b'|' | b'^' | b'?' | b'('
-            | b'[' | b'{' | b'\\' | b'.'
+        b',' | b'='
+            | b':'
+            | b'+'
+            | b'-'
+            | b'*'
+            | b'/'
+            | b'%'
+            | b'&'
+            | b'|'
+            | b'^'
+            | b'?'
+            | b'('
+            | b'['
+            | b'{'
+            | b'\\'
+            | b'.'
     )
 }
 
@@ -328,13 +335,44 @@ pub fn extract_top_level_statements(
 // Expression extraction
 // ========================================
 
-/// Replaces every top-level `{...}` expression with a `\x01MDXE<n>\x01`
+/// Replaces every top-level `{...}` expression with a `\x01MDXE<nonce>:<index>\x01`
 /// placeholder, returning the rewritten text and the captured expressions.
 ///
 /// Fenced and inline code spans are passed through untouched. Inside an
 /// expression the scanner tracks strings, template literals (including nested
 /// `${}`), and comments so braces in those contexts don't end it early.
 pub fn replace_expressions(source: &[u8]) -> Result<(Vec<u8>, Vec<ExpressionSlot>), MdxError> {
+    let marker = b"\x01MDXE";
+    let nonce = {
+        let mut used = std::collections::HashSet::new();
+        let mut cursor = 0;
+        while let Some(offset) = strings::index_of(&source[cursor..], marker) {
+            cursor += offset + marker.len();
+            let start = cursor;
+            let mut value = Some(0usize);
+            while let Some(c @ b'0'..=b'9') = source.get(cursor) {
+                value = value.and_then(|n| n.checked_mul(10)?.checked_add((c - b'0') as usize));
+                cursor += 1;
+            }
+            if cursor > start
+                && source.get(cursor) == Some(&b':')
+                && let Some(value) = value.filter(|&n| n <= source.len())
+            {
+                used.try_reserve(1)?;
+                used.insert(value);
+            }
+        }
+        let mut nonce = 0;
+        while used.contains(&nonce) {
+            nonce += 1;
+        }
+        nonce
+    };
+    let mut prefix = Vec::new();
+    push_all(&mut prefix, marker)?;
+    let mut nonce_buf = [0u8; 20];
+    push_all(&mut prefix, format_usize(&mut nonce_buf, nonce))?;
+    push_all(&mut prefix, b":")?;
     let mut slots: Vec<ExpressionSlot> = Vec::new();
     let mut output: Vec<u8> = Vec::new();
 
@@ -342,7 +380,10 @@ pub fn replace_expressions(source: &[u8]) -> Result<(Vec<u8>, Vec<ExpressionSlot
     let mut depth = 0usize;
     let mut expr_start: Option<usize> = None;
     let mut in_code_fence = false;
-    let mut in_inline_code = false;
+    let mut inline_code_delimiter = 0;
+    let mut fence_delimiter = b'`';
+    let mut fence_length = 0;
+    let mut line_start = 0;
     let mut expr_quote: Option<u8> = None;
     let mut expr_escaped = false;
     let mut expr_in_line_comment = false;
@@ -351,23 +392,13 @@ pub fn replace_expressions(source: &[u8]) -> Result<(Vec<u8>, Vec<ExpressionSlot
 
     while i < source.len() {
         let c = source[i];
+        if c == b'\n' {
+            line_start = i + 1;
+        }
 
         // `break 'step` plays the role of Zig's `continue`: it skips the rest
         // of the body but still runs the `i += 1` below.
         'step: {
-            if c == b'`' && i + 2 < source.len() && source[i + 1] == b'`' && source[i + 2] == b'`' {
-                in_code_fence = !in_code_fence;
-                output.try_reserve(3)?;
-                output.extend_from_slice(&source[i..i + 3]);
-                i += 2;
-                break 'step;
-            }
-            if in_code_fence {
-                output.try_reserve(1)?;
-                output.push(c);
-                break 'step;
-            }
-
             if expr_start.is_some() {
                 if expr_in_line_comment {
                     if c == b'\n' {
@@ -499,9 +530,8 @@ pub fn replace_expressions(source: &[u8]) -> Result<(Vec<u8>, Vec<ExpressionSlot
                         let expr_text = &source[start + 1..i];
 
                         let mut placeholder = Vec::new();
-                        placeholder.try_reserve(16)?;
-                        placeholder.push(1);
-                        placeholder.extend_from_slice(b"MDXE");
+                        placeholder.try_reserve(prefix.len() + 21)?;
+                        placeholder.extend_from_slice(&prefix);
                         let mut num_buf = [0u8; 20];
                         placeholder.extend_from_slice(format_usize(&mut num_buf, slots.len()));
                         placeholder.push(1);
@@ -529,15 +559,45 @@ pub fn replace_expressions(source: &[u8]) -> Result<(Vec<u8>, Vec<ExpressionSlot
                 break 'step;
             }
 
-            if c == b'`' {
-                in_inline_code = !in_inline_code;
+            if c == b'`' || c == b'~' {
+                let run_length = source[i..].iter().take_while(|&&b| b == c).count();
+                let at_block_start = i >= line_start
+                    && i - line_start <= 3
+                    && source[line_start..i].iter().all(|&b| b == b' ');
+                if inline_code_delimiter == 0 && run_length >= 3 && at_block_start {
+                    if !in_code_fence {
+                        in_code_fence = true;
+                        fence_delimiter = c;
+                        fence_length = run_length;
+                    } else if c == fence_delimiter && run_length >= fence_length {
+                        let rest = source[i + run_length..]
+                            .split(|&b| b == b'\n')
+                            .next()
+                            .unwrap();
+                        if rest.trim_ascii().is_empty() {
+                            in_code_fence = false;
+                        }
+                    }
+                } else if !in_code_fence && c == b'`' {
+                    if inline_code_delimiter == 0 {
+                        inline_code_delimiter = run_length;
+                    } else if inline_code_delimiter == run_length {
+                        inline_code_delimiter = 0;
+                    }
+                }
+                push_all(&mut output, &source[i..i + run_length])?;
+                i += run_length - 1;
+                break 'step;
+            }
+            if in_code_fence || inline_code_delimiter != 0 {
                 output.try_reserve(1)?;
                 output.push(c);
                 break 'step;
             }
-            if in_inline_code {
-                output.try_reserve(1)?;
-                output.push(c);
+
+            if c == b'\\' && source.get(i + 1).is_some_and(u8::is_ascii_punctuation) {
+                push_all(&mut output, &source[i..i + 2])?;
+                i += 1;
                 break 'step;
             }
 
@@ -571,6 +631,9 @@ pub fn replace_expressions(source: &[u8]) -> Result<(Vec<u8>, Vec<ExpressionSlot
 // ========================================
 
 pub fn compile(src: &[u8], options: &MdxOptions<'_>) -> Result<Vec<u8>, MdxError> {
+    if src.len() > crate::parser::MAX_INPUT_LEN {
+        return Err(ParserError::InputTooLarge.into());
+    }
     let source = src.trim_ascii();
     let frontmatter = extract_frontmatter(source);
     let content_start = frontmatter
@@ -585,8 +648,11 @@ pub fn compile(src: &[u8], options: &MdxOptions<'_>) -> Result<Vec<u8>, MdxError
     if renderer.is_oom() {
         return Err(MdxError::OutOfMemory);
     }
-    if strings::contains(renderer.output(), b"\x01MDXE") {
-        return Err(MdxError::UnresolvedPlaceholder);
+    if let Some(slot) = slots.first() {
+        let prefix = &slot.placeholder[..slot.placeholder.len() - 2];
+        if strings::contains(renderer.output(), prefix) {
+            return Err(MdxError::UnresolvedPlaceholder);
+        }
     }
 
     let mut out: Vec<u8> = Vec::new();
@@ -638,30 +704,43 @@ pub fn compile(src: &[u8], options: &MdxOptions<'_>) -> Result<Vec<u8>, MdxError
 // Frontmatter → JSON
 // ========================================
 
-/// Parses YAML frontmatter and serializes it as a JSON object literal.
-/// Uses Bun's YAML parser, so the full YAML spec is supported including
-/// nested objects, arrays, booleans, numbers, and multiline strings.
+/// Serializes YAML frontmatter as a JavaScript literal, preserving own
+/// `__proto__` properties with computed keys.
 fn emit_frontmatter_as_json(out: &mut Vec<u8>, yaml_content: &[u8]) -> Result<(), MdxError> {
-    bun_ast::Expr::data_store_create();
-
     let mut log = bun_ast::Log::init();
     let arena = bun_alloc::Arena::new();
+    let mut ast_allocator = bun_ast::ASTMemoryAllocator::borrowing(&arena);
+    let _ast_scope = ast_allocator.enter();
     let source = bun_ast::Source::init_path_string(b"frontmatter.yaml", yaml_content);
 
-    let expr = match bun_parsers::yaml::YAML::parse(&source, &mut log, &arena) {
+    let expr = match bun_parsers::yaml::YAML::parse(
+        &source,
+        &mut log,
+        &arena,
+        bun_parsers::yaml::CyclicAliases::Reject,
+    ) {
         Ok(expr) => expr,
-        Err(_) => return Err(MdxError::YamlParse),
+        Err(bun_parsers::yaml::YamlParseError::OutOfMemory) => return Err(MdxError::OutOfMemory),
+        Err(bun_parsers::yaml::YamlParseError::StackOverflow) => {
+            return Err(ParserError::StackOverflow.into());
+        }
+        Err(bun_parsers::yaml::YamlParseError::SyntaxError) => return Err(MdxError::YamlParse),
     };
 
-    emit_expr_as_json(out, &expr, &arena)
+    emit_expr_as_json(out, &expr, &arena, &bun_core::StackCheck::init())
 }
 
 fn emit_expr_as_json(
     out: &mut Vec<u8>,
     expr: &bun_ast::Expr,
     arena: &bun_alloc::Arena,
+    stack_check: &bun_core::StackCheck,
 ) -> Result<(), MdxError> {
     use bun_ast::expr::Data;
+
+    if !stack_check.is_safe_to_recurse() {
+        return Err(ParserError::StackOverflow.into());
+    }
 
     match &expr.data {
         Data::EObject(obj) => {
@@ -672,14 +751,18 @@ fn emit_expr_as_json(
                 }
                 match prop.key.as_ref().and_then(|k| k.as_string(arena)) {
                     Some(key) => {
-                        push_all(out, b"\"")?;
-                        append_json_string_escaped(out, key)?;
-                        push_all(out, b"\": ")?;
+                        if key == b"__proto__" {
+                            push_all(out, b"[\"__proto__\"]: ")?;
+                        } else {
+                            push_all(out, b"\"")?;
+                            append_json_string_escaped(out, key)?;
+                            push_all(out, b"\": ")?;
+                        }
                     }
                     None => push_all(out, b"\"\":")?,
                 }
                 match prop.value.as_ref() {
-                    Some(value) => emit_expr_as_json(out, value, arena)?,
+                    Some(value) => emit_expr_as_json(out, value, arena, stack_check)?,
                     None => push_all(out, b"null")?,
                 }
             }
@@ -691,7 +774,7 @@ fn emit_expr_as_json(
                 if i > 0 {
                     push_all(out, b", ")?;
                 }
-                emit_expr_as_json(out, item, arena)?;
+                emit_expr_as_json(out, item, arena, stack_check)?;
             }
             push_all(out, b"]")?;
         }

@@ -613,9 +613,9 @@ pub fn cached_github_folder_name_print_auto(
     ZStr::EMPTY
 }
 
-/// `<name>@<version>@@@<ver>` for a tarball on registry.npmjs.org, else
-/// `<name>@<version>@@<host>__<hash of tarball_url>@@@<ver>`. An empty
-/// `tarball_url` (a lockfile row without one) keeps the `@@<configured host>` name.
+/// `<name>@<version>@@@<ver>` on the default registry, `@@<host>__<hash of the
+/// registry URL>@@@<ver>` on any other configured registry, and `@@<host>__<hash
+/// of tarball_url>@@@<ver>` for a tarball that is on neither (a lockfile URL).
 // TODO: normalize to alphanumeric
 pub fn cached_npm_package_folder_name_print<'a>(
     this: &PackageManager,
@@ -627,12 +627,12 @@ pub fn cached_npm_package_folder_name_print<'a>(
 ) -> &'a ZStr {
     let scope = this.scope_for_package_name(name);
 
-    let on_default_registry = if tarball_url.is_empty() {
-        scope.name.is_empty() && !this.options.did_override_default_scope
-    } else {
-        url_is_under_registry(tarball_url, Npm::Registry::DEFAULT_URL.as_bytes())
-    };
-    if on_default_registry {
+    // bun.lock stores a registry.npmjs.org URL as "" and rebuilds it under the
+    // configured registry, so both spellings have to name the registry's slot.
+    let from_registry = tarball_url.is_empty()
+        || url_is_under_registry(tarball_url, Npm::Registry::DEFAULT_URL.as_bytes())
+        || url_is_under_registry(tarball_url, scope.url.href());
+    if from_registry && scope.name.is_empty() && !this.options.did_override_default_scope {
         let include_version_number = true;
         return cached_npm_package_folder_print_basename(
             buf,
@@ -651,26 +651,22 @@ pub fn cached_npm_package_folder_name_print<'a>(
     // reshaped for borrowck — resume the cursor at the basename's
     // tail instead of holding the returned `&ZStr` across the re-borrow.
     let scope_url = scope.url.url();
+    let (hostname, hash) = if from_registry {
+        (scope_url.hostname, scope.url_hash)
+    } else {
+        (
+            URL::parse(tarball_url).hostname,
+            Semver::semver_string::Builder::string_hash(tarball_url),
+        )
+    };
     let mut w = ByteCursor {
         buf,
         at: spanned_len,
     };
-    if !tarball_url.is_empty() {
-        let hostname = URL::parse(tarball_url).hostname;
-        w.put(b"@@");
-        w.put(&hostname[..hostname.len().min(32)]);
-        w.put(b"__");
-        w.put_u64_hex16::<true>(Semver::semver_string::Builder::string_hash(tarball_url));
-    } else if scope_url.hostname.len() > 32 || w.buf.len() - spanned_len < 64 {
-        let visible_hostname = &scope_url.hostname[..scope_url.hostname.len().min(12)];
-        w.put(b"@@");
-        w.put(visible_hostname);
-        w.put(b"__");
-        w.put_u64_hex16::<true>(Semver::semver_string::Builder::string_hash(scope_url.href));
-    } else {
-        w.put(b"@@");
-        w.put(scope_url.hostname);
-    }
+    w.put(b"@@");
+    w.put(&hostname[..hostname.len().min(32)]);
+    w.put(b"__");
+    w.put_u64_hex16::<true>(hash);
     w.put_cache_version(Some(CacheVersion::CURRENT));
     w.put_patch_hash(patch_hash);
     w.finish_z()

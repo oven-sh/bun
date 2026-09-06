@@ -102,6 +102,8 @@ Object.defineProperty(ReadStream, "prototype", {
       return this;
     };
 
+    Prototype.constructor = ReadStream;
+
     Object.defineProperty(ReadStream, "prototype", { value: Prototype });
 
     return Prototype;
@@ -116,9 +118,8 @@ function WriteStream(fd): void {
   const stream = fs.WriteStream.$call(this, null, { fd, $fastPath: true, autoClose: false });
   stream.columns = undefined;
   stream.rows = undefined;
-  stream.isTTY = isatty(stream.fd);
 
-  if (stream.isTTY) {
+  if (isatty(fd)) {
     const windowSizeArray = [0, 0];
     if (_getWindowSize(fd, windowSizeArray) === true) {
       stream.columns = windowSizeArray[0];
@@ -128,13 +129,15 @@ function WriteStream(fd): void {
 
   return stream;
 }
+$toClass(WriteStream, "WriteStream", fs.WriteStream);
 
 Object.defineProperty(WriteStream, "prototype", {
   get() {
-    const Real = fs.WriteStream.prototype;
-    Object.defineProperty(WriteStream, "prototype", { value: Real });
+    const Prototype = Object.create(fs.WriteStream.prototype);
+    Prototype.constructor = WriteStream;
+    Prototype.isTTY = true;
 
-    WriteStream.prototype._refreshSize = function () {
+    Prototype._refreshSize = function () {
       const oldCols = this.columns;
       const oldRows = this.rows;
       const windowSizeArray = [0, 0];
@@ -147,30 +150,30 @@ Object.defineProperty(WriteStream, "prototype", {
       }
     };
 
-    WriteStream.prototype.clearLine = function (dir, cb) {
+    Prototype.clearLine = function (dir, cb) {
       return require("node:readline").clearLine(this, dir, cb);
     };
 
-    WriteStream.prototype.clearScreenDown = function (cb) {
+    Prototype.clearScreenDown = function (cb) {
       return require("node:readline").clearScreenDown(this, cb);
     };
 
-    WriteStream.prototype.cursorTo = function (x, y, cb) {
+    Prototype.cursorTo = function (x, y, cb) {
       return require("node:readline").cursorTo(this, x, y, cb);
     };
 
     // The `getColorDepth` API got inspired by multiple sources such as
     // https://github.com/chalk/supports-color,
     // https://github.com/isaacs/color-support.
-    WriteStream.prototype.getColorDepth = function (env = process.env) {
+    Prototype.getColorDepth = function (env = process.env) {
       return require("internal/tty").getColorDepth(env);
     };
 
-    WriteStream.prototype.getWindowSize = function () {
+    Prototype.getWindowSize = function () {
       return [this.columns, this.rows];
     };
 
-    WriteStream.prototype.hasColors = function (count, env) {
+    Prototype.hasColors = function (count, env) {
       if (env === undefined && (count === undefined || (typeof count === "object" && count !== null))) {
         env = count;
         count = 16;
@@ -181,13 +184,13 @@ Object.defineProperty(WriteStream, "prototype", {
       return count <= 2 ** this.getColorDepth(env);
     };
 
-    WriteStream.prototype.moveCursor = function (dx, dy, cb) {
+    Prototype.moveCursor = function (dx, dy, cb) {
       return require("node:readline").moveCursor(this, dx, dy, cb);
     };
 
     // Add Symbol.asyncIterator to make tty.WriteStream compatible with code
     // that expects stdout/stderr to be async iterable (like in Node.js where they're Duplex)
-    WriteStream.prototype[Symbol.asyncIterator] = function () {
+    Prototype[Symbol.asyncIterator] = function () {
       // Since WriteStream is write-only, we return an empty async iterator
       // This matches the behavior of Node.js Duplex streams used for stdout/stderr
       return (async function* () {
@@ -195,7 +198,9 @@ Object.defineProperty(WriteStream, "prototype", {
       })();
     };
 
-    return Real;
+    Object.defineProperty(WriteStream, "prototype", { value: Prototype });
+
+    return Prototype;
   },
   enumerable: true,
   configurable: true,

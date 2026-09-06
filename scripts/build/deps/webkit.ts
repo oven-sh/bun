@@ -1586,6 +1586,10 @@ function jscProgram(cfg: Config, name: string, sources: string[], ldflags: strin
 export const webkit: Dependency = {
   name: "WebKit",
   versionMacro: "WEBKIT",
+  // Applied after the sparse source fetch (source mode only). Reject the
+  // empty-bucket sentinel key (0) in the inspector agents' SourceID/injected
+  // script id maps before a lookup. See the patch header for the crash.
+  patches: cfg => (cfg.webkit === "source" ? ["patches/webkit/inspector-reject-zero-sourceid.patch"] : []),
   // The direct build compiles against the mimalloc bun links
   // (USE_EXTERNAL_MIMALLOC) and, off macOS, the ICU built by deps/icu.ts.
   fetchDeps: cfg =>

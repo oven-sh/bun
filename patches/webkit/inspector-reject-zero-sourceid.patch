@@ -1,0 +1,90 @@
+Reject the empty-bucket sentinel key in the inspector agents' id maps.
+
+The inspector debugger and runtime agents parse a scriptId (or injected
+script id) from a protocol string and look it up in an UncheckedKeyHashMap.
+parseIntegerAllowingTrailingJunk(...).value_or(0) turns a string that does
+not parse (for example "", "abc", "-1", a lone surrogate) into 0. A real
+SourceID is never 0 (noSourceID == 0) and injected script ids start at 1,
+so 0 is the map's empty-bucket value. The maps are UncheckedKeyHashMap, so
+key validation is compiled out, and find(0) on a populated map matches an
+empty bucket instead of returning end(). The zero-initialised value is then
+used: Debugger.setBreakpoint and Debugger.getBreakpointLocations dereference
+a null sourceProvider and crash the debuggee, and Debugger.getScriptSource
+and Debugger.searchInContent return an empty source instead of an error.
+
+The fix rejects the sentinel right after parsing, so these commands return
+the normal "Missing script" error. This can be dropped once the change
+lands in oven-sh/WebKit and WEBKIT_VERSION is bumped past it.
+
+--- a/Source/JavaScriptCore/inspector/InjectedScriptManager.cpp
++++ b/Source/JavaScriptCore/inspector/InjectedScriptManager.cpp
+@@ -115,6 +115,12 @@ InjectedScript InjectedScriptManager::injectedScriptForObjectId(const String& ob
+     if (!injectedScriptId)
+         return InjectedScript();
+ 
++    // Injected script ids are handed out from m_nextInjectedScriptId starting
++    // at 1, so 0 is never a real id. It is also the empty-bucket value of the
++    // id map, so a lookup of 0 matches an empty bucket in a populated map.
++    if (*injectedScriptId < 1)
++        return InjectedScript();
++
+     return m_idToInjectedScript.get(*injectedScriptId);
+ }
+ 
+--- a/Source/JavaScriptCore/inspector/agents/InspectorDebuggerAgent.cpp
++++ b/Source/JavaScriptCore/inspector/agents/InspectorDebuggerAgent.cpp
+@@ -570,7 +570,12 @@ static bool parseLocation(Protocol::ErrorString& errorString, const JSON::Object
+         return false;
+     }
+ 
+-    sourceID = parseIntegerAllowingTrailingJunk<JSC::SourceID>(scriptIDStr).value_or(0);
++    sourceID = parseIntegerAllowingTrailingJunk<JSC::SourceID>(scriptIDStr).value_or(JSC::noSourceID);
++    if (sourceID == JSC::noSourceID) {
++        errorString = "Missing script for given scriptId"_s;
++        return false;
++    }
++
+     columnNumber = location.getInteger("columnNumber"_s).value_or(0);
+     return true;
+ }
+@@ -1116,7 +1121,11 @@ Protocol::ErrorStringOr<void> InspectorDebuggerAgent::continueToLocation(Ref<JSO
+ 
+ Protocol::ErrorStringOr<Ref<JSON::ArrayOf<Protocol::GenericTypes::SearchMatch>>> InspectorDebuggerAgent::searchInContent(const Protocol::Debugger::ScriptId& scriptId, const String& query, std::optional<bool>&& caseSensitive, std::optional<bool>&& isRegex)
+ {
+-    auto it = m_scripts.find(parseIntegerAllowingTrailingJunk<JSC::SourceID>(scriptId).value_or(0));
++    auto sourceID = parseIntegerAllowingTrailingJunk<JSC::SourceID>(scriptId).value_or(JSC::noSourceID);
++    if (sourceID == JSC::noSourceID)
++        return makeUnexpected("Missing script for given scriptId"_s);
++
++    auto it = m_scripts.find(sourceID);
+     if (it == m_scripts.end())
+         return makeUnexpected("Missing script for given scriptId"_s);
+ 
+@@ -1125,7 +1134,11 @@ Protocol::ErrorStringOr<Ref<JSON::ArrayOf<Protocol::GenericTypes::SearchMatch>>>
+ 
+ Protocol::ErrorStringOr<String> InspectorDebuggerAgent::getScriptSource(const Protocol::Debugger::ScriptId& scriptId)
+ {
+-    auto it = m_scripts.find(parseIntegerAllowingTrailingJunk<JSC::SourceID>(scriptId).value_or(0));
++    auto sourceID = parseIntegerAllowingTrailingJunk<JSC::SourceID>(scriptId).value_or(JSC::noSourceID);
++    if (sourceID == JSC::noSourceID)
++        return makeUnexpected("Missing script for given scriptId"_s);
++
++    auto it = m_scripts.find(sourceID);
+     if (it == m_scripts.end())
+         return makeUnexpected("Missing script for given scriptId"_s);
+ 
+--- a/Source/JavaScriptCore/inspector/agents/InspectorRuntimeAgent.cpp
++++ b/Source/JavaScriptCore/inspector/agents/InspectorRuntimeAgent.cpp
+@@ -533,7 +533,11 @@ Protocol::ErrorStringOr<Ref<JSON::ArrayOf<Protocol::Runtime::BasicBlock>>> Inspe
+         return makeUnexpected("VM has no control flow information"_s);
+ 
+     auto basicBlocks = JSON::ArrayOf<Protocol::Runtime::BasicBlock>::create();
+-    for (const auto& block : m_vm.controlFlowProfiler()->getBasicBlocksForSourceID(parseIntegerAllowingTrailingJunk<uintptr_t>(sourceID).value_or(0), m_vm)) {
++    auto parsedSourceID = parseIntegerAllowingTrailingJunk<uintptr_t>(sourceID).value_or(0);
++    if (!parsedSourceID)
++        return basicBlocks;
++
++    for (const auto& block : m_vm.controlFlowProfiler()->getBasicBlocksForSourceID(parsedSourceID, m_vm)) {
+         auto location = Protocol::Runtime::BasicBlock::create()
+             .setStartOffset(block.m_startOffset)
+             .setEndOffset(block.m_endOffset)

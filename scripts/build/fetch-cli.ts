@@ -404,14 +404,25 @@ function normalizeLf(s: string): string {
  * so a CRLF-mangled checkout still applies cleanly. --no-index: dest/ is
  * not a git repo. --ignore-whitespace / --ignore-space-change: patches are
  * authored against upstream which may have different trailing whitespace.
+ *
+ * dest/ is a subdirectory of bun's own git repo, so git apply runs with a
+ * path prefix. A patch whose hunks carry `diff --git` headers is then treated
+ * as toplevel-relative, does not get the prefix, and git skips it with
+ * "Skipped patch" and exit 0. This is why the vendored patches are plain
+ * `--- a/` / `+++ b/` diffs. A skip is a silent no-op, so --verbose is passed
+ * and a skip becomes a hard error instead of a dep built from unpatched source.
  */
 function applyPatch(dest: string, patchPath: string, patchBody: string): void {
-  const result = spawnSync("git", ["apply", "--ignore-whitespace", "--ignore-space-change", "--no-index", "-"], {
-    cwd: dest,
-    input: normalizeLf(patchBody),
-    stdio: ["pipe", "ignore", "pipe"],
-    encoding: "utf8",
-  });
+  const result = spawnSync(
+    "git",
+    ["apply", "--verbose", "--ignore-whitespace", "--ignore-space-change", "--no-index", "-"],
+    {
+      cwd: dest,
+      input: normalizeLf(patchBody),
+      stdio: ["pipe", "pipe", "pipe"],
+      encoding: "utf8",
+    },
+  );
 
   if (result.error) {
     throw new BuildError(`Failed to spawn git apply`, { cause: result.error });
@@ -424,6 +435,14 @@ function applyPatch(dest: string, patchPath: string, patchBody: string): void {
     throw new BuildError(`Patch failed: ${result.stderr}`, {
       file: patchPath,
       hint: "The patch may be out of date with the pinned commit",
+    });
+  }
+
+  const output = `${result.stdout ?? ""}${result.stderr ?? ""}`;
+  if (output.includes("Skipped patch")) {
+    throw new BuildError(`Patch skipped: ${output.trim()}`, {
+      file: patchPath,
+      hint: "Remove the `diff --git`/`index` header lines so the patch is a plain `--- a/` / `+++ b/` diff",
     });
   }
 }

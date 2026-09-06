@@ -100,14 +100,7 @@ fn clone_root(
     match root.deep_clone(bump) {
         Ok(root) => Ok(root),
         Err(bun_ast::DeepCloneError::StackOverflow) => {
-            log.add_error_fmt_opts(
-                format_args!("JSON document is too deeply nested"),
-                bun_ast::AddErrorOptions {
-                    source: Some(source),
-                    loc: root.loc,
-                    ..Default::default()
-                },
-            );
+            json::add_too_deeply_nested_error(log, source, root.loc);
             Err(bun_parsers::Error::StackOverflow.into())
         }
         Err(bun_ast::DeepCloneError::Alloc(err)) => Err(err.into()),

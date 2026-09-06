@@ -1155,6 +1155,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
                 if let Some(val) = property.value {
                     self.next_fn_is_derived_class_ctor = is_derived_class
+                        && property.kind == PropertyKind::Normal
                         && property.flags.contains(flags::Property::IsMethod)
                         && !property.flags.contains(flags::Property::IsStatic)
                         && !property.flags.contains(flags::Property::IsComputed)

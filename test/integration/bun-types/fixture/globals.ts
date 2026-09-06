@@ -236,17 +236,19 @@ const writableStream = new WritableStream();
 
   // https://github.com/oven-sh/bun/issues/27194
   // FormData values can be a `File`, not only a `string`, and FormData itself
-  // must be directly iterable (matching entries()).
+  // must be directly iterable (matching entries()). Use `.is<>()` (exact
+  // type equality) rather than `satisfies`, so a regression that narrows
+  // these back to plain `string` fails type-checking again.
   for (const [key, value] of a) {
-    key satisfies string;
-    value satisfies string | File;
+    expectType(key).is<string>();
+    expectType(value).is<Bun.FormDataEntryValue>();
   }
   for (const value of a.values()) {
-    value satisfies string | File;
+    expectType(value).is<Bun.FormDataEntryValue>();
   }
   for (const [key, value] of a.entries()) {
-    key satisfies string;
-    value satisfies string | File;
+    expectType(key).is<string>();
+    expectType(value).is<Bun.FormDataEntryValue>();
   }
 }
 {

@@ -127,3 +127,39 @@ test("indexOfLine skips multi-byte sequences correctly", () => {
   expect(indexOfLine(buf3, 3)).toBe(6);
   expect(indexOfLine(buf3, 7)).toBe(11);
 });
+
+test("indexOfLine finds a newline after a truncated multi-byte lead byte", () => {
+  // A lead byte whose continuation bytes are missing must not hide the
+  // newline that follows it.
+  const cases = [
+    { bytes: [0xf0, 0x0a], expected: 1 },
+    { bytes: [0xe2, 0x82, 0x0a], expected: 2 },
+    { bytes: [0xc3, 0x0a, 0x41, 0x0a], expected: 1 },
+    { bytes: [0x41, 0xf0, 0x0a, 0x0a], expected: 2 },
+    { bytes: [0x80, 0x0a], expected: 1 },
+    { bytes: [0xff, 0x0a], expected: 1 },
+    { bytes: [0xf0], expected: -1 },
+    { bytes: [0xf0, 0x90], expected: -1 },
+  ];
+  expect(cases.map(({ bytes }) => indexOfLine(new Uint8Array(bytes)))).toEqual(cases.map(c => c.expected));
+  // The same with an offset that lands on the lead byte.
+  expect(indexOfLine(new Uint8Array([0x41, 0x42, 0xf0, 0x0a]), 2)).toBe(3);
+  // A valid sequence directly before the newline still works.
+  expect(indexOfLine(new Uint8Array([0xf0, 0x9f, 0x98, 0x8b, 0x0a]))).toBe(4);
+});
+
+test("console async iterator splits lines after a truncated multi-byte lead byte", async () => {
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", "for await (const line of console) console.log(JSON.stringify(line))"],
+    env: bunEnv,
+    stdin: new Uint8Array([0xf0, 0x0a, 0x62, 0x0a]),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  // Only the split matters here. What the iterator yields after the last
+  // newline is a separate question.
+  expect(stdout).toStartWith('"\ufffd"\n"b"\n');
+  expect(stderr).toBe("");
+  expect(exitCode).toBe(0);
+});

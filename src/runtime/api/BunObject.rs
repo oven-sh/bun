@@ -1340,29 +1340,16 @@ fn index_of_line(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResul
     };
 
     let bytes = buffer.byte_slice();
-    let mut current_offset = offset;
-    let end = bytes.len() as u32;
-
-    while current_offset < end as usize {
-        if let Some(i) = strings::index_of_newline_or_non_ascii(bytes, current_offset as u32) {
-            let byte = bytes[i as usize];
-            if byte > 0x7F {
-                current_offset =
-                    i as usize + (strings::wtf8_byte_sequence_length(byte) as usize).max(1);
-                continue;
-            }
-
-            if byte == b'\n' {
-                return Ok(JSValue::js_number(i as f64));
-            }
-
-            current_offset = i as usize + 1;
-        } else {
-            break;
-        }
+    if offset >= bytes.len() {
+        return Ok(JSValue::js_number_from_int32(-1));
     }
 
-    Ok(JSValue::js_number_from_int32(-1))
+    // A newline byte is never part of a multi-byte UTF-8 sequence, so a
+    // plain byte search is correct for valid and invalid input alike.
+    Ok(match strings::index_of_char_usize(&bytes[offset..], b'\n') {
+        Some(i) => JSValue::js_number((offset + i) as f64),
+        None => JSValue::js_number_from_int32(-1),
+    })
 }
 
 #[bun_jsc::host_fn]

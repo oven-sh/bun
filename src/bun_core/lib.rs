@@ -1591,36 +1591,26 @@ pub(crate) mod strings_impl {
     }
 
     /// Port of `allocateLatin1IntoUTF8WithList`.
-    /// Uses `first_non_ascii` (simdutf SIMD) for the ASCII-span scan.
     pub fn allocate_latin1_into_utf8_with_list(
         mut list: Vec<u8>,
         offset_into_list: usize,
         latin1: &[u8],
     ) -> Vec<u8> {
         list.truncate(offset_into_list);
-        list.reserve(latin1.len());
-        let mut rest = latin1;
-        while !rest.is_empty() {
-            match first_non_ascii_usize(rest) {
-                None => {
-                    list.extend_from_slice(rest);
-                    break;
-                }
-                Some(i) => {
-                    list.extend_from_slice(&rest[..i]);
-                    rest = &rest[i..];
-                    while let Some(&c) = rest.first() {
-                        if c < 0x80 {
-                            break;
-                        }
-                        list.reserve(2);
-                        let [a, b] = latin1_to_codepoint_bytes_assume_not_ascii(c);
-                        list.push(a);
-                        list.push(b);
-                        rest = &rest[1..];
-                    }
-                }
-            }
+        let (ascii, rest) = match first_non_ascii_usize(latin1) {
+            None => (latin1, &[][..]),
+            Some(i) => latin1.split_at(i),
+        };
+        list.reserve(ascii.len() + element_length_latin1_into_utf8(rest));
+        list.extend_from_slice(ascii);
+        if !rest.is_empty() {
+            // SAFETY: the reserve above sized the spare slice for the whole
+            // conversion; simdutf writes only initialized bytes and reports the count.
+            unsafe {
+                crate::vec::fill_spare(&mut list, 0, |spare| {
+                    (simdutf::convert::latin1::to::utf8(rest, spare), ())
+                })
+            };
         }
         list
     }
@@ -1819,9 +1809,29 @@ pub(crate) mod strings_impl {
     }
 
     /// Port of `copyLatin1IntoUTF8` — encode Latin-1 into a fixed-size UTF-8 buffer.
-    #[inline]
+    ///
+    /// A Latin-1 byte encodes to at most 2 UTF-8 bytes, so the next
+    /// `remaining_buf / 2` input bytes always fit. Those go through simdutf,
+    /// and each round at least halves the space left, so only a short tail
+    /// takes the bounded scalar loop.
     pub fn copy_latin1_into_utf8(buf: &mut [u8], latin1: &[u8]) -> EncodeIntoResult {
-        copy_latin1_into_utf8_stop_on_non_ascii::<false>(buf, latin1)
+        let mut read = 0usize;
+        let mut written = 0usize;
+        loop {
+            let head = ((buf.len() - written) / 2).min(latin1.len() - read);
+            if head < 16 {
+                break;
+            }
+            written +=
+                simdutf::convert::latin1::to::utf8(&latin1[read..read + head], &mut buf[written..]);
+            read += head;
+        }
+        let tail =
+            copy_latin1_into_utf8_stop_on_non_ascii::<false>(&mut buf[written..], &latin1[read..]);
+        EncodeIntoResult {
+            read: (read + tail.read as usize) as u32,
+            written: (written + tail.written as usize) as u32,
+        }
     }
 
     #[inline]

@@ -4,6 +4,7 @@ use bun_core::strings;
 use bun_jsc::HostReturn as _;
 use bun_jsc::js_string::Iterator as JSStringIterator;
 use bun_jsc::{ArrayBuffer, JSGlobalObject, JSString, JSType, JSValue, JsResult};
+use bun_simdutf_sys::simdutf;
 
 // `const TextEncoder = @This();` — file is a namespace of exported fns; no wrapper struct needed.
 
@@ -43,9 +44,8 @@ unsafe extern "C" fn TextEncoder__encode8(
         return JSValue::ZERO;
     };
     debug_assert!(array_buffer.len == utf8_len);
-    let result = strings::copy_latin1_into_utf8(array_buffer.byte_slice_mut(), slice);
-    debug_assert!(result.written as usize == utf8_len);
-    debug_assert!(result.read as usize == slice.len());
+    let written = simdutf::convert::latin1::to::utf8(slice, array_buffer.byte_slice_mut());
+    debug_assert!(written == utf8_len);
     uint8array
 }
 

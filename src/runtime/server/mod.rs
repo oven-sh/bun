@@ -2255,10 +2255,17 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             self.dev_server.as_deref_mut().map(std::ptr::from_mut);
 
         // https://chromium.googlesource.com/devtools/devtools-frontend/+/main/docs/ecosystem/automatic_workspace_folders.md
-        // Only enable this when we're using the dev server.
+        // Only enable this when the server serves a frontend: either through
+        // the dev server (HMR on) or through an HTML bundle route (HMR off).
+        let serves_html = dev_server.is_some()
+            || self
+                .config
+                .static_routes
+                .iter()
+                .any(|entry| matches!(entry.route, AnyRoute::Html(_)));
         let mut should_add_chrome_devtools_json_route = DEBUG
             && self.config.allow_hot
-            && dev_server.is_some()
+            && serves_html
             && self
                 .config
                 .enable_chrome_devtools_automatic_workspace_folders;

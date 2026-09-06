@@ -3381,33 +3381,26 @@ where
             httplog!("{} - {}", BStr::new(&m), BStr::new(&u));
         }
 
-        let authorized = 'brk: {
-            let Some(dev_server) = self.dev_server.as_deref() else {
-                break 'brk false;
-            };
-
-            // The loopback source-IP check below is not enough on its own: a
-            // DNS-rebound origin connects from 127.0.0.1 but presents the
-            // attacker's hostname in `Host`. Apply the same Host allowlist as
-            // the `/_bun/*` routes before disclosing the project root path.
-            if !bake::is_allowed_dev_host(dev_server, req) {
-                break 'brk false;
-            }
-
-            if resp
+        // The loopback source-IP check is not enough on its own: a
+        // DNS-rebound origin connects from 127.0.0.1 but presents the
+        // attacker's hostname in `Host`. Apply the same Host allowlist as
+        // the `/_bun/*` routes before disclosing the project root path.
+        let authorized = bake::is_allowed_host_header(req, Some(&self.config.address))
+            && resp
                 .get_remote_socket_info()
-                .is_some_and(|address| address.is_loopback())
-            {
-                break 'brk true;
-            }
-
-            false
-        };
+                .is_some_and(|address| address.is_loopback());
 
         if !authorized {
             req.set_yield(true);
             return;
         }
+
+        // Without a DevServer (HMR off) the HTML bundle is still served from
+        // the project root, which is the cwd the DevServer would have used.
+        let root: &[u8] = match self.dev_server.as_deref() {
+            Some(dev_server) => &dev_server.root,
+            None => FileSystem::instance().top_level_dir,
+        };
 
         // They need a 16 byte uuid. It needs to be somewhat consistent. We don't want to store this field anywhere.
 
@@ -3423,7 +3416,6 @@ where
         // And then we use a hash of their project root directory:
         let second_hash_segment: [u8; 8] = 'brk: {
             let mut buffer = paths::path_buffer_pool::get();
-            let root = &self.dev_server.as_ref().unwrap().root;
             let len = root.len().min(buffer.len());
             break 'brk hash(strings::copy_lowercase(&root[..len], &mut buffer[..len]))
                 .to_ne_bytes();
@@ -3445,10 +3437,7 @@ where
         let _ = write!(
             &mut json_string,
             "{{ \"workspace\": {{ \"root\": {}, \"uuid\": \"{}\" }} }}",
-            bun_fmt::format_json_string_utf8(
-                &self.dev_server.as_ref().unwrap().root,
-                Default::default()
-            ),
+            bun_fmt::format_json_string_utf8(root, Default::default()),
             uuid,
         );
 

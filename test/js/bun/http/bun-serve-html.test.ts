@@ -1606,3 +1606,53 @@ describe("production headers and import.meta.env", () => {
     expect(results).toEqual(cases.map(([, , expected]) => expected));
   });
 });
+
+describe("chrome devtools automatic workspace folders", () => {
+  const route = "/.well-known/appspecific/com.chrome.devtools.json";
+
+  // The route is served only while the server is in development mode and has
+  // an HTML route. It must not depend on HMR: `{ hmr: false }` is still
+  // development mode.
+  const cases: [development: string, served: boolean][] = [
+    ["true", true],
+    ["{ hmr: false }", true],
+    ["{ hmr: false, chromeDevToolsAutomaticWorkspaceFolders: true }", true],
+    ["{ hmr: true, chromeDevToolsAutomaticWorkspaceFolders: false }", false],
+    ["{ hmr: false, chromeDevToolsAutomaticWorkspaceFolders: false }", false],
+    ["false", false],
+  ];
+
+  test.concurrent.each(cases)("development: %s", async (development, served) => {
+    using dir = tempDir("bun-serve-html-devtools-json", {
+      "index.html": `<!DOCTYPE html><html><head><script type="module" src="./app.ts"></script></head><body>hi</body></html>`,
+      "app.ts": `console.log("app");`,
+      "serve.ts": /*ts*/ `
+        import page from "./index.html";
+        using server = Bun.serve({
+          port: 0,
+          development: ${development},
+          routes: { "/": page },
+          fetch: () => new Response("fell through", { status: 404 }),
+        });
+        const response = await fetch(new URL(${JSON.stringify(route)}, server.url));
+        const status = response.status;
+        const body = status === 200 ? await response.json() : await response.text();
+        console.log(JSON.stringify({ status, body }));
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "serve.ts"],
+      env: { ...bunEnv, NODE_ENV: undefined },
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    if (exitCode !== 0) throw new Error(stdout + "\n" + stderr);
+    expect(JSON.parse(stdout)).toEqual(
+      served
+        ? { status: 200, body: { workspace: { root: String(dir), uuid: expect.any(String) } } }
+        : { status: 404, body: "fell through" },
+    );
+  });
+});

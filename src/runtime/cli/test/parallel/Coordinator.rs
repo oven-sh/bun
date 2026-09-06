@@ -457,7 +457,10 @@ impl<'a> Coordinator<'a> {
                 };
                 (p.file_idx, pos + p.line.len())
             } else {
-                (p.file_idx, strings::last_index_of_char(&w.captured, b'\n').map_or(0, |nl| nl + 1))
+                (
+                    p.file_idx,
+                    strings::last_index_of_char(&w.captured, b'\n').map_or(0, |nl| nl + 1),
+                )
             };
             let p = w.pending_lines.pop_front().expect("front was Some");
             self.print_captured(w, end, Some(file_idx));

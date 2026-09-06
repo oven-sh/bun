@@ -3860,7 +3860,10 @@ impl VirtualMachine {
                 }
             }
         }
+        // Fatal, as in `uncaught_exception`: the code is decided before the
+        // handler runs, since a worker's handler dispatches 'exit' from here.
         self.unhandled_error_counter += 1;
+        self.exit_handler.exit_code = 1;
         (self.on_unhandled_rejection)(self, global_object, reason);
     }
 

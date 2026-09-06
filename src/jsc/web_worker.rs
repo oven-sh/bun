@@ -863,8 +863,10 @@ impl WebWorker {
         let promise = match vm.as_mut().load_entry_point_for_web_worker(path) {
             Ok(p) => p,
             Err(_) => {
-                // process.exit() may have run during load; don't clobber its code.
-                if !self.exit_called.load(Ordering::Relaxed) {
+                // process.exit() may have run during load; don't clobber its code. Nor a
+                // nonzero one: an uncaught error during load sets 1 and then runs the
+                // 'exit' listeners, which may change process.exitCode.
+                if !self.exit_called.load(Ordering::Relaxed) && vm.exit_handler.exit_code == 0 {
                     vm.as_mut().exit_handler.exit_code = 1;
                 }
                 self.flush_logs(vm);

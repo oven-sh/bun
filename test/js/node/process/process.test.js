@@ -1048,6 +1048,94 @@ describe.concurrent(() => {
       expect(stderr).not.toInclude("error: boom");
       expect(exitCode).toBe(0);
     });
+
+    // Node's fatal path sets process.exitCode = 1 and emits 'exit' with 1 for an
+    // unhandled rejection exactly as for an uncaught exception.
+    it.each([
+      ["an Error", `new Error("boom")`],
+      ["undefined", `undefined`],
+    ])("an unhandled rejection of %s passes 1 to 'exit' listeners", async (_, reason) => {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `process.on("exit", code => console.log("exit", code, process.exitCode));
+           Promise.reject(${reason});`,
+        ],
+        env: bunEnv,
+        stdio: ["inherit", "pipe", "pipe"],
+      });
+      const [stderr, stdout, exitCode] = await Promise.all([proc.stderr.text(), proc.stdout.text(), proc.exited]);
+      expect(stdout).toBe("exit 1 1\n");
+      expect(exitCode).toBe(1);
+    });
+
+    it.each(["Promise.reject(new Error('boom'))", "setTimeout(() => { throw new Error('boom') })"])(
+      "process.exitCode set by an 'exit' listener is the exit code after a fatal %s",
+      async fatal => {
+        await using proc = Bun.spawn({
+          cmd: [
+            bunExe(),
+            "-e",
+            `process.on("exit", code => { console.log("exit", code); process.exitCode = 42; });
+             ${fatal};`,
+          ],
+          env: bunEnv,
+          stdio: ["inherit", "pipe", "pipe"],
+        });
+        const [stderr, stdout, exitCode] = await Promise.all([proc.stderr.text(), proc.stdout.text(), proc.exited]);
+        expect(stdout).toBe("exit 1\n");
+        expect(stderr).toInclude("error: boom");
+        expect(exitCode).toBe(42);
+      },
+    );
+
+    it("an error Bun printed without stopping the loop is in the code 'exit' listeners receive", async () => {
+      // A throwing fetch handler is reported by the default error printer and the
+      // run goes on; it still exits 1, so that is what the listeners must be told.
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `process.on("exit", code => console.log("exit", code, process.exitCode));
+           const server = Bun.serve({ port: 0, fetch() { throw new Error("boom"); } });
+           const res = await fetch(server.url);
+           console.log("status", res.status);
+           await res.text();
+           await server.stop(true);`,
+        ],
+        env: bunEnv,
+        stdio: ["inherit", "pipe", "pipe"],
+      });
+      const [stderr, stdout, exitCode] = await Promise.all([proc.stderr.text(), proc.stdout.text(), proc.exited]);
+      expect(stdout).toBe("status 500\nexit 1 1\n");
+      expect(stderr).toInclude("error: boom");
+      expect(exitCode).toBe(1);
+    });
+
+    it("an unhandled rejection in a worker passes 1 to its 'exit' listeners, which may change the code", async () => {
+      using dir = tempDir("process-onexit-worker-rejection", {
+        "worker.js": `process.on("exit", code => { console.log("worker exit listener", code, process.exitCode); process.exitCode = 42; });
+                      Promise.reject(new Error("boom"));`,
+        "index.js": `const { Worker } = require("node:worker_threads");
+                     const worker = new Worker(require("path").join(__dirname, "worker.js"));
+                     worker.on("error", e => console.log("worker error", e.message));
+                     worker.on("exit", code => console.log("worker exit", code));`,
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), join(String(dir), "index.js")],
+        env: bunEnv,
+        stdio: ["inherit", "pipe", "pipe"],
+      });
+      const [stderr, stdout, exitCode] = await Promise.all([proc.stderr.text(), proc.stdout.text(), proc.exited]);
+      // The worker's own stdout line and the parent's 'error' line come from two threads.
+      expect(stdout.trim().split("\n").sort()).toEqual([
+        "worker error boom",
+        "worker exit 42",
+        "worker exit listener 1 1",
+      ]);
+      expect(exitCode).toBe(0);
+    });
   });
 
   it("process.memoryUsage", () => {

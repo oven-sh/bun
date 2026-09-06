@@ -1567,10 +1567,16 @@ impl Run<'_> {
         if vm.unhandled_error_counter > 0 {
             vm.exit_handler.requested = true;
         }
+        // An error the default handler printed fails the run. Decide that before
+        // the 'exit' listeners: they receive this code, and what they leave in
+        // process.exitCode is final (as in Node and `exit_with_unhandled_note`).
+        if ANY_UNHANDLED.load(Ordering::Relaxed) {
+            vm.exit_handler.exit_code = 1;
+        }
         vm.on_exit();
 
         if ANY_UNHANDLED.load(Ordering::Relaxed) {
-            print_unhandled_version_note(vm);
+            print_unhandled_version_note();
         }
 
         // These create undefined references to externally-defined C symbols
@@ -1639,8 +1645,7 @@ fn exit_with_unhandled_note(vm: &mut VirtualMachine) -> ! {
     vm.exit_handler.requested = true;
     vm.on_exit();
     if ANY_UNHANDLED.load(Ordering::Relaxed) {
-        bun_sourcemap::SavedSourceMap::MissingSourceMapNoteInfo::print();
-        pretty_errorln!("<r>\n<d>{}<r>", Global::unhandled_error_bun_version_string,);
+        print_unhandled_version_note();
     }
     vm.global_exit();
 }
@@ -1666,16 +1671,15 @@ fn entry_point_load_failed(vm: &mut VirtualMachine, err: &crate::Error) -> ! {
     exit_with_unhandled_note(vm);
 }
 
-/// Cold tail of `Run::start` when `ANY_UNHANDLED` tripped on an otherwise-clean
-/// exit: bump the exit code and print the sourcemap note + version string.
+/// Cold tail of an exit on which `ANY_UNHANDLED` tripped: print the sourcemap
+/// note + version string after the 'exit' listeners ran.
 #[cold]
 #[inline(never)]
 #[cfg_attr(
     any(target_os = "linux", target_os = "android"),
     unsafe(link_section = ".text.unlikely")
 )]
-fn print_unhandled_version_note(vm: &mut VirtualMachine) {
-    vm.exit_handler.exit_code = 1;
+fn print_unhandled_version_note() {
     bun_sourcemap::SavedSourceMap::MissingSourceMapNoteInfo::print();
     pretty_errorln!("<r>\n<d>{}<r>", Global::unhandled_error_bun_version_string,);
 }

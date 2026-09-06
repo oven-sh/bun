@@ -588,7 +588,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         r,
                         b"Unexpected parentheses in binding pattern",
                     );
-                    return Err(crate::Error::SyntaxError);
                 }
 
                 // Now that we've decided we're an arrow function, report binding pattern

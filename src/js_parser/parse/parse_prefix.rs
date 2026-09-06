@@ -789,7 +789,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         // Is this a binding pattern?
         if p.will_need_binding_pattern() {
-            // noop
+            // "[(a)] = b" is a valid assignment target, but "([(a)] = b) => c"
+            // is not.
+            if let Some(errors) = errors {
+                errors.invalid_paren = self_errors.invalid_paren.or(errors.invalid_paren);
+            }
         } else if errors.is_none() {
             // Is this an expression?
             p.log_expr_errors(&mut self_errors);
@@ -875,7 +879,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         p.allow_in = old_allow_in;
 
         if p.will_need_binding_pattern() {
-            // Is this a binding pattern?
+            // Is this a binding pattern? "{a: (b)} = c" is a valid assignment
+            // target, but "({a: (b)} = c) => d" is not.
+            if let Some(errors) = errors {
+                errors.invalid_paren = self_errors.invalid_paren.or(errors.invalid_paren);
+            }
         } else if errors.is_none() {
             // Is this an expression?
             p.log_expr_errors(&mut self_errors);

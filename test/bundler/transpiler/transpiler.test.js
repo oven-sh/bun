@@ -3027,6 +3027,18 @@ console.log(<div {...obj} key="after" />);`),
       expectParseError("var f = ({ ...(a) }) => a", message);
       expectParseError("var f = async ((a)) => a", message);
       expectParseError("var f = (((a))) => a", message);
+      expectParseError("var f = ([(a)] = b) => a", message);
+      expectParseError("var f = ([[(a)]] = b) => a", message);
+      expectParseError("var f = ({ a: (b) } = c) => b", message);
+      expectParseError("var f = ([{ a: (b) }] = c) => b", message);
+      // The parser keeps going after the error, so later errors are still reported.
+      try {
+        parsed("var f = ((a)) => a; var g = ((b)) => b;", false, false);
+        throw new Error("Expected parse error");
+      } catch (er) {
+        expect(er).toBeInstanceOf(AggregateError);
+        expect(er.errors.map(e => e.message)).toEqual([message, message]);
+      }
     });
 
     it("import assert", () => {

@@ -755,12 +755,6 @@ impl PinnedArrayBuffer {
         Some(this)
     }
 
-    /// [`root`](Self::root) for a job that reads the bytes itself: see [`copy_if_resizable`](Self::copy_if_resizable).
-    pub fn root_read_only(global: &JSGlobalObject, value: JSValue) -> Option<Self> {
-        let mut this = Self::root(global, value)?;
-        this.copy_if_resizable(global).then_some(this)
-    }
-
     /// A pin stops a detach but not a shrink, which unmaps pages: a resizable non-shared buffer is copied so a later read of the bytes in user space cannot fault (a syscall reader gets `EFAULT` and needs no copy). `false` if the copy cannot be allocated.
     pub fn copy_if_resizable(&mut self, global: &JSGlobalObject) -> bool {
         if !self.buffer.resizable

@@ -142,14 +142,20 @@ async function connect(server: ReturnType<typeof startServer>, offer: string): P
       "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n" +
       `Sec-WebSocket-Extensions: ${offer}\r\n\r\n`,
   );
-  const head = await read<string>(() => {
-    const end = buffer.indexOf("\r\n\r\n");
-    if (end < 0) return;
-    const head = buffer.subarray(0, end).toString();
-    buffer = buffer.subarray(end + 4);
-    return head;
-  });
-  expect(head).toStartWith("HTTP/1.1 101");
+  let head: string;
+  try {
+    head = await read<string>(() => {
+      const end = buffer.indexOf("\r\n\r\n");
+      if (end < 0) return;
+      const head = buffer.subarray(0, end).toString();
+      buffer = buffer.subarray(end + 4);
+      return head;
+    });
+    expect(head).toStartWith("HTTP/1.1 101");
+  } catch (error) {
+    socket.destroy();
+    throw error;
+  }
   const extensions = head
     .split("\r\n")
     .find(line => line.toLowerCase().startsWith("sec-websocket-extensions:"))
@@ -303,9 +309,12 @@ describe.concurrent("Bun.serve perMessageDeflate", () => {
 
   test("publish compresses for each subscriber with its own negotiated state", async () => {
     await using server = startServer({ compress: "dedicated", decompress: true });
-    const withTakeover = await connect(server, "permessage-deflate");
-    const withoutTakeover = await connect(server, "permessage-deflate; server_no_context_takeover");
+    const peers: Peer[] = [];
     try {
+      const withTakeover = await connect(server, "permessage-deflate");
+      peers.push(withTakeover);
+      const withoutTakeover = await connect(server, "permessage-deflate; server_no_context_takeover");
+      peers.push(withoutTakeover);
       expect(withTakeover.extensions).toBe("permessage-deflate; client_no_context_takeover");
       expect(withoutTakeover.extensions).toBe(
         "permessage-deflate; client_no_context_takeover; server_no_context_takeover",
@@ -323,8 +332,7 @@ describe.concurrent("Bun.serve perMessageDeflate", () => {
         }
       }
     } finally {
-      withTakeover.close();
-      withoutTakeover.close();
+      for (const peer of peers) peer.close();
     }
   });
 });

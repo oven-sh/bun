@@ -2060,7 +2060,9 @@ describe.skipIf(isWindows)("Bun.file().stream() surfaces read() errors", () => {
 describe.skipIf(isWindows)("Bun.file().stream() on a character device", () => {
   it.each(["/dev/zero", "/dev/urandom"])("%s streams the sliced range", async path => {
     let total = 0;
-    for await (const chunk of Bun.file(path).slice(0, 1 << 20).stream()) {
+    for await (const chunk of Bun.file(path)
+      .slice(0, 1 << 20)
+      .stream()) {
       total += chunk.length;
     }
     expect(total).toBe(1 << 20);

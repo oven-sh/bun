@@ -646,16 +646,19 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         );
 
                         VecExt::append(&mut args, p.new_expr(E::Undefined {}, expr.loc));
-                        // `this` is in its TDZ before `super()`: no `self` argument there.
-                        if !p.fn_only_data_visit.is_derived_class_ctor {
-                            VecExt::append(
-                                &mut args,
-                                Expr {
-                                    data: prefill::data::THIS,
-                                    loc: expr.loc,
-                                },
-                            );
-                        }
+                        // `this` is in its TDZ before `super()`: pass `undefined` as `self` there.
+                        let self_arg = if p.fn_only_data_visit.is_derived_class_ctor {
+                            Data::EUndefined(E::Undefined {})
+                        } else {
+                            prefill::data::THIS
+                        };
+                        VecExt::append(
+                            &mut args,
+                            Expr {
+                                data: self_arg,
+                                loc: expr.loc,
+                            },
+                        );
                     }
 
                     let jsx_target = p.jsx_import_automatic(expr.loc, is_static_jsx);

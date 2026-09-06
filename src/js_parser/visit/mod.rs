@@ -1115,6 +1115,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 // The value of "this" is shadowed inside property values
                 let old_is_this_captured = self.fn_only_data_visit.is_this_nested;
                 self.fn_only_data_visit.is_this_nested = true;
+                let old_is_derived_class_ctor = self.fn_only_data_visit.is_derived_class_ctor;
+                self.fn_only_data_visit.is_derived_class_ctor = false;
 
                 // We need to explicitly assign the name to the property initializer if it
                 // will be transformed such that it is no longer an inline initializer.
@@ -1222,6 +1224,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 // manual restore for the two `defer`s above
                 self.vis_scope().forbid_arguments = false;
                 self.fn_only_data_visit.is_this_nested = old_is_this_captured;
+                self.fn_only_data_visit.is_derived_class_ctor = old_is_derived_class_ctor;
             }
 
             if Self::IS_TYPESCRIPT_ENABLED {

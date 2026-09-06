@@ -1390,9 +1390,12 @@ describe.concurrent("jsx/derivedClassCtorSelf", () => {
           this.nested = function () {
             return <e />;
           }.call(this);
+          this.inner = new (class {
+            field = <f />;
+          })();
         }
         method() {
-          return <f />;
+          return <g />;
         }
       }
       const d = new Derived();
@@ -1403,6 +1406,7 @@ describe.concurrent("jsx/derivedClassCtorSelf", () => {
           after: d.after.self,
           arrow: d.arrow.self,
           nested: d.nested.self === d,
+          innerField: d.inner.field.self === d.inner,
           method: d.method().self === d,
         }),
       );
@@ -1420,11 +1424,11 @@ describe.concurrent("jsx/derivedClassCtorSelf", () => {
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).toBe("");
-    expect(JSON.parse(stdout)).toEqual({ nested: true, method: true });
+    expect(JSON.parse(stdout)).toEqual({ nested: true, innerField: true, method: true });
     expect(exitCode).toBe(0);
   });
 
-  test("the self argument is omitted only where this is the derived constructor's", async () => {
+  test("the self argument is undefined only where this is the derived constructor's", async () => {
     using dir = tempDir("jsx-derived-ctor-out", files);
     await using proc = Bun.spawn({
       cmd: [bunExe(), "build", "--no-bundle", "index.tsx"],
@@ -1435,17 +1439,17 @@ describe.concurrent("jsx/derivedClassCtorSelf", () => {
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).toBe("");
-    const selfArgs = [...stdout.matchAll(/jsxDEV\w*\("(\w)", \{\}, undefined, false, undefined(, this)?\)/g)].map(m => [
-      m[1],
-      m[2] === ", this",
-    ]);
+    const selfArgs = [...stdout.matchAll(/jsxDEV\w*\("(\w)", \{\}, undefined, false, undefined, (this|undefined)\)/g)].map(
+      m => [m[1], m[2]],
+    );
     expect(selfArgs).toEqual([
-      ["a", false],
-      ["b", false],
-      ["c", false],
-      ["d", false],
-      ["e", true],
-      ["f", true],
+      ["a", "undefined"],
+      ["b", "undefined"],
+      ["c", "undefined"],
+      ["d", "undefined"],
+      ["e", "this"],
+      ["f", "this"],
+      ["g", "this"],
     ]);
     expect(exitCode).toBe(0);
   });

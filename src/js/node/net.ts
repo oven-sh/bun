@@ -138,6 +138,9 @@ const bunTLSConnectOptions = Symbol.for("::buntlsconnectoptions::");
 // binding to the constructor.
 const kNativeSecureContextCtor = Symbol.for("::buntlsnativesecurecontextctor::");
 const kReinitializeHandle = Symbol("kReinitializeHandle");
+// Set on the native handle while a connect is in flight (libuv's
+// `connect_req`): a second connect on the same handle fails with EALREADY.
+const kConnectReq = Symbol("kConnectReq");
 
 const kRealListen = Symbol("kRealListen");
 const kSetNoDelay = Symbol("kSetNoDelay");
@@ -1249,6 +1252,7 @@ const SocketHandlers2: SocketHandler<NonNullable<import("node:net").Socket["_han
     $debug("Bun.Socket open");
     let { self, req } = socket.data;
     socket[owner_symbol] = self;
+    socket[kConnectReq] = undefined;
     $debug("self[kupgraded]", String(self[kupgraded]));
     // Offer a previously-negotiated session for resumption before oncomplete
     // (afterConnect) runs: a user 'connect' listener that writes immediately
@@ -1420,6 +1424,7 @@ const SocketHandlers2: SocketHandler<NonNullable<import("node:net").Socket["_han
     $debug("Bun.Socket connectError");
     let { self, req } = socket.data;
     socket[owner_symbol] = self;
+    socket[kConnectReq] = undefined;
     socket.data.req = undefined;
     // doConnect dispatches this synchronously when connect()/bind() fails at
     // the syscall; surface it as kConnectTcp/Pipe's return value (callers'
@@ -1487,6 +1492,9 @@ function traceConnectEnd(req) {
 
 function kConnectTcp(self, addressType, req, address, port) {
   $debug("SocketHandle.kConnectTcp", addressType, address, port);
+  // Node's TCPWrap parses the address with uv_ip4_addr/uv_ip6_addr for the
+  // requested family and returns EINVAL when it does not parse.
+  if (isIP(address) !== addressType) return uv().UV_EINVAL;
   return kConnectDispatch(self, req, {
     hostname: address,
     port,
@@ -1508,7 +1516,7 @@ function kConnectTcp(self, addressType, req, address, port) {
 
 function kConnectPipe(self, req, address) {
   $debug("SocketHandle.kConnectPipe");
-  return kConnectDispatch(self, req, {
+  const errno = kConnectDispatch(self, req, {
     hostname: address,
     unix: address,
     // Always half-open natively; see kConnect.
@@ -1518,15 +1526,40 @@ function kConnectPipe(self, req, address) {
     data: { self, req },
     socket: self[khandlers],
   });
+  // uv_pipe_connect never fails synchronously: a connect(2) error is stored
+  // as delayed_error and reported through the connect callback on the next
+  // loop turn. Defer the same way so 'error' follows the events a caller
+  // queued right after connect() (http's 'socket', for one).
+  if (errno) {
+    const handle = self._handle;
+    handle[kConnectReq] = req;
+    process.nextTick(() => {
+      handle[kConnectReq] = undefined;
+      // A destroy() + connect() in between gave the socket a new handle.
+      if (self._handle !== handle) return;
+      req.oncomplete(errno, handle, req, true, true);
+    });
+  }
+  return 0;
 }
 
 function kConnectDispatch(self, req, opts) {
+  const handle = self._handle;
+  if (handle[kConnectReq] !== undefined) return uv().UV_EALREADY;
   // Node's TCPWrap returns errno for sync uv_*_connect failure and defers
   // oncomplete; doConnect instead fires connectError inside this call. Bracket
   // it so connectError hands the errno back here instead of re-entering.
   req.dispatching = true;
-  const promise = doConnect(self._handle, opts);
-  req.dispatching = false;
+  handle[kConnectReq] = req;
+  let promise;
+  try {
+    promise = doConnect(handle, opts);
+  } catch (e) {
+    handle[kConnectReq] = undefined;
+    throw e;
+  } finally {
+    req.dispatching = false;
+  }
   promise.catch(_reason => {
     // eat this so there's no unhandledRejection
     // we already catch this in connectError and error

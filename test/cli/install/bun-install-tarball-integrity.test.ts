@@ -915,11 +915,18 @@ describe.concurrent("gzip trailer verification", () => {
       cwd: String(dir),
       stdout: "pipe",
       stderr: "pipe",
-      env: { ...env, BUN_INSTALL_CACHE_DIR: join(String(dir), ".cache"), ...extraEnv },
+      env: {
+        ...env,
+        BUN_INSTALL_CACHE_DIR: join(String(dir), ".cache"),
+        BUN_TMPDIR: join(String(dir), ".tmp"),
+        ...extraEnv,
+      },
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     const installed = await file(join(String(dir), "node_modules", "pkg", "index.js")).exists();
-    return { stdout, stderr, exitCode, installed };
+    // A failed extraction must not leave its temp directory behind.
+    const leftovers = await readdirSorted(join(String(dir), ".tmp")).catch(() => []);
+    return { stdout, stderr, exitCode, installed, leftovers };
   }
 
   it("installs a tarball with a valid trailer", async () => {
@@ -930,28 +937,31 @@ describe.concurrent("gzip trailer verification", () => {
   });
 
   it("rejects a CRC32 mismatch", async () => {
-    const { stdout, stderr, exitCode, installed } = await install("gzip-trailer-crc", badCrcTgz);
+    const { stdout, stderr, exitCode, installed, leftovers } = await install("gzip-trailer-crc", badCrcTgz);
     expect(stderr).toContain("Corrupt gzip data");
     expect(stdout).not.toContain("1 package installed");
     expect(exitCode).toBe(1);
     expect(installed).toBe(false);
+    expect(leftovers).toEqual([]);
   });
 
   it("rejects a CRC32 mismatch on the streaming path", async () => {
-    const { stdout, stderr, exitCode, installed } = await install("gzip-trailer-crc-stream", badCrcTgz, {
+    const { stdout, stderr, exitCode, installed, leftovers } = await install("gzip-trailer-crc-stream", badCrcTgz, {
       BUN_FEATURE_FLAG_NO_LIBDEFLATE: "1",
     });
     expect(stderr).toContain("extracting tarball from pkg");
     expect(stdout).not.toContain("1 package installed");
     expect(exitCode).toBe(1);
     expect(installed).toBe(false);
+    expect(leftovers).toEqual([]);
   });
 
   it("rejects an ISIZE mismatch", async () => {
-    const { stdout, stderr, exitCode, installed } = await install("gzip-trailer-isize", badIsizeTgz);
+    const { stdout, stderr, exitCode, installed, leftovers } = await install("gzip-trailer-isize", badIsizeTgz);
     expect(stderr).toContain("extracting tarball from pkg");
     expect(stdout).not.toContain("1 package installed");
     expect(exitCode).toBe(1);
     expect(installed).toBe(false);
+    expect(leftovers).toEqual([]);
   });
 });

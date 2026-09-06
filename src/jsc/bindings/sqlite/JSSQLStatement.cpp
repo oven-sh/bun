@@ -241,8 +241,7 @@ DEFINE_ALLOCATOR_WITH_HEAP_IDENTIFIER(VersionSqlite3);
 class SQLiteSingleton {
 public:
     Vector<VersionSqlite3*> databases;
-    // Handles whose entry was freed. Reused by the next registerDatabase so the
-    // vector does not grow by one slot per Database ever opened.
+    // Indices of freed entries, reused by registerDatabase.
     Vector<size_t> freeHandles;
 };
 
@@ -295,10 +294,7 @@ static VersionSqlite3* databaseForHandle(int32_t handle)
     return dbs[static_cast<size_t>(handle)];
 }
 
-// Registers a freshly opened connection. The JS Database object that owns the
-// handle is the finalization target: its GC finalizer drops the entry's initial
-// ref, so a Database that is dropped without close() still releases the
-// connection.
+// The finalization target is the JS Database object; its GC finalizer drops the entry's initial ref.
 static size_t registerDatabase(JSC::VM& vm, sqlite3* db, JSC::JSValue finalizationTarget)
 {
     auto* versionDB = new VersionSqlite3(db, &vm);
@@ -311,9 +307,7 @@ static size_t registerDatabase(JSC::VM& vm, sqlite3* db, JSC::JSValue finalizati
     return index;
 }
 
-// The last ref is always dropped on the owning VM's thread: the JS Database
-// finalizer and every JSSQLStatement destructor run there. Once it is gone no
-// JS object can name this handle, so the entry is freed and the handle reused.
+// The last ref drops on the owning VM's thread after no JS object can name this handle.
 void VersionSqlite3::release()
 {
     ASSERT(reference_count > 0);

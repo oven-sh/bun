@@ -74,9 +74,7 @@ impl MapEntry {
 pub type Map = StringHashMap<MapEntry>;
 
 /// Parses `source` and clones the tree out of the thread-local `Store` into
-/// `bump`, so the result survives the `Store` resets that later lookups do.
-/// The clone recurses once per nesting level and reports a too-deep tree the
-/// same way the parser does.
+/// `bump`, so the result survives the `Store` resets of later lookups.
 fn parse_package_json(
     source: &Source,
     log: &mut Log,

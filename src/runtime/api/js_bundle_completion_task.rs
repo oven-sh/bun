@@ -1213,11 +1213,9 @@ impl CompletionStruct for JSBundleCompletionTask {
         let tp: *mut Transpiler<'a> = transpiler;
         // SAFETY: `tp` aliases nothing in `self`; lives in `bump`.
         if let Err(err) = self.configure_bundler(unsafe { &mut *tp }, bump) {
-            // The arena never runs `Drop`; release the transpiler's
-            // global-heap state here, as `generate_in_new_thread` does on the
-            // success path.
+            // The arena never runs `Drop`; release the transpiler's heap state.
             // SAFETY: `tp` is the unique slot from `bump.alloc`; the reborrow
-            // above has ended and nothing else references it.
+            // above has ended.
             unsafe { core::ptr::drop_in_place(tp) };
             return Err(err);
         }

@@ -112,11 +112,7 @@ impl Expr {
 }
 
 impl Expr {
-    /// Deep-clone this subtree into `bump`. Returns
-    /// [`DeepCloneError::StackOverflow`] when the tree is nested deeper than
-    /// the remaining native stack allows. The parsers that produce these
-    /// trees are depth-guarded with the same `StackCheck`, but their frames
-    /// are smaller, so a tree they accept can still overflow the clone.
+    /// Deep-clone this subtree into `bump`.
     pub fn deep_clone(&self, bump: &Bump) -> Result<Expr, DeepCloneError> {
         let _g = bun_alloc::ast_alloc::DetachAstHeap::new();
         self.deep_clone_no_detach(bump, StackCheck::init())

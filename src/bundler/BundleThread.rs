@@ -281,14 +281,10 @@ impl<C: CompletionStruct> BundleThread<C> {
         let transpiler = match completion.create_and_configure_transpiler(bump) {
             Ok(transpiler) => transpiler,
             Err(err) => {
-                // The transpiler (if it was allocated) is already dropped by
-                // the callee. Restore the AST-allocator thread-local and
-                // release the store's global-heap state, as the success path
-                // does below.
+                // The callee dropped the transpiler. Unwind the AST store as
+                // the success path does below.
                 ast_memory_store.pop();
-                // SAFETY: the unique `&mut` slot from `bump.alloc` above;
-                // nothing else references it. The arena bytes are bulk-freed
-                // by `heap`'s `Drop`.
+                // SAFETY: the unique `&mut` slot from `bump.alloc` above.
                 unsafe {
                     core::ptr::drop_in_place(std::ptr::from_mut::<bun_ast::ASTMemoryAllocator>(
                         ast_memory_store,

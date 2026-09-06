@@ -27,9 +27,8 @@ impl bun_core::output::ErrName for Error {
 
 pub type Result<T, E = Error> = core::result::Result<T, E>;
 
-/// Failure of `Expr::deep_clone` and friends: the clone recurses once per
-/// nesting level, so a tree the depth-guarded parsers accept can still run
-/// out of native stack here.
+/// `Expr::deep_clone` recurses once per nesting level, so a tree the
+/// depth-guarded parsers accepted can still run out of native stack here.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 pub enum DeepCloneError {
     #[error("StackOverflow")]

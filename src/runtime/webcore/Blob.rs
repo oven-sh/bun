@@ -4095,6 +4095,11 @@ pub(crate) extern "C" fn Blob__dupe(this: &Blob) -> *mut Blob {
 }
 
 #[unsafe(no_mangle)]
+pub(crate) extern "C" fn Blob__calculateEstimatedByteSize(this: &Blob) {
+    this.calculate_estimated_byte_size();
+}
+
+#[unsafe(no_mangle)]
 pub(crate) extern "C" fn Blob__getFileNameString(this: &Blob) -> BunString {
     this.get_name_string()
         .map_or(BunString::EMPTY, Clone::clone)

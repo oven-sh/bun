@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
+import { AsyncLocalStorage } from "node:async_hooks";
 import path, { dirname, join, resolve } from "node:path";
 import { itBundled } from "./expectBundled";
 
@@ -1893,4 +1894,52 @@ describe("bundler", () => {
       }).toEqual({ success: true, logs: [], outputs: ["second-name.js"] });
     });
   }
+
+  // The bundle thread dispatches onResolve/onLoad/onEnd back to JS after the
+  // setup() call has returned. Each hook runs in the AsyncLocalStorage context
+  // that was active when it was registered.
+  test.concurrent("plugin/hooks run in the AsyncLocalStorage context of their registration", async () => {
+    using dir = tempDir("plugin-async-local-storage", {
+      "entry.ts": `import x from "./dep.magic"; console.log(x);`,
+      "dep.ts": `export default 1;`,
+    });
+    const als = new AsyncLocalStorage<string>();
+    const seen: string[] = [];
+    const result = await als.run("build", () =>
+      Bun.build({
+        entrypoints: [join(String(dir), "entry.ts")],
+        throw: false,
+        plugins: [
+          {
+            name: "als",
+            setup(build) {
+              build.onStart(() => {
+                seen.push(`onStart:${als.getStore()}`);
+              });
+              build.onResolve({ filter: /\.magic$/ }, () => {
+                seen.push(`onResolve:${als.getStore()}`);
+                return { path: join(String(dir), "dep.ts") };
+              });
+              build.onLoad({ filter: /dep\.ts$/ }, async () => {
+                seen.push(`onLoad:${als.getStore()}`);
+                await Bun.sleep(0);
+                seen.push(`onLoad-after-await:${als.getStore()}`);
+                return { contents: "export default 2;", loader: "ts" };
+              });
+              als.run("registration", () => {
+                build.onEnd(() => {
+                  seen.push(`onEnd:${als.getStore()}`);
+                });
+              });
+            },
+          },
+        ],
+      }),
+    );
+    expect({ success: result.success, logs: result.logs.map(log => log.message), seen }).toEqual({
+      success: true,
+      logs: [],
+      seen: ["onStart:build", "onResolve:build", "onLoad:build", "onLoad-after-await:build", "onEnd:registration"],
+    });
+  });
 });

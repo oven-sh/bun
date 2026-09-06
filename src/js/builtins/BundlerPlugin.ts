@@ -5,9 +5,9 @@ type AnyFunction = (...args: any[]) => any;
  * @see `JSBundlerPlugin.h`
  */
 interface BundlerPlugin {
-  onLoad: Map<string, [RegExp, OnLoadCallback][]>;
-  onResolve: Map<string, [RegExp, OnResolveCallback][]>;
-  onEndCallbacks: Array<(build: Bun.BuildOutput) => void | Promise<void>> | undefined;
+  onLoad: Map<string, [RegExp, OnLoadCallback, asyncContext: unknown][]>;
+  onResolve: Map<string, [RegExp, OnResolveCallback, asyncContext: unknown][]>;
+  onEndCallbacks: Array<[(build: Bun.BuildOutput) => void | Promise<void>, asyncContext: unknown]> | undefined;
   /** Binding to `JSBundlerPlugin__onLoadAsync` */
   onLoadAsync(
     internalID,
@@ -115,10 +115,11 @@ export function runOnEndCallbacks(
   const callbacks = this.onEndCallbacks;
   if (!callbacks) return;
   const promises: PromiseLike<unknown>[] = [];
+  const runInFrame = require("internal/async_context_frame").run;
 
-  for (const callback of callbacks) {
+  for (const [callback, asyncContext] of callbacks) {
     try {
-      const result = callback(buildResult);
+      const result = runInFrame(asyncContext, callback, undefined, buildResult);
 
       if (result && $isPromise(result)) {
         $arrayPush(promises, result);
@@ -163,8 +164,8 @@ export function runSetupFunction(
   isBake: boolean,
 ): Promise<Promise<any>[]> | Promise<any>[] | undefined {
   this.promises = promises;
-  var onLoadPlugins = new Map<string, [filter: RegExp, callback: OnLoadCallback][]>();
-  var onResolvePlugins = new Map<string, [filter: RegExp, OnResolveCallback][]>();
+  var onLoadPlugins = new Map<string, [filter: RegExp, callback: OnLoadCallback, asyncContext: unknown][]>();
+  var onResolvePlugins = new Map<string, [filter: RegExp, OnResolveCallback, asyncContext: unknown][]>();
   var onBeforeParsePlugins = new Map<
     string,
     [RegExp, napiModule: unknown, symbol: string, external?: undefined | unknown][]
@@ -218,10 +219,15 @@ export function runSetupFunction(
 
     var callbacks = map.$get(namespace);
 
+    // The bundle thread dispatches onLoad/onResolve later, outside any JS frame. Capture the
+    // async context at registration so the callback runs in it (AsyncLocalStorage).
+    var entry = isOnBeforeParse
+      ? [filter, callback, symbol, external]
+      : [filter, callback, $getInternalField($asyncContext, 0)];
     if (!callbacks) {
-      map.$set(namespace, [isOnBeforeParse ? [filter, callback, symbol, external] : [filter, callback]]);
+      map.$set(namespace, [entry]);
     } else {
-      $arrayPush(callbacks, isOnBeforeParse ? [filter, callback, symbol, external] : [filter, callback]);
+      $arrayPush(callbacks, entry);
     }
   }
 
@@ -273,7 +279,7 @@ export function runSetupFunction(
 
     if (!self.onEndCallbacks) self.onEndCallbacks = [];
 
-    $arrayPush(self.onEndCallbacks, callback);
+    $arrayPush(self.onEndCallbacks, [callback, $getInternalField($asyncContext, 0)]);
 
     return this;
   }
@@ -308,7 +314,7 @@ export function runSetupFunction(
         this.onResolve = onResolvePlugins;
       } else {
         for (let [namespace, callbacks] of onResolvePlugins.entries()) {
-          var existing = onResolveObject.$get(namespace) as [RegExp, AnyFunction][];
+          var existing = onResolveObject.$get(namespace) as [RegExp, AnyFunction, unknown][];
 
           if (!existing) {
             onResolveObject.$set(namespace, callbacks);
@@ -325,7 +331,7 @@ export function runSetupFunction(
         this.onLoad = onLoadPlugins;
       } else {
         for (let [namespace, callbacks] of onLoadPlugins.entries()) {
-          var existing = onLoadObject.$get(namespace) as [RegExp, AnyFunction][];
+          var existing = onLoadObject.$get(namespace) as [RegExp, AnyFunction, unknown][];
 
           if (!existing) {
             onLoadObject.$set(namespace, callbacks);
@@ -408,10 +414,11 @@ export function runOnResolvePlugins(this: BundlerPlugin, specifier, inputNamespa
       this.onResolveAsync(internalID, null, null, null);
       return null;
     }
+    const runInFrame = require("internal/async_context_frame").run;
 
-    for (let [filter, callback] of results) {
+    for (let [filter, callback, asyncContext] of results) {
       if (filter.test(inputPath)) {
-        var result = callback({
+        var result = runInFrame(asyncContext, callback, undefined, {
           path: inputPath,
           importer,
           namespace: inputNamespace,
@@ -515,10 +522,11 @@ export function runOnLoadPlugins(
       this.onLoadAsync(internalID, null, null);
       return null;
     }
+    const runInFrame = require("internal/async_context_frame").run;
 
-    for (let [filter, callback] of results) {
+    for (let [filter, callback, asyncContext] of results) {
       if (filter.test(path)) {
-        var result = callback({
+        var result = runInFrame(asyncContext, callback, undefined, {
           path,
           namespace,
           // suffix

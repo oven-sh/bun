@@ -149,15 +149,15 @@ test("BUN_WATCHER_TRACE with --watch flag", async () => {
   expect(foundScriptEvent).toBe(true);
 }, 10000);
 
-// Windows needs a privilege to create symlinks, and the inotify path under test is Linux only.
-const traceDirKinds: [string, boolean][] = isWindows
-  ? [["its real path", false]]
-  : [
-      ["its real path", false],
-      ["a symlink", true],
-    ];
+// The cycle exists on inotify only: kqueue and ReadDirectoryChangesW do not report
+// the trace append through the directory watch. Windows also needs a privilege to
+// create symlinks, so the file is Linux coverage.
+const traceDirKinds: [string, boolean][] = [
+  ["its real path", false],
+  ["a symlink", true],
+];
 describe.each(traceDirKinds)("BUN_WATCHER_TRACE inside the watched directory via %s", (_, viaSymlink) => {
-  test("does not trace its own writes", async () => {
+  test.skipIf(isWindows)("does not trace its own writes", async () => {
     using dir = tempDir("watcher-trace-self", {
       "project/script.js": `console.log("run", 0);\nsetInterval(() => {}, 1000);`,
     });

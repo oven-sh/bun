@@ -752,13 +752,6 @@ impl<'a> URL<'a> {
             url.pathname = b"/";
         }
 
-        const SLASH_SLASH: u16 = u16::from_le_bytes(*b"//");
-        while url.pathname.len() > 1
-            && u16::from_le_bytes([url.pathname[0], url.pathname[1]]) == SLASH_SLASH
-        {
-            url.pathname = &url.pathname[1..];
-        }
-
         url.origin = strings::trim(url.origin, b"/ ?#");
         url
     }
@@ -1773,6 +1766,21 @@ mod tests {
             .expect("Vec<u8> writes cannot fail");
         assert_eq!(&*boxed, &*out, "join_alloc and join_write must agree");
         out
+    }
+
+    #[test]
+    fn leading_empty_path_segments_are_kept() {
+        let url = URL::parse(b"http://localhost:3000//admin");
+        assert_eq!(url.hostname, b"localhost");
+        assert_eq!(url.port, b"3000");
+        assert_eq!(url.pathname, b"//admin");
+
+        let url = URL::parse(b"http://localhost:3000///t?a=1");
+        assert_eq!(url.pathname, b"///t?a=1");
+        assert_eq!(url.search, b"?a=1");
+
+        let url = URL::parse(b"http://localhost:3000/a//b");
+        assert_eq!(url.pathname, b"/a//b");
     }
 
     #[test]

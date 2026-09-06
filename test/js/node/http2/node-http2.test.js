@@ -6009,3 +6009,111 @@ describe("frames issued from inside a user-supplied Duplex transport's _write", 
     },
   );
 });
+
+// session.setLocalWindowSize() grows the connection window only (nghttp2_session_set_local_window_size
+// on stream 0). Stream windows keep SETTINGS_INITIAL_WINDOW_SIZE, so a transfer larger than that
+// still gets its stream-level WINDOW_UPDATEs and finishes.
+describe("session.setLocalWindowSize()", () => {
+  async function download(windowSize, bodySize) {
+    const server = http2.createServer((req, res) => res.end(Buffer.alloc(bodySize, 97)));
+    await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
+    try {
+      const client = http2.connect(`http://127.0.0.1:${server.address().port}`);
+      try {
+        await new Promise(resolve => client.once("connect", resolve));
+        if (windowSize !== undefined) client.setLocalWindowSize(windowSize);
+        const stateAfterCall = client.state;
+        const req = client.request({ ":path": "/" });
+        let received = 0;
+        let streamState;
+        let stateAtEnd;
+        const { promise, resolve, reject } = Promise.withResolvers();
+        req.on("response", () => (streamState = req.state));
+        req.on("data", chunk => (received += chunk.length));
+        req.on("error", reject);
+        req.on("end", () => {
+          stateAtEnd = client.state;
+          resolve();
+        });
+        await promise;
+        return { received, stateAfterCall, streamState, stateAtEnd };
+      } finally {
+        client.destroy();
+      }
+    } finally {
+      server.close();
+    }
+  }
+
+  it("client: a download larger than the initial stream window completes", async () => {
+    const { received, stateAfterCall, streamState } = await download(1 << 20, 2 * 1048576);
+    expect(received).toBe(2 * 1048576);
+    expect(stateAfterCall).toMatchObject({
+      effectiveLocalWindowSize: 1 << 20,
+      localWindowSize: 1 << 20,
+      effectiveRecvDataLength: 0,
+      remoteWindowSize: 65535,
+    });
+    // The stream window is still the SETTINGS value, like node.
+    expect(streamState.localWindowSize).toBe(65535);
+  });
+
+  it("server: an upload larger than the initial stream window completes", async () => {
+    const server = http2.createServer();
+    server.on("session", session => session.setLocalWindowSize(1 << 20));
+    server.on("stream", stream => {
+      let received = 0;
+      stream.on("data", chunk => (received += chunk.length));
+      stream.on("end", () => {
+        stream.respond({ ":status": 200 });
+        stream.end(String(received));
+      });
+    });
+    await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
+    try {
+      const client = http2.connect(`http://127.0.0.1:${server.address().port}`);
+      try {
+        const req = client.request({ ":method": "POST", ":path": "/" });
+        const { promise, resolve, reject } = Promise.withResolvers();
+        let body = "";
+        req.setEncoding("utf8");
+        req.on("data", chunk => (body += chunk));
+        req.on("error", reject);
+        req.on("end", resolve);
+        const chunk = Buffer.alloc(65536, 1);
+        for (let sent = 0; sent < 2 * 1048576; sent += chunk.length) {
+          if (!req.write(chunk)) await new Promise(drained => req.once("drain", drained));
+        }
+        req.end();
+        await promise;
+        expect(body).toBe(String(2 * 1048576));
+      } finally {
+        client.destroy();
+      }
+    } finally {
+      server.close();
+    }
+  });
+
+  it("a smaller size keeps the window the peer already has", async () => {
+    const { received, stateAfterCall } = await download(20, 100000);
+    expect(received).toBe(100000);
+    expect(stateAfterCall).toMatchObject({ effectiveLocalWindowSize: 20, localWindowSize: 65535 });
+  });
+
+  it("state counts received DATA against the connection window", async () => {
+    const { stateAfterCall, stateAtEnd } = await download(undefined, 1000);
+    expect(stateAfterCall).toMatchObject({
+      effectiveLocalWindowSize: 65535,
+      localWindowSize: 65535,
+      effectiveRecvDataLength: 0,
+    });
+    // Read from inside the 'end' handler: 1000 bytes received and no WINDOW_UPDATE sent yet (below
+    // half the window), so the peer's remaining connection window is 65535 - 1000.
+    expect(stateAtEnd).toMatchObject({
+      effectiveLocalWindowSize: 65535,
+      localWindowSize: 64535,
+      effectiveRecvDataLength: 1000,
+    });
+  });
+});

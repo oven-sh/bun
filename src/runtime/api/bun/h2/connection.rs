@@ -193,6 +193,9 @@ pub trait Sink {
     fn on_headers_complete(&self, _stream_id: u32, _end_stream: bool, _flags: u8) {}
     /// A DATA payload (padding already stripped).
     fn on_data(&self, _stream_id: u32, _data: &[u8]) {}
+    /// The connection receive window changed: `size` is what the peer was given, `received`
+    /// the DATA counted against it since the last WINDOW_UPDATE.
+    fn on_recv_window(&self, _size: i64, _received: i64) {}
     /// The stream half/fully closed; `state` is the `stream::State` integer.
     fn on_stream_end(&self, _stream_id: u32, _state: u8) {}
     /// The stream was reset (inbound RST_STREAM or a local stream error). `code` is the raw
@@ -569,6 +572,7 @@ impl Connection {
     fn replenish_windows(&mut self, sink: &impl Sink) {
         if self.recv_window.needs_update() {
             let inc = self.recv_window.take_update();
+            sink.on_recv_window(self.recv_window.size, self.recv_window.consumed);
             if inc > 0 {
                 self.send_window_update(sink, 0, inc);
             }
@@ -1368,6 +1372,7 @@ impl Connection {
 
         // §6.9: the whole declared frame counts against the connection recv window on receipt.
         self.recv_window.on_data(hdr.length as i64);
+        sink.on_recv_window(self.recv_window.size, self.recv_window.consumed);
         if self.recv_window.is_overflowed() {
             self.send_go_away(
                 sink,
@@ -1486,6 +1491,7 @@ impl Connection {
 
         // §6.9: the whole frame counts against the connection recv window.
         self.recv_window.on_data(consumed);
+        sink.on_recv_window(self.recv_window.size, self.recv_window.consumed);
         if self.recv_window.is_overflowed() {
             self.send_go_away(
                 sink,

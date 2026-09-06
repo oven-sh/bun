@@ -1080,6 +1080,10 @@ pub struct H2FrameParser {
     /// Receive-window growth requested by setLocalWindowSize() while a dispatch held the engine
     /// borrow; applied by rewrite_read() on its next pass.
     pending_recv_window_growth: Cell<i64>,
+    /// The engine's connection receive window (size, DATA received since the last
+    /// WINDOW_UPDATE), mirrored through `Sink::on_recv_window` so `session.state` can read it
+    /// while a dispatch borrows the engine.
+    recv_window_snapshot: Cell<(i64, i64)>,
     /// Bridge: outbound DATA bytes the legacy encoder wrote since the engine last ran, applied to
     /// the engine's connection-level send window in rewrite_read (the engine cell may be borrowed
     /// when the DATA goes out). Without this the engine's window only ever grows and a compliant
@@ -1316,8 +1320,6 @@ pub struct Stream {
     weight: u16,
     // current window size for the stream
     window_size: u64,
-    // used window size for the stream
-    used_window_size: u64,
     // remote window size for the stream
     remote_window_size: u64,
     // remote used window size for the stream
@@ -1832,7 +1834,6 @@ impl Stream {
             // which is what stream.state.weight reports when no priority was signaled.
             weight: 16,
             window_size: initial_window_size as u64,
-            used_window_size: 0,
             remote_window_size: remote_window_size as u64,
             remote_used_window_size: 0,
             signal: None,
@@ -3566,6 +3567,8 @@ impl H2FrameParser {
             let pending = self.pending_recv_window_growth.replace(0);
             if pending > 0 {
                 engine.recv_window.grow(pending);
+                self.recv_window_snapshot
+                    .set((engine.recv_window.size, engine.recv_window.consumed));
             }
             // Apply outbound DATA the legacy encoder wrote since the last batch, so the engine's
             // send windows reflect what is actually in flight (§6.9.1 overflow stays peer-error
@@ -4070,6 +4073,10 @@ impl crate::api::h2::connection::Sink for H2FrameParser {
         }
     }
 
+    fn on_recv_window(&self, size: i64, received: i64) {
+        self.recv_window_snapshot.set((size, received));
+    }
+
     fn on_data(&self, stream_id: u32, data: &[u8]) {
         let g = self.global();
         let stream_ctx = self.rewrite_stream_ctx(stream_id);
@@ -4532,13 +4539,10 @@ impl H2FrameParser {
                 "Expected windowSize to be greater than usedWindowSize"
             )));
         }
+        // Only the connection window changes (nghttp2_session_set_local_window_size on stream
+        // 0). Stream windows keep SETTINGS_INITIAL_WINDOW_SIZE, the size the peer works from.
         let old_window_size = this.window_size.get();
         this.window_size.set(window_size_value as u64);
-        if this.local_settings.get().initial_window_size < window_size_value {
-            let mut s = this.local_settings.get();
-            s.initial_window_size = window_size_value;
-            this.local_settings.set(s);
-        }
         if window_size_value as u64 > old_window_size {
             let increment: u32 = (window_size_value as u64 - old_window_size) as u32;
             this.send_window_update(0, UInt31WithReserved::init(increment, false));
@@ -4549,7 +4553,11 @@ impl H2FrameParser {
             // delta keeps that path panic-free.
             match this.engine.try_borrow_mut() {
                 Ok(mut guard) => match guard.as_mut() {
-                    Some(engine) => engine.recv_window.grow(increment as i64),
+                    Some(engine) => {
+                        engine.recv_window.grow(increment as i64);
+                        this.recv_window_snapshot
+                            .set((engine.recv_window.size, engine.recv_window.consumed));
+                    }
                     None => {
                         // The engine is created lazily on the first inbound read; carry the
                         // growth forward so it applies when that happens.
@@ -4564,14 +4572,6 @@ impl H2FrameParser {
                         .set(this.pending_recv_window_growth.get() + increment as i64);
                 }
             }
-        }
-        for (_, item) in this.streams.get().iter() {
-            // SAFETY: item is &*mut Stream from streams.iter(); the boxed Stream outlives the iteration
-            let stream = unsafe { &mut **item };
-            if stream.used_window_size > window_size_value as u64 {
-                continue;
-            }
-            stream.window_size = window_size_value as u64;
         }
         Ok(JSValue::UNDEFINED)
     }
@@ -4606,6 +4606,10 @@ impl H2FrameParser {
         _callframe: &CallFrame,
     ) -> JsResult<JSValue> {
         let result = JSValue::create_empty_object(global_object, 9);
+        // node: localWindowSize is the window the peer was given (it never shrinks) minus the
+        // DATA received since the last WINDOW_UPDATE, effectiveRecvDataLength is that amount.
+        let (snapshot_size, received_since_update) = this.recv_window_snapshot.get();
+        let advertised_window = snapshot_size + this.pending_recv_window_growth.get();
         result.put(
             global_object,
             b"effectiveLocalWindowSize",
@@ -4614,7 +4618,7 @@ impl H2FrameParser {
         result.put(
             global_object,
             b"effectiveRecvDataLength",
-            JSValue::js_number((this.window_size.get() - this.used_window_size.get()) as f64),
+            JSValue::js_number(received_since_update as f64),
         );
         result.put(
             global_object,
@@ -4629,7 +4633,6 @@ impl H2FrameParser {
 
         let settings = this.remote_settings.get().unwrap_or_default();
         let remote_iws = settings.initial_window_size;
-        let local_iws = this.local_settings.get().initial_window_size;
         let local_hts = this.local_settings.get().header_table_size;
         result.put(
             global_object,
@@ -4639,7 +4642,7 @@ impl H2FrameParser {
         result.put(
             global_object,
             b"localWindowSize",
-            JSValue::js_number(local_iws as f64),
+            JSValue::js_number((advertised_window - received_since_update) as f64),
         );
         result.put(
             global_object,
@@ -7580,6 +7583,7 @@ impl H2FrameParser {
             max_header_list_pairs: Cell::new(128),
             max_settings: Cell::new(32),
             pending_recv_window_growth: Cell::new(0),
+            recv_window_snapshot: Cell::new((DEFAULT_WINDOW_SIZE as i64, 0)),
             pending_send_window_consumed: Cell::new(0),
             pending_stream_send_consumed: JsCell::new(Vec::new()),
             pending_engine_stream_closes: JsCell::new(Vec::new()),

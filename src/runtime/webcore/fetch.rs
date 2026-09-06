@@ -887,7 +887,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                                         format_args!("fetch() proxy URL is invalid"),
                                     );
                                     return Ok(
-                                        JSPromise::rejected_promise(global_this, err).to_js(),
+                                        JSPromise::rejected_promise(global_this, err).to_js()
                                     );
                                 }
                                 let mut buffer: Vec<u8> =

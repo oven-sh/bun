@@ -1709,6 +1709,14 @@ impl Archiver {
                             let target_z = ZStr::from_buf(&target_buf[..], target_len);
                             let link = || bun_sys::linkat(dir_fd, target_z, dir_fd, path_z);
                             let result = match link() {
+                                // A link to itself is already in place; replacing it
+                                // would delete the only copy.
+                                Err(err)
+                                    if err.get_errno() == bun_sys::E::EEXIST
+                                        && target_z.as_bytes() == path_slice =>
+                                {
+                                    Ok(())
+                                }
                                 Err(err) if err.get_errno() == bun_sys::E::EEXIST => {
                                     bun_sys::unlinkat(dir_fd, path_z).and_then(|()| link())
                                 }
@@ -1768,15 +1776,22 @@ impl Archiver {
                                     Err(err) => match err.get_errno() {
                                         // Tarballs commonly list a directory twice (`x` and
                                         // `./x`), and parents are created on demand, so an
-                                        // existing directory is fine. Anything else in the
-                                        // way is replaced, as tar does.
+                                        // existing directory (or symlink to one) is fine. A
+                                        // non-directory in the way is replaced, as tar does.
                                         bun_sys::E::EEXIST => {
-                                            let existing = bun_sys::lstatat(dir_fd, path_z)
-                                                .map_err(|e| entry_error(e, path_slice))?;
-                                            if bun_sys::kind_from_mode(
-                                                existing.st_mode as bun_sys::Mode,
-                                            ) == bun_sys::FileKind::Directory
-                                            {
+                                            let is_dir = match bun_sys::fstatat(dir_fd, path_z) {
+                                                Ok(existing) => {
+                                                    bun_sys::kind_from_mode(
+                                                        existing.st_mode as bun_sys::Mode,
+                                                    ) == bun_sys::FileKind::Directory
+                                                }
+                                                // A dangling symlink.
+                                                Err(e) if e.get_errno() == bun_sys::E::ENOENT => {
+                                                    false
+                                                }
+                                                Err(e) => return Err(entry_error(e, path_slice)),
+                                            };
+                                            if is_dir {
                                                 false
                                             } else {
                                                 bun_sys::unlinkat(dir_fd, path_z)

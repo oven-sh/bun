@@ -141,9 +141,7 @@ void NodeVMSourceTextModule::destroy(JSCell* cell)
     static_cast<NodeVMSourceTextModule*>(cell)->NodeVMSourceTextModule::~NodeVMSourceTextModule();
 }
 
-// The `type` the module analyzer derives from an import statement's attributes
-// (`tryCreateAttributes` in NodesAnalyzeModule.cpp). No attributes, or no `type`
-// key, means JavaScript.
+// Mirrors `tryCreateAttributes` in JSC's NodesAnalyzeModule.cpp: no `type` key means JavaScript.
 static ScriptFetchParameters::Type importAttributesType(VM& vm, ImportAttributesListNode* attributesList)
 {
     if (!attributesList)
@@ -155,10 +153,8 @@ static ScriptFetchParameters::Type importAttributesType(VM& vm, ImportAttributes
     return ScriptFetchParameters::Type::JavaScript;
 }
 
-// The phase of an import statement. The AST node does not expose it, but the
-// module record keeps it on the import entry of each binding the statement
-// declares. A statement with no bindings (`import 'm'`) is always evaluation
-// phase: `import defer` requires a namespace binding.
+// The AST node keeps its phase private; the record stores it per imported binding.
+// `import 'm'` (no bindings) cannot be `import defer`, so it is evaluation phase.
 static AbstractModuleRecord::ModulePhase importPhase(JSModuleRecord& moduleRecord, ImportDeclarationNode& importDeclaration)
 {
     const auto& specifiers = importDeclaration.specifierList()->specifiers();
@@ -170,10 +166,8 @@ static AbstractModuleRecord::ModulePhase importPhase(JSModuleRecord& moduleRecor
     return entry->value.phase;
 }
 
-// `requestedModules()` is deduplicated by (specifier, type, phase) in
-// first-occurrence order, so it cannot be index-aligned with the import
-// statements. Find the statement that produced `request`: the first import with
-// the same key. Returns null for a request that came from an `export ... from`.
+// `requestedModules()` is deduplicated by (specifier, type, phase), first occurrence wins.
+// The first import statement with that key produced `request`. Null for `export ... from`.
 static ImportAttributesListNode* findImportAttributesList(VM& vm, JSModuleRecord& moduleRecord, ModuleProgramNode& node, const AbstractModuleRecord::ModuleRequest& request)
 {
     ScriptFetchParameters::Type requestType = request.m_attributes ? request.m_attributes->type() : ScriptFetchParameters::Type::JavaScript;

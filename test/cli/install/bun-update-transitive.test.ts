@@ -2123,9 +2123,13 @@ async function staleDirectAndTransitive() {
   return { dir, packageJson };
 }
 
-test.concurrent("`bun update --depth 0` moves direct entries and keeps transitive rows locked", async () => {
+// A bare `bun update` on the same fixture moves no-deps too (see `stale()` above); --depth 0 leaves that row alone.
+test.concurrent.each([
+  ["--depth 0", ["--depth", "0"]],
+  ["--depth=0", ["--depth=0"]],
+])("`bun update %s` moves direct entries and keeps transitive rows locked", async (_, args) => {
   const { dir } = await staleDirectAndTransitive();
-  const { stdout, stderr, exitCode } = await run(dir, "update", "--depth", "0");
+  const { stdout, stderr, exitCode } = await run(dir, "update", ...args);
   expectSummary(stdout, A_DEP_ROW, "", installed(1));
   expectCleanStderr(stderr);
   expect(await packageJsonOf(dir)).toStrictEqual(pkgJson({ "one-range-dep": "1.0.0", "a-dep": "^1.0.10" }));
@@ -2133,21 +2137,6 @@ test.concurrent("`bun update --depth 0` moves direct entries and keeps transitiv
   expect(await lockedVersions(dir, "no-deps")).toStrictEqual(["1.0.0"]);
   expect(await installedVersion(dir, "no-deps")).toBe("1.0.0");
   await frozen(dir);
-  expect(exitCode).toBe(0);
-
-  // The transitive row is still stale: a bare update is what moves it.
-  const bare = await run(dir, "update");
-  expectSummary(bare.stdout, NO_DEPS_ROW_HINTED, "", installed(1));
-  expect(await lockedVersions(dir, "no-deps")).toStrictEqual(["1.1.0"]);
-  expect(bare.exitCode).toBe(0);
-});
-
-test.concurrent("`bun update --depth=0` is `--depth 0`", async () => {
-  const { dir } = await staleDirectAndTransitive();
-  const { stdout, stderr, exitCode } = await run(dir, "update", "--depth=0");
-  expectSummary(stdout, A_DEP_ROW, "", installed(1));
-  expectCleanStderr(stderr);
-  expect(await lockedVersions(dir, "no-deps")).toStrictEqual(["1.0.0"]);
   expect(exitCode).toBe(0);
 });
 
@@ -2161,9 +2150,21 @@ test.concurrent("`bun update --depth 0 <name>` matches the name against direct e
   expect(exitCode).toBe(0);
 });
 
-test.concurrent("`bun update --depth 0` with nothing stale is a no-op that shows its work", async () => {
-  const dir = await setup({ "package.json": pkgJson({ "one-range-dep": "1.0.0" }) });
-  await expectNothingToUpdate(dir, noneSelected(1, "selected by --depth 0"), "--depth", "0");
+// one-range-dep is pinned and no-deps is only transitive: nothing to move, and the stale transitive row is not counted as a change.
+test.concurrent(
+  "`bun update --depth 0` with a stale transitive row only is the same no-op as naming the parent",
+  async () => {
+    const { dir } = await stale();
+    await expectNothingToUpdate(dir, noChanges(2, 3), "--depth", "0");
+    expect(await lockedVersions(dir, "no-deps")).toStrictEqual(["1.0.0"]);
+  },
+);
+
+// The root's only rows are its two workspace links, which are not dependencies to check.
+test.concurrent("`bun update --depth 0` from a workspace root without -r selects no entries and says so", async () => {
+  const { dir, texts, textsBefore } = await staleMemberGroups();
+  await expectNothingToUpdate(dir, noneSelected(0, "selected by --depth 0"), "--depth", "0");
+  expect(await texts()).toStrictEqual(textsBefore);
 });
 
 test.concurrent.each(["1", "x"])("`bun update --depth %s` is rejected", async depth => {

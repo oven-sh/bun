@@ -432,6 +432,43 @@ describe("bundler", async () => {
     },
   });
 
+  // A byte that is not valid UTF-8 in a text import or in a string of a data
+  // file prints as U+FFFD. The bytes around it are kept and the output stays
+  // valid UTF-8. "bun" prints the literal with ASCII escapes, "browser" writes
+  // the characters as UTF-8.
+  {
+    // "A" E9 "B" C3 "Z" 80 FF "[" C3 A9, E2 82 AC, F0 9F 98 80 "]" E2
+    // E9 and C3 start a sequence that the next byte does not continue, 80 is a
+    // continuation byte on its own, FF is never valid, the bracket holds valid
+    // 2, 3 and 4 byte sequences, and the E2 at the end is cut off by the end
+    // of the file.
+    const body = Buffer.from("41e942c35a80ff5bc3a9e282acf09f98805d", "hex");
+    const text = Buffer.concat([body, Buffer.from([0xe2])]);
+    const json = Buffer.concat([Buffer.from('{"key":"'), body, Buffer.from('"}')]);
+    const expected = "41 fffd 42 fffd 5a fffd fffd 5b e9 20ac 1f600 5d";
+    for (const target of ["bun", "browser"] as const) {
+      itBundled(`${target}/loader-ill-formed-utf8`, {
+        target,
+        files: {
+          "/entry.ts": /* js */ `
+            import text from "./chars.txt" with { type: "text" };
+            import json from "./chars.json";
+            const codePoints = (s) => [...s].map(c => c.codePointAt(0).toString(16)).join(" ");
+            console.log(codePoints(text));
+            console.log(codePoints(json.key));
+          `,
+          "/chars.txt": text,
+          "/chars.json": json,
+        },
+        onAfterBundle(api) {
+          const output = fs.readFileSync(api.outfile);
+          expect(() => new TextDecoder("utf-8", { fatal: true }).decode(output)).not.toThrow();
+        },
+        run: { stdout: `${expected} fffd\n${expected}` },
+      });
+    }
+  }
+
   const loaders: Loader[] = ["wasm", "json", "file" /* "napi" */, "text"];
   const exts = ["wasm", "json", "lmao" /*  ".node" */, "txt"];
   for (let i = 0; i < loaders.length; i++) {

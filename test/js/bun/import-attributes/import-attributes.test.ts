@@ -99,7 +99,10 @@ type Tests = Record<
 const default_tests = Object.fromEntries(
   loaders.map(loader => [loader, { loader, filename: "no_extension" }]),
 ) as Tests;
-async function compileAndTest(code: string, tests: Tests = default_tests): Promise<Record<string, unknown>> {
+async function compileAndTest(
+  code: string | Buffer,
+  tests: Tests = default_tests,
+): Promise<Record<string, unknown>> {
   const [v1, v2, v3] = await Promise.all([
     compileAndTest_inner(code, tests, testBunRun),
     compileAndTest_inner(code, tests, testBunRunAwaitImport),
@@ -114,7 +117,7 @@ async function compileAndTest(code: string, tests: Tests = default_tests): Promi
   return v1;
 }
 async function compileAndTest_inner(
-  code: string,
+  code: string | Buffer,
   tests: Tests,
   cb: (dir: string, loader: string | null, filename: string) => Promise<unknown>,
 ): Promise<Record<string, unknown>> {
@@ -131,7 +134,7 @@ async function compileAndTest_inner(
   );
   let res: Record<string, unknown> = Object.fromEntries(results);
   if (Object.hasOwn(res, "text")) {
-    expect(res.text).toEqual({ default: code });
+    expect(res.text).toEqual({ default: typeof code === "string" ? code : code.toString("utf8") });
     delete res.text;
   }
   if (Object.hasOwn(res, "yaml")) {
@@ -290,6 +293,24 @@ test("yaml", async () => {
   },
 }
 `);
+});
+
+// A byte that is not valid UTF-8 becomes U+FFFD and the bytes around it are
+// kept, both in a text import and in a string value of a data file.
+test("ill-formed UTF-8", async () => {
+  // {"key":"A E9 B C3 Z 80 FF [é€😀]"}: E9 and C3 start a sequence that the
+  // next byte does not continue, 80 is a continuation byte on its own, FF is
+  // never valid, and the bracket holds valid 2, 3 and 4 byte sequences.
+  const code = Buffer.concat([
+    Buffer.from('{"key":"'),
+    Buffer.from("41e942c35a80ff5bc3a9e282acf09f98805d", "hex"),
+    Buffer.from('"}'),
+  ]);
+  const key = "A\uFFFDB\uFFFDZ\uFFFD\uFFFD[\u00E9\u20AC\u{1F600}]";
+  expect(await compileAndTest(code)).toEqual({
+    "js,jsx,ts,tsx,toml": "error",
+    "json,jsonc,yaml": { default: { key }, key },
+  });
 });
 
 test("tsconfig.json is assumed jsonc", async () => {

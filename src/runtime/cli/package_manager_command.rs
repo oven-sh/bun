@@ -436,38 +436,47 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
                 && strings::eql_comptime(pm.options.positionals[1], b"rm")
             {
                 let mut had_err = false;
+                let dry_run = pm.options.dry_run;
 
                 let mut process_env = bun_dotenv::Loader::init();
                 process_env.load_process()?;
                 let cache_dir = fetch_cache_directory_path(&mut process_env, None);
-                let mut rm_buf = bun_paths::path_buffer_pool::get();
-                let rm_dir = match Dir::cwd().make_open_path(&cache_dir.path, Default::default()) {
-                    Ok(d) => d,
-                    Err(err) => {
-                        bun_core::pretty_errorln!(
-                            "{} getting cache directory",
-                            crate::Error::from(err).name(),
-                        );
-                        Global::crash();
-                    }
-                };
-                let rm_path = match rm_dir.get_fd_path(&mut rm_buf) {
-                    Ok(p) => &p[..],
-                    Err(err) => {
-                        bun_core::pretty_errorln!(
-                            "{} getting cache directory",
-                            crate::Error::from(err).name(),
-                        );
-                        Global::crash();
-                    }
-                };
-                rm_dir.close();
+                if dry_run {
+                    bun_core::prettyln!(
+                        "<r><d>dry run:<r> would delete 'bun install' cache at {}",
+                        bstr::BStr::new(&cache_dir.path),
+                    );
+                } else {
+                    let mut rm_buf = bun_paths::path_buffer_pool::get();
+                    let rm_dir =
+                        match Dir::cwd().make_open_path(&cache_dir.path, Default::default()) {
+                            Ok(d) => d,
+                            Err(err) => {
+                                bun_core::pretty_errorln!(
+                                    "{} getting cache directory",
+                                    crate::Error::from(err).name(),
+                                );
+                                Global::crash();
+                            }
+                        };
+                    let rm_path = match rm_dir.get_fd_path(&mut rm_buf) {
+                        Ok(p) => &p[..],
+                        Err(err) => {
+                            bun_core::pretty_errorln!(
+                                "{} getting cache directory",
+                                crate::Error::from(err).name(),
+                            );
+                            Global::crash();
+                        }
+                    };
+                    rm_dir.close();
 
-                if let Err(err) = bun_sys::delete_tree_absolute(rm_path) {
-                    Output::err(err, "Could not delete {s}", (bstr::BStr::new(rm_path),));
-                    had_err = true;
+                    if let Err(err) = bun_sys::delete_tree_absolute(rm_path) {
+                        Output::err(err, "Could not delete {s}", (bstr::BStr::new(rm_path),));
+                        had_err = true;
+                    }
+                    bun_core::prettyln!("Cleared 'bun install' cache");
                 }
-                bun_core::prettyln!("Cleared 'bun install' cache");
 
                 'bunx: {
                     let tmp = Fs::RealFS::platform_temp_dir();
@@ -516,7 +525,14 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
                         };
                         let name = entry.name.slice_u8();
                         if name.starts_with(prefix.as_slice()) {
-                            if let Err(err) = tmp_dir.delete_tree(name) {
+                            if dry_run {
+                                bun_core::prettyln!(
+                                    "<r><d>dry run:<r> would delete {}{}{}",
+                                    bstr::BStr::new(strings::without_trailing_slash(tmp)),
+                                    std::path::MAIN_SEPARATOR,
+                                    bstr::BStr::new(name),
+                                );
+                            } else if let Err(err) = tmp_dir.delete_tree(name) {
                                 Output::err(err, "Could not delete {s}", (bstr::BStr::new(name),));
                                 had_err = true;
                                 continue;
@@ -526,7 +542,11 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
                         }
                     }
 
-                    bun_core::prettyln!("Cleared {} cached 'bunx' packages", deleted);
+                    if dry_run {
+                        bun_core::prettyln!("Would clear {} cached 'bunx' packages", deleted);
+                    } else {
+                        bun_core::prettyln!("Cleared {} cached 'bunx' packages", deleted);
+                    }
                 }
 
                 Global::exit(if had_err { 1 } else { 0 });
@@ -742,6 +762,13 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
                 Global::exit(1);
             }
             Self::handle_load_lockfile_errors(&load_lockfile, log_level);
+            if pm.options.dry_run {
+                if log_level != LogLevel::Silent {
+                    bun_core::prettyln!("<r><d>dry run:<r> would write bun.lock");
+                }
+                Output::flush();
+                Global::exit(0);
+            }
             // Reshaped for borrowck — `save_to_disk` needs
             // `&mut Lockfile` (self) and `&LoadResult` simultaneously, but
             // `LoadResultOk.lockfile` already holds the only `&mut` into the

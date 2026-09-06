@@ -326,14 +326,14 @@ impl PmPkgCommand {
         }
 
         if modified {
-            Self::save_package_json(&path, root, &pkg)?;
+            Self::save_package_json(&path, root, &pkg, pm.options.dry_run)?;
         }
         Ok(())
     }
 
     fn exec_delete(
         ctx: &Context,
-        _pm: &mut PackageManager,
+        pm: &mut PackageManager,
         args: &[&[u8]],
         cwd: &[u8],
     ) -> Result<(), Error> {
@@ -369,12 +369,12 @@ impl PmPkgCommand {
         }
 
         if modified {
-            Self::save_package_json(&path, root, &pkg)?;
+            Self::save_package_json(&path, root, &pkg, pm.options.dry_run)?;
         }
         Ok(())
     }
 
-    fn exec_fix(ctx: &Context, _pm: &mut PackageManager, cwd: &[u8]) -> Result<(), Error> {
+    fn exec_fix(ctx: &Context, pm: &mut PackageManager, cwd: &[u8]) -> Result<(), Error> {
         let path = Self::find_package_json(cwd)?;
 
         let pkg = Self::load_package_json(ctx, &path)?;
@@ -426,7 +426,7 @@ impl PmPkgCommand {
         }
 
         if modified {
-            Self::save_package_json(&path, root, &pkg)?;
+            Self::save_package_json(&path, root, &pkg, pm.options.dry_run)?;
         }
         Ok(())
     }
@@ -825,7 +825,12 @@ impl PmPkgCommand {
         Ok(true)
     }
 
-    fn save_package_json(path: &[u8], root: Expr, pkg: &PackageJson) -> Result<(), Error> {
+    fn save_package_json(
+        path: &[u8],
+        root: Expr,
+        pkg: &PackageJson,
+        dry_run: bool,
+    ) -> Result<(), Error> {
         let preserve_newline =
             !pkg.contents.is_empty() && pkg.contents[pkg.contents.len() - 1] == b'\n';
 
@@ -853,6 +858,11 @@ impl PmPkgCommand {
         }
 
         let content = writer.ctx.written_without_trailing_zero();
+        if dry_run {
+            let _ = Output::writer().write_all(content);
+            Output::flush();
+            return Ok(());
+        }
         let path_z = bun_core::ZBox::from_bytes(path);
         if let Err(e) = bun_sys::File::write_file(bun_sys::Fd::cwd(), path_z.as_zstr(), content) {
             Output::err_generic(

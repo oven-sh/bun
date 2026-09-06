@@ -829,15 +829,19 @@ test.each([
 
 // A slice shares the parent's bytes. It must not report them to the GC as a
 // new allocation, or each slice of a large Blob triggers a collection.
+// extraMemorySize is summed during marking, so a full GC precedes each sample.
 test("Blob.slice() does not report the shared bytes as extra memory", () => {
   const size = 1 << 20;
   const blob = new Blob([new Uint8Array(size)]);
+  Bun.gc(true);
   const before = heapStats().extraMemorySize;
   const slices: Blob[] = [];
   for (let i = 0; i < 100; i++) {
     slices.push(blob.slice(0, size));
   }
+  Bun.gc(true);
   const delta = heapStats().extraMemorySize - before;
+  expect(blob.size).toBe(size);
   expect(slices.length).toBe(100);
   expect(delta).toBeLessThan(size);
 });

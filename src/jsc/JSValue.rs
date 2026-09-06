@@ -2270,9 +2270,7 @@ impl JSValue {
         host_fn::from_js_host_call_generic(global, || Bun__JSValue__toNumber(self, global))
     }
 
-    /// `parseInt(value, radix)`: `ToString` the value, then JSC's parser. A
-    /// radix of 0 means "not given" (decimal, or hex after a `0x` prefix).
-    /// A Symbol gives NaN, as `util.format("%i")` does, instead of throwing.
+    /// `parseInt(value, radix)`; radix 0 means "not given". A Symbol gives NaN.
     pub fn parse_int(self, global: &JSGlobalObject, radix: i32) -> JsResult<f64> {
         if self.is_symbol() {
             return Ok(f64::NAN);
@@ -2281,8 +2279,7 @@ impl JSValue {
         Ok(Bun__parseInt(&string, radix))
     }
 
-    /// `parseFloat(value)`: `ToString` the value, then JSC's parser.
-    /// A Symbol gives NaN, as `util.format("%f")` does, instead of throwing.
+    /// `parseFloat(value)`. A Symbol gives NaN.
     pub fn parse_float(self, global: &JSGlobalObject) -> JsResult<f64> {
         if self.is_symbol() {
             return Ok(f64::NAN);

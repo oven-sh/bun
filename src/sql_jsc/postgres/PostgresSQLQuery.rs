@@ -867,6 +867,7 @@ impl PostgresSQLQuery {
             );
             if status == Status::Pending {
                 // Nothing on the wire yet: a Fail entry is discarded, never written.
+                connection.finish_request(this);
                 this.on_js_error(err, global_object);
             } else {
                 // Already on the wire: the backend will answer it regardless.

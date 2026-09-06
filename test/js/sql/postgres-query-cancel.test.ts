@@ -248,6 +248,45 @@ test("cancel() on a queued query does not cancel the one the backend is running"
   expect(server.connections).toBe(1);
 });
 
+// The connection counts queued requests whose bytes are not written yet, and only
+// pipelines a prepared query at enqueue time while that count is zero. A queued
+// query that is cancelled leaves the queue without ever being written, so it has
+// to leave that count too, or the connection stops pipelining for good.
+test("a connection still pipelines after a queued query on it was cancelled", async () => {
+  await using server = await backend();
+  await using sql = new SQL({ url: server.url, max: 1, connectionTimeout: 5 });
+
+  // Warm the statement so each later run of it is a bare Bind/Execute.
+  expect(await sql`select 'p'`).toEqual([{ v: "ok" }]);
+  server.autoReply = false;
+
+  const running = sql`select 'kept'`.simple().execute();
+  await server.untilQueryUnits(2);
+  const queued = sql`select 'cancelled'`.simple().execute();
+  const queuedSettled = queued.then(
+    rows => rows,
+    err => err,
+  );
+  queued.cancel();
+  expect((await queuedSettled).code).toBe("ERR_POSTGRES_QUERY_CANCELLED");
+  server.reply(
+    pgRowDescription([{ name: "v", typeOid: TEXT_OID }]),
+    pgDataRow([Buffer.from("kept")]),
+    pgCommandComplete("SELECT 1"),
+    pgReadyForQuery(),
+  );
+  expect(await running).toEqual([{ v: "kept" }]);
+
+  // Both Bind/Execute units must reach the backend before it answers either:
+  // the second one rides the wire behind the first instead of waiting for it.
+  const first = sql`select 'p'`.execute();
+  const second = sql`select 'p'`.execute();
+  await server.untilQueryUnits(4);
+  server.answerPrepared("first");
+  server.answerPrepared("second");
+  expect(await Promise.all([first, second])).toEqual([[{ v: "first" }], [{ v: "second" }]]);
+});
+
 // A CancelRequest names the backend process, not a statement. Once a statement is
 // prepared, Bun pipelines the next query's Bind/Execute straight onto the wire
 // behind the running one (do_run's Prepared arm writes when `can_pipeline()`), so

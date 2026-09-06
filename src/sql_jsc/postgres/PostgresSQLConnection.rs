@@ -1747,7 +1747,9 @@ impl PostgresSQLConnection {
         }
     }
 
-    fn finish_request(&self, item: &PostgresSQLQuery) {
+    /// Take `item` out of the connection's request accounting. Call it once,
+    /// while `item` still has the status it was counted under.
+    pub(crate) fn finish_request(&self, item: &PostgresSQLQuery) {
         match item.status.get() {
             QueryStatus::Running | QueryStatus::Binding | QueryStatus::PartialResponse => {
                 let counter = item.flags.get().counter;

@@ -644,14 +644,18 @@ impl PosixBufferedReader {
         }
     }
 
-    /// Delivers the read reserved by [`Self::begin_async_read`] the way a synchronous read is
-    /// delivered (chunk, EOF, or error). A `close()` that landed meanwhile is finished here and the
-    /// bytes are dropped. Returns whether the parent wants the next read.
+    /// Accounts for the read reserved by [`Self::begin_async_read`]: budgets, the offset, EOF
+    /// and errors, and a `close()` that landed while the read was out (finished here, the bytes
+    /// dropped). `Some((len, state))` bytes are the parent's to deliver, followed by a call to
+    /// [`Self::finish_async_read`]. `None`: the reader ended and reported it.
     ///
     /// # Safety
     /// `this` is the live reader; the dispatches may free the parent, so the caller holds its own
     /// reference across this call.
-    pub unsafe fn complete_async_read(this: *mut Self, result: sys::Result<Vec<u8>>) -> bool {
+    pub unsafe fn account_async_read(
+        this: *mut Self,
+        result: sys::Result<usize>,
+    ) -> Option<(usize, ReadState)> {
         // SAFETY: caller contract; borrows end at each `;`.
         let vtable = unsafe {
             (*this).flags.remove(PosixFlags::ASYNC_READ_IN_FLIGHT);
@@ -665,21 +669,21 @@ impl PosixBufferedReader {
                 (*this).flags.remove(PosixFlags::DEFER_DONE_CALLBACK);
                 Self::close_handle(this);
             }
-            return false;
+            return None;
         }
         // SAFETY: caller contract; borrow ends at `;`.
         if unsafe { (*this).is_done() } {
-            return false;
+            return None;
         }
-        let bytes = match result {
-            sys::Result::Ok(bytes) => bytes,
+        let n = match result {
+            sys::Result::Ok(n) => n,
             sys::Result::Err(err) => {
                 // SAFETY: caller contract; `on_error` is the tail.
                 unsafe { Self::on_error(this, err) };
-                return false;
+                return None;
             }
         };
-        if bytes.is_empty() {
+        if n == 0 {
             // SAFETY: caller contract; `done` is the tail.
             unsafe {
                 (*this).close_without_reporting();
@@ -687,9 +691,8 @@ impl PosixBufferedReader {
                     Self::done(this);
                 }
             }
-            return false;
+            return None;
         }
-        let n = bytes.len();
         // SAFETY: caller contract; borrows end at the block.
         let stop = unsafe {
             (*this)._offset += n;
@@ -704,14 +707,17 @@ impl PosixBufferedReader {
         };
         // SAFETY: caller contract; borrow ends at `;`.
         unsafe { Self::close_if_final(this, stop.as_ref()) };
-        let keep_going = if vtable.is_streaming_enabled() {
-            vtable.on_read_chunk(Chunk::Owned(bytes), Self::read_state(stop.as_ref(), false))
-        } else {
-            // SAFETY: caller contract; borrow ends at `;`.
-            unsafe { (*this)._buffer.extend_from_slice(&bytes) };
-            true
-        };
-        if stop.is_some() {
+        Some((n, Self::read_state(stop.as_ref(), false)))
+    }
+
+    /// After the parent delivered the bytes from [`Self::account_async_read`]: ends the reader on
+    /// EOF. Returns whether the parent wants the next read (`keep_going` from its delivery, and
+    /// the reader neither paused nor done).
+    ///
+    /// # Safety
+    /// As [`Self::account_async_read`].
+    pub unsafe fn finish_async_read(this: *mut Self, state: ReadState, keep_going: bool) -> bool {
+        if state == ReadState::Eof {
             // SAFETY: caller contract; `done` is the tail.
             unsafe {
                 if !(*this).flags.contains(PosixFlags::IS_DONE) {
@@ -720,9 +726,40 @@ impl PosixBufferedReader {
             }
             return false;
         }
-        // SAFETY: caller contract (the dispatch never frees `*this`); borrow ends at `;`.
+        // SAFETY: caller contract; borrow ends at `;`.
         keep_going
             && unsafe { !(*this).is_done() && !(*this).flags.contains(PosixFlags::IS_PAUSED) }
+    }
+
+    /// The owned-buffer form: accounts for the read, delivers `bytes` to the parent the way a
+    /// synchronous read's are delivered, and finishes it.
+    ///
+    /// # Safety
+    /// As [`Self::account_async_read`].
+    pub unsafe fn complete_async_read(this: *mut Self, result: sys::Result<Vec<u8>>) -> bool {
+        let (bytes, counted) = match result {
+            sys::Result::Ok(bytes) => {
+                let n = bytes.len();
+                (bytes, sys::Result::Ok(n))
+            }
+            sys::Result::Err(err) => (Vec::new(), sys::Result::Err(err)),
+        };
+        // SAFETY: caller contract.
+        let Some((_, state)) = (unsafe { Self::account_async_read(this, counted) }) else {
+            return false;
+        };
+        // SAFETY: caller contract; the (Copy) vtable is read before the dispatch.
+        let vtable = unsafe { (*this).vtable };
+        let _parent = vtable.ref_parent();
+        let keep_going = if vtable.is_streaming_enabled() {
+            vtable.on_read_chunk(Chunk::Owned(bytes), state)
+        } else {
+            // SAFETY: caller contract; borrow ends at `;`.
+            unsafe { (*this)._buffer.extend_from_slice(&bytes) };
+            true
+        };
+        // SAFETY: caller contract.
+        unsafe { Self::finish_async_read(this, state, keep_going) }
     }
 
     pub fn watch(&mut self) {

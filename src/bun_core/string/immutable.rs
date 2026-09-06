@@ -2202,6 +2202,44 @@ pub fn percent_encode_write(
     Ok(())
 }
 
+/// Percent-encodes a file path so that it can be written where a URL is
+/// expected (an HTML `src`/`href`, for example) and name the same file once a
+/// browser has parsed it and a server has decoded it. `/` is kept as the
+/// segment separator.
+///
+/// The escaped bytes are the WHATWG URL "path percent-encode set" (C0
+/// controls, space, `"`, `#`, `<`, `>`, `?`, `^`, `` ` ``, `{`, `}`, DEL and
+/// every non-ASCII byte), plus `%` and `\`: the input is a path, so a `%` in
+/// it is a literal percent sign and a `\` is not a separator the browser may
+/// rewrite to `/`. Everything else a browser sends unchanged, so it is left
+/// unchanged here too. Returns the input when nothing needs escaping.
+pub fn percent_encode_url_path(path: &[u8]) -> std::borrow::Cow<'_, [u8]> {
+    #[inline(always)]
+    fn needs_escape(byte: u8) -> bool {
+        byte <= b' '
+            || byte >= 0x7F
+            || matches!(
+                byte,
+                b'"' | b'#' | b'%' | b'<' | b'>' | b'?' | b'\\' | b'^' | b'`' | b'{' | b'}'
+            )
+    }
+
+    let Some(first) = path.iter().position(|&byte| needs_escape(byte)) else {
+        return std::borrow::Cow::Borrowed(path);
+    };
+    let mut out = Vec::with_capacity(path.len() + 2 * (path.len() - first));
+    out.extend_from_slice(&path[..first]);
+    for &byte in &path[first..] {
+        if needs_escape(byte) {
+            let hex = crate::fmt::hex2_upper(byte);
+            out.extend_from_slice(&[b'%', hex[0], hex[1]]);
+        } else {
+            out.push(byte);
+        }
+    }
+    std::borrow::Cow::Owned(out)
+}
+
 // ───────────── re-exports from sibling modules ─────────────
 
 // Unicode core is re-exported at the top of the file. Further transcoding

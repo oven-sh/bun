@@ -1,6 +1,7 @@
 use crate::mal_prelude::*;
 use core::cell::UnsafeCell;
 use core::fmt;
+use std::borrow::Cow;
 use std::io::Write as _;
 
 use bun_alloc::AllocError;
@@ -770,6 +771,10 @@ impl IntermediateOutput {
                     || reference_path_style == ReferencePathStyle::OutdirRelative
                     || !import_prefix.is_empty();
 
+                // An HTML `src`/`href` is a URL, so a space, `#`, `?` or `%` in an
+                // output file's name must be percent-encoded to still name that file.
+                let percent_encode_paths = matches!(chunk.content, Content::Html);
+
                 let urls_for_css: &[&[u8]] = if standalone_chunk_contents.is_some() {
                     graph.ast.items_url_for_css()
                 } else {
@@ -865,7 +870,12 @@ impl IntermediateOutput {
                                     )
                                 },
                             );
-                            count += cheap_normalizer[0].len() + cheap_normalizer[1].len();
+                            let path_part = if percent_encode_paths {
+                                strings::percent_encode_url_path(cheap_normalizer[1])
+                            } else {
+                                Cow::Borrowed(cheap_normalizer[1])
+                            };
+                            count += cheap_normalizer[0].len() + path_part.len();
                         }
                         QueryKind::None => {}
                     }
@@ -1063,6 +1073,11 @@ impl IntermediateOutput {
                                     )
                                 },
                             );
+                            let path_part = if percent_encode_paths {
+                                strings::percent_encode_url_path(cheap_normalizer[1])
+                            } else {
+                                Cow::Borrowed(cheap_normalizer[1])
+                            };
 
                             if !cheap_normalizer[0].is_empty() {
                                 remain[..cheap_normalizer[0].len()]
@@ -1073,12 +1088,11 @@ impl IntermediateOutput {
                                 }
                             }
 
-                            if !cheap_normalizer[1].is_empty() {
-                                remain[..cheap_normalizer[1].len()]
-                                    .copy_from_slice(cheap_normalizer[1]);
-                                remain = &mut remain[cheap_normalizer[1].len()..];
+                            if !path_part.is_empty() {
+                                remain[..path_part.len()].copy_from_slice(&path_part);
+                                remain = &mut remain[path_part.len()..];
                                 if ENABLE_SOURCE_MAP_SHIFTS {
-                                    shift.after.advance(cheap_normalizer[1]);
+                                    shift.after.advance(&path_part);
                                 }
                             }
 

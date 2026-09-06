@@ -229,9 +229,8 @@ impl PostgresSQLQuery {
         );
     }
 
-    /// Drop the query's strong GC edge to the connection it ran on. Every
-    /// terminal path has to do this, or holding a settled `Query` keeps the whole
-    /// connection (socket buffers, prepared-statement map) reachable.
+    /// The cached `connection` is a strong GC edge; every terminal path must
+    /// clear it or a retained `Query` pins the whole connection.
     fn release_connection(this_value: JSValue, global_object: &JSGlobalObject) {
         js::connection_set_cached(this_value, global_object, JSValue::ZERO);
     }
@@ -251,15 +250,10 @@ impl PostgresSQLQuery {
         self.run_reject_callback(global_object, this_value, target_value, err);
     }
 
-    /// Reject the promise of a request whose Bind/Execute is already on the wire.
-    ///
-    /// Unlike [`on_js_error`](Self::on_js_error) this leaves `status`, `target`
-    /// and the strong `this_value` alone: the backend is going to answer this
-    /// request no matter what, and the connection has to keep the FIFO entry to
-    /// consume those answers in order. `Status::Fail` would make `advance()`
-    /// discard the entry and the next BindComplete would land on the wrong
-    /// request. The request then finishes down the normal path, where
-    /// `Query.resolve()` on an already rejected promise is a no-op.
+    /// Reject a request whose Bind/Execute is already on the wire. Unlike
+    /// `on_js_error` this leaves `status` and the FIFO entry alone: the backend
+    /// will still answer, and a `Fail` entry gets discarded by `advance()`, so
+    /// the next BindComplete would land on the wrong request.
     pub fn reject_in_place(&self, err: JSValue, global_object: &JSGlobalObject) {
         let _deref = self.ref_guard();
         let Some(this_value) = self.this_value.get().try_get() else {
@@ -890,17 +884,14 @@ impl PostgresSQLQuery {
         Ok(JSValue::UNDEFINED)
     }
 
-    /// Returns the CancelRequest packet the caller must deliver on a second
-    /// connection, or `undefined` when there is nothing for the server to stop.
+    /// Returns the CancelRequest packet to deliver on a second connection, or
+    /// `undefined` when there is nothing for the server to stop.
     pub fn do_cancel(
         this: &Self,
         global_object: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
         let this_value = callframe.this();
-        // No connection cached means `run()` never bound this query to one, so
-        // the pool still owes it a connection (or it already finished). Either
-        // way there is nothing on the wire to cancel.
         let Some(connection_value) = js::connection_get_cached(this_value) else {
             return Ok(JSValue::UNDEFINED);
         };
@@ -913,10 +904,8 @@ impl PostgresSQLQuery {
             return Ok(JSValue::UNDEFINED);
         }
 
-        // A CancelRequest names the backend *process*, not a statement, so it
-        // stops whatever that backend is running: the request at the head of the
-        // connection's FIFO. Sending one for any other request would kill an
-        // unrelated query, so everything else is settled locally.
+        // A CancelRequest names the backend process, not a statement, so it only
+        // ever stops the FIFO head. Anything else is settled locally.
         if status == Status::Pending || !connection.is_current_request(core::ptr::from_ref(this)) {
             let err = postgres_error_to_js(
                 global_object,
@@ -924,27 +913,21 @@ impl PostgresSQLQuery {
                 AnyPostgresError::QueryCancelled,
             );
             if status == Status::Pending {
-                // Nothing of this request is on the wire. Failing it keeps the
-                // backend from ever running it: advance() discards a Fail entry
-                // instead of writing its Bind/Execute.
+                // Nothing on the wire yet: a Fail entry is discarded, never written.
                 this.on_js_error(err, global_object);
             } else {
-                // Pipelined onto the wire behind the head request, so the backend
-                // will run it regardless. Reject the promise but leave the entry
-                // in the FIFO to consume the answers that are already coming.
+                // Already on the wire: the backend will answer it regardless.
                 this.reject_in_place(err, global_object);
             }
             return Ok(JSValue::UNDEFINED);
         }
 
-        // Copy the key out before allocating into the JS heap, so no `JsCell`
-        // borrow is live across a call that can re-enter.
+        // Copy out before the JS-heap allocation below can re-enter.
         let (process_id, packet) = {
             let key = connection.backend_key_data.get();
             (key.process_id, key.cancel_request())
         };
-        // The server never sent BackendKeyData, so it cannot be asked to cancel
-        // anything. The query keeps running.
+        // No BackendKeyData was ever received, so the server cannot be asked.
         if process_id == 0 {
             return Ok(JSValue::UNDEFINED);
         }

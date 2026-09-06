@@ -92,9 +92,7 @@ for (const type of types) {
           length: 1,
         },
       },
-      // Postgres cancels a running query by sending a CancelRequest on a
-      // second connection, so its query handle has to remember which
-      // connection it was dispatched to.
+      // `connection` lets a Postgres query find its BackendKeyData for cancel().
       values:
         type === "PostgresSQL"
           ? ["pendingValue", "target", "columns", "binding", "connection"]

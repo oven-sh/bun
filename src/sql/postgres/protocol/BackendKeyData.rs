@@ -1,8 +1,7 @@
 use super::new_reader::NewReader;
 use crate::postgres::AnyPostgresError;
 
-/// Protocol §55.2.3: the request code a CancelRequest carries in place of the
-/// protocol version, `(1234 << 16) | 5678`.
+/// CancelRequest's stand-in for the protocol version: `(1234 << 16) | 5678`.
 const CANCEL_REQUEST_CODE: u32 = 80877102;
 
 #[derive(Default)]
@@ -18,9 +17,8 @@ impl BackendKeyData {
         Self::decode_internal(NewReader { wrapped: context })
     }
 
-    /// Protocol §55.2.3 CancelRequest: `Int32(16) Int32(80877102) Int32(pid) Int32(secret)`.
-    /// It has no message-type byte because it is only ever sent as the first
-    /// message of a *separate* connection, which the backend then closes.
+    /// `Int32(16) Int32(80877102) Int32(pid) Int32(secret)`: no type byte, it
+    /// is the only message on a connection opened just to carry it.
     pub fn cancel_request(&self) -> [u8; 16] {
         let mut packet = [0u8; 16];
         packet[0..4].copy_from_slice(&16u32.to_be_bytes());

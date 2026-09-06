@@ -15,11 +15,7 @@ const PublicPromise = Promise;
 
 export interface BaseQueryHandle<Connection> {
   done?(): void;
-  /**
-   * Abort a query the handle already dispatched. Returns the request bytes the
-   * adapter has to deliver out-of-band (Postgres sends a CancelRequest on a
-   * second connection), or undefined when nothing has to reach the server.
-   */
+  /** Returns bytes the adapter must deliver out-of-band, or undefined. */
   cancel?(): Uint8Array | undefined;
   setMode(mode: SQLQueryResultMode): void;
   run(connection: Connection, query: Query<any, any>): void | Promise<void>;

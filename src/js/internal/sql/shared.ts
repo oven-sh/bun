@@ -2141,11 +2141,7 @@ export interface DatabaseAdapter<Connection, ConnectionHandle, QueryHandle> {
   queryCancelledError(): Error;
   invalidTransactionStateError(message: string): Error;
 
-  /**
-   * Deliver a `Query.cancel()` request that cannot travel on the query's own
-   * connection, because that connection is busy running the query being
-   * cancelled. Postgres opens a second connection to the same server for it.
-   */
+  /** Deliver the bytes `QueryHandle.cancel()` returned on a separate connection. */
   sendCancelRequest?(request: Uint8Array): void;
 }
 

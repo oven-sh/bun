@@ -1662,10 +1662,8 @@ pub(crate) mod __gated_printer {
         pub(crate) prev_op_end: i32,
         pub(crate) prev_num_end: i32,
         pub(crate) prev_reg_exp_end: i32,
-        /// End offset of the last printed identifier whose final code point is not
-        /// ASCII (printed raw as UTF-8 or as a `\u{...}` escape). `prev_char()` sees
-        /// a UTF-8 continuation byte or `}` there, which `is_identifier_continue`
-        /// rejects, so a following keyword (`of`, `in`, `instanceof`) would be glued on.
+        /// End of the last identifier whose final byte is not an ASCII identifier byte
+        /// (raw UTF-8 or a `\u{...}` escape), so `prev_char()` cannot tell.
         pub(crate) prev_identifier_end: i32,
         pub(crate) call_target: Option<ExprData>,
         pub(crate) writer: W,

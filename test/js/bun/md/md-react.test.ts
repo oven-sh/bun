@@ -738,21 +738,34 @@ describe("Bun.markdown.react development fields", () => {
     expect(item).toEqual(prodShape);
   });
 
-  test("react-server-dom marks elements validated without throwing", () => {
+  test("react-server-dom marks elements validated without throwing", async () => {
     // react-server-dom-webpack's development build does `element._store.validated = 1`
     // on every element it renders. It must not throw.
-    const root = Markdown.react("# Title\n\n- a\n- b\n");
-    const visit = (node: any) => {
-      if (node === null || typeof node !== "object") return;
-      if (Array.isArray(node)) return node.forEach(visit);
-      expect(node._owner).toBeNull();
-      expect(node._debugStack).toBeNull();
-      expect(node._debugTask).toBeNull();
-      node._store.validated = 1;
-      expect(node._store.validated).toBe(1);
-      visit(node.props.children);
-    };
-    visit(root);
+    const visitScript = `
+      const root = Bun.markdown.react("# Title\\n\\n- a\\n- b\\n");
+      let visited = 0;
+      const visit = node => {
+        if (node === null || typeof node !== "object") return;
+        if (Array.isArray(node)) return node.forEach(visit);
+        if (node._owner !== null || node._debugStack !== null || node._debugTask !== null) {
+          throw new Error("missing development fields on " + String(node.type));
+        }
+        node._store.validated = 1;
+        visited++;
+        visit(node.props.children);
+      };
+      visit(root);
+      console.log(visited);
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", visitScript],
+      env: { ...bunEnv, NODE_ENV: "development" },
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe("5\n");
+    expect(exitCode).toBe(0);
   });
 
   test("list items do not trigger the missing key warning", () => {

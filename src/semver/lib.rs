@@ -569,17 +569,8 @@ pub mod semver_string {
             if String::can_inline(str) {
                 return Ok(String::init_inline(str));
             }
-
             let hash = Builder::string_hash(str);
-            let entry = self.pool.get_or_put(hash)?;
-            if entry.found_existing {
-                return Ok(*entry.value_ptr);
-            }
-
-            // new entry
-            let new = String::init_append(self.bytes, str)?;
-            *entry.value_ptr = new;
-            Ok(new)
+            self.append_with_hash(str, hash)
         }
 
         pub fn append_with_hash(&mut self, str: &[u8], hash: u64) -> Result<String, AllocError> {
@@ -589,7 +580,15 @@ pub mod semver_string {
 
             let entry = self.pool.get_or_put(hash)?;
             if entry.found_existing {
-                return Ok(*entry.value_ptr);
+                let existing = *entry.value_ptr;
+                // Two distinct strings can share one hash. Compare the bytes
+                // before the pooled string is reused, so a collision does not
+                // return another string's value. `Builder::append_with_hash`
+                // does the same check.
+                if strings::eql(existing.slice(self.bytes), str) {
+                    return Ok(existing);
+                }
+                return String::init_append(self.bytes, str);
             }
 
             // new entry
@@ -600,25 +599,7 @@ pub mod semver_string {
 
         pub fn append_external(&mut self, str: &[u8]) -> Result<ExternalString, AllocError> {
             let hash = Builder::string_hash(str);
-
-            if String::can_inline(str) {
-                return Ok(ExternalString {
-                    value: String::init_inline(str),
-                    hash,
-                });
-            }
-
-            let entry = self.pool.get_or_put(hash)?;
-            if entry.found_existing {
-                return Ok(ExternalString {
-                    value: *entry.value_ptr,
-                    hash,
-                });
-            }
-
-            let new = String::init_append(self.bytes, str)?;
-            *entry.value_ptr = new;
-            Ok(ExternalString { value: new, hash })
+            self.append_external_with_hash(str, hash)
         }
 
         pub fn append_external_with_hash(
@@ -635,10 +616,15 @@ pub mod semver_string {
 
             let entry = self.pool.get_or_put(hash)?;
             if entry.found_existing {
-                return Ok(ExternalString {
-                    value: *entry.value_ptr,
-                    hash,
-                });
+                let existing = *entry.value_ptr;
+                if strings::eql(existing.slice(self.bytes), str) {
+                    return Ok(ExternalString {
+                        value: existing,
+                        hash,
+                    });
+                }
+                let new = String::init_append(self.bytes, str)?;
+                return Ok(ExternalString { value: new, hash });
             }
 
             let new = String::init_append(self.bytes, str)?;
@@ -843,6 +829,12 @@ pub mod semver_string {
         #[inline]
         pub fn contains(&self, hash: u64) -> bool {
             self.map.contains_key(&hash)
+        }
+        /// The pooled string for `hash`, if one is present. The caller compares
+        /// its bytes to guard against a hash collision.
+        #[inline]
+        pub fn get(&self, hash: u64) -> Option<String> {
+            self.map.get(&hash).copied()
         }
         /// Number of slots reservable without rehash.
         #[inline]

@@ -46,7 +46,16 @@ export interface BinaryExpectations {
    * oven-sh/bun#40530); the set is deliberately the libc/libSystem minimum.
    * New code that wants another system library links it statically.
    */
-  neededLibs: { names: string[]; exact: boolean };
+  neededLibs: {
+    names: string[];
+    exact: boolean;
+    /**
+     * Patterns (`*` wildcards) for libraries that may appear beyond `names`
+     * without being a violation: the sanitizer runtimes an ASAN build links,
+     * which are a property of that build flavour, not of bun.
+     */
+    allowed?: string[];
+  };
   /**
    * ELF symbol versioning ceilings: for each version-namespace prefix the
    * highest version any import may require (`GLIBC: "2.17"`). A prefix not
@@ -189,6 +198,14 @@ const forbiddenImportsCommon = [
 export function binaryExpectations(cfg: Config): BinaryExpectations {
   const format = binaryFormat(cfg);
   const src = (f: string) => join(cfg.cwd, "src", f);
+  // A sanitizer build links its runtime (and, on macOS, our dyld shim for
+  // it) and gains a module constructor per translation unit; those are
+  // properties of the flavour, so the library set is opened up for them and
+  // the initializer audit is skipped there. Debug and release are held to
+  // the same list: an initializer that only -O2 folds away is still one we
+  // wrote (make it constexpr/constinit instead).
+  const sanitizerLibs = cfg.asan ? ["*libclang_rt.asan*", "*asan-dyld-shim*", "libresolv.so.2", "libgcc_s.so.1"] : [];
+  const auditInitializers = !cfg.asan;
 
   if (format === "elf") {
     const android = cfg.abi === "android";
@@ -211,7 +228,7 @@ export function binaryExpectations(cfg: Config): BinaryExpectations {
     return {
       format,
       exports: { exact: [], ...versionScriptGlobals(src(freebsd ? "linker-freebsd.lds" : "linker.lds")) },
-      neededLibs: { names: neededLibs, exact: pinned },
+      neededLibs: { names: neededLibs, exact: pinned, allowed: sanitizerLibs },
       // glibc 2.17 = RHEL 7 / Amazon Linux 2, the oldest distro generation bun
       // runs on. FreeBSD 13's libc is FBSD_1.7; its libc++ carries GLIBCXX_3.4
       // version tags for the libstdc++-compatible subset.
@@ -226,7 +243,7 @@ export function binaryExpectations(cfg: Config): BinaryExpectations {
       // entry points are legitimately imported (libstdc++/libc++ reference
       // them internally); the ban applies where we link it statically.
       forbiddenImports: musl || freebsd ? ["__emutls_*"] : forbiddenImportsCommon,
-      staticInitializers: runtimeInitializers,
+      ...(auditInitializers && { staticInitializers: runtimeInitializers }),
       elf: {
         // Android requires PIE; everywhere else bun is a fixed-address
         // executable (-fno-pic, see flags.ts). No RELRO / BIND_NOW anywhere:
@@ -254,10 +271,11 @@ export function binaryExpectations(cfg: Config): BinaryExpectations {
           "/usr/lib/libresolv.9.dylib",
         ],
         exact: true,
+        allowed: sanitizerLibs,
       },
       ...(cfg.osxDeploymentTarget !== undefined && { minOSVersion: cfg.osxDeploymentTarget }),
       forbiddenImports: forbiddenImportsCommon,
-      staticInitializers: runtimeInitializers,
+      ...(auditInitializers && { staticInitializers: runtimeInitializers }),
       macho: {
         flags: ["PIE", "TWOLEVEL", "DYLDLINK"],
         segmentMaxProt: { __TEXT: "r-x", __DATA_CONST: "rw-", __DATA: "rw-", __LINKEDIT: "r--" },
@@ -278,6 +296,7 @@ export function binaryExpectations(cfg: Config): BinaryExpectations {
     },
     neededLibs: {
       exact: true,
+      allowed: sanitizerLibs,
       names: [
         "ADVAPI32.dll",
         "CRYPT32.dll",

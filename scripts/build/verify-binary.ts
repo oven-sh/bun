@@ -146,6 +146,22 @@ function setDifference(
   ];
 }
 
+/** Dynamic-library set vs expectations: `names` (exact or superset per `exact`); extras matching `allowed` are fine. */
+function libraryDifference(
+  found: string[],
+  expect: BinaryExpectations["neededLibs"],
+  normalize = (s: string) => s,
+): string[] {
+  const names = new Set(expect.names.map(normalize));
+  const allowed = globToRegExp((expect.allowed ?? []).map(normalize));
+  return setDifference(
+    found.filter(f => names.has(normalize(f)) || !allowed.test(normalize(f))),
+    expect.names,
+    expect.exact,
+    normalize,
+  );
+}
+
 /** `llvm-readobj` LLVM-style output → the `{ ... }` blocks that start with `<kind> {`. */
 function blocks(text: string, kind: string): string[] {
   const out: string[] = [];
@@ -259,7 +275,7 @@ function verifyElf(spec: VerifySpec): void {
       .split("\n")
       .map(s => s.trim())
       .filter(s => s.length > 0);
-    const violations = setDifference(needed, expect.neededLibs.names, expect.neededLibs.exact);
+    const violations = libraryDifference(needed, expect.neededLibs);
     // Only what we *require* (verneed), not the versions we define (verdef).
     const verneed = info.match(/VersionRequirements \[[\s\S]*?\n\]/)?.[0] ?? "";
     const maxSeen = new Map<string, string>();
@@ -414,9 +430,10 @@ function verifyMachO(spec: VerifySpec): void {
       .filter(c => /^LC_(LOAD|LOAD_WEAK|REEXPORT|LOAD_UPWARD|LAZY_LOAD)_DYLIB$/.test(c.cmd))
       .map(c => c.text.match(/^\s+name (\S+) \(offset \d+\)$/m)?.[1] ?? "?");
     const uniq = [...new Set(dylibs)];
-    const violations = setDifference(uniq, expect.neededLibs.names, expect.neededLibs.exact);
+    const violations = libraryDifference(uniq, expect.neededLibs);
     const minos = priv.match(/^\s+minos ([0-9.]+)/m)?.[1];
-    if (expect.minOSVersion !== undefined && minos !== expect.minOSVersion)
+    const sameVersion = (a: string | undefined, b: string) => a !== undefined && versionLeq(a, b) && versionLeq(b, a);
+    if (expect.minOSVersion !== undefined && !sameVersion(minos, expect.minOSVersion))
       violations.push(`minos ${minos}, expected ${expect.minOSVersion}`);
     report("dynamic libraries", `${uniq.map(s => s.replace(/^.*\//, "")).join(" ")}; minos ${minos}`, violations);
   }
@@ -525,7 +542,7 @@ function verifyPE(spec: VerifySpec): void {
     const text = run(readobj, ["--coff-imports", exe]);
     const imports = [...blocks(text, "Import"), ...blocks(text, "DelayImport")];
     const dlls = [...new Set(imports.map(b => field(b, "Name")!).filter(Boolean))];
-    const violations = setDifference(dlls, expect.neededLibs.names, expect.neededLibs.exact, s => s.toLowerCase());
+    const violations = libraryDifference(dlls, expect.neededLibs, s => s.toLowerCase());
     report(
       "dynamic libraries",
       `${dlls.length} DLLs (${imports.length - blocks(text, "Import").length} delay-loaded)`,
@@ -584,28 +601,45 @@ function verifyDuplicates(nm: string, rspfile: string, reportPath: string): numb
     } while (end < inputs.length && length + inputs[end]!.length < NM_ARGV_BUDGET);
     // -A: prefix each line with the object (archive:member for archives).
     // -S: print size. --extern-only --defined-only: what can collide.
+    // -m: Mach-O and LTO bitcode objects print the Darwin form, which is the
+    // only one that says whether a definition is weak ("weak external");
+    // ELF and COFF objects ignore it and print the BSD form, whose type
+    // letter (W/V) carries the same bit.
     const r = spawnSync(
       nm,
-      ["-A", "-S", "--extern-only", "--defined-only", "--no-demangle", ...inputs.slice(start, end)],
-      {
-        encoding: "utf8",
-        maxBuffer: 1 << 30,
-      },
+      ["-A", "-S", "-m", "--extern-only", "--defined-only", "--no-demangle", ...inputs.slice(start, end)],
+      { encoding: "utf8", maxBuffer: 1 << 30 },
     );
     if (r.error) throw new BuildError(`duplicates: failed to run ${nm}`, { cause: r.error });
     for (const line of r.stdout.split("\n")) {
-      // <obj>: <value> [<size>] <type> <name>   (size absent for some formats)
-      // Value and size are hex, or dashes for an LTO bitcode object.
-      const m = line.match(/^(.*): +[-0-9a-fA-F]* *([-0-9a-fA-F]*) +([A-Za-z]) (\S+)\s*$/);
-      if (!m) continue;
-      const [, obj, size, type, name] = m as unknown as [string, string, string, string, string];
+      let obj: string, size: string, weak: boolean, common: boolean, name: string;
+      // Darwin form: `<obj>: <value> (<segment>,<section>) [weak] [private] external [<attrs>] <name>`
+      const d = line.match(
+        /^(.*): +[-0-9a-fA-F]+ (\([^)]*\)(?: \([^)]*\))*) ((?:weak )?)(?:private )?external (?:\[[^\]]*\] )?(\S+)\s*$/,
+      );
+      if (d) {
+        [obj, size, weak, common, name] = [d[1]!, "", d[3] !== "", d[2]!.startsWith("(common)"), d[4]!];
+      } else {
+        // BSD form: `<obj>: <value> [<size>] <type> <name>`; value/size are hex, or dashes for bitcode.
+        const b = line.match(/^(.*): +[-0-9a-fA-F]* *([-0-9a-fA-F]*) +([A-Za-z]) (\S+)\s*$/);
+        if (!b) continue;
+        const type = b[3]!;
+        if (!/[TDBRSGWVC]/.test(type)) continue;
+        [obj, size, weak, common, name] = [
+          b[1]!,
+          b[2]!.replace(/^-+$/, ""),
+          type === "W" || type === "V",
+          type === "C",
+          b[4]!,
+        ];
+      }
       scanned++;
-      if (type === "W" || type === "V") {
+      if (common) continue; // tentative definitions merge by design
+      if (weak) {
         let sizes = weakSizes.get(name);
         if (sizes === undefined) weakSizes.set(name, (sizes = new Map()));
         if (size !== "" && !sizes.has(size)) sizes.set(size, obj);
-      } else if (/[TDBRSG]/.test(type) && type !== "C") {
-        // LTO bitcode objects report every definition; COMMON (C) merges by design.
+      } else {
         const objs = strong.get(name);
         if (objs === undefined) strong.set(name, [obj]);
         else objs.push(obj);

@@ -126,7 +126,7 @@ interface CppSQL {
     openFlags: number,
     deserializeFlags: number,
     db: Database,
-  ): TODO;
+  ): number;
   fcntl(handle: TODO, ...args: TODO[]): TODO;
   close(handle: TODO, throwOnError: boolean): void;
   setCustomSQLite(path: string): void;

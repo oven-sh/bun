@@ -5833,6 +5833,19 @@ impl VirtualMachine {
         }
 
         let already_remapped = frames[top].remapped;
+        // Only read a frame's source URL from disk for a code-frame excerpt
+        // when the module loader loaded that URL. The already-remapped branch
+        // parses frames out of an `error.stack` string, so the URL can be a
+        // name the running code chose (a `//# sourceURL` directive in node:vm
+        // or eval code), not a module the loader ever loaded. The non-remapped
+        // branch resolves through the source-map table, which is already the
+        // loaded-module check.
+        let allow_source_from_disk = if already_remapped {
+            let url = frames[top].source_url.to_utf8();
+            self.source_mappings.has_mapping(url.slice())
+        } else {
+            true
+        };
         let resolved = {
             let top_source_url = frames[top].source_url.to_utf8();
             let maybe_lookup: Option<bun_sourcemap::mapping::Lookup> = if already_remapped {
@@ -5898,6 +5911,9 @@ impl VirtualMachine {
                 }
                 if top_frame_is_builtin {
                     // Avoid printing "export default 'native'"
+                    break 'code bun_core::Utf8Bytes::EMPTY;
+                }
+                if !allow_source_from_disk {
                     break 'code bun_core::Utf8Bytes::EMPTY;
                 }
                 let mut log = bun_ast::Log::default();

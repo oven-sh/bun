@@ -252,6 +252,19 @@ impl SavedSourceMap {
         Ok(())
     }
 
+    /// Returns `true` when a source map is registered for `path`. The module
+    /// loader registers a path here only when it loads and transpiles that
+    /// path. The error printer uses this to decide whether a stack frame's
+    /// source URL names a module the loader actually loaded, before it reads
+    /// that path from disk for a code-frame excerpt.
+    pub(crate) fn has_mapping(&mut self, path: &[u8]) -> bool {
+        let h = hash(path);
+        self.lock();
+        let found = self.map.contains_key(&h);
+        self.unlock();
+        found
+    }
+
     /// You must call `sourcemap.map.deref()` or you will leak memory
     fn get_with_content(
         &mut self,

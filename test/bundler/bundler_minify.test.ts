@@ -1574,6 +1574,61 @@ describe("bundler", () => {
     },
   });
 
+  // An identifier can end in a code point that is ID_Continue but not ID_Start
+  // (ZWNJ, a combining mark, a non-ASCII digit) or in any non-ASCII letter. The
+  // printer must still put a space between it and a following keyword, whether
+  // the identifier is printed as raw UTF-8 or as a `\u{...}` escape.
+  const nonAsciiIdentifierSource = /* js */ `
+    var _\u200C = 1;
+    var caf\u00E9 = 2;
+    var x\u0967 = 3;
+    var \u2118q = 4;
+    var \u03C0 = "k";
+    class \u00D1 {
+      #\u00E9 = 1;
+      static has(o) {
+        return #\u00E9 in o;
+      }
+    }
+    var out = [];
+    for (_\u200C of [4]) out.push(_\u200C);
+    for (caf\u00E9 in { 2: 1 }) out.push(caf\u00E9);
+    for (x\u0967 of [5]) out.push(x\u0967);
+    for (\u2118q of [6]) out.push(\u2118q);
+    out.push(caf\u00E9 in { 2: 1 }, x\u0967 instanceof Number, _\u200C in { 4: 1 });
+    out.push(\u03C0 in { k: 1 }, \u00D1.has(new \u00D1()), new \u00D1() instanceof \u00D1);
+    console.log(JSON.stringify(out));
+  `;
+  const nonAsciiIdentifierStdout = '[4,"2",5,6,true,false,true,true,true,true]';
+  itBundled("minify/SpaceBetweenNonAsciiIdentifierAndKeyword", {
+    files: { "/entry.js": nonAsciiIdentifierSource },
+    minifyWhitespace: true,
+    target: "browser",
+    onAfterBundle(api) {
+      const code = api.readFile("/out.js");
+      expect(code).toContain("_\u200C of[4]");
+      expect(code).toContain("caf\u00E9 in{");
+      expect(code).toContain("x\u0967 instanceof Number");
+      expect(code).toContain("#\u00E9 in o");
+      expect(code).toContain("new \u00D1 instanceof \u00D1");
+    },
+    run: { stdout: nonAsciiIdentifierStdout },
+  });
+  itBundled("minify/SpaceBetweenEscapedIdentifierAndKeyword", {
+    files: { "/entry.js": nonAsciiIdentifierSource },
+    minifyWhitespace: true,
+    target: "bun",
+    onAfterBundle(api) {
+      const code = api.readFile("/out.js");
+      expect(code).toContain("_\\u{200c} of[4]");
+      expect(code).toContain("caf\\u{e9} in{");
+      expect(code).toContain("x\\u{967} instanceof Number");
+      expect(code).toContain("#\\u{e9} in o");
+      expect(code).toContain("new \\u{d1} instanceof \\u{d1}");
+    },
+    run: { stdout: nonAsciiIdentifierStdout },
+  });
+
   // Without minifySyntax the block body must be preserved verbatim.
   itBundled("minify/ArrowReturnNotCollapsedWithoutMinifySyntax", {
     files: {

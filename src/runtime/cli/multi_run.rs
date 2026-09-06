@@ -502,7 +502,9 @@ impl<'a> State<'a> {
         };
 
         if failed && !self.no_exit_on_error {
-            self.abort(bun_sys::SignalCode::SIGINT);
+            if !self.aborted {
+                self.abort(bun_sys::SignalCode::SIGINT);
+            }
             return Ok(());
         }
 
@@ -563,28 +565,37 @@ impl<'a> State<'a> {
         }
     }
 
-    /// Sends `signal` to every running script and finishes the rest.
+    /// Sends `signal` to every script that is still running.
+    fn kill_running(&self, signal: bun_sys::SignalCode) {
+        for handle in self.handles.iter() {
+            if let Some(proc) = &handle.process
+                && matches!(proc.status, Status::Running)
+            {
+                let _ = proc.process.kill(signal.0);
+            }
+        }
+    }
+
+    /// Sends `signal` to every running script and finishes the rest. After a
+    /// failure cascade has already aborted, a signal still reaches the
+    /// scripts the cascade's SIGINT did not stop.
     fn abort(&mut self, signal: bun_sys::SignalCode) {
         if self.aborted {
+            self.kill_running(signal);
             return;
         }
         self.aborted = true;
+        self.kill_running(signal);
         // Raw ptrs so `self.maybe_finish` can be called while walking (the
         // file-wide State/handle backref pattern).
         let handles: Vec<*mut ProcessHandle<'a>> =
             self.handles.iter_mut().map(std::ptr::from_mut).collect();
         for handle in handles {
-            // SAFETY: points into `self.handles`, live for the whole run loop.
-            if let Some(proc) = unsafe { (*handle).process.as_ref() } {
-                if matches!(proc.status, Status::Running) {
-                    let _ = proc.process.kill(signal.0);
-                }
-            }
             // An already-exited handle may be waiting on pipes a grandchild
             // still holds; with `aborted` set this finishes it now. Killed
             // handles finish when their exit arrives.
-            // SAFETY: same `self.handles` element as above; the exclusive
-            // reborrow is confined to this call.
+            // SAFETY: points into `self.handles`, live for the whole run loop;
+            // the exclusive reborrow is confined to this call.
             let _ = self.maybe_finish(unsafe { &mut *handle });
         }
     }
@@ -1181,10 +1192,10 @@ pub(crate) fn run(ctx: &mut Command::ContextData) -> Result<core::convert::Infal
     // SAFETY: event_loop points at the thread-lifetime MiniEventLoop singleton.
     run_abort::install(unsafe { (*event_loop).loop_ptr() });
 
+    let mut signaled = false;
     while !state.is_done() {
-        if let Some(signal) = run_abort::pending()
-            && !state.aborted
-        {
+        if !signaled && let Some(signal) = run_abort::pending() {
+            signaled = true;
             run_abort::uninstall();
             state.abort(signal);
             // The abort sweep may have finished the last script; re-check

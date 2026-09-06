@@ -33,7 +33,13 @@ extern "C" fn posix_signal_handler(
     _: *const bun_sys::posix::siginfo_t,
     _: *const core::ffi::c_void,
 ) {
+    // The wakeup write may set errno; the interrupted code must not see that.
+    let errno_ptr = bun_core::ffi::errno_ptr();
+    // SAFETY: thread-local errno slot, valid for the calling thread.
+    let saved = unsafe { *errno_ptr };
     request_abort(SignalCode(sig as u8));
+    // SAFETY: same slot.
+    unsafe { *errno_ptr = saved };
 }
 
 #[cfg(windows)]

@@ -1575,6 +1575,10 @@ function parseSQLiteOptions(
   }
   if ("safeIntegers" in options) {
     sqliteOptions.safeIntegers = options.safeIntegers;
+  } else if (options.bigint !== undefined) {
+    // `bigint` is the option the other adapters take for "integers as
+    // BigInt"; on SQLite that is bun:sqlite's safeIntegers mode.
+    sqliteOptions.safeIntegers = !!options.bigint;
   }
 
   return sqliteOptions;

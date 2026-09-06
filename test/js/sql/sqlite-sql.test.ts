@@ -1821,6 +1821,22 @@ describe("Helper argument validation", () => {
     expect(rows[0].text_val).toBe("ok");
   });
 
+  test("bigint: true returns integers as BigInt, like safeIntegers", async () => {
+    // `bigint` is the option name the PostgreSQL and MySQL adapters take; it
+    // used to be accepted and ignored here, so 2^53 + 1 lost precision.
+    const read = async (options: Partial<Bun.SQL.SQLiteOptions> & { bigint?: boolean }) => {
+      await using db = new SQL({ adapter: "sqlite", filename: ":memory:", ...options });
+      const [row] = await db`SELECT 9007199254740993 AS big, 5 AS small`;
+      return row;
+    };
+    expect(await read({})).toEqual({ big: 9007199254740992, small: 5 });
+    expect(await read({ bigint: true })).toEqual({ big: 9007199254740993n, small: 5n });
+    expect(await read({ safeIntegers: true })).toEqual({ big: 9007199254740993n, small: 5n });
+    // An explicit safeIntegers wins over the alias.
+    expect(await read({ bigint: true, safeIntegers: false })).toEqual({ big: 9007199254740992, small: 5 });
+    expect(await read({ bigint: false })).toEqual({ big: 9007199254740992, small: 5 });
+  });
+
   test("BigInt out of range rejects when safeIntegers is enabled", async () => {
     const sqlSafe = new SQL({ adapter: "sqlite", filename: ":memory:", safeIntegers: true });
     await sqlSafe`CREATE TABLE t (id INTEGER PRIMARY KEY, n INTEGER)`;
@@ -2081,12 +2097,16 @@ describe("Connection management", () => {
     await sql.close();
   });
 
-  test("flush throws for SQLite", async () => {
+  test("flush is a no-op for SQLite", async () => {
+    // Queries run synchronously, so there is never anything buffered. The
+    // other adapters return undefined here; throwing broke adapter-agnostic
+    // code that flushes before awaiting a batch.
     const sql = new SQL("sqlite://:memory:");
 
-    expect(() => sql.flush()).toThrowErrorMatchingInlineSnapshot(
-      `"SQLite doesn't support flush() - queries are executed synchronously"`,
-    );
+    expect(sql.flush()).toBeUndefined();
+    await sql.begin(async tx => {
+      expect(tx.flush()).toBeUndefined();
+    });
 
     await sql.close();
   });

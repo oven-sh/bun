@@ -189,6 +189,14 @@ declare module "bun" {
       filename?: URL | ":memory:" | (string & {}) | undefined;
 
       /**
+       * Return every integer as a `BigInt`. The same as {@link safeIntegers},
+       * under the option name the other adapters take. An explicit
+       * `safeIntegers` takes precedence.
+       * @default false
+       */
+      bigint?: boolean | undefined;
+
+      /**
        * Called when a connection attempt completes.
        * Receives an `Error` on failure, or `null` on success.
        */

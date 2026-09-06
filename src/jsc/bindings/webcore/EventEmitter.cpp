@@ -7,7 +7,6 @@
 #include "EventNames.h"
 #include "JSErrorHandler.h"
 #include "JSEventListener.h"
-#include "ZigGlobalObject.h"
 #include <wtf/MainThread.h>
 #include <wtf/NeverDestroyed.h>
 #include <wtf/Ref.h>
@@ -73,16 +72,6 @@ bool EventEmitter::removeListener(const Identifier& eventType, EventListener& li
         return true;
     }
     return false;
-}
-
-unsigned EventEmitter::getMaxListeners() const
-{
-    if (m_maxListeners)
-        return *m_maxListeners;
-    auto* context = scriptExecutionContext();
-    if (!context)
-        return 10;
-    return defaultGlobalObject(context->jsGlobalObject())->m_defaultMaxListeners;
 }
 
 bool EventEmitter::markMaxListenersWarned(const Identifier& eventType)

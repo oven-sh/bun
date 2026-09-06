@@ -2,6 +2,7 @@
 #include "JSEventEmitter.h"
 
 #include "BunProcess.h"
+#include "NodeValidator.h"
 #include "ZigGlobalObject.h"
 #include "ExtendedDOMClientIsoSubspaces.h"
 #include "ExtendedDOMIsoSubspaces.h"
@@ -322,19 +323,18 @@ void JSEventEmitter::emitMaxListenersExceededWarning(JSC::JSGlobalObject* lexica
             emitterName = JSObject::calculatedClassName(emitterObject);
     }
 
+    // `String(type)`: a symbol becomes "Symbol(desc)" instead of throwing.
     String typeName;
     if (type.isSymbol()) {
-        JSString* symbolString = asSymbol(type)->toString(lexicalGlobalObject);
-        RETURN_IF_EXCEPTION(scope, void());
-        typeName = symbolString->value(lexicalGlobalObject);
+        typeName = asSymbol(type)->tryGetDescriptiveString().value_or(String());
     } else {
         typeName = type.toWTFString(lexicalGlobalObject);
+        RETURN_IF_EXCEPTION(scope, void());
     }
-    RETURN_IF_EXCEPTION(scope, void());
 
     auto message = makeString("Possible EventEmitter memory leak detected. "_s, count, ' ', typeName, " listeners added to ["_s, emitterName, "]. MaxListeners is "_s, maxListeners, ". Use emitter.setMaxListeners() to increase limit"_s);
     JSObject* warning = createError(lexicalGlobalObject, message);
-    warning->putDirect(vm, vm.propertyNames->name, jsString(vm, String("MaxListenersExceededWarning"_s)), JSC::PropertyAttribute::DontEnum | 0);
+    warning->putDirect(vm, vm.propertyNames->name, jsString(vm, String("MaxListenersExceededWarning"_s)), 0);
     warning->putDirect(vm, Identifier::fromString(vm, "emitter"_s), emitter, 0);
     warning->putDirect(vm, vm.propertyNames->type, type, 0);
     warning->putDirect(vm, Identifier::fromString(vm, "count"_s), jsNumber(count), 0);
@@ -352,20 +352,17 @@ static inline JSC::EncodedJSValue jsEventEmitterPrototypeFunction_setMaxListener
 {
     auto& impl = castedThis->wrapped();
     auto throwScope = DECLARE_THROW_SCOPE(JSC::getVM(lexicalGlobalObject));
-    if (callFrame->argumentCount() == 0) {
-        return JSC::JSValue::encode(JSC::jsUndefined());
-    }
-    EnsureStillAliveScope argument0 = callFrame->uncheckedArgument(0);
-    if (!argument0.value().isNumber()) {
-        throwTypeError(lexicalGlobalObject, throwScope, "The maxListeners argument must be a number"_s);
-        return JSC::JSValue::encode(JSC::jsUndefined());
-    }
+    JSValue argument0 = callFrame->argument(0);
+    // Same check as EventEmitterPrototype.setMaxListeners in events.ts.
+    Bun::V::validateNumber(throwScope, lexicalGlobalObject, argument0, "setMaxListeners"_s, jsNumber(0), jsUndefined());
+    RETURN_IF_EXCEPTION(throwScope, {});
 
-    impl.setMaxListeners(JSEventEmitter::maxListenersFromNumber(argument0.value().asNumber()));
-    return JSC::JSValue::encode(JSC::jsUndefined());
+    impl.setMaxListeners(JSEventEmitter::maxListenersFromNumber(argument0.asNumber()));
+    return JSC::JSValue::encode(callFrame->thisValue());
 }
 
-// 0 means no limit, so a count that does not fit is the same as no limit.
+// Takes a validated non-negative number. 0 means no limit, so a count that
+// does not fit is the same as no limit.
 unsigned JSEventEmitter::maxListenersFromNumber(double n)
 {
     if (!(n < static_cast<double>(std::numeric_limits<unsigned>::max())))
@@ -374,12 +371,13 @@ unsigned JSEventEmitter::maxListenersFromNumber(double n)
 }
 
 // Called by `events.defaultMaxListeners = n` and `events.setMaxListeners(n)`
-// in events.ts, which validate `n` first.
+// in events.ts, which validate `n` first. `process` is the only native
+// EventEmitter, so the mirrored default lives on it.
 JSC_DEFINE_HOST_FUNCTION(jsEventEmitterSetDefaultMaxListeners, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
     JSValue value = callFrame->argument(0);
     if (value.isNumber())
-        defaultGlobalObject(globalObject)->m_defaultMaxListeners = JSEventEmitter::maxListenersFromNumber(value.asNumber());
+        defaultGlobalObject(globalObject)->processObject()->wrapped().setDefaultMaxListeners(JSEventEmitter::maxListenersFromNumber(value.asNumber()));
     return JSValue::encode(jsUndefined());
 }
 

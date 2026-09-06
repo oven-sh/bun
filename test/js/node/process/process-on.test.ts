@@ -1,5 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
+import { EventEmitter } from "node:events";
 import path from "path";
 
 describe("process.on", () => {
@@ -136,6 +137,27 @@ describe.concurrent("process MaxListenersExceededWarning", () => {
     expect(stderr).toContain("MaxListeners is 3");
     expect(JSON.parse(stdout)).toEqual(["4:3"]);
     expect(exitCode).toBe(0);
+  });
+
+  it("process.setMaxListeners validates like EventEmitter.prototype.setMaxListeners", () => {
+    for (const bad of [-1, NaN, "3", undefined]) {
+      let processError: any, emitterError: any;
+      try {
+        process.setMaxListeners(bad as number);
+      } catch (e) {
+        processError = e;
+      }
+      try {
+        new EventEmitter().setMaxListeners(bad as number);
+      } catch (e) {
+        emitterError = e;
+      }
+      expect(processError?.code).toBe(emitterError.code);
+      expect(processError?.message).toBe(emitterError.message);
+    }
+    const before = process.getMaxListeners();
+    expect(process.setMaxListeners(2.5)).toBe(process);
+    process.setMaxListeners(before);
   });
 
   it("follows events.defaultMaxListeners until process.setMaxListeners is called", async () => {

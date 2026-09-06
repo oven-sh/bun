@@ -597,6 +597,17 @@ function onStreamRead(nread, buffer) {
   if (nread > 0) {
     self._unrefTimer();
     self.bytesRead += nread;
+    // A socket built with the `onread` option hands chunks to that callback.
+    const deliver = self[kOnreadDeliver];
+    if (deliver !== undefined) {
+      const tail = self[kOnreadTail];
+      if (tail !== undefined) {
+        self[kOnreadTail] = Buffer.concat([tail, buffer]);
+        return;
+      }
+      deliver(buffer);
+      return;
+    }
     if (!self.push(buffer)) readStop(self, this);
     return;
   }
@@ -1850,6 +1861,11 @@ function Socket(options?) {
       },
     };
   }
+  // Node starts the flow of data from a handle at once unless asked not to.
+  // https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L472
+  if (handle && isStreamWrapHandle(handle) && opts.readable !== false && !opts.manualStart) {
+    this.read(0);
+  }
   if (signal) {
     if (signal.aborted) {
       process.nextTick(destroyNT, this, $makeAbortError(undefined, { cause: signal.reason }));
@@ -2281,7 +2297,8 @@ Socket.prototype._destroy = function _destroy(err, callback) {
     const isException = err ? true : false;
     // `bytesRead` and `kBytesWritten` should be accessible after `.destroy()`
     // this[kBytesRead] = this._handle.bytesRead;
-    this[kBytesWritten] = this._handle.bytesWritten;
+    // A stream-wrap handle does not write: streamWrapSyncWrite keeps the count here.
+    if (!isStreamWrapHandle(this._handle)) this[kBytesWritten] = this._handle.bytesWritten;
 
     const currentHandle = this._handle;
     if (this.resetAndClosing) {

@@ -10,6 +10,7 @@
 use core::cell::Cell;
 use core::ffi::c_void;
 
+use bun_core::UnwrapOrOom as _;
 use bun_io::pipe_reader::BufferedReaderParent;
 #[cfg(unix)]
 use bun_io::pipe_reader::PosixFlags;
@@ -271,8 +272,10 @@ impl TTY {
             self.read_fd.set(Fd::INVALID);
             return Err(StartError::Sys(err));
         }
-        // `on_reader_error` already closed a reader whose poll the loop refused.
+        // The loop refused the poll: `on_reader_error` already ran, with no ref
+        // to release. Closing the reader here closes the fd.
         if self.flags.get().contains(Flags::READER_DONE) {
+            self.reader.with_mut(|r| r.close());
             self.read_fd.set(Fd::INVALID);
             return Err(StartError::Unpollable);
         }
@@ -502,9 +505,7 @@ impl TTY {
             .set(self.bytes_read.get().wrapping_add(chunk.len() as u64));
 
         let mut v: Vec<u8> = Vec::new();
-        if v.try_reserve_exact(chunk.len()).is_err() {
-            return true;
-        }
+        v.try_reserve_exact(chunk.len()).unwrap_or_oom();
         v.extend_from_slice(chunk);
         // The Buffer owns this allocation (freed on the C++ side when collected).
         let bytes: &'static mut [u8] = Box::leak(v.into_boxed_slice());
@@ -525,43 +526,32 @@ impl TTY {
 
     fn on_reader_done(&self) {
         bun_output::scoped_log!(TTYWrap, "onReaderDone");
-        let was_closed = self.flags.get().contains(Flags::CLOSED);
-        let already_done = self.flags.get().contains(Flags::READER_DONE);
-        self.update_flags(|f| {
-            f.insert(Flags::READER_DONE);
-            f.remove(Flags::READING);
-        });
-        self.reader.with_mut(|r| r.update_ref(false));
-        if !was_closed && !already_done {
-            self.call_onread(UV_EOF, JSValue::UNDEFINED);
-        }
-        self.this_value.with_mut(|v| v.downgrade());
-        self.reader_terminated();
+        self.on_reader_finished(UV_EOF);
     }
 
     fn on_reader_error(&self, err: &sys::Error) {
         bun_output::scoped_log!(TTYWrap, "onReaderError: {:?}", err);
+        self.on_reader_finished(uv_errno(err.errno));
+    }
+
+    /// Shared tail of `on_reader_done`/`on_reader_error`. The reader dispatches
+    /// these from inside its own methods, so this touches only `Cell` fields,
+    /// never `self.reader`; `close()` tears the reader down later.
+    fn on_reader_finished(&self, nread: i32) {
+        if self.flags.get().contains(Flags::READER_DONE) {
+            return;
+        }
         let was_closed = self.flags.get().contains(Flags::CLOSED);
         self.update_flags(|f| {
             f.insert(Flags::READER_DONE);
             f.remove(Flags::READING);
         });
-        self.reader.with_mut(|r| {
-            r.pause();
-            r.update_ref(false);
-        });
         if !was_closed {
-            self.call_onread(uv_errno(err.errno), JSValue::UNDEFINED);
+            self.call_onread(nread, JSValue::UNDEFINED);
         }
         self.this_value.with_mut(|v| v.downgrade());
-        // Releases the poll and fd; `on_reader_done` then drops the reader's ref.
-        self.reader.with_mut(|r| r.close());
-    }
-
-    /// Releases the ref the reader took in `start_reader`. May free `self`.
-    fn reader_terminated(&self) {
+        // The ref the reader took in `start_reader`. May free `self`.
         if self.flags.get().contains(Flags::READER_STARTED) {
-            self.update_flags(|f| f.remove(Flags::READER_STARTED));
             self.deref_();
         }
     }

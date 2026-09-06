@@ -1,7 +1,7 @@
 import { describe, expect, it, test } from "bun:test";
 import { bunEnv, bunExe, isWindows } from "harness";
 import { join } from "node:path";
-import { WriteStream } from "node:tty";
+import { ReadStream, WriteStream } from "node:tty";
 
 describe("ReadStream.prototype.setRawMode", () => {
   // Regression: on Windows, the `fd === 0` branch returned early on success
@@ -546,6 +546,114 @@ describe.skipIf(isWindows)("tty.ReadStream is a net.Socket over a native TTY han
       isRaw: false,
     });
     expect(exitCode).toBe(0);
+  });
+});
+
+describe("ReadStream constructor", () => {
+  test("rejects a negative or non-integer fd like Node", () => {
+    for (const fd of [-1, 1.5]) {
+      expect(() => new ReadStream(fd)).toThrow(
+        expect.objectContaining({
+          name: "RangeError",
+          code: "ERR_INVALID_FD",
+          message: `"fd" must be a positive integer: ${fd}`,
+        }),
+      );
+    }
+  });
+});
+
+describe.skipIf(isWindows)("tty.ReadStream over the stream-wrap path of net.Socket", () => {
+  // Node's net.Socket({ handle, onread }) hands every chunk to onread.callback
+  // instead of push(); the stream-wrap read path must do the same.
+  test("a Socket over a TTY handle honours the onread option", async () => {
+    const { code, output } = await runInPty(
+      `
+        const net = require("node:net");
+        const { TTY } = process.binding("tty_wrap");
+        const seen = [];
+        const s = new net.Socket({
+          handle: new TTY(0, {}),
+          onread: {
+            buffer: Buffer.alloc(64),
+            callback(nread, buf) {
+              seen.push(buf.toString("utf8", 0, nread));
+              if (seen.join("").includes("\\n")) {
+                process.stdout.write("RESULT " + JSON.stringify({ seen, pushed: s.readableLength, bytesRead: s.bytesRead }) + "\\n");
+                s.destroy();
+              }
+            },
+          },
+        });
+        process.stdout.write("P1\\n");
+      `,
+      [
+        terminal => {
+          terminal.write("abc\n");
+        },
+      ],
+      { markers: ["P1"] },
+    );
+    expect(code).toBe(0);
+    const result = JSON.parse(Bun.stripANSI(output()).match(/RESULT (\{.*\})/)![1]);
+    expect(result.seen.join("")).toBe("abc\n");
+    expect(result).toMatchObject({ pushed: 0, bytesRead: 4 });
+  });
+
+  // The handle does not count writes (they go through write(2) on the JS
+  // side), so destroy() must not reset bytesWritten from the handle.
+  test("bytesWritten survives destroy()", async () => {
+    const { code, output } = await runInPty(
+      `
+        const s = process.stdin;
+        s.write("hi", () => {
+          const before = s.bytesWritten;
+          s.on("close", () => {
+            process.stdout.write("RESULT " + JSON.stringify({ before, after: s.bytesWritten }) + "\\n");
+          });
+          s.destroy();
+        });
+      `,
+      [() => {}],
+      { markers: ["RESULT "] },
+    );
+    expect(code).toBe(0);
+    expect(JSON.parse(Bun.stripANSI(output()).match(/RESULT (\{.*\})/)![1])).toEqual({ before: 2, after: 2 });
+  });
+
+  // A TUI run as 'app < in > out' still has a controlling terminal and opens
+  // /dev/tty. On macOS kqueue refuses the /dev/tty alias, and with no tty on
+  // stdio the real device must come from the kernel, not from a stdio scan.
+  test("reads /dev/tty from a process whose stdio are all pipes", async () => {
+    const { code, output } = await runInPty(
+      `
+        const { spawn } = require("node:child_process");
+        const child = spawn(process.execPath, ["-e", \`
+          const fs = require("node:fs");
+          const tty = require("node:tty");
+          const input = new tty.ReadStream(fs.openSync("/dev/tty", "r"));
+          input.on("error", err => { process.stdout.write("ERROR " + err.code + "\\\\n"); process.exit(1); });
+          input.on("data", d => {
+            process.stdout.write("DATA " + JSON.stringify(String(d)) + "\\\\n");
+            input.destroy();
+          });
+          process.stdout.write("CHILDREADY\\\\n");
+        \`], { stdio: ["pipe", "pipe", "pipe"] });
+        child.stdout.on("data", d => process.stdout.write(d));
+        child.stderr.on("data", d => process.stdout.write("STDERR " + d));
+        child.on("exit", code => { process.stdout.write("RESULT " + code + "\\n"); process.exit(0); });
+      `,
+      [
+        terminal => {
+          terminal.write("from the terminal\n");
+        },
+      ],
+      { markers: ["CHILDREADY"], controllingTerminal: true },
+    );
+    expect(code).toBe(0);
+    const text = Bun.stripANSI(output());
+    expect(text).toContain('DATA "from the terminal\\n"');
+    expect(text).toContain("RESULT 0");
   });
 });
 

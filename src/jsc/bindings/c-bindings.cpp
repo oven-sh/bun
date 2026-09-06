@@ -21,6 +21,8 @@
 #include <sys/socket.h>
 #if OS(DARWIN)
 #include <mach-o/loader.h>
+#include <sys/param.h>
+#include <sys/sysctl.h>
 #endif
 #else
 #include <uv.h>
@@ -868,22 +870,21 @@ extern "C" int32_t open_as_nonblocking_tty(int32_t fd, int32_t mode)
     }
 
 #if OS(DARWIN)
-    // kqueue rejects the /dev/tty alias (EINVAL). A tty stdio fd in the same
-    // session is the same terminal under a /dev/ttysNNN name kqueue accepts.
+    // kqueue rejects the /dev/tty alias (EINVAL). /dev/tty is the controlling
+    // terminal, whose real /dev/ttysNNN device the kernel reports per process.
     if (strcmp(pathbuf, "/dev/tty") == 0) {
-        pid_t sid = tcgetsid(fd);
-        if (sid == -1)
+        int mib[4] = { CTL_KERN, KERN_PROC, KERN_PROC_PID, getpid() };
+        struct kinfo_proc kp;
+        size_t len = sizeof(kp);
+        if (sysctl(mib, 4, &kp, &len, nullptr, 0) != 0 || len != sizeof(kp))
             return -1;
-        bool found = false;
-        for (int candidate = 0; candidate < 3 && !found; candidate++) {
-            if (!isatty(candidate) || tcgetsid(candidate) != sid)
-                continue;
-            if (ttyname_r(candidate, pathbuf, sizeof(pathbuf)) != 0 || strcmp(pathbuf, "/dev/tty") == 0)
-                continue;
-            found = true;
-        }
-        if (!found)
+        dev_t tdev = kp.kp_eproc.e_tdev;
+        if (tdev == NODEV || tdev == static_cast<dev_t>(-1))
             return -1;
+        char name[64];
+        if (devname_r(tdev, S_IFCHR, name, sizeof(name)) == nullptr)
+            return -1;
+        snprintf(pathbuf, sizeof(pathbuf), "/dev/%s", name);
     }
 #endif
 

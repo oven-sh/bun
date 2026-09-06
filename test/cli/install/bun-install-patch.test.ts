@@ -1284,3 +1284,116 @@ index 0000000000000000000000000000000000000000..3b18e512dba79e4c8300dd08aeb37f8e
     });
   });
 });
+
+describe("hunk placement", () => {
+  const registry = new VerdaccioRegistry();
+
+  beforeAll(async () => {
+    await registry.start();
+  });
+
+  afterAll(() => {
+    registry.stop();
+  });
+
+  // no-deps@1.0.0 index.js:
+  //   1 module.exports = require(`./package.json`);
+  //   2
+  //   3 for (const key of [`dependencies`, `devDependencies`, `peerDependencies`]) {
+  //   4   for (const dep of Object.keys(module.exports[key] || {})) {
+  //   5     module.exports[key][dep] = require(dep);
+  //   6   }
+  //   7 }
+  const packageJson = JSON.stringify({
+    name: "hunk-placement",
+    dependencies: { "no-deps": "1.0.0" },
+    patchedDependencies: { "no-deps@1.0.0": "patches/no-deps@1.0.0.patch" },
+  });
+
+  const install = async (packageDir: string) => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "install"],
+      cwd: packageDir,
+      env: { ...bunEnv, BUN_INSTALL_CACHE_DIR: join(packageDir, ".bun-cache") },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  };
+
+  const indexJs = (packageDir: string) => Bun.file(join(packageDir, "node_modules", "no-deps", "index.js"));
+
+  test.concurrent("a hunk whose - side matches nothing fails the install", async () => {
+    const { packageDir } = await registry.createTestDir({
+      files: {
+        "package.json": packageJson,
+        patches: {
+          "no-deps@1.0.0.patch": [
+            "diff --git a/index.js b/index.js",
+            "--- a/index.js",
+            "+++ b/index.js",
+            "@@ -1 +1 @@",
+            "-a line that exists in no version of this package",
+            '+module.exports = "STALE-HUNK-APPLIED";',
+            "",
+          ].join("\n"),
+        },
+      },
+    });
+
+    const { stderr, exitCode } = await install(packageDir);
+    expect(normalizeBunSnapshot(stderr)).toMatchInlineSnapshot(`
+      "Resolving dependencies
+      error: failed applying patch file: hunk #1 does not apply to index.js (expected at line 1)
+      error: failed to apply patchfile (patches/no-deps@1.0.0.patch)"
+    `);
+    expect(exitCode).toBe(1);
+    const index = indexJs(packageDir);
+    expect((await index.exists()) && (await index.text()).includes("STALE-HUNK-APPLIED")).toBe(false);
+  });
+
+  test.concurrent("a hunk with a stale + start is placed by its context", async () => {
+    const { packageDir } = await registry.createTestDir({
+      files: {
+        "package.json": packageJson,
+        patches: {
+          // Hunk 1 adds two lines, so hunk 2's correct `+` start is 7. The
+          // header says 5, as `yarn patch-commit` emits.
+          "no-deps@1.0.0.patch": [
+            "diff --git a/index.js b/index.js",
+            "--- a/index.js",
+            "+++ b/index.js",
+            "@@ -1,2 +1,4 @@",
+            " module.exports = require(`./package.json`);",
+            "+// FIRST-A",
+            "+// FIRST-B",
+            " ",
+            "@@ -5,2 +5,3 @@",
+            "     module.exports[key][dep] = require(dep);",
+            "+    // SECOND-MARKER",
+            "   }",
+            "",
+          ].join("\n"),
+        },
+      },
+    });
+
+    const { stderr, exitCode } = await install(packageDir);
+    expect(stderr).not.toContain("error:");
+    expect(exitCode).toBe(0);
+    expect((await indexJs(packageDir).text()).split("\n")).toEqual([
+      "module.exports = require(`./package.json`);",
+      "// FIRST-A",
+      "// FIRST-B",
+      "",
+      "for (const key of [`dependencies`, `devDependencies`, `peerDependencies`]) {",
+      "  for (const dep of Object.keys(module.exports[key] || {})) {",
+      "    module.exports[key][dep] = require(dep);",
+      "    // SECOND-MARKER",
+      "  }",
+      "}",
+      "",
+    ]);
+  });
+});

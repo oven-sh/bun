@@ -616,9 +616,93 @@ describe("apply", () => {
         "",
       ].join("\n");
 
-      expect(() => apply(patchfile, afolder)).toThrow();
+      expect(() => apply(patchfile, afolder)).toThrow("hunk #1 does not apply to hello.txt (expected at line 1)");
       // the file must be left untouched
       expect(await fs.readFile(join(afolder, "hello.txt"), "utf8")).toBe(afile);
+    });
+
+    test("a later hunk that matches nowhere fails before anything is written", async () => {
+      const afile = Array.from({ length: 10 }, (_, i) => `line${i + 1}`).join("\n") + "\n";
+      await using tempdir = tempDir("patch-test", {
+        "a/hello.txt": afile,
+      });
+      const afolder = join(tempdir, "a");
+
+      const patchfile = [
+        "diff --git a/hello.txt b/hello.txt",
+        "--- a/hello.txt",
+        "+++ b/hello.txt",
+        "@@ -1,2 +1,3 @@",
+        " line1",
+        "+FIRST",
+        " line2",
+        "@@ -8,2 +9,3 @@",
+        " line8",
+        "+SECOND",
+        " not-line9",
+        "",
+      ].join("\n");
+
+      expect(() => apply(patchfile, afolder)).toThrow("hunk #2 does not apply to hello.txt (expected at line 8)");
+      expect(await fs.readFile(join(afolder, "hello.txt"), "utf8")).toBe(afile);
+    });
+
+    test("hunk is found by context when the file shifted by more than 20 lines", async () => {
+      const afile =
+        Array.from({ length: 60 }, (_, i) => (i === 49 ? "target" : `filler${i + 1}`)).join("\n") + "\n";
+      await using tempdir = tempDir("patch-test", {
+        "a/hello.txt": afile,
+      });
+      const afolder = join(tempdir, "a");
+
+      // The patch was made when "target" was line 2. It is now line 50.
+      const patchfile = [
+        "diff --git a/hello.txt b/hello.txt",
+        "--- a/hello.txt",
+        "+++ b/hello.txt",
+        "@@ -1,3 +1,3 @@",
+        " filler49",
+        "-target",
+        "+replaced",
+        " filler51",
+        "",
+      ].join("\n");
+
+      await apply(patchfile, afolder);
+
+      const lines = (await fs.readFile(join(afolder, "hello.txt"), "utf8")).split("\n");
+      expect({ line49: lines[48], line50: lines[49], line51: lines[50], count: lines.length }).toEqual({
+        line49: "filler49",
+        line50: "replaced",
+        line51: "filler51",
+        count: 61,
+      });
+    });
+
+    test("a zero-context deletion removes the line the - side names", async () => {
+      const afile = Array.from({ length: 12 }, (_, i) => `line${String(i + 1).padStart(2, "0")}`).join("\n") + "\n";
+      await using tempdir = tempDir("patch-test", {
+        "a/hello.txt": afile,
+      });
+      const afolder = join(tempdir, "a");
+
+      // `diff -U0` output: delete line 6 of the original.
+      const patchfile = [
+        "diff --git a/hello.txt b/hello.txt",
+        "--- a/hello.txt",
+        "+++ b/hello.txt",
+        "@@ -6 +5,0 @@",
+        "-line06",
+        "",
+      ].join("\n");
+
+      await apply(patchfile, afolder);
+
+      expect(await fs.readFile(join(afolder, "hello.txt"), "utf8")).toBe(
+        ["line01", "line02", "line03", "line04", "line05", "line07", "line08", "line09", "line10", "line11", "line12", ""].join(
+          "\n",
+        ),
+      );
     });
   });
 
@@ -697,7 +781,7 @@ describe("apply", () => {
       });
     });
 
-    test("header deleting more lines than the target file has returns EINVAL", async () => {
+    test("header deleting more lines than the target file has does not apply", async () => {
       await using dir = tempDir("patch-underflow", { "target.txt": "only line\n" });
 
       await using proc = Bun.spawn({
@@ -719,7 +803,7 @@ describe("apply", () => {
              patchInternals.apply(patch, ${JSON.stringify(dir)});
              console.log("no-error");
            } catch (e) {
-             console.log("caught: " + e.code);
+             console.log("caught: " + e.message);
            }`,
         ],
         env: bunEnv,
@@ -729,7 +813,7 @@ describe("apply", () => {
 
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
       expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
-        stdout: "caught: EINVAL",
+        stdout: "caught: hunk #1 does not apply to target.txt (expected at line 1)",
         stderr: "",
         exitCode: 0,
       });

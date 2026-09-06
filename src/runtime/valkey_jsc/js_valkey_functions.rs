@@ -73,8 +73,6 @@ fn from_js(global: &JSGlobalObject, value: JSValue) -> JsResult<Option<JSArgumen
     JSArgument::from_js_maybe_file(global, value, FileBlobs::Allow)
 }
 
-/// One HSET/HMSET field or value: the same conversion every other command
-/// uses, with a typed error instead of a `ToString` coercion.
 fn hset_arg(
     global: &JSGlobalObject,
     name: &'static str,
@@ -1094,9 +1092,7 @@ impl JSValkeyClient {
 
         args.push(key);
 
-        // A string, number, buffer, or Blob as the second argument selects the
-        // variadic form. It is probed first because buffers and Blobs are
-        // objects too, and must not be iterated as a record of fields.
+        // Probed before the record form: a buffer or Blob is an object too.
         if let Some(field) = from_js(global, second_arg)? {
             // Pattern 2: Variadic - hset(key, field, value, ...)
             let args_count = frame.arguments_count();

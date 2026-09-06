@@ -84,7 +84,7 @@ export function deprecate(fn, msg) {
       }
       warned = true;
     }
-    return fn.apply(this, ...args);
+    return fn.apply(this, args);
   }
 
   return deprecated;
@@ -104,7 +104,7 @@ export const debuglog = /* @__PURE__ */ ((debugs = {}, debugEnvRegex = {}, debug
     if (!debugs[set]) {
       if (debugEnvRegex.test(set)) {
         debugs[set] = function (...args) {
-          console.error("%s: %s", set, pid, format.apply(null, ...args));
+          console.error("%s: %s", set, format.apply(null, args));
         };
       } else {
         debugs[set] = function () {};
@@ -433,7 +433,119 @@ function reduceToSingleString(output, base, braces) {
   return braces[0] + base + " " + output.join(", ") + " " + braces[1];
 }
 
-export const types = /* @__PURE__ */ () => {};
+// Brand checks for typed arrays: the %TypedArray%.prototype[Symbol.toStringTag]
+// getter returns the concrete type name, or undefined for anything else.
+const getTypedArrayTag = /* @__PURE__ */ Object.getOwnPropertyDescriptor(
+  Object.getPrototypeOf(Uint8Array.prototype),
+  Symbol.toStringTag,
+).get;
+
+function typedArrayTag(value) {
+  return isObject(value) ? getTypedArrayTag.call(value) : undefined;
+}
+
+function hasTag(tag) {
+  return function (value) {
+    return (isObject(value) || isFunction(value)) && objectToString(value) === tag;
+  };
+}
+
+const isArrayBuffer = /* @__PURE__ */ hasTag("[object ArrayBuffer]");
+const isSharedArrayBuffer = /* @__PURE__ */ hasTag("[object SharedArrayBuffer]");
+
+export const types = {
+  isAnyArrayBuffer(value) {
+    return isArrayBuffer(value) || isSharedArrayBuffer(value);
+  },
+  isArrayBuffer,
+  isSharedArrayBuffer,
+  isArgumentsObject: /* @__PURE__ */ hasTag("[object Arguments]"),
+  isArrayBufferView: ArrayBuffer.isView,
+  isAsyncFunction: /* @__PURE__ */ hasTag("[object AsyncFunction]"),
+  isBigInt64Array(value) {
+    return typedArrayTag(value) === "BigInt64Array";
+  },
+  isBigUint64Array(value) {
+    return typedArrayTag(value) === "BigUint64Array";
+  },
+  isBooleanObject: /* @__PURE__ */ hasTag("[object Boolean]"),
+  isBoxedPrimitive(value) {
+    return (
+      types.isNumberObject(value) ||
+      types.isStringObject(value) ||
+      types.isBooleanObject(value) ||
+      types.isBigIntObject(value) ||
+      types.isSymbolObject(value)
+    );
+  },
+  isBigIntObject: /* @__PURE__ */ hasTag("[object BigInt]"),
+  isCryptoKey(value) {
+    return typeof CryptoKey !== "undefined" && value instanceof CryptoKey;
+  },
+  isDataView: /* @__PURE__ */ hasTag("[object DataView]"),
+  isDate,
+  isExternal() {
+    return false;
+  },
+  isFloat16Array(value) {
+    return typedArrayTag(value) === "Float16Array";
+  },
+  isFloat32Array(value) {
+    return typedArrayTag(value) === "Float32Array";
+  },
+  isFloat64Array(value) {
+    return typedArrayTag(value) === "Float64Array";
+  },
+  isGeneratorFunction: /* @__PURE__ */ hasTag("[object GeneratorFunction]"),
+  isGeneratorObject: /* @__PURE__ */ hasTag("[object Generator]"),
+  isInt8Array(value) {
+    return typedArrayTag(value) === "Int8Array";
+  },
+  isInt16Array(value) {
+    return typedArrayTag(value) === "Int16Array";
+  },
+  isInt32Array(value) {
+    return typedArrayTag(value) === "Int32Array";
+  },
+  isKeyObject() {
+    return false;
+  },
+  isMap: /* @__PURE__ */ hasTag("[object Map]"),
+  isMapIterator: /* @__PURE__ */ hasTag("[object Map Iterator]"),
+  isModuleNamespaceObject: /* @__PURE__ */ hasTag("[object Module]"),
+  isNativeError(value) {
+    return isObject(value) && value instanceof Error;
+  },
+  isNumberObject: /* @__PURE__ */ hasTag("[object Number]"),
+  isPromise(value) {
+    return isObject(value) && value instanceof Promise;
+  },
+  isProxy() {
+    return false;
+  },
+  isRegExp,
+  isSet: /* @__PURE__ */ hasTag("[object Set]"),
+  isSetIterator: /* @__PURE__ */ hasTag("[object Set Iterator]"),
+  isStringObject: /* @__PURE__ */ hasTag("[object String]"),
+  isSymbolObject: /* @__PURE__ */ hasTag("[object Symbol]"),
+  isTypedArray(value) {
+    return typedArrayTag(value) !== undefined;
+  },
+  isUint8Array(value) {
+    return typedArrayTag(value) === "Uint8Array";
+  },
+  isUint8ClampedArray(value) {
+    return typedArrayTag(value) === "Uint8ClampedArray";
+  },
+  isUint16Array(value) {
+    return typedArrayTag(value) === "Uint16Array";
+  },
+  isUint32Array(value) {
+    return typedArrayTag(value) === "Uint32Array";
+  },
+  isWeakMap: /* @__PURE__ */ hasTag("[object WeakMap]"),
+  isWeakSet: /* @__PURE__ */ hasTag("[object WeakSet]"),
+};
 
 export function isArray(ar) {
   return Array.isArray(ar);
@@ -568,11 +680,13 @@ function hasOwnProperty(obj, prop) {
   return Object.prototype.hasOwnProperty.call(obj, prop);
 }
 
-export const promisify = /* @__PURE__ */ (x => ((x.custom = Symbol.for("nodejs.util.promisify.custom")), x))(
+const kCustomPromisifiedSymbol = Symbol.for("nodejs.util.promisify.custom");
+
+export const promisify = /* @__PURE__ */ (x => ((x.custom = kCustomPromisifiedSymbol), x))(
   function promisify(original) {
     if (typeof original !== "function") throw new TypeError('The "original" argument must be of type Function');
 
-    if (kCustomPromisifiedSymbol && original[kCustomPromisifiedSymbol]) {
+    if (original[kCustomPromisifiedSymbol]) {
       var fn = original[kCustomPromisifiedSymbol];
 
       if (typeof fn !== "function") {
@@ -614,13 +728,12 @@ export const promisify = /* @__PURE__ */ (x => ((x.custom = Symbol.for("nodejs.u
 
     Object.setPrototypeOf(fn, Object.getPrototypeOf(original));
 
-    if (kCustomPromisifiedSymbol)
-      Object.defineProperty(fn, kCustomPromisifiedSymbol, {
-        value: fn,
-        enumerable: false,
-        writable: false,
-        configurable: true,
-      });
+    Object.defineProperty(fn, kCustomPromisifiedSymbol, {
+      value: fn,
+      enumerable: false,
+      writable: false,
+      configurable: true,
+    });
     return Object.defineProperties(fn, Object.getOwnPropertyDescriptors(original));
   },
 );
@@ -653,16 +766,16 @@ export function callbackify(original) {
     }
     var self = this;
     var cb = function (...args) {
-      return maybeCb.apply(self, ...args);
+      return maybeCb.apply(self, args);
     };
     // In true node style we process the callback on `nextTick` with all the
     // implications (stack, `uncaughtException`, `async_hooks`)
     original.apply(this, args).then(
       function (ret) {
-        process.nextTick(cb.bind(null, null, ret));
+        process.nextTick(cb, null, ret);
       },
       function (rej) {
-        process.nextTick(callbackifyOnRejected.bind(null, rej, cb));
+        process.nextTick(callbackifyOnRejected, rej, cb);
       },
     );
   }
@@ -676,12 +789,32 @@ export function callbackify(original) {
 export const TextEncoder = /* @__PURE__ */ globalThis.TextEncoder;
 export const TextDecoder = /* @__PURE__ */ globalThis.TextDecoder;
 export default {
-  TextEncoder,
-  TextDecoder,
-  promisify,
+  format,
+  deprecate,
+  debuglog,
+  inspect,
+  types,
+  isArray,
+  isBoolean,
+  isNull,
+  isNullOrUndefined,
+  isNumber,
+  isString,
+  isSymbol,
+  isUndefined,
+  isRegExp,
+  isObject,
+  isDate,
+  isError,
+  isFunction,
+  isPrimitive,
+  isBuffer,
   log,
   inherits,
   _extend,
+  promisify,
   callbackifyOnRejected,
   callbackify,
+  TextEncoder,
+  TextDecoder,
 };

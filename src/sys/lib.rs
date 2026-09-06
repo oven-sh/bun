@@ -9086,6 +9086,17 @@ pub(crate) fn renameat_concurrently_without_fallback(
             }
         }
 
+        // A plain rename replaces a file or an empty directory atomically. It
+        // also reports EXDEV before anything is deleted where the flagged
+        // renames above are not supported (ENOSYS on FreeBSD, EINVAL on some
+        // filesystems). On Windows the first attempt already was a plain rename.
+        #[cfg(not(windows))]
+        match renameat(from_dir_fd, from, to_dir_fd, to) {
+            Ok(()) => break 'attempt,
+            Err(err) if matches!(err.get_errno(), E::ENOENT | E::EXDEV) => return Err(err),
+            Err(_) => {}
+        }
+
         //  sad path: let's try to delete the folder and then rename it
         if to_dir_fd.is_valid() {
             let _ = Dir::borrow(&to_dir_fd).delete_tree(to.as_bytes());

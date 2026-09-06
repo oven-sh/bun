@@ -785,12 +785,8 @@ static constexpr DeepEqualsMode deepEqualsMode {
     checkPrototypes ? &nonIndexOwnPropertiesEqual<isStrict, enableAsymmetricMatchers, checkPrototypes, skipPrototypeIdentity> : nullptr,
 };
 
-// Finds an enumerable property `propertyName` on `object`. `ownOnly` skips the
-// prototype chain (node compares own properties only). A non-enumerable match
-// counts as absent: the callers iterate enumerable names, so a non-enumerable
-// property on the other side must not satisfy one of them, or the result would
-// depend on the argument order. When `value` is given, the property is read
-// into it. Without it the getter does not run.
+// A non-enumerable match counts as absent. `ownOnly` skips the prototype chain.
+// The getter runs only when `value` is given.
 static bool findEnumerableProperty(JSC::JSGlobalObject* globalObject, JSC::JSObject* object, JSC::PropertyName propertyName, bool ownOnly, JSValue* value)
 {
     VM& vm = globalObject->vm();
@@ -816,14 +812,8 @@ static bool findEnumerableProperty(JSC::JSGlobalObject* globalObject, JSC::JSObj
     return true;
 }
 
-// Compares the properties of o1 and o2 by the enumerable names in a1 and a2.
-// Every name in a1 must resolve to an enumerable property on both sides with
-// equal values. In strict mode the two name lists must have the same length,
-// which makes the name sets equal. In loose mode a property whose value is
-// undefined counts as absent, so every name in a2 that o1 does not have must be
-// absent or undefined on o2.
-// `ownOnly` must match how the name lists were built (own names, or the
-// prototype chain too). `skipName` is ignored on both sides (Error's `stack`).
+// Compares o1 and o2 by the enumerable names in a1 and a2. Loose mode treats an
+// undefined value as absent. `ownOnly` must match how the name lists were built.
 static bool enumerablePropertiesEqual(const DeepEqualsMode& mode, JSC::JSGlobalObject* globalObject, MarkedArgumentBuffer& gcBuffer, Vector<std::pair<JSC::JSValue, JSC::JSValue>, 16>& stack, ThrowScope& scope, JSC::JSObject* o1, JSC::JSObject* o2, const JSC::PropertyNameArrayBuilder& a1, const JSC::PropertyNameArrayBuilder& a2, bool ownOnly, const Identifier* skipName = nullptr)
 {
     const size_t propertyArrayLength1 = a1.size();
@@ -837,10 +827,7 @@ static bool enumerablePropertiesEqual(const DeepEqualsMode& mode, JSC::JSGlobalO
         if (skipName && i1 == *skipName) continue;
         PropertyName propertyName1 = PropertyName(i1);
 
-        // The name lists collect enumerable names from the whole prototype chain. A
-        // non-enumerable property nearer the object can shadow such a name, and then
-        // the name resolves to a non-enumerable property. Treat it as absent on that
-        // side, the same rule as the lookup on the other side.
+        // A non-enumerable property can shadow an enumerable chain name.
         JSValue prop1;
         bool has1 = findEnumerableProperty(globalObject, o1, propertyName1, ownOnly, &prop1);
         RETURN_IF_EXCEPTION(scope, false);
@@ -875,7 +862,6 @@ static bool enumerablePropertiesEqual(const DeepEqualsMode& mode, JSC::JSGlobalO
         if (skipName && i2 == *skipName) continue;
         PropertyName propertyName2 = PropertyName(i2);
 
-        // A name o1 has was compared in the loop above. The getter does not run again.
         bool has1 = findEnumerableProperty(globalObject, o1, propertyName2, ownOnly, nullptr);
         RETURN_IF_EXCEPTION(scope, false);
         if (has1) continue;
@@ -1215,9 +1201,7 @@ bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
 
                     JSValue left = o1->getDirect(entry.offset());
                     JSValue right;
-                    // Only an enumerable property on o2 can match an enumerable one on o1.
-                    // getDirect() alone would also find a non-enumerable property, which the
-                    // reverse loop skips, so the result would depend on the argument order.
+                    // getDirect() alone would also match a non-enumerable property.
                     unsigned o2Attributes = 0;
                     PropertyOffset o2Offset = o2Structure->get(vm, JSC::PropertyName(entry.key()), o2Attributes);
                     if (o2Offset != invalidOffset && !(o2Attributes & PropertyAttribute::DontEnum)) {

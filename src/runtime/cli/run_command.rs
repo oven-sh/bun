@@ -1980,8 +1980,7 @@ impl RunCommand {
                 b"\\node_modules\\.bin"
             ));
 
-            // A trailing delimiter with nothing after it is an empty PATH
-            // entry, which the shell resolves against the cwd.
+            // An empty trailing entry would make the shell search the cwd.
             if !path.is_empty() {
                 new_path.push(DELIMITER);
                 new_path.extend_from_slice(&path);

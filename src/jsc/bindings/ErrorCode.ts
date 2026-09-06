@@ -262,6 +262,7 @@ const errors: ErrorCodeMapping = [
   ["ERR_ZSTD_INVALID_PARAM", RangeError],
   ["ERR_USE_AFTER_CLOSE", Error],
   ["ERR_WEBASSEMBLY_RESPONSE", TypeError],
+  ["ERR_WORKER_INIT_FAILED", Error],
   ["ERR_WORKER_NOT_RUNNING", Error],
   ["ERR_WORKER_UNSUPPORTED_OPERATION", TypeError],
   ["ERR_WORKER_PATH", TypeError],

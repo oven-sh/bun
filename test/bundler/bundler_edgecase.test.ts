@@ -4215,6 +4215,34 @@ describe("bundler", () => {
       `,
     },
   });
+  // The re-exporter's `__reExport(...)` of its first async dependency joins
+  // the awaited list too: `__promiseAll` must be included for it.
+  itBundled("edgecase/ExportStarOfAsyncDependencyWithDynamicFallback", {
+    files: {
+      "/entry.js": /* js */ `
+        import * as X from "./x.js";
+        console.log("entry", X.c);
+        import("./x.js").then(() => console.log("dyn"));
+      `,
+      "/x.js": /* js */ `export * from "./r.js";`,
+      "/r.js": /* js */ `
+        export * from "./c.cjs";
+        console.log("r start");
+        await 0;
+        console.log("r end");
+      `,
+      "/c.cjs": /* js */ `module.exports = { c: 1 };`,
+    },
+    format: "esm",
+    run: {
+      stdout: `
+        r start
+        r end
+        entry 1
+        dyn
+      `,
+    },
+  });
   itBundled("edgecase/ExportStarOfRejectedAsyncDependencyRejects", {
     files: {
       "/entry.js": /* js */ `

@@ -1385,6 +1385,13 @@ pub(crate) fn scan_imports_and_exports(
                             1,
                             Index::source(source_index),
                         )?;
+
+                        // The `__reExport` call follows the `init_x()` of its own
+                        // record, so it joins the awaited list from the first async
+                        // record on.
+                        if first_async_import.is_some_and(|first| *import_record_index >= first) {
+                            promise_all_uses += 1;
+                        }
                         col!(ast_flags_list)[id].insert(AstFlags::USES_EXPORTS_REF);
                         col!(import_records_list)[id].as_mut_slice()[*import_record_index as usize]
                             .flags

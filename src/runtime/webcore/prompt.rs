@@ -6,9 +6,7 @@ use bun_core::EncodedSlice;
 use bun_core::Output;
 use bun_jsc::EncodedSliceJsc as _;
 
-/// Waits until stdin is readable and runs queued JS signal listeners meanwhile.
-/// Signal handlers are SA_RESTART, so `read(2)` never sees EINTR; `pselect(2)`
-/// does, and the mask closes the gap between the queue check and the wait.
+/// Waits for stdin with `pselect(2)` (interruptible, unlike `read(2)` under SA_RESTART handlers) and runs queued JS signal listeners on EINTR.
 #[cfg(unix)]
 fn wait_for_stdin(global: &JSGlobalObject) {
     use bun_jsc::PosixSignalHandle;

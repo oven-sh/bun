@@ -58,8 +58,7 @@ impl PosixSignalHandle {
         Self::main_thread().is_some_and(|handler| !handler.ring.is_empty())
     }
 
-    /// Runs the JS listeners for every queued signal now, for a host function that
-    /// blocks the JS thread (`prompt()`). Main thread only, the ring's single consumer.
+    /// Runs the JS listeners for every queued signal now (for a host function that blocks the JS thread). Main thread only.
     #[cfg(unix)]
     pub fn run_queued_from_js_thread(global_object: &JSGlobalObject) {
         let Some(handler) = Self::main_thread() else {

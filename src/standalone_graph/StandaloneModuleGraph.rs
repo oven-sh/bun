@@ -2435,7 +2435,17 @@ pub fn target_executable(
         let version_zstr = ZStr::from_slice_with_nul(&version_str[..]);
 
         let mut needs_download: bool = true;
-        let dest_z = target.exe_path(&mut exe_path_buf, version_zstr, env, &mut needs_download);
+        let dest_z =
+            match target.exe_path(&mut exe_path_buf, version_zstr, env, &mut needs_download) {
+                Ok(dest) => dest,
+                Err(_) => {
+                    return Err(CompileError::fmt(format_args!(
+                        "Cache directory for '{}' is too long (File name too long): {}",
+                        target,
+                        bstr::BStr::new(&bun_sys::fetch_cache_directory_path())
+                    )));
+                }
+            };
 
         if needs_download {
             if let Err(e) = download_to_path(target, env, dest_z) {

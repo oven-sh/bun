@@ -64,6 +64,7 @@ pub fn do_patch_commit(
     log_level: LogLevel,
 ) -> Result<Option<PatchCommitResult>, crate::Error> {
     let mut folder_path_buf = bun_paths::path_buffer_pool::get();
+    let mut package_json_path_buf = bun_paths::path_buffer_pool::get();
     let mut lockfile: Box<Lockfile> = Box::default();
     let log = manager.log_mut();
     match lockfile.load_from_cwd::<true>(Some(manager), log) {
@@ -161,8 +162,13 @@ pub fn do_patch_commit(
     let mut iterator = tree::Iterator::<{ tree::IteratorPathStyle::NodeModules }>::init(&lockfile);
     let (changes_dir, pkg): (Vec<u8>, Package) = match arg_kind {
         PatchArgKind::Path => 'result: {
-            let package_json_path =
-                resolve_path::join_z::<platform::Auto>(&[argument, b"package.json"]);
+            let Some(package_json_path) = resolve_path::join_z_buf_checked::<platform::Auto>(
+                &mut package_json_path_buf[..],
+                &[argument, b"package.json"],
+            ) else {
+                Output::err_generic("path is too long: {}", (bun_fmt::quote(argument),));
+                Global::crash();
+            };
             let package_json_source: bun_ast::Source =
                 match bun_ast::to_source(package_json_path, Default::default()) {
                     Ok(s) => s,
@@ -566,8 +572,11 @@ pub fn do_patch_commit(
         _ => unreachable!("patch_features must be Commit in doPatchCommit"),
     };
 
-    let path_in_patches_dir =
-        resolve_path::join_z::<platform::Posix>(&[patches_dir, patch_filename]);
+    let mut path_in_patches_dir_spill = Vec::new();
+    let path_in_patches_dir = resolve_path::join_z_spill::<platform::Posix>(
+        &mut path_in_patches_dir_spill,
+        &[patches_dir, patch_filename],
+    );
 
     // mkdir-p syscall is used here, no JS surface; route directly through
     // `bun_sys::mkdir_recursive` to avoid the `bun_runtime` dep cycle.
@@ -595,10 +604,12 @@ pub fn do_patch_commit(
     }
 
     let patchfile_path: Box<[u8]> = Box::<[u8]>::from(path_in_patches_dir.as_bytes());
-    let _ = sys::unlink(resolve_path::join_z::<platform::Auto>(&[
-        changes_dir,
-        b".bun-patch-tag",
-    ]));
+    if let Some(tag_path) = resolve_path::join_z_buf_checked::<platform::Auto>(
+        &mut pathbuf[..],
+        &[changes_dir, b".bun-patch-tag"],
+    ) {
+        let _ = sys::unlink(tag_path);
+    }
 
     Ok(Some(PatchCommitResult {
         patch_key: patch_key.into_boxed_slice(),
@@ -703,6 +714,7 @@ pub fn prepare_patch(manager: &mut PackageManager) -> Result<(), crate::Error> {
     let arg_kind: PatchArgKind = PatchArgKind::from_arg(argument);
 
     let mut folder_path_buf = bun_paths::path_buffer_pool::get();
+    let mut package_json_path_buf = bun_paths::path_buffer_pool::get();
 
     #[cfg(windows)]
     let mut win_normalizer = bun_paths::path_buffer_pool::get();
@@ -735,8 +747,13 @@ pub fn prepare_patch(manager: &mut PackageManager) -> Result<(), crate::Error> {
     let (cache_dir, cache_dir_subpath, module_folder, pkg_name): (Fd, &[u8], Vec<u8>, Vec<u8>) =
         match arg_kind {
             PatchArgKind::Path => 'brk: {
-                let package_json_path =
-                    resolve_path::join_z::<platform::Auto>(&[argument, b"package.json"]);
+                let Some(package_json_path) = resolve_path::join_z_buf_checked::<platform::Auto>(
+                    &mut package_json_path_buf[..],
+                    &[argument, b"package.json"],
+                ) else {
+                    Output::err_generic("path is too long: {}", (bun_fmt::quote(argument),));
+                    Global::crash();
+                };
                 let package_json_source: bun_ast::Source =
                     match bun_ast::to_source(package_json_path, Default::default()) {
                         Ok(s) => s,

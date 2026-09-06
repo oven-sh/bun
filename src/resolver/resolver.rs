@@ -4027,24 +4027,32 @@ impl<'a> Resolver<'a> {
                 None => return Ok(None),
             };
 
-        if result.has_base_url() {
-            // this might leak
-            if !bun_paths::is_absolute(&result.base_url) {
-                // NOTE: `base_url: Box<[u8]>` owns its bytes, so
-                // copy `abs_buf`'s thread-local result directly instead of
-                // double-copying through the `dirname_store` arena.
-                let abs = self
-                    .fs_ref()
-                    .abs_buf(&[file_dir, &result.base_url[..]], bufs!(tsconfig_base_url));
-                result.base_url = Box::from(abs);
-            }
+        if result.has_base_url() && !bun_paths::is_absolute(&result.base_url) {
+            // NOTE: `base_url: Box<[u8]>` owns its bytes, so
+            // copy `abs_buf`'s thread-local result directly instead of
+            // double-copying through the `dirname_store` arena.
+            let Some(abs) = self
+                .fs_ref()
+                .abs_buf_checked(&[file_dir, &result.base_url[..]], bufs!(tsconfig_base_url))
+            else {
+                let _ = self.log_mut().add_error_fmt(
+                    None,
+                    bun_ast::Loc::EMPTY,
+                    format_args!(
+                        "\"baseUrl\" in {} is too long",
+                        bun_core::fmt::quote(key_path)
+                    ),
+                );
+                return Ok(None);
+            };
+            result.base_url = Box::from(abs);
         }
 
         if result.paths.count() > 0
             && (result.base_url_for_paths.is_empty()
                 || !bun_paths::is_absolute(&result.base_url_for_paths))
         {
-            // this might leak
+            // `base_url` is empty or the bounds-checked result from above, so this fits.
             let abs = self
                 .fs_ref()
                 .abs_buf(&[file_dir, &result.base_url[..]], bufs!(tsconfig_base_url));
@@ -4780,8 +4788,13 @@ impl<'a> Resolver<'a> {
 
                         if !bun_paths::is_absolute(absolute_original_path) {
                             let parts: [&[u8]; 2] = [abs_base_url, original_path.as_ref()];
-                            absolute_original_path =
-                                self.fs_ref().abs_buf(&parts, bufs!(tsconfig_path_abs));
+                            let Some(abs) = self
+                                .fs_ref()
+                                .abs_buf_checked(&parts, bufs!(tsconfig_path_abs))
+                            else {
+                                continue;
+                            };
+                            absolute_original_path = abs;
                         }
 
                         if self

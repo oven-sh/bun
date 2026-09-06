@@ -53,6 +53,23 @@ impl Snapshots {
     #[cfg(not(windows))]
     const SNAPSHOTS_DIR_NAME: &'static [u8] = b"__snapshots__/";
 
+    /// Appends `parts` to `buf` at `*pos` and NUL-terminates. `None` when the
+    /// result does not fit in `buf`.
+    fn append_path_z<'b>(buf: &'b mut [u8], pos: &mut usize, parts: &[&[u8]]) -> Option<&'b ZStr> {
+        let end = parts
+            .iter()
+            .try_fold(*pos, |acc, part| acc.checked_add(part.len()))?;
+        if end >= buf.len() {
+            return None;
+        }
+        for part in parts {
+            buf[*pos..*pos + part.len()].copy_from_slice(part);
+            *pos += part.len();
+        }
+        buf[*pos] = 0;
+        Some(ZStr::from_buf(buf, *pos))
+    }
+
     pub(crate) fn init(update_snapshots: bool) -> Snapshots {
         Snapshots {
             update_snapshots,
@@ -255,17 +272,12 @@ impl Snapshots {
         let mut snapshot_file_path_buf = bun_paths::path_buffer_pool::get();
         let buf = snapshot_file_path_buf.0.as_mut_slice();
         let mut pos = 0usize;
-        buf[pos..pos + dir_path.len()].copy_from_slice(dir_path);
-        pos += dir_path.len();
-        buf[pos..pos + Self::SNAPSHOTS_DIR_NAME.len()].copy_from_slice(Self::SNAPSHOTS_DIR_NAME);
-        pos += Self::SNAPSHOTS_DIR_NAME.len();
-        buf[pos..pos + test_filename.len()].copy_from_slice(test_filename);
-        pos += test_filename.len();
-        buf[pos..pos + b".snap".len()].copy_from_slice(b".snap");
-        pos += b".snap".len();
-        buf[pos] = 0;
-        // SAFETY: buf[pos] == 0 written above
-        let snapshot_file_path = ZStr::from_buf(&buf[..], pos);
+        let snapshot_file_path = Self::append_path_z(
+            buf,
+            &mut pos,
+            &[dir_path, Self::SNAPSHOTS_DIR_NAME, test_filename, b".snap"],
+        )
+        .ok_or(crate::Error::FailedToOpenSnapshotFile)?;
 
         let source = bun_ast::Source::init_path_string(
             snapshot_file_path.as_bytes(),
@@ -847,17 +859,12 @@ impl Snapshots {
             let mut snapshot_file_path_buf = bun_paths::path_buffer_pool::get();
             let buf = snapshot_file_path_buf.0.as_mut_slice();
             let mut pos = 0usize;
-            buf[pos..pos + dir_path.len()].copy_from_slice(dir_path);
-            pos += dir_path.len();
-            buf[pos..pos + Self::SNAPSHOTS_DIR_NAME.len()]
-                .copy_from_slice(Self::SNAPSHOTS_DIR_NAME);
-            pos += Self::SNAPSHOTS_DIR_NAME.len();
+            let snapshot_dir_path =
+                Self::append_path_z(buf, &mut pos, &[dir_path, Self::SNAPSHOTS_DIR_NAME])
+                    .ok_or(crate::Error::FailedToOpenSnapshotFile)?;
 
             let cached_dir = self.snapshot_dir_path;
             if cached_dir.is_none() || !strings::eql_long(dir_path, cached_dir.unwrap(), true) {
-                buf[pos] = 0;
-                // SAFETY: buf[pos] == 0 written above
-                let snapshot_dir_path = ZStr::from_buf(&buf[..], pos);
                 match bun_sys::mkdir(snapshot_dir_path, 0o777) {
                     bun_sys::Result::Ok(()) => {
                         self.snapshot_dir_path = Some(dir_path);
@@ -871,13 +878,8 @@ impl Snapshots {
                 }
             }
 
-            buf[pos..pos + test_filename.len()].copy_from_slice(test_filename);
-            pos += test_filename.len();
-            buf[pos..pos + b".snap".len()].copy_from_slice(b".snap");
-            pos += b".snap".len();
-            buf[pos] = 0;
-            // SAFETY: buf[pos] == 0 written above
-            let snapshot_file_path = ZStr::from_buf(&buf[..], pos);
+            let snapshot_file_path = Self::append_path_z(buf, &mut pos, &[test_filename, b".snap"])
+                .ok_or(crate::Error::FailedToOpenSnapshotFile)?;
 
             let mut flags: i32 = bun_sys::O::CREAT | bun_sys::O::RDWR;
             if self.update_snapshots {

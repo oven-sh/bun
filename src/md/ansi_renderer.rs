@@ -2697,11 +2697,11 @@ fn resolve_local_image_path(src: &[u8], base_dir: Option<&[u8]>) -> Option<Box<[
     // Percent-decode the path so file:///foo/bar%20baz works.
     let decoded = bun_url::PercentEncoding::decode_alloc(path).ok()?;
 
-    // Resolve to an absolute path. bun.path.joinAbsString returns a
-    // slice in a threadlocal buffer — dupe it before leaving this fn.
-    // Prefer the markdown file's directory when provided; otherwise fall
-    // back to cwd so `Bun.markdown.ansi()` callers without a source path
-    // still work.
+    // Resolve to an absolute path. Prefer the markdown file's directory
+    // when provided; otherwise fall back to cwd so `Bun.markdown.ansi()`
+    // callers without a source path still work. A path that does not fit
+    // a PathBuffer cannot exist on disk, so it is skipped like a missing
+    // file.
     let mut cwd_buf = bun_paths::path_buffer_pool::get();
     let base: &[u8] = if let Some(d) = base_dir {
         d
@@ -2711,16 +2711,17 @@ fn resolve_local_image_path(src: &[u8], base_dir: Option<&[u8]>) -> Option<Box<[
             Err(_) => return None,
         }
     };
-    let joined =
-        bun_paths::resolve_path::join_abs_string::<bun_paths::platform::Auto>(base, &[&decoded]);
-    let abs = Box::<[u8]>::from(joined);
+    let mut abs_buf = bun_paths::path_buffer_pool::get();
+    let abs_z = bun_paths::resolve_path::join_abs_string_buf_z_checked::<bun_paths::platform::Auto>(
+        base,
+        &mut abs_buf[..],
+        &[&decoded],
+    )?;
     // Stat instead of plain exists() so a directory like `./assets/` gets
     // rejected. bun.sys.exists wraps access(path, F_OK) which returns true
     // for any entry, including directories — and emitKittyImageFile sets
     // q=2 so the terminal silently drops directory paths without falling
     // through to alt text.
-    let mut zbuf = bun_paths::path_buffer_pool::get();
-    let abs_z = bun_paths::resolve_path::z(&abs, &mut zbuf);
     match bun_sys::stat(abs_z) {
         Ok(s) => {
             if !bun_sys::S::ISREG(s.st_mode as _) {
@@ -2729,7 +2730,7 @@ fn resolve_local_image_path(src: &[u8], base_dir: Option<&[u8]>) -> Option<Box<[
         }
         Err(_) => return None,
     }
-    Some(abs)
+    Some(Box::<[u8]>::from(abs_z.as_bytes()))
 }
 
 // ========================================

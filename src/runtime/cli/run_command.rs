@@ -2754,12 +2754,14 @@ impl RunCommand {
             };
             let cwd_len = cwd.as_bytes().len();
             cwd_buf[cwd_len] = paths::SEP;
-            let joined = paths::resolve_path::join_abs_string_buf::<paths::platform::Auto>(
-                &cwd_buf[..cwd_len + 1],
-                &mut script_name_buf.0,
-                &[target],
-            );
-            if joined.is_empty() {
+            let Some(joined) = paths::resolve_path::join_abs_string_buf_checked::<
+                paths::platform::Auto,
+            >(
+                &cwd_buf[..cwd_len + 1], &mut script_name_buf.0, &[target]
+            ) else {
+                return false;
+            };
+            if joined.is_empty() || joined.len() >= MAX_PATH_BYTES {
                 return false;
             }
             joined.len()

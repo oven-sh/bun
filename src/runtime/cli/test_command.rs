@@ -897,17 +897,25 @@ impl JunitReporter {
 
         let mut junit_path_buf = bun_paths::path_buffer_pool::get();
 
-        junit_path_buf[..path.len()].copy_from_slice(path);
-        junit_path_buf[path.len()] = 0;
+        let opened = if path.len() >= junit_path_buf.len() {
+            Err(
+                bun_sys::Error::from_code(bun_sys::E::ENAMETOOLONG, bun_sys::Tag::open)
+                    .with_path(path),
+            )
+        } else {
+            junit_path_buf[..path.len()].copy_from_slice(path);
+            junit_path_buf[path.len()] = 0;
 
-        // SAFETY: junit_path_buf[path.len()] == 0 written above
-        let zpath = bun_core::ZStr::from_buf(&junit_path_buf[..], path.len());
-        match File::openat(
-            Fd::cwd(),
-            zpath,
-            bun_sys::O::WRONLY | bun_sys::O::CREAT | bun_sys::O::TRUNC,
-            0o664,
-        ) {
+            // SAFETY: junit_path_buf[path.len()] == 0 written above
+            let zpath = bun_core::ZStr::from_buf(&junit_path_buf[..], path.len());
+            File::openat(
+                Fd::cwd(),
+                zpath,
+                bun_sys::O::WRONLY | bun_sys::O::CREAT | bun_sys::O::TRUNC,
+                0o664,
+            )
+        };
+        match opened {
             bun_sys::Result::Err(err) => {
                 Output::err(
                     crate::Error::JUnitReportFailed,
@@ -1502,7 +1510,11 @@ impl CommandLineReporter {
         let mut reports: Vec<CodeCoverageReport<'static>> = Vec::new();
         Self::for_each_coverage_report(vm, opts, |report| reports.push(report.into_owned()));
         if let Err(err) = print_coverage_reports(opts, &reports) {
-            Output::err(err, "Failed to write lcov.info", ());
+            Output::err(
+                err,
+                "Failed to write lcov.info to {}",
+                (bstr::BStr::new(&opts.reports_directory),),
+            );
             Global::exit(1);
         }
     }
@@ -1653,12 +1665,24 @@ fn write_lcov_report(
         ".lcov.info.{}.tmp",
         bun_core::fmt::hex_lower(&rand)
     );
+    let too_long = || {
+        bun_sys::Error::from_code(bun_sys::E::ENAMETOOLONG, bun_sys::Tag::open)
+            .with_path(&opts.reports_directory)
+    };
     let mut buf = bun_paths::path_buffer_pool::get();
-    let tmp_path = resolve_path::join_abs_string_buf_z::<bun_path::platform::Auto>(
+    let tmp_path = resolve_path::join_abs_string_buf_z_checked::<bun_path::platform::Auto>(
         relative_dir,
         &mut buf,
         &[&opts.reports_directory, &tmpname],
-    );
+    )
+    .ok_or_else(too_long)?;
+    let mut final_buf = bun_paths::path_buffer_pool::get();
+    let final_path = resolve_path::join_abs_string_buf_z_checked::<bun_path::platform::Auto>(
+        relative_dir,
+        &mut final_buf,
+        &[&opts.reports_directory, b"lcov.info"],
+    )
+    .ok_or_else(too_long)?;
     let file = File::openat(
         Fd::cwd(),
         tmp_path,
@@ -1668,15 +1692,7 @@ fn write_lcov_report(
     let written = file.write_all(&contents);
     drop(file);
     let moved = match written {
-        Ok(()) => bun_sys::move_file_z(
-            Fd::cwd(),
-            tmp_path,
-            Fd::cwd(),
-            resolve_path::join_abs_string_z::<bun_path::platform::Auto>(
-                relative_dir,
-                &[&opts.reports_directory, b"lcov.info"],
-            ),
-        ),
+        Ok(()) => bun_sys::move_file_z(Fd::cwd(), tmp_path, Fd::cwd(), final_path),
         err => err,
     };
     if moved.is_err() {

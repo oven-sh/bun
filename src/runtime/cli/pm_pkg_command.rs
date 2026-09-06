@@ -413,9 +413,14 @@ impl PmPkgCommand {
                             pkg_dir = cwd;
                         }
                         let mut buf = bun_paths::path_buffer_pool::get();
-                        let full_path = path::resolve_path::join_abs_string_buf_z::<
+                        let Some(full_path) = path::resolve_path::join_abs_string_buf_z_checked::<
                             path::platform::Auto,
-                        >(pkg_dir, &mut buf, &[bin_path]);
+                        >(
+                            pkg_dir, &mut buf, &[bin_path]
+                        ) else {
+                            bun_core::warn!("bin path is too long: {}", bstr::BStr::new(bin_path));
+                            continue;
+                        };
 
                         if !bun_sys::exists_z(full_path) {
                             bun_core::warn!("No bin file found at {}", bstr::BStr::new(bin_path));

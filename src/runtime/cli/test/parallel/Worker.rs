@@ -62,16 +62,12 @@ pub struct Worker {
     /// Millisecond timestamp at the most recent dispatch; drives lazy
     /// scale-up.
     pub(crate) dispatched_at: i64,
-    /// Worker stdout+stderr not yet printed. Printed under the right file
-    /// header so concurrent files don't interleave.
+    /// Worker stdout+stderr not yet printed.
     pub(crate) captured: Vec<u8>,
-    /// Result lines from `test_done` frames whose copy in `captured` has not
-    /// been printed yet, in frame order. The worker writes each line to its
-    /// stderr right before it sends the frame, so the line marks where the
-    /// test's output ends in the byte stream.
+    /// Result lines from `test_done` frames not yet found in `captured`. The
+    /// worker writes each line to stderr before it sends the frame.
     pub(crate) pending_lines: VecDeque<Box<[u8]>>,
-    /// Set while the coordinator drains the pipes itself, so the read
-    /// callback does not re-enter it.
+    /// The coordinator is draining the pipes itself.
     pub(crate) draining: bool,
     pub(crate) alive: bool,
     /// Set when the process-exit notification arrives. Reaping waits for both
@@ -415,8 +411,8 @@ impl WorkerPipe {
         }
     }
 
-    /// Raw receiver: the coordinator call below forms a `&mut Worker`, which
-    /// contains this pipe, so no `&mut WorkerPipe` may be live across it.
+    /// Raw receiver: the coordinator call forms a `&mut Worker` that
+    /// contains this pipe.
     ///
     /// # Safety
     /// `this` is the live pipe, embedded in its worker.
@@ -425,17 +421,10 @@ impl WorkerPipe {
         chunk: &[u8],
         _: bun_io::ReadState,
     ) -> bool {
-        // SAFETY: worker backref valid while WorkerPipe is embedded in Worker.
-        // Mutating through cast_mut requires write provenance on the stored
-        // pointer; all backref creation sites (the runner.rs coord_ptr, the
-        // Worker.rs start() errdefer guard, and the Coordinator.rs
-        // spawn_worker/respawn sites via `std::ptr::from_mut(..).cast_const()`)
-        // establish it. The residual `&mut Coordinator`-during-drive aliasing
-        // caveat described in the `Worker::coord` field doc applies to this
-        // backref too. No other reference to the worker is live during the
-        // read callback, except while the coordinator drains the pipe itself
-        // from `flush_captured_lines`: `draining` is set then and the call
-        // into the coordinator is skipped.
+        // SAFETY: the worker backref is valid while the pipe is embedded in
+        // its worker and carries write provenance (see `Worker::coord`).
+        // While the coordinator drains the pipe itself, `draining` is set
+        // and it is not called back.
         unsafe {
             let w = (*this).worker.cast_mut();
             (*w).captured.extend_from_slice(chunk);

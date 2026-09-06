@@ -407,16 +407,14 @@ impl<'a> Coordinator<'a> {
         }
     }
 
-    /// Prints `captured[..end]` under the in-flight file's header.
-    /// `dot_len` is the length of a trailing dot (no newline) that joins the
-    /// dots line instead of opening a header of its own.
+    /// Prints `captured[..end]` under the in-flight file's header. A lone
+    /// dot (`dot_len` bytes, no newline) joins the dots line instead.
     fn print_captured(&mut self, w: &mut Worker, end: usize, dot_len: usize) {
         if end == 0 {
             return;
         }
         if end > dot_len {
-            // A worker that printed dots itself ends its dots line before
-            // other output, as the serial reporter does.
+            // The worker already ended the dots line.
             if w.captured[0] == b'\n' {
                 self.last_printed_dot = false;
             }
@@ -431,23 +429,16 @@ impl<'a> Coordinator<'a> {
         Output::flush();
     }
 
-    /// Reads what the worker's pipes hold right now, then prints captured
-    /// output through each result line that has arrived, in frame order.
-    /// Bytes past the last printed line stay captured: they belong to a test
-    /// whose result line is not here yet.
+    /// Drains the worker's pipes (POSIX only: the worker wrote the result
+    /// line before it sent the frame, so the drain sees it), then prints
+    /// through each result line that has arrived.
     fn flush_captured_lines(&mut self, w: &mut Worker) {
-        // The worker writes a test's output and its result line before it
-        // sends the frame, so on POSIX a synchronous drain sees all of it.
-        // Windows reads complete through libuv only; `on_worker_output`
-        // prints the lines when the chunk that carries them arrives.
         #[cfg(unix)]
         {
             let wp: *mut Worker = w;
-            // SAFETY: `wp` is the live worker slot. `read` dispatches
-            // `on_read_chunk`, which appends to `captured` through the pipe's
-            // worker backref; `w` is not touched until it returns (the same
-            // backref caveat as the `Worker::coord` field doc). `draining`
-            // keeps that dispatch from calling back into the coordinator.
+            // SAFETY: `wp` is the live worker slot; `w` is not used until
+            // `read` returns. `draining` keeps `on_read_chunk` from calling
+            // back into the coordinator.
             unsafe {
                 (*wp).draining = true;
                 for pipe in [&raw mut (*wp).out, &raw mut (*wp).err] {
@@ -461,8 +452,7 @@ impl<'a> Coordinator<'a> {
         self.on_worker_output(w);
     }
 
-    /// A chunk of worker stdout/stderr arrived: print through any result
-    /// line it completed.
+    /// Prints captured output through each pending result line found in it.
     pub(crate) fn on_worker_output(&mut self, w: &mut Worker) {
         while let Some(line) = w.pending_lines.front() {
             let Some(pos) = strings::index_of(&w.captured, line) else {
@@ -479,12 +469,9 @@ impl<'a> Coordinator<'a> {
         }
     }
 
-    /// File end: prints through the last result line and what follows it
-    /// (hook output). On POSIX the drain in `flush_captured_lines` has read
-    /// everything the worker wrote for this file, so a line still pending
-    /// never reached the pipe and prints from the frame. On Windows reads
-    /// complete through libuv only, so such a line stays pending and prints
-    /// with the chunk that carries it.
+    /// File end. On POSIX the drain has read everything, so a line still
+    /// pending never reached the pipe. On Windows reads complete through
+    /// libuv only, so it prints with the chunk that carries it.
     fn flush_file_end(&mut self, w: &mut Worker) {
         if cfg!(unix) {
             self.flush_captured(w);
@@ -496,8 +483,7 @@ impl<'a> Coordinator<'a> {
         }
     }
 
-    /// Prints everything the worker wrote. Result lines that never showed up
-    /// in the stream are printed from the frames so no result is lost.
+    /// Prints everything, result lines that never reached the pipe included.
     fn flush_captured(&mut self, w: &mut Worker) {
         self.flush_captured_lines(w);
         for line in w.pending_lines.drain(..) {
@@ -536,9 +522,7 @@ impl<'a> Coordinator<'a> {
                 if let Some(file) = self.test_records.get_mut(idx as usize) {
                     file.tests.push(Box::from(rd.p));
                 }
-                // The worker wrote `formatted` to its stderr before it sent
-                // this frame. Empty under --only-failures for a pass: that
-                // test's output waits for the next line or the file end.
+                // Empty for a pass under --only-failures.
                 if !formatted.is_empty() {
                     w.pending_lines.push_back(Box::from(formatted));
                 }

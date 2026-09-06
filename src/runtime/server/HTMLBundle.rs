@@ -665,11 +665,9 @@ impl Route {
                 let (mut html_route, html_route_path) =
                     this_html_route.expect("the loop above visited html_index");
                 let html_route_clone = html_route.clone(global_this);
-                // The page is also served at its output path, unless an html
-                // route is mounted there: a static route at the same path
-                // would replace it in the route list, and the page would
-                // never bundle again. Not an asset either way, so a reload
-                // drops it and the new html route bundles.
+                // Not an asset: a reload drops this alias so the page bundles
+                // again. An html route mounted at this path would be replaced
+                // by the alias in the route list and never bundle again.
                 let html_path_has_html_route =
                     server.config().static_routes.iter().any(|entry| {
                         matches!(entry.route, AnyRoute::Html(_))

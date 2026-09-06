@@ -1211,7 +1211,9 @@ describe.concurrent("WebSocket subprotocol options", () => {
     ["protocol string", { protocol: "chat" }, "chat"],
     ["protocols wins over protocol", { protocols: ["a"], protocol: "b" }, "a"],
     ["protocol when protocols is undefined", { protocols: undefined, protocol: "b" }, "b"],
+    ["protocol when protocols is null", { protocols: null, protocol: "b" }, "b"],
     ["no protocol", {}, null],
+    ["protocols null", { protocols: null }, null],
   ])("%s", async (_, options, expected) => {
     expect(await requestedProtocol(options)).toBe(expected);
   });

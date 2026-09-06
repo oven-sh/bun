@@ -745,16 +745,9 @@ static bool compareBranch(JSC::JSGlobalObject* globalObject, JSC::MarkedArgument
             return false;
         auto* actualKey = uncheckedDowncast<WebCore::JSCryptoKey>(actual.asCell());
         auto* expectedKey = uncheckedDowncast<WebCore::JSCryptoKey>(expected.asCell());
-        const JSC::Identifier algorithmName = JSC::Identifier::fromString(vm, "algorithm"_s);
-        JSValue actualAlgorithm = actualKey->get(globalObject, algorithmName);
-        RETURN_IF_EXCEPTION(scope, false);
-        JSValue expectedAlgorithm = expectedKey->get(globalObject, algorithmName);
-        RETURN_IF_EXCEPTION(scope, false);
-        bool sameAlgorithm = compareBranch(globalObject, gcBuffer, cycles, scope, actualAlgorithm, expectedAlgorithm);
-        RETURN_IF_EXCEPTION(scope, false);
-        if (!sameAlgorithm)
-            return false;
-        bool equal = Bun::KeyObject::cryptoKeysDeepEqual(globalObject, scope, actualKey->wrapped(), expectedKey->wrapped());
+        bool equal = Bun::KeyObject::cryptoKeysDeepEqual(globalObject, scope, actualKey, expectedKey, [&](JSValue actualAlgorithm, JSValue expectedAlgorithm) {
+            return compareBranch(globalObject, gcBuffer, cycles, scope, actualAlgorithm, expectedAlgorithm);
+        });
         RETURN_IF_EXCEPTION(scope, false);
         if (!equal)
             return false;

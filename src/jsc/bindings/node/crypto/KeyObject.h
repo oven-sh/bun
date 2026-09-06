@@ -8,6 +8,7 @@
 
 namespace WebCore {
 class CryptoKey;
+class JSCryptoKey;
 }
 
 namespace Bun {
@@ -113,9 +114,9 @@ public:
     // `equals` for node's deep equality: throws ERR_CRYPTO_UNSUPPORTED_OPERATION
     // when the key material cannot be compared, like KeyObject.prototype.equals.
     bool deepEquals(JSC::JSGlobalObject*, JSC::ThrowScope&, const KeyObject& other) const;
-    // The CryptoKey half of node's deep equality that needs no recursion: type,
-    // extractable, usages, and key material. The caller compares `algorithm`.
-    static bool cryptoKeysDeepEqual(JSC::JSGlobalObject*, JSC::ThrowScope&, WebCore::CryptoKey&, WebCore::CryptoKey&);
+    // node's deep equality for two CryptoKeys: type, extractable, `algorithm`
+    // (compared by the caller's recursion), usages, and key material.
+    static bool cryptoKeysDeepEqual(JSC::JSGlobalObject*, JSC::ThrowScope&, WebCore::JSCryptoKey*, WebCore::JSCryptoKey*, const WTF::Function<bool(JSC::JSValue, JSC::JSValue)>& algorithmsEqual);
     JSC::JSValue toCryptoKey(JSC::JSGlobalObject*, JSC::ThrowScope&,
         JSC::JSValue algorithmValue, JSC::JSValue extractableValue, JSC::JSValue keyUsagesValue);
 

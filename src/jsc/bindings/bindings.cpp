@@ -1405,18 +1405,9 @@ static std::optional<bool> cryptoKeysDequal(const DeepEqualsMode& mode, JSC::JSG
         auto* cryptoKey2 = dynamicDowncast<WebCore::JSCryptoKey>(o2);
         if (!cryptoKey2)
             return false;
-
-        const Identifier algorithmName = Identifier::fromString(globalObject->vm(), "algorithm"_s);
-        JSValue algorithm1 = cryptoKey1->get(globalObject, algorithmName);
-        RETURN_IF_EXCEPTION(scope, {});
-        JSValue algorithm2 = cryptoKey2->get(globalObject, algorithmName);
-        RETURN_IF_EXCEPTION(scope, {});
-        bool sameAlgorithm = mode.deepEquals(globalObject, algorithm1, algorithm2, gcBuffer, stack, scope, true);
-        RETURN_IF_EXCEPTION(scope, {});
-        if (!sameAlgorithm)
-            return false;
-
-        bool equal = Bun::KeyObject::cryptoKeysDeepEqual(globalObject, scope, cryptoKey1->wrapped(), cryptoKey2->wrapped());
+        bool equal = Bun::KeyObject::cryptoKeysDeepEqual(globalObject, scope, cryptoKey1, cryptoKey2, [&](JSValue algorithm1, JSValue algorithm2) {
+            return mode.deepEquals(globalObject, algorithm1, algorithm2, gcBuffer, stack, scope, true);
+        });
         RETURN_IF_EXCEPTION(scope, {});
         if (!equal)
             return false;

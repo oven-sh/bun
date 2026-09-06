@@ -930,9 +930,21 @@ bool KeyObject::deepEquals(JSGlobalObject* globalObject, ThrowScope& scope, cons
     return *result;
 }
 
-bool KeyObject::cryptoKeysDeepEqual(JSGlobalObject* globalObject, ThrowScope& scope, WebCore::CryptoKey& key1, WebCore::CryptoKey& key2)
+bool KeyObject::cryptoKeysDeepEqual(JSGlobalObject* globalObject, ThrowScope& scope, WebCore::JSCryptoKey* cryptoKey1, WebCore::JSCryptoKey* cryptoKey2, const WTF::Function<bool(JSValue, JSValue)>& algorithmsEqual)
 {
+    auto& key1 = cryptoKey1->wrapped();
+    auto& key2 = cryptoKey2->wrapped();
     if (key1.type() != key2.type() || key1.extractable() != key2.extractable() || key1.usagesBitmap() != key2.usagesBitmap())
+        return false;
+
+    const Identifier algorithmName = Identifier::fromString(globalObject->vm(), "algorithm"_s);
+    JSValue algorithm1 = cryptoKey1->get(globalObject, algorithmName);
+    RETURN_IF_EXCEPTION(scope, false);
+    JSValue algorithm2 = cryptoKey2->get(globalObject, algorithmName);
+    RETURN_IF_EXCEPTION(scope, false);
+    bool sameAlgorithm = algorithmsEqual(algorithm1, algorithm2);
+    RETURN_IF_EXCEPTION(scope, false);
+    if (!sameAlgorithm)
         return false;
 
     auto handle1 = create(key1);

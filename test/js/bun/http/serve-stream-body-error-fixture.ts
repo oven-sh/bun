@@ -102,6 +102,45 @@ const sources: Record<string, () => ReadableStream> = {
         c.close();
       },
     }),
+  // A direct stream that fails through its own controller, synchronously:
+  // the write is still buffered in the sink when close(error) arrives.
+  "direct-close-error": () =>
+    new ReadableStream({
+      type: "direct",
+      pull(c) {
+        c.write('{"rows":[1,');
+        c.close(new Error("boom"));
+      },
+    }),
+  // Same, after the first chunk is already on the wire. The second write is
+  // still buffered when close(error) arrives.
+  "direct-mid-stream-close-error": () =>
+    new ReadableStream({
+      type: "direct",
+      async pull(c) {
+        const reached = chunkReachedClient();
+        c.write("chunk-a");
+        await reached;
+        c.write("chunk-b");
+        c.close(new Error("boom"));
+      },
+    }),
+  // A flush() promise is still parked when close(error) arrives. The failed
+  // sink must settle it, or the request waits on it until the client goes
+  // away. The parked flush is resolved, so the pull itself completes.
+  "direct-flush-then-close-error": () =>
+    new ReadableStream({
+      type: "direct",
+      async pull(c) {
+        const reached = chunkReachedClient();
+        c.write("chunk-a");
+        await reached;
+        c.write(Buffer.alloc(16 * 1024 * 1024, "b"));
+        const flushed = c.flush(true);
+        c.close(new Error("boom"));
+        await flushed;
+      },
+    }),
   // highWaterMark: 0 defers the first pull() until the server's own reader
   // asks for data, so the stream is still readable when the server commits to
   // streaming and only errors inside the microtask drain that follows.

@@ -1809,8 +1809,10 @@ impl<const SSL: bool> HTTPServerWritable<SSL> {
     /// body that never completes, so they must not go out: a clean `end()`
     /// would `try_end` them with a `Content-Length`, and the client would
     /// take the truncated body for a complete 200. Drop them and stop. The
-    /// owning `RequestContext` reads `is_failed()` and closes the connection
-    /// without a terminator.
+    /// owning `RequestContext` then closes the connection without a
+    /// terminator: through `handle_reject_stream` when the pump rejects, or
+    /// through `is_failed()` when a direct stream's `controller.close(error)`
+    /// resolves it instead.
     pub(crate) fn fail(&mut self) {
         bun_core::scoped_log!(HTTPServerWritableLog, "fail()");
 
@@ -1825,6 +1827,9 @@ impl<const SSL: bool> HTTPServerWritable<SSL> {
                 res.clear_on_writable();
             }
         }
+        // A parked `flush(true)`/`write()` promise could only settle from the
+        // drain callback cleared above; settle it here, as `abort` does.
+        self.flush_promise();
         self.source.close(None);
         self.finalize();
     }

@@ -111,6 +111,34 @@ for (const flags of [[], ["development"]]) {
   );
 }
 
+// A direct stream fails through its own `controller.close(error)`. That
+// resolves the pump instead of rejecting it, so the failure is only visible
+// on the sink. Before the fix the synchronous close went out as a complete
+// empty 200, and the mid-stream close framed the still-buffered second write
+// as a complete body.
+//
+// No stderr assertion: close(error) is the source's own action, and its
+// reason goes to the source's cancel(), not to the error reporter.
+test.concurrent.each([
+  ["direct-close-error", "", ""],
+  ["direct-mid-stream-close-error", "HTTP/1.1 200 OK", "7\r\nchunk-a\r\n"],
+  ["direct-flush-then-close-error", "HTTP/1.1 200 OK", "7\r\nchunk-a\r\n"],
+])("%s: the body is not terminated as complete", async (variant, statusLine, bodyPrefix) => {
+  const { stdout, exitCode } = await runFixture(variant);
+  const { body, ...result } = JSON.parse(stdout);
+  expect({ result, exitCode }).toEqual({
+    result: {
+      statusLine,
+      cleanChunkedTerminator: false,
+      errorCb: 0,
+      unhandled: 0,
+      secondStatusLine: "HTTP/1.1 200 OK",
+    },
+    exitCode: 0,
+  });
+  expect(body).toStartWith(bodyPrefix);
+});
+
 // The headers are already on the wire (the first pull() was still pending
 // when the server flushed them) and the source then errors without ever
 // producing a chunk. The 200 is irrevocable, so the connection is closed

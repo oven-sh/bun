@@ -2309,6 +2309,25 @@ where
             .response_body_readable_stream_ref
             .replace(readable_stream::Strong::default());
 
+        // A direct stream's synchronous `controller.close(error)`: the sink
+        // dropped its buffered prefix, and the stream is already errored and
+        // unlocked, so it must not fall through to `render_missing()`.
+        if response_stream.sink.is_failed() {
+            stream_log!("failed");
+            response_stream.sink.on_first_write = None;
+            response_stream.sink.ctx = None;
+            ResponseStreamJSSink::<SSL_ENABLED>::detach(
+                &mut response_stream.sink.source,
+                global_this,
+            );
+            response_stream.sink.finalize();
+            this.sink.set(None);
+            Self::destroy_sink(response_stream_ptr);
+            readable_ref.deinit();
+            this.close_incomplete_stream();
+            return;
+        }
+
         let is_in_progress = response_stream.sink.has_backpressure
             || !(response_stream.sink.wrote == 0 && response_stream.sink.buffer.len() == 0);
 
@@ -2891,6 +2910,7 @@ where
 
         let mut wrote_anything = false;
         let mut ended_response = false;
+        let mut failed = false;
         if let Some(wrapper) = self.sink_mut() {
             let wrapper_ptr = self
                 .sink
@@ -2900,6 +2920,7 @@ where
             self.flags.set_aborted(aborted);
             wrote_anything = wrapper.sink.wrote > 0;
             ended_response = wrapper.sink.ended_response;
+            failed = wrapper.sink.is_failed();
             if ended_response {
                 // `resp` may be freed; the sink already resumed it. Clear these
                 // before `detach()` below re-enters JS so any drain callback /
@@ -2950,6 +2971,12 @@ where
         // alive here and its still-armed onAborted must be disarmed.
         if !MUX && ended_response {
             self.end_already_responded_stream();
+            return;
+        }
+        // A direct stream's `controller.close(error)` fails the sink but
+        // resolves the pump, so the failure is only visible on the sink.
+        if failed {
+            self.close_incomplete_stream();
             return;
         }
         if !self.flags.has_written_status() {

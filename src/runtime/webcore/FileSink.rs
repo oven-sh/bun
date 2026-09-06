@@ -852,8 +852,15 @@ impl FileSink {
     pub(crate) unsafe fn on_auto_flush(this: *mut FileSink) -> bool {
         // SAFETY: caller contract — `this` is live with write+dealloc provenance.
         unsafe {
-            if (*this).done.get() || !(*this).writer.get().has_pending_data() {
+            if !(*this).writer.get().has_pending_data() {
                 (*this).update_ref(false);
+                (*this).auto_flusher.with_mut(|a| a.registered.set(false));
+                return false;
+            }
+            // `end()` took a short flush and left the tail in the buffer. The
+            // writable poll drains it, and its ref on the loop must stay until
+            // then, or the process exits with the tail unwritten.
+            if (*this).done.get() {
                 (*this).auto_flusher.with_mut(|a| a.registered.set(false));
                 return false;
             }

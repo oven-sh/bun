@@ -1281,14 +1281,46 @@ describe("RSA and EC generateKey run off the JS thread", () => {
     await promise;
   });
 
-  it("an even public exponent still rejects with OperationError", async () => {
-    const rejection = crypto.subtle
-      .generateKey({ ...rsa("RSA-OAEP"), publicExponent: new Uint8Array([1, 0, 0]) }, true, ["encrypt", "decrypt"])
-      .then(
+  it("pairs generated on the pool sign, verify and derive", async () => {
+    const data = new Uint8Array([1, 2, 3]);
+    const ec = await crypto.subtle.generateKey({ name: "ECDSA", namedCurve: "P-384" }, false, ["sign", "verify"]);
+    const ecSignature = await crypto.subtle.sign({ name: "ECDSA", hash: "SHA-384" }, ec.privateKey, data);
+    const rsaPair = await crypto.subtle.generateKey(rsa("RSASSA-PKCS1-v1_5"), false, ["sign", "verify"]);
+    const rsaSignature = await crypto.subtle.sign("RSASSA-PKCS1-v1_5", rsaPair.privateKey, data);
+    const alice = await crypto.subtle.generateKey({ name: "ECDH", namedCurve: "P-521" }, false, ["deriveBits"]);
+    const bob = await crypto.subtle.generateKey({ name: "ECDH", namedCurve: "P-521" }, false, ["deriveBits"]);
+    const aliceBits = await crypto.subtle.deriveBits({ name: "ECDH", public: bob.publicKey }, alice.privateKey, 256);
+    const bobBits = await crypto.subtle.deriveBits({ name: "ECDH", public: alice.publicKey }, bob.privateKey, 256);
+    expect({
+      ecVerified: await crypto.subtle.verify({ name: "ECDSA", hash: "SHA-384" }, ec.publicKey, ecSignature, data),
+      rsaVerified: await crypto.subtle.verify("RSASSA-PKCS1-v1_5", rsaPair.publicKey, rsaSignature, data),
+      ecdhAgreed: Buffer.from(aliceBits).equals(Buffer.from(bobBits)),
+    }).toEqual({ ecVerified: true, rsaVerified: true, ecdhAgreed: true });
+  });
+
+  it("a batch of concurrent P-521 generations resolves with distinct keys", async () => {
+    const pairs = await Promise.all(
+      Array.from({ length: 16 }, () =>
+        crypto.subtle.generateKey({ name: "ECDSA", namedCurve: "P-521" }, true, ["sign", "verify"]),
+      ),
+    );
+    const raws = await Promise.all(pairs.map(pair => crypto.subtle.exportKey("raw", pair.publicKey)));
+    expect(raws.map(raw => raw.byteLength)).toEqual(Array(16).fill(133));
+    expect(new Set(raws.map(raw => Buffer.from(raw).toString("hex"))).size).toBe(16);
+  });
+
+  it("invalid RSA parameters still reject with OperationError", async () => {
+    const rejection = (params: RsaHashedKeyGenParams) =>
+      crypto.subtle.generateKey(params, true, ["encrypt", "decrypt"]).then(
         () => "resolved",
         e => e.name,
       );
-    expect(await rejection).toBe("OperationError");
+    expect({
+      // Rejected on the JS thread, before the generation is dispatched.
+      evenExponent: await rejection({ ...rsa("RSA-OAEP"), publicExponent: new Uint8Array([1, 0, 0]) }),
+      // RSA_generate_key_ex fails on the pool thread.
+      tinyModulus: await rejection({ ...rsa("RSA-OAEP"), modulusLength: 8 }),
+    }).toEqual({ evenExponent: "OperationError", tinyModulus: "OperationError" });
   });
 
   it("an unsupported curve still rejects with NotSupportedError", async () => {
@@ -1314,7 +1346,27 @@ describe("RSA and EC generateKey run off the JS thread", () => {
     });
   });
 
-  it("a pair generated inside a Worker posts back to the worker", async () => {
+  // Nothing but the pool task's event loop ref keeps this process running.
+  it.concurrent("a floating generateKey keeps the process alive until it settles", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        crypto.subtle.generateKey({ name: "ECDH", namedCurve: "P-384" }, true, ["deriveBits"]).then(k => console.log(k.privateKey.algorithm.namedCurve));
+        crypto.subtle.generateKey({ name: "RSA-PSS", modulusLength: 1024, publicExponent: new Uint8Array([1, 0, 1]), hash: "SHA-256" }, true, ["sign"]).then(k => console.log(k.privateKey.algorithm.modulusLength));
+        `,
+      ],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout.trim().split("\n").sort()).toEqual(["1024", "P-384"]);
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+  });
+
+  it.concurrent("a pair generated inside a Worker posts back to the worker", async () => {
     await using proc = Bun.spawn({
       cmd: [
         bunExe(),

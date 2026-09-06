@@ -56,7 +56,12 @@ bun_core::declare_scope!(cache, visible);
 /// u8/u16/u32 ids and implied slots dropped, instead of fixed u32 arrays.
 /// Version 27: ModuleInfo string table holds Latin-1 / UTF-16 bodies, not WTF-8.
 /// Version 28: the define table and `--drop` entries participate in the features hash.
-const EXPECTED_VERSION: u32 = 28;
+/// Version 29: the entry stores a SHA-256 of the source bytes and verifies it
+/// on load. The cache key (`input_hash`) is `Wyhash(src)`, which is not
+/// collision-resistant, and the source text is not retained, so a hash match
+/// was the whole check. Two different files with the same Wyhash and byte
+/// length served each other's transpiled output. The digest closes that.
+const EXPECTED_VERSION: u32 = 29;
 
 /// Source files smaller than this are not written to / read from the on-disk
 /// transpiler cache. Originally 50 KiB, which excluded almost every file in a
@@ -108,6 +113,10 @@ pub struct Metadata {
 
     pub(crate) input_byte_length: u64,
     pub(crate) input_hash: u64,
+    /// SHA-256 of the source bytes. `input_hash` is a non-cryptographic Wyhash
+    /// and the source text is not stored, so this digest is what proves the
+    /// cached output belongs to the file being loaded.
+    pub(crate) input_digest: [u8; 32],
 
     pub(crate) output_byte_offset: u64,
     pub(crate) output_byte_length: u64,
@@ -131,6 +140,7 @@ impl Default for Metadata {
             features_hash: 0,
             input_byte_length: 0,
             input_hash: 0,
+            input_digest: [0u8; 32],
             output_byte_offset: 0,
             output_byte_length: 0,
             output_hash: 0,
@@ -145,8 +155,8 @@ impl Default for Metadata {
 }
 
 impl Metadata {
-    // 1×u32 + 2×u8 (enum reprs) + 12×u64 = 4 + 2 + 96 = 102
-    pub(crate) const SIZE: usize = 4 + 1 + 1 + 12 * 8;
+    // 1×u32 + 2×u8 (enum reprs) + 12×u64 + 32-byte digest = 4 + 2 + 96 + 32 = 134
+    pub(crate) const SIZE: usize = 4 + 1 + 1 + 12 * 8 + 32;
 
     pub(crate) fn encode<W: bun_io::Write>(&self, writer: &mut W) -> crate::CrateResult<()> {
         writer.write_int_le::<u32>(self.cache_version)?;
@@ -157,6 +167,7 @@ impl Metadata {
 
         writer.write_int_le::<u64>(self.input_byte_length)?;
         writer.write_int_le::<u64>(self.input_hash)?;
+        writer.write_all(&self.input_digest)?;
 
         writer.write_int_le::<u64>(self.output_byte_offset)?;
         writer.write_int_le::<u64>(self.output_byte_length)?;
@@ -193,6 +204,7 @@ impl Metadata {
 
         self.input_byte_length = reader.read_int_le::<u64>()?;
         self.input_hash = reader.read_int_le::<u64>()?;
+        reader.read_exact(&mut self.input_digest)?;
 
         self.output_byte_offset = reader.read_int_le::<u64>()?;
         self.output_byte_length = reader.read_int_le::<u64>()?;
@@ -238,6 +250,7 @@ impl Entry {
         destination_path: &ZStr,
         input_byte_length: u64,
         input_hash: u64,
+        input_digest: [u8; 32],
         features_hash: u64,
         sourcemap: &[u8],
         esm_record: &[u8],
@@ -272,6 +285,7 @@ impl Entry {
                 let mut metadata = Metadata {
                     input_byte_length,
                     input_hash,
+                    input_digest,
                     features_hash,
                     module_type: match exports_kind {
                         ExportsKind::Cjs => ModuleType::Cjs,
@@ -532,6 +546,7 @@ impl Entry {
 
 pub struct RuntimeTranspilerCache {
     pub(crate) input_hash: Option<u64>,
+    pub(crate) input_digest: Option<[u8; 32]>,
     pub(crate) input_byte_length: Option<u64>,
     pub(crate) features_hash: Option<u64>,
     pub(crate) exports_kind: ExportsKind,
@@ -544,6 +559,16 @@ pub struct RuntimeTranspilerCache {
 
 pub(crate) fn hash(bytes: &[u8]) -> u64 {
     Wyhash::hash(SEED, bytes)
+}
+
+/// Collision-resistant digest of the source bytes, used to verify that a
+/// cache entry found by `input_hash` (a non-cryptographic Wyhash) really
+/// belongs to the file being loaded.
+pub(crate) fn digest(bytes: &[u8]) -> [u8; 32] {
+    let mut out = [0u8; 32];
+    // SAFETY: `out` is exactly the 32 bytes SHA256 writes.
+    unsafe { bun_boringssl::c::SHA256(bytes.as_ptr(), bytes.len(), out.as_mut_ptr()) };
+    out
 }
 
 /// Allocate `len` bytes and fill them via `pread_all` at `offset`, returning
@@ -712,6 +737,7 @@ impl RuntimeTranspilerCache {
 
     pub(crate) fn from_file(
         input_hash: u64,
+        input_digest: [u8; 32],
         feature_hash: u64,
         input_stat_size: u64,
     ) -> crate::CrateResult<Entry> {
@@ -723,6 +749,7 @@ impl RuntimeTranspilerCache {
         Self::from_file_with_cache_file_path(
             cache_file_path,
             input_hash,
+            input_digest,
             feature_hash,
             input_stat_size,
         )
@@ -731,6 +758,7 @@ impl RuntimeTranspilerCache {
     pub(crate) fn from_file_with_cache_file_path(
         cache_file_path: &ZStr,
         input_hash: u64,
+        input_digest: [u8; 32],
         feature_hash: u64,
         input_stat_size: u64,
     ) -> crate::CrateResult<Entry> {
@@ -769,6 +797,14 @@ impl RuntimeTranspilerCache {
             return Err(crate::CrateError::InvalidInputHash);
         }
 
+        // `input_hash` is a non-cryptographic Wyhash and the source text is not
+        // stored, so verify the SHA-256 of the source before trusting the
+        // cached output. Two files with the same Wyhash and byte length would
+        // otherwise serve each other's transpiled output.
+        if entry.metadata.input_digest != input_digest {
+            return Err(crate::CrateError::InvalidInputHash);
+        }
+
         if entry.metadata.features_hash != feature_hash {
             // delete the cache in this case
             return Err(crate::CrateError::MismatchedFeatureHash);
@@ -783,6 +819,7 @@ impl RuntimeTranspilerCache {
     pub(crate) fn to_file(
         input_byte_length: u64,
         input_hash: u64,
+        input_digest: [u8; 32],
         features_hash: u64,
         sourcemap: &[u8],
         esm_record: &[u8],
@@ -831,6 +868,7 @@ impl RuntimeTranspilerCache {
             cache_file_path,
             input_byte_length,
             input_hash,
+            input_digest,
             features_hash,
             sourcemap,
             esm_record,
@@ -874,6 +912,8 @@ impl RuntimeTranspilerCache {
 
         let input_hash = self.input_hash.unwrap_or_else(|| hash(&source.contents));
         self.input_hash = Some(input_hash);
+        let input_digest = self.input_digest.unwrap_or_else(|| digest(&source.contents));
+        self.input_digest = Some(input_digest);
         self.input_byte_length = Some(source.contents.len() as u64);
 
         let mut features_hasher = Wyhash::init(SEED);
@@ -882,6 +922,7 @@ impl RuntimeTranspilerCache {
 
         self.entry = match Self::from_file(
             input_hash,
+            input_digest,
             self.features_hash.unwrap(),
             source.contents.len() as u64,
         ) {
@@ -949,6 +990,7 @@ bun_ast::link_impl_TranspilerCacheImpl! {
 
             let mut jsc = RuntimeTranspilerCache {
                 input_hash: this.input_hash,
+                input_digest: this.input_digest,
                 input_byte_length: this.input_byte_length,
                 features_hash: this.features_hash,
                 exports_kind: this.exports_kind,
@@ -956,6 +998,7 @@ bun_ast::link_impl_TranspilerCacheImpl! {
             };
             let hit = jsc.get(source, parser_options, used_jsx);
             this.input_hash = jsc.input_hash;
+            this.input_digest = jsc.input_digest;
             this.input_byte_length = jsc.input_byte_length;
             this.features_hash = jsc.features_hash;
             this.exports_kind = jsc.exports_kind;
@@ -966,7 +1009,10 @@ bun_ast::link_impl_TranspilerCacheImpl! {
         },
         put(output_code_bytes, sourcemap, esm_record) => {
             let this = &mut *this;
-            if this.input_hash.is_none() || IS_DISABLED.load(Ordering::Relaxed) {
+            if this.input_hash.is_none()
+                || this.input_digest.is_none()
+                || IS_DISABLED.load(Ordering::Relaxed)
+            {
                 return;
             }
             debug_assert!(this.entry.is_none());
@@ -978,6 +1024,7 @@ bun_ast::link_impl_TranspilerCacheImpl! {
             let result = RuntimeTranspilerCache::to_file(
                 this.input_byte_length.unwrap(),
                 this.input_hash.unwrap(),
+                this.input_digest.unwrap(),
                 this.features_hash.unwrap(),
                 sourcemap,
                 esm_record,

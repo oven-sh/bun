@@ -136,6 +136,41 @@ describe("transpiler cache", () => {
     expect(await bunRun(join(temp_dir, "b.js"), env)).toSpawn("b");
     expect(newCacheCount()).toBe(0);
   });
+  test("a constructed wyhash collision does not serve another file's output", async () => {
+    // The cache key is Wyhash(src) + byte length; the source text is not
+    // stored. Wyhash is not collision-resistant: its final step multiplies
+    // `(a ^ secret1) * (b ^ state)`, so any two equal-length inputs whose 8
+    // bytes at [len-16, len-8) equal secret1 hash to the same value for every
+    // seed. Two such files must still run their own code, not share output.
+    const LANE = Buffer.from([0xdb, 0x28, 0xb4, 0xa0, 0xd1, 0x7e, 0x03, 0xe7]);
+    const SIZE = 8 * 1024;
+    const build = (code: string) => {
+      const head = Buffer.from(code + "\n//");
+      const pad = Buffer.alloc(SIZE - 16 - head.length, 0x70);
+      return Buffer.concat([head, pad, LANE, Buffer.from("TAILTAI\n")]);
+    };
+    const a = build(`console.log("A pays alice");`);
+    const b = build(`console.log("B refuses");`);
+    expect(a.length).toBe(SIZE);
+    expect(b.length).toBe(SIZE);
+    // The two files collide on Wyhash with the cache seed and share a length.
+    expect(Bun.hash(a, 42n)).toBe(Bun.hash(b, 42n));
+
+    writeFileSync(join(temp_dir, "a.js"), a);
+    writeFileSync(join(temp_dir, "b.js"), b);
+
+    // Run a.js first so its transpiled output is written to the cache under
+    // the shared Wyhash key.
+    expect(await bunRun(join(temp_dir, "a.js"), env)).toSpawn("A pays alice");
+    expect(newCacheCount()).toBe(1);
+
+    // b.js has the same Wyhash and length, so the hash-only check would serve
+    // a.js's cached output. It must run its own code.
+    expect(await bunRun(join(temp_dir, "b.js"), env)).toSpawn("B refuses");
+
+    // a.js still runs its own code after the collision.
+    expect(await bunRun(join(temp_dir, "a.js"), env)).toSpawn("A pays alice");
+  });
   test("doing 50 buns at once does not crash", async () => {
     writeFileSync(join(temp_dir, "a.js"), dummyFile(50 * 1024, "1", "b"));
     writeFileSync(join(temp_dir, "b.js"), dummyFile(50 * 1024, "2", "b"));
@@ -507,17 +542,19 @@ test("rejects cached module records containing out-of-range string indices", () 
   //
   // Cache entry layout (src/jsc/RuntimeTranspilerCache.rs, Metadata::encode):
   //   0: cache_version u32, 4: module_type u8, 5: output_encoding u8,
-  //   then twelve u64 fields; esm_record_byte_offset @ 78,
-  //   esm_record_byte_length @ 86, esm_record_hash @ 94. Payload follows @ 102.
+  //   6: features_hash u64, 14: input_byte_length u64, 22: input_hash u64,
+  //   30: input_digest [u8; 32], then nine u64 fields;
+  //   esm_record_byte_offset @ 110, esm_record_byte_length @ 118,
+  //   esm_record_hash @ 126. Payload follows @ 134.
   // Serialized module record layout (ModuleInfoStringTable + body, see
   // `ModuleInfoDeserialized::serialize` in src/js_printer/lib.rs):
   //   table: [offset_width u8][0;3][count u32][(count+1) offsets][pad to even][bytes]
   //   body:  [flags u8][id_width u8][0;2][n_requested u32][n_records u32]
   //          [n_records tag bytes][n_requested tag bytes][string ids @ id_width ...]
-  const ESM_RECORD_BYTE_OFFSET_AT = 78;
-  const ESM_RECORD_BYTE_LENGTH_AT = 86;
-  const ESM_RECORD_HASH_AT = 94;
-  const METADATA_SIZE = 102;
+  const ESM_RECORD_BYTE_OFFSET_AT = 110;
+  const ESM_RECORD_BYTE_LENGTH_AT = 118;
+  const ESM_RECORD_HASH_AT = 126;
+  const METADATA_SIZE = 134;
 
   function corruptModuleRecordStringIndices(file: string): boolean {
     const data = readFileSync(file);
@@ -623,17 +660,20 @@ test("rejects a cached entry whose sourcemap section header is corrupt", () => {
   //
   // Cache entry layout (src/jsc/RuntimeTranspilerCache.rs, Metadata::encode):
   //   0: cache_version u32, 4: module_type u8, 5: output_encoding u8,
-  //   then twelve u64 fields; sourcemap_byte_offset @ 54,
-  //   sourcemap_byte_length @ 62, sourcemap_hash @ 70.
+  //   6: features_hash u64, 14: input_byte_length u64, 22: input_hash u64,
+  //   30: input_digest [u8; 32], 62: output_byte_offset u64,
+  //   70: output_byte_length u64, 78: output_hash u64,
+  //   86: sourcemap_byte_offset u64, 94: sourcemap_byte_length u64,
+  //   102: sourcemap_hash u64.
   // InternalSourceMap header (src/sourcemap/InternalSourceMap.rs):
   //   0: total_len u64, 8: mapping_count u64, 16: input_line_count u64,
   //   24: sync_count u32, 28: stream_offset u32.
-  const SOURCEMAP_BYTE_OFFSET_AT = 54;
-  const SOURCEMAP_BYTE_LENGTH_AT = 62;
+  const SOURCEMAP_BYTE_OFFSET_AT = 86;
+  const SOURCEMAP_BYTE_LENGTH_AT = 94;
 
   function corruptSourceMapHeader(file: string): boolean {
     const data = readFileSync(file);
-    if (data.length < 102) return false;
+    if (data.length < 134) return false;
     const smOff = Number(data.readBigUInt64LE(SOURCEMAP_BYTE_OFFSET_AT));
     const smLen = Number(data.readBigUInt64LE(SOURCEMAP_BYTE_LENGTH_AT));
     if (smLen < 32 || smOff + smLen > data.length) return false;

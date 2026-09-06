@@ -15,6 +15,10 @@ use core::ptr::NonNull;
 
 pub struct RuntimeTranspilerCache {
     pub input_hash: Option<u64>,
+    /// SHA-256 of the source bytes. `input_hash` is a non-cryptographic
+    /// Wyhash, so the jsc tier verifies this digest before it trusts a cache
+    /// entry found by `input_hash`.
+    pub input_digest: Option<[u8; 32]>,
     pub input_byte_length: Option<u64>,
     pub features_hash: Option<u64>,
     pub exports_kind: ExportsKind,
@@ -35,6 +39,7 @@ impl Default for RuntimeTranspilerCache {
     fn default() -> Self {
         Self {
             input_hash: None,
+            input_digest: None,
             input_byte_length: None,
             features_hash: None,
             exports_kind: ExportsKind::None,

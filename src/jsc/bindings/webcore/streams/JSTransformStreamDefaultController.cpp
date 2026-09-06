@@ -353,11 +353,13 @@ extern "C" void TextDecoder__destroyForStream(void*);
 void nativeTransformReleaseState(JSTransformStream* stream)
 {
     stream->m_nativeStateReleasePending = false;
-    if (auto* s = dynamicDowncast<JSCompressionStream>(stream))
+    if (auto* s = dynamicDowncast<JSCompressionStream>(stream)) {
         CompressionStreamCoder__destroy(std::exchange(s->m_coder, nullptr));
-    else if (auto* s = dynamicDowncast<JSDecompressionStream>(stream))
+        s->m_nativeMemoryCost = 0;
+    } else if (auto* s = dynamicDowncast<JSDecompressionStream>(stream)) {
         CompressionStreamCoder__destroy(std::exchange(s->m_coder, nullptr));
-    else if (auto* s = dynamicDowncast<JSTextEncoderStream>(stream))
+        s->m_nativeMemoryCost = 0;
+    } else if (auto* s = dynamicDowncast<JSTextEncoderStream>(stream))
         TextEncoderStreamEncoder__destroyForStream(std::exchange(s->m_encoder, nullptr));
     else if (auto* s = dynamicDowncast<JSTextDecoderStream>(stream))
         TextDecoder__destroyForStream(std::exchange(s->m_decoder, nullptr));

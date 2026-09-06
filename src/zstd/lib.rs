@@ -138,6 +138,9 @@ pub mod c {
         pub fn ZSTD_freeCCtx(cctx: *mut ZSTD_CCtx) -> usize;
         pub safe fn ZSTD_createDCtx() -> *mut ZSTD_DCtx;
         pub fn ZSTD_freeDCtx(dctx: *mut ZSTD_DCtx) -> usize;
+        /// Bytes the context currently holds, including its workspace buffers.
+        pub fn ZSTD_sizeof_CCtx(cctx: *const ZSTD_CCtx) -> usize;
+        pub fn ZSTD_sizeof_DCtx(dctx: *const ZSTD_DCtx) -> usize;
         pub fn ZSTD_CCtx_setPledgedSrcSize(
             cctx: *mut ZSTD_CCtx,
             pledged_src_size: c_ulonglong,

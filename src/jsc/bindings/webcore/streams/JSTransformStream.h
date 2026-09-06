@@ -30,6 +30,7 @@ public:
     // visitChildrenImpl MUST visit every WriteBarrier field below.
     DECLARE_VISIT_CHILDREN;
     static void analyzeHeap(JSCell*, JSC::HeapAnalyzer&);
+    static size_t estimatedSize(JSCell*, JSC::VM&);
 
     template<typename, JSC::SubspaceAccess mode>
     static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
@@ -79,6 +80,14 @@ public:
     JSC::WriteBarrier<JSC::JSPromise> m_codecPromise;
     void* m_nativeSinkPtr { nullptr };
     uint8_t m_nativeSinkId { 0 };
+    // Native state bytes last reported to the GC for this cell (reportNativeMemoryCost). The
+    // codec state of a CompressionStream is hundreds of KB the GC cannot see otherwise, so
+    // a loop that drops unused streams never triggers a collection.
+    size_t m_nativeMemoryCost { 0 };
+
+    // Reports growth of the native state as extra memory allocated and caches `cost` for
+    // visitChildren; after the state is freed, call it with 0.
+    void reportNativeMemoryCost(JSC::VM&, size_t cost);
 
 protected:
     JSTransformStream(JSC::VM&, JSC::Structure*);

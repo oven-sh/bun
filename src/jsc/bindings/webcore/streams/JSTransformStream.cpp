@@ -271,6 +271,19 @@ void JSTransformStream::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     visitor.appendHidden(thisObject->m_nativeSinkCell);
     visitor.appendHidden(thisObject->m_nativeSinkReadyPromise);
     visitor.appendHidden(thisObject->m_codecPromise);
+    visitor.reportExtraMemoryVisited(thisObject->m_nativeMemoryCost);
+}
+
+size_t JSTransformStream::estimatedSize(JSCell* cell, VM& vm)
+{
+    return Base::estimatedSize(cell, vm) + uncheckedDowncast<JSTransformStream>(cell)->m_nativeMemoryCost;
+}
+
+void JSTransformStream::reportNativeMemoryCost(VM& vm, size_t cost)
+{
+    if (cost > m_nativeMemoryCost)
+        vm.heap.reportExtraMemoryAllocated(this, cost - m_nativeMemoryCost);
+    m_nativeMemoryCost = cost;
 }
 
 void JSTransformStream::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)

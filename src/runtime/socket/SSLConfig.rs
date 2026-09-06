@@ -252,6 +252,8 @@ impl SSLConfigFromJs for SSLConfig {
             result.ssl_ciphers = zbox_into_raw(&ciphers.to_owned_slice_z());
             result.is_using_default_ciphers = false;
             result.requires_custom_request_ctx = true;
+        } else {
+            apply_default_ciphers(vm, &mut result);
         }
 
         result.client_renegotiation_limit = generated.client_renegotiation_limit;
@@ -271,7 +273,27 @@ impl SSLConfigFromJs for SSLConfig {
 pub fn tls_true_defaults(vm: &VirtualMachine) -> SSLConfig {
     let mut cfg = SSLConfig::zero();
     cfg.reject_unauthorized = vm.get_tls_reject_unauthorized() as i32;
+    apply_default_ciphers(vm, &mut cfg);
     cfg
+}
+
+/// `tls.DEFAULT_CIPHERS = ...` sets the cipher list of every context built
+/// without a `ciphers` option, servers included, like Node's
+/// configSecureContext. A list with no TLS 1.2 cipher left raises the
+/// protocol floor to TLS 1.3 the way Node does, instead of leaving
+/// BoringSSL's built-in TLS 1.2 list in effect.
+fn apply_default_ciphers(vm: &VirtualMachine, cfg: &mut SSLConfig) {
+    let Some(ciphers) = vm.tls_default_ciphers() else {
+        return;
+    };
+    cfg.ssl_ciphers = dupe_z(ciphers);
+    let tls1_3 = i32::from(bun_boringssl_sys::TLS1_3_VERSION);
+    if ciphers.is_empty()
+        && cfg.ssl_min_version < tls1_3
+        && (cfg.ssl_max_version == 0 || cfg.ssl_max_version >= tls1_3)
+    {
+        cfg.ssl_min_version = tls1_3;
+    }
 }
 
 /// Whether a new TLS socket must enforce `rejectUnauthorized`: close the

@@ -3623,6 +3623,14 @@ impl VirtualMachine {
         self.transpiler.env_mut().get_tls_reject_unauthorized()
     }
 
+    /// The TLS 1.2 cipher list assigned through `tls.DEFAULT_CIPHERS = ...`
+    /// (TLS 1.3 suite names already stripped), or `None` when never assigned.
+    pub fn tls_default_ciphers(&self) -> Option<&[u8]> {
+        self.rare_data
+            .as_deref()
+            .and_then(RareData::tls_default_ciphers)
+    }
+
     /// Registers a spawned subprocess with the auto-killer.
     pub fn on_subprocess_spawn(&mut self, process: core::ptr::NonNull<bun_spawn::Process>) {
         self.auto_killer.on_subprocess_spawn(process);

@@ -604,11 +604,15 @@ impl FileReader {
             return false;
         }
         self.read_size.set(buffer.len());
-        // SAFETY: `buffer` is the JS slab the pull pins (`pending_value`) until the read settles;
-        // a slice's data pointer is non-null even when empty.
-        let slab =
-            unsafe { bun_jsc::JsPtr::new(core::ptr::NonNull::new_unchecked(buffer.as_mut_ptr())) };
-        self.schedule_offloaded_read(ReadTarget::Slab(slab));
+        // An empty slab cannot hold the one byte a read asks for at least; read into an owned buffer.
+        let target = match core::ptr::NonNull::new(buffer.as_mut_ptr()) {
+            // SAFETY: `buffer` is the JS slab the pull pins (`pending_value`) until the read settles.
+            Some(slab) if !buffer.is_empty() => {
+                ReadTarget::Slab(unsafe { bun_jsc::JsPtr::new(slab) })
+            }
+            _ => ReadTarget::Owned(Vec::new()),
+        };
+        self.schedule_offloaded_read(target);
         true
     }
 

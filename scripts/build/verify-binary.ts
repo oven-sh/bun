@@ -401,7 +401,9 @@ function verifyElf(spec: VerifySpec): void {
   if (expect.debugInfo !== undefined) {
     const violations: string[] = [];
     const symtab = section(".symtab") !== undefined;
-    const debug = sections.filter(b => (field(b, "Name") ?? "").startsWith(".debug_"));
+    // DWARF only: rustc's `.debug_gdb_scripts` (a one-line loader hint in
+    // debug builds) is not debug info and is never compressed.
+    const debug = sections.filter(b => /^\.debug_(?!gdb_scripts)/.test(field(b, "Name") ?? ""));
     const compressed = debug.length > 0 && debug.every(b => flagNames(b, "Flags").includes("SHF_COMPRESSED"));
     if (symtab !== expect.debugInfo.symtab) violations.push(`.symtab ${symtab ? "present" : "absent"}`);
     if (debug.length > 0 !== expect.debugInfo.debugSections)

@@ -115,7 +115,8 @@ export interface BinaryExpectations {
   /**
    * The profile executable keeps a symbol table and debug sections (ELF; on
    * Mach-O debug info lives in the dSYM, on PE in the PDB). `compressed`:
-   * the debug sections carry SHF_COMPRESSED.
+   * the DWARF sections carry SHF_COMPRESSED (at link, or post-link with
+   * rust-lld — flags.ts --compress-debug-sections).
    */
   debugInfo?: { symtab: boolean; debugSections: boolean; compressed: boolean };
 }
@@ -259,7 +260,7 @@ export function binaryExpectations(cfg: Config): BinaryExpectations {
   // the initializer audit is skipped there. Debug and release are held to
   // the same list: an initializer that only -O2 folds away is still one we
   // wrote (make it constexpr/constinit instead).
-  const sanitizerLibs = cfg.asan ? ["*libclang_rt.asan*", "*asan-dyld-shim*", "libresolv.so.2", "libgcc_s.so.1"] : [];
+  const sanitizerLibs = cfg.asan ? ["*libclang_rt.asan*", "*asan-dyld-shim*", "libgcc_s.so.1"] : [];
   const staticInitializers = cfg.asan ? undefined : runtimeInitializers(cfg);
 
   switch (format) {
@@ -275,8 +276,11 @@ export function binaryExpectations(cfg: Config): BinaryExpectations {
       let neededLibs: string[];
       let maxSymbolVersions: Record<string, string>;
       if (gnu) {
-        const loader = cfg.x64 ? "ld-linux-x86-64.so.2" : "ld-linux-aarch64.so.1";
-        neededLibs = [loader, "libc.so.6", "libdl.so.2", "libm.so.6", "libpthread.so.0"];
+        neededLibs = ["libc.so.6", "libdl.so.2", "libm.so.6", "libpthread.so.0"];
+        // The static ASan runtime links librt/libresolv; without it bun
+        // references the loader directly (__tls_get_addr).
+        if (cfg.asan) neededLibs.push("libresolv.so.2", "librt.so.1");
+        else neededLibs.push(cfg.x64 ? "ld-linux-x86-64.so.2" : "ld-linux-aarch64.so.1");
         // glibc 2.17 = RHEL 7 / Amazon Linux 2, the oldest distro generation
         // bun runs on.
         maxSymbolVersions = { GLIBC: "2.17" };
@@ -315,7 +319,7 @@ export function binaryExpectations(cfg: Config): BinaryExpectations {
           relro: false,
           bindNow: false,
         },
-        debugInfo: { symtab: true, debugSections: true, compressed: cfg.release && !cfg.asan },
+        debugInfo: { symtab: true, debugSections: true, compressed: true },
       };
     }
 

@@ -2556,6 +2556,30 @@ it.each([
   await expect(res.text()).rejects.toThrow("Body already used");
 });
 
+// lol-html compiles the selectors lazily, inside `transform()`. A chain of
+// combinators builds one AST node per compound, so the compiler must not
+// recurse per level or a long selector overflows the native stack.
+it.concurrent.each([" ", " > "])(
+  "a selector with 30000 %j combinators does not overflow the stack",
+  async combinator => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const sel = Array.from({ length: 30000 }, () => "p").join(${JSON.stringify(combinator)});
+       const rw = new HTMLRewriter().on(sel, { element(el) { el.setAttribute("hit", ""); } });
+       console.log(rw.transform("<i>x</i><p>y</p>"));`,
+      ],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe("<i>x</i><p>y</p>\n");
+    expect(exitCode).toBe(0);
+  },
+);
+
 // `on()` stores one (selector, handlers) record per call; `transform()` turns
 // the records collected so far into a fresh lol-html rewriter each time.
 describe("on() registrations", () => {

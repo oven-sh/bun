@@ -6,17 +6,8 @@ const allFiles = fs.readdirSync(".").filter(f => f.endsWith(".js"));
 const outdir = process.argv[2];
 const builtins = new Set(Module.builtinModules);
 
-// Every node builtin stays a bare `require("x")` / `import "x"` in the output.
-// The user's `--target=browser` build resolves it to the matching polyfill, so
-// one `Buffer` (or `EventEmitter`, or `Stream`) is shared by all of them.
-//
-// The polyfills are bundled with `target: "browser"` so the npm packages
-// resolve through their `browser` field. `crypto-browserify` depends on it:
-// the node `main` of `randombytes`, `create-hash`, `create-hmac` and `pbkdf2`
-// is `require("crypto").X`, which in a browser bundle is the polyfill itself.
-//
-// `external` cannot express this: with the browser target the resolver picks
-// the polyfill before it checks the externals list. A plugin runs first.
+// A plugin, not `external`: with the browser target the resolver picks the
+// polyfill before it reads the externals list.
 const keepBuiltinsExternal: Bun.BunPlugin = {
   name: "keep node builtins external",
   setup(build) {
@@ -30,8 +21,6 @@ const keepBuiltinsExternal: Bun.BunPlugin = {
   },
 };
 
-// `require` in the browser output is the runtime's `__require` shim. The text
-// is rewritten to a plain `require(...)` below, which leaves the shim unused.
 const requireShim = /var __require=\(\(x\)=>typeof require<"u"\?require:.*?is not supported'\)\}\);/;
 
 let commands: Promise<void>[] = [];

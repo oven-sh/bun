@@ -2306,6 +2306,42 @@ test.concurrent(
   },
 );
 
+// The root and parent share one leaf package: the root's row moves, parent's row stays on it.
+const SHARED_PACKAGE: Manifests = {
+  parent: { "1.0.0": { dependencies: { leaf: "^1.0.0" } } },
+  leaf: { "1.0.0": {}, "1.1.0": {} },
+};
+
+test.concurrent(
+  "`bun update --depth 0` leaves a transitive edge on the package a moved direct entry was deduped to",
+  async () => {
+    using server = await serveRegistry(SHARED_PACKAGE);
+    const dir = await setupServed(
+      server,
+      "update-depth-deduped-",
+      pkgJson({ parent: "1.0.0", leaf: "1.0.0" }),
+      pkgJson({ parent: "1.0.0", leaf: "^1.0.0" }),
+    );
+    expect(await lockedVersions(dir, "leaf")).toStrictEqual(["1.0.0"]);
+
+    const { stdout, stderr, exitCode } = await run(dir, "update", "--depth", "0");
+    expect(movedRows(stdout)).toStrictEqual([movedRow("leaf", "1.0.0", "1.1.0")]);
+    expectCleanStderr(stderr);
+    expect(await packageJsonOf(dir)).toStrictEqual(pkgJson({ parent: "1.0.0", leaf: "^1.1.0" }));
+    expect(await lockedVersions(dir, "leaf")).toStrictEqual(["1.0.0", "1.1.0"]);
+    expect(await installedVersion(dir, "leaf")).toBe("1.1.0");
+    expect(await installedVersion(dir, "parent", "node_modules", "leaf")).toBe("1.0.0");
+    await frozen(dir);
+    expect(exitCode).toBe(0);
+
+    // A bare update collapses the two copies again.
+    const bare = await run(dir, "update");
+    expectCleanStderr(bare.stderr);
+    expect(await lockedVersions(dir, "leaf")).toStrictEqual(["1.1.0"]);
+    expect(bare.exitCode).toBe(0);
+  },
+);
+
 test.concurrent("`bun update --depth 0 -r` moves every workspace's direct entries and nothing else", async () => {
   const { dir, locked, stale, texts, textsBefore } = await staleMemberGroups();
   const [rootBefore] = textsBefore;

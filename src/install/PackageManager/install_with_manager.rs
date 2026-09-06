@@ -649,9 +649,11 @@ pub fn install_with_manager(
         resolve_pending_tasks(manager, &root, log_level, &mut named)?;
     }
 
-    direct_deps_before.redirect_dependents(&mut manager.lockfile);
+    // `--depth 0`: a transitive edge that shared the old package with a moved direct entry stays on it.
+    let direct_only = manager.options.do_.update_direct_only();
+    direct_deps_before.redirect_dependents(&mut manager.lockfile, direct_only);
     transitive.redirect_dependents(&mut manager.lockfile);
-    redirect_moved_edges(&mut manager.lockfile, &named.moved);
+    redirect_moved_edges(&mut manager.lockfile, &named.moved, direct_only);
     transitive.print_plan(manager, &direct_deps_before, &named.moved);
     print_kept_patched(manager);
 

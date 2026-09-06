@@ -216,6 +216,30 @@ impl UpdateScope<'_> {
     }
 }
 
+/// One bit per dependency row the root or a workspace owns.
+pub fn direct_rows(lockfile: &Lockfile) -> DynamicBitSet {
+    let mut rows = DynamicBitSet::init_empty(lockfile.buffers.dependencies.len()).unwrap_or_oom();
+    let pkg_res = lockfile.packages.items_resolution();
+    for (id, slice) in lockfile.packages.items_dependencies().iter().enumerate() {
+        if slice.len == 0
+            || !matches!(
+                pkg_res[id].tag,
+                ResolutionTag::Root | ResolutionTag::Workspace
+            )
+        {
+            continue;
+        }
+        rows.set_range_value(
+            Range {
+                start: slice.begin() as usize,
+                end: slice.end() as usize,
+            },
+            true,
+        );
+    }
+    rows
+}
+
 /// Which package.json entries --dev / --prod / --no-optional cover; peer entries are covered only when no selector is given.
 pub fn selects(groups: UpdateGroups, behavior: Behavior) -> bool {
     if groups.no_optional && behavior.is_optional() {

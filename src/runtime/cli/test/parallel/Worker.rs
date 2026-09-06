@@ -4,6 +4,7 @@
 //! spawn/dispatch/shutdown mechanics.
 
 use core::ffi::c_void;
+use std::collections::VecDeque;
 
 #[cfg(unix)]
 use crate::api::bun::process::PosixStdio as Stdio;
@@ -61,9 +62,17 @@ pub struct Worker {
     /// Millisecond timestamp at the most recent dispatch; drives lazy
     /// scale-up.
     pub(crate) dispatched_at: i64,
-    /// Worker stdout+stderr since the last `test_done`. Flushed atomically
-    /// under the right file header so concurrent files don't interleave.
+    /// Worker stdout+stderr not yet printed. Printed under the right file
+    /// header so concurrent files don't interleave.
     pub(crate) captured: Vec<u8>,
+    /// Result lines from `test_done` frames whose copy in `captured` has not
+    /// been printed yet, in frame order. The worker writes each line to its
+    /// stderr right before it sends the frame, so the line marks where the
+    /// test's output ends in the byte stream.
+    pub(crate) pending_lines: VecDeque<Box<[u8]>>,
+    /// Set while the coordinator drains the pipes itself, so the read
+    /// callback does not re-enter it.
+    pub(crate) draining: bool,
     pub(crate) alive: bool,
     /// Set when the process-exit notification arrives. Reaping waits for both
     /// this and `ipc.done` so trailing IPC frames are decoded first.
@@ -406,17 +415,30 @@ impl WorkerPipe {
         }
     }
 
-    pub(crate) fn on_read_chunk(&mut self, chunk: &[u8], _: bun_io::ReadState) -> bool {
+    /// Raw receiver: the coordinator call below forms a `&mut Worker`, which
+    /// contains this pipe, so no `&mut WorkerPipe` may be live across it.
+    ///
+    /// # Safety
+    /// `this` is the live pipe, embedded in its worker.
+    pub(crate) unsafe fn on_read_chunk(this: *mut Self, chunk: &[u8], _: bun_io::ReadState) -> bool {
         // SAFETY: worker backref valid while WorkerPipe is embedded in Worker.
-        // Mutating `captured` through cast_mut requires write provenance on
-        // the stored pointer; all backref creation sites (the runner.rs
-        // coord_ptr, the Worker.rs start() errdefer guard, and the
-        // Coordinator.rs spawn_worker/respawn sites via
-        // `std::ptr::from_mut(..).cast_const()`) now establish it. The
-        // residual `&mut Coordinator`-during-drive aliasing caveat described
-        // in the `Worker::coord` field doc applies to this backref too. No
-        // other reference to `captured` is live during the read callback.
-        unsafe { (*self.worker.cast_mut()).captured.extend_from_slice(chunk) };
+        // Mutating through cast_mut requires write provenance on the stored
+        // pointer; all backref creation sites (the runner.rs coord_ptr, the
+        // Worker.rs start() errdefer guard, and the Coordinator.rs
+        // spawn_worker/respawn sites via `std::ptr::from_mut(..).cast_const()`)
+        // establish it. The residual `&mut Coordinator`-during-drive aliasing
+        // caveat described in the `Worker::coord` field doc applies to this
+        // backref too. No other reference to the worker is live during the
+        // read callback, except while the coordinator drains the pipe itself
+        // from `flush_captured_lines`: `draining` is set then and the call
+        // into the coordinator is skipped.
+        unsafe {
+            let w = (*this).worker.cast_mut();
+            (*w).captured.extend_from_slice(chunk);
+            if !(*w).draining && !(*w).pending_lines.is_empty() {
+                (*(*w).coord.cast_mut()).on_worker_output(&mut *w);
+            }
+        }
         true
     }
     pub(crate) fn on_reader_done(&mut self) {
@@ -433,7 +455,7 @@ impl WorkerPipe {
 bun_io::impl_buffered_reader_parent! {
     TestParallelWorkerPipe for WorkerPipe;
     has_on_read_chunk = true;
-    on_read_chunk   = |this, chunk, state| (*this).on_read_chunk(&chunk, state);
+    on_read_chunk   = |this, chunk, state| WorkerPipe::on_read_chunk(this, &chunk, state);
     on_reader_done  = |this| (*this).on_reader_done();
     on_reader_error = |this, err| (*this).on_reader_error(err);
     // `vm.uv_loop()` is `*mut bun_io::Loop` on every target.

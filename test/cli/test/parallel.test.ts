@@ -784,6 +784,60 @@ test("--parallel never interleaves console output across files", async () => {
   expect(exitCode).toBe(0);
 });
 
+test("--parallel keeps each failure's error output and GitHub annotation with its (fail) line", async () => {
+  // Many failures with a long message per file. The error output rides the
+  // worker's stderr pipe and the result line rides the IPC channel, so the
+  // coordinator must print the stderr bytes that precede each result line
+  // before that line, and nothing past it.
+  const body = (tag: string) =>
+    `import {test} from "bun:test";
+     const big = Buffer.alloc(3000, "X").toString();
+     for (let i = 0; i < 60; i++) test("${tag}" + i, async () => {
+       if (i % 7 == 0) await Bun.sleep(1);
+       throw new Error("E-${tag}" + i + "\\n" + big + "\\nend");
+     });`;
+  using dir = tempDir("parallel-error-order", {
+    "a.test.js": body("a"),
+    "b.test.js": body("b"),
+    "c.test.js": body("c"),
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test", "--parallel=3"],
+    env: { ...bunEnv, GITHUB_ACTIONS: "true", BUN_TEST_PARALLEL_SCALE_MS: "0" },
+    cwd: String(dir),
+    stderr: "pipe",
+    stdout: "pipe",
+  });
+  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+
+  // Every annotation is one intact line that names its test.
+  const annotations = stderr.split("\n").filter(line => line.startsWith("::error "));
+  expect(annotations.length).toBe(180);
+  for (const line of annotations) {
+    expect(line).toMatch(/^::error file=[abc]\.test\.js,line=\d+,col=\d+,title=error: E-[abc]\d+::end%0A/);
+  }
+  // The code frame for a test is followed by that test's own (fail) line.
+  let pendingError: string | null = null;
+  let checked = 0;
+  for (const line of stderr.split("\n")) {
+    const err = line.match(/^error: (E-[abc]\d+)$/);
+    if (err) {
+      expect(pendingError).toBeNull();
+      pendingError = err[1];
+      continue;
+    }
+    const fail = line.match(/^\(fail\) ([abc]\d+)/);
+    if (fail) {
+      expect(pendingError).toBe("E-" + fail[1]);
+      pendingError = null;
+      checked++;
+    }
+  }
+  expect(checked).toBe(180);
+  expect(stderr).toContain("180 fail");
+  expect(exitCode).toBe(1);
+});
+
 test("--parallel lazily scales workers based on file duration", async () => {
   // Each test file appends its PID so we can count distinct worker processes.
   const body = (sleepMs: number) =>

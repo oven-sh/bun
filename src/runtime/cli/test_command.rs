@@ -1357,6 +1357,10 @@ impl CommandLineReporter {
             Self::test_case_report(result, buntest, sequence, test_entry, elapsed_ns, failure)
         });
         if let Some(idx) = this.worker_ipc_file_idx {
+            // The line goes into the worker's own stderr so it is sequenced
+            // with the error output that precedes it. The coordinator prints
+            // captured stderr up to this line when the frame arrives.
+            let _ = Output::error_writer().write_all(formatted_line);
             ParallelRunner::worker_emit_test_done(idx, formatted_line, report.as_ref());
         } else {
             let _ = Output::error_writer().write_all(formatted_line);

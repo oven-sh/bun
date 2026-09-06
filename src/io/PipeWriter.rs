@@ -581,8 +581,7 @@ pub trait PosixStreamingWriterParent {
     /// per-tag dispatch in `bun_runtime::dispatch::__bun_run_file_poll`
     /// recovers `*mut PosixStreamingWriter<Self>` from this.
     const POLL_OWNER_TAG: PollTag;
-    /// `amount` is what reached the fd in this step: 0 when a chunk was only
-    /// buffered (reported with `Drained` so the parent can schedule a flush).
+    /// `amount`: bytes that reached the fd in this call (0 for a chunk that was only buffered).
     ///
     /// # Safety
     /// `this` must point to a live `Self`.
@@ -851,11 +850,10 @@ impl<Parent: PosixStreamingWriterParent> PosixStreamingWriter<Parent> {
         debug_assert!(!self.is_done);
 
         if self.should_buffer(0) {
-            // Nothing reached the fd; the call lets the parent schedule its auto-flush.
+            // Buffered only: 0 bytes reached the fd. Lets the parent schedule its auto-flush.
             self.parent_on_write(0, WriteStatus::Drained);
             Self::register_poll(self);
 
-            // Buffered, but reported as written to the caller.
             return WriteResult::Wrote(buf_len);
         }
 
@@ -913,8 +911,7 @@ impl<Parent: PosixStreamingWriterParent> PosixStreamingWriter<Parent> {
                 return WriteResult::Err(sys::Error::oom());
             }
 
-            // Nothing reached the fd yet (amount 0); the call gives the parent
-            // a chance to register deferred tasks (onAutoFlush).
+            // Buffered only: 0 bytes reached the fd. Lets the parent schedule its auto-flush.
             self.parent_on_write(0, WriteStatus::Drained);
             Self::register_poll(self);
 

@@ -1681,6 +1681,90 @@ describe("bundler", () => {
       expect(code.match(/let keep = /g)).toHaveLength(10);
     },
   });
+
+  // The tag of a tagged template is a call target: a fold that turns a value
+  // into a property reference gives the tag a `this` it must not have.
+  itBundled("minify/TemplateTagKeepsCommaAndArrayInline", {
+    files: {
+      "/entry.js": /* js */ `
+        const o = {
+          tag() { return this === o ? "o" : this === undefined ? "undefined" : typeof this; },
+        };
+        const f = function () { return this === undefined ? "undefined" : typeof this; };
+        console.log((0, o.tag)\`x\`);
+        console.log([o.tag][0]\`x\`);
+        console.log({ f }.f\`x\`);
+        console.log({ f: f }.f());
+        console.log((o.tag)\`x\`);
+      `,
+    },
+    minifySyntax: true,
+    minifyIdentifiers: false,
+    onAfterBundle(api) {
+      const code = api.readFile("/out.js");
+      expect(code).toContain("(0, o.tag)`x`");
+      expect(code).not.toContain("o.tag`x`;");
+    },
+    run: { stdout: "undefined\nundefined\nobject\nobject\no" },
+  });
+
+  // The operand of `delete` is a property reference. Folding it to the value
+  // of the property turns `delete` of a non-configurable property into
+  // `delete 1`, and `delete [o.x][0]` into a real delete of `o.x`.
+  itBundled("minify/DeleteOperandNotFolded", {
+    files: {
+      "/entry.js": /* js */ `
+        const t = (f) => { try { return String(f()); } catch (e) { return e.constructor.name; } };
+        const o = { x: 1 };
+        console.log(t(() => delete "x".length));
+        console.log(t(() => delete "abc"[0]));
+        console.log(t(() => delete \`t\`.length));
+        console.log(t(() => delete (void 0, "x").length));
+        console.log(t(() => delete [o.x][0]), o.x);
+        console.log(t(() => delete (0, o.x)), o.x);
+      `,
+    },
+    minifySyntax: true,
+    minifyIdentifiers: false,
+    onAfterBundle(api) {
+      const code = api.readFile("/out.js");
+      expect(code).not.toContain("delete 1");
+      expect(code).not.toContain('delete "a"');
+      expect(code).toContain('delete "x".length');
+      expect(code).toContain("delete [o.x][0]");
+      expect(code).toContain("delete (0, o.x)");
+    },
+    run: { stdout: "TypeError\nTypeError\nTypeError\nTypeError\ntrue 1\ntrue 1" },
+  });
+});
+
+// The runtime transpiler enables minify-syntax, so the same folds apply to
+// `bun run` with no flags.
+test("runtime transpiler keeps the receiver of a folded template tag and the delete operand", async () => {
+  using dir = tempDir("fold-reference-position", {
+    "index.mjs": /* js */ `
+      const o = {
+        x: 1,
+        tag() { return this === o ? "o" : this === undefined ? "undefined" : typeof this; },
+      };
+      const t = (f) => { try { return String(f()); } catch (e) { return e.constructor.name; } };
+      console.log((0, o.tag)\`x\`, [o.tag][0]\`x\`, (o.tag)\`x\`);
+      console.log(t(() => delete "x".length), t(() => delete "abc"[0]), t(() => delete [o.x][0]), o.x);
+    `,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "index.mjs"],
+    env: bunEnv,
+    cwd: String(dir),
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stdout).toBe("undefined undefined o\nTypeError TypeError true 1\n");
+  expect(stderr).toBe("");
+  expect(exitCode).toBe(0);
 });
 
 // The runtime transpiler (`bun run`/`bun test`) implicitly enables

@@ -117,6 +117,8 @@ impl BinaryExpressionVisitor {
 
         let is_call_target =
             matches!(p.call_target, ExprData::EBinary(ptr) if core::ptr::eq(ptr.as_ptr(), e_ptr));
+        let is_template_tag =
+            matches!(p.template_tag, ExprData::EBinary(ptr) if core::ptr::eq(ptr.as_ptr(), e_ptr));
         let was_anonymous_named_expr = e_.right.is_anonymous_named();
         let prev_decorator_class_name = p.decorator_class_name;
 
@@ -215,6 +217,7 @@ impl BinaryExpressionVisitor {
                 // "(sideEffects(), 2)" => "(sideEffects(), 2)"
                 // "(0, this.fn)" => "this.fn"
                 // "(0, this.fn)()" => "(0, this.fn)()"
+                // "(0, this.fn)``" => "(0, this.fn)``"
                 if p.options.features.minify_syntax {
                     // If e_.left is itself a comma, its .left was already simplified
                     // by the previous unwind step; only simplify its .right to avoid
@@ -238,8 +241,11 @@ impl BinaryExpressionVisitor {
                         e_.left = simplified_left;
                     } else {
                         // The left operand has no side effects, but we need to preserve
-                        // the comma operator semantics when used as a call target
-                        if is_call_target && e_.right.has_value_for_this_in_call() {
+                        // the comma operator semantics when used as a call target or
+                        // template tag
+                        if (is_call_target || is_template_tag)
+                            && e_.right.has_value_for_this_in_call()
+                        {
                             // Keep the comma expression to strip "this" binding
                             e_.left = Expr {
                                 data: prefill::data::ZERO,

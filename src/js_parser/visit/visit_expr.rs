@@ -1061,7 +1061,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let index = e_.index.unwrap_inlined();
 
         // `[x][0] = v` writes into the temporary, not `x`.
-        if p.options.features.minify_syntax && in_.assign_target == js_ast::AssignTarget::None {
+        // `delete "ab"[0]` and `delete [x][0]` must keep the property reference.
+        if p.options.features.minify_syntax
+            && in_.assign_target == js_ast::AssignTarget::None
+            && !is_delete_target
+        {
             if let Some(number) = index.data.as_e_number() {
                 if number.value() >= 0.0
                     && number.value() < (usize::MAX as f64)
@@ -1109,7 +1113,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             }
                             if inlined.can_be_inlined_from_property_access() {
                                 // "[obj.m][0]()" => "(0, obj.m)()"
-                                *e = if is_call_target && inlined.has_value_for_this_in_call() {
+                                // "[obj.m][0]``" => "(0, obj.m)``"
+                                *e = if (is_call_target || is_template_tag)
+                                    && inlined.has_value_for_this_in_call()
+                                {
                                     p.new_expr(E::Number::new(0.0), expr.loc)
                                         .join_with_comma(inlined)
                                 } else {

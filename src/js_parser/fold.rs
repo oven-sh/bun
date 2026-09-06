@@ -532,7 +532,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     }
                 }
                 js_ast::ExprData::EString(str_) => {
-                    if p.options.features.minify_syntax {
+                    // `delete "x".length` must keep the property reference.
+                    if p.options.features.minify_syntax && !identifier_opts.is_delete_target() {
                         // minify "long-string".length to 11
                         if name == b"length" {
                             if let Some(len) = e_string_javascript_length(&str_) {
@@ -560,6 +561,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 && !identifier_opts.is_delete_target()
                                 && identifier_opts.assign_target() == js_ast::AssignTarget::None
                                 && !identifier_opts.is_call_target()
+                                && !identifier_opts.is_template_tag()
                             {
                                 let prop: &G::Property = &obj.properties.slice()[0];
                                 if let (Some(value), Some(key)) = (prop.value, prop.key) {

@@ -194,17 +194,19 @@ describe("ReadStream.prototype.setRawMode", () => {
 
 // Runs `script` in a child attached to a fresh PTY and drives it through a
 // phase protocol: the child prints a marker, the parent reads termios and
-// types the next line. Resolves with the child's exit code.
+// types the next line. Resolves with the child's exit code. With
+// `controllingTerminal` the PTY is created by the spawn itself, which is the
+// only form that makes the child a session leader on it (so /dev/tty opens).
 async function runInPty(
   script: string,
   phases: ((terminal: Bun.Terminal, output: () => string) => void | Promise<void>)[],
-  opts: { markers: string[] },
+  opts: { markers: string[]; controllingTerminal?: boolean },
 ) {
   const decoder = new TextDecoder();
   let buffer = "";
   const waiters: { marker: string; resolve: () => void }[] = [];
-  await using terminal = new Bun.Terminal({
-    data(_terminal, chunk: Uint8Array) {
+  const terminalOptions = {
+    data(_terminal: Bun.Terminal, chunk: Uint8Array) {
       buffer += decoder.decode(chunk, { stream: true });
       for (let i = waiters.length - 1; i >= 0; i--) {
         if (buffer.includes(waiters[i].marker)) {
@@ -213,8 +215,15 @@ async function runInPty(
         }
       }
     },
+  };
+  await using ownTerminal = opts.controllingTerminal ? null : new Bun.Terminal(terminalOptions);
+  const proc = Bun.spawn({
+    cmd: [bunExe(), "-e", script],
+    env: bunEnv,
+    terminal: ownTerminal ?? terminalOptions,
   });
-  const proc = Bun.spawn({ cmd: [bunExe(), "-e", script], env: bunEnv, terminal });
+  await using spawnedTerminal = ownTerminal ? null : proc.terminal!;
+  const terminal = (ownTerminal ?? spawnedTerminal)!;
   const exitedEarly = proc.exited.then(code => {
     throw new Error(`child exited early with code ${code}; terminal output: ${JSON.stringify(buffer)}`);
   });
@@ -403,6 +412,61 @@ describe.skipIf(isWindows)("tty.ReadStream is a net.Socket over a native TTY han
       childExit: 0,
     });
     expect(text).toContain("CHILD:hello child");
+  });
+
+  // Before, tty.ReadStream was an fs.ReadStream with a blocking read(2) on a
+  // pool thread: destroy() could not cancel it, the process lived until the
+  // next line, and that line vanished into the destroyed stream. Now close()
+  // unregisters the poll, the loop empties, and the line is still in the
+  // terminal's input queue for the next reader. The caller's fd stays open,
+  // as in Node (libuv closes only the fd it reopened).
+  test("destroy() with no input pending lets the process exit and leaves the next line to the next reader", async () => {
+    const { code, output } = await runInPty(
+      `
+        const fs = require("node:fs");
+        const tty = require("node:tty");
+        const { spawn } = require("node:child_process");
+        const fd = fs.openSync("/dev/tty", "r");
+        const input = new tty.ReadStream(fd);
+        const seen = [];
+        input.on("data", d => seen.push(String(d)));
+        let readingBeforeDestroy;
+        input.on("close", () => {
+          let fdOpen = true;
+          try { fs.fstatSync(fd); } catch { fdOpen = false; }
+          process.stdout.write("P1 " + JSON.stringify({ seen, readingBeforeDestroy, fdOpen, destroyed: input.destroyed }) + "\\n");
+          const child = spawn(
+            process.execPath,
+            ["-e", "process.stdout.write('CHILDREADY\\\\n'); process.stdin.once('data', d => { process.stdout.write('CHILD:' + d); process.exit(0); })"],
+            { stdio: "inherit" },
+          );
+          child.on("exit", exitCode => process.stdout.write("P2 " + exitCode + "\\n"));
+        });
+        const timer = setInterval(() => {
+          if (input._handle && !input._handle.reading) return;
+          clearInterval(timer);
+          readingBeforeDestroy = input._handle ? input._handle.reading : null;
+          input.destroy();
+        }, 1);
+      `,
+      [
+        () => {},
+        terminal => {
+          terminal.write("after destroy\n");
+        },
+      ],
+      { markers: ["P1 ", "CHILDREADY"], controllingTerminal: true },
+    );
+    expect(code).toBe(0);
+    const text = Bun.stripANSI(output());
+    expect(JSON.parse(text.match(/P1 (\{.*\})/)![1])).toEqual({
+      seen: [],
+      readingBeforeDestroy: true,
+      fdOpen: true,
+      destroyed: true,
+    });
+    expect(text).toContain("CHILD:after destroy");
+    expect(text).toContain("P2 0");
   });
 
   test("tty_wrap.TTY delivers reads through onread and reports EOF", async () => {

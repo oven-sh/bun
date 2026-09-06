@@ -142,7 +142,11 @@ describe.concurrent("WebSocket tls.checkServerIdentity", () => {
     });
     expect(await openSession(ws)).toEqual(opened);
     expect(calls).toEqual([
-      { hostname: "localhost", subject: "server-bun", altnames: "DNS:localhost, IP Address:127.0.0.1, IP Address:0:0:0:0:0:0:0:1" },
+      {
+        hostname: "localhost",
+        subject: "server-bun",
+        altnames: "DNS:localhost, IP Address:127.0.0.1, IP Address:0:0:0:0:0:0:0:1",
+      },
     ]);
   });
 
@@ -231,6 +235,28 @@ describe.concurrent("WebSocket tls.checkServerIdentity", () => {
       },
     });
     expect(await openSession(ws)).toEqual(tlsFailed(url));
+    expect(calls).toEqual(["localhost"]);
+    expect(proxy.requests).toHaveLength(1);
+  });
+
+  test("is not called for the certificate of an HTTPS proxy", async () => {
+    using server = startSniServer();
+    using proxy = await startRecordingProxy({ tls: true });
+    const url = `wss://localhost:${await server.port}/`;
+    const calls: string[] = [];
+    // The proxy presents the harness certificate too. The built-in check
+    // verifies it against 127.0.0.1; the callback sees only the target.
+    const ws = new WebSocket(url, {
+      proxy: `https://127.0.0.1:${proxy.port}`,
+      tls: {
+        ca: tlsCerts.cert,
+        checkServerIdentity(hostname: string) {
+          calls.push(hostname);
+          return undefined;
+        },
+      },
+    });
+    expect(await openSession(ws)).toEqual(opened);
     expect(calls).toEqual(["localhost"]);
     expect(proxy.requests).toHaveLength(1);
   });

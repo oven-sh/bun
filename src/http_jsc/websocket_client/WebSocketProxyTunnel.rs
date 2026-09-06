@@ -315,10 +315,8 @@ impl WebSocketProxyTunnel {
             // `upgrade_client`; re-read it before dispatching further.
             let ssl = this.wrapper.get().and_then(|w| w.ssl.get());
             let failed_identity = match (ssl, this.sni_hostname.as_deref()) {
-                (Some(ssl_ptr), Some(hostname)) => !upgrade_client.verify_peer_identity(
-                    bun_opaque::opaque_deref_mut(ssl_ptr.as_ptr()),
-                    hostname,
-                ),
+                (Some(ssl_ptr), Some(hostname)) => !upgrade_client
+                    .verify_peer_identity(bun_opaque::opaque_deref_mut(ssl_ptr.as_ptr()), hostname),
                 _ => false,
             };
             upgrade_client = match this.upgrade_client.get() {

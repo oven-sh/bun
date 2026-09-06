@@ -396,13 +396,15 @@ where
             headers_buf: JsCell::new([picohttp::Header::ZERO; 128]),
             body: JsCell::new(Vec::new()),
             hostname: JsCell::new(ZBox::default()),
-            check_server_identity: JsCell::new(if !check_server_identity.is_empty_or_undefined_or_null()
-                && check_server_identity.is_callable()
-            {
-                StrongOptional::create(check_server_identity, global)
-            } else {
-                StrongOptional::empty()
-            }),
+            check_server_identity: JsCell::new(
+                if !check_server_identity.is_empty_or_undefined_or_null()
+                    && check_server_identity.is_callable()
+                {
+                    StrongOptional::create(check_server_identity, global)
+                } else {
+                    StrongOptional::empty()
+                },
+            ),
             poll_ref: JsCell::new(poll_ref),
             state: Cell::new(State::Initializing),
             proxy: JsCell::new(proxy_state),
@@ -665,7 +667,15 @@ where
                         ssl.servername().map(<[u8]>::to_vec).unwrap_or_default()
                     }
                 };
-                let identity_ok = Self::verify_peer_identity(this, ssl, &hostname);
+                // Through an HTTPS proxy this is the proxy's own certificate.
+                // The user callback applies to the target's certificate only
+                // (the tunnel handshake), as in `fetch`; a pinning callback
+                // written for the target would reject the proxy.
+                let identity_ok = if this.proxy.get().is_some() {
+                    !hostname.is_empty() && boringssl::check_server_identity(ssl, &hostname)
+                } else {
+                    Self::verify_peer_identity(this, ssl, &hostname)
+                };
                 if this.cpp_websocket().is_none() {
                     // The callback closed the WebSocket; `cancel` already
                     // closed the socket.
@@ -1885,15 +1895,14 @@ fn call_check_server_identity(
     let Some(cert) = ssl.peer_leaf_certificate() else {
         return false;
     };
-    let js_cert = match bun_jsc::from_js_host_call(global, || {
-        Bun__X509__toJSLegacyEncoding(cert, global)
-    }) {
-        Ok(v) => v,
-        Err(e) => {
-            let _ = global.take_exception(e);
-            return false;
-        }
-    };
+    let js_cert =
+        match bun_jsc::from_js_host_call(global, || Bun__X509__toJSLegacyEncoding(cert, global)) {
+            Ok(v) => v,
+            Err(e) => {
+                let _ = global.take_exception(e);
+                return false;
+            }
+        };
     let js_hostname = match bun_jsc::bun_string_jsc::create_utf8_for_js(global, hostname) {
         Ok(v) => v,
         Err(e) => {

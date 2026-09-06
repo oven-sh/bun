@@ -5976,3 +5976,37 @@ describe("frames issued from inside a user-supplied Duplex transport's _write", 
     },
   );
 });
+
+it("http2.constants carries node's hidden (non-enumerable) constants", () => {
+  const { constants } = http2;
+  const hidden = {
+    NGHTTP2_HCAT_REQUEST: 0,
+    NGHTTP2_HCAT_RESPONSE: 1,
+    NGHTTP2_HCAT_PUSH_RESPONSE: 2,
+    NGHTTP2_HCAT_HEADERS: 3,
+    NGHTTP2_NV_FLAG_NONE: 0,
+    NGHTTP2_NV_FLAG_NO_INDEX: 1,
+    NGHTTP2_ERR_DEFERRED: -508,
+    NGHTTP2_ERR_STREAM_ID_NOT_AVAILABLE: -509,
+    NGHTTP2_ERR_INVALID_ARGUMENT: -501,
+    NGHTTP2_ERR_STREAM_CLOSED: -510,
+    NGHTTP2_ERR_NOMEM: -901,
+    STREAM_OPTION_EMPTY_PAYLOAD: 1,
+    STREAM_OPTION_GET_TRAILERS: 2,
+  };
+  const actual = {};
+  for (const key of Object.keys(hidden)) {
+    actual[key] = constants[key];
+  }
+  expect(actual).toEqual(hidden);
+  for (const key of Object.keys(hidden)) {
+    expect(Object.getOwnPropertyDescriptor(constants, key)).toEqual({
+      value: hidden[key],
+      writable: false,
+      enumerable: false,
+      configurable: false,
+    });
+  }
+  // Hidden constants stay out of Object.keys, as in node.
+  expect(Object.keys(constants)).not.toContain("NGHTTP2_ERR_STREAM_CLOSED");
+});

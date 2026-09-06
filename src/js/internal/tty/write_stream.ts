@@ -1,5 +1,4 @@
-// tty.WriteStream on its own, so that a TTY process.stdout does not load
-// node:tty's other dependency, node:net.
+// tty.WriteStream alone: a TTY process.stdout must not load node:net.
 
 const { isatty, getWindowSize: _getWindowSize } = $cpp("ProcessBindingTTYWrap.cpp", "createBunTTYFunctions");
 
@@ -55,9 +54,7 @@ Object.defineProperty(WriteStream, "prototype", {
       return require("node:readline").cursorTo(this, x, y, cb);
     };
 
-    // The `getColorDepth` API got inspired by multiple sources such as
-    // https://github.com/chalk/supports-color,
-    // https://github.com/isaacs/color-support.
+    // After https://github.com/chalk/supports-color and https://github.com/isaacs/color-support.
     WriteStream.prototype.getColorDepth = function (env = process.env) {
       return require("internal/tty").getColorDepth(env);
     };
@@ -81,14 +78,9 @@ Object.defineProperty(WriteStream, "prototype", {
       return require("node:readline").moveCursor(this, dx, dy, cb);
     };
 
-    // Add Symbol.asyncIterator to make tty.WriteStream compatible with code
-    // that expects stdout/stderr to be async iterable (like in Node.js where they're Duplex)
+    // Node's stdout is a Duplex, so it is async iterable. It yields nothing.
     WriteStream.prototype[Symbol.asyncIterator] = function () {
-      // Since WriteStream is write-only, we return an empty async iterator
-      // This matches the behavior of Node.js Duplex streams used for stdout/stderr
-      return (async function* () {
-        // stdout/stderr don't produce readable data, so yield nothing
-      })();
+      return (async function* () {})();
     };
 
     return Real;

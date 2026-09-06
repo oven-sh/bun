@@ -1025,10 +1025,8 @@ impl MultiPartUpload {
         self.options.get().part_size as usize
     }
 
-    /// The caller has sent EOF and now awaits the result. Keep the event loop
-    /// alive until the upload finishes (released in `Drop`). Before EOF, only
-    /// in-flight requests hold the loop (each `S3HttpSimpleTask` has its own
-    /// `KeepAlive`), so a writer that is never ended does not pin the process.
+    /// EOF received: hold the event loop until the upload settles (`Drop` releases it).
+    /// Before EOF only in-flight requests hold it, so an un-ended writer can exit.
     fn mark_ended(&self) {
         self.ended.set(true);
         self.poll_ref

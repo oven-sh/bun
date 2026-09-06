@@ -637,8 +637,7 @@ impl TrustCommand {
         Ok(())
     }
 
-    /// Adds `package_names` to `trustedDependencies` in package.json, and in
-    /// the lockfile too when `scripts_ran`, then writes the edited files.
+    /// Writes `trustedDependencies` to package.json, and to the lockfile only when `scripts_ran`.
     fn write_trusted_dependencies(
         ctx: Command::Context,
         pm_raw: *mut PackageManager,

@@ -120,6 +120,18 @@ impl Error {
         self.get_errno() == E::EAGAIN
     }
 
+    /// For an error from an open or read of `path`: `true` when no file
+    /// exists at `path` (ENOENT, ENOTDIR). `false` for a file that exists
+    /// but cannot be read (EACCES, EISDIR, ...) and for a dangling symlink,
+    /// which `open` also reports as ENOENT.
+    pub fn is_missing_file(&self, path: &bun_core::ZStr) -> bool {
+        match self.get_errno() {
+            E::ENOENT => crate::lstat(path).is_err(),
+            E::ENOTDIR => true,
+            _ => false,
+        }
+    }
+
     /// `bun.sys.Error.oom` — `ENOMEM` with no syscall context. (The `Box<[u8]>`
     /// fields prevent a true `const` item.)
     #[inline]

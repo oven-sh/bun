@@ -1253,6 +1253,14 @@ mod draft {
                 Ok(s) => s,
                 Err(err) => {
                     if auto_loaded {
+                        if !err.is_missing_file(npmrc_path) {
+                            bun_core::warn!(
+                                "{}\nThe registry and auth settings in <b>{}<r> are not applied.\n",
+                                err,
+                                bstr::BStr::new(npmrc_path.as_bytes()),
+                            );
+                            Output::flush();
+                        }
                         continue;
                     }
                     Output::err(

@@ -38,7 +38,6 @@ pub mod js_bundler {
             options::JSX::Runtime::_None => api::JsxRuntime::_none,
             options::JSX::Runtime::Automatic => api::JsxRuntime::Automatic,
             options::JSX::Runtime::Classic => api::JsxRuntime::Classic,
-            options::JSX::Runtime::Solid => api::JsxRuntime::Solid,
         }
     }
 

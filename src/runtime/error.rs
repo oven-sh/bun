@@ -132,8 +132,6 @@ pub enum Error {
     ModuleNotFound,
     #[error("InvalidLoader")]
     InvalidLoader,
-    #[error("InvalidJSXRuntime")]
-    InvalidJSXRuntime,
     #[error("ThreadSpawnFailed")]
     ThreadSpawnFailed,
     #[error("CouldntReadCurrentDirectory")]
@@ -460,7 +458,6 @@ impl Error {
             Self::AssertionError => "AssertionError",
             Self::ModuleNotFound => "ModuleNotFound",
             Self::InvalidLoader => "InvalidLoader",
-            Self::InvalidJSXRuntime => "InvalidJSXRuntime",
             Self::ThreadSpawnFailed => "ThreadSpawnFailed",
             Self::CouldntReadCurrentDirectory => "CouldntReadCurrentDirectory",
             Self::FailedToGetTempPath => "FailedToGetTempPath",

@@ -26,6 +26,7 @@ import {
   mysqlAckSessionSetup,
   mysqlHandshakeV10,
   mysqlOkPacket,
+  mysqlRawPacket,
   mysqlReadPackets,
   neverAnsweringServer,
   pgAuthenticationOk,
@@ -260,7 +261,10 @@ function holdingTlsPeer(
   };
 }
 
-function holdingPostgresPeer(): HoldingPeer {
+// `startupReply` answers the StartupMessage
+function holdingPostgresPeer(
+  startupReply: Buffer = Buffer.concat([pgAuthenticationOk(), pgReadyForQuery("I")]),
+): HoldingPeer {
   let started = false;
   return holdingTlsPeer(
     null,
@@ -272,13 +276,13 @@ function holdingPostgresPeer(): HoldingPeer {
     (socket, _chunk) => {
       if (started) return;
       started = true;
-      // the StartupMessage
-      socket.write(Buffer.concat([pgAuthenticationOk(), pgReadyForQuery("I")]));
+      socket.write(startupReply);
     },
   );
 }
 
-function holdingMysqlPeer(): HoldingPeer {
+// `authReply` answers the HandshakeResponse that carries sequence id `seq`
+function holdingMysqlPeer(authReply: (seq: number) => Buffer = seq => mysqlOkPacket(seq + 1)): HoldingPeer {
   let buffered = Buffer.alloc(0);
   let authed = false;
   return holdingTlsPeer(
@@ -288,7 +292,7 @@ function holdingMysqlPeer(): HoldingPeer {
       buffered = mysqlReadPackets(Buffer.concat([buffered, chunk]), (seq, payload) => {
         if (!authed) {
           authed = true;
-          socket.write(mysqlOkPacket(seq + 1));
+          socket.write(authReply(seq));
           return;
         }
         mysqlAckSessionSetup(socket, payload);
@@ -297,9 +301,12 @@ function holdingMysqlPeer(): HoldingPeer {
   );
 }
 
+const postgresTlsUrl = (port: number) => `postgres://u:p@127.0.0.1:${port}/db?sslmode=require`;
+const mysqlTlsUrl = (port: number) => `mysql://root:pw@127.0.0.1:${port}/db`;
+
 const holdingPeers = [
-  ["postgres", holdingPostgresPeer, (port: number) => `postgres://u:p@127.0.0.1:${port}/db?sslmode=require`],
-  ["mysql", holdingMysqlPeer, (port: number) => `mysql://root:pw@127.0.0.1:${port}/db`],
+  ["postgres", holdingPostgresPeer, postgresTlsUrl],
+  ["mysql", holdingMysqlPeer, mysqlTlsUrl],
 ] as const;
 
 for (const [name, peer, url] of holdingPeers) {
@@ -326,6 +333,39 @@ for (const [name, peer, url] of holdingPeers) {
       });
       await sql.connect();
       await closed.promise;
+      await server.ended;
+      await server.closed;
+      await sql.close();
+    },
+  );
+}
+
+// The peer answers the startup with a message the client rejects: a
+// ReadyForQuery before any Authentication message, resp. an auth reply whose
+// header byte no auth packet uses. The client fails the connection from
+// inside the TLS data dispatch, the same path an ErrorResponse during
+// authentication takes.
+const protocolViolations = [
+  ["postgres", () => holdingPostgresPeer(pgReadyForQuery("I")), postgresTlsUrl, "ERR_POSTGRES_UNEXPECTED_MESSAGE"],
+  [
+    "mysql",
+    () => holdingMysqlPeer(seq => mysqlRawPacket(seq + 1, Buffer.from([0x42]))),
+    mysqlTlsUrl,
+    "ERR_MYSQL_UNEXPECTED_PACKET",
+  ],
+] as const;
+
+for (const [name, peer, url, code] of protocolViolations) {
+  test.concurrent(
+    `${name}: a protocol violation closes the socket against a TLS peer that never answers close_notify`,
+    async () => {
+      using server = peer();
+      const sql = new SQL({ url: url(server.port), max: 1, tls: { rejectUnauthorized: false } });
+      const settled = await sql.connect().then(
+        () => "connected",
+        e => e.code,
+      );
+      expect(settled).toBe(code);
       await server.ended;
       await server.closed;
       await sql.close();

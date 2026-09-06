@@ -1368,12 +1368,15 @@ describe("bundler", () => {
 // tsconfig matches them case-insensitively.
 describe.concurrent("jsx/bunfigRuntimeSpelling", () => {
   const stubs = {
-    "node_modules/react/package.json": `{ "name": "react" }`,
+    "node_modules/react/package.json": `{ "name": "react", "main": "index.js" }`,
+    "node_modules/react/index.js": `export default { createElement() { return "createElement"; } };`,
     "node_modules/react/jsx-dev-runtime.js": `export function jsxDEV() { return "jsxDEV"; }`,
     "node_modules/react/jsx-runtime.js": `export function jsx() { return "jsx"; }`,
-    "index.tsx": `console.log(<a />);`,
+    "index.tsx": `import React from "react";\nconsole.log(<a />);`,
   };
   for (const [spelling, expected] of [
+    ["react", "createElement"],
+    ["React", "createElement"],
     ["react-jsxdev", "jsxDEV"],
     ["react-jsxDEV", "jsxDEV"],
     ["REACT-JSXDEV", "jsxDEV"],

@@ -71,7 +71,7 @@ pub struct AutoFlusher {
     pub(crate) registered: core::cell::Cell<bool>,
 }
 
-/// Implemented below for `FileSink` and `HTTPServerWritable<_, _>`.
+/// Implemented below for `FileSink`, `HTTPServerWritable<_, _>` and `H2FrameParser`.
 pub trait HasAutoFlusher: Sized {
     fn auto_flusher(&self) -> &AutoFlusher;
     /// `Type.onAutoFlush` — `DeferredRepeatingTask` ABI after `@ptrCast`
@@ -195,6 +195,20 @@ impl<const SSL: bool> HasAutoFlusher for streams::HTTPServerWritable<SSL> {
     /// See [`HasAutoFlusher::on_auto_flush`].
     unsafe fn on_auto_flush(this: *mut Self) -> bool {
         // SAFETY: see FileSink impl above.
+        unsafe { (*this).on_auto_flush() }
+    }
+}
+
+impl HasAutoFlusher for crate::api::h2_frame_parser_body::H2FrameParser {
+    #[inline]
+    fn auto_flusher(&self) -> &AutoFlusher {
+        self.auto_flusher.get()
+    }
+    /// # Safety
+    /// See [`HasAutoFlusher::on_auto_flush`].
+    unsafe fn on_auto_flush(this: *mut Self) -> bool {
+        // SAFETY: `this` is the `&H2FrameParser` registered by `register_auto_flush`, kept alive
+        // by the parser's `auto_flush_ref` until it unregisters; only `&self` is formed.
         unsafe { (*this).on_auto_flush() }
     }
 }

@@ -489,7 +489,8 @@ describe("spawn stdin ReadableStream edge cases", () => {
           .stdout.toString()
           .split("\n")
           .map(line => line.trim().split(/\s+/))
-          .filter(([, ppid, , comm]) => ppid === String(process.pid) && comm === "sleep");
+          // Linux prints the basename, macOS the executable path.
+          .filter(([, ppid, , comm]) => ppid === String(process.pid) && (comm === "sleep" || comm?.endsWith("/sleep")));
 
       const deadline = Date.now() + 2000;
       let children = listChildren();

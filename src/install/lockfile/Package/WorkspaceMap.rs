@@ -231,6 +231,19 @@ fn workspace_dir_of(abs_package_json_path: &[u8]) -> &[u8] {
     )
 }
 
+/// True when a `workspaces` entry resolves outside the workspace root: a path
+/// that climbs out of it (`../sibling`), an absolute path elsewhere on disk, or
+/// a different Windows drive (which `relative` spells as an absolute path).
+///
+/// `bun install` creates `<member>/node_modules` for every member, so without
+/// this check a cloned repository could name its sibling directories (the
+/// user's other projects) as members and write into them.
+fn escapes_root(root_relative_dir: &[u8]) -> bool {
+    root_relative_dir == b".."
+        || root_relative_dir.starts_with(b"../")
+        || path::is_absolute(root_relative_dir)
+}
+
 fn relative_workspace_path<'b>(
     buf: &'b mut [u8],
     root_dir: &[u8],
@@ -265,7 +278,7 @@ impl WorkspaceMap {
 
         let orig_msgs_len = log.msgs.len();
 
-        let mut workspace_globs: Vec<Box<[u8]>> = Vec::new();
+        let mut workspace_globs: Vec<(Box<[u8]>, bun_ast::Loc)> = Vec::new();
         let mut filepath_buf_os = path::path_buffer_pool::get();
         let filepath_buf: &mut [u8] = &mut filepath_buf_os.0[..];
         let mut rel_path_buf = path::path_buffer_pool::get();
@@ -293,7 +306,7 @@ impl WorkspaceMap {
             }
 
             if glob::detect_glob_syntax(input_path) {
-                workspace_globs.push(Box::<[u8]>::from(input_path));
+                workspace_globs.push((Box::<[u8]>::from(input_path), arr.item_loc(source, i)));
                 continue;
             }
 
@@ -310,6 +323,22 @@ impl WorkspaceMap {
                         root_dir,
                         true,
                     ) {
+                        continue;
+                    }
+
+                    if escapes_root(relative_workspace_path(
+                        &mut rel_path_buf.0,
+                        root_dir,
+                        workspace_dir_of(abs_package_json_path),
+                    )) {
+                        log.add_error_fmt(
+                            Some(source),
+                            arr.item_loc(source, i),
+                            format_args!(
+                                "Workspace \"{}\" is outside the workspace root",
+                                BStr::new(input_path)
+                            ),
+                        );
                         continue;
                     }
 
@@ -411,7 +440,7 @@ impl WorkspaceMap {
 
         if workspace_globs.len() > 0 {
             let mut arena = Arena::new();
-            for (i, user_pattern) in workspace_globs.iter().enumerate() {
+            for (i, (user_pattern, pattern_loc)) in workspace_globs.iter().enumerate() {
                 // walker/iter borrow `&arena` and Drop at scope exit,
                 // so resetting here (top of next iter) ensures they drop before invalidation.
                 // Last iter's allocs are freed when `arena` itself drops after the loop.
@@ -506,7 +535,7 @@ impl WorkspaceMap {
                         );
 
                         // check if it's negated by any remaining patterns
-                        for next_pattern in &workspace_globs[i + 1..] {
+                        for (next_pattern, _) in &workspace_globs[i + 1..] {
                             let result =
                                 glob::r#match(next_pattern, matched_path_without_package_json);
                             if result.is_negated() && !result.matches() {
@@ -534,6 +563,24 @@ impl WorkspaceMap {
                         cwd, filepath_buf, &[entry_dir, b"package.json"]
                     ) {
                         Some(abs_package_json_path) => {
+                            if escapes_root(relative_workspace_path(
+                                &mut rel_path_buf.0,
+                                root_dir,
+                                workspace_dir_of(abs_package_json_path),
+                            )) {
+                                log.add_error_fmt(
+                                    Some(source),
+                                    *pattern_loc,
+                                    format_args!(
+                                        "Workspace \"{}\" is outside the workspace root",
+                                        BStr::new(entry_dir)
+                                    ),
+                                );
+                                // One error names the pattern; the rest of its
+                                // matches would repeat it.
+                                break;
+                            }
+
                             process_workspace_name(json_cache, abs_package_json_path, log)
                                 .map(|entry| (abs_package_json_path, entry))
                         }

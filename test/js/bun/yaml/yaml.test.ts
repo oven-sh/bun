@@ -2934,6 +2934,52 @@ config:
         expect(YAML.parse(YAML.stringify("a\u2028b\u2029c"))).toBe("a\u2028b\u2029c");
       });
 
+      test("escapes C1 controls, U+FEFF, U+FFFE and U+FFFF", () => {
+        // YAML 1.2 §5.1: output may only contain c-printable characters
+        // (#x9 | #xA | #xD | [#x20-#x7E] | #x85 | [#xA0-#xD7FF] | [#xE000-#xFFFD]
+        // | [#x10000-#x10FFFF]); anything else must be an escape sequence in a
+        // double-quoted scalar. [27] nb-char also keeps a BOM out of content.
+        // libyaml and PyYAML reject the raw characters.
+        const cases: [string, string][] = [
+          ["\u0080", '"\\x80"'],
+          ["\u0084", '"\\x84"'],
+          ["\u0085", '"\\N"'],
+          ["\u0086", '"\\x86"'],
+          ["\u009f", '"\\x9f"'],
+          ["\u00a0", '"\\_"'],
+          ["\ufeff", '"\\ufeff"'],
+          ["\ufffe", '"\\ufffe"'],
+          ["\uffff", '"\\uffff"'],
+          ["a\u0080b", '"a\\x80b"'],
+          ["a\u009fb", '"a\\x9fb"'],
+          ["a\ufeffb", '"a\\ufeffb"'],
+          ["a\ufffeb", '"a\\ufffeb"'],
+          ["a\uffffb", '"a\\uffffb"'],
+          // neighbours stay printable and unquoted
+          ["a\u00a1b", "a\u00a1b"],
+          ["a\ue000b", "a\ue000b"],
+          ["a\ufffdb", "a\ufffdb"],
+        ];
+        for (const [input, expected] of cases) {
+          expect(YAML.stringify(input)).toBe(expected);
+          expect(YAML.parse(expected)).toBe(input);
+        }
+
+        expect(YAML.stringify({ "a\u0080b": "c\uffffd" }, null, 2)).toBe('"a\\x80b": "c\\uffffd"');
+        expect(YAML.stringify({ "a\u0080b": "c\uffffd" })).toBe('{"a\\x80b": "c\\uffffd"}');
+        expect(YAML.parse(YAML.stringify({ "a\u0080b": ["c\uffffd", "\u009f"] }))).toEqual({
+          "a\u0080b": ["c\uffffd", "\u009f"],
+        });
+
+        let c1 = "";
+        for (let cp = 0x80; cp <= 0x9f; cp++) c1 += String.fromCharCode(cp);
+        expect(YAML.stringify(c1)).toBe(
+          '"\\x80\\x81\\x82\\x83\\x84\\N\\x86\\x87\\x88\\x89\\x8a\\x8b\\x8c\\x8d\\x8e\\x8f' +
+            '\\x90\\x91\\x92\\x93\\x94\\x95\\x96\\x97\\x98\\x99\\x9a\\x9b\\x9c\\x9d\\x9e\\x9f"',
+        );
+        expect(YAML.parse(YAML.stringify(c1))).toBe(c1);
+      });
+
       test("round-trips every non-surrogate BMP code point", () => {
         let all = "";
         for (let cp = 0; cp <= 0xffff; cp++) {
@@ -3849,6 +3895,77 @@ config:
         expect(parsed["key: value"]).toBe("colon space key");
         expect(parsed["[array]"]).toBe("bracket key");
         expect(parsed["{object}"]).toBe("brace key");
+      });
+
+      test("writes a key longer than 1024 characters as an explicit `?` entry", () => {
+        // YAML 1.2 [154]/[155]: an implicit key is at most 1024 characters, so
+        // that a parser can find the `:` with bounded lookahead. libyaml and
+        // PyYAML reject a longer one in block and in flow mappings. An explicit
+        // `? key` entry has no length limit.
+        const fits = Buffer.alloc(1024, "k").toString();
+        const long = Buffer.alloc(1025, "k").toString();
+
+        expect(YAML.stringify({ [fits]: 1 }, null, 2)).toBe(`${fits}: 1`);
+        expect(YAML.stringify({ [fits]: 1 })).toBe(`{${fits}: 1}`);
+        expect(YAML.stringify({ [long]: 1 }, null, 2)).toBe(`? ${long}\n: 1`);
+        expect(YAML.stringify({ [long]: 1 })).toBe(`{? ${long}: 1}`);
+
+        // The limit applies to the key as written, quotes and escapes included.
+        const quotedFits = " " + Buffer.alloc(1021, "k").toString(); // `" kkk..."` is 1024 long
+        const quotedLong = " " + Buffer.alloc(1022, "k").toString(); // 1025
+        expect(YAML.stringify({ [quotedFits]: 1 }, null, 2)).toBe(`"${quotedFits}": 1`);
+        expect(YAML.stringify({ [quotedFits]: 1 })).toBe(`{"${quotedFits}": 1}`);
+        expect(YAML.stringify({ [quotedLong]: 1 }, null, 2)).toBe(`? "${quotedLong}"\n: 1`);
+        expect(YAML.stringify({ [quotedLong]: 1 })).toBe(`{? "${quotedLong}": 1}`);
+
+        const hexFits = Buffer.alloc(255, 1).toString("latin1"); // 255 `\x01` + 2 quotes = 1022
+        const hexLong = Buffer.alloc(256, 1).toString("latin1"); // 1026
+        expect(YAML.stringify({ [hexFits]: 1 }, null, 2)).toBe(`"${"\\x01".repeat(255)}": 1`);
+        expect(YAML.stringify({ [hexLong]: 1 }, null, 2)).toBe(`? "${"\\x01".repeat(256)}"\n: 1`);
+
+        const uFits = "\ufffe".repeat(170); // 170 `\ufffe` + 2 quotes = 1022
+        const uLong = "\ufffe".repeat(171); // 1028
+        expect(YAML.stringify({ [uFits]: 1 }, null, 2)).toBe(`"${"\\ufffe".repeat(170)}": 1`);
+        expect(YAML.stringify({ [uLong]: 1 }, null, 2)).toBe(`? "${"\\ufffe".repeat(171)}"\n: 1`);
+
+        // Nested and with collection values: the `:` is written at the
+        // indentation of its `?`.
+        const obj = { a: 0, [long]: { b: [1, 2] }, c: [{ [long]: 3, d: 4 }], [quotedLong]: [] };
+        expect(
+          YAML.stringify(obj, null, 2)
+            .split("\n")
+            .map(line => line.trimEnd()),
+        ).toEqual([
+          "a: 0",
+          `? ${long}`,
+          ":",
+          "  b:",
+          "    - 1",
+          "    - 2",
+          "c:",
+          `  - ? ${long}`,
+          "    : 3",
+          "    d: 4",
+          `? "${quotedLong}"`,
+          ":",
+          "  []",
+        ]);
+        expect(YAML.stringify(obj)).toBe(`{a: 0,? ${long}: {b: [1,2]},c: [{? ${long}: 3,d: 4}],? "${quotedLong}": []}`);
+
+        for (const value of [
+          { [fits]: 1 },
+          { [long]: 1 },
+          { [quotedFits]: 1 },
+          { [quotedLong]: 1 },
+          { [hexFits]: 1 },
+          { [hexLong]: 1 },
+          { [uFits]: 1 },
+          { [uLong]: 1 },
+          obj,
+        ]) {
+          expect(YAML.parse(YAML.stringify(value))).toEqual(value);
+          expect(YAML.parse(YAML.stringify(value, null, 2))).toEqual(value);
+        }
       });
 
       test("handles arrays with objects containing undefined/symbol", () => {

@@ -518,8 +518,7 @@ impl Stringifier {
                     }
                     first = false;
 
-                    self.append_string(&prop_name);
-                    self.builder.append_latin1(b": ");
+                    self.append_key(&prop_name);
 
                     self.stringify(global, value)?;
                 }
@@ -539,8 +538,7 @@ impl Stringifier {
                     }
                     first = false;
 
-                    self.append_string(&prop_name);
-                    self.builder.append_latin1(b": ");
+                    self.append_key(&prop_name);
 
                     self.indent += 1;
 
@@ -595,54 +593,18 @@ impl Stringifier {
         for i in 0..str.length() {
             let c = str.char_at(i);
 
-            match c {
-                0x00 => self.builder.append_latin1(b"\\0"),
-                0x01 => self.builder.append_latin1(b"\\x01"),
-                0x02 => self.builder.append_latin1(b"\\x02"),
-                0x03 => self.builder.append_latin1(b"\\x03"),
-                0x04 => self.builder.append_latin1(b"\\x04"),
-                0x05 => self.builder.append_latin1(b"\\x05"),
-                0x06 => self.builder.append_latin1(b"\\x06"),
-                0x07 => self.builder.append_latin1(b"\\a"), // bell
-                0x08 => self.builder.append_latin1(b"\\b"), // backspace
-                0x09 => self.builder.append_latin1(b"\\t"), // tab
-                0x0a => self.builder.append_latin1(b"\\n"), // line feed
-                0x0b => self.builder.append_latin1(b"\\v"), // vertical tab
-                0x0c => self.builder.append_latin1(b"\\f"), // form feed
-                0x0d => self.builder.append_latin1(b"\\r"), // carriage return
-                0x0e => self.builder.append_latin1(b"\\x0e"),
-                0x0f => self.builder.append_latin1(b"\\x0f"),
-                0x10 => self.builder.append_latin1(b"\\x10"),
-                0x11 => self.builder.append_latin1(b"\\x11"),
-                0x12 => self.builder.append_latin1(b"\\x12"),
-                0x13 => self.builder.append_latin1(b"\\x13"),
-                0x14 => self.builder.append_latin1(b"\\x14"),
-                0x15 => self.builder.append_latin1(b"\\x15"),
-                0x16 => self.builder.append_latin1(b"\\x16"),
-                0x17 => self.builder.append_latin1(b"\\x17"),
-                0x18 => self.builder.append_latin1(b"\\x18"),
-                0x19 => self.builder.append_latin1(b"\\x19"),
-                0x1a => self.builder.append_latin1(b"\\x1a"),
-                0x1b => self.builder.append_latin1(b"\\e"), // escape
-                0x1c => self.builder.append_latin1(b"\\x1c"),
-                0x1d => self.builder.append_latin1(b"\\x1d"),
-                0x1e => self.builder.append_latin1(b"\\x1e"),
-                0x1f => self.builder.append_latin1(b"\\x1f"),
-                0x22 => self.builder.append_latin1(b"\\\""), // "
-                0x5c => self.builder.append_latin1(b"\\\\"), // \
-                0x7f => self.builder.append_latin1(b"\\x7f"), // delete
-                0x85 => self.builder.append_latin1(b"\\N"),  // next line
-                0xa0 => self.builder.append_latin1(b"\\_"),  // non-breaking space
-                0x2028 => self.builder.append_latin1(b"\\L"), // line separator
-                0x2029 => self.builder.append_latin1(b"\\P"), // paragraph separator
-
-                0x20..=0x21
-                | 0x23..=0x5b
-                | 0x5d..=0x7e
-                | 0x80..=0x84
-                | 0x86..=0x9f
-                | 0xa1..=0x2027
-                | 0x202a..=u16::MAX => self.builder.append_uchar(c),
+            match Escape::of(c) {
+                None => self.builder.append_uchar(c),
+                Some(Escape::Short(e)) => self.builder.append_latin1(&[b'\\', e]),
+                Some(Escape::Hex2) => {
+                    let [hi, lo] = bun_core::fmt::hex_byte_lower(c as u8);
+                    self.builder.append_latin1(&[b'\\', b'x', hi, lo]);
+                }
+                Some(Escape::Hex4) => {
+                    let [h1, h2] = bun_core::fmt::hex_byte_lower((c >> 8) as u8);
+                    let [h3, h4] = bun_core::fmt::hex_byte_lower(c as u8);
+                    self.builder.append_latin1(&[b'\\', b'u', h1, h2, h3, h4]);
+                }
             }
         }
 
@@ -656,6 +618,101 @@ impl Stringifier {
         }
         self.builder.append_string(str);
     }
+
+    /// Writes `key: `. A key that is too long to be implicit is written as an
+    /// explicit entry instead: `? key`, then `: ` on the next line (block) or
+    /// right after the key (flow).
+    fn append_key(&mut self, key: &BunString) {
+        let quoted = string_needs_quotes(key);
+        let explicit = key_needs_explicit_entry(key, quoted);
+
+        if explicit {
+            self.builder.append_latin1(b"? ");
+        }
+        if quoted {
+            self.append_double_quoted_string(key);
+        } else {
+            self.builder.append_string(key);
+        }
+        if explicit && !matches!(self.space, Space::Minified) {
+            self.newline();
+        }
+        self.builder.append_latin1(b": ");
+    }
+}
+
+/// An escape sequence in a double-quoted scalar (YAML 1.2 §5.7).
+#[derive(Clone, Copy)]
+enum Escape {
+    /// `\` and one more character: `\0`, `\n`, `\"`, `\N`, ...
+    Short(u8),
+    /// `\xHH`
+    Hex2,
+    /// `\uHHHH`
+    Hex4,
+}
+
+impl Escape {
+    /// The escape for the UTF-16 code unit `c`, or `None` when `c` is written
+    /// as is. Output may only contain printable characters (§5.1 `c-printable`,
+    /// and `nb-char` also keeps a BOM out of content), so every other one is
+    /// escaped. NEL, NBSP, LS and PS are printable but keep their short escapes
+    /// for YAML 1.1 readers.
+    fn of(c: u16) -> Option<Escape> {
+        Some(match c {
+            0x00 => Escape::Short(b'0'),
+            0x07 => Escape::Short(b'a'),
+            0x08 => Escape::Short(b'b'),
+            0x09 => Escape::Short(b't'),
+            0x0a => Escape::Short(b'n'),
+            0x0b => Escape::Short(b'v'),
+            0x0c => Escape::Short(b'f'),
+            0x0d => Escape::Short(b'r'),
+            0x1b => Escape::Short(b'e'),
+            0x22 => Escape::Short(b'"'),
+            0x5c => Escape::Short(b'\\'),
+            0x85 => Escape::Short(b'N'),
+            0xa0 => Escape::Short(b'_'),
+            0x2028 => Escape::Short(b'L'),
+            0x2029 => Escape::Short(b'P'),
+            0x01..=0x06 | 0x0e..=0x1a | 0x1c..=0x1f | 0x7f..=0x84 | 0x86..=0x9f => Escape::Hex2,
+            0xfeff | 0xfffe | 0xffff => Escape::Hex4,
+            _ => return None,
+        })
+    }
+
+    /// Length of the escape sequence in characters.
+    fn len(self) -> usize {
+        match self {
+            Escape::Short(_) => 2,
+            Escape::Hex2 => 4,
+            Escape::Hex4 => 6,
+        }
+    }
+}
+
+/// YAML 1.2 §7.4.2 limits an implicit key to 1024 characters so that a parser
+/// can find the `:` with bounded lookahead. libyaml and PyYAML reject a longer
+/// one, in block and in flow mappings.
+fn key_needs_explicit_entry(key: &BunString, quoted: bool) -> bool {
+    const MAX_IMPLICIT_KEY_LEN: usize = 1024;
+
+    // The longest escape writes one code unit as six characters (`\uHHHH`).
+    if key.length() <= (MAX_IMPLICIT_KEY_LEN - 2) / 6 {
+        return false;
+    }
+
+    let written_len = if quoted {
+        let mut len: usize = 2;
+        for i in 0..key.length() {
+            len += Escape::of(key.char_at(i)).map_or(1, Escape::len);
+        }
+        len
+    } else {
+        key.length()
+    };
+
+    written_len > MAX_IMPLICIT_KEY_LEN
 }
 
 /// Does this (unwrapped) object property value need a newline? True for arrays and objects.
@@ -870,13 +927,15 @@ fn string_needs_quotes(str: &BunString) -> bool {
                 i += 1;
             }
 
+            // not printable, or only representable with an escape (see `Escape::of`)
             0x00..=0x1f
             | 0x22
-            | 0x7f
-            | 0x85
-            | 0xa0
+            | 0x7f..=0xa0
             | 0x2028
-            | 0x2029 => return true,
+            | 0x2029
+            | 0xfeff
+            | 0xfffe
+            | 0xffff => return true,
 
             _ => {
                 i += 1;

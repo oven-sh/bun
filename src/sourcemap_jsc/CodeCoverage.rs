@@ -617,10 +617,8 @@ pub struct BasicBlockRange {
 
 pub struct ByteRangeMapping {
     pub(crate) line_offset_table: line_offset_table::List,
-    /// One bit per source byte: set for bytes that are not whitespace and not
-    /// a closing brace. Only these bytes make a line executable, so the `}`
-    /// that ends a function, and the newline an executed block shares with the
-    /// last line of a dead one, do not count.
+    /// One bit per source byte: not whitespace, not `}`, not a leading
+    /// `export`/`default`. Only these bytes can make a line executable.
     significant_bytes: Bitset,
     pub(crate) source_id: i32,
     pub source_url: Utf8Bytes<'static>,
@@ -727,9 +725,8 @@ impl ByteRangeMapping {
                 .get(source_url)
         };
 
-        // The function ranges include the program itself: the one that starts
-        // at 0 and reaches farthest. It is the outermost owner of every byte
-        // and is not a function in the report.
+        // The program's own range starts at 0 and reaches farthest. It is not
+        // a function in the report.
         let module_range = function_blocks
             .iter()
             .enumerate()
@@ -737,8 +734,7 @@ impl ByteRangeMapping {
             .max_by_key(|(_, function)| function.end_offset)
             .map(|(i, _)| i);
 
-        // Every range JSC reported, function bodies first so that a block with
-        // the same span is painted after it and owns the bytes.
+        // Function ranges first: a block with the same span is painted later.
         let mut ranges: Vec<OwnedRange> = Vec::new();
         ranges.reserve_exact(function_blocks.len() + blocks.len());
         let mut functions: Vec<ByteRange> = Vec::new();
@@ -770,11 +766,8 @@ impl ByteRangeMapping {
             ranges.push(range);
         }
 
-        // Paint the ranges widest first. The last one to touch a byte is the
-        // innermost range that contains it, and that range decides whether the
-        // byte executed. This is the same rule as JSC's
-        // `ControlFlowProfiler::findBasicBlockAtTextOffset`. It is what keeps a
-        // never-called function dead when an enclosing block executed.
+        // Widest first, so the innermost range that contains a byte owns it
+        // (JSC's `ControlFlowProfiler::findBasicBlockAtTextOffset` rule).
         let mut order: Vec<u32> = (0..ranges.len()).map(|i| i as u32).collect();
         order.sort_by_key(|&i| {
             core::cmp::Reverse(ranges[i as usize].end - ranges[i as usize].start)
@@ -789,8 +782,7 @@ impl ByteRangeMapping {
         let mut executable_lines: Bitset;
         let mut lines_which_have_executed: Bitset;
         let mut line_hits: LinesHits;
-        // Bytes whose owner mapped to a source line. Only meaningful with a
-        // source map: a function none of whose bytes map is not reported.
+        // With a source map, a function none of whose bytes map is not reported.
         let mut mapped_bytes: Bitset = Bitset::init_empty(0)?;
 
         let line_end = |line: usize| -> usize {
@@ -916,9 +908,7 @@ impl ByteRangeMapping {
                 continue;
             }
             if at_line_start {
-                // JSC's function range starts at `function`, not at the `export`
-                // in front of it. Skip the keyword so that the function decides
-                // its declaration line.
+                // JSC's function range starts at `function`, not at `export`.
                 if let Some(len) = leading_export_keyword(&source_contents[i..]) {
                     i += len;
                     continue;
@@ -938,8 +928,8 @@ impl ByteRangeMapping {
     }
 }
 
-/// The length of an `export` or `default` keyword at the start of `rest`, if
-/// one is there. Whitespace must follow, so `default:` in a switch is not one.
+/// Length of an `export` or `default` keyword followed by whitespace at the
+/// start of `rest`.
 fn leading_export_keyword(rest: &[u8]) -> Option<usize> {
     for keyword in [&b"export"[..], &b"default"[..]] {
         if rest.starts_with(keyword)
@@ -964,8 +954,8 @@ struct OwnedRange {
 
 impl OwnedRange {
     fn from_jsc(range: &BasicBlockRange, byte_count: usize) -> Option<OwnedRange> {
-        // JSC reports an empty piece as `end < start` when a nested function
-        // starts exactly where the block does. A negative offset maps to nothing.
+        // `end < start` is an empty piece (a nested function starts where the
+        // block does). A negative offset maps to nothing.
         if range.start_offset < 0 || range.end_offset < range.start_offset {
             return None;
         }
@@ -983,8 +973,7 @@ impl OwnedRange {
     }
 
     /// The first significant byte on a line decides the line: that is the
-    /// statement which starts there. Later bytes may belong to a dead branch
-    /// on the same line, or to the statement that follows a dead one.
+    /// statement which starts there.
     fn decide_line(
         &self,
         line: usize,

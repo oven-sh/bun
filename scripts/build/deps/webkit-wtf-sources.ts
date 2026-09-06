@@ -266,10 +266,10 @@ export function wtfSourcesFor(cfg: Config): string[] {
   ];
 }
 
-/** WTF_PRIVATE_INCLUDE_DIRECTORIES inside the tree (relative to Source/WTF/wtf; ".." is Source/WTF for <wtf/X.h>). */
+/** WTF_PRIVATE_INCLUDE_DIRECTORIES inside the tree (relative to Source/WTF/wtf: "." is that directory, ".." is Source/WTF for <wtf/X.h>). */
 export const wtfIncludeDirs: readonly string[] = [
   "..",
-  "",
+  ".",
   "dtoa",
   "fast_float",
   "persistence",

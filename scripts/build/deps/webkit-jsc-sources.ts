@@ -13,9 +13,9 @@
  * says which cmake variable maps to which list).
  */
 
-/** JavaScriptCore_PRIVATE_INCLUDE_DIRECTORIES inside the tree (relative to Source/JavaScriptCore). */
+/** JavaScriptCore_PRIVATE_INCLUDE_DIRECTORIES inside the tree (relative to Source/JavaScriptCore; "." is that directory). */
 export const jscIncludeDirs: readonly string[] = [
-  "",
+  ".",
   "API",
   "assembler",
   "b3",

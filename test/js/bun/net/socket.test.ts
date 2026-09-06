@@ -3029,9 +3029,8 @@ Reo=
           data(_socket, data) {
             serverReceived += data.toString();
           },
-          end(socket) {
+          close() {
             serverGot.resolve(serverReceived);
-            socket.end();
           },
           error() {},
         },

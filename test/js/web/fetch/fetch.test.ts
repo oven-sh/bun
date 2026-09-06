@@ -3690,13 +3690,28 @@ describe.concurrent("verbose fetch logging redacts credentials", () => {
       for (const secret of Object.values(secrets)) {
         expect(stderr).not.toContain(secret);
       }
-      expect(stderr).toContain("Authorization: Bearer [redacted]");
-      expect(stderr).toContain("Proxy-Authorization: Basic [redacted]");
-      expect(stderr).toContain("Cookie: [redacted]");
-      expect(stderr).toContain("x-amz-security-token: [redacted]");
-      expect(stderr).toContain("X-Plain: plain-value");
+
+      // One `> name: value` (request) or `< name: value` (response) trace line per
+      // header. Match on the full header name so `Cookie` and `Set-Cookie` are
+      // checked independently.
+      const traceLines = stderr.split(/\r?\n/).map(line => line.replace(/^(?:\[fetch\])?\s*[<>]?\s*/, ""));
+      const headerLines = (name: string) =>
+        traceLines.filter(line => line.toLowerCase().startsWith(name.toLowerCase() + ":"));
+      expect(headerLines("Authorization")).toEqual(["Authorization: Bearer [redacted]"]);
+      expect(headerLines("Proxy-Authorization")).toEqual(["Proxy-Authorization: Basic [redacted]"]);
+      expect(headerLines("Cookie")).toEqual(["Cookie: [redacted]"]);
+      expect(headerLines("x-amz-security-token")).toEqual(["x-amz-security-token: [redacted]"]);
+      expect(headerLines("X-Plain")).toEqual(["X-Plain: plain-value"]);
+      expect(headerLines("Set-Cookie").map(line => line.toLowerCase())).toEqual(["set-cookie: [redacted]"]);
+
       if (mode === "curl") {
-        expect(stderr).toContain(`curl --http1.1 "http://user:***`);
+        const curlLine = stderr.split(/\r?\n/).find(line => line.includes("curl --http1.1")) ?? "";
+        expect(curlLine).toContain(`curl --http1.1 "http://user:***`);
+        expect(curlLine).toContain(`-H "Authorization: Bearer [redacted]"`);
+        expect(curlLine).toContain(`-H "Proxy-Authorization: Basic [redacted]"`);
+        expect(curlLine).toContain(`-H "Cookie: [redacted]"`);
+        expect(curlLine).toContain(`-H "x-amz-security-token: [redacted]"`);
+        expect(curlLine).toContain(`-H "X-Plain: plain-value"`);
       }
       expect(exitCode).toBe(0);
     });

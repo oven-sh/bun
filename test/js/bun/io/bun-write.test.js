@@ -1175,29 +1175,30 @@ it.skipIf(isWindows)("Bun.write(Bun.stdout, ...) to a full nonblocking pipe comp
     import { fstatSync, readdirSync } from "node:fs";
     process.stdout.write("x"); // constructs the fd 1 FileSink, which flips the pipe O_NONBLOCK
     const fdDir = process.platform === "darwin" ? "/dev/fd" : "/proc/self/fd";
-    const fds = () => readdirSync(fdDir).map(Number).sort((a, b) => a - b);
-    const describe = fd => {
-      try {
-        const st = fstatSync(fd);
-        return { fd, mode: st.mode.toString(8), fifo: st.isFIFO(), dupOfStdout: st.ino === fstatSync(1).ino };
-      } catch (e) {
-        return { fd, err: e.code };
-      }
-    };
+    const stdoutIno = fstatSync(1).ino;
+    // Every fd that refers to stdout's pipe. WriteFile dups fd 1 and must close the dup.
+    // A plain fd count would also see the IO thread's kqueue/epoll fd, which is created
+    // the first time a write has to wait.
+    const stdoutDups = () =>
+      readdirSync(fdDir).filter(name => {
+        try {
+          return fstatSync(Number(name)).ino === stdoutIno;
+        } catch {
+          return false;
+        }
+      }).length;
     const small = Buffer.alloc(64 * 1024, 65).toString();
     const large = Buffer.alloc(256 * 1024, 66).toString();
-    let wrote = 0, fdsBefore, fdsAfter;
+    let wrote = 0, dupsBefore, dupsAfter;
     for (let round = 0; round < 2; round++) {
-      fdsBefore = fds();
+      dupsBefore = stdoutDups();
       const ps = [];
       for (let i = 0; i < 16; i++) ps.push(Bun.write(Bun.stdout, small));
       for (let i = 0; i < 4; i++) ps.push(Bun.write(Bun.stdout, large));
       for (const n of await Promise.all(ps)) wrote += n;
-      fdsAfter = fds();
+      dupsAfter = stdoutDups();
     }
-    const newFds = fdsAfter.filter(fd => !fdsBefore.includes(fd)).map(describe);
-    const goneFds = fdsBefore.filter(fd => !fdsAfter.includes(fd));
-    process.stderr.write(JSON.stringify({ wrote, fdDelta: fdsAfter.length - fdsBefore.length, newFds, goneFds }));
+    process.stderr.write(JSON.stringify({ wrote, dupDelta: dupsAfter - dupsBefore }));
   `;
   await using proc = Bun.spawn({
     cmd: [bunExe(), "-e", script],
@@ -1211,7 +1212,7 @@ it.skipIf(isWindows)("Bun.write(Bun.stdout, ...) to a full nonblocking pipe comp
   const expected = 1 + 2 * (16 * 64 * 1024 + 4 * 256 * 1024);
   expect({ length: stdout.length, stderr, exitCode, signalCode: proc.signalCode }).toEqual({
     length: expected,
-    stderr: JSON.stringify({ wrote: expected - 1, fdDelta: 0, newFds: [], goneFds: [] }),
+    stderr: JSON.stringify({ wrote: expected - 1, dupDelta: 0 }),
     exitCode: 0,
     signalCode: null,
   });
@@ -1235,7 +1236,7 @@ describe.skipIf(isWindows)("Bun.write to a full pipe", () => {
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     // stderr carries the fixture's progress markers. It is only shown on failure.
     expect({ stdout, exitCode, signalCode: proc.signalCode, stderr: exitCode === 0 ? "" : stderr }).toEqual({
-      stdout: JSON.stringify({ n: size, got: size }) + "\n",
+      stdout: JSON.stringify({ n: size, got: size, firstBadByte: -1 }) + "\n",
       stderr: "",
       exitCode: 0,
       signalCode: null,

@@ -858,7 +858,7 @@ static bool enumerablePropertiesEqual(const DeepEqualsMode& mode, JSC::JSGlobalO
         if (has1) continue;
 
         JSValue prop2;
-        bool has2 = findEnumerableProperty(globalObject, o2, propertyName2, ownOnly, &prop2);
+        bool has2 = findEnumerableProperty(globalObject, o2, propertyName2, ownOnly, mode.isStrict ? nullptr : &prop2);
         RETURN_IF_EXCEPTION(scope, false);
         if (has2 && (mode.isStrict || !prop2.isUndefined())) {
             return false;

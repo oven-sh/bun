@@ -749,3 +749,90 @@ test("my-test", () => {
     });
   }
 });
+
+// Native APIs that fail before scheduling any work return a promise that is
+// already rejected. A test that drops one of those on the floor has to fail,
+// exactly like it does for `Promise.reject()` in the same position.
+test("a test that leaves a natively pre-rejected promise unhandled fails", () => {
+  const cases: [name: string, setup: string, promise: string, message: string][] = [
+    [
+      "fetch with an already aborted signal",
+      ``,
+      `fetch("http://127.0.0.1:1/", { signal: AbortSignal.abort() })`,
+      "The operation was aborted",
+    ],
+    [
+      "fetch GET with a body",
+      ``,
+      `fetch("http://127.0.0.1:1/", { method: "GET", body: "x" })`,
+      "fetch() request with GET/HEAD method cannot have body",
+    ],
+    [
+      "fetch with a used Request body",
+      `const r = new Request("http://127.0.0.1:1/", { method: "POST", body: "x" }); await r.text();`,
+      `fetch(r)`,
+      "Request body already used",
+    ],
+    ["fetch with an invalid url", ``, `fetch("http://[bad")`, "fetch() URL is invalid"],
+    ["Bun.write to a directory", ``, `Bun.write(dir, "x")`, "EISDIR"],
+    [
+      "Bun.write of a used Response",
+      `const r = new Response("x"); await r.text();`,
+      `Bun.write(join(dir, "out.txt"), r)`,
+      "Body already used",
+    ],
+    ["BunFile.write on a directory", ``, `Bun.file(dir).write("x")`, "EISDIR"],
+    [
+      "Bun.resolve of a missing package",
+      ``,
+      `Bun.resolve("no-such-pkg-zz", dir)`,
+      "Cannot find package 'no-such-pkg-zz'",
+    ],
+    [
+      "S3 write with an invalid option",
+      `const s3 = new Bun.S3Client({ accessKeyId: "a", secretAccessKey: "b", bucket: "bk", endpoint: "http://127.0.0.1:1" });`,
+      `s3.file("k").write("d", { acl: "bogus" })`,
+      "acl must be one of",
+    ],
+    [
+      "server.fetch without arguments",
+      `using server = Bun.serve({ port: 0, fetch: () => new Response("x") });`,
+      `server.fetch()`,
+      "fetch() expects a string but received no arguments",
+    ],
+  ];
+  // The test bodies never attach a handler. They only keep the test alive until
+  // the promise has settled (immediately, everywhere but the Windows write
+  // path), so the rejection cannot land after the runner moved on.
+  const code = [
+    `import { test } from "bun:test";`,
+    `import { join } from "node:path";`,
+    `const dir = import.meta.dir;`,
+    `async function settled(promise) { while (Bun.peek.status(promise) === "pending") await Bun.sleep(1); }`,
+    ...cases.map(
+      ([name, setup, promise]) => `test(${JSON.stringify(name)}, async () => { ${setup} await settled(${promise}); });`,
+    ),
+  ].join("\n");
+
+  using test_dir = tempDir("unhandled-native-rejection", {
+    "native.test.ts": code,
+    "package.json": "{}",
+  });
+
+  const { stderr, exitCode } = spawnSync({
+    cmd: [bunExe(), "test", "./native.test.ts"],
+    cwd: String(test_dir),
+    stdout: "ignore",
+    stderr: "pipe",
+    env: bunEnv,
+  });
+  const output = stderr.toString();
+
+  for (const [name, , , message] of cases) {
+    expect(output).toContain(message);
+    expect(output).toContain(`(fail) ${name}`);
+  }
+  expect(output).toContain("\n 0 pass");
+  expect(output).toContain(`\n ${cases.length} fail`);
+  expect(exitCode).toBe(1);
+});

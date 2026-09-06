@@ -311,6 +311,49 @@ describe.concurrent("Bun.serve perMessageDeflate", () => {
     });
   });
 
+  // The legacy Safari extension shares the window negotiation: its offer
+  // parameters constrain the server compressor the same way.
+  describe("x-webkit-deflate-frame with a dedicated compressor", () => {
+    test("no_context_takeover downgrades to the shared compressor", async () => {
+      await using server = startServer({ compress: "dedicated", decompress: true });
+      const peer = await connect(server, "x-webkit-deflate-frame; no_context_takeover");
+      try {
+        expect(peer.extensions).toBe("x-webkit-deflate-frame; no_context_takeover");
+        const first = await peer.request(600);
+        const second = await peer.request(600);
+        expect(inflateFresh(first.payload).toString()).toBe(pseudoRandomText(600));
+        expect(inflateFresh(second.payload).toString()).toBe(pseudoRandomText(600));
+      } finally {
+        peer.close();
+      }
+    });
+
+    test("max_window_bits lowers the window", async () => {
+      await using server = startServer({ compress: "dedicated", decompress: true });
+      const peer = await connect(server, "x-webkit-deflate-frame; max_window_bits=10");
+      try {
+        expect(peer.extensions).toBe("x-webkit-deflate-frame; no_context_takeover");
+        expect(await secondCopySize(peer, 600)).toBeLessThan(60);
+        expect(await secondCopySize(peer, 1000)).toBeGreaterThan(500);
+      } finally {
+        peer.close();
+      }
+    });
+
+    test.each(["max_window_bits=8", "max_window_bits=16", "server_no_context_takeover", "no_context_takeover; foo"])(
+      "declines the offer %p",
+      async params => {
+        await using server = startServer({ compress: "dedicated", decompress: true });
+        const peer = await connect(server, `x-webkit-deflate-frame; ${params}`);
+        try {
+          expect(peer.extensions).toBeUndefined();
+        } finally {
+          peer.close();
+        }
+      },
+    );
+  });
+
   test("publish compresses for each subscriber with its own negotiated state", async () => {
     await using server = startServer({ compress: "dedicated", decompress: true });
     const peers: Peer[] = [];

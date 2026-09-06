@@ -1387,24 +1387,10 @@ impl Run<'_> {
         // ── hot-reloader enable ─────────────────────────────────────────────
         match ctx.debug.hot_reload {
             cli::command::HotReload::Hot => {
-                // SAFETY: `vm` is the boxed-and-leaked main-thread VM
-                // (process-lifetime); it outlives the leaked reloader.
-                unsafe {
-                    bun_jsc::hot_reloader::HotReloader::enable_hot_module_reloading(
-                        std::ptr::from_mut::<VirtualMachine>(vm),
-                        Some(entry),
-                    )
-                }
+                bun_jsc::hot_reloader::HotReloader::enable_hot_module_reloading(vm, Some(entry))
             }
             cli::command::HotReload::Watch => {
-                // SAFETY: `vm` is the boxed-and-leaked main-thread VM
-                // (process-lifetime); it outlives the leaked reloader.
-                unsafe {
-                    bun_jsc::hot_reloader::WatchReloader::enable_hot_module_reloading(
-                        std::ptr::from_mut::<VirtualMachine>(vm),
-                        Some(entry),
-                    )
-                }
+                bun_jsc::hot_reloader::WatchReloader::enable_hot_module_reloading(vm, Some(entry));
                 bun_jsc::posix_signal_handle::enable_watch_mode_signals(
                     ctx.debug.watch_kill_signal,
                 );
@@ -1539,18 +1525,12 @@ impl Run<'_> {
                     }
                     result
                 };
-                // SAFETY: `vals[..1]` is the single stack `to_print`; null
-                // `ctype` routes to the VM's stdout/stderr default.
-                unsafe {
-                    bun_jsc::ConsoleObject::message_with_type_and_level(
-                        ::core::ptr::null_mut(),
-                        bun_jsc::ConsoleObject::MessageType::Log,
-                        bun_jsc::ConsoleObject::MessageLevel::Log,
-                        vm.global(),
-                        &raw const to_print,
-                        1,
-                    );
-                }
+                bun_jsc::ConsoleObject::message_with_type_and_level(
+                    bun_jsc::ConsoleObject::MessageType::Log,
+                    bun_jsc::ConsoleObject::MessageLevel::Log,
+                    vm.global(),
+                    &[to_print],
+                );
             }
 
             vm.on_before_exit();

@@ -1506,6 +1506,31 @@ impl Timer {
             panic!("internal error: uv_timer_stop failed");
         }
     }
+
+    /// Run `callback` once on `loop_`'s thread `timeout_ms` from now (the
+    /// loop's cached time is refreshed first), from a ref'd timer that then
+    /// closes and frees itself. `loop_` is the caller's live loop, as for
+    /// [`init`](Self::init).
+    pub fn one_shot(loop_: *mut Loop, timeout_ms: u64, callback: fn()) {
+        unsafe extern "C" fn fire(handle: *mut Timer) {
+            // SAFETY: `handle` is the box `one_shot` leaked; `data` holds the `fn()`.
+            let callback: fn() = unsafe { mem::transmute::<*mut c_void, fn()>((*handle).data) };
+            callback();
+            // SAFETY: as above; libuv is done with the handle once `free` runs.
+            unsafe { (*handle).close(free) };
+        }
+        unsafe extern "C" fn free(handle: *mut Timer) {
+            // SAFETY: the box `one_shot` leaked; closed, so libuv holds no pointer to it.
+            drop(unsafe { Box::from_raw(handle) });
+        }
+        // SAFETY: `loop_` is a live initialised loop (fn contract, as `uv_timer_init` below).
+        unsafe { uv_update_time(loop_) };
+        let timer: &mut Timer = Box::leak(Box::new(bun_core::ffi::zeroed::<Timer>()));
+        timer.init(loop_);
+        timer.data = callback as *mut c_void;
+        timer.start(timeout_ms, 0, Some(fire));
+        timer.ref_();
+    }
 }
 
 // ──────────────────────────────────────────────────────────────────────────

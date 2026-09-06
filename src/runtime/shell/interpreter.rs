@@ -1612,10 +1612,7 @@ impl Interpreter {
                     int -= 1;
                 }
 
-                if let Some(worker_ptr) = vm.worker {
-                    // SAFETY: `vm.worker` is set in `VirtualMachine::init_worker`
-                    // to a live `*WebWorker` for the worker's lifetime.
-                    let worker = unsafe { &*worker_ptr.cast::<bun_jsc::web_worker::WebWorker>() };
+                if let Some(worker) = vm.worker_ref() {
                     let argv = worker.argv();
                     if int as usize >= argv.len() {
                         return;
@@ -1623,8 +1620,7 @@ impl Interpreter {
                     if vm_args_utf8.len() != argv.len() {
                         vm_args_utf8.reserve(argv.len());
                         for arg in argv {
-                            vm_args_utf8
-                                .push(crate::node::process::worker_option_string(*arg).into_utf8());
+                            vm_args_utf8.push(arg.to_utf8());
                         }
                     }
                     out.extend_from_slice(vm_args_utf8[int as usize].slice());

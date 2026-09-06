@@ -2204,7 +2204,7 @@ struct SerializedScriptValueExternal {
     handle: *mut c_void,
 }
 
-/// Callback signature for [`JSValue::for_each`] / [`JSValue::for_each_with_context`].
+/// Callback signature for [`JSValue::for_each`].
 pub type ForEachCallback =
     extern "C" fn(vm: *mut crate::VM, global: &JSGlobalObject, ctx: *mut c_void, next: JSValue);
 
@@ -2218,6 +2218,50 @@ pub(crate) type ForEachPropertyCallback = extern "C" fn(
     is_symbol: bool,
     is_private_symbol: bool,
 );
+
+/// Typed receiver for [`JSValue::for_each_ctx`]: one call per iterated element.
+pub trait ForEachContext {
+    fn on_value(&mut self, global: &JSGlobalObject, value: JSValue);
+}
+
+/// Typed receiver for [`JSValue::for_each_property_ctx`] and its variants: one
+/// call per own property.
+pub trait ForEachPropertyContext {
+    fn on_property(
+        &mut self,
+        global: &JSGlobalObject,
+        key: &bun_core::EncodedSlice,
+        value: JSValue,
+        is_symbol: bool,
+        is_private_symbol: bool,
+    );
+}
+
+/// [`ForEachCallback`] trampoline for a `&mut C` context.
+extern "C" fn for_each_context_trampoline<C: ForEachContext>(
+    _: *mut crate::VM,
+    global: &JSGlobalObject,
+    ctx: *mut c_void,
+    next: JSValue,
+) {
+    // SAFETY: `ctx` is the `&mut C` `for_each_ctx` passed for this synchronous iteration.
+    unsafe { &mut *ctx.cast::<C>() }.on_value(global, next);
+}
+
+/// [`ForEachPropertyCallback`] trampoline for a `&mut C` context.
+extern "C" fn for_each_property_context_trampoline<C: ForEachPropertyContext>(
+    global: &JSGlobalObject,
+    ctx: *mut c_void,
+    key: *mut bun_core::EncodedSlice,
+    value: JSValue,
+    is_symbol: bool,
+    is_private_symbol: bool,
+) {
+    // SAFETY: `ctx` is the `&mut C` the `for_each_property*_ctx` caller passed for
+    // this synchronous iteration; `key` is the live stack `EncodedSlice` C++ passes.
+    let (ctx, key) = unsafe { (&mut *ctx.cast::<C>(), &*key) };
+    ctx.on_property(global, key, value, is_symbol, is_private_symbol);
+}
 
 /// `JSValue.StringFormatter` — `Display` adapter that
 /// coerces the value via `toBunString` at format time.
@@ -2437,16 +2481,59 @@ impl JSValue {
             JSC__JSValue__forEach(self, global, ctx, callback)
         })
     }
-    /// `JSValue.forEachWithContext` — typed-ctx wrapper (callers pass
-    /// `*mut c_void` directly).
+    /// [`for_each`](Self::for_each) with a typed context.
     #[inline]
-    pub(crate) fn for_each_with_context(
+    pub fn for_each_ctx<C: ForEachContext>(
         self,
         global: &JSGlobalObject,
-        ctx: *mut c_void,
-        callback: ForEachCallback,
+        ctx: &mut C,
     ) -> JsResult<()> {
-        self.for_each(global, ctx, callback)
+        self.for_each(
+            global,
+            core::ptr::from_mut(ctx).cast(),
+            for_each_context_trampoline::<C>,
+        )
+    }
+    /// [`for_each_property`](Self::for_each_property) with a typed context.
+    #[inline(always)]
+    pub fn for_each_property_ctx<C: ForEachPropertyContext>(
+        self,
+        global: &JSGlobalObject,
+        ctx: &mut C,
+    ) -> JsResult<()> {
+        self.for_each_property(
+            global,
+            core::ptr::from_mut(ctx).cast(),
+            for_each_property_context_trampoline::<C>,
+        )
+    }
+    /// [`for_each_property_non_indexed`](Self::for_each_property_non_indexed)
+    /// with a typed context.
+    #[inline(always)]
+    pub fn for_each_property_non_indexed_ctx<C: ForEachPropertyContext>(
+        self,
+        global: &JSGlobalObject,
+        ctx: &mut C,
+    ) -> JsResult<()> {
+        self.for_each_property_non_indexed(
+            global,
+            core::ptr::from_mut(ctx).cast(),
+            for_each_property_context_trampoline::<C>,
+        )
+    }
+    /// [`for_each_property_ordered`](Self::for_each_property_ordered) with a
+    /// typed context.
+    #[inline(always)]
+    pub fn for_each_property_ordered_ctx<C: ForEachPropertyContext>(
+        self,
+        global: &JSGlobalObject,
+        ctx: &mut C,
+    ) -> JsResult<()> {
+        self.for_each_property_ordered(
+            global,
+            core::ptr::from_mut(ctx).cast(),
+            for_each_property_context_trampoline::<C>,
+        )
     }
     /// `JSValue.forEachProperty` — enumerate own props,
     /// invoking `callback` per (key, value, is_symbol, is_private_symbol).

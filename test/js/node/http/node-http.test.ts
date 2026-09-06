@@ -2617,6 +2617,37 @@ it("ClientRequest.destroy(err) with a throwing error listener still tears down; 
   expect(exitCode).toBe(0);
 });
 
+it("captureRejections: a rejecting async listener on a Server event other than 'request' emits 'error'", async () => {
+  // node: http.Server's [captureRejectionSymbol] handles 'request' itself and
+  // hands every other event to net.Server's handler, whose default is
+  // this.emit('error', err). The rejection must not be dropped.
+  const script = `
+    const events = require("node:events");
+    events.captureRejections = true;
+    const http = require("node:http");
+    const server = http.createServer();
+    server.on("error", err => console.log("error event: " + err.message));
+    process.on("unhandledRejection", err => console.log("unhandledRejection: " + err.message));
+    server.on("custom", async () => {
+      throw new Error("custom-rejects");
+    });
+    server.emit("custom");
+    // rejection (microtask) -> nextTick -> 'error'; all settle within one turn.
+    setImmediate(() => setImmediate(() => console.log("done")));
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", script],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  // node v26.3.0 verified.
+  expect(stdout.trim().split("\n")).toEqual(["error event: custom-rejects", "done"]);
+  expect(exitCode).toBe(0);
+});
+
 it("keep-alive socket reused after a 304 response still frames the next response body", async () => {
   // The native per-request reset must clear the 204/304 no-body flag, or the
   // 200 that follows a 304 on the same connection is sent with no framing

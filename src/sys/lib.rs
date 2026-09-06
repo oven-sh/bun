@@ -1897,8 +1897,11 @@ mod posix_impl {
         // Linux/FreeBSD, `openat$NOCANCEL(AT_FDCWD, ..)` on Darwin.
         openat(Fd::cwd(), path, flags, mode)
     }
+    /// Every descriptor is close-on-exec. A child that must inherit one gets
+    /// it through `dup2` (or an explicit `FD_CLOEXEC` clear) in the spawn path.
     pub fn openat(dir: impl AsFd, path: &ZStr, flags: i32, mode: Mode) -> Maybe<Fd> {
         let dir = dir.as_fd();
+        let flags = flags | O::CLOEXEC;
         // macOS: `openat$NOCANCEL`, retried on EINTR.
         #[cfg(target_os = "macos")]
         {
@@ -1929,6 +1932,7 @@ mod posix_impl {
     #[cfg(any(target_os = "linux", target_os = "android"))]
     pub fn openat2_beneath(dir: impl AsFd, path: &ZStr, flags: i32, mode: Mode) -> Maybe<Fd> {
         let dir = dir.as_fd();
+        let flags = flags | O::CLOEXEC;
         super::linux_syscall::openat2_beneath(dir, path, flags, mode)
             .map_err(|e| Error::from_code_int(e, Tag::open).with_path(path.as_bytes()))
     }
@@ -1941,6 +1945,7 @@ mod posix_impl {
         static UNAVAILABLE: AtomicBool = AtomicBool::new(false);
 
         let dir = dir.as_fd();
+        let flags = flags | O::CLOEXEC;
         if !UNAVAILABLE.load(Ordering::Relaxed) {
             match super::linux_syscall::openat2_in_root(dir, path, flags, mode) {
                 Ok(fd) => return Ok(fd),

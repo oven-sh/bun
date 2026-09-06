@@ -31,6 +31,35 @@ use html5ever::tokenizer::states::RawKind;
 use html5ever::tokenizer::{Doctype, Tag, TagKind, Token, TokenSink, TokenSinkResult};
 use html5ever::{Attribute, LocalName, QualName, ns};
 
+use super::scan;
+
+/// Attributes per tag before duplicate detection switches from a scan of
+/// the ones so far to a hash set.
+const DUP_SCAN_LIMIT: usize = 32;
+
+type NameSet = bun_collections::HashMap<LocalName, ()>;
+
+/// Duplicate check for a tag that already has [`DUP_SCAN_LIMIT`] attributes:
+/// builds (once) and consults a set of the names so far, so a tag with a
+/// hundred thousand attributes is linear rather than quadratic. Out of line
+/// because no real document gets here.
+#[cold]
+#[inline(never)]
+fn is_duplicate_hashed(
+    attrs: &[Attribute],
+    seen: &mut Option<Box<NameSet>>,
+    name: &LocalName,
+) -> bool {
+    let set = seen.get_or_insert_with(|| {
+        let mut set = Box::new(NameSet::new());
+        for a in attrs {
+            set.insert(a.name.local.clone(), ());
+        }
+        set
+    });
+    set.insert(name.clone(), ()).is_some()
+}
+
 /// Internal control flow: the input ran out (in whatever state; the state's
 /// EOF rule has already been applied by whoever returns this).
 enum Halt {
@@ -52,7 +81,46 @@ enum Mode {
     Plaintext,
 }
 
-pub(crate) struct FastTokenizer<'t, S: TokenSink> {
+/// Which text state a run is decoded under: decides which bytes interrupt
+/// literal text and what NUL turns into.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum TextMode {
+    Data,
+    Raw(RawKind),
+    Plaintext,
+}
+
+impl TextMode {
+    /// The bytes that interrupt literal text in this mode. Padded to four
+    /// with a repeat so every mode scans with the same routine.
+    #[inline]
+    fn specials(self) -> &'static [u8; 4] {
+        match self {
+            TextMode::Data | TextMode::Raw(RawKind::Rcdata) => b"<&\r\0",
+            TextMode::Raw(_) => b"<\r\0\0",
+            TextMode::Plaintext => b"\r\0\0\0",
+        }
+    }
+}
+
+enum RawLt {
+    /// Just a `<` character.
+    Text,
+    /// `<!--` in script data: the escaped states take over.
+    CommentOpen,
+    /// The end tag that closes the element: position after its name, name.
+    EndTag(usize, LocalName),
+}
+
+/// Lets the tokenizer reuse one attribute vector for every tag instead of
+/// allocating per tag; see [`super::dom::Sink::take_attr_buf`].
+pub(crate) trait AttrBuf {
+    fn take_attr_buf(&self) -> Vec<Attribute> {
+        Vec::new()
+    }
+}
+
+pub(crate) struct FastTokenizer<'t, S: TokenSink + AttrBuf> {
     src: &'t str,
     /// The same bytes as `src`, as a tendril, so text and attribute values
     /// can be handed over as shared sub-slices instead of copies.
@@ -70,28 +138,33 @@ pub(crate) struct FastTokenizer<'t, S: TokenSink> {
 /// `input slice → atom` in front of that turns nearly every lookup into a
 /// short byte comparison and an atom clone.
 struct NameCache<'t> {
-    slots: [Option<(&'t str, LocalName)>; 256],
+    slots: [Option<(&'t str, LocalName)>; NAME_CACHE_SLOTS],
 }
+
+const NAME_CACHE_SLOTS: usize = 256;
 
 impl<'t> NameCache<'t> {
     fn new() -> Self {
         NameCache {
-            slots: [const { None }; 256],
+            slots: [const { None }; NAME_CACHE_SLOTS],
         }
     }
 
     #[inline]
     fn intern(&mut self, name: &'t str) -> LocalName {
         let b = name.as_bytes();
-        // Cheap spread over length and the first/last bytes; collisions just
-        // cost a real intern.
+        // Cheap spread over the length and a few bytes; a collision only
+        // costs a real intern.
         let h = (b.len().wrapping_mul(31))
             ^ (b[0] as usize).wrapping_mul(7)
             ^ (b[b.len() - 1] as usize).wrapping_mul(131)
             ^ (b[b.len() / 2] as usize).wrapping_mul(17);
-        let slot = &mut self.slots[h & 255];
+        let slot = &mut self.slots[h % NAME_CACHE_SLOTS];
         if let Some((k, atom)) = slot {
-            if *k == name {
+            // An inline byte loop: `==` on slices is a libc `memcmp` call,
+            // which for names this short costs more than the comparison.
+            let k = k.as_bytes();
+            if k.len() == b.len() && k.iter().zip(b).all(|(x, y)| x == y) {
                 return atom.clone();
             }
         }
@@ -101,14 +174,52 @@ impl<'t> NameCache<'t> {
     }
 }
 
-/// HTML whitespace as the tokenizer sees it after input preprocessing:
-/// TAB, LF, FF, SPACE, and CR (which preprocessing turns into LF).
-#[inline]
-fn is_ws(b: u8) -> bool {
-    matches!(b, b'\t' | b'\n' | b'\x0C' | b' ' | b'\r')
+/// Byte classes for the tag-parsing loops, looked up instead of branched on.
+mod class {
+    /// TAB, LF, FF, SPACE, and CR (which input preprocessing turns into LF):
+    /// HTML whitespace as the tokenizer sees it.
+    pub(super) const WS: u8 = 1;
+    /// `/` or `>`: ends a tag name or attribute name.
+    pub(super) const SLASH_GT: u8 = 2;
+    /// `=`: ends an attribute name (after its first byte).
+    pub(super) const EQ: u8 = 4;
+    /// ASCII uppercase or NUL: the name cannot be interned straight from
+    /// the input slice (needs lowercasing / U+FFFD).
+    pub(super) const FIXUP: u8 = 8;
+
+    pub(super) static TABLE: [u8; 256] = {
+        let mut t = [0u8; 256];
+        t[b'\t' as usize] = WS;
+        t[b'\n' as usize] = WS;
+        t[0x0C] = WS;
+        t[b' ' as usize] = WS;
+        t[b'\r' as usize] = WS;
+        t[b'/' as usize] = SLASH_GT;
+        t[b'>' as usize] = SLASH_GT;
+        t[b'=' as usize] = EQ;
+        t[0] = FIXUP;
+        let mut c = b'A';
+        while c <= b'Z' {
+            t[c as usize] = FIXUP;
+            c += 1;
+        }
+        t
+    };
 }
 
-impl<'t, S: TokenSink> FastTokenizer<'t, S> {
+#[inline(always)]
+fn class_of(b: u8) -> u8 {
+    class::TABLE[b as usize]
+}
+
+/// HTML whitespace as the tokenizer sees it after input preprocessing:
+/// TAB, LF, FF, SPACE, and CR (which preprocessing turns into LF).
+#[inline(always)]
+fn is_ws(b: u8) -> bool {
+    class_of(b) & class::WS != 0
+}
+
+impl<'t, S: TokenSink + AttrBuf> FastTokenizer<'t, S> {
     pub(crate) fn new(input: &'t StrTendril, sink: &'t S) -> Self {
         let src: &str = input;
         // Input-stream preprocessing: a leading BOM is not content.
@@ -236,16 +347,16 @@ impl<'t, S: TokenSink> FastTokenizer<'t, S> {
         let bytes = self.bytes();
         loop {
             let start = self.pos;
-            let Some(off) = strings::index_of_any(&bytes[start..], b"<&\r\0") else {
+            let Some(off) = scan::find_any(&bytes[start..], b"<&\r\0") else {
                 self.emit_slice(start, bytes.len());
                 self.pos = bytes.len();
                 return Some(Halt::Eof);
             };
             let i = start + off;
-            self.emit_slice(start, i);
-            self.pos = i + 1;
             match bytes[i] {
                 b'<' => {
+                    self.emit_slice(start, i);
+                    self.pos = i + 1;
                     if let Some(h) = self.tag_open() {
                         return Some(h);
                     }
@@ -253,9 +364,15 @@ impl<'t, S: TokenSink> FastTokenizer<'t, S> {
                         return None;
                     }
                 }
-                b'&' => self.char_ref_in_text(),
-                b'\r' => self.carriage_return(),
-                _ => self.process(Token::NullCharacterToken),
+                0 => {
+                    // The tree builder treats NUL specially per insertion
+                    // mode, so it travels as its own token.
+                    self.emit_slice(start, i);
+                    self.pos = i + 1;
+                    self.process(Token::NullCharacterToken);
+                }
+                // `&` or CR: something in this run needs decoding.
+                _ => self.decoded_run(start, i, TextMode::Data),
             }
         }
     }
@@ -272,62 +389,135 @@ impl<'t, S: TokenSink> FastTokenizer<'t, S> {
     /// RCDATA / RAWTEXT / script data: text until the matching end tag.
     fn raw(&mut self, kind: RawKind) -> Option<Halt> {
         let bytes = self.bytes();
-        let set: &[u8] = if kind == RawKind::Rcdata {
-            b"<&\r\0"
-        } else {
-            b"<\r\0"
-        };
+        let set = TextMode::Raw(kind).specials();
         loop {
+            // `start..scan` is text already known to be literal.
             let start = self.pos;
-            let Some(off) = strings::index_of_any(&bytes[start..], set) else {
-                self.emit_slice(start, bytes.len());
-                self.pos = bytes.len();
-                return Some(Halt::Eof);
-            };
-            let i = start + off;
-            match bytes[i] {
-                b'<' => {
-                    if kind == RawKind::ScriptData && bytes[i + 1..].starts_with(b"!--") {
+            let mut scan = start;
+            loop {
+                let Some(off) = scan::find_any(&bytes[scan..], set) else {
+                    self.emit_slice(start, bytes.len());
+                    self.pos = bytes.len();
+                    return Some(Halt::Eof);
+                };
+                let i = scan + off;
+                if bytes[i] != b'<' {
+                    // `&` (RCDATA), CR or NUL: decode the rest of this run.
+                    self.decoded_run(start, i, TextMode::Raw(kind));
+                    break;
+                }
+                match self.raw_less_than(kind, i) {
+                    RawLt::Text => scan = i + 1,
+                    RawLt::CommentOpen => {
                         // `<!--` inside a script: the "escaped" states, where
                         // `<script>…</script>` pairs nest once. All of it is
                         // still script text; only where the element ends moves.
                         self.emit_slice(start, i + 4);
                         self.pos = i + 4;
                         match self.script_data_escaped() {
-                            Escaped::Script => continue,
+                            Escaped::Script => break,
                             Escaped::Done(halt) => return halt,
                         }
                     }
-                    if bytes.get(i + 1) == Some(&b'/') {
-                        if let Some((name_end, name)) = self.appropriate_end_tag(i + 2) {
-                            self.emit_slice(start, i);
-                            self.pos = name_end;
-                            // From here the end tag is parsed like any tag's
-                            // attribute section (attributes on an end tag are a
-                            // parse error but are tokenized all the same).
-                            // Then back to the data state (or wherever the
-                            // tree builder sends us), or out on EOF.
-                            return self.tag_rest(TagKind::EndTag, name);
+                    RawLt::EndTag(name_end, name) => {
+                        self.emit_slice(start, i);
+                        self.pos = name_end;
+                        // From here the end tag is parsed like any tag's
+                        // attribute section (attributes on an end tag are a
+                        // parse error but are tokenized all the same). Then
+                        // back to the data state (or wherever the tree builder
+                        // sends us), or out on EOF.
+                        return self.tag_rest(TagKind::EndTag, name);
+                    }
+                }
+            }
+        }
+    }
+
+    /// What a `<` at `i` means in a raw-text mode.
+    #[inline]
+    fn raw_less_than(&self, kind: RawKind, i: usize) -> RawLt {
+        let bytes = self.bytes();
+        if kind == RawKind::ScriptData && bytes[i + 1..].starts_with(b"!--") {
+            return RawLt::CommentOpen;
+        }
+        if bytes.get(i + 1) == Some(&b'/')
+            && let Some((name_end, name)) = self.appropriate_end_tag(i + 2)
+        {
+            return RawLt::EndTag(name_end, name);
+        }
+        RawLt::Text
+    }
+
+    fn plaintext(&mut self) -> Option<Halt> {
+        let bytes = self.bytes();
+        let start = self.pos;
+        match scan::find_any(&bytes[start..], TextMode::Plaintext.specials()) {
+            None => self.emit_slice(start, bytes.len()),
+            Some(off) => self.decoded_run(start, start + off, TextMode::Plaintext),
+        }
+        self.pos = bytes.len();
+        Some(Halt::Eof)
+    }
+
+    /// A text run that needs decoding somewhere: `start..first` is literal
+    /// and `bytes[first]` is a character reference `&`, a CR, or (outside the
+    /// data state) a NUL. Decodes from there to the end of the run — the next
+    /// `<` that is markup in this mode, a NUL in the data state, or EOF — into
+    /// one buffer and emits it as a single token, leaving `pos` at the
+    /// terminator. (Emitting the pieces separately would be equivalent, but
+    /// every extra token is a trip through the tree builder and an append
+    /// that may have to copy the text node built so far.)
+    fn decoded_run(&mut self, start: usize, first: usize, mode: TextMode) {
+        let bytes = self.bytes();
+        let set = mode.specials();
+        let mut buf = StrTendril::new();
+        let est = (first - start).saturating_add(64).min(bytes.len() - start);
+        buf.reserve(u32::try_from(est).unwrap_or(u32::MAX));
+        let mut seg = start;
+        let mut i = first;
+        loop {
+            buf.push_slice(&self.src[seg..i]);
+            self.pos = i + 1;
+            match bytes[i] {
+                b'&' => self.char_ref(false, &mut buf),
+                b'\r' => {
+                    // CRLF: the LF itself is picked up as literal text.
+                    if self.peek() != Some(b'\n') {
+                        buf.push_char('\n');
+                    }
+                }
+                _ => buf.push_char('\u{FFFD}'),
+            }
+            seg = self.pos;
+            // Extend over literal text to the next byte that needs attention.
+            let stop = loop {
+                match scan::find_any(&bytes[self.pos..], set) {
+                    None => break None,
+                    Some(off) => {
+                        let j = self.pos + off;
+                        match (bytes[j], mode) {
+                            (b'<', TextMode::Raw(kind)) => {
+                                if matches!(self.raw_less_than(kind, j), RawLt::Text) {
+                                    self.pos = j + 1;
+                                    continue;
+                                }
+                                break Some((j, true));
+                            }
+                            (b'<' | 0, TextMode::Data) => break Some((j, true)),
+                            _ => break Some((j, false)),
                         }
                     }
-                    // Not a tag here: `<` is text.
-                    self.emit_slice(start, i + 1);
-                    self.pos = i + 1;
                 }
-                b'&' => {
-                    self.emit_slice(start, i);
-                    self.pos = i + 1;
-                    self.char_ref_in_text();
-                }
-                b'\r' => {
-                    self.emit_slice(start, i);
-                    self.pos = i + 1;
-                    self.carriage_return();
-                }
+            };
+            match stop {
+                Some((j, false)) => i = j,
                 _ => {
-                    self.emit_slice(start, i);
-                    self.pos = i + 1;
-                    self.emit_str("\u{FFFD}");
+                    let end = stop.map_or(bytes.len(), |(j, _)| j);
+                    buf.push_slice(&self.src[seg..end]);
+                    self.pos = end;
+                    self.process(Token::CharacterTokens(buf));
+                    return;
                 }
             }
         }
@@ -348,7 +538,7 @@ impl<'t, S: TokenSink> FastTokenizer<'t, S> {
         loop {
             // Skip ordinary bytes in bulk.
             if dashes == 0 {
-                match strings::index_of_any(&bytes[self.pos..], b"-<\r\0") {
+                match scan::find_any(&bytes[self.pos..], b"-<\r\0") {
                     Some(off) => self.pos += off,
                     None => self.pos = bytes.len(),
                 }
@@ -471,26 +661,6 @@ impl<'t, S: TokenSink> FastTokenizer<'t, S> {
         }
     }
 
-    fn plaintext(&mut self) -> Option<Halt> {
-        let bytes = self.bytes();
-        loop {
-            let start = self.pos;
-            let Some(off) = strings::index_of_any(&bytes[start..], b"\r\0") else {
-                self.emit_slice(start, bytes.len());
-                self.pos = bytes.len();
-                return Some(Halt::Eof);
-            };
-            let i = start + off;
-            self.emit_slice(start, i);
-            self.pos = i + 1;
-            if bytes[i] == b'\r' {
-                self.carriage_return();
-            } else {
-                self.emit_str("\u{FFFD}");
-            }
-        }
-    }
-
     // ───────────────────────── tags ─────────────────────────
 
     /// Tag open state; `pos` is just past `<`. `Some` only at EOF.
@@ -529,8 +699,14 @@ impl<'t, S: TokenSink> FastTokenizer<'t, S> {
                 Some(Halt::Eof)
             }
             Some(b'>') => {
-                // `</>` is swallowed whole.
+                // `</>` is swallowed whole. It is the one construct that yields
+                // a parse error and no token, and html5ever's tree builder lets
+                // a parse-error token consume the "ignore a leading newline"
+                // state that `<pre>`/`<listing>`/`<textarea>` set up — so
+                // report it, or `<pre></>\n` would lose a newline html5ever
+                // keeps.
                 self.pos += 1;
+                self.process(Token::ParseError(std::borrow::Cow::Borrowed("Saw </>")));
                 None
             }
             Some(c) if c.is_ascii_alphabetic() => self.tag(TagKind::EndTag),
@@ -543,15 +719,13 @@ impl<'t, S: TokenSink> FastTokenizer<'t, S> {
         let bytes = self.bytes();
         let start = self.pos;
         let mut end = start;
-        let mut clean = true; // no uppercase / NUL: name can be interned from the slice
+        let mut seen = 0u8;
         while end < bytes.len() {
-            let b = bytes[end];
-            if is_ws(b) || b == b'/' || b == b'>' {
+            let c = class_of(bytes[end]);
+            if c & (class::WS | class::SLASH_GT) != 0 {
                 break;
             }
-            if b.is_ascii_uppercase() || b == 0 {
-                clean = false;
-            }
+            seen |= c;
             end += 1;
         }
         if end == bytes.len() {
@@ -559,6 +733,8 @@ impl<'t, S: TokenSink> FastTokenizer<'t, S> {
             self.pos = end;
             return Some(Halt::Eof);
         }
+        // No uppercase / NUL: the name can be interned from the slice.
+        let clean = seen & class::FIXUP == 0;
         let name = if clean {
             self.names.intern(&self.src[start..end])
         } else {
@@ -574,6 +750,7 @@ impl<'t, S: TokenSink> FastTokenizer<'t, S> {
     fn tag_rest(&mut self, kind: TagKind, name: LocalName) -> Option<Halt> {
         let bytes = self.bytes();
         let mut attrs: Vec<Attribute> = Vec::new();
+        let mut seen_names: Option<Box<NameSet>> = None;
         let mut had_duplicate_attributes = false;
         let mut self_closing = false;
 
@@ -611,17 +788,16 @@ impl<'t, S: TokenSink> FastTokenizer<'t, S> {
             // "=x"); after it, `=` ends the name.
             let name_start = self.pos;
             let mut name_end = name_start + 1;
-            let mut clean = !bytes[name_start].is_ascii_uppercase() && bytes[name_start] != 0;
+            let mut seen = class_of(bytes[name_start]);
             while name_end < bytes.len() {
-                let b = bytes[name_end];
-                if is_ws(b) || b == b'/' || b == b'=' || b == b'>' {
+                let c = class_of(bytes[name_end]);
+                if c & (class::WS | class::SLASH_GT | class::EQ) != 0 {
                     break;
                 }
-                if b.is_ascii_uppercase() || b == 0 {
-                    clean = false;
-                }
+                seen |= c;
                 name_end += 1;
             }
+            let clean = seen & class::FIXUP == 0;
             // `name_start` may sit inside a multi-byte character only if the
             // byte there is a UTF-8 continuation byte, which cannot happen:
             // we arrive here at an ASCII delimiter boundary or at a byte the
@@ -653,10 +829,20 @@ impl<'t, S: TokenSink> FastTokenizer<'t, S> {
                 }
             }
 
-            // Duplicate attributes are dropped (first one wins).
-            if attrs.iter().any(|a| a.name.local == attr_name) {
+            // Duplicate attributes are dropped (first one wins). Past a few
+            // dozen attributes a hash set takes over the check so a tag with
+            // a hundred thousand of them is linear, not quadratic.
+            let duplicate = if attrs.len() < DUP_SCAN_LIMIT {
+                attrs.iter().any(|a| a.name.local == attr_name)
+            } else {
+                is_duplicate_hashed(&attrs, &mut seen_names, &attr_name)
+            };
+            if duplicate {
                 had_duplicate_attributes = true;
             } else {
+                if attrs.capacity() == 0 {
+                    attrs = self.sink.take_attr_buf();
+                }
                 attrs.push(Attribute {
                     name: QualName::new(None, ns!(), attr_name),
                     value: value.unwrap_or_default(),
@@ -692,9 +878,9 @@ impl<'t, S: TokenSink> FastTokenizer<'t, S> {
             Some(q @ (b'"' | b'\'')) => {
                 self.pos += 1;
                 let start = self.pos;
-                let set: &[u8] = if q == b'"' { b"\"&\r\0" } else { b"'&\r\0" };
+                let set: &'static [u8; 4] = if q == b'"' { b"\"&\r\0" } else { b"'&\r\0" };
                 // Fast path: nothing to decode before the closing quote.
-                match strings::index_of_any(&bytes[start..], set) {
+                match scan::find_any(&bytes[start..], set) {
                     None => {
                         self.pos = bytes.len();
                         Err(Halt::Eof)
@@ -714,7 +900,7 @@ impl<'t, S: TokenSink> FastTokenizer<'t, S> {
             Some(_) => {
                 // Unquoted: up to whitespace or `>`.
                 let start = self.pos;
-                match strings::index_of_any(&bytes[start..], b"\t\n\x0C \r>&\0") {
+                match scan::find_any(&bytes[start..], b"\t\n\x0C \r>&\0") {
                     None => {
                         self.pos = bytes.len();
                         Err(Halt::Eof)
@@ -732,12 +918,16 @@ impl<'t, S: TokenSink> FastTokenizer<'t, S> {
     /// Attribute value containing character references, CRs or NULs.
     /// `quote` is the closing quote, or 0 for an unquoted value. `pos` is at
     /// the start of the value.
-    fn attribute_value_slow(&mut self, quote: u8, set: &[u8]) -> Result<StrTendril, Halt> {
+    fn attribute_value_slow<const N: usize>(
+        &mut self,
+        quote: u8,
+        set: &[u8; N],
+    ) -> Result<StrTendril, Halt> {
         let bytes = self.bytes();
         let mut out = StrTendril::new();
         loop {
             let start = self.pos;
-            let Some(off) = strings::index_of_any(&bytes[start..], set) else {
+            let Some(off) = scan::find_any(&bytes[start..], set) else {
                 self.pos = bytes.len();
                 return Err(Halt::Eof);
             };
@@ -766,13 +956,6 @@ impl<'t, S: TokenSink> FastTokenizer<'t, S> {
     }
 
     // ───────────────────── character references ─────────────────────
-
-    /// `&` in text (data or RCDATA); `pos` is just past it.
-    fn char_ref_in_text(&mut self) {
-        let mut out = StrTendril::new();
-        self.char_ref(false, &mut out);
-        self.process(Token::CharacterTokens(out));
-    }
 
     /// Character reference state; `pos` is just past the `&`. Appends the
     /// expansion — or `&` itself when this is not a reference — to `out` and
@@ -811,10 +994,28 @@ impl<'t, S: TokenSink> FastTokenizer<'t, S> {
                 out.push_char(numeric_char_ref(num, too_big));
             }
             Some(b) if b.is_ascii_alphanumeric() => {
+                let name_start = self.pos;
+                // The handful of references that make up nearly all of real
+                // markup, matched directly. Each ends in `;`, and no entity
+                // name continues past a `;`, so these are also the longest
+                // matches the table walk below would find.
+                let rest = &bytes[name_start..];
+                let common: Option<(usize, char)> = match b {
+                    b'a' if rest.starts_with(b"amp;") => Some((4, '&')),
+                    b'l' if rest.starts_with(b"lt;") => Some((3, '<')),
+                    b'g' if rest.starts_with(b"gt;") => Some((3, '>')),
+                    b'q' if rest.starts_with(b"quot;") => Some((5, '"')),
+                    b'n' if rest.starts_with(b"nbsp;") => Some((5, '\u{A0}')),
+                    _ => None,
+                };
+                if let Some((len, c)) = common {
+                    self.pos = name_start + len;
+                    out.push_char(c);
+                    return;
+                }
                 // Longest match against the entity table, which also holds
                 // every proper prefix of every name (mapped to 0) so the
                 // scan knows when to stop.
-                let name_start = self.pos;
                 let mut len = 0usize;
                 let mut matched: Option<(usize, (u32, u32))> = None;
                 while let Some(&b) = bytes.get(name_start + len) {
@@ -882,7 +1083,7 @@ impl<'t, S: TokenSink> FastTokenizer<'t, S> {
     /// Bogus comment: everything up to the next `>` (or EOF).
     fn bogus_comment(&mut self, data_start: usize) -> Option<Halt> {
         let bytes = self.bytes();
-        match strings::index_of_char_usize(&bytes[data_start..], b'>') {
+        match scan::find_byte(&bytes[data_start..], b'>') {
             Some(off) => {
                 self.emit_comment(data_start, data_start + off);
                 self.pos = data_start + off + 1;
@@ -960,7 +1161,7 @@ impl<'t, S: TokenSink> FastTokenizer<'t, S> {
         // The section's text, with the same NUL / CR treatment as data.
         while self.pos < stop {
             let start = self.pos;
-            match strings::index_of_any(&bytes[start..stop], b"\r\0") {
+            match scan::find_any(&bytes[start..stop], b"\r\0") {
                 None => {
                     self.emit_slice(start, stop);
                     self.pos = stop;
@@ -1170,7 +1371,7 @@ impl<'t, S: TokenSink> FastTokenizer<'t, S> {
     /// Bogus DOCTYPE state: skip to `>`.
     fn bogus_doctype(&mut self) -> Option<Halt> {
         let bytes = self.bytes();
-        match strings::index_of_char_usize(&bytes[self.pos..], b'>') {
+        match scan::find_byte(&bytes[self.pos..], b'>') {
             Some(off) => {
                 self.pos += off + 1;
                 None
@@ -1292,6 +1493,8 @@ mod tests {
         }
     }
 
+    impl<S> super::AttrBuf for Recorder<S> {}
+
     impl<S: TokenSink> TokenSink for Recorder<S> {
         type Handle = S::Handle;
         fn process_token(&self, token: Token, line: u64) -> TokenSinkResult<S::Handle> {
@@ -1383,7 +1586,7 @@ mod tests {
     }
 
     fn reference_stream(html: &str) -> Vec<String> {
-        let arena = typed_arena::Arena::new();
+        let arena = dom::Arenas::with_capacity(64);
         let rec = Recorder::new(depth::DepthLimiter::new(TreeBuilder::new(
             dom::Sink::new(&arena),
             opts(),
@@ -1397,7 +1600,7 @@ mod tests {
     }
 
     fn our_stream(html: &str) -> Vec<String> {
-        let arena = typed_arena::Arena::new();
+        let arena = dom::Arenas::with_capacity(64);
         let rec = Recorder::new(depth::DepthLimiter::new(TreeBuilder::new(
             dom::Sink::new(&arena),
             opts(),

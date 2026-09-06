@@ -14,6 +14,7 @@ use super::Options;
 use super::dom::{
     FLAG_HAS_MEANINGFUL, FLAG_HAS_TABLE, FLAG_HAS_VOID, FLAG_WS_ONLY, NodeData, Ref, Tag,
 };
+use super::scan;
 use super::text::{
     escape_markdown_into, is_js_whitespace, js_trim, js_trim_in_place, leading_newlines,
     leading_whitespace, lines, push_text_content, text_content_ends_with_space,
@@ -31,12 +32,18 @@ pub const MAX_DEPTH: usize = 512;
 
 pub(crate) struct Converter<'o> {
     opts: &'o Options,
-    /// Per-depth scratch buffers for the rules that must rewrite their
+    /// Spare scratch buffers for the rules that must rewrite their
     /// children's output (list items, block quotes, headings, code spans,
     /// table cells), so steady-state conversion allocates nothing per
     /// element. Every other rule writes straight into its parent's buffer.
+    /// Use is strictly nested, so a stack serves every depth.
     pool: Vec<String>,
 }
+
+/// Scratch buffers larger than this are freed rather than pooled: a spare
+/// per nesting level each holding a copy of some huge nested quote would
+/// make peak memory depth × output instead of proportional to it.
+const POOLED_BUF_MAX: usize = 64 << 10;
 
 impl<'o> Converter<'o> {
     pub(crate) fn new(opts: &'o Options) -> Self {
@@ -51,17 +58,15 @@ impl<'o> Converter<'o> {
         post_process(out);
     }
 
-    fn take_buf(&mut self, depth: usize) -> String {
-        if self.pool.len() <= depth {
-            self.pool.resize_with(depth + 1, String::new);
-        }
-        let mut buf = core::mem::take(&mut self.pool[depth]);
-        buf.clear();
-        buf
+    fn take_buf(&mut self) -> String {
+        self.pool.pop().unwrap_or_default()
     }
 
-    fn return_buf(&mut self, depth: usize, buf: String) {
-        self.pool[depth] = buf;
+    fn return_buf(&mut self, mut buf: String) {
+        if buf.capacity() <= POOLED_BUF_MAX {
+            buf.clear();
+            self.pool.push(buf);
+        }
     }
 
     /// turndown's `process`: reduce each child to its replacement and join.
@@ -119,16 +124,28 @@ impl<'o> Converter<'o> {
         let is_block = tag.is_block();
         let in_code = in_code || tag == Tag::Code;
 
-        // The seam: whatever the rule emits first, `out` keeps at most one
-        // blank line before it. Block rules then raise the request to 2.
-        join_boundary(out, 0);
-
         // Inline elements hoist their edge whitespace outside the Markdown
         // delimiters (`<b> x </b>` → ` **x** `), dropping it where the
-        // neighbour already ends/starts with a space. The leading part goes
-        // straight into `out`; `trailing` stays unallocated when empty.
+        // neighbour already ends/starts with a space. Both strings stay
+        // unallocated when empty, which is nearly always.
+        let mut leading = String::new();
         let mut trailing = String::new();
-        let hoisted = !is_block && flanking_whitespace(node, out, &mut trailing);
+        let hoisted = !is_block && flanking_whitespace(node, &mut leading, &mut trailing);
+
+        // The seam: newlines the replacement starts with merge with the ones
+        // `out` ends in, capped at one blank line. The leading whitespace can
+        // itself start with newlines (edge text of a nested `<pre>`); those
+        // are the replacement's leading newlines. Block rules raise the
+        // request to 2 further down.
+        let lead_nl = leading_newlines(&leading);
+        join_boundary(out, lead_nl);
+        out.push_str(&leading[lead_nl..]);
+        // A `<pre>` edge can also leave `leading` *ending* in a run of
+        // newlines. More than two render the same as two, and capping the run
+        // upholds the invariant the in-place rules below rely on: children
+        // merging their own newlines into that run can then never shorten
+        // `out` past the position their parent recorded.
+        clamp_trailing_newlines(out, 2);
 
         if is_blank(node, tag) {
             if is_block {
@@ -169,8 +186,9 @@ impl<'o> Converter<'o> {
                     self.process_children(node, out, depth + 1, in_code);
                 } else {
                     join_boundary(out, 2);
+                    let seam = out.len();
                     self.process_children(node, out, depth + 1, in_code);
-                    out.push_str("\n\n");
+                    close_block(out, seam);
                 }
             }
             // ── leaves ──
@@ -218,7 +236,7 @@ impl<'o> Converter<'o> {
             | Tag::Blockquote
             | Tag::Li
             | Tag::Code => {
-                let mut content = self.take_buf(depth);
+                let mut content = self.take_buf();
                 self.process_children(node, &mut content, depth + 1, in_code);
                 if hoisted {
                     js_trim_in_place(&mut content);
@@ -242,14 +260,15 @@ impl<'o> Converter<'o> {
                     Tag::Code => inline_code(&content, out),
                     _ => self.heading(tag, &content, out),
                 }
-                self.return_buf(depth, content);
+                self.return_buf(content);
             }
             // ── everything else keeps its text: block or inline default ──
             _ => {
                 if is_block {
                     join_boundary(out, 2);
+                    let seam = out.len();
                     self.process_children(node, out, depth + 1, in_code);
-                    out.push_str("\n\n");
+                    close_block(out, seam);
                 } else {
                     self.children_in_place(node, out, depth, in_code, hoisted);
                 }
@@ -294,7 +313,11 @@ impl<'o> Converter<'o> {
         if hoisted {
             js_trim_region(out, start);
         }
-        if js_trim(&out[start..]).is_empty() {
+        debug_assert!(out.is_char_boundary(start) && &out[delim_at..start] == delim);
+        if !out.is_char_boundary(start) {
+            // Unreachable by construction; see `js_trim_region`.
+            out.push_str(delim);
+        } else if js_trim(&out[start..]).is_empty() {
             out.drain(delim_at..start);
         } else {
             out.push_str(delim);
@@ -423,7 +446,7 @@ impl<'o> Converter<'o> {
 
         join_boundary(rep, 2);
 
-        let mut cell_buf = self.take_buf(depth);
+        let mut cell_buf = self.take_buf();
         if let Some(caption) = table.children().find(|c| c.tag() == Tag::Caption) {
             self.process_children(caption, &mut cell_buf, depth + 1, false);
             let c = js_trim(&cell_buf);
@@ -490,12 +513,13 @@ impl<'o> Converter<'o> {
                 rep.push('\n');
             }
         }
-        self.return_buf(depth, cell_buf);
+        self.return_buf(cell_buf);
         rep.push('\n');
     }
 
-    /// Past `MAX_DEPTH`: emit the subtree's text as escaped inline prose,
-    /// iteratively.
+    /// Past `MAX_DEPTH`: emit the subtree's text as escaped prose,
+    /// iteratively, keeping only paragraph breaks at block elements and line
+    /// breaks at `<br>`.
     fn emit_flat_text(&mut self, root: Ref<'_>, out: &mut String) {
         let mut node = root;
         loop {
@@ -507,7 +531,16 @@ impl<'o> Converter<'o> {
                     let at_line_start = out.is_empty() || out.ends_with('\n');
                     escape_markdown_into(&t, at_line_start, out);
                 }
-                NodeData::Element { .. } if node.tag().is_skipped() => descend = false,
+                NodeData::Element { .. } => {
+                    let tag = node.tag();
+                    if tag.is_skipped() {
+                        descend = false;
+                    } else if tag.is_block() {
+                        join_boundary(out, 2);
+                    } else if tag == Tag::Br {
+                        out.push('\n');
+                    }
+                }
                 _ => {}
             }
             match super::dom::next_in_preorder(node, root, descend) {
@@ -526,13 +559,34 @@ fn join(out: &mut String, rep: &str) {
     out.push_str(&rep[lead..]);
 }
 
-fn join_boundary(out: &mut String, rep_leading_newlines: usize) {
-    let trailing = out
-        .as_bytes()
+fn trailing_newlines(s: &str) -> usize {
+    s.as_bytes()
         .iter()
         .rev()
         .take_while(|&&b| b == b'\n')
-        .count();
+        .count()
+}
+
+fn clamp_trailing_newlines(out: &mut String, max: usize) {
+    let trailing = trailing_newlines(out);
+    if trailing > max {
+        out.truncate(out.len() - (trailing - max));
+    }
+}
+
+/// Ends a block whose content was written in place after a
+/// `join_boundary(out, 2)` seam at `seam`. turndown's replacement is
+/// `"\n\n" + content + "\n\n"`; when the content is empty that whole string
+/// is newlines and folds into the seam, so nothing more is owed.
+fn close_block(out: &mut String, seam: usize) {
+    debug_assert!(out.len() >= seam);
+    if out.len() > seam {
+        out.push_str("\n\n");
+    }
+}
+
+fn join_boundary(out: &mut String, rep_leading_newlines: usize) {
+    let trailing = trailing_newlines(out);
     let trimmed = out.len() - trailing;
     let nls = trailing.max(rep_leading_newlines).min(2);
     out.truncate(trimmed);
@@ -554,6 +608,12 @@ fn post_process(out: &mut String) {
 
 /// `String.prototype.trim` applied to `out[start..]` in place.
 fn js_trim_region(out: &mut String, start: usize) {
+    debug_assert!(start <= out.len() && out.is_char_boundary(start));
+    if !out.is_char_boundary(start) {
+        // Unreachable by construction (see `replacement_for_node`); a missed
+        // trim is preferable to a panic should that ever be wrong.
+        return;
+    }
     let end = start + out[start..].trim_end_matches(is_js_whitespace).len();
     out.truncate(end);
     let lead = out[start..].len() - out[start..].trim_start_matches(is_js_whitespace).len();
@@ -646,26 +706,25 @@ fn inline_code(content: &str, rep: &mut String) {
         return;
     }
     // Newlines cannot appear inside a code span's rendered text.
-    let code: std::borrow::Cow<'_, str> =
-        if strings::index_of_any(content.as_bytes(), b"\r\n").is_some() {
-            let mut s = String::with_capacity(content.len());
-            let mut chars = content.chars().peekable();
-            while let Some(c) = chars.next() {
-                match c {
-                    '\r' => {
-                        if chars.peek() == Some(&'\n') {
-                            chars.next();
-                        }
-                        s.push(' ');
+    let code: std::borrow::Cow<'_, str> = if scan::find_any(content.as_bytes(), b"\r\n").is_some() {
+        let mut s = String::with_capacity(content.len());
+        let mut chars = content.chars().peekable();
+        while let Some(c) = chars.next() {
+            match c {
+                '\r' => {
+                    if chars.peek() == Some(&'\n') {
+                        chars.next();
                     }
-                    '\n' => s.push(' '),
-                    c => s.push(c),
+                    s.push(' ');
                 }
+                '\n' => s.push(' '),
+                c => s.push(c),
             }
-            s.into()
-        } else {
-            content.into()
-        };
+        }
+        s.into()
+    } else {
+        content.into()
+    };
 
     // Pad with a space when the code starts/ends with a backtick (so it
     // isn't read as part of the delimiter) or is space-wrapped non-space
@@ -786,7 +845,7 @@ fn push_link_destination(rep: &mut String, dest: &str) {
         rep.push('<');
     }
     let mut rest = dest;
-    while let Some(i) = strings::index_of_any(rest.as_bytes(), b"()<>\t\n\r") {
+    while let Some(i) = scan::find_any(rest.as_bytes(), b"()<>\t\n\r") {
         rep.push_str(&rest[..i]);
         let c = rest.as_bytes()[i];
         if !matches!(c, b'\t' | b'\n' | b'\r') {

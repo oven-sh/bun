@@ -399,7 +399,7 @@ const res = await fetch("https://bun.com/docs/runtime/markdown");
 const md = Bun.markdown.fromHTML(await res.text());
 ```
 
-Bun parses the input with a spec-compliant HTML5 parser, so malformed markup is recovered the same way a browser recovers it. The conversion never throws on bad HTML. Only `<body>` content is converted. `<script>`, `<style>`, `<template>`, and `<noscript>` elements are dropped, and comments are ignored.
+Bun parses the input with a spec-compliant HTML5 parser, so malformed markup is recovered the same way a browser recovers it. The conversion never throws on bad HTML. Only `<body>` content is converted. `<script>`, `<style>`, `<template>`, and `<noscript>` elements are dropped together with their contents, as if they were not in the document, and comments are ignored.
 
 GFM output is on by default. Tables become pipe tables, `<del>` becomes `~~strikethrough~~`, and checkboxes at the start of list items become task list markers:
 
@@ -444,7 +444,7 @@ The rules follow [turndown](https://github.com/mixmark-io/turndown), the most wi
 | `<input type="checkbox">` at the start of an `<li>`     | `[x]` or `[ ]`                                                                                                                                                  |
 | Anything else (`<span>`, `<sup>`, custom elements, SVG) | Its text content                                                                                                                                                |
 
-Characters in text that Markdown would otherwise treat as syntax (`*`, `_`, `` ` ``, `[`, `\`, a leading `-`, `#`, `>` or `1.`) are backslash-escaped, so the output renders back to the same text.
+Characters in text that Markdown would otherwise treat as syntax (`*`, `_`, `` ` ``, `[`, `\`, and at the start of a line `-`, `+`, `#`, `>`, `=` or `1.`) are backslash-escaped, so the output renders back to the same text.
 
 Pipe-table cells cannot hold block content, so paragraphs, lists, and line breaks inside a table cell are joined onto one line. A table that cannot form a grid, such as a single cell or a layout table that wraps other tables, is unwrapped into ordinary blocks instead.
 
@@ -482,4 +482,4 @@ An unrecognized option value throws a `TypeError`.
 
 `fromHTML()` accepts a string or any `TypedArray`, `DataView`, or `ArrayBuffer` holding UTF-8 bytes. Invalid UTF-8 sequences in a buffer are replaced with U+FFFD, as a browser does.
 
-Deeply nested markup is handled without recursion limits in the parser. Like browsers, Bun stops nesting elements past a depth of 512 and keeps their text in the deepest open element.
+Conversion time and memory are linear in the size of the input, including for hostile markup. Like browsers, Bun stops nesting elements past a depth of 512 and keeps their text in the deepest open element, with block boundaries reduced to spaces.

@@ -11,10 +11,10 @@
 
 use core::ptr;
 
-use bun_core::strings;
 use html5ever::tendril::StrTendril;
 
 use super::dom::{self, FLAG_WS_ONLY, NodeData, Ref, Tag};
+use super::scan;
 use super::text::is_js_whitespace;
 
 /// Elements whose children the walk never enters: `<pre>` (whitespace is
@@ -72,8 +72,12 @@ pub(crate) fn collapse_whitespace(root: Ref<'_>) {
                 false
             }
             NodeData::Element { .. } => {
-                state.visit_element(node.tag());
-                if is_opaque(node) {
+                let tag = node.tag();
+                state.visit_element(tag);
+                if tag.is_skipped() {
+                    // Dropped from the output, so absent for blankness too.
+                    false
+                } else if tag == Tag::Pre {
                     // Not entered, but its flags still have to cover its text.
                     dom::compute_subtree_flags(node);
                     dom::contribute_flags(parent, node);
@@ -191,11 +195,7 @@ fn collapse_text(t: &mut StrTendril, strip_leading: bool, scratch: &mut String) 
 
     // First place that needs rewriting: a tab/CR/LF, or the second space
     // of a run. Everything before it is copied verbatim.
-    let first_bad = match strings::index_of_any(bytes, b"\t\n\r") {
-        Some(i) => Some(strings::index_of(&bytes[..i], b"  ").map_or(i, |j| j + 1)),
-        None => strings::index_of(bytes, b"  ").map(|j| j + 1),
-    };
-    let Some(first_bad) = first_bad else {
+    let Some(first_bad) = scan::first_uncollapsed(bytes) else {
         if strip_leading && bytes[0] == b' ' {
             t.pop_front(1);
         }

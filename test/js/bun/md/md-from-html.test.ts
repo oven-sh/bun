@@ -561,6 +561,32 @@ describe("Bun.markdown.fromHTML", () => {
         .filter(Boolean);
       expect(words).toEqual(["one", "two", "three"]);
     });
+    test("block boundaries past the depth cap still separate words", () => {
+      const md = fromHTML(repeat("<div>", 600) + "<p>one</p><p>two<br>three</p><ul><li>a</li><li>b</li></ul>");
+      expect(md.split(/\s+/)).toEqual(["one", "two", "three", "a", "b"]);
+    });
+    // Mis-nested formatting tags make the HTML adoption agency algorithm
+    // re-parent nodes towards the root, so the parser's stack of open
+    // elements grows while the tree stays shallow; a cap that only watched
+    // tree depth let this go quadratic (seconds for a few hundred KB).
+    test("adoption-agency churn is bounded by the open-element cap", () => {
+      const md = fromHTML(repeat(repeat("<a><b><div><a>", 8) + "x", 4000));
+      expect(md.replace(/[*\s]/g, "")).toBe(repeat("x", 4000));
+    });
+    test("a tag with 100k attributes is linear", () => {
+      const attrs = Array.from({ length: 100_000 }, (_, i) => `a${i}=${i}`).join(" ");
+      expect(fromHTML(`<p><a ${attrs} href="/last">x</a></p>`)).toBe("[x](/last)");
+      expect(fromHTML(`<p><a ${repeat("href=/first ", 50_000)}href=/dup>y</a></p>`)).toBe("[y](/first)");
+    });
+    // Every level of a nested quote re-prefixes all of its lines; scratch
+    // buffers for that must not be retained per level or peak memory becomes
+    // depth × output.
+    test("nested blockquotes: output is prefixed per level, memory stays proportional", () => {
+      const md = fromHTML(repeat("<blockquote>", 50) + repeat("<p>line</p>", 2000));
+      const lines = md.split("\n").filter(l => l.endsWith("line"));
+      expect(lines.length).toBe(2000);
+      expect(lines[0]).toBe(repeat("> ", 50) + "line");
+    });
   });
 
   // -------------------------------------------------------------------------

@@ -8,7 +8,7 @@
 //! recursive `Drop`, so pathological nesting cannot overflow the stack on
 //! teardown.
 
-use core::cell::{Cell, RefCell, UnsafeCell};
+use core::cell::{Cell, RefCell};
 use core::ptr;
 use std::borrow::Cow;
 
@@ -16,7 +16,24 @@ use html5ever::interface::tree_builder::{ElementFlags, NodeOrText, QuirksMode, T
 use html5ever::tendril::StrTendril;
 use html5ever::{Attribute, ExpandedName, LocalName, Namespace, QualName, local_name, ns};
 
-pub(crate) type Arena<'a> = &'a typed_arena::Arena<Node<'a>>;
+/// Backing storage for one document: nodes in one arena, attribute lists
+/// in another (so a start tag's attributes cost no allocation of their own
+/// and are dropped in one sweep with everything else).
+pub(crate) struct Arenas<'a> {
+    nodes: typed_arena::Arena<Node<'a>>,
+    attrs: typed_arena::Arena<Attribute>,
+}
+
+impl Arenas<'_> {
+    pub(crate) fn with_capacity(nodes: usize) -> Self {
+        Arenas {
+            nodes: typed_arena::Arena::with_capacity(nodes),
+            attrs: typed_arena::Arena::with_capacity(nodes),
+        }
+    }
+}
+
+pub(crate) type Arena<'a> = &'a Arenas<'a>;
 pub(crate) type Ref<'a> = &'a Node<'a>;
 type Link<'a> = Cell<Option<Ref<'a>>>;
 
@@ -38,10 +55,10 @@ pub(crate) struct Node<'a> {
     /// during parsing as a hint for the depth limiter; later re-parenting
     /// does not update it.
     depth: Cell<u32>,
-    pub(crate) data: NodeData,
+    pub(crate) data: NodeData<'a>,
 }
 
-pub(crate) enum NodeData {
+pub(crate) enum NodeData<'a> {
     Document,
     /// Doctype / comment / processing instruction. None of these produce
     /// Markdown, so their payloads are not retained.
@@ -50,12 +67,9 @@ pub(crate) enum NodeData {
     Element {
         ns: Namespace,
         local: LocalName,
-        /// Written only by the tree builder while parsing
-        /// (`add_attrs_if_missing`), read only by the converter afterwards;
-        /// the two phases never overlap, which is what makes the
-        /// `UnsafeCell` accesses below sound. (A `RefCell` would push `Node`
-        /// past 96 bytes.)
-        attrs: UnsafeCell<Vec<Attribute>>,
+        /// Lives in [`Arenas::attrs`]; replaced wholesale in the rare case
+        /// the tree builder merges attributes into an existing element.
+        attrs: Cell<&'a [Attribute]>,
     },
 }
 
@@ -68,10 +82,10 @@ pub(crate) const FLAG_HAS_MEANINGFUL: u8 = 1 << 2;
 /// Some strict descendant is a `<table>`.
 pub(crate) const FLAG_HAS_TABLE: u8 = 1 << 3;
 
-const _: () = assert!(core::mem::size_of::<Node<'static>>() <= 96, "Node grew");
+const _: () = assert!(core::mem::size_of::<Node<'static>>() <= 88, "Node grew");
 
 impl<'a> Node<'a> {
-    fn new(data: NodeData, tag: Tag) -> Self {
+    fn new(data: NodeData<'a>, tag: Tag) -> Self {
         Node {
             parent: Cell::new(None),
             previous_sibling: Cell::new(None),
@@ -114,16 +128,13 @@ impl<'a> Node<'a> {
         }
     }
 
-    /// Value of the (namespace-less) attribute `name`, if present. Only for
-    /// use once parsing has finished.
-    pub(crate) fn attr(&self, name: &LocalName) -> Option<&str> {
+    /// Value of the (namespace-less) attribute `name`, if present.
+    pub(crate) fn attr(&self, name: &LocalName) -> Option<&'a str> {
         let NodeData::Element { attrs, .. } = &self.data else {
             return None;
         };
-        // SAFETY: parsing is over, so `add_attrs_if_missing` (the only
-        // writer) can no longer run; see the field docs.
-        let attrs = unsafe { &*attrs.get() };
         attrs
+            .get()
             .iter()
             .find(|a| a.name.local == *name && a.name.ns == ns!())
             .map(|a| &*a.value)
@@ -239,6 +250,12 @@ pub(crate) fn next_in_preorder<'a>(node: Ref<'a>, root: Ref<'a>, descend: bool) 
 /// only clear the former and set the latter.
 #[inline]
 pub(crate) fn contribute_flags(parent: Ref<'_>, child: Ref<'_>) {
+    if child.tag.is_skipped() {
+        // Subtrees the converter drops (`<script>`, `<template>`, …) are
+        // treated as absent throughout, so an element holding nothing else
+        // is blank rather than an empty shell (`[](/x)`, a lone `-`).
+        return;
+    }
     let cf = child.flags.get();
     let mut f = parent.flags.get();
     f &= cf | !FLAG_WS_ONLY;
@@ -289,14 +306,20 @@ pub(crate) struct Sink<'a> {
     document: Ref<'a>,
     /// Depth of the most recently inserted element; see [`super::depth`].
     last_insert_depth: Cell<u32>,
+    /// An emptied attribute vector (capacity intact) for the tokenizer to
+    /// build the next tag's attributes in; see [`Sink::take_attr_buf`].
+    spare_attrs: Cell<Vec<Attribute>>,
 }
 
 impl<'a> Sink<'a> {
     pub(crate) fn new(arena: Arena<'a>) -> Self {
         Sink {
             arena,
-            document: arena.alloc(Node::new(NodeData::Document, Tag::NotAnElement)),
+            document: arena
+                .nodes
+                .alloc(Node::new(NodeData::Document, Tag::NotAnElement)),
             last_insert_depth: Cell::new(0),
+            spare_attrs: Cell::new(Vec::new()),
         }
     }
 
@@ -305,9 +328,36 @@ impl<'a> Sink<'a> {
         self.last_insert_depth.get()
     }
 
+    /// html5ever's `Tag` carries attributes as a `Vec`, so every start tag
+    /// with attributes would cost an allocation and, at teardown, a free.
+    /// Instead the vector's contents are moved into the attribute arena when
+    /// the element is created and the empty vector is parked here for the
+    /// tokenizer to pick up for the next tag: one buffer cycles between the
+    /// two for the whole document.
     #[inline]
-    fn new_node(&self, data: NodeData, tag: Tag) -> Ref<'a> {
-        self.arena.alloc(Node::new(data, tag))
+    pub(crate) fn take_attr_buf(&self) -> Vec<Attribute> {
+        self.spare_attrs.take()
+    }
+
+    fn store_attrs(&self, mut attrs: Vec<Attribute>) -> &'a [Attribute] {
+        if attrs.is_empty() {
+            return &[];
+        }
+        let stored: &'a [Attribute] = self.arena.attrs.alloc_extend(attrs.drain(..));
+        // Park the (now empty) buffer unless a roomier one is already there.
+        let parked = self.spare_attrs.take();
+        self.spare_attrs
+            .set(if parked.capacity() > attrs.capacity() {
+                parked
+            } else {
+                attrs
+            });
+        stored
+    }
+
+    #[inline]
+    fn new_node(&self, data: NodeData<'a>, tag: Tag) -> Ref<'a> {
+        self.arena.nodes.alloc(Node::new(data, tag))
     }
 
     fn append_common<P, A>(&self, child: NodeOrText<Ref<'a>>, previous: P, append: A)
@@ -390,13 +440,14 @@ impl<'a> TreeSink for Sink<'a> {
         } else {
             Tag::Other
         };
-        self.arena.alloc(Node {
+        let attrs = self.store_attrs(attrs);
+        self.arena.nodes.alloc(Node {
             mathml_annotation_xml_integration_point: flags.mathml_annotation_xml_integration_point,
             ..Node::new(
                 NodeData::Element {
                     ns: name.ns,
                     local: name.local,
-                    attrs: UnsafeCell::new(attrs),
+                    attrs: Cell::new(attrs),
                 },
                 tag,
             )
@@ -458,15 +509,23 @@ impl<'a> TreeSink for Sink<'a> {
         else {
             panic!("not an element")
         };
-        // SAFETY: called by the tree builder mid-parse; nothing reads
-        // attributes until parsing has finished, and the tree builder holds
-        // no reference into the vector across this call.
-        let existing = unsafe { &mut *existing.get() };
+        // Only reached for a repeated `<html>`/`<body>` tag: rebuild the
+        // list with the additions (the old slice stays in the arena).
+        let current = existing.get();
+        let mut merged: Vec<Attribute> = Vec::new();
         for attr in attrs {
-            if !existing.iter().any(|e| e.name == attr.name) {
-                existing.push(attr);
+            if !current.iter().any(|e| e.name == attr.name)
+                && !merged.iter().any(|e| e.name == attr.name)
+            {
+                merged.push(attr);
             }
         }
+        if merged.is_empty() {
+            return;
+        }
+        let mut all = current.to_vec();
+        all.append(&mut merged);
+        existing.set(self.arena.attrs.alloc_extend(all));
     }
 
     fn remove_from_parent(&self, target: &Ref<'a>) {
@@ -578,7 +637,7 @@ pub(crate) enum Tag {
 }
 
 impl Tag {
-    fn from_local_name(name: &LocalName) -> Tag {
+    pub(crate) fn from_local_name(name: &LocalName) -> Tag {
         // Static atoms compare as packed integers, so this is a jump table
         // rather than string comparisons.
         match *name {

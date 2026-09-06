@@ -1,9 +1,8 @@
 //! String helpers that mirror the JavaScript semantics turndown relies on
 //! (`String.prototype.trim`, `\s`), plus Markdown escaping.
 
-use bun_core::strings;
-
 use super::dom::{NodeData, Ref, next_in_preorder};
+use super::scan;
 
 /// Splits on `\n`. (`str::split` is off-limits in this tree; the SIMD byte
 /// search finds each newline and `\n` is always a char boundary.)
@@ -11,7 +10,7 @@ pub(crate) fn lines(s: &str) -> impl Iterator<Item = &str> {
     let mut rest = Some(s);
     core::iter::from_fn(move || {
         let cur = rest?;
-        match strings::index_of_char_usize(cur.as_bytes(), b'\n') {
+        match scan::find_byte(cur.as_bytes(), b'\n') {
             Some(i) => {
                 rest = Some(&cur[i + 1..]);
                 Some(&cur[..i])
@@ -244,7 +243,7 @@ pub(crate) fn escape_markdown_into(text: &str, at_line_start: bool, out: &mut St
     // them, so most of the text is copied in a handful of large pushes.
     // Everything matched is ASCII, so slicing at it keeps UTF-8 intact.
     let mut run_start = i;
-    while let Some(off) = strings::index_of_any(&bytes[i..], b"\\*`[]_<") {
+    while let Some(off) = scan::find_any(&bytes[i..], b"\\*`[]_<") {
         let at = i + off;
         let esc = match bytes[at] {
             b'_' => {

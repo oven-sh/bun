@@ -7,13 +7,21 @@
 //! past 512 levels; this token filter does the same in front of html5ever's
 //! tree builder: once the tree is [`MAX_TREE_DEPTH`] deep, further
 //! nesting start tags are discarded (their text still lands in the deepest
-//! open element) along with the matching end tags.
+//! open element, block boundaries reduced to spaces) along with the matching
+//! end tags.
 //!
-//! Depth is read from the sink's record of where the last node was inserted,
-//! which can only be stale on the high side (after end tags pop elements
-//! nothing is inserted until the next token). A high reading is confirmed
-//! against the tree builder's real stack before anything is dropped, so
-//! ordinary documents never lose a tag and pay one integer compare per token.
+//! What is actually bounded is the number of nodes the tree builder is
+//! holding — its stack of open elements plus the list of active formatting
+//! elements — since that is what its scans walk. Usually that is the tree
+//! depth, and the sink's record of where the last node was inserted is a
+//! free lower-bound check. But the adoption agency algorithm re-parents
+//! nodes towards the root while leaving them on the stack, so mis-nested
+//! formatting tags (`<a><b><div><a>…`) can grow the stack without the tree
+//! getting deeper; for that an upper-bound estimate of the handle count is
+//! kept as well and checked against a cap of its own. Whenever either
+//! signal fires the real count is taken from the tree builder before
+//! anything is dropped, so ordinary documents never lose a tag and pay two
+//! integer compares per tag.
 
 use core::cell::{Cell, RefCell};
 
@@ -22,11 +30,17 @@ use html5ever::interface::tree_builder::Tracer;
 use html5ever::tokenizer::{TagKind, Token, TokenSink, TokenSinkResult};
 use html5ever::tree_builder::TreeBuilder;
 
-use super::dom::{Ref, Sink};
+use super::dom::{Ref, Sink, Tag};
 
 /// Matches Blink's `kMaximumHTMLParserDOMTreeDepth` / WebKit's
 /// `defaultMaximumHTMLParserDOMTreeDepth`.
 pub const MAX_TREE_DEPTH: u32 = 512;
+
+/// Cap on the tree builder's handle count (open elements + active
+/// formatting elements) for when the tree itself is not deep; see the module
+/// docs. Twice the depth cap, so that plain nesting of formatting elements —
+/// which count once in each list — is still governed by tree depth.
+const MAX_HANDLES: u32 = 2 * MAX_TREE_DEPTH;
 
 /// Distinct tag names tracked for end-tag suppression. Past this, a dropped
 /// start tag's end tag is simply forwarded; the tree builder ignores end
@@ -38,6 +52,14 @@ pub(crate) struct DepthLimiter<'a> {
     /// Start tags dropped so far whose end tags have not been seen:
     /// `(name, outstanding count)`, at most `MAX_TRACKED_NAMES` entries.
     dropped: RefCell<Vec<(LocalName, u32)>>,
+    /// Upper estimate of the tree builder's handle count: the last exact
+    /// count plus two per start tag since (a start tag pushes at most one
+    /// open element and one formatting entry). The one thing that can outrun
+    /// it is reconstruction of formatting elements that were already closed
+    /// at the last count — at most that count again — so a recount is taken
+    /// whenever the estimate reaches half of [`MAX_HANDLES`], which keeps the
+    /// true figure under the cap in between.
+    handles_at_most: Cell<u32>,
 }
 
 impl<'a> DepthLimiter<'a> {
@@ -45,6 +67,7 @@ impl<'a> DepthLimiter<'a> {
         DepthLimiter {
             inner,
             dropped: RefCell::new(Vec::new()),
+            handles_at_most: Cell::new(0),
         }
     }
 
@@ -55,6 +78,23 @@ impl<'a> DepthLimiter<'a> {
         let counter = HandleCounter(Cell::new(0), core::marker::PhantomData);
         self.inner.trace_handles(&counter);
         counter.0.get()
+    }
+}
+
+impl<'a> DepthLimiter<'a> {
+    /// In place of a dropped tag: a space if the tag was block-level, so the
+    /// words on either side of what would have been a block boundary do not
+    /// run together in the flattened text. (Whitespace is insertable in every
+    /// tree-builder mode and collapses like any other later on.)
+    fn separator_for(&self, name: &LocalName, line_number: u64) -> TokenSinkResult<Ref<'a>> {
+        if Tag::from_local_name(name).is_block() {
+            self.inner.process_token(
+                Token::CharacterTokens(html5ever::tendril::StrTendril::from_slice(" ")),
+                line_number,
+            )
+        } else {
+            TokenSinkResult::Continue
+        }
     }
 }
 
@@ -110,6 +150,13 @@ fn always_forward(name: &LocalName) -> bool {
     )
 }
 
+impl super::tokenizer::AttrBuf for DepthLimiter<'_> {
+    #[inline]
+    fn take_attr_buf(&self) -> Vec<html5ever::Attribute> {
+        self.inner.sink.take_attr_buf()
+    }
+}
+
 impl<'a> TokenSink for DepthLimiter<'a> {
     type Handle = Ref<'a>;
 
@@ -118,19 +165,32 @@ impl<'a> TokenSink for DepthLimiter<'a> {
         if let Token::TagToken(tag) = &token {
             match tag.kind {
                 TagKind::StartTag => {
-                    if self.inner.sink.depth_hint() >= MAX_TREE_DEPTH
+                    let tree_deep = self.inner.sink.depth_hint() >= MAX_TREE_DEPTH;
+                    if (tree_deep || self.handles_at_most.get() >= MAX_HANDLES / 2)
                         && !always_forward(&tag.name)
-                        && self.open_handle_count() >= MAX_TREE_DEPTH
                     {
-                        let mut dropped = self.dropped.borrow_mut();
-                        if let Some((_, n)) = dropped.iter_mut().find(|(name, _)| *name == tag.name)
-                        {
-                            *n += 1;
-                        } else if dropped.len() < MAX_TRACKED_NAMES {
-                            dropped.push((tag.name.clone(), 1));
+                        let handles = self.open_handle_count();
+                        self.handles_at_most.set(handles);
+                        let cap = if tree_deep {
+                            MAX_TREE_DEPTH
+                        } else {
+                            MAX_HANDLES
+                        };
+                        if handles >= cap {
+                            {
+                                let mut dropped = self.dropped.borrow_mut();
+                                if let Some((_, n)) =
+                                    dropped.iter_mut().find(|(name, _)| *name == tag.name)
+                                {
+                                    *n += 1;
+                                } else if dropped.len() < MAX_TRACKED_NAMES {
+                                    dropped.push((tag.name.clone(), 1));
+                                }
+                            }
+                            return self.separator_for(&tag.name, line_number);
                         }
-                        return TokenSinkResult::Continue;
                     }
+                    self.handles_at_most.set(self.handles_at_most.get() + 2);
                 }
                 TagKind::EndTag => {
                     let mut dropped = self.dropped.borrow_mut();
@@ -140,7 +200,8 @@ impl<'a> TokenSink for DepthLimiter<'a> {
                             if dropped[i].1 == 0 {
                                 dropped.swap_remove(i);
                             }
-                            return TokenSinkResult::Continue;
+                            drop(dropped);
+                            return self.separator_for(&tag.name, line_number);
                         }
                     }
                 }

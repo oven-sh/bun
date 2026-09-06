@@ -22,6 +22,7 @@
 mod depth;
 mod dom;
 mod emit;
+mod scan;
 mod text;
 mod tokenizer;
 mod whitespace;
@@ -189,7 +190,7 @@ impl Options {
 /// accepts everything. Callers bound `html.len()` by [`MAX_INPUT_LEN`].
 pub fn convert(html: &str, options: &Options) -> String {
     debug_assert!(html.len() <= MAX_INPUT_LEN);
-    let arena = typed_arena::Arena::with_capacity(html.len() / 32);
+    let arena = dom::Arenas::with_capacity(html.len() / 32);
 
     let tree_builder = TreeBuilder::new(
         dom::Sink::new(&arena),

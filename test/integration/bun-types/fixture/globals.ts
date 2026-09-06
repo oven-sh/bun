@@ -233,6 +233,21 @@ const writableStream = new WritableStream();
   a.keys();
   a.values();
   a.toString();
+
+  // https://github.com/oven-sh/bun/issues/27194
+  // FormData values can be a `File`, not only a `string`, and FormData itself
+  // must be directly iterable (matching entries()).
+  for (const [key, value] of a) {
+    key satisfies string;
+    value satisfies string | File;
+  }
+  for (const value of a.values()) {
+    value satisfies string | File;
+  }
+  for (const [key, value] of a.entries()) {
+    key satisfies string;
+    value satisfies string | File;
+  }
 }
 {
   const a = new Headers();

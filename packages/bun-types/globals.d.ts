@@ -1723,9 +1723,13 @@ interface FormData {
   set(name: string, value: string): void;
   set(name: string, blobValue: Blob, filename?: string): void;
   forEach(callbackfn: (value: Bun.FormDataEntryValue, key: string, parent: FormData) => void, thisArg?: any): void;
+  /** Returns a list of keys in the list. */
   keys(): IterableIterator<string>;
-  values(): IterableIterator<string>;
-  entries(): IterableIterator<[string, string]>;
+  /** Returns a list of values in the list. */
+  values(): IterableIterator<Bun.FormDataEntryValue>;
+  /** Returns an array of key, value pairs for every entry in the list. */
+  entries(): IterableIterator<[string, Bun.FormDataEntryValue]>;
+  [Symbol.iterator](): IterableIterator<[string, Bun.FormDataEntryValue]>;
 }
 declare var FormData: Bun.__internal.UseLibDomIfAvailable<"FormData", { prototype: FormData; new (): FormData }>;
 

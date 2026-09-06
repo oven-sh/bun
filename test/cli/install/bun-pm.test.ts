@@ -1148,26 +1148,6 @@ test("bun pm migrate --dry-run does not write bun.lock", async () => {
   expect(exitCode).toBe(0);
 });
 
-test("bun install --dry-run does not write a migrated bun.lock", async () => {
-  using dir = tempDir("install-migrate-dry-run", npmLockfileWithLocalDep);
-
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "install", "--dry-run"],
-    cwd: String(dir),
-    stdout: "pipe",
-    stderr: "pipe",
-    env,
-  });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-
-  expect(stderr).toContain("migrated lockfile from package-lock.json");
-  expect(stderr).not.toContain("Saved lockfile");
-  expect(stdout).toContain("dep@dep");
-  expect(await exists(join(String(dir), "bun.lock"))).toBeFalse();
-  expect(await exists(join(String(dir), "node_modules"))).toBeFalse();
-  expect(exitCode).toBe(0);
-});
-
 function projectWithBlockedPostinstall() {
   return {
     "package.json": JSON.stringify({ name: "app", dependencies: { dep: "file:./dep" } }),

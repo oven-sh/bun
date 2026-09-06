@@ -1012,7 +1012,7 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
       const result = await runOn(bunExe(), "test_napi_run_script_exception_value", ["1+"]);
       expect(result).toContain("run status=9 pending=1");
       expect(result).toContain("typeof status=0 type=6 is_error=1");
-      expect(result).toContain("synchronously threw Error: message \"SyntaxError:");
+      expect(result).toContain('synchronously threw Error: message "SyntaxError:');
     });
     it("hands a thrown primitive to napi_get_and_clear_last_exception", async () => {
       const result = await checkSameOutput("test_napi_run_script_exception_value", ["throw 42"]);

@@ -1660,6 +1660,45 @@ describe("node v26 stream semantics", () => {
     expect(log).toEqual(["data:ok", "data:boom", "error:tail-boom"]);
   });
 
+  // Upstream: nodejs/node#63699. With a web stream tail, compose runs one
+  // reader loop per _read() call. When the loop that sees done runs while the
+  // composed buffer is over the high water mark, push(value) reports
+  // backpressure. The done check has to come first or push(null) never runs.
+  it("compose with a web stream tail ends when done arrives under backpressure", async () => {
+    const waitFor = async condition => {
+      for (let i = 0; i < 200 && !condition(); i++) {
+        await new Promise(resolve => setImmediate(resolve));
+      }
+      return condition();
+    };
+    const src = new Readable({ read() {} });
+    const composed = compose(src, new TransformStream());
+    let ended = false;
+    composed.on("end", () => (ended = true));
+    const big = Buffer.alloc(40000, "a");
+
+    // The first reader loop starts.
+    composed.read(0);
+    src.push(big);
+    expect(await waitFor(() => composed.readableLength === big.length)).toBe(true);
+    // readableLength - 1 is below the high water mark, so a second loop starts.
+    composed.read(1);
+    // The first loop receives this chunk. push() returns false: over the high water mark.
+    src.push(big);
+    expect(await waitFor(() => composed.readableLength === big.length * 2 - 1)).toBe(true);
+    // The second loop receives done while the buffer is still full. The fix
+    // pushes null here. Without it nothing observable changes, so this wait
+    // runs to its bound and the drain below never sees 'end'.
+    src.push(null);
+    await waitFor(() => composed._readableState.ended);
+
+    let total = 1;
+    let chunk;
+    while ((chunk = composed.read()) !== null) total += chunk.length;
+    expect(total).toBe(big.length * 2);
+    expect(await waitFor(() => ended)).toBe(true);
+  });
+
   // Upstream: v26 test-stream-writable-decoded-encoding.js.
   it("write(string, 'buffer') throws ERR_UNKNOWN_ENCODING", () => {
     for (const opts of [{ decodeStrings: false }, {}]) {

@@ -511,18 +511,20 @@ it("ignores [install] globalDir and globalBinDir from a project bunfig.toml", as
     env: linkEnv,
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect(stderr).toContain('"globalBinDir" is ignored in a project bunfig.toml');
-  expect(stderr).toContain('"globalDir" is ignored in a project bunfig.toml');
   expect(stdout).toContain('Success! Registered "hostile-lib"');
-  expect(exitCode).toBe(0);
 
-  // The file the "bin" map named is untouched, and no new name appeared.
+  // Nothing outside the project is created, replaced or deleted.
+  expect(await readdirSorted(join(String(dir), "outside"))).toEqual(["victim-file"]);
   expect(readFileSync(join(String(dir), "outside", "victim-file"), "utf8")).toBe("do not touch\n");
   expect(lstatSync(join(String(dir), "outside", "victim-file")).isSymbolicLink()).toBe(false);
-  expect(await readdirSorted(join(String(dir), "outside"))).toEqual(["victim-file"]);
 
   // The bins go to $BUN_INSTALL/bin, which is where they belong.
   expect(await readdirSorted(join(bunInstall, "bin"))).toHaveBins(["new-name", "victim-file"]);
+
+  // Bun says which keys it ignored.
+  expect(stderr).toContain('"globalBinDir" is ignored in a project bunfig.toml');
+  expect(stderr).toContain('"globalDir" is ignored in a project bunfig.toml');
+  expect(exitCode).toBe(0);
 });
 
 it("honors [install] globalDir and globalBinDir from the user bunfig", async () => {

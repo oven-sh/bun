@@ -151,4 +151,32 @@ describe("tls.createSecureContext pfx argument", () => {
     expect(called instanceof tls.SecureContext).toBe(true);
     expect(typeof called.context.addCACert).toBe("function");
   });
+
+  // Giving the builtin SecureContext function its prototype must mark only that
+  // prototype object, not the shared structure every empty `{}` starts from.
+  // When it leaked, debug builds hit `ASSERTION FAILED: !newStructure->mayBePrototype()`
+  // in JSON.parse once node:tls had loaded.
+  it("loading node:tls leaves plain object structures alone", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          require("node:tls");
+          const warm = new Object();
+          warm.zz1 = 1;
+          let parsed;
+          for (let i = 0; i < 3; i++) parsed = JSON.parse('{"zz1":1}');
+          console.log(JSON.stringify(parsed));
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout).toBe('{"zz1":1}\n');
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+  });
 });

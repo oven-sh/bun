@@ -169,6 +169,8 @@ await fetch("https://example.com", {
 
 The lines with `[fetch] >` are the request from your local code, and the lines with `[fetch] <` are the response from the remote server.
 
+Credentials are not logged. The values of the `Authorization`, `Proxy-Authorization`, `Cookie`, `Set-Cookie` and `x-amz-security-token` headers print as `[redacted]` (an auth scheme such as `Bearer` is kept), and a password in the URL is masked with `*`. This applies to the `curl` command as well, so add the credentials back before you run it. The request body is printed in full.
+
 To print without the `curl` command, set `BUN_CONFIG_VERBOSE_FETCH` to `true`.
 
 ```ts index.ts icon="/icons/typescript.svg"

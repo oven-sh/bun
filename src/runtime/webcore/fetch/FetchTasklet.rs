@@ -1904,14 +1904,11 @@ impl FetchTasklet {
         // ...` on the JS thread cannot invalidate them mid-request.
         let proxy_settings: Option<Box<http::ProxySettings>> =
             if let Some(proxy_opt) = &fetch_options.proxy {
-                if !proxy_opt.is_empty() {
-                    http::ProxySettings::from_explicit(proxy_opt.href, env)
-                } else {
-                    // proxy: "" means explicitly no proxy (direct connection)
-                    None
-                }
-            } else {
+                http::ProxySettings::from_explicit(proxy_opt.href, env)
+            } else if fetch_options.use_env_proxy {
                 http::ProxySettings::from_env(env)
+            } else {
+                None
             };
         // Hop-0 proxy borrows the boxed `ProxySettings` heap storage, which is
         // moved into `AsyncHTTP::init` below and lives on `client` for the
@@ -2589,6 +2586,8 @@ pub struct FetchOptions {
     pub(crate) verbose: http::HTTPVerboseLevel,
     pub(crate) redirect_type: FetchRedirect,
     pub(crate) proxy: Option<ZigURL<'static>>,
+    /// With no `proxy`, resolve one from http_proxy / https_proxy. False for `proxy: null` / `""`.
+    pub(crate) use_env_proxy: bool,
     pub(crate) proxy_headers: Option<Headers>,
     pub(crate) url_proxy_buffer: Box<[u8]>,
     pub(crate) signal: Option<AbortSignalRef>,

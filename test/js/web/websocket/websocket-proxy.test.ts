@@ -821,12 +821,14 @@ describe.concurrent("WebSocket proxy from the environment", () => {
     ["https_proxy proxies wss://", () => `wss://127.0.0.1:${wssPort}`, "https_proxy", "proxied"],
     ["HTTPS_PROXY does not apply to ws://", () => `ws://127.0.0.1:${wsPort}`, "HTTPS_PROXY", "direct"],
     ["HTTP_PROXY does not apply to wss://", () => `wss://127.0.0.1:${wssPort}`, "HTTP_PROXY", "direct"],
-  ] as const)("%s", async (_, url, variable, outcome) => {
+    // fetch() dials a schemeless value as an http:// proxy, so WebSocket does too.
+    ["HTTP_PROXY without a scheme proxies ws://", () => `ws://127.0.0.1:${wsPort}`, "HTTP_PROXY", "proxied", ""],
+  ] as const)("%s", async (_, url, variable, outcome, scheme = "http://") => {
     using recorded = await startRecordingProxy();
     const target = url();
     const targetPort = Number(new URL(target).port);
     const result = await run(target, `{ tls: { rejectUnauthorized: false } }`, {
-      [variable]: `http://127.0.0.1:${recorded.port}`,
+      [variable]: `${scheme}127.0.0.1:${recorded.port}`,
     });
     expect({ ...result, requests: recorded.requests }).toEqual({
       stdout: connected,
@@ -878,10 +880,11 @@ describe.concurrent("WebSocket proxy from the environment", () => {
     });
   });
 
-  test("an unsupported env proxy scheme throws like the proxy option does", async () => {
+  test("an unsupported env proxy scheme fails the connection with an error event", async () => {
     const result = await run(`ws://127.0.0.1:${wsPort}`, "{}", { HTTP_PROXY: "socks5://127.0.0.1:1" });
+    const message = `WebSocket connection to 'ws://127.0.0.1:${wsPort}/' failed: Unsupported proxy protocol "socks5" (expected "http" or "https")`;
     expect(result).toEqual({
-      stdout: `throw: Unsupported proxy protocol "socks5" (expected "http" or "https")\n`,
+      stdout: `error: ${message}\nclose: 1006 ${JSON.stringify(message)}\n`,
       stderr: "",
       exitCode: 0,
     });

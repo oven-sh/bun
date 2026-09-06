@@ -412,6 +412,8 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
     }
 
     let mut proxy: Option<ZigURL> = None;
+    // false for `proxy: null` / `proxy: ""`: connect directly, ignore http_proxy / https_proxy.
+    let mut use_env_proxy = true;
     let mut redirect_type: FetchRedirect = FetchRedirect::Follow;
     let signal: Option<AbortSignalRef>;
     let mut range: Option<bun_core::ZBox> = None;
@@ -864,13 +866,10 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                     // branch below would silently ignore it. Treat it as its href here.
                     let is_url_instance =
                         bun_jsc::DOMURL::cast_(proxy_arg, global_this.vm()).is_some();
-                    // proxy: null or proxy: "" opts out of the http_proxy /
-                    // https_proxy env lookup. `FetchTasklet` turns the empty
-                    // href into a direct connection.
                     if proxy_arg.is_null()
                         || (proxy_arg.is_string() && proxy_arg.get_length(ctx)? == 0)
                     {
-                        proxy = Some(ZigURL::parse(b""));
+                        use_env_proxy = false;
                         break 'extract_proxy url_proxy_buffer;
                     }
                     // Handle string format: proxy: "http://proxy.example.com:8080"
@@ -1217,7 +1216,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
         break 'extract_headers result;
     };
 
-    if proxy.as_ref().is_some_and(|p| !p.is_empty()) && !unix_socket_path.is_empty() {
+    if proxy.is_some() && !unix_socket_path.is_empty() {
         let err = ctx.to_type_error(
             jsc::ErrorCode::INVALID_ARG_VALUE,
             format_args!("fetch() cannot use a proxy with a unix socket."),
@@ -1519,10 +1518,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
             // An explicit `compress` request always wins over the sendfile
             // heuristic — otherwise the same `Bun.file()` body would compress
             // over https/proxy/<32 KiB/Windows but silently not over plain http.
-            if !proxy.as_ref().is_some_and(|p| !p.is_empty())
-                && compress.is_none()
-                && http::SendFile::is_eligible(&url)
-            {
+            if proxy.is_none() && compress.is_none() && http::SendFile::is_eligible(&url) {
                 'use_sendfile: {
                     let stat: bun_sys::Stat = match bun_sys::fstat(opened_fd) {
                         Ok(result) => result,
@@ -1721,7 +1717,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
             let s3_path = url_static.s3_path();
 
             // Proxy href (if any) lives in the same buffer, immediately after `url`.
-            let proxy_url: Option<&[u8]> = if proxy.as_ref().is_some_and(|p| !p.is_empty()) {
+            let proxy_url: Option<&[u8]> = if proxy.is_some() {
                 // SAFETY: see `url_static` SAFETY note above.
                 Some(unsafe { bun_ptr::detach_lifetime(&owned_buffer[url_len..]) })
             } else {
@@ -1878,6 +1874,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
         redirect_type,
         verbose,
         proxy: proxy_static,
+        use_env_proxy,
         proxy_headers: proxy_headers.take(),
         url_proxy_buffer: url_proxy_boxed,
         signal,

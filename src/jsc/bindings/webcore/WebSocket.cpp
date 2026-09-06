@@ -305,7 +305,7 @@ ExceptionOr<Ref<WebSocket>> WebSocket::create(ScriptExecutionContext& context, c
     return socket;
 }
 
-ExceptionOr<Ref<WebSocket>> WebSocket::create(ScriptExecutionContext& context, const String& url, const Vector<String>& protocols, std::optional<FetchHeaders::Init>&& headers, const String& proxyUrl, std::optional<FetchHeaders::Init>&& proxyHeaders, WebSocketSSLConfigPtr&& sslConfig, bool offerPerMessageDeflate)
+ExceptionOr<Ref<WebSocket>> WebSocket::create(ScriptExecutionContext& context, const String& url, const Vector<String>& protocols, std::optional<FetchHeaders::Init>&& headers, const String& proxyUrl, std::optional<FetchHeaders::Init>&& proxyHeaders, WebSocketSSLConfigPtr&& sslConfig, bool offerPerMessageDeflate, bool useEnvProxy)
 {
     if (url.isNull())
         return Exception { SyntaxError };
@@ -322,16 +322,14 @@ ExceptionOr<Ref<WebSocket>> WebSocket::create(ScriptExecutionContext& context, c
     socket->m_sslConfig = WTF::move(sslConfig); // Set BEFORE connect() so it's available during connection
     socket->setOfferPerMessageDeflate(offerPerMessageDeflate);
 
-    // A null proxyUrl means the constructor got no `proxy` key. An empty
-    // (non-null) one means `proxy: null` / `proxy: ""`: force a direct connection.
-    auto result = socket->connect(url, protocols, WTF::move(headers), proxyConfigResult.releaseReturnValue(), proxyUrl.isNull());
+    auto result = socket->connect(url, protocols, WTF::move(headers), proxyConfigResult.releaseReturnValue(), useEnvProxy);
     if (result.hasException())
         return result.releaseException();
 
     return socket;
 }
 
-ExceptionOr<Ref<WebSocket>> WebSocket::create(ScriptExecutionContext& context, const String& url, const Vector<String>& protocols, std::optional<FetchHeaders::Init>&& headers, bool rejectUnauthorized, const String& proxyUrl, std::optional<FetchHeaders::Init>&& proxyHeaders, WebSocketSSLConfigPtr&& sslConfig, bool offerPerMessageDeflate)
+ExceptionOr<Ref<WebSocket>> WebSocket::create(ScriptExecutionContext& context, const String& url, const Vector<String>& protocols, std::optional<FetchHeaders::Init>&& headers, bool rejectUnauthorized, const String& proxyUrl, std::optional<FetchHeaders::Init>&& proxyHeaders, WebSocketSSLConfigPtr&& sslConfig, bool offerPerMessageDeflate, bool useEnvProxy)
 {
     if (url.isNull())
         return Exception { SyntaxError };
@@ -349,9 +347,7 @@ ExceptionOr<Ref<WebSocket>> WebSocket::create(ScriptExecutionContext& context, c
     socket->m_sslConfig = WTF::move(sslConfig); // Set BEFORE connect() so it's available during connection
     socket->setOfferPerMessageDeflate(offerPerMessageDeflate);
 
-    // A null proxyUrl means the constructor got no `proxy` key. An empty
-    // (non-null) one means `proxy: null` / `proxy: ""`: force a direct connection.
-    auto result = socket->connect(url, protocols, WTF::move(headers), proxyConfigResult.releaseReturnValue(), proxyUrl.isNull());
+    auto result = socket->connect(url, protocols, WTF::move(headers), proxyConfigResult.releaseReturnValue(), useEnvProxy);
     if (result.hasException())
         return result.releaseException();
 
@@ -570,14 +566,14 @@ __attribute__((minsize)) ExceptionOr<void> WebSocket::connect(const String& url,
                 hasProxy = false;
             }
         } else if (useEnvProxy) {
-            // No `proxy` option: use the proxy fetch() would pick from
-            // http_proxy / https_proxy (NO_PROXY already applied).
+            // NO_PROXY is already applied to the result.
             String envProxyUrl = Bun__getEnvHttpProxy(!is_secure, hostUtf8.data(), hostUtf8.length(), hostWithPortUtf8.data(), hostWithPortUtf8.length()).transferToWTFString();
             if (!envProxyUrl.isEmpty()) {
                 auto envProxyConfig = setupProxy(envProxyUrl, std::nullopt);
                 if (envProxyConfig.hasException()) {
-                    m_state = CLOSED;
-                    return envProxyConfig.releaseException();
+                    // A bad env value is not the caller's bug, so it does not throw.
+                    dispatchConnectFailure(envProxyConfig.releaseException().releaseMessage());
+                    return {};
                 }
                 proxyConfig = envProxyConfig.releaseReturnValue();
                 hasProxy = proxyConfig.has_value();
@@ -667,15 +663,7 @@ __attribute__((minsize)) ExceptionOr<void> WebSocket::connect(const String& url,
     headerNames.clear();
 
     if (this->m_upgradeClient == nullptr) {
-        m_state = CLOSED;
-        if (scriptExecutionContext()) {
-            queueTaskKeepingObjectAlive(*this, TaskSource::WebSocket, [](WebSocket& ws) {
-                auto eventInit = createErrorEventInit(ws, "Failed to connect"_s, ws.scriptExecutionContext()->jsGlobalObject());
-                auto message = eventInit.message;
-                ws.dispatchEvent(ErrorEvent::create(eventNames().errorEvent, WTF::move(eventInit), EventIsTrusted::Yes));
-                ws.dispatchEvent(CloseEvent::create(false, 1006, WTF::move(message)));
-            });
-        }
+        dispatchConnectFailure("Failed to connect"_s);
         // create() still holds a Ref, so releasing connect()'s claim here cannot destroy `this`.
         m_pendingActivity = nullptr;
         return {};
@@ -683,6 +671,19 @@ __attribute__((minsize)) ExceptionOr<void> WebSocket::connect(const String& url,
 
     m_state = CONNECTING;
     return {};
+}
+
+void WebSocket::dispatchConnectFailure(String&& reason)
+{
+    m_state = CLOSED;
+    if (!scriptExecutionContext())
+        return;
+    queueTaskKeepingObjectAlive(*this, TaskSource::WebSocket, [reason = WTF::move(reason)](WebSocket& ws) {
+        auto eventInit = createErrorEventInit(ws, reason, ws.scriptExecutionContext()->jsGlobalObject());
+        auto message = eventInit.message;
+        ws.dispatchEvent(ErrorEvent::create(eventNames().errorEvent, WTF::move(eventInit), EventIsTrusted::Yes));
+        ws.dispatchEvent(CloseEvent::create(false, 1006, WTF::move(message)));
+    });
 }
 
 ExceptionOr<void> WebSocket::send(const String& message)

@@ -226,8 +226,9 @@ static inline JSC::EncodedJSValue constructJSWebSocket3(JSGlobalObject* lexicalG
     // ws.WebSocket passes `perMessageDeflate: false` to opt out.
     bool offerPerMessageDeflate = true;
 
-    // Proxy options
+    // Proxy options. Without a `proxy` key the proxy comes from http_proxy / https_proxy.
     String proxyUrl;
+    bool useEnvProxy = true;
     auto proxyHeadersInit = std::optional<Converter<IDLUnion<IDLSequence<IDLSequence<IDLByteString>>, IDLRecord<IDLByteString, IDLByteString>>>::ReturnType>();
 
     if (JSC::JSObject* options = optionsObjectValue.getObject()) {
@@ -286,25 +287,23 @@ static inline JSC::EncodedJSValue constructJSWebSocket3(JSGlobalObject* lexicalG
             offerPerMessageDeflate = false;
         }
 
-        // Parse proxy option - can be string or { url, headers }
-        // proxyUrl stays null when the key is absent or undefined (the env
-        // proxy applies). `null` and "" make it empty but non-null: direct.
+        // Parse proxy option - can be string or { url, headers }. null and "" connect directly.
         auto proxyValue = Bun::getOwnPropertyIfExists(globalObject, options, PropertyName(Identifier::fromString(vm, "proxy"_s)));
         RETURN_IF_EXCEPTION(throwScope, {});
         if (proxyValue) {
             if (proxyValue.isNull()) {
-                proxyUrl = emptyString();
+                useEnvProxy = false;
             } else if (!proxyValue.isUndefined()) {
                 if (proxyValue.isString()) {
                     // proxy: "http://proxy:8080"
                     proxyUrl = convert<IDLUSVString>(*lexicalGlobalObject, proxyValue);
                     RETURN_IF_EXCEPTION(throwScope, {});
-                    if (proxyUrl.isNull())
-                        proxyUrl = emptyString();
+                    useEnvProxy = false;
                 } else if (auto* domUrl = dynamicDowncast<JSDOMURL>(proxyValue)) {
                     // proxy: new URL("http://proxy:8080") — URL has no `.url` own
                     // property, so the object branch below would silently drop it.
                     proxyUrl = domUrl->wrapped().href().string();
+                    useEnvProxy = false;
                 } else if (proxyValue.isObject()) {
                     // proxy: { url: "http://proxy:8080", headers: {...} }
                     JSC::JSObject* proxyOptions = proxyValue.getObject();
@@ -313,6 +312,7 @@ static inline JSC::EncodedJSValue constructJSWebSocket3(JSGlobalObject* lexicalG
                     if (proxyUrlValue && !proxyUrlValue.isUndefinedOrNull()) {
                         proxyUrl = convert<IDLUSVString>(*lexicalGlobalObject, proxyUrlValue);
                         RETURN_IF_EXCEPTION(throwScope, {});
+                        useEnvProxy = false;
                     }
 
                     auto proxyHeadersValue = Bun::getOwnPropertyIfExists(globalObject, proxyOptions, builtinnames.headersPublicName());
@@ -340,8 +340,8 @@ static inline JSC::EncodedJSValue constructJSWebSocket3(JSGlobalObject* lexicalG
     }
 
     auto object = (rejectUnauthorized == -1)
-        ? WebSocket::create(*context, WTF::move(url), protocols, WTF::move(headersInit), WTF::move(proxyUrl), WTF::move(proxyHeadersInit), WTF::move(sslConfig), offerPerMessageDeflate)
-        : WebSocket::create(*context, WTF::move(url), protocols, WTF::move(headersInit), rejectUnauthorized ? true : false, WTF::move(proxyUrl), WTF::move(proxyHeadersInit), WTF::move(sslConfig), offerPerMessageDeflate);
+        ? WebSocket::create(*context, WTF::move(url), protocols, WTF::move(headersInit), WTF::move(proxyUrl), WTF::move(proxyHeadersInit), WTF::move(sslConfig), offerPerMessageDeflate, useEnvProxy)
+        : WebSocket::create(*context, WTF::move(url), protocols, WTF::move(headersInit), rejectUnauthorized ? true : false, WTF::move(proxyUrl), WTF::move(proxyHeadersInit), WTF::move(sslConfig), offerPerMessageDeflate, useEnvProxy);
 
     if constexpr (IsExceptionOr<decltype(object)>)
         RETURN_IF_EXCEPTION(throwScope, {});

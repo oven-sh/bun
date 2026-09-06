@@ -239,13 +239,10 @@ pub unsafe fn is_no_proxy(
 }
 
 // HOST_EXPORT(Bun__getEnvHttpProxy, c)
-/// The proxy `fetch()` would pick for a target from `http_proxy` /
-/// `https_proxy` (NO_PROXY applied), or an empty string for a direct
-/// connection. `is_http` selects `http_proxy`, otherwise `https_proxy`.
+/// The `http_proxy` (`is_http`) or `https_proxy` href `fetch()` would use for this host, or empty for direct.
 ///
 /// # Safety
-/// `hostname_ptr[..hostname_len]` and `host_ptr[..host_len]` must each be valid
-/// for reads for the duration of the call (or the corresponding len must be 0).
+/// Same contract as [`is_no_proxy`].
 pub unsafe fn get_env_http_proxy(
     is_http: bool,
     hostname_ptr: *const u8,
@@ -268,6 +265,10 @@ pub unsafe fn get_env_http_proxy(
         None
     };
     match vm.env_loader().get_http_proxy(is_http, hostname, host) {
+        // `HTTPThread::dial` treats a schemeless value (`proxy:3128`) as http (#11343).
+        Some(url) if url.protocol.is_empty() => {
+            BunString::clone_utf8(&[b"http://".as_slice(), url.href].concat())
+        }
         Some(url) => BunString::clone_utf8(url.href),
         None => BunString::EMPTY,
     }

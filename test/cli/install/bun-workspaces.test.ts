@@ -2885,7 +2885,8 @@ test.concurrent("a copyfile install over a workspace's hardlinked files does not
 });
 
 for (const linker of ["hoisted", "isolated"]) {
-  test.skipIf(isWindows)(`workspace globs match a symlinked member directory (${linker})`, async () => {
+  // symlinkSync to a directory needs Developer Mode or elevation on Windows.
+  test.concurrent.skipIf(isWindows)(`workspace globs match a symlinked member directory (${linker})`, async () => {
     using ctx = await setupTest();
     const { packageDir, env } = ctx;
     await Promise.all([

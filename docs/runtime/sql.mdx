@@ -483,6 +483,8 @@ await query;
 
 You can configure `sql` connection parameters with environment variables. The client checks them in order of precedence and detects the database type from the connection string format.
 
+The connection URL variables (`DATABASE_URL`, `POSTGRES_URL`, `MYSQL_URL`, `SQLITE_URL` and the `TLS_*` variants) are a fallback for when nothing names a target. A connection string, or an options object with `url`, `filename`, `hostname` or `host`, is used as given and these variables are not consulted.
+
 ### Automatic Database Detection
 
 When you use `Bun.sql()` without arguments, or `new SQL()` with a connection string, Bun detects the adapter from the URL format:

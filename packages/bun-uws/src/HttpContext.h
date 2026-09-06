@@ -945,6 +945,18 @@ private:
         // Node.js by default closes the connection but they emit the timeout event before that
         HttpResponseData<SSL> *httpResponseData = reinterpret_cast<HttpResponseData<SSL> *>(asyncSocket->getAsyncSocketData());
 
+        /* The timer was armed with outgoing bytes pending (see
+         * HttpResponse::resetTimeout). A peer that took some of them since is
+         * a slow reader, not an idle one: give it another period. */
+        if (httpResponseData->state & HttpResponseData<SSL>::HTTP_SEND_PROGRESS_MARKED) {
+            uint64_t mark;
+            if (us_socket_send_progress_mark(s, &mark) == 0 && mark != httpResponseData->sendProgressMark) {
+                httpResponseData->sendProgressMark = mark;
+                asyncSocket->timeout(httpResponseData->idleTimeout);
+                return s;
+            }
+        }
+
         if (httpResponseData->onTimeout) {
             httpResponseData->onTimeout((HttpResponse<SSL> *)s, httpResponseData->userData);
         }

@@ -1513,15 +1513,21 @@ size_t uws_req_get_header(uws_req_t *res, const char *lower_case_header,
 
   void uws_res_uncork(int ssl, uws_res_r res)
   {
+    /* A short write here leaves bytes pending on a timer that was armed
+     * before them; re-arm so the timer knows (HttpResponse::resetTimeout). */
     if (ssl)
     {
       uWS::HttpResponse<true> *uwsRes = (uWS::HttpResponse<true> *)res;
-      uwsRes->uncork();
+      if (uwsRes->uncork().second && !us_socket_is_closed((struct us_socket_t *)res)) {
+        uwsRes->resetTimeout();
+      }
     }
     else
     {
       uWS::HttpResponse<false> *uwsRes = (uWS::HttpResponse<false> *)res;
-      uwsRes->uncork();
+      if (uwsRes->uncork().second && !us_socket_is_closed((struct us_socket_t *)res)) {
+        uwsRes->resetTimeout();
+      }
     }
   }
 

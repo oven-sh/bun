@@ -3123,6 +3123,82 @@ it.concurrent(
   20_000,
 );
 
+// A client that reads steadily but slower than the kernel send buffer drains
+// gets no writable event on the server for longer than idleTimeout, so the
+// server used to abort the request and close the socket mid-body. The client
+// here reads one chunk, pauses, and resumes after a fixed delay: the pacing is
+// the condition under test, not a wait for one. The timer has a 4 second
+// granularity, so the idle period is 8 to 12 seconds and the client reads at
+// least once in every period.
+describe.concurrent("idleTimeout keeps a slow reader alive", () => {
+  const TOTAL = 16 << 20;
+  const PACED_MS = 16_000;
+  const PAUSE_MS = 5_000;
+  for (const kind of ["bytes", "stream"] as const) {
+    it(kind, async () => {
+      let aborted = false;
+      using server = Bun.serve({
+        hostname: "127.0.0.1",
+        port: 0,
+        idleTimeout: 10,
+        fetch(req) {
+          req.signal.addEventListener("abort", () => (aborted = true));
+          if (kind === "bytes") return new Response(new Uint8Array(TOTAL));
+          const chunk = new Uint8Array(16 * 1024);
+          let sent = 0;
+          return new Response(
+            new ReadableStream({
+              pull(c) {
+                if (sent >= TOTAL) return c.close();
+                c.enqueue(chunk);
+                sent += chunk.byteLength;
+              },
+            }),
+          );
+        },
+      });
+
+      const { promise, resolve } = Promise.withResolvers<void>();
+      let head = Buffer.alloc(0);
+      let headerDone = false;
+      let contentLength = -1;
+      let body = 0;
+      let tail = Buffer.alloc(0);
+      const start = performance.now();
+      const sock = net.connect(server.port, "127.0.0.1", () => {
+        sock.write("GET / HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n");
+      });
+      sock.on("data", (d: Buffer) => {
+        if (!headerDone) {
+          head = Buffer.concat([head, d]);
+          const i = head.indexOf("\r\n\r\n");
+          if (i < 0) return;
+          headerDone = true;
+          const m = /content-length: (\d+)/i.exec(head.subarray(0, i).toString());
+          if (m) contentLength = Number(m[1]);
+          d = head.subarray(i + 4);
+        }
+        body += d.length;
+        tail = Buffer.concat([tail, d]).subarray(-8);
+        if (performance.now() - start < PACED_MS) {
+          sock.pause();
+          setTimeout(() => sock.resume(), PAUSE_MS);
+        }
+      });
+      sock.on("error", () => resolve());
+      sock.on("close", () => resolve());
+      await promise;
+
+      expect(aborted).toBe(false);
+      if (kind === "bytes") {
+        expect(body).toBe(contentLength);
+      } else {
+        expect(tail.toString()).toEndWith("0\r\n\r\n");
+      }
+    }, 30_000);
+  }
+});
+
 it.concurrent("allow requestIP after async operation", async () => {
   using server = Bun.serve({
     port: 0,

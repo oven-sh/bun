@@ -190,6 +190,10 @@ int bsd_socket_get_tos(LIBUS_SOCKET_DESCRIPTOR fd);
  * resulting value to *out; on failure returns the setsockopt/getsockopt result
  * with the error left in errno (WSAGetLastError on Windows). */
 int bsd_socket_buffer_size(LIBUS_SOCKET_DESCRIPTOR fd, int is_recv, int size, int *out);
+/* See us_socket_send_progress_mark. Linux: SIOCOUTQ, macOS: SO_NWRITE (both the
+ * unsent queue), Windows: SIO_TCP_INFO BytesOut (cumulative). Returns 0 and
+ * writes the mark, or -1 when the platform or socket kind cannot answer. */
+int bsd_socket_send_progress_mark(LIBUS_SOCKET_DESCRIPTOR fd, uint64_t *mark);
 int bsd_prepare_adopted_udp_socket(LIBUS_SOCKET_DESCRIPTOR fd);
 int bsd_set_reuseaddr(LIBUS_SOCKET_DESCRIPTOR fd);
 int bsd_bind_udp_fd(LIBUS_SOCKET_DESCRIPTOR fd, const struct sockaddr *addr, int addrlen, int flags);

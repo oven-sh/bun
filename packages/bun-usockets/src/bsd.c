@@ -56,6 +56,10 @@ static void init_debug_logging() {
 #include <unistd.h>
 #include <fcntl.h>
 #include <errno.h>
+#include <sys/ioctl.h>
+#ifdef __linux__
+#include <linux/sockios.h>
+#endif
 #else /* _WIN32 */
 #include <mstcpip.h>
 #endif
@@ -678,6 +682,50 @@ int bsd_socket_buffer_size(LIBUS_SOCKET_DESCRIPTOR fd, int is_recv, int size, in
     }
     *out = value;
     return 0;
+}
+
+int bsd_socket_send_progress_mark(LIBUS_SOCKET_DESCRIPTOR fd, uint64_t *mark) {
+#if defined(_WIN32)
+    /* Winsock has no unsent-queue query; the cumulative sent-bytes counter
+     * moves whenever the kernel delivers more to the peer. */
+    TCP_INFO_v0 info;
+    DWORD version = 0, bytes = 0;
+    memset(&info, 0, sizeof(info));
+    if (WSAIoctl(fd, SIO_TCP_INFO, &version, sizeof(version), &info, sizeof(info), &bytes, NULL, NULL) != 0) {
+        return -1;
+    }
+    *mark = info.BytesOut;
+    return 0;
+#elif defined(__APPLE__)
+    int queued = 0;
+    socklen_t len = sizeof(queued);
+    if (getsockopt(fd, SOL_SOCKET, SO_NWRITE, &queued, &len) != 0) {
+        return -1;
+    }
+    *mark = (uint64_t) queued;
+    return 0;
+#elif defined(SIOCOUTQ)
+    int queued = 0;
+    /* TCP: bytes not yet sent. Bytes in flight at the time of a mark are
+     * acked soon after, and counting them would read as progress once on a
+     * peer that then stalls. Unix sockets only answer SIOCOUTQ (bytes the
+     * peer has not read). */
+#ifdef SIOCOUTQNSD
+    if (ioctl(fd, SIOCOUTQNSD, &queued) == 0) {
+        *mark = (uint64_t) queued;
+        return 0;
+    }
+#endif
+    if (ioctl(fd, SIOCOUTQ, &queued) != 0) {
+        return -1;
+    }
+    *mark = (uint64_t) queued;
+    return 0;
+#else
+    (void) fd;
+    (void) mark;
+    return -1;
+#endif
 }
 
 void bsd_socket_flush(LIBUS_SOCKET_DESCRIPTOR fd) {

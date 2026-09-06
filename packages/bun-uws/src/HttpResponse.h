@@ -54,15 +54,28 @@ public:
     }
 
     void setTimeout(uint8_t seconds) {
-        auto* data = getHttpResponseData();
-        data->idleTimeout = seconds;
-        Super::timeout(data->idleTimeout);
+        getHttpResponseData()->idleTimeout = seconds;
+        resetTimeout();
     }
 
     void resetTimeout() {
         auto* data = getHttpResponseData();
-
         Super::timeout(data->idleTimeout);
+
+        /* Outgoing bytes the peer has not taken yet (the kernel refused part of
+         * the last write, or uWS holds a remainder) drain at the peer's pace,
+         * with no write on our side to re-arm the timer and a writable event
+         * only once a good part of the kernel send buffer is free. Remember how
+         * far the kernel got, so that HttpContext::onTimeout can tell a slow
+         * reader from a stalled one. */
+        uint64_t mark;
+        if ((Super::getBufferedAmount() > 0 || us_socket_is_awaiting_writable((us_socket_t *) this))
+            && us_socket_send_progress_mark((us_socket_t *) this, &mark) == 0) {
+            data->sendProgressMark = mark;
+            data->state |= HttpResponseData<SSL>::HTTP_SEND_PROGRESS_MARKED;
+        } else {
+            data->state &= ~HttpResponseData<SSL>::HTTP_SEND_PROGRESS_MARKED;
+        }
     }
     /* Write an unsigned 32-bit integer in hex */
     void writeUnsignedHex(unsigned int value) {

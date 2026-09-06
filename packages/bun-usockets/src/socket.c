@@ -422,6 +422,13 @@ int us_socket_stalled_write_means_peer_gone(struct us_socket_t *s) {
 #endif
 }
 
+int us_socket_send_progress_mark(struct us_socket_t *s, uint64_t *mark) {
+    if (us_socket_is_closed(s)) {
+        return -1;
+    }
+    return bsd_socket_send_progress_mark(us_poll_fd(&s->p), mark);
+}
+
 int us_socket_write2(struct us_socket_t *s, const char *header, int header_length, const char *payload, int payload_length) {
     if (us_socket_is_closed(s) || us_socket_is_shut_down(s)) {
         return 0;
@@ -708,6 +715,10 @@ __attribute__((always_inline)) int us_socket_is_shut_down(struct us_socket_t *s)
         return us_internal_ssl_is_shut_down(s);
     }
     return us_internal_poll_type(&s->p) == POLL_TYPE_SOCKET_SHUT_DOWN;
+}
+
+int us_socket_is_awaiting_writable(struct us_socket_t *s) {
+    return s->flags.last_write_failed;
 }
 
 int us_connecting_socket_is_shut_down(struct us_connecting_socket_t *c) {

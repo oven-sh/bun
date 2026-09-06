@@ -107,22 +107,25 @@ describe("require(esm) rejects top-level await before evaluating anything", () =
     using dir = tempDir("require-esm-tla-message", {
       ...fixtures,
       "main.cjs": `
-        const { sep } = require("node:path");
         globalThis.order = [];
         try {
           require("./parent.mjs");
           console.log(JSON.stringify("returned"));
         } catch (e) {
-          console.log(JSON.stringify(e.message.replaceAll(__dirname, "<dir>").replaceAll(sep, "/")));
+          const message = e.message
+            .replaceAll(__filename, "<main.cjs>")
+            .replaceAll(require.resolve("./parent.mjs"), "<parent.mjs>")
+            .replaceAll(require.resolve("./dep-tla.mjs"), "<dep-tla.mjs>");
+          console.log(JSON.stringify(message.split("\\n")));
         }
       `,
     });
-    expect(await run(String(dir), "main.cjs")).toBe(
-      "require() cannot be used on an ESM graph with top-level await. Use import() instead.\n" +
-        "  From <dir>/main.cjs\n" +
-        "  Requiring <dir>/parent.mjs\n" +
-        "  The top-level await is in <dir>/dep-tla.mjs",
-    );
+    expect(await run(String(dir), "main.cjs")).toEqual([
+      "require() cannot be used on an ESM graph with top-level await. Use import() instead.",
+      "  From <main.cjs>",
+      "  Requiring <parent.mjs>",
+      "  The top-level await is in <dep-tla.mjs>",
+    ]);
   });
 });
 

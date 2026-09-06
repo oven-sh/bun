@@ -347,10 +347,14 @@ impl PosixBufferedReader {
         }
         self.flags.insert(PosixFlags::IS_PAUSED);
 
-        // Unregister the FilePoll if it's registered
+        // Force the deregistration. pause() usually lands from inside the
+        // poll's own dispatch, where a one-shot poll is flagged NeedsRearm and
+        // a non-forced unregister only clears the flags without an EV_DELETE.
+        // On kqueue (EV_DISPATCH) the knote then stays live and keeps firing,
+        // so a "paused" reader drains the writer to EOF.
         if let PollOrFd::Poll(poll) = &mut self.handle {
-            if poll.is_registered() {
-                let _ = poll.unregister(self.vtable.loop_().cast(), false);
+            if poll.is_registered() || poll.has_flag(FilePollFlag::NeedsRearm) {
+                let _ = poll.unregister(self.vtable.loop_().cast(), true);
             }
         }
     }

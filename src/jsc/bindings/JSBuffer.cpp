@@ -2159,8 +2159,7 @@ JSC::EncodedJSValue jsBufferToString(JSC::JSGlobalObject* lexicalGlobalObject, T
         length = byteLength - offset;
     }
 
-    // Only the UTF-8 decoder reads its input twice. The other encodings size
-    // their output from the byte count and read each byte once.
+    // Only the UTF-8 decoder reads its input twice.
     WTF::Vector<uint8_t> storage;
     auto bytes = Bun::stableBytes(lexicalGlobalObject, scope, castedThis->span().subspan(offset, length), encoding == WebCore::BufferEncodingType::utf8 && castedThis->isShared(), storage);
     RETURN_IF_EXCEPTION(scope, {});

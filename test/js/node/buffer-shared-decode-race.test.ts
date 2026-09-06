@@ -73,9 +73,11 @@ for (const mode of ["toString", "transcode", "string_decoder", "TextDecoderStrea
       env: bunEnv,
       cwd: String(dir),
       stdout: "pipe",
+      stderr: "pipe",
     });
-    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
-    expect(stdout).toBe("ok true\n");
-    expect(exitCode).toBe(0);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    // stderr carries the panic or the sanitizer report on a failing build.
+    expect(stdout, stderr).toBe("ok true\n");
+    expect(exitCode, stderr).toBe(0);
   });
 }

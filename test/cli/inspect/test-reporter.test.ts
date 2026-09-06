@@ -513,7 +513,8 @@ test("last one fails", () => {
     session.send("LifecycleReporter.enable");
     session.initialize();
 
-    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    void stdout;
     // The process closed its end of the socket on exit. Once our end closes,
     // every byte it wrote has been read.
     await socketClosed.promise;

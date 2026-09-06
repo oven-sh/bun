@@ -153,6 +153,46 @@ impl Header {
     pub(crate) fn curl(&self) -> HeaderCurlFormatter<'_> {
         HeaderCurlFormatter { header: self }
     }
+
+    /// The value as verbose logging prints it. A credential header keeps only
+    /// its auth scheme: `Bearer [redacted]`, `[redacted]`.
+    pub fn logged_value(&self) -> LoggedHeaderValue<'_> {
+        LoggedHeaderValue { header: self }
+    }
+}
+
+/// The value of a credential header is never logged. The `Display` impls
+/// below (the `> name: value` lines and the `curl` line of
+/// `BUN_CONFIG_VERBOSE_FETCH`) all go through `logged_value`.
+pub struct LoggedHeaderValue<'a> {
+    header: &'a Header,
+}
+
+impl LoggedHeaderValue<'_> {
+    /// `Authorization: <scheme> <credentials>`: the scheme is kept.
+    const SCHEME_HEADERS: [&[u8]; 2] = [b"authorization", b"proxy-authorization"];
+    /// The whole value is a secret.
+    const SECRET_HEADERS: [&[u8]; 3] = [b"cookie", b"set-cookie", b"x-amz-security-token"];
+
+    fn matches(name: &[u8], list: &[&[u8]]) -> bool {
+        list.iter()
+            .any(|n| strings::eql_case_insensitive_ascii(name, n, true))
+    }
+}
+
+impl fmt::Display for LoggedHeaderValue<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let name = self.header.name();
+        let value = self.header.value();
+        if Self::matches(name, &Self::SCHEME_HEADERS) {
+            let scheme_len = strings::index_of_char_usize(value, b' ').map_or(0, |i| i + 1);
+            write!(f, "{}[redacted]", BStr::new(&value[..scheme_len]))
+        } else if Self::matches(name, &Self::SECRET_HEADERS) {
+            f.write_str("[redacted]")
+        } else {
+            write!(f, "{}", BStr::new(value))
+        }
+    }
 }
 
 impl fmt::Display for Header {
@@ -167,7 +207,7 @@ impl fmt::Display for Header {
                     f,
                     pretty_fmt!("<r><cyan>{}<r><d>: <r>{}", true),
                     BStr::new(self.name()),
-                    BStr::new(self.value()),
+                    self.logged_value(),
                 )
             }
         } else {
@@ -182,7 +222,7 @@ impl fmt::Display for Header {
                     f,
                     pretty_fmt!("<r><cyan>{}<r><d>: <r>{}", false),
                     BStr::new(self.name()),
-                    BStr::new(self.value()),
+                    self.logged_value(),
                 )
             }
         }
@@ -204,7 +244,7 @@ impl fmt::Display for HeaderCurlFormatter<'_> {
                 f,
                 "-H \"{}: {}\"",
                 BStr::new(header.name()),
-                BStr::new(header.value())
+                header.logged_value()
             )
         } else {
             write!(f, "-H \"{}\"", BStr::new(header.name()))
@@ -348,10 +388,14 @@ impl fmt::Display for RequestCurlFormatter<'_> {
             write!(
                 f,
                 pretty_fmt!("<b><cyan>curl<r> <d>--http1.1<r> <b>\"{}\"<r>", true),
-                BStr::new(request.path),
+                bun_core::fmt::redacted_npm_url(request.path),
             )?;
         } else {
-            write!(f, "curl --http1.1 \"{}\"", BStr::new(request.path))?;
+            write!(
+                f,
+                "curl --http1.1 \"{}\"",
+                bun_core::fmt::redacted_npm_url(request.path)
+            )?;
         }
 
         if request.method != b"GET" {

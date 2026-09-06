@@ -3639,3 +3639,66 @@ it("verbose fetch logging prints [redacted] in place of Authorization credential
   expect(stderr).not.toContain("sekret-token");
   expect(exitCode).toBe(0);
 });
+
+describe.concurrent("verbose fetch logging redacts credentials", () => {
+  const secrets = {
+    password: "url-pw-sekret",
+    authorization: "auth-sekret",
+    proxyAuthorization: "proxy-sekret",
+    cookie: "cookie-sekret",
+    sessionToken: "session-sekret",
+    setCookie: "set-cookie-sekret",
+  };
+
+  for (const mode of ["1", "curl"]) {
+    it(`BUN_CONFIG_VERBOSE_FETCH=${mode}`, async () => {
+      using server = Bun.serve({
+        port: 0,
+        fetch(req) {
+          return new Response(req.headers.get("authorization") ?? "", {
+            headers: { "Set-Cookie": `sid=${secrets.setCookie}` },
+          });
+        },
+      });
+      const url = new URL(server.url);
+      url.username = "user";
+      url.password = secrets.password;
+
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `const res = await fetch(process.env.SERVER_URL, {
+             headers: {
+               Authorization: "Bearer ${secrets.authorization}",
+               "Proxy-Authorization": "Basic ${secrets.proxyAuthorization}",
+               Cookie: "sid=${secrets.cookie}",
+               "x-amz-security-token": "${secrets.sessionToken}",
+               "X-Plain": "plain-value",
+             },
+           });
+           console.log(await res.text());`,
+        ],
+        env: { ...bunEnv, BUN_CONFIG_VERBOSE_FETCH: mode, SERVER_URL: url.href },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      expect(stdout).toBe(`Bearer ${secrets.authorization}\n`);
+      for (const secret of Object.values(secrets)) {
+        expect(stderr).not.toContain(secret);
+      }
+      expect(stderr).toContain("Authorization: Bearer [redacted]");
+      expect(stderr).toContain("Proxy-Authorization: Basic [redacted]");
+      expect(stderr).toContain("Cookie: [redacted]");
+      expect(stderr).toContain("x-amz-security-token: [redacted]");
+      expect(stderr).toContain("X-Plain: plain-value");
+      if (mode === "curl") {
+        expect(stderr).toContain(`curl --http1.1 "http://user:***`);
+      }
+      expect(exitCode).toBe(0);
+    });
+  }
+});

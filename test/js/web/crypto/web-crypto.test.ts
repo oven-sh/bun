@@ -1235,6 +1235,104 @@ describe("empty usages on a private or secret key", () => {
   });
 });
 
+// RSA and EC key generation run on the work pool. When the key pair was
+// generated synchronously inside the generateKey() call, the promise was
+// already settled when it was returned, and the event loop was frozen for the
+// whole keygen (seconds for 4096-bit RSA, about 250 ms for 200 P-521 pairs).
+describe("RSA and EC generateKey run off the JS thread", () => {
+  const rsa = (name: string): RsaHashedKeyGenParams => ({
+    name,
+    modulusLength: 2048,
+    publicExponent: new Uint8Array([1, 0, 1]),
+    hash: "SHA-256",
+  });
+  const cases: [string, RsaHashedKeyGenParams | EcKeyGenParams, KeyUsage[]][] = [
+    ["RSA-OAEP", rsa("RSA-OAEP"), ["encrypt", "decrypt"]],
+    ["RSA-PSS", rsa("RSA-PSS"), ["sign", "verify"]],
+    ["RSASSA-PKCS1-v1_5", rsa("RSASSA-PKCS1-v1_5"), ["sign", "verify"]],
+    ["ECDSA P-256", { name: "ECDSA", namedCurve: "P-256" }, ["sign", "verify"]],
+    ["ECDSA P-521", { name: "ECDSA", namedCurve: "P-521" }, ["sign", "verify"]],
+    ["ECDH P-521", { name: "ECDH", namedCurve: "P-521" }, ["deriveBits"]],
+  ];
+  it.each(cases)("%s returns a pending promise", async (_, params, usages) => {
+    const promise = crypto.subtle.generateKey(params, true, usages);
+    expect(Bun.peek.status(promise)).toBe("pending");
+    const pair = await promise;
+    expect([pair.publicKey.type, pair.privateKey.type, pair.privateKey.algorithm.name]).toEqual([
+      "public",
+      "private",
+      params.name,
+    ]);
+  });
+
+  it("a timer fires while RSA keygen is pending", async () => {
+    let ticks = 0;
+    const interval = setInterval(() => ticks++, 1);
+    try {
+      await crypto.subtle.generateKey(rsa("RSA-OAEP"), true, ["encrypt", "decrypt"]);
+    } finally {
+      clearInterval(interval);
+    }
+    expect(ticks).toBeGreaterThan(0);
+  });
+
+  it("an even public exponent still rejects with OperationError", async () => {
+    const rejection = crypto.subtle
+      .generateKey({ ...rsa("RSA-OAEP"), publicExponent: new Uint8Array([1, 0, 0]) }, true, ["encrypt", "decrypt"])
+      .then(
+        () => "resolved",
+        e => e.name,
+      );
+    expect(await rejection).toBe("OperationError");
+  });
+
+  it("an unsupported curve still rejects with NotSupportedError", async () => {
+    const rejection = crypto.subtle.generateKey({ name: "ECDSA", namedCurve: "P-999" }, true, ["sign"]).then(
+      () => "resolved",
+      e => e.name,
+    );
+    expect(await rejection).toBe("NotSupportedError");
+  });
+
+  it("empty usages still rejects with SyntaxError", async () => {
+    const rejection = (p: Promise<unknown>) =>
+      p.then(
+        () => "resolved",
+        e => `${e.name}: ${e.message}`,
+      );
+    expect({
+      rsa: await rejection(crypto.subtle.generateKey(rsa("RSA-OAEP"), true, ["encrypt"])),
+      ec: await rejection(crypto.subtle.generateKey({ name: "ECDSA", namedCurve: "P-256" }, true, ["verify"])),
+    }).toEqual({
+      rsa: "SyntaxError: Usages cannot be empty when creating a key.",
+      ec: "SyntaxError: Usages cannot be empty when creating a key.",
+    });
+  });
+
+  it("a pair generated inside a Worker posts back to the worker", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        const w = new Worker(URL.createObjectURL(new Blob([\`
+          const ec = await crypto.subtle.generateKey({ name: "ECDSA", namedCurve: "P-521" }, true, ["sign", "verify"]);
+          const rsa = await crypto.subtle.generateKey({ name: "RSA-PSS", modulusLength: 2048, publicExponent: new Uint8Array([1, 0, 1]), hash: "SHA-256" }, true, ["sign", "verify"]);
+          postMessage([ec.privateKey.algorithm.namedCurve, rsa.privateKey.algorithm.modulusLength]);
+        \`], { type: "application/javascript" })));
+        w.onmessage = e => { console.log(e.data.join(" ")); w.terminate(); };
+        `,
+      ],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout).toBe("P-521 2048\n");
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+  });
+});
+
 // X25519 deriveBits is a line-for-line parallel of ECDH's; ECDH got Node's
 // mismatch messages but the X25519 twin was left with the empty-message
 // InvalidAccessError. The cfrg vendored test only covers this under X448.

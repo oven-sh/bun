@@ -30,6 +30,7 @@
 #include <openssl/aes.h>
 #include <openssl/evp.h>
 #include <stdint.h>
+#include <wtf/Function.h>
 #include <wtf/Noncopyable.h>
 #include <wtf/Vector.h>
 
@@ -50,6 +51,18 @@ Vector<uint8_t> convertToBytes(const BIGNUM*);
 Vector<uint8_t> convertToBytesExpand(const BIGNUM*, size_t bufferSize);
 
 BIGNUMPtr convertToBigNumber(const Vector<uint8_t>& bytes);
+
+class ScriptExecutionContext;
+
+struct EvpKeyPair {
+    EvpPKeyPtr publicKey;
+    EvpPKeyPtr privateKey;
+};
+
+// Runs `generate` on the work pool, then `onKeys` or `onFailure` on the JS thread
+// that owns `context`. `generate` must not touch anything bound to the JS thread.
+// The CryptoKey objects are built in `onKeys`.
+void generateKeyPairInWorkQueue(ScriptExecutionContext&, Function<std::optional<EvpKeyPair>()>&& generate, Function<void(EvpKeyPair&&)>&& onKeys, Function<void()>&& onFailure);
 
 class AESKey {
     WTF_MAKE_NONCOPYABLE(AESKey);

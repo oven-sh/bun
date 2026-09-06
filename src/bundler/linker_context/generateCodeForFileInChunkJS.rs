@@ -424,23 +424,17 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
                 // If any top-level properties ended up being imported directly, change
                 // the property to just reference the corresponding variable instead
                 for prop in new_properties.slice_mut() {
-                    if prop.key.is_none()
-                        || !matches!(
-                            prop.key.as_ref().expect("infallible: prop has key").data,
-                            ExprData::EString(_)
-                        )
-                        || prop.value.is_none()
-                    {
+                    let (Some(key), Some(_)) = (&prop.key, &prop.value) else {
                         continue;
-                    }
-                    let name: &[u8] = match &prop.key.as_ref().unwrap().data {
-                        ExprData::EString(s) => {
-                            bun_core::handle_oom(s.flattened(temp_arena).string(temp_arena))
-                        }
-                        _ => unreachable!(),
                     };
-                    if name == b"default" || name == b"__esModule" || !js_lexer::is_identifier(name)
-                    {
+                    let Some(name) =
+                        super::generate_code_for_lazy_export::lazy_export_property_alias(
+                            key, temp_arena,
+                        )
+                    else {
+                        continue;
+                    };
+                    if name == b"default" || name == b"__esModule" {
                         continue;
                     }
 

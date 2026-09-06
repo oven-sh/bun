@@ -419,27 +419,30 @@ pub(crate) fn generate_code_for_lazy_export(
                 for property in e_object.properties.slice() {
                     let _: &G::Property = property;
                     let Some(key) = property.key else { continue };
-                    let ExprData::EString(key_str) = key.data else {
-                        continue;
-                    };
                     let Some(value) = property.value else {
                         continue;
                     };
-                    if key_str.eql_comptime(b"default") || key_str.eql_comptime(b"__esModule") {
-                        continue;
-                    }
 
                     // SAFETY: `LinkerContext::arena()` returns a stable `&Arena` valid for the
                     // link pass; detach via raw-pointer round-trip so `name` doesn't borrow `this`
                     // across the `&mut self` call to `generate_named_export_in_file` below.
                     let alloc: &bun_alloc::Arena =
                         unsafe { bun_ptr::detach_lifetime_ref::<bun_alloc::Arena>(this.arena()) };
-                    let name: &[u8] = bun_core::handle_oom(key_str.flattened(alloc).string(alloc));
-
-                    // TODO: support non-identifier names
-                    if !js_lexer::is_identifier(name) {
+                    let Some(alias) = lazy_export_property_alias(&key, alloc) else {
+                        continue;
+                    };
+                    if alias == b"default" || alias == b"__esModule" {
                         continue;
                     }
+                    // The export alias is the key itself (`export { a_b as "a b" }`);
+                    // the variable holding the value needs an identifier.
+                    let name: &[u8] = if js_lexer::is_identifier(alias) {
+                        alias
+                    } else {
+                        alloc.alloc_slice_copy(&bun_core::handle_oom(
+                            bun_core::MutableString::ensure_valid_identifier(alias),
+                        ))
+                    };
 
                     // This initializes the generated variable with a copy of the property
                     // value, which is INCORRECT for values that are objects/arrays because
@@ -453,7 +456,7 @@ pub(crate) fn generate_code_for_lazy_export(
                     // end up actually being used at this point (since import binding hasn't
                     // happened yet). So we need to wait until after tree shaking happens.
                     let generated =
-                        this.generate_named_export_in_file(source_index, module_ref, name, name)?;
+                        this.generate_named_export_in_file(source_index, module_ref, name, alias)?;
                     let new_stmts: &mut [Stmt] =
                         alloc.alloc_slice_fill_iter(core::iter::once(Stmt::alloc(
                             S::Local {
@@ -522,4 +525,31 @@ pub(crate) fn generate_code_for_lazy_export(
     }
 
     Ok(())
+}
+
+/// The export name for one top-level property of a lazy-export (JSON, TOML,
+/// YAML, ...) object, or `None` when the key has no stable string form. This
+/// is the string the key has at runtime: `"a b"` stays `a b`, and the YAML keys
+/// `1:`, `true:` and `null:` become `1`, `true` and `null`.
+pub(crate) fn lazy_export_property_alias<'a>(key: &Expr, arena: &'a Arena) -> Option<&'a [u8]> {
+    match &key.data {
+        ExprData::EString(key_str) => {
+            Some(bun_core::handle_oom(key_str.flattened(arena).string(arena)))
+        }
+        ExprData::EBoolean(b) => Some(if b.value { b"true" } else { b"false" }),
+        ExprData::ENull(_) => Some(b"null"),
+        ExprData::ENumber(n) => {
+            // Integers below 2^53 print the same in JS and in Rust. Other
+            // numbers (`1.5`, `1e21`) would need JS `Number#toString`.
+            let value = n.value();
+            if value.is_finite() && value.fract() == 0.0 && value.abs() < 9007199254740992.0 {
+                let mut buf = Vec::new();
+                write!(&mut buf, "{}", value as i64).expect("write to Vec<u8> cannot fail");
+                Some(arena.alloc_slice_copy(&buf))
+            } else {
+                None
+            }
+        }
+        _ => None,
+    }
 }

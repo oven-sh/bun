@@ -739,6 +739,7 @@ writeStreamPrototype._destroy = function (err, cb) {
     try {
       end = sink.end(err);
     } catch (e) {
+      this.fd = null;
       cb(err || e);
       return;
     }

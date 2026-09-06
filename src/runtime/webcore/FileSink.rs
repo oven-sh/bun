@@ -65,8 +65,8 @@ pub struct FileSink {
     pub(crate) stream_bytes: Cell<Option<u64>>,
 
     /// A write failure that arrived while no `write()`/`flush()`/`end()` promise was pending
-    /// to carry it (the writer dropped buffered bytes on an async error). The next
-    /// `write`/`flush`/`end` from JS takes it.
+    /// to carry it (the writer dropped buffered bytes on an async error) and no stream drives
+    /// the sink. The next `write`/`flush`/`end` from JS takes it.
     undelivered_error: JsCell<Option<sys::Error>>,
 
     /// Strong reference to the JS wrapper object to prevent GC from collecting it
@@ -472,7 +472,7 @@ impl FileSink {
         unsafe {
             (*this).record_stream_error(streams::StreamError::Error(err.clone()));
             if (*this).pending.get().state != streams::PendingState::Pending {
-                (*this).undelivered_error.set(Some(err));
+                (*this).latch_undelivered_error(err);
                 return;
             }
             (*this)
@@ -887,7 +887,7 @@ impl FileSink {
                             .pending
                             .with_mut(|p| p.result = streams::Writable::Err(err));
                     } else {
-                        (*this).undelivered_error.set(Some(err));
+                        (*this).latch_undelivered_error(err);
                     }
                     (*this).writer.with_mut(|w| w.end());
                     (*this).run_pending_later();
@@ -1095,6 +1095,15 @@ impl FileSink {
     fn record_stream_error(&self, err: streams::StreamError) {
         if self.stream_error.get().is_none() {
             self.stream_error.set(Some(err));
+        }
+    }
+
+    /// A stream that drives the sink reports the failure through its own pump; only a sink
+    /// written from JS has nobody else to tell.
+    fn latch_undelivered_error(&self, err: sys::Error) {
+        // SAFETY(JsCell): `Strong::has` only reads the GC root.
+        if !unsafe { self.readable_stream.get_mut() }.has() {
+            self.undelivered_error.set(Some(err));
         }
     }
 

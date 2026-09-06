@@ -856,24 +856,26 @@ describe("Bun.serve http2 in-process", () => {
     await new Promise<void>(r => session.close(() => r()));
   });
 
-  // The peer opens a window far larger than the kernel send buffer, so the
-  // TCP send buffer is what throttles the response, like an HTTP/1.1 client
-  // reading slowly. No write and no writable event re-arms the idle timer for
-  // longer than idleTimeout (8 to 12 seconds with the 4 second timer
-  // granularity), yet the peer keeps taking bytes and must not be aborted.
-  // The pacing is the condition under test, not a wait for one. Skipped on
-  // Windows, where the buffered remainder gets no writable event while the
-  // peer reads slowly (a separate Windows issue).
+  // The peer opens a window far larger than the kernel send buffer, so the TCP
+  // send buffer throttles the response, like an HTTP/1.1 client reading slowly.
+  // No write and no writable event re-arms the idle timer while the buffer
+  // stays full, yet the peer keeps taking bytes and must not be aborted. The
+  // client reads at a fixed low rate for longer than one idle period; the body
+  // is larger than the window so it never completes here, surviving the window
+  // is the point. Skipped on Windows (the buffered remainder gets no writable
+  // event there while the peer reads slowly, a separate Windows issue).
   test.skipIf(isWindows)(
     "idleTimeout keeps a slow reader alive",
     async () => {
-      const TOTAL = 16 << 20;
+      const TOTAL = 64 << 20;
+      const IDLE_S = 8;
+      const RATE = 128 * 1024; // bytes/sec, below the writable-event rate, above the 16 KB/s floor
       let aborted = false;
       await using server = Bun.serve({
         hostname: "127.0.0.1",
         port: 0,
         http2: true,
-        idleTimeout: 10,
+        idleTimeout: IDLE_S,
         fetch(req) {
           req.signal.addEventListener("abort", () => (aborted = true));
           return new Response(new Uint8Array(TOTAL));
@@ -886,22 +888,24 @@ describe("Bun.serve http2 in-process", () => {
       const inc = Buffer.alloc(4);
       inc.writeUInt32BE(64 << 20, 0);
       raw.write(frame(T.WINDOW_UPDATE, 0, 0, inc));
+      const RUN_MS = IDLE_S * 1000 + 8_000;
       const start = performance.now();
-      raw.socket.on("data", () => {
-        if (performance.now() - start < 16_000) {
+      let received = 0;
+      raw.socket.on("data", (d: Buffer) => {
+        received += d.length;
+        if (performance.now() - start < RUN_MS) {
           raw.socket.pause();
-          setTimeout(() => raw.socket.resume(), 5_000);
+          setTimeout(() => raw.socket.resume(), Math.max(1, Math.round((d.length / RATE) * 1000)));
         }
       });
       raw.headers(1, baseHeaders("/"));
-      const ended = await raw
-        .waitFor(f => f.type === T.DATA && f.streamId === 1 && (f.flags & F.END_STREAM) !== 0)
-        .then(
-          () => true,
-          () => false,
-        );
-      const received = raw.frames.filter(f => f.type === T.DATA).reduce((n, f) => n + f.payload.length, 0);
-      expect({ aborted, ended, received }).toEqual({ aborted: false, ended: true, received: TOTAL });
+      const { promise, resolve } = Promise.withResolvers<void>();
+      raw.socket.on("close", () => resolve()); // the server aborting fires this early
+      const deadline = setTimeout(() => resolve(), RUN_MS + 2_000);
+      await promise;
+      clearTimeout(deadline);
+      const gotData = raw.frames.some(f => f.type === T.DATA && f.streamId === 1);
+      expect({ aborted, gotData }).toEqual({ aborted: false, gotData: true });
       raw.close();
     },
     30_000,

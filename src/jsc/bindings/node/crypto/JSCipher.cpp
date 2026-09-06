@@ -13,6 +13,7 @@
 #include "openssl/rsa.h"
 #include "NodeValidator.h"
 #include "KeyObject.h"
+#include "LazyTransform.h"
 
 namespace Bun {
 
@@ -40,18 +41,34 @@ void JSCipher::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 
 DEFINE_VISIT_CHILDREN(JSCipher);
 
-void setupCipherClassStructure(JSC::LazyClassStructure::Initializer& init)
+static void setupCipherClassStructure(JSC::LazyClassStructure::Initializer& init, CipherKind kind)
 {
-    auto* prototypeStructure = JSCipherPrototype::createStructure(init.vm, init.global, init.global->objectPrototype());
-    auto* prototype = JSCipherPrototype::create(init.vm, init.global, prototypeStructure);
+    // class Cipheriv / Decipheriv extends Transform (internal/streams/transform)
+    JSObject* transform = transformConstructor(init.global);
+    RELEASE_ASSERT(transform);
+    JSValue transformPrototype = transform->getDirect(init.vm, init.vm.propertyNames->prototype);
+    RELEASE_ASSERT(transformPrototype && transformPrototype.isObject());
 
-    auto* constructorStructure = JSCipherConstructor::createStructure(init.vm, init.global, init.global->functionPrototype());
-    auto* constructor = JSCipherConstructor::create(init.vm, constructorStructure, prototype);
+    auto* prototypeStructure = JSCipherPrototype::createStructure(init.vm, init.global, transformPrototype);
+    auto* prototype = JSCipherPrototype::create(init.vm, init.global, prototypeStructure, kind);
+
+    auto* constructorStructure = JSCipherConstructor::createStructure(init.vm, init.global, transform);
+    auto* constructor = JSCipherConstructor::create(init.vm, constructorStructure, prototype, kind);
 
     auto* structure = JSCipher::createStructure(init.vm, init.global, prototype);
     init.setPrototype(prototype);
     init.setStructure(structure);
     init.setConstructor(constructor);
+}
+
+void setupCipherivClassStructure(JSC::LazyClassStructure::Initializer& init)
+{
+    setupCipherClassStructure(init, CipherKind::Cipher);
+}
+
+void setupDecipherivClassStructure(JSC::LazyClassStructure::Initializer& init)
+{
+    setupCipherClassStructure(init, CipherKind::Decipher);
 }
 
 enum class KeyType {

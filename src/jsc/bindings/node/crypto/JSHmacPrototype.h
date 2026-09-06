@@ -1,31 +1,29 @@
 #pragma once
 
 #include "root.h"
-#include <JavaScriptCore/CallData.h>
-#include <JavaScriptCore/ObjectConstructor.h>
-#include "JSCipher.h"
+#include <JavaScriptCore/JSObject.h>
 
 namespace Bun {
 
-class JSCipherPrototype final : public JSC::JSNonFinalObject {
+class JSHmacPrototype final : public JSC::JSNonFinalObject {
 public:
     using Base = JSC::JSNonFinalObject;
     static constexpr unsigned StructureFlags = Base::StructureFlags;
 
-    static JSCipherPrototype* create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, CipherKind kind)
+    static JSHmacPrototype* create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure)
     {
-        JSCipherPrototype* prototype = new (NotNull, JSC::allocateCell<JSCipherPrototype>(vm)) JSCipherPrototype(vm, structure);
-        prototype->finishCreation(vm, kind);
+        JSHmacPrototype* prototype = new (NotNull, JSC::allocateCell<JSHmacPrototype>(vm)) JSHmacPrototype(vm, structure);
+        prototype->finishCreation(vm);
         return prototype;
     }
+
+    DECLARE_INFO;
 
     template<typename, JSC::SubspaceAccess>
     static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
     {
         return &vm.plainObjectSpace();
     }
-
-    DECLARE_INFO;
 
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
     {
@@ -35,12 +33,12 @@ public:
     }
 
 private:
-    JSCipherPrototype(JSC::VM& vm, JSC::Structure* structure)
+    JSHmacPrototype(JSC::VM& vm, JSC::Structure* structure)
         : Base(vm, structure)
     {
     }
 
-    void finishCreation(JSC::VM&, CipherKind);
+    void finishCreation(JSC::VM& vm);
 };
 
 } // namespace Bun

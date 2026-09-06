@@ -2,21 +2,17 @@
 
 #include "root.h"
 #include "BunClientData.h"
-#include <JavaScriptCore/ArrayBuffer.h>
-#include <JavaScriptCore/ArrayBufferView.h>
 #include <JavaScriptCore/JSDestructibleObject.h>
 #include "ncrypto.h"
 #include "CryptoUtil.h"
 #include "JSBuffer.h"
 #include "JSDOMConvertEnumeration.h"
-#include <JavaScriptCore/LazyProperty.h>
-#include <JavaScriptCore/LazyPropertyInlines.h>
 
 namespace Bun {
 
-JSC_DECLARE_HOST_FUNCTION(callHmac);
-JSC_DECLARE_HOST_FUNCTION(constructHmac);
-
+// node:crypto `Hmac`: the object returned by createHmac(). Its prototype chain is
+// Hmac.prototype -> Transform.prototype (JS) -> ...; the Transform half is constructed lazily
+// (LazyTransform.h) and the HMAC context lives directly on this cell.
 class JSHmac final : public JSC::JSDestructibleObject {
 public:
     using Base = JSC::JSDestructibleObject;
@@ -48,81 +44,6 @@ public:
     size_t m_sizeForGC { 0 };
 };
 
-class JSHmacPrototype final : public JSC::JSNonFinalObject {
-public:
-    using Base = JSC::JSNonFinalObject;
-    static constexpr unsigned StructureFlags = Base::StructureFlags;
-
-    static JSHmacPrototype* create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure)
-    {
-        JSHmacPrototype* prototype = new (NotNull, JSC::allocateCell<JSHmacPrototype>(vm)) JSHmacPrototype(vm, structure);
-        prototype->finishCreation(vm);
-        return prototype;
-    }
-
-    DECLARE_INFO;
-
-    template<typename, JSC::SubspaceAccess>
-    static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
-    {
-        return &vm.plainObjectSpace();
-    }
-
-    static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
-    {
-        auto* structure = Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
-        structure->setMayBePrototype(true);
-        return structure;
-    }
-
-private:
-    JSHmacPrototype(JSC::VM& vm, JSC::Structure* structure)
-        : Base(vm, structure)
-    {
-    }
-
-    void finishCreation(JSC::VM& vm);
-};
-
-class JSHmacConstructor final : public JSC::InternalFunction {
-public:
-    using Base = JSC::InternalFunction;
-    static constexpr unsigned StructureFlags = Base::StructureFlags;
-
-    static JSHmacConstructor* create(JSC::VM& vm, JSC::Structure* structure, JSC::JSObject* prototype)
-    {
-        JSHmacConstructor* constructor = new (NotNull, JSC::allocateCell<JSHmacConstructor>(vm)) JSHmacConstructor(vm, structure);
-        constructor->finishCreation(vm, prototype);
-        return constructor;
-    }
-
-    static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype);
-
-    DECLARE_INFO;
-
-    template<typename, JSC::SubspaceAccess mode>
-    static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
-    {
-        if constexpr (mode == JSC::SubspaceAccess::Concurrently)
-            return nullptr;
-        return &vm.internalFunctionSpace();
-    }
-
-private:
-    JSHmacConstructor(JSC::VM& vm, JSC::Structure* structure)
-        : Base(vm, structure, callHmac, constructHmac)
-    {
-    }
-
-    void finishCreation(JSC::VM& vm, JSC::JSObject* prototype)
-    {
-        Base::finishCreation(vm, 2, "Hmac"_s, PropertyAdditionMode::WithStructureTransition);
-    }
-};
-
-JSC_DECLARE_HOST_FUNCTION(jsHmacProtoFuncUpdate);
-JSC_DECLARE_HOST_FUNCTION(jsHmacProtoFuncDigest);
-
-void setupJSHmacClassStructure(JSC::LazyClassStructure::Initializer& init);
+void setupJSHmacClassStructure(JSC::LazyClassStructure::Initializer&);
 
 } // namespace Bun

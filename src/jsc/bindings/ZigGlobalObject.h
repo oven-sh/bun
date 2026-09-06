@@ -589,6 +589,7 @@ public:
     V(public, LazyClassStructure, m_JSHashClassStructure)                                                    \
     V(public, LazyClassStructure, m_JSECDHClassStructure)                                                    \
     V(public, LazyClassStructure, m_JSCipherClassStructure)                                                  \
+    V(public, LazyClassStructure, m_JSDecipherClassStructure)                                                \
     V(public, LazyClassStructure, m_JSKeyObjectClassStructure)                                               \
     V(public, LazyClassStructure, m_JSSecretKeyObjectClassStructure)                                         \
     V(public, LazyPropertyOfGlobalObject<JSObject>, m_JSAsymmetricKeyObjectPrototype)                        \

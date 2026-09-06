@@ -2069,7 +2069,10 @@ void GlobalObject::finishCreation(VM& vm)
              setupJSHashClassStructure(init);
          } },
         { OBJECT_OFFSETOF(GlobalObject, m_JSCipherClassStructure), [](LazyClassStructure::Initializer& init) {
-             setupCipherClassStructure(init);
+             setupCipherivClassStructure(init);
+         } },
+        { OBJECT_OFFSETOF(GlobalObject, m_JSDecipherClassStructure), [](LazyClassStructure::Initializer& init) {
+             setupDecipherivClassStructure(init);
          } },
         { OBJECT_OFFSETOF(GlobalObject, m_JSKeyObjectClassStructure), [](LazyClassStructure::Initializer& init) {
              setupKeyObjectClassStructure(init);

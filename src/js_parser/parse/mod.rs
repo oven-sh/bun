@@ -106,8 +106,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         self.parse_suffix(expr, level, errors.as_deref_mut(), flags)?;
 
-        // "[(a = 1)] = []" is an error, "[(a = {}).b] = [1]" is not. With any
-        // other suffix the visit pass already rejects the target.
+        // Only a bare "(a = 1)" item counts: "[(a = {}).b] = [1]" is valid.
         if let (Some(errors), Some(prefix)) = (errors, paren_assign_prefix)
             && Self::assign_ptr(expr) != Some(prefix)
         {

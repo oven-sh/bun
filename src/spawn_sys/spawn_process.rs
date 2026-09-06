@@ -766,13 +766,13 @@ pub unsafe fn spawn_process_posix(
             PosixStdio::Inherit => {
                 // A closed slot would inherit whatever fd is created later at that number (e.g. the ipc socketpair); libuv gives it /dev/null.
                 if bun_sys::get_fcntl_flags(fileno).is_err() {
-                    actions.open_z(fileno, c"/dev/null", flag | bun_sys::O::CREAT as u32, 0o664)?;
+                    actions.open_z(fileno, c"/dev/null", flag, 0)?;
                 } else {
                     actions.inherit(fileno)?;
                 }
             }
             PosixStdio::Ipc | PosixStdio::Ignore => {
-                actions.open_z(fileno, c"/dev/null", flag | bun_sys::O::CREAT as u32, 0o664)?;
+                actions.open_z(fileno, c"/dev/null", flag, 0)?;
             }
             PosixStdio::Path(path) => {
                 actions.open(fileno, path, flag | bun_sys::O::CREAT as u32, 0o664)?;

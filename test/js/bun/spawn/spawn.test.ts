@@ -1719,3 +1719,71 @@ it.if(parentThp() === "1")("spawned children keep the system THP policy", async 
   expect(thpEnabled(readFileSync("/proc/self/status", "utf8"))).toBe("1");
   expect(exitCode).toBe(0);
 });
+
+// stdio "ignore" opens /dev/null. The open must not carry O_CREAT: on a rootfs
+// without /dev/null that creates a regular file there. A seccomp filter that
+// fails every openat(2) with O_CREAT proves the flag is gone.
+it.if(isLinux && (process.arch === "x64" || process.arch === "arm64"))(
+  "stdio ignore opens /dev/null without O_CREAT",
+  async () => {
+    using dir = tempDir("spawn-ignore-no-creat", {
+      "deny-creat.c": `
+        typedef unsigned short u16; typedef unsigned char u8; typedef unsigned int u32;
+        struct sock_filter { u16 code; u8 jt; u8 jf; u32 k; };
+        struct sock_fprog { u16 len; struct sock_filter *filter; };
+        int prctl(int option, ...);
+        #if defined(__x86_64__)
+        #define NR_OPENAT 257
+        #else
+        #define NR_OPENAT 56
+        #endif
+        int deny_openat_with_creat(void) {
+          struct sock_filter f[] = {
+            { 0x20, 0, 0, 0 },               /* A = nr                     (BPF_LD|BPF_W|BPF_ABS)  */
+            { 0x15, 0, 3, NR_OPENAT },       /* if nr != openat: allow     (BPF_JMP|BPF_JEQ|BPF_K) */
+            { 0x20, 0, 0, 16 + 2 * 8 },      /* A = args[2] (flags)                                 */
+            { 0x45, 0, 1, 0100 },            /* if !(A & O_CREAT): allow   (BPF_JMP|BPF_JSET|BPF_K) */
+            { 0x06, 0, 0, 0x00050000 | 13 }, /* SECCOMP_RET_ERRNO | EACCES (BPF_RET|BPF_K)          */
+            { 0x06, 0, 0, 0x7fff0000 },      /* SECCOMP_RET_ALLOW                                   */
+          };
+          struct sock_fprog prog = { sizeof(f) / sizeof(f[0]), f };
+          if (prctl(38 /* PR_SET_NO_NEW_PRIVS */, 1, 0, 0, 0) != 0) return -1;
+          if (prctl(22 /* PR_SET_SECCOMP */, 2 /* SECCOMP_MODE_FILTER */, &prog) != 0) return -2;
+          return 0;
+        }
+      `,
+      "fixture.ts": `
+        import { cc } from "bun:ffi";
+        import { spawnSync as nodeSpawnSync } from "node:child_process";
+        const { symbols } = cc({
+          source: new URL("./deny-creat.c", import.meta.url).pathname,
+          symbols: { deny_openat_with_creat: { args: [], returns: "i32" } },
+        });
+        const seccomp = symbols.deny_openat_with_creat();
+        const result: Record<string, unknown> = { seccomp };
+        try {
+          result.bun = Bun.spawnSync({
+            cmd: [process.execPath, "-e", "process.exit(7)"],
+            stdio: ["ignore", "ignore", "ignore"],
+          }).exitCode;
+        } catch (e) {
+          result.bun = String(e);
+        }
+        const node = nodeSpawnSync(process.execPath, ["-e", "process.exit(8)"], { stdio: "ignore" });
+        result.node = node.error ? String(node.error) : node.status;
+        console.log(JSON.stringify(result));
+      `,
+    });
+    await using proc = spawn({
+      cmd: [bunExe(), "fixture.ts"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({ seccomp: 0, bun: 7, node: 8 });
+    expect(exitCode).toBe(0);
+  },
+);

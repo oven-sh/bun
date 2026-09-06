@@ -4057,7 +4057,7 @@ describe("bundler", () => {
   itBundled("edgecase/ParenthesizedOptionalChainTagAndNewCallee", {
     files: {
       "/entry.ts": /* ts */ `
-        var a = null, o = { t: s => s[0], K: class { constructor() { this.v = 1 } }, f() { return o } }, r = [];
+        var a = null, o = { t: s => s[0], K: class { constructor() { this.v = 1 } }, f() { return o }, g() { return s => o.K } }, r = [];
         r.push((o?.t)\`A\`);
         r.push((o?.["t"])\`D\`);
         r.push((o?.f().t)\`B\`);
@@ -4066,13 +4066,14 @@ describe("bundler", () => {
         r.push(new (o?.K)().v);
         r.push(new (o?.f().K)().v);
         r.push(new (o?.K)!().v);
+        r.push(new (o.g()\`K\`)().v);
         try { (a?.t)\`x\` } catch (e) { r.push(e.name) }
         try { new (a?.K)() } catch (e) { r.push(e.name) }
         console.log(JSON.stringify(r));
       `,
     },
     minifySyntax: true,
-    run: { stdout: `["A","D","B","C","E",1,1,1,"TypeError","TypeError"]` },
+    run: { stdout: `["A","D","B","C","E",1,1,1,1,"TypeError","TypeError"]` },
   });
 });
 

@@ -3689,6 +3689,8 @@ pub(crate) mod __gated_printer {
                         if flags.contains(ExprFlag::HasNonOptionalChainParent) {
                             wrap = true;
                             self.print(b"(");
+                            // The parentheses already isolate the chain from `new`.
+                            flags.remove(ExprFlag::ForbidCall);
                         }
                         flags.remove(ExprFlag::HasNonOptionalChainParent);
                     }
@@ -3753,6 +3755,8 @@ pub(crate) mod __gated_printer {
                         if flags.contains(ExprFlag::HasNonOptionalChainParent) {
                             wrap = true;
                             self.print(b"(");
+                            // The parentheses already isolate the chain from `new`.
+                            flags.remove(ExprFlag::ForbidCall);
                         }
                         flags.remove(ExprFlag::HasNonOptionalChainParent);
                     }
@@ -4209,7 +4213,9 @@ pub(crate) mod __gated_printer {
                         } else if let ExprData::ECommonjsExportIdentifier(id) = tag.data {
                             self.print_commonjs_export_identifier(id, tag.loc, true);
                         } else {
-                            self.print_expr(*tag, Level::Postfix, ExprFlag::none());
+                            // Inside the target of `new`, a call in the tag must keep its
+                            // parentheses: `new foo()\`x\`()` calls `new foo()` first.
+                            self.print_expr(*tag, Level::Postfix, flags & ExprFlag::ForbidCall);
                         }
                     } else {
                         self.add_source_mapping(expr.loc);

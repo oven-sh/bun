@@ -3693,13 +3693,23 @@ console.log(resolve.length)
     expectPrinted_("new (a?.b())()", "new (a?.b())");
     expectPrinted_("new (a?.b()).c()", "new (a?.b()).c");
     expectPrinted_("new (a.b?.().c)()", "new (a.b?.().c)");
-    expectPrinted_("new ((a.h())?.c)", "new ((a.h())?.c)");
+    expectPrinted_("new ((a.h())?.c)", "new (a.h()?.c)");
     expectPrinted_("new ((a.arr[1])?.b)()", "new (a.arr[1]?.b)");
     ts.expectPrinted_("new (a?.b)!()", "new (a?.b)");
     ts.expectPrinted_("new (a?.b as any)(2)", "new (a?.b)(2)");
     ts.expectPrinted_("new (a?.b!)()", "new (a?.b)");
     expectPrinted_("new a.b()", "new a.b");
     expectPrinted_("new (a())()", "new (a())");
+    expectPrinted_("new (a?.b.c).d()", "new (a?.b.c).d");
+    expectPrinted_("new (a?.b().c).d()", "new (a?.b().c).d");
+  });
+
+  it("tagged template with a call in the tag as new callee", () => {
+    expectPrinted_("new (a()`x`)()", "new (a())`x`");
+    expectPrinted_("new (a()`x`.b)()", "new (a())`x`.b");
+    expectPrinted_("new (a.b`x`)()", "new a.b`x`");
+    expectPrinted_("new a`x`()", "new a`x`");
+    expectPrinted_("a()`x`", "a()`x`");
   });
 
   it("useDefineForConst TypeScript class initialization", () => {

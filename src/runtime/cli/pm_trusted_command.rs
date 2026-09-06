@@ -25,9 +25,7 @@ use crate::package_manager_command::PackageManagerCommand;
 
 type DepIdSet = ArrayHashMap<DependencyID, (), ArrayIdentityContext>;
 
-/// Mirrors the installers' enqueue gate (`PackageInstaller` and the isolated
-/// `Installer`): the root and workspace members are first-party, their scripts
-/// always run at install, so they are never "blocked".
+/// The installers' enqueue gate: root and workspace scripts always run.
 fn scripts_blocked_at_install(
     lockfile: &Lockfile,
     alias: &[u8],

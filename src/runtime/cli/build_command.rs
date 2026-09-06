@@ -160,20 +160,25 @@ impl BuildCommand {
             options::CompileMode::None
         };
 
-        if this_transpiler.options.source_map == options::SourceMapOption::External
-            && ctx.bundler_options.outdir.is_empty()
-            && !ctx.bundler_options.compile
-        {
-            bun_core::pretty_errorln!(
-                "<r><red>error<r><d>:<r> cannot use an external source map without --outdir"
-            );
-            Global::exit(1);
-        }
-
         let mut outfile: &[u8] = &ctx.bundler_options.outfile;
         let output_to_stdout = !ctx.bundler_options.compile
             && outfile.is_empty()
             && ctx.bundler_options.outdir.is_empty();
+
+        if output_to_stdout {
+            let kind = match this_transpiler.options.source_map {
+                options::SourceMapOption::External => Some("an external"),
+                options::SourceMapOption::Linked => Some("a linked"),
+                options::SourceMapOption::Inline | options::SourceMapOption::None => None,
+            };
+            if let Some(kind) = kind {
+                bun_core::pretty_errorln!(
+                    "<r><red>error<r><d>:<r> cannot use {} source map without --outdir or --outfile (use --sourcemap=inline to print it to stdout)",
+                    kind
+                );
+                Global::exit(1);
+            }
+        }
 
         this_transpiler.options.supports_multiple_outputs =
             !(output_to_stdout || !outfile.is_empty());
@@ -392,6 +397,25 @@ impl BuildCommand {
                 );
                 Global::exit(1);
             }
+        }
+
+        // For the bundler, `--outfile dir/app.js` is `--outdir dir` with the
+        // entry chunk (and so its .map) named after the file. `--compile` and
+        // `--no-bundle` keep the output in memory and write `outfile` below.
+        if ctx.bundler_options.outdir.is_empty()
+            && !outfile.is_empty()
+            && !ctx.bundler_options.compile
+            && !ctx.bundler_options.transform_only
+        {
+            let mut entry_naming = Vec::<u8>::new();
+            write!(
+                &mut entry_naming,
+                "./{}",
+                bstr::BStr::new(bun_paths::basename(outfile))
+            )
+            .expect("unreachable");
+            this_transpiler.options.entry_naming = entry_naming.into_boxed_slice();
+            this_transpiler.options.output_dir = bun_core::dirname(outfile).unwrap_or(b".").into();
         }
 
         let mut src_root_dir_buf = bun_paths::path_buffer_pool::get();
@@ -642,25 +666,6 @@ impl BuildCommand {
                 break 'brk result.output_files.into_vec();
             }
 
-            if ctx.bundler_options.outdir.is_empty()
-                && !outfile.is_empty()
-                && !ctx.bundler_options.compile
-            {
-                let mut entry_naming = Vec::<u8>::new();
-                write!(
-                    &mut entry_naming,
-                    "./{}",
-                    bstr::BStr::new(bun_paths::basename(outfile))
-                )
-                .expect("unreachable");
-                this_transpiler.options.entry_naming = entry_naming.into_boxed_slice();
-                if let Some(dir) = bun_core::dirname(outfile) {
-                    ctx.bundler_options.outdir = dir.into();
-                }
-                // resolver.opts.entry_naming — field does not exist on the
-                // resolver subset; bundler-side `entry_naming` is sufficient.
-            }
-
             // Stack-owned Mini event loop so its tasks/concurrent_tasks queues
             // drop at scope exit; the arena bulk-free skips Drop. Outlives the
             // BACKREF passed to `generate_from_cli`.
@@ -791,19 +796,19 @@ impl BuildCommand {
             let writer = Output::writer_buffered();
             let mut output_dir: &[u8] = &opt_output_dir;
 
-            let will_be_one_file =
-                // --outdir is not supported with --compile
-                // but you can still use --outfile
-                // in which case, we should set the output dir to the dirname of the outfile
-                // https://github.com/oven-sh/bun/issues/8697
-                ctx.bundler_options.compile
-                    || (output_files.len() == 1
-                        && matches!(output_files[0].value, options::OutputFileValue::Buffer { .. }));
-
-            if output_dir.is_empty() && !outfile.is_empty() && will_be_one_file {
+            // `--compile` and `--no-bundle` keep the `--outfile` output in memory
+            // until here. It goes into the outfile's directory.
+            // https://github.com/oven-sh/bun/issues/8697
+            if output_dir.is_empty() && !outfile.is_empty() {
                 output_dir = bun_core::dirname(outfile).unwrap_or(b".");
                 // With --compile, the bundler already named the entry point's chunk after the outfile.
-                if !ctx.bundler_options.compile {
+                if !ctx.bundler_options.compile
+                    && output_files.len() == 1
+                    && matches!(
+                        output_files[0].value,
+                        options::OutputFileValue::Buffer { .. }
+                    )
+                {
                     output_files[0].dest_path = bun_paths::basename(outfile).into();
                 }
             }
@@ -822,21 +827,16 @@ impl BuildCommand {
                 }
             }
 
-            let mut root_path: &[u8] = output_dir;
-            if root_path.is_empty() && ctx.args.entry_points.len() == 1 {
-                root_path = bun_core::dirname(&ctx.args.entry_points[0]).unwrap_or(b".");
-            }
-
-            let root_dir = if root_path.is_empty() || root_path == b"." {
+            let root_dir = if output_dir.is_empty() || output_dir == b"." {
                 bun_sys::Dir::cwd()
             } else {
-                match bun_sys::Dir::cwd().make_open_path(root_path, Default::default()) {
+                match bun_sys::Dir::cwd().make_open_path(output_dir, Default::default()) {
                     Ok(d) => d,
                     Err(err) => {
                         Output::err(
                             err,
                             "could not open output directory {}",
-                            (bun_fmt::quote(root_path),),
+                            (bun_fmt::quote(output_dir),),
                         );
                         exit_or_watch(1, ctx.debug.hot_reload == HotReload::Watch);
                     }

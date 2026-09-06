@@ -2633,8 +2633,17 @@ fn parse_build_command_options(
 
     if let Some(setting) = args.option(b"--sourcemap") {
         if setting.is_empty() {
-            // In the future, Bun is going to make this default to .linked
-            opts.source_map = Some(api::SourceMapMode::Linked);
+            // Same rule as `Bun.build({ sourcemap: true })`: a separate .map
+            // file when the build writes to disk, an inline map when the
+            // bundle goes to stdout.
+            let writes_to_disk = ctx.bundler_options.compile
+                || !ctx.bundler_options.outdir.is_empty()
+                || !ctx.bundler_options.outfile.is_empty();
+            opts.source_map = Some(if writes_to_disk {
+                api::SourceMapMode::Linked
+            } else {
+                api::SourceMapMode::Inline
+            });
         } else if setting == b"inline" {
             opts.source_map = Some(api::SourceMapMode::Inline);
         } else if setting == b"none" {

@@ -719,14 +719,14 @@ describe("apply", () => {
         "line 1\nA\nB\nline 2\nline 3\nC\nline 4\n",
       ],
     ])("zero-context hunk: %s", async (_name, before, hunks, after) => {
-      await using dir = tempDir("patch-u0", { "index.js": before });
+      using dir = tempDir("patch-u0", { "index.js": before });
       const patchfile = `diff --git a/index.js b/index.js\n--- a/index.js\n+++ b/index.js\n${hunks}`;
       await apply(patchfile, String(dir));
       expect(await fs.readFile(join(String(dir), "index.js"), "utf8")).toBe(after);
     });
 
     test("a pure insertion past the end of the file does not apply", async () => {
-      await using dir = tempDir("patch-u0", { "index.js": "line 1\nline 2\n" });
+      using dir = tempDir("patch-u0", { "index.js": "line 1\nline 2\n" });
       const header = "diff --git a/index.js b/index.js\n--- a/index.js\n+++ b/index.js\n";
       expect(() => apply(header + "@@ -9,0 +10 @@\n+X\n", String(dir))).toThrow(
         "hunk #1 does not apply to index.js (expected at line 9)",
@@ -754,7 +754,7 @@ describe("apply", () => {
         "@@ -1,2 +1,1 @@\n-line 1\n\\ No newline at end of file\n line 2\n",
       ],
     ])("a no-newline pragma with %s does not apply", async (_name, before, hunk) => {
-      await using dir = tempDir("patch-pragma", { "index.js": before });
+      using dir = tempDir("patch-pragma", { "index.js": before });
       const patchfile = `diff --git a/index.js b/index.js\n--- a/index.js\n+++ b/index.js\n${hunk}`;
       expect(() => apply(patchfile, String(dir))).toThrow("hunk #1 does not apply to index.js (expected at line 1)");
       expect(await fs.readFile(join(String(dir), "index.js"), "utf8")).toBe(before);
@@ -786,14 +786,14 @@ describe("apply", () => {
         "X\na\nb",
       ],
     ])("a no-newline pragma where git puts it applies: %s", async (_name, before, hunk, after) => {
-      await using dir = tempDir("patch-pragma", { "index.js": before });
+      using dir = tempDir("patch-pragma", { "index.js": before });
       const patchfile = `diff --git a/index.js b/index.js\n--- a/index.js\n+++ b/index.js\n${hunk}`;
       await apply(patchfile, String(dir));
       expect(await fs.readFile(join(String(dir), "index.js"), "utf8")).toBe(after);
     });
 
     test("a header start far past the end of the file is still found or rejected quickly", async () => {
-      await using dir = tempDir("patch-far", { "index.js": "line 1\nline 2\nline 3\n" });
+      using dir = tempDir("patch-far", { "index.js": "line 1\nline 2\nline 3\n" });
       const header = "diff --git a/index.js b/index.js\n--- a/index.js\n+++ b/index.js\n";
       await apply(header + "@@ -4000000000 +4000000000 @@\n-line 2\n+TWO\n", String(dir));
       expect(await fs.readFile(join(String(dir), "index.js"), "utf8")).toBe("line 1\nTWO\nline 3\n");

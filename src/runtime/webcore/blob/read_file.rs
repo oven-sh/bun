@@ -13,7 +13,9 @@ use crate::webcore::blob::ClosingState;
 #[cfg(windows)]
 use crate::webcore::blob::store::Bytes as ByteStore;
 use crate::webcore::blob::store::{Data, File as FileStore};
-use crate::webcore::blob::{Blob, FileCloser, FileOpener, MAX_SIZE, SizeType, Store};
+use crate::webcore::blob::{
+    Blob, FileCloser, FileOpener, MAX_SIZE, SizeType, Store, stat_to_js_mtime,
+};
 use crate::webcore::node_types::PathOrFileDescriptor;
 #[cfg(windows)]
 use bun_collections::ByteVecExt as _;
@@ -691,8 +693,7 @@ impl ReadFile {
 
         if let Some(store) = &self.store {
             if let Data::File(file) = Store::data_mut(store) {
-                let mtime = bun_sys::PosixStat::init(&stat).mtime();
-                file.last_modified = jsc::to_js_time(mtime.sec as isize, mtime.nsec as isize);
+                file.last_modified = stat_to_js_mtime(&stat);
             }
         }
 
@@ -1204,10 +1205,7 @@ impl<'a> ReadFileUV<'a> {
 
         // keep in sync with resolveSizeAndLastModified
         if let Data::File(file) = Store::data_mut(&this.store) {
-            // `uv_timespec_t` fields are `c_long` (i32 on Windows); widen to the
-            // platform-width `isize` `to_js_time` expects.
-            file.last_modified =
-                jsc::to_js_time(stat.mtime().sec as isize, stat.mtime().nsec as isize);
+            file.last_modified = stat_to_js_mtime(&stat);
         }
 
         if bun_sys::S::ISDIR(u32::try_from(stat.mode()).expect("int cast")) {

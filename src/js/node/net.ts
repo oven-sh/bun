@@ -1861,7 +1861,6 @@ function Socket(options?) {
       },
     };
   }
-  // Node starts the flow of data from a handle at once unless asked not to.
   // https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L472
   if (handle && isStreamWrapHandle(handle) && opts.readable !== false && !opts.manualStart) {
     this.read(0);

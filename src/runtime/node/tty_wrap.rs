@@ -272,8 +272,7 @@ impl TTY {
             self.read_fd.set(Fd::INVALID);
             return Err(StartError::Sys(err));
         }
-        // The loop refused the poll: `on_reader_error` already ran, with no ref
-        // to release. Closing the reader here closes the fd.
+        // The loop refused the poll (`on_reader_error` ran): close the reader's fd.
         if self.flags.get().contains(Flags::READER_DONE) {
             self.reader.with_mut(|r| r.close());
             self.read_fd.set(Fd::INVALID);
@@ -534,9 +533,7 @@ impl TTY {
         self.on_reader_finished(uv_errno(err.errno));
     }
 
-    /// Shared tail of `on_reader_done`/`on_reader_error`. The reader dispatches
-    /// these from inside its own methods, so this touches only `Cell` fields,
-    /// never `self.reader`; `close()` tears the reader down later.
+    /// Runs inside a reader method: touches `Cell` fields only, never `self.reader`.
     fn on_reader_finished(&self, nread: i32) {
         if self.flags.get().contains(Flags::READER_DONE) {
             return;

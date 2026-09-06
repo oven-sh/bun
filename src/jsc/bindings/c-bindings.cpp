@@ -870,8 +870,7 @@ extern "C" int32_t open_as_nonblocking_tty(int32_t fd, int32_t mode)
     }
 
 #if OS(DARWIN)
-    // kqueue rejects the /dev/tty alias (EINVAL). /dev/tty is the controlling
-    // terminal, whose real /dev/ttysNNN device the kernel reports per process.
+    // kqueue rejects the /dev/tty alias: open the controlling terminal's real device.
     if (strcmp(pathbuf, "/dev/tty") == 0) {
         int mib[4] = { CTL_KERN, KERN_PROC, KERN_PROC_PID, getpid() };
         struct kinfo_proc kp;

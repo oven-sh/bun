@@ -3381,10 +3381,7 @@ where
             httplog!("{} - {}", BStr::new(&m), BStr::new(&u));
         }
 
-        // The loopback source-IP check is not enough on its own: a
-        // DNS-rebound origin connects from 127.0.0.1 but presents the
-        // attacker's hostname in `Host`. Apply the same Host allowlist as
-        // the `/_bun/*` routes before disclosing the project root path.
+        // Check `Host` too: a DNS-rebound origin connects from loopback with a foreign `Host`.
         let authorized = bake::is_allowed_host_header(req, Some(&self.config.address))
             && resp
                 .get_remote_socket_info()
@@ -3395,10 +3392,7 @@ where
             return;
         }
 
-        // Without a DevServer (HMR off) the HTML bundle is still served from
-        // the project root, which is the cwd the DevServer would have used.
-        // `process.chdir()` leaves a trailing separator on `top_level_dir`;
-        // strip it the way `DevServer::init` does so both modes agree.
+        // `process.chdir()` leaves a trailing separator on `top_level_dir`; strip it like `DevServer::init`.
         let root: &[u8] = match self.dev_server.as_deref() {
             Some(dev_server) => &dev_server.root,
             None => paths::string_paths::without_trailing_slash_windows_path(

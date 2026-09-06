@@ -2255,8 +2255,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             self.dev_server.as_deref_mut().map(std::ptr::from_mut);
 
         // https://chromium.googlesource.com/devtools/devtools-frontend/+/main/docs/ecosystem/automatic_workspace_folders.md
-        // Only enable this when the server serves a frontend: either through
-        // the dev server (HMR on) or through an HTML bundle route (HMR off).
+        // Only for a server that serves HTML, with or without the dev server.
         let serves_html = dev_server.is_some()
             || self
                 .config

@@ -2135,6 +2135,80 @@ describe("HTTP Server Security Tests - Advanced", () => {
       expect(response).toInclude("200 Everything Is Fine");
       expect(response).toInclude("ok");
     });
+
+    // Raw bytes: the reason phrase is Latin-1 on the wire, so a utf8-decoding
+    // client would mangle exactly the bytes these tests check.
+    const sendRawRequest = (message: string): Promise<Buffer> =>
+      new Promise((resolve, reject) => {
+        const client = connect(port, "localhost");
+        const chunks: Buffer[] = [];
+        client.on("data", chunk => chunks.push(chunk));
+        client.on("error", reject);
+        client.on("end", () => resolve(Buffer.concat(chunks)));
+        client.write(message);
+      });
+    const statusLineOf = (bytes: Buffer) => bytes.subarray(0, bytes.indexOf("\r\n"));
+
+    // Node validates the reason phrase per UTF-16 code unit
+    // (checkInvalidHeaderChar: [\t\x20-\x7e\x80-\xff]), so U+010D is rejected
+    // even though its UTF-8 bytes are all >= 0x80.
+    test("rejects a statusMessage code unit above 0xff set via property assignment followed by res.end()", async () => {
+      const { promise: errorPromise, resolve: resolveError } = Promise.withResolvers<Error>();
+      server.on("request", (req, res) => {
+        res.statusMessage = "O\u010d";
+        try {
+          res.end("body");
+        } catch (e: any) {
+          resolveError(e);
+          res.statusMessage = "OK";
+          res.end("safe");
+        }
+      });
+
+      const response = await sendRawRequest("GET / HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n");
+      const err = await errorPromise;
+      expect((err as any).code).toBe("ERR_INVALID_CHAR");
+      expect(statusLineOf(response).toString("latin1")).toBe("HTTP/1.1 200 OK");
+    });
+
+    test("rejects a statusMessage code unit above 0xff set via property assignment followed by res.write()", async () => {
+      const { promise: errorPromise, resolve: resolveError } = Promise.withResolvers<Error>();
+      server.on("request", (req, res) => {
+        res.statusMessage = "O\u010d";
+        try {
+          res.write("chunk");
+        } catch (e: any) {
+          resolveError(e);
+          res.statusMessage = "OK";
+          res.end("safe");
+        }
+      });
+
+      const response = await sendRawRequest("GET / HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n");
+      const err = await errorPromise;
+      expect((err as any).code).toBe("ERR_INVALID_CHAR");
+      expect(statusLineOf(response).toString("latin1")).toBe("HTTP/1.1 200 OK");
+    });
+
+    test("writes a Latin-1 statusMessage as one byte per character via writeHead()", async () => {
+      server.on("request", (req, res) => {
+        res.writeHead(200, "Ol\u00e1");
+        res.end("ok");
+      });
+
+      const response = await sendRawRequest("GET / HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n");
+      expect(statusLineOf(response)).toEqual(Buffer.from("HTTP/1.1 200 Ol\u00e1", "latin1"));
+    });
+
+    test("writes a Latin-1 statusMessage as one byte per character via property assignment and res.end()", async () => {
+      server.on("request", (req, res) => {
+        res.statusMessage = "Ol\u00e1";
+        res.end("ok");
+      });
+
+      const response = await sendRawRequest("GET / HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n");
+      expect(statusLineOf(response)).toEqual(Buffer.from("HTTP/1.1 200 Ol\u00e1", "latin1"));
+    });
   });
 
   test("Server should not crash in clientError is emitted when calling destroy", async () => {

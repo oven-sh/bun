@@ -936,11 +936,19 @@ impl NodeHTTPResponse {
         };
 
         let status_message_view;
-        let status_message_slice;
+        let status_message_narrowed: Vec<u8>;
         let status_message_bytes: &[u8] = if !status_message_value.is_undefined() {
             status_message_view = status_message_value.to_js_string_view(global_object)?;
-            status_message_slice = status_message_view.to_utf8();
-            status_message_slice.slice()
+            if status_message_view.is_8bit() {
+                status_message_view.latin1()
+            } else {
+                status_message_narrowed = status_message_view
+                    .utf16()
+                    .iter()
+                    .map(|&unit| u8::try_from(unit).unwrap_or(0))
+                    .collect();
+                &status_message_narrowed
+            }
         } else {
             &[]
         };
@@ -953,9 +961,10 @@ impl NodeHTTPResponse {
             );
         }
 
-        // Validate status message does not contain invalid characters (defense-in-depth
-        // against HTTP response splitting). Matches Node.js checkInvalidHeaderChar:
-        // rejects any char not in [\t\x20-\x7e\x80-\xff].
+        // The reason phrase is Latin-1 on the wire (one byte per code unit,
+        // RFC 9112 obs-text), so it is validated per UTF-16 code unit like Node's
+        // checkInvalidHeaderChar: anything outside [\t\x20-\x7e\x80-\xff] throws.
+        // A 16-bit unit above 0xff was narrowed to 0 above and fails this check.
         for &c in status_message_bytes {
             if c != b'\t' && (c < 0x20 || c == 0x7f) {
                 return err_throw(

@@ -1025,8 +1025,7 @@ impl MultiPartUpload {
         self.options.get().part_size as usize
     }
 
-    /// EOF received: hold the event loop until the upload settles (`Drop` releases it).
-    /// Before EOF only in-flight requests hold it, so an un-ended writer can exit.
+    /// Holds the event loop from EOF until `Drop`.
     fn mark_ended(&self) {
         self.ended.set(true);
         self.poll_ref

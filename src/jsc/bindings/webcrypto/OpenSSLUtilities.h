@@ -59,9 +59,7 @@ struct EvpKeyPair {
     EvpPKeyPtr privateKey;
 };
 
-// Runs `generate` on the work pool, then `onKeys` or `onFailure` on the JS thread
-// that owns `context`. `generate` must not touch anything bound to the JS thread.
-// The CryptoKey objects are built in `onKeys`.
+// Runs `generate` on the work pool, then `onKeys` or `onFailure` on the JS thread that owns `context`.
 void generateKeyPairInWorkQueue(ScriptExecutionContext&, Function<std::optional<EvpKeyPair>()>&& generate, Function<void(EvpKeyPair&&)>&& onKeys, Function<void()>&& onFailure);
 
 class AESKey {

@@ -1023,9 +1023,7 @@ void SubtleCrypto::generateKey(JSC::JSGlobalObject& state, AlgorithmIdentifier&&
             rejectWithException(promise.releaseNonNull(), ec, msg);
     };
 
-    // The specification says this runs "in parallel": https://www.w3.org/TR/WebCryptoAPI/#SubtleCrypto-method-generateKey
-    // RSA and EC key pairs are generated on the work pool (generateKeyPairInWorkQueue). AES, HMAC,
-    // OKP and AKP keys are cheap and are generated inline.
+    // RSA and EC key pairs are generated on the work pool. The cheap key types are generated inline.
     RELEASE_AND_RETURN(scope, algorithm->generateKey(*params, extractable, keyUsagesBitmap, WTF::move(callback), WTF::move(exceptionCallback), *scriptExecutionContext()));
 }
 

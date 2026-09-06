@@ -2200,6 +2200,43 @@ impl NetworkSink {
         self.task = None;
     }
 
+    /// The `writer()` wrapper was collected before `end()`. Nothing can finish
+    /// the upload any more, so fail it: that frees the queued parts, aborts a
+    /// started multipart upload on the server, and releases the upload's
+    /// event-loop ref. Deferred to a task because this runs inside a GC sweep
+    /// and `fail` settles a pending `flush()` promise.
+    ///
+    /// # Safety
+    /// `this` is the live heap box from `writable()`.
+    unsafe fn abort_on_collect(this: *mut NetworkSink) {
+        // SAFETY: fn contract.
+        let task = unsafe {
+            if (*this).ended || (*this).writer_holders.get() == 0 {
+                return;
+            }
+            (*this).ended = true;
+            (*this).done = true;
+            (*this).task.clone()
+        };
+        let Some(task) = task else {
+            return;
+        };
+        fn fail_collected(task: *mut RefPtr<bun_s3::MultiPartUpload>) -> JsResult<()> {
+            // SAFETY: the box leaked below; ManagedTask hands it over once.
+            let task = unsafe { bun_core::heap::take(task) };
+            task.fail(bun_s3_signing::error::S3Error {
+                code: b"UnknownError",
+                message: b"S3 writer was garbage collected before end() was called",
+            })
+        }
+        VirtualMachine::get().event_loop_ref().enqueue_task(
+            bun_event_loop::ManagedTask::ManagedTask::new_owned(
+                bun_core::heap::into_raw(Box::new(task)),
+                fail_collected,
+            ),
+        );
+    }
+
     /// The S3 upload drained: settle the flush/write promises (terminal, like
     /// `flush_promise`) and wake the source.
     pub(crate) fn on_writable(
@@ -2521,6 +2558,7 @@ impl crate::webcore::sink::JsSinkType for NetworkSink {
     unsafe fn finalize(this: *mut Self) {
         // SAFETY: trait contract — `this` is live and not used after this call.
         unsafe {
+            Self::abort_on_collect(this);
             (*this).finalize();
             Self::release_writer_holder(this);
         }

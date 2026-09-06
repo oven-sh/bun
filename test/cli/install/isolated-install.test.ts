@@ -759,7 +759,10 @@ describe("isolated workspaces", () => {
     expect(await readdirSorted(memberModules)).toEqual([".bin", "linked", "manual", "no-deps"]);
     expect(await readdirSorted(join(memberModules, ".bin"))).toEqual([]);
     expect(await file(join(memberModules, "manual", "package.json")).json()).toEqual({ name: "manual" });
-    expect(await file(join(memberModules, "linked", "package.json")).json()).toEqual({ name: "linked", version: "1.0.0" });
+    expect(await file(join(memberModules, "linked", "package.json")).json()).toEqual({
+      name: "linked",
+      version: "1.0.0",
+    });
 
     // Removing a root dependency that a workspace package still uses keeps
     // the package in the store but unlinks it from the root.

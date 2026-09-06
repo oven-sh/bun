@@ -343,7 +343,9 @@ export function binaryExpectations(cfg: Config): BinaryExpectations {
           // Node-API and the V8 / node C++ embedder API are exported from the
           // source with __declspec(dllexport) (NAPI_EXTERN, BUN_EXPORT), the
           // C++ ones under their MSVC-mangled names; symbols.def adds libuv.
-          patterns: ["napi_*", "node_api_*", "?*@v8@@*", "?*@node@@*"],
+          // llhttp_*: node.exe exports llhttp's C API (its header dllexports
+          // on _WIN32) and so does bun.exe, from the same header.
+          patterns: ["napi_*", "node_api_*", "?*@v8@@*", "?*@node@@*", "llhttp_*"],
           demangledPatterns: [],
         },
         neededLibs: {

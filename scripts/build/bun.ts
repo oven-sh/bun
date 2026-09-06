@@ -978,8 +978,32 @@ function emitJscProgram(
       orderOnlyInputs: webkit.generatedHeaders,
     }),
   );
+  // Where JSC links bun's ICU (everywhere but macOS), its data archive is the
+  // zstd-repacked one (deps/icu.ts), read through the bun_icu_maybe_decompress
+  // hook bun defines in src/jsc/bindings/bun_icu_decompress.cpp. Compile that
+  // TU for the program too (through a wrapper in the build dir, so its object
+  // does not collide with bun's) and link zstd; without it every compressed
+  // item would fail to load and Intl would be English-only in the shell.
+  const icuHook: string[] = [];
+  if (deps.has("icu")) {
+    const wrapper = resolve(cfg.buildDir, "codegen", `${name}-bun_icu_decompress.cpp`);
+    writeIfChanged(wrapper, `#include "${slash(resolve(cfg.cwd, "src/jsc/bindings/bun_icu_decompress.cpp"))}"\n`);
+    objects.push(
+      cxx(n, cfg, wrapper, {
+        flags: [
+          ...spec.cxxflags,
+          `-I${resolve(cfg.cwd, "src/jsc/bindings")}`,
+          ...["zstd", "mimalloc"].flatMap(d => (deps.get(d)?.includes ?? []).map(i => `-I${i}`)),
+          "-Wno-undef", // mimalloc's internal headers under JSC's -Wundef
+        ],
+        implicitInputs: webkit.outputs,
+        orderOnlyInputs: webkit.generatedHeaders,
+      }),
+    );
+    icuHook.push(...fromDep("zstd"));
+  }
   const shims = emitShims(n, cfg);
-  const deps_ = lazyDepObjects(cfg, [...fromDep("WebKit"), ...fromDep("icu"), ...fromDep("mimalloc")]);
+  const deps_ = lazyDepObjects(cfg, [...fromDep("WebKit"), ...fromDep("icu"), ...icuHook, ...fromDep("mimalloc")]);
   const exe = link(n, cfg, name, [...objects, ...deps_.eager], {
     lazyObjects: deps_.lazy,
     libs: [],

@@ -494,7 +494,9 @@ export function link(n: Ninja, cfg: Config, out: string, objects: string[], opts
     writeIfChanged(rsp, ["/start-lib", ...lazy.map(o => quote(n.rel(o), true)), "/end-lib"].join("\n") + "\n");
     vars.lazy = quote(`/clang:-Wl,@${n.rel(rsp)}`, cfg.host.os === "windows");
     inputs = [...objects, ...opts.libs];
-    implicitInputs.push(...lazy);
+    // The rsp itself too: a member dropped from the group changes neither $in
+    // nor $lazy, only this file (writeIfChanged keeps its mtime otherwise).
+    implicitInputs.push(rsp, ...lazy);
   }
 
   const node: BuildNode = {

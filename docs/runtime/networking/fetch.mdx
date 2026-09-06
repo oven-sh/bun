@@ -217,6 +217,8 @@ await fetch("https://example.com", {
 });
 ```
 
+A `BunFile` here is read synchronously on every `fetch()` call that passes it, like `fs.readFileSync`, and must point to a regular file. For requests in a loop, read the file once and pass the string or `Buffer`.
+
 #### Custom TLS Validation
 
 To customize TLS validation, use the `checkServerIdentity` option in `tls`:

@@ -17,6 +17,7 @@ use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{self as jsc, JSGlobalObject, JSValue, JsError, JsResult, SysErrorJsc};
 
 use crate::node::fs as node_fs;
+use crate::node::types::{PathLikeExt as _, PathOrFileDescriptor};
 use crate::webcore::Blob;
 use crate::webcore::blob::store::Data as StoreData;
 
@@ -37,6 +38,7 @@ pub(crate) enum ReadFromBlobError {
     Js(JsError),
     NullStore,
     NotAFile,
+    NotRegularFile,
     EmptyFile,
 }
 
@@ -85,6 +87,22 @@ fn read_from_blob(
         StoreData::File(f) => f,
         _ => return Err(ReadFromBlobError::NotAFile),
     };
+    // The read below is synchronous on the JS thread: the PEM bytes must exist
+    // before the SSL_CTX is built. `open(2)` of a FIFO waits for a writer and a
+    // read of a pipe, socket or device waits for its peer, so only a regular
+    // file is accepted. A stat error is left for the open to report.
+    let stat = match &file.pathlike {
+        PathOrFileDescriptor::Path(path) => {
+            let mut buf = bun_paths::path_buffer_pool::get();
+            bun_sys::stat(path.slice_z(&mut buf))
+        }
+        PathOrFileDescriptor::Fd(fd) => bun_sys::fstat(*fd),
+    };
+    if let Ok(stat) = stat {
+        if !bun_sys::S::ISREG(stat.st_mode as _) {
+            return Err(ReadFromBlobError::NotRegularFile);
+        }
+    }
     let mut fs = node_fs::NodeFS::default();
     // `ReadFile` has a `Drop` impl (releases its `signal` ref), so functional
     // record update from `..Default::default()` would partially move out of a
@@ -297,18 +315,16 @@ fn handle_path(
     string: &bun_core::String,
 ) -> JsResult<*const c_char> {
     let name = string.to_owned_slice_z();
-    // `bun_sys::access` routes to `access(2)` on POSIX and
-    // `GetFileAttributesW` on Windows (via `sys_uv`), so this is the
-    // cross-platform existence probe.
-    if bun_sys::access(&name, bun_sys::posix::F_OK).is_err() {
-        // Error path: free_sensitive(name) — zero before drop. Route through
-        // the canonical helper so the secure-zero core stays single-sourced.
-        // SAFETY: `zbox_into_raw` yields a `default_alloc::malloc`-backed,
-        // NUL-terminated buffer whose ownership we now hold exclusively.
-        unsafe { bun_core::free_sensitive(zbox_into_raw(&name)) };
-        return Err(global.throw_invalid_arguments(format_args!("Unable to access {} path", field)));
+    // The file is opened later, synchronously, when the SSL_CTX is built, so
+    // reject anything whose open or read can block (FIFO, socket, device) here.
+    match bun_sys::stat(&name) {
+        Ok(stat) if bun_sys::S::ISREG(stat.st_mode as _) => Ok(zbox_into_raw(&name)),
+        Ok(_) => Err(global
+            .throw_invalid_arguments(format_args!("TLSOptions.{} must be a regular file", field))),
+        Err(_) => {
+            Err(global.throw_invalid_arguments(format_args!("Unable to access {} path", field)))
+        }
     }
-    Ok(zbox_into_raw(&name))
 }
 
 fn handle_file_for_field(
@@ -323,6 +339,10 @@ fn handle_file_for_field(
             Err(global
                 .throw_invalid_arguments(format_args!("TLSOptions.{} is an empty file", field)))
         }
+        Err(ReadFromBlobError::NotRegularFile) => Err(global.throw_invalid_arguments(format_args!(
+            "TLSOptions.{} must be a regular file (for a FIFO, socket or device, pass its contents instead of a Bun.file())",
+            field
+        ))),
         Err(ReadFromBlobError::NullStore) | Err(ReadFromBlobError::NotAFile) => Err(global
             .throw_invalid_arguments(format_args!(
                 "TLSOptions.{} is not a valid BunFile (non-BunFile `Blob`s are not supported)",

@@ -4671,6 +4671,10 @@ declare module "bun" {
      * Optionally override the trusted CA certificates. Default is to trust
      * the well-known CAs curated by Mozilla. Mozilla's CAs are completely
      * replaced when CAs are explicitly specified using this option.
+     *
+     * A `BunFile` is read synchronously when the options are parsed, like
+     * `fs.readFileSync`, and must point to a regular file. The same applies
+     * to `cert` and `key`.
      */
     ca?: string | BufferSource | BunFile | Array<string | BufferSource | BunFile> | undefined;
     /**
@@ -4683,6 +4687,9 @@ declare module "bun" {
      *  be in the same order as their private keys in key. If the
      *  intermediate certificates are not provided, the peer cannot
      *  validate the certificate, and the handshake fails.
+     *
+     *  A `BunFile` is read synchronously when the options are parsed and
+     *  must point to a regular file.
      */
     cert?: string | BufferSource | BunFile | Array<string | BufferSource | BunFile> | undefined;
     /**
@@ -4694,6 +4701,9 @@ declare module "bun" {
      * passphrase: <string>]}. The object form can only occur in an array.
      * object.passphrase is optional. Encrypted keys are decrypted with
      * object.passphrase if provided, or options.passphrase if it is not.
+     *
+     * A `BunFile` is read synchronously when the options are parsed and
+     * must point to a regular file.
      */
     key?: string | BufferSource | BunFile | Array<string | BufferSource | BunFile> | undefined;
     /**

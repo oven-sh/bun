@@ -27,6 +27,8 @@ Bun.serve({
 });
 ```
 
+A `BunFile` is read synchronously when `Bun.serve()` parses the options, like `fs.readFileSync`. It must point to a regular file. To use a FIFO, a socket, or a device, read it yourself (`await Bun.file(path).text()`) and pass the contents.
+
 ### Passphrase
 
 If your private key is encrypted with a passphrase, provide a value for `passphrase` to decrypt it.

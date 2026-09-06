@@ -1,5 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "fs";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import { mkfifo } from "mkfifo";
 import tls from "node:tls";
 import { join } from "path";
 import privateKey from "../../third_party/jsonwebtoken/priv.pem" with { type: "text" };
@@ -253,4 +255,51 @@ describe("Bun.serve per-serverName client certificate policy", () => {
       gatedResumed: "connection closed without a response",
     });
   });
+});
+
+// A TLS file option (a `Bun.file()` value, or a `keyFile`/`certFile` path) is
+// read synchronously when the options are parsed or the SSL context is built.
+// A FIFO, socket or device there would block the JS thread in open(2) or
+// read(2), with no writer forever, so every door rejects it up front.
+test.skipIf(isWindows)("TLS file options that are not regular files are rejected by every door", async () => {
+  using dir = tempDir("tls-not-regular", {});
+  const fifo = join(String(dir), "tls.fifo");
+  mkfifo(fifo);
+  // Nothing ever opens the FIFO for writing. A door that open(2)s it hangs the
+  // child at that door until this test times out.
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), join(import.meta.dir, "tls-file-option-not-regular-fixture.ts")],
+    env: { ...bunEnv, FIFO: fifo },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  // One JSON line per door: { door, message }.
+  const messages = Object.fromEntries(
+    stdout
+      .trim()
+      .split("\n")
+      .map(line => JSON.parse(line))
+      .map(({ door, message }) => [door, message]),
+  );
+  const rejected = expect.stringMatching(/^TLSOptions\.\w+ must be a regular file/);
+  expect(messages).toEqual({
+    "Bun.serve": rejected,
+    "Bun.serve sni": rejected,
+    "Bun.serve keyFile": rejected,
+    "server.reload": rejected,
+    "Bun.listen": rejected,
+    "Bun.listen keyFile": rejected,
+    "Bun.connect": rejected,
+    fetch: rejected,
+    "tls.connect": rejected,
+    "tls.createServer": rejected,
+    "tls.createSecureContext": rejected,
+    "https.Agent": rejected,
+    WebSocket: rejected,
+    RedisClient: rejected,
+    "Bun.SQL": rejected,
+  });
+  expect(exitCode).toBe(0);
 });

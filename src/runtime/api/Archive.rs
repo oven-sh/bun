@@ -1320,6 +1320,8 @@ fn extract_to_disk_filtered(
 
     let mut count: u32 = 0;
     let mut entry: *mut lib::Entry = core::ptr::null_mut();
+    #[cfg(not(windows))]
+    let mut parent_dirs = libarchive::ParentDirs::new();
     let mut stack_buf = bun_core::vec::UninitBuf::<{ 64 * 1024 }>::uninit();
     // SAFETY: `archive_read_data` is the only writer of `buf`; each chunk reads back only `buf[..bytes_read]`.
     let buf = unsafe { stack_buf.as_bytes_mut() };
@@ -1364,9 +1366,22 @@ fn extract_to_disk_filtered(
         let filetype = entry_ref.filetype();
         let kind = bun_sys::kind_from_mode(filetype);
 
+        // Never create an entry through a symlink already in the destination.
+        #[cfg(not(windows))]
+        let Some((parent_dir, name_z)) = parent_dirs.open_entry(dir_fd, pathname_z) else {
+            continue;
+        };
+        #[cfg(windows)]
+        let (parent_dir, name_z) = (dir_fd, pathname_z);
+
         match kind {
             bun_sys::FileKind::Directory => {
-                match dir_fd.make_path(pathname) {
+                #[cfg(windows)]
+                let created = dir_fd.make_path(pathname);
+                // 0o755 is the mode `make_path` gives the directories it creates.
+                #[cfg(not(windows))]
+                let created = bun_sys::mkdirat_z(parent_dir, name_z, 0o755);
+                match created {
                     // Directory already exists - don't count as extracted
                     Err(e) if e.get_errno() == bun_sys::E::EEXIST => continue,
                     Err(_) => continue,
@@ -1385,8 +1400,9 @@ fn extract_to_disk_filtered(
                 };
 
                 // Create parent directories if needed (ignore expected errors)
-                if let Some(parent_dir) = bun_core::dirname(pathname) {
-                    match dir_fd.make_path(parent_dir) {
+                #[cfg(windows)]
+                if let Some(parent) = bun_core::dirname(pathname) {
+                    match dir_fd.make_path(parent) {
                         // Expected: directory already exists
                         Err(e) if e.get_errno() == bun_sys::E::EEXIST => {}
                         // Permission errors: skip this file, will fail at openat
@@ -1397,14 +1413,24 @@ fn extract_to_disk_filtered(
                     }
                 }
 
+                let flags = bun_sys::O::WRONLY | bun_sys::O::CREAT | bun_sys::O::TRUNC;
+                #[cfg(not(windows))]
+                let flags = flags | bun_sys::O::NOFOLLOW;
+
                 // Create and write the file using bun.sys
-                let file_fd: Fd = match bun_sys::openat(
-                    dir_fd,
-                    pathname_z,
-                    bun_sys::O::WRONLY | bun_sys::O::CREAT | bun_sys::O::TRUNC,
-                    mode,
-                ) {
+                let file_fd: Fd = match bun_sys::openat(parent_dir, name_z, flags, mode) {
                     Ok(fd) => fd,
+                    // A symlink holds the name (FreeBSD says EMLINK). Replace
+                    // it, as GNU tar and node-tar do.
+                    Err(err)
+                        if matches!(err.get_errno(), bun_sys::E::ELOOP | bun_sys::E::EMLINK) =>
+                    {
+                        let _ = bun_sys::unlinkat(parent_dir, name_z);
+                        match bun_sys::openat(parent_dir, name_z, flags, mode) {
+                            Ok(fd) => fd,
+                            Err(_) => continue,
+                        }
+                    }
                     Err(_) => continue,
                 };
 
@@ -1448,7 +1474,7 @@ fn extract_to_disk_filtered(
                     count += 1;
                 } else {
                     // Remove partial file on failure
-                    let _ = bun_sys::unlinkat(dir_fd, pathname_z);
+                    let _ = bun_sys::unlinkat(parent_dir, name_z);
                 }
             }
             bun_sys::FileKind::SymLink => {
@@ -1461,20 +1487,8 @@ fn extract_to_disk_filtered(
                 // On Windows, symlinks are skipped since they require elevated privileges.
                 #[cfg(unix)]
                 {
-                    match bun_sys::symlinkat(link_target_z, dir_fd, pathname_z) {
-                        Err(err) => {
-                            if matches!(err.get_errno(), bun_sys::E::EPERM | bun_sys::E::ENOENT) {
-                                if let Some(parent) = bun_core::dirname(pathname) {
-                                    let _ = dir_fd.make_path(parent);
-                                }
-                                if bun_sys::symlinkat(link_target_z, dir_fd, pathname_z).is_err() {
-                                    continue;
-                                }
-                            } else {
-                                continue;
-                            }
-                        }
-                        Ok(()) => {}
+                    if bun_sys::symlinkat(link_target_z, parent_dir, name_z).is_err() {
+                        continue;
                     }
                     count += 1;
                 }

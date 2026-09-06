@@ -57,8 +57,7 @@ bitflags::bitflags! {
         /// The loop refused to poll the fd (kqueue on the macOS `/dev/tty`
         /// alias): `readStart()` reports `ENOTSUP`, everything else works.
         const UNPOLLABLE     = 1 << 6;
-        /// `close()` closes `fd` too. libuv owns a tty fd it could not reopen
-        /// (a pty master, a pipe) and closes it unless it is stdio.
+        /// `close()` closes `fd` too: libuv owns a non-stdio fd it could not reopen.
         const OWNS_FD        = 1 << 7;
     }
 }
@@ -93,8 +92,7 @@ enum StartError {
     Unpollable,
 }
 
-/// The code `onread`, `readStart()` and `setRawMode()` report: libuv's
-/// negative errno, which is the `UV_E*` value on Windows.
+/// libuv's negative errno (`UV_E*` on Windows), as `onread` and `setRawMode()` report it.
 fn uv_errno(errno: u16) -> i32 {
     #[cfg(windows)]
     {

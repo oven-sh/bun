@@ -37,8 +37,7 @@ function ReadStream(fd, options): void {
   this.isTTY = true;
 }
 
-// The base class is net.Socket, loaded on first use so that a TTY stdout
-// (tty.WriteStream) does not pay for node:net. Same trick as WriteStream below.
+// net.Socket is loaded on first use: a TTY stdout must not pay for node:net.
 Object.defineProperty(ReadStream, "prototype", {
   get() {
     const { Socket } = require("node:net");

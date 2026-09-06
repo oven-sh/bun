@@ -299,9 +299,17 @@ describe.concurrent("bun-install", () => {
     ["an empty name with a dist-tag", { "": "latest" }, 'Dependency name cannot be empty (in "dependencies")'],
     ["an empty name with a range", { "": "^1" }, 'Dependency name cannot be empty (in "dependencies")'],
     ["an npm alias with no name", { "x": "npm:@1.0.0" }, 'invalid package name "@1.0.0" in dependency "npm:@1.0.0"'],
-    ["an npm alias with no name and a dist-tag", { "x": "npm:@latest" }, 'invalid package name "@latest" in dependency "npm:@latest"'],
+    [
+      "an npm alias with no name and a dist-tag",
+      { "x": "npm:@latest" },
+      'invalid package name "@latest" in dependency "npm:@latest"',
+    ],
     ["an npm alias with an empty version", { "x": "npm:@" }, 'invalid package name "@" in dependency "npm:@"'],
-    ["an npm alias scope with no name", { "x": "npm:@scope/@1" }, 'invalid package name "@scope/" in dependency "npm:@scope/@1"'],
+    [
+      "an npm alias scope with no name",
+      { "x": "npm:@scope/@1" },
+      'invalid package name "@scope/" in dependency "npm:@scope/@1"',
+    ],
   ])("rejects %s without a registry request", async (_, dependencies, message) => {
     await withContext(defaultOpts, async ctx => {
       const urls: string[] = [];

@@ -7,6 +7,7 @@ import {
   exampleSite,
   gcTick,
   isASAN,
+  isLinux,
   isWindows,
   tempDir,
   withoutAggressiveGC,
@@ -514,6 +515,35 @@ const IS_UV_FS_COPYFILE_DISABLED =
       expect(exitCode).toBe(0);
     });
   });
+
+  // Linux preallocates a path destination to the source's st_size before
+  // copy_file_range. A source fd positioned past 0 supplies fewer bytes, so
+  // the destination must be trimmed to what was copied.
+  it.skipIf(!isLinux)(
+    "Bun.write(path, Bun.file(fd)) with a positioned fd does not leave preallocated zeros",
+    async () => {
+      // The preallocate threshold is 2 MiB of source.
+      const skip = 2 * 1024 * 1024;
+      const tail = 64 * 1024;
+      using dir = tempDir("bun-write-fd-positioned", {});
+      const src = join(String(dir), "src.bin");
+      const dst = join(String(dir), "dst.bin");
+      fs.writeFileSync(src, Buffer.concat([Buffer.alloc(skip, "S"), Buffer.alloc(tail, "T")]));
+
+      const fd = fs.openSync(src, "r");
+      try {
+        fs.readSync(fd, Buffer.alloc(skip), 0, skip, null);
+        const written = await Bun.write(dst, Bun.file(fd));
+        expect({
+          written,
+          size: fs.statSync(dst).size,
+          content: fs.readFileSync(dst).equals(Buffer.alloc(tail, "T")),
+        }).toEqual({ written: tail, size: tail, content: true });
+      } finally {
+        fs.closeSync(fd);
+      }
+    },
+  );
 
   // fstat on a FIFO reports st_size == 0, so the kernel-copy / bounded loop
   // must terminate on EOF, not on the stat-derived budget.

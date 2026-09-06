@@ -501,6 +501,19 @@ impl CopyFile {
                 }
             }
         }
+
+        // `run_async` preallocates a destination Bun opened with O_TRUNC to the
+        // source's st_size. A source fd whose position is past 0 supplies fewer
+        // bytes than that, so trim the destination to what was copied.
+        if !unknown_size
+            && total_written < u64::from(self.max_length)
+            && matches!(
+                self.destination_file_store.pathlike,
+                PathOrFileDescriptor::Path(_)
+            )
+        {
+            let _ = bun_sys::ftruncate(dest_fd, i64::try_from(total_written).expect("int cast"));
+        }
         Ok(())
     }
 

@@ -2261,8 +2261,7 @@ __attribute__((minsize)) JSValue Process::emitWarning(JSC::JSGlobalObject* lexic
         auto s = warning.getString(globalObject);
         RETURN_IF_EXCEPTION(scope, {});
         errorInstance = createError(globalObject, !s.isEmpty() ? s : "Warning"_s);
-        // Node's createWarningObject assigns name, code and detail with plain assignment, and
-        // only on the Error it creates for a string warning. An Error passed in is left as is.
+        // Like Node's createWarningObject: plain assignment, and only on the Error made for a string.
         errorInstance->putDirect(vm, vm.propertyNames->name, type, 0);
         if (!code.isUndefined()) errorInstance->putDirect(vm, builtinNames(vm).codePublicName(), code, 0);
         if (!detail.isUndefined()) errorInstance->putDirect(vm, vm.propertyNames->detail, detail, 0);

@@ -135,16 +135,14 @@ static JSC::JSObject* createErrorPrototype(JSC::VM& vm, JSC::JSGlobalObject* glo
         break;
     }
 
-    // Non-enumerable, like the members of Node's NodeError class prototype, so `for (k in err)`
-    // yields only the instance's own properties. `code` is one of those, see `putOwnCode`.
+    // DontEnum like Node's NodeError prototype members, so `for (k in err)` sees only own properties.
     prototype->putDirect(vm, vm.propertyNames->name, jsString(vm, String(name)), JSC::PropertyAttribute::DontEnum | 0);
     prototype->putDirect(vm, vm.propertyNames->toString, JSC::JSFunction::create(vm, globalObject, 0, "toString"_s, NodeError_proto_toString, JSC::ImplementationVisibility::Private), JSC::PropertyAttribute::DontEnum | 0);
 
     return prototype;
 }
 
-// Node assigns `code` as a plain own property (`error.code = key` in lib/internal/errors.js),
-// so `Object.keys`, `JSON.stringify` and `{ ...err }` all carry it.
+// Node does `error.code = key` on the instance: an own, enumerable, writable property.
 static JSC::ErrorInstance* putOwnCode(JSC::VM& vm, JSC::ErrorInstance* error, WTF::ASCIILiteral code)
 {
     error->putDirect(vm, WebCore::builtinNames(vm).codePublicName(), jsString(vm, String(code)), 0);

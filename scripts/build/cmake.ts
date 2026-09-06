@@ -286,7 +286,7 @@ export function renderArg(a: Arg): string {
   return a.text;
 }
 
-/** `${NAME}`, `$ENV{NAME}`, `$CACHE{NAME}` and `@NAME@` references in an argument (outermost names; nested refs inside a name are returned too). */
+/** `${NAME}`, `$ENV{NAME}` and `$CACHE{NAME}` references in an argument (nested refs inside a name are returned too). `@NAME@` is not a reference in command arguments — CMake only substitutes it in configure_file()/string(CONFIGURE) input. */
 export function variableReferences(a: Arg): string[] {
   if (a.kind === "bracket") return [];
   const names: string[] = [];

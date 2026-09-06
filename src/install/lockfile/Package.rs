@@ -1817,11 +1817,7 @@ impl Package<u64> {
             Some(&mut *log),
             Some(&mut *pm),
         )
-        .unwrap_or_else(|| dependency::Version {
-            tag: dependency::version::Tag::Uninitialized,
-            literal: sliced.value(),
-            value: dependency::Value::default(),
-        });
+        .unwrap_or_default();
         let mut workspace_range: Option<semver::query::Group> = None;
         #[allow(non_snake_case)]
         let FEATURES = features;

@@ -9426,6 +9426,79 @@ test("rejects package names containing relative path components in bun.lock", as
   expect(await exited).toBe(0);
 });
 
+describe.each(["hoisted", "isolated"])("package names longer than 255 bytes in bun.lock (%s)", linker => {
+  // The name from a bun.lock `packages` entry is copied into fixed-size path
+  // buffers by both linkers: the hoisted linker when it prints the cache
+  // folder name, the isolated linker when a worker thread builds the store
+  // path of a dependency. A name longer than 255 bytes (NAME_MAX, above npm's
+  // 214 byte limit) is rejected when the lockfile is parsed, before either runs.
+  async function installWithName(nameLength: number) {
+    const name = "e" + Buffer.alloc(nameLength - "evil".length, "A").toString() + "vil";
+    const tarballUrl = `${registryUrl()}no-deps/-/no-deps-1.0.0.tgz`;
+    await Promise.all([
+      write(
+        packageJson,
+        JSON.stringify({
+          name: "foo",
+          version: "1.0.0",
+          dependencies: {
+            "no-deps": "1.0.0",
+          },
+        }),
+      ),
+      write(
+        join(packageDir, "bun.lock"),
+        JSON.stringify({
+          lockfileVersion: 1,
+          configVersion: 1,
+          workspaces: {
+            "": {
+              name: "foo",
+              dependencies: {
+                "no-deps": "1.0.0",
+              },
+            },
+          },
+          packages: {
+            "no-deps": [
+              `${name}@1.0.0`,
+              tarballUrl,
+              {},
+              "sha512-v4w12JRjUGvfHDUP8vFDwu0gUWu04j0cv9hLb1Abf9VdaXu4XcrddYFTMVBVvmldKViGWH7jrb6xPJRF0wq6gw==",
+            ],
+          },
+        }),
+      ),
+    ]);
+
+    await using proc = spawn({
+      cmd: [bunExe(), "install", "--frozen-lockfile", "--linker", linker],
+      cwd: packageDir,
+      stdout: "pipe",
+      stderr: "pipe",
+      env,
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+
+  test("a name of 214 bytes (npm's limit) installs", async () => {
+    const { stdout, stderr, exitCode } = await installWithName(214);
+
+    expect(stderr).not.toContain("error:");
+    expect(stdout).toContain("1 package installed");
+    expect(exitCode).toBe(0);
+  });
+
+  test.each([256, 3000, 1_000_000])("a name of %d bytes is rejected", async nameLength => {
+    const { stdout, stderr, exitCode } = await installWithName(nameLength);
+
+    expect(stderr).toContain("Invalid package name");
+    expect(stdout).not.toContain("installed");
+    expect(exitCode).toBe(1);
+  });
+});
+
 test("rejects npm aliases whose manifest URL resolves to a different host than the registry", async () => {
   // The manifest URL is built by joining the registry URL with the package
   // name. WHATWG URL joining treats "\" like "/" for http(s) schemes, so a

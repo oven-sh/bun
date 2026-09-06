@@ -2100,6 +2100,39 @@ pub(crate) fn install_isolated_packages(
             );
         }
 
+        // Validate every package name and dependency alias as a
+        // `node_modules/<name>` component before the first task starts. A
+        // running task builds the store paths of its dependencies on a worker
+        // thread, so a check inside the task-start loop below would race it.
+        for (entry_index, entry_deps) in entry_dependencies.iter().enumerate() {
+            let node_id = entry_node_ids[entry_index];
+            let pkg_id = node_pkg_ids[node_id.get() as usize];
+            let name = pkg_names[pkg_id as usize].slice(string_buf);
+
+            let mut unsafe_folder_name: Option<&[u8]> = None;
+            if !name.is_empty() && !crate::package_installer::alias_is_safe_install_target(name) {
+                unsafe_folder_name = Some(name);
+            } else {
+                for dep in entry_deps.slice() {
+                    let dep_name = lockfile_ro.buffers.dependencies[dep.dep_id as usize]
+                        .name
+                        .slice(string_buf);
+                    if !crate::package_installer::alias_is_safe_install_target(dep_name) {
+                        unsafe_folder_name = Some(dep_name);
+                        break;
+                    }
+                }
+            }
+            if let Some(name) = unsafe_folder_name {
+                Output::err_generic(
+                    "\"{}\" is not a valid install folder name",
+                    (BStr::new(name),),
+                );
+                Output::flush();
+                Global::exit(1);
+            }
+        }
+
         // add the pending task count upfront
         installer
             .manager_mut()
@@ -2114,35 +2147,6 @@ pub(crate) fn install_isolated_packages(
             let pkg_name = pkg_names[pkg_id as usize];
             let pkg_name_hash = pkg_name_hashes[pkg_id as usize];
             let pkg_res: Resolution = pkg_resolutions[pkg_id as usize];
-
-            // Validate the package name and every dependency alias as
-            // `node_modules/<name>` components before any filesystem work.
-            {
-                let mut unsafe_folder_name: Option<&[u8]> = None;
-                let name = pkg_name.slice(string_buf);
-                if !name.is_empty() && !crate::package_installer::alias_is_safe_install_target(name)
-                {
-                    unsafe_folder_name = Some(name);
-                } else {
-                    for dep in entry_dependencies[entry_id.get() as usize].slice() {
-                        let dep_name = lockfile_ro.buffers.dependencies[dep.dep_id as usize]
-                            .name
-                            .slice(string_buf);
-                        if !crate::package_installer::alias_is_safe_install_target(dep_name) {
-                            unsafe_folder_name = Some(dep_name);
-                            break;
-                        }
-                    }
-                }
-                if let Some(name) = unsafe_folder_name {
-                    Output::err_generic(
-                        "\"{}\" is not a valid install folder name",
-                        (BStr::new(name),),
-                    );
-                    Output::flush();
-                    Global::exit(1);
-                }
-            }
 
             match pkg_res.tag {
                 ResolutionTag::Root => {

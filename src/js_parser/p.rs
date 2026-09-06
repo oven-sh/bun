@@ -2175,9 +2175,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         if self.options.features.inlining {
             if let Some(replacement) = self.const_values.get(&ref_) {
-                let replacement = *replacement;
+                // Keep the use site's position, not the declaration's, so
+                // an error thrown here maps back to this line.
+                let data = replacement.data;
                 self.ignore_usage(ref_);
-                return replacement;
+                return Expr { loc, data };
             }
         }
 
@@ -2768,6 +2770,23 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 }
                 js_ast::StmtData::SReturn(mut ret) => {
                     if let Some(value) = ret.value.as_mut() {
+                        // `const r = g(); return r;` keeps this function on the
+                        // stack. `return g()` is a tail call in strict mode and
+                        // JSC drops the frame. Only a requested minify may do
+                        // that: the runtime forces `minify_syntax` on.
+                        if !self.options.bundle
+                            && Self::any_in_tail_position(&replacement, &mut |e| {
+                                matches!(e.data, js_ast::ExprData::ECall(_))
+                                    || matches!(e.data, js_ast::ExprData::ETemplate(t) if t.tag.is_some())
+                            })
+                            && Self::any_in_tail_position(value, &mut |e| {
+                                matches!(e.data, js_ast::ExprData::EIdentifier(ident)
+                                    if ident.ref_.eql(r#ref)
+                                        || self.symbols[ident.ref_.inner_index() as usize].link.get().eql(r#ref))
+                            })
+                        {
+                            return false;
+                        }
                         break 'brk js_ast::StoreRef::from_bump(value);
                     }
                 }
@@ -2840,6 +2859,29 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
 
         false
+    }
+
+    /// Tail position follows JSC's bytecode generator: the whole expression,
+    /// the last operand of a comma, the right side of `&&` / `||` / `??`,
+    /// and both branches of `?:`.
+    fn any_in_tail_position(expr: &Expr, pred: &mut impl FnMut(&Expr) -> bool) -> bool {
+        match expr.data {
+            js_ast::ExprData::EIf(e) => {
+                Self::any_in_tail_position(&e.yes, pred) || Self::any_in_tail_position(&e.no, pred)
+            }
+            js_ast::ExprData::EBinary(e)
+                if matches!(
+                    e.op,
+                    js_ast::op::Code::BinComma
+                        | js_ast::op::Code::BinLogicalAnd
+                        | js_ast::op::Code::BinLogicalOr
+                        | js_ast::op::Code::BinNullishCoalescing
+                ) =>
+            {
+                Self::any_in_tail_position(&e.right, pred)
+            }
+            _ => pred(expr),
+        }
     }
 
     fn substitute_single_use_symbol_in_expr(

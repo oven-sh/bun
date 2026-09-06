@@ -2487,7 +2487,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             p.visit_expr(arg);
         }
 
-        if p.options.features.minify_syntax {
+        // Gated on `bundle` like the `e_function` name-drop below: the runtime
+        // forces `minify_syntax` on, and dropping `new` turns
+        // `return new Error()` into a tail call, which removes the caller's
+        // frame from `Error.stack`.
+        if p.options.features.minify_syntax && p.options.bundle {
             if let Some(minified) = js_ast::known_global::KnownGlobal::minify_global_constructor(
                 p.arena,
                 &mut *e_,

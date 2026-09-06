@@ -1,15 +1,21 @@
 /**
- * Guards the hand transcription of WebKit's code generators in deps/webkit.ts.
+ * Guards the hand transcription of WebKit's CMake in deps/webkit.ts.
  *
- * Every `gen()` step there mirrors an `add_custom_command` in WebKit's CMake
- * (JSC's DerivedSources generators, the LLInt offlineasm pipeline, WTF's MIG
- * stubs). This reads those CMake files from the fetched tree — parsed, not
- * evaluated (scripts/build/cmake.ts) — and extracts, as canonical text:
+ * webkit.ts restates, by hand, three kinds of thing WebKit's CMake decides:
+ * the code generators (every `gen()` mirrors an `add_custom_command`), the
+ * option values that end up in cmakeconfig.h (the `rows` table mirrors
+ * WEBKIT_OPTION_DEFINE / _DEFAULT_PORT_VALUE / SET_AND_EXPOSE_TO_BUILD), and
+ * WebKit's own compiler flags (webkitFlags() mirrors
+ * WEBKIT_*_COMPILER_FLAGS, add_compile_options, per-source COMPILE_OPTIONS).
+ * This reads the CMake files those live in from the fetched tree — parsed,
+ * not evaluated (scripts/build/cmake.ts) — and extracts, as canonical text:
  *
- *   - every add_custom_command / add_custom_target,
- *   - every call of a macro defined there that wraps one (GENERATE_HASH_LUT …),
+ *   - every call of a watched command (add_custom_command, the option and
+ *     flag macros …) and of any macro defined there that wraps one,
  *   - every statement that assigns a variable those reference, transitively
- *     (OFFLINE_ASM_ARGS, LLINT_ASM, JavaScriptCore_BUILTINS_SOURCES …),
+ *     (OFFLINE_ASM_ARGS, ENABLE_FTL_DEFAULT, JavaScriptCore_BUILTINS_SOURCES …),
+ *   - the DerivedSources entries of JavaScriptCore_PRIVATE_FRAMEWORK_HEADERS
+ *     (frameworkHeaders() forwards those; tree headers it forwards wholesale),
  *
  * each with the if/foreach/macro blocks enclosing it. That text is compared
  * with the checked-in snapshot (webkit-cmake.snapshot). A WebKit bump that
@@ -26,19 +32,66 @@ import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { type Invocation, parseCMake, renderInvocation, variableReferences } from "../cmake.ts";
 
-const [root, stampOrFlag] = process.argv.slice(2);
-if (root === undefined || stampOrFlag === undefined) {
-  console.error("usage: webkit-check-cmake.ts <WebKit root> (<stamp> | --update)");
-  process.exit(2);
-}
 const snapshotPath = join(import.meta.dirname, "webkit-cmake.snapshot");
 const snapshotName = "scripts/build/deps/webkit-cmake.snapshot";
 
-/** The CMake files whose generators deps/webkit.ts transcribes. */
-const watchedFiles = ["Source/JavaScriptCore/CMakeLists.txt", "Source/WTF/wtf/PlatformJSCOnly.cmake"];
+/** The CMake files deps/webkit.ts transcribes from (all inside the sparse checkout). */
+export const watchedFiles = [
+  "Source/cmake/WebKitFeatures.cmake",
+  "Source/cmake/OptionsCommon.cmake",
+  "Source/cmake/OptionsJSCOnly.cmake",
+  "Source/cmake/OptionsMSVC.cmake",
+  "Source/cmake/WebKitCompilerFlags.cmake",
+  "Source/bmalloc/CMakeLists.txt",
+  "Source/WTF/wtf/CMakeLists.txt",
+  "Source/WTF/wtf/PlatformJSCOnly.cmake",
+  "Source/JavaScriptCore/CMakeLists.txt",
+];
 
-/** Statements that define build steps. */
-const stepCommands = new Set(["add_custom_command", "add_custom_target"]);
+/** Commands whose every call is captured (lower-case). */
+const watchedCommands = new Set([
+  // generators → gen() steps
+  "add_custom_command",
+  "add_custom_target",
+  // options → the cmakeconfig.h `rows` table
+  "webkit_option_define",
+  "webkit_option_default_port_value",
+  "webkit_option_depend",
+  "webkit_option_conflict",
+  "set_and_expose_to_build",
+  "expose_variable_to_build",
+  "expose_string_variable_to_build",
+  // compiler / linker flags → webkitFlags(), per-source cflags
+  "webkit_prepend_global_compiler_flags",
+  "webkit_append_global_compiler_flags",
+  "webkit_prepend_global_cxx_flags",
+  "webkit_append_global_cxx_flags",
+  "webkit_prepend_global_c_flags",
+  "webkit_append_global_c_flags",
+  "webkit_add_target_cxx_flags",
+  "webkit_add_target_c_flags",
+  "webkit_add_compiler_flags",
+  "add_compile_options",
+  "add_compile_definitions",
+  "add_definitions",
+  "remove_definitions",
+  "add_link_options",
+  "target_compile_options",
+  "target_compile_definitions",
+  "set_source_files_properties",
+]);
+
+/**
+ * Variables captured even though no watched call references them, with an
+ * optional filter on which arguments of their assignments matter.
+ * JavaScriptCore_PRIVATE_FRAMEWORK_HEADERS: only its DerivedSources entries
+ * are transcribed (frameworkHeaders()); the ~900 tree headers are forwarded
+ * by directory, so listing them would only add noise to every bump.
+ */
+const watchedVariables = new Map<string, ((arg: string) => boolean) | undefined>([
+  ["JavaScriptCore_PRIVATE_FRAMEWORK_HEADERS", arg => !/^[A-Za-z0-9_/.-]+\.(h|def)$/.test(arg)],
+]);
+
 /** Keyword arguments that start a new line in the rendering (readability of the diff only). */
 const keywords = new Set([
   "OUTPUT",
@@ -59,7 +112,7 @@ const keywords = new Set([
  * them are not chased; deps/webkit.ts maps them to bun's own paths/config.
  */
 const environment =
-  /^(CMAKE_|JAVASCRIPTCORE_DIR$|JavaScriptCore_(DERIVED_SOURCES|SCRIPTS|FRAMEWORK_HEADERS|PRIVATE_FRAMEWORK_HEADERS)_DIR$|WTF_(DERIVED_SOURCES_DIR|SCRIPTS_DIR|DIR)$|(PYTHON|PERL|Ruby|Python|Mig)_EXECUTABLE$|PORT$|WTF_(CPU|OS|PLATFORM)_|ENABLE_|USE_|HAVE_|WIN32$|APPLE$|UNIX$|MSVC$)/;
+  /^(CMAKE_|JAVASCRIPTCORE_DIR$|JavaScriptCore_(DERIVED_SOURCES|SCRIPTS|FRAMEWORK_HEADERS|PRIVATE_FRAMEWORK_HEADERS)_DIR$|WTF_(DERIVED_SOURCES_DIR|SCRIPTS_DIR|DIR)$|(PYTHON|PERL|Ruby|Python|Mig)_EXECUTABLE$|PORT$|WTF_(CPU|OS|PLATFORM)_|WIN32$|APPLE$|UNIX$|MSVC$)/;
 
 /** Which variable (if any) a statement assigns. Over-approximates for string()/file()/math(): any of their unquoted arguments may be the output. */
 function assignedVariables(inv: Invocation): string[] {
@@ -68,6 +121,9 @@ function assignedVariables(inv: Invocation): string[] {
     case "set":
     case "unset":
     case "option":
+    case "set_and_expose_to_build":
+    case "webkit_option_define":
+    case "webkit_option_default_port_value":
       return a[0] ? [a[0].text] : [];
     case "list":
       return a[1] ? [a[1].text] : [];
@@ -92,7 +148,7 @@ function extract(rootDir: string): string {
     // Macros/functions defined here whose body declares a step: their call sites carry the real arguments.
     const wrapperNames = new Set<string>();
     for (const inv of invs) {
-      if (!stepCommands.has(inv.name)) continue;
+      if (!watchedCommands.has(inv.name)) continue;
       for (const c of inv.context) {
         const m = /^(?:macro|function)\(([A-Za-z_][A-Za-z0-9_]*)/.exec(c);
         if (m) wrapperNames.add(m[1]!.toLowerCase());
@@ -100,7 +156,7 @@ function extract(rootDir: string): string {
     }
 
     const watched = new Set<Invocation>();
-    const wanted = new Set<string>(); // variable names to chase
+    const wanted = new Set<string>(watchedVariables.keys()); // variable names to chase
     const chase = (inv: Invocation) => {
       if (watched.has(inv)) return;
       watched.add(inv);
@@ -110,7 +166,7 @@ function extract(rootDir: string): string {
         if (c.startsWith("foreach("))
           for (const m of c.matchAll(/\$\{([A-Za-z0-9_]+)\}/g)) if (!environment.test(m[1]!)) wanted.add(m[1]!);
     };
-    for (const inv of invs) if (stepCommands.has(inv.name) || wrapperNames.has(inv.name)) chase(inv);
+    for (const inv of invs) if (watchedCommands.has(inv.name) || wrapperNames.has(inv.name)) chase(inv);
     // Transitive closure over assignments (a handful of rounds suffices; bound it anyway).
     for (let round = 0; round < 20; round++) {
       const before = watched.size;
@@ -119,14 +175,27 @@ function extract(rootDir: string): string {
     }
 
     blocks.push(`#### ${rel}`);
-    for (const inv of invs) if (watched.has(inv)) blocks.push(renderInvocation(inv, keywords));
+    for (const inv of invs) {
+      if (!watched.has(inv)) continue;
+      const filter = assignedVariables(inv)
+        .map(v => watchedVariables.get(v))
+        .find(f => f !== undefined);
+      if (filter) {
+        const named = inv.name === "set" ? 1 : 2; // leading name / keyword+name arguments
+        const kept = inv.args.filter((a, i) => i < named || filter(a.text));
+        if (kept.length === named) continue; // nothing transcribed from this statement
+        blocks.push(renderInvocation({ ...inv, args: kept }, keywords));
+      } else blocks.push(renderInvocation(inv, keywords));
+    }
   }
   const header = [
     "# WebKit CMake statements that scripts/build/deps/webkit.ts transcribes by hand:",
-    "# code generators (add_custom_command), the macros wrapping them, and the",
-    "# variables they use — rendered canonically by webkit-check-cmake.ts from the",
-    "# fetched tree and compared on every build. When this changes upstream, carry",
-    "# the change into webkit.ts, then refresh with:",
+    "# code generators (add_custom_command → gen()), options (WEBKIT_OPTION_* /",
+    "# SET_AND_EXPOSE_TO_BUILD → the cmakeconfig.h rows), compiler flags",
+    "# (WEBKIT_*_COMPILER_FLAGS, add_compile_options … → webkitFlags()), the macros",
+    "# wrapping them and the variables they use — rendered canonically by",
+    "# webkit-check-cmake.ts from the fetched tree and compared on every build.",
+    "# When this changes upstream, carry the change into webkit.ts, then refresh:",
     "#   bun scripts/build/deps/webkit-check-cmake.ts vendor/WebKit --update",
   ].join("\n");
   return [header, ...blocks].join("\n\n") + "\n";
@@ -191,22 +260,31 @@ function unifiedDiff(oldText: string, newText: string, context = 3): string {
   return out.join("\n");
 }
 
-const current = extract(root);
-if (stampOrFlag === "--update") {
-  writeFileSync(snapshotPath, current);
-  console.log(`wrote ${snapshotName} (${current.split("\n").length} lines)`);
-  process.exit(0);
+if (import.meta.main ?? process.argv[1] === import.meta.filename) {
+  const [root, stampOrFlag] = process.argv.slice(2);
+  if (root === undefined || stampOrFlag === undefined) {
+    console.error("usage: webkit-check-cmake.ts <WebKit root> (<stamp> | --update)");
+    process.exit(2);
+  }
+  const current = extract(root);
+  if (stampOrFlag === "--update") {
+    writeFileSync(snapshotPath, current);
+    console.log(`wrote ${snapshotName} (${current.split("\n").length} lines)`);
+    process.exit(0);
+  }
+  const expected = existsSync(snapshotPath) ? readFileSync(snapshotPath, "utf8") : "";
+  if (current !== expected) {
+    console.error(
+      `WebKit's CMake differs from ${snapshotName}:\n\n` +
+        unifiedDiff(expected, current) +
+        `\n\nThese are the CMake statements scripts/build/deps/webkit.ts transcribes by hand:\n` +
+        `add_custom_command → a gen() step, WEBKIT_OPTION_* / SET_AND_EXPOSE_TO_BUILD → the\n` +
+        `cmakeconfig.h rows table, WEBKIT_*_FLAGS / add_compile_options / COMPILE_OPTIONS →\n` +
+        `webkitFlags() or a per-source cflags. Read the diff, make the matching change to\n` +
+        `webkit.ts (or decide none is needed), then refresh the snapshot:\n` +
+        `  bun scripts/build/deps/webkit-check-cmake.ts vendor/WebKit --update`,
+    );
+    process.exit(1);
+  }
+  writeFileSync(stampOrFlag, `${current.length}\n`);
 }
-const expected = existsSync(snapshotPath) ? readFileSync(snapshotPath, "utf8") : "";
-if (current !== expected) {
-  console.error(
-    `WebKit's CMake code-generation statements differ from ${snapshotName}:\n\n` +
-      unifiedDiff(expected, current) +
-      `\n\nThese are the add_custom_command generators (and the variables feeding them) that\n` +
-      `scripts/build/deps/webkit.ts transcribes as gen() steps. Read the diff, make the matching\n` +
-      `change to webkit.ts (or decide none is needed), then refresh the snapshot:\n` +
-      `  bun scripts/build/deps/webkit-check-cmake.ts vendor/WebKit --update`,
-  );
-  process.exit(1);
-}
-writeFileSync(stampOrFlag, `${current.length}\n`);

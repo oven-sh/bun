@@ -1,9 +1,1487 @@
 # WebKit CMake statements that scripts/build/deps/webkit.ts transcribes by hand:
-# code generators (add_custom_command), the macros wrapping them, and the
-# variables they use — rendered canonically by webkit-check-cmake.ts from the
-# fetched tree and compared on every build. When this changes upstream, carry
-# the change into webkit.ts, then refresh with:
+# code generators (add_custom_command → gen()), options (WEBKIT_OPTION_* /
+# SET_AND_EXPOSE_TO_BUILD → the cmakeconfig.h rows), compiler flags
+# (WEBKIT_*_COMPILER_FLAGS, add_compile_options … → webkitFlags()), the macros
+# wrapping them and the variables they use — rendered canonically by
+# webkit-check-cmake.ts from the fetched tree and compared on every build.
+# When this changes upstream, carry the change into webkit.ts, then refresh:
 #   bun scripts/build/deps/webkit-check-cmake.ts vendor/WebKit --update
+
+#### Source/cmake/WebKitFeatures.cmake
+
+# in macro(WEBKIT_OPTION_DEFINE _name _description _public _initial_value)
+expose_variable_to_build(${_name})
+
+option(
+    USE_64KB_PAGE_BLOCK "Support 64 KB userspace page size (reduces security and performance)" OFF
+)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+# in if(USE_64KB_PAGE_BLOCK)
+set(ENABLE_JIT_DEFAULT OFF)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+# in if(USE_64KB_PAGE_BLOCK)
+set(ENABLE_FTL_DEFAULT OFF)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+# in if(USE_64KB_PAGE_BLOCK)
+set(USE_SYSTEM_MALLOC_DEFAULT OFF)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+# in if(USE_64KB_PAGE_BLOCK)
+set(USE_MIMALLOC_DEFAULT ON)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+# in if(USE_64KB_PAGE_BLOCK)
+# in if(WTF_CPU_ARM64)
+set(ENABLE_C_LOOP_DEFAULT OFF)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+# in if(USE_64KB_PAGE_BLOCK)
+# in if(WTF_CPU_ARM64)
+set(ENABLE_SAMPLING_PROFILER_DEFAULT ON)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+# in if(USE_64KB_PAGE_BLOCK)
+# in else() # if(WTF_CPU_ARM64)
+set(ENABLE_C_LOOP_DEFAULT ON)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+# in if(USE_64KB_PAGE_BLOCK)
+# in else() # if(WTF_CPU_ARM64)
+set(ENABLE_SAMPLING_PROFILER_DEFAULT OFF)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+# in elseif(WTF_CPU_ARM64 OR WTF_CPU_X86_64) # if(USE_64KB_PAGE_BLOCK)
+set(ENABLE_JIT_DEFAULT ON)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+# in elseif(WTF_CPU_ARM64 OR WTF_CPU_X86_64) # if(USE_64KB_PAGE_BLOCK)
+set(ENABLE_FTL_DEFAULT ON)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+# in elseif(WTF_CPU_ARM64 OR WTF_CPU_X86_64) # if(USE_64KB_PAGE_BLOCK)
+set(USE_SYSTEM_MALLOC_DEFAULT OFF)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+# in elseif(WTF_CPU_ARM64 OR WTF_CPU_X86_64) # if(USE_64KB_PAGE_BLOCK)
+set(USE_MIMALLOC_DEFAULT OFF)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+# in elseif(WTF_CPU_ARM64 OR WTF_CPU_X86_64) # if(USE_64KB_PAGE_BLOCK)
+set(ENABLE_C_LOOP_DEFAULT OFF)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+# in elseif(WTF_CPU_ARM64 OR WTF_CPU_X86_64) # if(USE_64KB_PAGE_BLOCK)
+set(ENABLE_SAMPLING_PROFILER_DEFAULT ON)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+# in elseif(WTF_CPU_RISCV64) # if(USE_64KB_PAGE_BLOCK)
+set(ENABLE_JIT_DEFAULT ON)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+# in elseif(WTF_CPU_RISCV64) # if(USE_64KB_PAGE_BLOCK)
+set(ENABLE_FTL_DEFAULT ON)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+# in elseif(WTF_CPU_RISCV64) # if(USE_64KB_PAGE_BLOCK)
+set(USE_SYSTEM_MALLOC_DEFAULT OFF)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+# in elseif(WTF_CPU_RISCV64) # if(USE_64KB_PAGE_BLOCK)
+set(USE_MIMALLOC_DEFAULT ON)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+# in elseif(WTF_CPU_RISCV64) # if(USE_64KB_PAGE_BLOCK)
+set(ENABLE_C_LOOP_DEFAULT OFF)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+# in elseif(WTF_CPU_RISCV64) # if(USE_64KB_PAGE_BLOCK)
+set(ENABLE_SAMPLING_PROFILER_DEFAULT OFF)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+# in else() # if(USE_64KB_PAGE_BLOCK)
+set(ENABLE_JIT_DEFAULT OFF)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+# in else() # if(USE_64KB_PAGE_BLOCK)
+set(ENABLE_FTL_DEFAULT OFF)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+# in else() # if(USE_64KB_PAGE_BLOCK)
+set(USE_SYSTEM_MALLOC_DEFAULT ON)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+# in else() # if(USE_64KB_PAGE_BLOCK)
+set(USE_MIMALLOC_DEFAULT OFF)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+# in else() # if(USE_64KB_PAGE_BLOCK)
+set(ENABLE_C_LOOP_DEFAULT ON)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+# in else() # if(USE_64KB_PAGE_BLOCK)
+set(ENABLE_SAMPLING_PROFILER_DEFAULT OFF)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+# in if(ENABLE_C_LOOP_DEFAULT)
+set(ENABLE_WEBASSEMBLY_DEFAULT OFF)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+# in else() # if(ENABLE_C_LOOP_DEFAULT)
+set(ENABLE_WEBASSEMBLY_DEFAULT ON)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+# in if(APPLE)
+set(USE_ISO_MALLOC_DEFAULT OFF)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+# in else() # if(APPLE)
+set(USE_ISO_MALLOC_DEFAULT ON)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+# in if(DEFINED ClangTidy_EXE OR DEFINED IWYU_EXE)
+set(ENABLE_UNIFIED_BUILDS_DEFAULT OFF)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+# in else() # if(DEFINED ClangTidy_EXE OR DEFINED IWYU_EXE)
+set(ENABLE_UNIFIED_BUILDS_DEFAULT ON)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+# in if(NOT DEFINED ENABLE_SWIFT_DEMO_URI_SCHEME_DEFAULT OR NOT DEFINED ENABLE_BACK_FORWARD_LIST_SWIFT_DEFAULT)
+# in if(CMAKE_CROSSCOMPILING)
+set(_swift_features_default OFF)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+# in if(NOT DEFINED ENABLE_SWIFT_DEMO_URI_SCHEME_DEFAULT OR NOT DEFINED ENABLE_BACK_FORWARD_LIST_SWIFT_DEFAULT)
+# in elseif(COMPILER_IS_CLANG) # if(CMAKE_CROSSCOMPILING)
+# in if(_swift_interop_ok)
+set(_swift_features_default ON)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+# in if(NOT DEFINED ENABLE_SWIFT_DEMO_URI_SCHEME_DEFAULT OR NOT DEFINED ENABLE_BACK_FORWARD_LIST_SWIFT_DEFAULT)
+# in elseif(COMPILER_IS_CLANG) # if(CMAKE_CROSSCOMPILING)
+# in else() # if(_swift_interop_ok)
+set(_swift_features_default OFF)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+# in if(NOT DEFINED ENABLE_SWIFT_DEMO_URI_SCHEME_DEFAULT OR NOT DEFINED ENABLE_BACK_FORWARD_LIST_SWIFT_DEFAULT)
+# in else() # if(CMAKE_CROSSCOMPILING)
+set(_swift_features_default OFF)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+# in if(NOT DEFINED ENABLE_SWIFT_DEMO_URI_SCHEME_DEFAULT OR NOT DEFINED ENABLE_BACK_FORWARD_LIST_SWIFT_DEFAULT)
+# in if(NOT DEFINED ENABLE_SWIFT_DEMO_URI_SCHEME_DEFAULT)
+set(ENABLE_SWIFT_DEMO_URI_SCHEME_DEFAULT ${_swift_features_default})
+
+# in macro(WEBKIT_OPTION_BEGIN)
+# in if(NOT DEFINED ENABLE_SWIFT_DEMO_URI_SCHEME_DEFAULT OR NOT DEFINED ENABLE_BACK_FORWARD_LIST_SWIFT_DEFAULT)
+# in if(NOT DEFINED ENABLE_BACK_FORWARD_LIST_SWIFT_DEFAULT)
+set(ENABLE_BACK_FORWARD_LIST_SWIFT_DEFAULT ${_swift_features_default})
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_define(
+    ENABLE_ACCESSIBILITY_ISOLATED_TREE "Toggle accessibility isolated tree support" PRIVATE OFF
+)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_define(ENABLE_API_TESTS "Enable public API unit tests" PRIVATE OFF)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_define(ENABLE_APPLE_PAY "Toggle Apple Pay support" PRIVATE OFF)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_define(
+    ENABLE_APPLE_PAY_AUTOMATIC_RELOAD_LINE_ITEM "Toggle Apple Pay automatic reload line item support"
+       PRIVATE OFF
+)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_define(
+    ENABLE_APPLE_PAY_AUTOMATIC_RELOAD_PAYMENTS "Toggle Apple Pay automatic reload payments support"
+       PRIVATE OFF
+)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_define(
+    ENABLE_APPLE_PAY_COUPON_CODE "Toggle Apple Pay coupon code support" PRIVATE OFF
+)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_define(
+    ENABLE_APPLE_PAY_DEFERRED_LINE_ITEM "Toggle Apple Pay deferred line item support" PRIVATE OFF
+)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_define(
+    ENABLE_APPLE_PAY_DEFERRED_PAYMENTS "Toggle Apple Pay deferred payments support" PRIVATE OFF
+)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_define(
+    ENABLE_APPLE_PAY_DELEGATED_REQUEST "Toggle Apple Pay delegated request support" PRIVATE OFF
+)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_define(
+    ENABLE_APPLE_PAY_DISBURSEMENTS "Toggle Apple Pay disbursements support" PRIVATE OFF
+)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_define(
+    ENABLE_APPLE_PAY_INSTALLMENTS "Toggle Apple Pay installments support" PRIVATE OFF
+)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_define(ENABLE_APPLE_PAY_LATER "Toggle Apple Pay Later support" PRIVATE OFF)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_define(
+    ENABLE_APPLE_PAY_LATER_AVAILABILITY "Toggle Apple Pay Later availability support" PRIVATE OFF
+)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_define(
+    ENABLE_APPLE_PAY_MERCHANT_CATEGORY_CODE "Toggle Apple Pay merchant category code support" PRIVATE OFF
+)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_define(
+    ENABLE_APPLE_PAY_MULTI_MERCHANT_PAYMENTS "Toggle Apple Pay multi-merchant payments support" PRIVATE
+       OFF
+)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_define(
+    ENABLE_APPLE_PAY_PAYMENT_ORDER_DETAILS "Toggle Apple Pay payment order details support" PRIVATE OFF
+)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_define(
+    ENABLE_APPLE_PAY_RECURRING_LINE_ITEM "Toggle Apple Pay recurring line item support" PRIVATE OFF
+)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_define(
+    ENABLE_APPLE_PAY_RECURRING_PAYMENTS "Toggle Apple Pay recurring payments support" PRIVATE OFF
+)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_define(
+    ENABLE_APPLE_PAY_SELECTED_SHIPPING_METHOD "Toggle Apple Pay selected shipping method support" PRIVATE
+       OFF
+)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_define(
+    ENABLE_APPLE_PAY_SHIPPING_CONTACT_EDITING_MODE
+       "Toggle Apple Pay shipping contact editing mode support" PRIVATE OFF
+)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_define(
+    ENABLE_APPLE_PAY_SHIPPING_METHOD_DATE_COMPONENTS_RANGE
+       "Toggle Apple Pay shipping method date range support" PRIVATE OFF
+)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_define(ENABLE_APPLICATION_MANIFEST "Toggle Application Manifest support" PRIVATE OFF)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_define(ENABLE_ASYNC_SCROLLING "Enable asynchronous scrolling" PRIVATE OFF)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_define(ENABLE_ATTACHMENT_ELEMENT "Toggle Attachment Element support" PRIVATE OFF)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_define(ENABLE_AUTOCAPITALIZE "Toggle autocapitalize support" PRIVATE OFF)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_define(ENABLE_AV1 "Toggle AV1 codec support" PRIVATE OFF)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_define(ENABLE_AVF_CAPTIONS "Toggle AVFoundation caption support" PRIVATE OFF)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_define(
+    ENABLE_BACK_FORWARD_LIST_SWIFT "Toggle Swift back forward list" PRIVATE
+       ${ENABLE_BACK_FORWARD_LIST_SWIFT_DEFAULT}
+)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_define(ENABLE_BREAKPAD "Toggle breakpad minidump support." PRIVATE OFF)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_define(ENABLE_BUBBLEWRAP_SANDBOX "Toggle Bubblewrap sandboxing support" PRIVATE OFF)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_define(ENABLE_CACHE_PARTITIONING "Toggle cache partitioning support" PRIVATE OFF)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_define(ENABLE_CONTENT_EXTENSIONS "Toggle Content Extensions support" PRIVATE OFF)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_define(ENABLE_CONTENT_FILTERING "Toggle content filtering support" PRIVATE OFF)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_define(ENABLE_CONTEXT_MENUS "Toggle Context Menu support" PRIVATE ON)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_define(
+    ENABLE_CSS_TAP_HIGHLIGHT_COLOR "Toggle CSS -webkit-tap-highlight-color support" PRIVATE OFF
+)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_define(ENABLE_CURSOR_VISIBILITY "Toggle cursor visibility support" PRIVATE OFF)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_define(ENABLE_C_LOOP "Enable CLoop interpreter" PRIVATE ${ENABLE_C_LOOP_DEFAULT})
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_define(ENABLE_DARK_MODE_CSS "Toggle Dark Mode CSS support" PRIVATE OFF)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_define(ENABLE_DATACUE_VALUE "Toggle datacue value support" PRIVATE OFF)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_define(ENABLE_DEVICE_ORIENTATION "Toggle Device Orientation support" PRIVATE OFF)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_define(ENABLE_DFG_JIT "Toggle data flow graph JIT tier" PRIVATE ${ENABLE_JIT_DEFAULT})
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_define(
+    ENABLE_DRAG_SUPPORT "Toggle support of drag actions (including selection of text with mouse)" PRIVATE
+       OFF
+)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_define(ENABLE_ENCRYPTED_MEDIA "Toggle EME V3 support" PRIVATE OFF)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_define(ENABLE_EXPERIMENTAL_FEATURES "Enable experimental features" PRIVATE OFF)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_define(ENABLE_FTL_JIT "Toggle FTL JIT support" PRIVATE ${ENABLE_FTL_DEFAULT})
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_define(ENABLE_FULLSCREEN_API "Toggle Fullscreen API support" PRIVATE ON)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_define(ENABLE_GAMEPAD "Toggle Gamepad support" PRIVATE OFF)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_define(ENABLE_GEOLOCATION "Toggle Geolocation support" PRIVATE ON)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_define(ENABLE_GPU_PROCESS "Toggle GPU Process support" PRIVATE OFF)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_define(ENABLE_IMAGE_DIFF "Toggle image diff support for layout tests" PRIVATE ON)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_define(
+    ENABLE_INSPECTOR_ALTERNATE_DISPATCHERS "Toggle inspector alternate dispatchers support" PRIVATE OFF
+)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_define(
+    ENABLE_INSPECTOR_EXTENSIONS "Toggle inspector web extensions support" PRIVATE OFF
+)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_define(ENABLE_INSPECTOR_TELEMETRY "Toggle inspector telemetry support" PRIVATE OFF)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_define(ENABLE_IOS_GESTURE_EVENTS "Toggle iOS gesture events support" PRIVATE OFF)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_define(ENABLE_IOS_TOUCH_EVENTS "Toggle iOS touch events support" PRIVATE OFF)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_define(ENABLE_IPC_TESTING_SWIFT "Toggle Swift-based IPC testing support" PRIVATE OFF)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_define(
+    ENABLE_JAVASCRIPT_SHELL "Toggle JavaScript shell and testing support" PRIVATE ON
+)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_define(
+    ENABLE_JIT "Toggle JustInTime JavaScript support" PRIVATE ${ENABLE_JIT_DEFAULT}
+)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_define(
+    ENABLE_LAYOUT_TESTS "Toggle layout test support (DumpRenderTree/WebkitTestRunner)" PRIVATE OFF
+)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_define(
+    ENABLE_LEGACY_CUSTOM_PROTOCOL_MANAGER "Toggle legacy protocol manager support" PRIVATE OFF
+)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_define(ENABLE_LEGACY_ENCRYPTED_MEDIA "Toggle Legacy EME V2 support" PRIVATE OFF)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_define(
+    ENABLE_LLVM_PROFILE_GENERATION "Include LLVM's instrumentation to generate profiles for PGO" PRIVATE
+       OFF
+)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_define(
+    ENABLE_MALLOC_HEAP_BREAKDOWN "Whether to enable malloc heap breakdown." PRIVATE OFF
+)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_define(ENABLE_MATHML "Toggle MathML support" PRIVATE ON)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_define(ENABLE_MEDIA_CAPTURE "Toggle Media Capture support" PRIVATE OFF)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_define(
+    ENABLE_MEDIA_CONTROLS_CONTEXT_MENUS "Toggle Media controls context menus." PRIVATE OFF
+)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_define(ENABLE_MEDIA_RECORDER "Toggle Media Recorder support" PRIVATE OFF)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_define(ENABLE_MEDIA_SESSION "Toggle Media Session support" PRIVATE OFF)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_define(
+    ENABLE_MEDIA_SESSION_COORDINATOR "Toggle Media Session Coordinator support" PRIVATE OFF
+)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_define(
+    ENABLE_MEDIA_SESSION_PLAYLIST "Toggle Media Session Playlist support" PRIVATE OFF
+)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_define(ENABLE_MEDIA_SOURCE "Toggle Media Source support" PRIVATE OFF)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_define(
+    ENABLE_MEDIA_SOURCE_IN_WORKERS "Toggle Media Source in Workers support" PRIVATE OFF
+)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_define(ENABLE_MEDIA_STATISTICS "Toggle Media Statistics support" PRIVATE OFF)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_define(ENABLE_MEDIA_STREAM "Toggle Media Stream support" PRIVATE OFF)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_define(ENABLE_MEMORY_SAMPLER "Toggle Memory Sampler support" PRIVATE OFF)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_define(ENABLE_MHTML "Toggle MHTML support" PRIVATE OFF)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_define(ENABLE_MINIBROWSER "Toggle MiniBrowser compilation." PRIVATE OFF)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_define(ENABLE_MODEL_ELEMENT "Toggle Model Element support" PRIVATE OFF)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_define(ENABLE_MOUSE_CURSOR_SCALE "Toggle Scaled mouse cursor support" PRIVATE OFF)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_define(ENABLE_NAVIGATOR_STANDALONE "Toogle standalone navigator support" PRIVATE OFF)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_define(ENABLE_NOTIFICATIONS "Toggle Notifications support" PRIVATE ON)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_define(ENABLE_OFFSCREEN_CANVAS "Toggle OffscreenCanvas support" PRIVATE OFF)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_define(
+    ENABLE_OFFSCREEN_CANVAS_IN_WORKERS "Toggle OffscreenCanvas in Workers support" PRIVATE OFF
+)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_define(ENABLE_ORIENTATION_EVENTS "Toggle Orientation Events support" PRIVATE OFF)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_define(ENABLE_PAYMENT_REQUEST "Toggle Payment Request support" PRIVATE OFF)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_define(ENABLE_PDFJS "Toggle PDF documents support using PDF.js" PRIVATE OFF)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_define(ENABLE_PDF_HUD "Toggle PDF HUD support" PRIVATE OFF)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_define(ENABLE_PDF_PLUGIN "Toggle PDF plugin support" PRIVATE OFF)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_define(ENABLE_PDFKIT_PLUGIN "Toggle PDFKit plugin support" PRIVATE OFF)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_define(ENABLE_UNIFIED_PDF "Toggle unified PDF support" PRIVATE OFF)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_define(
+    ENABLE_PERIODIC_MEMORY_MONITOR "Toggle periodical memory monitor support" PRIVATE OFF
+)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_define(
+    ENABLE_PICTURE_IN_PICTURE_API "Toggle Picture-in-Picture API support" PRIVATE OFF
+)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_define(ENABLE_POINTER_LOCK "Toggle pointer lock support" PRIVATE OFF)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_define(
+    ENABLE_PREDEFINED_COLOR_SPACE_DISPLAY_P3 "Toggle display-p3 PredefinedColorSpace enum values" PRIVATE
+       OFF
+)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_define(
+    ENABLE_REFTRACKER "Enable debugging tools for tracking RAII objects" PRIVATE OFF
+)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_define(ENABLE_RELEASE_LOG "Toggle release log support" PRIVATE OFF)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_define(ENABLE_REMOTE_INSPECTOR "Toggle remote inspector support" PRIVATE ON)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_define(ENABLE_RESOURCE_USAGE "Toggle resource usage support" PRIVATE OFF)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_define(
+    ENABLE_SAMPLING_PROFILER "Toggle sampling profiler support" PRIVATE
+       ${ENABLE_SAMPLING_PROFILER_DEFAULT}
+)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_define(ENABLE_SANDBOX_EXTENSIONS "Toggle sandbox extensions support" PRIVATE OFF)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_define(ENABLE_SERVICE_CONTROLS "Toggle service controls support" PRIVATE OFF)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_define(
+    ENABLE_SHAREABLE_RESOURCE "Toggle network shareable resources support" PRIVATE OFF
+)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_define(ENABLE_SMOOTH_SCROLLING "Toggle smooth scrolling" PRIVATE ON)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_define(ENABLE_SPATIAL_PORTAL "Toggle Spatial CSS Portal support" PRIVATE OFF)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_define(ENABLE_SPEECH_SYNTHESIS "Toggle Speech Synthesis API support" PRIVATE OFF)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_define(
+    ENABLE_SPELLCHECK "Toggle Spellchecking support (requires Enchant)" PRIVATE OFF
+)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_define(
+    ENABLE_STREAMING_IPC_IN_LOG_FORWARDING "Toggle streaming connection in WebKit::LogStream" PRIVATE OFF
+)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_define(
+    ENABLE_SWIFT_DEMO_URI_SCHEME "Toggle Swift demo URI feature" PRIVATE
+       ${ENABLE_SWIFT_DEMO_URI_SCHEME_DEFAULT}
+)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_define(
+    ENABLE_TELEPHONE_NUMBER_DETECTION "Toggle telephone number detection support" PRIVATE OFF
+)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_define(
+    ENABLE_TEXT_AUTOSIZING "Toggle automatic text size adjustment support" PRIVATE OFF
+)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_define(ENABLE_THUNDER "Toggle EME V3 Thunder support" PRIVATE OFF)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_define(ENABLE_TOUCH_EVENTS "Toggle Touch Events support" PRIVATE OFF)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_define(
+    ENABLE_UNIFIED_BUILDS "Toggle unified builds" PRIVATE ${ENABLE_UNIFIED_BUILDS_DEFAULT}
+)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_define(
+    ENABLE_USER_MESSAGE_HANDLERS "Toggle user script message handler support" PRIVATE ON
+)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_define(ENABLE_VARIATION_FONTS "Toggle variation fonts support" PRIVATE OFF)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_define(ENABLE_VIDEO "Toggle Video support" PRIVATE ON)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_define(
+    ENABLE_VIDEO_PRESENTATION_MODE "Toggle Video presentation mode support" PRIVATE OFF
+)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_define(
+    ENABLE_VIDEO_USES_ELEMENT_FULLSCREEN "Toggle video element fullscreen support" PRIVATE ON
+)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_define(
+    ENABLE_WEBASSEMBLY "Toggle WebAssembly support" PRIVATE ${ENABLE_WEBASSEMBLY_DEFAULT}
+)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_define(
+    ENABLE_WEBASSEMBLY_BBQJIT "Toggle WebAssembly BBQ JIT support" PRIVATE ${ENABLE_FTL_DEFAULT}
+)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_define(
+    ENABLE_WEBASSEMBLY_OMGJIT "Toggle WebAssembly OMG JIT support" PRIVATE ${ENABLE_FTL_DEFAULT}
+)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_define(ENABLE_WEBDRIVER "Toggle WebDriver service process" PRIVATE OFF)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_define(ENABLE_WEBDRIVER_BIDI "Toggler WebDriver BiDi protocol support" PRIVATE OFF)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_define(
+    ENABLE_WEBDRIVER_KEYBOARD_GRAPHEME_CLUSTERS
+       "Toggle WebDriver allowing grapheme clusters to be sent as a series of characters to a single action step"
+       PRIVATE OFF
+)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_define(
+    ENABLE_WEBDRIVER_KEYBOARD_INTERACTIONS "Toggle WebDriver keyboard interactions" PRIVATE OFF
+)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_define(
+    ENABLE_WEBDRIVER_MOUSE_INTERACTIONS "Toggle WebDriver mouse interactions" PRIVATE OFF
+)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_define(
+    ENABLE_WEBDRIVER_TOUCH_INTERACTIONS "Toggle WebDriver touch interactions" PRIVATE OFF
+)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_define(
+    ENABLE_WEBDRIVER_WHEEL_INTERACTIONS "Toggle WebDriver wheel interactions" PRIVATE OFF
+)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_define(ENABLE_WEBGL "Toggle WebGL support" PRIVATE ON)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_define(ENABLE_WEBGPU "Toggle WebGPU support" PRIVATE OFF)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_define(
+    ENABLE_WEBKIT_OVERFLOW_SCROLLING_CSS_PROPERTY "Toggle accelerated scrolling support" PRIVATE OFF
+)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_define(
+    ENABLE_WEBKIT_TOUCH_CALLOUT_CSS_PROPERTY "Toggle -webkit-touch-callout CSS property" PRIVATE OFF
+)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_define(ENABLE_WEBXR "Toggle WebXR support" PRIVATE OFF)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_define(ENABLE_WEBXR_HIT_TEST "Toggle WebXR Hit Test Module support" PRIVATE OFF)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_define(ENABLE_WEBXR_LAYERS "Toggle WebXR Layers support" PRIVATE OFF)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_define(ENABLE_WEB_API_STATISTICS "Toggle Web API statistics support" PRIVATE OFF)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_define(ENABLE_WEB_AUDIO "Toggle Web Audio support" PRIVATE ON)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_define(ENABLE_WEB_AUTHN "Toggle Web AuthN support" PRIVATE OFF)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_define(ENABLE_WEB_CODECS "Toggle WebCodecs support" PRIVATE OFF)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_define(ENABLE_WEB_RTC "Toggle WebRTC support" PRIVATE OFF)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_define(
+    ENABLE_WIRELESS_PLAYBACK_TARGET "Toggle wireless playback target support" PRIVATE OFF
+)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_define(ENABLE_WK_WEB_EXTENSIONS "Toggle WebExtensions support" PRIVATE OFF)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_define(ENABLE_WRITING_TOOLS "Toggle Writing Tools support" PRIVATE OFF)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_define(ENABLE_XSLT "Toggle XSLT support" PRIVATE ON)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_define(USE_AVIF "Toggle support for AVIF images." PRIVATE ON)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_define(USE_LCMS "Toggle support for image color management using libcms2" PRIVATE ON)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_define(USE_ISO_MALLOC "Toggle IsoMalloc support" PRIVATE ${USE_ISO_MALLOC_DEFAULT})
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_define(USE_JPEGXL "Toggle support for JPEG XL images" PRIVATE ON)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_define(USE_SKIA "Whether to use Skia instead of Cairo." PRIVATE OFF)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_define(USE_SKIA_ENCODERS "Whether to use Skia image encoders" PRIVATE ON)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_define(
+    USE_SYSTEM_MALLOC "Toggle system allocator instead of WebKit's custom allocator" PRIVATE
+       ${USE_SYSTEM_MALLOC_DEFAULT}
+)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_define(
+    USE_MIMALLOC "Toggle mimalloc instead of WebKit's custom allocator" PRIVATE ${USE_MIMALLOC_DEFAULT}
+)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_define(
+    USE_EXTERNAL_MIMALLOC
+       "Compile against mimalloc headers but leave mi_* symbols unresolved in the static archives (caller links its own mimalloc). Requires USE_MIMALLOC."
+       PRIVATE OFF
+)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_define(
+    USE_PGO_PROFILE "Use PGO profile data for optimization (set PGO_PROFILE_PATH)" PRIVATE OFF
+)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_define(USE_WOFF2 "Toggle support for WOFF2 Web Fonts through libwoff2" PRIVATE ON)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_conflict(ENABLE_JIT ENABLE_C_LOOP)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_conflict(ENABLE_LLVM_PROFILE_GENERATION USE_PGO_PROFILE)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_conflict(ENABLE_SAMPLING_PROFILER ENABLE_C_LOOP)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_conflict(ENABLE_WEBASSEMBLY ENABLE_C_LOOP)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_depend(ENABLE_WEB_RTC ENABLE_MEDIA_STREAM)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_depend(ENABLE_ENCRYPTED_MEDIA ENABLE_VIDEO)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_depend(ENABLE_LEGACY_ENCRYPTED_MEDIA ENABLE_VIDEO)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_depend(ENABLE_DFG_JIT ENABLE_JIT)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_depend(ENABLE_FTL_JIT ENABLE_DFG_JIT)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_depend(ENABLE_WEBASSEMBLY_BBQJIT ENABLE_FTL_JIT)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_depend(ENABLE_WEBASSEMBLY_OMGJIT ENABLE_FTL_JIT)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_depend(ENABLE_INSPECTOR_ALTERNATE_DISPATCHERS ENABLE_REMOTE_INSPECTOR)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_depend(ENABLE_MEDIA_CONTROLS_CONTEXT_MENUS ENABLE_VIDEO)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_depend(ENABLE_MEDIA_RECORDER ENABLE_MEDIA_STREAM)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_depend(ENABLE_MEDIA_SESSION ENABLE_VIDEO)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_depend(ENABLE_MEDIA_SOURCE ENABLE_VIDEO)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_depend(ENABLE_MEDIA_STREAM ENABLE_VIDEO)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_depend(ENABLE_THUNDER ENABLE_ENCRYPTED_MEDIA)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_depend(ENABLE_VIDEO_PRESENTATION_MODE ENABLE_VIDEO)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_depend(ENABLE_VIDEO_USES_ELEMENT_FULLSCREEN ENABLE_VIDEO)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_depend(ENABLE_WEBXR ENABLE_WEBGL)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_depend(ENABLE_WEBXR_HIT_TEST ENABLE_WEBXR)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_depend(ENABLE_WEBXR_LAYERS ENABLE_WEBXR)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_depend(USE_SKIA_ENCODERS USE_SKIA)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_depend(USE_EXTERNAL_MIMALLOC USE_MIMALLOC)
+
+# in macro(SET_AND_EXPOSE_TO_BUILD _variable_name)
+expose_variable_to_build(${_variable_name})
+
+# in macro(WEBKIT_CHECK_HAVE_INCLUDE _variable _header)
+set_and_expose_to_build(${_variable} ${${_variable}_value})
+
+# in macro(WEBKIT_CHECK_HAVE_FUNCTION _variable _function _header)
+set_and_expose_to_build(${_variable} ${${_variable}_value})
+
+# in macro(WEBKIT_CHECK_HAVE_SYMBOL _variable _symbol _header)
+set_and_expose_to_build(${_variable} ${${_variable}_value})
+
+# in macro(WEBKIT_CHECK_HAVE_STRUCT _variable _struct _member _header)
+set_and_expose_to_build(${_variable} ${${_variable}_value})
+
+option(ENABLE_EXPERIMENTAL_FEATURES "Enable experimental features" OFF)
+
+set_and_expose_to_build(ENABLE_EXPERIMENTAL_FEATURES ${ENABLE_EXPERIMENTAL_FEATURES})
+
+set_and_expose_to_build(USE_64KB_PAGE_BLOCK ${USE_64KB_PAGE_BLOCK})
+
+#### Source/cmake/OptionsCommon.cmake
+
+# in if(USE_LD_LLD)
+# in if(LD_VERSION MATCHES "(^|[ \t])LLD ")
+add_link_options(
+    "$<$<NOT:$<LINK_LANGUAGE:Swift>>:-fuse-ld=lld>" "$<$<LINK_LANGUAGE:Swift>:-use-ld=lld>"
+)
+
+# in if(LD_SUPPORTS_GC_SECTIONS)
+webkit_append_global_compiler_flags(-ffunction-sections -fdata-sections)
+
+# in if(LD_SUPPORTS_GC_SECTIONS)
+add_link_options("LINKER:--gc-sections")
+
+# in if(LD_SUPPORTS_DISABLE_NEW_DTAGS)
+add_link_options("LINKER:--disable-new-dtags")
+
+# in if(DEBUG_FISSION)
+# in if(LD_SUPPORTS_GDB_INDEX)
+add_link_options("LINKER:--gdb-index")
+
+# in if(SWIFT_NINJA_TRACE)
+set(SWIFT_JOBS_LOG "${CMAKE_BINARY_DIR}/swift-jobs.jsonl")
+
+# in if(SWIFT_NINJA_TRACE)
+set(SWIFT_STATS_DIR "${CMAKE_BINARY_DIR}/swift-stats")
+
+# in if(SWIFT_NINJA_TRACE)
+add_compile_options($<$<COMPILE_LANGUAGE:Swift>:--jobs-log=${SWIFT_JOBS_LOG}>)
+
+# in if(SWIFT_NINJA_TRACE)
+add_compile_options("$<$<COMPILE_LANGUAGE:Swift>:SHELL:-stats-output-dir ${SWIFT_STATS_DIR}>")
+
+# in elseif(ENABLE_ASSERTS) # if(ENABLE_ASSERTS STREQUAL "AUTO")
+webkit_prepend_global_compiler_flags(-DASSERT_ENABLED=1)
+
+# in elseif(NOT ENABLE_ASSERTS) # if(ENABLE_ASSERTS STREQUAL "AUTO")
+webkit_prepend_global_compiler_flags(-DASSERT_ENABLED=0)
+
+# in if(NOT APPLE)
+# in if(INT128_IS_USABLE)
+set_and_expose_to_build(HAVE_INT128_T TRUE)
+
+# in if(NOT APPLE)
+# in if(STD_FILESYSTEM_IS_AVAILABLE)
+set_and_expose_to_build(HAVE_STD_FILESYSTEM TRUE)
+
+# in if(NOT APPLE)
+# in elseif(STD_EXPERIMENTAL_FILESYSTEM_IS_AVAILABLE) # if(STD_FILESYSTEM_IS_AVAILABLE)
+set_and_expose_to_build(HAVE_STD_EXPERIMENTAL_FILESYSTEM TRUE)
+
+#### Source/cmake/OptionsJSCOnly.cmake
+
+add_definitions(-DBUILDING_JSCONLY__)
+
+webkit_option_define(USE_BUN_JSC_ADDITIONS "Whether to enable Bun's JSC additions" PUBLIC OFF)
+
+webkit_option_define(
+    ENABLE_MALLOC_HEAP_BREAKDOWN "Whether to enable MALLOC_HEAP_BREAKDOWN" PUBLIC OFF
+)
+
+webkit_option_define(
+    ENABLE_STATIC_JSC "Whether to build JavaScriptCore as a static library." PUBLIC OFF
+)
+
+webkit_option_define(USE_LIBBACKTRACE "Whether to enable usage of libbacktrace." PUBLIC OFF)
+
+webkit_option_default_port_value(ENABLE_REMOTE_INSPECTOR PRIVATE OFF)
+
+# in if(NOT WIN32)
+webkit_option_define(
+    ENABLE_FUZZILLI "Whether to build JavaScriptCore with support for Fuzzilli." PUBLIC OFF
+)
+
+webkit_option_define(
+    ENABLE_JSC_GLIB_API "Whether to enable the JavaScriptCore GLib API." PUBLIC OFF
+)
+
+webkit_option_define(USE_SYSTEM_UNIFDEF "Whether to use a system-provided unifdef" PRIVATE OFF)
+
+webkit_option_define(
+    ALLOW_LINE_AND_COLUMN_NUMBER_IN_BUILTINS "Whether to allow line numbers & column numbers in builtins"
+       PUBLIC OFF
+)
+
+webkit_option_define(
+    ENABLE_REMOTE_INSPECTOR "Whether to build JavaScriptCore with remote inspector support" PUBLIC OFF
+)
+
+webkit_option_define(
+    ENABLE_BUN_SKIP_FAILING_ASSERTIONS "Skip failing ASSERT when targeting Bun" PUBLIC OFF
+)
+
+# in if(USE_BUN_JSC_ADDITIONS)
+set_and_expose_to_build(USE_BUN_JSC_ADDITIONS 1)
+
+# in if(USE_BUN_JSC_ADDITIONS)
+# in if(WIN32)
+set_and_expose_to_build(JS_NO_EXPORT 1)
+
+# in if(USE_BUN_JSC_ADDITIONS)
+set_and_expose_to_build(BUSE_TZONE 0)
+
+# in if(USE_BUN_JSC_ADDITIONS)
+set_and_expose_to_build(USE_TZONE_MALLOC 0)
+
+# in if(ENABLE_MALLOC_HEAP_BREAKDOWN)
+set_and_expose_to_build(ENABLE_MALLOC_HEAP_BREAKDOWN 1)
+
+# in if(ENABLE_MALLOC_HEAP_BREAKDOWN)
+set_and_expose_to_build(BENABLE_MALLOC_HEAP_BREAKDOWN 1)
+
+# in if(ENABLE_MALLOC_HEAP_BREAKDOWN)
+set_and_expose_to_build(USE_SYSTEM_MALLOC 1)
+
+# in if(ENABLE_MALLOC_HEAP_BREAKDOWN)
+set_and_expose_to_build(ENABLE_LIBPAS 0)
+
+# in if(ALLOW_LINE_AND_COLUMN_NUMBER_IN_BUILTINS)
+set_and_expose_to_build(USE_ALLOW_LINE_AND_COLUMN_NUMBER_IN_BUILTINS 1)
+
+set_and_expose_to_build(ENABLE_RESOURCE_USAGE ON)
+
+# in if(ENABLE_REMOTE_INSPECTOR)
+set_and_expose_to_build(ENABLE_INSPECTOR_ALTERNATE_DISPATCHERS 1)
+
+# in if(ENABLE_REMOTE_INSPECTOR)
+set_and_expose_to_build(USE_INSPECTOR_SOCKET_SERVER 1)
+
+# in if(ENABLE_REMOTE_INSPECTOR)
+set_and_expose_to_build(USE_UNIX_DOMAIN_SOCKETS 1)
+
+# in if(ENABLE_BUN_SKIP_FAILING_ASSERTIONS)
+set_and_expose_to_build(BUN_SKIP_FAILING_ASSERTIONS 1)
+
+# in if(WIN32)
+add_definitions(-D_WINDOWS -DNTDDI_VERSION=0x0A000006 -D_WIN32_WINNT=0x0A00)
+
+# in if(WIN32)
+add_definitions(-DNOMINMAX)
+
+# in if(WIN32)
+add_definitions(-DUNICODE -D_UNICODE)
+
+# in if(WIN32)
+add_definitions(-DNOCRYPT)
+
+# in if(WIN32)
+add_definitions(-D_CRT_NONSTDC_NO_DEPRECATE)
+
+# in if(WIN32)
+add_definitions(-D_SILENCE_CXX23_DENORM_DEPRECATION_WARNING)
+
+# in if(WIN32)
+add_definitions(-D_WINSOCKAPI_=)
+
+# in if(ENABLE_JSC_GLIB_API)
+set_and_expose_to_build(ENABLE_2022_GLIB_API TRUE)
+
+# in if(ENABLE_JSC_GLIB_API)
+add_definitions(-DJSC_GLIB_API_ENABLED)
+
+# in if(ENABLE_JSC_GLIB_API)
+add_definitions(-DGETTEXT_PACKAGE="JSCGlib")
+
+# in if(LOWERCASE_EVENT_LOOP_TYPE STREQUAL "glib")
+set_and_expose_to_build(USE_GLIB 1)
+
+# in if(LOWERCASE_EVENT_LOOP_TYPE STREQUAL "glib")
+set_and_expose_to_build(USE_GLIB_EVENT_LOOP 1)
+
+# in if(LOWERCASE_EVENT_LOOP_TYPE STREQUAL "glib")
+set_and_expose_to_build(WTF_DEFAULT_EVENT_LOOP 0)
+
+# in elseif(LOWERCASE_EVENT_LOOP_TYPE STREQUAL "bun") # if(LOWERCASE_EVENT_LOOP_TYPE STREQUAL "glib")
+set_and_expose_to_build(USE_BUN_EVENT_LOOP 1)
+
+# in elseif(LOWERCASE_EVENT_LOOP_TYPE STREQUAL "bun") # if(LOWERCASE_EVENT_LOOP_TYPE STREQUAL "glib")
+set_and_expose_to_build(WTF_DEFAULT_EVENT_LOOP 0)
+
+# in else() # if(LOWERCASE_EVENT_LOOP_TYPE STREQUAL "glib")
+set_and_expose_to_build(USE_GENERIC_EVENT_LOOP 1)
+
+# in else() # if(LOWERCASE_EVENT_LOOP_TYPE STREQUAL "glib")
+set_and_expose_to_build(WTF_DEFAULT_EVENT_LOOP 0)
+
+# in if(APPLE)
+add_definitions(-DU_DISABLE_RENAMING=1)
+
+#### Source/cmake/OptionsMSVC.cmake
+
+# in function(MSVC_ADD_COMPILE_OPTIONS)
+# in foreach(_option ${ARGV})
+add_compile_options($<$<COMPILE_LANGUAGE:C,CXX>:${_option}>)
+
+msvc_add_compile_options(/clang:-masm=att)
+
+msvc_add_compile_options(/Zi /GS)
+
+add_link_options(/DEBUG /OPT:NOICF /OPT:REF)
+
+add_definitions(-D_HAS_EXCEPTIONS=0)
+
+msvc_add_compile_options(/EHa- /EHc- /EHs- /fp:except-)
+
+msvc_add_compile_options(/GR-)
+
+msvc_add_compile_options(/analyze- /bigobj)
+
+add_definitions(-D_CRT_SECURE_NO_WARNINGS)
+
+add_definitions(-D_ENABLE_EXTENDED_ALIGNED_STORAGE)
+
+msvc_add_compile_options(/utf-8 /validate-charset)
+
+# in if(NOT ${CMAKE_GENERATOR} MATCHES "Ninja")
+msvc_add_compile_options(/MP)
+
+# in if(${CMAKE_BUILD_TYPE} MATCHES "Release")
+# in if(COMPILER_IS_CLANG_CL)
+add_compile_options(/clang:-fno-omit-frame-pointer /clang:-mno-omit-leaf-frame-pointer /Gw /Gy /GF)
+
+# in if(${CMAKE_BUILD_TYPE} MATCHES "Release")
+# in else() # if(COMPILER_IS_CLANG_CL)
+add_compile_options(/Oy- /Gw /Gy /GF)
+
+webkit_append_global_compiler_flags(/Wmicrosoft-include)
+
+webkit_prepend_global_compiler_flags(/W4)
+
+webkit_prepend_global_compiler_flags(/Zc:dllexportInlines-)
+
+add_link_options(/INCREMENTAL:NO)
+
+#### Source/cmake/WebKitCompilerFlags.cmake
+
+# in macro(WEBKIT_ADD_TARGET_C_FLAGS _target)
+webkit_add_compiler_flags(C TARGET ${_target} ${ARGN})
+
+# in macro(WEBKIT_ADD_TARGET_CXX_FLAGS _target)
+webkit_add_compiler_flags(CXX TARGET ${_target} ${ARGN})
+
+# in if(DEVELOPER_MODE AND DEVELOPER_MODE_FATAL_WARNINGS)
+# in if(MSVC)
+webkit_prepend_global_compiler_flags(/WX)
+
+# in if(DEVELOPER_MODE AND DEVELOPER_MODE_FATAL_WARNINGS)
+# in elseif(COMPILER_IS_GCC_OR_CLANG) # if(MSVC)
+webkit_prepend_global_compiler_flags(-Werror)
+
+# in if(DEVELOPER_MODE OR ARM)
+webkit_prepend_global_compiler_flags(-fno-omit-frame-pointer)
+
+# in if(COMPILER_IS_GCC_OR_CLANG)
+# in if(NOT APPLE AND ( COMPILER_IS_CLANG OR ( DEVELOPER_MODE AND NOT ARM ) ))
+webkit_prepend_global_compiler_flags(-fdebug-types-section)
+
+# in if(COMPILER_IS_GCC_OR_CLANG)
+webkit_prepend_global_compiler_flags(-gsimple-template-names)
+
+# in if(COMPILER_IS_GCC_OR_CLANG)
+webkit_prepend_global_compiler_flags("-mllvm -dwarf-linkage-names=Abstract")
+
+# in if(COMPILER_IS_GCC_OR_CLANG)
+webkit_append_global_compiler_flags(-fno-strict-aliasing)
+
+# in if(COMPILER_IS_GCC_OR_CLANG)
+# in if(NOT COMPILER_IS_CLANG_CL)
+webkit_append_global_compiler_flags(-fno-exceptions)
+
+# in if(COMPILER_IS_GCC_OR_CLANG)
+# in if(NOT COMPILER_IS_CLANG_CL)
+webkit_append_global_cxx_flags(-fno-rtti)
+
+# in if(COMPILER_IS_GCC_OR_CLANG)
+# in if(NOT COMPILER_IS_CLANG_CL)
+webkit_append_global_cxx_flags(-fcoroutines)
+
+# in if(COMPILER_IS_GCC_OR_CLANG)
+# in if(NOT COMPILER_IS_CLANG_CL)
+# in if(NOT APPLE)
+webkit_prepend_global_cxx_flags(-fasynchronous-unwind-tables)
+
+# in if(COMPILER_IS_GCC_OR_CLANG)
+# in if(NOT COMPILER_IS_CLANG_CL)
+webkit_prepend_global_compiler_flags(-Wno-tautological-compare)
+
+# in if(COMPILER_IS_GCC_OR_CLANG)
+# in if(NOT COMPILER_IS_CLANG_CL)
+# in if(WIN32)
+webkit_append_global_compiler_flags(-mno-ms-bitfields)
+
+# in if(COMPILER_IS_GCC_OR_CLANG)
+# in if(NOT COMPILER_IS_CLANG_CL)
+# in if(WIN32)
+webkit_prepend_global_compiler_flags(-Wno-unknown-pragmas)
+
+# in if(COMPILER_IS_GCC_OR_CLANG)
+# in if(NOT COMPILER_IS_CLANG_CL)
+# in if(WIN32)
+add_definitions(-D__USE_MINGW_ANSI_STDIO=1)
+
+# in if(COMPILER_IS_GCC_OR_CLANG)
+# in if(NOT WTF_CPU_ARM)
+webkit_prepend_global_compiler_flags(-Wcast-align)
+
+# in if(COMPILER_IS_GCC_OR_CLANG)
+webkit_prepend_global_compiler_flags(
+    -Wformat-security -Wmissing-format-attribute -Wpointer-arith -Wundef
+)
+
+# in if(COMPILER_IS_GCC_OR_CLANG)
+webkit_prepend_global_compiler_flags(
+    -Qunused-arguments -Wno-parentheses-equality -Wno-misleading-indentation -Wno-psabi
+       -Wno-nullability-completeness
+)
+
+# in if(COMPILER_IS_GCC_OR_CLANG)
+# in if(CMAKE_CXX_COMPILER_ID MATCHES "GNU")
+webkit_prepend_global_compiler_flags(-Wno-maybe-uninitialized)
+
+# in if(COMPILER_IS_GCC_OR_CLANG)
+# in if(( CMAKE_CXX_COMPILER_ID STREQUAL Clang ) AND ( CMAKE_CXX_COMPILER_VERSION VERSION_LESS 19 ))
+webkit_prepend_global_cxx_flags(-frelaxed-template-template-args)
+
+# in if(COMPILER_IS_GCC_OR_CLANG)
+# in if(( CMAKE_CXX_COMPILER_ID STREQUAL Clang ) AND ( CMAKE_CXX_COMPILER_VERSION VERSION_LESS 19 ))
+add_compile_options(
+    $<$<COMPILE_LANGUAGE:CXX>:-D__cpp_concepts=202002>
+       $<$<COMPILE_LANGUAGE:CXX>:-Wno-builtin-macro-redefined>
+)
+
+# in if(COMPILER_IS_GCC_OR_CLANG)
+# in if(CMAKE_CXX_COMPILER_ID MATCHES "GNU")
+webkit_prepend_global_compiler_flags(-Wno-subobject-linkage)
+
+# in if(COMPILER_IS_GCC_OR_CLANG)
+# in if(CMAKE_CXX_COMPILER_ID MATCHES "GNU")
+# in if(${CMAKE_CXX_COMPILER_VERSION} VERSION_LESS "14.0.1")
+webkit_prepend_global_compiler_flags(-fno-unswitch-loops)
+
+# in if(COMPILER_IS_GCC_OR_CLANG)
+webkit_prepend_global_cxx_flags(-Wno-noexcept-type)
+
+# in if(COMPILER_IS_GCC_OR_CLANG)
+# in if(CMAKE_CXX_COMPILER_ID MATCHES "GNU")
+webkit_prepend_global_compiler_flags(-Wno-expansion-to-defined)
+
+# in if(COMPILER_IS_GCC_OR_CLANG)
+# in if(CMAKE_CXX_COMPILER_ID MATCHES "GNU")
+webkit_prepend_global_cxx_flags(-Wno-array-bounds)
+
+# in if(COMPILER_IS_GCC_OR_CLANG)
+# in if(CMAKE_CXX_COMPILER_ID MATCHES "GNU")
+webkit_prepend_global_cxx_flags(-Wno-nonnull)
+
+# in if(COMPILER_IS_GCC_OR_CLANG)
+# in if(CMAKE_CXX_COMPILER_ID MATCHES "GNU")
+webkit_prepend_global_compiler_flags(-Wno-stringop-overflow)
+
+# in if(COMPILER_IS_GCC_OR_CLANG)
+# in if(CMAKE_CXX_COMPILER_ID MATCHES "GNU")
+webkit_prepend_global_cxx_flags(-Wno-stringop-overread)
+
+# in if(COMPILER_IS_GCC_OR_CLANG)
+# in if(CMAKE_CXX_COMPILER_ID MATCHES "GNU")
+webkit_prepend_global_cxx_flags(-Wno-odr)
+
+# in if(COMPILER_IS_GCC_OR_CLANG)
+# in if(CMAKE_CXX_COMPILER_ID MATCHES "GNU")
+webkit_prepend_global_cxx_flags(-Wno-invalid-offsetof)
+
+# in if(COMPILER_IS_GCC_OR_CLANG)
+# in if(CMAKE_CXX_COMPILER_ID MATCHES "GNU")
+webkit_prepend_global_cxx_flags(-Wno-dangling-pointer)
+
+# in if(COMPILER_IS_GCC_OR_CLANG)
+# in if(CMAKE_CXX_COMPILER_ID MATCHES "GNU")
+webkit_prepend_global_compiler_flags(-fmax-errors=20)
+
+# in if(COMPILER_IS_GCC_OR_CLANG)
+# in if(WTF_CPU_X86 AND NOT CMAKE_CROSSCOMPILING)
+webkit_prepend_global_compiler_flags(-msse2 -mfpmath=sse)
+
+# in if(COMPILER_IS_GCC_OR_CLANG)
+webkit_prepend_global_compiler_flags(-pipe)
+
+# in if(COMPILER_IS_GCC_OR_CLANG)
+# in if(USE_BUN_EVENT_LOOP)
+# in if(APPLE)
+webkit_prepend_global_compiler_flags(
+    -Wl,-U,_WTFTimer__create -Wl,-U,_WTFTimer__update -Wl,-U,_WTFTimer__deinit -Wl,-U,_WTFTimer__isActive
+       -Wl,-U,_WTFTimer__secondsUntilTimer -Wl,-U,_WTFTimer__cancel -Wl,-U,_Bun__errorInstance__finalize
+       -Wl,-U,_Bun__reportUnhandledError
+)
+
+# in if(COMPILER_IS_GCC_OR_CLANG)
+# in if(USE_BUN_EVENT_LOOP)
+# in else() # if(APPLE)
+webkit_prepend_global_compiler_flags(
+    -Wl,-u,_WTFTimer__create -Wl,-u,_WTFTimer__update -Wl,-u,_WTFTimer__deinit -Wl,-u,_WTFTimer__isActive
+       -Wl,-u,_WTFTimer__secondsUntilTimer -Wl,-u,_WTFTimer__cancel -Wl,-u,_Bun__errorInstance__finalize
+       -Wl,-u,_Bun__reportUnhandledError
+)
+
+# in if(COMPILER_IS_GCC_OR_CLANG)
+webkit_prepend_global_compiler_flags(-Werror=undefined-inline -Werror=undefined-internal)
+
+# in if(COMPILER_IS_GCC_OR_CLANG)
+webkit_prepend_global_compiler_flags(-Wno-character-conversion)
+
+# in if(COMPILER_IS_GCC_OR_CLANG AND NOT MSVC)
+webkit_prepend_global_compiler_flags(-Wall -Wextra)
+
+# in if(CMAKE_GENERATOR STREQUAL "Ninja")
+webkit_prepend_global_compiler_flags(-fcolor-diagnostics -fdiagnostics-color=always)
+
+# in if("${CMAKE_CXX_COMPILER_ID}" STREQUAL "GNU" AND NOT "${LOWERCASE_CMAKE_HOST_SYSTEM_PROCESSOR}" MATCHES "x86_64")
+add_link_options("$<$<CONFIG:Debug>:LINKER:--no-keep-memory>")
+
+# in if(LTO_MODE AND COMPILER_IS_CLANG AND NOT MSVC)
+add_link_options("$<$<NOT:$<LINK_LANGUAGE:Swift>>:-flto=${LTO_MODE}>")
+
+# in if(COMPILER_IS_GCC_OR_CLANG)
+# in if(ENABLE_SANITIZERS)
+# in if(MSVC AND WTF_CPU_X86_64)
+add_link_options("/WHOLEARCHIVE:${CLANG_ASAN_LIBRARY}" ${CLANG_ASAN_RT_LIBRARY})
+
+# in if(COMPILER_IS_GCC_OR_CLANG)
+# in if(ENABLE_SANITIZERS)
+# in else() # if(MSVC AND WTF_CPU_X86_64)
+add_link_options(-lpthread)
+
+# in if(COMPILER_IS_GCC_OR_CLANG)
+# in if(ENABLE_SANITIZERS)
+set(_ld_sanitize "$<IF:$<LINK_LANGUAGE:Swift>,-sanitize,-fsanitize>")
+
+# in if(COMPILER_IS_GCC_OR_CLANG)
+# in if(ENABLE_SANITIZERS)
+set(_cc_sanitize "$<IF:$<COMPILE_LANGUAGE:Swift>,-sanitize,-fsanitize>")
+
+# in if(COMPILER_IS_GCC_OR_CLANG)
+# in if(ENABLE_SANITIZERS)
+# in foreach(SANITIZER ${ENABLE_SANITIZERS})
+# in if(${SANITIZER} MATCHES "address")
+webkit_prepend_global_compiler_flags("-fno-omit-frame-pointer -fno-optimize-sibling-calls")
+
+# in if(COMPILER_IS_GCC_OR_CLANG)
+# in if(ENABLE_SANITIZERS)
+# in foreach(SANITIZER ${ENABLE_SANITIZERS})
+# in if(${SANITIZER} MATCHES "address")
+add_compile_options("${_cc_sanitize}=address")
+
+# in if(COMPILER_IS_GCC_OR_CLANG)
+# in if(ENABLE_SANITIZERS)
+# in foreach(SANITIZER ${ENABLE_SANITIZERS})
+# in if(${SANITIZER} MATCHES "address")
+add_link_options("${_ld_sanitize}=address")
+
+# in if(COMPILER_IS_GCC_OR_CLANG)
+# in if(ENABLE_SANITIZERS)
+# in foreach(SANITIZER ${ENABLE_SANITIZERS})
+# in elseif(${SANITIZER} MATCHES "undefined") # if(${SANITIZER} MATCHES "address")
+webkit_prepend_global_compiler_flags(
+    "-fno-omit-frame-pointer -fno-delete-null-pointer-checks -fno-optimize-sibling-calls"
+)
+
+# in if(COMPILER_IS_GCC_OR_CLANG)
+# in if(ENABLE_SANITIZERS)
+# in foreach(SANITIZER ${ENABLE_SANITIZERS})
+# in elseif(${SANITIZER} MATCHES "undefined") # if(${SANITIZER} MATCHES "address")
+add_compile_options(
+    "${_cc_sanitize}=undefined" "$<$<NOT:$<COMPILE_LANGUAGE:Swift>>:-fno-sanitize=vptr>"
+)
+
+# in if(COMPILER_IS_GCC_OR_CLANG)
+# in if(ENABLE_SANITIZERS)
+# in foreach(SANITIZER ${ENABLE_SANITIZERS})
+# in elseif(${SANITIZER} MATCHES "undefined") # if(${SANITIZER} MATCHES "address")
+add_link_options("${_ld_sanitize}=undefined")
+
+# in if(COMPILER_IS_GCC_OR_CLANG)
+# in if(ENABLE_SANITIZERS)
+# in foreach(SANITIZER ${ENABLE_SANITIZERS})
+# in elseif(${SANITIZER} MATCHES "thread" AND NOT MSVC) # if(${SANITIZER} MATCHES "address")
+add_compile_options("${_cc_sanitize}=thread")
+
+# in if(COMPILER_IS_GCC_OR_CLANG)
+# in if(ENABLE_SANITIZERS)
+# in foreach(SANITIZER ${ENABLE_SANITIZERS})
+# in elseif(${SANITIZER} MATCHES "thread" AND NOT MSVC) # if(${SANITIZER} MATCHES "address")
+add_link_options("${_ld_sanitize}=thread")
+
+# in if(COMPILER_IS_GCC_OR_CLANG)
+# in if(ENABLE_SANITIZERS)
+# in foreach(SANITIZER ${ENABLE_SANITIZERS})
+# in elseif(${SANITIZER} MATCHES "memory" AND COMPILER_IS_CLANG AND NOT MSVC) # if(${SANITIZER} MATCHES "address")
+add_compile_options("${_cc_sanitize}=memory")
+
+# in if(COMPILER_IS_GCC_OR_CLANG)
+# in if(ENABLE_SANITIZERS)
+# in foreach(SANITIZER ${ENABLE_SANITIZERS})
+# in elseif(${SANITIZER} MATCHES "memory" AND COMPILER_IS_CLANG AND NOT MSVC) # if(${SANITIZER} MATCHES "address")
+add_link_options("${_ld_sanitize}=memory")
+
+# in if(COMPILER_IS_GCC_OR_CLANG)
+# in if(ENABLE_SANITIZERS)
+# in foreach(SANITIZER ${ENABLE_SANITIZERS})
+# in elseif(${SANITIZER} MATCHES "leak" AND NOT MSVC) # if(${SANITIZER} MATCHES "address")
+add_compile_options("${_cc_sanitize}=leak")
+
+# in if(COMPILER_IS_GCC_OR_CLANG)
+# in if(ENABLE_SANITIZERS)
+# in foreach(SANITIZER ${ENABLE_SANITIZERS})
+# in elseif(${SANITIZER} MATCHES "leak" AND NOT MSVC) # if(${SANITIZER} MATCHES "address")
+add_link_options("${_ld_sanitize}=leak")
+
+# in if(COMPILER_IS_GCC_OR_CLANG)
+# in if(ENABLE_SANITIZERS)
+unset(_ld_sanitize)
+
+# in if(COMPILER_IS_GCC_OR_CLANG)
+# in if(ENABLE_SANITIZERS)
+unset(_cc_sanitize)
+
+# in if(UNIX AND NOT APPLE AND NOT ENABLED_COMPILER_SANITIZERS)
+add_link_options(
+    "$<$<OR:$<STREQUAL:$<TARGET_PROPERTY:TYPE>,SHARED_LIBRARY>,$<STREQUAL:$<TARGET_PROPERTY:TYPE>,MODULE_LIBRARY>>:LINKER:--no-undefined>"
+)
+
+# in if(CMAKE_CXX_COMPILER_ID MATCHES "GNU" AND WTF_CPU_MIPS)
+webkit_prepend_global_compiler_flags(-mno-lxc1-sxc1)
+
+#### Source/bmalloc/CMakeLists.txt
+
+set_source_files_properties(
+    libpas/src/libpas/bmalloc_heap.c libpas/src/libpas/bmalloc_heap_config.c
+       libpas/src/libpas/bmalloc_heap_flex.c libpas/src/libpas/bmalloc_heap_iso.c
+       libpas/src/libpas/bmalloc_heap_utils.c libpas/src/libpas/jit_heap.c
+       libpas/src/libpas/pas_bitfit_page_config_kind.c libpas/src/libpas/pas_heap_config_kind.c
+       libpas/src/libpas/pas_segregated_page_config_kind.c libpas/src/libpas/tagged_bmalloc_heap.c
+       libpas/src/libpas/tagged_bmalloc_heap_config.c libpas/src/libpas/tagged_bmalloc_heap_utils.c
+       PROPERTIES LANGUAGE CXX
+)
+
+# in if(CMAKE_C_COMPILER_ID STREQUAL "GNU")
+# in if(_all_c_flags MATCHES "-O1")
+set_source_files_properties(
+    libpas/src/libpas/pas_fast_large_free_heap.c libpas/src/libpas/pas_simple_large_free_heap.c
+       PROPERTIES COMPILE_OPTIONS "-O2"
+)
+
+add_definitions(-D_GNU_SOURCE)
+
+add_definitions(-DPAS_BMALLOC=1)
+
+# in if(USE_MIMALLOC)
+add_definitions(-DUSE_MIMALLOC=1)
+
+# in if(USE_SYSTEM_MALLOC)
+add_definitions(-DUSE_SYSTEM_MALLOC=1)
+
+# in if(MSVC)
+add_compile_options(/wd4206)
+
+# in if(MSVC)
+# in if(WTF_CPU_X86_64)
+add_compile_options(-mcx16)
+
+# in if(DEVELOPER_MODE AND ( APPLE OR HAVE_MALLOC_TRIM ))
+webkit_add_target_cxx_flags(mbmalloc -Wno-missing-field-initializers)
+
+#### Source/WTF/wtf/CMakeLists.txt
+
+# in elseif(APPLE) # if(WIN32)
+set_source_files_properties(darwin/OSLogPrintStream.mm PROPERTIES COMPILE_OPTIONS -fobjc-arc)
+
+# in else() # if(MSVC)
+set_source_files_properties(
+    SIMDUTF.cpp text/Base64.cpp text/StringImpl.cpp unicode/UTF8Conversion.cpp text/StringCommon.cpp
+       PROPERTIES COMPILE_FLAGS "-Wno-error=undef -Wno-undef"
+)
+
+#### Source/WTF/wtf/PlatformJSCOnly.cmake
+
+# in elseif(APPLE) # if(WIN32)
+add_custom_command(
+    OUTPUT ${WTF_DERIVED_SOURCES_DIR}/MachExceptionsServer.h ${WTF_DERIVED_SOURCES_DIR}/mach_exc.h
+       ${WTF_DERIVED_SOURCES_DIR}/mach_excServer.c ${WTF_DERIVED_SOURCES_DIR}/mach_excUser.c
+    MAIN_DEPENDENCY mac/MachExceptions.defs
+    WORKING_DIRECTORY ${WTF_DERIVED_SOURCES_DIR}
+    COMMAND ${Mig_EXECUTABLE} -header mach_exc.h -user mach_excUser.c
+       -sheader MachExceptionsServer.h -server mach_excServer.c -DMACH_EXC_SERVER_TASKIDTOKEN_STATE
+       -isysroot ${CMAKE_OSX_SYSROOT} MachExceptions.defs
+    VERBATIM
+)
 
 #### Source/JavaScriptCore/CMakeLists.txt
 
@@ -355,6 +1833,17 @@ generate_hash_lut(
     ${CMAKE_CURRENT_SOURCE_DIR}/${_file} ${JavaScriptCore_DERIVED_SOURCES_DIR}/${_name}.lut.h
 )
 
+set(
+    JavaScriptCore_PRIVATE_FRAMEWORK_HEADERS ${JavaScriptCore_DERIVED_SOURCES_DIR}/Bytecodes.h
+       ${JavaScriptCore_DERIVED_SOURCES_DIR}/JSCBuiltins.h
+       ${JavaScriptCore_DERIVED_SOURCES_DIR}/JSCWebPreferenceOptions.h
+       ${JavaScriptCore_DERIVED_SOURCES_DIR}/WasmOps.h
+       ${JavaScriptCore_DERIVED_SOURCES_DIR}/inspector/InspectorAlternateBackendDispatchers.h
+       ${JavaScriptCore_DERIVED_SOURCES_DIR}/inspector/InspectorBackendDispatchers.h
+       ${JavaScriptCore_DERIVED_SOURCES_DIR}/inspector/InspectorFrontendDispatchers.h
+       ${JavaScriptCore_DERIVED_SOURCES_DIR}/inspector/InspectorProtocolObjects.h
+)
+
 generate_hash_lut(
     ${CMAKE_CURRENT_SOURCE_DIR}/parser/Keywords.table ${JavaScriptCore_DERIVED_SOURCES_DIR}/Lexer.lut.h
 )
@@ -496,21 +1985,46 @@ add_custom_command(
     VERBATIM
 )
 
+# in if(COMPILER_IS_GCC_OR_CLANG)
+# in if(WTF_CPU_LOONGARCH64)
+webkit_add_target_cxx_flags(JavaScriptCore -ffp-contract=off)
+
+# in if(COMPILER_IS_GCC_OR_CLANG)
+# in else() # if(WTF_CPU_LOONGARCH64)
+webkit_add_target_cxx_flags(JavaScriptCore -ffp-contract=off -fno-slp-vectorize)
+
+# in if(COMPILER_IS_GCC_OR_CLANG)
+# in if(WTF_CPU_MIPS)
+webkit_add_target_cxx_flags(JavaScriptCore -mno-madd4)
+
+# in if(WIN32 AND WTF_CPU_ARM64)
+target_compile_options(LowLevelInterpreterLib PRIVATE -fno-unwind-tables)
+
+# in if(WIN32 AND WTF_CPU_ARM64)
+set_source_files_properties(
+    assembler/MacroAssemblerARM64.cpp jit/ThunkGenerators.cpp PROPERTIES COMPILE_FLAGS
+       "-fno-unwind-tables"
+)
+
+# in if(CMAKE_COMPILER_IS_GNUCXX AND GCC_OFFLINEASM_SOURCE_MAP)
+set_source_files_properties(
+    "llint/LowLevelInterpreter.cpp" PROPERTIES COMPILE_DEFINITIONS
+       "POSTPROCESS_ASM=llint/LowLevelInterpreter.cpp" COMPILE_FLAGS "-fno-lto"
+)
+
+# in if(COMPILER_IS_GCC_OR_CLANG AND CMAKE_BUILD_TYPE STREQUAL "Debug")
+set_source_files_properties("llint/LowLevelInterpreter.cpp" PROPERTIES COMPILE_OPTIONS "-O")
+
+# in if(WIN32 AND WTF_CPU_ARM64)
+target_compile_options(LowLevelInterpreterLib PRIVATE /clang:-fno-unwind-tables)
+
+# in if(WIN32 AND WTF_CPU_ARM64)
+set_source_files_properties(
+    assembler/MacroAssemblerARM64.cpp jit/ThunkGenerators.cpp PROPERTIES COMPILE_FLAGS
+       "/clang:-fno-unwind-tables"
+)
+
 add_custom_target(
     JavaScriptCoreSharedScripts
     DEPENDS ${JavaScriptCore_SCRIPTS}
-)
-
-#### Source/WTF/wtf/PlatformJSCOnly.cmake
-
-# in elseif(APPLE) # if(WIN32)
-add_custom_command(
-    OUTPUT ${WTF_DERIVED_SOURCES_DIR}/MachExceptionsServer.h ${WTF_DERIVED_SOURCES_DIR}/mach_exc.h
-       ${WTF_DERIVED_SOURCES_DIR}/mach_excServer.c ${WTF_DERIVED_SOURCES_DIR}/mach_excUser.c
-    MAIN_DEPENDENCY mac/MachExceptions.defs
-    WORKING_DIRECTORY ${WTF_DERIVED_SOURCES_DIR}
-    COMMAND ${Mig_EXECUTABLE} -header mach_exc.h -user mach_excUser.c
-       -sheader MachExceptionsServer.h -server mach_excServer.c -DMACH_EXC_SERVER_TASKIDTOKEN_STATE
-       -isysroot ${CMAKE_OSX_SYSROOT} MachExceptions.defs
-    VERBATIM
 )

@@ -61,6 +61,7 @@ import {
   jscUnifiedBundles,
 } from "./webkit-jsc-sources.ts";
 import { jscOfflineasmRuby, llintAsm } from "./webkit-llint-sources.ts";
+import { watchedFiles as cmakeWatchedFiles } from "./webkit-check-cmake.ts";
 import { wtfIncludeDirs, wtfSourcesCommon, wtfSourcesFor } from "./webkit-wtf-sources.ts";
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -181,6 +182,9 @@ const sourceSparse = [
   "/Source/bmalloc/",
   "/Source/WTF/",
   "/Source/JavaScriptCore/",
+  // Not built from — read by webkit-check-cmake.ts, which guards this file's
+  // transcription of WebKit's options and compiler flags.
+  "/Source/cmake/",
   "/Tools/Scripts/check-classinfo-uniqueness.py",
   // The fork's Linux-hosted `mig` driver + the mach stub headers its host
   // migcom build needs (macOS targets: WTF's Mach exception RPC stubs).
@@ -1449,19 +1453,18 @@ function jscSourceList(wk: WebKitBuild): { sources: string[]; bundles: Record<st
   // those statements (and the variables feeding them) from the fetched tree
   // and compares them with webkit-cmake.snapshot; a bump that changes one
   // fails here with the diff until webkit.ts and the snapshot are updated.
-  const cmakeChecked = join(B, ".cmake-commands-checked");
+  const cmakeChecked = join(B, ".cmake-checked");
   const cmakeCheckScript = join(import.meta.dirname, "webkit-check-cmake.ts");
   gen(wk, {
     outputs: [cmakeChecked],
     cmd: [...cfg.jsRuntimeArgv, cmakeCheckScript, wk.W, cmakeChecked],
     inputs: [
-      join(JSC, "CMakeLists.txt"),
-      join(wk.WTF, "wtf", "PlatformJSCOnly.cmake"),
+      ...cmakeWatchedFiles.map(f => join(wk.W, f)),
       cmakeCheckScript,
       join(import.meta.dirname, "..", "cmake.ts"),
       join(import.meta.dirname, "webkit-cmake.snapshot"),
     ],
-    desc: "check CMake generators against webkit-cmake.snapshot",
+    desc: "check WebKit's CMake against webkit-cmake.snapshot",
   });
   const bundleDir = join(DS, "unified-sources");
   const bundles: Record<string, string> = {};

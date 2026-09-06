@@ -1300,7 +1300,7 @@ bool IsFfdhe2048(const BIGNUM* p)
 // OpenSSL's DH_check() skips its primality tests for the built-in named groups
 // (DH_get_nid() != NID_undef). BoringSSL's does not, so check() does it here for
 // the named groups BoringSSL ships: RFC 3526 modp1536..8192 and RFC 7919 ffdhe2048.
-bool IsWellKnownGroup(const DH* dh)
+bool IsNamedGroup(const DH* dh)
 {
     const BIGNUM* p = nullptr;
     const BIGNUM* q = nullptr;
@@ -1440,7 +1440,7 @@ DHPointer::CheckResult DHPointer::check()
     ClearErrorOnReturn clearErrorOnReturn;
     if (!dh_) return DHPointer::CheckResult::NONE;
 #ifdef OPENSSL_IS_BORINGSSL
-    if (IsWellKnownGroup(dh_.get())) return DHPointer::CheckResult::NONE;
+    if (IsNamedGroup(dh_.get())) return DHPointer::CheckResult::NONE;
 #endif
     int codes = 0;
     if (DH_check(dh_.get(), &codes) != 1)

@@ -396,9 +396,8 @@ pub struct RunCommand;
 pub static PRETEND_TO_BE_NODE: core::sync::atomic::AtomicBool =
     core::sync::atomic::AtomicBool::new(false);
 
-/// argv index of the subcommand keyword as located by `Command::which()`
-/// in `bun_runtime::cli`: `bun test …` → 1; `bun --cwd ./dir test …` → 3.
-/// Lives here so `CommandLineArguments::parse` can read it.
+/// argv index of the subcommand keyword, set by `Command::which()` in
+/// `bun_runtime::cli` (`bun --cwd ./dir test` → 3).
 pub static SUBCOMMAND_ARGV_INDEX: core::sync::atomic::AtomicUsize =
     core::sync::atomic::AtomicUsize::new(1);
 
@@ -407,11 +406,8 @@ pub fn subcommand_argv_index() -> usize {
     SUBCOMMAND_ARGV_INDEX.load(core::sync::atomic::Ordering::Relaxed)
 }
 
-/// `Command::which()` steps past the values of the runtime flags in front
-/// of the keyword (`bun --preload ./x.ts install`). A command table that does
-/// not declare those flags hands their values back as positionals. Drop
-/// everything before the keyword so it stays at `[0]`. Positionals borrow
-/// argv, so the keyword is found by identity.
+/// Drop the positionals before the keyword: values of runtime flags that
+/// this command's table does not declare (`bun --preload ./x.ts install`).
 pub fn positionals_from_keyword<'a>(positionals: &'a [&'static [u8]]) -> &'a [&'static [u8]] {
     let Some(keyword) = bun_core::argv().get(subcommand_argv_index()) else {
         return positionals;

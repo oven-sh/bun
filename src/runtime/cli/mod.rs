@@ -503,8 +503,6 @@ pub use bun_install::PRETEND_TO_BE_NODE;
 /// This is set `true` during `Command.which()` if argv0 is "bunx"
 static IS_BUNX_EXE: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
 
-/// argv index of the subcommand keyword as located by `Command::which()`.
-/// Lives in `bun_install` for the same reason as `PRETEND_TO_BE_NODE`.
 pub use bun_install::SUBCOMMAND_ARGV_INDEX;
 
 bun_core::declare_scope!(CLI, hidden);
@@ -789,9 +787,8 @@ pub mod command {
         bun_install::subcommand_argv_index()
     }
 
-    /// Apply a `--cwd <dir>` / `--cwd=<dir>` that preceded the subcommand
-    /// keyword, for handlers that don't route through `arguments::parse` /
-    /// `CommandLineArguments::parse`. Last occurrence wins (clap semantics).
+    /// Apply a `--cwd` that preceded the keyword, for handlers that do not
+    /// run a clap parse. The last occurrence wins, as in clap.
     #[cold]
     pub(crate) fn apply_leading_cwd() {
         let argv = bun::argv();
@@ -973,8 +970,7 @@ pub mod command {
         let Some(mut first_arg_name) = iter.next() else {
             return Tag::AutoCommand;
         };
-        // A `--filter` / `--workspaces` in front of `test` or `build` names a
-        // package.json script, which the run path handles.
+        // `--filter`/`--workspaces` before `test` or `build` name a script.
         let mut saw_filter_flag = false;
         while !first_arg_name.is_empty() && first_arg_name[0] == b'-' {
             // `--interactive` stays on AutoCommand: Arguments.rs parses it and the no-target check
@@ -1871,8 +1867,7 @@ pub mod command {
             let mut remainder_i: usize = 0;
             while remainder_i < remainder.len() && positional_i < positionals.len() {
                 let slice = strings::trim(remainder[remainder_i].as_bytes(), b" \t\n");
-                // A global flag in front of `create`: neither it nor its
-                // value is the template name.
+                // A global flag in front of `create` is not the template.
                 if remainder_i + 1 < cmd_idx {
                     if slice == b"--bun" {
                         dash_dash_bun = true;

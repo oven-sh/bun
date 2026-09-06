@@ -772,13 +772,10 @@ pub use bun_bunfig::arguments::{load_config_path, load_config_with_cmd_args};
 /// the attached value `e`. Bun's `-p` takes the code, so `-pe X` is `-p X`.
 pub const NODE_SHORT_ALIASES: &[(&[u8], &[u8])] = &[(b"-pe", b"-p")];
 
-/// How `Command::which()` treats a `-`-prefixed token in front of the
-/// subcommand keyword. The arity comes from `AUTO_PARAMS`, the table that
-/// parses `bun [flags] <file>`, so the sniffer and clap agree on which token
-/// is a flag's value and which is the keyword.
+/// How `Command::which()` treats a flag in front of the subcommand keyword.
+/// The arity comes from `AUTO_PARAMS` so the sniffer and clap agree.
 pub(crate) enum LeadingFlag {
-    /// Every token after this one belongs to the program: `-` (stdin),
-    /// `--`, and the code of `-e` / `--eval` / `-p` / `--print`.
+    /// The rest of argv belongs to the program (`-`, `--`, `-e`, `-p`).
     Program,
     Flag {
         /// The next argv token is this flag's value, not the keyword.
@@ -789,12 +786,8 @@ pub(crate) enum LeadingFlag {
 }
 
 impl LeadingFlag {
-    /// `next_is_keyword`: the token after `arg` names a subcommand. A short
-    /// flag means different things to different commands (`-p` is `--print`
-    /// for `bun <file>` and `--production` for `bun install`, `-d` is
-    /// `--define` and `--dev`, `-u` is `--origin` and `--update-snapshots`),
-    /// so when the auto meaning would swallow a keyword, the keyword wins.
-    /// Long names do not collide across the tables.
+    /// A short flag means different things to different commands (`-p` is
+    /// `--print` and `--production`), so a keyword wins over its auto value.
     pub(crate) fn classify(arg: &[u8], next_is_keyword: bool) -> Self {
         if arg == b"-" || arg == b"--" {
             return Self::Program;
@@ -819,9 +812,8 @@ impl LeadingFlag {
                 filter: Self::is_filter_long(name),
             };
         }
-        // A short chain (`-abc`): boolean flags share the token, the first
-        // value-taking flag claims the rest of it (`-Fpat`, `-F=pat`) or, when
-        // it is the last character, the next token (`-F pat`).
+        // Short chain: the first value-taking flag claims the rest of the
+        // token (`-Fpat`) or, when it is the last character, the next token.
         let chain = if arg == b"-pe" {
             b"p".as_slice()
         } else {
@@ -833,9 +825,8 @@ impl LeadingFlag {
             };
             let value_is_next_token = i + 1 == chain.len();
             if Self::is_eval(param) {
-                // `-e` always ends the scan. `-p` yields to a keyword
-                // (`bun -p install` is `bun install --production`) and to an
-                // attached value (`bun -p=pkg x bin` is bunx's `--package`).
+                // `-p` yields to a keyword and to an attached value (`-p=pkg`
+                // is bunx's `--package`). `-e` always ends the scan.
                 if c == b'e' || (value_is_next_token && !next_is_keyword) {
                     return Self::Program;
                 }

@@ -157,8 +157,7 @@ impl Options {
                     opts.specified_package = Some(package_value);
                 } else if i < keyword_index {
                     // A global flag in front of `x`: its value is not the
-                    // package name. `--cwd` was applied by the caller's
-                    // `apply_leading_cwd()`.
+                    // package name.
                     if let LeadingFlag::Flag {
                         consumes_value: true,
                         ..

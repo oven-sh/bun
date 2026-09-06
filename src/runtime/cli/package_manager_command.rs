@@ -234,11 +234,8 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
     }
 
     pub(crate) fn exec(ctx: Command::Context) -> crate::Result<()> {
-        // `bun_core::argv()` includes argv[0]; skip to the subcommand keyword and
-        // collect into a borrowed-slice Vec so `&[&[u8]]` callers
-        // (TrustCommand/UntrustedCommand) index `args[2..]` relative to the
-        // keyword. Flag probes (`--all`, `--trusted`) scan `all_args` instead
-        // so a flag placed before the keyword is still seen.
+        // `args` starts at the `pm` keyword (TrustCommand indexes `args[2..]`).
+        // Flag probes scan `all_args` so a flag before the keyword is seen.
         let cmd_idx = Command::subcommand_argv_index();
         let all_args: Vec<&'static [u8]> = bun_core::argv().into_iter().skip(1).collect();
         let args: &[&[u8]] = &all_args[(cmd_idx - 1).min(all_args.len())..];

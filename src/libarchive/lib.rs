@@ -1297,6 +1297,11 @@ pub mod archiver {
         pub close_handles: bool,
         pub log: bool,
         pub npm: bool,
+        /// libarchive drops a header block whose checksum does not match and
+        /// scans on for the next one, so the damaged member goes missing.
+        /// `true` keeps going (what `bun install` does today); `false` fails
+        /// with libarchive's "Damaged tar archive" message instead.
+        pub skip_damaged_blocks: bool,
     }
 
     impl Default for ExtractOptions {
@@ -1306,6 +1311,7 @@ pub mod archiver {
                 close_handles: true,
                 log: false,
                 npm: false,
+                skip_damaged_blocks: true,
             }
         }
     }
@@ -1381,7 +1387,8 @@ impl Archiver {
 
             match r {
                 lib::Result::Eof => break 'loop_,
-                lib::Result::Retry | lib::Result::Failed | lib::Result::Fatal => {
+                lib::Result::Retry => continue 'loop_,
+                lib::Result::Failed | lib::Result::Fatal => {
                     // SAFETY: archive valid for stream lifetime
                     return Err(unsafe { &*archive }.read_error("failed to read archive header"));
                 }
@@ -1537,6 +1544,7 @@ impl Archiver {
                 lib::Result::Eof => break 'loop_,
                 // The whole archive is in memory, so `Retry` only ever means
                 // libarchive discarded a damaged header block.
+                lib::Result::Retry if options.skip_damaged_blocks => continue 'loop_,
                 lib::Result::Retry | lib::Result::Failed | lib::Result::Fatal => {
                     return Err(archive.read_error("failed to read archive header"));
                 }

@@ -788,6 +788,7 @@ impl ExtractContext {
             close_handles: true,
             log: false,
             npm: false,
+            skip_damaged_blocks: false,
         };
         let data = self.store.shared_view();
         let count = match self.glob_patterns.as_deref() {

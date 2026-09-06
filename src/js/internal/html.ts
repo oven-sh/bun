@@ -379,22 +379,28 @@ yourself with Bun.serve().
           printInitialMessage(false);
           break;
 
-        case "o\n":
+        case "o\n": {
           const url = server.url.toString();
+          let cmd: string[];
 
           if (process.platform === "darwin") {
-            // TODO: copy the AppleScript from create-react-app or Vite.
-            Bun.spawn(["open", url]).exited.catch(() => {});
+            cmd = ["open", url];
           } else if (process.platform === "win32") {
-            Bun.spawn(["start", url]).exited.catch(() => {});
+            cmd = ["start", url];
           } else if (process.platform === "android") {
-            Bun.spawn(["/system/bin/am", "start", "-a", "android.intent.action.VIEW", "-d", url]).exited.catch(
-              () => {},
-            );
+            cmd = ["/system/bin/am", "start", "-a", "android.intent.action.VIEW", "-d", url];
           } else {
-            Bun.spawn(["xdg-open", url]).exited.catch(() => {});
+            cmd = ["xdg-open", url];
+          }
+
+          // Bun.spawn throws synchronously when the opener is not installed.
+          try {
+            Bun.spawn(cmd).exited.catch(() => {});
+          } catch {
+            console.log(`Open ${url} in your browser`);
           }
           break;
+        }
 
         case "h\n":
           console.clear();

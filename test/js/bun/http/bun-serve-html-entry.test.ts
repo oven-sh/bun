@@ -1,6 +1,6 @@
 import type { Subprocess } from "bun";
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "node:path";
 
 async function getServerUrl(process: Subprocess) {
@@ -714,4 +714,48 @@ test.concurrent("subdirectory routes use forward slashes on Windows", async () =
   const buttons = await fetch(new URL("/components/buttons", serverUrl));
   expect(buttons.status).toBe(200);
   expect(await buttons.text()).toContain("<title>Buttons</title>");
+});
+
+// The `o + Enter` shortcut spawns the platform opener (`xdg-open` on Linux).
+// `Bun.spawn` throws synchronously when the opener is not on PATH. That throw
+// must not end the dev server. The key handler only runs on a TTY, so the
+// server runs under a pty with a PATH that has no opener on it.
+test.concurrent.skipIf(isWindows)("o + Enter without an opener on PATH keeps the server running", async () => {
+  await using dir = tempDir("html-entry-open-key", {
+    "index.html": `<!DOCTYPE html><html><body><h1>hi</h1></body></html>`,
+    "empty-bin/.keep": "",
+  });
+
+  let text = "";
+  const ready = Promise.withResolvers<void>();
+  const printedUrl = Promise.withResolvers<void>();
+  await using process = Bun.spawn({
+    cmd: [bunExe(), "index.html", "--port=0", "--hostname=127.0.0.1"],
+    env: { ...bunEnv, PATH: join(String(dir), "empty-bin"), NO_COLOR: "1" },
+    cwd: String(dir),
+    terminal: {
+      data(_terminal, chunk) {
+        text += new TextDecoder().decode(chunk);
+        if (text.includes("http://127.0.0.1:")) ready.resolve();
+        if (text.includes("in your browser")) printedUrl.resolve();
+      },
+    },
+  });
+  await ready.promise;
+  const serverUrl = text.match(/http:\/\/127\.0\.0\.1:\d+/)![0];
+
+  process.terminal!.write("o\n");
+  const outcome = await Promise.race([
+    printedUrl.promise.then(() => "printed the url"),
+    process.exited.then(code => `exited with ${code}:\n${text}`),
+  ]);
+  expect(outcome).toBe("printed the url");
+  expect(text).toContain(`Open ${serverUrl}/ in your browser`);
+
+  // The server still answers after the failed open.
+  const response = await fetch(`${serverUrl}/`);
+  expect(await response.text()).toContain("<h1>hi</h1>");
+
+  process.terminal!.write("q\n");
+  expect(await process.exited).toBe(0);
 });

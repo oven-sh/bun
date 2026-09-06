@@ -83,6 +83,36 @@ describe.todoIf(isBroken && isWindows)("--watch recovers from a missing import",
     await proc.exited;
   });
 
+  test("a directory import that resolves does not rerun on a sibling file", async () => {
+    // `./lib` misses as a file before it resolves as `lib/index.js`. A file the
+    // program writes next to it must not count as the missing file appearing.
+    await using dir = tempDir("watch-dir-import", {
+      "entry.js": `
+        import { writeFileSync } from "node:fs";
+        import { v } from "./lib";
+        console.log("RUN", v);
+        writeFileSync("lib.log", String(Date.now()));
+      `,
+      "lib/index.js": "export const v = 1;",
+    });
+    await using proc = spawn({
+      cmd: [bunExe(), "--watch", "--no-clear-screen", "entry.js"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    const stdout = forEachLine(proc.stdout);
+
+    expect(await readUntil(stdout, line => line.startsWith("RUN"))).toBe("RUN 1");
+
+    // The next run must come from this edit, not from the lib.log write.
+    await writeFile(join(String(dir), "lib", "index.js"), "export const v = 2;");
+    expect(await readUntil(stdout, line => line.startsWith("RUN"))).toBe("RUN 2");
+
+    proc.kill("SIGKILL");
+    await proc.exited;
+  });
+
   test("bun build --watch keeps rebuilding and recovers", async () => {
     await using dir = tempDir("build-watch-missing-import", {
       "entry.js": `import { a } from "./a.js"; import { b } from "./b.js"; console.log(a + b);`,

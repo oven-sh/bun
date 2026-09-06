@@ -947,8 +947,8 @@ where
                 bun_watcher::Kind::Directory => {
                     // A file the resolver could not find is not in the watchlist, so
                     // its creation only shows up as an event on the directory the
-                    // resolver searched. The Windows watcher does not pass entry
-                    // names, so a new entry in that directory has to do.
+                    // resolver searched. The Windows watcher passes no entry name, so
+                    // the watcher lists the directory instead.
                     #[cfg(windows)]
                     {
                         // on windows we receive file events for all items affected by a directory change
@@ -1087,20 +1087,26 @@ where
 
                         // A file the resolver could not find is not in the watchlist,
                         // so its creation only shows up as an event on the directory
-                        // the resolver searched. kqueue reports a directory write
-                        // with no entry name; inotify names each entry.
+                        // the resolver searched. A kqueue directory write means an
+                        // entry was added, removed, or renamed, with no name; inotify
+                        // names each entry and tells a create from a write.
                         let satisfies_unresolved_import = if IS_KQUEUE {
-                            // SAFETY: the Watcher outlives this call (it owns the
-                            // Reloader that calls us); the borrow is scoped to this call.
-                            unsafe { (*ctx).unresolved_import_matches(file_path, None) }
+                            event.op.contains(WatchOp::WRITE)
+                                // SAFETY: the Watcher outlives this call (it owns the
+                                // Reloader that calls us); the borrow is scoped to this call.
+                                && unsafe { (*ctx).unresolved_import_matches(file_path, None) }
                         } else {
-                            affected_inotify.iter().any(|name| match name {
-                                // SAFETY: see the kqueue arm above.
-                                Some(z) => unsafe {
-                                    (*ctx).unresolved_import_matches(file_path, Some(z.as_bytes()))
-                                },
-                                None => false,
-                            })
+                            event.op.intersects(WatchOp::CREATE | WatchOp::MOVE_TO)
+                                && affected_inotify.iter().any(|name| match name {
+                                    // SAFETY: see the kqueue arm above.
+                                    Some(z) => unsafe {
+                                        (*ctx).unresolved_import_matches(
+                                            file_path,
+                                            Some(z.as_bytes()),
+                                        )
+                                    },
+                                    None => false,
+                                })
                         };
                         if satisfies_unresolved_import {
                             current_task.append(current_hash);

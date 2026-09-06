@@ -5560,7 +5560,7 @@ describe("util.inspect(buffer) with extra own properties", () => {
     expect(inspect(buf, { colors: true })).toBe(
       "<Buffer 03, x: \x1b[32m'y'\x1b[39m, \x1b[32m'a-b'\x1b[39m: [ \x1b[33m1\x1b[39m, \x1b[32m'two'\x1b[39m ], \x1b[32mSymbol(s)\x1b[39m: { a: { b: \x1b[36m[Object]\x1b[39m } }>",
     );
-    // Called directly, with no inspect function as the third argument.
+    // The hook called directly, outside util.inspect.
     expect(buf[custom](0, {})).toBe(expected);
   });
 

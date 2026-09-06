@@ -2766,7 +2766,12 @@ declare module "bun" {
 
   interface CSRFGenerateOptions {
     /**
-     * The number of milliseconds until the token expires. 0 means the token never expires.
+     * The number of milliseconds the token is valid for, counted from when it
+     * was generated. The value is embedded in the token. `0` embeds no expiry.
+     *
+     * `verify()` also rejects tokens older than its own `maxAge` (24 hours by
+     * default). A token with a longer `expiresIn`, or with `0`, only verifies
+     * past 24 hours when `verify()` gets a `maxAge` to match.
      * @default 24 * 60 * 60 * 1000 (24 hours)
      */
     expiresIn?: number;
@@ -2811,7 +2816,10 @@ declare module "bun" {
     algorithm?: CSRFAlgorithm;
 
     /**
-     * The number of milliseconds until the token expires. 0 means the token never expires.
+     * The maximum token age, in milliseconds, that `verify()` accepts, counted
+     * from when the token was generated. This check runs in addition to the
+     * `expiresIn` embedded in the token: a token must pass both. `0` turns off
+     * this check, so that only the token's own `expiresIn` applies.
      * @default 24 * 60 * 60 * 1000 (24 hours)
      */
     maxAge?: number;

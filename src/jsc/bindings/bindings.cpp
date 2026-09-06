@@ -817,10 +817,11 @@ static bool findEnumerableProperty(JSC::JSGlobalObject* globalObject, JSC::JSObj
 }
 
 // Compares the properties of o1 and o2 by the enumerable names in a1 and a2.
-// Every name in a1 must be an enumerable property of o2 with an equal value.
-// In strict mode the two name lists must have the same length, which makes the
-// name sets equal. In loose mode a property whose value is undefined counts as
-// absent, so every name in a2 that o1 does not have must be undefined on o2.
+// Every name in a1 must resolve to an enumerable property on both sides with
+// equal values. In strict mode the two name lists must have the same length,
+// which makes the name sets equal. In loose mode a property whose value is
+// undefined counts as absent, so every name in a2 that o1 does not have must be
+// absent or undefined on o2.
 // `ownOnly` must match how the name lists were built (own names, or the
 // prototype chain too). `skipName` is ignored on both sides (Error's `stack`).
 static bool enumerablePropertiesEqual(const DeepEqualsMode& mode, JSC::JSGlobalObject* globalObject, MarkedArgumentBuffer& gcBuffer, Vector<std::pair<JSC::JSValue, JSC::JSValue>, 16>& stack, ThrowScope& scope, JSC::JSObject* o1, JSC::JSObject* o2, const JSC::PropertyNameArrayBuilder& a1, const JSC::PropertyNameArrayBuilder& a2, bool ownOnly, const Identifier* skipName = nullptr)
@@ -836,10 +837,18 @@ static bool enumerablePropertiesEqual(const DeepEqualsMode& mode, JSC::JSGlobalO
         if (skipName && i1 == *skipName) continue;
         PropertyName propertyName1 = PropertyName(i1);
 
-        JSValue prop1 = o1->get(globalObject, propertyName1);
+        // The name lists collect enumerable names from the whole prototype chain. A
+        // non-enumerable property nearer the object can shadow such a name, and then
+        // the name resolves to a non-enumerable property. Treat it as absent on that
+        // side, the same rule as the lookup on the other side.
+        JSValue prop1;
+        bool has1 = findEnumerableProperty(globalObject, o1, propertyName1, ownOnly, &prop1);
         RETURN_IF_EXCEPTION(scope, false);
-        if (!prop1) [[unlikely]] {
-            return false;
+        if (!has1) {
+            if (mode.isStrict) {
+                return false;
+            }
+            continue;
         }
 
         JSValue prop2;
@@ -871,9 +880,10 @@ static bool enumerablePropertiesEqual(const DeepEqualsMode& mode, JSC::JSGlobalO
         RETURN_IF_EXCEPTION(scope, false);
         if (has1) continue;
 
-        JSValue prop2 = o2->get(globalObject, propertyName2);
+        JSValue prop2;
+        bool has2 = findEnumerableProperty(globalObject, o2, propertyName2, ownOnly, &prop2);
         RETURN_IF_EXCEPTION(scope, false);
-        if (!prop2.isUndefined()) {
+        if (has2 && !prop2.isUndefined()) {
             return false;
         }
     }

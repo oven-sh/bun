@@ -169,34 +169,42 @@ function runtimeInitializers(cfg: Config): string[] {
   const gnu = cfg.linux && cfg.abi === "gnu";
   const musl = cfg.linux && cfg.abi === "musl";
   const android = cfg.linux && cfg.abi === "android";
-  return [
-    // mimalloc's process attach hook: every target.
-    "_ZL17mi_process_attachv",
-    // crtbegin.o's frame_dummy: glibc and musl link GCC's crt objects.
-    ...(gnu || musl ? ["frame_dummy"] : []),
+
+  // mimalloc's process attach hook: every target.
+  const initializers = ["_ZL17mi_process_attachv"];
+  if (gnu || musl) {
+    // crtbegin.o (GCC's crt objects).
+    initializers.push("frame_dummy");
+  }
+  if (cfg.freebsd) {
     // FreeBSD's crtbegin registers Objective-C classes (a no-op for us).
-    ...(cfg.freebsd ? ["register_classes"] : []),
+    initializers.push("register_classes");
+  }
+  if (gnu) {
     // Rust std captures argv from .init_array on glibc only.
-    ...(gnu ? ["_R*3std3sys4args4unix3imp15ARGV_INIT_ARRAY*"] : []),
-    // aarch64 outline-atomics probes: Rust std's on Linux (gnu/musl),
-    // compiler-rt's + bionic's cpu-feature init on Android.
-    ...(cfg.arm64 && (gnu || musl) ? ["_R*3std3sys18configure_builtins13RUST_LSE_INIT*"] : []),
-    ...(cfg.arm64 && android ? ["init_have_lse_atomics", "__init_cpu_features"] : []),
-    // libstdc++ is linked statically on glibc targets and brings its own
+    initializers.push("_R*3std3sys4args4unix3imp15ARGV_INIT_ARRAY*");
+    // libstdc++ is linked statically on glibc and brings its own
     // iostream/locale/error-category tables (which ones depends on the
     // libstdc++ version; the sysroot's gcc-13 has all seven).
-    ...(gnu
-      ? [
-          "_GLOBAL__sub_I_eh_alloc.cc",
-          "_GLOBAL__sub_I_cxx11_locale_inst.cc",
-          "_GLOBAL__sub_I_cxx11_wlocale_inst.cc",
-          "_GLOBAL__sub_I_ios_errcat.cc",
-          "_GLOBAL__sub_I_locale_inst.cc",
-          "_GLOBAL__sub_I_system_error.cc",
-          "_GLOBAL__sub_I_wlocale_inst.cc",
-        ]
-      : []),
-  ];
+    initializers.push(
+      "_GLOBAL__sub_I_eh_alloc.cc",
+      "_GLOBAL__sub_I_cxx11_locale_inst.cc",
+      "_GLOBAL__sub_I_cxx11_wlocale_inst.cc",
+      "_GLOBAL__sub_I_ios_errcat.cc",
+      "_GLOBAL__sub_I_locale_inst.cc",
+      "_GLOBAL__sub_I_system_error.cc",
+      "_GLOBAL__sub_I_wlocale_inst.cc",
+    );
+  }
+  if (cfg.arm64 && (gnu || musl)) {
+    // Rust std's aarch64 outline-atomics (LSE) probe.
+    initializers.push("_R*3std3sys18configure_builtins13RUST_LSE_INIT*");
+  }
+  if (cfg.arm64 && android) {
+    // compiler-rt's outline-atomics probe and bionic's cpu-feature init.
+    initializers.push("init_have_lse_atomics", "__init_cpu_features");
+  }
+  return initializers;
 }
 
 /**
@@ -208,19 +216,31 @@ function runtimeInitializers(cfg: Config): string[] {
  * banned there. Emulated TLS and libatomic calls are banned everywhere.
  */
 function forbiddenImports(cfg: Config): string[] {
-  const everywhere = ["__emutls_*", "__atomic_*"];
-  const throwing = [
+  // Emulated TLS and libatomic calls: nowhere.
+  const forbidden = ["__emutls_*", "__atomic_*"];
+  if (cfg.windows) {
+    forbidden.push("_CxxThrowException", "__CxxFrameHandler*");
+    return forbidden;
+  }
+  // The Itanium C++ throw path: nowhere (bun is -fno-exceptions).
+  forbidden.push(
     "__cxa_throw",
     "__cxa_rethrow",
     "__cxa_allocate_exception",
     "__cxa_begin_catch",
     "__gxx_personality_*",
-  ];
-  if (cfg.windows) return [...everywhere, "_CxxThrowException", "__CxxFrameHandler*"];
-  if (cfg.darwin) return [...everywhere, ...throwing, "_Unwind_Resume"];
-  if (cfg.linux && (cfg.abi === "gnu" || cfg.abi === "android"))
-    return [...everywhere, ...throwing, "_Unwind_Resume", "__cxa_guard_*"];
-  return [...everywhere, ...throwing]; // musl, FreeBSD
+  );
+  if (cfg.darwin || (cfg.linux && cfg.abi !== "musl")) {
+    // C++ runtime static (glibc, Android) or part of the OS (macOS): the
+    // unwinder entry must not be imported either.
+    forbidden.push("_Unwind_Resume");
+  }
+  if (cfg.linux && cfg.abi !== "musl") {
+    // …nor the function-local-static guards (musl/FreeBSD/macOS take them
+    // from the shared libstdc++/libc++ legitimately).
+    forbidden.push("__cxa_guard_*");
+  }
+  return forbidden;
 }
 
 export function binaryExpectations(cfg: Config): BinaryExpectations {

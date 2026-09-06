@@ -619,6 +619,27 @@ it("setSession() should not leak the SSL_SESSION returned by d2i_SSL_SESSION", a
   expect(exitCode).toBe(0);
 }, 60_000);
 
+describe.concurrent("setSession() after the handshake started", () => {
+  // BoringSSL's SSL_set_session abort()s the process once the handshake state
+  // machine has left its initial state. Every door below used to take the
+  // whole process down with rc 134; now each one throws.
+  it.each([["node-client-secureConnect"], ["node-server-secureConnection"], ["node-duplex-secureConnect"]])(
+    "%s throws instead of aborting",
+    async door => {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), join(import.meta.dirname, "node-tls-set-session-after-start.fixture.ts"), door],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(JSON.parse(stdout)).toEqual({ threw: "Already started." });
+      expect(exitCode).toBe(0);
+    },
+  );
+});
+
 it.each([["TLSv1.2"], ["TLSv1.3"]] as const)(
   "%s: data written after secureConnect is delivered both ways even when the server ends first",
   async version => {

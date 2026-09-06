@@ -208,6 +208,10 @@ static int us_ssl_new_session_ref_idx = -1;
  * 'session' event (fetch) can still cache without paying the serialized
  * pending-session queue. */
 static int us_ssl_session_sink_idx = -1;
+/* (SSL) (void*)1 once the info callback saw SSL_CB_HANDSHAKE_START, i.e. the
+ * handshake state machine left its initial state. BoringSSL exposes no query
+ * for that, and SSL_set_session abort()s the process when called after it. */
+static int us_ssl_handshake_started_ex_idx = -1;
 #ifdef _WIN32
 static INIT_ONCE us_ex_idx_once = INIT_ONCE_STATIC_INIT;
 #else
@@ -463,6 +467,7 @@ static void us_ex_idx_init(void) {
   us_ssl_pending_keylog_idx = SSL_get_ex_new_index(0, NULL, NULL, NULL, us_ssl_pending_session_free);
   us_ssl_new_session_ref_idx = SSL_get_ex_new_index(0, NULL, NULL, NULL, us_ssl_new_session_ref_free);
   us_ssl_session_sink_idx = SSL_get_ex_new_index(0, NULL, NULL, NULL, us_ssl_session_sink_free);
+  us_ssl_handshake_started_ex_idx = SSL_get_ex_new_index(0, NULL, NULL, NULL, NULL);
 }
 
 #ifdef _WIN32
@@ -562,6 +567,23 @@ int us_ssl_pop_pending_keylog(SSL *ssl, unsigned char *out, int out_cap) {
 SSL_SESSION *us_ssl_get_new_session(SSL *ssl) {
   if (us_ssl_new_session_ref_idx < 0) return NULL;
   return SSL_get_ex_data(ssl, us_ssl_new_session_ref_idx);
+}
+
+/* Installed on every SSL_CTX from us_ssl_ctx_build_raw. BoringSSL fires
+ * SSL_CB_HANDSHAKE_START from the state-0 step of both the client and the
+ * server state machine, which is exactly the point after which
+ * SSL_set_session abort()s. Only that transition is recorded. */
+static void us_ssl_info_cb(const SSL *ssl, int type, int value) {
+  (void)value;
+  if (type == SSL_CB_HANDSHAKE_START) {
+    SSL_set_ex_data((SSL *)ssl, us_ssl_handshake_started_ex_idx, (void *)1);
+  }
+}
+
+int us_ssl_handshake_started(SSL *ssl) {
+  if (SSL_is_init_finished(ssl)) return 1;
+  return us_ssl_handshake_started_ex_idx >= 0 &&
+         SSL_get_ex_data(ssl, us_ssl_handshake_started_ex_idx) != NULL;
 }
 
 int us_ssl_ctx_cache_ex_idx(void) {
@@ -1269,6 +1291,7 @@ SSL_CTX *us_ssl_ctx_build_raw(struct us_bun_socket_context_options_t options,
   /* Register the live-count free_func first thing so every exit (including
    * build_fail) balances. The packed reneg policy reuses the same slot. */
   SSL_CTX_set_ex_data(ssl_context, us_ssl_ctx_ex_idx(), NULL);
+  SSL_CTX_set_info_callback(ssl_context, us_ssl_info_cb);
 
   /* Default options we rely on — changing these breaks the BIO logic. */
   SSL_CTX_set_read_ahead(ssl_context, 1);

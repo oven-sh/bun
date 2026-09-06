@@ -4706,3 +4706,26 @@ it("concurrent end() on two allowHalfOpen TLS peers closes both sockets", async 
 
   await Promise.all([serverClosed.promise, clientClosed.promise]);
 });
+
+describe.concurrent("setSession() after the handshake started", () => {
+  // BoringSSL's SSL_set_session abort()s the process once the handshake state
+  // machine has left its initial state. The fixture feeds a valid session to
+  // setSession() through each Bun socket door and prints what happened.
+  const fixture = join(import.meta.dirname, "../../node/tls/node-tls-set-session-after-start.fixture.ts");
+
+  async function run(door: string) {
+    await using proc = Bun.spawn({ cmd: [bunExe(), fixture, door], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+    return JSON.parse(stdout);
+  }
+
+  it.each([["bun-connect-handshake"], ["bun-listen-handshake"]])("%s throws instead of aborting", async door => {
+    expect(await run(door)).toEqual({ threw: "Already started." });
+  });
+
+  it("is still accepted from open(), before the ClientHello", async () => {
+    expect(await run("bun-connect-open")).toEqual({ threw: null });
+  });
+});

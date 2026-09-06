@@ -612,7 +612,7 @@ impl Expansion {
         .clone();
         // Like bash, drop NUL bytes from command-substitution output: the words
         // become NUL-terminated argv entries.
-        let stdout = if stdout.contains(&0) {
+        let stdout = if bun_core::strings::contains_char(&stdout, 0) {
             stdout.into_iter().filter(|&b| b != 0).collect()
         } else {
             stdout

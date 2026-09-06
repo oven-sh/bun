@@ -1387,10 +1387,39 @@ DHPointer DHPointer::New(size_t bits, unsigned int generator)
     return dh;
 }
 
+bool DHPointer::isNamedGroup() const
+{
+    if (!dh_) return false;
+    const BIGNUM* p = nullptr;
+    const BIGNUM* g = nullptr;
+    DH_get0_pqg(dh_.get(), &p, nullptr, &g);
+    if (!p || !g || !BN_is_word(g, DH_GENERATOR_2)) return false;
+
+    static constexpr BIGNUM* (*const kGroups[])(BIGNUM*) = {
+        BN_get_rfc3526_prime_1536,
+        BN_get_rfc3526_prime_2048,
+        BN_get_rfc3526_prime_3072,
+        BN_get_rfc3526_prime_4096,
+        BN_get_rfc3526_prime_6144,
+        BN_get_rfc3526_prime_8192,
+    };
+    unsigned bits = BN_num_bits(p);
+    for (auto getPrime : kGroups) {
+        BignumPointer known(getPrime(nullptr));
+        if (!known || BN_num_bits(known.get()) != bits) continue;
+        if (BN_cmp(known.get(), p) == 0) return true;
+    }
+    return false;
+}
+
 DHPointer::CheckResult DHPointer::check()
 {
     ClearErrorOnReturn clearErrorOnReturn;
     if (!dh_) return DHPointer::CheckResult::NONE;
+    // OpenSSL's DH_check reports no codes for a named group without running
+    // the primality tests. BoringSSL has no such shortcut, and testing the
+    // 8192-bit RFC 3526 prime takes tens of seconds. Match OpenSSL here.
+    if (isNamedGroup()) return DHPointer::CheckResult::NONE;
     int codes = 0;
     if (DH_check(dh_.get(), &codes) != 1)
         return DHPointer::CheckResult::CHECK_FAILED;

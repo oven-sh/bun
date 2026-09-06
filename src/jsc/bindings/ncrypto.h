@@ -895,6 +895,9 @@ public:
     };
     CheckResult check();
 
+    // True when p and g are one of the RFC 3526 MODP groups with generator 2.
+    bool isNamedGroup() const;
+
     enum class CheckPublicKeyResult {
         NONE,
 #ifndef OPENSSL_IS_BORINGSSL

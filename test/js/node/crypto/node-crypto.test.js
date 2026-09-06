@@ -995,11 +995,28 @@ it("verifyError should not be on the prototype of DiffieHellman and DiffieHellma
   const dhg = crypto.createDiffieHellmanGroup("modp5");
   expect("verifyError" in crypto.DiffieHellmanGroup.prototype).toBeFalse();
   expect("verifyError" in dhg).toBeTrue();
+  expect(dhg.verifyError).toBe(0);
+});
 
-  // boringssl seems to set DH_NOT_SUITABLE_GENERATOR for both
-  // DH_GENERATOR_2 and DH_GENERATOR_5 if not using
-  // DH_generate_parameters_ex
-  expect(dhg.verifyError).toBe(8);
+// OpenSSL skips DH_check for a named group and reports verifyError 0. Without that
+// shortcut BoringSSL runs primality tests on the prime, which takes about 30s for
+// modp18 and reports DH_NOT_SUITABLE_GENERATOR (8) for generator 2.
+it("well-known MODP groups construct without a parameter check and report verifyError 0", () => {
+  const modp14 = crypto.getDiffieHellman("modp14");
+  expect(modp14.verifyError).toBe(0);
+
+  // The same prime passed as bytes is recognised too.
+  const fromPrime = crypto.createDiffieHellman(modp14.getPrime(), 2);
+  expect(fromPrime.verifyError).toBe(0);
+  expect(fromPrime.getPrime("hex")).toBe(modp14.getPrime("hex"));
+
+  for (const name of ["modp15", "modp16", "modp17", "modp18"]) {
+    expect(crypto.getDiffieHellman(name).verifyError).toBe(0);
+  }
+
+  // A prime that is not a named group still goes through DH_check.
+  const tiny = crypto.createDiffieHellman(Buffer.from("ffffffffffffffc5", "hex"), 2);
+  expect(tiny.verifyError).not.toBe(0);
 });
 it("cipher.setAAD should not throw if encoding or plaintextLength is undefined #18700", () => {
   const key = crypto.randomBytes(32);

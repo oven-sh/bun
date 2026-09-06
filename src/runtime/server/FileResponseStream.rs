@@ -47,8 +47,7 @@ pub(crate) struct FileResponseStream {
     mode: Cell<Mode>,
     reader: JsCell<BufferedReader>,
     sendfile: JsCell<Sendfile>,
-    /// Bytes still owed on a fixed-length body (the caller wrote this many
-    /// into Content-Length). `None` streams to EOF.
+    /// Bytes still owed against the Content-Length the caller wrote; `None` streams to EOF.
     remaining: Cell<Option<u64>>,
 
     state: Cell<State>,
@@ -134,9 +133,7 @@ pub(crate) enum StreamOwner {
 enum StreamEnd {
     Complete,
     Abort,
-    /// The file ended before the length the caller committed to (it shrank
-    /// after the `fstat`). The socket is force-closed first; the owner only
-    /// has to release the request.
+    /// EOF before the committed length (the file shrank after the `fstat`).
     Truncated,
     Error(sys::Error),
 }
@@ -546,8 +543,6 @@ impl FileResponseStream {
         self.finish();
     }
 
-    /// Subtracts `sent` from the bytes still owed; returns the new balance
-    /// (`None` when the body has no fixed length).
     fn charge_remaining(&self, sent: u64) -> Option<u64> {
         let remaining = self.remaining.get().map(|n| n.saturating_sub(sent));
         self.remaining.set(remaining);
@@ -558,11 +553,8 @@ impl FileResponseStream {
         self.close_with(StreamEnd::Error(err));
     }
 
-    /// The headers already promised a Content-Length that the file no longer
-    /// backs. A clean end would retire the request as a complete keep-alive
-    /// response, and the client would wait for the missing bytes until the
-    /// idle timeout. Closing the connection is the one signal left that the
-    /// body is short.
+    /// The committed Content-Length can no longer be honoured, so a close is
+    /// the only signal left that tells the client the body is short.
     fn end_truncated(&self) {
         bun_output::scoped_log!(
             FileResponseStream,
@@ -607,9 +599,8 @@ impl FileResponseStream {
         self.insert_state(State::FINISHED);
 
         if !self.state.get().contains(State::RESPONSE_DONE) {
-            // The reader reports an EOF with no final chunk through
-            // `on_reader_done`, so this is where a short file lands. The nested
-            // `finish()` returns at the `FINISHED` guard above.
+            // An EOF with no final chunk arrives through `on_reader_done` and
+            // lands here; the nested `finish()` returns at the guard above.
             if self.remaining.get().is_some_and(|n| n > 0) {
                 self.end_truncated();
             } else {

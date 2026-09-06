@@ -350,6 +350,8 @@ public:
     Ref<Bun::GlobalEventScope> globalEventScope;
     RefPtr<WebCore::MessagePort> m_nodeParentPort;
     bool m_nodeWorkerEntrySettled { false };
+    // Mirror of `events.defaultMaxListeners` for the native EventEmitter (process).
+    unsigned m_defaultMaxListeners { 10 };
 
     void resetOnEachMicrotaskTick();
 

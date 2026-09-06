@@ -2,6 +2,7 @@
 #include "JSEventEmitter.h"
 
 #include "BunProcess.h"
+#include "ZigGlobalObject.h"
 #include "ExtendedDOMClientIsoSubspaces.h"
 #include "ExtendedDOMIsoSubspaces.h"
 #include "IDLTypes.h"
@@ -359,10 +360,27 @@ static inline JSC::EncodedJSValue jsEventEmitterPrototypeFunction_setMaxListener
         throwTypeError(lexicalGlobalObject, throwScope, "The maxListeners argument must be a number"_s);
         return JSC::JSValue::encode(JSC::jsUndefined());
     }
-    unsigned maxListeners = JSC::toUInt32(argument0.value().asNumber());
 
-    impl.setMaxListeners(maxListeners);
+    impl.setMaxListeners(JSEventEmitter::maxListenersFromNumber(argument0.value().asNumber()));
     return JSC::JSValue::encode(JSC::jsUndefined());
+}
+
+// 0 means no limit, so a count that does not fit is the same as no limit.
+unsigned JSEventEmitter::maxListenersFromNumber(double n)
+{
+    if (!(n < static_cast<double>(std::numeric_limits<unsigned>::max())))
+        return 0;
+    return JSC::toUInt32(n);
+}
+
+// Called by `events.defaultMaxListeners = n` and `events.setMaxListeners(n)`
+// in events.ts, which validate `n` first.
+JSC_DEFINE_HOST_FUNCTION(jsEventEmitterSetDefaultMaxListeners, (JSGlobalObject * globalObject, CallFrame* callFrame))
+{
+    JSValue value = callFrame->argument(0);
+    if (value.isNumber())
+        defaultGlobalObject(globalObject)->m_defaultMaxListeners = JSEventEmitter::maxListenersFromNumber(value.asNumber());
+    return JSValue::encode(jsUndefined());
 }
 
 static inline JSC::EncodedJSValue jsEventEmitterPrototypeFunction_getMaxListenersBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<JSEventEmitter>::ClassParameter castedThis)

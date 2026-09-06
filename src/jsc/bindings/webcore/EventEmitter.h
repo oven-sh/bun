@@ -7,6 +7,7 @@
 #include "ContextDestructionObserver.h"
 #include "ScriptWrappable.h"
 #include <memory>
+#include <optional>
 #include <variant>
 #include <wtf/Forward.h>
 
@@ -69,7 +70,9 @@ public:
 
     WTF::Function<void(EventEmitter&, const Identifier& eventName, bool isAdded)> onDidChangeListener = WTF::Function<void(EventEmitter&, const Identifier& eventName, bool isAdded)>(nullptr);
 
-    unsigned getMaxListeners() const { return m_maxListeners; };
+    // The per-emitter limit, or the global's `events.defaultMaxListeners`
+    // when none was set, like node's `_maxListeners ?? defaultMaxListeners`.
+    unsigned getMaxListeners() const;
 
     void setMaxListeners(unsigned count);
 
@@ -111,7 +114,7 @@ private:
     void clearMaxListenersWarnedIfBelowLimit(const Identifier& eventType);
 
     EventEmitterData m_eventTargetData;
-    unsigned m_maxListeners { 10 };
+    std::optional<unsigned> m_maxListeners;
     Vector<Identifier, 1> m_maxListenersWarned;
 
     mutable JSC::Weak<JSC::JSObject> m_thisObject { nullptr };

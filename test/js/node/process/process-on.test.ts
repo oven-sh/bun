@@ -138,6 +138,28 @@ describe.concurrent("process MaxListenersExceededWarning", () => {
     expect(exitCode).toBe(0);
   });
 
+  it("follows events.defaultMaxListeners until process.setMaxListeners is called", async () => {
+    const { stdout, stderr, exitCode } = await run(`
+      const events = require("node:events");
+      const warned = [];
+      process.on("warning", w => warned.push(w.message.match(/(\\d+) (\\w+) listeners.*MaxListeners is (\\d+)/).slice(1).join(":")));
+      events.defaultMaxListeners = 20;
+      console.log(process.getMaxListeners(), events.getMaxListeners(process));
+      for (let i = 0; i < 15; i++) process.on("a", () => {});
+      events.setMaxListeners(12);
+      for (let i = 0; i < 13; i++) process.on("b", () => {});
+      events.defaultMaxListeners = Infinity;
+      for (let i = 0; i < 50; i++) process.on("c", () => {});
+      process.setMaxListeners(3);
+      console.log(process.getMaxListeners());
+      for (let i = 0; i < 4; i++) process.on("d", () => {});
+      process.nextTick(() => console.log(JSON.stringify(warned)));
+    `);
+    expect(stderr).not.toContain("15 a listeners");
+    expect(stdout).toBe(`20 20\n3\n${JSON.stringify(["13:b:12", "4:d:3"])}\n`);
+    expect(exitCode).toBe(0);
+  });
+
   it("warns again after the listeners are removed", async () => {
     const { stdout, exitCode } = await run(`
       let warned = 0;

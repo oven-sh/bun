@@ -23,6 +23,7 @@ public:
     static void destroy(JSC::JSCell*);
 
     static inline JSC::EncodedJSValue addListener(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, JSEventEmitter* castedThis, bool once, bool prepend);
+    static unsigned maxListenersFromNumber(double n);
     static void emitMaxListenersExceededWarning(JSC::JSGlobalObject* lexicalGlobalObject, JSC::JSValue emitter, JSC::JSValue type, int count, unsigned maxListeners);
     static inline JSC::EncodedJSValue removeListener(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, JSEventEmitter* castedThis);
 
@@ -74,6 +75,8 @@ template<> struct JSDOMWrapperConverterTraits<EventEmitter> {
     using WrapperClass = JSEventEmitter;
     using ToWrappedReturnType = EventEmitter*;
 };
+
+JSC_DECLARE_HOST_FUNCTION(jsEventEmitterSetDefaultMaxListeners);
 
 } // namespace WebCore
 #include "JSEventEmitterCustom.h"

@@ -1116,8 +1116,7 @@ pub(crate) fn parse_with_optional_tag<'a, 'b>(
     )
 }
 
-/// Splits `npm:<name>@<version>` (the part after `npm:`) into the package name
-/// and the rest after the separating `@`. A leading `@` belongs to the scope.
+/// `@scope/name@version` after `npm:` -> (`@scope/name`, `version`).
 fn split_npm_alias(str: &[u8]) -> (&[u8], &[u8]) {
     let mut i: usize = (!str.is_empty() && str[0] == b'@') as usize;
     while i < str.len() {
@@ -1129,9 +1128,6 @@ fn split_npm_alias(str: &[u8]) -> (&[u8], &[u8]) {
     (str, &str[i..])
 }
 
-/// Rejects a name that the registry cannot serve: empty, or `@` with a
-/// missing scope or package part. Such a name turns into a request for the
-/// registry root (`GET /`) or for `/@scope%2f`.
 fn invalid_package_name(
     log_: Option<&mut bun_ast::Log>,
     name: &[u8],

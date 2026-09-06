@@ -2163,8 +2163,7 @@ function parseOptions(
     }
   }
 
-  // verify-ca and verify-full verify even with NODE_TLS_REJECT_UNAUTHORIZED=0.
-  // Only an own `rejectUnauthorized: false` opts out.
+  // A verify-* sslmode beats NODE_TLS_REJECT_UNAUTHORIZED=0; only an own `rejectUnauthorized: false` opts out.
   if (
     sslMode >= SSLMode.verify_ca &&
     !(

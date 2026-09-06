@@ -1254,26 +1254,31 @@ describe("RSA and EC generateKey run off the JS thread", () => {
     ["ECDSA P-521", { name: "ECDSA", namedCurve: "P-521" }, ["sign", "verify"]],
     ["ECDH P-521", { name: "ECDH", namedCurve: "P-521" }, ["deriveBits"]],
   ];
-  it.each(cases)("%s returns a pending promise", async (_, params, usages) => {
-    const promise = crypto.subtle.generateKey(params, true, usages);
-    expect(Bun.peek.status(promise)).toBe("pending");
-    const pair = await promise;
-    expect([pair.publicKey.type, pair.privateKey.type, pair.privateKey.algorithm.name]).toEqual([
-      "public",
-      "private",
-      params.name,
-    ]);
+  describe.each(cases)("%s", (_, params, usages) => {
+    it("returns a pending promise", async () => {
+      const promise = crypto.subtle.generateKey(params, true, usages);
+      expect(Bun.peek.status(promise)).toBe("pending");
+      const pair = await promise;
+      expect([pair.publicKey.type, pair.privateKey.type, pair.privateKey.algorithm.name]).toEqual([
+        "public",
+        "private",
+        params.name,
+      ]);
+    });
   });
 
+  // One RSA-2048 keygen is tens of milliseconds at the fastest, so a 1 ms
+  // interval gets a turn while the promise is pending.
   it("a timer fires while RSA keygen is pending", async () => {
-    let ticks = 0;
-    const interval = setInterval(() => ticks++, 1);
+    const promise = crypto.subtle.generateKey(rsa("RSA-OAEP"), true, ["encrypt", "decrypt"]);
+    const { promise: ticked, resolve } = Promise.withResolvers<string>();
+    const interval = setInterval(() => resolve(Bun.peek.status(promise)), 1);
     try {
-      await crypto.subtle.generateKey(rsa("RSA-OAEP"), true, ["encrypt", "decrypt"]);
+      expect(await ticked).toBe("pending");
     } finally {
       clearInterval(interval);
     }
-    expect(ticks).toBeGreaterThan(0);
+    await promise;
   });
 
   it("an even public exponent still rejects with OperationError", async () => {

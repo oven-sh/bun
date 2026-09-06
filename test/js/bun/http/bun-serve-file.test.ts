@@ -1,6 +1,6 @@
 import type { Server } from "bun";
 import { afterAll, beforeAll, describe, expect, it, mock, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, isWindows, rmScope, rss, tempDir, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, isASAN, isLinux, isWindows, rmScope, rss, tempDir, tempDirWithFiles } from "harness";
 import { mkfifo } from "mkfifo";
 import { closeSync, openSync, unlinkSync, writeSync } from "node:fs";
 import { join } from "node:path";
@@ -1513,4 +1513,129 @@ test("file route serves a burst of concurrent requests after reloads", async () 
 
   const a = await fetch(`${server.url}a`).then(r => r.text());
   expect(a).toBe("a-new");
+});
+
+// A regular file of 1 MiB or more over plain TCP is sent with sendfile(2). A
+// kernel, seccomp policy or filesystem that refuses sendfile for the source fd
+// answers EINVAL, ENOSYS, EOPNOTSUPP or EPERM on the first call, after the head with its
+// Content-Length is already on the wire. The stream has to serve the declared
+// bytes with read+write instead. The broken build closed the socket, so the
+// client saw a 200 head and then a reset with no body.
+//
+// A seccomp filter installed in the server process makes every sendfile(2)
+// fail with the errno under test. Linux only: the filter is a Linux API.
+describe.skipIf(!isLinux)("Bun.serve falls back to read+write when sendfile(2) is refused", () => {
+  const SIZE = 2 * 1024 * 1024;
+  const fixture = `
+import { dlopen, FFIType, ptr } from "bun:ffi";
+
+function openLibc() {
+  for (const name of ["libc.so.6", "libc.musl-x86_64.so.1", "libc.musl-aarch64.so.1", "libc.so"]) {
+    try {
+      return dlopen(name, {
+        prctl: { args: [FFIType.i32, FFIType.u64, FFIType.u64, FFIType.u64, FFIType.u64], returns: FFIType.i32 },
+      });
+    } catch {}
+  }
+  return null;
+}
+
+// Returns false when this environment does not allow a seccomp filter.
+function failSendfile(errno) {
+  const libc = openLibc();
+  if (libc === null) return false;
+  const NR_SENDFILE = process.arch === "x64" ? 40 : 71;
+  const BPF_LD_W_ABS = 0x20, BPF_JMP_JEQ_K = 0x15, BPF_RET_K = 0x06;
+  const SECCOMP_RET_ALLOW = 0x7fff0000, SECCOMP_RET_ERRNO = 0x00050000;
+  const insns = [
+    [BPF_LD_W_ABS, 0, 0, 0], // A = seccomp_data.nr
+    [BPF_JMP_JEQ_K, 0, 1, NR_SENDFILE],
+    [BPF_RET_K, 0, 0, SECCOMP_RET_ERRNO | errno],
+    [BPF_RET_K, 0, 0, SECCOMP_RET_ALLOW],
+  ];
+  const prog = new Uint8Array(insns.length * 8);
+  const view = new DataView(prog.buffer);
+  insns.forEach(([code, jt, jf, k], i) => {
+    view.setUint16(i * 8, code, true);
+    view.setUint8(i * 8 + 2, jt);
+    view.setUint8(i * 8 + 3, jf);
+    view.setUint32(i * 8 + 4, k, true);
+  });
+  const fprog = new Uint8Array(16);
+  const fview = new DataView(fprog.buffer);
+  fview.setUint16(0, insns.length, true);
+  fview.setBigUint64(8, BigInt(ptr(prog)), true);
+  const PR_SET_NO_NEW_PRIVS = 38, PR_SET_SECCOMP = 22, SECCOMP_MODE_FILTER = 2;
+  if (libc.symbols.prctl(PR_SET_NO_NEW_PRIVS, 1n, 0n, 0n, 0n) !== 0) return false;
+  return libc.symbols.prctl(PR_SET_SECCOMP, BigInt(SECCOMP_MODE_FILTER), BigInt(ptr(fprog)), 0n, 0n) === 0;
+}
+
+if (!failSendfile(Number(process.env.SENDFILE_ERRNO))) {
+  console.log("seccomp-unavailable");
+  process.exit(0);
+}
+const server = Bun.serve({
+  port: 0,
+  hostname: "127.0.0.1",
+  fetch: () => new Response(Bun.file(process.env.FILE)),
+  error(e) {
+    console.log("error-handler " + e.code);
+    return new Response("error", { status: 500 });
+  },
+});
+console.log(server.port);
+`;
+
+  for (const [name, errno] of [
+    ["EINVAL", 22],
+    ["ENOSYS", 38],
+    ["EOPNOTSUPP", 95],
+    ["EPERM", 1],
+  ] as const) {
+    test.concurrent(name, async () => {
+      using dir = tempDir("serve-sendfile-fallback", { "server.ts": fixture });
+      const filePath = join(String(dir), "large.bin");
+      const content = Buffer.alloc(SIZE);
+      for (let i = 0; i < SIZE; i += 4) content.writeUInt32LE((i * 2654435761) >>> 0, i);
+      await Bun.write(filePath, content);
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "server.ts"],
+        cwd: String(dir),
+        env: { ...bunEnv, FILE: filePath, SENDFILE_ERRNO: String(errno) },
+        stdout: "pipe",
+        stderr: "inherit",
+      });
+      const reader = proc.stdout.getReader();
+      let stdout = "";
+      while (!stdout.includes("\n")) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        stdout += Buffer.from(value).toString();
+      }
+      const firstLine = stdout.split("\n")[0];
+      if (firstLine === "seccomp-unavailable") {
+        await proc.exited;
+        return;
+      }
+      const port = Number(firstLine);
+
+      // Two requests on one keep-alive connection: the second only parses if
+      // the first body was framed by the declared Content-Length.
+      const results = [];
+      for (let i = 0; i < 2; i++) {
+        const res = await fetch(`http://127.0.0.1:${port}/`);
+        const body = Buffer.from(await res.arrayBuffer());
+        results.push({
+          status: res.status,
+          contentLength: res.headers.get("content-length"),
+          bodyLength: body.length,
+          bodyMatches: body.equals(content),
+        });
+      }
+      expect(results).toEqual(
+        Array(2).fill({ status: 200, contentLength: String(SIZE), bodyLength: SIZE, bodyMatches: true }),
+      );
+    });
+  }
 });

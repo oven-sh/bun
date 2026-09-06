@@ -819,8 +819,13 @@ export function* gen() {
   yield 1;
   console.log("never");
 }
+export async function skipped(flag: boolean) {
+  flag && await new Promise(() => {});
+  return "ran";
+}
 suspended();
 gen().next();
+skipped(false);
 `,
       "run.test.ts": runTest,
     });
@@ -834,6 +839,10 @@ gen().next();
       8: 0,
       10: 1,
       11: 1,
+      12: 1,
+      14: 1,
+      15: 1,
+      16: 1,
     });
   });
 

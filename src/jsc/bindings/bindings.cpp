@@ -847,10 +847,6 @@ static bool enumerablePropertiesEqual(const DeepEqualsMode& mode, JSC::JSGlobalO
         if (!eql) return false;
     }
 
-    if (mode.isStrict) {
-        return true;
-    }
-
     for (size_t i = 0; i < propertyArrayLength2; i++) {
         const Identifier& i2 = a2[i];
         if (skipName && i2 == *skipName) continue;
@@ -864,7 +860,7 @@ static bool enumerablePropertiesEqual(const DeepEqualsMode& mode, JSC::JSGlobalO
         JSValue prop2;
         bool has2 = findEnumerableProperty(globalObject, o2, propertyName2, ownOnly, &prop2);
         RETURN_IF_EXCEPTION(scope, false);
-        if (has2 && !prop2.isUndefined()) {
+        if (has2 && (mode.isStrict || !prop2.isUndefined())) {
             return false;
         }
     }

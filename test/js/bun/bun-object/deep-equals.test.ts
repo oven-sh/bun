@@ -231,6 +231,17 @@ describe("Bun.deepEquals with mixed enumerability", () => {
     expect(Bun.deepEquals(a, b, true)).toBe(true);
     const c = Object.create(Object.getPrototypeOf(process));
     expect(Bun.deepEquals(c, Object.getPrototypeOf(process))).toBe(true);
+
+    // The shadowed name still counts in the name list, so the list lengths
+    // match here although the own keys differ.
+    const far = { s: 1 };
+    const mid = nonEnumerable(Object.create(far), "s", 1);
+    const shadowed = withGetter(Object.assign(Object.create(mid), { a: 1 }));
+    const extra = withGetter({ a: 1, extra: 9 });
+    expect(Bun.deepEquals(shadowed, extra, true)).toBe(false);
+    expect(Bun.deepEquals(extra, shadowed, true)).toBe(false);
+    expect(Bun.deepEquals(shadowed, extra)).toBe(false);
+    expect(Bun.deepEquals(extra, shadowed)).toBe(false);
   });
 
   it("still ignores non-enumerable properties present on both sides", () => {

@@ -8,8 +8,7 @@
 // SIGXFSZ, so the syscall fails instead of killing the process. The source
 // stays under 128 KB so that macOS takes the read/write path, not clonefile().
 import { describe, expect, it } from "bun:test";
-import { copyFileSync, existsSync, readFileSync, writeFileSync } from "node:fs";
-import { constants } from "node:fs";
+import { constants, copyFileSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { bunEnv, bunExe, isLinux, isWindows, tempDir } from "harness";
 
@@ -60,11 +59,7 @@ describe.skipIf(isWindows)("copy that fails partway removes the destination", ()
             stdout: "pipe",
             stderr: "pipe",
           });
-          const [stdout, stderr, exitCode] = await Promise.all([
-            proc.stdout.text(),
-            proc.stderr.text(),
-            proc.exited,
-          ]);
+          const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
           expect(stderr).toBe("");
           expect(JSON.parse(stdout)).toEqual({ code: "EFBIG", destExists: false });
           expect(exitCode).toBe(0);

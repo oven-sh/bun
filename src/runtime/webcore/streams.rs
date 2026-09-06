@@ -987,14 +987,17 @@ impl SourceHandle {
 // HTTPServerWritable
 // ──────────────────────────────────────────────────────────────────────────
 
-/// `Done` and `Aborted` are both "done" (no further sends); `Aborted`
-/// additionally records that the peer went away. `start()` (reachable again
-/// through a `type: "direct"` stream's controller) moves `Done` back to
-/// `Writing`; it bails out first on `Aborted`, which nothing leaves.
+/// `Done`, `Failed` and `Aborted` are all "done" (no further sends).
+/// `Failed` records that the source failed while bytes were still buffered
+/// here, so the response must be closed as incomplete; `Aborted` records
+/// that the peer went away. `start()` (reachable again through a
+/// `type: "direct"` stream's controller) moves `Done` back to `Writing`; it
+/// bails out first on `Failed` and `Aborted`, which nothing leaves.
 #[derive(Copy, Clone, Eq, PartialEq)]
 pub(crate) enum HTTPServerWritableState {
     Writing,
     Done,
+    Failed,
     Aborted,
 }
 
@@ -1192,8 +1195,12 @@ impl<const SSL: bool> HTTPServerWritable<SSL> {
         self.state == HTTPServerWritableState::Aborted
     }
 
-    /// `Aborted` is already done and stays `Aborted`; callers still read
-    /// `is_aborted()` afterwards.
+    pub(crate) fn is_failed(&self) -> bool {
+        self.state == HTTPServerWritableState::Failed
+    }
+
+    /// `Failed` and `Aborted` are already done and keep their state; callers
+    /// still read `is_failed()` / `is_aborted()` afterwards.
     pub(crate) fn set_done(&mut self) {
         if self.state == HTTPServerWritableState::Writing {
             self.state = HTTPServerWritableState::Done;
@@ -1485,7 +1492,11 @@ impl<const SSL: bool> HTTPServerWritable<SSL> {
     }
 
     pub(crate) fn start(&mut self, stream_start: &Start) -> bun_sys::Result<()> {
-        if self.is_aborted() || self.res.is_none() || self.any_res().unwrap().has_responded() {
+        if self.is_aborted()
+            || self.is_failed()
+            || self.res.is_none()
+            || self.any_res().unwrap().has_responded()
+        {
             self.mark_done();
             self.source.close(None);
             return bun_sys::Result::Ok(());
@@ -1794,6 +1805,30 @@ impl<const SSL: bool> HTTPServerWritable<SSL> {
         bun_sys::Result::Ok(())
     }
 
+    /// The source failed. The bytes still buffered here are the prefix of a
+    /// body that never completes, so they must not go out: a clean `end()`
+    /// would `try_end` them with a `Content-Length`, and the client would
+    /// take the truncated body for a complete 200. Drop them and stop. The
+    /// owning `RequestContext` reads `is_failed()` and closes the connection
+    /// without a terminator.
+    pub(crate) fn fail(&mut self) {
+        bun_core::scoped_log!(HTTPServerWritableLog, "fail()");
+
+        if !self.is_done() {
+            self.state = HTTPServerWritableState::Failed;
+            self.unregister_auto_flusher();
+            self.buffer.clear();
+            self.offset = 0;
+            self.requested_end = true;
+            self.end_len = 0;
+            if let Some(res) = self.any_res() {
+                res.clear_on_writable();
+            }
+        }
+        self.source.close(None);
+        self.finalize();
+    }
+
     pub(crate) fn end_from_js(&mut self, global_this: &JSGlobalObject) -> bun_sys::Result<JSValue> {
         bun_core::scoped_log!(HTTPServerWritableLog, "endFromJS()");
 
@@ -2073,6 +2108,15 @@ impl<const SSL: bool> crate::webcore::sink::JsSinkType for HTTPServerWritable<SS
         // `destroy` frees it (never the inherent `finalize`), so the `&mut`
         // scoped to this call stays valid throughout.
         unsafe { (*this).finalize() }
+    }
+    unsafe fn close_with_error(
+        this: *mut Self,
+        _global: &JSGlobalObject,
+        _reason: JSValue,
+    ) -> bun_sys::Result<()> {
+        // SAFETY: caller contract; `fail` does not free the sink.
+        unsafe { (*this).fail() };
+        bun_sys::Result::Ok(())
     }
     fn end_from_js(&mut self, global: &JSGlobalObject) -> bun_sys::Result<JSValue> {
         Self::end_from_js(self, global)

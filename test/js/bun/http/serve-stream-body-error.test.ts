@@ -76,6 +76,41 @@ test.concurrent("pull-throw in development mode: the connection is closed withou
   expect(exitCode).toBe(0);
 });
 
+// The source hands the sink some body bytes and then fails in the same turn,
+// before the sink's first flush. The sink used to end cleanly with the
+// buffered prefix as a complete body: `200 OK`, `Content-Length: 11`, and a
+// keep-alive client could not tell the truncated body from a complete one.
+// Now the sink drops the prefix and the connection is closed, the same as
+// when the source fails before producing anything.
+//
+// [variant, what stderr must name]
+const bufferedPrefixFailures = [
+  ["enqueue-then-pull-throw", "boom"],
+  ["enqueue-then-bad-chunk", "write() expects a string, ArrayBufferView, or ArrayBuffer"],
+] as const;
+
+for (const flags of [[], ["development"]]) {
+  const mode = flags.length ? "development" : "production";
+  test.concurrent.each(bufferedPrefixFailures)(
+    `%s in ${mode} mode: the buffered prefix is not sent as a complete response`,
+    async (variant, reported) => {
+      const { stdout, stderr, exitCode } = await runFixture(variant, ...flags);
+      expect({ result: JSON.parse(stdout), exitCode }).toEqual({
+        result: {
+          statusLine: "",
+          cleanChunkedTerminator: false,
+          body: "",
+          errorCb: 0,
+          unhandled: 0,
+          secondStatusLine: "HTTP/1.1 200 OK",
+        },
+        exitCode: 0,
+      });
+      expect(stderr).toContain(reported);
+    },
+  );
+}
+
 // The headers are already on the wire (the first pull() was still pending
 // when the server flushed them) and the source then errors without ever
 // producing a chunk. The 200 is irrevocable, so the connection is closed

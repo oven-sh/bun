@@ -75,6 +75,33 @@ const sources: Record<string, () => ReadableStream> = {
         throw new Error("boom");
       },
     }),
+  // The first pull() hands the sink some body bytes and returns; the second
+  // throws in the same turn, before the sink has flushed anything. The sink
+  // used to end cleanly with the buffered prefix as a complete body:
+  // `200 OK` with `Content-Length: 11`.
+  "enqueue-then-pull-throw": () => {
+    let pulls = 0;
+    return new ReadableStream({
+      pull(c) {
+        if (pulls++ === 0) {
+          c.enqueue(new TextEncoder().encode('{"rows":[1,'));
+          return;
+        }
+        throw new Error("boom");
+      },
+    });
+  },
+  // Same window, but the failure is the pump's: the second chunk is not a
+  // string or BufferSource, so the sink's write() rejects it.
+  "enqueue-then-bad-chunk": () =>
+    new ReadableStream({
+      start(c) {
+        c.enqueue(new TextEncoder().encode('{"rows":[1,'));
+        c.enqueue(12345 as any);
+        c.enqueue(new TextEncoder().encode("2,3]}"));
+        c.close();
+      },
+    }),
   // highWaterMark: 0 defers the first pull() until the server's own reader
   // asks for data, so the stream is still readable when the server commits to
   // streaming and only errors inside the microtask drain that follows.

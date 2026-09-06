@@ -589,6 +589,20 @@ impl SocketConfig {
         mode: SocketMode,
     ) -> JsResult<SocketConfig> {
         let generated = GeneratedSocketConfig::from_js(global_object, opts)?;
+        if matches!(generated.tls, GeneratedTls::Object(_)) {
+            // The `tls` dictionary accepts any object, including an array.
+            // `Bun.serve` takes an array of TLS options for SNI; `Bun.listen`
+            // and `Bun.connect` do not. An array has none of the named fields,
+            // so it would silently build a plaintext socket.
+            if let Some(tls) = opts.get(global_object, "tls")? {
+                if tls.js_type().is_array() {
+                    return Err(global_object.throw_invalid_arguments(format_args!(
+                        "Expected \"tls\" to be an object or a boolean, not an array. \
+                         Bun.listen and Bun.connect do not accept an array of TLS options"
+                    )));
+                }
+            }
+        }
         Self::from_generated(vm, global_object, generated, mode)
     }
 }

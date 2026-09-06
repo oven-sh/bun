@@ -1045,6 +1045,51 @@ it("should throw on empty unix path from truthy non-string value", () => {
   expect(() => Bun.connect({ unix: [] as any, socket })).toThrow("SocketOptions.unix must be a string");
 });
 
+it("should throw on a tls array instead of starting a plaintext socket", async () => {
+  const socket = { data() {}, open() {}, close() {} };
+  // An array has none of the TLSOptions fields. Without the check it parses as
+  // an empty config and the listener comes up as plain TCP.
+  const message = 'Expected "tls" to be an object or a boolean, not an array';
+  for (const tlsOption of [[tls], [tls, { serverName: "a.test", ...tls }], []]) {
+    expect(() => Bun.listen({ hostname: "127.0.0.1", port: 0, tls: tlsOption as any, socket })).toThrow(message);
+    expect(() => Bun.connect({ hostname: "127.0.0.1", port: 1, tls: tlsOption as any, socket })).toThrow(message);
+  }
+
+  // The same entry as a plain object still produces a TLS listener.
+  using server = Bun.listen({
+    hostname: "127.0.0.1",
+    port: 0,
+    tls,
+    socket: {
+      data(s) {
+        s.write("hello");
+        s.end();
+      },
+      open() {},
+      close() {},
+    },
+  });
+  const { promise, resolve } = Promise.withResolvers<string>();
+  let received = "";
+  await Bun.connect({
+    hostname: "127.0.0.1",
+    port: server.port,
+    tls: { rejectUnauthorized: false },
+    socket: {
+      open(s) {
+        s.write("ping");
+      },
+      data(_s, chunk) {
+        received += chunk.toString();
+      },
+      close() {
+        resolve(received);
+      },
+    },
+  });
+  expect(await promise).toBe("hello");
+});
+
 it("reading .listener on a closed client socket does not use-after-free handlers", async () => {
   // Client-mode Handlers is heap-allocated per-connect and freed in
   // markInactive once the socket closes. `socket.listener` read

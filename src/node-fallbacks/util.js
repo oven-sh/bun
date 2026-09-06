@@ -433,8 +433,7 @@ function reduceToSingleString(output, base, braces) {
   return braces[0] + base + " " + output.join(", ") + " " + braces[1];
 }
 
-// Brand checks for typed arrays: the %TypedArray%.prototype[Symbol.toStringTag]
-// getter returns the concrete type name, or undefined for anything else.
+// %TypedArray%.prototype[Symbol.toStringTag] is a brand check: it returns the type name or undefined.
 const getTypedArrayTag = /* @__PURE__ */ Object.getOwnPropertyDescriptor(
   Object.getPrototypeOf(Uint8Array.prototype),
   Symbol.toStringTag,

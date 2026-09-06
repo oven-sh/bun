@@ -312,22 +312,25 @@ for (const [name, peer, url] of holdingPeers) {
     await server.closed;
   });
 
-  test.concurrent(`${name}: idleTimeout eviction settles against a TLS peer that never answers close_notify`, async () => {
-    using server = peer();
-    const closed = Promise.withResolvers<void>();
-    const sql = new SQL({
-      url: url(server.port),
-      max: 1,
-      idleTimeout: 1,
-      tls: { rejectUnauthorized: false },
-      onclose: () => closed.resolve(),
-    });
-    await sql.connect();
-    await closed.promise;
-    await server.ended;
-    await server.closed;
-    await sql.close();
-  });
+  test.concurrent(
+    `${name}: idleTimeout eviction settles against a TLS peer that never answers close_notify`,
+    async () => {
+      using server = peer();
+      const closed = Promise.withResolvers<void>();
+      const sql = new SQL({
+        url: url(server.port),
+        max: 1,
+        idleTimeout: 1,
+        tls: { rejectUnauthorized: false },
+        onclose: () => closed.resolve(),
+      });
+      await sql.connect();
+      await closed.promise;
+      await server.ended;
+      await server.closed;
+      await sql.close();
+    },
+  );
 }
 
 test.concurrent("postgres: a rejected certificate over a holding TLS peer does not pin the process", async () => {
@@ -353,4 +356,3 @@ test.concurrent("postgres: a rejected certificate over a holding TLS peer does n
   expect(stderr).toBe("");
   expect(exitCode).toBe(0);
 });
-

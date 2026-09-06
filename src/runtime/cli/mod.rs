@@ -980,7 +980,10 @@ pub mod command {
             // `--interactive` stays on AutoCommand: Arguments.rs parses it and the no-target check
             // routes to RunCommand::exec_node_repl. An early ReplCommand return here would bypass
             // that and boot the legacy `bun repl` implementation instead.
-            match arguments::LeadingFlag::classify(first_arg_name) {
+            let next_is_keyword = argv
+                .get(idx + 1)
+                .is_some_and(|next| keyword_tag(next).is_some());
+            match arguments::LeadingFlag::classify(first_arg_name, next_is_keyword) {
                 arguments::LeadingFlag::Program => return Tag::AutoCommand,
                 arguments::LeadingFlag::Flag {
                     consumes_value,
@@ -1005,110 +1008,118 @@ pub mod command {
         }
         SUBCOMMAND_ARGV_INDEX.store(idx, core::sync::atomic::Ordering::Relaxed);
 
-        type RootCommandMatcher = strings::ExactSizeMatcher<12>;
-        let x = RootCommandMatcher::r#match(first_arg_name);
+        let keyword = RootCommandMatcher::r#match(first_arg_name);
         if saw_filter_flag
-            && (x == RootCommandMatcher::case(b"test") || x == RootCommandMatcher::case(b"build"))
+            && (keyword == RootCommandMatcher::case(b"test")
+                || keyword == RootCommandMatcher::case(b"build"))
         {
             return Tag::AutoCommand;
         }
+        keyword_tag(first_arg_name).unwrap_or(Tag::AutoCommand)
+    }
+
+    type RootCommandMatcher = strings::ExactSizeMatcher<12>;
+
+    /// The command a subcommand keyword names, `None` for anything else.
+    fn keyword_tag(arg: &[u8]) -> Option<Tag> {
+        let x = RootCommandMatcher::r#match(arg);
         // PERF: `if x == const` is a chain of compares rather than a jump
         // table on the packed u96 — profile if it shows up on a hot path.
         if x == RootCommandMatcher::case(b"init") {
-            return Tag::InitCommand;
+            return Some(Tag::InitCommand);
         }
         if x == RootCommandMatcher::case(b"build") || x == RootCommandMatcher::case(b"bun") {
-            return Tag::BuildCommand;
+            return Some(Tag::BuildCommand);
         }
         if x == RootCommandMatcher::case(b"discord") {
-            return Tag::DiscordCommand;
+            return Some(Tag::DiscordCommand);
         }
         if x == RootCommandMatcher::case(b"upgrade") {
-            return Tag::UpgradeCommand;
+            return Some(Tag::UpgradeCommand);
         }
         if x == RootCommandMatcher::case(b"completions") {
-            return Tag::InstallCompletionsCommand;
+            return Some(Tag::InstallCompletionsCommand);
         }
         if x == RootCommandMatcher::case(b"getcompletes") {
-            return Tag::GetCompletionsCommand;
+            return Some(Tag::GetCompletionsCommand);
         }
         if x == RootCommandMatcher::case(b"link") {
-            return Tag::LinkCommand;
+            return Some(Tag::LinkCommand);
         }
         if x == RootCommandMatcher::case(b"unlink") {
-            return Tag::UnlinkCommand;
+            return Some(Tag::UnlinkCommand);
         }
         if x == RootCommandMatcher::case(b"x") {
-            return Tag::BunxCommand;
+            return Some(Tag::BunxCommand);
         }
         if x == RootCommandMatcher::case(b"repl") {
-            return Tag::ReplCommand;
+            return Some(Tag::ReplCommand);
         }
         if x == RootCommandMatcher::case(b"i") || x == RootCommandMatcher::case(b"install") {
-            for arg in argv.iter() {
-                if arg == b"-g" || arg == b"--global" {
-                    return Tag::AddCommand;
+            for a in bun::argv().iter() {
+                if a == b"-g" || a == b"--global" {
+                    return Some(Tag::AddCommand);
                 }
             }
-            return Tag::InstallCommand;
+            return Some(Tag::InstallCommand);
         }
         if x == RootCommandMatcher::case(b"ci") {
-            return Tag::InstallCommand;
+            return Some(Tag::InstallCommand);
         }
         if x == RootCommandMatcher::case(b"c") || x == RootCommandMatcher::case(b"create") {
-            return Tag::CreateCommand;
+            return Some(Tag::CreateCommand);
         }
         if x == RootCommandMatcher::case(b"test") {
-            return Tag::TestCommand;
+            return Some(Tag::TestCommand);
         }
         if x == RootCommandMatcher::case(b"pm") {
-            return Tag::PackageManagerCommand;
+            return Some(Tag::PackageManagerCommand);
         }
         if x == RootCommandMatcher::case(b"add") || x == RootCommandMatcher::case(b"a") {
-            return Tag::AddCommand;
+            return Some(Tag::AddCommand);
         }
         if x == RootCommandMatcher::case(b"update") || x == RootCommandMatcher::case(b"up") {
-            return Tag::UpdateCommand;
+            return Some(Tag::UpdateCommand);
         }
         if x == RootCommandMatcher::case(b"patch") {
-            return Tag::PatchCommand;
+            return Some(Tag::PatchCommand);
         }
         if x == RootCommandMatcher::case(b"patch-commit") {
-            return Tag::PatchCommitCommand;
+            return Some(Tag::PatchCommitCommand);
         }
         if x == RootCommandMatcher::case(b"r")
             || x == RootCommandMatcher::case(b"remove")
             || x == RootCommandMatcher::case(b"rm")
             || x == RootCommandMatcher::case(b"uninstall")
         {
-            return Tag::RemoveCommand;
+            return Some(Tag::RemoveCommand);
         }
         if x == RootCommandMatcher::case(b"run") {
-            return Tag::RunCommand;
+            return Some(Tag::RunCommand);
         }
         if x == RootCommandMatcher::case(b"help") {
-            return Tag::HelpCommand;
+            return Some(Tag::HelpCommand);
         }
         if x == RootCommandMatcher::case(b"exec") {
-            return Tag::ExecCommand;
+            return Some(Tag::ExecCommand);
         }
         if x == RootCommandMatcher::case(b"outdated") {
-            return Tag::OutdatedCommand;
+            return Some(Tag::OutdatedCommand);
         }
         if x == RootCommandMatcher::case(b"publish") {
-            return Tag::PublishCommand;
+            return Some(Tag::PublishCommand);
         }
         if x == RootCommandMatcher::case(b"audit") {
-            return Tag::AuditCommand;
+            return Some(Tag::AuditCommand);
         }
         if x == RootCommandMatcher::case(b"info") {
-            return Tag::InfoCommand;
+            return Some(Tag::InfoCommand);
         }
         if x == RootCommandMatcher::case(b"dedupe") {
-            return Tag::DedupeCommand;
+            return Some(Tag::DedupeCommand);
         }
         if x == RootCommandMatcher::case(b"prune") {
-            return Tag::PruneCommand;
+            return Some(Tag::PruneCommand);
         }
         // reserved
         if x == RootCommandMatcher::case(b"deploy")
@@ -1119,21 +1130,21 @@ pub mod command {
             || x == RootCommandMatcher::case(b"login")
             || x == RootCommandMatcher::case(b"logout")
         {
-            return Tag::ReservedCommand;
+            return Some(Tag::ReservedCommand);
         }
         if x == RootCommandMatcher::case(b"whoami") || x == RootCommandMatcher::case(b"list") {
-            return Tag::PackageManagerCommand;
+            return Some(Tag::PackageManagerCommand);
         }
         if x == RootCommandMatcher::case(b"why") {
-            return Tag::WhyCommand;
+            return Some(Tag::WhyCommand);
         }
         if x == RootCommandMatcher::case(b"fuzzilli") {
             if bun_core::Environment::ENABLE_FUZZILLI {
-                return Tag::FuzzilliCommand;
+                return Some(Tag::FuzzilliCommand);
             }
-            return Tag::AutoCommand;
+            return None;
         }
-        Tag::AutoCommand
+        None
     }
 
     /// Initialize the process-global `CONTEXT_DATA` and publish it via
@@ -1860,6 +1871,24 @@ pub mod command {
             let mut remainder_i: usize = 0;
             while remainder_i < remainder.len() && positional_i < positionals.len() {
                 let slice = strings::trim(remainder[remainder_i].as_bytes(), b" \t\n");
+                // A global flag in front of `create`: neither it nor its
+                // value is the template name.
+                if remainder_i + 1 < cmd_idx {
+                    if slice == b"--bun" {
+                        dash_dash_bun = true;
+                    } else if slice == b"--help" || slice == b"-h" {
+                        print_help = true;
+                    } else if let arguments::LeadingFlag::Flag {
+                        consumes_value: true,
+                        ..
+                    } =
+                        arguments::LeadingFlag::classify(slice, remainder_i + 2 == cmd_idx)
+                    {
+                        remainder_i += 1;
+                    }
+                    remainder_i += 1;
+                    continue;
+                }
                 if !slice.is_empty() {
                     if !strings::has_prefix(slice, b"--") {
                         if positional_i == 1 {
@@ -1873,16 +1902,6 @@ pub mod command {
                             dash_dash_bun = true;
                         } else if slice == b"--help" || slice == b"-h" {
                             print_help = true;
-                        } else if remainder_i + 1 < cmd_idx {
-                            // A global flag in front of `create`: its value
-                            // is not the template name.
-                            if let arguments::LeadingFlag::Flag {
-                                consumes_value: true,
-                                ..
-                            } = arguments::LeadingFlag::classify(slice)
-                            {
-                                remainder_i += 1;
-                            }
                         }
                     }
                 }

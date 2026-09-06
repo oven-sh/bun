@@ -407,6 +407,24 @@ pub fn subcommand_argv_index() -> usize {
     SUBCOMMAND_ARGV_INDEX.load(core::sync::atomic::Ordering::Relaxed)
 }
 
+/// `Command::which()` steps past the values of the runtime flags in front
+/// of the keyword (`bun --preload ./x.ts install`). A command table that does
+/// not declare those flags hands their values back as positionals. Drop
+/// everything before the keyword so it stays at `[0]`. Positionals borrow
+/// argv, so the keyword is found by identity.
+pub fn positionals_from_keyword<'a>(positionals: &'a [&'static [u8]]) -> &'a [&'static [u8]] {
+    let Some(keyword) = bun_core::argv().get(subcommand_argv_index()) else {
+        return positionals;
+    };
+    match positionals
+        .iter()
+        .position(|p| core::ptr::eq(p.as_ptr(), keyword.as_bytes().as_ptr()))
+    {
+        Some(k) => &positionals[k..],
+        None => positionals,
+    }
+}
+
 #[cfg(not(windows))]
 use bun_core::ZStr;
 

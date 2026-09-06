@@ -789,22 +789,29 @@ pub(crate) enum LeadingFlag {
 }
 
 impl LeadingFlag {
-    pub(crate) fn classify(arg: &[u8]) -> Self {
+    /// `next_is_keyword`: the token after `arg` names a subcommand. A short
+    /// flag means different things to different commands (`-p` is `--print`
+    /// for `bun <file>` and `--production` for `bun install`, `-d` is
+    /// `--define` and `--dev`, `-u` is `--origin` and `--update-snapshots`),
+    /// so when the auto meaning would swallow a keyword, the keyword wins.
+    /// Long names do not collide across the tables.
+    pub(crate) fn classify(arg: &[u8], next_is_keyword: bool) -> Self {
         if arg == b"-" || arg == b"--" {
             return Self::Program;
         }
+        let no_value = Self::Flag {
+            consumes_value: false,
+            filter: false,
+        };
         if let Some(long) = arg.strip_prefix(b"--") {
             let (name, has_attached_value) = match strings::index_of_char_usize(long, b'=') {
                 Some(i) => (&long[..i], true),
                 None => (long, false),
             };
             let Some(param) = AUTO_PARAMS.iter().find(|p| p.names.matches_long(name)) else {
-                return Self::Flag {
-                    consumes_value: false,
-                    filter: false,
-                };
+                return no_value;
             };
-            if Self::is_eval(param) {
+            if Self::is_eval(param) && !has_attached_value {
                 return Self::Program;
             }
             return Self::Flag {
@@ -815,25 +822,33 @@ impl LeadingFlag {
         // A short chain (`-abc`): boolean flags share the token, the first
         // value-taking flag claims the rest of it (`-Fpat`, `-F=pat`) or, when
         // it is the last character, the next token (`-F pat`).
-        let chain = &arg[1..];
+        let chain = if arg == b"-pe" {
+            b"p".as_slice()
+        } else {
+            &arg[1..]
+        };
         for (i, &c) in chain.iter().enumerate() {
             let Some(param) = AUTO_PARAMS.iter().find(|p| p.names.short == Some(c)) else {
                 break;
             };
+            let value_is_next_token = i + 1 == chain.len();
             if Self::is_eval(param) {
-                return Self::Program;
+                // `-e` always ends the scan. `-p` yields to a keyword
+                // (`bun -p install` is `bun install --production`) and to an
+                // attached value (`bun -p=pkg x bin` is bunx's `--package`).
+                if c == b'e' || (value_is_next_token && !next_is_keyword) {
+                    return Self::Program;
+                }
+                return no_value;
             }
             if Self::takes_value(param) {
                 return Self::Flag {
-                    consumes_value: i + 1 == chain.len(),
+                    consumes_value: value_is_next_token && !next_is_keyword,
                     filter: c == b'F',
                 };
             }
         }
-        Self::Flag {
-            consumes_value: false,
-            filter: false,
-        }
+        no_value
     }
 
     fn takes_value(param: &ParamType) -> bool {
@@ -988,7 +1003,7 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
     }
 
     ctx.args.absolute_working_dir = Some(cwd);
-    ctx.positionals = slice_to_owned(args.positionals());
+    ctx.positionals = slice_to_owned(bun_install::positionals_from_keyword(args.positionals()));
 
     if command::LOADS_CONFIG[cmd] {
         load_config_with_cmd_args(cmd, &args, ctx)?;

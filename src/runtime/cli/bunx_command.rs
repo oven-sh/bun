@@ -120,17 +120,6 @@ impl Options {
                     ctx.debug.run_in_bun = true;
                 } else if positional == b"--no-install" {
                     opts.no_install = true;
-                } else if i < keyword_index {
-                    // A global flag in front of `x`: its value is not the
-                    // package name. `--cwd` was applied by the caller's
-                    // `apply_leading_cwd()`.
-                    if let LeadingFlag::Flag {
-                        consumes_value: true,
-                        ..
-                    } = LeadingFlag::classify(positional)
-                    {
-                        i += 1;
-                    }
                 } else if positional == b"--package" || positional == b"-p" {
                     // Next argument should be the package name
                     i += 1;
@@ -166,6 +155,17 @@ impl Options {
                         Global::exit(1);
                     }
                     opts.specified_package = Some(package_value);
+                } else if i < keyword_index {
+                    // A global flag in front of `x`: its value is not the
+                    // package name. `--cwd` was applied by the caller's
+                    // `apply_leading_cwd()`.
+                    if let LeadingFlag::Flag {
+                        consumes_value: true,
+                        ..
+                    } = LeadingFlag::classify(positional, i + 1 == keyword_index)
+                    {
+                        i += 1;
+                    }
                 }
             } else {
                 if !found_subcommand_name {

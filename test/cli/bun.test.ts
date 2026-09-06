@@ -659,6 +659,40 @@ describe.concurrent("global flag before subcommand", () => {
     });
   }
 
+  test("bun --preload ./pre.ts build <file> bundles only the entry point", async () => {
+    using dir = tempDir("which-preload-build", valueFlags);
+    const { stdout, stderr, exitCode } = await run(String(dir), ["--preload", "./pre.ts", "build", "./app.ts"]);
+    // The build table has no --preload: its value must not become an entry
+    // point, and neither may the `build` keyword.
+    expect(stderr).not.toContain("Script not found");
+    expect(stdout).toContain('console.log("ran")');
+    expect(stdout).not.toContain("preloaded");
+    expect(exitCode).toBe(0);
+  });
+
+  // A short flag means different things to different commands. When the
+  // next token is a keyword, the keyword wins.
+  test("bun -p install is install --production", async () => {
+    using dir = tempDir("which-p-install", valueFlags);
+    const { stdout, stderr, exitCode } = await run(String(dir), ["-p", "install", "--dry-run"]);
+    expect(stderr).not.toContain("ReferenceError");
+    expect(stdout).toContain("bun install");
+    expect(exitCode).toBe(0);
+  });
+
+  test("bun -d add is add --dev", async () => {
+    using dir = tempDir("which-d-add", valueFlags);
+    const { stderr } = await run(String(dir), ["-d", "add", "--dry-run"]);
+    expect(stderr).toContain("no package specified to add");
+  });
+
+  test("bun -u test <file> is test --update-snapshots", async () => {
+    using dir = tempDir("which-u-test", valueFlags);
+    const { stderr, exitCode } = await run(String(dir), ["-u", "test", "pass.test.ts"]);
+    expect(stderr).toContain("1 pass");
+    expect(exitCode).toBe(0);
+  });
+
   test("bun --console-depth 5 run <file> dispatches RunCommand", async () => {
     using dir = tempDir("which-console-depth", valueFlags);
     const { stdout, stderr, exitCode } = await run(String(dir), ["--console-depth", "5", "run", "app.ts"]);

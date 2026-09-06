@@ -1472,24 +1472,18 @@ fn overlay_bunfig_install(install: &mut Api::BunInstall, bunfig: Api::BunInstall
     );
 }
 
-/// Is a `package.json` found above the directory this command ran in allowed to
-/// become the root of the install?
+/// May a `package.json` above the directory this command ran in be the root of
+/// the install? Both upward walks in [`init`] ask this.
 ///
-/// The root manifest decides which lifecycle scripts run
-/// (`trustedDependencies`), where every dependency comes from (`overrides`,
-/// `resolutions`, `patchedDependencies`, its `bun.lock`) and which registry
-/// serves them (its `.npmrc` and `bunfig.toml`). A directory that other local
-/// users can write to, `/tmp` above a `mktemp -d` build directory for example,
-/// lets one of them plant such a manifest above a project that is not theirs.
+/// The root manifest picks which lifecycle scripts run (`trustedDependencies`),
+/// where the dependencies come from (`overrides`, `patchedDependencies`, its
+/// `bun.lock`) and which registry serves them (its `.npmrc`, `bunfig.toml`). In
+/// a directory other local users can write to, `/tmp` for example, any of them
+/// can plant one above a project that is not theirs.
 ///
-/// So use an ancestor manifest only when the current user owns it, or when its
-/// owner also owns the directory the command ran in. The second case keeps
-/// `sudo bun install` and container images, where one other user owns the whole
-/// checkout, working. `cwd_uid` is `None` when that directory cannot be read,
-/// which leaves the current user as the only owner bun trusts.
-///
-/// Both upward walks in [`init`] use this: the walk for the project's own
-/// manifest, and the walk for the workspace root above it.
+/// Trusted owners: this user, and the owner of the directory the command ran in
+/// (`cwd_uid`, `None` when it cannot be read). The second keeps `sudo bun
+/// install` and images where one other user owns the checkout working.
 #[cfg(unix)]
 fn ancestor_package_json_is_trusted(package_json: &bun_sys::File, cwd_uid: Option<u32>) -> bool {
     bun_sys::fstat(package_json.handle)
@@ -1589,8 +1583,7 @@ pub fn init(
     let mut workspace_name_hash: Option<PackageNameHash> = None;
     let mut root_package_json_name_at_time_of_init: Box<[u8]> = Box::default();
 
-    // The owner of the directory this command ran in. Both upward walks below compare
-    // an ancestor `package.json` against it (`ancestor_package_json_is_trusted`).
+    // Compared against an ancestor `package.json` by both upward walks below.
     #[cfg(unix)]
     let cwd_uid = {
         let mut cwd_path_buf = bun_paths::path_buffer_pool::get();
@@ -1641,9 +1634,7 @@ pub fn init(
                     0,
                 ) {
                     Ok(f) => {
-                        // This manifest becomes the project, and the install root unless a
-                        // workspace root is found above it. Above the directory the command
-                        // ran in, it has to belong to this user.
+                        // Above the cwd this is also the install root, so check its owner.
                         #[cfg(unix)]
                         if !strings::eql_long(this_cwd, original_cwd, true)
                             && !ancestor_package_json_is_trusted(&f, cwd_uid)

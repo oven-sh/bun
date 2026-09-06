@@ -1172,22 +1172,32 @@ it.skipIf(isWindows)("Bun.write(Bun.stdout, ...) to a full nonblocking pipe comp
   // Below 256 KiB exercises the sync fast path's EAGAIN -> needs_async fallback; at/above
   // 256 KiB goes straight to the thread-pool WriteFile path.
   const script = `
-    import { readdirSync } from "node:fs";
+    import { fstatSync, readdirSync } from "node:fs";
     process.stdout.write("x"); // constructs the fd 1 FileSink, which flips the pipe O_NONBLOCK
     const fdDir = process.platform === "darwin" ? "/dev/fd" : "/proc/self/fd";
-    const fdCount = () => readdirSync(fdDir).length;
+    const fds = () => readdirSync(fdDir).map(Number).sort((a, b) => a - b);
+    const describe = fd => {
+      try {
+        const st = fstatSync(fd);
+        return { fd, mode: st.mode.toString(8), fifo: st.isFIFO(), sock: st.isSocket(), file: st.isFile(), chr: st.isCharacterDevice() };
+      } catch (e) {
+        return { fd, err: e.code };
+      }
+    };
     const small = Buffer.alloc(64 * 1024, 65).toString();
     const large = Buffer.alloc(256 * 1024, 66).toString();
     let wrote = 0, fdsBefore, fdsAfter;
     for (let round = 0; round < 2; round++) {
-      fdsBefore = fdCount();
+      fdsBefore = fds();
       const ps = [];
       for (let i = 0; i < 16; i++) ps.push(Bun.write(Bun.stdout, small));
       for (let i = 0; i < 4; i++) ps.push(Bun.write(Bun.stdout, large));
       for (const n of await Promise.all(ps)) wrote += n;
-      fdsAfter = fdCount();
+      fdsAfter = fds();
     }
-    process.stderr.write("wrote=" + wrote + " fdDelta=" + (fdsAfter - fdsBefore));
+    const newFds = fdsAfter.filter(fd => !fdsBefore.includes(fd)).map(describe);
+    const goneFds = fdsBefore.filter(fd => !fdsAfter.includes(fd));
+    process.stderr.write(JSON.stringify({ wrote, fdDelta: fdsAfter.length - fdsBefore.length, newFds, goneFds }));
   `;
   await using proc = Bun.spawn({
     cmd: [bunExe(), "-e", script],
@@ -1201,7 +1211,7 @@ it.skipIf(isWindows)("Bun.write(Bun.stdout, ...) to a full nonblocking pipe comp
   const expected = 1 + 2 * (16 * 64 * 1024 + 4 * 256 * 1024);
   expect({ length: stdout.length, stderr, exitCode, signalCode: proc.signalCode }).toEqual({
     length: expected,
-    stderr: "wrote=" + (expected - 1) + " fdDelta=0",
+    stderr: JSON.stringify({ wrote: expected - 1, fdDelta: 0, newFds: [], goneFds: [] }),
     exitCode: 0,
     signalCode: null,
   });
@@ -1221,7 +1231,8 @@ it.skipIf(isWindows)("Bun.write to a full pipe resumes async after a partial wri
     killSignal: "SIGKILL",
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect({ stdout, stderr, exitCode, signalCode: proc.signalCode }).toEqual({
+  // stderr carries the fixture's progress markers. It is only shown on failure.
+  expect({ stdout, exitCode, signalCode: proc.signalCode, stderr: exitCode === 0 ? "" : stderr }).toEqual({
     stdout: JSON.stringify({ n: 200 * 1024, got: 200 * 1024 }) + "\n",
     stderr: "",
     exitCode: 0,

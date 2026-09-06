@@ -91,6 +91,8 @@ impl AnyResolveWatcher {
 struct UnresolvedImport {
     dir_hash: HashType,
     stem: Box<[u8]>,
+    /// Entries that matched the stem when the import failed. They cannot satisfy it.
+    present: Vec<Box<[u8]>>,
 }
 
 impl UnresolvedImport {
@@ -104,11 +106,27 @@ impl UnresolvedImport {
         }
     }
 
-    fn matches(&self, name: &[u8]) -> bool {
-        let stem: &[u8] = &self.stem;
+    fn stem_matches(stem: &[u8], name: &[u8]) -> bool {
         name == stem
             || (name.len() > stem.len() && name.starts_with(stem) && name[stem.len()] == b'.')
     }
+
+    fn matches(&self, name: &[u8]) -> bool {
+        Self::stem_matches(&self.stem, name) && !self.present.iter().any(|p| &**p == name)
+    }
+}
+
+fn for_each_dir_entry(dir_path: &[u8], mut f: impl FnMut(&[u8]) -> bool) -> bool {
+    let Ok(dir) = sys::Dir::open(strings::without_trailing_slash(dir_path)) else {
+        return false;
+    };
+    let mut iter = sys::iterate_dir(dir.fd());
+    while let Ok(Some(entry)) = iter.next() {
+        if f(entry.name.slice_u8()) {
+            return true;
+        }
+    }
+    false
 }
 
 // TODO: some platform-specific behavior is implemented in
@@ -1017,17 +1035,29 @@ impl Watcher {
             return;
         }
         let dir_hash = Self::unresolved_dir_hash(dir_path);
-        let _guard = self.mutex.lock_guard();
-        if !self
-            .unresolved_imports
-            .iter()
-            .any(|u| u.dir_hash == dir_hash && &*u.stem == stem)
         {
-            self.unresolved_imports.push(UnresolvedImport {
-                dir_hash,
-                stem: stem.into(),
-            });
+            let _guard = self.mutex.lock_guard();
+            if self
+                .unresolved_imports
+                .iter()
+                .any(|u| u.dir_hash == dir_hash && &*u.stem == stem)
+            {
+                return;
+            }
         }
+        let mut present: Vec<Box<[u8]>> = Vec::new();
+        for_each_dir_entry(dir_path, |name| {
+            if UnresolvedImport::stem_matches(stem, name) {
+                present.push(name.into());
+            }
+            false
+        });
+        let _guard = self.mutex.lock_guard();
+        self.unresolved_imports.push(UnresolvedImport {
+            dir_hash,
+            stem: stem.into(),
+            present,
+        });
     }
 
     /// Callers spell the same directory with and without a trailing slash.
@@ -1052,17 +1082,9 @@ impl Watcher {
             return candidates.any(|u| u.matches(name));
         }
         let candidates: Vec<&UnresolvedImport> = candidates.collect();
-        let Ok(dir) = sys::Dir::open(strings::without_trailing_slash(dir_path)) else {
-            return false;
-        };
-        let mut iter = sys::iterate_dir(dir.fd());
-        while let Ok(Some(entry)) = iter.next() {
-            let entry_name = entry.name.slice_u8();
-            if candidates.iter().any(|u| u.matches(entry_name)) {
-                return true;
-            }
-        }
-        false
+        for_each_dir_entry(dir_path, |entry_name| {
+            candidates.iter().any(|u| u.matches(entry_name))
+        })
     }
 
     /// A reload re-runs every resolution, so the record of failed ones starts over.

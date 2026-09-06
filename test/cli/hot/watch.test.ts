@@ -49,11 +49,34 @@ describe.todoIf(isBroken && isWindows)("--watch works", async () => {
   }
 });
 
-async function readUntil(lines: AsyncIterator<string>, predicate: (line: string) => boolean): Promise<string> {
-  while (true) {
-    const { value, done } = await lines.next();
-    if (done) throw new Error("stream ended before the expected line");
-    if (predicate(value)) return value;
+class LineReader {
+  #lines: AsyncIterator<string>;
+  #pending: Promise<IteratorResult<string>> | undefined;
+  constructor(stream: ReadableStream<Uint8Array>) {
+    this.#lines = forEachLine(stream);
+  }
+  #next(): Promise<IteratorResult<string>> {
+    this.#pending ??= this.#lines.next().finally(() => (this.#pending = undefined));
+    return this.#pending;
+  }
+  async until(predicate: (line: string) => boolean): Promise<string> {
+    while (true) {
+      const { value, done } = await this.#next();
+      if (done) throw new Error("stream ended before the expected line");
+      if (predicate(value)) return value;
+    }
+  }
+  /** The lines that arrive within `ms`. A line that arrives later stays queued for the next read. */
+  async within(ms: number): Promise<string[]> {
+    const out: string[] = [];
+    const deadline = Date.now() + ms;
+    while (true) {
+      const left = deadline - Date.now();
+      if (left <= 0) return out;
+      const result = await Promise.race([this.#next(), Bun.sleep(left).then(() => undefined)]);
+      if (result === undefined || result.done) return out;
+      out.push(result.value);
+    }
   }
 }
 
@@ -68,16 +91,16 @@ describe.todoIf(isBroken && isWindows)("--watch recovers from a missing import",
       env: bunEnv,
       stdio: ["ignore", "pipe", "pipe"],
     });
-    const stdout = forEachLine(proc.stdout);
-    const stderr = forEachLine(proc.stderr);
+    const stdout = new LineReader(proc.stdout);
+    const stderr = new LineReader(proc.stderr);
 
-    await readUntil(stderr, line => line.includes("Cannot find module"));
+    await stderr.until(line => line.includes("Cannot find module"));
 
     await writeFile(join(String(dir), "a.js"), "export const a = 10;");
-    expect(await readUntil(stdout, line => line.startsWith("RUN"))).toBe("RUN 10");
+    expect(await stdout.until(line => line.startsWith("RUN"))).toBe("RUN 10");
 
     await writeFile(join(String(dir), "a.js"), "export const a = 20;");
-    expect(await readUntil(stdout, line => line.startsWith("RUN"))).toBe("RUN 20");
+    expect(await stdout.until(line => line.startsWith("RUN"))).toBe("RUN 20");
 
     proc.kill("SIGKILL");
     await proc.exited;
@@ -101,13 +124,16 @@ describe.todoIf(isBroken && isWindows)("--watch recovers from a missing import",
       env: bunEnv,
       stdio: ["ignore", "pipe", "pipe"],
     });
-    const stdout = forEachLine(proc.stdout);
+    const stdout = new LineReader(proc.stdout);
 
-    expect(await readUntil(stdout, line => line.startsWith("RUN"))).toBe("RUN 1");
+    expect(await stdout.until(line => line.startsWith("RUN"))).toBe("RUN 1");
 
-    // The next run must come from this edit, not from the lib.log write.
+    // A rerun from the lib.log write would land well inside this window. A
+    // correct build prints nothing here, so the window cannot make it flake.
+    expect(await stdout.within(2000)).toEqual([]);
+
     await writeFile(join(String(dir), "lib", "index.js"), "export const v = 2;");
-    expect(await readUntil(stdout, line => line.startsWith("RUN"))).toBe("RUN 2");
+    expect(await stdout.until(line => line.startsWith("RUN"))).toBe("RUN 2");
 
     proc.kill("SIGKILL");
     await proc.exited;
@@ -124,20 +150,20 @@ describe.todoIf(isBroken && isWindows)("--watch recovers from a missing import",
       env: bunEnv,
       stdio: ["ignore", "pipe", "pipe"],
     });
-    const stdout = forEachLine(proc.stdout);
-    const stderr = forEachLine(proc.stderr);
+    const stdout = new LineReader(proc.stdout);
+    const stderr = new LineReader(proc.stderr);
     const isResolveError = (line: string) => line.includes('Could not resolve: "./a.js"');
 
-    await readUntil(stderr, isResolveError);
+    await stderr.until(isResolveError);
 
     // An edit to an import that did resolve rebuilds while a.js is missing.
     await writeFile(join(String(dir), "b.js"), "export const b = 30;");
-    await readUntil(stderr, isResolveError);
+    await stderr.until(isResolveError);
 
     // Creating the missing file rebuilds with both edits.
     await writeFile(join(String(dir), "a.js"), "export const a = 10;");
     // The per-file row is printed after the file is written.
-    await readUntil(stdout, line => line.includes("entry.js") && line.includes("(entry point)"));
+    await stdout.until(line => line.includes("entry.js") && line.includes("(entry point)"));
     const bundle = await Bun.file(join(String(dir), "out", "entry.js")).text();
     expect(bundle).toContain("var a = 10");
     expect(bundle).toContain("var b = 30");

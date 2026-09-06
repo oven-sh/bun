@@ -638,7 +638,7 @@ function webkitBuildSpec(cfg: Config): DirectBuild {
       bmallocGroup(wk, flags),
       wtf.group,
       ...llint.groups,
-      jscGroup(wk, jsc, jscSources.sources, [...codegenReady, jscSources.checked], llint.assembly),
+      jscGroup(wk, jsc, jscSources.sources, [...codegenReady, ...jscSources.checked], llint.assembly),
     ],
     steps: wk.steps,
     // What a consumer's compile waits for: JSC's generated headers (bun
@@ -1426,7 +1426,7 @@ function llintSteps(
  * JavaScriptCore_SOURCES. The bundle files themselves are `headers` entries
  * written at configure.
  */
-function jscSourceList(wk: WebKitBuild): { sources: string[]; bundles: Record<string, string>; checked: string } {
+function jscSourceList(wk: WebKitBuild): { sources: string[]; bundles: Record<string, string>; checked: string[] } {
   const { cfg, JSC, DS, B } = wk;
   // The bundle and @no-unify lists are kept by hand; this step fails the
   // build, before any JSC compile, if a fetched Sources.txt names a file they
@@ -1444,6 +1444,25 @@ function jscSourceList(wk: WebKitBuild): { sources: string[]; bundles: Record<st
     ],
     desc: "check Sources.txt against webkit-jsc-sources.ts",
   });
+  // Same idea for the generators: every gen() in this file transcribes an
+  // add_custom_command from WebKit's CMake. webkit-check-cmake.ts renders
+  // those statements (and the variables feeding them) from the fetched tree
+  // and compares them with webkit-cmake.snapshot; a bump that changes one
+  // fails here with the diff until webkit.ts and the snapshot are updated.
+  const cmakeChecked = join(B, ".cmake-commands-checked");
+  const cmakeCheckScript = join(import.meta.dirname, "webkit-check-cmake.ts");
+  gen(wk, {
+    outputs: [cmakeChecked],
+    cmd: [...cfg.jsRuntimeArgv, cmakeCheckScript, wk.W, cmakeChecked],
+    inputs: [
+      join(JSC, "CMakeLists.txt"),
+      join(wk.WTF, "wtf", "PlatformJSCOnly.cmake"),
+      cmakeCheckScript,
+      join(import.meta.dirname, "..", "cmake.ts"),
+      join(import.meta.dirname, "webkit-cmake.snapshot"),
+    ],
+    desc: "check CMake generators against webkit-cmake.snapshot",
+  });
   const bundleDir = join(DS, "unified-sources");
   const bundles: Record<string, string> = {};
   for (const [bundle, members] of jscUnifiedBundles) {
@@ -1457,7 +1476,7 @@ function jscSourceList(wk: WebKitBuild): { sources: string[]; bundles: Record<st
     join(DS, "JSCBuiltins.cpp"),
     ...inTree(JSC, jscExtraSourcesFor(cfg)),
   ];
-  return { sources, bundles, checked };
+  return { sources, bundles, checked: [checked, cmakeChecked] };
 }
 
 function jscGroup(

@@ -1,0 +1,516 @@
+# WebKit CMake statements that scripts/build/deps/webkit.ts transcribes by hand:
+# code generators (add_custom_command), the macros wrapping them, and the
+# variables they use — rendered canonically by webkit-check-cmake.ts from the
+# fetched tree and compared on every build. When this changes upstream, carry
+# the change into webkit.ts, then refresh with:
+#   bun scripts/build/deps/webkit-check-cmake.ts vendor/WebKit --update
+
+#### Source/JavaScriptCore/CMakeLists.txt
+
+set(
+    JavaScriptCore_OBJECT_LUT_SOURCES runtime/ArrayConstructor.cpp
+       runtime/AsyncFromSyncIteratorPrototype.cpp runtime/AsyncGeneratorPrototype.cpp
+       runtime/BigIntConstructor.cpp runtime/BigIntPrototype.cpp runtime/BooleanPrototype.cpp
+       runtime/DateConstructor.cpp runtime/DatePrototype.cpp runtime/ErrorPrototype.cpp
+       runtime/GeneratorPrototype.cpp runtime/IntlCollatorConstructor.cpp
+       runtime/IntlCollatorPrototype.cpp runtime/IntlDateTimeFormatConstructor.cpp
+       runtime/IntlDateTimeFormatPrototype.cpp runtime/IntlDisplayNamesConstructor.cpp
+       runtime/IntlDisplayNamesPrototype.cpp runtime/IntlDurationFormatConstructor.cpp
+       runtime/IntlDurationFormatPrototype.cpp runtime/IntlListFormatConstructor.cpp
+       runtime/IntlListFormatPrototype.cpp runtime/IntlLocalePrototype.cpp
+       runtime/IntlNumberFormatConstructor.cpp runtime/IntlNumberFormatPrototype.cpp
+       runtime/IntlObject.cpp runtime/IntlPluralRulesConstructor.cpp runtime/IntlPluralRulesPrototype.cpp
+       runtime/IntlRelativeTimeFormatConstructor.cpp runtime/IntlRelativeTimeFormatPrototype.cpp
+       runtime/IntlSegmentIteratorPrototype.cpp runtime/IntlSegmenterConstructor.cpp
+       runtime/IntlSegmenterPrototype.cpp runtime/IntlSegmentsPrototype.cpp
+       runtime/JSDataViewPrototype.cpp runtime/JSGlobalObject.cpp runtime/JSIterator.cpp
+       runtime/JSIteratorConstructor.cpp runtime/JSIteratorHelperPrototype.cpp runtime/JSONObject.cpp
+       runtime/JSPromiseConstructor.cpp runtime/JSPromisePrototype.cpp runtime/MapConstructor.cpp
+       runtime/MapPrototype.cpp runtime/NumberConstructor.cpp runtime/NumberPrototype.cpp
+       runtime/ObjectConstructor.cpp runtime/ReflectObject.cpp runtime/RegExpConstructor.cpp
+       runtime/RegExpPrototype.cpp runtime/RegExpStringIteratorPrototype.cpp runtime/SetPrototype.cpp
+       runtime/ShadowRealmObject.cpp runtime/ShadowRealmPrototype.cpp runtime/StringConstructor.cpp
+       runtime/StringPrototype.cpp runtime/SymbolConstructor.cpp runtime/SymbolPrototype.cpp
+       runtime/TemporalDurationConstructor.cpp runtime/TemporalDurationPrototype.cpp
+       runtime/TemporalInstantConstructor.cpp runtime/TemporalInstantPrototype.cpp
+       runtime/TemporalNow.cpp runtime/TemporalObject.cpp runtime/TemporalPlainDateConstructor.cpp
+       runtime/TemporalPlainDatePrototype.cpp runtime/TemporalPlainDateTimeConstructor.cpp
+       runtime/TemporalPlainDateTimePrototype.cpp runtime/TemporalPlainMonthDayConstructor.cpp
+       runtime/TemporalPlainMonthDayPrototype.cpp runtime/TemporalPlainTimeConstructor.cpp
+       runtime/TemporalPlainTimePrototype.cpp runtime/TemporalPlainYearMonthConstructor.cpp
+       runtime/TemporalPlainYearMonthPrototype.cpp runtime/TemporalZonedDateTimeConstructor.cpp
+       runtime/TemporalZonedDateTimePrototype.cpp wasm/js/JSWebAssembly.cpp
+       wasm/js/WebAssemblyArrayConstructor.cpp wasm/js/WebAssemblyArrayPrototype.cpp
+       wasm/js/WebAssemblyCompileErrorConstructor.cpp wasm/js/WebAssemblyCompileErrorPrototype.cpp
+       wasm/js/WebAssemblyExceptionConstructor.cpp wasm/js/WebAssemblyExceptionPrototype.cpp
+       wasm/js/WebAssemblyGlobalConstructor.cpp wasm/js/WebAssemblyGlobalPrototype.cpp
+       wasm/js/WebAssemblyInstanceConstructor.cpp wasm/js/WebAssemblyInstancePrototype.cpp
+       wasm/js/WebAssemblyLinkErrorConstructor.cpp wasm/js/WebAssemblyLinkErrorPrototype.cpp
+       wasm/js/WebAssemblyMemoryConstructor.cpp wasm/js/WebAssemblyMemoryPrototype.cpp
+       wasm/js/WebAssemblyModuleConstructor.cpp wasm/js/WebAssemblyModulePrototype.cpp
+       wasm/js/WebAssemblyRuntimeErrorConstructor.cpp wasm/js/WebAssemblyRuntimeErrorPrototype.cpp
+       wasm/js/WebAssemblySuspendErrorConstructor.cpp wasm/js/WebAssemblySuspendErrorPrototype.cpp
+       wasm/js/WebAssemblyStructConstructor.cpp wasm/js/WebAssemblyStructPrototype.cpp
+       wasm/js/WebAssemblyTableConstructor.cpp wasm/js/WebAssemblyTablePrototype.cpp
+       wasm/js/WebAssemblyTagConstructor.cpp wasm/js/WebAssemblyTagPrototype.cpp
+)
+
+set(JavaScriptCore_SCRIPTS_SOURCES_DIR "${JAVASCRIPTCORE_DIR}/Scripts")
+
+set(
+    JavaScriptCore_SCRIPTS_SOURCES_PATHS ${JavaScriptCore_SCRIPTS_SOURCES_DIR}/*.pl
+       ${JavaScriptCore_SCRIPTS_SOURCES_DIR}/*.py
+       ${JavaScriptCore_SCRIPTS_SOURCES_DIR}/wkbuiltins/builtins*.py
+       ${JavaScriptCore_SCRIPTS_SOURCES_DIR}/wkbuiltins/wkbuiltins.py
+)
+
+# in if(USE_FRAMEWORK_BUNDLES)
+list(
+    APPEND JavaScriptCore_SCRIPTS_SOURCES_PATHS ${JAVASCRIPTCORE_DIR}/inspector/scripts/generate*.py
+       ${JAVASCRIPTCORE_DIR}/inspector/scripts/codegen/generate*.py
+       ${JAVASCRIPTCORE_DIR}/inspector/scripts/codegen/*generator*.py
+       ${JAVASCRIPTCORE_DIR}/inspector/scripts/codegen/models.py
+)
+
+file(GLOB JavaScriptCore_SCRIPTS_SOURCES ${JavaScriptCore_SCRIPTS_SOURCES_PATHS})
+
+# in foreach(_file ${JavaScriptCore_SCRIPTS_SOURCES})
+get_filename_component(_script "${_file}" NAME)
+
+# in foreach(_file ${JavaScriptCore_SCRIPTS_SOURCES})
+add_custom_command(
+    OUTPUT ${JavaScriptCore_SCRIPTS_DIR}/${_script}
+    MAIN_DEPENDENCY ${_file}
+    WORKING_DIRECTORY ${JavaScriptCore_DERIVED_SOURCES_DIR}
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different ${_file} ${JavaScriptCore_SCRIPTS_DIR}/${_script}
+    VERBATIM
+)
+
+# in foreach(_file ${JavaScriptCore_SCRIPTS_SOURCES})
+list(
+    APPEND JavaScriptCore_SCRIPTS ${JavaScriptCore_SCRIPTS_DIR}/${_script}
+)
+
+set(BUILD_VARIANTS "normal")
+
+set(OFFLINE_ASM_INCLUDE_DIRS "")
+
+set(OFFLINE_ASM_ARGS "")
+
+set(OFFLINE_ASM_FORMAT_ARGS "")
+
+# in if(CMAKE_SYSTEM_NAME MATCHES "Linux")
+list(
+    APPEND OFFLINE_ASM_FORMAT_ARGS --binary-format=ELF
+)
+
+# in if(MSVC AND NOT ENABLE_C_LOOP)
+list(
+    APPEND OFFLINE_ASM_FORMAT_ARGS --platform=Windows
+)
+
+# in if(USE_APPLE_INTERNAL_SDK)
+list(
+    APPEND OFFLINE_ASM_ARGS "--webkit-additions-path=${WebKitAdditions_HEADERS_DIR}"
+)
+
+# in if(USE_APPLE_INTERNAL_SDK)
+list(
+    APPEND OFFLINE_ASM_INCLUDE_DIRS "-I${WebKitAdditions_HEADERS_DIR}"
+)
+
+set(
+    LLINT_ASM llint/InPlaceInterpreter.asm llint/InPlaceInterpreter64.asm llint/LowLevelInterpreter.asm
+       llint/LowLevelInterpreter64.asm
+)
+
+set(
+    OFFLINE_ASM offlineasm/arm64.rb offlineasm/arm64e.rb offlineasm/asm.rb offlineasm/ast.rb
+       offlineasm/backends.rb offlineasm/cloop.rb offlineasm/config.rb offlineasm/instructions.rb
+       offlineasm/offsets.rb offlineasm/opt.rb offlineasm/parser.rb offlineasm/registers.rb
+       offlineasm/risc.rb offlineasm/riscv64.rb offlineasm/self_hash.rb offlineasm/settings.rb
+       offlineasm/transform.rb offlineasm/x86.rb
+)
+
+set(
+    GENERATOR generator/Argument.rb generator/Assertion.rb generator/Checkpoints.rb generator/DSL.rb
+       generator/Fits.rb generator/GeneratedFile.rb generator/Metadata.rb generator/Opcode.rb
+       generator/OpcodeGroup.rb generator/Options.rb generator/Section.rb generator/Template.rb
+       generator/Type.rb generator/Wasm.rb generator/main.rb
+)
+
+add_custom_command(
+    OUTPUT ${JavaScriptCore_DERIVED_SOURCES_DIR}/Bytecodes.h
+       ${JavaScriptCore_DERIVED_SOURCES_DIR}/InitBytecodes.asm
+       ${JavaScriptCore_DERIVED_SOURCES_DIR}/BytecodeStructs.h
+       ${JavaScriptCore_DERIVED_SOURCES_DIR}/BytecodeIndices.h
+       ${JavaScriptCore_DERIVED_SOURCES_DIR}/BytecodeDumperGenerated.cpp
+    MAIN_DEPENDENCY ${JAVASCRIPTCORE_DIR}/generator/main.rb
+    DEPENDS ${GENERATOR} bytecode/BytecodeList.rb ${JAVASCRIPTCORE_DIR}/wasm/wasm.json
+    COMMAND ${Ruby_EXECUTABLE} ${JAVASCRIPTCORE_DIR}/generator/main.rb --bytecodes_h
+       ${JavaScriptCore_DERIVED_SOURCES_DIR}/Bytecodes.h --init_bytecodes_asm
+       ${JavaScriptCore_DERIVED_SOURCES_DIR}/InitBytecodes.asm --bytecode_structs_h
+       ${JavaScriptCore_DERIVED_SOURCES_DIR}/BytecodeStructs.h --bytecode_indices_h
+       ${JavaScriptCore_DERIVED_SOURCES_DIR}/BytecodeIndices.h
+       ${JAVASCRIPTCORE_DIR}/bytecode/BytecodeList.rb --wasm_json ${JAVASCRIPTCORE_DIR}/wasm/wasm.json
+       --bytecode_dumper ${JavaScriptCore_DERIVED_SOURCES_DIR}/BytecodeDumperGenerated.cpp
+    VERBATIM
+)
+
+add_custom_target(
+    Bytecodes
+    DEPENDS "${JavaScriptCore_DERIVED_SOURCES_DIR}/Bytecodes.h"
+)
+
+add_custom_command(
+    OUTPUT ${JavaScriptCore_DERIVED_SOURCES_DIR}/JSCWebPreferenceOptions.h
+    MAIN_DEPENDENCY ${JAVASCRIPTCORE_DIR}/Scripts/PreferencesTemplates/JSCWebPreferenceOptions.h.erb
+    DEPENDS ${WTF_SCRIPTS_DIR}/GeneratePreferences.rb
+       ${WTF_SCRIPTS_DIR}/Preferences/UnifiedWebPreferences.yaml WTF_CopyPreferences
+    COMMAND ${Ruby_EXECUTABLE} ${WTF_SCRIPTS_DIR}/GeneratePreferences.rb --frontend JavaScriptCore
+       --outputDir "${JavaScriptCore_DERIVED_SOURCES_DIR}" --template
+       ${JAVASCRIPTCORE_DIR}/Scripts/PreferencesTemplates/JSCWebPreferenceOptions.h.erb
+       ${WTF_SCRIPTS_DIR}/Preferences/UnifiedWebPreferences.yaml
+    VERBATIM
+)
+
+add_custom_target(
+    JSCWebPreferenceOptions
+    DEPENDS "${JavaScriptCore_DERIVED_SOURCES_DIR}/JSCWebPreferenceOptions.h"
+)
+
+# in if(WTF_CPU_X86_64)
+set(OFFLINE_ASM_BACKEND "X86_64")
+
+# in elseif(WTF_CPU_ARM64) # if(WTF_CPU_X86_64)
+# in if(CMAKE_OSX_ARCHITECTURES STREQUAL "arm64e")
+set(OFFLINE_ASM_BACKEND "ARM64E")
+
+# in elseif(WTF_CPU_ARM64) # if(WTF_CPU_X86_64)
+# in else() # if(CMAKE_OSX_ARCHITECTURES STREQUAL "arm64e")
+set(OFFLINE_ASM_BACKEND "ARM64")
+
+# in elseif(WTF_CPU_RISCV64) # if(WTF_CPU_X86_64)
+set(OFFLINE_ASM_BACKEND "RISCV64")
+
+# in if(NOT ENABLE_JIT)
+# in if(ENABLE_C_LOOP)
+set(OFFLINE_ASM_BACKEND "C_LOOP")
+
+add_custom_command(
+    OUTPUT ${JavaScriptCore_DERIVED_SOURCES_DIR}/AirOpcode.h
+       ${JavaScriptCore_DERIVED_SOURCES_DIR}/AirOpcodeGenerated.h
+    MAIN_DEPENDENCY ${JAVASCRIPTCORE_DIR}/b3/air/AirOpcode.opcodes
+    DEPENDS ${JAVASCRIPTCORE_DIR}/b3/air/opcode_generator.rb
+    COMMAND ${Ruby_EXECUTABLE} ${JAVASCRIPTCORE_DIR}/b3/air/opcode_generator.rb
+       ${JAVASCRIPTCORE_DIR}/b3/air/AirOpcode.opcodes
+    VERBATIM
+    WORKING_DIRECTORY ${JavaScriptCore_DERIVED_SOURCES_DIR}
+)
+
+add_custom_command(
+    OUTPUT ${JavaScriptCore_DERIVED_SOURCES_DIR}/LLIntDesiredSettings.h
+    MAIN_DEPENDENCY ${JAVASCRIPTCORE_DIR}/offlineasm/generate_settings_extractor.rb
+    DEPENDS ${LLINT_ASM} ${OFFLINE_ASM} ${JavaScriptCore_DERIVED_SOURCES_DIR}/InitBytecodes.asm
+    COMMAND ${Ruby_EXECUTABLE} ${JAVASCRIPTCORE_DIR}/offlineasm/generate_settings_extractor.rb
+       -I${JavaScriptCore_DERIVED_SOURCES_DIR}/ ${OFFLINE_ASM_INCLUDE_DIRS}
+       ${JAVASCRIPTCORE_DIR}/llint/LowLevelInterpreter.asm
+       ${JavaScriptCore_DERIVED_SOURCES_DIR}/LLIntDesiredSettings.h ${OFFLINE_ASM_BACKEND}
+       ${OFFLINE_ASM_ARGS}
+    VERBATIM
+)
+
+add_custom_command(
+    OUTPUT ${JavaScriptCore_DERIVED_SOURCES_DIR}/LLIntDesiredOffsets.h
+    MAIN_DEPENDENCY ${JAVASCRIPTCORE_DIR}/offlineasm/generate_offset_extractor.rb
+    DEPENDS LLIntSettingsExtractor ${LLINT_ASM} ${OFFLINE_ASM}
+       ${JavaScriptCore_DERIVED_SOURCES_DIR}/InitBytecodes.asm
+       ${JavaScriptCore_DERIVED_SOURCES_DIR}/AirOpcode.h ${JavaScriptCore_DERIVED_SOURCES_DIR}/WasmOps.h
+    COMMAND ${Ruby_EXECUTABLE} ${JAVASCRIPTCORE_DIR}/offlineasm/generate_offset_extractor.rb
+       -I${JavaScriptCore_DERIVED_SOURCES_DIR}/ ${OFFLINE_ASM_INCLUDE_DIRS}
+       ${JAVASCRIPTCORE_DIR}/llint/LowLevelInterpreter.asm $<TARGET_FILE:LLIntSettingsExtractor>
+       ${JavaScriptCore_DERIVED_SOURCES_DIR}/LLIntDesiredOffsets.h ${OFFLINE_ASM_BACKEND}
+       ${BUILD_VARIANTS} ${OFFLINE_ASM_ARGS}
+    VERBATIM
+)
+
+set(
+    BUILTINS_GENERATOR_SCRIPTS ${JavaScriptCore_SCRIPTS_DIR}/wkbuiltins.py
+       ${JavaScriptCore_SCRIPTS_DIR}/builtins_generator.py
+       ${JavaScriptCore_SCRIPTS_DIR}/builtins_model.py
+       ${JavaScriptCore_SCRIPTS_DIR}/builtins_templates.py
+       ${JavaScriptCore_SCRIPTS_DIR}/builtins_generate_combined_header.py
+       ${JavaScriptCore_SCRIPTS_DIR}/builtins_generate_combined_implementation.py
+       ${JavaScriptCore_SCRIPTS_DIR}/builtins_generate_separate_header.py
+       ${JavaScriptCore_SCRIPTS_DIR}/builtins_generate_separate_implementation.py
+       ${JavaScriptCore_SCRIPTS_DIR}/builtins_generate_wrapper_header.py
+       ${JavaScriptCore_SCRIPTS_DIR}/builtins_generate_wrapper_implementation.py
+       ${JavaScriptCore_SCRIPTS_DIR}/builtins_generate_internals_wrapper_header.py
+       ${JavaScriptCore_SCRIPTS_DIR}/builtins_generate_internals_wrapper_implementation.py
+       ${JavaScriptCore_SCRIPTS_DIR}/generate-js-builtins.py ${JavaScriptCore_SCRIPTS_DIR}/lazywriter.py
+)
+
+set(
+    JavaScriptCore_BUILTINS_SOURCES ${JAVASCRIPTCORE_DIR}/builtins/ArrayConstructor.js
+       ${JAVASCRIPTCORE_DIR}/builtins/ArrayIteratorPrototype.js
+       ${JAVASCRIPTCORE_DIR}/builtins/ArrayPrototype.js
+       ${JAVASCRIPTCORE_DIR}/builtins/AsyncDisposableStackPrototype.js
+       ${JAVASCRIPTCORE_DIR}/builtins/AsyncIteratorPrototype.js
+       ${JAVASCRIPTCORE_DIR}/builtins/DisposableStackPrototype.js
+       ${JAVASCRIPTCORE_DIR}/builtins/FunctionPrototype.js
+       ${JAVASCRIPTCORE_DIR}/builtins/GeneratorPrototype.js
+       ${JAVASCRIPTCORE_DIR}/builtins/IteratorHelpers.js
+       ${JAVASCRIPTCORE_DIR}/builtins/JSIteratorConstructor.js
+       ${JAVASCRIPTCORE_DIR}/builtins/JSIteratorHelperPrototype.js
+       ${JAVASCRIPTCORE_DIR}/builtins/JSIteratorPrototype.js
+       ${JAVASCRIPTCORE_DIR}/builtins/MapConstructor.js ${JAVASCRIPTCORE_DIR}/builtins/MapPrototype.js
+       ${JAVASCRIPTCORE_DIR}/builtins/ObjectConstructor.js
+       ${JAVASCRIPTCORE_DIR}/builtins/PromiseConstructor.js
+       ${JAVASCRIPTCORE_DIR}/builtins/ProxyHelpers.js ${JAVASCRIPTCORE_DIR}/builtins/ReflectObject.js
+       ${JAVASCRIPTCORE_DIR}/builtins/SetPrototype.js
+       ${JAVASCRIPTCORE_DIR}/builtins/ShadowRealmPrototype.js
+       ${JAVASCRIPTCORE_DIR}/builtins/TypedArrayConstructor.js
+       ${JAVASCRIPTCORE_DIR}/builtins/TypedArrayPrototype.js
+       ${JAVASCRIPTCORE_DIR}/builtins/WrapForValidIteratorPrototype.js
+       ${JAVASCRIPTCORE_DIR}/inspector/InjectedScriptSource.js
+)
+
+add_custom_command(
+    OUTPUT ${JavaScriptCore_DERIVED_SOURCES_DIR}/JSCBuiltins.cpp
+       ${JavaScriptCore_DERIVED_SOURCES_DIR}/JSCBuiltins.h
+    MAIN_DEPENDENCY ${JavaScriptCore_SCRIPTS_DIR}/generate-js-builtins.py
+    DEPENDS ${JavaScriptCore_BUILTINS_SOURCES} ${BUILTINS_GENERATOR_SCRIPTS}
+    COMMAND ${PYTHON_EXECUTABLE} ${JavaScriptCore_SCRIPTS_DIR}/generate-js-builtins.py --framework
+       JavaScriptCore --output-directory ${JavaScriptCore_DERIVED_SOURCES_DIR} --combined
+       ${JavaScriptCore_BUILTINS_SOURCES}
+    VERBATIM
+)
+
+add_custom_target(
+    JSCBuiltins
+    DEPENDS "${JavaScriptCore_DERIVED_SOURCES_DIR}/JSCBuiltins.h"
+)
+
+set(LLIntOutput LLIntAssembly.h)
+
+# in if(CMAKE_SYSTEM_NAME MATCHES "Linux")
+set(OFFLINE_ASM_ARGS --binary-format=ELF)
+
+# in if(MSVC AND NOT ENABLE_C_LOOP)
+set(OFFLINE_ASM_ARGS --platform=Windows)
+
+add_custom_command(
+    OUTPUT ${JavaScriptCore_DERIVED_SOURCES_DIR}/${LLIntOutput}
+    MAIN_DEPENDENCY ${JAVASCRIPTCORE_DIR}/offlineasm/asm.rb
+    DEPENDS LLIntOffsetsExtractor ${LLINT_ASM} ${OFFLINE_ASM}
+       ${JavaScriptCore_DERIVED_SOURCES_DIR}/InitBytecodes.asm
+    COMMAND ${CMAKE_COMMAND} -E env CMAKE_CXX_COMPILER_ID=${CMAKE_CXX_COMPILER_ID}
+       GCC_OFFLINEASM_SOURCE_MAP=${GCC_OFFLINEASM_SOURCE_MAP} ${Ruby_EXECUTABLE}
+       ${JAVASCRIPTCORE_DIR}/offlineasm/asm.rb -I${JavaScriptCore_DERIVED_SOURCES_DIR}/
+       ${OFFLINE_ASM_INCLUDE_DIRS} ${JAVASCRIPTCORE_DIR}/llint/LowLevelInterpreter.asm
+       $<TARGET_FILE:LLIntOffsetsExtractor> ${JavaScriptCore_DERIVED_SOURCES_DIR}/${LLIntOutput}
+       ${BUILD_VARIANTS} ${OFFLINE_ASM_ARGS} ${OFFLINE_ASM_FORMAT_ARGS}
+    COMMAND ${CMAKE_COMMAND} -E touch_nocreate ${JavaScriptCore_DERIVED_SOURCES_DIR}/${LLIntOutput}
+    WORKING_DIRECTORY ${JavaScriptCore_DERIVED_SOURCES_DIR}
+    VERBATIM
+)
+
+# in macro(GENERATE_PYTHON _generator _additional_deps _input _output)
+add_custom_command(
+    OUTPUT ${_output}
+    MAIN_DEPENDENCY ${_generator}
+    DEPENDS ${_input} ${_additional_deps}
+    COMMAND ${PYTHON_EXECUTABLE} ${_generator} ${_input} ${_output}
+    VERBATIM
+)
+
+generate_python(
+    ${CMAKE_CURRENT_SOURCE_DIR}/wasm/generateWasmOpsHeader.py
+       ${CMAKE_CURRENT_SOURCE_DIR}/wasm/generateWasm.py ${CMAKE_CURRENT_SOURCE_DIR}/wasm/wasm.json
+       ${JavaScriptCore_DERIVED_SOURCES_DIR}/WasmOps.h
+)
+
+generate_python(
+    ${CMAKE_CURRENT_SOURCE_DIR}/wasm/generateWasmOMGIRGeneratorInlinesHeader.py
+       ${CMAKE_CURRENT_SOURCE_DIR}/wasm/generateWasm.py ${CMAKE_CURRENT_SOURCE_DIR}/wasm/wasm.json
+       ${JavaScriptCore_DERIVED_SOURCES_DIR}/WasmOMGIRGeneratorInlines.h
+)
+
+set(HASH_LUT_GENERATOR ${CMAKE_CURRENT_SOURCE_DIR}/create_hash_table)
+
+# in macro(GENERATE_HASH_LUT _input _output)
+add_custom_command(
+    OUTPUT ${_output}
+    MAIN_DEPENDENCY ${HASH_LUT_GENERATOR}
+    DEPENDS ${_input}
+    COMMAND ${PERL_EXECUTABLE} ${HASH_LUT_GENERATOR} ${_input} > ${_output}
+    VERBATIM
+)
+
+# in foreach(_file ${JavaScriptCore_OBJECT_LUT_SOURCES})
+get_filename_component(_name ${_file} NAME_WE)
+
+# in foreach(_file ${JavaScriptCore_OBJECT_LUT_SOURCES})
+generate_hash_lut(
+    ${CMAKE_CURRENT_SOURCE_DIR}/${_file} ${JavaScriptCore_DERIVED_SOURCES_DIR}/${_name}.lut.h
+)
+
+generate_hash_lut(
+    ${CMAKE_CURRENT_SOURCE_DIR}/parser/Keywords.table ${JavaScriptCore_DERIVED_SOURCES_DIR}/Lexer.lut.h
+)
+
+add_custom_command(
+    OUTPUT ${JavaScriptCore_DERIVED_SOURCES_DIR}/yarr/RegExpJitTables.h
+    MAIN_DEPENDENCY ${CMAKE_CURRENT_SOURCE_DIR}/yarr/create_regex_tables
+    COMMAND ${PYTHON_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/yarr/create_regex_tables
+       ${JavaScriptCore_DERIVED_SOURCES_DIR}/yarr/RegExpJitTables.h
+    VERBATIM
+)
+
+add_custom_command(
+    OUTPUT ${JavaScriptCore_DERIVED_SOURCES_DIR}/LexerUnicodePropertyTables.h
+    MAIN_DEPENDENCY ${JAVASCRIPTCORE_DIR}/parser/generateLexerUnicodePropertyTables.py
+    DEPENDS ${JAVASCRIPTCORE_DIR}/ucd/UnicodeData.txt
+    COMMAND ${PYTHON_EXECUTABLE} ${JAVASCRIPTCORE_DIR}/parser/generateLexerUnicodePropertyTables.py
+       ${JAVASCRIPTCORE_DIR}/ucd/UnicodeData.txt
+       ${JavaScriptCore_DERIVED_SOURCES_DIR}/LexerUnicodePropertyTables.h
+    VERBATIM
+)
+
+add_custom_command(
+    OUTPUT ${JavaScriptCore_DERIVED_SOURCES_DIR}/yarr/UnicodePatternTables.h
+    MAIN_DEPENDENCY ${JAVASCRIPTCORE_DIR}/yarr/generateYarrUnicodePropertyTables.py
+    DEPENDS ${JAVASCRIPTCORE_DIR}/yarr/hasher.py ${JAVASCRIPTCORE_DIR}/ucd/DerivedBinaryProperties.txt
+       ${JAVASCRIPTCORE_DIR}/ucd/DerivedCoreProperties.txt
+       ${JAVASCRIPTCORE_DIR}/ucd/DerivedNormalizationProps.txt ${JAVASCRIPTCORE_DIR}/ucd/PropList.txt
+       ${JAVASCRIPTCORE_DIR}/ucd/PropertyAliases.txt ${JAVASCRIPTCORE_DIR}/ucd/PropertyValueAliases.txt
+       ${JAVASCRIPTCORE_DIR}/ucd/ScriptExtensions.txt ${JAVASCRIPTCORE_DIR}/ucd/Scripts.txt
+       ${JAVASCRIPTCORE_DIR}/ucd/UnicodeData.txt ${JAVASCRIPTCORE_DIR}/ucd/emoji-data.txt
+    COMMAND ${PYTHON_EXECUTABLE} ${JAVASCRIPTCORE_DIR}/yarr/generateYarrUnicodePropertyTables.py
+       ${JAVASCRIPTCORE_DIR}/ucd ${JavaScriptCore_DERIVED_SOURCES_DIR}/yarr/UnicodePatternTables.h
+    VERBATIM
+)
+
+add_custom_command(
+    OUTPUT ${JavaScriptCore_DERIVED_SOURCES_DIR}/yarr/YarrCanonicalizeUnicode.cpp
+    MAIN_DEPENDENCY ${JAVASCRIPTCORE_DIR}/yarr/generateYarrCanonicalizeUnicode
+    DEPENDS ${JAVASCRIPTCORE_DIR}/ucd/CaseFolding.txt
+    COMMAND ${PYTHON_EXECUTABLE} ${JAVASCRIPTCORE_DIR}/yarr/generateYarrCanonicalizeUnicode
+       ${JAVASCRIPTCORE_DIR}/ucd/CaseFolding.txt
+       ${JavaScriptCore_DERIVED_SOURCES_DIR}/yarr/YarrCanonicalizeUnicode.cpp
+    VERBATIM
+)
+
+add_custom_command(
+    OUTPUT ${JavaScriptCore_DERIVED_SOURCES_DIR}/KeywordLookup.h
+    MAIN_DEPENDENCY ${CMAKE_CURRENT_SOURCE_DIR}/KeywordLookupGenerator.py
+    DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/parser/Keywords.table
+    COMMAND ${PYTHON_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/KeywordLookupGenerator.py
+       ${CMAKE_CURRENT_SOURCE_DIR}/parser/Keywords.table >
+       ${JavaScriptCore_DERIVED_SOURCES_DIR}/KeywordLookup.h
+    VERBATIM
+)
+
+set(JavaScriptCore_INSPECTOR_SCRIPTS_DIR "${JAVASCRIPTCORE_DIR}/inspector/scripts")
+
+set(
+    JavaScriptCore_INSPECTOR_PROTOCOL_SCRIPTS
+       ${JavaScriptCore_INSPECTOR_SCRIPTS_DIR}/generate-inspector-protocol-bindings.py
+       ${JavaScriptCore_INSPECTOR_SCRIPTS_DIR}/codegen/cpp_generator.py
+       ${JavaScriptCore_INSPECTOR_SCRIPTS_DIR}/codegen/cpp_generator_templates.py
+       ${JavaScriptCore_INSPECTOR_SCRIPTS_DIR}/codegen/generate_js_backend_commands.py
+       ${JavaScriptCore_INSPECTOR_SCRIPTS_DIR}/codegen/generate_cpp_backend_dispatcher_header.py
+       ${JavaScriptCore_INSPECTOR_SCRIPTS_DIR}/codegen/generate_cpp_backend_dispatcher_implementation.py
+       ${JavaScriptCore_INSPECTOR_SCRIPTS_DIR}/codegen/generate_cpp_frontend_dispatcher_header.py
+       ${JavaScriptCore_INSPECTOR_SCRIPTS_DIR}/codegen/generate_cpp_frontend_dispatcher_implementation.py
+       ${JavaScriptCore_INSPECTOR_SCRIPTS_DIR}/codegen/generate_cpp_protocol_types_header.py
+       ${JavaScriptCore_INSPECTOR_SCRIPTS_DIR}/codegen/generate_cpp_protocol_types_implementation.py
+       ${JavaScriptCore_INSPECTOR_SCRIPTS_DIR}/codegen/generator.py
+       ${JavaScriptCore_INSPECTOR_SCRIPTS_DIR}/codegen/generator_templates.py
+       ${JavaScriptCore_INSPECTOR_SCRIPTS_DIR}/codegen/__init__.py
+       ${JavaScriptCore_INSPECTOR_SCRIPTS_DIR}/codegen/models.py
+)
+
+set(
+    JavaScriptCore_INSPECTOR_DOMAINS ${JAVASCRIPTCORE_DIR}/inspector/protocol/Animation.json
+       ${JAVASCRIPTCORE_DIR}/inspector/protocol/Audit.json
+       ${JAVASCRIPTCORE_DIR}/inspector/protocol/Browser.json
+       ${JAVASCRIPTCORE_DIR}/inspector/protocol/CPUProfiler.json
+       ${JAVASCRIPTCORE_DIR}/inspector/protocol/CSS.json
+       ${JAVASCRIPTCORE_DIR}/inspector/protocol/Canvas.json
+       ${JAVASCRIPTCORE_DIR}/inspector/protocol/Console.json
+       ${JAVASCRIPTCORE_DIR}/inspector/protocol/DOM.json
+       ${JAVASCRIPTCORE_DIR}/inspector/protocol/DOMDebugger.json
+       ${JAVASCRIPTCORE_DIR}/inspector/protocol/DOMStorage.json
+       ${JAVASCRIPTCORE_DIR}/inspector/protocol/Debugger.json
+       ${JAVASCRIPTCORE_DIR}/inspector/protocol/GenericTypes.json
+       ${JAVASCRIPTCORE_DIR}/inspector/protocol/Heap.json
+       ${JAVASCRIPTCORE_DIR}/inspector/protocol/IndexedDB.json
+       ${JAVASCRIPTCORE_DIR}/inspector/protocol/Inspector.json
+       ${JAVASCRIPTCORE_DIR}/inspector/protocol/LayerTree.json
+       ${JAVASCRIPTCORE_DIR}/inspector/protocol/Memory.json
+       ${JAVASCRIPTCORE_DIR}/inspector/protocol/Network.json
+       ${JAVASCRIPTCORE_DIR}/inspector/protocol/Page.json
+       ${JAVASCRIPTCORE_DIR}/inspector/protocol/Recording.json
+       ${JAVASCRIPTCORE_DIR}/inspector/protocol/Runtime.json
+       ${JAVASCRIPTCORE_DIR}/inspector/protocol/ScriptProfiler.json
+       ${JAVASCRIPTCORE_DIR}/inspector/protocol/Security.json
+       ${JAVASCRIPTCORE_DIR}/inspector/protocol/ServiceWorker.json
+       ${JAVASCRIPTCORE_DIR}/inspector/protocol/Storage.json
+       ${JAVASCRIPTCORE_DIR}/inspector/protocol/Target.json
+       ${JAVASCRIPTCORE_DIR}/inspector/protocol/Timeline.json
+       ${JAVASCRIPTCORE_DIR}/inspector/protocol/Worker.json
+       ${JAVASCRIPTCORE_DIR}/inspector/protocol/LifecycleReporter.json
+       ${JAVASCRIPTCORE_DIR}/inspector/protocol/TestReporter.json
+       ${JAVASCRIPTCORE_DIR}/inspector/protocol/BunFrontendDevServer.json
+       ${JAVASCRIPTCORE_DIR}/inspector/protocol/HTTPServer.json
+       ${JAVASCRIPTCORE_DIR}/inspector/protocol/File.json
+       ${JAVASCRIPTCORE_DIR}/inspector/protocol/Process.json
+)
+
+add_custom_command(
+    OUTPUT ${JavaScriptCore_DERIVED_SOURCES_DIR}/CombinedDomains.json
+    MAIN_DEPENDENCY ${JavaScriptCore_SCRIPTS_DIR}/generate-combined-inspector-json.py
+    DEPENDS ${JavaScriptCore_INSPECTOR_DOMAINS}
+    COMMAND ${PYTHON_EXECUTABLE} ${JavaScriptCore_SCRIPTS_DIR}/generate-combined-inspector-json.py
+       ${JavaScriptCore_INSPECTOR_DOMAINS} "${FEATURE_DEFINES_WITH_SPACE_SEPARATOR}"
+       ${JavaScriptCore_DERIVED_SOURCES_DIR}/CombinedDomains.json
+    VERBATIM
+)
+
+add_custom_command(
+    OUTPUT ${JavaScriptCore_DERIVED_SOURCES_DIR}/inspector/InspectorAlternateBackendDispatchers.h
+       ${JavaScriptCore_DERIVED_SOURCES_DIR}/inspector/InspectorBackendDispatchers.cpp
+       ${JavaScriptCore_DERIVED_SOURCES_DIR}/inspector/InspectorBackendDispatchers.h
+       ${JavaScriptCore_DERIVED_SOURCES_DIR}/inspector/InspectorFrontendDispatchers.cpp
+       ${JavaScriptCore_DERIVED_SOURCES_DIR}/inspector/InspectorFrontendDispatchers.h
+       ${JavaScriptCore_DERIVED_SOURCES_DIR}/inspector/InspectorProtocolObjects.cpp
+       ${JavaScriptCore_DERIVED_SOURCES_DIR}/inspector/InspectorProtocolObjects.h
+       ${JavaScriptCore_DERIVED_SOURCES_DIR}/inspector/InspectorBackendCommands.js
+    MAIN_DEPENDENCY ${JavaScriptCore_DERIVED_SOURCES_DIR}/CombinedDomains.json
+    DEPENDS ${JavaScriptCore_INSPECTOR_PROTOCOL_SCRIPTS}
+    COMMAND ${PYTHON_EXECUTABLE}
+       ${JavaScriptCore_INSPECTOR_SCRIPTS_DIR}/generate-inspector-protocol-bindings.py --outputDir
+       "${JavaScriptCore_DERIVED_SOURCES_DIR}/inspector" --framework JavaScriptCore
+       ${JavaScriptCore_DERIVED_SOURCES_DIR}/CombinedDomains.json
+    VERBATIM
+)
+
+add_custom_target(
+    JavaScriptCoreSharedScripts
+    DEPENDS ${JavaScriptCore_SCRIPTS}
+)
+
+#### Source/WTF/wtf/PlatformJSCOnly.cmake
+
+# in elseif(APPLE) # if(WIN32)
+add_custom_command(
+    OUTPUT ${WTF_DERIVED_SOURCES_DIR}/MachExceptionsServer.h ${WTF_DERIVED_SOURCES_DIR}/mach_exc.h
+       ${WTF_DERIVED_SOURCES_DIR}/mach_excServer.c ${WTF_DERIVED_SOURCES_DIR}/mach_excUser.c
+    MAIN_DEPENDENCY mac/MachExceptions.defs
+    WORKING_DIRECTORY ${WTF_DERIVED_SOURCES_DIR}
+    COMMAND ${Mig_EXECUTABLE} -header mach_exc.h -user mach_excUser.c
+       -sheader MachExceptionsServer.h -server mach_excServer.c -DMACH_EXC_SERVER_TASKIDTOKEN_STATE
+       -isysroot ${CMAKE_OSX_SYSROOT} MachExceptions.defs
+    VERBATIM
+)

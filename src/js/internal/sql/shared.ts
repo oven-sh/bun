@@ -2164,6 +2164,12 @@ function parseOptions(
     value: function inspect(this: typeof ret) {
       const copy = { ...this };
       if (copy.password) copy.password = "[REDACTED]";
+      if ($isObject(copy.tls)) {
+        const tls: Bun.TLSOptions = { ...copy.tls };
+        if (tls.key) tls.key = "[REDACTED]";
+        if (tls.passphrase) tls.passphrase = "[REDACTED]";
+        copy.tls = tls;
+      }
       return copy;
     },
     enumerable: false,

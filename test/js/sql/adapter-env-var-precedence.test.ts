@@ -792,5 +792,22 @@ describe("SQL adapter environment variable precedence", () => {
       expect(derived.options.password).toBe("sekret-password");
       expect(Bun.inspect(derived.options)).not.toContain("sekret-password");
     });
+
+    test("tls key and passphrase", () => {
+      const sql = new SQL({
+        adapter: "postgres",
+        hostname: "127.0.0.1",
+        username: "app",
+        password: "sekret-password",
+        tls: { key: Buffer.from("sekret-key"), passphrase: "sekret-passphrase" },
+      });
+      expect((sql.options.tls as Bun.TLSOptions).passphrase).toBe("sekret-passphrase");
+      for (const printed of [Bun.inspect(sql.options), util.inspect(sql.options, { depth: 4 })]) {
+        expect(printed).toContain('passphrase: "[REDACTED]"');
+        expect(printed).not.toContain("sekret-passphrase");
+        expect(printed).not.toContain("sekret-password");
+        expect(printed).not.toContain(Bun.inspect(Buffer.from("sekret-key")));
+      }
+    });
   });
 });

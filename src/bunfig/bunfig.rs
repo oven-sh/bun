@@ -1192,9 +1192,8 @@ impl<'a> Parser<'a> {
         .parse_registry_url_string_impl(url)?)
     }
 
-    /// A scope whose `url` is empty inherits the default registry together with
-    /// the scope's credentials (`PackageManagerOptions::load`). Only a missing
-    /// `url` may do that, so an explicit empty string is an error.
+    /// An empty scope url would inherit the default registry with the scope's
+    /// credentials (`PackageManagerOptions::load`).
     fn check_scope_url(
         &mut self,
         scope: Option<&[u8]>,
@@ -1215,17 +1214,12 @@ impl<'a> Parser<'a> {
         Ok(())
     }
 
-    /// `scope` is the scope name for `[install.scopes]` entries, `None` for
-    /// `[install] registry`.
     fn parse_registry_object(
         &mut self,
         obj: &E::Object,
         scope: Option<&[u8]>,
     ) -> crate::Result<api::NpmRegistry> {
         if scope.is_some() {
-            // A stray key in a scope table (`registry = ...` for `url = ...`)
-            // leaves `url` unset and routes the scope's credentials to the
-            // default registry.
             for prop in obj.properties.slice() {
                 let Some(key_expr) = prop.key.as_ref() else {
                     continue;

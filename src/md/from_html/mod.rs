@@ -1,12 +1,15 @@
 //! HTML → Markdown (`Bun.markdown.fromHTML`).
 //!
 //! The rule set is turndown's (plus turndown-plugin-gfm) applied to a tree
-//! built by html5ever, a spec-compliant HTML5 parser. The pipeline is the
-//! same shape as turndown's:
+//! built by html5ever's tree builder — spec-compliant HTML5 tree
+//! construction — fed by a byte-oriented tokenizer of our own
+//! ([`tokenizer`]) that produces the same tokens html5ever's would, several
+//! times faster. The pipeline is the same shape as turndown's:
 //!
-//! 1. parse into an arena DOM ([`dom`]),
-//! 2. collapse inter-element whitespace the way a browser would render it
-//!    ([`whitespace`]),
+//! 1. tokenize and build an arena DOM ([`tokenizer`] → [`depth`] → html5ever
+//!    → [`dom`]),
+//! 2. collapse inter-element whitespace the way a browser would render it,
+//!    noting which subtrees end up blank ([`whitespace`]),
 //! 3. walk the tree bottom-up, turning each element into Markdown with a
 //!    fixed rule per tag and joining siblings with the right number of
 //!    blank lines ([`emit`]).
@@ -20,11 +23,10 @@ mod depth;
 mod dom;
 mod emit;
 mod text;
+mod tokenizer;
 mod whitespace;
 
-use html5ever::TokenizerResult;
 use html5ever::tendril::StrTendril;
-use html5ever::tokenizer::{BufferQueue, Tokenizer, TokenizerOpts};
 use html5ever::tree_builder::{TreeBuilder, TreeBuilderOpts, TreeSink};
 
 pub use depth::MAX_TREE_DEPTH;
@@ -189,8 +191,6 @@ pub fn convert(html: &str, options: &Options) -> String {
     debug_assert!(html.len() <= MAX_INPUT_LEN);
     let arena = typed_arena::Arena::with_capacity(html.len() / 32);
 
-    // This is `html5ever::parse_document(..).one(html)` with the depth
-    // limiter spliced between the tokenizer and the tree builder.
     let tree_builder = TreeBuilder::new(
         dom::Sink::new(&arena),
         TreeBuilderOpts {
@@ -201,17 +201,11 @@ pub fn convert(html: &str, options: &Options) -> String {
             ..Default::default()
         },
     );
-    let tokenizer = Tokenizer::new(
-        depth::DepthLimiter::new(tree_builder),
-        TokenizerOpts::default(),
-    );
-    let input = BufferQueue::default();
-    input.push_back(StrTendril::from(html));
-    // `feed` yields at each `</script>` so a browser could run it; nothing to
-    // do here but resume.
-    while !matches!(tokenizer.feed(&input), TokenizerResult::Done) {}
-    tokenizer.end();
-    let document = tokenizer.sink.inner.sink.get_document();
+    // Tokens flow tokenizer → depth limiter → html5ever tree builder → sink.
+    let limiter = depth::DepthLimiter::new(tree_builder);
+    let input = StrTendril::from(html);
+    tokenizer::FastTokenizer::new(&input, &limiter).run();
+    let document = limiter.inner.sink.get_document();
 
     // Convert `<body>` when the parser produced one (it always does for
     // document input); fall back to `<html>` for frameset documents.
@@ -222,7 +216,6 @@ pub fn convert(html: &str, options: &Options) -> String {
         .unwrap_or(document);
 
     whitespace::collapse_whitespace(root);
-    dom::compute_subtree_flags(root);
 
     let mut out = String::with_capacity(html.len() / 2);
     emit::Converter::new(options).convert(root, &mut out);

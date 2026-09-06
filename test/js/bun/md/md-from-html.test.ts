@@ -178,6 +178,104 @@ describe("Bun.markdown.fromHTML", () => {
     }
   });
 
+  // HTML tokenizer behaviour (entities, CR/NUL handling, raw-text elements,
+  // comments, doctypes, malformed tags). The expected strings were produced
+  // with html5ever's reference tokenizer driving the same tree builder; the
+  // built-in tokenizer must match them exactly.
+  describe("tokenizer", () => {
+    const cases: [string, string, string][] = [
+      [
+        "named entities with and without semicolon",
+        "<p>&amp; &amp &lt;b&gt; &copy &notin; &notit; &noti &xyz; &;</p>",
+        "& & \\<b> © ∉ ¬it; ¬i &xyz; &;",
+      ],
+      [
+        "entities in attributes keep &not= literal",
+        '<p><a href="/x?a=1&not=2&notin;3&amp;4&copy">l</a></p>',
+        "[l](/x?a=1&not=2∉3&4©)",
+      ],
+      [
+        "numeric references",
+        "<p>&#65;&#x41;&#x1F600; &#128; &#x80; &#0; &#xD800; &#x110000; &#65 &#x41x &# &#x;</p>",
+        "AA😀 € € � � � A Ax &# &#x;",
+      ],
+      ["CRLF and CR are newlines", "<p>a\r\nb\rc</p><pre>x\r\ny\rz</pre>", "a b c\n\n```\nx\ny\nz\n```"],
+      ["CR inside attribute value", '<p><a href="/a\r\nb" title="t\rt">x</a></p>', '[x](/ab "t\nt")'],
+      [
+        "uppercase tags and attributes",
+        '<P><A HREF="/X" TiTlE="T">Link</A> <IMG SRC="i.png" ALT="A"></P>',
+        '[Link](/X "T") ![A](i.png)',
+      ],
+      ["duplicate attributes: first wins", '<p><a href="/first" href="/second">x</a></p>', "[x](/first)"],
+      [
+        "unquoted and empty attribute values",
+        "<p><a href=/x title=hello>a</a> <a href=>b</a> <a href>c</a> <img src=i.png alt></p>",
+        '[a](/x "hello") b c ![](i.png)',
+      ],
+      ["spaces around =", '<p><a href = "/x" >y</a></p>', "[y](/x)"],
+      ["self-closing and end tags with junk", "<p>a<br/>b<br / >c</p></p x=1><p>d</p>", "a  \nb  \nc\n\nd"],
+      [
+        "bogus comments and processing instructions",
+        "<p>a<?php echo 1 ?>b<!x>c</ br>d<!-->e<!--->f<!-- g -- h -->i</p>",
+        "abcdefi",
+      ],
+      [
+        "title and textarea are RCDATA",
+        "<title>a<b>&amp;</title><p><textarea><b>&lt;</b></textarea>x</p>",
+        "\\<b><\\</b>x",
+      ],
+      ["style/xmp are raw text", "<style>p<b>{}</style><p>a<xmp><b>&amp;</xmp>b</p>", "a\n\n\\<b>&amp;b"],
+      [
+        "script with escaped and double-escaped sections",
+        "<script><!-- <script> </script> x </script> --> </script><p>after</p>",
+        "\\-->\n\nafter",
+      ],
+      ["script comment without close", "<script><!-- if (a<b) --> </script><p>ok</p>", "ok"],
+      [
+        "plaintext swallows everything",
+        "<p>a</p><plaintext><b>&amp;</b></plaintext><p>b",
+        "a\n\n\\<b>&amp;\\</b>\\</plaintext>\\<p>b",
+      ],
+      [
+        "CDATA only in foreign content",
+        "<p><![CDATA[x<y]]>a</p><p><svg><![CDATA[x<y]]></svg>b</p><p><math><mi><![CDATA[z]]></mi></math></p>",
+        "a\n\nx\\<yb\n\nz",
+      ],
+      [
+        "doctype decides quirks: table inside p",
+        "<!DOCTYPE html><p>a<table><tr><td>b</td><td>c</td></tr></table>",
+        "a\n\n| b | c |\n| --- | --- |",
+      ],
+      [
+        "quirks mode keeps table in p",
+        "<p>a<table><tr><td>b</td><td>c</td></tr></table>",
+        "a\n\n| b | c |\n| --- | --- |",
+      ],
+      [
+        "legacy doctype public id",
+        '<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN" "http://www.w3.org/TR/html4/loose.dtd"><p>x</p>',
+        "x",
+      ],
+      ["BOM at start is dropped, elsewhere kept", "﻿<p>a﻿b</p>", "a﻿b"],
+      ["EOF inside a tag drops it", '<p>kept</p><a href="/x', "kept"],
+      ["EOF inside comment", "<p>a</p><!-- b", "a"],
+      ["end tag with attributes still closes", "<p><b>a</b x=1>b</p>", "**a**b"],
+      ["NUL bytes", "<p>a\u0000b</p><pre>c\u0000d</pre><p><b x\u0000y=1>e</b></p>", "ab\n\n```\ncd\n```\n\n**e**"],
+      ["less-than that does not start a tag", "<p>1 < 2 <3 a<=b </3 <</p>", "1 < 2 <3 a<=b"],
+      ["non-ASCII tag and attribute names", '<p><é>x</é> <a hréf="/x" href="/y">z</a></p>', "<é>x [z](/y)"],
+      ["form feed and tab as attribute separators", "<p><a\fhref='/x'\ttitle='t'>y</a></p>", '[y](/x "t")'],
+    ];
+
+    for (const [name, html, md] of cases) {
+      test(name, () => expect(fromHTML(html)).toBe(md));
+    }
+    test("escape precision: only text that starts a line is escaped", () => {
+      expect(fromHTML("<p>a<span>- b</span> <b>1. c</b> <em>#</em> d</p><p><span>- e</span></p>")).toBe(
+        "a- b **1. c** _#_ d\n\n\\- e",
+      );
+    });
+  });
+
   describe("tables", () => {
     test("thead/tbody with alignment", () => {
       expect(

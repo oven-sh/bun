@@ -70,7 +70,7 @@ pub(crate) fn leading_newlines(s: &str) -> usize {
 }
 
 /// Appends the concatenated text of every text node under `node` (DOM
-/// `textContent`).
+/// `textContent`), leaving out dropped (`is_skipped`) subtrees.
 pub(crate) fn push_text_content(node: Ref<'_>, out: &mut String) {
     if let Some(t) = node.as_text() {
         out.push_str(&t.borrow());
@@ -81,16 +81,19 @@ pub(crate) fn push_text_content(node: Ref<'_>, out: &mut String) {
         if let Some(t) = n.as_text() {
             out.push_str(&t.borrow());
         }
-        cur = next_in_preorder(n, node, true);
+        cur = next_in_preorder(n, node, !n.tag().is_skipped());
     }
 }
 
 /// Iterates the text nodes under `root` in document order (forwards) or
-/// reverse document order (backwards).
+/// reverse document order (backwards). Dropped (`is_skipped`) subtrees are
+/// treated as absent, as they are everywhere else.
 fn text_nodes<'a>(root: Ref<'a>, backwards: bool) -> impl Iterator<Item = Ref<'a>> {
     // Reverse pre-order: last_child chain, then previous siblings, then up.
     fn prev_in_order<'a>(node: Ref<'a>, root: Ref<'a>) -> Option<Ref<'a>> {
-        if let Some(c) = node.last_child.get() {
+        if !node.tag().is_skipped()
+            && let Some(c) = node.last_child.get()
+        {
             return Some(c);
         }
         let mut cur = node;
@@ -120,7 +123,7 @@ fn text_nodes<'a>(root: Ref<'a>, backwards: bool) -> impl Iterator<Item = Ref<'a
             } else if backwards {
                 prev_in_order(n, root)
             } else {
-                next_in_preorder(n, root, true)
+                next_in_preorder(n, root, !n.tag().is_skipped())
             };
             if matches!(n.data, NodeData::Text(_)) {
                 return Some(n);
@@ -231,37 +234,37 @@ pub(crate) fn escape_markdown_into(text: &str, at_line_start: bool, out: &mut St
     if bytes.is_empty() {
         return;
     }
-    out.reserve(text.len());
 
     let mut i = 0;
     if at_line_start {
         i = escape_line_start(text, out);
     }
 
-    // Everything below is ASCII, so byte-wise copying keeps UTF-8 intact.
+    // Hop between candidate bytes with the SIMD scanner; prose has few of
+    // them, so most of the text is copied in a handful of large pushes.
+    // Everything matched is ASCII, so slicing at it keeps UTF-8 intact.
     let mut run_start = i;
-    while i < bytes.len() {
-        let b = bytes[i];
-        let esc = match b {
-            b'\\' | b'*' | b'`' | b'[' | b']' => true,
+    while let Some(off) = strings::index_of_any(&bytes[i..], b"\\*`[]_<") {
+        let at = i + off;
+        let esc = match bytes[at] {
             b'_' => {
-                let prev_alnum = i > 0 && bytes[i - 1].is_ascii_alphanumeric();
-                let next_alnum = i + 1 < bytes.len() && bytes[i + 1].is_ascii_alphanumeric();
+                let prev_alnum = at > 0 && bytes[at - 1].is_ascii_alphanumeric();
+                let next_alnum = at + 1 < bytes.len() && bytes[at + 1].is_ascii_alphanumeric();
                 !(prev_alnum && next_alnum)
             }
             b'<' => {
-                i + 1 < bytes.len()
-                    && (bytes[i + 1].is_ascii_alphabetic()
-                        || matches!(bytes[i + 1], b'/' | b'!' | b'?'))
+                at + 1 < bytes.len()
+                    && (bytes[at + 1].is_ascii_alphabetic()
+                        || matches!(bytes[at + 1], b'/' | b'!' | b'?'))
             }
-            _ => false,
+            _ => true,
         };
         if esc {
-            out.push_str(&text[run_start..i]);
+            out.push_str(&text[run_start..at]);
             out.push('\\');
-            run_start = i;
+            run_start = at;
         }
-        i += 1;
+        i = at + 1;
     }
     out.push_str(&text[run_start..]);
 }
@@ -311,21 +314,4 @@ fn escape_line_start(text: &str, out: &mut String) -> usize {
         }
         _ => 0,
     }
-}
-
-#[inline]
-pub(crate) fn needs_escape_scan(text: &str, at_line_start: bool) -> bool {
-    let bytes = text.as_bytes();
-    if bytes.is_empty() {
-        return false;
-    }
-    if at_line_start
-        && matches!(
-            bytes[0],
-            b'-' | b'>' | b'+' | b'=' | b'#' | b'~' | b'0'..=b'9'
-        )
-    {
-        return true;
-    }
-    strings::index_of_any(bytes, b"\\*`[]_<").is_some()
 }

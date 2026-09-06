@@ -16,7 +16,7 @@ use super::dom::{
 };
 use super::text::{
     escape_markdown_into, is_js_whitespace, js_trim, js_trim_in_place, leading_newlines,
-    leading_whitespace, lines, needs_escape_scan, push_text_content, text_content_ends_with_space,
+    leading_whitespace, lines, push_text_content, text_content_ends_with_space,
     text_content_starts_with_space, trailing_whitespace,
 };
 use super::{CodeBlockStyle, HeadingStyle};
@@ -31,10 +31,11 @@ pub const MAX_DEPTH: usize = 512;
 
 pub(crate) struct Converter<'o> {
     opts: &'o Options,
-    /// Per-depth scratch buffers (children's joined output, and the
-    /// element's own replacement) so steady-state conversion allocates
-    /// nothing per element.
-    pool: Vec<(String, String)>,
+    /// Per-depth scratch buffers for the rules that must rewrite their
+    /// children's output (list items, block quotes, headings, code spans,
+    /// table cells), so steady-state conversion allocates nothing per
+    /// element. Every other rule writes straight into its parent's buffer.
+    pool: Vec<String>,
 }
 
 impl<'o> Converter<'o> {
@@ -50,18 +51,17 @@ impl<'o> Converter<'o> {
         post_process(out);
     }
 
-    fn take_bufs(&mut self, depth: usize) -> (String, String) {
+    fn take_buf(&mut self, depth: usize) -> String {
         if self.pool.len() <= depth {
-            self.pool.resize_with(depth + 1, Default::default);
+            self.pool.resize_with(depth + 1, String::new);
         }
-        let (mut a, mut b) = core::mem::take(&mut self.pool[depth]);
-        a.clear();
-        b.clear();
-        (a, b)
+        let mut buf = core::mem::take(&mut self.pool[depth]);
+        buf.clear();
+        buf
     }
 
-    fn return_bufs(&mut self, depth: usize, bufs: (String, String)) {
-        self.pool[depth] = bufs;
+    fn return_buf(&mut self, depth: usize, buf: String) {
+        self.pool[depth] = buf;
     }
 
     /// turndown's `process`: reduce each child to its replacement and join.
@@ -79,11 +79,7 @@ impl<'o> Converter<'o> {
                         // newlines and the text is escaped straight into `out`.
                         join_boundary(out, 0);
                         let at_line_start = out.is_empty() || out.ends_with('\n');
-                        if needs_escape_scan(&t, at_line_start) {
-                            escape_markdown_into(&t, at_line_start, out);
-                        } else {
-                            out.push_str(&t);
-                        }
+                        escape_markdown_into(&t, at_line_start, out);
                     }
                 }
                 NodeData::Element { .. } => {
@@ -95,9 +91,14 @@ impl<'o> Converter<'o> {
         }
     }
 
-    /// turndown's `replacementForNode`: children → content, trim if the
-    /// element's own edge whitespace is being hoisted outside it, apply the
-    /// rule, then join onto `out`.
+    /// turndown's `replacementForNode` + `join`, writing straight into `out`.
+    ///
+    /// turndown builds `leading + rule(content) + trailing` as a fresh string
+    /// and then joins it onto the output; the join only ever looks at the
+    /// newlines on either side of the seam, so the same result is produced by
+    /// settling the seam first ([`join_boundary`]) and letting the rule and
+    /// the children append in place. Rules that have to rewrite their content
+    /// (indent it, quote it, flatten it) still collect it in a scratch buffer.
     fn replacement_for_node(
         &mut self,
         node: Ref<'_>,
@@ -118,95 +119,45 @@ impl<'o> Converter<'o> {
         let is_block = tag.is_block();
         let in_code = in_code || tag == Tag::Code;
 
-        let (mut content, mut rep) = self.take_bufs(depth);
+        // The seam: whatever the rule emits first, `out` keeps at most one
+        // blank line before it. Block rules then raise the request to 2.
+        join_boundary(out, 0);
 
         // Inline elements hoist their edge whitespace outside the Markdown
         // delimiters (`<b> x </b>` → ` **x** `), dropping it where the
         // neighbour already ends/starts with a space. The leading part goes
-        // straight into `rep`; `trailing` stays unallocated when empty.
+        // straight into `out`; `trailing` stays unallocated when empty.
         let mut trailing = String::new();
-        let hoisted = !is_block && flanking_whitespace(node, &mut rep, &mut trailing);
+        let hoisted = !is_block && flanking_whitespace(node, out, &mut trailing);
 
-        let blank = is_blank(node, tag);
-        let gfm_table =
-            tag == Tag::Table && self.opts.tables && !blank && !table_should_be_skipped(node);
-
-        if !blank && tag != Tag::Pre && !gfm_table {
-            self.process_children(node, &mut content, depth + 1, in_code);
-        }
-        if hoisted {
-            js_trim_in_place(&mut content);
-        }
-
-        if blank {
+        if is_blank(node, tag) {
             if is_block {
-                rep.push_str("\n\n");
+                join_boundary(out, 2);
             }
-        } else if gfm_table {
-            self.emit_table(node, &mut rep, depth);
-        } else {
-            self.apply_rule(node, tag, &content, &mut rep, element_index);
+            out.push_str(&trailing);
+            return;
         }
-        rep.push_str(&trailing);
 
-        join(out, &rep);
-        self.return_bufs(depth, (content, rep));
-    }
-
-    fn apply_rule(
-        &mut self,
-        node: Ref<'_>,
-        tag: Tag,
-        content: &str,
-        rep: &mut String,
-        element_index: usize,
-    ) {
         let opts = self.opts;
         match tag {
-            Tag::P => block(rep, content),
-            Tag::Br => {
-                rep.push_str(opts.br());
-                rep.push('\n');
-            }
-            Tag::H1 | Tag::H2 | Tag::H3 | Tag::H4 | Tag::H5 | Tag::H6 => {
-                let level = tag.heading_level().unwrap() as usize;
-                rep.push_str("\n\n");
-                if opts.heading_style == HeadingStyle::Setext && level < 3 {
-                    let start = rep.len();
-                    push_one_line(rep, content, false);
-                    let width = rep[start..].chars().count().max(1);
-                    rep.push('\n');
-                    let ch = if level == 1 { "=" } else { "-" };
-                    for _ in 0..width {
-                        rep.push_str(ch);
-                    }
-                } else {
-                    for _ in 0..level {
-                        rep.push('#');
-                    }
-                    rep.push(' ');
-                    // A heading is a single line in Markdown; block children
-                    // (`<h1><div>Brand</div><div>tagline</div></h1>`) would
-                    // otherwise spill everything after the first onto a
-                    // plain paragraph.
-                    push_one_line(rep, content, false);
+            // ── rules that wrap their content as-is: children write in place ──
+            Tag::A => match node.attr(&local_name!("href")) {
+                Some(href) if !href.is_empty() => {
+                    out.push('[');
+                    self.children_in_place(node, out, depth, in_code, hoisted);
+                    out.push_str("](");
+                    push_link_destination(out, href);
+                    push_link_title(out, node);
+                    out.push(')');
                 }
-                rep.push_str("\n\n");
+                _ => self.children_in_place(node, out, depth, in_code, hoisted),
+            },
+            Tag::Em | Tag::I => self.wrap_in_place(node, out, depth, in_code, hoisted, opts.em()),
+            Tag::Strong | Tag::B => {
+                self.wrap_in_place(node, out, depth, in_code, hoisted, opts.strong())
             }
-            Tag::Blockquote => {
-                let c = trim_newlines(content);
-                rep.push_str("\n\n");
-                for (i, line) in lines(c).enumerate() {
-                    if i > 0 {
-                        rep.push('\n');
-                    }
-                    rep.push('>');
-                    if !line.is_empty() {
-                        rep.push(' ');
-                        rep.push_str(line);
-                    }
-                }
-                rep.push_str("\n\n");
+            Tag::Del | Tag::S | Tag::Strike if opts.strikethrough => {
+                self.wrap_in_place(node, out, depth, in_code, hoisted, "~~")
             }
             Tag::Ul | Tag::Ol => {
                 let parent = node.parent.get();
@@ -214,69 +165,165 @@ impl<'o> Converter<'o> {
                     p.tag() == Tag::Li && p.last_element_child().is_some_and(|l| ptr::eq(l, node))
                 });
                 if nested_last {
-                    rep.push('\n');
-                    rep.push_str(content);
+                    join_boundary(out, 1);
+                    self.process_children(node, out, depth + 1, in_code);
                 } else {
-                    block(rep, content);
+                    join_boundary(out, 2);
+                    self.process_children(node, out, depth + 1, in_code);
+                    out.push_str("\n\n");
                 }
             }
-            Tag::Li => self.list_item(node, content, rep, element_index),
-            Tag::Pre => self.code_block(node, rep),
-            Tag::Code => inline_code(content, rep),
+            // ── leaves ──
+            Tag::Br => {
+                out.push_str(opts.br());
+                out.push('\n');
+            }
             Tag::Hr => {
-                rep.push_str("\n\n");
-                rep.push_str(opts.hr());
-                rep.push_str("\n\n");
+                join_boundary(out, 2);
+                out.push_str(opts.hr());
+                out.push_str("\n\n");
             }
-            Tag::A => match node.attr(&local_name!("href")) {
-                Some(href) if !href.is_empty() => {
-                    rep.push('[');
-                    rep.push_str(content);
-                    rep.push_str("](");
-                    push_link_destination(rep, &href);
-                    drop(href);
-                    push_link_title(rep, node);
-                    rep.push(')');
-                }
-                _ => rep.push_str(content),
-            },
-            Tag::Em | Tag::I => wrap_nonblank(rep, content, opts.em()),
-            Tag::Strong | Tag::B => wrap_nonblank(rep, content, opts.strong()),
             Tag::Img => {
-                let src = node.attr(&local_name!("src"));
-                let Some(src) = src.filter(|s| !s.is_empty()) else {
-                    return;
-                };
-                rep.push_str("![");
-                if let Some(alt) = node.attr(&local_name!("alt")) {
-                    let mut cleaned = String::new();
-                    clean_attribute(&alt, &mut cleaned);
-                    escape_markdown_into(&cleaned, true, rep);
+                if let Some(src) = node.attr(&local_name!("src")).filter(|s| !s.is_empty()) {
+                    out.push_str("![");
+                    if let Some(alt) = node.attr(&local_name!("alt")) {
+                        let mut cleaned = String::new();
+                        clean_attribute(alt, &mut cleaned);
+                        escape_markdown_into(&cleaned, true, out);
+                    }
+                    out.push_str("](");
+                    push_link_destination(out, src);
+                    push_link_title(out, node);
+                    out.push(')');
                 }
-                rep.push_str("](");
-                push_link_destination(rep, &src);
-                drop(src);
-                push_link_title(rep, node);
-                rep.push(')');
-            }
-            Tag::Del | Tag::S | Tag::Strike if opts.strikethrough => {
-                wrap_nonblank(rep, content, "~~")
             }
             Tag::Input if opts.tasklists && is_task_checkbox(node) => {
                 let checked = node.attr(&local_name!("checked")).is_some();
-                rep.push_str(if checked { "[x]" } else { "[ ]" });
+                out.push_str(if checked { "[x]" } else { "[ ]" });
                 if !is_flanked_by_whitespace_right(node) {
-                    rep.push(' ');
+                    out.push(' ');
                 }
             }
+            Tag::Pre => self.code_block(node, out),
+            Tag::Table if opts.tables && !table_should_be_skipped(node) => {
+                self.emit_table(node, out, depth);
+            }
+            // ── rules that rewrite their content: collect it first ──
+            Tag::H1
+            | Tag::H2
+            | Tag::H3
+            | Tag::H4
+            | Tag::H5
+            | Tag::H6
+            | Tag::Blockquote
+            | Tag::Li
+            | Tag::Code => {
+                let mut content = self.take_buf(depth);
+                self.process_children(node, &mut content, depth + 1, in_code);
+                if hoisted {
+                    js_trim_in_place(&mut content);
+                }
+                match tag {
+                    Tag::Blockquote => {
+                        join_boundary(out, 2);
+                        for (i, line) in lines(trim_newlines(&content)).enumerate() {
+                            if i > 0 {
+                                out.push('\n');
+                            }
+                            out.push('>');
+                            if !line.is_empty() {
+                                out.push(' ');
+                                out.push_str(line);
+                            }
+                        }
+                        out.push_str("\n\n");
+                    }
+                    Tag::Li => self.list_item(node, &content, out, element_index),
+                    Tag::Code => inline_code(&content, out),
+                    _ => self.heading(tag, &content, out),
+                }
+                self.return_buf(depth, content);
+            }
+            // ── everything else keeps its text: block or inline default ──
             _ => {
-                if tag.is_block() {
-                    block(rep, content);
+                if is_block {
+                    join_boundary(out, 2);
+                    self.process_children(node, out, depth + 1, in_code);
+                    out.push_str("\n\n");
                 } else {
-                    rep.push_str(content);
+                    self.children_in_place(node, out, depth, in_code, hoisted);
                 }
             }
         }
+        out.push_str(&trailing);
+    }
+
+    /// Children appended directly to `out`, then trimmed in place when the
+    /// element's edge whitespace was hoisted outside it.
+    fn children_in_place(
+        &mut self,
+        node: Ref<'_>,
+        out: &mut String,
+        depth: usize,
+        in_code: bool,
+        hoisted: bool,
+    ) {
+        let start = out.len();
+        self.process_children(node, out, depth + 1, in_code);
+        if hoisted {
+            js_trim_region(out, start);
+        }
+    }
+
+    /// Emphasis-style wrapping in place. Whitespace-only content gets no
+    /// delimiters (`** **` would be literal asterisks) but is still emitted,
+    /// so a `<br>` inside `<b>` keeps its line break.
+    fn wrap_in_place(
+        &mut self,
+        node: Ref<'_>,
+        out: &mut String,
+        depth: usize,
+        in_code: bool,
+        hoisted: bool,
+        delim: &str,
+    ) {
+        let delim_at = out.len();
+        out.push_str(delim);
+        let start = out.len();
+        self.process_children(node, out, depth + 1, in_code);
+        if hoisted {
+            js_trim_region(out, start);
+        }
+        if js_trim(&out[start..]).is_empty() {
+            out.drain(delim_at..start);
+        } else {
+            out.push_str(delim);
+        }
+    }
+
+    fn heading(&mut self, tag: Tag, content: &str, out: &mut String) {
+        let level = tag.heading_level().unwrap() as usize;
+        join_boundary(out, 2);
+        if self.opts.heading_style == HeadingStyle::Setext && level < 3 {
+            let start = out.len();
+            push_one_line(out, content, false);
+            let width = out[start..].chars().count().max(1);
+            out.push('\n');
+            let ch = if level == 1 { "=" } else { "-" };
+            for _ in 0..width {
+                out.push_str(ch);
+            }
+        } else {
+            for _ in 0..level {
+                out.push('#');
+            }
+            out.push(' ');
+            // A heading is a single line in Markdown; block children
+            // (`<h1><div>Brand</div><div>tagline</div></h1>`) would otherwise
+            // spill everything after the first onto a plain paragraph.
+            push_one_line(out, content, false);
+        }
+        out.push_str("\n\n");
     }
 
     fn list_item(&mut self, node: Ref<'_>, content: &str, rep: &mut String, element_index: usize) {
@@ -285,7 +332,7 @@ impl<'o> Converter<'o> {
         if parent.is_some_and(|p| p.tag() == Tag::Ol) {
             let start = parent
                 .and_then(|p| p.attr(&local_name!("start")))
-                .and_then(|s| js_trim(&s).parse::<i64>().ok())
+                .and_then(|s| js_trim(s).parse::<i64>().ok())
                 .unwrap_or(1);
             let _ = write!(rep, "{}. ", start.saturating_add(element_index as i64));
         } else {
@@ -340,7 +387,7 @@ impl<'o> Converter<'o> {
                         fence_len = run + 1;
                     }
                 }
-                rep.push_str("\n\n");
+                join_boundary(rep, 2);
                 for _ in 0..fence_len {
                     rep.push(fence_char);
                 }
@@ -354,7 +401,7 @@ impl<'o> Converter<'o> {
                 rep.push_str("\n\n");
             }
             CodeBlockStyle::Indented => {
-                rep.push_str("\n\n");
+                join_boundary(rep, 2);
                 for (i, line) in lines(&code).enumerate() {
                     if i > 0 {
                         rep.push('\n');
@@ -374,17 +421,16 @@ impl<'o> Converter<'o> {
     fn emit_table(&mut self, table: Ref<'_>, rep: &mut String, depth: usize) {
         let rows = table_rows(table);
 
-        rep.push_str("\n\n");
+        join_boundary(rep, 2);
 
+        let mut cell_buf = self.take_buf(depth);
         if let Some(caption) = table.children().find(|c| c.tag() == Tag::Caption) {
-            let (mut buf, spare) = self.take_bufs(depth + 1);
-            self.process_children(caption, &mut buf, depth + 2, false);
-            let c = js_trim(&buf);
+            self.process_children(caption, &mut cell_buf, depth + 1, false);
+            let c = js_trim(&cell_buf);
             if !c.is_empty() {
                 rep.push_str(c);
                 rep.push_str("\n\n");
             }
-            self.return_bufs(depth + 1, (buf, spare));
         }
 
         // Column count = widest row, counting colspans.
@@ -395,13 +441,12 @@ impl<'o> Converter<'o> {
             .unwrap_or(0)
             .max(1);
 
-        let (mut cell_buf, spare) = self.take_bufs(depth + 1);
         for (row_index, &row) in rows.iter().enumerate() {
             let mut col = 0usize;
             rep.push('|');
             for cell in table_cells(row) {
                 cell_buf.clear();
-                self.process_children(cell, &mut cell_buf, depth + 2, false);
+                self.process_children(cell, &mut cell_buf, depth + 1, false);
                 rep.push(' ');
                 push_one_line(rep, &cell_buf, true);
                 rep.push_str(" |");
@@ -445,7 +490,7 @@ impl<'o> Converter<'o> {
                 rep.push('\n');
             }
         }
-        self.return_bufs(depth + 1, (cell_buf, spare));
+        self.return_buf(depth, cell_buf);
         rep.push('\n');
     }
 
@@ -462,7 +507,7 @@ impl<'o> Converter<'o> {
                     let at_line_start = out.is_empty() || out.ends_with('\n');
                     escape_markdown_into(&t, at_line_start, out);
                 }
-                NodeData::Element { tag, .. } if tag.is_skipped() => descend = false,
+                NodeData::Element { .. } if node.tag().is_skipped() => descend = false,
                 _ => {}
             }
             match super::dom::next_in_preorder(node, root, descend) {
@@ -482,8 +527,13 @@ fn join(out: &mut String, rep: &str) {
 }
 
 fn join_boundary(out: &mut String, rep_leading_newlines: usize) {
-    let trimmed = out.trim_end_matches('\n').len();
-    let trailing = out.len() - trimmed;
+    let trailing = out
+        .as_bytes()
+        .iter()
+        .rev()
+        .take_while(|&&b| b == b'\n')
+        .count();
+    let trimmed = out.len() - trailing;
     let nls = trailing.max(rep_leading_newlines).min(2);
     out.truncate(trimmed);
     for _ in 0..nls {
@@ -502,23 +552,14 @@ fn post_process(out: &mut String) {
     }
 }
 
-fn block(rep: &mut String, content: &str) {
-    rep.push_str("\n\n");
-    rep.push_str(content);
-    rep.push_str("\n\n");
-}
-
-/// Emphasis-style wrapping. Whitespace-only content gets no delimiters
-/// (`** **` would be literal asterisks), but is still emitted so a `<br>`
-/// inside `<b>` keeps its line break.
-fn wrap_nonblank(rep: &mut String, content: &str, delim: &str) {
-    if js_trim(content).is_empty() {
-        rep.push_str(content);
-        return;
+/// `String.prototype.trim` applied to `out[start..]` in place.
+fn js_trim_region(out: &mut String, start: usize) {
+    let end = start + out[start..].trim_end_matches(is_js_whitespace).len();
+    out.truncate(end);
+    let lead = out[start..].len() - out[start..].trim_start_matches(is_js_whitespace).len();
+    if lead > 0 {
+        out.drain(start..start + lead);
     }
-    rep.push_str(delim);
-    rep.push_str(content);
-    rep.push_str(delim);
 }
 
 fn trim_newlines(s: &str) -> &str {
@@ -539,6 +580,21 @@ fn is_blank(node: Ref<'_>, tag: Tag) -> bool {
 /// leading part to `leading` and the trailing part to `trailing`. Returns
 /// whether either is non-empty.
 fn flanking_whitespace(node: Ref<'_>, leading: &mut String, trailing: &mut String) -> bool {
+    // By far the most common inline element is `<a>`/`<code>`/`<span>`
+    // around a single text node with no edge whitespace; settle that from the
+    // text's first and last characters without walking anything.
+    if let Some(only) = node.first_child.get()
+        && only.next_sibling.get().is_none()
+        && let Some(t) = only.as_text()
+    {
+        let t = t.borrow();
+        if !t.starts_with(is_js_whitespace) && !t.ends_with(is_js_whitespace) {
+            return false;
+        }
+    } else if node.first_child.get().is_none() {
+        return false;
+    }
+
     let mut ascii = String::new();
     let mut rest = String::new();
     let before = leading.len();
@@ -561,7 +617,8 @@ fn is_flanked_by_whitespace_left(node: Ref<'_>) -> bool {
     match node.previous_sibling.get() {
         Some(sib) => match &sib.data {
             NodeData::Text(t) => t.borrow().ends_with(' '),
-            NodeData::Element { tag, .. } => {
+            NodeData::Element { .. } => {
+                let tag = sib.tag();
                 !tag.is_block() && !tag.is_skipped() && text_content_ends_with_space(sib)
             }
             _ => false,
@@ -574,7 +631,8 @@ fn is_flanked_by_whitespace_right(node: Ref<'_>) -> bool {
     match node.next_sibling.get() {
         Some(sib) => match &sib.data {
             NodeData::Text(t) => t.borrow().starts_with(' '),
-            NodeData::Element { tag, .. } => {
+            NodeData::Element { .. } => {
+                let tag = sib.tag();
                 !tag.is_block() && !tag.is_skipped() && text_content_starts_with_space(sib)
             }
             _ => false,
@@ -675,7 +733,7 @@ fn code_language(pre: Ref<'_>) -> String {
     }
     // GitHub's rendered-markdown HTML: `<pre lang="ts"><code>`.
     if let Some(l) = pre.attr(&local_name!("lang")) {
-        let l = js_trim(&l);
+        let l = js_trim(l);
         if !l.is_empty() && !strings::contains_char(l.as_bytes(), b' ') {
             return l.to_owned();
         }
@@ -748,7 +806,7 @@ fn push_link_title(rep: &mut String, node: Ref<'_>) {
         return;
     };
     let mut cleaned = String::new();
-    clean_attribute(&title, &mut cleaned);
+    clean_attribute(title, &mut cleaned);
     if cleaned.is_empty() {
         return;
     }
@@ -813,7 +871,7 @@ fn table_cells<'a>(row: Ref<'a>) -> impl Iterator<Item = Ref<'a>> {
 
 fn colspan(cell: Ref<'_>) -> usize {
     cell.attr(&local_name!("colspan"))
-        .and_then(|v| js_trim(&v).parse::<usize>().ok())
+        .and_then(|v| js_trim(v).parse::<usize>().ok())
         .filter(|&n| n >= 1)
         // The HTML spec clamps colspan to 1000.
         .map_or(1, |n| n.min(1000))
@@ -841,7 +899,7 @@ fn cell_alignment(cell: Ref<'_>) -> Align {
         }
     }
     if let Some(a) = cell.attr(&local_name!("align")) {
-        let r = parse(&a);
+        let r = parse(a);
         if !matches!(r, Align::None) {
             return r;
         }
@@ -867,30 +925,41 @@ fn cell_alignment(cell: Ref<'_>) -> Align {
 /// unescaped `|` are escaped so they do not end a table cell.
 fn push_one_line(rep: &mut String, content: &str, escape_pipes: bool) {
     let content = js_trim(content);
-    let mut pending_space = false;
+    let bytes = content.as_bytes();
+    let mut run_start = 0;
     let mut prev_backslash = false;
-    for c in content.chars() {
-        match c {
-            '\n' | '\r' => pending_space = true,
-            ' ' | '\t' if pending_space => {}
-            _ => {
-                if pending_space {
-                    // Drop the hard-break marker that preceded the newline.
-                    while rep.ends_with(' ') {
-                        rep.pop();
-                    }
-                    if rep.ends_with('\\') && !rep.ends_with("\\\\") {
-                        rep.pop();
-                    }
-                    rep.push(' ');
-                    pending_space = false;
+    let mut i = 0;
+    while i < bytes.len() {
+        match bytes[i] {
+            b'\n' | b'\r' => {
+                rep.push_str(&content[run_start..i]);
+                // Drop the hard-break marker that preceded the newline.
+                while rep.ends_with(' ') {
+                    rep.pop();
                 }
-                if escape_pipes && c == '|' && !prev_backslash {
-                    rep.push('\\');
+                if rep.ends_with('\\') && !rep.ends_with("\\\\") {
+                    rep.pop();
                 }
-                rep.push(c);
+                while i < bytes.len() && matches!(bytes[i], b'\n' | b'\r' | b' ' | b'\t') {
+                    i += 1;
+                }
+                // `content` is trimmed, so something non-blank follows.
+                rep.push(' ');
+                run_start = i;
+                prev_backslash = false;
+            }
+            b'|' if escape_pipes && !prev_backslash => {
+                rep.push_str(&content[run_start..i]);
+                rep.push('\\');
+                run_start = i;
+                prev_backslash = false;
+                i += 1;
+            }
+            b => {
+                prev_backslash = b == b'\\' && !prev_backslash;
+                i += 1;
             }
         }
-        prev_backslash = c == '\\' && !prev_backslash;
     }
+    rep.push_str(&content[run_start..]);
 }

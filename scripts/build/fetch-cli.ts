@@ -513,7 +513,8 @@ async function sameContent(a: string, b: string, symlink: boolean): Promise<bool
     }
   }
   const [sa, sb] = await Promise.all([lstat(a), lstat(b)]);
-  if (!sb.isFile() || sa.size !== sb.size) return false;
+  // Mode too: a bump that only flips an execute bit must land.
+  if (!sb.isFile() || sa.size !== sb.size || (sa.mode & 0o777) !== (sb.mode & 0o777)) return false;
   // Chunked compare, stopping at the first difference.
   const [fa, fb] = await Promise.all([open(a, "r"), open(b, "r")]);
   try {

@@ -519,19 +519,18 @@ export interface ResolvedDep {
    */
   sources: string[];
   /**
-   * The final build output(s). Use these as implicit inputs on anything
-   * downstream that needs this dep built first.
-   * For cargo deps, these ARE the libs. For header-only deps, this is
-   * the source stamp (.ref).
+   * The "this dep is ready" signal for anything downstream: for cargo deps
+   * the libs, for prebuilt deps the identity stamp, for direct / header-only
+   * deps the source stamp (.ref). How a consumer's compile edges name them
+   * (implicit vs order-only) is `headerSignal`.
    */
   outputs: string[];
   /**
    * A direct dep's generated headers (`headers` substitutions, the steps'
    * `consumerOutputs`). Declared, restat outputs, so a consumer names them
    * ORDER-ONLY — they exist before its first compile and its depfile tracks
-   * the ones it actually includes from then on — where `outputs` (fetch
-   * stamps, prebuilt/cargo libs: edges with undeclared header side effects)
-   * must be implicit. Empty for every other build kind.
+   * the ones it actually includes from then on. Empty for every other build
+   * kind.
    */
   generatedHeaders: string[];
   /**

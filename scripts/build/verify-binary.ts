@@ -687,7 +687,7 @@ function verifyDuplicates(nm: string, objdump: string | undefined, rspfile: stri
   // with RTTI on clang models the vftable as an external *alias* into that
   // COMDAT, which nm reports as a plain external definition.
   const coff = objdump !== undefined ? coffDefinitions(objdump, inputs) : undefined;
-  if (coff) defs.push(...coff.defs);
+  for (const d of coff?.defs ?? []) defs.push(d); // not push(...): more entries than an argument list holds
   const msAbiComdat = (name: string): boolean => coff !== undefined && /^\?\?_[78R]/.test(name);
   // -A: prefix each line with the object (archive:member for archives).
   // -S: print size. --extern-only --defined-only: what can collide.

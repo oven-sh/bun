@@ -477,8 +477,7 @@ JSPromise* readableStreamCancel(JSGlobalObject* globalObject, JSReadableStream* 
     return result;
 }
 
-// Bun: `updateRef(value)` on a default-controller native source handle. Returns whether the
-// source held a ref before the call; false when there is no such handle.
+// Bun: `updateRef(value)` on the native source handle, if any; returns the previous ref state.
 static bool updateNativeSourceRef(JSGlobalObject* globalObject, JSReadableStream* stream, bool value)
 {
     auto& vm = getVM(globalObject);

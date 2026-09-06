@@ -1608,9 +1608,13 @@ impl<'a> Resolver<'a> {
                     // Watch the link's directory: a retarget is invisible
                     // from the real path.
                     if FeatureFlags::WATCH_DIRECTORIES {
-                        if let Some(watcher) = self.watcher.as_ref() {
-                            if let Some((link_dir, fd)) =
-                                dir.get_entries_const().map(|e| (e.dir, e.fd))
+                        if let Some(watcher) = self.watcher {
+                            if let Some((link_dir, fd)) = self
+                                .fs_mut()
+                                .fs
+                                .entries
+                                .at_index(dir.entries)
+                                .and_then(|e| e.dir_and_fd())
                             {
                                 watcher.watch(link_dir, fd);
                             }

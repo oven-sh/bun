@@ -816,12 +816,17 @@ where
     /// true when there was something to drop, which means a resolution went
     /// through `dir/name` as a directory.
     #[cfg(not(windows))]
-    fn bust_changed_entry(&mut self, dir: &[u8], name: &[u8]) -> bool {
+    fn bust_changed_entry(
+        &mut self,
+        rfs: &mut Fs::file_system::RealFS,
+        dir: &[u8],
+        name: &[u8],
+    ) -> bool {
         let mut buf = bun_paths::path_buffer_pool::get();
         let Some(child) = Self::join_entry_path(&mut buf, dir, name) else {
             return false;
         };
-        self.tombstone_entries(child.as_bytes());
+        self.tombstone_entries(rfs, child.as_bytes());
         self.ctx_mut().bust_dir_cache_tree(child.as_bytes())
     }
 
@@ -829,7 +834,12 @@ where
     /// than where the resolver followed it. Drops the resolver cache for the
     /// link when it does.
     #[cfg(not(windows))]
-    fn symlink_entry_changed(&mut self, dir: &[u8], entry: &Fs::Entry) -> bool {
+    fn symlink_entry_changed(
+        &mut self,
+        rfs: &mut Fs::file_system::RealFS,
+        dir: &[u8],
+        entry: &Fs::Entry,
+    ) -> bool {
         let mut buf = bun_paths::path_buffer_pool::get();
         let Some(child) = Self::join_entry_path(&mut buf, dir, entry.base()) else {
             return false;
@@ -840,7 +850,7 @@ where
         {
             return false;
         }
-        self.tombstone_entries(child.as_bytes());
+        self.tombstone_entries(rfs, child.as_bytes());
         self.ctx_mut().bust_dir_cache_tree(child.as_bytes());
         true
     }
@@ -848,8 +858,7 @@ where
     /// Keeps the listing of `dir` reachable for later events on it after
     /// the resolver cache is busted.
     #[cfg(not(windows))]
-    fn tombstone_entries(&mut self, dir: &[u8]) {
-        let rfs: &mut Fs::file_system::RealFS = &mut FileSystem::instance().fs;
+    fn tombstone_entries(&mut self, rfs: &mut Fs::file_system::RealFS, dir: &[u8]) {
         let Some(existing) = rfs.entries.get(dir) else {
             return;
         };
@@ -1221,7 +1230,7 @@ where
                                     }
                                 }
                                 for entry in followed {
-                                    if self.symlink_entry_changed(file_path, entry) {
+                                    if self.symlink_entry_changed(rfs, file_path, entry) {
                                         current_task.append(current_hash);
                                     }
                                 }
@@ -1255,7 +1264,7 @@ where
                                     }
                                     None => false,
                                 };
-                                if self.bust_changed_entry(file_path, changed_name)
+                                if self.bust_changed_entry(rfs, file_path, changed_name)
                                     || followed_symlink
                                 {
                                     current_task.append(current_hash);

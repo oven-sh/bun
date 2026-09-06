@@ -194,13 +194,13 @@ std::optional<KeyValuePair<String, DOMFormData::FormDataEntryValue>> DOMFormData
 
 size_t DOMFormData::memoryCost() const
 {
-    size_t cost = m_items.sizeInBytes();
+    size_t cost = m_items.capacity() * sizeof(Item);
     for (auto& item : m_items) {
-        cost += item.name.sizeInBytes();
+        cost += stringMemoryCost(item.name);
         if (auto value = std::get_if<RefPtr<Blob>>(&item.data)) {
             cost += value->get()->memoryCost();
         } else if (auto value = std::get_if<String>(&item.data)) {
-            cost += value->sizeInBytes();
+            cost += stringMemoryCost(*value);
         }
     }
 

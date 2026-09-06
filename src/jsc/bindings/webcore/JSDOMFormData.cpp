@@ -244,6 +244,13 @@ void JSDOMFormData::computeMemoryCost()
     }
 }
 
+void JSDOMFormData::reportAppendedEntry(size_t bytes)
+{
+    size_t cost = bytes + sizeof(DOMFormData::Item);
+    m_memoryCost += cost;
+    globalObject()->vm().heap.reportExtraMemoryAllocated(this, cost);
+}
+
 JSObject* JSDOMFormData::createPrototype(VM& vm, JSDOMGlobalObject& globalObject)
 {
     auto* structure = JSDOMFormDataPrototype::createStructure(vm, &globalObject, globalObject.objectPrototype());
@@ -290,7 +297,10 @@ static inline JSC::EncodedJSValue jsDOMFormDataPrototypeFunction_append1Body(JSC
     EnsureStillAliveScope argument1 = callFrame->uncheckedArgument(1);
     auto value = convert<IDLUSVString>(*lexicalGlobalObject, argument1.value());
     RETURN_IF_EXCEPTION(throwScope, {});
-    RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLUndefined>(*lexicalGlobalObject, throwScope, [&]() -> decltype(auto) { return impl.append(WTF::move(name), WTF::move(value)); })));
+    size_t entryBytes = DOMFormData::stringMemoryCost(name) + DOMFormData::stringMemoryCost(value);
+    impl.append(WTF::move(name), WTF::move(value));
+    castedThis->reportAppendedEntry(entryBytes);
+    return JSValue::encode(jsUndefined());
 }
 
 extern "C" BunString Blob__getFileNameString(void* impl);
@@ -321,7 +331,10 @@ static inline JSC::EncodedJSValue jsDOMFormDataPrototypeFunction_append2Body(JSC
     auto filename = argument2.value().isUndefined() ? Blob__getFileNameString(blobValue->impl()).transferToWTFString() : convert<IDLUSVString>(*lexicalGlobalObject, argument2.value());
     RETURN_IF_EXCEPTION(throwScope, {});
 
-    RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLUndefined>(*lexicalGlobalObject, throwScope, [&]() -> decltype(auto) { return impl.append(WTF::move(name), WTF::move(blobValue), WTF::move(filename)); })));
+    size_t entryBytes = DOMFormData::stringMemoryCost(name) + blobValue->memoryCost();
+    impl.append(WTF::move(name), WTF::move(blobValue), WTF::move(filename));
+    castedThis->reportAppendedEntry(entryBytes);
+    return JSValue::encode(jsUndefined());
 }
 
 static inline JSC::EncodedJSValue jsDOMFormDataPrototypeFunction_appendOverloadDispatcher(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<JSDOMFormData>::ClassParameter castedThis)
@@ -360,7 +373,9 @@ static inline JSC::EncodedJSValue jsDOMFormDataPrototypeFunction_deleteBody(JSC:
     EnsureStillAliveScope argument0 = callFrame->uncheckedArgument(0);
     auto name = convert<IDLUSVString>(*lexicalGlobalObject, argument0.value());
     RETURN_IF_EXCEPTION(throwScope, {});
-    RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLUndefined>(*lexicalGlobalObject, throwScope, [&]() -> decltype(auto) { return impl.remove(WTF::move(name)); })));
+    impl.remove(WTF::move(name));
+    castedThis->computeMemoryCost();
+    return JSValue::encode(jsUndefined());
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsDOMFormDataPrototypeFunction_delete, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
@@ -455,7 +470,9 @@ static inline JSC::EncodedJSValue jsDOMFormDataPrototypeFunction_set1Body(JSC::J
     EnsureStillAliveScope argument1 = callFrame->uncheckedArgument(1);
     auto value = convert<IDLUSVString>(*lexicalGlobalObject, argument1.value());
     RETURN_IF_EXCEPTION(throwScope, {});
-    RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLUndefined>(*lexicalGlobalObject, throwScope, [&]() -> decltype(auto) { return impl.set(WTF::move(name), WTF::move(value)); })));
+    impl.set(WTF::move(name), WTF::move(value));
+    castedThis->computeMemoryCost();
+    return JSValue::encode(jsUndefined());
 }
 
 static inline JSC::EncodedJSValue jsDOMFormDataPrototypeFunction_set2Body(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<JSDOMFormData>::ClassParameter castedThis)
@@ -484,7 +501,9 @@ static inline JSC::EncodedJSValue jsDOMFormDataPrototypeFunction_set2Body(JSC::J
     auto filename = argument2.value().isUndefined() ? Blob__getFileNameString(blobValue->impl()).transferToWTFString() : convert<IDLUSVString>(*lexicalGlobalObject, argument2.value());
     RETURN_IF_EXCEPTION(throwScope, {});
 
-    RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLUndefined>(*lexicalGlobalObject, throwScope, [&]() -> decltype(auto) { return impl.set(WTF::move(name), WTF::move(blobValue), WTF::move(filename)); })));
+    impl.set(WTF::move(name), WTF::move(blobValue), WTF::move(filename));
+    castedThis->computeMemoryCost();
+    return JSValue::encode(jsUndefined());
 }
 
 static inline JSC::EncodedJSValue jsDOMFormDataPrototypeFunction_setOverloadDispatcher(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<JSDOMFormData>::ClassParameter castedThis)

@@ -1005,27 +1005,27 @@ describe("USVString conversion of lone surrogates", () => {
   });
 });
 
-// A parsed FormData stores its entries as native WTF::String bytes outside the
-// JS heap. The JS wrapper must report those bytes to the GC, otherwise the
-// allocation-driven GC trigger never fires and the native memory accumulates
-// while requests keep arriving. See ledger #23371.
+// A FormData stores its entries as native WTF::String bytes outside the JS
+// heap. The JS wrapper must report those bytes to the GC, otherwise the
+// allocation-driven GC trigger never fires and a server that parses one body
+// per request accumulates native memory until the idle collector runs.
 describe.concurrent("FormData native memory is reported to the GC", () => {
-  async function extraMemoryDelta(buildBody: string, contentType: string, count: number): Promise<number> {
+  // `create` is the source of an async function that returns one FormData.
+  async function extraMemoryDelta(create: string, count: number): Promise<number> {
     const script = `
       const { heapStats } = require("bun:jsc");
-      const headers = { "content-type": ${JSON.stringify(contentType)} };
-      const buildBody = ${buildBody};
+      const create = ${create};
 
       Bun.gc(true);
       const before = heapStats().extraMemorySize;
 
       const live = [];
       for (let i = 0; i < ${count}; i++) {
-        live.push(await new Response(buildBody(), { headers }).formData());
+        live.push(await create());
       }
 
-      // Collect the transient request bodies. Only the referenced FormData
-      // objects and their reported native bytes remain.
+      // Collect the transient inputs. Only the referenced FormData objects and
+      // their reported native bytes remain.
       Bun.gc(true);
       const after = heapStats().extraMemorySize;
       process.stdout.write(String(after - before));
@@ -1040,30 +1040,50 @@ describe.concurrent("FormData native memory is reported to the GC", () => {
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     const delta = Number(stdout);
-    expect({ stderr, exitCode, delta }).toEqual({ stderr: expect.any(String), exitCode: 0, delta: expect.any(Number) });
+    expect(stderr).toBe("");
+    expect({ exitCode, delta }).toEqual({ exitCode: 0, delta: expect.any(Number) });
     expect(Number.isFinite(delta)).toBe(true);
     return delta;
   }
 
-  // Each body has one 8 MB field value, parsed into a native WTF::String entry
-  // the FormData owns. After the fix the GC sees those bytes and they survive a
-  // collection while the FormData is referenced. Without the fix the delta is
-  // near zero. A few large entries keep the debug+ASAN parse fast.
+  // Each FormData holds one 8 MB field value as a native WTF::String. After
+  // the fix the GC sees those bytes and they survive a collection while the
+  // FormData is referenced. Without the fix the delta is near zero. A few
+  // large entries keep the debug+ASAN parse fast.
   const valueSize = 8 * 1024 * 1024;
   const count = 2;
+  const value = `Buffer.alloc(${valueSize}, "x").toString()`;
 
   test("urlencoded entries report their bytes", async () => {
-    const buildBody = `() => "a=" + Buffer.alloc(${valueSize}, "x").toString()`;
-    const delta = await extraMemoryDelta(buildBody, "application/x-www-form-urlencoded", count);
-    expect(delta).toBeGreaterThan(count * valueSize * 0.5);
+    const create = `async () => new Response("a=" + ${value}, {
+      headers: { "content-type": "application/x-www-form-urlencoded" },
+    }).formData()`;
+    expect(await extraMemoryDelta(create, count)).toBeGreaterThan(count * valueSize * 0.5);
   });
 
   test("multipart string fields report their bytes", async () => {
-    const buildBody = `() => {
-      const value = Buffer.alloc(${valueSize}, "x").toString();
-      return "--X\\r\\nContent-Disposition: form-data; name=\\"a\\"\\r\\n\\r\\n" + value + "\\r\\n--X--\\r\\n";
+    const create = `async () => new Response(
+      "--X\\r\\nContent-Disposition: form-data; name=\\"a\\"\\r\\n\\r\\n" + ${value} + "\\r\\n--X--\\r\\n",
+      { headers: { "content-type": "multipart/form-data; boundary=X" } },
+    ).formData()`;
+    expect(await extraMemoryDelta(create, count)).toBeGreaterThan(count * valueSize * 0.5);
+  });
+
+  test("multipart file parts report their store bytes", async () => {
+    const create = `async () => new Response(
+      "--X\\r\\nContent-Disposition: form-data; name=\\"a\\"; filename=\\"a.txt\\"\\r\\n\\r\\n" + ${value} + "\\r\\n--X--\\r\\n",
+      { headers: { "content-type": "multipart/form-data; boundary=X" } },
+    ).formData()`;
+    expect(await extraMemoryDelta(create, count)).toBeGreaterThan(count * valueSize * 0.5);
+  });
+
+  test("append and set report their bytes", async () => {
+    const create = `async () => {
+      const fd = new FormData();
+      fd.append("a", ${value});
+      fd.set("b", ${value});
+      return fd;
     }`;
-    const delta = await extraMemoryDelta(buildBody, "multipart/form-data; boundary=X", count);
-    expect(delta).toBeGreaterThan(count * valueSize * 0.5);
+    expect(await extraMemoryDelta(create, count)).toBeGreaterThan(count * 2 * valueSize * 0.5);
   });
 });

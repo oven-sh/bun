@@ -2334,6 +2334,52 @@ describe.concurrent.skipIf(isWindows)("signals", () => {
     expect(exitCode).toBe(130);
   });
 
+  test("SIGTERM after a failure cascade still reaches a script that survived the cascade's SIGINT", async () => {
+    using dir = tempDir("mr-sig-cascade", {
+      // Exits 3 once the test creates `go`, so the cascade starts only after `b` is ready.
+      "fail.js": `
+        const fs = require("fs");
+        setInterval(() => { if (fs.existsSync("go")) process.exit(3); }, 10);
+      `,
+      // Survives the cascade's SIGINT, exits 0 on SIGTERM.
+      "survive.js": `
+        process.on("SIGINT", () => console.log("ignored SIGINT"));
+        process.on("SIGTERM", () => { console.log("got SIGTERM"); process.exit(0); });
+        console.log("ready");
+        setTimeout(() => {}, 30_000);
+      `,
+      "package.json": JSON.stringify({
+        scripts: { a: `${bunExe()} fail.js`, b: `${bunExe()} survive.js` },
+      }),
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "run", "--parallel", "a", "b"],
+      env: { ...bunEnv, NO_COLOR: "1" },
+      cwd: String(dir),
+      stderr: "pipe",
+      stdout: "pipe",
+    });
+    const ready = Promise.withResolvers<void>();
+    const cascaded = Promise.withResolvers<void>();
+    const stdoutPromise = collect(proc.stdout, text => {
+      if (count(text, "ready") >= 1) ready.resolve();
+      if (count(text, "ignored SIGINT") >= 1) cascaded.resolve();
+    });
+    stdoutPromise.then(text => {
+      const err = new Error(`stdout ended early:\n${text}`);
+      ready.reject(err);
+      cascaded.reject(err);
+    });
+    await ready.promise;
+    await Bun.write(path.join(String(dir), "go"), "");
+    await cascaded.promise;
+    proc.kill("SIGTERM");
+    const [stdout, stderr, exitCode] = await Promise.all([stdoutPromise, proc.stderr.text(), proc.exited]);
+    expectExited(stderr, "a", 3);
+    expectPrefixed(stdout, "b", "got SIGTERM");
+    expect(exitCode).toBe(143);
+  });
+
   test("sequential: SIGINT stops the chain and exits 130 even though the script exited 0", async () => {
     using dir = tempDir("mr-sig-seq", trapPackage("SIGINT"));
     const r = await runAndSignal(["--sequential", "a", "b"], String(dir), "SIGINT", 1);

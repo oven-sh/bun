@@ -2017,6 +2017,7 @@ pub(crate) fn install_isolated_packages(
                     installer: bun_ptr::BackRef::from(core::ptr::NonNull::dangling()),
                     result: installer::Result::None,
                     relink: installer::Relink::Off,
+                    newly_trusted: false,
                     task: bun_threading::thread_pool::Task {
                         callback: installer::Task::callback,
                         node: Default::default(),

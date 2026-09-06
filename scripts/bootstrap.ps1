@@ -260,11 +260,26 @@ function Install-Llvm {
   if (Which clang-cl) {
     return
   }
-  if ($script:IsARM64) {
-    Install-Scoop-Package "llvm-arm64@$LLVM_VERSION" -Command clang-cl
-  } else {
-    Install-Scoop-Package "llvm@$LLVM_VERSION" -Command clang-cl
+
+  # The pinned release's own installer, not `scoop install llvm@<version>`:
+  # scoop generates a manifest for a non-current version from its autoupdate
+  # template, and that template follows whatever installer format the latest
+  # LLVM ships (.msi since 23), which older releases (.exe) do not have.
+  $llvmArch = if ($script:IsARM64) { "woa64" } else { "win64" }
+  $installDir = "C:\Program Files\LLVM"
+  Write-Output "Installing LLVM $LLVM_VERSION ($llvmArch)..."
+  $installer = Download-File "https://github.com/llvm/llvm-project/releases/download/llvmorg-$LLVM_VERSION/LLVM-$LLVM_VERSION-$llvmArch.exe" -Name "llvm-$LLVM_VERSION-$llvmArch.exe"
+  # NSIS installer: /S silent, /D= install dir (must be last, unquoted).
+  $process = Start-Process $installer -ArgumentList "/S /D=$installDir" -Wait -PassThru -NoNewWindow
+  if ($process.ExitCode -ne 0) {
+    throw "Failed to install LLVM: code $($process.ExitCode)"
   }
+  if (-not (Test-Path "$installDir\bin\clang-cl.exe")) {
+    throw "LLVM installer finished but $installDir\bin\clang-cl.exe is missing"
+  }
+  Remove-Item $installer -ErrorAction SilentlyContinue
+  Add-To-Path "$installDir\bin"
+  Refresh-Path
 }
 
 function Install-Ninja {

@@ -987,6 +987,35 @@ describe("explicit dotfile segments match without dot:true", () => {
     const result = await Array.fromAsync(new Glob(".dotdir/inner.txt").scan({ cwd: String(dir) }));
     expect(norm(result)).toEqual([".dotdir/inner.txt"]);
   });
+
+  // The explicit-dot rule applies per brace alternative, like minimatch
+  // after brace expansion: `{.a,*}` is `.a` (explicit) or `*` (hidden).
+  const braceFiles = {
+    "flat/.a": "x",
+    "flat/.b": "x",
+    "flat/.ca": "x",
+    "flat/a.b": "x",
+    "flat/c": "x",
+  };
+
+  test.each([
+    ["flat/{.a,.b}", ["flat/.a", "flat/.b"]],
+    ["flat/{c,.a}", ["flat/.a", "flat/c"]],
+    ["flat/{*,.a}", ["flat/.a", "flat/a.b", "flat/c"]],
+    ["flat/{.,}a", ["flat/.a"]],
+    ["flat/{.c,x}*", ["flat/.ca"]],
+    ["flat/{a,.c}?", ["flat/.ca"]],
+    ["flat/[.]a", ["flat/.a"]],
+    ["flat/{**,.a}", ["flat/.a", "flat/a.b", "flat/c"]],
+    // No alternative spells out the dot: dotfiles stay hidden.
+    ["flat/{*,?a}", ["flat/a.b", "flat/c"]],
+    ["flat/{[!x],c}a", []],
+    ["flat/[.a]a", []],
+  ])("pattern %j applies the dotfile rule per brace alternative", (pattern, expected) => {
+    using dir = tempDir("glob-scan-brace-dot", braceFiles);
+    const result = Array.from(new Glob(pattern).scanSync({ cwd: String(dir) }));
+    expect(norm(result)).toEqual(expected.sort());
+  });
 });
 
 // `followSymlinks` controls whether wildcard traversal descends through

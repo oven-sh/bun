@@ -1758,15 +1758,25 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
 
     fn match_pattern_impl(&self, pattern_component: &Component, filepath: &[u8]) -> bool {
         log!("matchPatternImpl: {}", bstr::BStr::new(filepath));
+        if (self.is_ignored)(filepath) {
+            return false;
+        }
+
         // A pattern segment that itself starts with a literal `.` opts into
         // matching dotfiles for that segment, regardless of the `dot` flag.
+        // Brace alternatives (`{.a,*}`) and classes (`[.]a`) decide per
+        // branch, so the general matcher applies the rule itself.
         if !self.dot
             && Self::starts_with_dot(filepath)
             && !Self::starts_with_dot(pattern_component.pattern_slice(&self.pattern))
         {
-            return false;
-        }
-        if (self.is_ignored)(filepath) {
+            if pattern_component.syntax_hint == SyntaxHint::None {
+                return crate::match_no_dot(
+                    pattern_component.pattern_slice(&self.pattern),
+                    filepath,
+                )
+                .matches();
+            }
             return false;
         }
 

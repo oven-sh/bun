@@ -55,6 +55,13 @@ void startCPUProfiler(JSC::VM& vm)
     auto stopwatch = WTF::Stopwatch::create();
     stopwatch->start();
 
+    // Without a PC-to-code-origin map, a sample in DFG or FTL code is attributed
+    // to the call site index the frame last stored, not to the sampled PC. With
+    // a function inlined into its caller, that is the caller. JSC builds the
+    // map for code compiled after this flag is set, the same as it does for
+    // --useSamplingProfiler.
+    vm.setShouldBuildPCToCodeOriginMapping();
+
     JSC::SamplingProfiler& samplingProfiler = vm.ensureSamplingProfiler(WTF::move(stopwatch));
     samplingProfiler.setTimingInterval(WTF::Seconds::fromMicroseconds(s_samplingInterval));
     samplingProfiler.noticeCurrentThreadAsJSCExecutionThread();

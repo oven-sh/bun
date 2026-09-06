@@ -37,7 +37,7 @@ import { generateDepVersionsHeader } from "./depVersionsHeader.ts";
 import { allDeps } from "./deps/index.ts";
 import { lolhtml } from "./deps/lolhtml.ts";
 import { rustArgon2 } from "./deps/rust-argon2.ts";
-import { type JSCProgram, jscShell, jscTestFFI, webkitClassInfoCheckScript } from "./deps/webkit.ts";
+import { jscShell, jscTestFFI, webkitClassInfoCheckScript, type JSCProgram } from "./deps/webkit.ts";
 import { assert } from "./error.ts";
 import {
   bunIncludes,

@@ -970,7 +970,7 @@ describe("bun test", () => {
         input: `
           import { test, expect } from "bun:test";
 
-          test.each(${JSON.stringify(input)})("with an object: %o", (o) => {
+          test.each(${JSON.stringify(input)})("with an object: %j", (o) => {
             expect(o).toBe(o);
           });
         `,
@@ -999,7 +999,7 @@ describe("bun test", () => {
           });
         `,
       });
-      expect(stderr).toContain(`with an object: ${JSON.stringify(input[0])}`);
+      expect(stderr).toContain(`with an object: { foo: "bar", nested: { again: { a: 2 } } }`);
     });
     test("check formatting for %#", () => {
       const numbers = [

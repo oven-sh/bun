@@ -687,8 +687,8 @@ fn write_placeholder_arg(
 ) -> JsResult<()> {
     let number = match spec {
         b's' => return write_title_value(global_this, arg, list),
-        b'p' | b'O' => return write_pretty_value(global_this, arg, list),
-        b'j' | b'o' => {
+        b'p' | b'o' | b'O' => return write_pretty_value(global_this, arg, list),
+        b'j' => {
             let str = arg.json_stringify_fast(global_this)?;
             list.extend_from_slice(&str.to_owned_slice());
             return Ok(());

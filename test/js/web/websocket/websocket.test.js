@@ -1177,7 +1177,7 @@ it("terminate() on a wss:// socket whose peer never answers close_notify still f
 // Both are sent as Sec-WebSocket-Protocol, the same as the positional argument.
 describe.concurrent("WebSocket subprotocol options", () => {
   async function requestedProtocol(options) {
-    const { promise, resolve } = Promise.withResolvers();
+    const { promise, resolve, reject } = Promise.withResolvers();
     using server = Bun.serve({
       port: 0,
       fetch(req, server) {
@@ -1192,9 +1192,14 @@ describe.concurrent("WebSocket subprotocol options", () => {
       },
     });
     const ws = new WebSocket(`ws://${server.hostname}:${server.port}`, options);
-    const closed = new Promise(resolve => (ws.onclose = resolve));
+    const closed = Promise.withResolvers();
+    ws.onerror = event => reject(event.error ?? new Error(event.message));
+    ws.onclose = event => {
+      reject(new Error(`closed before the upgrade request arrived: ${event.code}`));
+      closed.resolve();
+    };
     const header = await promise;
-    await closed;
+    await closed.promise;
     return header;
   }
 

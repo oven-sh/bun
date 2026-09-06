@@ -346,4 +346,17 @@ describe.concurrent("workspace: spec that names no workspace", () => {
     expect(exitCode).toBe(0);
     expect(readFileSync(join(String(dir), "node_modules", "a", "package.json"), "utf8")).toContain('"name":"a"');
   });
+
+  test("workspace:. in a workspace member does not link the member under another name", async () => {
+    using dir = tempDir("bad-workspace-member-self-spec", {
+      "package.json": JSON.stringify({ name: "p", version: "1.0.0", workspaces: ["packages/*"] }),
+      "packages/foo/package.json": JSON.stringify({ name: "foo", version: "1.0.0", dependencies: { bar: "workspace:." } }),
+    });
+
+    const { stderr, exitCode } = await runInstall(String(dir));
+
+    expect(stderr).toContain("error: bar@workspace:. failed to resolve");
+    expect(existsSync(join(String(dir), "node_modules", "bar"))).toBe(false);
+    expect(exitCode).toBe(1);
+  });
 });

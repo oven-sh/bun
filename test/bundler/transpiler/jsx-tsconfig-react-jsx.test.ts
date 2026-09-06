@@ -98,10 +98,12 @@ describe("tsconfig compilerOptions.jsx", () => {
     jsx => {
       const transpiler = new Bun.Transpiler({
         loader: "tsx",
+        autoImportJSX: true,
         tsconfig: { compilerOptions: { jsx, jsxImportSource: "solid-js" } },
       });
       const out = transpiler.transformSync(`export default <div>hi</div>;`);
-      expect(out).toMatch(/^export default jsx(DEV)?_\w+\("div"/);
+      expect(out).toMatch(/^import \{ jsx(DEV)? as \w+ \} from "solid-js\/jsx(-dev)?-runtime";\n/);
+      expect(out).toMatch(/\nexport default jsx(DEV)?_\w+\("div"/);
       expect(out).not.toContain("React.createElement");
     },
   );

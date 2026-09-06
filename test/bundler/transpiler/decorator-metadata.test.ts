@@ -10,7 +10,11 @@ namespace MetadataNs {
     }
   }
   export enum Empty {}
+  export namespace EmptyNs {
+    init();
+  }
 }
+function init() {}
 
 enum WithHelpers {
   A,
@@ -642,6 +646,8 @@ describe("decorator metadata", () => {
       @d2
       nsEmpty: MetadataNs.Empty;
       @d2
+      nsEmptyNs: MetadataNs.EmptyNs;
+      @d2
       nullable: Numeric | null;
       @d2
       optional?: Str;
@@ -677,6 +683,8 @@ describe("decorator metadata", () => {
     expect(type(A.prototype, "withHelpers")).toBe(Number);
     expect(type(A.prototype, "empty")).toBe(Number);
     expect(type(A.prototype, "nsEmpty")).toBe(Number);
+    // an empty namespace is not a type in tsc; bun keeps the namespace object like before
+    expect(type(A.prototype, "nsEmptyNs")).toBe(MetadataNs.EmptyNs);
     expect(type(A.prototype, "nullable")).toBe(Number);
     expect(type(A.prototype, "optional")).toBe(String);
     expect(type(A.prototype, "array")).toBe(Array);

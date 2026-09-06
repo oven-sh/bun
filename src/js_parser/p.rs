@@ -8076,7 +8076,19 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 _ => return None,
             }
         }
-        Self::enum_members_metadata(&members)
+        // An empty map is an empty enum or an empty namespace. Only the enum is `Number`.
+        let map: &js_ast::TSNamespaceMemberMap = &members;
+        if map.count() == 0 {
+            let is_enum = self.ts_namespace_scopes.iter().any(|scope| {
+                scope.is_enum_scope
+                    && core::ptr::eq::<js_ast::TSNamespaceMemberMap>(
+                        scope.exported_members.get(),
+                        map,
+                    )
+            });
+            return is_enum.then_some(bun_ast::ts::Metadata::MNumber);
+        }
+        Self::enum_members_metadata(map)
     }
 
     /// Re-resolve the name from the class scope like `visit_expr`, then follow symbol links.

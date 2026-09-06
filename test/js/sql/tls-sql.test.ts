@@ -1,8 +1,15 @@
 import { SQL, randomUUIDv7 } from "bun";
 import { describe, expect, test } from "bun:test";
-import { describeWithContainer, isDockerEnabled } from "harness";
+import { describeWithContainer, isDockerEnabled, tls as tlsCert } from "harness";
 import path from "node:path";
-import { listeningServer, pgAuthenticationCleartextPassword, pgSSLRequest, pgSSLResponse } from "./wire-frames";
+import { TLSSocket } from "node:tls";
+import {
+  listeningServer,
+  pgAuthenticationCleartextPassword,
+  pgErrorResponse,
+  pgSSLRequest,
+  pgSSLResponse,
+} from "./wire-frames";
 
 if (!isDockerEnabled()) {
   test.skip("skipping TLS SQL tests - Docker is not available", () => {});
@@ -416,5 +423,69 @@ test("postgres client aborts the connection when the server declines TLS that wa
       for (const socket of sockets) socket.destroy();
       await new Promise<void>(resolve => server.close(() => resolve()));
     }
+  }
+});
+
+// Needs a server that reports the SNI server_name it received in the TLS
+// ClientHello, which a real PostgreSQL server does not expose. DO NOT COPY THIS
+// PATTERN — anything a real server can produce belongs in describeWithContainer.
+// All wire-protocol bytes come from test/js/sql/wire-frames.ts.
+// https://github.com/oven-sh/bun/issues/26369
+test.each([
+  [
+    "a URL without ?sslmode= and tls: true",
+    (port: number): Bun.SQL.Options => ({ url: `postgres://postgres:p@bun-sql-sni.localhost:${port}/db`, tls: true }),
+  ],
+  [
+    "host, port and tls: true as separate options",
+    (port: number): Bun.SQL.Options => ({ host: "bun-sql-sni.localhost", port, username: "postgres", tls: true }),
+  ],
+  [
+    "a tls object without serverName",
+    (port: number): Bun.SQL.Options => ({
+      hostname: "bun-sql-sni.localhost",
+      port,
+      username: "postgres",
+      tls: { rejectUnauthorized: false },
+    }),
+  ],
+] as const)("postgres client sends the hostname as SNI when TLS is enabled by %s", async (_, options) => {
+  const observedServerName = Promise.withResolvers<string | false | undefined>();
+  const sockets = new Set<import("node:net").Socket | TLSSocket>();
+
+  const { server, port } = await listeningServer(socket => {
+    sockets.add(socket);
+    socket.on("error", () => {});
+    let preTlsClientBytes = Buffer.alloc(0);
+    const onData = (data: Buffer) => {
+      preTlsClientBytes = Buffer.concat([preTlsClientBytes, data]);
+      if (preTlsClientBytes.length < pgSSLRequest().length) return;
+      socket.off("data", onData);
+      // Accept the SSLRequest, run the server side of the TLS handshake on the
+      // same socket, and report the server_name the ClientHello carried.
+      socket.write(pgSSLResponse("S"));
+      const secured = new TLSSocket(socket, { isServer: true, ...tlsCert });
+      sockets.add(secured);
+      secured.on("error", observedServerName.reject);
+      secured.on("secure", () => {
+        observedServerName.resolve((secured as TLSSocket & { servername?: string | false }).servername);
+        secured.end(pgErrorResponse({ S: "FATAL", C: "28000", M: "server name observed" }));
+      });
+    };
+    socket.on("data", onData);
+  });
+
+  try {
+    await using sql = new SQL({ ...options(port), adapter: "postgres", max: 1 });
+    const query = sql`select 1`.then(
+      () => ({ code: "connected" }),
+      e => ({ code: e?.code ?? String(e) }),
+    );
+    const serverName = await Promise.race([observedServerName.promise, query.then(outcome => outcome.code)]);
+    expect(serverName).toBe("bun-sql-sni.localhost");
+    expect(await query).toEqual({ code: "ERR_POSTGRES_SERVER_ERROR" });
+  } finally {
+    for (const socket of sockets) socket.destroy();
+    await new Promise<void>(resolve => server.close(() => resolve()));
   }
 });

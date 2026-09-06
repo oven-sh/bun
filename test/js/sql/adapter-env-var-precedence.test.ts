@@ -422,7 +422,67 @@ describe("SQL adapter environment variable precedence", () => {
     test("a tls object alongside ssl: false still requests an encrypted connection", () => {
       const options = new SQL({ adapter: "postgres", hostname: "h", tls: {}, ssl: false });
       expect(options.options.sslMode).toBe(2);
-      expect(options.options.tls).toBeTypeOf("object");
+      expect(options.options.tls).toEqual({ serverName: "h" });
+    });
+  });
+
+  // https://github.com/oven-sh/bun/issues/26369: a boolean or object tls option
+  // with no sslmode anywhere enables TLS, so it must also get the serverName
+  // that an sslmode-enabled connection gets. The native side sends it as SNI.
+  describe("tls/ssl option given as a boolean or an object", () => {
+    const shapes = [
+      [{ tls: true }, { serverName: "h" }],
+      [{ ssl: true }, { serverName: "h" }],
+      [{ tls: {} }, { serverName: "h" }],
+      [{ ssl: {} }, { serverName: "h" }],
+      [{ tls: { rejectUnauthorized: false } }, { rejectUnauthorized: false, serverName: "h" }],
+    ] as const;
+
+    for (const adapter of ["postgres", "mysql", "mariadb"] as const) {
+      test.each(shapes)(
+        `${adapter}: %j requires TLS with serverName set from the hostname`,
+        (tlsOptions, expectedTls) => {
+          const options = new SQL({ adapter, hostname: "h", ...tlsOptions });
+          expect(options.options.sslMode).toBe(2);
+          expect(options.options.tls).toEqual(expectedTls);
+        },
+      );
+    }
+
+    test.each(shapes)(
+      "%j alongside a URL without ?sslmode= sets serverName from the URL host",
+      (tlsOptions, expectedTls) => {
+        const postgres = new SQL("postgres://u@h:5432/db", tlsOptions);
+        expect(postgres.options.sslMode).toBe(2);
+        expect(postgres.options.tls).toEqual(expectedTls);
+
+        const mysql = new SQL({ url: "mysql://u:p@h/db", ...tlsOptions });
+        expect(mysql.options.adapter).toBe("mysql");
+        expect(mysql.options.sslMode).toBe(2);
+        expect(mysql.options.tls).toEqual(expectedTls);
+      },
+    );
+
+    test("host, username and tls: true given as separate options set serverName from host", () => {
+      const options = new SQL({ host: "db.example.com", username: "u", password: "p", database: "d", tls: true });
+      expect(options.options).toMatchObject({ adapter: "postgres", hostname: "db.example.com", sslMode: 2 });
+      expect(options.options.tls).toEqual({ serverName: "db.example.com" });
+    });
+
+    test("an explicit tls.serverName is kept", () => {
+      const options = new SQL({ adapter: "postgres", hostname: "h", tls: { serverName: "other.example.com" } });
+      expect(options.options.sslMode).toBe(2);
+      expect(options.options.tls).toEqual({ serverName: "other.example.com" });
+
+      const fromUrl = new SQL("postgres://u@h:5432/db?sslmode=require", { tls: { serverName: "other.example.com" } });
+      expect(fromUrl.options.sslMode).toBe(2);
+      expect(fromUrl.options.tls).toEqual({ serverName: "other.example.com" });
+    });
+
+    test("no tls option and no sslmode leaves TLS disabled", () => {
+      const options = new SQL({ adapter: "postgres", hostname: "h" });
+      expect(options.options.sslMode).toBe(0);
+      expect(options.options.tls).toBeUndefined();
     });
   });
 
@@ -493,7 +553,7 @@ describe("SQL adapter environment variable precedence", () => {
     test("an explicit tls option takes priority over ?ssl=false", () => {
       const options = new SQL("postgres://u@h:5432/db?ssl=false", { tls: true });
       expect(options.options.sslMode).toBe(2);
-      expect(options.options.tls).toBe(true);
+      expect(options.options.tls).toEqual({ serverName: "h" });
     });
 
     test.each(["mysql://u:p@h/db?ssl=bogus", 'mysql://u:p@h/db?ssl={"rejectUnauthorized":true}'])(
@@ -561,7 +621,7 @@ describe("SQL adapter environment variable precedence", () => {
 
       const optedOut = new SQL({ adapter: "postgres", hostname: "h", tls: { caFile, rejectUnauthorized: false } });
       expect(optedOut.options.sslMode).toBe(2);
-      expect(optedOut.options.tls).toMatchObject({ caFile, rejectUnauthorized: false });
+      expect(optedOut.options.tls).toEqual({ caFile, rejectUnauthorized: false, serverName: "h" });
 
       const fromUrl = new SQL("postgres://u@h:5432/db?sslmode=verify-ca", { tls: { caFile } });
       expect(fromUrl.options.sslMode).toBe(3);

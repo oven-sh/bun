@@ -409,6 +409,42 @@ pub(super) fn convert_utf8_bytes_into_utf16(bytes: &[u8]) -> UTF16Replacement {
     convert_utf8_bytes_into_utf16_with_length(sequence, sequence_length, bytes.len())
 }
 
+/// [`convert_utf8_bytes_into_utf16`] for WTF-8: the sequence at the start of `bytes`
+/// (`bytes[0] >= 0x80`) may also be the 3-byte form of a surrogate code point
+/// (`ED A0 80`..=`ED BF BF`), which byte strings use to carry a lone surrogate.
+///
+/// An ill-formed sequence comes back with `fail` set, `code_point` U+FFFD and `len` equal to
+/// its maximal subpart (Unicode §3.9 U+FFFD substitution, the rule `TextDecoder` follows): the
+/// lead byte plus every following byte that was still valid in its position, at least one byte.
+/// That run never includes an ASCII byte, so a caller that emits one U+FFFD and skips `len`
+/// bytes cannot lose a quote, backslash or newline that follows the bad bytes.
+pub fn decode_wtf8_with_fffd(bytes: &[u8]) -> UTF16Replacement {
+    debug_assert!(!bytes.is_empty() && bytes[0] >= 0x80);
+    if bytes[0] == 0xED && bytes.len() >= 2 && (0xA0..=0xBF).contains(&bytes[1]) {
+        if bytes.len() >= 3 && bytes[2] & 0xC0 == 0x80 {
+            return UTF16Replacement {
+                code_point: 0xD000 | (u32::from(bytes[1] & 0x3F) << 6) | u32::from(bytes[2] & 0x3F),
+                len: 3,
+                ..Default::default()
+            };
+        }
+        return UTF16Replacement {
+            len: 2,
+            fail: true,
+            ..Default::default()
+        };
+    }
+    let result = convert_utf8_bytes_into_utf16(bytes);
+    if result.fail {
+        return UTF16Replacement {
+            len: result.len.max(1),
+            fail: true,
+            ..Default::default()
+        };
+    }
+    result
+}
+
 // SWAR body moved down into `crate::strings_impl` (T0) so the canonical
 // `copy_latin1_into_utf8` is the spec-faithful fast path. Re-export here so
 // `pub use unicode_draft::copy_latin1_into_utf8_stop_on_non_ascii` in

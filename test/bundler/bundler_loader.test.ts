@@ -1,5 +1,6 @@
 import { fileURLToPath, Loader } from "bun";
-import { describe, expect } from "bun:test";
+import { describe, expect, test } from "bun:test";
+import { bunEnv, bunExe, tempDir } from "harness";
 import fs, { readdirSync } from "node:fs";
 import { join } from "path";
 import { itBundled } from "./expectBundled";
@@ -542,6 +543,96 @@ describe("bundler", async () => {
         },
       });
     }
+  });
+
+  // The JSON, JSONC, YAML, text and .env loaders hand the bytes of the file
+  // to the printer as they are on disk. Bytes that are not UTF-8 (a
+  // Latin-1 "café", a stray 0xFF) must print as U+FFFD, one per ill-formed
+  // sequence like TextDecoder, so that the bundle is valid UTF-8 and holds the
+  // same strings `bun run` reads from those files.
+  describe("ill-formed UTF-8 in data files", () => {
+    const R = 0xfffd;
+    const cases: [name: string, bytes: number[], codePoints: number[]][] = [
+      ["Latin-1 letter before the closing quote", [0x63, 0x61, 0x66, 0xe9], [0x63, 0x61, 0x66, R]],
+      ["byte that cannot start a sequence", [0x78, 0xff, 0x79], [0x78, R, 0x79]],
+      ["lone continuation byte", [0x78, 0x80, 0x79], [0x78, R, 0x79]],
+      ["truncated sequence before ASCII", [0x61, 0xe2, 0x82, 0x41], [0x61, R, 0x41]],
+      ["truncated sequence at the end", [0x61, 0xe2, 0x82], [0x61, R]],
+      ["truncated 4-byte sequence", [0x61, 0xf0, 0x9f, 0x98, 0x41], [0x61, R, 0x41]],
+      ["overlong encoding", [0x61, 0xc0, 0x80, 0x62], [0x61, R, R, 0x62]],
+      ["lead byte above F4", [0x61, 0xf5, 0x80, 0x62], [0x61, R, R, 0x62]],
+      ["well-formed text", [0xc3, 0xa9, 0xe2, 0x82, 0xac, 0xf0, 0x9f, 0x98, 0x80], [0xe9, 0x20ac, 0x1f600]],
+    ];
+    // An object key that is not UTF-8 must be quoted and decoded the same way,
+    // not printed as an identifier with the raw byte in it.
+    const badKey = { bytes: [0x6b, 0xff, 0x79], codePoints: [0x6b, R, 0x79] };
+
+    const buf = (parts: (string | number[])[]) =>
+      Buffer.concat(parts.map(p => (typeof p === "string" ? Buffer.from(p, "utf8") : Buffer.from(p))));
+    const rows: [key: string | number[], value: string | number[]][] = [
+      ...cases.map(([, bytes], i): [string, number[]] => [`case${i}`, bytes]),
+      [badKey.bytes, "value"],
+    ];
+    const objectRows = (row: (key: string | number[], value: string | number[]) => (string | number[])[]) =>
+      rows.flatMap(([key, value]) => row(key, value));
+    const files = {
+      "data.json": buf(["{", ...objectRows((k, v) => ['"', k, '":"', v, '",']).slice(0, -1), '"}']),
+      "data.jsonc": buf(["// comment\n{\n", ...objectRows((k, v) => ['  "', k, '": "', v, '",\n']), "}\n"]),
+      "data.yaml": buf(objectRows((k, v) => ['"', k, '": "', v, '"\n'])),
+      "data.txt": buf(cases.flatMap(([, bytes], i) => (i ? ["\n", bytes] : [bytes]))),
+      ".env": buf(cases.flatMap(([, bytes], i) => [`PUBLIC_CASE${i}=`, bytes, "\n"])),
+      "entry.ts": /* js */ `
+        import json from "./data.json";
+        import jsonc from "./data.jsonc";
+        import yaml from "./data.yaml";
+        import text from "./data.txt";
+        const codePoints = s => Array.from(s, c => c.codePointAt(0));
+        const describe = obj => JSON.stringify([Object.values(obj).map(codePoints), codePoints(Object.keys(obj).pop())]);
+        console.log("json  " + describe(json));
+        console.log("jsonc " + describe(jsonc));
+        console.log("yaml  " + describe(yaml));
+        console.log("text  " + JSON.stringify(codePoints(text)));
+        console.log("env   " + JSON.stringify([${cases.map((_, i) => `process.env.PUBLIC_CASE${i}`).join(", ")}].map(codePoints)));
+      `,
+    };
+    const values = cases.map(([, , codePoints]) => codePoints);
+    const objectLine = JSON.stringify([[...values, [..."value"].map(c => c.codePointAt(0))], badKey.codePoints]);
+    const expected = [
+      "json  " + objectLine,
+      "jsonc " + objectLine,
+      "yaml  " + objectLine,
+      "text  " + JSON.stringify(values.flatMap((codePoints, i) => (i ? [0x0a, ...codePoints] : codePoints))),
+      "env   " + JSON.stringify(values),
+    ].join("\n");
+
+    // "bun" prints string literals with ASCII escapes, "browser" writes UTF-8.
+    for (const target of ["bun", "browser"] as const) {
+      itBundled(`${target}/loader-data-file-ill-formed-utf8`, {
+        target,
+        dotenv: "PUBLIC_*",
+        files: Object.fromEntries(Object.entries(files).map(([name, contents]) => ["/" + name, contents])),
+        entryPoints: ["/entry.ts"],
+        onAfterBundle(api) {
+          expect(() => new TextDecoder("utf-8", { fatal: true }).decode(fs.readFileSync(api.outfile))).not.toThrow();
+        },
+        run: { stdout: expected },
+      });
+    }
+
+    test("bun run reads the same strings from those files", async () => {
+      using dir = tempDir("loader-ill-formed-utf8", files);
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "entry.ts"],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(stdout.trim()).toBe(expected);
+      expect(exitCode).toBe(0);
+    });
   });
 
   // Lazy-export modules (JSON, TOML, CSS modules, ...) used to crash the

@@ -1075,46 +1075,44 @@ where
     }
 
     while i < n {
-        let width: u8 = match ENCODING {
-            Encoding::Latin1 | Encoding::Ascii => 1,
-            Encoding::Utf8 => strings::wtf8_byte_sequence_length_with_invalid(text[i]),
-            Encoding::Utf16 => 1,
-        };
-        let clamped_width = (width as usize).min(n.saturating_sub(i));
-        let c: i32 = match ENCODING {
-            Encoding::Utf8 => {
-                let bytes: [u8; 4] = match clamped_width {
-                    1 => [text[i], 0, 0, 0],
-                    2 => [text[i], text[i + 1], 0, 0],
-                    3 => [text[i], text[i + 1], text[i + 2], 0],
-                    4 => [text[i], text[i + 1], text[i + 2], text[i + 3]],
-                    _ => unreachable!(),
-                };
-                strings::decode_wtf8_rune_t::<i32>(bytes, width, 0)
+        let (c, width): (i32, usize) = match ENCODING {
+            Encoding::Utf8 if text[i] >= 0x80 => {
+                let decoded = strings::decode_wtf8_with_fffd(&text[i..]);
+                if decoded.fail {
+                    // Not WTF-8: write U+FFFD in place of the ill-formed bytes, never the bytes.
+                    if ascii_only {
+                        writer.write_all(&bmp_escape(0xFFFD))?;
+                    } else {
+                        writer.write_all("\u{FFFD}".as_bytes())?;
+                    }
+                    i += decoded.len as usize;
+                    continue;
+                }
+                (decoded.code_point as i32, decoded.len as usize)
             }
+            Encoding::Utf8 | Encoding::Latin1 => (text[i] as i32, 1),
             Encoding::Ascii => {
                 debug_assert!(text[i] <= 0x7F);
-                text[i] as i32
+                (text[i] as i32, 1)
             }
-            Encoding::Latin1 => text[i] as i32,
             Encoding::Utf16 => {
                 // TODO: if this is a part of a surrogate pair, we could parse the whole codepoint in order
                 // to emit it as a single \u{result} rather than two paired \uLOW\uHIGH.
                 // eg: "\u{10334}" will convert to "𐌴" without this.
-                code_unit_at!(i)
+                (code_unit_at!(i), 1)
             }
         };
 
         if can_print_without_escape(c, ascii_only) {
             match ENCODING {
                 Encoding::Ascii | Encoding::Utf8 => {
-                    let remain = &text[i + clamped_width..];
+                    let remain = &text[i + width..];
                     if let Some(j) =
                         strings::index_of_needs_escape_for_java_script_string(remain, quote_char)
                     {
                         let j = j as usize;
-                        writer.write_all(&text[i..i + clamped_width + j])?;
-                        i += clamped_width + j;
+                        writer.write_all(&text[i..i + width + j])?;
+                        i += width + j;
                     } else {
                         writer.write_all(&text[i..])?;
                         break;
@@ -1124,7 +1122,7 @@ where
                     let mut codepoint_bytes = [0u8; 4];
                     let codepoint_len = strings::encode_wtf8_rune(&mut codepoint_bytes, c as u32);
                     writer.write_all(&codepoint_bytes[..codepoint_len])?;
-                    i += clamped_width;
+                    i += width;
                 }
             }
             continue;
@@ -1190,8 +1188,8 @@ where
             }
             0x24 => {
                 if quote_char == b'`' {
-                    let next = if i + clamped_width < n {
-                        Some(code_unit_at!(i + clamped_width))
+                    let next = if i + width < n {
+                        Some(code_unit_at!(i + width))
                     } else {
                         None
                     };
@@ -1214,7 +1212,7 @@ where
                 i += 1;
             }
             _ => {
-                i += width as usize;
+                i += width;
 
                 if c <= 0xFF && !json {
                     let h = hex2_upper(c as u8);

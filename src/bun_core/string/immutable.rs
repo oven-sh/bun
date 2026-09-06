@@ -38,7 +38,7 @@ pub use crate::strings_impl::{
 pub use unicode_draft::{
     BOM, UTF16Replacement, allocate_latin1_into_utf8, copy_cp1252_into_utf16,
     copy_latin1_into_ascii, copy_latin1_into_utf8_stop_on_non_ascii, copy_latin1_into_utf16,
-    copy_u8_into_u16, copy_u16_into_u8, copy_utf16_into_utf8_impl,
+    copy_u8_into_u16, copy_u16_into_u8, copy_utf16_into_utf8_impl, decode_wtf8_with_fffd,
     element_length_cp1252_into_utf16, element_length_utf8_into_utf16, to_utf8_list_with_type_bun,
     to_utf16_alloc_maybe_buffered, u16_is_lead, u16_is_trail, utf16_codepoint,
     utf16_codepoint_with_fffd, wtf8_sequence,
@@ -120,19 +120,9 @@ pub mod unicode {
                 cursor.width = 1;
                 return true;
             }
-            let len = wtf8_byte_sequence_length(first);
-            // `take ∈ 1..=4` clamped to the remaining length.
-            let take = (len as usize).min(tail.len());
-            let mut buf = [0u8; 4];
-            buf[..take].copy_from_slice(&tail[..take]);
-            let cp = decode_wtf8_rune_t::<CodePoint>(buf, len, -1);
-            if cp == -1 {
-                cursor.c = super::UNICODE_REPLACEMENT as CodePoint;
-                cursor.width = 1;
-            } else {
-                cursor.c = cp;
-                cursor.width = len;
-            }
+            let decoded = super::decode_wtf8_with_fffd(tail);
+            cursor.c = decoded.code_point as CodePoint;
+            cursor.width = decoded.len;
             true
         }
     }
@@ -2493,25 +2483,15 @@ pub fn try_convert_utf8_to_utf16_in_buffer<'a>(
     Some(&mut buf[..written])
 }
 
-/// Decode one WTF-8 sequence at the head of `s`; invalid lead/truncated → (U+FFFD, 1).
+/// Decode one WTF-8 sequence at the head of `s`; an ill-formed one → (U+FFFD, its maximal subpart).
 /// Lone surrogates pass through (WTF-8). Helper for [`convert_utf8_to_utf16_in_buffer`].
 fn decode_wtf8_one(s: &[u8]) -> (u32, usize) {
     let b0 = s[0];
     if b0 < 0x80 {
         return (b0 as u32, 1);
     }
-    let width = wtf8_byte_sequence_length_with_invalid(b0);
-    if width == 1 {
-        return (0xFFFD, 1);
-    }
-    let take = (width as usize).min(s.len());
-    let mut buf = [0u8; 4];
-    buf[..take].copy_from_slice(&s[..take]);
-    let cp = decode_wtf8_rune_t::<i32>(buf, width, -1);
-    if cp < 0 {
-        return (0xFFFD, 1);
-    }
-    (cp as u32, take)
+    let decoded = decode_wtf8_with_fffd(s);
+    (decoded.code_point, decoded.len as usize)
 }
 
 /// `strings.toUTF8ListWithType` — append UTF-8 transcoding of `utf16` onto
@@ -2637,7 +2617,8 @@ pub fn wtf8_to_utf16_alloc(bytes: &[u8]) -> Option<Vec<u16>> {
 /// Writes `bytes` (WTF-8) as little-endian UTF-16 code units starting at `dst` and returns the
 /// number of bytes written. `first_non_ascii` is the caller's `strings::first_non_ascii(bytes)`:
 /// that prefix is widened directly and only the rest goes through simdutf; a lone surrogate or an
-/// invalid byte there falls to a scalar loop (invalid byte → U+FFFD, lone surrogate kept).
+/// invalid byte there falls to a scalar loop (ill-formed sequence → one U+FFFD per maximal
+/// subpart, see [`decode_wtf8_with_fffd`]; lone surrogate kept).
 ///
 /// # Safety
 /// `dst` must be 2-byte aligned and valid for `2 * bytes.len()` bytes of writes (every input byte yields at
@@ -2686,22 +2667,8 @@ pub unsafe fn write_wtf8_as_utf16le(bytes: &[u8], first_non_ascii: usize, dst: *
             i += 1;
             continue;
         }
-        let width = wtf8_byte_sequence_length_with_invalid(b);
-        if width == 1 {
-            put(UNICODE_REPLACEMENT as u16);
-            i += 1;
-            continue;
-        }
-        let take = (width as usize).min(bytes.len() - i);
-        let mut buf = [0u8; 4];
-        buf[..take].copy_from_slice(&bytes[i..i + take]);
-        let cp = decode_wtf8_rune_t::<i32>(buf, width, -1);
-        if cp < 0 {
-            put(UNICODE_REPLACEMENT as u16);
-            i += 1;
-            continue;
-        }
-        let cp = cp as u32;
+        let decoded = decode_wtf8_with_fffd(&bytes[i..]);
+        let cp = decoded.code_point;
         if cp < 0x10000 {
             put(cp as u16);
         } else {
@@ -2709,7 +2676,7 @@ pub unsafe fn write_wtf8_as_utf16le(bytes: &[u8], first_non_ascii: usize, dst: *
             put(0xD800 + (c >> 10) as u16);
             put(0xDC00 + (c & 0x3FF) as u16);
         }
-        i += take;
+        i += decoded.len as usize;
     }
     written
 }

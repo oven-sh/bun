@@ -1831,9 +1831,7 @@ pub mod printer {
         }
     }
 
-    const MALFORMED: i32 = -1;
-
-    /// Same algorithm as `bun_js_printer::write_pre_quoted_string`, except malformed UTF-8 becomes U+FFFD.
+    /// Same algorithm as `bun_js_printer::write_pre_quoted_string`.
     /// PERF: (quote_char, ascii_only, json, encoding) are runtime params —
     /// profile if it shows up on a hot path.
     pub fn write_pre_quoted_string<W: PrinterWriter + ?Sized>(
@@ -1861,54 +1859,38 @@ pub mod printer {
         let mut i: usize = 0;
 
         while i < n {
-            let width: u8 = match encoding {
-                StrEncoding::Latin1 | StrEncoding::Ascii | StrEncoding::Utf16 => 1,
-                StrEncoding::Utf8 => strings::wtf8_byte_sequence_length_with_invalid(text_in[i]),
-            };
-            let clamped_width = (width as usize).min(n.saturating_sub(i));
-            let c: i32 = match encoding {
-                StrEncoding::Utf8 => {
-                    if width == 1 {
-                        // width 1 with a byte >= 0x80 is a stray continuation byte or an invalid lead.
-                        if text_in[i] >= 0x80 {
-                            MALFORMED
+            let (c, width): (i32, usize) = match encoding {
+                StrEncoding::Utf8 if text_in[i] >= 0x80 => {
+                    let decoded = strings::decode_wtf8_with_fffd(&text_in[i..]);
+                    if decoded.fail {
+                        // Not WTF-8: write U+FFFD in place of the ill-formed bytes, never the bytes.
+                        if ascii_only {
+                            writer.write_all(&bmp_escape(0xFFFD))?;
                         } else {
-                            text_in[i] as i32
+                            writer.write_all("\u{FFFD}".as_bytes())?;
                         }
-                    } else {
-                        let mut buf = [0u8; 4];
-                        buf[..clamped_width].copy_from_slice(&text_in[i..i + clamped_width]);
-                        strings::decode_wtf8_rune_t::<i32>(buf, width, MALFORMED)
+                        i += decoded.len as usize;
+                        continue;
                     }
+                    (decoded.code_point as i32, decoded.len as usize)
                 }
+                StrEncoding::Utf8 | StrEncoding::Latin1 => (text_in[i] as i32, 1),
                 StrEncoding::Ascii => {
                     debug_assert!(text_in[i] <= 0x7F);
-                    text_in[i] as i32
+                    (text_in[i] as i32, 1)
                 }
-                StrEncoding::Latin1 => text_in[i] as i32,
-                StrEncoding::Utf16 => text16[i] as i32,
+                StrEncoding::Utf16 => (text16[i] as i32, 1),
             };
-
-            if c == MALFORMED {
-                if ascii_only {
-                    writer.write_all(&bmp_escape(0xFFFD))?;
-                } else {
-                    writer.write_all("\u{FFFD}".as_bytes())?;
-                }
-                // One byte, not `width`, so the bytes after a truncated sequence survive.
-                i += 1;
-                continue;
-            }
 
             if can_print_without_escape(c, ascii_only) {
                 match encoding {
                     StrEncoding::Ascii | StrEncoding::Utf8 => {
-                        let remain = &text_in[i + clamped_width..];
+                        let remain = &text_in[i + width..];
                         if let Some(j) = strings::index_of_needs_escape_for_java_script_string(
                             remain, quote_char,
                         ) {
-                            writer.write_all(&text_in[i..i + clamped_width])?;
-                            i += clamped_width;
+                            writer.write_all(&text_in[i..i + width])?;
+                            i += width;
                             writer.write_all(&remain[..j as usize])?;
                             i += j as usize;
                         } else {
@@ -1920,7 +1902,7 @@ pub mod printer {
                         let mut cp = [0u8; 4];
                         let cp_len = strings::encode_wtf8_rune(&mut cp, c as u32);
                         writer.write_all(&cp[..cp_len])?;
-                        i += clamped_width;
+                        i += width;
                     }
                 }
                 continue;
@@ -1984,7 +1966,7 @@ pub mod printer {
                     i += 1;
                 }
                 _ => {
-                    i += width as usize;
+                    i += width;
                     if c <= 0xFF && !json {
                         let h = hex2_upper(c as u8);
                         writer.write_all(&[b'\\', b'x', h[0], h[1]])?;

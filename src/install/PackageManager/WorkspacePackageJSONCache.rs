@@ -65,7 +65,7 @@ impl MapEntry {
     pub(crate) fn reparse_root(&mut self, log: &mut Log) -> Result<(), Error> {
         let json_bump = bun_alloc::Arena::new();
         let parsed = parse_package_json(&self.source, log, &json_bump, false)?;
-        self.root = bun_core::handle_oom(parsed.root.deep_clone(&json_bump));
+        self.root = clone_root(&parsed.root, &self.source, log, &json_bump)?;
         self.json_arena = json_bump;
         Ok(())
     }
@@ -89,6 +89,31 @@ fn parse_package_json(
         log,
         bump,
     )?)
+}
+
+/// Clone the parsed root out of the thread-local AST store into `bump`, so
+/// the entry survives the next `initialize_store()` reset.
+fn clone_root(
+    root: &Expr,
+    source: &Source,
+    log: &mut Log,
+    bump: &bun_alloc::Arena,
+) -> Result<Expr, crate::Error> {
+    match root.deep_clone(bump) {
+        Ok(root) => Ok(root),
+        Err(bun_ast::DeepCloneError::StackOverflow) => {
+            log.add_error_fmt_opts(
+                format_args!("JSON document is too deeply nested"),
+                bun_ast::AddErrorOptions {
+                    source: Some(source),
+                    loc: root.loc,
+                    ..Default::default()
+                },
+            );
+            Err(bun_parsers::Error::StackOverflow.into())
+        }
+        Err(bun_ast::DeepCloneError::Alloc(err)) => Err(err.into()),
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -193,8 +218,15 @@ impl WorkspacePackageJSONCache {
             }
         };
 
+        let root = match clone_root(&parsed.root, &source, log, &json_bump) {
+            Ok(root) => root,
+            Err(err) => {
+                return GetResult::ParseErr(err);
+            }
+        };
+
         let value = MapEntry {
-            root: bun_core::handle_oom(parsed.root.deep_clone(&json_bump)),
+            root,
             source,
             indentation: parsed.indentation,
             indentation_guessed: opts.guess_indentation,

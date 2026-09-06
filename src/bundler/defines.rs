@@ -443,7 +443,21 @@ impl DefineDataExt for DefineData {
         // `.into()` deep-walking T2→T4 and re-boxing the payload; now `.into()`
         // is identity, so without `deep_clone` the `DefineData.value` dangles
         // into a freed slab and `process.env.NODE_ENV` reads garbage.
-        let data: ExprData = expr.data.deep_clone(bump)?;
+        let data: ExprData = match expr.data.deep_clone(bump) {
+            Ok(data) => data,
+            Err(bun_ast::DeepCloneError::StackOverflow) => {
+                log.add_error_fmt_opts(
+                    format_args!("JSON document is too deeply nested"),
+                    bun_ast::AddErrorOptions {
+                        source: Some(&source),
+                        loc: expr.loc,
+                        ..Default::default()
+                    },
+                );
+                return Err(bun_parsers::Error::StackOverflow.into());
+            }
+            Err(bun_ast::DeepCloneError::Alloc(err)) => return Err(err.into()),
+        };
         let can_be_removed_if_unused = bun_ast::expr::Tag::is_primitive_literal(data.tag());
         Ok(DefineData {
             value: data,

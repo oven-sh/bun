@@ -1,7 +1,7 @@
 import { file, spawn, write } from "bun";
 import { install_test_helpers } from "bun:internal-for-testing";
 import { afterAll, beforeAll, describe, expect, setDefaultTimeout, test } from "bun:test";
-import { mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "fs";
+import { mkdirSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from "fs";
 import { cp, exists, mkdir, rm } from "fs/promises";
 import {
   assertManifestsPopulated,
@@ -2883,3 +2883,40 @@ test.concurrent("a copyfile install over a workspace's hardlinked files does not
   expect(readJson(join(cacheDir, cached[0], "package.json"))).toEqual({ name: "no-deps", version: "2.0.0" });
   expect(statSync(join(cacheDir, cached[0], "index.js")).size).toBeGreaterThan(0);
 });
+
+for (const linker of ["hoisted", "isolated"]) {
+  test.skipIf(isWindows)(`workspace globs match a symlinked member directory (${linker})`, async () => {
+    using ctx = await setupTest();
+    const { packageDir, env } = ctx;
+    await Promise.all([
+      write(
+        join(packageDir, "package.json"),
+        JSON.stringify({ name: "mono", private: true, workspaces: ["packages/*"] }),
+      ),
+      write(join(packageDir, "real", "s", "package.json"), JSON.stringify({ name: "s", version: "1.0.0" })),
+      write(
+        join(packageDir, "packages", "b", "package.json"),
+        JSON.stringify({ name: "b", version: "1.0.0", dependencies: { s: "workspace:*" } }),
+      ),
+    ]);
+    symlinkSync(join("..", "real", "s"), join(packageDir, "packages", "s"));
+
+    await using proc = spawn({
+      cmd: [bunExe(), "install", `--linker=${linker}`],
+      cwd: packageDir,
+      stdout: "pipe",
+      stderr: "pipe",
+      env,
+    });
+    const [, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(err).not.toContain("error:");
+    expect(err).toContain("Saved lockfile");
+    expect(exitCode).toBe(0);
+    expect(await file(join(packageDir, "bun.lock")).text()).toContain(`"packages/s": {`);
+    const linked =
+      linker === "hoisted"
+        ? join(packageDir, "node_modules", "s", "package.json")
+        : join(packageDir, "packages", "b", "node_modules", "s", "package.json");
+    expect(await file(linked).json()).toEqual({ name: "s", version: "1.0.0" });
+  });
+}

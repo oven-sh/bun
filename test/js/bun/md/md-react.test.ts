@@ -712,12 +712,15 @@ describe("Bun.markdown.react development fields", () => {
     debugTask: null,
   };
 
-  test.each(["development", "test", undefined])("NODE_ENV=%s adds the fields React's dev build expects", async nodeEnv => {
-    const { root, list, item } = await run(nodeEnv);
-    expect(root).toEqual(devShape);
-    expect(list).toEqual(devShape);
-    expect(item).toEqual(devShape);
-  });
+  test.each(["development", "test", undefined])(
+    "NODE_ENV=%s adds the fields React's dev build expects",
+    async nodeEnv => {
+      const { root, list, item } = await run(nodeEnv);
+      expect(root).toEqual(devShape);
+      expect(list).toEqual(devShape);
+      expect(item).toEqual(devShape);
+    },
+  );
 
   test("NODE_ENV=production keeps the production shape", async () => {
     const { root, list, item } = await run("production");

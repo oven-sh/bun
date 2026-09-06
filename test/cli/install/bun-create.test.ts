@@ -457,10 +457,127 @@ it("should keep bun-create task and start strings containing escape sequences in
     env: { ...env, BUN_CREATE_DIR: bunCreateDir, MIMALLOC_PURGE_DELAY: "0" },
   });
 
-  const [out, _err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect(out).toContain("\n$ echo créate-step-done\n");
+  const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(err).toContain("$ echo créate-step-done\n");
+  expect(out).toContain("créate-step-done\n");
   expect(out).toContain("\n  cd escaped-dest\n  bun run dév --hot\n");
   expect(exitCode).toBe(0);
+});
+
+describe("bun-create hooks", () => {
+  function writeTemplate(name: string, pkg: Record<string, unknown>) {
+    const bunCreateDir = join(x_dir, "bun-create");
+    return Promise.all([
+      Bun.write(join(bunCreateDir, name, "package.json"), JSON.stringify({ name, version: "1.0.0", ...pkg })),
+      Bun.write(join(bunCreateDir, name, "index.js"), "console.log('hi');\n"),
+    ]).then(() => bunCreateDir);
+  }
+
+  async function runCreate(template: string, dest: string, bunCreateDir: string, extraArgs: string[] = []) {
+    await using proc = spawn({
+      cmd: [bunExe(), "create", template, dest, "--no-git", ...extraArgs],
+      cwd: x_dir,
+      stdout: "pipe",
+      stdin: "ignore",
+      stderr: "pipe",
+      env: { ...env, BUN_CREATE_DIR: bunCreateDir },
+    });
+    const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { out, err, exitCode };
+  }
+
+  it.skipIf(!isPosix)("run through the shell when the template has no dependencies", async () => {
+    const bunCreateDir = await writeTemplate("hooks-no-deps", {
+      dependencies: {},
+      "bun-create": {
+        preinstall: "echo 'Installing...' && echo pre > PRE_RAN",
+        postinstall: ["echo a    b >> hooks.log", "echo done && echo chained > CHAINED", 'sh -c "echo hi > f.txt"'],
+      },
+    });
+    const dest = join(x_dir, "hooks-no-deps-dest");
+
+    const { out, err, exitCode } = await runCreate("hooks-no-deps", dest, bunCreateDir);
+    expect(out).toContain("Installing...\n");
+    expect(err).toContain("$ echo 'Installing...' && echo pre > PRE_RAN\n");
+    expect(exitCode).toBe(0);
+
+    expect(await Bun.file(join(dest, "PRE_RAN")).text()).toBe("pre\n");
+    expect(await Bun.file(join(dest, "hooks.log")).text()).toBe("a b\n");
+    expect(await Bun.file(join(dest, "CHAINED")).text()).toBe("chained\n");
+    expect(await Bun.file(join(dest, "f.txt")).text()).toBe("hi\n");
+  });
+
+  it.skipIf(!isPosix)("stop with the hook's exit code when a hook fails", async () => {
+    const bunCreateDir = await writeTemplate("hooks-fail", {
+      "bun-create": {
+        postinstall: ["echo first > FIRST", "exit 3", "echo after > AFTER"],
+      },
+    });
+    const dest = join(x_dir, "hooks-fail-dest");
+
+    const { err, exitCode } = await runCreate("hooks-fail", dest, bunCreateDir);
+    expect(err).toContain('script "postinstall" exited with code 3');
+    expect(exitCode).toBe(3);
+
+    expect(await exists(join(dest, "FIRST"))).toBe(true);
+    expect(await exists(join(dest, "AFTER"))).toBe(false);
+  });
+
+  it.skipIf(!isPosix)("set npm_lifecycle_event and npm_package_name for the hook", async () => {
+    const bunCreateDir = await writeTemplate("hooks-env", {
+      "bun-create": {
+        preinstall: "echo $npm_lifecycle_event/$npm_package_name > PRE_ENV",
+        postinstall: "echo $npm_lifecycle_event/$npm_package_name > POST_ENV",
+      },
+    });
+    const dest = join(x_dir, "hooks-env-dest");
+
+    const { exitCode } = await runCreate("hooks-env", dest, bunCreateDir);
+    expect(exitCode).toBe(0);
+    expect(await Bun.file(join(dest, "PRE_ENV")).text()).toBe("preinstall/hooks-env-dest\n");
+    expect(await Bun.file(join(dest, "POST_ENV")).text()).toBe("postinstall/hooks-env-dest\n");
+  });
+
+  it("skip every hook with --no-install", async () => {
+    const bunCreateDir = await writeTemplate("hooks-skip", {
+      "bun-create": {
+        preinstall: "echo pre > PRE_RAN",
+        postinstall: "echo post > POST_RAN",
+      },
+    });
+    const dest = join(x_dir, "hooks-skip-dest");
+
+    const { err, exitCode } = await runCreate("hooks-skip", dest, bunCreateDir, ["--no-install"]);
+    expect(err).not.toContain("$ echo");
+    expect(exitCode).toBe(0);
+    expect(await exists(join(dest, "PRE_RAN"))).toBe(false);
+    expect(await exists(join(dest, "POST_RAN"))).toBe(false);
+  });
+
+  it("stop when bun install fails", async () => {
+    using server = Bun.serve({
+      port: 0,
+      fetch() {
+        return new Response("not found", { status: 404 });
+      },
+    });
+    const bunCreateDir = await writeTemplate("hooks-install-fail", {
+      dependencies: { "no-such-package-for-bun-create": "1.0.0" },
+      "bun-create": {
+        preinstall: "echo pre > PRE_RAN",
+        postinstall: "echo post > POST_RAN",
+      },
+    });
+    await Bun.write(join(bunCreateDir, "hooks-install-fail", "bunfig.toml"), `[install]\nregistry = "${server.url}"\n`);
+    const dest = join(x_dir, "hooks-install-fail-dest");
+
+    const { out, err, exitCode } = await runCreate("hooks-install-fail", dest, bunCreateDir);
+    expect(err).toContain("bun install exited with code 1");
+    expect(out).not.toContain("project successfully");
+    expect(exitCode).toBe(1);
+    expect(await exists(join(dest, "PRE_RAN"))).toBe(true);
+    expect(await exists(join(dest, "POST_RAN"))).toBe(false);
+  });
 });
 
 it("should not crash with --no-install and bun-create.postinstall starting with 'bun '", async () => {

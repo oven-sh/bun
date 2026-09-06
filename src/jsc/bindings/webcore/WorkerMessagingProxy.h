@@ -126,7 +126,7 @@ private:
     void releaseWorkerThread();
     void drainMessagesToWorkerObject(ScriptExecutionContext&, DrainBudget);
     void rejectAllCrossVMRequests();
-    void postMessageErrorToWorkerObject(String&& message);
+    void postMessageErrorToWorkerObject(String&& message, RefPtr<SerializedScriptValue>&& errorForDefaultReport);
     bool postSerializedErrorToWorkerObject(Zig::GlobalObject&, JSC::JSValue error);
 
     // Parent thread only.

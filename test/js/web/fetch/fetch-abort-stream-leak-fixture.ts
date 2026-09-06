@@ -6,8 +6,7 @@ const rss =
     ? Bun.unsafe.memoryFootprint
     : process.memoryUsage.rss;
 
-const ITER = Number(process.env.ITERATIONS ?? "60");
-const MAX_GROWTH_MB = Number(process.env.MAX_GROWTH_MB ?? "55");
+const ITER = 60;
 const CHUNK = new Uint8Array(512 * 1024);
 
 let sent = 0;
@@ -58,12 +57,8 @@ Bun.gc(true);
 await Bun.sleep(1);
 Bun.gc(true);
 
-const growthMB = (rss() - rss0) / 1024 / 1024;
-const heapMB = heapStats().heapSize / 1024 / 1024;
-console.log(`held=${held.length / 2} growthMB=${growthMB.toFixed(1)} heapMB=${heapMB.toFixed(1)}`);
+if (held.length !== ITER * 2) throw new Error(`held ${held.length / 2} of ${ITER} responses`);
 
-if (growthMB > MAX_GROWTH_MB) {
-  console.error(`LEAK: RSS grew ${growthMB.toFixed(1)}MB over ${ITER} aborts (> ${MAX_GROWTH_MB}MB)`);
-  process.exit(1);
-}
+console.log(JSON.stringify({ held: held.length / 2, heapMiB: heapStats().heapSize / 1024 / 1024 }));
+console.log(JSON.stringify({ deltaMiB: (rss() - rss0) / 1024 / 1024 }));
 process.exit(0);

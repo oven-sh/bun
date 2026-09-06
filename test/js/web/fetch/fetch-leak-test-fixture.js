@@ -27,8 +27,14 @@ await (async function runAll() {
   fetches.length = 0;
   fetches = [];
 })();
-await Bun.sleep(10);
+// A Response finalizer releases its native body, so an object freed by one
+// collection shows up in the next one's heap stats. Collect, yield, collect.
 Bun.gc(true);
-if ((heapStats().objectTypeCounts.Response ?? 0) > 1 + ((COUNT / 2) | 0)) {
-  throw new Error("Too many Response objects: " + heapStats().objectTypeCounts.Response);
+await new Promise(r => setImmediate(r));
+Bun.gc(true);
+// Nothing holds the COUNT responses any more. Unfixed, every one of them
+// stays alive.
+const responses = heapStats().objectTypeCounts.Response ?? 0;
+if (responses > 5) {
+  throw new Error("Too many Response objects: " + responses);
 }

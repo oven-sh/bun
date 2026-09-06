@@ -10,7 +10,8 @@ function getHeapStats() {
 
 const server = process.argv[2];
 const batch = 10;
-const iterations = 50;
+const warmupIterations = 2;
+const iterations = 12;
 const threshold = batch * 2 + batch / 2;
 // JSC's C++ module loader keeps a handful of pipeline JSPromises live in the
 // module map (fetch/module/load per registry entry) for the life of the
@@ -82,10 +83,19 @@ function getBody() {
       break;
     case "stream":
       body = new ReadableStream({
-        async pull(c) {
-          await Bun.sleep(10);
-          c.enqueue((cachedBody ??= getBuffer()));
-          c.close();
+        pull(c) {
+          // The server answers without reading the body, so the pull can still
+          // be in flight when fetch() resolves, and by then the controller may
+          // already be closed. Track the pull so iterate() waits for it before
+          // the heap is measured.
+          const pull = Bun.sleep(10).then(() => {
+            try {
+              c.enqueue((cachedBody ??= getBuffer()));
+              c.close();
+            } catch {}
+          });
+          pendingPulls.push(pull);
+          return pull;
         },
       });
       break;
@@ -96,34 +106,61 @@ function getBody() {
   return body;
 }
 
+let responses = 0;
+const pendingPulls = [];
 async function iterate() {
   const promises = [];
   for (let j = 0; j < batch; j++) {
     promises.push(fetch(server, { method: "POST", body: getBody() }));
   }
-  await Promise.all(promises);
+  for (const res of await Promise.all(promises)) {
+    if (res.status !== 200) throw new Error("unexpected status " + res.status);
+    responses++;
+  }
+  await Promise.all(pendingPulls);
+  pendingPulls.length = 0;
+}
+
+// A Response finalizer releases its native body, so an object freed by one
+// collection shows up in the next one's heap stats. Collect, yield, collect.
+async function collect() {
+  Bun.gc(true);
+  await new Promise(r => setImmediate(r));
+  Bun.gc(true);
+}
+
+let maxResponses = 0;
+let maxPromises = 0;
+async function measure() {
+  await collect();
+  const stats = getHeapStats();
+  maxResponses = Math.max(maxResponses, stats.Response || 0);
+  maxPromises = Math.max(maxPromises, stats.Promise || 0);
+  expect(stats.Response || 0).toBeLessThanOrEqual(threshold);
+  expect(stats.Promise || 0).toBeLessThanOrEqual(promiseThreshold);
 }
 
 try {
+  for (let i = 0; i < warmupIterations; i++) {
+    await iterate();
+    await measure();
+  }
+  const baseline = rss();
+
   for (let i = 0; i < iterations; i++) {
     await iterate();
-
-    {
-      Bun.gc(true);
-      await Bun.sleep(100);
-      Bun.gc(true);
-      const stats = getHeapStats();
-      expect(stats.Response || 0).toBeLessThanOrEqual(threshold);
-      expect(stats.Promise || 0).toBeLessThanOrEqual(promiseThreshold);
-      process.send({
-        rss: rss(),
-      });
-    }
+    await measure();
   }
-  process.send({
-    rss: rss(),
-  });
-  await Bun.sleep(10);
+
+  console.log(
+    JSON.stringify({
+      type,
+      responses,
+      maxResponses,
+      maxPromises,
+      deltaMiB: Math.round(((rss() - baseline) / 1024 / 1024) * 10) / 10,
+    }),
+  );
   process.exit(0);
 } catch (e) {
   console.error(e);

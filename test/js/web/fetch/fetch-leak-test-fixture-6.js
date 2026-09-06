@@ -1,28 +1,34 @@
-import { expect } from "bun:test";
 const rss =
   process.platform === "darwin" && typeof Bun.unsafe.memoryFootprint === "function"
     ? Bun.unsafe.memoryFootprint
     : process.memoryUsage.rss;
-let rssSample = 0;
-const url = process.env.SERVER_URL;
-const maxMemoryIncrease = parseInt(process.env.MAX_MEMORY_INCREASE || "0", 10);
-for (let i = 0; i < 500; i++) {
-  let response = await fetch(url);
+const url = process.argv[2];
+const expectBytes = parseInt(process.argv[3], 10);
+const iterations = parseInt(process.argv[4], 10);
 
+let chunks = 0;
+async function iterate() {
+  const response = await fetch(url);
   const reader = response.body.getReader();
+  let bytes = 0;
   while (true) {
-    const { done } = await reader.read();
+    const { done, value } = await reader.read();
     if (done) break;
-
-    await Bun.sleep(1);
+    bytes += value.byteLength;
+    chunks++;
+    // Yield between reads so the body is consumed slower than it arrives.
+    await new Promise(r => setImmediate(r));
   }
-  await Bun.sleep(1);
-  const memoryUsage = rss() / 1024 / 1024;
-  // memory should be stable after X iterations
-  if (i == 250) rssSample = memoryUsage;
+  if (bytes !== expectBytes) throw new Error("expected " + expectBytes + " bytes, got " + bytes);
 }
-await Bun.sleep(1);
+
+for (let i = 0; i < Math.ceil(iterations / 10); i++) await iterate();
 Bun.gc(true);
-const memoryUsage = rss() / 1024 / 1024;
-expect(rssSample).toBeGreaterThanOrEqual(memoryUsage - maxMemoryIncrease);
-console.log("done");
+const baseline = rss();
+
+for (let i = 0; i < iterations; i++) await iterate();
+Bun.gc(true);
+await new Promise(r => setImmediate(r));
+Bun.gc(true);
+
+console.log(JSON.stringify({ chunks, deltaMiB: Math.round(((rss() - baseline) / 1024 / 1024) * 10) / 10 }));

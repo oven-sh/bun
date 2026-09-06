@@ -31,7 +31,7 @@ use bun_jsc::EventLoopHandle;
 use bun_jsc::virtual_machine::VirtualMachine;
 #[cfg(not(windows))]
 use bun_paths::SEP;
-use bun_paths::{self, PathBuffer, platform, resolve_path};
+use bun_paths::{self, platform, resolve_path};
 use bun_ptr::Interned;
 #[cfg(not(windows))]
 use bun_resolver::fs::RealFS;
@@ -634,7 +634,7 @@ fn run_git(git_path: &[u8], cwd: &[u8], args: &[&[u8]]) -> GitResult {
 /// Parse newline-delimited repo-relative paths from git output, join each
 /// with the repository root, and insert existing files into `set`.
 fn append_paths(set: &mut StringSet, git_root: &[u8], stdout: &[u8]) {
-    let mut buf = PathBuffer::uninit();
+    let mut buf = bun_paths::path_buffer_pool::get();
     for line in strings::tokenize_any(stdout, b"\r\n") {
         let rel = strings::trim(line, b" \t");
         if rel.is_empty() {

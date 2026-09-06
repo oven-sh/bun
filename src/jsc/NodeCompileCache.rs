@@ -10,7 +10,7 @@ use bun_collections::{HashMap, IdentityContext};
 use bun_core::String as BunString;
 use bun_core::{Mutex, ZStr, env_var};
 use bun_options_types::Format;
-use bun_paths::{MAX_PATH_BYTES, PathBuffer, SEP};
+use bun_paths::{MAX_PATH_BYTES, SEP};
 use bun_sys::{self as sys, Fd, O};
 
 pub const STATUS_FAILED: i32 = 0;
@@ -402,8 +402,8 @@ fn enable_with_dir(dir: &[u8], portable: bool) -> EnableResult {
     let tag = version_tag();
 
     // Resolve `dir` to an absolute path against the process cwd.
-    let mut abs_buf = PathBuffer::uninit();
-    let mut cwd_buf = PathBuffer::uninit();
+    let mut abs_buf = bun_paths::path_buffer_pool::get();
+    let mut cwd_buf = bun_paths::path_buffer_pool::get();
     let abs: &[u8] = if bun_paths::is_absolute(dir) {
         dir
     } else {
@@ -512,8 +512,8 @@ fn enable_with_dir(dir: &[u8], portable: bool) -> EnableResult {
         if portable {
             // Resolve symlinks (e.g. macOS /var -> /private/var) so relative
             // keys match Bun's realpath'd module paths.
-            let mut z_buf = bun_core::PathBuffer::uninit();
-            let mut real_buf = bun_core::PathBuffer::uninit();
+            let mut z_buf = bun_paths::path_buffer_pool::get();
+            let mut real_buf = bun_paths::path_buffer_pool::get();
             let tagged_z = bun_paths::resolve_path::z(&tagged, &mut z_buf);
             if let Ok(real) = sys::realpath(tagged_z, &mut real_buf) {
                 tagged = real.to_vec();
@@ -1021,7 +1021,7 @@ fn write_persist_job_locked(
     let cache_hash = sha256(blob);
 
     let basename = cache_basename(job.key);
-    let mut tmpname_buf = PathBuffer::uninit();
+    let mut tmpname_buf = bun_paths::path_buffer_pool::get();
     let tmpname_zstr: &ZStr =
         match bun_resolver::fs::FileSystem::tmpname(&basename, &mut tmpname_buf[..], job.key) {
             Ok(z) => z,

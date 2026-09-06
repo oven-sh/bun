@@ -28,7 +28,6 @@ function mockToolchain(): Toolchain {
     clangVersion: "21.1.8",
     clangResourceDir: "/fake/llvm/lib/clang/21",
     ar: "/fake/llvm/bin/llvm-ar",
-    ranlib: "/fake/llvm/bin/llvm-ranlib",
     ld: "/fake/llvm/bin/ld.lld",
     ld64Lld: "/fake/llvm/bin/ld64.lld",
     rustLld: undefined,
@@ -36,9 +35,13 @@ function mockToolchain(): Toolchain {
     strip: "/fake/bin/strip",
     llvmStrip: "/fake/llvm/bin/llvm-strip",
     nm: "/fake/llvm/bin/llvm-nm",
+    readobj: "/fake/llvm/bin/llvm-readobj",
+    objdump: "/fake/llvm/bin/llvm-objdump",
+    cxxfilt: "/fake/llvm/bin/llvm-cxxfilt",
     dsymutil: "/fake/llvm/bin/dsymutil",
     bun: "/fake/bin/bun",
     jsRuntime: "/fake/bin/bun",
+    jsRuntimeArgv: ["/fake/bin/bun"],
     esbuild: "/fake/bin/esbuild",
     ccache: undefined,
     cmake: "/fake/bin/cmake",
@@ -47,7 +50,6 @@ function mockToolchain(): Toolchain {
     rustupHome: undefined,
     msvcLinker: undefined,
     rc: undefined,
-    mt: undefined,
     nasm: undefined,
   };
 }
@@ -91,7 +93,10 @@ describe("debug-info flag order", () => {
 
   test("release without LTO: full, homed debug info", () => {
     using dir = tempDir("build-debug-info", {});
-    for (const partial of [{ buildType: "Release" }, { buildType: "Release", asan: true }] as const) {
+    for (const partial of [
+      { buildType: "Release", lto: false },
+      { buildType: "Release", asan: true },
+    ] as const) {
       const cfg = linuxConfig(partial, String(dir));
       expect(cfg.lto).toBe(false);
       for (const flags of allCompileFlagLists(cfg)) {

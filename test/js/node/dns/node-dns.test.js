@@ -1,3 +1,4 @@
+import { dnsGetaddrinfoError } from "bun:internal-for-testing";
 import { beforeAll, describe, expect, it, setDefaultTimeout, test } from "bun:test";
 import { bunEnv, bunExe, isLinux, isWindows } from "harness";
 import * as dgram from "node:dgram";
@@ -1050,4 +1051,33 @@ test.concurrent.each(["NAPTR", "naptr"])("resolve(hostname, %p) issues a NAPTR q
   } finally {
     socket.close();
   }
+});
+
+// dns.lookup() is getaddrinfo(3). Node reports a temporary resolver failure
+// (every nameserver timed out or answered SERVFAIL) as `EAI_AGAIN` with
+// libuv's errno, and retry libraries key on that code. Bun used to report it
+// as the c-ares code `ETIMEOUT`. CI cannot point getaddrinfo at a failing
+// resolver, so this drives the same mapping the system backend, fetch() and
+// Bun.connect() use with the raw EAI_* status.
+describe("getaddrinfo status mapping", () => {
+  test("EAI_AGAIN is reported as EAI_AGAIN, like Node", () => {
+    const err = dnsGetaddrinfoError("EAI_AGAIN", "redis.example");
+    expect(err).toBeInstanceOf(Error);
+    expect(err).toMatchObject({
+      message: "getaddrinfo EAI_AGAIN redis.example",
+      code: "EAI_AGAIN",
+      errno: -3001,
+      syscall: "getaddrinfo",
+      hostname: "redis.example",
+    });
+  });
+
+  test("EAI_NONAME is still reported as ENOTFOUND, like Node", () => {
+    expect(dnsGetaddrinfoError("EAI_NONAME", "redis.example")).toMatchObject({
+      message: "getaddrinfo ENOTFOUND redis.example",
+      code: "ENOTFOUND",
+      syscall: "getaddrinfo",
+      hostname: "redis.example",
+    });
+  });
 });

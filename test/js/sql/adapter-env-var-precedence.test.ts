@@ -138,6 +138,19 @@ describe("SQL adapter environment variable precedence", () => {
       expect(sql.options.filename).toBe(":memory:");
     });
 
+    test.each(["sqlite://app.db", "file:data.db", ":memory:", "./relative.db"])(
+      'a url is a connection target for adapter: "sqlite" too (%s)',
+      url => {
+        const expected = new SQL(url, { adapter: "sqlite" }).options.filename;
+        expect(new SQL({ adapter: "sqlite", url }).options).toMatchObject({ adapter: "sqlite", filename: expected });
+
+        process.env.DATABASE_URL = "sqlite://env.db";
+        process.env.SQLITE_URL = "sqlite://env.db";
+        expect(new SQL({ adapter: "sqlite", url }).options).toMatchObject({ adapter: "sqlite", filename: expected });
+        expect(new SQL({ adapter: "sqlite", url, filename: "wins.db" }).options.filename).toBe("wins.db");
+      },
+    );
+
     test("the host option alias is a connection target", () => {
       process.env.DATABASE_URL = ":memory:";
 

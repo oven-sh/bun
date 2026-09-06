@@ -483,7 +483,7 @@ await query;
 
 You can configure `sql` connection parameters with environment variables. The client checks them in order of precedence and detects the database type from the connection string format.
 
-The connection URL variables (`DATABASE_URL`, `POSTGRES_URL`, `MYSQL_URL`, `SQLITE_URL` and the `TLS_*` variants) are a fallback for when nothing names a target. A connection string, or an options object with `url`, `filename`, `hostname`, `host` or `path`, is used as given and these variables are not consulted.
+The connection URL variables (`DATABASE_URL`, `POSTGRES_URL`, `MYSQL_URL`, `MARIADB_URL`, `SQLITE_URL`, their aliases listed below, and the `TLS_*` variants) are a fallback for when nothing names a target. A connection string, or an options object with `url`, `filename`, `hostname`, `host` or `path`, is used as given and these variables are not consulted.
 
 ### Automatic Database Detection
 

@@ -1699,21 +1699,17 @@ function parseConnectionDetailsFromOptionsOrEnvironment(
 
   let optionsFilename;
   let optionsUrl;
-  if (options.adapter === "sqlite") {
-    // SQLite adapter - only check filename (not url)
-    if ("filename" in options && (optionsFilename = options.filename)) {
-      resolvedUrl = optionsFilename;
-    }
-  } else if (!options.adapter) {
-    // Unknown adapter - check both, filename first (more specific)
-    if ("filename" in options && (optionsFilename = options.filename)) {
-      resolvedUrl = optionsFilename;
-    } else if ("url" in options && (optionsUrl = options.url)) {
+  if (options.adapter && options.adapter !== "sqlite") {
+    // Known non-SQLite adapter - only check url (not filename)
+    if ("url" in options && (optionsUrl = options.url)) {
       resolvedUrl = optionsUrl;
     }
   } else {
-    // Known non-SQLite adapter - only check url (not filename)
-    if ("url" in options && (optionsUrl = options.url)) {
+    // SQLite or unknown adapter - check both, filename first (more specific).
+    // { adapter: "sqlite", url } must open the same database that { url } alone does.
+    if ("filename" in options && (optionsFilename = options.filename)) {
+      resolvedUrl = optionsFilename;
+    } else if ("url" in options && (optionsUrl = options.url)) {
       resolvedUrl = optionsUrl;
     }
   }

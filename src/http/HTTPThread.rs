@@ -427,12 +427,7 @@ impl ThreadState {
             // SSL request — including unix-socket and proxy paths below —
             // funnels through here before touching `https_context.{group,secure}`.
             self.ensure_https_context_init();
-        }
-        if !client.unix_socket_path.is_empty() {
-            return self.context::<IS_SSL>().connect_socket(client);
-        }
 
-        if IS_SSL {
             'custom_ctx: {
                 let Some(tls) = client.tls_props.clone() else {
                     break 'custom_ctx;
@@ -490,30 +485,20 @@ impl ThreadState {
                 let this = ctx.this_ptr();
                 let _guard = RefPtr::from_this(this);
                 client.set_custom_ssl_ctx(ctx);
-                let ctx = this;
-                // Keepalive is now supported for custom SSL contexts
-                let result = if let Some((hostname, port, protocol_ok)) =
-                    client.http_proxy().map(|url| {
-                        (
-                            bun_ptr::RawSlice::new(url.hostname),
-                            url.get_port_auto(),
-                            url.protocol.is_empty() || url.has_http_like_protocol(),
-                        )
-                    }) {
-                    if !protocol_ok {
-                        return Err(crate::Error::UnsupportedProxyProtocol);
-                    }
-                    ctx.connect(client, hostname.slice(), port)
-                } else {
-                    let (hn, pt) = (
-                        bun_ptr::RawSlice::new(client.url.hostname()),
-                        client.url.get_port_auto(),
-                    );
-                    ctx.connect(client, hn.slice(), pt)
-                };
                 // NewHttpContext<true> == NewHttpContext<IS_SSL> here (IS_SSL branch).
-                return result.map(|o| o.map(|s| s.cast_ssl::<IS_SSL>()));
+                return Self::dial(&*this, client).map(|o| o.map(|s| s.cast_ssl::<IS_SSL>()));
             }
+        }
+        Self::dial(self.context::<IS_SSL>(), client)
+    }
+
+    /// Open the connection for `client` on `ctx`: unix path, HTTP proxy, or direct.
+    fn dial<const IS_SSL: bool>(
+        ctx: &NewHttpContext<IS_SSL>,
+        client: &mut crate::HTTPClient,
+    ) -> crate::Result<Option<crate::HTTPSocket<IS_SSL>>> {
+        if !client.unix_socket_path.is_empty() {
+            return ctx.connect_socket(client);
         }
         if let Some((href_empty, hostname, port, protocol_ok)) = client.http_proxy().map(|url| {
             (
@@ -526,9 +511,7 @@ impl ThreadState {
             if !href_empty {
                 // https://github.com/oven-sh/bun/issues/11343
                 if protocol_ok {
-                    return self
-                        .context::<IS_SSL>()
-                        .connect(client, hostname.slice(), port);
+                    return ctx.connect(client, hostname.slice(), port);
                 }
                 return Err(crate::Error::UnsupportedProxyProtocol);
             }
@@ -537,7 +520,7 @@ impl ThreadState {
             bun_ptr::RawSlice::new(client.url.hostname()),
             client.url.get_port_auto(),
         );
-        self.context::<IS_SSL>().connect(client, hn.slice(), pt)
+        ctx.connect(client, hn.slice(), pt)
     }
 
     /// Evict SSL context cache entries that haven't been used for ssl_context_cache_ttl_ns.

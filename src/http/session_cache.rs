@@ -1,6 +1,6 @@
 //! Client-side TLS session cache for `fetch()`.
 //!
-//! Keyed on the keep-alive pool tuple `(hostname, port, proxy_auth_hash)` and
+//! Keyed on the keep-alive pool tuple `(hostname, port, proxy_auth_hash, unix_path)` and
 //! scoped to one [`HTTPContext<true>`] per interned `SSLConfig`. A sink is
 //! installed before the handshake and armed only after `checkServerIdentity`
 //! passes, so an unverified handshake never inserts: a resumed handshake
@@ -25,6 +25,8 @@ struct CacheEntry {
     hostname: Box<[u8]>,
     port: u16,
     proxy_auth_hash: u64,
+    /// AF_UNIX socket path; empty for TCP.
+    unix_path: Box<[u8]>,
     session: SslSession,
 }
 
@@ -41,6 +43,7 @@ impl SessionCache {
         hostname: &[u8],
         port: u16,
         proxy_auth_hash: u64,
+        unix_path: &[u8],
     ) -> Option<SslSession> {
         if hostname.len() > MAX_KEEPALIVE_HOSTNAME {
             return None;
@@ -50,11 +53,19 @@ impl SessionCache {
             e.port == port
                 && e.proxy_auth_hash == proxy_auth_hash
                 && strings::eql_long(&e.hostname, hostname, true)
+                && *e.unix_path == *unix_path
         })?;
         Some(entries.remove(idx).session)
     }
 
-    fn insert(&self, hostname: &[u8], port: u16, proxy_auth_hash: u64, session: SslSession) {
+    fn insert(
+        &self,
+        hostname: &[u8],
+        port: u16,
+        proxy_auth_hash: u64,
+        unix_path: &[u8],
+        session: SslSession,
+    ) {
         if hostname.len() > MAX_KEEPALIVE_HOSTNAME {
             return;
         }
@@ -63,6 +74,7 @@ impl SessionCache {
             e.port == port
                 && e.proxy_auth_hash == proxy_auth_hash
                 && strings::eql_long(&e.hostname, hostname, true)
+                && *e.unix_path == *unix_path
         }) {
             let _ = entries.remove(idx);
         } else if entries.len() >= SESSION_CACHE_CAPACITY {
@@ -72,6 +84,7 @@ impl SessionCache {
             hostname: Box::<[u8]>::from(hostname),
             port,
             proxy_auth_hash,
+            unix_path: Box::<[u8]>::from(unix_path),
             session,
         });
     }
@@ -86,6 +99,7 @@ pub(crate) struct SessionSink {
     hostname: Box<[u8]>,
     port: u16,
     proxy_auth_hash: u64,
+    unix_path: Box<[u8]>,
     /// Set once `checkServerIdentity` passes. TLS 1.2 delivers the session
     /// inside `SSL_do_handshake`, before `on_handshake` can verify the peer.
     armed: Cell<bool>,
@@ -94,9 +108,13 @@ pub(crate) struct SessionSink {
 
 impl SessionSink {
     fn insert(&self, session: SslSession) {
-        self.ctx
-            .session_cache
-            .insert(&self.hostname, self.port, self.proxy_auth_hash, session);
+        self.ctx.session_cache.insert(
+            &self.hostname,
+            self.port,
+            self.proxy_auth_hash,
+            &self.unix_path,
+            session,
+        );
     }
 
     /// Flush the parked TLS 1.2 session and admit later TLS 1.3 tickets.
@@ -130,7 +148,6 @@ impl bun_uws::SslSessionSink for SinkHandle {
 pub(crate) fn eligible(client: &crate::HTTPClient) -> bool {
     client.flags.reject_unauthorized
         && !client.signals.get(signals::Field::CertErrors)
-        && client.unix_socket_path.is_empty()
         && !bun_core::env_var::feature_flag::BUN_FEATURE_FLAG_DISABLE_FETCH_TLS_SESSION_CACHE
             .get()
             .unwrap_or(false)
@@ -144,8 +161,12 @@ pub(crate) fn install(
     hostname: &[u8],
     port: u16,
     proxy_auth_hash: u64,
+    unix_path: &[u8],
 ) -> Option<Rc<SessionSink>> {
-    if let Some(session) = ctx.session_cache.take(hostname, port, proxy_auth_hash) {
+    if let Some(session) = ctx
+        .session_cache
+        .take(hostname, port, proxy_auth_hash, unix_path)
+    {
         ssl.set_session(&session);
     }
     let sink = Rc::new(SessionSink {
@@ -153,6 +174,7 @@ pub(crate) fn install(
         hostname: Box::<[u8]>::from(hostname),
         port,
         proxy_auth_hash,
+        unix_path: Box::<[u8]>::from(unix_path),
         armed: Cell::new(false),
         pending: RefCell::new(None),
     });

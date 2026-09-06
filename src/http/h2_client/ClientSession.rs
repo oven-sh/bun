@@ -1058,6 +1058,7 @@ impl ClientSession {
                 0,
                 0,
                 pool_ref,
+                b"",
             );
         } else {
             NewHTTPContext::<true>::close_socket(socket);

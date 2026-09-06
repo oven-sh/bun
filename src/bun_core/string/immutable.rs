@@ -2741,4 +2741,31 @@ mod tests {
         let out = super::convert_utf8_to_utf16_in_buffer(&mut buf, b"\xC3\xA9\xF0\x9F\x98\x80");
         assert_eq!(out, &[0x00E9, 0xD83D, 0xDE00][..]);
     }
+
+    #[test]
+    fn decode_wtf8_with_fffd_covers_the_maximal_subpart_of_an_ill_formed_sequence() {
+        let decode = |bytes: &[u8]| {
+            let r = super::decode_wtf8_with_fffd(bytes);
+            (r.code_point, r.len, r.fail)
+        };
+        assert_eq!(decode(b"\xC3\xA9"), (0xE9, 2, false));
+        assert_eq!(decode(b"\xF0\x9F\x98\x80!"), (0x1F600, 4, false));
+        // WTF-8 lone surrogates decode; a truncated one is a 2-byte subpart.
+        assert_eq!(decode(b"\xED\xA0\x80"), (0xD800, 3, false));
+        assert_eq!(decode(b"\xED\xBF\xBF"), (0xDFFF, 3, false));
+        assert_eq!(decode(b"\xED\xA0"), (0xFFFD, 2, true));
+        assert_eq!(decode(b"\xED\xA0A"), (0xFFFD, 2, true));
+        // Bytes that cannot start a sequence are replaced one at a time.
+        assert_eq!(decode(b"\xFF"), (0xFFFD, 1, true));
+        assert_eq!(decode(b"\x80a"), (0xFFFD, 1, true));
+        assert_eq!(decode(b"\xC0\x80"), (0xFFFD, 1, true));
+        // A lead byte without its continuation bytes: the ASCII that follows is not consumed.
+        assert_eq!(decode(b"\xE9\""), (0xFFFD, 1, true));
+        assert_eq!(decode(b"\xE2\x82A"), (0xFFFD, 2, true));
+        assert_eq!(decode(b"\xE2\x82"), (0xFFFD, 2, true));
+        assert_eq!(decode(b"\xF0\x9F\x98A"), (0xFFFD, 3, true));
+        // Second bytes outside the lead byte's range (overlong, above U+10FFFF) end the subpart.
+        assert_eq!(decode(b"\xE0\x80\x80"), (0xFFFD, 1, true));
+        assert_eq!(decode(b"\xF4\x90\x80\x80"), (0xFFFD, 1, true));
+    }
 }

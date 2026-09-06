@@ -4,8 +4,8 @@
  *   icudt<NN>l.dat (as shipped in the ICU release tarball)
  *     │  1. filter  — drop items bun never reaches (icupkg -r)
  *     │  2. guard   — fail if the rbnf keep-list went stale
- *     │  3. repack  — per-item zstd with a trained dictionary; items in
- *     │               icu-keep-raw.txt stay uncompressed
+ *     │  3. repack  — per-item zstd with a trained dictionary; KEEP_RAW
+ *     │               items stay uncompressed
  *     ▼
  *   <out>/icudt<NN>l.dat   the repacked package
  *   <out>/icudt.zstdict    the dictionary
@@ -22,7 +22,7 @@
  * rewriting the package TOC, which is verified by a byte-exact round trip of
  * the unmodified package first.
  *
- *   icu-data.ts --icupkg <exe> --in <icudtNNl.dat> --out <dir> --keep-raw <file> [--obj-format elf|coff]
+ *   icu-data.ts --icupkg <exe> --in <icudtNNl.dat> --out <dir> [--obj-format elf|coff]
  */
 
 import { spawnSync } from "node:child_process";
@@ -50,6 +50,58 @@ const keepAnyway = (item: string): boolean => {
   return m !== null && RBNF_KEEP.has(m[1]!);
 };
 
+/**
+ * Items that stay UNCOMPRESSED because decompressing them on first use would
+ * cost too much: the item is large (>~100 KB → ms-scale decode), it is loaded
+ * by JSC/VM init, or it is shared by every call into a subsystem (root / pool
+ * / DUCET). Everything else is per-item zstd'd and decompressed on first
+ * lookup by bun_icu_maybe_decompress. `*` matches within one path segment.
+ */
+const KEEP_RAW = [
+  // Unicode property tries / normalization — JSC init (lexer, regex \p{})
+  // and String.normalize / URL IDNA read these.
+  "*.icu",
+  "*.nrm",
+  // Shared string pools — every locale bundle in a tree references its
+  // tree's pool; compressing them would add ~100-150 us to the first call of
+  // each tree's API regardless of locale.
+  "*/pool.res",
+  "pool.res",
+  // en-locale and root format patterns — Date.toString() and Intl.*("en").
+  "root.res",
+  "en.res",
+  "en_*.res",
+  // ko.res is the one locale-pattern file large enough (70 KB) to decode in
+  // ~100 us; the next-largest (ff_Adlm, zh, ru) are <40 KB and stay compressed.
+  "ko.res",
+  // Supplemental tables — touched by Date / Intl.Locale / DateTimeFormat /
+  // NumberFormat construction across many locales.
+  "supplementalData.res",
+  "zoneinfo64.res",
+  "metaZones.res",
+  "timezoneTypes.res",
+  "windowsZones.res",
+  "numberingSystems.res",
+  "plurals.res",
+  "pluralRanges.res",
+  "dayPeriods.res",
+  "genderList.res",
+  "metadata.res",
+  "units.res",
+  "langInfo.res",
+  "keyTypeData.res",
+  // Collation: the DUCET root table is opened by every Intl.Collator (573 KB,
+  // ~0.8 ms decode); the CJK tailorings are the only per-locale ones >100 KB.
+  "coll/ucadata.icu",
+  "coll/root.res",
+  "coll/zh.res",
+  "coll/ko.res",
+  "coll/ja.res",
+  // Segmentation dictionaries — cjdict alone is 2 MB (~1.9 ms decode).
+  "brkitr/*.dict",
+].map(g => new RegExp(`^${g.replace(/[.+^${}()|[\]\\]/g, "\\$&").replace(/\*/g, "[^/]*")}$`));
+const keepRaw = (bare: string): boolean => KEEP_RAW.some(r => r.test(bare));
+
 const ZSTD_LEVEL = 19;
 const DICT_SIZE = 128 * 1024;
 /** Below this an item isn't worth a frame header. */
@@ -63,19 +115,15 @@ const { values: opts } = parseArgs({
     icupkg: { type: "string" },
     in: { type: "string" },
     out: { type: "string" },
-    "keep-raw": { type: "string" },
     "obj-format": { type: "string", default: "elf" },
   },
 });
-if (!opts.icupkg || !opts.in || !opts.out || !opts["keep-raw"]) {
-  throw new BuildError(
-    "usage: icu-data.ts --icupkg <exe> --in <icudtNNl.dat> --out <dir> --keep-raw <file> [--obj-format elf|coff]",
-  );
+if (!opts.icupkg || !opts.in || !opts.out) {
+  throw new BuildError("usage: icu-data.ts --icupkg <exe> --in <icudtNNl.dat> --out <dir> [--obj-format elf|coff]");
 }
 const ICUPKG = opts.icupkg;
 const IN_DAT = opts.in;
 const OUT = opts.out;
-const KEEP_RAW = opts["keep-raw"];
 const OBJ_FORMAT = opts["obj-format"];
 if (OBJ_FORMAT !== "elf" && OBJ_FORMAT !== "coff")
   throw new BuildError(`--obj-format must be elf or coff, got ${OBJ_FORMAT}`);
@@ -225,15 +273,6 @@ function assertRbnfKeepList(itemsDir: string): void {
   }
 }
 
-function loadKeepRaw(file: string): (bare: string) => boolean {
-  const globs = readFileSync(file, "utf8")
-    .split("\n")
-    .map(l => l.replace(/#.*$/, "").trim())
-    .filter(Boolean)
-    .map(g => new RegExp(`^${g.replace(/[.+^${}()|[\]\\]/g, "\\$&").replace(/\*/g, "[^/]*")}$`));
-  return bare => globs.some(r => r.test(bare));
-}
-
 // ───────────────────────────────────────────────────────────────────────────
 
 function main(): void {
@@ -276,7 +315,6 @@ function main(): void {
 
   // 3. Repack. Train the dictionary only on items that will be compressed —
   // kept-raw items would waste dictionary capacity.
-  const keepRaw = loadKeepRaw(KEEP_RAW);
   const trainDir = join(work, "train");
   mkdirSync(trainDir);
   for (const bare of names) {

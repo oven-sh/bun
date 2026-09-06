@@ -101,7 +101,6 @@ export const icu: Dependency = {
     // ─── Data ───
     const dataDir = join(B, "data");
     const inDat = join(S, "data", "in", `icudt${ICU_MAJOR}l.dat`);
-    const keepRaw = join(cfg.cwd, "scripts", "build", "icu-keep-raw.txt");
     const dataScript = join(cfg.cwd, "scripts", "build", "icu-data.ts");
     const outDat = join(dataDir, `icudt${ICU_MAJOR}l.dat`);
     const dict = join(dataDir, "icudt.zstdict");
@@ -151,7 +150,7 @@ export const icu: Dependency = {
         },
         {
           outputs: [asm, outDat, dict],
-          inputs: [inDat, icupkg, keepRaw, dataScript],
+          inputs: [inDat, icupkg, dataScript],
           cmd: [
             ...cfg.jsRuntimeArgv,
             dataScript,
@@ -161,8 +160,6 @@ export const icu: Dependency = {
             inDat,
             "--out",
             dataDir,
-            "--keep-raw",
-            keepRaw,
             "--obj-format",
             cfg.windows ? "coff" : "elf",
           ],

@@ -520,9 +520,10 @@ export interface ResolvedDep {
   sources: string[];
   /**
    * The "this dep is ready" signal for anything downstream: for cargo deps
-   * the libs, for prebuilt deps the identity stamp, for direct / header-only
-   * deps the source stamp (.ref). How a consumer's compile edges name them
-   * (implicit vs order-only) is `headerSignal`.
+   * the libs, for prebuilt deps the libs (or the identity stamp when it ships
+   * none), for direct / header-only deps the source stamp (.ref). How a
+   * consumer's compile edges name them (implicit vs order-only) is
+   * `headerSignal`.
    */
   outputs: string[];
   /**

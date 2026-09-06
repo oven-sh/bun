@@ -41,8 +41,7 @@ impl SubCommand {
     }
 }
 
-/// How many `null` slots `set` may add past the end of an array for one
-/// index. A larger index is a typo, not a request for a dense array.
+/// Upper bound on the `null` slots one `set` may add past the end of an array.
 const MAX_ARRAY_EXTENSION: usize = 1024;
 
 /// One step of a `bun pm pkg` key path such as `contributors[0].name`.
@@ -537,10 +536,7 @@ impl PmPkgCommand {
     }
 
     /// Splits `a.b[0][c.d]` into `[Key("a"), Key("b"), Key("0"), Key("c.d")]`.
-    /// Text inside `[...]` is one segment, dots included. `[]` is `Append`.
-    /// Segments are sub-slices of `key`: `E::Object::put` stores keys by
-    /// reference (no copy into the AST arena), so they must outlive the
-    /// `Expr` tree, which `key` (an argv slice) does.
+    /// Segments borrow from `key` because `E::Object::put` stores keys by reference.
     fn parse_key_path(key: &[u8]) -> Result<Vec<Segment<'_>>, Error> {
         let mut segments: Vec<Segment<'_>> = Vec::new();
         let mut rest = key;
@@ -588,10 +584,7 @@ impl PmPkgCommand {
         Self::set_path(root, &path, expr)
     }
 
-    /// Walks `path` from `container`, creating missing containers, and stores
-    /// `value` at the end. Like `npm pkg set`: a numeric segment indexes an
-    /// existing array (holes become `null`), and a missing container becomes
-    /// an array when the segment after it is numeric or `[]`.
+    /// Stores `value` at `path`, with the container rules of `npm pkg set`.
     fn set_path(container: &mut Expr, path: &[Segment<'_>], value: Expr) -> Result<(), Error> {
         let (segment, rest) = path.split_first().ok_or(crate::Error::EmptyKey)?;
 
@@ -645,9 +638,7 @@ impl PmPkgCommand {
         }
     }
 
-    /// True when `next` can be stored into `expr` without replacing it. An
-    /// empty object is replaced by an array when `next` is an index, as npm
-    /// does.
+    /// An empty object is replaced by an array when `next` is an index, as npm does.
     fn is_writable_container(expr: &Expr, next: &Segment<'_>) -> bool {
         match &expr.data {
             ExprData::EArray(_) => true,
@@ -711,8 +702,7 @@ impl PmPkgCommand {
         Self::delete_path(root, &path)
     }
 
-    /// Removes the value at `path`. An index into an array removes that item
-    /// and shifts the rest down, like `npm pkg delete`.
+    /// Removes the value at `path`. An array index splices the item out.
     fn delete_path(container: &mut Expr, path: &[Segment<'_>]) -> Result<bool, Error> {
         let Some((Segment::Key(part), rest)) = path.split_first() else {
             return Ok(false);

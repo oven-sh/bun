@@ -623,19 +623,21 @@ describe.concurrent("setSession() after the handshake started", () => {
   // BoringSSL's SSL_set_session abort()s the process once the handshake state
   // machine has left its initial state. Every door below used to take the
   // whole process down with rc 134; now each one throws.
-  it.each([["node-client-secureConnect"], ["node-server-secureConnection"], ["node-duplex-secureConnect"]])(
-    "%s throws instead of aborting",
-    async door => {
-      await using proc = Bun.spawn({
-        cmd: [bunExe(), join(import.meta.dirname, "node-tls-set-session-after-start.fixture.ts"), door],
-        env: bunEnv,
-        stdout: "pipe",
-        stderr: "pipe",
+  describe.each([["node-client-secureConnect"], ["node-server-secureConnection"], ["node-duplex-secureConnect"]])(
+    "%s",
+    door => {
+      it("throws instead of aborting", async () => {
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), join(import.meta.dirname, "node-tls-set-session-after-start.fixture.ts"), door],
+          env: bunEnv,
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect(stderr).toBe("");
+        expect(JSON.parse(stdout)).toEqual({ threw: "Already started." });
+        expect(exitCode).toBe(0);
       });
-      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      expect(stderr).toBe("");
-      expect(JSON.parse(stdout)).toEqual({ threw: "Already started." });
-      expect(exitCode).toBe(0);
     },
   );
 });

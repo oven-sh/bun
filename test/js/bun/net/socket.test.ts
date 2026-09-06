@@ -4721,8 +4721,10 @@ describe.concurrent("setSession() after the handshake started", () => {
     expect(exitCode).toBe(0);
   }
 
-  it.each([["bun-connect-handshake"], ["bun-listen-handshake"]])("%s throws instead of aborting", async door => {
-    await run(door, { threw: "Already started." });
+  describe.each([["bun-connect-handshake"], ["bun-listen-handshake"]])("%s", door => {
+    it("throws instead of aborting", async () => {
+      await run(door, { threw: "Already started." });
+    });
   });
 
   it("is still accepted from open(), before the ClientHello", async () => {

@@ -423,8 +423,6 @@ impl<const SSL: bool> App<SSL> {
         c::uws_filter(Self::SSL_FLAG, self.as_raw(), Some(handler), user_data)
     }
 
-    /// Calls with the same non-null `shared_context_key` share one uWS
-    /// `WebSocketContext`, and the latest `behavior` applies to it.
     pub fn ws(
         &mut self,
         pattern: &[u8],

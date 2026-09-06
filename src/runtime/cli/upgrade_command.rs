@@ -756,8 +756,7 @@ impl UpgradeCommand {
                 };
             let save_dir: sys::Dir = save_dir_it;
 
-            // `mkdirat` made it 0700 and ours; anything else was renamed over
-            // the name by another user of $TMPDIR before the open.
+            // `mkdirat` made it ours and 0700; anything else was swapped in by another $TMPDIR user.
             #[cfg(unix)]
             {
                 let staging = match sys::fstat(save_dir.fd()) {
@@ -789,8 +788,7 @@ impl UpgradeCommand {
                 }
             }
 
-            // The children below inherit this cwd. Never hand them the path:
-            // another user of $TMPDIR can rename a different directory onto it.
+            // The children inherit this cwd; a path would re-resolve to whatever now sits at the name.
             if let Err(err) = sys::fchdir(save_dir.fd()) {
                 let _ = save_dir_.delete_tree(&version_name);
                 Output::err_generic(

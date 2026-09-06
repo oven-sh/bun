@@ -3084,8 +3084,8 @@ declare module "bun" {
      * Transpile code from TypeScript or JSX into valid JavaScript.
      * This function does not resolve imports.
      * @param code The code to transpile
-     * @param loader The loader for `code`. Defaults to the `loader` passed to
-     * the constructor, which defaults to `"jsx"`.
+     * @param loader The loader for `code`
+     * @param ctx An object to pass to macros
      */
     transformSync(code: Bun.StringOrBuffer, loader: JavaScriptLoader, ctx: object): string;
     /**
@@ -6019,11 +6019,11 @@ declare module "bun" {
      */
     | "bun"
     /**
-     * The plugin is applied to Node.js builds
+     * For bundles that run in Node.js.
      */
     | "node"
     /**
-     * The plugin is applied to browser builds
+     * For bundles that run in the browser. This is the default for `Bun.build`.
      */
     | "browser";
 
@@ -6383,6 +6383,7 @@ declare module "bun" {
    *
    * ```js
    * Bun.plugin({
+   *  name: "yaml",
    *  setup(builder) {
    *   builder.onLoad({ filter: /\.yaml$/ }, ({path}) => ({
    *     loader: "object",

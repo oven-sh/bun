@@ -57,7 +57,7 @@ Bun.serve({
 
 In Bun, you declare handlers once per server, instead of per socket.
 
-You pass a single `WebSocketHandler` object to `Bun.serve()` with methods for `open`, `message`, `close`, `drain`, and `error`. This design differs from the client-side `WebSocket` class, which extends `EventTarget` (`onmessage`, `onopen`, `onclose`).
+You pass a single `WebSocketHandler` object to `Bun.serve()` with methods for `open`, `message`, `close`, `drain`, `ping`, `pong`, and `error`. This design differs from the client-side `WebSocket` class, which extends `EventTarget` (`onmessage`, `onopen`, `onclose`).
 
 Clients tend to have few socket connections open, so an event-based API makes sense there.
 
@@ -71,7 +71,7 @@ Reusing one handler object across every connection avoids both costs.
 
 </Accordion>
 
-The first argument to each handler is the `ServerWebSocket` instance handling the event. The `ServerWebSocket` class is a fast, Bun-native implementation of [`WebSocket`](https://developer.mozilla.org/en-US/docs/Web/API/WebSocket) with some additional features.
+The first argument to each handler (except `error`, which receives the thrown value) is the `ServerWebSocket` instance handling the event. The `ServerWebSocket` class is a fast, Bun-native implementation of [`WebSocket`](https://developer.mozilla.org/en-US/docs/Web/API/WebSocket) with some additional features.
 
 ```ts server.ts icon="/icons/typescript.svg"
 Bun.serve({

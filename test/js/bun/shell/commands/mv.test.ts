@@ -1,6 +1,6 @@
 import { $ } from "bun";
 import { describe, expect, test } from "bun:test";
-import { isPosix } from "harness";
+import { isPosix, tempDir } from "harness";
 import {
   accessSync,
   chmodSync,
@@ -116,6 +116,24 @@ describe("mv", async () => {
         rmSync(src, { recursive: true, force: true });
         rmSync(dst, { recursive: true, force: true });
       }
+    });
+
+    // The copy fallback preallocates the destination to the source's st_size.
+    // A sysfs file reports st_size 4096 but holds a few bytes, so the
+    // destination must shrink to the bytes copied. The unlink of the sysfs
+    // source fails, so mv exits non-zero, but the copy has already happened.
+    const sysfsFile = "/sys/devices/system/cpu/online";
+    const hasSysfs = process.platform === "linux" && existsSync(sysfsFile);
+    test.skipIf(!hasSysfs)("across devices, the destination is the bytes copied, not st_size", async () => {
+      using dst = tempDir("bun-mv-xdev-short-read", {});
+      const content = readFileSync(sysfsFile);
+      expect(content.length).toBeGreaterThan(0);
+      expect(statSync(sysfsFile).size).toBeGreaterThan(content.length);
+      const dstFile = join(String(dst), "online");
+
+      const r = await $`mv ${sysfsFile} ${dstFile}`.quiet();
+      expect(r.exitCode).not.toBe(0);
+      expect(readFileSync(dstFile)).toEqual(content);
     });
 
     test.skipIf(skip)("file -> directory across devices", async () => {

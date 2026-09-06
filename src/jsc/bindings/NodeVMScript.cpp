@@ -172,9 +172,7 @@ constructScript(JSGlobalObject* globalObject, CallFrame* callFrame, JSValue newT
         JSC::LexicallyScopedFeatures lexicallyScopedFeatures = globalObject->globalScopeExtension() ? JSC::TaintedByWithScopeLexicallyScopedFeature : JSC::NoLexicallyScopedFeatures;
         JSC::SourceCodeKey key(script->source(), {}, JSC::SourceCodeType::ProgramType, lexicallyScopedFeatures, JSC::JSParserScriptMode::Classic, JSC::DerivedContextType::None, JSC::EvalContextType::None, false, {}, std::nullopt);
         Ref<JSC::CachedBytecode> cachedBytecode = JSC::CachedBytecode::create(std::span(cachedData), nullptr, {});
-        // Decoding checks the format, the checksum and the source key, which is the accept/reject
-        // answer Node reports (NodeVMSourceTextModule::create does the same). Every run links its
-        // own block from unlinkedCodeBlockFor(), so a block linked from this one never executes.
+        // Whether the blob decodes is Node's cachedDataRejected. Runs link their own block (unlinkedCodeBlockFor).
         JSC::UnlinkedProgramCodeBlock* unlinkedBlock = JSC::decodeCodeBlock<UnlinkedProgramCodeBlock>(vm, key, WTF::move(cachedBytecode));
         script->cachedDataRejected(unlinkedBlock ? TriState::False : TriState::True);
     } else if (script->options().produceCachedData)
@@ -201,8 +199,7 @@ JSC::UnlinkedProgramCodeBlock* NodeVMScript::unlinkedCodeBlockFor(JSGlobalObject
     if (m_unlinkedCodeBlock && m_unlinkedCodeBlock->codeGenerationMode() == codeGenerationMode)
         return m_unlinkedCodeBlock.get();
 
-    // The CodeCache records the parse on the executable it is given, which changes what that executable keys
-    // later lookups with, so it gets a throwaway one; every run links its own anyway.
+    // A throwaway executable: the CodeCache records the parse on the one it is given, and every run links its own.
     JSC::UnlinkedProgramCodeBlock* block = vm.codeCache()->getUnlinkedProgramCodeBlock(vm, JSC::ProgramExecutable::create(globalObject, m_source), m_source, codeGenerationMode, error);
     if (block)
         m_unlinkedCodeBlock.set(vm, this, block);

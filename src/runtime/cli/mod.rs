@@ -1342,8 +1342,7 @@ pub mod command {
                 // table / rodata) or walks the per-tag dispatch `match` below.
                 // Dispatches to exactly the arm `which()` would have selected,
                 // so config loading / arg parsing / passthrough are unchanged.
-                // With BUN_OPTIONS set, argv[1] is a spliced token that only
-                // `which()` may judge.
+                // A BUN_OPTIONS token in argv[1] is for `which()` to judge.
                 if bun::bun_options_argc() == 0
                     && argv
                         .get(1)

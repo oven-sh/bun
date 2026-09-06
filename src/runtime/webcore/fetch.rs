@@ -528,9 +528,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
 
     // `ZigURL::from_string` returns `OwnedURL` (owns href buffer); we
     // immediately move that buffer into `url_proxy_buffer` and re-parse `url` to
-    // borrow it.
-    //
-    // An `s3://` URL skips the WHATWG serializer: see `bun_url::is_s3_url`.
+    // borrow it. An `s3://` URL is kept as written, see `bun_url::is_s3_url`.
     let mut url_proxy_buffer = if bun_url::is_s3_url(&url_str) {
         url_str.to_utf8().to_vec()
     } else {

@@ -350,9 +350,7 @@ function Server(options, callback): void {
         tlsStringToProtocolVersion,
         SSL_OP_CIPHER_SERVER_PREFERENCE,
       } = tlsHelpers;
-      // The same checks tls.createServer runs (ecdhCurve, sigalgs,
-      // sessionTimeout, secureProtocol, ...), so a bad option throws here
-      // instead of reaching the native config.
+      // The same checks tls.createServer runs.
       validateSecureContextOptions(options);
       // Node's tls.Server defaults honorCipherOrder to true.
       if (options.honorCipherOrder !== false) secureOptions |= SSL_OP_CIPHER_SERVER_PREFERENCE;

@@ -13,7 +13,7 @@ use bun_sql::mysql::protocol::any_mysql_error;
 use bun_sql::mysql::protocol::prepared_statement::ExecuteParam;
 use bun_sql::shared::Data;
 
-use crate::jsc::webcore::Blob;
+use bun_jsc::PinnedBytes;
 
 pub(crate) fn field_type_from_js(
     global_object: &JSGlobalObject,
@@ -115,7 +115,7 @@ pub(crate) fn field_type_from_js(
     Ok(FieldType::MYSQL_TYPE_VARCHAR)
 }
 
-pub(crate) enum Value {
+pub(crate) enum Value<'a> {
     Null,
     Bool(bool),
     Short(i16),
@@ -128,47 +128,28 @@ pub(crate) enum Value {
     Double(f64),
 
     String(Utf8Bytes<'static>),
-    Bytes(Bytes),
+    Bytes(Bytes<'a>),
     Date(DateTime),
     Time(Time),
 }
 
 /// BLOB parameter bytes. `MySQLQuery.bind()` fills every `Value` before
 /// `execute.write()` reads any of them, and converting later parameters
-/// can run user JS (array index getters, toJSON, toString coercion). That
-/// JS could `transfer()`/detach an earlier ArrayBuffer, or drop the last
-/// JS reference to it and force GC, while we still hold a borrowed slice
-/// into it. Pinning the backing `ArrayBuffer` makes it non-detachable for
-/// the duration (`transfer()` then hands the user a copy), and the
-/// caller's stack-scoped `MarkedArgumentBuffer` roots the wrapper so GC
-/// can't sweep the cell whose `RefPtr<ArrayBuffer>` keeps the storage
-/// alive — `params` is on the malloc heap and isn't scanned. `Drop`
-/// unpins.
-pub struct Bytes {
-    pub(crate) slice: Utf8Bytes<'static>,
-    /// JS ArrayBuffer/view to `unpinArrayBuffer` in `Drop`. `JSValue::ZERO`
-    /// when the slice is owned (FastTypedArray dupe), borrowed from a
-    /// Blob store (nothing to unpin), or empty. GC rooting of this value
-    /// is the caller's responsibility via the `MarkedArgumentBuffer`
-    /// passed to `from_js`.
-    pub(crate) pinned: JSValue,
+/// can run user JS (array index getters, toJSON, toString coercion) that
+/// could `transfer()`/detach an earlier ArrayBuffer or drop the last JS
+/// reference to it. ArrayBuffer/view bytes are therefore [`PinnedBytes`]
+/// (pinned + rooted in the bind's `MarkedArgumentBuffer` for `'a`); a Blob's
+/// store is immutable from JS, so rooting its wrapper there is enough.
+pub(crate) enum Bytes<'a> {
+    Pinned(PinnedBytes<'a>),
+    Blob(&'a [u8]),
 }
 
-impl Default for Bytes {
-    fn default() -> Self {
-        Self {
-            slice: Utf8Bytes::EMPTY,
-            pinned: JSValue::ZERO,
-        }
-    }
-}
-
-impl Drop for Bytes {
-    fn drop(&mut self) {
-        if !self.pinned.is_empty() {
-            // `pinned` is rooted by the caller's MarkedArgumentBuffer for the
-            // lifetime of this Value (see struct doc); the FFI itself is `safe fn`.
-            JSC__JSValue__unpinArrayBuffer(self.pinned);
+impl Bytes<'_> {
+    fn slice(&self) -> &[u8] {
+        match self {
+            Bytes::Pinned(b) => b.slice(),
+            Bytes::Blob(b) => b,
         }
     }
 }
@@ -205,7 +186,7 @@ fn validate_bigint<T: bun_core::Integer>(
         .map_err(js_error_to_mysql)
 }
 
-impl ExecuteParam for Value {
+impl ExecuteParam for Value<'_> {
     fn is_null(&self) -> bool {
         matches!(self, Value::Null)
     }
@@ -262,7 +243,7 @@ impl ExecuteParam for Value {
                 });
             }
             Value::Bytes(b) => {
-                let s = b.slice.slice();
+                let s = b.slice();
                 return Ok(if s.is_empty() {
                     Data::Empty
                 } else {
@@ -275,14 +256,14 @@ impl ExecuteParam for Value {
     }
 }
 
-impl Value {
+impl<'a> Value<'a> {
     pub(crate) fn from_js(
         value: JSValue,
         global_object: &JSGlobalObject,
         field_type: FieldType,
         unsigned: bool,
-        roots: &mut MarkedArgumentBuffer,
-    ) -> Result<Value, any_mysql_error::Error> {
+        roots: &'a MarkedArgumentBuffer,
+    ) -> Result<Value<'a>, any_mysql_error::Error> {
         if value.is_empty_or_undefined_or_null() {
             return Ok(Value::Null);
         }
@@ -333,41 +314,12 @@ impl Value {
                     // Pin the backing ArrayBuffer so it stays non-detachable
                     // until Value drop unpins it; borrowing the slice is
                     // then safe without a copy. See `Bytes`.
-                    let mut ptr: *const u8 = core::ptr::null();
-                    let mut len: usize = 0;
-                    return match JSC__JSValue__borrowBytesForOffThread(value, &mut ptr, &mut len) {
-                        // detached / null
-                        0 => Ok(Value::Bytes(Bytes::default())),
-                        // FastTypedArray — tiny, GC-movable vector; dupe.
-                        1 => Ok(Value::Bytes(Bytes {
-                            // SAFETY: ptr/len returned from helper are valid for the
-                            // duration of this call; copied immediately.
-                            slice: Utf8Bytes::Owned(
-                                unsafe { core::slice::from_raw_parts(ptr, len) }.to_vec(),
-                            ),
-                            pinned: JSValue::ZERO,
-                        })),
-                        // Oversize/Wasteful/DataView/JSArrayBuffer — pinned
-                        // by the helper. Root the wrapper so GC can't
-                        // collect it (and free the backing store despite
-                        // the pin) if user JS drops the last reference from
-                        // a later parameter.
-                        kind @ (2 | 3) => {
-                            roots.append(value);
-                            Ok(Value::Bytes(Bytes {
-                                // SAFETY: backing storage is pinned or held (bufferless view) and
-                                // rooted via `roots`; slice stays valid until Bytes::drop unpins.
-                                slice: Utf8Bytes::Borrowed(unsafe {
-                                    core::slice::from_raw_parts(ptr, len)
-                                }),
-                                pinned: if kind == 2 { value } else { JSValue::ZERO },
-                            }))
-                        }
-                        _ => unreachable!(),
-                    };
+                    return Ok(Value::Bytes(Bytes::Pinned(
+                        roots.pin_bytes(value).unwrap_or(PinnedBytes::EMPTY),
+                    )));
                 }
 
-                if let Some(blob) = value.as_class_ref::<Blob>() {
+                if let Some(blob) = value.as_class_ref::<crate::jsc::webcore::Blob>() {
                     if blob.needs_to_read_file() {
                         return Err(js_error_to_mysql(global_object.throw_invalid_arguments(
                             format_args!("File blobs are not supported"),
@@ -378,10 +330,7 @@ impl Value {
                     // the last reference and force GC. Root the wrapper so
                     // the store survives until execute.write() has read it.
                     roots.append(value);
-                    return Ok(Value::Bytes(Bytes {
-                        slice: Utf8Bytes::Borrowed(blob.shared_view()),
-                        pinned: JSValue::ZERO,
-                    }));
+                    return Ok(Value::Bytes(Bytes::Blob(blob.shared_view())));
                 }
 
                 if value.is_string() {
@@ -802,20 +751,4 @@ fn gregorian_date(days: i32) -> Date {
         month: m,
         day: u8::try_from(d + 1).expect("int cast"),
     }
-}
-
-unsafe extern "C" {
-    /// By-value `JSValue`; C++ side null-checks and reads its own heap state.
-    /// No caller-side preconditions → `safe fn`.
-    safe fn JSC__JSValue__unpinArrayBuffer(v: JSValue);
-    /// 0 = detached/null, 1 = FastTypedArray (GC-movable — caller should dupe;
-    /// no unpin needed), 2 = pinned an existing ArrayBuffer (caller must
-    /// `unpinArrayBuffer`), 3 = held a bufferless OversizeTypedArray (nothing to unpin; root it as for 2).
-    /// Out-params are `&mut` (same ABI as `*mut`), so the only obligation left
-    /// is on the *returned* slice, not the call itself → `safe fn`.
-    safe fn JSC__JSValue__borrowBytesForOffThread(
-        v: JSValue,
-        out_ptr: &mut *const u8,
-        out_len: &mut usize,
-    ) -> i32;
 }

@@ -152,6 +152,30 @@ impl JSObject {
         unsafe { JSC__createStructure(global.as_ptr(), owner_cell, length, names) }
     }
 
+    /// [`create_structure`](Self::create_structure) over a slice. `owner` is
+    /// the cell the structure is write-barriered against, or the empty value
+    /// for none.
+    pub fn create_structure_for(
+        global: &JSGlobalObject,
+        owner: JSValue,
+        names: &mut [ExternColumnIdentifier],
+    ) -> JSValue {
+        crate::mark_binding!();
+        assert!(owner.is_empty() || owner.is_cell());
+        let owner_cell = owner.0 as *mut JSCell;
+        // SAFETY: `owner_cell` is null or a live cell (checked above; the caller
+        // holds `owner` on the stack); `names` is an initialized slice C++ reads
+        // for the duration of the call only.
+        unsafe {
+            JSC__createStructure(
+                global.as_ptr(),
+                owner_cell,
+                names.len() as u32,
+                names.as_mut_ptr(),
+            )
+        }
+    }
+
     /// The C++ side returns the object even when `creator` threw inside
     /// `initializer_call`, so the exception state is checked explicitly.
     pub fn create_with_initializer<Ctx: ObjectInitializer>(

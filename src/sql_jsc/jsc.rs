@@ -6,7 +6,7 @@
 //! `bun_io`** so the `#[bun_jsc::JsClass]` / `#[bun_jsc::host_fn]` proc-macros
 //! see identical types. SQL-specific helpers that `bun_jsc` doesn't expose at
 //! this tier are provided as extension traits ([`JSGlobalObjectSqlExt`],
-//! [`VirtualMachineSqlExt`], [`EventLoopSqlExt`]).
+//! [`VirtualMachineSqlExt`]).
 //!
 //! [`RareData`] here is the **per-VM SQL state** (`mysql_context` /
 //! `postgresql_context`) that `bun_runtime::jsc_hooks::RuntimeState` owns by
@@ -16,9 +16,7 @@
 
 #![warn(unused_must_use)]
 
-use core::ffi::{c_char, c_void};
 use core::marker::PhantomData;
-use core::ptr::NonNull;
 
 // ──────────────────────────────────────────────────────────────────────────
 // Core handles — re-exported from `bun_jsc` so proc-macro generated wrappers
@@ -87,20 +85,9 @@ pub use bun_jsc::system_error::verify_error_to_js;
 /// code `BORINGSSL`. Body mirrors `bun_runtime::crypto::boringssl_jsc::err_to_js`
 /// (unreachable from here without a cycle).
 fn boringssl_err_to_js(global: &JSGlobalObject, err_code: u32) -> JSValue {
-    const PREFIX: &[u8] = b"BoringSSL ";
-    let mut outbuf = [0u8; 128 + 1 + PREFIX.len()];
-    outbuf[..PREFIX.len()].copy_from_slice(PREFIX);
-    let message_buf = &mut outbuf[PREFIX.len()..];
-    // SAFETY: `message_buf` is a valid writable buffer of `message_buf.len()` bytes.
-    unsafe {
-        bun_boringssl_sys::ERR_error_string_n(
-            err_code,
-            message_buf.as_mut_ptr().cast::<core::ffi::c_char>(),
-            message_buf.len(),
-        );
-    }
-    let error_message: &[u8] = bun_core::slice_to_nul(&outbuf[..]);
-    if error_message.len() == PREFIX.len() {
+    let mut buf = [0u8; 128];
+    let reason = bun_boringssl_sys::err_error_string_n(err_code, &mut buf);
+    if reason.is_empty() {
         return global
             .err(
                 ErrorCode::BORINGSSL,
@@ -111,7 +98,7 @@ fn boringssl_err_to_js(global: &JSGlobalObject, err_code: u32) -> JSValue {
     global
         .err(
             ErrorCode::BORINGSSL,
-            format_args!("{}", bstr::BStr::new(error_message)),
+            format_args!("BoringSSL {}", bstr::BStr::new(reason)),
         )
         .to_js()
 }
@@ -166,7 +153,6 @@ pub(crate) trait JSGlobalObjectSqlExt {
     /// `&mut VirtualMachine`; this `&`-receiver form is for SQL callsites that
     /// only need shared access.
     fn sql_vm(&self) -> &VirtualMachine;
-    fn sql_vm_ptr(&self) -> *mut VirtualMachine;
 }
 
 impl JSGlobalObjectSqlExt for JSGlobalObject {
@@ -180,10 +166,6 @@ impl JSGlobalObjectSqlExt for JSGlobalObject {
         // audited deref in bun_jsc); the VM is a process-lifetime singleton.
         self.bun_vm()
     }
-    #[inline]
-    fn sql_vm_ptr(&self) -> *mut VirtualMachine {
-        JSC__JSGlobalObject__bunVM(self).cast::<VirtualMachine>()
-    }
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -193,7 +175,7 @@ impl JSGlobalObjectSqlExt for JSGlobalObject {
 // structs that round-tripped through Rust→Rust extern "C" shims
 // (Bun__VM__global / Bun__VM__eventLoop / Bun__EventLoop__enterLoop / …)
 // were a layering workaround. SQL-specific accessors that bun_jsc doesn't
-// expose at this tier (sql_state(), timer(), ssl_ctx_cache()) are provided
+// expose at this tier (with_sql_state(), timer_insert()/timer_remove()) are provided
 // as the [VirtualMachineSqlExt] extension trait.
 // ──────────────────────────────────────────────────────────────────────────
 
@@ -204,8 +186,8 @@ pub use bun_jsc::virtual_machine::VirtualMachine;
 // ──────────────────────────────────────────────────────────────────────────
 // SqlRuntimeHooks — manual cold-path vtable (CYCLEBREAK §Dispatch).
 //
-// `bun_runtime` owns the per-VM `RuntimeState` (timer heap, SSLContextCache,
-// SSLConfig parser, Blob accessors) and *depends on* this crate, so direct
+// `bun_runtime` owns the per-VM `RuntimeState` (timer heap, SSLConfig parser)
+// and *depends on* this crate, so direct
 // imports would cycle. Instead of Rust→Rust `extern "C"` shims (which let the
 // two sides disagree on pointee types — the previous local `EventLoopTimer` /
 // `SSLConfig` stubs were layout-incompatible with what `hw_exports.rs` wrote),
@@ -215,40 +197,14 @@ pub use bun_jsc::virtual_machine::VirtualMachine;
 // ──────────────────────────────────────────────────────────────────────────
 
 pub struct SqlRuntimeHooks {
-    /// `&mut runtime_state().sql_rare` — this crate's [`RareData`] storage.
-    pub sql_rare: unsafe fn(*mut VirtualMachine) -> *mut RareData,
-    /// `&mut runtime_state().timer` — opaque `bun_runtime::timer::All`.
-    pub timer_heap: unsafe fn(*mut VirtualMachine) -> *mut c_void,
-    /// `Timer.All.insert` — push an intrusive `EventLoopTimer` into the heap.
-    pub timer_insert: unsafe fn(heap: *mut c_void, *mut EventLoopTimer),
-    /// `Timer.All.remove`.
-    pub timer_remove: unsafe fn(heap: *mut c_void, *mut EventLoopTimer),
-    /// `&mut runtime_state().ssl_ctx_cache` — opaque `SSLContextCache`.
-    pub ssl_ctx_cache: unsafe fn(*mut VirtualMachine) -> *mut c_void,
-    /// `SSLContextCache::getOrCreateOpts` — digest-keyed weak `SSL_CTX*` cache.
-    pub ssl_ctx_get_or_create: unsafe fn(
-        cache: *mut c_void,
-        opts: &bun_uws::us_bun_socket_context_options_t,
-        err: &mut bun_uws::create_bun_socket_error_t,
-    ) -> Option<OwnedSslCtx>,
-    /// `SSLConfig::fromJS` — parse a JS TLS-options object. Returns a boxed
-    /// `bun_runtime::socket::SSLConfig` (caller frees via `ssl_config_free`),
-    /// or null when the value contained no TLS config / threw (caller checks
-    /// `global.has_exception()`).
-    pub ssl_config_from_js: unsafe fn(&JSGlobalObject, JSValue) -> *mut c_void,
-    /// Drop a boxed `SSLConfig` returned by `ssl_config_from_js`.
-    pub ssl_config_free: unsafe fn(*mut c_void),
-    /// `SSLConfig::asUSocketsForClientVerification`.
-    pub ssl_config_as_usockets_client:
-        unsafe fn(*const c_void) -> bun_uws::us_bun_socket_context_options_t,
-    /// `SSLConfig.server_name` — null when unset.
-    pub ssl_config_server_name: unsafe fn(*const c_void) -> *const c_char,
-    /// `SSLConfig.reject_unauthorized`.
-    pub ssl_config_reject_unauthorized: unsafe fn(*const c_void) -> i32,
-    /// `Blob::needsToReadFile`.
-    pub blob_needs_to_read_file: unsafe fn(*const c_void) -> bool,
-    /// `Blob::sharedView` — returns `(ptr, len)` borrowing the immutable store.
-    pub blob_shared_view: unsafe fn(*const c_void, out_len: *mut usize) -> *const u8,
+    /// Run a closure against this thread's [`RareData`] (`runtime_state().sql_rare`).
+    pub with_sql_state: fn(&mut dyn FnMut(&mut RareData)),
+    /// `Timer.All.insert` / `Timer.All.remove` on this thread's timer heap.
+    pub timer_insert: fn(TimerRef),
+    pub timer_remove: fn(TimerRef),
+    /// `SSLConfig.fromJS` — parse a JS TLS-options object; `None` when the
+    /// value carried no TLS options.
+    pub ssl_config_from_js: fn(&JSGlobalObject, JSValue) -> JsResult<Option<bun_http::SSLConfig>>,
 }
 
 unsafe extern "Rust" {
@@ -269,7 +225,7 @@ fn hooks() -> &'static SqlRuntimeHooks {
 /// The bun_jsc::rare_data::RareData slots for these are opaque
 /// (cycle break: bun_jsc cannot name bun_sql_jsc types), so the storage lives
 /// in bun_runtime::jsc_hooks::RuntimeState.sql_rare and is reached via
-/// [VirtualMachineSqlExt::sql_state].
+/// [VirtualMachineSqlExt::with_sql_state].
 #[repr(C)]
 pub struct RareData {
     pub mysql_context: crate::mysql::MySQLContext,
@@ -279,44 +235,34 @@ pub struct RareData {
 /// SQL-specific accessors on [VirtualMachine] for state owned by the
 /// higher-tier bun_runtime::jsc_hooks::RuntimeState.
 pub(crate) trait VirtualMachineSqlExt {
-    /// RareData.{mysql,postgresql}_context. Named sql_state to avoid
-    /// shadowing the inherent VirtualMachine::rare_data() (which returns the
-    /// bun_jsc RareData holding the per-protocol SocketGroups).
-    fn sql_state(&mut self) -> &mut RareData;
-    /// vm.timer — the Timer::All heap, owned by RuntimeState.
-    fn timer(&mut self) -> &mut TimerHeap;
-    /// RareData.ssl_ctx_cache — owned by RuntimeState.
-    fn ssl_ctx_cache(&mut self) -> &mut SslCtxCache;
+    /// RareData.{mysql,postgresql}_context. `f` must not re-enter anything
+    /// that reaches this state.
+    fn with_sql_state<R>(&self, f: impl FnOnce(&mut RareData) -> R) -> R;
+    /// Link / unlink one of a connection's timer slots on vm.timer.
+    fn timer_insert(&self, timer: TimerRef);
+    fn timer_remove(&self, timer: TimerRef);
     /// bun_io::EventLoopCtx for the JS-thread VM, for KeepAlive::{ref_,unref}.
     fn vm_ctx(&self) -> bun_io::EventLoopCtx;
     /// Lazy-init `RareData`'s per-protocol uws [`bun_uws::SocketGroup`].
     fn postgres_socket_group<const SSL: bool>(&mut self) -> &mut bun_uws::SocketGroup;
     /// See [`Self::postgres_socket_group`].
     fn mysql_socket_group<const SSL: bool>(&mut self) -> &mut bun_uws::SocketGroup;
-    // NOTE: `event_loop_mut` lives on `VirtualMachine` as a safe inherent
-    // accessor (single audited deref under the JS-thread-singleton invariant);
-    // the former unsafe trait shim here was dead — inherent methods always win
-    // method resolution over this extension trait.
 }
 impl VirtualMachineSqlExt for VirtualMachine {
     #[inline]
-    fn sql_state(&mut self) -> &mut RareData {
-        // SAFETY: hook returns `&mut runtime_state().sql_rare`; non-null on
-        // the JS thread once `init_runtime_state` has run.
-        unsafe { &mut *(hooks().sql_rare)(self) }
+    fn with_sql_state<R>(&self, f: impl FnOnce(&mut RareData) -> R) -> R {
+        let mut f = Some(f);
+        let mut out = None;
+        (hooks().with_sql_state)(&mut |state| out = Some((f.take().unwrap())(state)));
+        out.unwrap()
     }
     #[inline]
-    fn timer(&mut self) -> &mut TimerHeap {
-        // SAFETY: hook returns `&mut runtime_state().timer`; non-null after
-        // `init_runtime_state`. `TimerHeap` is an opaque newtype over the
-        // `*mut c_void` so callers stay typed.
-        unsafe { &mut *(hooks().timer_heap)(self).cast::<TimerHeap>() }
+    fn timer_insert(&self, timer: TimerRef) {
+        (hooks().timer_insert)(timer)
     }
     #[inline]
-    fn ssl_ctx_cache(&mut self) -> &mut SslCtxCache {
-        // SAFETY: hook returns `&mut runtime_state().ssl_ctx_cache`; non-null
-        // after `init_runtime_state`.
-        unsafe { &mut *(hooks().ssl_ctx_cache)(self).cast::<SslCtxCache>() }
+    fn timer_remove(&self, timer: TimerRef) {
+        (hooks().timer_remove)(timer)
     }
     #[inline]
     fn vm_ctx(&self) -> bun_io::EventLoopCtx {
@@ -334,20 +280,6 @@ impl VirtualMachineSqlExt for VirtualMachine {
     }
 }
 
-/// RAII enter()/exit() for [EventLoop] — wraps the inherent (unsafe,
-/// raw-pointer) bun_jsc::event_loop::EventLoop::enter_scope.
-pub(crate) trait EventLoopSqlExt {
-    fn entered(&mut self) -> EventLoopGuard;
-}
-impl EventLoopSqlExt for EventLoop {
-    #[inline]
-    fn entered(&mut self) -> EventLoopGuard {
-        // SAFETY: self is the live VM-owned event loop; the guard holds the
-        // raw pointer so no &mut is held across re-entrant JS.
-        unsafe { EventLoop::enter_scope(self) }
-    }
-}
-
 // ──────────────────────────────────────────────────────────────────────────
 // Timer heap / EventLoopTimer.
 //
@@ -360,81 +292,21 @@ impl EventLoopSqlExt for EventLoop {
 // mis-routed.
 //
 // `Timer::All` (the heap container) lives in `bun_runtime::RuntimeState`;
-// reached via [`SqlRuntimeHooks::timer_heap`] / `timer_insert` / `timer_remove`.
+// reached via [`SqlRuntimeHooks::timer_insert`] / `timer_remove`.
 // ──────────────────────────────────────────────────────────────────────────
 
 pub use bun_event_loop::EventLoopTimer::{
-    EventLoopTimer, State as EventLoopTimerState, Tag as EventLoopTimerTag,
+    EventLoopTimer, State as EventLoopTimerState, Tag as EventLoopTimerTag, TimerRef,
 };
 
-// `bun_runtime::timer::All` — heap of `EventLoopTimer`. Opaque on this side
-// (the layout is high-tier); insert/remove forward to `bun_runtime` via the
-// [`SqlRuntimeHooks`] vtable.
-bun_opaque::opaque_ffi! { pub struct TimerHeap; }
-impl TimerHeap {
-    pub(crate) fn insert(&mut self, t: *mut EventLoopTimer) {
-        // SAFETY: `self` is `&mut runtime_state().timer`; `t` is a live
-        // intrusive heap node whose provenance covers its container.
-        unsafe { (hooks().timer_insert)(self._p.get().cast::<c_void>(), t) }
-    }
-    pub(crate) fn remove(&mut self, t: &mut EventLoopTimer) {
-        // SAFETY: `self` is `&mut runtime_state().timer`; `t` was previously
-        // inserted by the caller.
-        unsafe { (hooks().timer_remove)(self._p.get().cast::<c_void>(), t) }
-    }
-}
+pub use bun_jsc::{AutoFlushTarget, AutoFlusher};
 
 // ──────────────────────────────────────────────────────────────────────────
-// AutoFlusher — thin VM-taking wrapper over
-// bun_jsc::event_loop::EventLoop::deferred_tasks.
-// ──────────────────────────────────────────────────────────────────────────
-
-#[derive(Default, Debug)]
-pub struct AutoFlusher {
-    pub(crate) registered: bool,
-}
-
-/// SQL connection types implement this to participate in deferred flushing.
-pub trait HasAutoFlush: Sized {
-    fn on_auto_flush(this: *mut Self) -> bool;
-}
-
-impl AutoFlusher {
-    pub(crate) fn register_deferred_microtask_with_type_unchecked<T: HasAutoFlush>(
-        this: *mut T,
-        vm: &VirtualMachine,
-    ) {
-        // Body is fully safe — `cast()` is safe and `on_auto_flush` takes a
-        // raw pointer by value. `ctx` is the `*mut T` registered below; the
-        // queue feeds it back unchanged. A safe `extern "C" fn` coerces to the
-        // `DeferredRepeatingTask` fn-pointer type.
-        extern "C" fn trampoline<T: HasAutoFlush>(ctx: *mut c_void) -> bool {
-            T::on_auto_flush(ctx.cast::<T>())
-        }
-        // `event_loop_mut()` is the canonical safe `&mut EventLoop` accessor
-        // (single audited deref inside `VirtualMachine`); `deferred_tasks` is an
-        // embedded field with stable address for the VM lifetime.
-        let q = &mut vm.event_loop_mut().deferred_tasks;
-        q.post_task(NonNull::new(this.cast::<c_void>()), trampoline::<T>);
-    }
-    pub(crate) fn unregister_deferred_microtask_with_type<T>(this: *mut T, vm: &VirtualMachine) {
-        // See register_deferred_microtask_with_type_unchecked.
-        let q = &mut vm.event_loop_mut().deferred_tasks;
-        q.unregister_task(NonNull::new(this.cast::<c_void>()));
-    }
-}
-
-// ──────────────────────────────────────────────────────────────────────────
-// api::ServerConfig::SSLConfig — opaque handle to a boxed
-// `bun_runtime::socket::SSLConfig`.
+// api::ServerConfig::SSLConfig — the connection's TLS options.
 //
-// The full `SSLConfig` (~18 fields incl. `Vec`/`CString`) is high-tier (it
-// pulls in `node::fs`/`webcore::Blob`). The previous 3-field local mirror was
-// passed as `*mut c_void` storage to `Bun__SSLConfig__fromJS`, which `.write()`
-// the full struct into the 16-byte stack slot — stack overflow / UB. Storage
-// now lives in `bun_runtime`; this side holds only an owning pointer and
-// reaches the two fields SQL actually reads (`server_name`,
-// `reject_unauthorized`) via [`SqlRuntimeHooks`].
+// Parsing a JS `tls: {...}` object needs `node:fs` / `Blob` (high tier), so it
+// goes through [`SqlRuntimeHooks::ssl_config_from_js`]; the parsed
+// `bun_http::SSLConfig` is owned here.
 // ──────────────────────────────────────────────────────────────────────────
 
 pub mod api {
@@ -442,48 +314,24 @@ pub mod api {
     pub mod server_config {
         use super::*;
 
-        /// Owning handle to a `Box<bun_runtime::socket::SSLConfig>`. `None` =
-        /// the default-constructed config — callers that pass
-        /// `tls: true` get an SSLConfig with no overrides.
+        /// A connection's TLS options. `None` inside = `tls: true`: the
+        /// defaults, with no overrides.
         #[derive(Default)]
-        pub struct SSLConfig(Option<NonNull<c_void>>);
-
-        // SAFETY: the boxed `bun_runtime::socket::SSLConfig` is `Send` (only
-        // `CString`/`Vec`/`AtomicU64` fields); the handle moves between
-        // construction and the connection struct on the same JS thread anyway.
-        unsafe impl Send for SSLConfig {}
-
-        impl Drop for SSLConfig {
-            fn drop(&mut self) {
-                if let Some(p) = self.0.take() {
-                    // SAFETY: `p` was returned by `ssl_config_from_js` and not
-                    // yet freed (Option::take guarantees single drop).
-                    unsafe { (hooks().ssl_config_free)(p.as_ptr()) }
-                }
-            }
-        }
+        pub struct SSLConfig(Option<bun_http::SSLConfig>);
 
         impl SSLConfig {
-            /// `SSLConfig.server_name` — the SNI hostname C string, or null
-            /// when unset / default.
+            /// The SNI hostname, if one was configured.
             #[inline]
-            pub(crate) fn server_name(&self) -> *const c_char {
-                match self.0 {
-                    None => core::ptr::null(),
-                    // SAFETY: live boxed SSLConfig; hook returns a borrow into
-                    // its `Option<CString>` field, valid for `self`'s lifetime.
-                    Some(p) => unsafe { (hooks().ssl_config_server_name)(p.as_ptr()) },
-                }
+            pub(crate) fn server_name(&self) -> Option<&core::ffi::CStr> {
+                self.0
+                    .as_ref()
+                    .and_then(bun_http::SSLConfig::server_name_cstr)
             }
 
             /// `SSLConfig.reject_unauthorized` — non-zero rejects on verify error.
             #[inline]
             pub(crate) fn reject_unauthorized(&self) -> i32 {
-                match self.0 {
-                    None => 0,
-                    // SAFETY: live boxed SSLConfig.
-                    Some(p) => unsafe { (hooks().ssl_config_reject_unauthorized)(p.as_ptr()) },
-                }
+                self.0.as_ref().map_or(0, |c| c.reject_unauthorized)
             }
 
             /// `SSLConfig.fromJS(vm, global, value)` — VM is accepted but
@@ -493,13 +341,11 @@ pub mod api {
                 global: &JSGlobalObject,
                 value: JSValue,
             ) -> JsResult<Option<Self>> {
-                // SAFETY: hook contract — may run JS getters / throw.
-                let p = unsafe { (hooks().ssl_config_from_js)(global, value) };
-                if global.has_exception() {
-                    debug_assert!(p.is_null());
-                    return Err(JsError::Thrown);
+                match (hooks().ssl_config_from_js)(global, value) {
+                    Ok(config) => Ok(config.map(|c| Self(Some(c)))),
+                    Err(JsError::OutOfMemory) => Err(global.throw_out_of_memory()),
+                    Err(e) => Err(e),
                 }
-                Ok(NonNull::new(p).map(|p| Self(Some(p))))
             }
 
             /// `SSLConfig.asUSocketsForClientVerification` — projects to the
@@ -509,14 +355,13 @@ pub mod api {
             pub(crate) fn as_usockets_for_client_verification(
                 &self,
             ) -> bun_uws::us_bun_socket_context_options_t {
-                match self.0 {
+                match &self.0 {
                     None => bun_uws::us_bun_socket_context_options_t {
                         request_cert: 1,
                         reject_unauthorized: 0,
                         ..Default::default()
                     },
-                    // SAFETY: live boxed SSLConfig.
-                    Some(p) => unsafe { (hooks().ssl_config_as_usockets_client)(p.as_ptr()) },
+                    Some(c) => c.as_usockets_for_client_verification(),
                 }
             }
         }
@@ -529,78 +374,7 @@ pub mod api {
 }
 
 pub mod webcore {
-    pub use super::AutoFlusher;
-    use super::*;
-
-    // Opaque view of `bun_runtime::webcore::Blob`. Never constructed by value
-    // on this side — SQL only ever holds `*mut Blob` recovered from a JS
-    // wrapper's `m_ctx` via `value.as_::<Blob>()`. Field accessors route
-    // through [`SqlRuntimeHooks`]; the `from_js`/`from_js_direct` codegen
-    // externs are real C++ symbols (generate-classes.ts), not Rust shims.
-    bun_opaque::opaque_ffi! { pub struct Blob; }
-    impl Blob {
-        pub(crate) fn needs_to_read_file(&self) -> bool {
-            // SAFETY: `self` is a live `*const bun_runtime::webcore::Blob`
-            // (codegen m_ctx payload).
-            unsafe { (hooks().blob_needs_to_read_file)(self._p.get() as *const c_void) }
-        }
-        pub(crate) fn shared_view(&self) -> &[u8] {
-            let mut len: usize = 0;
-            // SAFETY: `self` is a live `*const Blob`; the returned ptr/len
-            // borrow the Blob's store, which is immutable for its lifetime.
-            let ptr =
-                unsafe { (hooks().blob_shared_view)(self._p.get() as *const c_void, &raw mut len) };
-            if ptr.is_null() || len == 0 {
-                return &[];
-            }
-            // SAFETY: hook guarantees `ptr[..len]` valid while the Blob lives.
-            unsafe { core::slice::from_raw_parts(ptr, len) }
-        }
-    }
-    impl super::JsClass for Blob {
-        fn from_js(value: JSValue) -> Option<*mut Self> {
-            let p = Blob__fromJS(value);
-            if p.is_null() {
-                None
-            } else {
-                Some(p.cast::<Self>())
-            }
-        }
-        fn from_js_direct(value: JSValue) -> Option<*mut Self> {
-            let p = Blob__fromJSDirect(value);
-            if p.is_null() {
-                None
-            } else {
-                Some(p.cast::<Self>())
-            }
-        }
-        fn to_js(self, _global: &JSGlobalObject) -> JSValue {
-            // The opaque view is zero-sized and unconstructible (no `pub`
-            // ctor); real callers go through `bun_runtime::webcore::Blob::to_js`.
-            // Safe `unreachable!` so a stray generic-over-`JsClass` call panics
-            // with a diagnostic instead of invoking UB.
-            unreachable!(
-                "webcore::Blob is an opaque view on the sql_jsc side; \
-                 construct via bun_runtime::webcore::Blob"
-            )
-        }
-        fn get_constructor(global: &JSGlobalObject) -> JSValue {
-            Blob__getConstructor(global)
-        }
-    }
-
-    // C++ codegen symbols (generate-classes.ts) — NOT Rust→Rust shims.
-    // SAFETY (safe fn): `JSValue` is a by-value scalar; `JSGlobalObject` is an
-    // opaque `UnsafeCell`-backed handle, so `&JSGlobalObject` is ABI-identical
-    // to a non-null `JSGlobalObject*` with write provenance.
-    // C++ declares these `extern JSC_CALLCONV` (= SysV ABI on win-x64), so
-    // import via `jsc_abi_extern!` — plain `extern "C"` is the Win64 ABI on
-    // Windows and would pass args in the wrong registers.
-    bun_jsc::jsc_abi_extern! {
-        safe fn Blob__fromJS(value: JSValue) -> *mut c_void;
-        safe fn Blob__fromJSDirect(value: JSValue) -> *mut c_void;
-        safe fn Blob__getConstructor(global: &JSGlobalObject) -> JSValue;
-    }
+    pub use bun_jsc::webcore::Blob;
 }
 
 /// `bun_jsc::JsClass` — generic downcast trait backing `JSValue::as_<T>()`.
@@ -645,9 +419,8 @@ pub mod codegen {
 // ──────────────────────────────────────────────────────────────────────────
 // JSFunction — host-function constructor.
 //
-// `bun_jsc::JSFunction` exists, but its `create` signature differs; the SQL
-// callsites only need the `JSHostFn` thunk plumbing, kept local so callers
-// don't churn.
+// Forwards to `bun_jsc::JSFunction::create`; kept local for the
+// [`IntoJSHostFn`] plumbing that lets callsites pass safe Rust fns.
 // ──────────────────────────────────────────────────────────────────────────
 
 #[repr(C)]
@@ -699,13 +472,10 @@ where
             where [F: Fn(&JSGlobalObject, &CallFrame) -> JsResult<JSValue> + Copy + 'static]
             {
                 let f: F = bun_core::ffi::conjure_zst::<F>();
-                // JSC passes live non-null `*JSGlobalObject` / `*CallFrame`; both
-                // strictly outlive the host-fn call, satisfying the `ParentRef`
-                // invariant. Safe `From<NonNull>` + `Deref` collapse the per-thunk
-                // raw `&*ptr` pair to one audited deref site in `bun_ptr`.
-                let global = bun_ptr::ParentRef::from(NonNull::new(g).expect("JSC host fn: global non-null"));
-                let frame = bun_ptr::ParentRef::from(NonNull::new(c).expect("JSC host fn: callframe non-null"));
-                match f(&global, &frame) {
+                // JSC passes its live global / call frame; both are opaque handles.
+                let global = bun_opaque::opaque_deref(g);
+                let frame = bun_opaque::opaque_deref(c);
+                match f(global, frame) {
                     Ok(v) => v,
                     Err(JsError::OutOfMemory) => { let _ = global.throw_out_of_memory(); JSValue::ZERO }
                     Err(_) => JSValue::ZERO,
@@ -731,52 +501,17 @@ where
             where [F: Fn(&JSGlobalObject, &CallFrame) -> JSValue + Copy + 'static]
             {
                 let f: F = bun_core::ffi::conjure_zst::<F>();
-                // JSC passes live non-null pointers; both outlive the host-fn
-                // call (the `ParentRef` invariant). Safe `Deref` recovers `&T`.
-                let global = bun_ptr::ParentRef::from(NonNull::new(g).expect("JSC host fn: global non-null"));
-                let frame = bun_ptr::ParentRef::from(NonNull::new(c).expect("JSC host fn: callframe non-null"));
-                f(&global, &frame)
+                // JSC passes its live global / call frame; both are opaque handles.
+                let global = bun_opaque::opaque_deref(g);
+                let frame = bun_opaque::opaque_deref(c);
+                f(global, frame)
             }
         }
         thunk::<F>
     }
 }
 
-#[repr(u8)]
-#[derive(Clone, Copy, Default)]
-pub enum ImplementationVisibility {
-    #[default]
-    Public = 0,
-    Private = 1,
-    PrivateRecursive = 2,
-}
-#[repr(u8)]
-#[derive(Clone, Copy, Default)]
-pub enum Intrinsic {
-    #[default]
-    None = 0,
-}
-#[derive(Clone, Copy, Default)]
-pub struct CreateJSFunctionOptions {
-    pub(crate) implementation_visibility: ImplementationVisibility,
-    pub(crate) intrinsic: Intrinsic,
-    pub(crate) constructor: Option<JSHostFn>,
-}
-
-unsafe extern "C" {
-    // `&JSGlobalObject` is ABI-identical to a non-null `*const JSGlobalObject`;
-    // remaining args are by-value scalars/fn-ptrs. No caller-side memory
-    // preconditions remain → `safe fn`.
-    safe fn JSFunction__createFromZig(
-        global: &JSGlobalObject,
-        fn_name: &bun_core::String,
-        implementation: JSHostFn,
-        arg_count: u32,
-        implementation_visibility: ImplementationVisibility,
-        intrinsic: Intrinsic,
-        constructor: Option<JSHostFn>,
-    ) -> JSValue;
-}
+pub use bun_jsc::js_function::CreateJSFunctionOptions;
 
 /// `bun_jsc::JSValue::put_host_functions`-shaped helper for the SQL binding
 /// objects. Macro (not fn) because each entry's `$f` is a *distinct* fn-item
@@ -805,21 +540,17 @@ impl JSFunction {
     /// `-> JsResult<JSValue>` via [`IntoJSHostFn`].
     pub(crate) fn create<M, F: IntoJSHostFn<M>>(
         global: &JSGlobalObject,
-        name: &str,
+        name: &'static str,
         implementation: F,
         arg_count: u32,
         opts: CreateJSFunctionOptions,
     ) -> JSValue {
-        let implementation: JSHostFn = implementation.into_js_host_fn();
-        let fn_name = bun_core::String::from_bytes(name.as_bytes());
-        JSFunction__createFromZig(
+        bun_jsc::JSFunction::create(
             global,
-            &fn_name,
-            implementation,
+            name,
+            implementation.into_js_host_fn(),
             arg_count,
-            opts.implementation_visibility,
-            opts.intrinsic,
-            opts.constructor,
+            opts,
         )
     }
 }
@@ -834,18 +565,12 @@ pub(crate) mod call_frame {
     /// Cursor over a `&[JSValue]`.
     pub(crate) struct ArgumentsSlice<'a> {
         remaining: &'a [JSValue],
-        _vm: *const c_void,
     }
     impl<'a> ArgumentsSlice<'a> {
         /// Generic over the VM handle so it accepts both the local
-        /// [`VirtualMachine`] and `bun_jsc`'s (callers pass `global.bun_vm()`,
-        /// which returns a raw `*mut VirtualMachineRef`). The VM is not
-        /// dereferenced, so it's accepted by-value and dropped.
+        /// [`VirtualMachine`] and `bun_jsc`'s. The VM is not used.
         pub(crate) fn init<V>(_vm: V, slice: &'a [JSValue]) -> Self {
-            Self {
-                remaining: slice,
-                _vm: core::ptr::null(),
-            }
+            Self { remaining: slice }
         }
         /// Return the head **and** advance.
         #[inline]
@@ -855,47 +580,4 @@ pub(crate) mod call_frame {
             Some(*first)
         }
     }
-}
-
-// ──────────────────────────────────────────────────────────────────────────
-// MarkedArgumentBuffer::run — C++-side trampoline. `bun_jsc::MarkedArgumentBuffer`
-// exposes `new(f)`; the SQL callsites use the lower-level `run(ctx, fn_ptr)`
-// shape, kept here as a free fn (cannot add inherent methods to a foreign type).
-// ──────────────────────────────────────────────────────────────────────────
-
-// Opaque handle to `bun_runtime::api::SSLContextCache` (owned by
-// `RuntimeState`). Reached via [`VirtualMachineSqlExt::ssl_ctx_cache`]; backed
-// by [`SqlRuntimeHooks::ssl_ctx_cache`] / `ssl_ctx_get_or_create`.
-use bun_boringssl_sys::OwnedSslCtx;
-
-bun_opaque::opaque_ffi! { pub struct SslCtxCache; }
-impl SslCtxCache {
-    pub(crate) fn get_or_create_opts(
-        &mut self,
-        opts: &bun_uws::us_bun_socket_context_options_t,
-        err: &mut bun_uws::create_bun_socket_error_t,
-    ) -> Option<OwnedSslCtx> {
-        // SAFETY: `self` is `&mut runtime_state().ssl_ctx_cache`; `opts`/`err`
-        // are caller stack locals.
-        unsafe { (hooks().ssl_ctx_get_or_create)(self._p.get().cast::<c_void>(), opts, err) }
-    }
-}
-
-// ──────────────────────────────────────────────────────────────────────────
-// extern "C" — **C++** JSC bindings (src/jsc/bindings/bindings.cpp) used by
-// the extension traits above. No Rust-defined symbols are declared here; all
-// `bun_runtime` cross-calls go through [`SqlRuntimeHooks`] so the compiler
-// type-checks both sides at the registration site.
-// ──────────────────────────────────────────────────────────────────────────
-unsafe extern "C" {
-    // JSValue — by-value `JSValue` (encoded NaN-boxed u64) + scalar args; the
-    // C++ side reads no caller memory and upholds no invariants the caller must
-    // discharge, so these are `safe fn`.
-
-    // JSGlobalObject — `&JSGlobalObject` is ABI-identical to a non-null
-    // `*const JSGlobalObject`; the reference type discharges the validity
-    // precondition, so `safe fn`. Returned pointer is opaque (caller derefs
-    // under its own SAFETY obligation).
-    safe fn JSC__JSGlobalObject__bunVM(this: &JSGlobalObject) -> *mut c_void;
-
 }

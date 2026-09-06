@@ -20,8 +20,6 @@
 //!   - `Bun__Process__send`
 //!       → `bun_jsc::virtual_machine_exports`
 
-use core::ffi::c_void;
-
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{
     CallFrame, JSGlobalObject, JSInternalPromise, JSValue, StringJsc as _, ZigStackFrame,
@@ -176,125 +174,40 @@ pub fn close_child_ipc(global: &JSGlobalObject) {
 
 // ─── sql_jsc bridge — `bun_sql_jsc::jsc::SqlRuntimeHooks` vtable ─────────────
 //
-// `bun_sql_jsc` cannot name `RuntimeState` / `socket::SSLConfig` /
-// `webcore::Blob` (this crate depends on it). Instead of Rust→Rust
-// `extern "C"` re-decls (which let the two sides silently disagree on pointee
-// layout), the low tier defines [`bun_sql_jsc::jsc::SqlRuntimeHooks`] and this
-// crate registers a `&'static` instance from [`crate::jsc_hooks::
-// `__BUN_SQL_RUNTIME_HOOKS`. Every fn-pointer signature is type-checked at the
-// struct-literal below.
-//
-// Opaque-pointer protocol for `SSLConfig`: `ssl_config_from_js` returns a
-// `Box<socket::SSLConfig>::into_raw`; the SQL side holds it as `*mut c_void`
-// and frees via `ssl_config_free`. Scalar accessors borrow into that box.
+// `bun_sql_jsc` cannot name `RuntimeState` / `socket::SSLConfig::from_js`
+// (this crate depends on it). Instead of Rust→Rust `extern "C"` re-decls (which let the
+// two sides silently disagree on pointee layout), the low tier defines
+// [`bun_sql_jsc::jsc::SqlRuntimeHooks`] and this crate registers a `&'static`
+// instance, `__BUN_SQL_RUNTIME_HOOKS`. Every fn-pointer signature is
+// type-checked at the struct-literal below.
 
 mod sql_hooks {
     use super::*;
-    use bun_event_loop::EventLoopTimer::EventLoopTimer;
     use bun_sql_jsc::jsc::{RareData as SqlRareData, SqlRuntimeHooks};
 
-    unsafe fn sql_rare(_vm: *mut VirtualMachine) -> *mut SqlRareData {
-        let state = crate::jsc_hooks::runtime_state();
-        debug_assert!(!state.is_null(), "RuntimeState not installed");
-        // SAFETY: `state` is the boxed per-thread `RuntimeState`; `sql_rare` is
-        // an embedded field with stable address for the VM lifetime.
-        unsafe { core::ptr::addr_of_mut!((*state).sql_rare) }
+    fn with_sql_state(f: &mut dyn FnMut(&mut SqlRareData)) {
+        crate::jsc_hooks::with_sql_state(f)
     }
-    unsafe fn timer_heap(_vm: *mut VirtualMachine) -> *mut c_void {
-        crate::jsc_hooks::timer_all().cast()
+    fn timer_insert(timer: crate::timer::TimerRef) {
+        crate::jsc_hooks::timer_all().insert(timer);
     }
-    unsafe fn timer_insert(heap: *mut c_void, timer: *mut EventLoopTimer) {
-        // SAFETY: `heap` is `&runtime_state().timer` (live for the VM); `timer`
-        // is a live intrusive heap node owned by the caller. Route through
-        // `All::insert` (NOT the raw `.timers` field) so the fake-timers
-        // routing and the `(*timer).state` / `in_heap` bookkeeping happen.
-        unsafe { (*heap.cast::<crate::timer::All>()).insert(timer) };
+    fn timer_remove(timer: crate::timer::TimerRef) {
+        crate::jsc_hooks::timer_all().remove(timer);
     }
-    unsafe fn timer_remove(heap: *mut c_void, timer: *mut EventLoopTimer) {
-        // SAFETY: `heap` is `&runtime_state().timer`; `timer` was previously
-        // inserted via `timer_insert`. Route through `All::remove` so
-        // `in_heap` is consulted and reset.
-        unsafe { (*heap.cast::<crate::timer::All>()).remove(timer) };
-    }
-    unsafe fn ssl_ctx_cache(_vm: *mut VirtualMachine) -> *mut c_void {
-        let state = crate::jsc_hooks::runtime_state();
-        debug_assert!(!state.is_null(), "RuntimeState not installed");
-        // SAFETY: `state` is the boxed per-thread `RuntimeState`; the embedded
-        // `SSLContextCache` has stable address for the VM lifetime.
-        unsafe { core::ptr::addr_of_mut!((*state).ssl_ctx_cache).cast::<c_void>() }
-    }
-    unsafe fn ssl_ctx_get_or_create(
-        cache: *mut c_void,
-        opts: &bun_uws::us_bun_socket_context_options_t,
-        err: &mut bun_uws::create_bun_socket_error_t,
-    ) -> Option<bun_boringssl_sys::OwnedSslCtx> {
-        // SAFETY: `cache` is `&runtime_state().ssl_ctx_cache`.
-        let cache = unsafe { &mut *cache.cast::<crate::api::SSLContextCache::SSLContextCache>() };
-        cache.get_or_create_opts(opts, err)
-    }
-    unsafe fn ssl_config_from_js(global: &JSGlobalObject, value: JSValue) -> *mut c_void {
+    fn ssl_config_from_js(
+        global: &JSGlobalObject,
+        value: JSValue,
+    ) -> bun_jsc::JsResult<Option<bun_http::SSLConfig>> {
         use crate::socket::SSLConfigFromJs;
-        match crate::socket::SSLConfig::from_js(global.bun_vm_ref(), global, value) {
-            Ok(Some(cfg)) => bun_core::heap::into_raw(Box::new(cfg)).cast::<c_void>(),
-            Ok(None) => core::ptr::null_mut(),
-            Err(bun_jsc::JsError::OutOfMemory) => {
-                let _ = global.throw_out_of_memory();
-                core::ptr::null_mut()
-            }
-            Err(_) => core::ptr::null_mut(),
-        }
+        crate::socket::SSLConfig::from_js(global.bun_vm_ref(), global, value)
     }
-    unsafe fn ssl_config_free(this: *mut c_void) {
-        // SAFETY: `this` was produced by `heap::alloc` in
-        // `ssl_config_from_js`; sql_jsc's `SSLConfig::drop` guards null/double.
-        drop(unsafe { bun_core::heap::take(this.cast::<crate::socket::SSLConfig>()) });
-    }
-    unsafe fn ssl_config_as_usockets_client(
-        this: *const c_void,
-    ) -> bun_uws::us_bun_socket_context_options_t {
-        // SAFETY: `this` is a live boxed `SSLConfig` from `ssl_config_from_js`.
-        unsafe { &*this.cast::<crate::socket::SSLConfig>() }.as_usockets_for_client_verification()
-    }
-    unsafe fn ssl_config_server_name(this: *const c_void) -> *const core::ffi::c_char {
-        // SAFETY: `this` is a live boxed `SSLConfig`; returned ptr borrows its
-        // heap-owned C-string field, valid until `ssl_config_free`.
-        unsafe { &*this.cast::<crate::socket::SSLConfig>() }.server_name
-    }
-    unsafe fn ssl_config_reject_unauthorized(this: *const c_void) -> i32 {
-        // SAFETY: `this` is a live boxed `SSLConfig`.
-        unsafe { (*this.cast::<crate::socket::SSLConfig>()).reject_unauthorized }
-    }
-    unsafe fn blob_needs_to_read_file(this: *const c_void) -> bool {
-        // SAFETY: `this` is a live `Blob` (codegen `m_ctx` payload from
-        // `Blob__fromJS`).
-        unsafe { (*this.cast::<crate::webcore::Blob>()).needs_to_read_file() }
-    }
-    unsafe fn blob_shared_view(this: *const c_void, out_len: *mut usize) -> *const u8 {
-        // SAFETY: `this` is a live `Blob`; `out_len` is a caller stack slot.
-        unsafe {
-            crate::webcore::blob::Bun__Blob__sharedView(
-                this.cast::<crate::webcore::Blob>(),
-                out_len,
-            )
-        }
-    }
-
     /// Declared `extern "Rust"` in `bun_sql_jsc::jsc`; link-time resolved.
     #[unsafe(no_mangle)]
     static __BUN_SQL_RUNTIME_HOOKS: SqlRuntimeHooks = SqlRuntimeHooks {
-        sql_rare,
-        timer_heap,
+        with_sql_state,
         timer_insert,
         timer_remove,
-        ssl_ctx_cache,
-        ssl_ctx_get_or_create,
         ssl_config_from_js,
-        ssl_config_free,
-        ssl_config_as_usockets_client,
-        ssl_config_server_name,
-        ssl_config_reject_unauthorized,
-        blob_needs_to_read_file,
-        blob_shared_view,
     };
 }
 

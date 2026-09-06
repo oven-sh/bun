@@ -3184,7 +3184,10 @@ impl<'a> Resolver<'a> {
                     }
                 };
 
-                match self.dir_info_for_resolution(dir_path_for_resolution, resolved_package_id) {
+                let dir_info_result =
+                    self.dir_info_for_resolution(dir_path_for_resolution, resolved_package_id);
+                self.flush_link_dir_watches();
+                match dir_info_result {
                     Ok(dir_info_to_use_) => {
                         if let Some(pkg_dir_info) = dir_info_to_use_ {
                             let abs_package_path = pkg_dir_info.abs_path;

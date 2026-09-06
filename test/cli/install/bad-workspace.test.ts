@@ -1,7 +1,7 @@
 import { spawn, spawnSync } from "bun";
 import { install_test_helpers } from "bun:internal-for-testing";
 import { beforeEach, describe, expect, setDefaultTimeout, test } from "bun:test";
-import { mkdirSync, writeFileSync } from "fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, isLinux, isWindows, tempDir, tmpdirSync } from "harness";
 import { dirname, join } from "path";
 
@@ -311,4 +311,39 @@ describe.concurrent("workspaces entries longer than the path buffer", () => {
       expect(exitCode).toBe(1);
     },
   );
+});
+
+// A `workspace:` spec with no path used to resolve to the project root and link it under the
+// dependency's name.
+describe.concurrent("workspace: spec that names no workspace", () => {
+  test.each(["workspace:", "workspace:."])("%s fails to resolve", async spec => {
+    using dir = tempDir("bad-workspace-empty-spec", {
+      "package.json": JSON.stringify({ name: "p", version: "1.0.0", dependencies: { a: spec } }),
+      "index.js": `module.exports = "root";`,
+    });
+
+    const { stderr, exitCode } = await runInstall(String(dir));
+
+    expect(stderr).toContain(`error: a@${spec} failed to resolve`);
+    expect(existsSync(join(String(dir), "node_modules", "a"))).toBe(false);
+    expect(exitCode).toBe(1);
+  });
+
+  test("workspace: links the workspace with the dependency's name", async () => {
+    using dir = tempDir("bad-workspace-empty-spec-found", {
+      "package.json": JSON.stringify({
+        name: "p",
+        version: "1.0.0",
+        workspaces: ["packages/*"],
+        dependencies: { a: "workspace:" },
+      }),
+      "packages/a/package.json": JSON.stringify({ name: "a", version: "1.0.0" }),
+    });
+
+    const { stderr, exitCode } = await runInstall(String(dir));
+
+    expect(stderr).not.toContain("error:");
+    expect(exitCode).toBe(0);
+    expect(readFileSync(join(String(dir), "node_modules", "a", "package.json"), "utf8")).toContain('"name":"a"');
+  });
 });

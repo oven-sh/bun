@@ -1977,8 +1977,14 @@ impl Package<u64> {
                     // borrow has a named place to point at.
                     let workspace_str = *dependency_version.workspace();
                     let workspace = workspace_str.slice(buf);
+                    // No workspace is named after this dependency. A spec with no path
+                    // (`workspace:`) or one that lands on the project root (`workspace:.`)
+                    // resolves like `workspace:*`, so it fails instead of linking the
+                    // declaring package under the dependency name.
                     let path =
-                        string_builder.append::<String>(if workspace == b"*" {
+                        string_builder.append::<String>(if workspace == b"*"
+                            || strings::trim(workspace, &strings::WHITESPACE_CHARS).is_empty()
+                        {
                             b"*"
                         } else {
                             'brk: {
@@ -1992,6 +1998,9 @@ impl Package<u64> {
                                             &[source.path.name().dir, workspace],
                                         ),
                                     );
+                                if rel.is_empty() {
+                                    break 'brk b"*";
+                                }
                                 #[cfg(windows)]
                                 {
                                     // With ALWAYS_COPY=false, `rel` may borrow

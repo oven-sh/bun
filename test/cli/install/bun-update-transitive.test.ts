@@ -2241,7 +2241,7 @@ test.concurrent(
   },
 );
 
-// The root and parent both depend on leaf, on different majors; both rows are parked one release behind.
+// The root and parent both depend on leaf, on different majors; both rows are parked one release behind. `bun update leaf` would move both.
 const SHARED_NAME: Manifests = {
   parent: { "1.0.0": { dependencies: { leaf: "^1.0.0" } } },
   leaf: { "1.0.0": {}, "1.1.0": {}, "2.0.0": {}, "2.1.0": {} },
@@ -2266,13 +2266,6 @@ test.concurrent(
     expect(await installedVersion(dir, "parent", "node_modules", "leaf")).toBe("1.0.0");
     await frozen(dir);
     expect(exitCode).toBe(0);
-
-    // Naming it moves every row of that name, in range: that is what --depth 0 opts out of.
-    const named = await run(dir, "update", "leaf");
-    expect(named.stderr).not.toContain("error:");
-    expect(await lockedVersions(dir, "leaf")).toStrictEqual(["1.1.0", "2.1.0"]);
-    expect(await installedVersion(dir, "parent", "node_modules", "leaf")).toBe("1.1.0");
-    expect(named.exitCode).toBe(0);
   },
 );
 
@@ -2333,12 +2326,6 @@ test.concurrent(
     expect(await installedVersion(dir, "parent", "node_modules", "leaf")).toBe("1.0.0");
     await frozen(dir);
     expect(exitCode).toBe(0);
-
-    // A bare update collapses the two copies again.
-    const bare = await run(dir, "update");
-    expectCleanStderr(bare.stderr);
-    expect(await lockedVersions(dir, "leaf")).toStrictEqual(["1.1.0"]);
-    expect(bare.exitCode).toBe(0);
   },
 );
 

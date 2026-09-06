@@ -1044,11 +1044,12 @@ describe("Valkey: Recovering After fail()", () => {
         isConnected: false,
         connections: 3,
       });
-      // The client is failed, not stuck: a later command is rejected outright
-      // and an explicit connect() dials again.
+      // The client is failed, not stuck: a later command is rejected outright,
+      // and an explicit connect() dials again with the retry budget reset, so
+      // it is rejected after three more attempts.
       await expect(client.ping()).rejects.toMatchObject({ message: "Connection has failed" });
       await expect(client.connect()).rejects.toMatchObject({ code: "ERR_REDIS_CONNECTION_CLOSED" });
-      expect(fake.connections).toBeGreaterThan(3);
+      expect(fake.connections).toBe(6);
     } finally {
       client.close();
       for (const socket of fake.sockets) socket.destroy();

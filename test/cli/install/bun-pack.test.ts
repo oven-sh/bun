@@ -1945,7 +1945,8 @@ describe.concurrent(".gitignore/.npmignore", () => {
       "index.js": indexJs,
       "secrets/prod.env": "TOKEN=abc",
       "notes.txt": "notes",
-      "spaced ": "has a trailing space in its name",
+      // Windows cannot create a file name that ends in a space.
+      ...(isWindows ? {} : { "spaced ": "has a trailing space in its name" }),
       "spaced": "no trailing space",
     });
 

@@ -111,11 +111,9 @@ public:
     JSC::JSObject* asymmetricKeyDetails(JSC::JSGlobalObject*, JSC::ThrowScope&);
 
     std::optional<bool> equals(const KeyObject& other) const;
-    // `equals` for node's deep equality: throws ERR_CRYPTO_UNSUPPORTED_OPERATION
-    // when the key material cannot be compared, like KeyObject.prototype.equals.
+    // `equals` that throws ERR_CRYPTO_UNSUPPORTED_OPERATION instead of returning nullopt.
     bool deepEquals(JSC::JSGlobalObject*, JSC::ThrowScope&, const KeyObject& other) const;
-    // node's deep equality for two CryptoKeys: type, extractable, `algorithm`
-    // (compared by the caller's recursion), usages, and key material.
+    // node's CryptoKey deep equality. `algorithmsEqual` is the caller's recursion.
     static bool cryptoKeysDeepEqual(JSC::JSGlobalObject*, JSC::ThrowScope&, WebCore::JSCryptoKey*, WebCore::JSCryptoKey*, const WTF::Function<bool(JSC::JSValue, JSC::JSValue)>& algorithmsEqual);
     JSC::JSValue toCryptoKey(JSC::JSGlobalObject*, JSC::ThrowScope&,
         JSC::JSValue algorithmValue, JSC::JSValue extractableValue, JSC::JSValue keyUsagesValue);

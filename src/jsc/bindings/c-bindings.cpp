@@ -600,6 +600,14 @@ extern "C" void bun_restore_stdio()
 {
 
 #if !OS(WINDOWS)
+    // We might be a background job that doesn't own the TTY so block SIGTTOU
+    // before making the tcsetattr() calls, otherwise that signal suspends us.
+    sigset_t sa;
+    sigset_t old_mask;
+    sigemptyset(&sa);
+    sigaddset(&sa, SIGTTOU);
+    pthread_sigmask(SIG_BLOCK, &sa, &old_mask);
+
     // A tty that setRawMode() touched and that is not one of fds 0-2 (for
     // example `fs.openSync("/dev/tty")`) is only known to the libuv-style
     // snapshot. Node's ResetStdio() does the same call first.
@@ -626,20 +634,13 @@ extern "C" void bun_restore_stdio()
         if (pipeline_producer && !bun_stdio_modified[fd])
             continue;
 
-        sigset_t sa;
         int err;
-
-        // We might be a background job that doesn't own the TTY so block SIGTTOU
-        // before making the tcsetattr() call, otherwise that signal suspends us.
-        sigemptyset(&sa);
-        sigaddset(&sa, SIGTTOU);
-
-        pthread_sigmask(SIG_BLOCK, &sa, nullptr);
         do
             err = tcsetattr(fd, TCSANOW, &termios_to_restore_later[fd]);
         while (err == -1 && errno == EINTR);
-        pthread_sigmask(SIG_UNBLOCK, &sa, nullptr);
     }
+
+    pthread_sigmask(SIG_SETMASK, &old_mask, nullptr);
 #endif
 }
 

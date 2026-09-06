@@ -6280,6 +6280,8 @@ declare module "bun" {
     onResolve(constraints: PluginConstraints, callback: OnResolveCallback): this;
     /**
      * The config object passed to `Bun.build` as is. Can be mutated.
+     *
+     * Not set for plugins registered with {@link Bun.plugin}.
      */
     config: BuildConfig & { plugins: BunPlugin[] };
 
@@ -6334,7 +6336,8 @@ declare module "bun" {
      *
      * {@link Bun.plugin} validates this value but does not filter on it, and
      * {@link Bun.build} does not read it: the plugin runs for every target.
-     * Check `build.config.target` inside `setup` to apply a plugin conditionally.
+     * To apply a `Bun.build` plugin conditionally, check `build.config.target`
+     * inside `setup` (`build.config` is only set for `Bun.build` plugins).
      */
     target?: Target;
 

@@ -2371,6 +2371,15 @@ impl<ValueType, const COUNT: usize, const REMOVE_TRAILING_SLASHES: bool>
         }
         doomed.len()
     }
+
+    /// Drops every not-found marker. Returns how many there were.
+    pub fn clear_not_found(&mut self) -> usize {
+        let _guard = self.mutex.lock();
+        let before = self.index.len();
+        self.index
+            .retain(|_, index| index.index() != NOT_FOUND.index());
+        before - self.index.len()
+    }
 }
 
 // ──────────────────────────────────────────────────────────────────────────

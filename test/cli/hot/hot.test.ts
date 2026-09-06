@@ -887,6 +887,24 @@ describe.skipIf(isWindows)("--hot follows a retargeted symlink on the import pat
     expect(await stdout.next()).toBe("MARK_V2_EDITED");
   });
 
+  it("directory symlink whose new target has a directory the old one lacked", async () => {
+    const { dir, runner, stdout, path } = await run(
+      {
+        "entry.ts": `import("./cur/sub/app.ts").catch(() => console.log("MARK_MISSING"));`,
+        "v1/app.ts": `console.log("MARK_V1");`,
+        "v2/sub/app.ts": `console.log("MARK_V2");`,
+      },
+      { cur: "v1" },
+    );
+    using _dir = dir;
+    await using _runner = runner;
+    expect(await stdout.next()).toBe("MARK_MISSING");
+
+    // The resolver cached `cur/sub` as not found under v1.
+    retargetSymlink(path("cur"), "v2");
+    expect(await stdout.next()).toBe("MARK_V2");
+  });
+
   it("file symlink", async () => {
     const { dir, runner, stdout, path } = await run(
       {

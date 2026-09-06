@@ -488,6 +488,11 @@ pub struct Resolver<'a> {
     pub elapsed: u64, // tracing
 
     pub watcher: Option<AnyResolveWatcher>,
+    /// Directories that hold a followed symlink, found while `entries_mutex`
+    /// was held. The watcher takes its own mutex, which the watcher thread
+    /// holds while it takes `entries_mutex`, so the watch is registered once
+    /// `entries_mutex` is released (`flush_link_dir_watches`).
+    link_dir_watches: Vec<(&'static [u8], FD)>,
 
     pub caches: CacheSet,
     pub generation: Generation,
@@ -625,6 +630,7 @@ impl<'a> Resolver<'a> {
             debug_logs: None,
             elapsed: 0,
             watcher: from.watcher,
+            link_dir_watches: Vec::new(),
             caches: CacheSet::init(),
             generation: from.generation,
             package_manager: from.package_manager,
@@ -925,6 +931,7 @@ impl<'a> Resolver<'a> {
             debug_logs: None,
             elapsed: 0,
             watcher: None,
+            link_dir_watches: Vec::new(),
             generation: 0,
             package_manager: None,
             on_wake_package_manager: Default::default(),
@@ -2441,15 +2448,35 @@ impl<'a> Resolver<'a> {
         first_bust || second_bust
     }
 
+    /// Registers the directory watches queued by `dir_info_uncached`. Call
+    /// without `entries_mutex` held.
+    fn flush_link_dir_watches(&mut self) {
+        if self.link_dir_watches.is_empty() {
+            return;
+        }
+        let Some(watcher) = self.watcher else {
+            self.link_dir_watches.clear();
+            return;
+        };
+        for (dir, fd) in self.link_dir_watches.drain(..) {
+            watcher.watch(dir, fd);
+        }
+    }
+
     /// `bust_dir_cache` for `path` and for every cached directory below it.
     /// A retargeted directory symlink makes the real path cached by each of
     /// them stale at once. Returns whether anything was busted.
     pub fn bust_dir_cache_tree(&mut self, path: &[u8]) -> bool {
-        let exact = self.bust_dir_cache(path);
+        // `dir_info_cached_miss` caches every directory from the top down, so
+        // nothing is cached below a path that is not cached itself. That
+        // keeps the two map walks below off the path of a plain file save.
+        if !self.bust_dir_cache(path) {
+            return false;
+        }
         let mut buf = bun_paths::path_buffer_pool::get();
         let path = strings::without_trailing_slash_windows_path(path);
         if path.len() + 1 >= buf.len() {
-            return exact;
+            return true;
         }
         buf[..path.len()].copy_from_slice(path);
         buf[path.len()] = SEP;
@@ -2458,14 +2485,18 @@ impl<'a> Resolver<'a> {
         let dirs_below = self.dir_cache_mut().remove_where(|info| {
             info.abs_path.len() > dir_with_slash.len() && info.abs_path.starts_with(dir_with_slash)
         });
+        // A not-found marker has no key to match, and a path that did not
+        // exist under the old target can exist under the new one.
+        let not_found = self.dir_cache_mut().clear_not_found();
         bun_core::scoped_log!(
             ResolverDev,
-            "Bust below {} = {}, {}",
+            "Bust below {} = {}, {}, {}",
             bstr::BStr::new(dir_with_slash),
             entries_below,
-            dirs_below
+            dirs_below,
+            not_found
         );
-        exact || entries_below > 0 || dirs_below > 0
+        true
     }
 
     /// bust both the named file and a parent directory, because `./hello` can resolve
@@ -4245,7 +4276,9 @@ impl<'a> Resolver<'a> {
                 .map(DirInfoRef::from_slot));
         }
 
-        self.dir_info_cached_miss(enable_logging, input_path, top_result)
+        let result = self.dir_info_cached_miss(enable_logging, input_path, top_result);
+        self.flush_link_dir_watches();
+        result
     }
 
     /// Cold tail of [`dir_info_cached_maybe_log`]: the directory walk +
@@ -6313,10 +6346,10 @@ impl<'a> Resolver<'a> {
                             // Only the real path gets watched through the
                             // files under it. Watch the link's own directory
                             // so a retarget of the link is seen.
-                            if FeatureFlags::WATCH_DIRECTORIES {
-                                if let Some(watcher) = self.watcher.as_ref() {
-                                    watcher.watch(parent_entries.dir, parent_entries.fd);
-                                }
+                            if FeatureFlags::WATCH_DIRECTORIES && self.watcher.is_some() {
+                                bun_core::handle_oom(self.link_dir_watches.try_reserve(1));
+                                self.link_dir_watches
+                                    .push((parent_entries.dir, parent_entries.fd));
                             }
                         } else if !parent_.abs_real_path.is_empty() {
                             // this might leak a little i'm not sure

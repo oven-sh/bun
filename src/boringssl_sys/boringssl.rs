@@ -419,9 +419,7 @@ impl X509 {
         }
     }
 
-    /// RFC 5929 §4.1 `tls-server-end-point`: the DER hashed with the
-    /// signature's digest (SHA-256 for MD5 and SHA-1). `None` when the
-    /// signature algorithm has no digest.
+    /// RFC 5929 §4.1 `tls-server-end-point` hash, or `None` when the signature algorithm has no digest.
     pub fn tls_server_end_point_hash(
         &self,
         out: &mut [u8; EVP_MAX_MD_SIZE as usize],

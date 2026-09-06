@@ -23,6 +23,17 @@ use super::coordinator::Coordinator;
 use super::file_range::FileRange;
 use super::frame;
 
+/// One `test_done` result the coordinator has not printed yet.
+pub struct PendingLine {
+    pub(crate) file_idx: u32,
+    pub(crate) line: Box<[u8]>,
+    /// The worker wrote `line` to its stderr before it sent the frame, so it
+    /// prints when its copy is found in `captured`. A dot or the agent
+    /// status is not in the stream and prints right behind the entry
+    /// before it.
+    pub(crate) in_stream: bool,
+}
+
 pub struct Worker {
     // BACKREF to the owning Coordinator. Stored as `*const` for LIFETIMES.tsv
     // parity, but mutation sites (`live_workers`, `on_worker_exit`, `frame`)
@@ -64,10 +75,8 @@ pub struct Worker {
     pub(crate) dispatched_at: i64,
     /// Worker stdout+stderr not yet printed.
     pub(crate) captured: Vec<u8>,
-    /// `(file index, result line)` from `test_done` frames not yet found in
-    /// `captured`. The worker writes each line to stderr before it sends
-    /// the frame.
-    pub(crate) pending_lines: VecDeque<(u32, Box<[u8]>)>,
+    /// Results from `test_done` frames not printed yet, in frame order.
+    pub(crate) pending_lines: VecDeque<PendingLine>,
     pub(crate) alive: bool,
     /// Set when the process-exit notification arrives. Reaping waits for both
     /// this and `ipc.done` so trailing IPC frames are decoded first.

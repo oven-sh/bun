@@ -16,7 +16,7 @@ use bun_jsc::virtual_machine::VirtualMachine;
 use bun_ptr::Interned;
 
 use super::frame::{self, Frame};
-use super::worker::{Worker, WorkerPipe};
+use super::worker::{PendingLine, Worker, WorkerPipe};
 use crate::test_command::CommandLineReporter;
 
 // `Status` lives in `crate::api::bun::process`
@@ -447,15 +447,30 @@ impl<'a> Coordinator<'a> {
         self.print_pending_lines(w);
     }
 
-    /// Prints captured output through each pending result line found in it.
+    /// Prints pending results in frame order: a stream line once its copy is
+    /// in `captured`, a dot right away behind the complete lines before it.
     fn print_pending_lines(&mut self, w: &mut Worker) {
-        while let Some((idx, line)) = w.pending_lines.front() {
-            let Some(pos) = strings::index_of(&w.captured, line) else {
-                break;
+        while let Some(p) = w.pending_lines.front() {
+            let (file_idx, end) = if p.in_stream {
+                let Some(pos) = strings::index_of(&w.captured, &p.line) else {
+                    break;
+                };
+                (p.file_idx, pos + p.line.len())
+            } else {
+                (p.file_idx, strings::last_index_of_char(&w.captured, b'\n').map_or(0, |nl| nl + 1))
             };
-            let (idx, end) = (*idx, pos + line.len());
-            w.pending_lines.pop_front();
-            self.print_captured(w, end, Some(idx));
+            let p = w.pending_lines.pop_front().expect("front was Some");
+            self.print_captured(w, end, Some(file_idx));
+            if !p.in_stream && !p.line.is_empty() {
+                let is_dot = self.dots;
+                if !is_dot {
+                    self.break_dots();
+                    self.ensure_header(file_idx);
+                }
+                let _ = Output::error_writer().write_all(&p.line);
+                self.last_printed_dot = is_dot;
+                Output::flush();
+            }
         }
     }
 
@@ -465,16 +480,9 @@ impl<'a> Coordinator<'a> {
         for i in 0..self.spawned_count as usize {
             // SAFETY: `i < spawned_count <= workers.len()`; fresh derivation per slot.
             let w = unsafe { &mut *self.workers.as_mut_ptr().add(i) };
-            if !w.pending_lines.is_empty() && !w.captured.is_empty() {
+            if !w.pending_lines.is_empty() {
                 self.print_pending_lines(w);
             }
-        }
-    }
-
-    /// Prints the complete lines captured so far under the in-flight file.
-    fn flush_complete_lines(&mut self, w: &mut Worker) {
-        if let Some(nl) = strings::last_index_of_char(&w.captured, b'\n') {
-            self.print_captured(w, nl + 1, w.inflight);
         }
     }
 
@@ -495,8 +503,8 @@ impl<'a> Coordinator<'a> {
     /// Prints everything, result lines that never reached the pipe included.
     fn flush_captured(&mut self, w: &mut Worker) {
         self.flush_captured_lines(w);
-        for (_, line) in w.pending_lines.drain(..) {
-            w.captured.extend_from_slice(&line);
+        for p in w.pending_lines.drain(..) {
+            w.captured.extend_from_slice(&p.line);
         }
         self.flush_rest(w);
     }
@@ -531,28 +539,12 @@ impl<'a> Coordinator<'a> {
                 if let Some(file) = self.test_records.get_mut(idx as usize) {
                     file.tests.push(Box::from(rd.p));
                 }
-                if strings::ends_with_char(formatted, b'\n') {
-                    // The worker wrote this line to its stderr before the frame.
-                    w.pending_lines.push_back((idx, Box::from(formatted)));
-                    self.flush_captured_lines(w);
-                    return;
-                }
-                // Empty (a pass under --only-failures), a dot, or the short
-                // AI-agent status: not in the stream, so print what the
-                // test wrote and then the status.
+                w.pending_lines.push_back(PendingLine {
+                    file_idx: idx,
+                    line: Box::from(formatted),
+                    in_stream: strings::ends_with_char(formatted, b'\n'),
+                });
                 self.flush_captured_lines(w);
-                self.flush_complete_lines(w);
-                if formatted.is_empty() {
-                    return;
-                }
-                let is_dot = self.dots;
-                if !is_dot {
-                    self.break_dots();
-                    self.ensure_header(idx);
-                }
-                let _ = Output::error_writer().write_all(formatted);
-                self.last_printed_dot = is_dot;
-                Output::flush();
             }
             frame::Kind::FileDone => {
                 let mut nums = [0u32; 9];

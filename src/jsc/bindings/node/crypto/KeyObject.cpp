@@ -920,6 +920,34 @@ std::optional<bool> KeyObject::equals(const KeyObject& other) const
     }
 }
 
+bool KeyObject::deepEquals(JSGlobalObject* globalObject, ThrowScope& scope, const KeyObject& other) const
+{
+    std::optional<bool> result = equals(other);
+    if (!result.has_value()) {
+        ERR::CRYPTO_UNSUPPORTED_OPERATION(scope, globalObject);
+        return false;
+    }
+    return *result;
+}
+
+bool KeyObject::cryptoKeysDeepEqual(JSGlobalObject* globalObject, ThrowScope& scope, WebCore::CryptoKey& key1, WebCore::CryptoKey& key2)
+{
+    if (key1.type() != key2.type() || key1.extractable() != key2.extractable() || key1.usagesBitmap() != key2.usagesBitmap())
+        return false;
+
+    auto handle1 = create(key1);
+    if (handle1.hasException()) {
+        WebCore::propagateException(*globalObject, scope, handle1.releaseException());
+        return false;
+    }
+    auto handle2 = create(key2);
+    if (handle2.hasException()) {
+        WebCore::propagateException(*globalObject, scope, handle2.releaseException());
+        return false;
+    }
+    return handle1.returnValue().deepEquals(globalObject, scope, handle2.returnValue());
+}
+
 static std::optional<Vector<uint8_t>> marshalAsymmetricKey(const ncrypto::EVPKeyPointer& pkey, bool isPublic)
 {
     return WebCore::marshalEVPKey(pkey.get(), isPublic);

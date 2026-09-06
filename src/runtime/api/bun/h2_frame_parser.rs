@@ -1975,8 +1975,8 @@ struct HeaderList {
 }
 
 struct HeaderField {
-    name_len: u32,
-    value_len: u32,
+    name_len: usize,
+    value_len: usize,
     never_index: bool,
 }
 
@@ -1996,8 +1996,8 @@ impl HeaderList {
         self.bytes.extend_from_slice(name);
         self.bytes.extend_from_slice(value);
         self.fields.push(HeaderField {
-            name_len: u32::try_from(name.len()).expect("header name fits u32"),
-            value_len: u32::try_from(value.len()).expect("header value fits u32"),
+            name_len: name.len(),
+            value_len: value.len(),
             never_index,
         });
         Ok(())
@@ -2013,8 +2013,8 @@ impl HeaderList {
     fn iter(&self) -> impl Iterator<Item = (&[u8], &[u8], bool)> {
         let mut offset = 0usize;
         self.fields.iter().map(move |field| {
-            let name_end = offset + field.name_len as usize;
-            let value_end = name_end + field.value_len as usize;
+            let name_end = offset + field.name_len;
+            let value_end = name_end + field.value_len;
             let name = &self.bytes[offset..name_end];
             let value = &self.bytes[name_end..value_end];
             offset = value_end;

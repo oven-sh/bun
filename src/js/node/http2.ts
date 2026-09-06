@@ -444,18 +444,6 @@ function emitSessionCloseNT(self: Http2Session, frame) {
     runInFrame(frame, self.emit, self, "close");
   }
 }
-function emitErrorNT(self: any, error: any, destroy: boolean) {
-  if (destroy) {
-    if (self.listenerCount("error") > 0) {
-      self.destroy(error);
-    } else {
-      self.destroy();
-    }
-  } else if (self.listenerCount("error") > 0) {
-    self.emit("error", error);
-  }
-}
-
 function emitOutofStreamErrorNT(self: any) {
   self.destroy($ERR_HTTP2_OUT_OF_STREAMS());
 }

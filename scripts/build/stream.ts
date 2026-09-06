@@ -45,6 +45,8 @@
  * pass) so ninja can still chain on it. --stdout=PATH captures the child's
  * stdout into PATH instead of forwarding it (generators that print their
  * output), writing only when the content changed so restat can prune.
+ * --label=TEXT puts TEXT after the `[name]` prefix on every line (the
+ * post-link checks label their lines with the executable they ran on).
  */
 
 import { spawn, spawnSync } from "node:child_process";
@@ -101,6 +103,7 @@ function main(): void {
   let consoleMode = false;
   let stampPath: string | undefined;
   let stdoutPath: string | undefined;
+  let label = "";
   const envOverrides: Record<string, string> = {};
 
   // Bun's bundled BoringSSL doesn't consult the system trust store, so
@@ -145,6 +148,8 @@ function main(): void {
       stampPath = opt.slice(8);
     } else if (opt.startsWith("--stdout=")) {
       stdoutPath = opt.slice(9);
+    } else if (opt.startsWith("--label=")) {
+      label = opt.slice(8) + " ";
     } else {
       process.stderr.write(`stream.ts: unknown option ${opt}\n`);
       process.exit(2);
@@ -217,7 +222,7 @@ function main(): void {
 
   // Color the prefix so interleaved parallel output is visually separable.
   // Hash-to-color: same dep always gets the same color across runs.
-  const prefix = useColor ? coloredPrefix(name) : `[${name}] `;
+  const prefix = (useColor ? coloredPrefix(name) : `[${name}] `) + label;
 
   const stdio: import("node:child_process").StdioOptions = ["inherit", "pipe", "pipe"];
 

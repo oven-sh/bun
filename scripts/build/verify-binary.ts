@@ -123,12 +123,15 @@ const GUIDANCE: Record<CheckName, string[]> = {
 
 interface CheckResult {
   name: CheckName;
+  /** `<count> <noun>` — the one thing printed when the check passes. */
   summary: string;
   violations: string[];
+  /** What was found, itemized; printed only alongside violations. */
+  details: string[];
 }
 const results: CheckResult[] = [];
-function report(name: CheckName, summary: string, violations: string[] = []): void {
-  results.push({ name, summary, violations });
+function report(name: CheckName, summary: string, violations: string[] = [], details: string[] = []): void {
+  results.push({ name, summary, violations, details });
 }
 
 /** Compare a found set against an expected set: extras are always violations, absentees only when `exact`. */
@@ -264,7 +267,7 @@ function verifyElf(spec: VerifySpec): void {
     );
     report(
       "exports",
-      `${exported.length} dynamic symbols${copyRelocated.size ? ` (${copyRelocated.size} libc copy relocations)` : ""}`,
+      `${exported.length - copyRelocated.size} exported symbols`,
       bad.map(s => `+ ${s} (not in the export list)`),
     );
   }
@@ -292,8 +295,10 @@ function verifyElf(spec: VerifySpec): void {
           violations.push(`${prefix}_${ver} required, ceiling is ${prefix}_${ceiling}`);
       }
     }
-    const vers = [...maxSeen].map(([p, v]) => `${p}_${v}`).join(" ");
-    report("dynamic libraries", `${needed.join(" ")}${vers ? `; max ${vers}` : ""}`, violations);
+    report("dynamic libraries", `${needed.length} shared libraries`, violations, [
+      ...needed,
+      ...[...maxSeen].map(([p, v]) => `max ${p}_${v}`),
+    ]);
   }
 
   // 3. forbidden imports
@@ -306,7 +311,7 @@ function verifyElf(spec: VerifySpec): void {
     const bad = imported.filter(s => pat.test(s));
     report(
       "imports",
-      `${imported.length} undefined dynamic symbols`,
+      `${imported.length} imported symbols`,
       bad.map(s => `+ ${s} (forbidden import)`),
     );
   }
@@ -349,7 +354,7 @@ function verifyElf(spec: VerifySpec): void {
         if (!allowed.test(name)) violations.push(`+ ${name} (new static initializer)`);
       }
     }
-    report("static initializers", `${names.length}${names.length ? ` (${names.join(", ")})` : ""}`, violations);
+    report("static initializers", `${names.length} static initializers`, violations, names);
   }
 
   // 5. hardening
@@ -373,7 +378,8 @@ function verifyElf(spec: VerifySpec): void {
       );
     const bindNow = /BIND_NOW|\bNOW\b/.test(info.match(/DynamicSection \[[\s\S]*?\n\]/)?.[0] ?? "");
     if (bindNow !== expect.elf.bindNow) violations.push(`BIND_NOW ${bindNow}, expected ${expect.elf.bindNow}`);
-    report("hardening", `${type}, nx-stack, no rwx${relro ? ", relro" : ""}${bindNow ? ", bind-now" : ""}`, violations);
+    const props = [type, "nx-stack", "no-rwx", ...(relro ? ["relro"] : []), ...(bindNow ? ["bind-now"] : [])];
+    report("hardening", `${props.length} properties`, violations, props);
   }
 
   // 8. debug info / symtab
@@ -389,11 +395,10 @@ function verifyElf(spec: VerifySpec): void {
       violations.push(
         `.debug_* ${compressed ? "compressed" : "uncompressed"}, expected ${expect.debugInfo.compressed ? "compressed" : "uncompressed"}`,
       );
-    report(
-      "debug info",
-      `${symtab ? "symtab" : "no symtab"}, ${debug.length} debug sections${compressed ? " (compressed)" : ""}`,
-      violations,
-    );
+    report("debug info", `${debug.length} debug sections`, violations, [
+      symtab ? "symtab" : "no symtab",
+      compressed ? "compressed" : "uncompressed",
+    ]);
   }
 }
 
@@ -435,7 +440,10 @@ function verifyMachO(spec: VerifySpec): void {
     const sameVersion = (a: string | undefined, b: string) => a !== undefined && versionLeq(a, b) && versionLeq(b, a);
     if (expect.minOSVersion !== undefined && !sameVersion(minos, expect.minOSVersion))
       violations.push(`minos ${minos}, expected ${expect.minOSVersion}`);
-    report("dynamic libraries", `${uniq.map(s => s.replace(/^.*\//, "")).join(" ")}; minos ${minos}`, violations);
+    report("dynamic libraries", `${uniq.length} shared libraries`, violations, [
+      ...uniq.map(s => s.replace(/^.*\//, "")),
+      `minos ${minos}`,
+    ]);
   }
 
   // 3. forbidden imports
@@ -447,7 +455,7 @@ function verifyMachO(spec: VerifySpec): void {
     const bad = imported.filter(s => pat.test(s));
     report(
       "imports",
-      `${imported.length} undefined symbols`,
+      `${imported.length} imported symbols`,
       bad.map(s => `+ ${s} (forbidden import)`),
     );
   }
@@ -483,7 +491,7 @@ function verifyMachO(spec: VerifySpec): void {
         if (!allowed.test(sym)) violations.push(`+ ${sym} (new static initializer)`);
       }
     }
-    report("static initializers", `${names.length}${names.length ? ` (${names.join(", ")})` : ""}`, violations);
+    report("static initializers", `${names.length} static initializers`, violations, names);
   }
 
   // 5. hardening: header flags + segment protections
@@ -509,7 +517,8 @@ function verifyMachO(spec: VerifySpec): void {
       if (want !== undefined && want !== maxprot) violations.push(`${segname} maxprot ${maxprot}, expected ${want}`);
       if (/w/.test(maxprot) && /x/.test(maxprot)) violations.push(`${segname} is RWX`);
     }
-    report("hardening", `${flagLine.trim().split(/\s+/).slice(7).join(" ")}; ${seen.join(" ")}`, violations);
+    const props = [...flagLine.trim().split(/\s+/).slice(7), ...seen];
+    report("hardening", `${props.length} properties`, violations, props);
   }
 }
 
@@ -543,11 +552,10 @@ function verifyPE(spec: VerifySpec): void {
     const imports = [...blocks(text, "Import"), ...blocks(text, "DelayImport")];
     const dlls = [...new Set(imports.map(b => field(b, "Name")!).filter(Boolean))];
     const violations = libraryDifference(dlls, expect.neededLibs, s => s.toLowerCase());
-    report(
-      "dynamic libraries",
-      `${dlls.length} DLLs (${imports.length - blocks(text, "Import").length} delay-loaded)`,
-      violations,
-    );
+    report("dynamic libraries", `${dlls.length} shared libraries`, violations, [
+      ...dlls,
+      `${imports.length - blocks(text, "Import").length} delay-loaded`,
+    ]);
     const syms = [...text.matchAll(/^\s+Symbol: (\S+) \(\d+\)/gm)].map(m => m[1]!);
     const pat = globToRegExp(expect.forbiddenImports);
     const bad = syms.filter(s => pat.test(s));
@@ -571,7 +579,8 @@ function verifyPE(spec: VerifySpec): void {
     const ver = `${field(hdr, "MajorSubsystemVersion")}.${field(hdr, "MinorSubsystemVersion")}`;
     if (expect.minOSVersion !== undefined && ver !== expect.minOSVersion)
       violations.push(`subsystem version ${ver}, expected ${expect.minOSVersion}`);
-    report("hardening", `${chars.join(" ")}; subsystem ${ver}`, violations);
+    const props = [...chars, `subsystem ${ver}`];
+    report("hardening", `${props.length} properties`, violations, props);
   }
 }
 
@@ -656,10 +665,12 @@ function verifyDuplicates(nm: string, rspfile: string, reportPath: string): numb
   for (const [name, sizes] of odr) lines.push(name, ...[...sizes].map(([sz, o]) => `    size 0x${sz} in ${o}`));
   writeFileSync(reportPath, lines.join("\n") + "\n");
   console.log(
-    `duplicate symbols: ${scanned} definitions across ${inputs.length} inputs; ${dups.length} duplicated, ${odr.length} weak with differing sizes (${reportPath})`,
+    `duplicate symbols: ${scanned} definitions across ${inputs.length} inputs${dups.length ? ` — ${dups.length} duplicated` : ""}`,
   );
   for (const [name, objs] of dups.slice(0, 50)) console.log(`  ${name}\n${objs.map(o => `      ${o}`).join("\n")}`);
   if (dups.length > 50) console.log(`  … ${dups.length - 50} more in ${reportPath}`);
+  if (dups.length > 0)
+    console.log(`  full report (and ${odr.length} weak definitions with differing sizes): ${reportPath}`);
   return dups.length > 0 ? 1 : 0;
 }
 
@@ -676,18 +687,17 @@ function main(argv: string[]): number {
     else verifyPE(spec);
     let failed = 0;
     for (const r of results) {
-      console.log(
-        `${spec.name} ${r.name}: ${r.summary}${r.violations.length ? ` — ${r.violations.length} violation(s)` : ""}`,
-      );
-      for (const v of r.violations) console.log(`    ${v}`);
+      console.log(`${r.name}: ${r.summary}${r.violations.length ? ` — ${r.violations.length} violation(s)` : ""}`);
       if (r.violations.length > 0) {
         failed++;
+        if (r.details.length > 0) console.log(`    found: ${r.details.join(", ")}`);
+        for (const v of r.violations) console.log(`    ${v}`);
         for (const line of GUIDANCE[r.name]) console.log(`  ${line}`);
       }
     }
     if (failed > 0)
       console.log(
-        `${spec.name}: ${failed} check(s) failed. Expectations: scripts/build/binary-expectations.ts (read the note on each list before extending it).`,
+        `${failed} check(s) failed. Expectations: scripts/build/binary-expectations.ts (read the note on each list before extending it).`,
       );
     return failed > 0 ? 1 : 0;
   }

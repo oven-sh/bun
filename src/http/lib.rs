@@ -3636,10 +3636,7 @@ impl<'a> HTTPClient<'a> {
             }};
         }
 
-        // Bounds `response_message_buffer`. Independent of the 16 KB
-        // server-side `MAX_HTTP_HEADER_SIZE`, which would reject legitimate
-        // large `Location`/`Set-Cookie` responses. Applied to the head
-        // length, whether the head is complete or not.
+        // Not the 16 KB server-side `MAX_HTTP_HEADER_SIZE`: large `Location`/`Set-Cookie` responses are legitimate.
         const MAX_RESPONSE_HEADER_BUFFER: usize = 1024 * 1024;
 
         let shared_resp = scratch::response_headers();

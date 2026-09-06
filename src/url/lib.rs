@@ -703,7 +703,14 @@ impl<'a> URL<'a> {
             url.pathname = url.path;
         }
 
-        if let Some(q) = strings::index_of_char(&base[offset as usize..], b'?') {
+        // The fragment starts at the first `#`, so a `?` after it is part of
+        // the fragment, not the start of the query.
+        let before_hash = match strings::index_of_char(&base[offset as usize..], b'#') {
+            Some(hash) => &base[offset as usize..][..hash as usize],
+            None => &base[offset as usize..],
+        };
+
+        if let Some(q) = strings::index_of_char(before_hash, b'?') {
             offset += q;
             url.path = &base[path_offset as usize..][0..q as usize];
             can_update_path = false;
@@ -750,13 +757,6 @@ impl<'a> URL<'a> {
 
         if url.pathname.is_empty() {
             url.pathname = b"/";
-        }
-
-        const SLASH_SLASH: u16 = u16::from_le_bytes(*b"//");
-        while url.pathname.len() > 1
-            && u16::from_le_bytes([url.pathname[0], url.pathname[1]]) == SLASH_SLASH
-        {
-            url.pathname = &url.pathname[1..];
         }
 
         url.origin = strings::trim(url.origin, b"/ ?#");
@@ -1773,6 +1773,44 @@ mod tests {
             .expect("Vec<u8> writes cannot fail");
         assert_eq!(&*boxed, &*out, "join_alloc and join_write must agree");
         out
+    }
+
+    #[test]
+    fn fragment_is_not_part_of_the_path_or_query() {
+        let url = URL::parse(b"http://localhost:3000/path#frag?x=1");
+        assert_eq!(url.pathname, b"/path");
+        assert_eq!(url.path, b"/path");
+        assert_eq!(url.search, b"");
+        assert_eq!(url.hash, b"#frag?x=1");
+
+        let url = URL::parse(b"http://localhost:3000/cb#access_token=abc&scope=x?y");
+        assert_eq!(url.pathname, b"/cb");
+        assert_eq!(url.hash, b"#access_token=abc&scope=x?y");
+
+        let url = URL::parse(b"http://localhost:3000/#?");
+        assert_eq!(url.pathname, b"/");
+        assert_eq!(url.hash, b"#?");
+
+        let url = URL::parse(b"http://localhost:3000/path?q=1#frag?x=2");
+        assert_eq!(url.pathname, b"/path?q=1");
+        assert_eq!(url.path, b"/path");
+        assert_eq!(url.search, b"?q=1");
+        assert_eq!(url.hash, b"#frag?x=2");
+    }
+
+    #[test]
+    fn leading_empty_path_segments_are_kept() {
+        let url = URL::parse(b"http://localhost:3000//admin");
+        assert_eq!(url.hostname, b"localhost");
+        assert_eq!(url.port, b"3000");
+        assert_eq!(url.pathname, b"//admin");
+
+        let url = URL::parse(b"http://localhost:3000///t?a=1");
+        assert_eq!(url.pathname, b"///t?a=1");
+        assert_eq!(url.search, b"?a=1");
+
+        let url = URL::parse(b"http://localhost:3000/a//b");
+        assert_eq!(url.pathname, b"/a//b");
     }
 
     #[test]

@@ -1,5 +1,5 @@
 import { indexOfLine } from "bun";
-import { expect, test } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 
 test("indexOfLine handles non-number offset", () => {
@@ -128,24 +128,25 @@ test("indexOfLine skips multi-byte sequences correctly", () => {
   expect(indexOfLine(buf3, 7)).toBe(11);
 });
 
-test("indexOfLine finds a newline after a truncated multi-byte lead byte", () => {
-  // A lead byte whose continuation bytes are missing must not hide the
-  // newline that follows it.
-  const cases = [
-    { bytes: [0xf0, 0x0a], expected: 1 },
-    { bytes: [0xe2, 0x82, 0x0a], expected: 2 },
-    { bytes: [0xc3, 0x0a, 0x41, 0x0a], expected: 1 },
-    { bytes: [0x41, 0xf0, 0x0a, 0x0a], expected: 2 },
-    { bytes: [0x80, 0x0a], expected: 1 },
-    { bytes: [0xff, 0x0a], expected: 1 },
-    { bytes: [0xf0], expected: -1 },
-    { bytes: [0xf0, 0x90], expected: -1 },
-  ];
-  expect(cases.map(({ bytes }) => indexOfLine(new Uint8Array(bytes)))).toEqual(cases.map(c => c.expected));
-  // The same with an offset that lands on the lead byte.
-  expect(indexOfLine(new Uint8Array([0x41, 0x42, 0xf0, 0x0a]), 2)).toBe(3);
-  // A valid sequence directly before the newline still works.
-  expect(indexOfLine(new Uint8Array([0xf0, 0x9f, 0x98, 0x8b, 0x0a]))).toBe(4);
+// A lead byte whose continuation bytes are missing must not hide the newline
+// that follows it.
+describe.each([
+  { bytes: [0xf0, 0x0a], offset: 0, expected: 1 },
+  { bytes: [0xe2, 0x82, 0x0a], offset: 0, expected: 2 },
+  { bytes: [0xc3, 0x0a, 0x41, 0x0a], offset: 0, expected: 1 },
+  { bytes: [0x41, 0xf0, 0x0a, 0x0a], offset: 0, expected: 2 },
+  { bytes: [0x80, 0x0a], offset: 0, expected: 1 },
+  { bytes: [0xff, 0x0a], offset: 0, expected: 1 },
+  { bytes: [0xf0], offset: 0, expected: -1 },
+  { bytes: [0xf0, 0x90], offset: 0, expected: -1 },
+  // the offset lands on the lead byte
+  { bytes: [0x41, 0x42, 0xf0, 0x0a], offset: 2, expected: 3 },
+  // a valid sequence directly before the newline
+  { bytes: [0xf0, 0x9f, 0x98, 0x8b, 0x0a], offset: 0, expected: 4 },
+])("indexOfLine with invalid UTF-8 $bytes at offset $offset", ({ bytes, offset, expected }) => {
+  test(`returns ${expected}`, () => {
+    expect(indexOfLine(new Uint8Array(bytes), offset)).toBe(expected);
+  });
 });
 
 test("console async iterator splits lines after a truncated multi-byte lead byte", async () => {

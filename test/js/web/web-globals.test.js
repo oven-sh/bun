@@ -422,9 +422,9 @@ test("confirm (no) windows newline", async () => {
 // prompt(), confirm() and alert() block the JS thread on stdin. A JS signal
 // listener must still run when the signal arrives, not after the next line.
 describe.skipIf(isWindows)("dialogs run JS signal listeners while they wait for input", () => {
-  async function run(dialog, signal, code) {
+  async function run(dialog, signal, code, listener = `() => { console.error("[listener ran]"); process.exit(${code}); }`) {
     const script = `
-      process.on(${JSON.stringify(signal)}, () => { console.error("[listener ran]"); process.exit(${code}); });
+      process.on(${JSON.stringify(signal)}, ${listener});
       const answer = ${dialog};
       console.error("[code after the dialog ran with " + JSON.stringify(answer) + "]");
     `;
@@ -466,6 +466,17 @@ describe.skipIf(isWindows)("dialogs run JS signal listeners while they wait for 
     expect(await run('alert("done?")', "SIGINT", 130)).toEqual({
       shown: "done? [Enter] ",
       stderr: "[listener ran]\n",
+      exitCode: 130,
+    });
+  });
+
+  // Node runs the microtask/nextTick checkpoint after a signal callback, so an
+  // exit that is one tick away must also happen during the wait.
+  test.concurrent("prompt() and a listener that exits on the next tick", async () => {
+    const listener = `() => process.nextTick(() => { console.error("[tick ran]"); process.exit(130); })`;
+    expect(await run('prompt("name?")', "SIGINT", 130, listener)).toEqual({
+      shown: "name? ",
+      stderr: "[tick ran]\n",
       exitCode: 130,
     });
   });

@@ -1861,7 +1861,7 @@ To create a project with the official Next.js scaffolding tool, run\n\
         let use_bunx = !HARDCODED_NON_BUN_X_LIST.contains(template_name)
             && (!strings::contains(template_name, b"/")
                 || strings::starts_with_char(template_name, b'@'))
-            && example_tag != ExampleTag::LocalFolder;
+            && !matches!(example_tag, ExampleTag::LocalFolder | ExampleTag::JslikeFile);
 
         if use_bunx {
             let mut bunx_args: Vec<&ZStr> =

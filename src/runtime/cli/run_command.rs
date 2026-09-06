@@ -2501,9 +2501,11 @@ impl RunCommand {
             bstr::BStr::new(target_name),
             bstr::BStr::new(fs_top_level_dir),
         );
+        let can_run_entry =
+            |loader: Loader| loader.can_be_run_by_bun() || loader == Loader::Html || loader == Loader::Md;
         // Temporarily honor `--preserve-symlinks-main` / NODE_PRESERVE_SYMLINKS_MAIN
         // for this one resolve.
-        let resolution: ::core::result::Result<bun_resolver::Result, bun_resolver::Error> = {
+        let resolution: Option<(Box<[u8]>, Loader)> = {
             let saved_preserve = this_transpiler.resolver.opts.preserve_symlinks;
             this_transpiler.resolver.opts.preserve_symlinks =
                 ctx.runtime_options.preserve_symlinks_main
@@ -2512,22 +2514,52 @@ impl RunCommand {
                         .unwrap_or(false);
             // SAFETY: `Transpiler::init` always sets `fs`; resolver-cache lifetime.
             let top_level_dir = unsafe { (*this_transpiler.fs).top_level_dir };
-            let resolved = match this_transpiler.resolver.resolve(
-                top_level_dir,
-                target_name,
-                bun_ast::ImportKind::EntryPointRun,
-            ) {
-                ok @ Ok(_) => ok,
-                Err(_) => {
-                    // Retry with explicit `./` prefix.
-                    let prefixed: Vec<u8> = [b"./".as_slice(), target_name].concat();
-                    this_transpiler.resolver.resolve(
-                        top_level_dir,
-                        &prefixed,
-                        bun_ast::ImportKind::EntryPointRun,
-                    )
-                }
+            let loaders = &this_transpiler.options.loaders;
+            let resolver = &mut this_transpiler.resolver;
+            // Resolves `name` (retrying with an explicit `./` prefix) and pairs
+            // the hit with the loader for its extension.
+            let mut resolve_entry = |name: &[u8]| -> Option<(Box<[u8]>, Loader)> {
+                let mut resolved = resolver
+                    .resolve(top_level_dir, name, bun_ast::ImportKind::EntryPointRun)
+                    .or_else(|_| {
+                        let prefixed: Vec<u8> = [b"./".as_slice(), name].concat();
+                        resolver.resolve(
+                            top_level_dir,
+                            &prefixed,
+                            bun_ast::ImportKind::EntryPointRun,
+                        )
+                    })
+                    .ok()?;
+                let path = resolved.path()?;
+                let ext = path.name().ext;
+                let loader: Loader = loaders
+                    .get(ext)
+                    .copied()
+                    .or_else(|| bun_bundler::options::DEFAULT_LOADERS.get(ext).copied())
+                    .unwrap_or(Loader::Tsx);
+                Some((path.text.to_vec().into_boxed_slice(), loader))
             };
+            let mut resolved = resolve_entry(target_name);
+            if let Some((path, loader)) = &resolved {
+                if !can_run_entry(*loader) {
+                    bun_core::scoped_log!(
+                        RUN_LOG,
+                        "Resolved file `{}` but ignoring because loader is {}",
+                        bstr::BStr::new(path),
+                        <&'static str>::from(*loader),
+                    );
+                    // `bun dev` lands on `dev.json` through extension probing,
+                    // which hides a runnable `dev/` directory entry
+                    // (`dev/index.*`, `dev/package.json`). Probe the directory
+                    // form before settling on the file Bun cannot run.
+                    let as_dir: Vec<u8> = [target_name, paths::SEP_STR.as_bytes()].concat();
+                    if let Some(dir_entry) = resolve_entry(&as_dir) {
+                        if can_run_entry(dir_entry.1) {
+                            resolved = Some(dir_entry);
+                        }
+                    }
+                }
+            }
             this_transpiler.resolver.opts.preserve_symlinks = saved_preserve;
             resolved
         };
@@ -2536,34 +2568,14 @@ impl RunCommand {
         // tail to print "Cannot run … / Bun cannot run {loader} files".
         let mut resolved_to_unrunnable_file: Option<(Box<[u8]>, Loader)> = None;
         match resolution {
-            Ok(mut resolved) => {
-                let path = resolved.path().expect("resolved primary path");
-                let ext = path.name().ext;
-                let loader: Loader = this_transpiler
-                    .options
-                    .loaders
-                    .get(ext)
-                    .copied()
-                    .or_else(|| bun_bundler::options::DEFAULT_LOADERS.get(ext).copied())
-                    .unwrap_or(Loader::Tsx);
-                if loader.can_be_run_by_bun() || loader == Loader::Html || loader == Loader::Md {
-                    bun_core::scoped_log!(RUN_LOG, "Resolved to: `{}`", bstr::BStr::new(path.text));
-                    // borrowck — `boot_and_handle_error` takes
-                    // `&mut ctx`; copy `path.text` out of the resolver borrow.
-                    let text: Box<[u8]> = path.text.to_vec().into_boxed_slice();
-                    return Ok(Self::boot_and_handle_error(ctx, &text, Some(loader)));
-                } else {
-                    bun_core::scoped_log!(
-                        RUN_LOG,
-                        "Resolved file `{}` but ignoring because loader is {}",
-                        bstr::BStr::new(path.text),
-                        <&'static str>::from(loader),
-                    );
-                    resolved_to_unrunnable_file =
-                        Some((path.text.to_vec().into_boxed_slice(), loader));
+            Some((path, loader)) => {
+                if can_run_entry(loader) {
+                    bun_core::scoped_log!(RUN_LOG, "Resolved to: `{}`", bstr::BStr::new(&path));
+                    return Ok(Self::boot_and_handle_error(ctx, &path, Some(loader)));
                 }
+                resolved_to_unrunnable_file = Some((path, loader));
             }
-            Err(_) => {
+            None => {
                 // Support globs for HTML entry points.
                 if strings::has_suffix_comptime(target_name, b".html")
                     && strings::contains_char(target_name, b'*')

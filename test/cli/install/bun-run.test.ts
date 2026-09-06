@@ -686,6 +686,14 @@ describe.concurrent("bun run", () => {
       "noext": "console.log('noext')",
       "folderandfile": { "index.js": "console.log('folderandfile/index.js')" },
       "folderandfile.js": "console.log('folderandfile.js')",
+      // a sibling file Bun cannot run must not hide the directory entry
+      "jsonandfolder": { "index.js": "console.log('jsonandfolder/index.js')" },
+      "jsonandfolder.json": JSON.stringify({}),
+      "jsonandmain": {
+        "package.json": JSON.stringify({ name: "jsonandmain", main: "entry.js" }),
+        "entry.js": "console.log('jsonandmain/entry.js')",
+      },
+      "jsonandmain.json": JSON.stringify({}),
       "shellscript.sh": "echo shellscript.sh",
       ".secretscript.js": "console.log('.secretscript.js')",
       "package.json": JSON.stringify({
@@ -783,6 +791,18 @@ describe.concurrent("bun run", () => {
       { command: ["./folderandfile/index.js"], stdout: "folderandfile/index.js", stderr: "" },
       { command: [dir + "/folderandfile"], stdout: "folderandfile.js", stderr: "" },
       { command: [dir + "/folderandfile/"], stdout: "folderandfile/index.js", stderr: "" },
+
+      { command: ["jsonandfolder"], stdout: "jsonandfolder/index.js", stderr: "" },
+      { command: ["./jsonandfolder"], stdout: "jsonandfolder/index.js", stderr: "" },
+      { command: [dir + "/jsonandfolder"], stdout: "jsonandfolder/index.js", stderr: "" },
+      {
+        command: ["jsonandfolder.json"],
+        stdout: "",
+        stderr: /error: Cannot run ".*jsonandfolder\.json"|EACCES/,
+        exitCode: 1,
+      },
+      { command: ["jsonandmain"], stdout: "jsonandmain/entry.js", stderr: "" },
+      { command: ["./jsonandmain"], stdout: "jsonandmain/entry.js", stderr: "" },
 
       { command: ["shellscript.sh"], stdout: "shellscript.sh", stderr: "" },
       { command: ["./shellscript.sh"], stdout: "shellscript.sh", stderr: "" },

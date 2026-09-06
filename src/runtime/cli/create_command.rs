@@ -1336,29 +1336,14 @@ impl CreateCommand {
                 }
             }
 
-            if !bun_paths::is_absolute(positional) {
-                'outer: {
-                    if let Some(home_dir) = env_loader.map.get(b"BUN_CREATE_DIR") {
-                        let parts = [home_dir, positional];
-                        let outdir_path = filesystem.abs_buf(&parts, home_dir_buf);
-                        let len = outdir_path.len();
-                        home_dir_buf[len] = 0;
-                        // SAFETY: home_dir_buf[len] == 0 written above
-                        let outdir_path_ = bun_core::ZStr::from_buf(&home_dir_buf[..], len);
-                        if bun_paths::resolve_path::has_any_illegal_chars(outdir_path_.as_bytes()) {
-                            break 'outer;
-                        }
-                        if bun_sys::directory_exists_at(bun_sys::Fd::cwd(), outdir_path_)
-                            .unwrap_or(false)
-                        {
-                            example_tag = ExampleTag::LocalFolder;
-                            break 'brk &home_dir_buf[..len];
-                        }
-                    }
-                }
+            if bun_paths::is_absolute(positional) {
+                example_tag = ExampleTag::LocalFolder;
+                break 'brk positional;
+            }
 
-                'outer: {
-                    let parts = [filesystem.top_level_dir, BUN_CREATE_DIR, positional];
+            'outer: {
+                if let Some(home_dir) = env_loader.map.get(b"BUN_CREATE_DIR") {
+                    let parts = [home_dir, positional];
                     let outdir_path = filesystem.abs_buf(&parts, home_dir_buf);
                     let len = outdir_path.len();
                     home_dir_buf[len] = 0;
@@ -1374,79 +1359,91 @@ impl CreateCommand {
                         break 'brk &home_dir_buf[..len];
                     }
                 }
+            }
 
-                'outer: {
-                    if let Some(home_dir) = env_loader.map.get(b"HOME") {
-                        let parts = [home_dir, BUN_CREATE_DIR, positional];
-                        let outdir_path = filesystem.abs_buf(&parts, home_dir_buf);
-                        let len = outdir_path.len();
-                        home_dir_buf[len] = 0;
-                        // SAFETY: home_dir_buf[len] == 0 written above
-                        let outdir_path_ = bun_core::ZStr::from_buf(&home_dir_buf[..], len);
-                        if bun_paths::resolve_path::has_any_illegal_chars(outdir_path_.as_bytes()) {
-                            break 'outer;
-                        }
-                        if bun_sys::directory_exists_at(bun_sys::Fd::cwd(), outdir_path_)
-                            .unwrap_or(false)
-                        {
-                            example_tag = ExampleTag::LocalFolder;
-                            break 'brk &home_dir_buf[..len];
-                        }
+            'outer: {
+                let parts = [filesystem.top_level_dir, BUN_CREATE_DIR, positional];
+                let outdir_path = filesystem.abs_buf(&parts, home_dir_buf);
+                let len = outdir_path.len();
+                home_dir_buf[len] = 0;
+                // SAFETY: home_dir_buf[len] == 0 written above
+                let outdir_path_ = bun_core::ZStr::from_buf(&home_dir_buf[..], len);
+                if bun_paths::resolve_path::has_any_illegal_chars(outdir_path_.as_bytes()) {
+                    break 'outer;
+                }
+                if bun_sys::directory_exists_at(bun_sys::Fd::cwd(), outdir_path_).unwrap_or(false)
+                {
+                    example_tag = ExampleTag::LocalFolder;
+                    break 'brk &home_dir_buf[..len];
+                }
+            }
+
+            'outer: {
+                if let Some(home_dir) = env_loader.map.get(b"HOME") {
+                    let parts = [home_dir, BUN_CREATE_DIR, positional];
+                    let outdir_path = filesystem.abs_buf(&parts, home_dir_buf);
+                    let len = outdir_path.len();
+                    home_dir_buf[len] = 0;
+                    // SAFETY: home_dir_buf[len] == 0 written above
+                    let outdir_path_ = bun_core::ZStr::from_buf(&home_dir_buf[..], len);
+                    if bun_paths::resolve_path::has_any_illegal_chars(outdir_path_.as_bytes()) {
+                        break 'outer;
+                    }
+                    if bun_sys::directory_exists_at(bun_sys::Fd::cwd(), outdir_path_)
+                        .unwrap_or(false)
+                    {
+                        example_tag = ExampleTag::LocalFolder;
+                        break 'brk &home_dir_buf[..len];
                     }
                 }
+            }
 
-                if bun_paths::is_absolute(positional) {
-                    example_tag = ExampleTag::LocalFolder;
-                    break 'brk positional;
-                }
+            let mut repo_begin: usize = usize::MAX;
+            // "https://github.com/foo/bar"
+            if strings::starts_with(positional, b"github.com/") {
+                repo_begin = b"github.com/".len();
+            }
 
-                let mut repo_begin: usize = usize::MAX;
-                // "https://github.com/foo/bar"
-                if strings::starts_with(positional, b"github.com/") {
-                    repo_begin = b"github.com/".len();
-                }
+            if strings::starts_with(positional, b"https://github.com/") {
+                repo_begin = b"https://github.com/".len();
+            }
 
-                if strings::starts_with(positional, b"https://github.com/") {
-                    repo_begin = b"https://github.com/".len();
-                }
-
-                if repo_begin == usize::MAX && positional[0] != b'/' {
-                    if let Some(first_slash_index) =
+            if repo_begin == usize::MAX && positional[0] != b'/' {
+                if let Some(first_slash_index) =
+                    bun_core::strings::index_of_char_usize(positional, b'/')
+                {
+                    let first_slash_index = first_slash_index as usize;
+                    if let Some(last_slash_index) =
                         bun_core::strings::index_of_char_usize(positional, b'/')
                     {
-                        let first_slash_index = first_slash_index as usize;
-                        if let Some(last_slash_index) =
-                            bun_core::strings::index_of_char_usize(positional, b'/')
+                        let last_slash_index = last_slash_index as usize;
+                        if first_slash_index == last_slash_index
+                            && !positional[last_slash_index..].is_empty()
+                            && last_slash_index > 0
                         {
-                            let last_slash_index = last_slash_index as usize;
-                            if first_slash_index == last_slash_index
-                                && !positional[last_slash_index..].is_empty()
-                                && last_slash_index > 0
-                            {
-                                repo_begin = 0;
-                            }
+                            repo_begin = 0;
                         }
                     }
                 }
+            }
 
-                if repo_begin != usize::MAX {
-                    let remainder = &positional[repo_begin..];
-                    if let Some(i) = bun_core::strings::index_of_char_usize(remainder, b'/') {
-                        let i = i as usize;
-                        if i > 0 && !remainder[i + 1..].is_empty() {
-                            if let Some(last_slash) =
-                                bun_core::strings::index_of_char_usize(&remainder[i + 1..], b'/')
-                            {
-                                let last_slash = last_slash as usize;
-                                example_tag = ExampleTag::GithubRepository;
-                                break 'brk strings::trim(
-                                    &remainder[0..i + 1 + last_slash],
-                                    b"# \r\t",
-                                );
-                            } else {
-                                example_tag = ExampleTag::GithubRepository;
-                                break 'brk strings::trim(remainder, b"# \r\t");
-                            }
+            if repo_begin != usize::MAX {
+                let remainder = &positional[repo_begin..];
+                if let Some(i) = bun_core::strings::index_of_char_usize(remainder, b'/') {
+                    let i = i as usize;
+                    if i > 0 && !remainder[i + 1..].is_empty() {
+                        if let Some(last_slash) =
+                            bun_core::strings::index_of_char_usize(&remainder[i + 1..], b'/')
+                        {
+                            let last_slash = last_slash as usize;
+                            example_tag = ExampleTag::GithubRepository;
+                            break 'brk strings::trim(
+                                &remainder[0..i + 1 + last_slash],
+                                b"# \r\t",
+                            );
+                        } else {
+                            example_tag = ExampleTag::GithubRepository;
+                            break 'brk strings::trim(remainder, b"# \r\t");
                         }
                     }
                 }

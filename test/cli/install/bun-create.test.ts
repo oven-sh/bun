@@ -342,6 +342,58 @@ it("should create template from local folder", async () => {
   expect(await Bun.file(join(x_dir, testTemplate, "foo", "bar.js")).text()).toBe("hi");
 });
 
+it("should create template from local folder given by absolute path", async () => {
+  const templateDir = join(x_dir, "my-templates", "abs-template");
+
+  await Bun.write(join(templateDir, "index.js"), "hi");
+  await Bun.write(join(templateDir, "foo", "bar.js"), "hi");
+
+  // A registry or proxy that refuses everything keeps a regression offline: an
+  // absolute path must never be looked up as a remote template.
+  using deadEnd = Bun.serve({ port: 0, fetch: () => new Response("no", { status: 404 }) });
+
+  await using proc = spawn({
+    cmd: [bunExe(), "create", templateDir],
+    cwd: x_dir,
+    stdout: "pipe",
+    stdin: "ignore",
+    stderr: "pipe",
+    env: { ...env, BUN_CONFIG_REGISTRY: deadEnd.url.href, https_proxy: deadEnd.url.href },
+  });
+
+  const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(err).not.toContain("error");
+  expect(await Bun.file(join(x_dir, "abs-template", "index.js")).text()).toBe("hi");
+  expect(await Bun.file(join(x_dir, "abs-template", "foo", "bar.js")).text()).toBe("hi");
+  expect(exitCode).toBe(0);
+});
+
+it("treats a bare <file>.tsx / <file>.jsx that exists in the cwd as a component, not a create-<file> template", async () => {
+  // No component export, so the component flow stops with its own error before
+  // it installs anything. The template flow would ask the registry for
+  // `create-App.tsx` instead.
+  await Bun.write(join(x_dir, "App.tsx"), "console.log('not a component');\n");
+  await Bun.write(join(x_dir, "widget.jsx"), "console.log('not a component');\n");
+
+  using deadEnd = Bun.serve({ port: 0, fetch: () => new Response("no", { status: 404 }) });
+
+  for (const file of ["App.tsx", "widget.jsx"]) {
+    await using proc = spawn({
+      cmd: [bunExe(), "create", file],
+      cwd: x_dir,
+      stdout: "pipe",
+      stdin: "ignore",
+      stderr: "pipe",
+      env: { ...env, BUN_CONFIG_REGISTRY: deadEnd.url.href },
+    });
+
+    const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(err).toContain(`No component export found in "${file}"`);
+    expect(err).not.toContain("create-");
+    expect(exitCode).toBe(1);
+  }
+});
+
 // `bun create <github-url>` hits https://api.github.com/repos/{owner}/{repo}/tarball.
 // CI exhausts the unauthenticated 60 req/hr limit (403) and the endpoint serves 5xx
 // during outages; skip rather than fail since these tests exercise `bun create`, not GitHub.

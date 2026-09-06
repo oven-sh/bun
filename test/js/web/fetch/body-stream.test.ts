@@ -23,16 +23,16 @@ function repeat(bytes: Uint8Array, times: number): Uint8Array {
   return out;
 }
 
-function fillRepeating(dstBuffer: Uint8Array, start: number, end: number) {
-  let len = dstBuffer.length,
-    sLen = end - start,
-    p = sLen;
-  while (p < len) {
-    if (p + sLen > len) sLen = len - p;
-    dstBuffer.copyWithin(p, start, sLen);
-    p += sLen;
-    sLen <<= 1;
+// A 255..0 gradient tiled across the whole body, so a byte-exact compare
+// also catches corruption past the first 256 bytes.
+function pattern(length: number): Uint8Array {
+  const bytes = new Uint8Array(length);
+  const seed = Math.min(length, 256);
+  for (let i = 0; i < seed; i++) bytes[i] = 255 - i;
+  for (let filled = seed; filled < length; filled *= 2) {
+    bytes.copyWithin(filled, 0, Math.min(filled, length - filled));
   }
+  return bytes;
 }
 
 // The headers the server saw on the request, echoed back as JSON so the
@@ -315,11 +315,7 @@ describe.each([
           const reads = doClone ? 2 : 1;
 
           for (const inputLength of inputLengths) {
-            const bytes = new Uint8Array(inputLength);
-            for (let i = 0; i < Math.min(bytes.length, 256); i++) {
-              bytes[i] = 255 - i;
-            }
-            if (bytes.length > 255) fillRepeating(bytes, 0, bytes.length);
+            const bytes = pattern(inputLength);
 
             // On the 1 MiB row, element-per-byte construction balloons the
             // multi-byte-element bodies to 2-8 MiB. View `bytes.buffer`

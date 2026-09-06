@@ -31,9 +31,31 @@ for (let fileIndex = 0; fileIndex < allFiles.length; fileIndex++) {
     .flatMap(b => [`--external:node:${b}`, `--external:${b}`])
     .join(" ");
 
+  // CommonJS packages whose `module.exports` is itself the API (readable-stream,
+  // assert). A `require()` of the polyfill must return that value, not an ESM
+  // namespace wrapped around it.
+  const format = name === "stream.js" || name === "assert.js" ? "cjs" : "esm";
+
+  const injectedGlobals = [
+    {
+      id: "__bun_process",
+      esm: 'import __bun_process from "process";',
+      cjs: 'var __bun_process = require("process").default;',
+    },
+    {
+      id: "__bun_Buffer",
+      esm: 'import { Buffer as __bun_Buffer } from "buffer";',
+      cjs: 'var __bun_Buffer = require("buffer").Buffer;',
+    },
+  ];
+  const defineGlobals = injectedGlobals
+    .filter(g => name !== g.id.slice("__bun_".length).toLowerCase() + ".js")
+    .map(g => `--define=${g.id.slice("__bun_".length)}:${g.id}`)
+    .join(" ");
+
   // Create the build command with all the specified options
   const buildCommand =
-    Bun.$`bun build --define=process.env.NODE_DEBUG:"false" --define=process.env.READABLE_STREAM="'enable'" --define=global:globalThis --outdir=${outdir} ${name} --minify-syntax --minify-whitespace --format=${name.includes("stream") ? "cjs" : "esm"} --target=node ${{ raw: externalModules }}`.text();
+    Bun.$`bun build --define=process.env.NODE_DEBUG:"false" --define=process.env.READABLE_STREAM="'enable'" --define=global:globalThis ${{ raw: defineGlobals }} --outdir=${outdir} ${name} --minify-syntax --minify-whitespace --format=${format} --target=node ${{ raw: externalModules }}`.text();
 
   commands.push(
     buildCommand.then(async text => {
@@ -43,11 +65,19 @@ for (let fileIndex = 0; fileIndex < allFiles.length; fileIndex++) {
         .replaceAll("__require(", "require(")
         .replaceAll("import.meta.url", "''")
         .replaceAll("createRequire", "")
-        .replaceAll("global.process", "require('process')")
+        .replaceAll("globalThis.process", "__bun_process")
         .trim();
 
       while (outfile.startsWith("import{")) {
         outfile = outfile.slice(outfile.indexOf(";") + 1);
+      }
+
+      // A browser has no `process` or `Buffer` global. The `--define`s above
+      // rename every free use to `__bun_process` / `__bun_Buffer`; bind those
+      // to the sibling polyfills so the output runs without node's globals.
+      for (const { id, esm, cjs } of injectedGlobals) {
+        if (!outfile.includes(id)) continue;
+        outfile = (format === "cjs" ? cjs : esm) + outfile;
       }
 
       if (outfile.includes('"node:module"')) {

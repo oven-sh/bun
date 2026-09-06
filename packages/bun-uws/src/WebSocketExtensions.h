@@ -18,14 +18,8 @@
 #ifndef UWS_WEBSOCKETEXTENSIONS_H
 #define UWS_WEBSOCKETEXTENSIONS_H
 
-/* There is a new, huge bug scenario that needs to be fixed:
- * pub/sub does not support being in DEDICATED_COMPRESSOR-mode while having
- * some clients downgraded to SHARED_COMPRESSOR - we cannot allow the client to
- * demand a downgrade to SHARED_COMPRESSOR (yet) until we fix that scenario in pub/sub */
-// #define UWS_ALLOW_SHARED_AND_DEDICATED_COMPRESSOR_MIX
-
-/* We forbid negotiating 8 windowBits since Zlib has a bug with this */
-// #define UWS_ALLOW_8_WINDOW_BITS
+/* Publish compresses per receiving socket (see TopicTree drain in App.h), so a
+ * socket may be downgraded to SHARED_COMPRESSOR while the context is dedicated. */
 
 #include <climits>
 #include <cctype>
@@ -53,6 +47,24 @@ struct ExtensionsParser {
 private:
     int *lastInteger = nullptr;
 
+    /* RFC 7692 7.1: an offer with a repeated, unknown or misvalued parameter must be declined */
+    void setFlag(bool &flag, bool allowed) {
+        if (flag || !allowed) {
+            invalid = true;
+        }
+        flag = true;
+        lastInteger = nullptr;
+    }
+
+    /* A window parameter without a value is stored as 1 until its integer arrives */
+    void setWindow(int &window, bool allowed) {
+        if (window || !allowed) {
+            invalid = true;
+        }
+        window = 1;
+        lastInteger = &window;
+    }
+
 public:
     /* Standard */
     bool perMessageDeflate = false;
@@ -65,6 +77,8 @@ public:
     bool xWebKitDeflateFrame = false;
     bool noContextTakeover = false;
     int maxWindowBits = 0;
+
+    bool invalid = false;
 
     int getToken(const char *&in, const char *stop) {
         while (in != stop && !isalnum(*in)) {
@@ -101,44 +115,71 @@ public:
         perMessageDeflate = (token == TOK_PERMESSAGE_DEFLATE);
         xWebKitDeflateFrame = (token == TOK_X_WEBKIT_DEFLATE_FRAME);
 
+        /* Parameters of this extension end at the next comma (RFC 6455 9.1) */
+        for (const char *p = data; p != stop; p++) {
+            if (*p == ',') {
+                stop = p;
+                break;
+            }
+        }
+
         while ((token = getToken(data, stop))) {
             switch (token) {
-            case TOK_X_WEBKIT_DEFLATE_FRAME:
-                /* Duplicates not allowed/supported */
-                return;
             case TOK_NO_CONTEXT_TAKEOVER:
-                noContextTakeover = true;
+                setFlag(noContextTakeover, xWebKitDeflateFrame);
                 break;
             case TOK_MAX_WINDOW_BITS:
-                maxWindowBits = 1;
-                lastInteger = &maxWindowBits;
+                setWindow(maxWindowBits, xWebKitDeflateFrame);
                 break;
-            case TOK_PERMESSAGE_DEFLATE:
-                /* Duplicates not allowed/supported */
-                return;
             case TOK_SERVER_NO_CONTEXT_TAKEOVER:
-                serverNoContextTakeover = true;
+                setFlag(serverNoContextTakeover, perMessageDeflate);
                 break;
             case TOK_CLIENT_NO_CONTEXT_TAKEOVER:
-                clientNoContextTakeover = true;
+                setFlag(clientNoContextTakeover, perMessageDeflate);
                 break;
             case TOK_SERVER_MAX_WINDOW_BITS:
-                serverMaxWindowBits = 1;
-                lastInteger = &serverMaxWindowBits;
+                setWindow(serverMaxWindowBits, perMessageDeflate);
                 break;
             case TOK_CLIENT_MAX_WINDOW_BITS:
-                clientMaxWindowBits = 1;
-                lastInteger = &clientMaxWindowBits;
+                setWindow(clientMaxWindowBits, perMessageDeflate);
                 break;
             default:
+                /* An integer is the value of the window parameter right before it; anything else is unknown */
                 if (token < 0 && lastInteger) {
                     *lastInteger = -token;
+                    lastInteger = nullptr;
+                } else {
+                    invalid = true;
                 }
                 break;
             }
         }
     }
 };
+
+/* Lower our compressor (0 = shared, else windowBits) to what the peer demands.
+ * Returns false when the demand cannot be honoured, in which case the offer must be declined. */
+static inline bool negotiateCompressionWindow(int &compressionWindow, bool peerNoContextTakeover, int peerMaxWindowBits) {
+    /* The value must be 9..15: a missing value is stored as 1, and zlib cannot deflate with 8 */
+    if (peerMaxWindowBits && (peerMaxWindowBits < 9 || peerMaxWindowBits > 15)) {
+        return false;
+    }
+
+    /* Only the shared compressor resets its context per message */
+    if (peerNoContextTakeover) {
+        compressionWindow = 0;
+    }
+
+    /* The shared compressor always uses the full window, so it cannot be lowered */
+    if (peerMaxWindowBits && peerMaxWindowBits < 15) {
+        if (!compressionWindow) {
+            return false;
+        }
+        compressionWindow = std::min<int>(peerMaxWindowBits, compressionWindow);
+    }
+
+    return true;
+}
 
 /* Takes what we (the server) wants, returns what we got */
 static inline std::tuple<bool, int, int, std::string_view> negotiateCompression(bool wantCompression, int wantedCompressionWindow, int wantedInflationWindow, std::string_view offer) {
@@ -149,6 +190,11 @@ static inline std::tuple<bool, int, int, std::string_view> negotiateCompression(
     }
 
     ExtensionsParser ep(offer.data(), offer.length());
+
+    /* We must decline rather than silently drop or alter what we cannot honour (RFC 7692 7.1) */
+    if (ep.invalid) {
+        return {false, 0, 0, ""};
+    }
 
     static thread_local std::string response;
     response = "";
@@ -162,29 +208,8 @@ static inline std::tuple<bool, int, int, std::string_view> negotiateCompression(
         compression = true;
         response = "x-webkit-deflate-frame";
 
-        /* If the other peer has DEMANDED us no sliding window,
-         * we cannot compress with anything other than shared compressor */
-        if (ep.noContextTakeover) {
-            /* We must fail here right now (fix pub/sub) */
-#ifndef UWS_ALLOW_SHARED_AND_DEDICATED_COMPRESSOR_MIX
-            if (wantedCompressionWindow != 0) {
-                return {false, 0, 0, ""};
-            }
-#endif
-
-            compressionWindow = 0;
-        }
-
-        /* If the other peer has DEMANDED us to use a limited sliding window,
-         * we have to limit out compression sliding window */
-        if (ep.maxWindowBits && ep.maxWindowBits < compressionWindow) {
-            compressionWindow = ep.maxWindowBits;
-#ifndef UWS_ALLOW_8_WINDOW_BITS
-            /* We cannot really deny this, so we have to disable compression in this case */
-            if (compressionWindow == 8) {
-                return {false, 0, 0, ""};
-            }
-#endif
+        if (!negotiateCompressionWindow(compressionWindow, ep.noContextTakeover, ep.maxWindowBits)) {
+            return {false, 0, 0, ""};
         }
 
         /* We decide our own inflation sliding window (and their compression sliding window) */
@@ -200,9 +225,17 @@ static inline std::tuple<bool, int, int, std::string_view> negotiateCompression(
         compression = true;
         response = "permessage-deflate";
 
+        /* client_max_window_bits may come without a value (stored as 1); with one it must be 8..15 */
+        if (ep.clientMaxWindowBits > 1 && ep.clientMaxWindowBits < 8) {
+            return {false, 0, 0, ""};
+        }
+        if (ep.clientMaxWindowBits > 15) {
+            return {false, 0, 0, ""};
+        }
+
         if (ep.clientNoContextTakeover) {
             inflationWindow = 0;
-        } else if (ep.clientMaxWindowBits && ep.clientMaxWindowBits != 1) {
+        } else if (ep.clientMaxWindowBits > 1) {
             inflationWindow = std::min<int>(ep.clientMaxWindowBits, inflationWindow);
         }
 
@@ -216,35 +249,23 @@ static inline std::tuple<bool, int, int, std::string_view> negotiateCompression(
             }
         }
 
-        /* This block basically lets the client lower it */
-        if (ep.serverNoContextTakeover) {
-        /* This is an important (temporary) fix since we haven't allowed
-         * these two modes to mix, and pub/sub will not handle this case (yet) */
-#ifdef UWS_ALLOW_SHARED_AND_DEDICATED_COMPRESSOR_MIX
-            compressionWindow = 0;
-#endif
-        } else if (ep.serverMaxWindowBits) {
-            compressionWindow = std::min<int>(ep.serverMaxWindowBits, compressionWindow);
-#ifndef UWS_ALLOW_8_WINDOW_BITS
-            /* Zlib cannot do windowBits=8, memLevel=1 so we raise it up to 9 minimum */
-            if (compressionWindow == 8) {
-                compressionWindow = 9;
-            }
-#endif
+        /* The client may forbid context takeover toward it, or lower our window */
+        if (!negotiateCompressionWindow(compressionWindow, ep.serverNoContextTakeover, ep.serverMaxWindowBits)) {
+            return {false, 0, 0, ""};
         }
 
-        /* Whatever we have now, write */
-        if (compressionWindow < 15) {
-            if (!compressionWindow) {
-                response += "; server_no_context_takeover";
-            } else {
-                response += "; server_max_window_bits=" + std::to_string(compressionWindow);
-            }
+        /* Whatever we have now, write. Accepting an offered server_max_window_bits
+         * means echoing it, even when it is 15 (RFC 7692 7.1.2.1) */
+        if (!compressionWindow) {
+            response += "; server_no_context_takeover";
+        }
+        if (ep.serverMaxWindowBits || (compressionWindow && compressionWindow < 15)) {
+            response += "; server_max_window_bits=" + std::to_string(compressionWindow ? compressionWindow : 15);
         }
     }
 
-    /* A final sanity check (this check does not actually catch too high values!) */
-    if ((compressionWindow && compressionWindow < 8) || compressionWindow > 15 || (inflationWindow && inflationWindow < 8) || inflationWindow > 15) {
+    /* A final sanity check */
+    if ((compressionWindow && compressionWindow < 9) || compressionWindow > 15 || (inflationWindow && inflationWindow < 8) || inflationWindow > 15) {
         return {false, 0, 0, ""};
     }
 

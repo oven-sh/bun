@@ -362,8 +362,8 @@ public:
 
                     /* If we are dedicated and have the 3kb then correct any 4kb to 3kb,
                      * (they both share the windowBits = 9) */
-                    if (webSocketContextData->compression & DEDICATED_COMPRESSOR_3KB) {
-                        compressOptions = DEDICATED_COMPRESSOR_3KB;
+                    if ((webSocketContextData->compression & CompressOptions::_COMPRESSOR_MASK) == CompressOptions::DEDICATED_COMPRESSOR_3KB) {
+                        compressOptions = CompressOptions::DEDICATED_COMPRESSOR_3KB;
                     }
                 }
 

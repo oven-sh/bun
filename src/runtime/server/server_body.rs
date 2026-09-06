@@ -1697,8 +1697,6 @@ where
                 }
             });
 
-            // Copied out of `options.headers` because `fast_remove` frees the
-            // entry they would otherwise borrow.
             let mut sec_websocket_protocol = Utf8Bytes::EMPTY;
             let mut sec_websocket_extensions = Utf8Bytes::EMPTY;
 
@@ -1745,31 +1743,23 @@ where
                         let fetch_headers_to_use =
                             bun_opaque::opaque_deref_mut(fetch_headers_to_use);
 
+                        // `upgrade()` writes these two itself from the values
+                        // passed to it; the writer below skips them.
                         if let Some(protocol) =
                             fetch_headers_to_use.fast_get(HTTPHeaderName::SecWebSocketProtocol)
                         {
                             sec_websocket_protocol = protocol.to_utf8().into_owned();
-                            // Remove from headers so it's not written twice (once here and once by upgrade())
-                            fetch_headers_to_use.fast_remove(HTTPHeaderName::SecWebSocketProtocol);
                         }
-
                         if let Some(extensions) =
                             fetch_headers_to_use.fast_get(HTTPHeaderName::SecWebSocketExtensions)
                         {
                             sec_websocket_extensions = extensions.to_utf8().into_owned();
-                            // Remove from headers so it's not written twice (once here and once by upgrade())
-                            fetch_headers_to_use
-                                .fast_remove(HTTPHeaderName::SecWebSocketExtensions);
                         }
                         if let Some(raw_response) = node_http_response.raw_response.get() {
                             // we must write the status first so that 200 OK isn't written
                             raw_response.write_status(b"101 Switching Protocols");
-                            fetch_headers_to_use.to_uws_response(
-                                if SSL {
-                                    ResponseKind::Ssl
-                                } else {
-                                    ResponseKind::Tcp
-                                },
+                            fetch_headers_to_use.to_uws_response_for_websocket_upgrade(
+                                SSL,
                                 raw_response.socket().cast::<c_void>(),
                             );
                         }
@@ -1954,14 +1944,13 @@ where
 
                     // S008: `FetchHeaders` is an `opaque_ffi!` ZST — safe deref.
                     let fh = bun_opaque::opaque_deref_mut(fh);
-                    // Copied out because `fast_remove` frees the entry.
+                    // `resp.upgrade()` writes these two itself from the values
+                    // passed to it; the writer below skips them.
                     if let Some(p) = fh.fast_get(HTTPHeaderName::SecWebSocketProtocol) {
                         sec_websocket_protocol = p.to_utf8().into_owned();
-                        fh.fast_remove(HTTPHeaderName::SecWebSocketProtocol);
                     }
                     if let Some(e) = fh.fast_get(HTTPHeaderName::SecWebSocketExtensions) {
                         sec_websocket_extensions = e.to_utf8().into_owned();
-                        fh.fast_remove(HTTPHeaderName::SecWebSocketExtensions);
                     }
                 }
             }
@@ -1983,14 +1972,8 @@ where
             resp.write_status(b"101 Switching Protocols");
             if let Some(h) = fetch_headers_to_use {
                 // S008: `FetchHeaders` is an `opaque_ffi!` ZST — safe deref.
-                bun_opaque::opaque_deref_mut(h).to_uws_response(
-                    if SSL {
-                        ResponseKind::Ssl
-                    } else {
-                        ResponseKind::Tcp
-                    },
-                    resp.socket().cast::<c_void>(),
-                );
+                bun_opaque::opaque_deref_mut(h)
+                    .to_uws_response_for_websocket_upgrade(SSL, resp.socket().cast::<c_void>());
             }
             if let Some(c) = cookies_to_write.as_mut() {
                 c.write(

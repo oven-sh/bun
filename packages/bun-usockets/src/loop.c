@@ -146,7 +146,9 @@ static void us_internal_connect_timer_arm(struct us_loop_t *loop) {
         us_timer_set(loop->data.connect_timer, (void (*)(struct us_timer_t *)) connect_timer_cb, 0, 0);
         return;
     }
-    long long ms = (deadline - (long long) us_internal_monotonic_ns()) / 1000000LL;
+    /* Round up: uv measures from its cached loop time, so a truncated delay
+     * fires before the deadline. An early fire re-arms from the callback. */
+    long long ms = (deadline - (long long) us_internal_monotonic_ns() + 999999LL) / 1000000LL;
     us_timer_set(loop->data.connect_timer, (void (*)(struct us_timer_t *)) connect_timer_cb, ms > 0 ? (int) ms : 1, 0);
 }
 #endif
@@ -174,6 +176,9 @@ void us_internal_connect_attempts_if_due(struct us_loop_t *loop) {
     }
     long long now = (long long) us_internal_monotonic_ns();
     if (now < loop->data.connect_next_attempt_ns) {
+#ifdef LIBUS_USE_LIBUV
+        us_internal_connect_timer_arm(loop);
+#endif
         return;
     }
     long long next = -1;

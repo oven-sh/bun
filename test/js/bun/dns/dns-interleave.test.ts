@@ -1,12 +1,12 @@
 // The internal DNS cache (used by the usockets connect path for fetch(),
-// WebSocket, Bun.connect() and `bun install`) decides which addresses the
-// parallel connection attempts usockets opens get to try.
+// WebSocket, Bun.connect() and `bun install`) decides the order in which
+// usockets dials the addresses of a name, one at a time (RFC 8305 §5).
 //
-// Interleave: it interleaves address families (RFC 8305 §4) so the four
-// parallel attempts always cover both families. registry.npmjs.org resolves to
+// Interleave: it interleaves address families (RFC 8305 §4) so the second
+// attempt is always the other family. registry.npmjs.org resolves to
 // 12 AAAA + 12 A; on a dual-stack host with blackholed IPv6 a broken interleave
-// leaves all four initial attempts on dead IPv6 and every manifest fetch stalls
-// for ~100s waiting on kernel SYN-retry exhaustion.
+// puts every IPv4 address behind 12 dead IPv6 ones and every manifest fetch
+// waits on all of them.
 //
 // https://github.com/oven-sh/bun/issues/4938
 // https://github.com/oven-sh/bun/issues/33278
@@ -18,7 +18,7 @@ import { bunEnv, bunExe, isLinux, isMusl } from "harness";
 // The DNS cache is process-global and a failed connect evicts its entry, so
 // each scenario runs in its own process. Every test also does a real fetch()
 // through the seeded entry, which is consumed by usockets via
-// Bun__addrinfo_getRequestResult and start_connections().
+// Bun__addrinfo_getRequestResult and us_internal_socket_start_next_attempt().
 async function run(body: string, timeoutMs = 10_000) {
   const fixture = /* js */ `
     const { dnsCacheSeed } = require("bun:internal-for-testing");

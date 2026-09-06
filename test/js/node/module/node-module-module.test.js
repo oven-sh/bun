@@ -189,6 +189,47 @@ describe.concurrent("node-module-module", () => {
     expect(exitCode).toBe(0);
   });
 
+  // A relative cache dir is joined onto cwd. A value that does not fit the
+  // path buffer after the join used to abort the process.
+  const longRelativeDir = Buffer.alloc(8000, "A").toString();
+
+  test("NODE_COMPILE_CACHE with an over-long relative path does not crash startup", async () => {
+    using dir = tempDir("compile-cache-long-env", {});
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", `console.log("user code ran")`],
+      env: { ...bunEnv, NODE_COMPILE_CACHE: longRelativeDir },
+      cwd: String(dir),
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout.trim()).toBe("user code ran");
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+  });
+
+  test("module.enableCompileCache reports FAILED for an over-long relative path", async () => {
+    using dir = tempDir("compile-cache-long-api", {});
+    const code = `
+      const Module = require("module");
+      const dir = Buffer.alloc(8000, "A").toString();
+      const r = Module.enableCompileCache(dir);
+      console.log(JSON.stringify({ status: r.status, message: r.message }));
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", code],
+      env: bunEnv,
+      cwd: String(dir),
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(JSON.parse(stdout)).toEqual({
+      status: Module.constants.compileCacheStatus.FAILED,
+      message: expect.stringContaining("Cannot create cache directory"),
+    });
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+  });
+
   test.skipIf(process.platform === "win32")(
     "compile cache persists modules loaded after a non-fatal self-kill",
     async () => {

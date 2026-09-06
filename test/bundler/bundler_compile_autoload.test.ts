@@ -81,6 +81,25 @@ describe("bundler", () => {
     },
   });
 
+  // A standalone executable runs as production, so it loads .env.production
+  // unless NODE_ENV asks for development.
+  itBundled("compile/AutoloadDotenvProductionSuffix", {
+    compile: true,
+    files: {
+      "/entry.ts": /* js */ `
+        console.log(process.env.TEST_VAR || "not found");
+      `,
+    },
+    runtimeFiles: {
+      "/.env.development": `TEST_VAR=from_development`,
+      "/.env.production": `TEST_VAR=from_production`,
+    },
+    run: [
+      { stdout: "from_production", setCwd: true },
+      { stdout: "from_development", setCwd: true, env: { NODE_ENV: "development" } },
+    ],
+  });
+
   // Test that bunfig.toml is loaded by default (preload is executed)
   itBundled("compile/AutoloadBunfigDefault", {
     compile: true,

@@ -1298,6 +1298,55 @@ describe("bundler", () => {
     },
     run: { stdout: JSON.stringify({ server: "client sees the text", clientHasLiteral: true, clientHasBunfs: false }) },
   });
+
+  // A compiled executable defaults Bun.serve to production. The dev error page
+  // (message, stack, source) must not be served unless the user opts in.
+  const serveDevelopmentEntry = (options: string) => /* js */ `
+    const server = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      ${options}
+      routes: { "/boom": () => { throw new Error("secret-stack-detail"); } },
+      fetch() { return new Response("nf", { status: 404 }); },
+    });
+    const res = await fetch(server.url + "boom", { headers: { accept: "text/html" } });
+    const body = await res.text();
+    console.log(JSON.stringify({
+      development: server.development,
+      status: res.status,
+      contentType: res.headers.get("content-type"),
+      leaks: body.includes("secret-stack-detail"),
+    }));
+    server.stop(true);
+    process.exit(0);
+  `;
+  const serveProduction = JSON.stringify({
+    development: false,
+    status: 500,
+    contentType: "text/plain",
+    leaks: false,
+  });
+  const serveDevelopment = JSON.stringify({
+    development: true,
+    status: 500,
+    contentType: "text/html;charset=utf-8",
+    leaks: true,
+  });
+  itBundled("compile/ServeDefaultsToProduction", {
+    compile: true,
+    files: { "/entry.ts": serveDevelopmentEntry("") },
+    run: [
+      { stdout: serveProduction },
+      { env: { NODE_ENV: "production" }, stdout: serveProduction },
+      { env: { NODE_ENV: "development" }, stdout: serveDevelopment },
+      { env: { BUN_ENV: "development" }, stdout: serveDevelopment },
+    ],
+  });
+  itBundled("compile/ServeExplicitDevelopment", {
+    compile: true,
+    files: { "/entry.ts": serveDevelopmentEntry("development: true,") },
+    run: { stdout: serveDevelopment },
+  });
   itBundled("compile/Utf8", {
     compile: true,
     files: {

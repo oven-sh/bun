@@ -25,6 +25,19 @@ pub(crate) fn apply_standalone_runtime_flags(
     b.resolver.opts.load_package_json = !graph
         .flags
         .contains(GraphFlags::DISABLE_AUTOLOAD_PACKAGE_JSON);
+
+    // A compiled executable is a deployment artifact: boot as production (so
+    // `Bun.serve` defaults to `development: false` and `.env.production` is
+    // the dotenv suffix) unless the process env asks for development or test.
+    // `configure_defines` runs after this and still honours an explicit
+    // `NODE_ENV` / `BUN_ENV`.
+    let env = b.env_mut();
+    bun_core::handle_oom(env.load_process());
+    let node_env = env.get_node_env().unwrap_or(b"");
+    if node_env != b"development" && node_env != b"test" {
+        b.options.set_production(true);
+        b.resolver.opts.set_production(true);
+    }
 }
 
 #[cold]

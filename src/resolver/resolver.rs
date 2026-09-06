@@ -1971,8 +1971,7 @@ impl<'a> Resolver<'a> {
                 bun_core::hint::cold();
                 for custom_path in custom_paths {
                     let custom_utf8 = custom_path.to_utf8();
-                    // Node anchors a relative `paths` entry at the cwd
-                    // (`Module._nodeModulePaths` starts with `path.resolve(from)`).
+                    // A relative entry is cwd-relative, like Node's `path.resolve(from)`.
                     let mut abs_buf = bun_paths::path_buffer_pool::get();
                     let custom_dir: &[u8] = if bun_paths::is_absolute(custom_utf8.slice()) {
                         custom_utf8.slice()

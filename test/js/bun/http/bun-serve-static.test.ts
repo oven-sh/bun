@@ -344,4 +344,61 @@ describe("static route preconditions (RFC 9110 §13.2.2)", () => {
       expect((await get("/s", { "If-Match": '"s1"', "If-None-Match": '"s1"' }, method)).status).toBe(304);
     });
   });
+
+  // §13.1.3 / §13.1.4: a value that is not an RFC 9110 HTTP-date (IMF-fixdate,
+  // rfc850-date, asctime-date) MUST be ignored. `Date.parse` accepts all of
+  // these, so they must not go through the JavaScript date grammar.
+  const NOT_HTTP_DATES = [
+    "2030",
+    "12345",
+    "10",
+    "1/1/2030",
+    "January 2030",
+    "March 2001",
+    "2028-01-01T00:00:00Z",
+    "Sun, 30 Feb 2025 00:00:00 GMT",
+    "Tue, 31 Dec 2024 16:00:01 PST",
+    "Wed, 21 Oct 2015 07:28:00 UTC",
+    "Wed, 21 Oct 2015 07:28:00",
+  ];
+
+  describe("ignores a conditional date that is not an HTTP-date", () => {
+    it.each(NOT_HTTP_DATES)("If-Modified-Since: %s → 200", async value => {
+      expect((await get("/s", { "If-Modified-Since": value })).status).toBe(200);
+    });
+
+    it.each(NOT_HTTP_DATES)("If-Unmodified-Since: %s → 200", async value => {
+      expect((await get("/s", { "If-Unmodified-Since": value })).status).toBe(200);
+    });
+
+    it("accepts the three RFC 9110 grammars for If-Modified-Since", async () => {
+      const results = await Promise.all(
+        [
+          "Wed, 21 Oct 2015 07:28:00 GMT",
+          "Wednesday, 21-Oct-15 07:28:00 GMT",
+          "Wed Oct 21 07:28:00 2015",
+          "Sun Nov  6 08:49:37 2050",
+        ].map(async value => [value, (await get("/s", { "If-Modified-Since": value })).status]),
+      );
+      expect(results).toEqual([
+        ["Wed, 21 Oct 2015 07:28:00 GMT", 304],
+        ["Wednesday, 21-Oct-15 07:28:00 GMT", 304],
+        ["Wed Oct 21 07:28:00 2015", 304],
+        ["Sun Nov  6 08:49:37 2050", 304],
+      ]);
+    });
+
+    it("accepts the three RFC 9110 grammars for If-Unmodified-Since", async () => {
+      const results = await Promise.all(
+        ["Wed, 21 Oct 2015 07:27:59 GMT", "Wednesday, 21-Oct-15 07:27:59 GMT", "Wed Oct 21 07:27:59 2015"].map(
+          async value => [value, (await get("/s", { "If-Unmodified-Since": value })).status],
+        ),
+      );
+      expect(results).toEqual([
+        ["Wed, 21 Oct 2015 07:27:59 GMT", 412],
+        ["Wednesday, 21-Oct-15 07:27:59 GMT", 412],
+        ["Wed Oct 21 07:27:59 2015", 412],
+      ]);
+    });
+  });
 });

@@ -1505,8 +1505,7 @@ impl<const SSL: bool> Drop for HTTPClient<SSL> {
     }
 }
 
-/// Header name/value pairs as wire bytes, stored flat (names at even indices,
-/// values at odd).
+/// Header names and values as wire bytes, interleaved: name, value, name, value.
 struct Headers8Bit<'a> {
     slices: Vec<Cow<'a, [u8]>>,
 }
@@ -1523,8 +1522,7 @@ impl<'a> Headers8Bit<'a> {
         Self { slices }
     }
 
-    /// One byte per code unit (<https://fetch.spec.whatwg.org/#concept-header-value>).
-    /// `FetchHeaders` validation already rejected code units above 0xFF.
+    /// One byte per code unit, per <https://fetch.spec.whatwg.org/#concept-header-value>.
     fn isomorphic_encode(s: &'a BunString) -> Cow<'a, [u8]> {
         if s.is_utf16() {
             let units = s.utf16();

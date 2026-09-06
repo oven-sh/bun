@@ -1038,8 +1038,6 @@ pub(crate) fn run_scripts_with_filter(
         if let Some(signal) = run_abort::pending()
             && !state.aborted
         {
-            // A second signal now ends the runner at once, for a script that
-            // ignores the forwarded one.
             run_abort::uninstall();
             state.abort(signal);
             // The abort sweep may have finished the last script; re-check
@@ -1051,8 +1049,7 @@ pub(crate) fn run_scripts_with_filter(
     }
 
     let status = state.finalize();
-    // An interrupted run is not a clean one, even if every script that
-    // started exited 0 before the signal reached it.
+    // Exit 128 + signal even when every started script exited 0 before the abort.
     let status = match run_abort::pending() {
         Some(signal) => signal.to_exit_code().unwrap_or(1),
         None => status,

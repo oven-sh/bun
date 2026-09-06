@@ -2493,7 +2493,7 @@ it("unix socket connection throws an error on a bad domain without crashing", as
   }).toThrow();
 });
 
-it("Bun.serve throws when both port and unix are given", () => {
+it("Bun.serve throws when both port and unix are given", async () => {
   using dir = tempDir("port-and-unix", {});
   const unix = join(String(dir), "port-and-unix.sock");
   expect(() => {
@@ -2515,8 +2515,9 @@ it("Bun.serve throws when both port and unix are given", () => {
       return new Response("hey");
     },
   });
-  expect(String(server.url)).toBe(`unix://${unix}`);
   expect(server.port).toBeUndefined();
+  const res = await fetch("http://localhost/", { unix });
+  expect(await res.text()).toBe("hey");
 });
 
 it("#5859 text", async () => {

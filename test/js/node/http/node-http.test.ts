@@ -1355,6 +1355,18 @@ describe("node:http", () => {
     expect(await response.text()).toBe("ok");
   });
 
+  test("listen({ path, host }) binds the path and ignores the host, as in node", async () => {
+    const socketPath = `${tmpdir()}/bun-server-${Math.random().toString(32)}.sock`;
+    await using server = createServer((req, res) => {
+      res.end("ok");
+    });
+    server.listen({ path: socketPath, host: "localhost" });
+    await once(server, "listening");
+    expect(server.address()).toBe(socketPath);
+    const response = await fetch("http://localhost/", { unix: socketPath });
+    expect(await response.text()).toBe("ok");
+  });
+
   test("should not decompress gzip, issue#4397", async () => {
     using server = Bun.serve({
       port: 0,

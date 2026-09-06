@@ -582,9 +582,12 @@ Server.prototype.listen = function () {
     }
   }
 
-  // As in node (and net.ts), a port takes precedence over `path`.
+  // As in node (and net.ts), a port takes precedence over `path`, and the
+  // pipe branch never reads `host`.
   if ((typeof port === "number" || typeof port === "string") && socketPath) {
     socketPath = undefined;
+  } else if (socketPath) {
+    host = undefined;
   }
 
   const lastArg = arguments[argc - 1];

@@ -1,4 +1,4 @@
-use std::collections::{HashSet, VecDeque};
+use std::collections::VecDeque;
 use std::rc::Rc;
 
 use bun_alloc::AllocError;
@@ -35,10 +35,12 @@ pub struct Scanner<'a> {
     /// Directories that could not be opened or read; non-zero fails the run.
     pub(crate) unreadable_dirs: usize,
     /// `(st_dev, st_ino)` of every directory scanned so far.
-    visited_dirs: HashSet<(u64, u64)>,
+    visited_dirs: VisitedDirs,
     /// The directory being iterated; its fd closes once every child `ScanEntry` has been opened.
     current_dir: Option<Rc<Dir>>,
 }
+
+type VisitedDirs = bun_collections::hashbrown::HashSet<(u64, u64), bun_wyhash::BuildHasher>;
 
 // FIFO queue of scan entries (pop_front / push_back).
 pub(crate) type Fifo = VecDeque<ScanEntry>;
@@ -93,7 +95,7 @@ impl<'a> Scanner<'a> {
             has_iterated: false,
             search_count: 0,
             unreadable_dirs: 0,
-            visited_dirs: HashSet::new(),
+            visited_dirs: VisitedDirs::default(),
             current_dir: None,
         })
     }

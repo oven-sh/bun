@@ -431,6 +431,42 @@ impl RunCommand {
         concatcp!(TMP, SUFFIX)
     };
 
+    /// Runtime-resolved shim dir. On OHOS `/tmp` is read-only, so the dir is
+    /// placed under `$TMPDIR` (the app cache); other platforms use the
+    /// compile-time `BUN_NODE_DIR`. Cached so every `--bun` child shares one
+    /// dir (matching the const's per-build keying).
+    #[cfg(not(windows))]
+    pub fn bun_node_dir_bytes() -> &'static [u8] {
+        #[cfg(target_env = "ohos")]
+        {
+            use std::sync::OnceLock;
+            static OHOS_DIR: OnceLock<Option<Box<[u8]>>> = OnceLock::new();
+            OHOS_DIR
+                .get_or_init(|| {
+                    let tmp = bun_core::env_var::TMPDIR::get().unwrap_or_default();
+                    if tmp.is_empty() {
+                        return None;
+                    }
+                    let mut dir = tmp.to_vec();
+                    if dir.last() == Some(&b'/') {
+                        dir.pop();
+                    }
+                    // Append only the "/bun-node-<sha>" suffix, not the full
+                    // const path (which starts with the read-only /tmp).
+                    let suffix = &Self::BUN_NODE_DIR
+                        .as_bytes()[Self::BUN_NODE_DIR.rfind('/').unwrap_or(0)..];
+                    dir.extend_from_slice(suffix);
+                    Some(dir.into_boxed_slice())
+                })
+                .as_deref()
+                .unwrap_or(Self::BUN_NODE_DIR.as_bytes())
+        }
+        #[cfg(not(target_env = "ohos"))]
+        {
+            Self::BUN_NODE_DIR.as_bytes()
+        }
+    }
+
     #[cfg(not(windows))]
     fn find_shell_impl<'a>(
         buf: &'a mut bun_paths::PathBuffer,
@@ -506,8 +542,6 @@ impl RunCommand {
 
         #[cfg(not(windows))]
         {
-            use const_format::concatcp;
-
             let argv0: &ZStr = bun_core::argv().get(0).unwrap_or(bun_core::zstr!("bun"));
 
             // PREFER `self_exe_path()` OVER `argv[0]`: on a nested `--bun`, the
@@ -539,7 +573,7 @@ impl RunCommand {
                     }
                     result => {
                         let argv0_bytes = argv0.as_bytes();
-                        if argv0_bytes.starts_with(Self::BUN_NODE_DIR.as_bytes()) {
+                        if argv0_bytes.starts_with(RunCommand::bun_node_dir_bytes()) {
                             // `self_exe_path()` failed and `argv[0]` is the shim
                             // under `BUN_NODE_DIR` (nested `--bun`). Using it as
                             // the target would recreate the #30711 self-loop; the
@@ -569,29 +603,34 @@ impl RunCommand {
                 let _ = bun_sys::delete_tree_absolute(Self::BUN_NODE_DIR.as_bytes());
             }
 
-            const NODE_LINK: &ZStr = {
-                const B: &[u8] = concatcp!(RunCommand::BUN_NODE_DIR, "/node\0").as_bytes();
-                // SAFETY: literal ends in NUL; len excludes it.
-                ZStr::from_static(B)
-            };
-            const BUN_LINK: &ZStr = {
-                const B: &[u8] = concatcp!(RunCommand::BUN_NODE_DIR, "/bun\0").as_bytes();
-                // SAFETY: literal ends in NUL; len excludes it.
-                ZStr::from_static(B)
-            };
-            const DIR_Z: &ZStr = {
-                const B: &[u8] = concatcp!(RunCommand::BUN_NODE_DIR, "\0").as_bytes();
-                // SAFETY: literal ends in NUL; len excludes it.
-                ZStr::from_static(B)
-            };
+            // Runtime-resolved dir: OHOS places the shim dir under $TMPDIR
+            // (/tmp is read-only there); other platforms use the const.
+            let node_dir = RunCommand::bun_node_dir_bytes();
+            let mut dir_buf = bun_paths::PathBuffer::uninit();
+            dir_buf[..node_dir.len()].copy_from_slice(node_dir);
+            dir_buf[node_dir.len()] = 0;
+            // SAFETY: NUL-terminated above; `dir_buf` outlives the call.
+            let dir_z = unsafe { ZStr::from_raw_mut(dir_buf.as_mut_ptr(), node_dir.len()) };
+            let mut node_buf = bun_paths::PathBuffer::uninit();
+            node_buf[..node_dir.len()].copy_from_slice(node_dir);
+            node_buf[node_dir.len()..node_dir.len() + 5].copy_from_slice(b"/node");
+            node_buf[node_dir.len() + 5] = 0;
+            // SAFETY: NUL-terminated above; `node_buf` outlives the call.
+            let node_link = unsafe { ZStr::from_raw_mut(node_buf.as_mut_ptr(), node_dir.len() + 5) };
+            let mut bun_buf = bun_paths::PathBuffer::uninit();
+            bun_buf[..node_dir.len()].copy_from_slice(node_dir);
+            bun_buf[node_dir.len()..node_dir.len() + 4].copy_from_slice(b"/bun");
+            bun_buf[node_dir.len() + 4] = 0;
+            // SAFETY: NUL-terminated above; `bun_buf` outlives the call.
+            let bun_link = unsafe { ZStr::from_raw_mut(bun_buf.as_mut_ptr(), node_dir.len() + 4) };
 
             // Don't trust attacker-created entries in a shared temp dir
             // (`BUN_NODE_DIR` lives under e.g. `/tmp`). Create it `0700`; if it
             // already exists, refuse to use it unless it's a directory we own
             // with no group/other write bits.
-            match bun_sys::mkdir(DIR_Z, 0o700) {
+            match bun_sys::mkdir(dir_z, 0o700) {
                 Ok(()) => {}
-                Err(e) if e.get_errno() == bun_sys::E::EEXIST => match bun_sys::lstat(DIR_Z) {
+                Err(e) if e.get_errno() == bun_sys::E::EEXIST => match bun_sys::lstat(dir_z) {
                     Ok(st)
                         if bun_sys::kind_from_mode(st.st_mode as bun_sys::Mode)
                             == bun_sys::FileKind::Directory
@@ -602,7 +641,7 @@ impl RunCommand {
                 Err(_) => return Ok(()),
             }
 
-            for dest in [NODE_LINK, BUN_LINK] {
+            for dest in [node_link, bun_link] {
                 let mut replaced = false;
                 loop {
                     match bun_sys::symlink(argv0_z, dest) {
@@ -637,7 +676,7 @@ impl RunCommand {
             // The reason for the extra delim is because we are going to append the system PATH
             // later on. this is done by the caller, and explains why we are adding bun_node_dir
             // to the end of the path slice rather than the start.
-            path.extend_from_slice(Self::BUN_NODE_DIR.as_bytes());
+            path.extend_from_slice(RunCommand::bun_node_dir_bytes());
             path.push(bun_paths::DELIMITER);
             Ok(())
         }
@@ -1109,3 +1148,29 @@ pub enum PackageManifestError {
 }
 
 bun_core::impl_tag_error!(PackageManifestError);
+
+/// Copy `src_dir/src_name` → `dest_dir/dest_path`. On EACCES/EPERM (e.g.
+/// OHOS SELinux blocking linkat), unlink the destination and retry create.
+pub(crate) fn copy_file_fallback(
+    src_dir: bun_sys::Fd,
+    src_name: &bun_core::ZStr,
+    dest_dir: bun_sys::Fd,
+    dest_path_z: &bun_core::ZStr,
+) -> bun_sys::Result<()> {
+    use bun_sys as sys;
+    let inf = sys::File::openat(src_dir, src_name, sys::O::RDONLY, 0)?;
+    let dest_path: &[u8] = dest_path_z;
+    let outf = match sys::File::create(dest_dir, dest_path, true) {
+        Ok(f) => f,
+        Err(ref e) if e.get_errno() == sys::E::EACCES || e.get_errno() == sys::E::EPERM => {
+            let _ = sys::unlinkat(dest_dir, dest_path_z);
+            sys::File::create(dest_dir, dest_path, true)?
+        }
+        Err(e) => return Err(e),
+    };
+    sys::copy_file::copy_file(inf.handle(), outf.handle())?;
+    if let Ok(stat) = sys::fstat(inf.handle()) {
+        let _ = sys::fchmod(outf.handle(), stat.st_mode);
+    }
+    Ok(())
+}

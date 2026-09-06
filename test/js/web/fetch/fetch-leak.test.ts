@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, tls as COMMON_CERT, gc, isASAN, isCI, isDebug } from "harness";
+import { bunEnv, bunExe, tls as COMMON_CERT, gc, isASAN, isCI, isDebug, isOhos } from "harness";
 import { once } from "node:events";
 import { createServer } from "node:http";
 import net from "node:net";
@@ -158,8 +158,9 @@ describe.each(["FormData", "Blob", "Buffer", "String", "URLSearchParams", "strea
     // The URLSearchParams variant URL-encodes the 2MB body on each of the 500
     // requests - pure throughput that a debug build cannot fit in 20s, and
     // ASAN instrumentation overruns the 20s release deadline the same way
-    // (observed 20000.61ms on the x64-asan lane).
-    isDebug || isASAN ? 120 * 1000 : 20 * 1000,
+    // (observed 20000.61ms on the x64-asan lane). OHOS is similarly slow
+    // (17s solo, over 20s under parallel load).
+    isDebug || isASAN || isOhos ? 120 * 1000 : 20 * 1000,
   );
 });
 

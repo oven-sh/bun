@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, isOhos, tempDir } from "harness";
 import { readdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { decodeSourceMappingsLine, itBundled } from "./expectBundled";
@@ -750,17 +750,32 @@ describe("bundler", () => {
       stdout: "outer-else",
     },
   });
-  itBundled("edgecase/AbsolutePathShouldNotResolveAsRelative", {
-    files: {
-      "/entry.js": /* js */ `
+  // OHOS: resolving the absolute entry probes the filesystem root, which
+  // the app sandbox cannot open (EACCES) — the error is EACCES, not
+  // ModuleNotFound. Skip on OHOS.
+  (isOhos
+    ? itBundled.skip("edgecase/AbsolutePathShouldNotResolveAsRelative", {
+        files: {
+          "/entry.js": /* js */ `
         console.log(1);
       `,
-    },
-    entryPointsRaw: ["/entry.js"],
-    bundleErrors: {
-      "<bun>": ['ModuleNotFound resolving "/entry.js" (entry point)'],
-    },
-  });
+        },
+        entryPointsRaw: ["/entry.js"],
+        bundleErrors: {
+          "<bun>": ['ModuleNotFound resolving "/entry.js" (entry point)'],
+        },
+      })
+    : itBundled("edgecase/AbsolutePathShouldNotResolveAsRelative", {
+        files: {
+          "/entry.js": /* js */ `
+        console.log(1);
+      `,
+        },
+        entryPointsRaw: ["/entry.js"],
+        bundleErrors: {
+          "<bun>": ['ModuleNotFound resolving "/entry.js" (entry point)'],
+        },
+      }));
   itBundled("edgecase/AssetEntryPoint", {
     files: {
       "/entry.zig": `

@@ -8,6 +8,7 @@ use core::sync::atomic::Ordering;
 // bun_ptr::ThreadSafeRefCount; see SyncWindowsProcess below.)
 
 #[cfg(any(target_os = "linux", target_os = "android", target_os = "macos"))]
+#[cfg_attr(target_env = "ohos", allow(unused_imports))]
 use bun_core::Global;
 use bun_core::Output;
 use bun_event_loop::EventLoopHandle;
@@ -1793,9 +1794,11 @@ mod spawn_process_body {
     /// RAII fd owner — closes the wrapped [`Fd`] on drop iff it is valid.
     /// Used by `sync::spawn_posix` (no-orphans kqueue, ppid pidfd).
     #[cfg(any(target_os = "linux", target_os = "android", target_os = "macos"))]
+    #[cfg_attr(target_env = "ohos", allow(dead_code))]
     struct AutoCloseFd(Fd);
 
     #[cfg(any(target_os = "linux", target_os = "android", target_os = "macos"))]
+    #[cfg_attr(target_env = "ohos", allow(dead_code))]
     impl AutoCloseFd {
         #[inline]
         const fn new(fd: Fd) -> Self {
@@ -2999,9 +3002,11 @@ mod spawn_process_body {
             safe fn tcsetpgrp(fd: c_int, pgrp: libc::pid_t) -> c_int;
             safe fn getpgrp() -> libc::pid_t;
             #[cfg(any(target_os = "linux", target_os = "android", target_os = "macos"))]
+            #[cfg_attr(target_env = "ohos", allow(dead_code))]
             safe fn getppid() -> libc::pid_t;
             safe fn isatty(fd: c_int) -> c_int;
             #[cfg(any(target_os = "linux", target_os = "android", target_os = "macos"))]
+            #[cfg_attr(target_env = "ohos", allow(dead_code))]
             safe fn raise(sig: c_int) -> c_int;
             safe fn kill(pid: libc::pid_t, sig: c_int) -> c_int;
             /// No args; returns -1/errno on failure. macOS-only caller below.
@@ -3012,6 +3017,7 @@ mod spawn_process_body {
         #[cfg(unix)]
         impl JobControl {
             #[cfg(any(target_os = "linux", target_os = "android", target_os = "macos"))]
+            #[cfg_attr(target_env = "ohos", allow(dead_code))]
             fn is_active(&self) -> bool {
                 self.prev > 0
             }
@@ -3049,7 +3055,7 @@ mod spawn_process_body {
             /// returns, and on resume gives the terminal back to the script (only
             /// if the shell `fg`'d us — for `bg` the shell keeps foreground and
             /// the script runs as a background pgroup like any other job).
-            #[cfg(any(target_os = "linux", target_os = "android", target_os = "macos"))]
+            #[cfg(all(any(target_os = "linux", target_os = "android", target_os = "macos"), not(target_env = "ohos")))]
             fn on_child_stopped(&self) {
                 if self.prev <= 0 {
                     return; // non-TTY: never asked for stop reports
@@ -3308,7 +3314,7 @@ mod spawn_process_body {
                         &mut out_fds_to_wait_for,
                         &mut out_fds,
                     );
-                    #[cfg(any(target_os = "linux", target_os = "android"))]
+                    #[cfg(all(any(target_os = "linux", target_os = "android"), not(target_env = "ohos")))]
                     let r: Option<Maybe<Status>> = wait_linux_signalfd(
                         process.pid,
                         ppid,
@@ -3327,6 +3333,11 @@ mod spawn_process_body {
                         let _ = ppid;
                         None
                     };
+                    #[cfg(target_env = "ohos")]
+                    let r: Option<Maybe<Status>> = {
+                        let _ = ppid;
+                        None
+                    };
                     if let Some(maybe) = r {
                         match maybe {
                             Err(err) => {
@@ -3340,6 +3351,48 @@ mod spawn_process_body {
                     // plain poll() loop so `.buffer` stdio still drains instead
                     // of being dropped (or deadlocking) in a blind `wait4()`.
                 }
+                // OHOS no_orphans: monitor parent death via pidfd + ppid polling.
+                // Same approach as wait_linux_signalfd but without signalfd/pidfd
+                // on the child (which hangs on OHOS).
+                #[cfg(target_env = "ohos")]
+                let (_ohos_ppid, _ohos_ppid_fd): (libc::pid_t, AutoCloseFd) = if no_orphans
+                {
+                    // Only trade PDEATHSIG away for the pidfd/getppid watch if the
+                    // loop that performs that watch is actually going to run. Its
+                    // condition is the same `out_fds_to_wait_for` test below: with
+                    // inherited stdio — which is what plain `bun run <script>`
+                    // uses — both fds are INVALID, the loop body never executes,
+                    // and clearing PDEATHSIG here would leave the process with no
+                    // parent-death detection of any kind. That is exactly the
+                    // `--no-orphans` guarantee, so keep the kernel-side signal
+                    // when we cannot replace it. The cost is that the cleanup
+                    // defer won't run in the SIGKILL case, which matches upstream
+                    // Linux behaviour (see enable()'s comment: that path relies on
+                    // env-var inheritance for descendant cleanup).
+                    let will_watch_in_poll_loop = out_fds_to_wait_for[0] != Fd::INVALID
+                        || out_fds_to_wait_for[1] != Fd::INVALID;
+                    let ppid_from_watchdog = if will_watch_in_poll_loop {
+                        ParentDeathWatchdog::ppid_to_watch().unwrap_or(0)
+                    } else {
+                        0
+                    };
+                    if ppid_from_watchdog > 1 {
+                        // Clear PDEATHSIG — SIGKILL is uncatchable and would prevent
+                        // our cleanup defer from running.  See wait_linux_signalfd:3697.
+                        let _ = unsafe { libc::prctl(libc::PR_SET_PDEATHSIG, 0) };
+                        let fd = bun_sys::pidfd_open(ppid_from_watchdog, 0)
+                            .map(AutoCloseFd::new)
+                            .unwrap_or_else(|_| AutoCloseFd::invalid());
+                        (ppid_from_watchdog, fd)
+                    } else {
+                        (0, AutoCloseFd::invalid())
+                    }
+                } else {
+                    (0, AutoCloseFd::invalid())
+                };
+                #[cfg(not(target_env = "ohos"))]
+                let (_ohos_ppid, _ohos_ppid_fd): (libc::pid_t, AutoCloseFd) = (0, AutoCloseFd::invalid());
+
                 while out_fds_to_wait_for[0] != Fd::INVALID || out_fds_to_wait_for[1] != Fd::INVALID
                 {
                     for i in 0..2 {
@@ -3700,7 +3753,7 @@ mod spawn_process_body {
             }
         }
 
-        #[cfg(any(target_os = "linux", target_os = "android"))]
+        #[cfg(all(any(target_os = "linux", target_os = "android"), not(target_env = "ohos")))]
         fn wait_linux_signalfd(
             child: libc::pid_t,
             ppid: libc::pid_t,

@@ -4036,11 +4036,26 @@ mod posix_platform_specific_v8_apis {
         -> *mut c_void;
     }
 }
+// OHOS uses LLVM libc++ which mangles std::function as NSt3__18function (same as Apple/FreeBSD).
+#[cfg(all(not(windows), target_env = "ohos"))]
+mod posix_platform_specific_v8_apis {
+    use core::ffi::c_void;
+    unsafe extern "C" {
+        pub(super) fn _ZN2v85Array3NewENS_5LocalINS_7ContextEEEmNSt3__18functionIFNS_10MaybeLocalINS_5ValueEEEvEEE()
+        -> *mut c_void;
+        pub(super) fn _ZN2v811CpuProfiler13CollectSampleEPNS_7IsolateENSt3__18optionalImEE()
+        -> *mut c_void;
+        pub(super) fn _ZN2v86BigInt3NewEPNS_7IsolateEl() -> *mut c_void;
+        pub(super) fn _ZN2v812HeapProfiler25StartSamplingHeapProfilerEmiNS0_13SamplingFlagsE()
+        -> *mut c_void;
+    }
+}
 #[cfg(all(
     not(windows),
     not(target_os = "android"),
     not(target_os = "macos"),
-    not(target_os = "freebsd")
+    not(target_os = "freebsd"),
+    not(target_env = "ohos")
 ))]
 mod posix_platform_specific_v8_apis {
     use core::ffi::c_void;
@@ -5242,11 +5257,19 @@ pub(crate) fn fix_dead_code_elimination() {
         posix_platform_specific_v8_apis::_ZN2v86BigInt3NewEPNS_7IsolateEl,
         posix_platform_specific_v8_apis::_ZN2v812HeapProfiler25StartSamplingHeapProfilerEmiNS0_13SamplingFlagsE,
     );
+    #[cfg(all(not(windows), target_env = "ohos"))]
+    keep_symbols!(
+        posix_platform_specific_v8_apis::_ZN2v85Array3NewENS_5LocalINS_7ContextEEEmNSt3__18functionIFNS_10MaybeLocalINS_5ValueEEEvEEE,
+        posix_platform_specific_v8_apis::_ZN2v811CpuProfiler13CollectSampleEPNS_7IsolateENSt3__18optionalImEE,
+        posix_platform_specific_v8_apis::_ZN2v86BigInt3NewEPNS_7IsolateEl,
+        posix_platform_specific_v8_apis::_ZN2v812HeapProfiler25StartSamplingHeapProfilerEmiNS0_13SamplingFlagsE,
+    );
     #[cfg(all(
         not(windows),
         not(target_os = "android"),
         not(target_os = "macos"),
-        not(target_os = "freebsd")
+        not(target_os = "freebsd"),
+        not(target_env = "ohos")
     ))]
     keep_symbols!(
         posix_platform_specific_v8_apis::_ZN2v85Array3NewENS_5LocalINS_7ContextEEEmSt8functionIFNS_10MaybeLocalINS_5ValueEEEvEE,

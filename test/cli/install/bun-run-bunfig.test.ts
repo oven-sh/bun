@@ -56,6 +56,7 @@ describe.each(["bun run", "bun"])(`%s`, cmd => {
 
   describe.each(["bun", "system", "default"])(`run.shell = "%s"`, shellStr => {
     if (isWindows && shellStr === "system") return; // windows always uses the bun shell now
+
     const shell = shellStr === "default" ? (isWindows ? "bun" : "system") : shellStr;
     const command_not_found =
       isWindows && shell === "system" ? "is not recognized as an internal or external command" : "command not found";

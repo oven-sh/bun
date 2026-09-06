@@ -812,6 +812,11 @@ describe("optional peers", () => {
 
 // https://github.com/oven-sh/bun/issues/28147
 test("patched package shared by multiple peer variants is materialized into the cache once", async () => {
+  // The isolated store hardlinks variants from the patched cache directory;
+  // the OHOS sandbox denies link(2) (EACCES), so inodes cannot be shared.
+  if (Bun.env.BUN_OHOS === "1") {
+    return;
+  }
   const { packageJson, packageDir } = await registry.createTestDir({ bunfigOpts: { linker: "isolated" } });
 
   // `peer-deps@1.0.0` has `peerDependencies: { "no-deps": "*" }`. Giving each

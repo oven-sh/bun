@@ -138,6 +138,34 @@ function needsMuslCrtDecompress(cfg: Config): boolean {
 const MUSL_CRT_OBJECTS = ["Scrt1.o", "crt1.o", "crti.o", "crtn.o"];
 
 /**
+ * HarmonyOS app sandboxes SIGSYS-kill several seccomp-filtered syscalls
+ * (close_range, fchmodat2 — the kill fires before any errno fallback can
+ * run) and return sandbox-specific errno from a few libc calls
+ * (getpwuid_r, tmpfile, getcwd). ohos-compat-shim handles all of these
+ * with a probe-then-fallback interposer, historically LD_PRELOAD'd by the
+ * harmonybrew formula wrapper scripts. Linking a vendored copy
+ * (shims/ohos_compat_shim.c) straight into the executable removes the
+ * wrapper requirement — for bun itself AND for every `bun build --compile`
+ * output, which embeds this runtime. Tracked in workarounds.ts
+ * ("ohos-compat-shim-embed").
+ */
+function needsOhosCompatShim(cfg: Config): boolean {
+  return cfg.ohos;
+}
+
+/**
+ * The shim's interposed symbols are re-exported from the executable via the
+ * global list in src/linker.lds so dlopen'd native modules (.node/.so)
+ * resolve them from the main binary too — the executable is first in the
+ * loader's global lookup order, which matches LD_PRELOAD interposition
+ * semantics. NOTE: the version script's `local: *` overrides
+ * --export-dynamic-symbol/--dynamic-list in lld (verified empirically on
+ * LLD 21), so linker.lds is the only working export mechanism here.
+ * linkat/symlinkat/splice interposers are default-on and can be disabled
+ * per-symbol via OHOS_COMPAT_SHIM_DISABLE, same as the preload .so.
+ */
+
+/**
  * Register shim compile rules. Call once from rules.ts alongside the
  * other registerXxxRules() calls.
  */

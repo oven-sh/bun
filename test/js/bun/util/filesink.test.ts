@@ -1,6 +1,6 @@
 import { createSocketPair, fileSinkInternals } from "bun:internal-for-testing";
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, fileDescriptorLeakChecker, isLinux, isPosix, isWindows, tmpdirSync } from "harness";
+import { bunEnv, bunExe, fileDescriptorLeakChecker, isLinux, isOhos, isPosix, isWindows, tmpdirSync } from "harness";
 import { mkfifo } from "mkfifo";
 import { join } from "node:path";
 
@@ -359,7 +359,10 @@ it.skipIf(!isPosix)(
 // drain-flush-drain shape needs the AF_UNIX send buffer to hold the remainder
 // (Linux default ~200KB; macOS is ~8KB, so flush() returns Pending there and
 // the promise was already settled via on_write).
-it.skipIf(!isLinux)(
+it.skipIf(!isLinux || isOhos)(
+  // OHOS: the AF_UNIX send buffer is ~512KB (Linux ~200KB) so 300KB never
+  // backpressures, and the socketpair read end is blocking there — the
+  // drain loop hangs once the buffer empties. Skip on OHOS.
   "end() after a backpressured write() with the reader drained returns the write's promise and resolves it",
   async () => {
     const [readFd, writeFd] = createSocketPair();

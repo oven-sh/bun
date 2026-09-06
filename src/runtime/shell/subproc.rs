@@ -1,4 +1,6 @@
 use core::ffi::{c_char, c_void};
+#[cfg(target_env = "ohos")]
+use core::ffi::CStr;
 use std::sync::Arc;
 
 #[cfg(unix)]
@@ -657,6 +659,39 @@ impl ShellSubprocess {
         // `Cmd.args`, NUL-terminated and null-sentinel-terminated, so this
         // function never needs to borrow the `Cmd` arena slot.
         debug_assert!(matches!(spawn_args.argv.last(), Some(p) if p.is_null()));
+
+        // OHOS: same fixup as Bun.spawn's (js_bun_spawn_bindings.rs) --
+        // `Bun.$`/`bun run <script>` don't go through that function, they
+        // land here instead, so a `node` invoked from the shell needs its
+        // own copy of this. `spawn_args.argv[0]` is the resolved absolute
+        // path (`Cmd::transition_to_exec` in states/Cmd.rs overwrites
+        // `Cmd.args[0]` with it before building `spawn_args.argv`), and this
+        // struct has no `Vec<ZBox>` storage the way spawn bindings does --
+        // new env lines are bump-allocated in `spawn_args.arena` instead,
+        // matching `SpawnArgs::fill_env` just above.
+        #[cfg(target_env = "ohos")]
+        if let Some(&a0) = spawn_args.argv.first() {
+            if !a0.is_null() {
+                // SAFETY: `a0` is `Cmd.args[0]`, NUL-terminated by
+                // `Cmd::transition_to_exec` (states/Cmd.rs) and owned by the
+                // same `Cmd` arena slot that outlives this spawn call.
+                let a0_bytes = unsafe { CStr::from_ptr(a0) }.to_bytes();
+                if let Some(inj) =
+                    crate::api::ohos_node_userinfo::compute(a0_bytes, &spawn_args.env_array)
+                {
+                    spawn_args
+                        .env_array
+                        .retain(|&ptr| !crate::api::ohos_node_userinfo::is_managed_key(ptr));
+                    let arena: &Arena = spawn_args.arena;
+                    for line in [Some(inj.node_options), inj.username].into_iter().flatten() {
+                        let buf = arena.alloc_slice_fill_default(line.len() + 1);
+                        buf[..line.len()].copy_from_slice(&line);
+                        buf[line.len()] = 0;
+                        spawn_args.env_array.push(buf.as_ptr().cast::<c_char>());
+                    }
+                }
+            }
+        }
 
         spawn_args.env_array.push(core::ptr::null());
 

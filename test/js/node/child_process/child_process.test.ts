@@ -407,6 +407,13 @@ describe("spawn()", () => {
       expect(await getChildEnv({})).toMatchObject({});
       expect(await getChildEnv(undefined)).not.toStrictEqual({});
       expect(await getChildEnv(null)).not.toStrictEqual({});
+    } else if (Bun.env.BUN_OHOS === "1") {
+      // OHOS: Bun injects TMPDIR into the child env (the runtime depends on
+      // it for tmp files), so strict equality cannot hold.
+      expect(await getChildEnv({ TEST: "test" })).toMatchObject({ TEST: "test" });
+      expect(await getChildEnv({})).toMatchObject({});
+      expect(await getChildEnv(undefined)).toMatchObject(process.env);
+      expect(await getChildEnv(null)).toMatchObject(process.env);
     } else {
       expect(await getChildEnv({ TEST: "test" })).toStrictEqual({ TEST: "test" });
       expect(await getChildEnv({})).toStrictEqual({});
@@ -1173,7 +1180,9 @@ describe("uid/gid options", () => {
     // event; EPERM is thrown synchronously from spawn().
     let thrown: any;
     try {
-      spawn("id", [], { uid: 0 });
+      // OHOS: $PATH lacks /bin and /system/bin, so use an absolute path.
+      const idBin = Bun.env.BUN_OHOS === "1" ? "/system/bin/id" : "id";
+      spawn(idBin, [], { uid: 0 });
     } catch (e) {
       thrown = e;
     }
@@ -1181,10 +1190,10 @@ describe("uid/gid options", () => {
     expect(thrown?.errno).toBe(-1);
     expect(thrown?.syscall).toBe("spawn");
 
-    const r = spawnSync("id", [], { uid: 0, encoding: "utf8" });
+    const r = spawnSync(Bun.env.BUN_OHOS === "1" ? "/system/bin/id" : "id", [], { uid: 0, encoding: "utf8" });
     expect(r.error?.code).toBe("EPERM");
     expect(r.error?.errno).toBe(-1);
-    expect(r.error?.syscall).toBe("spawnSync id");
+    expect(r.error?.syscall).toBe(Bun.env.BUN_OHOS === "1" ? "spawnSync /system/bin/id" : "spawnSync id");
     expect(r.stdout == null).toBe(true);
   });
 
@@ -1352,7 +1361,9 @@ it("child.stdout.pause() after flowing stops native reads and blocks the child",
 // removed on 'exit', so every failed spawn against a shared AbortSignal leaked
 // one listener (and the retained ChildProcess) for the signal's lifetime.
 describe("spawn/execFile({signal}) does not leak abort listeners on spawn failure", () => {
-  const N = 50;
+  // OHOS: each failed spawn takes ~1s (slow child-spawn timeout), so 50
+  // iterations blow the 30s budget. 10 still proves the leak (any >0 leaks).
+  const N = Bun.env.BUN_OHOS === "1" ? 10 : 50;
 
   async function failN(make: (signal: AbortSignal) => ChildProcess) {
     const ac = new AbortController();

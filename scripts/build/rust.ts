@@ -57,6 +57,7 @@ export function rustTriple(os: OS, arch: Arch, abi: Abi | undefined): string {
   if (os === "freebsd") return `${rustArch}-unknown-freebsd`;
   // linux
   assert(abi !== undefined, "linux build missing abi");
+  if (os === "ohos") return `${rustArch}-unknown-linux-ohos`;
   if (abi === "android") return `${rustArch}-linux-android`;
   if (abi === "musl") return `${rustArch}-unknown-linux-musl`;
   return `${rustArch}-unknown-linux-gnu`;
@@ -73,6 +74,45 @@ export function rustTriple(os: OS, arch: Arch, abi: Abi | undefined): string {
  */
 export function cargoProfile(cfg: Config): { name: string; subdir: string } {
   return cfg.buildType === "Debug" ? { name: "dev", subdir: "debug" } : { name: "release", subdir: "release" };
+}
+
+/**
+ * Can a linux host cross-compile the Rust staticlib for `cfg`'s target
+ * without a native runner?
+ *
+ * Used by CI's `build-rust` step to decide fan-out: targets that return
+ * `true` here share one fast linux box (one `cargo build --target <triple>`
+ * each); targets that return `false` get a native agent.
+ *
+ *   linux-{gnu,musl,android} × {x64,aarch64}: yes — `rustup target add`
+ *     installs prebuilt std, no foreign linker needed for a staticlib.
+ *   freebsd × {x64,aarch64}: yes — Tier 2/3 (`-Zbuild-std` for aarch64),
+ *     staticlib needs no FreeBSD libc to produce.
+ *   darwin × {x64,aarch64}: yes — Tier 2 prebuilt std, and a staticlib
+ *     needs no Mach-O link. No build script in the current dep graph
+ *     compiles C for the target; if one ever does, emitRust's
+ *     CFLAGS_<triple>/SDKROOT forwarding (set when the SDK is resolved)
+ *     points cc-rs at the macOS SDK.
+ *   windows-msvc × {x64,aarch64}: yes *when a Windows sysroot (xwin splat)
+ *     is present* — the staticlib itself needs no SDK, but the bun_shim_impl
+ *     PE that emitRust() also builds links against kernel32/ntdll import
+ *     libs via lld-link + /winsysroot (see config.ts `winsysroot`). The
+ *     shared CI rust box doesn't carry a splat, so CI runs these on the
+ *     amazonlinux fleet instead, where configure fetches one per build.
+ *
+ * Unlike zig (which bundled its own libc/SDK for every target), cargo
+ * delegates to a system C toolchain for any `cc`/`bindgen`/link step, so
+ * the cross-compile boundary is "does the host have a C cross-toolchain
+ * for the target", not "does rustc support the triple".
+ */
+export function rustCanCrossFromLinux(cfg: Config): boolean {
+  if (cfg.linux) return true; // gnu, musl, android — all archs
+  if (cfg.freebsd) return true;
+  if (cfg.darwin) return true;
+  // windows: possible with a winsysroot (see above), but the shared rust
+  // box isn't provisioned with one — CI routes windows rust-only to the
+  // amazonlinux fleet (which fetches a splat at configure time) instead.
+  return false;
 }
 
 /**
@@ -155,7 +195,15 @@ function rustCpuTargetFlags(cfg: Config): string[] {
     } else {
       const [level, ...extensions] = value.split("+");
       assert(level === "armv8-a", `rustCpuTargetFlags() only knows how to spell -march=armv8-a, not -march=${value}`);
-      rustflags.push("-Ctarget-cpu=generic");
+      // OHOS: the build machine is a Cortex-A72-class core; `generic`
+      // leaves auto-vectorization off. Match the C++ side's
+      // `-mtune=cortex-a53` with a concrete CPU so Rust codegen isn't
+      // measurably slower (parallel test timeouts on OHOS).
+      if (cfg.ohos) {
+        rustflags.push("-Ctarget-cpu=cortex-a72");
+      } else {
+        rustflags.push("-Ctarget-cpu=generic");
+      }
       if (extensions.length > 0) rustflags.push(`-Ctarget-feature=${extensions.map(ext => `+${ext}`).join(",")}`);
     }
   }
@@ -254,6 +302,7 @@ export function registerRustRules(n: Ninja, cfg: Config): void {
       // exists for cargo's dep-info on $shim_dest, not for restat.
     });
   }
+
 }
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -405,6 +454,12 @@ export function cargoBuildInvocation(cfg: Config): CargoInvocation {
   // `-Cllvm-args=-addrsig` sets the same LLVM module flag clang's `-faddrsig`
   // does. Harmless on Apple ld64 (ignores the section).
   rustflags.push("-Cllvm-args=-addrsig");
+  // Match the C++ side's CPU target (`cpuTargetFlags` in flags.ts) so Rust
+  // codegen sees the same ISA. Without this, C++ is built with
+  // `-march=haswell` while Rust defaults to generic x86-64 (SSE2 only),
+  // leaving auto-vectorization and BMI/LZCNT/POPCNT on the table for the
+  // entire Rust crate graph. rustc's `-C target-cpu=` takes LLVM CPU names
+  // (same vocabulary as clang's `-march=`/`-mcpu=`), so the mapping is 1:1.
   // Reuse an upstream crate's monomorphization instead of re-instantiating
   // it locally. rustc defaults this on only at opt-level 0/1/s/z: at O2/O3 a
   // shared generic is an out-of-line upstream symbol the caller can't
@@ -559,14 +614,36 @@ export function cargoBuildInvocation(cfg: Config): CargoInvocation {
     rustflags.push("-Cembed-bitcode=yes");
     // EnableSplitLTOUnit consistency: lld errors with "inconsistent LTO Unit
     // splitting" if any bitcode module in the link disagrees with the others.
-    // Every LTO platform now links ThinLTO with the C/C++ side passing
-    // -fno-split-lto-unit (index-based WPD, no hybrid split), so every C/C++
-    // module (ours and the WebKit -lto prebuilts) says 0. rustc's default is
-    // also 0, so pass nothing. (`-Clink-arg=-fuse-ld=lld` is pushed
-    // unconditionally above — under LTO it doubles as making rustc's bitcode
-    // link go through the LTO-aware linker our final link uses, not BFD
-    // `/usr/bin/ld`.)
+    // The Rust value must match whatever the C++ side produces, and that
+    // differs per platform:
+    //
+    //   - darwin (ThinLTO): the C/C++ side passes -fno-split-lto-unit
+    //     everywhere (index-based WPD, no hybrid split mode) and Apple
+    //     targets default to 0 anyway, so every C/C++ module is 0. rustc's
+    //     default is also 0 — pass nothing. Adding -Zsplit-lto-unit here
+    //     would make the Rust modules the inconsistent ones and abort the
+    //     link.
+    //   - windows cross (ThinLTO): same as darwin — clang-cl never gets
+    //     -fwhole-program-vtables (COFF associative-COMDAT abort) and
+    //     -fno-split-lto-unit is passed explicitly, so every C/C++ module is
+    //     0 and rustc's default 0 matches — pass nothing.
+    //   - linux (full LTO): the regular-LTO summary clang writes on ELF
+    //     always says EnableSplitLTOUnit=1, so every C++ module (ours and
+    //     the WebKit -lto prebuilts) carries 1. The Rust modules'
+    //     EnableSplitLTOUnit module flag must say 1 to match →
+    //     -Zsplit-lto-unit. (The flag is stamped per-CGU at module
+    //     creation, survives rustc's fat-LTO pre-merge, and is what the
+    //     rust_lto_fix step's `opt --module-summary` copies into the
+    //     regular-LTO summary it bolts onto the merged module — see
+    //     rust-lto-fix-cli.ts.)
+    //
+    // (`-Clink-arg=-fuse-ld=lld` is pushed unconditionally above — under LTO
+    // it doubles as making rustc's bitcode link go through the LTO-aware
+    // linker our final link uses, not BFD `/usr/bin/ld`.)
     if (!cfg.darwin && !cfg.windows) {
+      rustflags.push("-Zsplit-lto-unit");
+
+
       // Rust functions default to carrying the `uwtable(async)` attribute.
       // When the LTO inliner inlines such a callee into one of our C++
       // callers (compiled without unwind tables), the caller inherits the
@@ -647,14 +724,34 @@ export function cargoBuildInvocation(cfg: Config): CargoInvocation {
     }
   }
   if (cfg.crossLangLto) {
-    // Every crossLangLto platform links ThinLTO, so leave each crate's per-CGU
-    // bitcode with its ThinLTO summary intact: the whole link is one uniform
-    // ThinLTO graph and cross-module importing works across Rust↔C++/JSC.
-    // `fat` would pre-merge the crates into one summary-less blob the thin
-    // link can't import from. (The workspace `[profile.release] lto = "fat"`
-    // exists for non-LTO release builds, where the rust .a is linked as
+    // The Rust bitcode's shape must match the platform's C++ LTO mode so both
+    // sides land in the same LTO partition at link time and can exchange
+    // function bodies. (The workspace `[profile.release] lto = "fat"` exists
+    // for non-LTO release builds, where the rust .a is linked as
     // already-codegen'd machine code and still wants intra-Rust inlining.)
-    env.CARGO_PROFILE_RELEASE_LTO = "off";
+    //
+    //   - darwin / windows cross (ThinLTO links): `off`. Each crate's
+    //     per-CGU bitcode keeps its ThinLTO summary, so the whole link is
+    //     one uniform ThinLTO graph and cross-module importing works across
+    //     Rust↔C++/JSC. `fat` would pre-merge the crates into one
+    //     summary-less blob the thin link can't import from (and rustc's
+    //     serial pre-merge is wasted work — the linker schedules the
+    //     backends itself).
+    //   - ELF (full-LTO link — see the -flto=full entry in flags.ts): `fat`.
+    //     rustc pre-merges every crate (including the prebuilt std's
+    //     embedded bitcode) into ONE summary-less regular-LTO module, which
+    //     lld then merges into the same regular-LTO partition as the C++
+    //     `-flto=full` objects — that merge is what gives Rust↔C++
+    //     cross-language inlining under full LTO. (The merged module first
+    //     gets a regular-LTO summary bolted on by the rust_lto_fix edge —
+    //     rustLtoLinkInputs() below — because lld's EnableSplitLTOUnit
+    //     consistency check requires one.) With `off`, the per-CGU
+    //     ThinLTO-summaried modules are processed as ThinLTO partitions
+    //     instead, which (a) never exchange function bodies with the C++
+    //     regular partition (no cross-language inlining at all), and
+    //     (b) go through the LLVM 22 ThinLTO backend pipeline that
+    //     miscompiles JSC on linux.
+    env.CARGO_PROFILE_RELEASE_LTO = cfg.darwin || cfg.windows ? "off" : "thin";
   } else if (cfg.asan) {
     // release-asan has `cfg.lto` forced off (config.ts), but without this
     // override Cargo.toml's `[profile.release] lto = "fat"` still applies —

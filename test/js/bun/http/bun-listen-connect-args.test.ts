@@ -1,10 +1,11 @@
 import { describe, test } from "bun:test";
-import { cwdScope, isWindows, tempDir } from "harness";
+import { cwdScope, isWindows, tempDir, tmpdirSync } from "harness";
+import { basename, dirname, join } from "node:path";
 
 describe.if(!isWindows)("unix socket", () => {
   test("valid", () => {
     using server = Bun.listen({
-      unix: Math.random().toString(32).slice(2, 15) + ".sock",
+      unix: join(tmpdirSync(), Math.random().toString(32).slice(2, 15) + ".sock"),
       socket: {
         open() {},
         close() {},
@@ -18,20 +19,20 @@ describe.if(!isWindows)("unix socket", () => {
   describe("allows", () => {
     const permutations = [
       {
-        unix: Math.random().toString(32).slice(2, 15) + ".sock",
+        unix: join(tmpdirSync(), Math.random().toString(32).slice(2, 15) + ".sock"),
         port: 0,
         hostname: "",
       },
       {
-        unix: Math.random().toString(32).slice(2, 15) + ".sock",
+        unix: join(tmpdirSync(), Math.random().toString(32).slice(2, 15) + ".sock"),
         hostname: undefined,
       },
       {
-        unix: Math.random().toString(32).slice(2, 15) + ".sock",
+        unix: join(tmpdirSync(), Math.random().toString(32).slice(2, 15) + ".sock"),
         hostname: null,
       },
       {
-        unix: Math.random().toString(32).slice(2, 15) + ".sock",
+        unix: join(tmpdirSync(), Math.random().toString(32).slice(2, 15) + ".sock"),
         hostname: false,
       },
     ];
@@ -45,7 +46,12 @@ describe.if(!isWindows)("unix socket", () => {
         for (let i = 0; i < 100; i++) {
           using server = Bun.listen({
             ...args,
-            unix: args.unix.startsWith("unix://") ? "unix://" + i + args.unix.slice(7) : i + args.unix,
+            // i prefixes the socket NAME (the old relative form relied on
+            // i + "name.sock"); with an absolute path the prefix must go on
+            // the basename.
+            unix: args.unix.startsWith("unix://")
+              ? "unix://" + i + args.unix.slice(7)
+              : join(dirname(args.unix), i + basename(args.unix)),
             socket: {
               open() {},
               close() {},

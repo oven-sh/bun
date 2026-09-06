@@ -10,7 +10,8 @@ import { isLinux, tmpdirSync } from "harness";
 import fs from "node:fs";
 import { join } from "node:path";
 
-describe.skipIf(!isLinux)("glob on a FUSE mount", () => {
+// OHOS: no python-fuse module and no fusermount in the sandbox.
+describe.skipIf(!isLinux || Bun.env.BUN_OHOS === "1")("glob on a FUSE mount", () => {
   // Mount once for the whole describe block. The first python3/libfuse
   // cold-start on Alpine CI can take several seconds when disk I/O is
   // contended by background container setup, so a per-test mount with a

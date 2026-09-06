@@ -1089,6 +1089,40 @@ pub mod get_addr_info_request {
                 debug_timer,
             );
             if err != 0 || addrinfo.is_null() {
+                // OHOS: if the lookup was restricted to AF_INET6 and failed,
+                // retry with AF_UNSPEC.  If the retry succeeds the hostname
+                // resolved (to IPv4) — the original family just had no results
+                // — so report EAI_NODATA ("no address for requested family")
+                // instead of the raw error (which may map to a nonstandard JS
+                // error code).
+                #[cfg(target_env = "ohos")]
+                if err != 0 {
+                    if let Some(ref hints_val) = hints {
+                        if hints_val.ai_family == netc::AF_INET6 {
+                            let mut fallback = *hints_val;
+                            fallback.ai_family = netc::AF_UNSPEC;
+                            let mut retry_info: *mut AddrInfo = ptr::null_mut();
+                            let retry_err = unsafe {
+                                libc::getaddrinfo(
+                                    host.as_ptr().cast::<c_char>(),
+                                    if port_len > 0 { port_z.as_ptr().cast::<c_char>() } else { ptr::null() },
+                                    &raw const fallback,
+                                    &raw mut retry_info,
+                                )
+                            };
+                            if retry_err == 0 && !retry_info.is_null() {
+                                // Hostname resolves to a non-IPv6 address.
+                                // Free the retry result and report EAI_NODATA.
+                                unsafe { bun_dns::freeaddrinfo(retry_info) };
+                                // musl/OHOS does not define EAI_NODATA;
+                                // libuv/Node.js uses -3007 for UV_EAI_NODATA
+                                // which maps to "ENOTFOUND".
+                                *self = LibcBackend::Err(-3007);
+                                return;
+                            }
+                        }
+                    }
+                }
                 *self = LibcBackend::Err(err);
                 return;
             }
@@ -5179,6 +5213,24 @@ impl Resolver {
         global_this: &JSGlobalObject,
     ) -> JsResult<JSValue> {
         if !bun_dns::is_valid_hostname(name) {
+            let mut promise = JSPromiseStrong::init(global_this);
+            let promise_value = promise.value();
+            error_to_deferred(
+                c_ares::Error::ENOTFOUND,
+                b"getaddrinfo",
+                Some(name),
+                &mut promise,
+            )
+            .reject_later(global_this);
+            return Ok(promise_value);
+        }
+
+        // A host option containing URL delimiter characters ("/", "?", "#")
+        // is not a resolvable hostname — Node rejects it with ENOTFOUND
+        // without ever issuing a lookup. Rejecting up front also avoids
+        // depending on resolver timeout behavior under load, where a
+        // malformed host could otherwise surface as ETIMEOUT.
+        if strings::contains_any(name, b"/?#") {
             let mut promise = JSPromiseStrong::init(global_this);
             let promise_value = promise.value();
             error_to_deferred(

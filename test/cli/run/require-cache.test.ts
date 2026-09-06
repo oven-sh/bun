@@ -37,7 +37,9 @@ describe.concurrent("require.cache", () => {
 
   // https://github.com/oven-sh/bun/issues/5188
   // msgpackr-extract has no prebuilt binary for win32-arm64, so it's unavailable there
-  test.skipIf(isWindows && isArm64)("require.cache does not include unevaluated modules", async () => {
+  // msgpackr-extract has no prebuilt for win32-arm64 or musl (OHOS), so
+  // the fixture's native addon cannot load there.
+  test.skipIf(isWindows && isArm64 || Bun.env.BUN_OHOS === "1")("require.cache does not include unevaluated modules", async () => {
     await using proc = Bun.spawn({
       cmd: [bunExe(), "run", join(import.meta.dir, "require-cache-bug-5188.js")],
       env: bunEnv,
@@ -339,7 +341,8 @@ describe.concurrent("require.cache", () => {
         expect(exitCode).toBe(0);
       },
       // TODO: Investigate why this is so slow on Windows
-      isWindows || isASAN ? 60000 : 30000,
+      // OHOS: the --smol spawn under the test runner takes >30s.
+      isWindows || isASAN || Bun.env.BUN_OHOS === "1" ? 60000 : 30000,
     );
   });
 });

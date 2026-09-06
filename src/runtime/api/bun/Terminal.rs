@@ -114,6 +114,15 @@ pub struct Terminal {
     /// Duplicated master fd for writing (POSIX) / overlapped write pipe end (Windows)
     write_fd: Cell<Fd>,
 
+    /// Exit notification that fired before the JS wrapper / callbacks existed.
+    /// `on_reader_finished` is one-shot (guarded by `READER_DONE`), and both
+    /// `writer.start()` and `reader.start()` can drive it synchronously during
+    /// `init_terminal` — long before `this_value` is set or the `exit` callback
+    /// is registered. Without this the single notification is silently dropped
+    /// and the user's `exit` callback never fires at all. Recorded here and
+    /// replayed at the end of `init_terminal`. See OHOS_TEST_TODO.md T03.
+    deferred_exit: Cell<Option<i32>>,
+
     /// The slave side of the PTY (used by child processes). Unused on Windows.
     slave_fd: Cell<Fd>,
 
@@ -417,6 +426,7 @@ impl Terminal {
             read_fd: Cell::new(pty_result.read_fd),
             write_fd: Cell::new(pty_result.write_fd),
             slave_fd: Cell::new(pty_result.slave),
+            deferred_exit: Cell::new(None),
             #[cfg(windows)]
             hpcon: Cell::new(Some(pty_result.hpcon)),
             cols: Cell::new(if cfg!(windows) {
@@ -500,16 +510,16 @@ impl Terminal {
                                 .insert(PosixFlags::NONBLOCKING | PosixFlags::POLLABLE);
                             poll.set_flag(bun_io::FilePollFlag::Nonblocking);
                         }
+                        // Enroll in epoll_rearm_watchdog: this fd class hit a
+                        // confirmed real-device OHOS kernel epoll defect
+                        // (registration reports success, kernel never
+                        // delivers) -- see OHOS_TEST_STATUS.md 2026-08-20.
+                        r.flags.insert(PosixFlags::EPOLL_REARM_WATCH);
                     });
                 }
                 terminal.update_flags(|f| f.insert(Flags::READER_STARTED));
             }
         }
-
-        // Start reading data
-        // SAFETY: the reader cell is live for the terminal's lifetime; `read`
-        // is the raw re-entrancy-safe entry (its dispatch runs user JS).
-        unsafe { IOReader::read(terminal.reader.as_ptr()) };
 
         // Get or create the JS wrapper
         let this_value = existing_js_value.unwrap_or_else(|| js::to_js(parent_ptr, global_object));
@@ -531,6 +541,45 @@ impl Terminal {
         }
         if let Some(cb) = options.drain_callback {
             js::gc::set(js::GcValue::Drain, this_value, global_object, cb);
+        }
+
+        // Start reading data LAST — after the JS wrapper exists and the
+        // callbacks are registered.
+        //
+        // `read()` can complete synchronously: a PTY whose slave end is
+        // already closed (or a read that errors) drives
+        // on_reader_done/on_reader_error -> on_reader_finished right here,
+        // inline. That path sets READER_DONE, which is a one-shot: every
+        // later call, including the one from the user's own `close()`, hits
+        // the `if READER_DONE { return }` guard at the top and returns
+        // without dispatching.
+        //
+        // With `read()` above the wrapper/callback setup, that inline
+        // completion consumed the single exit notification while
+        // `this_value` was still `JsRef::empty()` and no Exit callback was
+        // registered yet, so it silently dropped at `try_get` /
+        // `gc::get(Exit)` and the user's `exit` callback then never fired at
+        // all. Observed intermittently (~50% under
+        // BUN_JSC_randomIntegrityAuditRate=1.0 after ~30 prior terminals);
+        // instrumentation showed the final terminal entering close_internal
+        // with READER_DONE already true and zero dispatches for the whole
+        // run. See OHOS_TEST_TODO.md T03.
+        unsafe { IOReader::read(terminal.reader.as_ptr()) };
+
+        // Replay an exit notification that fired during startup, before the
+        // wrapper and callbacks above existed. `writer.start()`,
+        // `reader.start()` and `read()` can all drive `on_reader_finished`
+        // synchronously; that path is one-shot, so without this replay the
+        // user's `exit` callback would never fire at all.
+        if let Some(code) = terminal.deferred_exit.take() {
+            #[cfg(debug_assertions)]
+            eprintln!(
+                "T@{:x} init: replaying deferred exit_code={}",
+                parent_ptr as usize,
+                code
+            );
+            terminal.this_value.with_mut(|v| v.downgrade());
+            terminal.call_exit_callback(code, None);
         }
 
         Ok(CreateResult {
@@ -1435,9 +1484,8 @@ impl Terminal {
         };
 
         let bytes = string_or_buffer.slice();
-        let input_len = bytes.len();
 
-        if input_len == 0 {
+        if bytes.is_empty() {
             return Ok(JSValue::js_number(0.0));
         }
 
@@ -1470,10 +1518,23 @@ impl Terminal {
         // writer can even exceed `input_len` when prior data drains), so
         // returning them would make callers re-send an already-queued tail.
         match write_result {
+            bun_io::WriteResult::Done(amt) => Ok(JSValue::js_number(
+                i32::try_from(amt).expect("int cast") as f64,
+            )),
+            bun_io::WriteResult::Wrote(amt) => Ok(JSValue::js_number(
+                i32::try_from(amt).expect("int cast") as f64,
+            )),
+            // On Windows the streaming writer buffers and returns .pending=0; the
+            // bytes were accepted, so report bytes.len to match POSIX semantics.
+            bun_io::WriteResult::Pending(amt) => {
+                let n = if cfg!(windows) { bytes.len() } else { amt };
+                Ok(JSValue::js_number(
+                    i32::try_from(n).expect("int cast") as f64
+                ))
+            }
             bun_io::WriteResult::Err(err) => {
                 Err(global_object.throw_value(err.to_js(global_object)))
             }
-            _ => Ok(JSValue::js_number(input_len as f64)),
         }
     }
 
@@ -1809,8 +1870,26 @@ impl Terminal {
         // EOF from master - downgrade to weak ref to allow GC.
         // Skip JS interactions if already finalized (happens when close() is called during finalize)
         if !self.flags.get().contains(Flags::FINALIZED) {
-            self.maybe_downgrade_after_eof();
-            self.call_exit_callback(exit_code, None);
+            if self.this_value.get().is_empty() {
+                // Fired from inside `init_terminal`, before the JS wrapper
+                // exists. Dispatching now would drop the notification (there
+                // is nothing to call), and `READER_DONE` is already set above
+                // so nothing will ever retry. Stash it; `init_terminal`
+                // replays it once the callbacks are registered.
+                self.deferred_exit.set(Some(exit_code));
+                #[cfg(debug_assertions)]
+                eprintln!(
+                    "T@{:x}   -> DEFERRED exit_code={} (wrapper not ready yet)",
+                    std::ptr::from_ref(self) as usize,
+                    exit_code,
+                );
+            } else {
+                // Upstream #36962: only downgrade once no buffered data awaits
+                // a drain dispatch (reader EOF + writer buffered → keep the
+                // wrapper rooted until the drain fires).
+                self.maybe_downgrade_after_eof();
+                self.call_exit_callback(exit_code, None);
+            }
         }
         self.deref_();
     }

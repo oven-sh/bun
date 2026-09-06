@@ -66,6 +66,48 @@ export interface Workaround {
 
 export const workarounds: Workaround[] = [
   {
+    id: "ohos-compat-shim-embed",
+    issue: "https://github.com/social4hyq/ohos-compat-shim",
+    description:
+      "HarmonyOS app sandboxes SIGSYS-kill seccomp-filtered syscalls (close_range, fchmodat2) " +
+      "and return sandbox-specific errno from getpwuid_r/tmpfile/getcwd. A vendored copy of " +
+      "ohos-compat-shim's probe-then-fallback interposer (shims/ohos_compat_shim.c) is linked " +
+      "into the executable with its symbols re-exported, so bun and every `bun build --compile` " +
+      "output run without the LD_PRELOAD wrapper the harmonybrew formulas used to require.",
+    applies: cfg => cfg.ohos,
+    // Sandbox seccomp policy, not a toolchain bug — no toolchain bump fixes
+    // it. Re-evaluate only if HarmonyOS ever relaxes the app allowlist
+    // (probe: a plain close_range() call surviving in a hishell terminal).
+    expectedToBeFixed: () => false,
+    cleanup:
+      `Delete scripts/build/shims/ohos_compat_shim.c, needsOhosCompatShim() and its blocks in ` +
+      `scripts/build/shims.ts, the shim symbol block in src/linker.lds, restore the LD_PRELOAD ` +
+      `wrapper in the bun.rb formula, and this entry.`,
+  },
+  {
+    id: "ohos-node-userinfo-preload",
+    issue: "https://github.com/social4hyq/ohos-compat-shim",
+    description:
+      "The embedded ohos-compat-shim (see 'ohos-compat-shim-embed' above) only interposes " +
+      "getpwuid_r inside the bun process itself; an exec'd node child gets the raw musl libc " +
+      "and its os.userInfo() throws ERR_SYSTEM_ERROR (uv_os_get_passwd -> ENOENT) for " +
+      "HarmonyOS sandbox uids. Bun.spawn/node:child_process/the shell interpreter therefore " +
+      "materialize a tiny CJS preload on disk and append `--require <preload>` to a node-like " +
+      "child's NODE_OPTIONS, passing the shim-resolved username through BUN_OHOS_USERNAME.",
+    applies: cfg => cfg.ohos,
+    // Same sandbox policy as ohos-compat-shim-embed: no toolchain bump fixes
+    // it. Re-evaluate only if HarmonyOS ever adds sandbox uids to the
+    // passwd database (probe: `getent passwd $(id -u)` succeeding in a
+    // hishell terminal).
+    expectedToBeFixed: () => false,
+    cleanup:
+      `Delete src/runtime/api/bun/ohos_node_userinfo.rs, its #[cfg(target_env = "ohos")] mod ` +
+      `declaration in src/runtime/api.rs, the #[cfg(target_env = "ohos")] compute()/is_managed_key ` +
+      `call blocks in src/runtime/api/bun/js_bun_spawn_bindings.rs and ` +
+      `src/runtime/shell/subproc.rs, BUN_OHOS_USERNAME in src/bun_core/env_var.rs, ` +
+      `test/js/bun/spawn/spawn-ohos-node-userinfo.test.ts, and this entry.`,
+  },
+  {
     id: "asan-dyld-shim",
     issue: "https://github.com/llvm/llvm-project/issues/182943",
     description:
@@ -77,7 +119,7 @@ export const workarounds: Workaround[] = [
       // https://github.com/llvm/llvm-project/pull/188913 — lower this
       // threshold to the exact 22.1.x once it lands. Apple clang is
       // already excluded: resolveLlvmToolchain only accepts Homebrew
-      // llvm (LLVM_VERSION_RANGE is >=21 <23), so cfg.clangVersion is
+      // llvm (LLVM_VERSION_RANGE is >=22.1.0 <22.1.99), so cfg.clangVersion is
       // always LLVM clang's version here.
       const FIXED_IN_LLVM = "22.1.4";
       return cfg.clangVersion !== undefined && satisfiesRange(cfg.clangVersion, `>=${FIXED_IN_LLVM}`);
@@ -96,9 +138,14 @@ export const workarounds: Workaround[] = [
       // Obsolete once clang's LLVM major catches up to (or passes) rustc's —
       // at that point clang's own ld.lld reads rustc's bitcode and the
       // rust-lld swap in resolveConfig() never fires.
-      const clangMajor = Number(cfg.clangVersion!.split(".")[0]);
-      const rustMajor = Number(cfg.rustLlvmVersion!.split(".")[0]);
-      return clangMajor >= rustMajor;
+      // Note: same major version is NOT sufficient — clang 22.1.4 vs rustc
+      // 22.1.8: clang's lld still can't read rustc's LTO bitcode. Require
+      // clang >= rustc at full version compare.
+      const clangVersion = cfg.clangVersion!;
+      const rustVersion = cfg.rustLlvmVersion!;
+      const clangMajor = Number(clangVersion.split(".")[0]);
+      const rustMajor = Number(rustVersion.split(".")[0]);
+      return clangMajor > rustMajor || (clangMajor === rustMajor && clangVersion >= rustVersion);
     },
     cleanup:
       `Delete the rust-lld swap block in resolveConfig() (config.ts), findRustLld() and its call ` +
@@ -145,9 +192,11 @@ export const workarounds: Workaround[] = [
       // Obsolete the same instant the rust-lld swap above is — once clang's
       // ld.lld (built with zlib) reads rustc's bitcode, we never select
       // rust-lld and the compressed CRTs are a non-issue.
-      const clangMajor = Number(cfg.clangVersion!.split(".")[0]);
-      const rustMajor = Number(cfg.rustLlvmVersion!.split(".")[0]);
-      return clangMajor >= rustMajor;
+      const clangVersion = cfg.clangVersion!;
+      const rustVersion = cfg.rustLlvmVersion!;
+      const clangMajor = Number(clangVersion.split(".")[0]);
+      const rustMajor = Number(rustVersion.split(".")[0]);
+      return clangMajor > rustMajor || (clangMajor === rustMajor && clangVersion >= rustVersion);
     },
     cleanup:
       `Delete needsMuslCrtDecompress(), MUSL_CRT_OBJECTS, the shim_crt_decompress rule, and the ` +

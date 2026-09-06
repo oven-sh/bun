@@ -4570,11 +4570,14 @@ impl NodeFS {
         // buf_to_free dropped at scope exit
 
         let mut remain = stat_size as u64;
-        // VERIFY-FIX(round1): the
-        // `if remain == 0` check below was wrong: `break 'toplevel` after
-        // `remain` had already saturated to 0 would still enter the else. Track
-        // an explicit `broke` flag instead.
-        let mut broke = false;
+        // The "read until EOF" fallback below is only correct when the caller
+        // did not specify a size (stat_size == 0 is the explicit "unknown"
+        // sentinel used by every call site — see copy_file.rs and the fs.copyFile
+        // paths). When stat_size > 0 it is a hard limit (e.g. a sliced
+        // destination in `Bun.write(Bun.file(p).slice(0, N), ...)`), and falling
+        // through to the EOF loop just because the first loop happened to hit
+        // the limit without EOF would copy past the requested boundary.
+        let unknown_size = stat_size == 0;
         'toplevel: while remain > 0 {
             let read_len = (buf.len() as u64).min(remain) as usize;
             let amt = match Syscall::read(src_fd, &mut buf[..read_len]) {
@@ -4589,7 +4592,6 @@ impl NodeFS {
             };
             // 0 == EOF
             if amt == 0 {
-                broke = true;
                 break 'toplevel;
             }
             *wrote += amt as u64;
@@ -4608,13 +4610,12 @@ impl NodeFS {
                     }
                 };
                 if written == 0 {
-                    broke = true;
                     break 'toplevel;
                 }
                 slice = &slice[written..];
             }
         }
-        if !broke {
+        if unknown_size {
             'outer: loop {
                 let amt = match Syscall::read(src_fd, buf) {
                     Ok(result) => result,
@@ -5349,8 +5350,36 @@ impl NodeFS {
                 Ok(result) => Ok(result),
             };
         }
+        // OHOS: go through `linkat` rather than `link`. The kernel refuses the
+        // bare linkat syscall with EACCES, and ohos-compat-shim works around
+        // that by interposing the libc *symbol* `linkat` (falling back to a
+        // byte copy). musl implements `link(a, b)` as a direct
+        // `syscall(SYS_linkat, AT_FDCWD, a, AT_FDCWD, b, 0)`, so it never
+        // reaches that symbol and never gets the workaround. Measured
+        // on-device: the libc `linkat` symbol succeeds where both `link()` and
+        // the raw syscall return EACCES, and stripping the shim from
+        // LD_PRELOAD makes `linkat` fail too. AT_FDCWD makes both paths
+        // resolve exactly as `link` would.
+        // SAFETY: `from`/`to` are NUL-terminated by `slice_z`.
+        #[cfg(all(not(windows), target_env = "ohos"))]
+        return Maybe::<ret::Link>::errno_sys_pd(
+            unsafe {
+                libc::linkat(
+                    libc::AT_FDCWD,
+                    from.as_ptr().cast(),
+                    libc::AT_FDCWD,
+                    to.as_ptr().cast(),
+                    0,
+                )
+            },
+            sys::Tag::link,
+            args.old_path.slice(),
+            args.new_path.slice(),
+        )
+        .unwrap_or(Ok(()));
+
         // SAFETY: `from`/`to` are NUL-terminated by `slice_z`; `link(2)` is the libc FFI.
-        #[cfg(not(windows))]
+        #[cfg(all(not(windows), not(target_env = "ohos")))]
         Maybe::<ret::Link>::errno_sys_pd(
             unsafe { libc::link(from.as_ptr().cast(), to.as_ptr().cast()) },
             sys::Tag::link,
@@ -6977,18 +7006,41 @@ impl NodeFS {
             return Err(abort_err());
         }
 
-        let stat_ = Syscall::fstat(fd)?;
+        // A descriptor that reads fine but refuses to describe itself is not a
+        // fatal case. The HarmonyOS sandbox denies fstat/statx (and
+        // stat("/proc/self/fd/N")) on memfd descriptors whose read() returns
+        // the full contents — verified with a standalone C probe, which
+        // passes unchanged inside the OpenHarmony container. Failing here
+        // turned a readable fd into `EACCES: permission denied, fstat`.
+        //
+        // The size is only ever a hint: the loop below already has an
+        // unbounded tail phase for files whose stat size is wrong or stale
+        // (issue #1220), so an unknown size degrades to exactly that path.
+        // Only metadata-permission errors fall back; EBADF and friends still
+        // propagate, since a read would not be meaningful either.
+        let stat_ = match Syscall::fstat(fd) {
+            Ok(stat_) => Some(stat_),
+            Err(err) if err.errno == E::EACCES as _ || err.errno == E::EPERM as _ => None,
+            Err(err) => return Err(err),
+        };
 
         // For certain files, the size might be 0 but the file might still have contents.
         // https://github.com/oven-sh/bun/issues/1220
         let max_size: u64 = args.max_size.map(|v| v as u64).unwrap_or(BLOB_SIZE_MAX);
         let has_max_size = args.max_size.is_some();
 
-        let size: u64 = (stat_.st_size as i64)
-            .min(max_size as i64) // Only used in DOMFormData
-            .max(total as i64)
-            .max(0) as u64
-            + (string_type == ReadFileStringType::NullTerminated) as u64;
+        let size: u64 = match stat_ {
+            Some(stat_) => {
+                (stat_.st_size as i64)
+                    .min(max_size as i64) // Only used in DOMFormData
+                    .max(total as i64)
+                    .max(0) as u64
+                    + (string_type == ReadFileStringType::NullTerminated) as u64
+            }
+            // Unknown: claim only what has already been read, so the loop
+            // starts in its unbounded phase and grows as the reads land.
+            None => total as u64,
+        };
 
         if args.limit_size_for_javascript &&
             // assume that anything more than 40 bits is not trustworthy.
@@ -7237,6 +7289,13 @@ impl NodeFS {
                     }
                 }
             }
+        }
+
+        // If the write loop exited with unwritten data but no error (e.g. OHOS
+        // FUSE returns Ok(0) instead of EFBIG when a write exceeds the file
+        // system's size limit), synthesize EFBIG to match Node.js behavior.
+        if write_err.is_none() && !buf.is_empty() {
+            write_err = Some(sys::Error::from_code(E::EFBIG, sys::Tag::write));
         }
 
         // https://github.com/oven-sh/bun/issues/2931

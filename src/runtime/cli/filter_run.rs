@@ -14,7 +14,7 @@ use bun_core::{Global, Output};
 use bun_core::{ZStr, strings};
 use bun_event_loop::EventLoopHandle;
 use bun_event_loop::MiniEventLoop::{self as MiniEventLoopMod, MiniEventLoop};
-use bun_io::{BufferedReader, ReadState};
+use bun_io::{BufferedReader, FilePollFlag, PosixFlags, ReadState};
 use bun_sys as sys;
 
 // The string fields below are owned boxes, except `combined` which is interned
@@ -161,10 +161,26 @@ impl<'a> ProcessHandle<'a> {
 
         #[cfg(unix)]
         {
-            if let Some(stdout) = stdout_fd {
-                let _ = sys::set_nonblocking(stdout);
+            // Mark the BufferedReader as nonblocking + socket so it uses
+            // the same read strategy as Bun.spawn (SubprocessPipeReader).
+            // Required on OHOS (blocking pipe strategy causes infinite loop)
+            // and safe on other Unix platforms.
+            let pipe_setup =
+                |reader: &mut BufferedReader, fd: sys::Fd| -> crate::Result<()> {
+                    let _ = sys::set_nonblocking(fd);
+                    reader.start(fd, true)?;
+                    reader.flags.insert(
+                        PosixFlags::SOCKET | PosixFlags::NONBLOCKING | PosixFlags::POLLABLE,
+                    );
+                    if let Some(poll) = reader.handle.get_poll() {
+                        poll.set_flag(FilePollFlag::Socket);
+                        poll.set_flag(FilePollFlag::Nonblocking);
+                    }
+                    Ok(())
+                };
+            if let Some(fd) = stdout_fd {
                 handle.remaining_fds += 1;
-                handle.stdout.start(stdout, true)?;
+                pipe_setup(&mut handle.stdout, fd)?;
             }
             if let Some(stderr) = stderr_fd {
                 let _ = sys::set_nonblocking(stderr);
@@ -224,7 +240,13 @@ impl<'a> ProcessHandle<'a> {
         unsafe {
             for reader in [&raw mut (*this).stdout, &raw mut (*this).stderr] {
                 // `is_done()` = EOF already counted out of `remaining_fds`.
-                #[cfg(unix)]
+                // OHOS: skip the buffered read — it re-registers the poll
+                // (EAGAIN → register_poll) and races the FIONREAD drain for
+                // bytes, swallowing output the drain would have read from
+                // the fd (see drain_ohos_pipes). The force-end below still
+                // applies so a detached child holding the write end cannot
+                // stall the finish.
+                #[cfg(all(unix, not(target_env = "ohos")))]
                 if !(*reader).is_done() && (*reader).get_fd() != sys::Fd::INVALID {
                     BufferedReader::read(reader);
                 }

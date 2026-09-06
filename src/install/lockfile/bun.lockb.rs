@@ -450,6 +450,37 @@ pub(crate) fn load(
         }
     }
 
+    // Upgrade meta.os from the pre-OPENHARMONY ALL value to the current ALL.
+    // Binary lockfiles created before OPENHARMONY was added to
+    // OperatingSystem::ALL_VALUE stored packages with no OS restriction as
+    // LEGACY_ALL = (ALL & !OPENHARMONY). On OHOS bun ALL_VALUE now includes
+    // OPENHARMONY, so LEGACY_ALL != ALL, causing bun.lock serialization to emit
+    // "os: !openharmony" for every unrestricted package. Detect the legacy value
+    // and upgrade it so the invariant holds: no os field ↔ no OS restriction.
+    //
+    // Also heal meta.os == NONE: "matches nothing" is never an intentional
+    // restriction — it means the writer's OperatingSystem map didn't know the
+    // token (Negatable::combine maps all-unrecognized to NONE), e.g.
+    // "openharmony" before OHOS support ("netbsd" is still unmapped). The
+    // original restriction is unrecoverable; default to ALL so the package's
+    // native platform isn't skipped forever. Unrestricted packages are ALL
+    // anyway, and a platform binary installed on the wrong OS is inert (its
+    // postinstall/runtime copes) — unlike a missing one, which breaks the
+    // package on its own platform (observed: @esbuild/openharmony-arm64 from
+    // a pre-OHOS lockb v2 is skipped on OHOS itself, failing esbuild's
+    // postinstall). Same reasoning for meta.arch.
+    {
+        use bun_install::npm::OperatingSystem;
+        const LEGACY_ALL: u16 = OperatingSystem::ALL_VALUE & !OperatingSystem::OPENHARMONY;
+        for meta in lockfile.packages.items_meta_mut() {
+            if meta.os.0 == LEGACY_ALL || meta.os.0 == OperatingSystem::NONE.0 {
+                meta.os = OperatingSystem::ALL;
+            }
+            if meta.arch.0 == bun_install::npm::Architecture::NONE.0 {
+                meta.arch = bun_install::npm::Architecture::ALL;
+            }
+        }
+    }
     res.packages_need_update = packages_load_result.needs_update;
     res.migrated_from_lockb_v2 = migrate_from_v2;
 

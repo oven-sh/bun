@@ -3,7 +3,9 @@ import { isLinux, tempDir } from "harness";
 import { chmodSync, closeSync, fstatSync, lstatSync, openSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
-describe.skipIf(!isLinux)("birthtime", () => {
+// OHOS reports platform "linux" but the filesystem does not expose birthtime
+// (statx BTIME is always 0), so the suite can never pass there.
+describe.skipIf(!isLinux || Bun.env.BUN_OHOS === "1")("birthtime", () => {
   it("should return non-zero birthtime on Linux", () => {
     using dir = tempDir("birthtime-test", {
       "test.txt": "initial content",

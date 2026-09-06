@@ -136,6 +136,61 @@ pub trait PosixPipeWriter {
                     self_addr,
                     poll.is_registered()
                 );
+                // Empty-buffer wake with nothing to write: drop the watch
+                // explicitly instead of relying on the kernel's EPOLLONESHOT
+                // auto-disarm. Kernels that lack it (HongMeng: a ONESHOT
+                // registration fires EPOLLOUT forever on a writable pipe)
+                // would otherwise wake the loop continuously at 100% CPU.
+                // `force` because on such a kernel the fd is still armed —
+                // the needs_rearm fast path skips the syscall entirely.
+                // The next buffered write re-registers via register_poll().
+                _ = poll.unregister(crate::Loop::get(), true);
+            }
+            // Some kernels (observed on HongMeng/OHOS) keep delivering ready
+            // events for `fd` even after the CTL_DEL above reports success:
+            // a *second*, unconditional CTL_DEL attempt on the very next
+            // empty wake gets ENOENT ("not registered"), yet the fd is
+            // reported ready again on the next epoll_pwait regardless.
+            // Userspace cannot make the kernel actually stop, so detect the
+            // storm -- the same fd hitting this branch repeatedly within a
+            // few milliseconds -- and yield the core instead of hammering
+            // epoll_pwait as fast as the syscall allows. A healthy
+            // drain-then-idle cycle recurring over a long-running process's
+            // lifetime is ms-to-seconds apart even when it happens many
+            // times, so the time window keeps this from misfiring there.
+            // Reduced idle CPU on an affected OHOS build from ~100% to
+            // ~6-8% (measured via /proc/<pid>/stat ground truth).
+            {
+                use core::sync::atomic::{AtomicI32, AtomicU32, Ordering};
+                use std::sync::Mutex;
+                use std::time::Instant;
+                static LAST_FD: AtomicI32 = AtomicI32::new(i32::MIN);
+                static STREAK: AtomicU32 = AtomicU32::new(0);
+                static LAST_SEEN: Mutex<Option<Instant>> = Mutex::new(None);
+                const THRESHOLD: u32 = 20;
+                const SLEEP_MS: u64 = 2;
+                const STORM_WINDOW_MS: u128 = 10;
+
+                let fd: i32 = self.get_fd().native();
+                let now = Instant::now();
+                let prev_fd = LAST_FD.swap(fd, Ordering::Relaxed);
+                let within_window = {
+                    let mut guard = LAST_SEEN.lock().unwrap();
+                    let within = guard
+                        .map(|t| now.duration_since(t).as_millis() <= STORM_WINDOW_MS)
+                        .unwrap_or(false);
+                    *guard = Some(now);
+                    within
+                };
+                let streak = if prev_fd == fd && within_window {
+                    STREAK.fetch_add(1, Ordering::Relaxed) + 1
+                } else {
+                    STREAK.store(1, Ordering::Relaxed);
+                    1
+                };
+                if streak > THRESHOLD {
+                    std::thread::sleep(std::time::Duration::from_millis(SLEEP_MS));
+                }
             }
             return;
         }
@@ -219,6 +274,17 @@ pub trait PosixPipeWriter {
 /// Free fn for the blocking-pipe path; the other file types are handled
 /// inline in `try_write` above.
 fn write_to_blocking_pipe(fd: Fd, buf: &[u8]) -> sys::Result<usize> {
+    // OHOS: expand pipe buffer from 4KB default to 1MB so large writes
+    // don't loop on every 4KB chunk + EAGAIN retry. Best-effort: if the
+    // fcntl fails (e.g. non-pipe fd or kernel doesn't support it), the
+    // write loop below falls back to the default buffer size.
+    #[cfg(target_env = "ohos")]
+    {
+        const F_SETPIPE_SZ: libc::c_int = 1031;
+        const ONE_MB: libc::c_int = 1048576;
+        let _ = unsafe { libc::fcntl(fd.0, F_SETPIPE_SZ, ONE_MB) };
+    }
+
     #[cfg(any(target_os = "linux", target_os = "android"))]
     {
         if bun_sys::linux::RWFFlagSupport::is_maybe_supported() {

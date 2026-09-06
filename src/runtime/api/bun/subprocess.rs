@@ -1500,7 +1500,6 @@ impl SourceData for webcore::AnyBlob {
 pub(crate) fn source_from_blob(b: webcore::AnyBlob) -> Source {
     Source::Any(Box::new(b))
 }
-
 /// Windows: the extra stdio pipes (`stdio_pipes`) are uv handles this
 /// Subprocess owns without a reader/writer in front of them; record that so a
 /// thread teardown closes them through us (and `finalize_streams` then finds

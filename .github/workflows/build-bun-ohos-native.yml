@@ -1,0 +1,609 @@
+# build-bun-ohos-native — OHOS aarch64 原生编译 Bun (GitHub Actions 版)
+#
+# 核心逻辑和环境配置来自本地脚本 scripts/ohos/build-bun-ohos-native.sh,
+# 阶段一一对应 (环境检查 / Rust nightly / WebKit / 布局 / bun install /
+# 构建环境 / configure+build 重试 / V8 stub / relink / 签名)。
+# 结构参考 .github/workflows/ohos-build-rust.yml (触发、job、产物上传)。
+#
+# 运行环境 (self-hosted, HarmonyOS PC):
+#   - harmonybrew: /storage/Users/currentUser/.harmonybrew (llvm@21, ohos-sdk, icu4c)
+#   - Rust nightly 2026-07-20 预装于 ~/.rust-nightly/ (已 binary-sign-tool 签名)
+#   - binary-sign-tool 在 PATH (OHOS 内核拒绝 exec 未签名 ELF)
+#   - bootstrap bun: /storage/Users/currentUser/.bun/bun
+#   - 持久缓存: /storage/Users/currentUser/.cache/ohos-bun-ci (rust-target, WebKit build)
+#
+# 产物: build/release/bun (已签名), 上传为 artifact。
+
+name: build-bun-ohos-native
+
+on:
+  push:
+    branches:
+      - ohos-aarch64
+      - 'claude/ohos-*'
+    paths:
+      - 'scripts/build/**'
+      - 'src/**/*.rs'
+      - 'src/**/*.cpp'
+      - 'src/**/*.h'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'rust-toolchain.toml'
+      - 'vendor/WebKit/**'
+      - 'patches/**'
+      - '.github/workflows/build-bun-ohos-native.yml'
+  pull_request:
+    branches:
+      - ohos-aarch64
+    paths:
+      - 'scripts/build/**'
+      - 'src/**/*.rs'
+      - 'src/**/*.cpp'
+      - 'src/**/*.h'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'rust-toolchain.toml'
+      - 'vendor/WebKit/**'
+      - 'patches/**'
+      - '.github/workflows/build-bun-ohos-native.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: ohos-build-native-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # ─── 与 build-bun-ohos-native.sh 相同的路径常量 ───────────────────────────
+  HOMEBREW_PREFIX: /storage/Users/currentUser/.harmonybrew
+  LLVM21: /storage/Users/currentUser/.harmonybrew/opt/llvm@21
+  OHOS_SDK: /storage/Users/currentUser/.harmonybrew/opt/ohos-sdk
+  SYSROOT: /storage/Users/currentUser/.harmonybrew/Cellar/ohos-sdk/26.0.0.18_1/native/sysroot
+  ICU_BREW: /storage/Users/currentUser/.harmonybrew/opt/icu4c
+  BUN: /storage/Users/currentUser/.bun/bun
+  WEBKIT_SRC: /storage/Users/currentUser/springsources/WebKit
+  RUST_VER: nightly-2026-07-20
+  RUST_HOME: /storage/Users/currentUser/.rust-nightly/nightly-2026-07-20
+  TMPDIR: /data/storage/el2/base/tmp
+  SSL_CERT_FILE: /storage/Users/currentUser/.harmonybrew/etc/ca-certificates/cert.pem
+  CURL_CA_BUNDLE: /storage/Users/currentUser/.harmonybrew/etc/ca-certificates/cert.pem
+
+defaults:
+  run:
+    shell: bash -euo pipefail {0}
+
+jobs:
+  build:
+    name: Build Bun for OHOS (aarch64, native)
+    runs-on: self-hosted
+    timeout-minutes: 360
+
+    steps:
+      # ─── 固定持久工作区 (增量构建的基础) ──────────────────────────────
+      # checkout 到 ~/.cache/ohos-bun-ci/src 固定路径, 所有步骤直接用该
+      # 绝对路径作 working-directory (不要用 symlink — github-act-runner
+      # 对 symlink 工作目录 exec bash 会 ENOENT)。
+      # 效果:
+      #   1. 源码 mtime 跨 run 稳定 (git checkout -f 只重写变化的文件) →
+      #      cargo 指纹匹配 → Rust 工作区 crate 零重编
+      #   2. 工作区路径固定 → WebKit 构建里 baked 的绝对路径稳定 →
+      #      webkit-build 缓存真正生效 (之前每 run 换路径导致全量重编)
+      # 网络走 gh-proxy (直连 github.com 间歇性不可达); 断网时回退到已有 checkout。
+      - name: Checkout Bun source (persistent workspace)
+        run: |
+          LOCAL=/storage/Users/currentUser/springsources/bun
+          REMOTE="https://gh-proxy.com/https://github.com/${{ github.repository }}.git"
+          WORK=/storage/Users/currentUser/.cache/ohos-bun-ci/src
+          mkdir -p "$(dirname "$WORK")"
+
+          if [ -d "$WORK/.git" ]; then
+            echo "persistent workspace exists: $WORK"
+            cd "$WORK"
+            git remote set-url origin "$REMOTE"
+            attempt=1
+            while [ $attempt -le 3 ]; do
+              echo "fetch attempt $attempt/3"
+              if git fetch "$REMOTE" ohos-aarch64 --depth=1 2>/dev/null; then
+                break
+              fi
+              attempt=$((attempt + 1))
+              sleep 5
+            done
+            if git rev-parse --verify FETCH_HEAD >/dev/null 2>&1; then
+              # checkout -f 只重写变化的文件, 未变文件 mtime 保持 → 增量构建
+              git checkout -f FETCH_HEAD
+              echo "checked out $(git rev-parse --short HEAD)"
+            else
+              echo "⚠️  fetch failed — building existing checkout ($(git rev-parse --short HEAD 2>/dev/null || echo none))"
+            fi
+          else
+            echo "no persistent workspace — cloning..."
+            rm -rf "$WORK"
+            if [ -d "$LOCAL/.git" ]; then
+              # reference clone (fetch 最新 refs); 断网回退 git clone --local
+              git clone --reference "$LOCAL/.git" "$REMOTE" "$WORK" 2>/dev/null || \
+                git clone --local "$LOCAL" "$WORK"
+              git -C "$WORK" remote set-url origin "$REMOTE"
+            else
+              git clone --depth 1 --branch ohos-aarch64 "$REMOTE" "$WORK"
+            fi
+            git -C "$WORK" fetch "$REMOTE" ohos-aarch64 --depth=1 2>/dev/null || true
+            if git -C "$WORK" rev-parse --verify FETCH_HEAD >/dev/null 2>&1; then
+              git -C "$WORK" checkout -f FETCH_HEAD
+            fi
+          fi
+          echo "workspace ready: $WORK ($(git -C "$WORK" rev-parse --short HEAD 2>/dev/null))"
+
+      # 同 ohos-build.yml (social4hyq): github-act-runner 不实现 actions/cache
+      # 后端 (无 ACTIONS_CACHE_URL), 用固定路径 symlink 实现真正持久化。
+      - name: Link persistent build caches
+        working-directory: /storage/Users/currentUser/.cache/ohos-bun-ci/src
+        run: |
+          CACHE_ROOT=/storage/Users/currentUser/.cache/ohos-bun-ci
+          mkdir -p "$CACHE_ROOT/webkit-build" "$CACHE_ROOT/rust-target"
+          mkdir -p build/release/deps
+          rm -rf build/release/deps/WebKit build/release/rust-target
+          ln -sfn "$CACHE_ROOT/webkit-build" build/release/deps/WebKit
+          ln -sfn "$CACHE_ROOT/rust-target" build/release/rust-target
+
+      # ─── phase_check ─────────────────────────────────────────────────────
+      - name: Environment check
+        working-directory: /storage/Users/currentUser/.cache/ohos-bun-ci/src
+        run: |
+          fail=0
+          for cmd in "$BUN" cmake ninja git perl python3 binary-sign-tool; do
+            command -v "$cmd" &>/dev/null || { echo "missing: $cmd"; fail=1; }
+          done
+          [ -f "$LLVM21/bin/clang" ]                 || { echo "missing: llvm@21 clang"; fail=1; }
+          [ -d "$LLVM21/include/aarch64-linux-ohos/c++/v1" ] || { echo "missing: llvm@21 OHOS libc++ headers"; fail=1; }
+          [ -f "$LLVM21/bin/aarch64-linux-ohos-clang++" ]   || { echo "missing: llvm@21 OHOS cross compiler"; fail=1; }
+          [ -d "$SYSROOT/usr/include" ]              || { echo "missing: ohos-sdk sysroot"; fail=1; }
+          [ -f "$BUN" ]                              || { echo "missing: bootstrap bun"; fail=1; }
+          for lib in libicudata.a libicui18n.a libicuuc.a; do
+            [ -f "$ICU_BREW/lib/$lib" ] || { echo "missing: brew ICU $lib"; fail=1; }
+          done
+          [ -f "$ICU_BREW/include/unicode/umachine.h" ] || { echo "missing: brew ICU headers"; fail=1; }
+          for tool in genrb genccode gencmn pkgdata; do
+            [ -f "$ICU_BREW/bin/$tool" ] || [ -f "$ICU_BREW/sbin/$tool" ] || { echo "missing: brew ICU tool $tool"; fail=1; }
+          done
+          [ "$fail" = "1" ] && exit 1
+          echo "environment OK"
+
+      # ─── phase_rust_nightly ──────────────────────────────────────────────
+      - name: Rust nightly check
+        run: |
+          if [ ! -f "$RUST_HOME/BREW_SIGNED_OK" ] || [ ! -f "$RUST_HOME/bin/rustc" ]; then
+            echo "Rust nightly $RUST_VER missing or unsigned — install to $RUST_HOME (see scripts/ohos/build-bun-ohos-native.sh phase_rust_nightly for manual steps)"
+            exit 1
+          fi
+          [ -d "$RUST_HOME/lib/rustlib/src/rust/library" ] || { echo "rust-src not installed to $RUST_HOME/lib/rustlib/src/"; exit 1; }
+          readelf -S "$RUST_HOME/bin/rustc" 2>/dev/null | grep -q codesign || { echo "rustc not signed!"; exit 1; }
+          echo "Rust nightly $("$RUST_HOME/bin/rustc" --version) OK"
+
+      # ─── phase_webkit ────────────────────────────────────────────────────
+      - name: Prepare WebKit source
+        working-directory: /storage/Users/currentUser/.cache/ohos-bun-ci/src
+        run: |
+          WEBKIT_COMMIT=$(grep "export const WEBKIT_VERSION" scripts/build/deps/webkit.ts | head -1 | sed 's/.*"\([a-f0-9]\{40\}\)".*/\1/')
+          [ -z "$WEBKIT_COMMIT" ] && { echo "cannot parse WEBKIT_VERSION from scripts/build/deps/webkit.ts"; exit 1; }
+          if [ -d "$WEBKIT_SRC/.git" ]; then
+            current=$(git -C "$WEBKIT_SRC" rev-parse HEAD 2>/dev/null || true)
+            if [ "$current" != "$WEBKIT_COMMIT" ]; then
+              echo "WebKit sync: $current -> $WEBKIT_COMMIT"
+              # gh-proxy + 重试 (直连 github.com 在本机间歇性不可达)
+              attempt=1
+              while [ $attempt -le 3 ]; do
+                echo "webkit fetch attempt $attempt/3"
+                if git -C "$WEBKIT_SRC" fetch --depth 1 "https://gh-proxy.com/https://github.com/oven-sh/WebKit.git" "$WEBKIT_COMMIT" 2>&1 | tail -1; then
+                  break
+                fi
+                attempt=$((attempt + 1))
+                sleep 5
+              done
+              git -C "$WEBKIT_SRC" checkout "$WEBKIT_COMMIT"
+            else
+              echo "WebKit already at target commit"
+            fi
+          else
+            git clone --depth 1 https://gh-proxy.com/https://github.com/oven-sh/WebKit.git "$WEBKIT_SRC"
+            git -C "$WEBKIT_SRC" checkout "$WEBKIT_COMMIT"
+          fi
+          # Pin the harmonybrew perl: `command -v perl` can resolve to
+          # /usr/local/bin/perl in the CI PATH, which is fragile. The
+          # inspector codegen (preprocess.pl) must use the same perl the
+          # local build verified against.
+          perl_path="$HOMEBREW_PREFIX/bin/perl"
+          sed -i "s|\"perl\"|\"${perl_path}\"|g" \
+            "$WEBKIT_SRC/Source/JavaScriptCore/inspector/scripts/generate-inspector-protocol-bindings.py" 2>/dev/null || true
+          echo "WebKit ready: $WEBKIT_SRC @ $WEBKIT_COMMIT"
+
+      # ─── phase_setup_layout ──────────────────────────────────────────────
+      - name: Setup build layout (ohos-icu + ohos-cross-libs)
+        working-directory: /storage/Users/currentUser/.cache/ohos-bun-ci/src
+        run: |
+          # 4a: build/ohos-icu — 指向 brew icu4c@78 的符号链接布局 (原生安装, 无交叉构建)
+          rm -rf build/ohos-icu
+          mkdir -p build/ohos-icu/target/include build/ohos-icu/target/lib build/ohos-icu/host/bin
+          ln -sf "$ICU_BREW/include/unicode" build/ohos-icu/target/include/unicode
+          for lib in libicudata.a libicui18n.a libicuuc.a; do
+            [ -f "$ICU_BREW/lib/$lib" ] || { echo "brew ICU missing $lib"; exit 1; }
+            ln -sf "$ICU_BREW/lib/$lib" "build/ohos-icu/target/lib/$lib"
+          done
+          for tool in genrb genccode gencmn pkgdata; do
+            t=""
+            [ -f "$ICU_BREW/bin/$tool" ] && t="$ICU_BREW/bin/$tool"
+            [ -f "$ICU_BREW/sbin/$tool" ] && t="$ICU_BREW/sbin/$tool"
+            [ -n "$t" ] || { echo "brew ICU tool missing $tool"; exit 1; }
+            ln -sf "$t" "build/ohos-icu/host/bin/$tool"
+          done
+
+          # 4b: build/ohos-cross-libs — 指向 llvm@21 的 OHOS libc++ (避免 musl 冲突)
+          # homebrew 的 libc++.a 是 38 字节空占位, 真实实现在 libc++_static.a
+          rm -rf build/ohos-cross-libs
+          mkdir -p build/ohos-cross-libs/libcxx/include build/ohos-cross-libs/libcxxabi \
+                   build/ohos-cross-libs/libcxx/lib build/ohos-cross-libs/libcxxabi/lib \
+                   build/ohos-cross-libs/libunwind/lib
+          ln -sf "$LLVM21/include/aarch64-linux-ohos/c++/v1" build/ohos-cross-libs/libcxx/include/v1
+          ln -sf "$LLVM21/include/aarch64-linux-ohos/c++/v1" build/ohos-cross-libs/libcxxabi/include
+          for lib in libc++abi.a libunwind.a; do
+            if [ -f "$LLVM21/lib/aarch64-linux-ohos/$lib" ]; then
+              ln -sf "$LLVM21/lib/aarch64-linux-ohos/$lib" build/ohos-cross-libs/libcxx/lib/$lib
+              ln -sf "$LLVM21/lib/aarch64-linux-ohos/$lib" build/ohos-cross-libs/libcxxabi/lib/$lib
+              ln -sf "$LLVM21/lib/aarch64-linux-ohos/$lib" build/ohos-cross-libs/libunwind/lib/$lib
+            fi
+          done
+          if [ -f "$LLVM21/lib/aarch64-linux-ohos/libc++_static.a" ]; then
+            ln -sf "$LLVM21/lib/aarch64-linux-ohos/libc++_static.a" build/ohos-cross-libs/libcxx/lib/libc++.a
+            ln -sf "$LLVM21/lib/aarch64-linux-ohos/libc++_static.a" build/ohos-cross-libs/libcxxabi/lib/libc++.a
+            ln -sf "$LLVM21/lib/aarch64-linux-ohos/libc++_static.a" build/ohos-cross-libs/libunwind/lib/libc++.a
+          fi
+          echo "build layout ready"
+
+      # ─── phase_bun_install ───────────────────────────────────────────────
+      - name: bun install
+        working-directory: /storage/Users/currentUser/.cache/ohos-bun-ci/src
+        run: |
+          export PATH="$LLVM21/bin:$PATH"
+          "$BUN" install 2>&1 | tail -3
+          cd src/node-fallbacks
+          "$BUN" install --frozen-lockfile 2>&1 | tail -3 || {
+            echo "node-fallbacks install failed, retrying without frozen-lockfile..."
+            "$BUN" install 2>&1 | tail -3
+          }
+
+      # OHOS: esbuild 原生 ELF (npm 下载) 无法被 binary-sign-tool 签名,
+      # 内核拒绝 exec (EACCES, ninja code=126)。与本地适配一致: 用
+      # bun build 包装脚本替换原生二进制 (shell 脚本无需签名)。
+      - name: Patch esbuild (bun-build wrapper)
+        working-directory: /storage/Users/currentUser/.cache/ohos-bun-ci/src
+        run: |
+          ESB=$(readlink -f node_modules/.bin/esbuild 2>/dev/null)
+          if [ -n "$ESB" ] && [ -f "$ESB" ]; then
+            cat > "$ESB" << 'ESBUILD'
+          #!/bin/sh
+          # Use bun build as esbuild replacement
+          # Strip esbuild-specific flags that bun build doesn't support
+          args=""
+          for a in "$@"; do
+            case "$a" in
+              --target=esnext|--target=es2020|--target=es2015|--target=es2017|--target=es2018|--target=es2019|--target=es2021|--target=es2022)
+                # bun build doesn't support esnext/esXXXX targets, use --target=browser
+                args="$args --target=browser"
+                ;;
+              --platform=node)
+                args="$args --target=node"
+                ;;
+              --platform=browser)
+                args="$args --target=browser"
+                ;;
+              --format=iife|--format=esm|--format=cjs)
+                args="$args $a"
+                ;;
+              '--define:process.env.NODE_ENV="production"'|"--define:process.env.NODE_ENV=\"production\"")
+                args="$args --define.process.env.NODE_ENV=\"production\""
+                ;;
+              --define:*)
+                args="$args $a"
+                ;;
+              '--external:/bun:*')
+                args="$args --external /bun/*"
+                ;;
+              --external:*)
+                args="$args $a"
+                ;;
+              --minify)
+                args="$args --minify"
+                ;;
+              --bundle)
+                # bun build bundles by default
+                ;;
+              --outfile=*)
+                args="$args $a"
+                ;;
+              --outdir=*)
+                args="$args $a"
+                ;;
+              *)
+                args="$args $a"
+                ;;
+            esac
+          done
+          exec /storage/Users/currentUser/.bun/bun build $args
+          ESBUILD
+            chmod 755 "$ESB"
+            echo "esbuild patched: $ESB"
+          else
+            echo "WARN: esbuild binary not found, skipping patch"
+          fi
+
+      # ─── phase_set_env ───────────────────────────────────────────────────
+      # 写入 $GITHUB_ENV / $GITHUB_PATH, 对后续所有步骤生效。
+      - name: Setup build environment
+        run: |
+          bin_dir="$GITHUB_WORKSPACE/bun/.bin"
+          mkdir -p "$bin_dir"
+
+          # CC/CXX: Homebrew cc/c++ shims (llvm-gcc-compat → ohos-sdk wrapper → llvm@21)
+          echo "CC=$HOMEBREW_PREFIX/bin/cc" >> "$GITHUB_ENV"
+          echo "CXX=$HOMEBREW_PREFIX/bin/c++" >> "$GITHUB_ENV"
+
+          # clang/clang++ wrapper (OHOS sysroot 用于 host 编译)
+          cat > "$bin_dir/clang" << CLANG
+          #!/bin/sh
+          exec "$LLVM21/bin/clang" --sysroot="$SYSROOT" "\$@"
+          CLANG
+          chmod 755 "$bin_dir/clang"
+          cat > "$bin_dir/clang++" << CLANGXX
+          #!/bin/sh
+          exec "$LLVM21/bin/clang++" --sysroot="$SYSROOT" "\$@"
+          CLANGXX
+          chmod 755 "$bin_dir/clang++"
+
+          # strip → llvm-strip
+          ln -sf "$LLVM21/bin/llvm-strip" "$bin_dir/strip" 2>/dev/null || true
+
+          # PATH: .bin → nightly rust → llvm@21 → harmonybrew → cargo
+          echo "PATH=$bin_dir:$RUST_HOME/bin:$LLVM21/bin:$HOMEBREW_PREFIX/bin:$HOME/.cargo/bin" >> "$GITHUB_PATH"
+
+          # LD_LIBRARY_PATH (lld 依赖 libxml2/zlib, cargo 链接 openssl@3)
+          echo "LD_LIBRARY_PATH=$HOMEBREW_PREFIX/opt/libxml2/lib:$HOMEBREW_PREFIX/opt/zlib/lib:$HOMEBREW_PREFIX/opt/openssl@3/lib:$LLVM21/lib" >> "$GITHUB_ENV"
+
+          # Rust 环境变量 (RUSTC pin: harmonybrew stable rustc 会截胡 nightly)
+          echo "CARGO_HOME=${CARGO_HOME:-$HOME/.cargo}" >> "$GITHUB_ENV"
+          echo "RUSTUP_HOME=$RUST_HOME" >> "$GITHUB_ENV"
+          echo "RUSTUP_TOOLCHAIN=$RUST_VER" >> "$GITHUB_ENV"
+          echo "RUSTC=$RUST_HOME/bin/rustc" >> "$GITHUB_ENV"
+
+          # 并行度: 与 scripts/ohos/build.sh 一致 (默认 nproc, 可用 NINJA_JOBS 覆盖)
+          echo "NINJA_JOBS=${NINJA_JOBS:-$(nproc)}" >> "$GITHUB_ENV"
+
+          # OHOS 专用
+          echo "OHOS_LLVM_PREFIX=$LLVM21" >> "$GITHUB_ENV"
+          echo "BUN_WEBKIT_PATH=$WEBKIT_SRC" >> "$GITHUB_ENV"
+          echo "OHOS_BUN_SIGNING_LINKER=$HOMEBREW_PREFIX/bin/c++" >> "$GITHUB_ENV"
+          echo "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_OHOS_LINKER=$HOMEBREW_PREFIX/bin/c++" >> "$GITHUB_ENV"
+
+          # cargo sparse protocol
+          mkdir -p "$HOME/.cargo"
+          cat > "$HOME/.cargo/config.toml" << 'CARGO'
+          [registries.crates-io]
+          protocol = "sparse"
+          [net]
+          git-fetch-with-cli = true
+          retry = 3
+          CARGO
+
+          echo "build env ready (rustc: $("$RUST_HOME/bin/rustc" --version))"
+
+      # ─── phase_build ─────────────────────────────────────────────────────
+      # configure-only → patch build.ninja (llvm22.1.7 残留 → llvm@21) →
+      # ninja -j1 → 签名错误修复重试 (最多 10 次), 与本地脚本完全一致。
+      - name: Configure + Build (retry loop)
+        working-directory: /storage/Users/currentUser/.cache/ohos-bun-ci/src
+        run: |
+          mkdir -p build/release
+          cache_dir="$HOME/.bun/build-cache"
+          mkdir -p "$cache_dir"
+
+          # build-script 签名工具 (OHOS 内核拒绝 exec 未签名 ELF)
+          sign_build_scripts() {
+            local rust_target="build/release/rust-target"
+            find "$rust_target/release/build" -name "build-script-build" -type f 2>/dev/null | while read -r f; do
+              if ! readelf -S "$f" 2>/dev/null | grep -q codesign; then
+                local tmp_f="${f}.unsigned"
+                mv "$f" "$tmp_f" 2>/dev/null && \
+                binary-sign-tool sign -selfSign 1 -inFile "$tmp_f" -outFile "$f" >/dev/null 2>&1 && \
+                chmod 755 "$f" 2>/dev/null
+                rm -f "$tmp_f" 2>/dev/null
+              fi
+            done
+            # 清除 stamp 迫使 cargo 重跑 build-script
+            find "$rust_target/release/build" -name "output" -type f 2>/dev/null | while read -r stamp; do
+              rm -f "$stamp" 2>/dev/null
+            done
+          }
+
+          # configure 检测到的 clang 可能来自 llvm22.1.7 (系统 PATH 残留),
+          # 统一替换为 llvm@21 (否则 ninja regen 会覆盖手动修改)
+          patch_ninja_llvm21() {
+            local nf="build/release/build.ninja"
+            [ -f "$nf" ] || return 0
+            if grep -qa 'llvm22.1.7' "$nf"; then
+              echo "build.ninja contains llvm22.1.7 references, replacing with llvm@21..."
+              sed -i "s|/storage/Users/currentUser/usr/local/llvm22.1.7|$LLVM21|g" "$nf"
+              if grep -qa 'llvm22.1.7' "$nf"; then
+                echo "ERROR: llvm22.1.7 still present in build.ninja"
+                return 1
+              fi
+              echo "build.ninja normalized to llvm@21"
+            else
+              echo "build.ninja already uses llvm@21"
+            fi
+          }
+
+          # ─── configure (仅当需要) ───────────────────────────────────────
+          # configure 只依赖构建系统输入: build.ninja 缺失或
+          # scripts/build/、Cargo.toml/lock、rust-toolchain.toml、patches/
+          # 比 build.ninja 新才重跑。源码 (src/**) 改动不需要 reconfigure —
+          # 若每次都重跑, ninja 的 rust edge 会被判脏导致全量重编,
+          # 持久工作区的增量就白做了。
+          nf="build/release/build.ninja"
+          need_configure=0
+          [ -f "$nf" ] || need_configure=1
+          if [ "$need_configure" = "0" ] && [ Cargo.toml -nt "$nf" ]; then need_configure=1; fi
+          if [ "$need_configure" = "0" ] && [ Cargo.lock -nt "$nf" ]; then need_configure=1; fi
+          if [ "$need_configure" = "0" ] && [ rust-toolchain.toml -nt "$nf" ]; then need_configure=1; fi
+          if [ "$need_configure" = "0" ] && find scripts/build patches -newer "$nf" -type f 2>/dev/null | grep -q .; then need_configure=1; fi
+
+          if [ "$need_configure" = "1" ]; then
+            echo "=== configure (first run or build inputs changed) ==="
+            if ! "$BUN" scripts/build.ts \
+              --profile=release \
+              --os=ohos \
+              --arch=aarch64 \
+              --webkit=local \
+              --cache-dir="$cache_dir" \
+              --ohos-sdk-root="$OHOS_SDK" \
+              --ohos-sysroot="$SYSROOT" \
+              --configure-only \
+              2>&1 | tee "$TMPDIR/build.log"; then
+              echo "configure failed (see $TMPDIR/build.log)"
+              exit 1
+            fi
+          else
+            echo "configure skipped (build.ninja up to date)"
+          fi
+
+          attempt=0
+          max_attempts=10
+          while [ $attempt -lt $max_attempts ]; do
+            attempt=$((attempt + 1))
+            echo "=== build attempt #$attempt ==="
+
+            # 统一工具链 (幂等; 覆盖 ninja regen 可能覆盖 patch 的情况)
+            patch_ninja_llvm21 || exit 1
+
+            # ninja 编译 (并行度 NINJA_JOBS, 同 scripts/ohos/build.sh)
+            if ninja -C build/release -j"$NINJA_JOBS" bun 2>&1 | tee "$TMPDIR/build.log"; then
+              echo "build succeeded"
+              exit 0
+            fi
+
+            # 检测可恢复错误 (Text file busy / Permission denied — build-script 签名问题)
+            if grep -qaE "Text file busy|Permission denied|could not execute process" "$TMPDIR/build.log"; then
+              echo "build-script signing issue detected, fixing and retrying..."
+              sign_build_scripts
+              sync
+              sleep 1
+            else
+              echo "build failed (non-signing issue, see $TMPDIR/build.log)"
+              exit 1
+            fi
+          done
+
+          echo "failed after $max_attempts attempts"
+          exit 1
+
+      # ─── phase_icu_shim ──────────────────────────────────────────────────
+      # ICU 已用 llvm@21 OHOS libc++ 头文件重编, 仅剩 Rust napi 引用的
+      # 2 个 V8 符号需要 stub (v8::Array::New / v8::CpuProfiler::CollectSample)。
+      - name: Compile + inject V8 stub
+        working-directory: /storage/Users/currentUser/.cache/ohos-bun-ci/src
+        run: |
+          SHIM_DIR=/data/storage/el2/base/tmp/icu-shim
+          mkdir -p "$SHIM_DIR"
+
+          cat > "$SHIM_DIR/v8_stub.cpp" << 'V8EOF'
+          extern "C" void _ZN2v85Array3NewENS_5LocalINS_7ContextEEEmNSt3__18functionIFNS_10MaybeLocalINS_5ValueEEEvEEE() {}
+          extern "C" void _ZN2v811CpuProfiler13CollectSampleEPNS_7IsolateENSt3__18optionalImEE() {}
+          V8EOF
+
+          "$LLVM21/bin/clang++" \
+            --target=aarch64-linux-ohos \
+            --sysroot="$SYSROOT" \
+            -D__MUSL__ -fPIC -Oz -fno-emulated-tls \
+            -c "$SHIM_DIR/v8_stub.cpp" -o "$SHIM_DIR/v8_stub.o"
+
+          # 将 v8_stub.o 注入最终链接命令 (link rule 的 command)
+          build_ninja="build/release/build.ninja"
+          if [ -f "$build_ninja" ]; then
+            python3 - "$build_ninja" "$SHIM_DIR/v8_stub.o" << 'PYEOF'
+          import sys
+          nf, stub = sys.argv[1], sys.argv[2]
+          with open(nf) as f:
+              c = f.read()
+          old = "stream.ts link --console ${REPO_BIN}clang++ @$out.rsp $ldflags -o $out"
+          # 实际命令格式
+          old = c[c.find("stream.ts link"):c.find("stream.ts link")+200]
+          if stub not in c:
+              # 在 @$out.rsp 前插入 stub
+              c = c.replace("@$out.rsp", stub + " @$out.rsp")
+              with open(nf, "w") as f:
+                  f.write(c)
+              print("v8_stub.o injected into link rule")
+          else:
+              print("v8_stub.o already present")
+          PYEOF
+          fi
+          echo "V8 stub ready: $SHIM_DIR/v8_stub.o"
+
+      # ─── phase_relink ────────────────────────────────────────────────────
+      # stub 注入 build.ninja 后必须重跑 link, 否则运行时报 symbol not found。
+      - name: Relink (V8 stub)
+        working-directory: /storage/Users/currentUser/.cache/ohos-bun-ci/src
+        run: |
+          ninja -C build/release -j"$NINJA_JOBS" bun 2>&1 | tee "$TMPDIR/build.log"
+
+      # ─── phase_sign ──────────────────────────────────────────────────────
+      - name: Sign final binary
+        working-directory: /storage/Users/currentUser/.cache/ohos-bun-ci/src
+        run: |
+          binary="build/release/bun"
+          [ -f "$binary" ] || binary="build/release/bun-profile"
+          [ -f "$binary" ] || { echo "binary not found"; exit 1; }
+          unsigned="$binary.unsigned"
+          mv "$binary" "$unsigned"
+          binary-sign-tool sign -selfSign 1 -inFile "$unsigned" -outFile "$binary"
+          chmod 755 "$binary"
+          rm -f "$unsigned"
+          echo "signed: $binary ($(ls -lh "$binary" | awk '{print $5}'))"
+
+      # ─── 验证 (参考 ohos-build-rust.yml) ─────────────────────────────────
+      - name: Verify binary
+        working-directory: /storage/Users/currentUser/.cache/ohos-bun-ci/src
+        run: |
+          file build/release/bun
+          file build/release/bun | grep -qiE "ELF.*(arm64|aarch64)" || { echo "ERROR: not an ARM64 ELF"; exit 1; }
+          readelf -S build/release/bun | grep -q codesign || { echo "ERROR: binary not signed"; exit 1; }
+          ls -lh build/release/bun
+          NO_COLOR=1 ./build/release/bun --version
+          RESULT=$(NO_COLOR=1 ./build/release/bun -e 'console.log(2**32)')
+          [ "$RESULT" = "4294967296" ] || { echo "FAILED: 2**32 = $RESULT"; exit 1; }
+          echo "smoke test passed"
+
+      # ─── 打包 + 上传 (参考 ohos-build-rust.yml) ──────────────────────────
+      - name: Package binary
+        working-directory: /storage/Users/currentUser/.cache/ohos-bun-ci/src
+        run: |
+          VERSION=$(build/release/bun --version 2>/dev/null || python3 -c "import json; print(json.load(open('package.json'))['version'])")
+          COMMIT=$(git rev-parse --short HEAD)
+          DATE=$(date +%Y%m%d_%H%M%S)
+          NAME="bun-ohos-aarch64-${VERSION}-${COMMIT}-${DATE}"
+          mkdir -p "$RUNNER_TEMP/bun-release/${NAME}"
+          cp build/release/bun "$RUNNER_TEMP/bun-release/${NAME}/bun"
+          cd "$RUNNER_TEMP/bun-release"
+          tar czf "${NAME}.tar.gz" "${NAME}/"
+          echo "artifact_name=${NAME}" >> "$GITHUB_ENV"
+          echo "artifact_path=${RUNNER_TEMP}/bun-release/${NAME}.tar.gz" >> "$GITHUB_ENV"
+          echo "binary_path=${RUNNER_TEMP}/bun-release/${NAME}/bun" >> "$GITHUB_ENV"
+
+      # github-act-runner marks the job complete after the first artifact
+      # upload; a second upload then 403s with "job is completed" (seen on
+      # 2026-08-17). Upload both artifacts in a single step.
+      - name: Upload artifacts (tar.gz + raw binary)
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.artifact_name }}
+          path: |
+            ${{ env.artifact_path }}
+            ${{ env.binary_path }}
+          retention-days: 30

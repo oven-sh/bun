@@ -87,6 +87,35 @@ extern "C" void bun_ignore_sigpipe()
     signal(SIGPIPE, SIG_IGN);
 #endif
 }
+#if defined(__OHOS__)
+static void ohos_sigsys_handler(int sig, siginfo_t* info, void* uctx) {
+    (void)sig;
+    (void)info;
+    (void)uctx;
+    int syscall_nr = -1;
+    FILE* f = fopen("/proc/self/syscall", "r");
+    if (f) {
+        char buf[128] = {};
+        if (fgets(buf, sizeof(buf), f)) {
+            char* end = buf;
+            long val = strtol(buf, &end, 0);
+            if (end != buf) syscall_nr = (int)val;
+        }
+        fclose(f);
+    }
+    fprintf(stderr, "\n*** SIGSYS: blocked syscall #%d ***\n", syscall_nr);
+    fflush(stderr);
+}
+
+extern "C" void ohos_setup_sigsys_handler() {
+    struct sigaction sa;
+    memset(&sa, 0, sizeof(sa));
+    sa.sa_flags = SA_SIGINFO;
+    sa.sa_sigaction = ohos_sigsys_handler;
+    sigaction(SIGSYS, &sa, nullptr);
+}
+#endif
+
 extern "C" ssize_t bun_sysconf__SC_CLK_TCK()
 {
 #ifdef __APPLE__
@@ -278,7 +307,14 @@ extern "C" void windows_enable_stdio_inheritance()
 // close_range is glibc > 2.33, which is very new
 extern "C" ssize_t bun_close_range(unsigned int start, unsigned int end, unsigned int flags)
 {
+#if defined(__OHOS__)
+    // OHOS kernel sends uncatchable SIGSYS for unimplemented syscalls.
+    // Fall back to the caller's closeRangeLoop.
+    errno = ENOSYS;
+    return -1;
+#else
     return syscall(__NR_close_range, start, end, flags);
+#endif
 }
 #else // OS(FREEBSD)
 // FreeBSD 12.2+ libc has close_range; 14.0+ supports CLOSE_RANGE_CLOEXEC
@@ -314,8 +350,11 @@ extern "C" void on_before_reload_process_posix()
     // close all file descriptors except stdin, stdout, stderr and possibly IPC.
     // if you're passing additional file descriptors to Bun, you're probably not passing more than 8.
     // If this fails, it's ultimately okay, we're just trying our best to avoid leaking file descriptors.
+#if !defined(__OHOS__)
     bun_close_range(3, ~0U, CLOSE_RANGE_CLOEXEC);
 #endif
+#endif // OS(LINUX) || OS(FREEBSD)
+
 
     // Preserve the IPC channel to the parent across the execve: NODE_CHANNEL_FD survives in
     // environ and the reloaded image re-attaches to it; CLOEXEC'd, the parent stops receiving
@@ -624,16 +663,16 @@ extern "C" void bun_restore_stdio()
         sigset_t sa;
         int err;
 
-        // We might be a background job that doesn't own the TTY so block SIGTTOU
-        // before making the tcsetattr() call, otherwise that signal suspends us.
-        sigemptyset(&sa);
-        sigaddset(&sa, SIGTTOU);
+    // We might be a background job that doesn't own the TTY so block SIGTTOU
+    // before making the tcsetattr() call, otherwise that signal suspends us.
+    sigemptyset(&sa);
+    sigaddset(&sa, SIGTTOU);
 
-        pthread_sigmask(SIG_BLOCK, &sa, nullptr);
-        do
-            err = tcsetattr(fd, TCSANOW, &termios_to_restore_later[fd]);
-        while (err == -1 && errno == EINTR);
-        pthread_sigmask(SIG_UNBLOCK, &sa, nullptr);
+    pthread_sigmask(SIG_BLOCK, &sa, nullptr);
+    do
+        err = tcsetattr(fd, TCSANOW, &termios_to_restore_later[fd]);
+    while (err == -1 && errno == EINTR);
+    pthread_sigmask(SIG_UNBLOCK, &sa, nullptr);
     }
 #endif
 }
@@ -703,9 +742,11 @@ extern "C" void bun_initialize_process()
     // This is less of an issue for macOS due to posix_spawn
     // This is best effort, not all linux kernels support close_range or CLOSE_RANGE_CLOEXEC
     // To avoid breaking --watch, we skip stdin, stdout, stderr and IPC.
+#if !OS(WINDOWS) && !defined(__OHOS__)
     bun_close_range(4, ~0U, CLOSE_RANGE_CLOEXEC);
 
     execve_counting_pid = getpid();
+#endif
 #endif
 
 #if OS(LINUX) || OS(DARWIN) || OS(FREEBSD)
@@ -1132,11 +1173,24 @@ extern "C" void Bun__unregisterSignalsForForwarding()
 #if OS(LINUX) || OS(DARWIN) || OS(FREEBSD)
 #include <paths.h>
 
+#if defined(__OHOS__)
+// OHOS has system binaries in /system/bin (echo, sh, mkdir, etc.).
+extern "C" const char* BUN_DEFAULT_PATH_FOR_SPAWN = "/system/bin:/usr/bin:/bin";
+#else
 extern "C" const char* BUN_DEFAULT_PATH_FOR_SPAWN = _PATH_DEFPATH;
+#endif
 #elif OS(WINDOWS)
 extern "C" const char* BUN_DEFAULT_PATH_FOR_SPAWN = "C:\\Windows\\System32;C:\\Windows;";
 #else
 extern "C" const char* BUN_DEFAULT_PATH_FOR_SPAWN = "/usr/bin:/bin";
+#endif
+
+// OHOS seccomp blocks close_range with uncatchable SIGSYS (verified 2026-06-07).
+// pidfd_open and memfd_create are available (no longer gated by this flag).
+#if defined(__OHOS__)
+extern "C" const bool BUN_OHOS_CLOSE_RANGE_BLOCKED = true;
+#else
+extern "C" const bool BUN_OHOS_CLOSE_RANGE_BLOCKED = false;
 #endif
 
 #if OS(DARWIN)

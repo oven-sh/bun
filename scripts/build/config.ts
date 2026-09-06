@@ -17,7 +17,7 @@ import { resolveMacosSdkPath } from "./macos-sdk.ts";
 import { clangTargetArch, toolchainOverride } from "./tools.ts";
 import { cyan, dim, green } from "./tty.ts";
 
-export type OS = "linux" | "darwin" | "windows" | "freebsd";
+export type OS = "linux" | "darwin" | "windows" | "freebsd" | "ohos";
 export type Arch = "x64" | "aarch64";
 export type Abi = "gnu" | "musl" | "android";
 export type BuildType = "Debug" | "Release" | "RelWithDebInfo" | "MinSizeRel";
@@ -76,7 +76,8 @@ export interface Config {
   darwin: boolean;
   windows: boolean;
   freebsd: boolean;
-  /** linux || darwin || freebsd */
+  ohos: boolean;
+  /** linux || darwin || freebsd || ohos */
   unix: boolean;
   x64: boolean;
   arm64: boolean;
@@ -490,7 +491,7 @@ export interface Toolchain {
 export function detectHost(): Host {
   const plat = hostPlatform();
   const os: OS =
-    plat === "linux"
+    plat === "linux" || plat === "openharmony"
       ? "linux"
       : plat === "darwin"
         ? "darwin"
@@ -724,13 +725,14 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
   // skip this (the host clang-cl's default arch is just the host's).
   const compilerArch = os === "windows" && host.os === "windows" ? clangTargetArch(toolchain.cc) : undefined;
   const arch = partial.arch ?? compilerArch ?? host.arch;
-  const abi: Abi | undefined = os === "linux" ? (partial.abi ?? detectLinuxAbi()) : undefined;
+  const abi: Abi | undefined = os === "linux" ? (partial.abi ?? detectLinuxAbi()) : os === "ohos" ? "musl" : undefined;
 
   const linux = os === "linux";
   const darwin = os === "darwin";
   const windows = os === "windows";
   const freebsd = os === "freebsd";
-  const unix = linux || darwin || freebsd;
+  const ohos = os === "ohos";
+  const unix = linux || darwin || freebsd || ohos;
   const x64 = arch === "x64";
   const arm64 = arch === "aarch64";
   // Darwin target on a non-darwin host (Linux CI box building macOS
@@ -1046,6 +1048,30 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
     }
   }
 
+  // ─── OHOS ───
+  let ohosSysroot: string | undefined;
+  let ohosSdkRoot: string | undefined;
+  let ohosCrossLibs: string | undefined;
+  let ohosIcuDir: string | undefined;
+  if (ohos) {
+    ohosSdkRoot = partial.ohosSdkRoot ? resolve(cwd, partial.ohosSdkRoot) : findOhosSdkRoot();
+    if (!ohosSdkRoot) {
+      throw new BuildError("OHOS build requires --ohos-sdk-root=<path> or setup-ohos-sdk in home", {
+        hint: "Install OHOS SDK from https://gitee.com/openharmony and point --ohos-sdk-root to the SDK root.",
+      });
+    }
+    ohosSysroot = partial.ohosSysroot ? resolve(cwd, partial.ohosSysroot) : resolve(ohosSdkRoot, "ohos/native/sysroot");
+    if (!existsSync(ohosSysroot)) {
+      throw new BuildError(`OHOS sysroot not found at ${ohosSysroot}`);
+    }
+    ohosCrossLibs = partial.ohosCrossLibs
+      ? resolve(cwd, partial.ohosCrossLibs)
+      : resolve(cwd, "build", "ohos-cross-libs");
+    ohosIcuDir = partial.ohosIcuDir ? resolve(cwd, partial.ohosIcuDir) : resolve(cwd, "build", "ohos-icu", "target");
+    sysroot = ohosSysroot;
+    crossTarget = partial.crossTarget ?? "aarch64-linux-ohos";
+  }
+
   // ─── Cross-compilation (Windows) ───
   // Same pattern as Android/FreeBSD, with the MSVC spin: the host LLVM's
   // clang-cl/lld-link/llvm-lib/llvm-rc are used (tools.ts picks them by
@@ -1178,6 +1204,7 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
     darwin,
     windows,
     freebsd,
+    ohos,
     unix,
     x64,
     arm64,
@@ -1273,6 +1300,10 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
     crossTarget,
     sysroot,
     winsysroot,
+    ohosSysroot,
+    ohosSdkRoot,
+    ohosCrossLibs,
+    ohosIcuDir,
     androidNdkRuntimeDir,
     version,
     revision,
@@ -1606,4 +1637,17 @@ export function formatConfig(cfg: Config, exe: string): string {
  */
 export function formatConfigUnchanged(exe: string, elapsed: number): string {
   return `[configured] ${c.green(exe)} in ${elapsed}ms ${c.dim("(unchanged)")}`;
+}
+
+function findOhosSdkRoot(): string | undefined {
+  // Environment variable takes priority (standard for cross-compilation toolchains).
+  const envRoot = process.env.OHOS_SDK_ROOT;
+  if (envRoot && existsSync(resolve(envRoot, "ohos/native/sysroot"))) {
+    return envRoot;
+  }
+  const candidates = [resolve(homedir(), "setup-ohos-sdk"), resolve(homedir(), "ohos-sdk"), "/opt/ohos-sdk"];
+  for (const dir of candidates) {
+    if (existsSync(resolve(dir, "ohos/native/sysroot"))) return dir;
+  }
+  return undefined;
 }

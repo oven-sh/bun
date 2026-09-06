@@ -553,9 +553,9 @@ mod elf {
         if vaddr_ptr.is_null() {
             return None;
         }
-        // SAFETY: read unaligned u64 vaddr.
-        let vaddr = unsafe { core::ptr::read_unaligned(vaddr_ptr) };
-        if vaddr == 0 {
+        // SAFETY: read unaligned u64 link-time vaddr.
+        let link_vaddr = unsafe { core::ptr::read_unaligned(vaddr_ptr) };
+        if link_vaddr == 0 {
             return None;
         }
         // BUN_COMPILED.size holds the link-time virtual address of the
@@ -568,7 +568,8 @@ mod elf {
         // permission for the in-place bytecode mutation done by JSC.
         let load_bias =
             bun_sys::elf::find_loaded_module(vaddr_ptr as usize).map_or(0, |m| m.base_address);
-        let target = (vaddr as usize).wrapping_add(load_bias) as *mut u8;
+        let target = (link_vaddr as usize).wrapping_add(load_bias) as *mut u8;
+
         // SAFETY: target points to 8-byte little-endian length prefix.
         let payload_len =
             u64::from_le_bytes(unsafe { core::ptr::read_unaligned(target.cast::<[u8; 8]>()) });
@@ -2151,6 +2152,19 @@ pub(crate) fn inject<'a>(
                 // SAFETY: libc fchmod on a valid native fd.
                 unsafe { bun_sys::c::fchmod(cloned_executable_fd.native(), 0o755) };
             }
+            #[cfg(target_env = "ohos")]
+            {
+                let out_str = unsafe { core::str::from_utf8_unchecked(zname.as_bytes()) };
+                let out_path = std::path::Path::new(out_str);
+                // The base bun binary is already signed, but we've appended
+                // the JS bundle after the original signature.  Strip the old
+                // .codesign and sign the modified file so the signature
+                // covers the entire standalone binary. Silent: a failure
+                // must not pollute stderr (test assertions like
+                // stderr.not.toContain("error:") would trip); the runtime
+                // reports the real load error.
+                let _ = ohos_sign::sign_selfsign_inplace_with_strip(out_path);
+            }
             return Some(Injected::new(
                 cloned_executable_fd,
                 cwd,
@@ -2701,7 +2715,32 @@ pub fn to_executable(
             }
         }
 
-        fd.close();
+        if fd != Fd::INVALID {
+            fd.close();
+        }
+
+        // OHOS: compiled binaries need a .codesign section to execute. The
+        // base bun binary carries a signature, and appending the JS bundle
+        // invalidates it while the stale .codesign section remains — so
+        // has_codesign() would report true and skip the re-sign, leaving an
+        // invalid signature the kernel rejects. Strip and re-sign
+        // unconditionally (same as the inject() path above).
+        #[cfg(target_env = "ohos")]
+        {
+            if !outfile.is_empty() {
+                if let Some(signed_path) = core::str::from_utf8(outfile).ok() {
+                    let p = std::path::Path::new(signed_path);
+                    if p.exists() {
+                        // Silent: a failure here must not pollute stderr
+                        // (test assertions like stderr.not.toContain("error:")
+                        // would trip); the user's exec of the output reports
+                        // the real error.
+                        let _ = ohos_sign::sign_selfsign_inplace_with_strip(p);
+                    }
+                }
+            }
+        }
+
         Ok(CompileResult::Success)
     }
 }

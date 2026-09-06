@@ -57,7 +57,12 @@ test("the install succeeds", async () => {
   // breaks (its process.config leaks thin-LTO flags that MSVC's link.exe
   // rejects). This test exercises lockfile migration, not lifecycle scripts,
   // so skip them there.
-  const installArgs = process.platform === "win32" ? [bunExe(), "install", "--ignore-scripts"] : [bunExe(), "install"];
+  // OHOS: sharp has no openharmony-arm64v8 prebuilt on GitHub (404), and its
+  // musl fallback .so cannot load on the OHOS kernel — source build needs
+  // libvips from source, so skip lifecycle scripts here too (same rationale).
+  const isOhos = Bun.env.BUN_OHOS === "1";
+  const installArgs =
+    process.platform === "win32" || isOhos ? [bunExe(), "install", "--ignore-scripts"] : [bunExe(), "install"];
   subprocess = Bun.spawn(installArgs, {
     env: bunEnv,
     cwd,

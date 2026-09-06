@@ -998,6 +998,32 @@ fn spawn_maybe_sync(
         }
     }
 
+    // OHOS: an exec'd `node` child gets the real musl libc, not the
+    // shim symbols linked into *this* executable, so its os.userInfo()
+    // throws ENOENT for the app-sandbox uid. Covers both Bun.spawn and
+    // node:child_process (child_process.ts's `spawn` calls into this same
+    // function) -- see ohos_node_userinfo.rs for the full rationale and
+    // workarounds.ts's "ohos-node-userinfo-preload" entry.
+    #[cfg(target_env = "ohos")]
+    if let Some(a0) = argv0 {
+        // SAFETY: `a0` at this point always points at NUL-terminated storage
+        // owned by `cstr_storage` (get_argv's `argv0_result.argv0`, pushed at
+        // :265) that outlives this call -- same invariant `is_pwd_key` above
+        // relies on for `env_array` entries.
+        let a0_bytes = unsafe { CStr::from_ptr(a0) }.to_bytes();
+        if let Some(inj) = crate::api::ohos_node_userinfo::compute(a0_bytes, &env_array) {
+            env_array.retain(|&ptr| !crate::api::ohos_node_userinfo::is_managed_key(ptr));
+            let node_options = ZBox::from_vec(inj.node_options);
+            env_array.push(node_options.as_ptr());
+            cstr_storage.push(node_options);
+            if let Some(username) = inj.username {
+                let username = ZBox::from_vec(username);
+                env_array.push(username.as_ptr());
+                cstr_storage.push(username);
+            }
+        }
+    }
+
     env_array.push(core::ptr::null());
     argv.push(core::ptr::null());
 

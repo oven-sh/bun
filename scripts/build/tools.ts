@@ -365,6 +365,7 @@ function llvmInstallHint(os: OS): string {
   if (os === "darwin") return `Install with: brew install llvm@${LLVM_MAJOR}`;
   if (os === "linux")
     return `Install with: apt install clang-${LLVM_MAJOR} lld-${LLVM_MAJOR}  (or equivalent for your distro)`;
+  if (os === "ohos") return `Install LLVM ${LLVM_VERSION} and provide --ohos-sysroot and --ohos-sdk-root`;
   if (os === "windows") return `Install LLVM ${LLVM_VERSION} from https://github.com/llvm/llvm-project/releases`;
   return "";
 }
@@ -685,31 +686,39 @@ export function findRustLld(os: OS): {
   // and the silent failure leaves `rustLld` undefined, which falls back to the
   // system lld. With cross-language LTO that means lld 21 reading rust-emitted
   // LLVM 22 bitcode → `Invalid record`. Pre-flight a `rustup toolchain
-  // install` so the proxy resolves instantly: idempotent (~0.5s, it re-checks
-  // the channel manifest) when already installed, downloads on a stale agent.
-  // `-q` also hides the download progress, so say how long it took whenever
-  // it evidently did more than that check: every build job of CI build 91391
-  // spent 34-36s in here without a line of output. Skip when there's no
-  // pinned channel or no rustup — the `rustc` queries below will just use
-  // whatever's there.
+  // install` so the proxy resolves instantly: idempotent ~70ms when already
+  // installed, downloads on a stale agent. Skip when there's no pinned channel
+  // or no rustup — the `rustc` queries below will just use whatever's there.
   const rustup = findTool({ names: ["rustup"], paths: [join(cargoHome, "bin")], required: false })?.path;
   const channel = readRustToolchainChannel();
   if (rustup !== undefined && channel !== undefined) {
-    const started = performance.now();
-    spawnSync(
-      rustup,
-      ["-q", "toolchain", "install", channel, "--no-self-update", "--profile", "minimal", "--component", "rust-src"],
-      {
-        encoding: "utf8",
-        timeout: 300_000,
-        stdio: ["ignore", "ignore", "inherit"], // surface error output; `-q` hides `info:` noise
-      },
-    );
-    const seconds = (performance.now() - started) / 1000;
-    if (seconds >= 5) {
-      console.log(
-        `rustup spent ${seconds.toFixed(0)}s installing the pinned toolchain (${channel}); it was missing or incomplete on this machine`,
+    // Skip when the toolchain is already on disk (offline-safe): `rustup
+    // toolchain install <nightly-date>` re-resolves the channel manifest
+    // against the network dist server even for an installed toolchain, so a
+    // flaky network turns a complete install into "no release found"
+    // (harmless here — exit 0 — but it leaks the error and can stall the
+    // 300s timeout). Same skip logic as the rust_build_cross rule in rust.ts.
+    const rustHome = process.env.RUSTUP_HOME ?? join(homedir(), ".rustup");
+    if (
+      spawnSync("sh", ["-c", `ls -d "${rustHome}/toolchains/${channel}-"*/lib/rustlib/src/rust >/dev/null 2>&1`])
+        .status !== 0
+    ) {
+      const started = performance.now();
+      spawnSync(
+        rustup,
+        ["-q", "toolchain", "install", channel, "--no-self-update", "--profile", "minimal", "--component", "rust-src"],
+        {
+          encoding: "utf8",
+          timeout: 300_000,
+          stdio: ["ignore", "ignore", "inherit"], // surface download/error output; `-q` hides `info:` noise
+        },
       );
+      const seconds = (performance.now() - started) / 1000;
+      if (seconds >= 5) {
+        console.log(
+          `rustup spent ${seconds.toFixed(0)}s installing the pinned toolchain (${channel}); it was missing or incomplete on this machine`,
+        );
+      }
     }
   }
 
@@ -731,13 +740,11 @@ export function findRustLld(os: OS): {
     encoding: "utf8",
     timeout: 300_000,
     stdio: ["ignore", "pipe", "pipe"],
-    env,
   }).stdout?.trim();
   const vv = spawnSync(rustc, ["-vV"], {
     encoding: "utf8",
     timeout: 30_000,
     stdio: ["ignore", "pipe", "pipe"],
-    env,
   }).stdout;
   if (!sysroot || !vv) return none;
 

@@ -6,7 +6,7 @@
  */
 import { $ } from "bun";
 import { beforeAll, describe, expect, setDefaultTimeout, test } from "bun:test";
-import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isOhos, isWindows, tempDir } from "harness";
 import { existsSync, mkdirSync, renameSync, symlinkSync, writeFileSync } from "node:fs";
 import path from "path";
 import { createTestBuilder, sortedShellOutput } from "../util";
@@ -403,7 +403,9 @@ test.skipIf(process.platform === "win32")(
     await using proc = Bun.spawn({
       cmd: [bunExe(), "-e", fixture],
       env: { ...bunEnv, SHELL_CWD: shellCwd },
-      cwd: "/",
+      // Any cwd different from shellCwd works; "/" is unreadable in the
+      // OHOS sandbox (the child fails before running the fixture).
+      cwd: isOhos ? "/storage/Users/currentUser" : "/",
       stdout: "pipe",
       stderr: "pipe",
     });

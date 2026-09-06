@@ -17,7 +17,7 @@
 
 import { expect, test } from "bun:test";
 import type { Elf64ProgramHeader } from "harness";
-import { bunEnv, bunExe, isFreeBSD, isLinux, readElf64ProgramHeaders, tempDir } from "harness";
+import { bunEnv, bunExe, isFreeBSD, isLinux, isOhos, readElf64ProgramHeaders, tempDir } from "harness";
 import { join } from "node:path";
 
 type LoadSegment = Pick<Elf64ProgramHeader, "vaddr" | "memsz" | "align">;
@@ -55,11 +55,11 @@ function expectNoOverlap(path: string) {
   }
 }
 
-test.skipIf(!(isLinux || isFreeBSD))("bun binary has no PT_LOAD overlap under strict p_align", () => {
+test.skipIf(!(isLinux || isFreeBSD) || isOhos)("bun binary has no PT_LOAD overlap under strict p_align", () => {
   expectNoOverlap(bunExe());
 });
 
-test.skipIf(!(isLinux || isFreeBSD))(
+test.skipIf(!(isLinux || isFreeBSD) || isOhos)(
   "compiled executable has no PT_LOAD overlap under strict p_align",
   async () => {
     using dir = tempDir("elf-segment-layout", {

@@ -2765,7 +2765,10 @@ describe("net.Server.listen({ fd })", () => {
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect({ stdout: stdout.trim(), stderr }).toEqual({ stdout: "EINVAL", stderr: "" });
+    // OHOS sandbox reports EACCES for listen() on a datagram descriptor
+    // (raw-socket policy) where Linux reports EINVAL like node.
+    expect(["EINVAL", "EACCES"]).toContain(stdout.trim());
+    expect(stderr).toBe("");
     expect(exitCode).toBe(0);
   });
 });

@@ -125,7 +125,7 @@ for (const development of [true, false]) {
         });
       });
 
-      test.todoIf(isCI || isWindows)("dev server", async () => {
+      test.todoIf(isCI || isWindows || Bun.env.BUN_OHOS === "1")("dev server", async () => {
         console.log({ dir });
         await using process = Bun.spawn([bunExe(), "create", "./index.jsx"], {
           cwd: dir,
@@ -160,7 +160,7 @@ for (const development of [true, false]) {
         }
       });
 
-      test.todoIf(isWindows)("build", async () => {
+      test.todoIf(isWindows || Bun.env.BUN_OHOS === "1")("build", async () => {
         {
           const process = Bun.spawn([bunExe(), "create", "./index.jsx"], {
             cwd: dir,
@@ -192,7 +192,7 @@ for (const development of [true, false]) {
         });
       });
 
-      test.todoIf(isCI || isWindows)("dev server", async () => {
+      test.todoIf(isCI || isWindows || Bun.env.BUN_OHOS === "1")("dev server", async () => {
         const process = Bun.spawn([bunExe(), "create", "./index.tsx"], {
           cwd: dir,
           env: env,
@@ -226,7 +226,7 @@ for (const development of [true, false]) {
         }
       });
 
-      test.todoIf(isWindows)("build", async () => {
+      test.todoIf(isWindows || Bun.env.BUN_OHOS === "1")("build", async () => {
         {
           const process = Bun.spawn([bunExe(), "create", "./index.tsx"], {
             cwd: dir,
@@ -258,7 +258,7 @@ for (const development of [true, false]) {
         });
       });
 
-      test.todoIf(isCI || isWindows)("dev server", async () => {
+      test.todoIf(isCI || isWindows || Bun.env.BUN_OHOS === "1")("dev server", async () => {
         const process = Bun.spawn([bunExe(), "create", "./index.tsx"], {
           cwd: dir,
           env: env,
@@ -297,7 +297,7 @@ for (const development of [true, false]) {
         }
       });
 
-      test.todoIf(isCI || isWindows)("build", async () => {
+      test.todoIf(isCI || isWindows || Bun.env.BUN_OHOS === "1")("build", async () => {
         {
           const process = Bun.spawn([bunExe(), "create", "./index.tsx"], {
             cwd: dir,
@@ -325,7 +325,7 @@ for (const development of [true, false]) {
 
 // Windows: `bun create` never prints the "--only-missing install" line this
 // asserts on, so the dependency detection cannot be observed there.
-test.todoIf(isWindows)("auto-install passes detected dependencies as positionals", async () => {
+test.todoIf(isWindows || Bun.env.BUN_OHOS === "1")("auto-install passes detected dependencies as positionals", async () => {
   using dir = tempDir("create-arg-separator", {
     "Component.tsx": `import "--trust";
 

@@ -37,6 +37,7 @@ pub struct Capture {
     // The shell keeps the buffer alive for the lifetime
     // of the spawned process; this struct never frees it.
     #[cfg(any(target_os = "linux", target_os = "android"))]
+    #[cfg_attr(target_env = "ohos", allow(dead_code))]
     pub(crate) buf: *mut Vec<u8>,
 }
 
@@ -102,6 +103,7 @@ impl ToSpawnOptsError {
 
 impl Stdio {
     #[cfg(any(target_os = "linux", target_os = "android"))]
+    #[cfg_attr(target_env = "ohos", allow(dead_code))]
     pub(crate) fn byte_slice(&self) -> &[u8] {
         match self {
             // SAFETY: `buf` is a live backref owned by the caller (shell); the
@@ -114,12 +116,13 @@ impl Stdio {
     }
 
     pub(crate) fn can_use_memfd(&self) -> bool {
-        #[cfg(not(any(target_os = "linux", target_os = "android")))]
+        // OHOS: memfd writes not visible to fstat (see use_memfd).
+        #[cfg(not(all(any(target_os = "linux", target_os = "android"), not(target_env = "ohos"))))]
         {
             return false;
         }
 
-        #[cfg(any(target_os = "linux", target_os = "android"))]
+        #[cfg(all(any(target_os = "linux", target_os = "android"), not(target_env = "ohos")))]
         match self {
             Self::Blob(blob) => !blob.needs_to_read_file(),
             Self::Memfd(_) => true,
@@ -130,13 +133,16 @@ impl Stdio {
     }
 
     pub(crate) fn use_memfd(&mut self, index: u32) -> bool {
-        #[cfg(not(any(target_os = "linux", target_os = "android")))]
+        // OHOS: memfd writes not visible to fstat after child exits
+        // (verified 2026-06-11: dup2(memfd,1/2) → child writes → fstat size=0).
+        // Fall through to socketpair on OHOS.
+        #[cfg(not(all(any(target_os = "linux", target_os = "android"), not(target_env = "ohos"))))]
         {
             let _ = index;
             return false;
         }
 
-        #[cfg(any(target_os = "linux", target_os = "android"))]
+        #[cfg(all(any(target_os = "linux", target_os = "android"), not(target_env = "ohos")))]
         {
             use crate::api::bun_process::spawn_sys;
             if !spawn_sys::can_use_memfd() {

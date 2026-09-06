@@ -395,7 +395,9 @@ it("process.release", () => {
   expect(process.release.name).toBe("node");
   const platform = process.platform == "win32" ? "windows" : process.platform;
   const arch = { arm64: "aarch64", x64: "x64" }[process.arch] || process.arch;
-  const abi = familySync() === "musl" ? "-musl" : "";
+  // OHOS: detect-libc cannot detect musl (its probes read /proc, which the
+  // sandbox denies), but OHOS runs musl — the sourceUrl carries -musl.
+  const abi = Bun.env.BUN_OHOS === "1" || familySync() === "musl" ? "-musl" : "";
   const nonbaseline = `https://github.com/oven-sh/bun/releases/download/bun-v${process.versions.bun}/bun-${platform}-${arch}${abi}.zip`;
   const baseline = `https://github.com/oven-sh/bun/releases/download/bun-v${process.versions.bun}/bun-${platform}-${arch}${abi}-baseline.zip`;
 
@@ -795,7 +797,7 @@ describe.concurrent(() => {
     });
 
     let [out, exited] = await Promise.all([new Response(subprocess.stdout).text(), subprocess.exited]);
-    expect(out.trim()).toEqual("v26.3.0");
+    expect(out.trim()).toEqual("v26.7.0");
     expect(exited).toBe(0);
   });
 

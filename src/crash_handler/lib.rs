@@ -1567,6 +1567,30 @@ mod draft {
         );
     }
 
+    #[cfg(target_env = "ohos")]
+    extern "C" fn handle_sigsys_posix(_sig: c_int, _info: *mut libc::siginfo_t, ctx: *mut c_void) {
+        // OHOS seccomp blocked a syscall. Return -ENOSYS so the caller sees a
+        // recoverable error instead of being killed with SIGSYS. This mirrors
+        // what Android's bionic libc does internally.
+        //
+        // On-device verified (HongMeng Kernel 1.13.0, aarch64): only the
+        // return register must be modified; the PC must be left at the
+        // faulting SVC. Advancing the PC makes the kernel force the return
+        // value to 0 — worse than a crash for syscalls like close_range, which
+        // would "succeed" without doing anything. With an unchanged PC the
+        // syscall returns the value written to the return register; on
+        // standard Linux seccomp TRAP an unchanged PC makes the kernel return
+        // -ENOSYS itself, so this is portable across kernels.
+        const ENOSYS: i64 = 38;
+        let uc = ctx as *mut libc::ucontext_t;
+        unsafe {
+            // Set x0 (return register) to -ENOSYS so callers see ENOSYS
+            // and can fall back to alternative implementations.
+            let regs = &raw mut (*uc).uc_mcontext.regs;
+            (*regs)[0] = (-ENOSYS) as libc::c_ulong;
+        }
+    }
+
     #[cfg(unix)]
     static DID_REGISTER_SIGALTSTACK: AtomicBool = AtomicBool::new(false);
     /// 512K alternate signal stack. The kernel writes here during signal delivery;
@@ -1611,6 +1635,21 @@ mod draft {
             // SAFETY: valid sigaction pointer or null; null oldact is permitted.
             unsafe {
                 libc::sigaction(signal, act_ptr, core::ptr::null_mut());
+            }
+        }
+        #[cfg(target_env = "ohos")]
+        {
+            // OHOS seccomp blocks unimplemented syscalls with uncatchable
+            // SIGSYS; the handler skips the SVC and returns -ENOSYS (see
+            // handle_sigsys_posix). Not in CRASH_HANDLER_SIGNALS — that list
+            // is the crash-report set, and SIGSYS here is a recoverable trap.
+            let mut sigsys: libc::sigaction = bun_core::ffi::zeroed();
+            sigsys.sa_sigaction = handle_sigsys_posix as *const () as usize;
+            sigsys.sa_flags = libc::SA_SIGINFO;
+            // SAFETY: null oldact is permitted; single-threaded at setup.
+            unsafe {
+                let _ = libc::sigemptyset(&raw mut sigsys.sa_mask);
+                libc::sigaction(libc::SIGSYS, &raw const sigsys, core::ptr::null_mut());
             }
         }
         Ok(())
@@ -2150,14 +2189,16 @@ mod draft {
                         .map_err(fmt_err)?;
                     }
                 }
-                #[cfg(all(target_os = "linux", target_env = "musl"))]
+                #[cfg(all(target_os = "linux", any(target_env = "musl", target_env = "ohos")))]
                 {
                     let kernel_version =
                         bun_analytics::GenerateHeader::generate_platform::kernel_version();
+                    let libc = if cfg!(target_env = "ohos") { "ohos (musl)" } else { "musl" };
                     write!(
                         writer,
-                        "Linux Kernel v{}.{}.{} | musl\n",
-                        kernel_version.major, kernel_version.minor, kernel_version.patch
+                        "Linux Kernel v{}.{}.{} | {}\n",
+                        kernel_version.major, kernel_version.minor, kernel_version.patch,
+                        libc,
                     )
                     .map_err(fmt_err)?;
                 }

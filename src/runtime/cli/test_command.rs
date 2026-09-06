@@ -1357,9 +1357,12 @@ impl CommandLineReporter {
             Self::test_case_report(result, buntest, sequence, test_entry, elapsed_ns, failure)
         });
         if let Some(idx) = this.worker_ipc_file_idx {
-            // Into stderr first: the coordinator prints captured stderr up
-            // to this line when the frame arrives.
-            let _ = Output::error_writer().write_all(formatted_line);
+            // A full line goes into stderr first, in sequence with the error
+            // output. The coordinator prints captured stderr up to it when
+            // the frame arrives. Dots stay out of the stream.
+            if strings::ends_with_char(formatted_line, b'\n') {
+                let _ = Output::error_writer().write_all(formatted_line);
+            }
             ParallelRunner::worker_emit_test_done(idx, formatted_line, report.as_ref());
         } else {
             let _ = Output::error_writer().write_all(formatted_line);

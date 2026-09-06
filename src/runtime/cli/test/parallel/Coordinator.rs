@@ -56,6 +56,7 @@ pub struct Coordinator<'a> {
     pub(crate) parallel_limit: u32,
     pub(crate) scale_up_after_ms: i64,
     pub(crate) bail: u32,
+    pub(crate) dots: bool,
     pub(crate) files_done: u32,
     pub(crate) spawned_count: u32,
     pub(crate) live_workers: u32,
@@ -146,6 +147,7 @@ impl<'a> Coordinator<'a> {
                 return;
             }
             self.vm.event_loop_ref().tick();
+            self.print_arrived_lines();
             self.run_pending_reaps();
             self.maybe_scale_up();
             self.run_pending_reaps();
@@ -407,25 +409,21 @@ impl<'a> Coordinator<'a> {
         }
     }
 
-    /// Prints `captured[..end]` under the in-flight file's header. A lone
-    /// dot (`dot_len` bytes, no newline) joins the dots line instead.
-    fn print_captured(&mut self, w: &mut Worker, end: usize, dot_len: usize) {
+    /// Prints `captured[..end]` under the header of file `idx`.
+    fn print_captured(&mut self, w: &mut Worker, end: usize, idx: Option<u32>) {
         if end == 0 {
             return;
         }
-        if end > dot_len {
-            // The worker already ended the dots line.
-            if w.captured[0] == b'\n' {
-                self.last_printed_dot = false;
-            }
-            self.break_dots();
-            if let Some(idx) = w.inflight {
-                self.ensure_header(idx);
-            }
+        // The worker already ended the dots line.
+        if w.captured[0] == b'\n' {
+            self.last_printed_dot = false;
+        }
+        self.break_dots();
+        if let Some(idx) = idx {
+            self.ensure_header(idx);
         }
         let _ = Output::error_writer().write_all(&w.captured[..end]);
         w.captured.drain(..end);
-        self.last_printed_dot = dot_len > 0;
         Output::flush();
     }
 
@@ -437,41 +435,52 @@ impl<'a> Coordinator<'a> {
         {
             let wp: *mut Worker = w;
             // SAFETY: `wp` is the live worker slot; `w` is not used until
-            // `read` returns. `draining` keeps `on_read_chunk` from calling
-            // back into the coordinator.
+            // `read` returns.
             unsafe {
-                (*wp).draining = true;
                 for pipe in [&raw mut (*wp).out, &raw mut (*wp).err] {
                     if !(*pipe).done && (*pipe).reader.get_fd() != bun_sys::Fd::INVALID {
                         bun_io::BufferedReader::read(&raw mut (*pipe).reader);
                     }
                 }
-                (*wp).draining = false;
             }
         }
-        self.on_worker_output(w);
+        self.print_pending_lines(w);
     }
 
     /// Prints captured output through each pending result line found in it.
-    pub(crate) fn on_worker_output(&mut self, w: &mut Worker) {
-        while let Some(line) = w.pending_lines.front() {
+    fn print_pending_lines(&mut self, w: &mut Worker) {
+        while let Some((idx, line)) = w.pending_lines.front() {
             let Some(pos) = strings::index_of(&w.captured, line) else {
                 break;
             };
-            let end = pos + line.len();
-            let dot_len = if strings::ends_with_char(line, b'\n') {
-                0
-            } else {
-                line.len()
-            };
+            let (idx, end) = (*idx, pos + line.len());
             w.pending_lines.pop_front();
-            self.print_captured(w, end, dot_len);
+            self.print_captured(w, end, Some(idx));
+        }
+    }
+
+    /// Windows reads complete through libuv only, so a result line can land
+    /// after its frame. Called once per loop tick.
+    fn print_arrived_lines(&mut self) {
+        for i in 0..self.spawned_count as usize {
+            // SAFETY: `i < spawned_count <= workers.len()`; fresh derivation per slot.
+            let w = unsafe { &mut *self.workers.as_mut_ptr().add(i) };
+            if !w.pending_lines.is_empty() && !w.captured.is_empty() {
+                self.print_pending_lines(w);
+            }
+        }
+    }
+
+    /// Prints the complete lines captured so far under the in-flight file.
+    fn flush_complete_lines(&mut self, w: &mut Worker) {
+        if let Some(nl) = strings::last_index_of_char(&w.captured, b'\n') {
+            self.print_captured(w, nl + 1, w.inflight);
         }
     }
 
     /// File end. On POSIX the drain has read everything, so a line still
-    /// pending never reached the pipe. On Windows reads complete through
-    /// libuv only, so it prints with the chunk that carries it.
+    /// pending never reached the pipe. On Windows it prints with the chunk
+    /// that carries it.
     fn flush_file_end(&mut self, w: &mut Worker) {
         if cfg!(unix) {
             self.flush_captured(w);
@@ -486,7 +495,7 @@ impl<'a> Coordinator<'a> {
     /// Prints everything, result lines that never reached the pipe included.
     fn flush_captured(&mut self, w: &mut Worker) {
         self.flush_captured_lines(w);
-        for line in w.pending_lines.drain(..) {
+        for (_, line) in w.pending_lines.drain(..) {
             w.captured.extend_from_slice(&line);
         }
         self.flush_rest(w);
@@ -500,7 +509,7 @@ impl<'a> Coordinator<'a> {
             w.captured.push(b'\n');
         }
         let end = w.captured.len();
-        self.print_captured(w, end, 0);
+        self.print_captured(w, end, w.inflight);
     }
 
     pub(crate) fn on_frame(&mut self, w: &mut Worker, kind: frame::Kind, rd: &mut frame::Reader) {
@@ -522,11 +531,28 @@ impl<'a> Coordinator<'a> {
                 if let Some(file) = self.test_records.get_mut(idx as usize) {
                     file.tests.push(Box::from(rd.p));
                 }
-                // Empty for a pass under --only-failures.
-                if !formatted.is_empty() {
-                    w.pending_lines.push_back(Box::from(formatted));
+                if strings::ends_with_char(formatted, b'\n') {
+                    // The worker wrote this line to its stderr before the frame.
+                    w.pending_lines.push_back((idx, Box::from(formatted)));
+                    self.flush_captured_lines(w);
+                    return;
                 }
+                // Empty (a pass under --only-failures), a dot, or the short
+                // AI-agent status: not in the stream, so print what the
+                // test wrote and then the status.
                 self.flush_captured_lines(w);
+                self.flush_complete_lines(w);
+                if formatted.is_empty() {
+                    return;
+                }
+                let is_dot = self.dots;
+                if !is_dot {
+                    self.break_dots();
+                    self.ensure_header(idx);
+                }
+                let _ = Output::error_writer().write_all(formatted);
+                self.last_printed_dot = is_dot;
+                Output::flush();
             }
             frame::Kind::FileDone => {
                 let mut nums = [0u32; 9];

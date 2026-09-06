@@ -64,11 +64,10 @@ pub struct Worker {
     pub(crate) dispatched_at: i64,
     /// Worker stdout+stderr not yet printed.
     pub(crate) captured: Vec<u8>,
-    /// Result lines from `test_done` frames not yet found in `captured`. The
-    /// worker writes each line to stderr before it sends the frame.
-    pub(crate) pending_lines: VecDeque<Box<[u8]>>,
-    /// The coordinator is draining the pipes itself.
-    pub(crate) draining: bool,
+    /// `(file index, result line)` from `test_done` frames not yet found in
+    /// `captured`. The worker writes each line to stderr before it sends
+    /// the frame.
+    pub(crate) pending_lines: VecDeque<(u32, Box<[u8]>)>,
     pub(crate) alive: bool,
     /// Set when the process-exit notification arrives. Reaping waits for both
     /// this and `ipc.done` so trailing IPC frames are decoded first.
@@ -411,27 +410,17 @@ impl WorkerPipe {
         }
     }
 
-    /// Raw receiver: the coordinator call forms a `&mut Worker` that
-    /// contains this pipe.
-    ///
-    /// # Safety
-    /// `this` is the live pipe, embedded in its worker.
-    pub(crate) unsafe fn on_read_chunk(
-        this: *mut Self,
-        chunk: &[u8],
-        _: bun_io::ReadState,
-    ) -> bool {
-        // SAFETY: the worker backref is valid while the pipe is embedded in
-        // its worker and carries write provenance (see `Worker::coord`).
-        // While the coordinator drains the pipe itself, `draining` is set
-        // and it is not called back.
-        unsafe {
-            let w = (*this).worker.cast_mut();
-            (*w).captured.extend_from_slice(chunk);
-            if !(*w).draining && !(*w).pending_lines.is_empty() {
-                (*(*w).coord.cast_mut()).on_worker_output(&mut *w);
-            }
-        }
+    pub(crate) fn on_read_chunk(&mut self, chunk: &[u8], _: bun_io::ReadState) -> bool {
+        // SAFETY: worker backref valid while WorkerPipe is embedded in Worker.
+        // Mutating `captured` through cast_mut requires write provenance on
+        // the stored pointer; all backref creation sites (the runner.rs
+        // coord_ptr, the Worker.rs start() errdefer guard, and the
+        // Coordinator.rs spawn_worker/respawn sites via
+        // `std::ptr::from_mut(..).cast_const()`) now establish it. The
+        // residual `&mut Coordinator`-during-drive aliasing caveat described
+        // in the `Worker::coord` field doc applies to this backref too. No
+        // other reference to `captured` is live during the read callback.
+        unsafe { (*self.worker.cast_mut()).captured.extend_from_slice(chunk) };
         true
     }
     pub(crate) fn on_reader_done(&mut self) {
@@ -448,7 +437,7 @@ impl WorkerPipe {
 bun_io::impl_buffered_reader_parent! {
     TestParallelWorkerPipe for WorkerPipe;
     has_on_read_chunk = true;
-    on_read_chunk   = |this, chunk, state| WorkerPipe::on_read_chunk(this, &chunk, state);
+    on_read_chunk   = |this, chunk, state| (*this).on_read_chunk(&chunk, state);
     on_reader_done  = |this| (*this).on_reader_done();
     on_reader_error = |this, err| (*this).on_reader_error(err);
     // `vm.uv_loop()` is `*mut bun_io::Loop` on every target.

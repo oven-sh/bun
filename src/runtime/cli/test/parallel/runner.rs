@@ -130,7 +130,6 @@ pub(crate) fn run_as_coordinator(
             dispatched_at: 0,
             captured: Vec::new(),
             pending_lines: std::collections::VecDeque::new(),
-            draining: false,
             alive: false,
             exit_status: None,
             reap_pending: false,
@@ -174,6 +173,7 @@ pub(crate) fn run_as_coordinator(
             DEFAULT_SCALE_UP_AFTER_MS
         },
         bail: ctx.test_options.bail,
+        dots: ctx.test_options.reporters.dots,
         test_records: if ctx.test_options.reporters.junit {
             (0..n).map(|_| Default::default()).collect()
         } else {

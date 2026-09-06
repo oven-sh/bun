@@ -808,7 +808,7 @@ test("--parallel keeps each failure's error output and GitHub annotation with it
     stderr: "pipe",
     stdout: "pipe",
   });
-  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+  const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   // Every annotation is one intact line that names its test.
   const annotations = stderr.split("\n").filter(line => line.startsWith("::error "));

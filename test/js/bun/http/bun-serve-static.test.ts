@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it, mock, test } from "bun:test";
-import { isBroken, isMacOS, tempDir } from "harness";
+import { bunEnv, bunExe, isBroken, isMacOS, tempDir } from "harness";
 import { routes, static_responses } from "./bun-serve-static-helpers";
 
 describe.todoIf(isBroken && isMacOS)("static", () => {
@@ -399,6 +399,53 @@ describe("static route preconditions (RFC 9110 §13.2.2)", () => {
         ["Wednesday, 21-Oct-15 07:27:59 GMT", 412],
         ["Wed Oct 21 07:27:59 2015", 412],
       ]);
+    });
+
+    // asctime-date carries no zone token and is UTC by definition (§5.6.7).
+    // `Date.parse` reads a zone-less string in the process's local time, so
+    // the result would move with TZ. Run the check in a child under a zone
+    // with a non-zero offset.
+    it("evaluates asctime-date as UTC regardless of the process TZ", async () => {
+      using dir = tempDir("serve-asctime-tz", {
+        "fixture.mjs": `
+          import { utimesSync, writeFileSync } from "node:fs";
+          const f = "asset.txt";
+          writeFileSync(f, "hello");
+          utimesSync(f, 1768478400, 1768478400); // 2026-01-15T12:00:00Z
+          const s = Bun.serve({
+            port: 0,
+            routes: {
+              "/static": new Response("hello", { headers: { "Last-Modified": "Thu, 15 Jan 2026 12:00:00 GMT" } }),
+              "/file": Bun.file(f),
+            },
+            fetch: () => new Response("fallback", { status: 599 }),
+          });
+          const out = [];
+          for (const path of ["/static", "/file"]) {
+            for (const header of ["If-Modified-Since", "If-Unmodified-Since"]) {
+              const res = await fetch(new URL(path, s.url), { headers: { [header]: "Thu Jan 15 12:00:00 2026" } });
+              out.push([path, header, res.status]);
+            }
+          }
+          s.stop(true);
+          console.log(JSON.stringify(out));
+        `,
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "fixture.mjs"],
+        env: { ...bunEnv, TZ: "Asia/Kolkata" },
+        cwd: String(dir),
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(JSON.parse(stdout)).toEqual([
+        ["/static", "If-Modified-Since", 304],
+        ["/static", "If-Unmodified-Since", 200],
+        ["/file", "If-Modified-Since", 304],
+        ["/file", "If-Unmodified-Since", 200],
+      ]);
+      expect(exitCode).toBe(0);
     });
   });
 });

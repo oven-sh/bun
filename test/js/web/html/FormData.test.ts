@@ -320,15 +320,21 @@ describe("FormData", () => {
       'multipart/form-data; charset=x"y; boundary=abc',
       "multipart/form-data; x; boundary=abc",
     ];
+    const noBoundary = "incorrect MIME type/boundary";
     const rejects = [
       // The delimiter in the body is "--abc", not "--abc ".
-      { ct: "multipart/form-data; boundary=abc ; charset=utf-8", body: body.replaceAll("--abc", "--abc ") },
+      {
+        ct: "multipart/form-data; boundary=abc ; charset=utf-8",
+        body: body.replaceAll("--abc", "--abc "),
+        error: "missing final boundary",
+      },
       // An empty boundary is not a boundary.
       {
         ct: 'multipart/form-data; boundary=""',
         body: "--\r\n" + body.slice("--abc\r\n".length, -"--abc--\r\n".length) + "----\r\n",
+        error: noBoundary,
       },
-      { ct: "multipart/form-data; boundary= ; charset=utf-8", body },
+      { ct: "multipart/form-data; boundary= ; charset=utf-8", body, error: noBoundary },
     ];
 
     for (const C of [Response, Request] as const) {
@@ -341,8 +347,8 @@ describe("FormData", () => {
         expect([...(await make(body, ct).formData())]).toEqual([["k", "v"]]);
       });
 
-      it.each(rejects)(`${C.name}: $ct rejects`, async ({ ct, body }) => {
-        await expect(make(body, ct).formData()).rejects.toThrow();
+      it.each(rejects)(`${C.name}: $ct rejects`, async ({ ct, body, error }) => {
+        await expect(make(body, ct).formData()).rejects.toThrow(error);
       });
     }
 

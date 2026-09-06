@@ -251,6 +251,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             return Err(crate::Error::StackOverflow);
         }
 
+        // The refs of a qualified name ("a.b.c") gathered across the `.` suffixes below.
+        // `ManuallyDrop` leaves the buffer in the arena, since `Metadata::MDot` points at it.
+        let mut dot_path: Option<core::mem::ManuallyDrop<bun_alloc::ArenaVec<'a, Ref>>> = None;
+
         loop {
             match self.lexer.token {
                 T::TNumericLiteral => {
@@ -902,29 +906,32 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         let r = result
                             .as_deref_mut()
                             .expect("infallible: GET_METADATA implies Some");
-                        match r {
+                        // `Metadata` is `Copy`; `head` borrows the arena, not `r`.
+                        let (head, extends_path): (Option<&[Ref]>, bool) = match *r {
                             Metadata::MIdentifier(id_ref) => {
-                                let id_ref = *id_ref;
-                                let find_result = self.find_symbol(bun_ast::Loc::EMPTY, ident)?;
-                                let dot: &mut [Ref] =
-                                    self.arena.alloc_slice_copy(&[id_ref, find_result.r#ref]);
-                                *r = Metadata::MDot(bun_ast::StoreSlice::new_mut(dot));
+                                (Some(self.arena.alloc_slice_copy(&[id_ref])), false)
                             }
-                            Metadata::MDot(dot) => {
-                                if self.lexer.is_identifier_or_keyword() {
-                                    let find_result =
-                                        self.find_symbol(bun_ast::Loc::EMPTY, ident)?;
-                                    let old: &[Ref] = dot.slice();
-                                    let mut grown = bun_alloc::ArenaVec::<Ref>::with_capacity_in(
-                                        old.len() + 1,
+                            Metadata::MDot(dot) if self.lexer.is_identifier_or_keyword() => {
+                                (Some(dot.slice()), true)
+                            }
+                            _ => (None, false),
+                        };
+                        if let Some(head) = head {
+                            let find_result = self.find_symbol(bun_ast::Loc::EMPTY, ident)?;
+                            // A path that came from a nested type (`(a.b).c`) starts a new vec.
+                            let path = match &mut dot_path {
+                                Some(path) if extends_path => path,
+                                slot => {
+                                    let mut path = bun_alloc::ArenaVec::<Ref>::with_capacity_in(
+                                        (head.len() + 1).max(4),
                                         self.arena,
                                     );
-                                    grown.extend_from_slice(old);
-                                    grown.push(find_result.r#ref);
-                                    *r = Metadata::MDot(bun_ast::StoreSlice::from_bump(grown));
+                                    path.extend_from_slice(head);
+                                    slot.insert(core::mem::ManuallyDrop::new(path))
                                 }
-                            }
-                            _ => {}
+                            };
+                            path.push(find_result.r#ref);
+                            *r = Metadata::MDot(bun_ast::StoreSlice::new_mut(path.as_mut_slice()));
                         }
                     }
 

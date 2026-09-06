@@ -251,8 +251,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             return Err(crate::Error::StackOverflow);
         }
 
-        // The refs of a qualified name ("a.b.c") gathered across the `.` suffixes below.
-        // `ManuallyDrop` leaves the buffer in the arena, since `Metadata::MDot` points at it.
+        // Refs of a qualified name ("a.b.c"); `ManuallyDrop` keeps the buffer `MDot` points at.
         let mut dot_path: Option<core::mem::ManuallyDrop<bun_alloc::ArenaVec<'a, Ref>>> = None;
 
         loop {

@@ -40,9 +40,10 @@ describe("should not crash", async () => {
   }
 });
 
+// cwd + "/" + positional must exceed the path buffer (4096 bytes on Linux,
+// 1024 on macOS). On Windows the buffer is larger than the longest argv
+// token the OS accepts, so these only prove the error message there.
 it("rejects a template name that does not fit the path buffer instead of crashing", async () => {
-  // cwd + "/" + template must exceed PATH_MAX (4096). The local-folder lookup
-  // joins the two into a fixed path buffer.
   const template = Buffer.alloc(5000, "A").toString();
   const { stderr, exited } = spawn({
     cmd: [bunExe(), "create", template, "dst"],
@@ -56,6 +57,23 @@ it("rejects a template name that does not fit the path buffer instead of crashin
   expect(err).toContain(`error: unrecognised dependency format: create-${template}`);
   expect(await exited).toBe(1);
   expect(await exists(join(x_dir, "dst"))).toBe(false);
+});
+
+it("rejects a destination that does not fit the path buffer instead of crashing", async () => {
+  const destination = Buffer.alloc(5000, "A").toString();
+  // elysia is one of the templates that bun create handles itself (not bunx),
+  // so the destination is joined before any network request.
+  const { stderr, exited } = spawn({
+    cmd: [bunExe(), "create", "elysia", destination],
+    cwd: x_dir,
+    stdout: "pipe",
+    stdin: "ignore",
+    stderr: "pipe",
+    env,
+  });
+  const err = await stderr.text();
+  expect(err).toContain(`error: destination path too long: "${destination}"`);
+  expect(await exited).toBe(1);
 });
 
 it("should create selected template with @ prefix", async () => {

@@ -290,12 +290,19 @@ impl CreateCommand {
             positionals[1]
         };
 
-        let destination =
-            filesystem
-                .dirname_store
-                .append_slice(bun_paths::resolve_path::join_abs::<
-                    bun_paths::platform::Loose,
-                >(filesystem.top_level_dir, dirname))?;
+        let destination = {
+            let mut destination_buf = bun_paths::path_buffer_pool::get();
+            let Some(joined) = bun_paths::resolve_path::join_abs_string_buf_checked::<
+                bun_paths::platform::Loose,
+            >(filesystem.top_level_dir, &mut *destination_buf, &[dirname]) else {
+                Output::err_generic(
+                    "destination path too long: \"{}\"",
+                    format_args!("{}", bstr::BStr::new(dirname)),
+                );
+                Global::crash();
+            };
+            filesystem.dirname_store.append_slice(joined)?
+        };
 
         let mut progress = Progress {
             supports_ansi_escape_codes: Output::enable_ansi_colors_stderr(),

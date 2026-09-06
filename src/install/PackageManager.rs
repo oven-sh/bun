@@ -1472,7 +1472,8 @@ fn overlay_bunfig_install(install: &mut Api::BunInstall, bunfig: Api::BunInstall
     );
 }
 
-/// Is an ancestor `package.json` allowed to become the root of this install?
+/// Is a `package.json` found above the directory this command ran in allowed to
+/// become the root of the install?
 ///
 /// The root manifest decides which lifecycle scripts run
 /// (`trustedDependencies`), where every dependency comes from (`overrides`,
@@ -1481,17 +1482,18 @@ fn overlay_bunfig_install(install: &mut Api::BunInstall, bunfig: Api::BunInstall
 /// users can write to, `/tmp` above a `mktemp -d` build directory for example,
 /// lets one of them plant such a manifest above a project that is not theirs.
 ///
-/// So adopt an ancestor root only when the current user owns it, or when its
-/// owner also owns the project's own `package.json`. The second case keeps
+/// So use an ancestor manifest only when the current user owns it, or when its
+/// owner also owns the directory the command ran in. The second case keeps
 /// `sudo bun install` and container images, where one other user owns the whole
-/// checkout, working.
+/// checkout, working. `cwd_uid` is `None` when that directory cannot be read,
+/// which leaves the current user as the only owner bun trusts.
+///
+/// Both upward walks in [`init`] use this: the walk for the project's own
+/// manifest, and the walk for the workspace root above it.
 #[cfg(unix)]
-fn ancestor_workspace_root_is_trusted(
-    root_package_json: &bun_sys::File,
-    project_package_json_uid: u32,
-) -> bool {
-    bun_sys::fstat(root_package_json.handle)
-        .is_ok_and(|st| st.st_uid == bun_sys::c::geteuid() || st.st_uid == project_package_json_uid)
+fn ancestor_package_json_is_trusted(package_json: &bun_sys::File, cwd_uid: Option<u32>) -> bool {
+    bun_sys::fstat(package_json.handle)
+        .is_ok_and(|st| st.st_uid == bun_sys::c::geteuid() || Some(st.st_uid) == cwd_uid)
 }
 
 /// Returns `&'static mut PackageManager` — the process-singleton (held in
@@ -1587,6 +1589,18 @@ pub fn init(
     let mut workspace_name_hash: Option<PackageNameHash> = None;
     let mut root_package_json_name_at_time_of_init: Box<[u8]> = Box::default();
 
+    // The owner of the directory this command ran in. Both upward walks below compare
+    // an ancestor `package.json` against it (`ancestor_package_json_is_trusted`).
+    #[cfg(unix)]
+    let cwd_uid = {
+        let mut cwd_path_buf = bun_paths::path_buffer_pool::get();
+        cwd_path_buf[..original_cwd.len()].copy_from_slice(original_cwd);
+        cwd_path_buf[original_cwd.len()] = 0;
+        // SAFETY: NUL written above
+        let cwd_path = ZStr::from_buf(&cwd_path_buf[..], original_cwd.len());
+        bun_sys::stat(cwd_path).map(|st| st.st_uid).ok()
+    };
+
     // Step 1. Find the nearest package.json directory
     //
     // We will walk up from the cwd, trying to find the nearest package.json file.
@@ -1626,7 +1640,27 @@ pub fn init(
                     } | bun_sys::O::CLOEXEC,
                     0,
                 ) {
-                    Ok(f) => break 'child f,
+                    Ok(f) => {
+                        // This manifest becomes the project, and the install root unless a
+                        // workspace root is found above it. Above the directory the command
+                        // ran in, it has to belong to this user.
+                        #[cfg(unix)]
+                        if !strings::eql_long(this_cwd, original_cwd, true)
+                            && !ancestor_package_json_is_trusted(&f, cwd_uid)
+                        {
+                            bun_core::warn!(
+                                "another user owns <b>{}/package.json<r>, so bun ignored it",
+                                bstr::BStr::new(this_cwd),
+                            );
+                            let _ = f.close();
+                            if let Some(parent) = bun_core::dirname(this_cwd) {
+                                this_cwd = strings::without_trailing_slash(parent);
+                                continue;
+                            }
+                            break;
+                        }
+                        break 'child f;
+                    }
                     Err(e) if e.get_errno() == bun_sys::E::ENOENT => {
                         if let Some(parent) = bun_core::dirname(this_cwd) {
                             this_cwd = strings::without_trailing_slash(parent);
@@ -1701,9 +1735,6 @@ pub fn init(
         // Check if this is a workspace; if so, use root package
         if subcommand.should_chdir_to_root() {
             if !created_package_json && !no_project {
-                #[cfg(unix)]
-                let project_package_json_uid = bun_sys::fstat(child_json.handle)
-                    .map_or_else(|_| bun_sys::c::geteuid(), |st| st.st_uid);
                 while let Some(parent) = bun_core::dirname(this_cwd) {
                     let parent_without_trailing_slash = strings::without_trailing_slash(parent);
                     let mut parent_path_buf = bun_paths::path_buffer_pool::get();
@@ -1840,10 +1871,7 @@ pub fn init(
 
                             if strings::eql_long(maybe_workspace_path, path_, true) {
                                 #[cfg(unix)]
-                                if !ancestor_workspace_root_is_trusted(
-                                    &json_file,
-                                    project_package_json_uid,
-                                ) {
+                                if !ancestor_package_json_is_trusted(&json_file, cwd_uid) {
                                     bun_core::warn!(
                                         "another user owns <b>{}/package.json<r>, so bun ignored it as the workspace root",
                                         bstr::BStr::new(parent_without_trailing_slash),

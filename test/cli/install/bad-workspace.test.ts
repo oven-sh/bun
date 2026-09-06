@@ -313,51 +313,69 @@ describe.concurrent("workspaces entries longer than the path buffer", () => {
   );
 });
 
-// An ancestor package.json whose `workspaces` match the project directory becomes the root
-// of the install. That manifest decides which lifecycle scripts are trusted, where the
-// dependencies come from and which registry serves them. A directory that other local
-// users can write to, `/tmp` above a `mktemp -d` build directory for example, lets one of
-// them plant such a manifest above a project that is not theirs. So the root manifest is
-// adopted only when the current user owns it, or when its owner also owns the project's
-// own package.json.
+// `bun install` walks up from the directory it runs in twice: once for the project's own
+// package.json, and once for a package.json above it whose `workspaces` match the project.
+// Whichever it finds becomes the root of the install, and the root manifest decides which
+// lifecycle scripts are trusted, where the dependencies come from and which registry
+// serves them. A directory that other local users can write to, `/tmp` above a
+// `mktemp -d` build directory for example, lets one of them plant such a manifest above a
+// project that is not theirs. So bun uses an ancestor manifest only when the current user
+// owns it, or when its owner also owns the directory the command ran in.
 //
-// Every case needs a second uid, so the tests run as root only.
-describe("ancestor workspace root owned by another user", () => {
+// Every case needs a second uid, so these tests run as root only.
+describe("ancestor package.json owned by another user", () => {
   // "nobody" on Linux and macOS.
   const OTHER_UID = 65534;
   const notRoot = isWindows || process.getuid?.() !== 0;
 
-  // A planted root whose `workspaces` match `proj`, and a project whose own dependency is
-  // a folder with a postinstall script. That script runs only if the root manifest trusts
-  // the dependency by name.
-  const files = {
-    "package.json": JSON.stringify({ name: "planted-root", workspaces: ["proj"], trustedDependencies: ["dep"] }),
-    "proj/package.json": JSON.stringify({ name: "proj", version: "1.0.0", dependencies: { dep: "file:./dep" } }),
-    "proj/dep/package.json": JSON.stringify({
+  // A dependency that is a folder with a postinstall script. The script runs only if the
+  // root manifest trusts the dependency by name.
+  const DEP = {
+    "dep/package.json": JSON.stringify({
       name: "dep",
       version: "1.0.0",
       scripts: { postinstall: `echo ran > "$POSTINSTALL_MARKER"` },
     }),
   };
 
+  // A planted root whose `workspaces` match `proj`, above a project of its own.
+  const workspaceFiles = {
+    "package.json": JSON.stringify({ name: "planted-root", workspaces: ["proj"], trustedDependencies: ["dep"] }),
+    "proj/package.json": JSON.stringify({ name: "proj", version: "1.0.0", dependencies: { dep: "file:./dep" } }),
+    "proj/dep/package.json": DEP["dep/package.json"],
+  };
+
+  // A planted project with no `workspaces` field at all, above a directory that has no
+  // package.json of its own.
+  const noWorkspacesFiles = {
+    "package.json": JSON.stringify({
+      name: "planted-project",
+      version: "1.0.0",
+      dependencies: { dep: "file:./dep" },
+      trustedDependencies: ["dep"],
+    }),
+    ...DEP,
+    "sub/.keep": "",
+  };
+
   function marker(root: string) {
     return join(root, "postinstall-ran");
   }
 
-  function installInProject(root: string) {
-    return runInstall(join(root, "proj"), { ...bunEnv, POSTINSTALL_MARKER: marker(root) });
+  function installIn(root: string, subdirectory: string) {
+    return runInstall(join(root, subdirectory), { ...bunEnv, POSTINSTALL_MARKER: marker(root) });
   }
 
   function chownToOtherUser(path: string) {
     chownSync(path, OTHER_UID, OTHER_UID);
   }
 
-  test.skipIf(notRoot)("is ignored, and its trustedDependencies do not run a script", async () => {
-    using dir = tempDir("bad-workspace-root-other-user", files);
+  test.skipIf(notRoot)("is not the workspace root, and its trustedDependencies do not run a script", async () => {
+    using dir = tempDir("bad-workspace-root-other-user", workspaceFiles);
     const root = String(dir);
     chownToOtherUser(join(root, "package.json"));
 
-    const { stdout, stderr, exitCode } = await installInProject(root);
+    const { stdout, stderr, exitCode } = await installIn(root, "proj");
 
     expect(stderr).toContain(`another user owns ${root}/package.json`);
     expect(stdout).toContain("Blocked 1 postinstall");
@@ -369,11 +387,28 @@ describe("ancestor workspace root owned by another user", () => {
     expect(exitCode).toBe(0);
   });
 
+  // The same manifest without a `workspaces` field, found by the walk for the project's
+  // own package.json. bun reports no project instead of installing this one.
+  test.skipIf(notRoot)("is not the project either, when the directory has no package.json", async () => {
+    using dir = tempDir("bad-workspace-project-other-user", noWorkspacesFiles);
+    const root = String(dir);
+    chownToOtherUser(join(root, "package.json"));
+
+    const { stderr, exitCode } = await installIn(root, "sub");
+
+    expect(stderr).toContain(`another user owns ${root}/package.json`);
+    expect(stderr).toContain("could not find a package.json file to install from");
+    expect(existsSync(marker(root))).toBe(false);
+    expect(existsSync(join(root, "bun.lock"))).toBe(false);
+    expect(existsSync(join(root, "node_modules"))).toBe(false);
+    expect(exitCode).toBe(1);
+  });
+
   test.skipIf(notRoot)("is adopted when the current user owns it", async () => {
-    using dir = tempDir("bad-workspace-root-same-user", files);
+    using dir = tempDir("bad-workspace-root-same-user", workspaceFiles);
     const root = String(dir);
 
-    const { stdout, stderr, exitCode } = await installInProject(root);
+    const { stdout, stderr, exitCode } = await installIn(root, "proj");
 
     expect(stderr).not.toContain("another user owns");
     expect(stdout).not.toContain("Blocked");
@@ -383,14 +418,15 @@ describe("ancestor workspace root owned by another user", () => {
   });
 
   // `sudo bun install`, and container images where one other user owns the whole checkout:
-  // the root manifest and the project's own manifest have the same owner.
-  test.skipIf(notRoot)("is adopted when its owner also owns the project's package.json", async () => {
-    using dir = tempDir("bad-workspace-root-one-other-user", files);
+  // that user owns the root manifest and the directory the command ran in.
+  test.skipIf(notRoot)("is adopted when its owner also owns the directory the command ran in", async () => {
+    using dir = tempDir("bad-workspace-root-one-other-user", workspaceFiles);
     const root = String(dir);
-    chownToOtherUser(join(root, "package.json"));
-    chownToOtherUser(join(root, "proj", "package.json"));
+    for (const path of ["package.json", "proj", "proj/package.json", "proj/dep", "proj/dep/package.json"]) {
+      chownToOtherUser(join(root, path));
+    }
 
-    const { stdout, stderr, exitCode } = await installInProject(root);
+    const { stdout, stderr, exitCode } = await installIn(root, "proj");
 
     expect(stderr).not.toContain("another user owns");
     expect(stdout).not.toContain("Blocked");

@@ -32,13 +32,6 @@ unsafe extern "C" {
         arg0: &JSGlobalObject,
         js_value1: JSValue,
     ) -> *mut JSPromise;
-    /// **DEPRECATED** This function does not notify the VM about the rejection,
-    /// meaning it will not trigger unhandled rejection handling. Use
-    /// `JSC__JSPromise__rejectedPromise` instead.
-    safe fn JSC__JSPromise__rejectedPromiseValue(
-        arg0: &JSGlobalObject,
-        js_value1: JSValue,
-    ) -> JSValue;
     safe fn JSC__JSPromise__resolvedPromise(
         arg0: &JSGlobalObject,
         js_value1: JSValue,
@@ -297,21 +290,10 @@ impl JSPromise {
     pub fn rejected_promise_with_caught_exception(
         global: &JSGlobalObject,
         err: JsError,
-    ) -> Result<&mut JSPromise, JsTerminated> {
+    ) -> JsResult<&mut JSPromise> {
         let promise = Self::create(global);
         promise.reject(global, Err(err))?;
         Ok(promise)
-    }
-
-    /// **DEPRECATED** use `rejected_promise` instead.
-    ///
-    /// Create a new rejected promise without notifying the VM. Unhandled
-    /// rejections created this way will not trigger unhandled rejection handling.
-    pub fn dangerously_create_rejected_promise_value_without_notifying_vm(
-        global: &JSGlobalObject,
-        value: JSValue,
-    ) -> JSValue {
-        JSC__JSPromise__rejectedPromiseValue(global, value)
     }
 
     /// Fulfill an existing promise with the value.

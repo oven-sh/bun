@@ -872,7 +872,15 @@ pub mod semver_string {
                 return;
             }
 
-            if !self.string_pool.contains(hash) {
+            // A hash hit with different bytes is a collision, and `append` stores it too.
+            let already_pooled = match self.string_pool.get(hash) {
+                Some(existing) => {
+                    let buf: &[u8] = self.ptr.as_deref().unwrap_or(&[]);
+                    strings::eql(existing.slice(buf), slice_)
+                }
+                None => false,
+            };
+            if !already_pooled {
                 self.cap += slice_.len();
             }
         }

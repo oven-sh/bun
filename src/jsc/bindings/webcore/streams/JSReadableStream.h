@@ -64,8 +64,7 @@ public:
     // Body.textStream(): the native source adapter decodes each chunk as UTF-8
     // text before enqueue.
     bool m_nativeTextMode : 1 { false };
-    // Bun: reader release called updateRef(false) on the native source; the next
-    // reader lock calls updateRef(true). A deliberate unref() never sets this.
+    // Bun: a reader release unref'd the native source; the next reader lock re-refs it.
     bool m_nativeRefDroppedOnRelease : 1 { false };
 
     // [[reader]] — a default reader, a BYOB reader, or null (undefined).

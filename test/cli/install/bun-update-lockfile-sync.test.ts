@@ -891,9 +891,9 @@ describe.concurrent("pointing a dependency at a different package re-resolves it
     expect(await installed(dir, key)).toMatchObject({ name: "a-dep", version: "1.0.10" });
     const { workspaces, packages } = await lock(dir);
     expect(workspaces[""].dependencies).toStrictEqual({ [key]: after });
-    expect(Object.fromEntries(Object.entries(packages).map(([path, entry]) => [path, (entry as string[])[0]]))).toStrictEqual(
-      { [key]: "a-dep@1.0.10" },
-    );
+    expect(
+      Object.fromEntries(Object.entries(packages).map(([path, entry]) => [path, (entry as string[])[0]])),
+    ).toStrictEqual({ [key]: "a-dep@1.0.10" });
     await expectInSync(dir, [""], { reinstall: true });
   });
 });

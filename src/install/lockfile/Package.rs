@@ -1589,7 +1589,8 @@ impl Diff {
                     if (from_res_id as usize) < from_lockfile.packages.len() {
                         let from_pkg_resolution =
                             from_lockfile.packages.items_resolution()[from_res_id as usize];
-                        let from_pkg_name = from_lockfile.packages.items_name()[from_res_id as usize];
+                        let from_pkg_name =
+                            from_lockfile.packages.items_name()[from_res_id as usize];
                         let to_dep = &to_deps!()[cur_to_i];
                         if to_dep.version.tag == dependency::version::Tag::Npm
                             && from_pkg_resolution.tag == ResolutionTag::Npm

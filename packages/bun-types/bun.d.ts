@@ -6536,11 +6536,20 @@ declare module "bun" {
     ref(): void;
 
     /**
-     * Set a timeout until the socket automatically closes.
+     * Set an idle timeout for the socket.
+     *
+     * When the timeout elapses, the `timeout` handler is called. The socket is
+     * not closed. Call `end()`, `close()`, or `terminate()` from the handler to
+     * close it.
+     *
+     * The timer has a granularity of 4 seconds. The handler runs on a 4 second
+     * tick, so the real delay is up to 4 seconds shorter or up to 3 seconds
+     * longer than `seconds`. `timeout(1)` fires at the next tick, which is
+     * between 0 and 4 seconds away. Pass `0` to disable the timeout.
      *
      * To reset the timeout, call this function again.
      *
-     * When a timeout happens, the `timeout` callback is called and the socket is closed.
+     * @param seconds The timeout in seconds.
      */
     timeout(seconds: number): void;
 
@@ -6557,23 +6566,29 @@ declare module "bun" {
     terminate(): void;
 
     /**
-     * Shuts down the write-half or both halves of the connection.
-     * This allows the socket to enter a half-closed state where it can still receive data
-     * but can no longer send data (`halfClose = true`), or close both read and write
-     * (`halfClose = false`, similar to `end()` but potentially more immediate depending on OS).
-     * Calls the `shutdown(2)` syscall internally.
+     * Shuts down one half of the connection with the `shutdown(2)` syscall.
      *
-     * @param halfClose If `true`, only shuts down the write side (allows receiving). If `false` or omitted, shuts down both read and write. Defaults to `false`.
+     * With no argument (or `false`), this shuts down the write side. The peer
+     * receives a FIN. The socket can still receive data, and `write()` returns
+     * `-1` from then on. This is the half-close that `end()` in `node:net`
+     * performs.
+     *
+     * With `true`, this shuts down the read side instead. The socket stops
+     * receiving data. The kernel reports end of file on the next read, so the
+     * `end` handler is called. Unless the socket was created with
+     * `allowHalfOpen: true`, it is then closed in full.
+     *
+     * @param shutdownRead If `true`, shut down the read side. If `false` or omitted, shut down the write side. Defaults to `false`.
      * @example
      * ```ts
-     * // Stop sending data, but allow receiving
-     * socket.shutdown(true);
-     *
-     * // Shutdown both reading and writing
+     * // Stop sending data, but keep receiving
      * socket.shutdown();
+     *
+     * // Stop receiving data
+     * socket.shutdown(true);
      * ```
      */
-    shutdown(halfClose?: boolean): void;
+    shutdown(shutdownRead?: boolean): void;
 
     /**
      * The ready state of the socket.

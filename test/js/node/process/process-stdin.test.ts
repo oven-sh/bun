@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isASAN, isDebug, isWindows, tempDir } from "harness";
 import { exec } from "node:child_process";
+import { closeSync, openSync } from "node:fs";
 
 test.concurrent("pipe does the right thing", async () => {
   // Note: Bun.spawnSync uses memfd_create on Linux for pipe, which means we see
@@ -418,6 +419,38 @@ test.concurrent("pause() and resume() churn while data is in flight never destro
   const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
   expect(stdout.trim()).toBe(`TOTAL ${20 * 1024}`);
   expect(exitCode).toBe(0);
+});
+
+// Windows cannot hand a directory handle to a child as stdin.
+test.skipIf(isWindows)("process.stdin ends when fd 0 is a directory, like node", async () => {
+  using dir = tempDir("stdin-directory", {});
+  const dirFd = openSync(String(dir), "r");
+  try {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const events = [];
+        process.stdin
+          .on("error", e => events.push("error:" + e.code))
+          .on("end", () => events.push("end"))
+          .on("close", () => events.push("close"))
+          .resume();
+        console.log(process.stdin.isTTY, process.stdin.fd);
+        process.on("exit", () => console.log(events.join(",")));`,
+      ],
+      stdin: dirFd,
+      stdout: "pipe",
+      stderr: "pipe",
+      env: bunEnv,
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe("undefined 0\nend,close\n");
+    expect(exitCode).toBe(0);
+  } finally {
+    closeSync(dirFd);
+  }
 });
 
 // The native FileReader source over a pollable pipe used to drain the fd to

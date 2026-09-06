@@ -26,108 +26,100 @@ function nested(depth: number): string {
 const NESTED_FN = `const nested = d => Buffer.alloc(d, "[").toString() + "1" + Buffer.alloc(d, "]").toString();`;
 
 describe("deeply nested define value does not overflow the stack", () => {
-  for (const depth of [700, 1000, 1300, 5000, 20000, 30000]) {
-    test.concurrent(`Bun.Transpiler, depth ${depth}`, async () => {
-      await using proc = Bun.spawn({
-        cmd: [
-          bunExe(),
-          "-e",
-          `${NESTED_FN}
+  test.concurrent.each([700, 1000, 1300, 5000, 20000, 30000])("Bun.Transpiler, depth %d", async depth => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `${NESTED_FN}
           try {
             new Bun.Transpiler({ define: { DEEPX: nested(${depth}) } });
             console.log("ok");
           } catch (e) {
             console.log("error: " + e.message);
           }`,
-        ],
-        env: bunEnv,
-        stdout: "pipe",
-        stderr: "pipe",
-      });
-      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      expect(proc.signalCode).toBeNull();
-      expect(stdout).toMatch(/^(ok|error: StackOverflow Failed to load define)\n$/);
-      expect(stderr).toBe("");
-      expect(exitCode).toBe(0);
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
     });
-  }
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(proc.signalCode).toBeNull();
+    expect(stdout).toMatch(/^(ok|error: StackOverflow Failed to load define)\n$/);
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+  });
 
-  for (const depth of [200, 250, 300, 3000, 5000]) {
-    test.concurrent(`Bun.build, depth ${depth}`, async () => {
-      using dir = tempDir("define-deep-nesting-build", {
-        "entry.ts": `console.log("ran");`,
-      });
-      await using proc = Bun.spawn({
-        cmd: [
-          bunExe(),
-          "-e",
-          `${NESTED_FN}
+  test.concurrent.each([200, 250, 300, 3000, 5000])("Bun.build, depth %d", async depth => {
+    using dir = tempDir("define-deep-nesting-build", {
+      "entry.ts": `console.log("ran");`,
+    });
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `${NESTED_FN}
           const result = await Bun.build({
             entrypoints: ["./entry.ts"],
             define: { DEEPX: nested(${depth}) },
             throw: false,
           });
           console.log(result.success ? "ok" : "error: " + result.logs.map(String).join("\\n"));`,
-        ],
-        env: bunEnv,
-        cwd: String(dir),
-        stdout: "pipe",
-        stderr: "pipe",
-      });
-      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      expect(proc.signalCode).toBeNull();
-      expect(stdout).toMatch(new RegExp(`^(ok|error: BuildMessage: ${TOO_DEEP})\n$`));
-      expect(stderr).toBe("");
-      expect(exitCode).toBe(0);
+      ],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
     });
-  }
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(proc.signalCode).toBeNull();
+    expect(stdout).toMatch(new RegExp(`^(ok|error: BuildMessage: ${TOO_DEEP})\n$`));
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+  });
 
   // Windows caps a command line at 32K characters, so the largest depth for
   // the flag stays below that. `bunfig.toml` carries the bigger values.
-  for (const depth of [800, 1400, 12000]) {
-    test.concurrent(`bun run --define, depth ${depth}`, async () => {
-      using dir = tempDir("define-deep-nesting-cli", {
-        "entry.ts": `console.log("ran");`,
-      });
-      await using proc = Bun.spawn({
-        cmd: [bunExe(), "--define", `DEEPX=${nested(depth)}`, "./entry.ts"],
-        env: bunEnv,
-        cwd: String(dir),
-        stdout: "pipe",
-        stderr: "pipe",
-      });
-      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      expect(proc.signalCode).toBeNull();
-      if (exitCode === 0) {
-        expect(stdout).toBe("ran\n");
-      } else {
-        expect(stderr).toContain(TOO_DEEP);
-        expect(exitCode).toBe(1);
-      }
+  test.concurrent.each([800, 1400, 12000])("bun run --define, depth %d", async depth => {
+    using dir = tempDir("define-deep-nesting-cli", {
+      "entry.ts": `console.log("ran");`,
     });
-  }
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "--define", `DEEPX=${nested(depth)}`, "./entry.ts"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(proc.signalCode).toBeNull();
+    if (exitCode === 0) {
+      expect(stdout).toBe("ran\n");
+    } else {
+      expect(stderr).toContain(TOO_DEEP);
+      expect(exitCode).toBe(1);
+    }
+  });
 
-  for (const depth of [1100, 20000]) {
-    test.concurrent(`bunfig.toml [define], depth ${depth}`, async () => {
-      using dir = tempDir("define-deep-nesting-bunfig", {
-        "entry.ts": `console.log("ran");`,
-        "bunfig.toml": `[define]\n"DEEPX" = '${nested(depth)}'\n`,
-      });
-      await using proc = Bun.spawn({
-        cmd: [bunExe(), "./entry.ts"],
-        env: bunEnv,
-        cwd: String(dir),
-        stdout: "pipe",
-        stderr: "pipe",
-      });
-      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      expect(proc.signalCode).toBeNull();
-      if (exitCode === 0) {
-        expect(stdout).toBe("ran\n");
-      } else {
-        expect(stderr).toContain(TOO_DEEP);
-        expect(exitCode).toBe(1);
-      }
+  test.concurrent.each([1100, 20000])("bunfig.toml [define], depth %d", async depth => {
+    using dir = tempDir("define-deep-nesting-bunfig", {
+      "entry.ts": `console.log("ran");`,
+      "bunfig.toml": `[define]\n"DEEPX" = '${nested(depth)}'\n`,
     });
-  }
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "./entry.ts"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(proc.signalCode).toBeNull();
+    if (exitCode === 0) {
+      expect(stdout).toBe("ran\n");
+    } else {
+      expect(stderr).toContain(TOO_DEEP);
+      expect(exitCode).toBe(1);
+    }
+  });
 });

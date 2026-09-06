@@ -608,7 +608,7 @@ describe.concurrent("bun install config precedence", () => {
     const { stderr, exitCode } = await install(String(dir), [], { BUN_INSTALL_CACHE_DIR: undefined });
     expect(stderr).not.toContain("error:");
     expect(readdirSync(join(String(dir), "bunfig-cache")).filter(name => name.startsWith("no-deps@"))).toStrictEqual([
-      "no-deps@1.0.0@@localhost@@@1",
+      registry.cacheFolderName("no-deps", "1.0.0"),
     ]);
     expect(existsSync(join(String(dir), "npmrc-cache"))).toBe(false);
     expect(installed(String(dir), "no-deps")).toBe(true);

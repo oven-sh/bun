@@ -1417,6 +1417,11 @@ impl<'a> PackageInstaller<'a> {
                     pkg_name.slice(string_buf!()),
                     resolution.npm().version,
                     patch_contents_hash,
+                    package_manager::npm_cache_key_for_package(
+                        self.lockfile(),
+                        package_id,
+                        resolution,
+                    ),
                 );
                 installer.cache_dir = package_manager::get_cache_directory(self.manager_mut());
             }

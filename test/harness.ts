@@ -1970,6 +1970,19 @@ export class VerdaccioRegistry {
     return `http://localhost:${this.port}/`;
   }
 
+  /**
+   * The extraction cache folder of a package served by this registry:
+   * `<name>@<version>@@localhost__<hex>@@@1`, where `hex` is the first 8
+   * bytes of the sha512 digest of `<packagesPath>/<name>/<name>-<version>.tgz`.
+   * Packages from registry.npmjs.org use `<name>@<version>@@@1` instead.
+   */
+  cacheFolderName(name: string, version: string) {
+    const basename = name.startsWith("@") ? name.slice(name.indexOf("/") + 1) : name;
+    const tarball = fs.readFileSync(join(this.packagesPath, name, `${basename}-${version}.tgz`));
+    const digest = new Bun.CryptoHasher("sha512").update(tarball).digest();
+    return `${name}@${version}@@localhost__${digest.subarray(0, 8).toHex()}@@@1`;
+  }
+
   stop() {
     rmSync(join(dirname(this.configPath), "htpasswd"), { force: true });
     this.process?.kill(0);

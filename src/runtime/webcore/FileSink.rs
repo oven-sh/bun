@@ -1646,10 +1646,9 @@ impl FileSink {
     }
 
     /// Pump `stream` into this sink. `Ok(UNDEFINED)` when the native fast-path took the stream,
-    /// `Ok(promise)` for a JS pump still in flight (the sink settles itself through `then`).
-    /// `Err` when the pump cannot start: the stream is already cancelled and the writer closed, and
-    /// the pump's rejection reason is the pending exception, so the caller throws it instead of the
-    /// reason escaping as an unhandled rejection nothing can catch.
+    /// `Ok(promise)` for a JS pump. A pump still in flight settles the sink through `then`. A pump
+    /// that already failed comes back as a rejected promise marked handled, with the sink torn down,
+    /// so the caller can throw its reason. `Err` when the pump could not be created at all.
     pub fn assign_to_stream(
         &mut self,
         stream: &mut ReadableStream,
@@ -1743,15 +1742,15 @@ impl FileSink {
                     }
                     bun_jsc::js_promise::Status::Rejected => {
                         // The pump failed before it returned (the source errored in start(), or
-                        // the first chunk was not bytes). Nothing holds this promise, so take its
-                        // rejection here: mark it handled and hand the reason to the caller.
+                        // the first chunk was not bytes). Nothing else holds this promise: mark
+                        // it handled here and return it, so the caller can read the reason and
+                        // rethrow it instead of the VM reporting an unhandled rejection.
                         // These don't ref().
                         // SAFETY: `js_promise` is non-null (`as_any_promise`).
                         let result = unsafe { (*js_promise).result(global_this.vm()) };
                         // SAFETY: same cell as above.
                         unsafe { (*js_promise).set_handled() };
                         self.handle_reject_stream(global_this, result)?;
-                        return Err(global_this.throw_value(result));
                     }
                 }
             }

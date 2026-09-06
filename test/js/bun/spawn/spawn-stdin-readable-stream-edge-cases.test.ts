@@ -11,7 +11,7 @@
 
 import { spawn } from "bun";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, isWindows } from "harness";
 
 describe("spawn stdin ReadableStream edge cases", () => {
   test("ReadableStream with exception in pull", async () => {
@@ -427,6 +427,45 @@ describe("spawn stdin ReadableStream edge cases", () => {
     expect(exitCode).toBe(0);
   });
 
+  test.skipIf(isWindows)("a spawn that throws on its stdin stream kills and reaps the child", async () => {
+    let onExitCalls = 0;
+    const stream = new ReadableStream({
+      start(controller) {
+        controller.enqueue(new Uint8Array(2));
+        controller.enqueue(42);
+        controller.close();
+      },
+    });
+
+    expect(() => {
+      spawn({
+        cmd: ["sleep", "5"],
+        stdin: stream,
+        stdout: "ignore",
+        stderr: "ignore",
+        onExit() {
+          onExitCalls++;
+        },
+      });
+    }).toThrow("write() expects a string, ArrayBufferView, or ArrayBuffer");
+
+    const listChildren = () =>
+      Bun.spawnSync(["ps", "-ax", "-o", "pid=,ppid=,stat=,comm="])
+        .stdout.toString()
+        .split("\n")
+        .map(line => line.trim().split(/\s+/))
+        .filter(([, ppid, , comm]) => ppid === String(process.pid) && comm === "sleep");
+
+    const deadline = Date.now() + 2000;
+    let children = listChildren();
+    while (children.length > 0 && Date.now() < deadline) {
+      await Bun.sleep(20);
+      children = listChildren();
+    }
+    expect(children).toEqual([]);
+    expect(onExitCalls).toBe(0);
+  });
+
   test("ReadableStream with byte stream", async () => {
     const data = new Uint8Array(256);
     for (let i = 0; i < 256; i++) {
@@ -551,25 +590,27 @@ describe("spawn stdin ReadableStream edge cases", () => {
       { stdout: "pipe", stderr: "inherit" },
     ];
 
-    for (const config of configs) {
-      const stream = new ReadableStream({
-        async pull(controller) {
-          await Bun.sleep(0);
-          controller.enqueue("test input");
-          controller.close();
-        },
-      });
+    // Run the configs at once: three sequential debug-build children do not fit the per-test budget.
+    const results = await Promise.all(
+      configs.map(async config => {
+        const stream = new ReadableStream({
+          async pull(controller) {
+            await Bun.sleep(0);
+            controller.enqueue("test input");
+            controller.close();
+          },
+        });
 
-      const proc = spawn({
-        cmd: [bunExe(), "-e", "process.stdin.pipe(process.stdout)"],
-        stdin: stream,
-        ...config,
-        env: bunEnv,
-      });
+        const proc = spawn({
+          cmd: [bunExe(), "-e", "process.stdin.pipe(process.stdout)"],
+          stdin: stream,
+          ...config,
+          env: bunEnv,
+        });
 
-      const stdout = await proc.stdout.text();
-      expect(stdout).toBe("test input");
-      expect(await proc.exited).toBe(0);
-    }
+        return [await proc.stdout.text(), await proc.exited];
+      }),
+    );
+    expect(results).toEqual(configs.map(() => ["test input", 0]));
   });
 });

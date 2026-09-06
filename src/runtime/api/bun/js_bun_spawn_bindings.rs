@@ -1778,6 +1778,23 @@ fn spawn_maybe_sync(
                     .on_subprocess_spawn(NonNull::new_unchecked(subprocess.process.as_ptr()))
             };
         }
+
+        // The stdin pump already failed (locked stream, start() errored, non-byte chunk). The
+        // child is watched, so it is reaped on exit. Kill it and throw the pump's reason: the
+        // caller gets the error from Bun.spawn, not from the unhandled rejection handler.
+        if let Some(promise) = promise_for_stream.as_promise() {
+            // SAFETY: `as_promise` returned a live cell held by `promise_for_stream`.
+            let promise = unsafe { &mut *promise };
+            if promise.status() == jsc::js_promise::Status::Rejected {
+                let reason = promise.result(global_this.vm());
+                // The caller never receives this Subprocess, so none of its callbacks may run.
+                let _ = Subprocess::js::on_exit_callback_take_cached(out, global_this);
+                let _ = Subprocess::js::on_disconnect_callback_take_cached(out, global_this);
+                let _ = Subprocess::js::ipc_callback_take_cached(out, global_this);
+                let _ = subprocess.try_kill(subprocess.kill_signal);
+                return Err(global_this.throw_value(reason));
+            }
+        }
         return Ok(out);
     }
 

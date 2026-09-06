@@ -40,6 +40,10 @@ expectAssignable<Bun.ZlibCompressionOptions>({ windowBits: -11 });
 // Other
 expectType<Promise<number>>(Bun.write("test.json", "lol"));
 expectType<Promise<number>>(Bun.write("test.json", new ArrayBuffer(32)));
+expectType<Promise<number>>(Bun.write("test.json", "lol", { createPath: false, mode: 0o600 }));
+expectType<Promise<number>>(Bun.file("test.json").write("lol", { createPath: false }));
+// @ts-expect-error BunFile.write() does not read highWaterMark
+Bun.file("test.json").write("lol", { highWaterMark: 1024 });
 expectType<URL>(Bun.pathToFileURL("/foo/bar.txt"));
 expectType<string>(Bun.fileURLToPath(new URL("file:///foo/bar.txt")));
 

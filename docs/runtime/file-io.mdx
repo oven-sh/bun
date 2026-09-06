@@ -78,9 +78,9 @@ await Bun.file("logs.json").delete();
 
 ## Writing files (`Bun.write()`)
 
-`Bun.write(destination, data): Promise<number>`
+`Bun.write(destination, data, options?): Promise<number>`
 
-The `Bun.write` function is a multi-tool for writing payloads of all kinds to disk.
+The `Bun.write` function is a multi-tool for writing payloads of all kinds to disk. It resolves with the number of bytes written.
 
 The first argument is the `destination`, which can be any of the following:
 
@@ -152,6 +152,29 @@ const response = await fetch("https://bun.com");
 await Bun.write("index.html", response);
 ```
 
+By default, `Bun.write` creates the destination's parent directories if they do not exist. Pass `createPath: false` to get an `ENOENT` error instead.
+
+```ts
+await Bun.write("out/nested/dir/file.txt", "data"); // creates out/nested/dir/
+await Bun.write("out/other/file.txt", "data", { createPath: false }); // rejects with ENOENT
+```
+
+### Overwriting an existing file
+
+When the destination is a path or a `Bun.file(path)`, `Bun.write` replaces the file's contents: after the write, the file holds exactly the bytes of `data`, even if it was longer before. The file is written in place, so it keeps its inode, hard links, and permissions.
+
+When the destination is a file descriptor (`Bun.file(fd)`), `Bun.write` writes at the descriptor's current position and does not truncate the file. Open the descriptor with the flags you need (for example `"a"` to append) and close it yourself.
+
+`Bun.write` is not atomic. Another process can observe a partially written file, and two writes to the same path at the same time can interleave their bytes. This is not specific to Bun. It is how writes to a shared path work. When readers must never see a partial file, write to a temporary path in the same directory and rename it over the destination:
+
+```ts
+import { rename } from "node:fs/promises";
+
+const tmp = `config.json.${process.pid}.tmp`;
+await Bun.write(tmp, JSON.stringify(config));
+await rename(tmp, "config.json"); // atomic on the same filesystem
+```
+
 ---
 
 ## Incremental writing with `FileSink`
@@ -161,6 +184,18 @@ Bun provides a native incremental file writing API called `FileSink`. To retriev
 ```ts
 const file = Bun.file("output.txt");
 const writer = file.writer();
+```
+
+Calling `.writer()` opens the file right away, and creates it if it does not exist (the parent directory must exist). Writing starts at the beginning of the file. `FileSink` has no append mode. To append, open the file in append mode with `node:fs` and create the writer from the file descriptor:
+
+```ts
+import { openSync, closeSync } from "node:fs";
+
+const fd = openSync("app.log", "a");
+const writer = Bun.file(fd).writer();
+writer.write("one more line\n");
+await writer.end();
+closeSync(fd); // the writer does not close a descriptor that you opened
 ```
 
 To incrementally write to the file, call `.write()`.
@@ -280,6 +315,10 @@ interface Bun {
   write(
     destination: string | number | BunFile | URL,
     input: string | Blob | ArrayBuffer | SharedArrayBuffer | TypedArray | Response,
+    options?: {
+      createPath?: boolean; // default true
+      mode?: number;
+    },
   ): Promise<number>;
 }
 
@@ -292,6 +331,10 @@ interface BunFile {
   arrayBuffer(): Promise<ArrayBuffer>;
   json(): Promise<any>;
   bytes(): Promise<Uint8Array>;
+  write(
+    input: string | Blob | ArrayBuffer | SharedArrayBuffer | TypedArray | Response,
+    options?: { createPath?: boolean },
+  ): Promise<number>;
   writer(params?: { highWaterMark?: number }): FileSink;
   exists(): Promise<boolean>;
   delete(): Promise<void>;

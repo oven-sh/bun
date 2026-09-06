@@ -35,8 +35,8 @@ async function install(files: Record<string, string>, args: string[], env: Recor
     cmd: [bunExe(), "install", ...args],
     cwd: String(dir),
     env: { ...bunEnv, BUN_INSTALL_CACHE_DIR: join(String(dir), "cache"), ...env },
-    stdout: "pipe",
-    stderr: "pipe",
+    stdout: "ignore",
+    stderr: "ignore",
   });
   return await proc.exited;
 }

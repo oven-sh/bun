@@ -189,14 +189,20 @@ pub mod api {
             }
             let username = url.username();
             let password = url.password();
+            if username.is_empty() && password.is_empty() {
+                // Kept as written: `.npmrc` `//host/` credential keys are matched against
+                // these bytes, and `Scope::set_url` normalizes the href later.
+                return Some(NpmRegistry {
+                    url: Box::from(str),
+                    ..Default::default()
+                });
+            }
+            // The serialized href is `scheme://user:pass@host...`; the credentials have every
+            // `@` of their own encoded, so the first one ends them.
             let mut href = url.href().to_owned_slice();
-            if !username.is_empty() || !password.is_empty() {
-                // The serialized href is `scheme://user:pass@host...`; the credentials have
-                // every `@` of their own encoded, so the first one ends them.
-                let authority = bun_core::strings::index_of(&href, b"://").map_or(0, |i| i + 3);
-                if let Some(at) = bun_core::strings::index_of_char_usize(&href[authority..], b'@') {
-                    href.drain(authority..=authority + at);
-                }
+            let authority = bun_core::strings::index_of(&href, b"://").map_or(0, |i| i + 3);
+            if let Some(at) = bun_core::strings::index_of_char_usize(&href[authority..], b'@') {
+                href.drain(authority..=authority + at);
             }
             let mut registry = NpmRegistry {
                 url: href.into_boxed_slice(),

@@ -86,7 +86,6 @@ describe("bundler", () => {
             throw err[0];
           return res;
         };
-        var __promiseAll = (args) => Promise.all(args);
 
         // StoreDependencyAsync.ts
         var somePromise;
@@ -127,7 +126,7 @@ describe("bundler", () => {
         }
         var depValue, formValue, listValue;
         var init_BaseElement = __esm(async () => {
-          await __promiseAll([
+          await Promise.all([
             init_StoreDependency(),
             init_BaseElementImport()
           ]);
@@ -142,7 +141,7 @@ describe("bundler", () => {
 
         // AsyncEntryPoint.ts
         async function AsyncEntryPoint() {
-          await Promise.resolve().then(() => init_BaseElement());
+          await (init_BaseElement() || Promise.resolve().then(() => init_BaseElement()));
           console.log("Launching AsyncEntryPoint", BaseElement());
         }
 
@@ -150,7 +149,7 @@ describe("bundler", () => {
         await Promise.resolve();
         AsyncEntryPoint();
 
-        //# debugId=249E30032625FC7A64756E2164756E21
+        //# debugId=721434D005877A6764756E2164756E21
         //# sourceMappingURL=out.js.map
         "
       `);

@@ -109,6 +109,55 @@ describe.concurrent("Server", () => {
     expect(received).toEqual(expected);
   });
 
+  test("upgrade(), timeout() and requestIP() throw for a Request that another server received", async () => {
+    const events: string[] = [];
+    const websocket = (name: string) => ({
+      open(ws: ServerWebSocket) {
+        events.push(name + ".open");
+        ws.close();
+      },
+      message() {},
+    });
+    using other = Bun.serve({ port: 0, fetch: () => new Response("other"), websocket: websocket("other") });
+    const { promise: results, resolve } = Promise.withResolvers<Record<string, string>>();
+    using server = Bun.serve({
+      port: 0,
+      websocket: websocket("server"),
+      fetch(req, server) {
+        const result: Record<string, string> = {};
+        const calls = {
+          upgrade: (s: Server) => s.upgrade(req),
+          timeout: (s: Server) => s.timeout(req, 10),
+          requestIP: (s: Server) => s.requestIP(req),
+        };
+        for (const [name, call] of Object.entries(calls)) {
+          try {
+            call(other);
+            result[name] = "did not throw";
+          } catch (e) {
+            result[name] = (e as Error).message;
+          }
+        }
+        result.ownRequestIP = typeof server.requestIP(req)?.address;
+        server.timeout(req, 10);
+        result.ownUpgrade = String(server.upgrade(req));
+        resolve(result);
+      },
+    });
+    const ws = new WebSocket(`ws://127.0.0.1:${server.port}/`);
+    const { promise: closed, resolve: onClose } = Promise.withResolvers<void>();
+    ws.onclose = () => onClose();
+    expect(await results).toEqual({
+      upgrade: "upgrade() must be called on the same server that received the request",
+      timeout: "timeout() must be called on the same server that received the request",
+      requestIP: "requestIP() must be called on the same server that received the request",
+      ownRequestIP: "string",
+      ownUpgrade: "true",
+    });
+    await closed;
+    expect(events).toEqual(["server.open"]);
+  });
+
   test("should not allow Bun.serve without first argument being a object", () => {
     expect(() => {
       //@ts-ignore

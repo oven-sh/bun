@@ -1,11 +1,6 @@
 {
   "configurations": [
     {
-      // Everything — bun's C++, JavaScriptCore/WTF/bmalloc, ICU and the other
-      // vendored deps — is compiled in one graph, so the build's compile
-      // database has the exact flags and include paths for every file,
-      // generated headers included. `bun run build:local` writes the same to
-      // build/debug-local/.
       "name": "Debug",
       "compileCommands": "${workspaceFolder}/build/debug/compile_commands.json",
       "browse": {

@@ -446,19 +446,19 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
   const windowsRes = cfg.windows ? [emitWindowsResources(n, cfg)] : [];
 
   // Full link.
-  // Order in `$in`: bun's own objects, the dependencies' objects (lazy — see
-  // LinkOpts.lazyObjects: each is taken only if referenced, which on Windows
-  // is what keeps an uncalled asm object out of bun.exe), the Rust staticlib,
-  // then the dependency archives. C++ objects create the `Bun__*` undefined
-  // refs, the Rust archive satisfies them (and `main`, via crt1.o) and in
-  // turn references JSC/WTF, which the dep objects/libs satisfy. Every
+  // Order in `$in`: bun's own objects, the dependencies' objects (assembler
+  // output among them lazy — see lazyDepObjects), the Rust staticlib, then
+  // the dependency archives. C++ objects create the `Bun__*` undefined refs,
+  // the Rust archive satisfies them (and `main`, via crt1.o) and in turn
+  // references JSC/WTF, which the dep objects/libs satisfy. Every
   // `#[no_mangle]` export the C++ side touches is reached transitively from
   // those roots, so no `--whole-archive` wrapping is needed; if a member ever
   // isn't, `rustLinkFlags()` in rust.ts is the wrapping helper.
   const linkObjects = [...allObjects, ...rustObjects, ...windowsRes];
   const ldflags = [...flags.ldflags, ...systemLibs(cfg), ...shims.ldflags];
-  const exe = link(n, cfg, exeName, [...cxxObjects, ...cObjects, ...windowsRes], {
-    lazyObjects: depObjects,
+  const deps_ = lazyDepObjects(cfg, depObjects);
+  const exe = link(n, cfg, exeName, [...cxxObjects, ...cObjects, ...deps_.eager, ...windowsRes], {
+    lazyObjects: deps_.lazy,
     libs: [...rustObjects, ...depLibs],
     flags: ldflags,
     implicitInputs: [...linkImplicitInputs(cfg), ...shims.implicitInputs],
@@ -483,6 +483,24 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
     objects: [...allObjects, ...sideObjects],
     ...(testFFI !== undefined && { testFFI }),
   };
+}
+
+/**
+ * Split a link's dependency objects into the ones passed eagerly and the ones
+ * the linker may leave out (LinkOpts.lazyObjects). On COFF the lazy ones are
+ * the assembler-produced objects: their sections are not COMDATs, so /OPT:REF
+ * cannot drop them and one nothing calls (BoringSSL's AES-GCM-SIV) would ship
+ * whole. Compiled objects stay eager there — /OPT:REF already drops their
+ * unreferenced COMDATs, and with every JSC/ICU object lazy (bitcode, under
+ * LTO) testFFI's link left the MSVC STL members the CRT pulls in late
+ * without the header-inline definitions those objects carry. Elsewhere the
+ * distinction is moot (ELF/Mach-O dead-strip per section) and everything
+ * rides as lazyObjects, i.e. after bun's objects in $in as before.
+ */
+function lazyDepObjects(cfg: Config, depObjects: string[]): { eager: string[]; lazy: string[] } {
+  if (!cfg.windows) return { eager: [], lazy: depObjects };
+  const isAssemblerOutput = (obj: string) => /\.(asm|S)\.obj$/i.test(obj);
+  return { eager: depObjects.filter(o => !isAssemblerOutput(o)), lazy: depObjects.filter(isAssemblerOutput) };
 }
 
 function registerBkUploadRules(n: Ninja, cfg: Config): void {
@@ -961,8 +979,9 @@ function emitJscProgram(
     }),
   );
   const shims = emitShims(n, cfg);
-  const exe = link(n, cfg, name, objects, {
-    lazyObjects: [...fromDep("WebKit"), ...fromDep("icu"), ...fromDep("mimalloc")],
+  const deps_ = lazyDepObjects(cfg, [...fromDep("WebKit"), ...fromDep("icu"), ...fromDep("mimalloc")]);
+  const exe = link(n, cfg, name, [...objects, ...deps_.eager], {
+    lazyObjects: deps_.lazy,
     libs: [],
     // Debug info stripped at link: nothing symbolizes these, and with full
     // DWARF testFFI is 0.5 GB on the non-LTO lanes' artifacts. (Windows never

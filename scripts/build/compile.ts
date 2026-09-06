@@ -450,11 +450,12 @@ export interface LinkOpts {
    * Objects the link may take or leave: each is pulled in only if it defines
    * a symbol something else references — a static library's semantics, minus
    * the archive (lld's `--start-lib … --end-lib` / `/start-lib … /end-lib`).
-   * bun.ts passes the dependencies' objects here. It matters on COFF, whose
-   * linkers discard unreferenced code only at COMDAT granularity: an object
-   * nothing calls (BoringSSL's AES-GCM-SIV asm, unused on Windows by design)
-   * would otherwise be linked whole. ELF and Mach-O dead-strip per section,
-   * so there these simply follow `objects` in `$in`.
+   * bun.ts passes dependency objects here (lazyDepObjects). It matters on
+   * COFF, whose linkers discard unreferenced code only at COMDAT granularity:
+   * an assembler-produced object nothing calls (BoringSSL's AES-GCM-SIV asm,
+   * unused on Windows by design) would otherwise be linked whole. ELF and
+   * Mach-O dead-strip per section, so there these simply follow `objects` in
+   * `$in`.
    */
   lazyObjects?: string[];
   /** Linker flags. */

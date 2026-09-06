@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
+import path from "node:path";
 
 // tsconfig "jsx": "react-jsx" selects the production automatic runtime (jsx/jsxs),
 // "react-jsxdev" selects the development runtime (jsxDEV), matching TypeScript/esbuild.
@@ -209,6 +210,93 @@ describe("tsconfig compilerOptions.jsx", () => {
       runtimeImportSource: buildImportSource!,
       runExitCode: 0,
       buildExitCode: 0,
+    });
+  });
+
+  // Two packages with their own tsconfig, each with a `paths` alias and a
+  // jsxImportSource, one importing the other. `paths` was already resolved per
+  // file; jsxImportSource has to be too, so both markers agree with `bun build`
+  // from any cwd, including one that has no tsconfig of its own but whose
+  // parent does (packages/a/src).
+  describe("cross-package matrix", () => {
+    const runtime = (name: string) => ({
+      [`node_modules/${name}/package.json`]: JSON.stringify({
+        name,
+        version: "1.0.0",
+        type: "module",
+        exports: { "./jsx-runtime": "./rt.js", "./jsx-dev-runtime": "./rt.js" },
+      }),
+      [`node_modules/${name}/rt.js`]: `
+        export const Fragment = Symbol.for("F");
+        export const jsx = () => ${JSON.stringify(name)};
+        export const jsxs = jsx;
+        export const jsxDEV = jsx;
+      `,
+    });
+    const tsconfig = (jsxImportSource: string, pathsDir: string) =>
+      JSON.stringify({
+        compilerOptions: { jsx: "react-jsx", jsxImportSource, baseUrl: ".", paths: { "@m/*": [`${pathsDir}/*`] } },
+      });
+    const files = {
+      ...runtime("react"),
+      ...runtime("jsxA"),
+      ...runtime("jsxB"),
+      "tsconfig.json": tsconfig("react", "rootm"),
+      "rootm/x.ts": `export default "rootm";`,
+      "packages/a/tsconfig.json": tsconfig("jsxA", "am"),
+      "packages/a/am/x.ts": `export default "am";`,
+      "packages/a/src/x.tsx": `
+        import m from "@m/x";
+        import { y } from "../../b/src/y.tsx";
+        console.log(JSON.stringify({ a: { paths: m, jsx: <i /> }, b: y }));
+      `,
+      "packages/b/tsconfig.json": tsconfig("jsxB", "bm"),
+      "packages/b/bm/x.ts": `export default "bm";`,
+      "packages/b/src/y.tsx": `
+        import m from "@m/x";
+        export const y = { paths: m, jsx: <i /> };
+      `,
+    };
+    const expected = { a: { paths: "am", jsx: "jsxA" }, b: { paths: "bm", jsx: "jsxB" } };
+
+    test.concurrent.each([".", "packages/a", "packages/b", "packages/a/src"])("bun run from %s", async cwd => {
+      using dir = tempDir("jsx-tsconfig-matrix", files);
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "run", path.join(String(dir), "packages/a/src/x.tsx")],
+        env: bunEnv,
+        cwd: path.join(String(dir), cwd),
+        stdout: "pipe",
+        stderr: "inherit",
+      });
+      const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+      expect({ out: JSON.parse(stdout), exitCode }).toEqual({ out: expected, exitCode: 0 });
+    });
+
+    test.concurrent("bun build agrees", async () => {
+      using dir = tempDir("jsx-tsconfig-matrix-build", files);
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "build",
+          "packages/a/src/x.tsx",
+          "--external",
+          "react/*",
+          "--external",
+          "jsxA/*",
+          "--external",
+          "jsxB/*",
+        ],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "inherit",
+      });
+      const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+      expect({
+        importSources: [...stdout.matchAll(/from "(\w+)\/jsx-runtime"/g)].map(m => m[1]).sort(),
+        pathsMarkers: [...stdout.matchAll(/"(rootm|am|bm)"/g)].map(m => m[1]).sort(),
+        exitCode,
+      }).toEqual({ importSources: ["jsxA", "jsxB"], pathsMarkers: ["am", "bm"], exitCode: 0 });
     });
   });
 });

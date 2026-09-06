@@ -214,11 +214,9 @@ impl ClientSession {
         }
     }
 
-    /// A stream closed before any response headers arrived: re-enqueue it on a
-    /// fresh session (the stale-pooled-session race), up to `MAX_H3_RETRIES`.
-    /// The first retry always fires. Later ones need `fast` (not a no-response
-    /// timeout) and a replayable request: `not_applied` (the handshake never
-    /// finished, so the origin never saw it) or an idempotent method.
+    /// Re-enqueue a stream that closed before any response headers on a fresh
+    /// session, up to `MAX_H3_RETRIES`. After the first retry, only a `fast`
+    /// failure of a replayable request (`not_applied` or idempotent) retries.
     pub(crate) fn retry_or_fail(
         &mut self,
         stream: *mut Stream,

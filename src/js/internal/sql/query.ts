@@ -105,15 +105,17 @@ class Query<T, Handle extends BaseQueryHandle<any>> extends PublicPromise<T> {
   #run() {
     const { [_handler]: handler, [_queryStatus]: status } = this;
 
-    if (
-      status &
-      (SQLQueryStatus.executed | SQLQueryStatus.error | SQLQueryStatus.cancelled | SQLQueryStatus.invalidHandle)
-    ) {
+    if (status & (SQLQueryStatus.executed | SQLQueryStatus.error | SQLQueryStatus.invalidHandle)) {
       return;
     }
 
     if (this[_flags] & SQLQueryFlags.notTagged) {
       this.reject(this[_adapter].notTaggedCallError());
+      return;
+    }
+
+    if (status & SQLQueryStatus.cancelled) {
+      this.reject(this[_adapter].queryCancelledError());
       return;
     }
 
@@ -135,15 +137,17 @@ class Query<T, Handle extends BaseQueryHandle<any>> extends PublicPromise<T> {
   async #runAsync() {
     const { [_handler]: handler, [_queryStatus]: status } = this;
 
-    if (
-      status &
-      (SQLQueryStatus.executed | SQLQueryStatus.error | SQLQueryStatus.cancelled | SQLQueryStatus.invalidHandle)
-    ) {
+    if (status & (SQLQueryStatus.executed | SQLQueryStatus.error | SQLQueryStatus.invalidHandle)) {
       return;
     }
 
     if (this[_flags] & SQLQueryFlags.notTagged) {
       this.reject(this[_adapter].notTaggedCallError());
+      return;
+    }
+
+    if (status & SQLQueryStatus.cancelled) {
+      this.reject(this[_adapter].queryCancelledError());
       return;
     }
 
@@ -223,18 +227,14 @@ class Query<T, Handle extends BaseQueryHandle<any>> extends PublicPromise<T> {
 
     this[_queryStatus] |= SQLQueryStatus.cancelled;
 
-    if (!(status & SQLQueryStatus.executed)) {
-      // Never dispatched, so no connection will ever settle this promise.
-      this.reject(this[_adapter].queryCancelledError());
-      return this;
-    }
+    if (status & SQLQueryStatus.executed) {
+      const handle = this.#getQueryHandle();
 
-    const handle = this.#getQueryHandle();
-
-    if (handle) {
-      const cancelRequest = handle.cancel?.();
-      if (cancelRequest) {
-        this[_adapter].sendCancelRequest?.(cancelRequest);
+      if (handle) {
+        const cancelRequest = handle.cancel?.();
+        if (cancelRequest) {
+          this[_adapter].sendCancelRequest?.(cancelRequest);
+        }
       }
     }
 

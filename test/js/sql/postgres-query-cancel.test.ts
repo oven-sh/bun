@@ -193,7 +193,7 @@ test("cancel() before the query is dispatched rejects it instead of hanging", as
   await using sql = new SQL({ url: server.url, max: 1, connectionTimeout: 5 });
 
   // Tagged templates are lazy: nothing has been sent, and nothing ever will be,
-  // so cancel() has to settle the promise itself.
+  // so the first consumer of the promise has to reject it.
   const query = sql`select 1`;
   query.cancel();
 

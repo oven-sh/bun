@@ -40,11 +40,11 @@ bun_output::declare_scope!(napi, visible);
 unsafe extern "C" {
     safe fn Bun__JSValue__isAsyncContextFrame(value: JSValue) -> bool;
     safe fn napi_set_last_error(env: Option<&NapiEnv>, status: NapiStatus) -> napi_status;
-    safe fn napi_internal_cleanup_env_cpp(env: &NapiEnv);
-    safe fn napi_internal_check_gc(env: &NapiEnv);
+    safe fn Bun__napi_cleanup_env_cpp(env: &NapiEnv);
+    safe fn Bun__napi_check_gc(env: &NapiEnv);
     /// Drops the env's bookkeeping entry for a finalizer that has run; the
     /// arguments are compared, not dereferenced.
-    safe fn napi_internal_remove_finalizer(
+    safe fn Bun__napi_remove_finalizer(
         env: &NapiEnv,
         fun: napi_finalize,
         hint: *mut c_void,
@@ -94,7 +94,7 @@ pub(crate) trait NapiEnvExt {
 
     /// Assert that we're not currently performing garbage collection
     fn check_gc(&self) {
-        napi_internal_check_gc(self.env());
+        Bun__napi_check_gc(self.env());
     }
 
     /// After a native addon callback (a `complete`, a finalizer, a `call_js`):
@@ -1381,7 +1381,7 @@ pub fn napi_fatal_error(
     message_len_: usize,
 ) -> ! {
     bun_output::scoped_log!(napi, "napi_fatal_error");
-    napi_internal_suppress_crash_on_abort_if_desired();
+    Bun__napi_suppress_crash_on_abort_if_desired();
     // SAFETY: the addon's string arguments (N-API contract); null is absent.
     let (location, message) = unsafe {
         (
@@ -1538,22 +1538,22 @@ pub fn napi_get_uv_event_loop(env_: Option<&NapiEnv>, loop_: Out<napi_event_loop
     env.ok()
 }
 
-extern "C" fn napi_internal_register_cleanup_callback(data: *mut c_void) {
-    // `data` is the env `napi_internal_register_cleanup_zig` registered.
-    napi_internal_cleanup_env_cpp(NapiEnv::opaque_ref(data.cast()));
+extern "C" fn Bun__napi_register_cleanup_callback(data: *mut c_void) {
+    // `data` is the env `Bun__napi_register_cleanup_zig` registered.
+    Bun__napi_cleanup_env_cpp(NapiEnv::opaque_ref(data.cast()));
 }
 
-// HOST_EXPORT(napi_internal_register_cleanup_zig, c)
-pub fn napi_internal_register_cleanup_zig(env: &NapiEnv) {
+// HOST_EXPORT(Bun__napi_register_cleanup_zig, c)
+pub fn Bun__napi_register_cleanup_zig(env: &NapiEnv) {
     env.to_js().bun_vm().as_mut().rare_data().push_cleanup_hook(
         env.to_js(),
         env.as_mut_ptr().cast::<c_void>(),
-        napi_internal_register_cleanup_callback,
+        Bun__napi_register_cleanup_callback,
     );
 }
 
-// HOST_EXPORT(napi_internal_suppress_crash_on_abort_if_desired, c)
-pub fn napi_internal_suppress_crash_on_abort_if_desired() {
+// HOST_EXPORT(Bun__napi_suppress_crash_on_abort_if_desired, c)
+pub fn Bun__napi_suppress_crash_on_abort_if_desired() {
     if bun_core::env_var::feature_flag::BUN_INTERNAL_SUPPRESS_CRASH_ON_NAPI_ABORT
         .get()
         .unwrap_or(false)
@@ -1581,7 +1581,7 @@ impl Finalizer {
         let _hs = NapiHandleScope::open_scoped(env);
 
         (self.fun)(env.as_mut_ptr(), self.data, self.hint);
-        napi_internal_remove_finalizer(env, Some(self.fun), self.hint, self.data);
+        Bun__napi_remove_finalizer(env, Some(self.fun), self.hint, self.data);
 
         env.surface_exception(env.to_js())
     }
@@ -1595,8 +1595,8 @@ impl Finalizer {
 /// For Node-API modules not built with NAPI_EXPERIMENTAL, finalizers should be deferred to the
 /// immediate task queue instead of run immediately. This lets finalizers perform allocations,
 /// which they couldn't if they ran immediately while the garbage collector is still running.
-// HOST_EXPORT(napi_internal_enqueue_finalizer, c)
-pub fn napi_internal_enqueue_finalizer(
+// HOST_EXPORT(Bun__napi_enqueue_finalizer, c)
+pub fn Bun__napi_enqueue_finalizer(
     env: Option<&NapiEnv>,
     fun: napi_finalize,
     data: *mut c_void,
@@ -1726,8 +1726,9 @@ unsafe impl TaskHop for TsfnDispatch {
     }
 }
 
-/// `task_tag::ThreadSafeFunctionFinalize`: the last thread reference is gone
-/// and the queue drained; run the addon's finalizer and let the JS side go.
+/// `task_tag::ThreadSafeFunctionFinalize`: the function closed (queue drained
+/// with no thread reference left, or aborted); run the addon's finalizer and
+/// let the JS side go.
 pub(crate) struct TsfnFinalize;
 // SAFETY: the only hop for `ThreadSafeFunctionFinalize`; the queued task holds `TsfnJs::finalize_ref`.
 unsafe impl TaskHop for TsfnFinalize {
@@ -1923,15 +1924,14 @@ impl ThreadSafeFunction {
                 // Closing (napi_tsfn_abort, or the last call already ran):
                 // nothing still queued runs any more, as in Node's DispatchOne.
                 // An abort's leftovers go back to the addon, with no lock held
-                // since that re-enters it; the function finalizes once the last
-                // thread reference is gone.
+                // since that re-enters it. Then it finalizes whatever
+                // thread_count is: after an abort the other threads may never
+                // release (Node's CloseHandlesAndMaybeDelete).
                 let leftovers = this.take_queue(&mut shared);
                 drop(shared);
                 this.hand_back(leftovers);
                 let _shared = this.shared.lock();
-                if this.thread_count.load(Ordering::SeqCst) == 0 {
-                    Self::maybe_queue_finalizer(this);
-                }
+                Self::maybe_queue_finalizer(this);
                 return Ok(false);
             }
             let Some(t) = shared.queue.read_item() else {
@@ -2137,33 +2137,41 @@ impl ThreadSafeFunction {
         }
     }
 
-    /// JS thread: the queue drained with no thread references left (Node's
-    /// Finalize). Queues the addon's finalizer, releases everything JS-affine
-    /// (see `TsfnJs`) and drops the JS side's reference.
+    /// JS thread, once the function has closed (Node's Finalize +
+    /// MaybeDelete): runs the addon's finalizer, which may still use the
+    /// handle, then releases everything JS-affine (see `TsfnJs`) and drops the
+    /// JS side's reference. The addon threads' reference, if one is left,
+    /// keeps the allocation until their last release.
     fn finalize(this: ThisPtr<Self>) {
-        let (finalizer, env, owner) = this.js.with_mut(|js| {
-            js.poll_ref.unref(bun_io::js_vm_ctx());
-            js.callback = StrongOptional::empty();
-            let finalizer = js
-                .finalizer_fun
+        let finalizer = this.js.with_mut(|js| {
+            if let Some(env) = js.env.as_ref() {
+                // Drops our registry entry so teardown cannot hand this pointer
+                // out after it is freed.
+                NapiEnv__unregisterThreadSafeFunction(env, this.as_ptr().cast());
+            }
+            js.finalizer_fun
+                .take()
                 .zip(js.env.as_ref())
                 .map(|(fun, env)| Finalizer {
                     env: env.clone(),
                     fun,
                     data: js.finalizer_data,
                     hint: this.ctx,
-                });
-            (finalizer, js.env.take(), js.owner_ref.take())
+                })
         });
 
-        if let Some(env) = env {
-            // Drops our registry entry so teardown cannot hand this pointer
-            // out after it is freed.
-            NapiEnv__unregisterThreadSafeFunction(&env, this.as_ptr().cast());
+        // Before anything is released, as in Node and `env_teardown`; the
+        // finalize task is its landing frame.
+        if let Some(mut finalizer) = finalizer {
+            crate::dispatch::fold(finalizer.run());
         }
-        if let Some(finalizer) = finalizer {
-            finalizer.enqueue();
-        }
+
+        let owner = this.js.with_mut(|js| {
+            js.poll_ref.unref(bun_io::js_vm_ctx());
+            js.callback = StrongOptional::empty();
+            drop(js.env.take());
+            js.owner_ref.take()
+        });
         drop(owner);
     }
 
@@ -2300,30 +2308,30 @@ impl ThreadSafeFunction {
             released.add(shared.threads_ref.take());
         }
 
-        if this.env_dead.load(Ordering::SeqCst) {
-            // The event loop we were created on is gone (`env_teardown` set
-            // this under the lock we hold). Never schedule onto it.
+        if this.env_dead.load(Ordering::SeqCst)
+            || this.closing.load(Ordering::SeqCst) == ClosingState::Closed as u8
+        {
+            // The JS thread owns the finalization (`finalize` queued or done,
+            // or `env_teardown` ran): never schedule onto the loop again. The
+            // last reference dropped frees the allocation.
             return NapiStatus::ok as napi_status;
         }
 
-        if mode == napi_threadsafe_function_release_mode::abort || prev_remaining == 1 {
-            if !this.is_closing() {
-                if mode == napi_threadsafe_function_release_mode::abort {
-                    this.closing
-                        .store(ClosingState::Closing as u8, Ordering::SeqCst);
-                    if this.max_queue_size > 0 {
-                        // Wake all producers blocked in enqueue()'s bounded
-                        // queue wait so they observe is_closing and release.
-                        this.blocking_condvar.broadcast();
-                    }
+        // Already closing: the abort's dispatch is pending or running and
+        // finalizes whatever thread_count is by then.
+        if (mode == napi_threadsafe_function_release_mode::abort || prev_remaining == 1)
+            && !this.is_closing()
+        {
+            if mode == napi_threadsafe_function_release_mode::abort {
+                this.closing
+                    .store(ClosingState::Closing as u8, Ordering::SeqCst);
+                if this.max_queue_size > 0 {
+                    // Wake all producers blocked in enqueue()'s bounded queue
+                    // wait so they observe is_closing and release.
+                    this.blocking_condvar.broadcast();
                 }
-                Self::schedule_dispatch(this, shared, released);
-            } else if prev_remaining == 1 {
-                // Already closing from an earlier abort. The last release must
-                // still reach dispatch_one's thread_count==0 path so the
-                // finalizer runs and the event-loop keepalive is dropped.
-                Self::schedule_dispatch(this, shared, released);
             }
+            Self::schedule_dispatch(this, shared, released);
         }
 
         NapiStatus::ok as napi_status
@@ -2348,8 +2356,8 @@ impl Released {
 /// Called from `NapiEnv::cleanup()` (JS thread) for every threadsafe function
 /// still registered with the env that is being torn down. The registry only
 /// holds live functions (`finalize` and this both remove the entry).
-// HOST_EXPORT(napi_internal_threadsafe_function_env_teardown, c)
-pub fn napi_internal_threadsafe_function_env_teardown(tsfn: ThisPtr<ThreadSafeFunction>) {
+// HOST_EXPORT(Bun__napi_threadsafe_function_env_teardown, c)
+pub fn Bun__napi_threadsafe_function_env_teardown(tsfn: ThisPtr<ThreadSafeFunction>) {
     ThreadSafeFunction::env_teardown(tsfn);
 }
 

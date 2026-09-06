@@ -1898,9 +1898,8 @@ mod _async_tasks {
             // are slices into `src_buf`/`dest_buf` and must end their borrow first.
             let src_len = PathInt::try_from(src.len()).expect("int cast");
             let dest_len = PathInt::try_from(dest.len()).expect("int cast");
-            let _ = Self::cp_async_directory(
+            Self::cp_async_directory(
                 nodefs,
-                args.flags,
                 // Pass the raw `*mut Self` (Box::leak provenance) so spawned
                 // `CpSingleTask`s store a pointer that may later be promoted to
                 // `&mut` in `on_subtask_done`.
@@ -1912,168 +1911,121 @@ mod _async_tasks {
             );
         }
 
-        // returns boolean `should_continue`
+        /// Mirrors the tree rooted at `src_buf[..src_dir_len]` under
+        /// `dest_buf[..dest_dir_len]`. Directories are created on this thread as
+        /// they are found; every other entry is dispatched as a `CpSingleTask`.
+        /// The directories being read sit on an explicit stack (one open
+        /// iterator per level, as in a recursive descent), so the depth of the
+        /// tree costs heap, not thread stack. The first error is recorded via
+        /// `finish_concurrently` and ends the walk.
         fn cp_async_directory(
             nodefs: &mut NodeFS,
-            args: args::CpFlags,
             this: *mut Self,
             src_buf: &mut OSPathBuffer,
             src_dir_len: PathInt,
             dest_buf: &mut OSPathBuffer,
             dest_dir_len: PathInt,
-        ) -> bool {
+        ) {
+            /// One source directory whose entries are still being read.
+            struct Level {
+                /// Boxed: the iterator embeds the 8 KB dirent buffer that entry
+                /// names point into.
+                #[cfg(windows)]
+                iter: Box<DirIterator::WrappedIteratorW>,
+                #[cfg(not(windows))]
+                iter: Box<DirIterator::WrappedIterator>,
+                fd: FD,
+                src_len: PathInt,
+                dest_len: PathInt,
+            }
+            impl Level {
+                fn new(fd: FD, src_len: PathInt, dest_len: PathInt) -> Self {
+                    Level {
+                        iter: Box::new(DirIterator::iterate(fd)),
+                        fd,
+                        src_len,
+                        dest_len,
+                    }
+                }
+            }
+            impl Drop for Level {
+                fn drop(&mut self) {
+                    self.fd.close();
+                }
+            }
+
             // SAFETY: `this` is the live Box-leaked task. Shared borrow only — spawned
             // `CpSingleTask`s on other workpool threads may concurrently hold `&Self`.
-            // The raw `*mut` is threaded through (instead of `&Self`) so that the
-            // `cp_task` pointers stored in subtasks retain mutable provenance for
-            // `on_subtask_done`'s eventual `&mut` promotion.
+            // The raw `*mut` is what subtasks store (instead of `&Self`) so that their
+            // `cp_task` pointers retain mutable provenance for `on_subtask_done`'s
+            // eventual `&mut` promotion.
             let this_ref = unsafe { &*this };
-            // SAFETY: callers NUL-terminate at src_dir_len/dest_dir_len before calling.
-            // Platform-generic — `OSPathBuffer` is `[u16;N]` on Windows, `[u8;N]` on POSIX,
-            // so reconstruct as `&OSPathSliceZ`.
-            let src = unsafe { OSPathSliceZ::from_raw(src_buf.as_ptr(), src_dir_len as usize) };
-            // SAFETY: dest_buf[dest_dir_len] == 0 written by caller
-            let dest = unsafe { OSPathSliceZ::from_raw(dest_buf.as_ptr(), dest_dir_len as usize) };
 
-            #[cfg(target_os = "macos")]
-            {
-                // CLONE_NOFOLLOW: `src` was classified as a directory via lstat, so
-                // mirror the O_NOFOLLOW directory open below instead of dereferencing.
-                if let Some(err) = Maybe::<ret::Cp>::errno_sys_p(
-                    bun_sys::c::clonefile_rc(src, dest, CLONE_NOFOLLOW),
-                    sys::Tag::clonefile,
-                    src.as_bytes(),
-                ) {
-                    match err.get_errno() {
-                        E::EACCES | E::ENAMETOOLONG | E::EROFS | E::EPERM | E::EINVAL => {
-                            // `errno_sys_p`
-                            // already boxed `src.as_bytes()` into `err.path`, so just forward.
-                            this_ref.finish_concurrently(err);
-                            return false;
-                        }
-                        // Other errors may be due to clonefile() not being supported
-                        // We'll fall back to other implementations
-                        _ => {}
-                    }
-                } else {
-                    return true;
-                }
-            }
-
-            let open_flags = sys::O::DIRECTORY | sys::O::RDONLY | sys::O::NOFOLLOW;
-            let fd = match openat_os_path(FD::cwd(), src, open_flags, 0) {
-                Err(err) => {
-                    this_ref.finish_concurrently(Err(
-                        err.with_path(nodefs.os_path_into_sync_error_buf(src))
-                    ));
-                    return false;
-                }
-                Ok(fd_) => fd_,
-            };
-            let _close = scopeguard::guard(fd, |fd| fd.close());
-
-            #[cfg(windows)]
-            let mut buf = bun_paths::os_path_buffer_pool::get();
-            #[cfg(windows)]
-            let normdest: &OSPathSliceZ = match sys::normalize_path_windows_opts(
-                FD::INVALID,
-                dest.as_slice(),
-                &mut buf[..],
-                // No NT prefix — `normdest` feeds
-                // `mkdirRecursiveOSPath` / `CopyFileW` which expect Win32 paths,
-                // not `\??\` NT object paths.
-                sys::NormalizePathWindowsOpts {
-                    add_nt_prefix: false,
-                },
+            let mut stack: Vec<Level> = Vec::new();
+            match Self::cp_async_open_directory(
+                nodefs,
+                this_ref,
+                src_buf,
+                src_dir_len,
+                dest_buf,
+                dest_dir_len,
             ) {
-                Err(err) => {
-                    this_ref.finish_concurrently(Err(err));
-                    return false;
-                }
-                Ok(n) => n,
-            };
-            #[cfg(not(windows))]
-            let normdest: &OSPathSliceZ = dest;
-
-            let mkdir_ = nodefs.mkdir_recursive_os_path(normdest, args::Mkdir::DEFAULT_MODE, false);
-            match mkdir_ {
-                Err(err) => {
-                    this_ref.finish_concurrently(Err(err));
-                    return false;
-                }
-                Ok(_) => {
-                    this_ref.on_copy(src, normdest);
-                }
+                Ok(Some(fd)) => stack.push(Level::new(fd, src_dir_len, dest_dir_len)),
+                Ok(None) | Err(()) => return,
             }
 
-            // On POSIX directory entries are always UTF-8, so monomorphise the
-            // const-generic path type on `U8` and let the Windows branch (gated
-            // above) handle the wide path.
-            #[cfg(windows)]
-            let mut iterator = DirIterator::iterate::<true>(fd);
-            #[cfg(not(windows))]
-            let mut iterator = DirIterator::iterate::<false>(fd);
-            let mut entry = iterator.next();
-            loop {
-                let current = match entry {
+            while let Some(level) = stack.last_mut() {
+                let sd = level.src_len as usize;
+                let dd = level.dest_len as usize;
+                let current = match level.iter.next() {
                     Err(err) => {
                         this_ref.finish_concurrently(Err(
-                            err.with_path(nodefs.os_path_into_sync_error_buf(src))
+                            err.with_path(nodefs.os_path_into_sync_error_buf(&src_buf[..sd]))
                         ));
-                        return false;
+                        return;
                     }
-                    Ok(ent) => match ent {
-                        Some(e) => e,
-                        None => break,
-                    },
+                    Ok(Some(ent)) => ent,
+                    Ok(None) => {
+                        stack.pop();
+                        continue;
+                    }
                 };
                 let cname = current.name.slice();
 
                 // The accumulated path for deep directory trees can exceed the fixed
                 // OSPathBuffer. Bail out with ENAMETOOLONG instead of writing past the
                 // end of the buffer and corrupting the stack.
-                if (src_dir_len as usize) + 1 + cname.len() >= src_buf.len()
-                    || (dest_dir_len as usize) + 1 + cname.len() >= dest_buf.len()
-                {
+                if sd + 1 + cname.len() >= src_buf.len() || dd + 1 + cname.len() >= dest_buf.len() {
                     this_ref.finish_concurrently(Err(sys::Error {
                         errno: E::ENAMETOOLONG as _,
                         syscall: sys::Tag::copyfile,
-                        path: nodefs
-                            .os_path_into_sync_error_buf(&src_buf[..src_dir_len as usize])
-                            .into(),
+                        path: nodefs.os_path_into_sync_error_buf(&src_buf[..sd]).into(),
                         ..Default::default()
                     }));
-                    return false;
+                    return;
                 }
 
                 match current.kind {
                     crate::node::dirent::Kind::Directory => {
-                        let sd = src_dir_len as usize;
-                        let dd = dest_dir_len as usize;
                         src_buf[sd + 1..sd + 1 + cname.len()].copy_from_slice(cname);
                         src_buf[sd] = paths::SEP as OSPathChar;
                         src_buf[sd + 1 + cname.len()] = 0;
                         dest_buf[dd + 1..dd + 1 + cname.len()].copy_from_slice(cname);
                         dest_buf[dd] = paths::SEP as OSPathChar;
                         dest_buf[dd + 1 + cname.len()] = 0;
+                        let src_len = (sd + 1 + cname.len()) as PathInt;
+                        let dest_len = (dd + 1 + cname.len()) as PathInt;
 
-                        let should_continue = Self::cp_async_directory(
-                            nodefs,
-                            args,
-                            this,
-                            src_buf,
-                            (sd + 1 + cname.len()) as PathInt,
-                            dest_buf,
-                            (dd + 1 + cname.len()) as PathInt,
-                        );
-                        if !should_continue {
-                            return false;
+                        match Self::cp_async_open_directory(
+                            nodefs, this_ref, src_buf, src_len, dest_buf, dest_len,
+                        ) {
+                            Ok(Some(fd)) => stack.push(Level::new(fd, src_len, dest_len)),
+                            Ok(None) => {}
+                            Err(()) => return,
                         }
                     }
                     _ => {
                         this_ref.subtask_count.fetch_add(1, Ordering::Relaxed);
-                        let sd = src_dir_len as usize;
-                        let dd = dest_dir_len as usize;
                         let total = sd + 1 + cname.len() + 1 + dd + 1 + cname.len() + 1;
 
                         // Allocate a path buffer for the path data
@@ -2098,10 +2050,101 @@ mod _async_tasks {
                         );
                     }
                 }
-                entry = iterator.next();
+            }
+        }
+
+        /// Creates the destination directory for one level of the walk and opens
+        /// the source directory for reading. `Ok(None)`: the subtree needs no walk
+        /// (macOS `clonefile` copied it whole). `Err(())`: the error is already
+        /// recorded via `finish_concurrently`; stop. Both buffers must be
+        /// NUL-terminated at the given lengths.
+        fn cp_async_open_directory(
+            nodefs: &mut NodeFS,
+            this_ref: &Self,
+            src_buf: &OSPathBuffer,
+            src_dir_len: PathInt,
+            dest_buf: &OSPathBuffer,
+            dest_dir_len: PathInt,
+        ) -> Result<Option<FD>, ()> {
+            // SAFETY: callers NUL-terminate at src_dir_len/dest_dir_len before calling.
+            // Platform-generic — `OSPathBuffer` is `[u16;N]` on Windows, `[u8;N]` on POSIX,
+            // so reconstruct as `&OSPathSliceZ`.
+            let src = unsafe { OSPathSliceZ::from_raw(src_buf.as_ptr(), src_dir_len as usize) };
+            // SAFETY: dest_buf[dest_dir_len] == 0 written by caller
+            let dest = unsafe { OSPathSliceZ::from_raw(dest_buf.as_ptr(), dest_dir_len as usize) };
+
+            #[cfg(target_os = "macos")]
+            {
+                // CLONE_NOFOLLOW: `src` was classified as a directory via lstat, so
+                // mirror the O_NOFOLLOW directory open below instead of dereferencing.
+                if let Some(err) = Maybe::<ret::Cp>::errno_sys_p(
+                    bun_sys::c::clonefile_rc(src, dest, CLONE_NOFOLLOW),
+                    sys::Tag::clonefile,
+                    src.as_bytes(),
+                ) {
+                    match err.get_errno() {
+                        E::EACCES | E::ENAMETOOLONG | E::EROFS | E::EPERM | E::EINVAL => {
+                            // `errno_sys_p`
+                            // already boxed `src.as_bytes()` into `err.path`, so just forward.
+                            this_ref.finish_concurrently(err);
+                            return Err(());
+                        }
+                        // Other errors may be due to clonefile() not being supported
+                        // We'll fall back to other implementations
+                        _ => {}
+                    }
+                } else {
+                    return Ok(None);
+                }
             }
 
-            true
+            let open_flags = sys::O::DIRECTORY | sys::O::RDONLY | sys::O::NOFOLLOW;
+            let fd = match openat_os_path(FD::cwd(), src, open_flags, 0) {
+                Err(err) => {
+                    this_ref.finish_concurrently(Err(
+                        err.with_path(nodefs.os_path_into_sync_error_buf(src))
+                    ));
+                    return Err(());
+                }
+                Ok(fd_) => fd_,
+            };
+            let close_on_error = scopeguard::guard(fd, |fd| fd.close());
+
+            #[cfg(windows)]
+            let mut buf = bun_paths::os_path_buffer_pool::get();
+            #[cfg(windows)]
+            let normdest: &OSPathSliceZ = match sys::normalize_path_windows_opts(
+                FD::INVALID,
+                dest.as_slice(),
+                &mut buf[..],
+                // No NT prefix — `normdest` feeds
+                // `mkdirRecursiveOSPath` / `CopyFileW` which expect Win32 paths,
+                // not `\??\` NT object paths.
+                sys::NormalizePathWindowsOpts {
+                    add_nt_prefix: false,
+                },
+            ) {
+                Err(err) => {
+                    this_ref.finish_concurrently(Err(err));
+                    return Err(());
+                }
+                Ok(n) => n,
+            };
+            #[cfg(not(windows))]
+            let normdest: &OSPathSliceZ = dest;
+
+            let mkdir_ = nodefs.mkdir_recursive_os_path(normdest, args::Mkdir::DEFAULT_MODE, false);
+            match mkdir_ {
+                Err(err) => {
+                    this_ref.finish_concurrently(Err(err));
+                    return Err(());
+                }
+                Ok(_) => {
+                    this_ref.on_copy(src, normdest);
+                }
+            }
+
+            Ok(Some(scopeguard::ScopeGuard::into_inner(close_on_error)))
         }
     }
 

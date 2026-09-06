@@ -1,7 +1,9 @@
 import { $ } from "bun";
 import { shellInternals } from "bun:internal-for-testing";
-import { describe, expect } from "bun:test";
-import { tempDirWithFiles } from "harness";
+import { describe, expect, test } from "bun:test";
+import { bunEnv, isLinux, tempDir, tempDirWithFiles } from "harness";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import { bunExe, createTestBuilder } from "../test_builder";
 import { sortedShellOutput } from "../util";
 const { builtinDisabled } = shellInternals;
@@ -171,6 +173,31 @@ describe.if(!builtinDisabled("cp"))("bunshell cp", async () => {
       .testMini({ cwd: mini_tmpdir })
       .runAsTest("cp_recurse");
   });
+});
+
+// The builtin is opt-in on POSIX, so spawn with the flag instead of relying on
+// `builtinDisabled`. Linux only: the 1200-byte paths do not fit PATH_MAX (1024)
+// on macOS, and the Windows builtin does not take paths past MAX_PATH (260).
+test.skipIf(!isLinux)("cp -R copies a directory tree 600 levels deep", async () => {
+  const depth = 600;
+  using dir = tempDir("cp-deep-tree", {});
+  const nested = Array(depth).fill("d").join("/");
+  mkdirSync(join(String(dir), "src", nested), { recursive: true });
+  writeFileSync(join(String(dir), "src", nested, "leaf"), "x");
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", 'import { $ } from "bun"; await $`cp -R src dst`;'],
+    env: { ...bunEnv, BUN_ENABLE_EXPERIMENTAL_SHELL_BUILTINS: "1" },
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(stdout).toBe("");
+  expect(proc.signalCode).toBeNull();
+  expect(exitCode).toBe(0);
+  expect(readFileSync(join(String(dir), "dst", nested, "leaf"), "utf8")).toBe("x");
 });
 
 function expectSortedOutput(expected: string) {

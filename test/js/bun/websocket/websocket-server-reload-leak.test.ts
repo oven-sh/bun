@@ -70,12 +70,13 @@ test("server.reload() with websocket config lacking open/message does not leak p
 // more generation of contexts. Now the app keeps one context and each ws()
 // registration writes the behavior into it.
 test("server.reload() on a websocket-enabled server does not keep a WebSocketContext per reload", async () => {
-  // 1000 reloads of 12 routes keep about 15 MiB of contexts on bun 1.4.3, and
-  // 14 to 18 MiB on an ASAN build with the quarantine off. Fixed: about 1 MiB
-  // and 5 MiB.
+  // 600 reloads of 12 routes keep 7 to 9 MiB of contexts on bun 1.4.3. Fixed:
+  // 0 to 1 MiB, on release and on an ASAN build with the quarantine off.
+  // Each reload registers 13 websocket routes and an ASAN build spends about
+  // 1 ms on each, so the fixture runs for 10 to 15 s there.
   await expectRssDeltaBelow([join(import.meta.dir, "websocket-server-reload-context-fixture.ts")], {
-    release: 7,
-    debug: 10,
+    release: 4,
+    debug: 5,
   });
 }, 60_000);
 

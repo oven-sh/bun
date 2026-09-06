@@ -6,8 +6,8 @@ const rss =
   process.platform === "darwin" && typeof Bun.unsafe.memoryFootprint === "function"
     ? Bun.unsafe.memoryFootprint
     : process.memoryUsage.rss;
-const reloads = parseInt(process.env.RELOADS || "1000", 10);
-const warmup = parseInt(process.env.WARMUP || "100", 10);
+const reloads = parseInt(process.env.RELOADS || "600", 10);
+const warmup = parseInt(process.env.WARMUP || "200", 10);
 const routeCount = parseInt(process.env.ROUTES || "12", 10);
 
 const routes: Record<string, () => Response> = {};

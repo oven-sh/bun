@@ -21,6 +21,9 @@ use bun_sys::{self as sys, Fd, FdExt as _};
 use crate::bun_json::{Expr, ExprData};
 use crate::dependency::{Dependency, DependencyExt as _};
 use crate::install::{DependencyID, ExternalStringList};
+use crate::lockfile::Lockfile;
+use crate::lockfile::package::PackageColumns as _;
+use crate::resolution;
 #[cfg(windows)]
 use crate::windows_shim::BinLinkingShim as WinBinLinkingShim;
 #[cfg(windows)]
@@ -693,41 +696,75 @@ impl<'a> NamesIterator<'a> {
     }
 }
 
-// BACKREF — `PackageInstaller` holds a
-// `&mut Lockfile` alongside a `Box<[TreeContext]>` whose `binaries` queues
-// alias into `lockfile.buffers`; a `&'a Vec<_>` borrow here would force the
-// `TreeContext.binaries` field to carry an unsatisfiable `'static` (the
-// installer outlives no concrete lifetime for its own self-borrowed buffers).
+/// The order in which the packages of one `node_modules` folder link their bins
+/// into its `.bin` folder. The first package to link a bin name keeps it
+/// (`Linker::seen`), so when two packages declare the same bin name, the one in
+/// the earlier group wins. Within a group, packages link in dependency name
+/// order. npm uses the same two groups: it links the bins of every extracted
+/// package before the bins of linked local directories.
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub(crate) enum LinkOrder {
+    /// Registry, tarball and git packages.
+    ExtractedPackage,
+    /// Workspace packages, `file:` and `link:` directories, and the root package.
+    LocalDirectory,
+}
+
+impl LinkOrder {
+    pub(crate) fn of(resolution: resolution::Tag) -> LinkOrder {
+        match resolution {
+            resolution::Tag::Root
+            | resolution::Tag::Workspace
+            | resolution::Tag::Folder
+            | resolution::Tag::Symlink => LinkOrder::LocalDirectory,
+            _ => LinkOrder::ExtractedPackage,
+        }
+    }
+}
+
+// BACKREF — `PackageInstaller` holds a `&mut Lockfile` alongside a
+// `Box<[TreeContext]>` whose `binaries` queues read the same `Lockfile`; a
+// `&'a Lockfile` borrow here would force the `TreeContext.binaries` field to
+// carry an unsatisfiable `'static` (the installer outlives no concrete lifetime
+// for its own self-borrowed lockfile).
 pub struct PriorityQueueContext {
-    pub(crate) dependencies: bun_ptr::BackRef<Vec<Dependency>>,
-    pub(crate) string_buf: bun_ptr::BackRef<Vec<u8>>,
+    pub(crate) lockfile: bun_ptr::BackRef<Lockfile>,
 }
 
 impl PriorityQueueContext {
-    fn less_than(&self, a: DependencyID, b: DependencyID) -> core::cmp::Ordering {
-        // `dependencies` / `string_buf` point at
-        // `lockfile.buffers.{dependencies,string_bytes}`, which are kept alive
-        // for the entire install (the `PackageInstaller` that owns this queue
-        // also borrows the same `Lockfile`). The Vecs may be reallocated by
-        // `fix_cached_lockfile_package_slices`, which is why we re-deref the
-        // `BackRef<Vec>` (header) on every compare instead of caching a slice.
-        let deps = self.dependencies.as_slice();
-        let buf = self.string_buf.as_slice();
-        let a_name = deps[a as usize].name.slice(buf);
-        let b_name = deps[b as usize].name.slice(buf);
-        strings::order(a_name, b_name)
+    fn order(&self, a: DependencyID, b: DependencyID) -> core::cmp::Ordering {
+        // The `Lockfile` is kept alive for the entire install (the
+        // `PackageInstaller` that owns this queue borrows the same one). Its
+        // buffers and its package list can grow during the install (see
+        // `fix_cached_lockfile_package_slices`), which is why the slices are
+        // re-read on every compare instead of cached.
+        let lockfile = &*self.lockfile;
+        let deps = lockfile.buffers.dependencies.as_slice();
+        let string_buf = lockfile.buffers.string_bytes.as_slice();
+        let resolutions = lockfile.buffers.resolutions.as_slice();
+        let pkg_resolutions = lockfile.packages.items_resolution();
+        let link_order = |dep_id: DependencyID| {
+            LinkOrder::of(pkg_resolutions[resolutions[dep_id as usize] as usize].tag)
+        };
+
+        link_order(a).cmp(&link_order(b)).then_with(|| {
+            strings::order(
+                deps[a as usize].name.slice(string_buf),
+                deps[b as usize].name.slice(string_buf),
+            )
+        })
     }
 }
 
 impl bun_collections::PriorityCompare<DependencyID> for PriorityQueueContext {
     #[inline]
     fn compare(&self, a: &DependencyID, b: &DependencyID) -> core::cmp::Ordering {
-        self.less_than(*a, *b)
+        self.order(*a, *b)
     }
 }
 
 // Port of `std.PriorityQueue(DependencyID, PriorityQueueContext, lessThan)`.
-// Min-heap keyed by `PriorityQueueContext::less_than` (string-order of dep names).
+// Min-heap keyed by `PriorityQueueContext::order` (`LinkOrder`, then dep name).
 pub(crate) type PriorityQueue = bun_collections::PriorityQueue<DependencyID, PriorityQueueContext>;
 
 // https://github.com/npm/npm-normalize-package-bin/blob/574e6d7cd21b2f3dee28a216ec2053c2551f7af9/lib/index.js#L38
@@ -896,6 +933,14 @@ impl<'a> Linker<'a> {
             // Skip seen destinations for this tree
             // https://github.com/npm/cli/blob/22731831e22011e32fa0ca12178e242c2ee2b33d/node_modules/bin-links/lib/link-gently.js#L30
             if seen.contains_key(abs_dest.as_bytes()) {
+                if crate::PackageManager::verbose_install() {
+                    bun_core::pretty_errorln!(
+                        "<d>[Bin Linker]<r> skipping {} of {}: another package already linked {}",
+                        bstr::BStr::new(path::basename(abs_dest.as_bytes())),
+                        bstr::BStr::new(self.package_name.slice()),
+                        bstr::BStr::new(abs_dest.as_bytes()),
+                    );
+                }
                 return;
             }
         }

@@ -11,6 +11,7 @@ import {
   readdirSorted,
   runBunInstall,
   runBunUpdate,
+  toBeValidBin,
   toMatchNodeModulesAt,
   VerdaccioRegistry,
 } from "harness";
@@ -18,7 +19,7 @@ import { join } from "path";
 
 const { parseLockfile } = install_test_helpers;
 
-expect.extend({ toMatchNodeModulesAt });
+expect.extend({ toBeValidBin, toMatchNodeModulesAt });
 
 var verdaccio: VerdaccioRegistry;
 
@@ -2882,4 +2883,96 @@ test.concurrent("a copyfile install over a workspace's hardlinked files does not
   expect(cached).toHaveLength(1);
   expect(readJson(join(cacheDir, cached[0], "package.json"))).toEqual({ name: "no-deps", version: "2.0.0" });
   expect(statSync(join(cacheDir, cached[0], "index.js")).size).toBeGreaterThan(0);
+});
+
+// Two packages in one node_modules folder can declare the same bin name, and only one
+// of them gets `node_modules/.bin/<name>`. Registry packages link their bins before
+// workspace packages do, as in npm, so a workspace package never takes the bin of a
+// registry dependency, whichever way the two package names sort.
+describe("a workspace package's bin does not replace the bin of a registry dependency", () => {
+  // "aaa" sorts before "what-bin". Bins used to be linked in name order alone, so
+  // `aaa` took `.bin/what-bin`.
+  async function writeWorkspacePackageWithWhatBin(packageDir: string) {
+    await Promise.all([
+      write(
+        join(packageDir, "packages", "aaa", "package.json"),
+        JSON.stringify({ name: "aaa", version: "1.0.0", bin: { "what-bin": "fake.js" } }),
+      ),
+      write(join(packageDir, "packages", "aaa", "fake.js"), "#!/usr/bin/env node\n"),
+    ]);
+  }
+
+  async function run(ctx: TestCtx, args: string[]) {
+    await using proc = spawn({
+      cmd: [bunExe(), ...args],
+      cwd: ctx.packageDir,
+      stdout: "pipe",
+      stderr: "pipe",
+      env: ctx.env,
+    });
+    const [, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(err).not.toContain("error:");
+    expect(err).toContain("Saved lockfile");
+    expect(exitCode).toBe(0);
+  }
+
+  const registryBin = join("..", "what-bin", "what-bin.js");
+  const workspaceBin = join("..", "aaa", "fake.js");
+
+  test.concurrent("hoisted: dependency of the root", async () => {
+    using ctx = await setupTest();
+    const { packageDir, packageJson } = ctx;
+    await Promise.all([
+      write(
+        packageJson,
+        JSON.stringify({ name: "foo", workspaces: ["packages/*"], dependencies: { "what-bin": "1.0.0" } }),
+      ),
+      writeWorkspacePackageWithWhatBin(packageDir),
+    ]);
+
+    await run(ctx, ["install", "--linker", "hoisted"]);
+    expect(join(packageDir, "node_modules", ".bin", "what-bin")).toBeValidBin(registryBin);
+
+    // and again with node_modules already in place
+    await rm(join(packageDir, "bun.lock"));
+    await run(ctx, ["install", "--linker", "hoisted"]);
+    expect(join(packageDir, "node_modules", ".bin", "what-bin")).toBeValidBin(registryBin);
+  });
+
+  test.concurrent("hoisted: adding the registry dependency afterwards takes the bin over", async () => {
+    using ctx = await setupTest();
+    const { packageDir, packageJson } = ctx;
+    await Promise.all([
+      write(packageJson, JSON.stringify({ name: "foo", workspaces: ["packages/*"] })),
+      writeWorkspacePackageWithWhatBin(packageDir),
+    ]);
+
+    await run(ctx, ["install", "--linker", "hoisted"]);
+    // nothing else declares a `what-bin` bin yet
+    expect(join(packageDir, "node_modules", ".bin", "what-bin")).toBeValidBin(workspaceBin);
+
+    await run(ctx, ["add", "what-bin@1.0.0", "--linker", "hoisted"]);
+    expect(join(packageDir, "node_modules", ".bin", "what-bin")).toBeValidBin(registryBin);
+  });
+
+  test.concurrent("isolated: workspace package that depends on both", async () => {
+    using ctx = await setupTest();
+    const { packageDir, packageJson } = ctx;
+    await Promise.all([
+      write(packageJson, JSON.stringify({ name: "foo", workspaces: ["packages/*"] })),
+      write(
+        join(packageDir, "packages", "app", "package.json"),
+        JSON.stringify({ name: "app", dependencies: { aaa: "workspace:*", "what-bin": "1.0.0" } }),
+      ),
+      writeWorkspacePackageWithWhatBin(packageDir),
+    ]);
+
+    await run(ctx, ["install", "--linker", "isolated"]);
+    expect(join(packageDir, "packages", "app", "node_modules", ".bin", "what-bin")).toBeValidBin(registryBin);
+
+    // and again with node_modules already in place
+    await rm(join(packageDir, "bun.lock"));
+    await run(ctx, ["install", "--linker", "isolated"]);
+    expect(join(packageDir, "packages", "app", "node_modules", ".bin", "what-bin")).toBeValidBin(registryBin);
+  });
 });

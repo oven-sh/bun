@@ -2333,7 +2333,22 @@ impl<'a> Installer<'a> {
             Which::Staging,
         );
 
-        for dep in entry_deps[parent_entry_id.get() as usize].slice() {
+        // `deps` is in dependency name order. Link in `LinkOrder` groups, each
+        // group in that order.
+        let deps = entry_deps[parent_entry_id.get() as usize].slice();
+        let pkg_resolutions = pkgs.items_resolution();
+        let link_order_of = |dep: &store::entry::DependenciesItem| {
+            let node_id = entry_node_ids[dep.entry_id.get() as usize];
+            bin_real::LinkOrder::of(pkg_resolutions[node_pkg_ids[node_id.get() as usize] as usize].tag)
+        };
+        let ordered_deps = [
+            bin_real::LinkOrder::ExtractedPackage,
+            bin_real::LinkOrder::LocalDirectory,
+        ]
+        .into_iter()
+        .flat_map(|order| deps.iter().filter(move |dep| link_order_of(dep) == order));
+
+        for dep in ordered_deps {
             let node_id = entry_node_ids[dep.entry_id.get() as usize];
             let dep_id = node_dep_ids[node_id.get() as usize];
             let pkg_id = node_pkg_ids[node_id.get() as usize];

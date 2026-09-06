@@ -550,6 +550,23 @@ registry=https://somehost.com/org1/npm/registry/
     expect(result.default_registry_token).toBe("");
   });
 
+  test("inline comments after a value do not become part of the registry URL or token", () => {
+    // npm/ini cuts an unquoted value at the first unescaped `;` or `#`.
+    // With the comment left in, the registry URL no longer matched its `//host/` credential.
+    const ini = `
+registry=http://127.0.0.1:4873/ ; default registry
+//127.0.0.1:4873/:_authToken=SECRET # token
+`;
+    const result = loadNpmrc(ini);
+    expect(result).toEqual({
+      default_registry_url: "http://127.0.0.1:4873/",
+      default_registry_token: "SECRET",
+      default_registry_username: "",
+      default_registry_password: "",
+      default_registry_email: "",
+    });
+  });
+
   describe("credentials keyed to a bracketed IPv6 host", () => {
     // The `//` is stripped off the key before it is parsed as a URL, leaving
     // `[::1]:4873/`. A leading `[` used to parse to an empty host, so these keys

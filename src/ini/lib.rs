@@ -631,7 +631,14 @@ mod draft {
                                 }
                                 unesc.push(b'$');
                             }
-                            b';' | b'#' => break,
+                            b';' | b'#' => {
+                                // npm/ini cuts the value at the first unescaped
+                                // comment char and trims the rest.
+                                let kept = bun_core::trim_right(&unesc, b" \n\r\t").len();
+                                unesc.truncate(kept);
+                                did_any_escape = true;
+                                break;
+                            }
                             b'\\' => {
                                 esc = true;
                                 did_any_escape = true;

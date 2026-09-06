@@ -404,6 +404,32 @@ bar = 'baz'
     });
   });
 
+  test("inline comments are cut from unquoted values, keys and sections", () => {
+    // npm/ini cuts an unquoted value at the first unescaped `;` or `#` and
+    // trims what is left. An escaped comment char stays in the value.
+    const ini = /* ini */ `
+a = hello ; comment
+b = world # comment
+c = x\\;y ; z
+d = foo#bar
+e ; comment = v
+[sec ; comment]
+f = 1
+[x.y # comment]
+g = 2
+`;
+
+    expect(parse(ini)).toEqual({
+      a: "hello",
+      b: "world",
+      c: "x;y",
+      d: "foo",
+      e: "v",
+      sec: { f: "1" },
+      x: { y: { g: "2" } },
+    });
+  });
+
   test("key and then section edgecase", () => {
     const ini = /* ini */ `
 foo = 'hihihi'

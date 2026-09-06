@@ -1,7 +1,26 @@
 import { spawn } from "bun";
 import { describe, expect, it } from "bun:test";
 import { bunEnv, bunExe, gcTick, isWindows } from "harness";
+import { closeSync, writeSync } from "node:fs";
 import path from "path";
+
+// The uncaught exception a receiver reports for bytes that are not a message in
+// the channel's serialization format. The channel is closed before the report.
+const undecodableMessageError = {
+  advancedFromSubprocess:
+    `The subprocess (pid <pid>) sent an IPC message that is not in Bun's "advanced" serialization format, so Bun closed the IPC channel. ` +
+    `"advanced" serialization only works between two Bun processes. For IPC between Bun and Node.js, use serialization: "json".`,
+  advancedFromParent:
+    `The parent process sent an IPC message that is not in Bun's "advanced" serialization format, so Bun closed the IPC channel. ` +
+    `"advanced" serialization only works between two Bun processes. For IPC between Bun and Node.js, use serialization: "json".`,
+  jsonFromSubprocess: `The subprocess (pid <pid>) sent an IPC message that is not valid JSON, so Bun closed the IPC channel.`,
+};
+
+// What a Node.js process whose channel uses serialization: "advanced" writes for
+// send({ hello: "from node" }): a 4-byte big-endian length, then the v8.serialize()
+// payload (0xff 0x0f is the v8 wire-format version header). See writeChannelMessage in
+// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/child_process/serialization.js#L109-L124
+const nodeAdvancedFrame = Buffer.from("00000017ff0f6f220568656c6c6f220966726f6d206e6f64657b01", "hex");
 
 describe.each(["advanced", "json"])("ipc mode %s", mode => {
   it("the subprocess should be defined and the child should send", done => {
@@ -126,8 +145,8 @@ describe("ipc mode json", () => {
   it.skipIf(isWindows)("closes the channel on a line that holds only the internal tag byte", async () => {
     // An internal JSON message is "\\x02" + json + "\\n". A line of just the tag
     // byte strips to an empty payload. The receiver must treat it like an empty
-    // line (invalid, close the channel) instead of building an external string
-    // over a zero-length slice.
+    // line (invalid: report it and close the channel) instead of building an
+    // external string over a zero-length slice.
     //
     // The receiver runs in its own subprocess so a crash shows up as a failing
     // assertion here rather than taking out the test runner.
@@ -141,6 +160,9 @@ describe("ipc mode json", () => {
         serialization: "json",
         ipc(msg) { console.error("UNEXPECTED_IPC_MESSAGE", msg); },
       });
+      process.on("uncaughtException", err => {
+        console.log("UNCAUGHT", child.connected, err.message.replaceAll(String(child.pid), "<pid>"));
+      });
       console.log("CHILD_EXIT", await child.exited);
     `;
 
@@ -153,7 +175,10 @@ describe("ipc mode json", () => {
 
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-    expect(stdout.trim()).toBe("CHILD_EXIT 42");
+    expect(stdout.trim().split("\n")).toEqual([
+      `UNCAUGHT false ${undecodableMessageError.jsonFromSubprocess}`,
+      "CHILD_EXIT 42",
+    ]);
     expect(stderr).toBe("");
     expect(exitCode).toBe(0);
   });
@@ -201,16 +226,29 @@ describe("ipc mode advanced", () => {
     expect(received.filter(message => Array.isArray(message))).toHaveLength(0);
   });
 
-  it("a message_len that overflows header_length + message_len does not crash the receiver", async () => {
-    // The advanced IPC framing is [u8 type][u32-le length][payload]. Decoding previously
-    // checked `data.len < header_length + message_len`, which is u32 arithmetic: a child
-    // sending length 0xFFFFFFFB makes the sum wrap to 0, the guard passes, and the receiver
-    // slices `data[5..0]` (length ~SIZE_MAX) straight into the deserializer.
-    //
-    // Run the receiver in its own subprocess so a crash is observed as a failing
-    // assertion here rather than taking out the test runner.
-    // prettier-ignore
-    const parent = `
+  // The raw-frame tests below inject bytes with fs.writeSync(3). On Windows the
+  // channel is a libuv IPC pipe with its own framing under ours, so a raw write
+  // never reaches the decoder; the node-peer tests in spawn.ipc.bun-node.test.ts
+  // and spawn.ipc.node-bun.test.ts cover the undecodable-message report there.
+  it.skipIf(isWindows)(
+    "a message_len that overflows header_length + message_len does not crash the receiver",
+    async () => {
+      // The advanced IPC framing is [u8 type][u32-le length][payload]. Decoding previously
+      // checked `data.len < header_length + message_len`, which is u32 arithmetic: a child
+      // sending length 0xFFFFFFFB makes the sum wrap to 0, the guard passes, and the receiver
+      // slices `data[5..0]` (length ~SIZE_MAX) straight into the deserializer.
+      //
+      // Run the receiver in its own subprocess so a crash is observed as a failing
+      // assertion here rather than taking out the test runner.
+      // prettier-ignore
+      const parent = `
+      // The child exits right after writing, so its exit and the report can
+      // land in either order; print at parent exit, when both have happened.
+      const lines = [];
+      process.on("uncaughtException", err => {
+        lines.push("UNCAUGHT " + err.message.replaceAll(String(child.pid), "<pid>"));
+      });
+      process.on("exit", () => console.log([...lines, "PARENT_EXIT"].join("\\n")));
       const child = Bun.spawn({
         cmd: [
           process.execPath, "-e",
@@ -223,22 +261,25 @@ describe("ipc mode advanced", () => {
         ipc(msg) { console.error("UNEXPECTED_IPC_MESSAGE", msg); },
       });
       await child.exited;
-      console.log("PARENT_OK");
     `;
 
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "-e", parent],
-      env: bunEnv,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", parent],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
 
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-    expect(stdout.trim()).toBe("PARENT_OK");
-    expect(stderr).not.toContain("UNEXPECTED_IPC_MESSAGE");
-    expect(exitCode).toBe(0);
-  });
+      expect(stdout.trim().split("\n")).toEqual([
+        `UNCAUGHT ${undecodableMessageError.advancedFromSubprocess}`,
+        "PARENT_EXIT",
+      ]);
+      expect(stderr).not.toContain("UNEXPECTED_IPC_MESSAGE");
+      expect(exitCode).toBe(0);
+    },
+  );
 
   it.skipIf(isWindows)("rejects a Buffer envelope whose buffer list holds a non-Uint8Array view", async () => {
     // Frame type 4 carries a [message, buffers] envelope and the receiver puts
@@ -305,6 +346,9 @@ describe("ipc mode advanced", () => {
         serialization: "advanced",
         ipc(msg) { console.error("UNEXPECTED_IPC_MESSAGE", msg); },
       });
+      process.on("uncaughtException", err => {
+        console.log("UNCAUGHT", err.message.replaceAll(String(child.pid), "<pid>"));
+      });
       console.log("CHILD_EXIT", await child.exited);
     `;
 
@@ -317,11 +361,82 @@ describe("ipc mode advanced", () => {
 
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-      expect(stdout.trim()).toBe("CHILD_EXIT 42");
+      expect(stdout.trim().split("\n")).toEqual([
+        `UNCAUGHT ${undecodableMessageError.advancedFromSubprocess}`,
+        "CHILD_EXIT 42",
+      ]);
       expect(stderr).not.toContain("UNEXPECTED_IPC_MESSAGE");
       expect(exitCode).toBe(0);
     },
   );
+
+  it.skipIf(isWindows)("reports a subprocess that does not speak the advanced format", async () => {
+    // A Node.js child answers a Bun.spawn({ ipc }) parent in v8's framing, which
+    // no Bun receiver can decode. The parent must say so (naming the remedy)
+    // instead of dropping the channel silently. The child here is Bun writing the
+    // exact bytes Node writes, so the test does not need a node binary.
+    const parent = `
+      const child = Bun.spawn({
+        cmd: [
+          process.execPath, "-e",
+          'process.on("disconnect", () => process.exit(42)); require("fs").writeSync(3, Buffer.from("${nodeAdvancedFrame.toString("hex")}", "hex"));',
+        ],
+        stdio: ["ignore", "inherit", "inherit"],
+        // no serialization option: "advanced", as in a bare Bun.spawn({ ipc }).
+        ipc(msg) { console.error("UNEXPECTED_IPC_MESSAGE", msg); },
+      });
+      process.on("uncaughtException", err => {
+        console.log("UNCAUGHT", child.connected, err.message.replaceAll(String(child.pid), "<pid>"));
+      });
+      console.log("CHILD_EXIT", await child.exited);
+    `;
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", parent],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stdout.trim().split("\n")).toEqual([
+      `UNCAUGHT false ${undecodableMessageError.advancedFromSubprocess}`,
+      "CHILD_EXIT 42",
+    ]);
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+  });
+
+  it.skipIf(isWindows)("a child reports a parent that does not speak the advanced format", async () => {
+    // The reverse pairing: a Node.js parent that spawned Bun with
+    // serialization: "advanced". The test plays the parent by holding the other
+    // end of the child's NODE_CHANNEL_FD and writing Node's bytes into it.
+    await using child = spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          process.on("uncaughtException", err => console.log("UNCAUGHT", process.connected, err.message));
+          process.on("disconnect", () => process.exit(42));
+          process.on("message", msg => console.log("UNEXPECTED_IPC_MESSAGE", msg));
+        `,
+      ],
+      env: { ...bunEnv, NODE_CHANNEL_FD: "3", NODE_CHANNEL_SERIALIZATION_MODE: "advanced" },
+      stdio: ["ignore", "pipe", "pipe", "pipe"],
+    });
+    // Reading .stdio[3] hands the descriptor to us; we close it.
+    const fd = child.stdio[3] as number;
+    try {
+      writeSync(fd, nodeAdvancedFrame);
+      const [stdout, stderr, exitCode] = await Promise.all([child.stdout.text(), child.stderr.text(), child.exited]);
+      expect(stdout.trim().split("\n")).toEqual([`UNCAUGHT false ${undecodableMessageError.advancedFromParent}`]);
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(42);
+    } finally {
+      closeSync(fd);
+    }
+  });
 });
 
 // getIPCInstance error path: on Windows, windowsConfigureClient can open the

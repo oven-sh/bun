@@ -577,11 +577,15 @@ impl TrustCommand {
         }
 
         if !dry_run {
+            // The next install runs the scripts of a package that package.json
+            // trusts and the lockfile does not. So when the scripts were
+            // skipped, only package.json records the trust.
             Self::write_trusted_dependencies(
                 ctx,
                 pm_raw,
                 &load_lockfile,
                 &mut package_names_to_add,
+                run_scripts,
             )?;
         }
 
@@ -636,13 +640,14 @@ impl TrustCommand {
         Ok(())
     }
 
-    /// Adds `package_names` to `trustedDependencies` in both package.json and
-    /// the lockfile, then writes both.
+    /// Adds `package_names` to `trustedDependencies` in package.json, and in
+    /// the lockfile too when `scripts_ran`, then writes the edited files.
     fn write_trusted_dependencies(
         ctx: Command::Context,
         pm_raw: *mut PackageManager,
         load_lockfile: &LoadResult<'_>,
         package_names: &mut StringArrayHashMap<()>,
+        scripts_ran: bool,
     ) -> crate::Result<()> {
         // SAFETY: `pm_raw` singleton; this scope takes over the descriptor
         // (the original `pm.root_package_json_file` is replaced with INVALID so
@@ -663,11 +668,6 @@ impl TrustCommand {
 
         let bump = Bump::new();
         // SAFETY: `ctx.log` set by `Command::init`, non-null for the command.
-        // Layering: `parse_utf8` returns the T2
-        // `bun_ast::Expr`; `PackageJSONEditor` and
-        // `js_printer::print_json` consume the T4 `bun_ast::Expr`. Lift
-        // once via `From<T2> for T4` (same as `updatePackageJSONAndInstall` /
-        // `pack_command`).
         let mut package_json: bun_ast::Expr = match bun_parsers::json::parse_utf8(
             &package_json_source,
             unsafe { ctx.log_mut() },
@@ -686,42 +686,41 @@ impl TrustCommand {
 
         debug_assert!(!package_names.keys().is_empty());
 
-        // could be null if these are the first packages to be trusted
-        // SAFETY: `pm_raw` singleton; mutates `lockfile.trusted_dependencies`.
-        unsafe {
-            if (*pm_raw).lockfile.trusted_dependencies.is_none() {
-                (*pm_raw).lockfile.trusted_dependencies = Some(Default::default());
-            }
-        }
-
         PackageJSONEditor::edit_trusted_dependencies(&mut package_json, package_names.keys_mut())?;
 
-        for name in package_names.keys() {
-            // SAFETY: `pm_raw` singleton; `trusted_dependencies` set Some above.
+        if scripts_ran {
+            // could be null if these are the first packages to be trusted
+            // SAFETY: `pm_raw` singleton; mutates `lockfile.trusted_dependencies`.
             unsafe {
-                (*pm_raw)
-                    .lockfile
-                    .trusted_dependencies
-                    .as_mut()
-                    .unwrap()
-                    .put(
-                        bun_semver::string::Builder::string_hash(name)
-                            as install::TruncatedPackageNameHash,
-                        Box::<[u8]>::from(&**name),
-                    )?;
+                if (*pm_raw).lockfile.trusted_dependencies.is_none() {
+                    (*pm_raw).lockfile.trusted_dependencies = Some(Default::default());
+                }
             }
-        }
 
-        // Reshaped for borrowck — `save_to_disk` needs `&mut Lockfile`
-        // and `&LoadResult` simultaneously, but `LoadResultOk.lockfile` already
-        // holds the only `&mut`. Same projection pattern as `migrate` in
-        // `package_manager_command.rs`.
-        // SAFETY: `load_lockfile` is `Ok` (errors exited in
-        // `handle_load_lockfile_errors`). `save_to_disk` reads `load_result`
-        // only for `save_format()` (scalar `format`/`migrated` fields).
-        unsafe {
-            let lf: *mut Lockfile = &raw mut *(*pm_raw).lockfile;
-            (*lf).save_to_disk(load_lockfile, &(*pm_raw).options);
+            for name in package_names.keys() {
+                // SAFETY: `pm_raw` singleton; `trusted_dependencies` set Some above.
+                unsafe {
+                    (*pm_raw)
+                        .lockfile
+                        .trusted_dependencies
+                        .as_mut()
+                        .unwrap()
+                        .put(
+                            bun_semver::string::Builder::string_hash(name)
+                                as install::TruncatedPackageNameHash,
+                            Box::<[u8]>::from(&**name),
+                        )?;
+                }
+            }
+
+            // SAFETY: `load_lockfile` is `Ok` (errors exited in
+            // `handle_load_lockfile_errors`). `save_to_disk` reads `load_result`
+            // only for `save_format()` (scalar `format`/`migrated` fields), so the
+            // `&mut Lockfile` it also needs does not alias. Same as `migrate`.
+            unsafe {
+                let lf: *mut Lockfile = &raw mut *(*pm_raw).lockfile;
+                (*lf).save_to_disk(load_lockfile, &(*pm_raw).options);
+            }
         }
 
         let mut buffer_writer = bun_js_printer::BufferWriter::init();

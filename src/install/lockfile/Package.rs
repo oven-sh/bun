@@ -1977,7 +1977,7 @@ impl Package<u64> {
                     // borrow has a named place to point at.
                     let workspace_str = *dependency_version.workspace();
                     let workspace = workspace_str.slice(buf);
-                    // An empty spec, or one that lands on the declaring package itself, is `*`.
+                    // An empty spec names no workspace and no path, so it resolves like `*`.
                     let path = string_builder.append::<String>(
                         if workspace == b"*"
                             || strings::trim(workspace, &strings::WHITESPACE_CHARS).is_empty()
@@ -1986,29 +1986,21 @@ impl Package<u64> {
                         } else {
                             'brk: {
                                 let top_level_dir = FileSystem::instance().top_level_dir();
-                                let mut self_buf = bun_paths::path_buffer_pool::get();
-                                let self_dir =
-                                    resolve_path::join_abs_string_buf::<path::platform::Auto>(
-                                        top_level_dir,
-                                        &mut self_buf.0,
-                                        &[source.path.name().dir],
-                                    );
                                 let mut buf2 = bun_paths::path_buffer_pool::get();
-                                let joined =
+                                let rel = resolve_path::relative_platform::<
+                                    path::platform::Auto,
+                                    false,
+                                >(
+                                    top_level_dir,
                                     resolve_path::join_abs_string_buf::<path::platform::Auto>(
                                         top_level_dir,
                                         &mut buf2.0,
                                         &[source.path.name().dir, workspace],
-                                    );
-                                if strings::eql(joined, self_dir) {
-                                    break 'brk b"*";
-                                }
-                                let rel = resolve_path::relative_platform::<
-                                    path::platform::Auto,
-                                    false,
-                                >(top_level_dir, joined);
+                                    ),
+                                );
+                                // if rel is empty, the path is the root package
                                 if rel.is_empty() {
-                                    break 'brk b"*";
+                                    break 'brk b".";
                                 }
                                 #[cfg(windows)]
                                 {

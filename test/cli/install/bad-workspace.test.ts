@@ -313,20 +313,53 @@ describe.concurrent("workspaces entries longer than the path buffer", () => {
   );
 });
 
-// A `workspace:` spec with no path used to resolve to the project root and link it under the
-// dependency's name.
+// A `workspace:` spec with no path used to resolve to the declaring package and link it under
+// the dependency's name.
 describe.concurrent("workspace: spec that names no workspace", () => {
-  test.each(["workspace:", "workspace:."])("%s fails to resolve", async spec => {
+  test("empty spec in the root fails to resolve", async () => {
     using dir = tempDir("bad-workspace-empty-spec", {
-      "package.json": JSON.stringify({ name: "p", version: "1.0.0", dependencies: { a: spec } }),
+      "package.json": JSON.stringify({ name: "p", version: "1.0.0", dependencies: { a: "workspace:" } }),
       "index.js": `module.exports = "root";`,
     });
 
     const { stderr, exitCode } = await runInstall(String(dir));
 
-    expect(stderr).toContain(`error: a@${spec} failed to resolve`);
+    expect(stderr).toContain("error: a@workspace: failed to resolve");
     expect(existsSync(join(String(dir), "node_modules", "a"))).toBe(false);
     expect(exitCode).toBe(1);
+  });
+
+  test("empty spec in a workspace member fails to resolve", async () => {
+    using dir = tempDir("bad-workspace-member-empty-spec", {
+      "package.json": JSON.stringify({ name: "p", version: "1.0.0", workspaces: ["packages/*"] }),
+      "packages/foo/package.json": JSON.stringify({
+        name: "foo",
+        version: "1.0.0",
+        dependencies: { bar: "workspace:" },
+      }),
+    });
+
+    const { stderr, exitCode } = await runInstall(String(dir));
+
+    expect(stderr).toContain("error: bar@workspace: failed to resolve");
+    expect(existsSync(join(String(dir), "node_modules", "bar"))).toBe(false);
+    expect(exitCode).toBe(1);
+  });
+
+  // `workspace:.` is a path. In the root it names the root package, like it names the member
+  // in a member (see "workspace self dependencies create symlinks" in isolated-install.test.ts).
+  test("workspace:. in the root links the root package under the dependency's name", async () => {
+    using dir = tempDir("bad-workspace-root-self-spec", {
+      "package.json": JSON.stringify({ name: "p", version: "1.0.0", dependencies: { a: "workspace:." } }),
+      "index.js": `module.exports = "root";`,
+    });
+
+    for (let i = 0; i < 2; i++) {
+      const { stderr, exitCode } = await runInstall(String(dir));
+      expect(stderr).not.toContain("error:");
+      expect(exitCode).toBe(0);
+      expect(JSON.parse(readFileSync(join(String(dir), "node_modules", "a", "package.json"), "utf8")).name).toBe("p");
+    }
   });
 
   test("workspace: links the workspace with the dependency's name", async () => {
@@ -345,22 +378,5 @@ describe.concurrent("workspace: spec that names no workspace", () => {
     expect(stderr).not.toContain("error:");
     expect(exitCode).toBe(0);
     expect(readFileSync(join(String(dir), "node_modules", "a", "package.json"), "utf8")).toContain('"name":"a"');
-  });
-
-  test("workspace:. in a workspace member does not link the member under another name", async () => {
-    using dir = tempDir("bad-workspace-member-self-spec", {
-      "package.json": JSON.stringify({ name: "p", version: "1.0.0", workspaces: ["packages/*"] }),
-      "packages/foo/package.json": JSON.stringify({
-        name: "foo",
-        version: "1.0.0",
-        dependencies: { bar: "workspace:." },
-      }),
-    });
-
-    const { stderr, exitCode } = await runInstall(String(dir));
-
-    expect(stderr).toContain("error: bar@workspace:. failed to resolve");
-    expect(existsSync(join(String(dir), "node_modules", "bar"))).toBe(false);
-    expect(exitCode).toBe(1);
   });
 });

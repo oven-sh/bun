@@ -872,7 +872,9 @@ pub mod ssl_wrapper {
             if taken == 0 {
                 return None;
             }
-            CStr::from_bytes_until_nul(buf).ok().filter(|s| !s.is_empty())
+            CStr::from_bytes_until_nul(buf)
+                .ok()
+                .filter(|s| !s.is_empty())
         }
 
         fn get_verify_error(&self) -> us_bun_verify_error_t {

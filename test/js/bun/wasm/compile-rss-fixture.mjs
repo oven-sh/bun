@@ -1,4 +1,4 @@
-// Fixture for compile-rss.test.ts. Compiles a generated wasm module 3 times, discards each result,
+// Fixture for compile-rss.test.ts. Compiles a generated wasm module 6 times, discards each result,
 // then polls RSS until it falls below the target (argv[2], MiB) or the deadline passes. The idle
 // compiler threads exit after 10 s and release everything then, so the deadline stays well below
 // that. Prints one JSON line with the lowest RSS growth seen, relative to the RSS before the first
@@ -94,11 +94,10 @@ function makeModule({ functionCount = 35, opsPerFunction = 1400, giantOps = 3000
 const targetMiB = Number(process.argv[2]);
 if (!Number.isFinite(targetMiB)) throw new Error(`expected the target in MiB as argv[2], got ${process.argv[2]}`);
 // On Darwin mimalloc returns memory with MADV_FREE_REUSABLE, which the kernel keeps counted in RSS
-// until it reuses the pages. phys_footprint drops at once, so measure that there.
-const rss =
-  process.platform === "darwin" && typeof Bun.unsafe.memoryFootprint === "function"
-    ? Bun.unsafe.memoryFootprint
-    : process.memoryUsage.rss;
+// until it reuses the pages. phys_footprint drops at once, so measure that there. memoryFootprint()
+// returns undefined when task_info fails, so fall back to RSS.
+const rss = () =>
+  (process.platform === "darwin" ? Bun.unsafe.memoryFootprint?.() : undefined) ?? process.memoryUsage.rss();
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 const bytes = makeModule();
 
@@ -112,7 +111,9 @@ for (const deadline = performance.now() + 2000; performance.now() < deadline; ) 
   if (now >= base - 1048576) break;
   base = now;
 }
-for (let i = 0; i < 3; i++) {
+// Each compile adds to what the unfixed threads keep (8 threads: 18 to 27 MiB after 3 compiles,
+// 35 to 39 MiB after 6) and costs about 20 ms. The fixed build returns to the baseline either way.
+for (let i = 0; i < 6; i++) {
   let mod = await WebAssembly.compile(bytes);
   mod = null;
 }

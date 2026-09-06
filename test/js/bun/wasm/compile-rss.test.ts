@@ -2,7 +2,7 @@ import { expect, test } from "bun:test";
 import { bunEnv, bunExe, isASAN, isDebug } from "harness";
 import path from "node:path";
 
-// Unfixed, the 8 idle wasm compiler threads keep 17 to 25 MB of freed compile temporaries until
+// Unfixed, the 8 idle wasm compiler threads keep 35 to 39 MiB of freed compile temporaries until
 // they exit after 10 s. Fixed, they release it about 100 ms after the last compile and RSS returns
 // to where it started.
 const idleTargetMiB = 10;
@@ -26,9 +26,13 @@ test.skipIf(isDebug || isASAN)(
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).toBe("");
     const result = JSON.parse(stdout.trim().split("\n").at(-1)!);
-    // The compiles have to grow RSS well past the target first, or the check below means nothing.
-    expect(result.peakDeltaMiB).toBeGreaterThan(idleTargetMiB * 2);
-    expect(result.idleDeltaMiB).toBeLessThan(idleTargetMiB);
+    // The whole measurement is in the object so a failure prints it. The compiles have to grow RSS
+    // well past the target first, or the idle check means nothing.
+    expect({
+      ...result,
+      grew: result.peakDeltaMiB > idleTargetMiB * 2,
+      released: result.idleDeltaMiB < idleTargetMiB,
+    }).toMatchObject({ grew: true, released: true });
     expect(exitCode).toBe(0);
   },
 );

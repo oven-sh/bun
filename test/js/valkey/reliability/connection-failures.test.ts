@@ -504,7 +504,7 @@ describe("Valkey: Auto-Reconnect Selected Database", () => {
   const options = { autoReconnect: true, enableOfflineQueue: true, connectionTimeout: 5000, maxRetries: 10 };
   const currentDb = (client: RedisClient) => client.send("CLIENT", ["INFO"]);
 
-  test("select() is replayed after an auto-reconnect and inherited by duplicate()", async () => {
+  test("select() is replayed after an auto-reconnect, and duplicate() starts on the URL database", async () => {
     using peer = createDbPeer();
     const port = await peer.listen();
     const client = new RedisClient(`redis://127.0.0.1:${port}/2`, options);
@@ -523,11 +523,13 @@ describe("Valkey: Auto-Reconnect Selected Database", () => {
         ["SELECT", "5"],
       ]);
 
+      // Like ioredis and node-redis, a duplicate is built from the
+      // configuration, not from the session's SELECT.
       duplicate = await client.duplicate();
-      expect(await currentDb(duplicate)).toBe("db=5");
+      expect(await currentDb(duplicate)).toBe("db=2");
       expect(peer.commands[2].slice(0, 2)).toEqual([
         ["HELLO", "3"],
-        ["SELECT", "5"],
+        ["SELECT", "2"],
       ]);
     } finally {
       duplicate?.close();

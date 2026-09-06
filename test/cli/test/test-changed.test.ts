@@ -1,7 +1,7 @@
 import { spawnSync } from "bun";
 import { describe, expect, setDefaultTimeout, test } from "bun:test";
 import { bunEnv, bunExe, isASAN, isWindows, tempDir, tmpdirSync } from "harness";
-import { appendFileSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, writeFileSync } from "node:fs";
 import { basename, join } from "node:path";
 
 // Each case spawns a full `bun test` process; give the concurrent group
@@ -392,6 +392,28 @@ describe.concurrent("bun test --changed", () => {
     const testNames = ["alias.test.ts", "relative.test.ts", "unrelated.test.ts"];
     expect(ranFiles(stderr, testNames)).toEqual(["alias.test.ts", "relative.test.ts"]);
     expect(exitCode).toBe(0);
+  });
+
+  // The `--changed=<since>` value is a git operand, not a git option. A
+  // value that starts with `-` must reach git after `--end-of-options` so
+  // git cannot treat it as a flag (`--output=<file>` makes git write a file).
+  test("a --changed value that looks like a git option is passed as an operand", async () => {
+    using dir = tempDir("test-changed-option-operand", fixture);
+    initRepo(String(dir));
+    const outFile = join(String(dir), "injected.txt");
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", `--changed=--output=${outFile}`],
+      cwd: String(dir),
+      env: gitEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+      stdin: "ignore",
+    });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    expect(existsSync(outFile)).toBe(false);
+    expect(stderr).toContain("--changed");
+    expect(exitCode).toBe(1);
   });
 });
 

@@ -46,12 +46,18 @@ pub unsafe trait IntrusiveWorkTask: bun_core::IntrusiveField<Task> {
 /// `bun_core::intrusive_field!(T, field: SharedWorkNode)` and write the
 /// `unsafe impl` yourself, stating the confinement below next to it.
 ///
+/// The node is re-armable as soon as the pool picks it up (before
+/// `run_work_task` runs), so a re-schedule that races a run is never lost; the
+/// price is that a holder which re-schedules while a run is still in progress
+/// gets a second, overlapping `run_work_task` on another pool thread.
+///
 /// # Safety
 /// Every field of `T` is either confined to one side (the pool's
-/// `run_work_task`, or the other holders) while the node is queued, or
-/// synchronized — `T` need not be `Sync` otherwise, so the type system does not
-/// check this; and wherever `run_work_task` lets its reference go must be a
-/// thread `T` may be freed on.
+/// `run_work_task`, or the other holders) while the node is queued or running,
+/// or synchronized — `T` need not be `Sync` otherwise, so the type system does
+/// not check this; a `T` that can be re-scheduled before the previous run
+/// returns must also tolerate overlapping runs; and wherever `run_work_task`
+/// lets its reference go must be a thread `T` may be freed on.
 pub unsafe trait SharedWorkTask:
     bun_ptr::AnyRefCounted + bun_core::IntrusiveField<SharedWorkNode>
 {

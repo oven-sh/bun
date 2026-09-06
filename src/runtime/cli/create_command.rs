@@ -1348,8 +1348,8 @@ impl CreateCommand {
                 'outer: {
                     if let Some(home_dir) = env_loader.map.get(b"BUN_CREATE_DIR") {
                         let parts = [home_dir, positional];
-                        let Some(outdir_path) = filesystem
-                            .abs_buf_checked(&parts, &mut home_dir_buf[..join_buf_len])
+                        let Some(outdir_path) =
+                            filesystem.abs_buf_checked(&parts, &mut home_dir_buf[..join_buf_len])
                         else {
                             break 'outer;
                         };
@@ -1394,8 +1394,8 @@ impl CreateCommand {
                 'outer: {
                     if let Some(home_dir) = env_loader.map.get(b"HOME") {
                         let parts = [home_dir, BUN_CREATE_DIR, positional];
-                        let Some(outdir_path) = filesystem
-                            .abs_buf_checked(&parts, &mut home_dir_buf[..join_buf_len])
+                        let Some(outdir_path) =
+                            filesystem.abs_buf_checked(&parts, &mut home_dir_buf[..join_buf_len])
                         else {
                             break 'outer;
                         };

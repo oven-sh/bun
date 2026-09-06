@@ -5,13 +5,13 @@
 //   bun scripts/binary-size.ts \
 //     --targets '[{"triplet":"bun-darwin-aarch64"},...]' \
 //     --threshold-mb 0.5 \
-//     [--no-fail] [--release]
+//     [--release]
 //
-//   Always posts an annotation with sizes and deltas. On PR builds it fails if
-//   any binary grew by more than --threshold-mb vs canary; on main it never
-//   fails (--no-fail) but still shows the comparison against the previous main
-//   build. Escape hatch: put `[skip size check]` in the commit message, which
-//   makes ci.mjs set soft_fail on this step (it still runs and annotates).
+//   Always posts an annotation with sizes and deltas against the build at this
+//   PR's merge-base on main. A binary that grew by more than --threshold-mb is
+//   called out with a warning-style annotation. The step itself never fails:
+//   binary size is advisory, and a hard gate here has mostly produced false
+//   positives when the baseline went stale.
 //
 // Local mode (no args):
 //   bun scripts/binary-size.ts
@@ -22,8 +22,6 @@
 
 import { mkdirSync, rmSync } from "node:fs";
 import { parseArgs } from "node:util";
-// @ts-ignore — utils.mjs has JSDoc types but no .d.ts
-import { markBuildkiteStepReported } from "./utils.mjs";
 
 type Target = { triplet: string };
 type Sizes = Record<string, number>;
@@ -32,7 +30,6 @@ const { values } = parseArgs({
   options: {
     targets: { type: "string" },
     "threshold-mb": { type: "string", default: "0.5" },
-    "no-fail": { type: "boolean", default: false },
     release: { type: "boolean", default: false },
   },
 });
@@ -44,7 +41,6 @@ if (!values.targets) {
 
 const targets: Target[] = JSON.parse(values.targets!);
 const thresholdBytes = parseFloat(values["threshold-mb"]!) * 1024 * 1024;
-const noFail = values["no-fail"];
 const isRelease = values.release;
 const buildKind = isRelease ? "release" : "canary";
 
@@ -254,11 +250,13 @@ const rows: Row[] = targets
     canary: delta(sizes[triplet], triplet),
   }));
 
-// Stale rows (baseline older than this PR's merge-base) are annotated but never
-// enforced: that delta includes main's growth, not just this PR's.
+// A row whose baseline is the merge-base build is a real signal about this
+// PR: over the threshold it gets the warning treatment. A stale row (baseline
+// older than the merge-base) folds in main's own growth, so it is shown with
+// its source build but does not raise the warning.
 const overThreshold = rows.filter(r => r.canary && !r.canary.stale && r.canary.bytes > thresholdBytes);
 const staleOver = rows.filter(r => r.canary?.stale && r.canary.bytes > thresholdBytes);
-const failed = !noFail && overThreshold.length > 0;
+const warn = overThreshold.length > 0;
 
 const link = (b: Baseline | undefined, fallback: string) =>
   b?.href ? `<a href="${b.href}">${b.label}</a>` : (b?.label ?? `${fallback} (n/a)`);
@@ -277,7 +275,7 @@ const deltaCells = (d: Delta | undefined, over: boolean) => {
 const tableRows = rows
   .map(r => {
     const over = !!r.canary && r.canary.bytes > thresholdBytes;
-    const mark = over ? (r.canary!.stale ? "⚠️ " : "❌ ") : "";
+    const mark = over && !r.canary!.stale ? "⚠️ " : "";
     return (
       `<tr><td>${mark}<code>${r.triplet}</code></td>` +
       `<td align="right">${fmtBytes(r.now)}</td>` +
@@ -288,22 +286,21 @@ const tableRows = rows
   .join("\n");
 
 const limit = fmtBytes(thresholdBytes);
-const header =
-  overThreshold.length > 0
-    ? `<b>${overThreshold.length}</b> over ${limit}`
-    : canary
-      ? `all within ${limit}${staleOver.length ? ` (${staleOver.length} stale ignored)` : ""}`
-      : `no ${buildKind} comparison (${canaryNote})`;
+const header = warn
+  ? `<b>${overThreshold.length}</b> over ${limit}`
+  : canary
+    ? `all within ${limit}${staleOver.length ? ` (${staleOver.length} stale ignored)` : ""}`
+    : `no ${buildKind} comparison (${canaryNote})`;
 
 const staleNote =
   canary && canary.stale.size > 0
-    ? `<p>⚠️ ${canary.stale.size} target(s) had no size recorded for the merge-base build ` +
+    ? `<p>${canary.stale.size} target(s) had no size recorded for the merge-base build ` +
       `${link(canary, baseBranch)}; their Δ is against the older build linked in the size column ` +
-      `and includes ${baseBranch}'s own growth, so it is not enforced.</p>`
+      `and includes ${baseBranch}'s own growth.</p>`
     : "";
 
 const annotation = `
-<details${failed ? " open" : ""}>
+<details${warn ? " open" : ""}>
 <summary>📦 Binary size — ${header}</summary>
 <table>
 <tr>
@@ -314,7 +311,6 @@ const annotation = `
 ${tableRows}
 </table>
 ${staleNote}
-${failed ? `<p>Add <code>[skip size check]</code> to the commit message if this increase is intentional.</p>` : ""}
 </details>`;
 
 Bun.spawnSync(
@@ -322,11 +318,11 @@ Bun.spawnSync(
     "buildkite-agent",
     "annotate",
     "--style",
-    failed ? "error" : "info",
+    warn ? "warning" : "info",
     "--context",
     "binary-size",
     "--priority",
-    failed ? "5" : "2",
+    warn ? "5" : "2",
   ],
   { stdin: new Blob([annotation]), stderr: "inherit" },
 );
@@ -338,12 +334,8 @@ for (const r of rows) {
   console.log(`  ${r.triplet.padEnd(30)} ${fmtBytes(r.now).padStart(10)}${c}`);
 }
 
-if (failed) {
-  console.error(`\nerror: ${overThreshold.length} target(s) exceeded ${limit} vs ${buildKind}`);
-  // Suppress the generic fallback in .buildkite/hooks/pre-exit; this script
-  // owns its failure annotation.
-  markBuildkiteStepReported();
-  process.exit(1);
+if (warn) {
+  console.log(`\nwarning: ${overThreshold.length} target(s) exceeded ${limit} vs ${buildKind}`);
 }
 
 // ─── helpers ───

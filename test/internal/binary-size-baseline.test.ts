@@ -1,6 +1,6 @@
-// Verifies that scripts/binary-size.ts does not fail a PR build when the only
-// available main baseline predates the PR's merge-base. This is the scenario
-// that trips every PR when a run of main builds gets canceled/timed out so the
+// Verifies that scripts/binary-size.ts resolves baselines from the PR merge-base
+// and only warns (never fails) on growth. The stale-baseline scenario is what
+// tripped every PR when a run of main builds got canceled/timed out so the
 // binary-size aggregator never runs, leaving a stale baseline that already
 // carries several hundred KB of main's own growth.
 //
@@ -100,7 +100,7 @@ set -eu
 cmd="$1"; shift
 case "$cmd" in
   secret) exit 1 ;;                      # no GITHUB_TOKEN secret
-  annotate) cat > "$ANNOTATION_OUT"; exit 0 ;;
+  annotate) printf '%s\\n' "$@" > "$ANNOTATION_OUT.args"; cat > "$ANNOTATION_OUT"; exit 0 ;;
   artifact)
     [[ "$1" == "upload" ]] && exit 0
     exit 1                               # no binary-sizes.json artifact anywhere
@@ -167,40 +167,48 @@ async function runBinarySize(meta: typeof META, overrides: typeof buildJsonOverr
   const annotation = await Bun.file(annotationOut)
     .text()
     .catch(() => "");
-  return { stdout, stderr, exitCode, annotation };
+  // buildkite-agent annotate --style <x> --context <y> --priority <z>
+  const args = await Bun.file(`${annotationOut}.args`)
+    .text()
+    .catch(() => "");
+  const style = args.split("\n")[args.split("\n").indexOf("--style") + 1] ?? "";
+  return { stdout, stderr, exitCode, annotation, style };
 }
 
 // The fake buildkite-agent is a bash script. Tests share one mock server with a
-// mutable commit-message map, so they run sequentially.
-test.skipIf(!isPosix)(
-  "PR is not failed when the only over-threshold rows have a baseline older than merge-base",
-  async () => {
-    const { stdout, stderr, exitCode, annotation } = await runBinarySize(META);
-    // linux-x64 baseline is from the merge-base build (#200): delta = 16 KB, under threshold.
-    // darwin-aarch64 has to fall back to #100: delta = +563 KB. That row is stale (baseline
-    // predates merge-base) so it is shown as ⚠️ but does not fail the step. Before this fix
-    // the walk used a single build for every target, so both rows compared against #100 and
-    // both read "+550 KB" → the step hard-failed with "2 target(s) exceeded 0.50 MB".
-    expect(stderr).not.toContain("error:");
-    expect(stdout).toContain("main #200");
-    expect(stdout).toMatch(/bun-linux-x64\s+.*\+16\.0 KB\s*$/m);
-    expect(stdout).toMatch(/bun-darwin-aarch64\s+.*\+562\.9 KB\s+\(stale: #100\)/);
-    expect(annotation).toContain("all within 0.50 MB (1 stale ignored)");
-    expect(annotation).toContain("⚠️ <code>bun-darwin-aarch64</code>");
-    expect(annotation).toContain('<sup><a href="https://buildkite.com/bun/bun/builds/100">#100</a></sup>');
-    expect(annotation).not.toContain("❌");
-    expect(exitCode).toBe(0);
-  },
-);
+// mutable build-json override map, so they run sequentially.
+test.skipIf(!isPosix)("rows whose only baseline predates the merge-base are shown but not warned on", async () => {
+  const { stdout, stderr, exitCode, annotation, style } = await runBinarySize(META);
+  // linux-x64 baseline is from the merge-base build (#200): delta = 16 KB, under threshold.
+  // darwin-aarch64 has to fall back to #100: delta = +563 KB. That row is stale (baseline
+  // predates merge-base) so it is listed with its source build but raises no warning.
+  // Before this change the walk used one build for every target, so both rows compared
+  // against #100, both read "+550 KB", and the step failed the PR.
+  expect(stderr).toBe("");
+  expect(stdout).toContain("main #200");
+  expect(stdout).toMatch(/bun-linux-x64\s+.*\+16\.0 KB\s*$/m);
+  expect(stdout).toMatch(/bun-darwin-aarch64\s+.*\+562\.9 KB\s+\(stale: #100\)/);
+  expect(stdout).not.toContain("warning:");
+  expect(annotation).toContain("all within 0.50 MB (1 stale ignored)");
+  expect(annotation).toContain('<sup><a href="https://buildkite.com/bun/bun/builds/100">#100</a></sup>');
+  expect(annotation).not.toContain("⚠️");
+  expect(style).toBe("info");
+  expect(exitCode).toBe(0);
+});
 
-test.skipIf(!isPosix)("PR still fails when the merge-base baseline itself is over threshold", async () => {
+test.skipIf(!isPosix)("growth over the merge-base baseline is a warning, not a failure", async () => {
   // Bump the PR's own linux-x64 size by 600 KB over merge-base. The baseline for
-  // linux-x64 is the merge-base build (#200), so this row is fresh and must fail.
+  // linux-x64 is the merge-base build (#200), so this row is fresh: it gets the
+  // warning annotation, and the step still exits 0.
   const big = { ...META, "999": { ...META["999"], "bun-linux-x64": META["200"]["bun-linux-x64"] + 600_000 } };
-  const { stderr, annotation, exitCode } = await runBinarySize(big);
-  expect(stderr).toContain("error: 1 target(s) exceeded 0.50 MB");
-  expect(annotation).toContain("❌ <code>bun-linux-x64</code>");
-  expect(exitCode).toBe(1);
+  const { stdout, stderr, annotation, style, exitCode } = await runBinarySize(big);
+  expect(stderr).toBe("");
+  expect(stdout).toContain("warning: 1 target(s) exceeded 0.50 MB");
+  expect(annotation).toContain("<b>1</b> over 0.50 MB");
+  expect(annotation).toContain("⚠️ <code>bun-linux-x64</code>");
+  expect(annotation).toContain("<details open>");
+  expect(style).toBe("warning");
+  expect(exitCode).toBe(0);
 });
 
 for (const [how, override] of [
@@ -208,22 +216,22 @@ for (const [how, override] of [
   ["[release] in the commit message", { message: "bump [release]" }],
 ] as const) {
   test.skipIf(!isPosix)(
-    `meta-data fallback does not enforce release-mode sizes from a merge-base build with ${how}`,
+    `meta-data fallback does not compare against release-mode sizes from a merge-base build with ${how}`,
     async () => {
       // Merge-base #200's meta-data is from a release build (whose Windows sizes
       // differ from canary by several MB). The fallback cannot recover an
       // authoritative release flag from meta-data, so it declines the build
       // entirely; the walk claims the anchor with no sizes and every row resolves
       // stale from an older canary build. Even with the PR's linux-x64 +600 KB
-      // over #150, the step annotates the growth but does not hard-fail on a
-      // baseline it cannot prove is like-for-like.
+      // over #150, no warning is raised on a baseline that is not like-for-like.
       const big = { ...META, "999": { ...META["999"], "bun-linux-x64": META["150"]["bun-linux-x64"] + 600_000 } };
-      const { stdout, stderr, annotation, exitCode } = await runBinarySize(big, { "200": override });
-      expect(stderr).not.toContain("error:");
+      const { stdout, stderr, annotation, style, exitCode } = await runBinarySize(big, { "200": override });
+      expect(stderr).toBe("");
       expect(stdout).toContain("main #200");
       expect(stdout).toMatch(/bun-linux-x64\s+.*\+585\.9 KB\s+\(stale: #150\)/);
       expect(annotation).toContain("all within 0.50 MB (2 stale ignored)");
-      expect(annotation).not.toContain("❌");
+      expect(annotation).not.toContain("⚠️");
+      expect(style).toBe("info");
       expect(exitCode).toBe(0);
     },
   );

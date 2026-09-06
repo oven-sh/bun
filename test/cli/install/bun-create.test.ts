@@ -5,7 +5,7 @@ import { exists, stat } from "fs/promises";
 import { bunExe, bunEnv as env, isPosix, tempDir, tls, tmpdirSync } from "harness";
 import { once } from "node:events";
 import * as nodetls from "node:tls";
-import { join } from "path";
+import { basename, join } from "path";
 import { gzipSync } from "zlib";
 
 let x_dir: string;
@@ -340,6 +340,87 @@ it("should create template from local folder", async () => {
   expect(dirStat.isDirectory()).toBe(true);
   expect(await Bun.file(join(x_dir, testTemplate, "index.js")).text()).toBe("hi");
   expect(await Bun.file(join(x_dir, testTemplate, "foo", "bar.js")).text()).toBe("hi");
+});
+
+it("should create template from an absolute folder path", async () => {
+  const template = join(x_dir, "templates", "from-path");
+  await Bun.write(join(template, "index.js"), "hi");
+  await Bun.write(join(template, "package.json"), JSON.stringify({ name: "from-path", version: "1.0.0" }));
+  const dest = join(x_dir, "dest");
+
+  await using proc = spawn({
+    cmd: [bunExe(), "create", template, dest, "--no-git", "--no-install"],
+    cwd: x_dir,
+    stdout: "pipe",
+    stderr: "pipe",
+    env,
+  });
+
+  const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).not.toContain("error:");
+  expect(await Bun.file(join(dest, "index.js")).text()).toBe("hi");
+  expect(JSON.parse(await Bun.file(join(dest, "package.json")).text()).name).toBe("dest");
+  expect(exitCode).toBe(0);
+});
+
+it("should refuse to copy a template into itself", async () => {
+  const template = join(x_dir, "tmpl");
+  await Bun.write(join(template, "index.js"), "hi");
+
+  // With no destination the destination is the template name, so both paths are
+  // `<x_dir>/tmpl`.
+  await using proc = spawn({
+    cmd: [bunExe(), "create", template, "--no-git", "--no-install"],
+    cwd: x_dir,
+    stdout: "pipe",
+    stderr: "pipe",
+    env,
+  });
+
+  const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toContain("overlaps the template");
+  expect(await Bun.file(join(template, "index.js")).text()).toBe("hi");
+  expect(exitCode).toBe(1);
+});
+
+for (const name of [".", ".."]) {
+  it(`should refuse ${JSON.stringify(name)} as a template name`, async () => {
+    const home = join(x_dir, "home");
+    mkdirSync(home, { recursive: true });
+    await Bun.write(join(x_dir, ".bun-create", "tmpl", "index.js"), "hi");
+    await Bun.write(join(x_dir, "keep.js"), "keep me");
+
+    await using proc = spawn({
+      cmd: [bunExe(), "create", name, "--no-git", "--no-install"],
+      cwd: x_dir,
+      stdout: "pipe",
+      stderr: "pipe",
+      env: { ...env, HOME: home },
+    });
+
+    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toContain("is not a template name");
+    // The template directory and the project keep every file.
+    expect(await Bun.file(join(x_dir, ".bun-create", "tmpl", "index.js")).text()).toBe("hi");
+    expect(await Bun.file(join(x_dir, "keep.js")).text()).toBe("keep me");
+    expect(await exists(join(x_dir, basename(x_dir)))).toBe(false);
+    expect(exitCode).toBe(1);
+  });
+}
+
+it("should refuse an empty template name", async () => {
+  await using proc = spawn({
+    cmd: [bunExe(), "create", "", join(x_dir, "dest"), "--no-git", "--no-install"],
+    cwd: x_dir,
+    stdout: "pipe",
+    stderr: "pipe",
+    env,
+  });
+
+  const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toContain("is not a template name");
+  expect(proc.signalCode).toBeNull();
+  expect(exitCode).toBe(1);
 });
 
 // `bun create <github-url>` hits https://api.github.com/repos/{owner}/{repo}/tarball.

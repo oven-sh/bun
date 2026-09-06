@@ -237,7 +237,7 @@ void JSDOMFormData::finishCreation(VM& vm)
 void JSDOMFormData::computeMemoryCost()
 {
     size_t previousCost = m_memoryCost;
-    m_memoryCost = wrapped().memoryCost();
+    m_memoryCost = wrapped().reportableMemoryCost();
     int64_t diff = static_cast<int64_t>(m_memoryCost) - static_cast<int64_t>(previousCost);
     if (diff > 0) {
         globalObject()->vm().heap.reportExtraMemoryAllocated(this, static_cast<uint64_t>(diff));

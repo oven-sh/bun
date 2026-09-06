@@ -192,14 +192,24 @@ std::optional<KeyValuePair<String, DOMFormData::FormDataEntryValue>> DOMFormData
     return makeKeyValuePair(item.name, item.data);
 }
 
-size_t DOMFormData::memoryCost() const
+size_t DOMFormData::reportableMemoryCost() const
 {
     size_t cost = m_items.capacity() * sizeof(Item);
     for (auto& item : m_items) {
         cost += stringMemoryCost(item.name);
-        // A Blob entry's store is reported by the JSBlob wrapper that get() creates.
         if (auto value = std::get_if<String>(&item.data))
             cost += stringMemoryCost(*value);
+    }
+
+    return cost;
+}
+
+size_t DOMFormData::memoryCost() const
+{
+    size_t cost = reportableMemoryCost();
+    for (auto& item : m_items) {
+        if (auto value = std::get_if<RefPtr<Blob>>(&item.data))
+            cost += value->get()->memoryCost();
     }
 
     return cost;

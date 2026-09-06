@@ -196,7 +196,7 @@ describe("url", () => {
       ["https://xn--xn--zca-hia.com/", false], // decodes to "xn--zca£": a label must not begin with xn-- after decoding
       ["https://xn--xn---epa/", false], // decodes to "xn--é"
       ["https://a.xn--xn--ab-gva.b/", false], // decodes to "xn--abé"
-      ["https://xn--xn--zca-7pj/", false], // decodes to "xn--zcaا" (RTL, ICU path)
+      ["https://xn--xn--zca-7pj/", false], // decodes to "xn--zcaا" (RTL: rejected before the BiDi rules hand it to ICU)
     ];
     for (const [input, ok] of cases) {
       expect([input, URL.canParse(input)]).toEqual([input, ok]);

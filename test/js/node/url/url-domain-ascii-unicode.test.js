@@ -109,7 +109,7 @@ describe("nested xn-- labels", () => {
     ["xn--xn--zca-hia", "xn--zca£"],
     ["xn--xn---epa", "xn--é"],
     ["a.xn--xn--ab-gva.b", "xn--abé"],
-    ["xn--xn--zca-7pj", "xn--zcaا (RTL, full ICU check)"],
+    ["xn--xn--zca-7pj", "xn--zcaا (RTL: rejected before the BiDi rules hand it to ICU)"],
   ])("'%s' (decodes to %s) is rejected", input => {
     expect([url.domainToASCII(input), url.domainToUnicode(input)]).toEqual(["", ""]);
   });

@@ -2687,6 +2687,12 @@ impl BufferedStdin {
         self
     }
 
+    /// `true` when the next `read_byte` is served from the buffer and does not touch the fd.
+    #[inline]
+    pub fn has_buffered(&self) -> bool {
+        self.start < self.end
+    }
+
     /// Fill `dest` from the buffer, refilling from
     /// the underlying fd until `dest` is full or EOF. Returns `Ok(0)` on EOF.
     ///

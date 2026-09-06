@@ -1,5 +1,5 @@
 import { spawn } from "bun";
-import { expect, it, test } from "bun:test";
+import { describe, expect, it, test } from "bun:test";
 import { bunEnv, bunExe, isLinux, isMacOS, isWindows, tempDir, withoutAggressiveGC } from "harness";
 
 test("exists", () => {
@@ -417,6 +417,58 @@ test("confirm (no) windows newline", async () => {
   await proc.exited;
 
   expect(await proc.stderr.text()).toBe("No\n");
+});
+
+// prompt(), confirm() and alert() block the JS thread on stdin. A JS signal
+// listener must still run when the signal arrives, not after the next line.
+describe.skipIf(isWindows)("dialogs run JS signal listeners while they wait for input", () => {
+  async function run(dialog, signal, code) {
+    const script = `
+      process.on(${JSON.stringify(signal)}, () => { console.error("[listener ran]"); process.exit(${code}); });
+      const answer = ${dialog};
+      console.error("[code after the dialog ran with " + JSON.stringify(answer) + "]");
+    `;
+    await using proc = spawn({ cmd: [bunExe(), "-e", script], stdio: ["pipe", "pipe", "pipe"], env: bunEnv });
+
+    // The dialog text is flushed right before the child waits on stdin.
+    const reader = proc.stdout.getReader();
+    let shown = "";
+    while (!shown.includes("? ")) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      shown += Buffer.from(value).toString();
+    }
+    proc.kill(signal);
+    proc.stdin.write("bob\n");
+    await proc.stdin.end();
+
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    return { shown, stderr, exitCode };
+  }
+
+  test.concurrent("prompt() and SIGINT", async () => {
+    expect(await run('prompt("name?")', "SIGINT", 130)).toEqual({
+      shown: "name? ",
+      stderr: "[listener ran]\n",
+      exitCode: 130,
+    });
+  });
+
+  test.concurrent("confirm() and SIGTERM", async () => {
+    expect(await run('confirm("sure?")', "SIGTERM", 143)).toEqual({
+      shown: "sure? [y/N] ",
+      stderr: "[listener ran]\n",
+      exitCode: 143,
+    });
+  });
+
+  test.concurrent("alert() and SIGINT", async () => {
+    expect(await run('alert("done?")', "SIGINT", 130)).toEqual({
+      shown: "done? [Enter] ",
+      stderr: "[listener ran]\n",
+      exitCode: 130,
+    });
+  });
 });
 
 test("globalThis.self = 123 works", () => {

@@ -43,6 +43,34 @@ impl PosixSignalHandle {
             event_loop.enqueue_task(task);
         }
     }
+
+    #[cfg(unix)]
+    fn main_thread() -> Option<bun_ptr::BackRef<Self>> {
+        let vm = VirtualMachine::get_main_thread_vm()?;
+        // SAFETY: `vm` and its event loop are process-lifetime; only the
+        // `signal_handler` slot is read.
+        unsafe { (*(*vm).event_loop()).signal_handler }
+    }
+
+    /// `true` when a signal handler has queued a signal the main thread has not consumed.
+    #[cfg(unix)]
+    pub fn has_queued() -> bool {
+        Self::main_thread().is_some_and(|handler| !handler.ring.is_empty())
+    }
+
+    /// Runs the JS listeners for every queued signal now, without the event
+    /// loop. For a host function that blocks the JS thread on stdin (`prompt()`):
+    /// the listener for SIGINT or SIGTERM must run at once, not after the line
+    /// arrives. Main thread only, the ring's single consumer.
+    #[cfg(unix)]
+    pub fn run_queued_from_js_thread(global_object: &JSGlobalObject) {
+        let Some(handler) = Self::main_thread() else {
+            return;
+        };
+        while let Some(signal) = handler.ring.dequeue() {
+            PosixSignalTask::run_from_js_thread(signal, global_object);
+        }
+    }
 }
 
 /// This is the signal handler entry point. Calls enqueue on the ring buffer.

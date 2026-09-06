@@ -84,6 +84,9 @@ function setup(root: string): { cfg: Config; n: Ninja; buildDir: string } {
   return { cfg, n, buildDir };
 }
 
+/** Forward slashes: build.ninja spells relative paths natively (backslashes on Windows); compare in one form. */
+const P = (path: string): string => path.replaceAll("\\", "/");
+
 /** The `build` statement in build.ninja whose first output is `firstOutput` (buildDir-relative), joined onto one line. */
 function edgeFor(ninjaText: string, firstOutput: string): string {
   const start = ninjaText.search(new RegExp(`^build ${RegExp.escape(firstOutput)}[ :]`, "m"));
@@ -100,21 +103,21 @@ describe("fetched dependency graph", () => {
     const r = resolveDep(n, cfg, zstd, new Map()) as ResolvedDep;
     writeFetchStaticOutputs(cfg, [r]);
     await n.write();
-    const text = readFileSync(join(buildDir, "build.ninja"), "utf8");
+    const text = P(readFileSync(join(buildDir, "build.ninja"), "utf8"));
     const tree = resolve(cfg.vendorDir, "zstd");
 
     const plan = edgeFor(text, "deps/zstd/sources.dd");
     expect(plan).toContain(": dep_fetch_plan ");
-    expect(plan).toContain(`ddfile = ${join(buildDir, "deps/zstd/sources.dd")}`);
-    expect(plan).toContain(`static_outputs = ${join(buildDir, "deps/static-outputs.txt")}`);
-    expect(plan).toContain(`builddir = ${buildDir}`);
+    expect(plan).toContain(`ddfile = ${P(join(buildDir, "deps/zstd/sources.dd"))}`);
+    expect(plan).toContain(`static_outputs = ${P(join(buildDir, "deps/static-outputs.txt"))}`);
+    expect(plan).toContain(`builddir = ${P(buildDir)}`);
     expect(plan).toContain("deps/static-outputs.txt"); // an input, so a new list re-plans
 
-    const dep = edgeFor(text, relative(buildDir, join(tree, ".ref")));
+    const dep = edgeFor(text, P(relative(buildDir, join(tree, ".ref"))));
     expect(dep).toContain(": dep_fetch |");
     expect(dep).toContain("dyndep = deps/zstd/sources.dd");
     expect(dep).toMatch(/\| [^:]*deps\/zstd\/sources\.dd[^:]*\n?/); // implicit input too
-    expect(dep).toContain(`${relative(buildDir, tree)}/lib/common/debug.c`); // a compiled source, static
+    expect(dep).toContain(`${P(relative(buildDir, tree))}/lib/common/debug.c`); // a compiled source, static
 
     expect(r.fetchDeclares).toContain(join(tree, "lib/common/debug.c"));
     expect(readFileSync(join(buildDir, "deps/static-outputs.txt"), "utf8").split("\n")).toContain(

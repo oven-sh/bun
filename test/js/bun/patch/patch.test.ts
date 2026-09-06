@@ -542,16 +542,36 @@ describe("apply", () => {
   describe("zero context (-U0) hunks", () => {
     const numbered = (n: number) => Array.from({ length: n }, (_, i) => `line ${i + 1}`).join("\n") + "\n";
     const cases: [name: string, before: string, hunks: string, after: string][] = [
-      ["delete one line", numbered(8), "@@ -6 +5,0 @@\n-line 6\n", "line 1\nline 2\nline 3\nline 4\nline 5\nline 7\nline 8\n"],
-      ["delete a run of lines", numbered(8), "@@ -3,3 +2,0 @@\n-line 3\n-line 4\n-line 5\n", "line 1\nline 2\nline 6\nline 7\nline 8\n"],
+      [
+        "delete one line",
+        numbered(8),
+        "@@ -6 +5,0 @@\n-line 6\n",
+        "line 1\nline 2\nline 3\nline 4\nline 5\nline 7\nline 8\n",
+      ],
+      [
+        "delete a run of lines",
+        numbered(8),
+        "@@ -3,3 +2,0 @@\n-line 3\n-line 4\n-line 5\n",
+        "line 1\nline 2\nline 6\nline 7\nline 8\n",
+      ],
       ["delete the first line", numbered(3), "@@ -1 +0,0 @@\n-line 1\n", "line 2\nline 3\n"],
       ["delete the last line", numbered(3), "@@ -3 +2,0 @@\n-line 3\n", "line 1\nline 2\n"],
       ["delete every line", numbered(2), "@@ -1,2 +0,0 @@\n-line 1\n-line 2\n", ""],
-      ["two deletions", numbered(8), "@@ -2 +1,0 @@\n-line 2\n@@ -6 +4,0 @@\n-line 6\n", "line 1\nline 3\nline 4\nline 5\nline 7\nline 8\n"],
+      [
+        "two deletions",
+        numbered(8),
+        "@@ -2 +1,0 @@\n-line 2\n@@ -6 +4,0 @@\n-line 6\n",
+        "line 1\nline 3\nline 4\nline 5\nline 7\nline 8\n",
+      ],
       ["insert after a line", numbered(4), "@@ -3,0 +4,2 @@\n+X\n+Y\n", "line 1\nline 2\nline 3\nX\nY\nline 4\n"],
       ["insert at the top", numbered(2), "@@ -0,0 +1 @@\n+X\n", "X\nline 1\nline 2\n"],
       ["replace a line", numbered(3), "@@ -2 +2 @@\n-line 2\n+TWO\n", "line 1\nTWO\nline 3\n"],
-      ["delete then insert", numbered(6), "@@ -2 +1,0 @@\n-line 2\n@@ -5,0 +5 @@\n+X\n", "line 1\nline 3\nline 4\nline 5\nX\nline 6\n"],
+      [
+        "delete then insert",
+        numbered(6),
+        "@@ -2 +1,0 @@\n-line 2\n@@ -5,0 +5 @@\n+X\n",
+        "line 1\nline 3\nline 4\nline 5\nX\nline 6\n",
+      ],
     ];
 
     test.each(cases)("%s", async (_name, before, hunks, after) => {

@@ -255,6 +255,8 @@ const IS_UV_FS_COPYFILE_DISABLED =
     {
       const result = await Bun.write(Bun.file(tmpbase + "fetch.js.out"), Bun.file(tmpbase + "fetch.js.in"));
       await gcTick();
+      // The copied byte count. On Windows the uv_fs_copyfile fast path used to resolve 0 here.
+      expect(result).toBe(Buffer.byteLength(exampleHtml));
       expect(await Bun.file(tmpbase + "fetch.js.out").text()).toBe(exampleHtml);
       await gcTick();
     }

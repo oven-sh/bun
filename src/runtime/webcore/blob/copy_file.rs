@@ -1578,8 +1578,27 @@ impl aio::uv_fs::OnFsCopyfile for CopyFileWindows {
             return Self::throw(this, err);
         }
 
-        let size = this.io_request.statbuf.size();
-        Self::on_complete(this, size as usize);
+        // `uv_fs_copyfile` reports no byte count, so read the size back from
+        // the destination (or, failing that, the source).
+        let size = Self::copied_size(&this.destination_file_store.data.as_file().pathlike)
+            .or_else(|| Self::copied_size(&this.source_file_store.data.as_file().pathlike))
+            .unwrap_or(0);
+        Self::on_complete(this, size);
+    }
+}
+
+#[cfg(windows)]
+impl CopyFileWindows {
+    fn copied_size(pathlike: &PathOrFileDescriptor) -> Option<usize> {
+        let stat = match pathlike {
+            PathOrFileDescriptor::Path(p) => {
+                let mut buf = bun_paths::path_buffer_pool::get();
+                bun_sys::stat(p.slice_z(&mut buf))
+            }
+            PathOrFileDescriptor::Fd(fd) => bun_sys::fstat(*fd),
+        }
+        .ok()?;
+        usize::try_from(stat.st_size).ok()
     }
 }
 

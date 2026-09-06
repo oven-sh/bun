@@ -43,9 +43,9 @@ pub trait OnFsStat: IntrusiveUvFs + 'static {
 
 /// An owner that copies a file through its embedded request.
 pub trait OnFsCopyfile: IntrusiveUvFs + 'static {
-    /// Loop thread: `uv_fs_copyfile` completed with `result`; on success the
-    /// request's `statbuf` describes the source. The request has not been
-    /// cleaned up.
+    /// Loop thread: `uv_fs_copyfile` completed with `result`. libuv reports no
+    /// byte count for a copy (`statbuf` is left untouched). The request has not
+    /// been cleaned up.
     fn on_fs_copyfile(this: Box<Self>, result: uv::ReturnCodeI64);
 }
 

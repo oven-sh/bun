@@ -6,8 +6,8 @@
  * Built directly in our graph from the ICU release tarball (which, unlike the
  * git repo, ships the prebuilt data package):
  *
- *   common/, i18n/          icu-sources.ts (ICU's sources.txt lists, kept by
- *                           generate-dep-sources.ts), compiled with dep flags
+ *   common/, i18n/          icu-sources.ts (ICU's per-library sources.txt
+ *                           lists, checked in), compiled with dep flags
  *                           straight onto bun's link line
  *   icupkg (host)           common + i18n + toolutil + stubdata for the BUILD
  *                           machine — reads/filters the data package

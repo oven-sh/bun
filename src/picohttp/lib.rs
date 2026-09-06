@@ -178,7 +178,10 @@ impl fmt::Display for LoggedHeaderValue<'_> {
         if strings::eql_any_case_insensitive_ascii(name, &Self::SCHEME_HEADERS) {
             let scheme_len = strings::index_of_char_usize(value, b' ').map_or(0, |i| i + 1);
             write!(f, "{}[redacted]", BStr::new(&value[..scheme_len]))
-        } else if strings::eql_any_case_insensitive_ascii(name, &Self::SECRET_HEADERS) {
+        } else if self.header.is_multiline()
+            || strings::eql_any_case_insensitive_ascii(name, &Self::SECRET_HEADERS)
+        {
+            // A folded continuation line has no name: the header it continues is unknown here.
             f.write_str("[redacted]")
         } else {
             write!(f, "{}", BStr::new(value))
@@ -192,7 +195,7 @@ impl fmt::Display for Header {
         // codes).
         if enable_ansi_colors_stderr() {
             if self.is_multiline() {
-                write!(f, pretty_fmt!("<r><cyan>{}", true), BStr::new(self.value()))
+                write!(f, pretty_fmt!("<r><cyan>{}", true), self.logged_value())
             } else {
                 write!(
                     f,
@@ -203,11 +206,7 @@ impl fmt::Display for Header {
             }
         } else {
             if self.is_multiline() {
-                write!(
-                    f,
-                    pretty_fmt!("<r><cyan>{}", false),
-                    BStr::new(self.value())
-                )
+                write!(f, pretty_fmt!("<r><cyan>{}", false), self.logged_value())
             } else {
                 write!(
                     f,

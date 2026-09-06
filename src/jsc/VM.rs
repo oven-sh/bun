@@ -87,8 +87,12 @@ impl VM {
         JSC__VM__shrinkFootprint(self)
     }
 
+    /// A synchronous full collection, conducted on this thread. The stack
+    /// region the collector used is zeroed before this returns.
     pub fn run_gc(&self, sync: bool) -> usize {
-        JSC__VM__runGC(self, sync)
+        let heap_size = JSC__VM__runGC(self, sync);
+        zero_collector_stack();
+        heap_size
     }
 
     pub(crate) fn heap_size(&self) -> usize {
@@ -156,6 +160,31 @@ impl VM {
     pub(crate) fn block_bytes_allocated(&self) -> usize {
         JSC__VM__blockBytesAllocated(self)
     }
+}
+
+/// Zero the stack below this frame after a collection that ran on this thread.
+///
+/// The collector's frames held the address of every cell the marker visited.
+/// Those frames are gone when `JSC__VM__runGC` returns, but the memory keeps
+/// the addresses until something overwrites them. A later callee whose frame
+/// has a slot it never writes (alignment padding, a local of a branch it does
+/// not take) then exposes one of them to the next conservative stack scan, and
+/// a dead object survives an explicit `gc()`. JSC's own `sanitizeStackForVM`
+/// does not cover this: it zeroes only between the last sanitize point (inside
+/// the collector, above the marking frames) and the current stack pointer.
+///
+/// A synchronous full collection reaches about 20 KiB below its caller. 32 KiB
+/// covers that and stays inside JSC's 64 KiB `reservedZoneSize`, so this is
+/// safe from a `gc()` call near the JS stack limit.
+#[inline(never)]
+fn zero_collector_stack() {
+    const BYTES: usize = 32 * 1024;
+    let mut region = core::mem::MaybeUninit::<[u8; BYTES]>::uninit();
+    // SAFETY: `region` is a live local of this frame and all-zero bytes are a
+    // valid `[u8; BYTES]`.
+    unsafe { core::ptr::write_bytes(region.as_mut_ptr(), 0, 1) };
+    // Keep the stores: without a use, the compiler drops the dead writes.
+    core::hint::black_box(&region);
 }
 
 /// RAII JSLockHolder returned by [`VM::get_api_lock`]. Released on `Drop`.

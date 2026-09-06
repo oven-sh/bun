@@ -6,13 +6,22 @@
 // valid serialized session to setSession() on a socket whose handshake has
 // started, through a different JS entry point. The expected outcome is a JS
 // exception, printed as JSON on stdout, and a normal exit.
-import { tls as certs } from "harness";
 import { once } from "node:events";
+import fs from "node:fs";
 import net from "node:net";
+import path from "node:path";
 import { Duplex } from "node:stream";
 import tls from "node:tls";
 
 const door = process.argv[2];
+
+// Read the cert from disk instead of importing "harness": that import costs
+// about two seconds under a debug build, most of this fixture's runtime.
+const fixturesDir = path.join(import.meta.dirname, "fixtures");
+const certs = {
+  key: fs.readFileSync(path.join(fixturesDir, "agent1-key.pem")),
+  cert: fs.readFileSync(path.join(fixturesDir, "agent1-cert.pem")),
+};
 
 let session: Buffer;
 const server = tls.createServer({ key: certs.key, cert: certs.cert }, socket => {
@@ -24,7 +33,7 @@ const server = tls.createServer({ key: certs.key, cert: certs.cert }, socket => 
 });
 await once(server.listen(0, "127.0.0.1"), "listening");
 const port = (server.address() as net.AddressInfo).port;
-const clientOptions = { host: "127.0.0.1", port, ca: certs.cert, servername: "localhost" } as const;
+const clientOptions = { host: "127.0.0.1", port, rejectUnauthorized: false } as const;
 
 // A first connection produces the session blob every door feeds back in.
 const first = tls.connect(clientOptions);
@@ -80,7 +89,7 @@ switch (door) {
     await Bun.connect({
       hostname: "127.0.0.1",
       port,
-      tls: { ca: certs.cert, serverName: "localhost" },
+      tls: { rejectUnauthorized: false },
       socket: {
         handshake(socket) {
           report(() => socket.setSession(session));
@@ -97,7 +106,7 @@ switch (door) {
     await Bun.connect({
       hostname: "127.0.0.1",
       port,
-      tls: { ca: certs.cert, serverName: "localhost" },
+      tls: { rejectUnauthorized: false },
       socket: {
         open(socket) {
           report(() => socket.setSession(session));

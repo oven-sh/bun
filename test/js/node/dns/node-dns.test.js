@@ -1,3 +1,4 @@
+import { dnsGetaddrinfoError } from "bun:internal-for-testing";
 import { beforeAll, describe, expect, it, setDefaultTimeout, test } from "bun:test";
 import { bunEnv, bunExe, isLinux, isWindows } from "harness";
 import * as dgram from "node:dgram";
@@ -1059,8 +1060,6 @@ test.concurrent.each(["NAPTR", "naptr"])("resolve(hostname, %p) issues a NAPTR q
 // resolver, so this drives the same mapping the system backend, fetch() and
 // Bun.connect() use with the raw EAI_* status.
 describe("getaddrinfo status mapping", () => {
-  const { dnsGetaddrinfoError } = require("bun:internal-for-testing");
-
   test("EAI_AGAIN is reported as EAI_AGAIN, like Node", () => {
     const err = dnsGetaddrinfoError("EAI_AGAIN", "redis.example");
     expect(err).toBeInstanceOf(Error);

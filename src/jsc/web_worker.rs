@@ -304,21 +304,20 @@ impl WebWorker {
         log!("[{}] create", this_context_id);
 
         let spec_slice = specifier_str.to_utf8();
-        let mut temp_log = bun_ast::Log::default();
         // SAFETY: `parent` is the calling thread's live VM (BACKREF); borrows
         // are scoped to each statement.
-        let prev_log = unsafe {
-            let prev = (*parent).transpiler.log;
-            (*parent).transpiler.set_log(&raw mut temp_log);
-            prev
-        };
+        let prev_log = unsafe { (*parent).transpiler.log };
         // RAII: log pointer restored and temp log dropped on every return path.
-        let mut restore = scopeguard::guard(temp_log, move |log| {
+        let mut restore = scopeguard::guard(bun_ast::Log::default(), move |log| {
             // SAFETY: `parent` outlives the guard (this call's frame).
             unsafe { (*parent).transpiler.set_log(prev_log) };
             drop(log);
         });
+        // The log lives inside the guard. Point the resolver at that slot, not
+        // at a local that a later move would leave behind.
         let temp_log = &mut *restore;
+        // SAFETY: as above; the pointer is cleared by the guard before `restore` drops.
+        unsafe { (*parent).transpiler.set_log(&raw mut *temp_log) };
 
         // SAFETY: caller passed valid (ptr,len) (or `(null,0)`); slice borrowed from C++.
         let preload_modules: &[BunString] =
@@ -336,7 +335,13 @@ impl WebWorker {
             // SAFETY: `parent` is the live VM on the calling (parent) thread;
             // `resolve_entry_point_specifier` takes the raw pointer.
             if let Some(preload) = unsafe {
-                resolve_entry_point_specifier(parent, utf8_slice.slice(), error_message, temp_log)
+                resolve_entry_point_specifier(
+                    parent,
+                    utf8_slice.slice(),
+                    SpecifierRole::Preload,
+                    error_message,
+                    temp_log,
+                )
             } {
                 preloads.push(preload.to_vec().into_boxed_slice());
             }
@@ -813,6 +818,7 @@ impl WebWorker {
             resolve_entry_point_specifier(
                 vm_ptr,
                 &self.unresolved_specifier,
+                SpecifierRole::EntryPoint,
                 &mut resolve_error,
                 vm_log,
             )
@@ -1262,6 +1268,14 @@ fn on_unhandled_rejection(
     vm.handle_ref().request_termination();
 }
 
+/// Which worker specifier `resolve_entry_point_specifier` is resolving. A
+/// preload failure is reported to the `Worker` constructor as a plain string.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum SpecifierRole {
+    EntryPoint,
+    Preload,
+}
+
 /// Resolve a worker entry-point specifier to a path the module loader can
 /// consume. The returned slice is BORROWED — it aliases `str`, the
 /// standalone module graph, or the resolver's arena; the caller must NOT
@@ -1275,6 +1289,7 @@ fn on_unhandled_rejection(
 unsafe fn resolve_entry_point_specifier<'s>(
     parent: *mut VirtualMachine,
     str: &'s [u8],
+    role: SpecifierRole,
     error_message: &mut BunString,
     log: &mut bun_ast::Log,
 ) -> Option<&'s [u8]> {
@@ -1319,6 +1334,18 @@ unsafe fn resolve_entry_point_specifier<'s>(
     // owning thread (the caller's thread per fn contract).
     let resolved_entry_point = match unsafe { (*parent).transpiler.resolve_entry_point(str) } {
         Ok(r) => r,
+        Err(err) if role == SpecifierRole::Preload => {
+            // The same wording as `--preload` on the CLI (`jsc_hooks.rs`).
+            *error_message = BunString::clone_utf8(
+                format!(
+                    "{} resolving preload \"{}\"",
+                    err,
+                    bstr::BStr::new(str)
+                )
+                .as_bytes(),
+            );
+            return None;
+        }
         Err(_) => {
             // `global` valid for VM lifetime; safe ZST-handle deref (panics on null).
             let global = JSGlobalObject::opaque_ref(global);

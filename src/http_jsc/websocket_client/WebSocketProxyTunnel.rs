@@ -310,9 +310,7 @@ impl WebSocketProxyTunnel {
                 return;
             }
 
-            // Verify server identity. A user `checkServerIdentity` callback
-            // runs here and may close the WebSocket, which detaches
-            // `upgrade_client`; re-read it before dispatching further.
+            // User JS in `verify_peer_identity` may detach `upgrade_client`.
             let ssl = this.wrapper.get().and_then(|w| w.ssl.get());
             let failed_identity = match (ssl, this.sni_hostname.as_deref()) {
                 (Some(ssl_ptr), Some(hostname)) => !upgrade_client

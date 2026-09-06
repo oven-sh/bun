@@ -121,8 +121,8 @@ pub struct HTTPClient<const SSL: bool> {
     to_send_len: Cell<usize>,
     headers_buf: JsCell<[picohttp::Header; 128]>,
     body: JsCell<Vec<u8>>,
-    /// Owned NUL-terminated hostname for SNI and certificate verification;
-    /// empty when unset. `tls.serverName` when given, else the dialed host.
+    /// SNI and certificate verification name: `tls.serverName`, else the
+    /// dialed host. Empty when unset.
     hostname: JsCell<ZBox>,
     poll_ref: JsCell<KeepAlive>,
     state: Cell<State>,
@@ -202,8 +202,6 @@ where
 
         debug_assert!(vm.event_loop_handle.is_some());
 
-        // `tls.serverName` overrides the URL host for SNI and for the name the
-        // peer certificate is verified against, as in `fetch()`.
         let server_name: Option<Box<[u8]>> = ssl_config
             .as_deref()
             .and_then(SSLConfig::server_name_bytes)
@@ -421,9 +419,7 @@ where
             bun_analytics::features::web_socket.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
 
             if SSL {
-                // SNI uses `tls.serverName`, else the URL host (defaulted to
-                // "localhost" in C++ when absent), mirroring the TCP path
-                // below. A user-supplied Host header does NOT affect SNI.
+                // A user-supplied Host header does NOT affect SNI.
                 let sni: &[u8] = match &server_name {
                     Some(name) => name,
                     None => host_slice.slice(),
@@ -457,10 +453,8 @@ where
         bun_analytics::features::web_socket.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
 
         if SSL {
-            // SNI for the outer TLS socket must use the host we actually
-            // dialed. For HTTPS proxy connections, that's the proxy host,
-            // not the wss:// target; `tls.serverName` names the target and
-            // is applied to the tunnel handshake instead.
+            // The outer socket's SNI is the host we dialed. Through a proxy
+            // that is the proxy; `server_name` names the target (tunnel).
             let sni: &[u8] = match &server_name {
                 Some(name) if !using_proxy => name,
                 _ => display_host,
@@ -624,8 +618,7 @@ where
         if handshake_success {
             // handshake completed but we may have ssl errors
             if reject_unauthorized {
-                // `verify_peer_identity` may run the user's callback, which can
-                // close the WebSocket and release every other ref to `this`.
+                // `verify_peer_identity` runs user JS that may free `this`.
                 let _guard = RefPtr::from_this(this);
                 // only reject the connection if reject_unauthorized == true
                 if ssl_error.error_no != 0 {
@@ -642,8 +635,7 @@ where
                     Self::fail(this, ErrorCode::TlsHandshakeFailed);
                     return;
                 };
-                // Owned copy: `verify_peer_identity` may run JS that clears
-                // `hostname` through `clear_data`.
+                // Owned: user JS below may run `clear_data`.
                 let hostname: Vec<u8> = {
                     let own_hostname = this.hostname.get();
                     if !own_hostname.is_empty() {
@@ -652,18 +644,15 @@ where
                         ssl.servername().map(<[u8]>::to_vec).unwrap_or_default()
                     }
                 };
-                // Through an HTTPS proxy this is the proxy's own certificate.
-                // The user callback applies to the target's certificate only
-                // (the tunnel handshake), as in `fetch`; a pinning callback
-                // written for the target would reject the proxy.
+                // Through a proxy this is the proxy's certificate; the user
+                // callback is for the target only (tunnel handshake), as in fetch.
                 let identity_ok = if this.proxy.get().is_some() {
                     !hostname.is_empty() && boringssl::check_server_identity(ssl, &hostname)
                 } else {
                     Self::verify_peer_identity(this, ssl, &hostname)
                 };
                 if this.cpp_websocket().is_none() {
-                    // The callback closed the WebSocket; `cancel` already
-                    // closed the socket.
+                    // The callback closed the WebSocket.
                     return;
                 }
                 if !identity_ok {
@@ -677,14 +666,9 @@ where
         }
     }
 
-    /// Verifies the peer certificate against `hostname`. With a user
-    /// `tls.checkServerIdentity` callback, the callback's verdict replaces the
-    /// built-in name check (Node semantics, same as `fetch`). Without one,
-    /// the built-in SAN check runs.
-    ///
-    /// Takes `ThisPtr<Self>` because the callback runs JS that may close the
-    /// WebSocket and re-enter `cancel`. The caller must hold a `RefPtr` guard
-    /// and re-check `cpp_websocket()` before it touches the socket again.
+    /// A user `tls.checkServerIdentity` replaces the built-in name check (as
+    /// in Node and `fetch`). It runs JS that may close the WebSocket: the
+    /// caller holds a `RefPtr` guard and re-checks `cpp_websocket()` after.
     pub(crate) fn verify_peer_identity(
         this: ThisPtr<Self>,
         ssl: &mut boringssl::c::SSL,
@@ -1863,10 +1847,8 @@ fn compute_accept_value(key: &[u8]) -> [u8; 28] {
     result
 }
 
-/// Calls the user's `checkServerIdentity(hostname, cert)` for the peer's leaf
-/// certificate. `true` unless the callback returns an Error or throws, or the
-/// certificate cannot be read. Any pending JS exception is consumed: the only
-/// signal to the user is the 1015 close.
+/// `false` if the callback returns an Error or throws (the exception is
+/// consumed; the user sees the 1015 close), or the certificate is unreadable.
 fn call_check_server_identity(
     global: &JSGlobalObject,
     callback: JSValue,
@@ -1904,8 +1886,7 @@ fn call_check_server_identity(
     verdict
 }
 
-// Same C++ entry point `bun_runtime::api::bun::x509::to_js` uses; declared
-// here because `bun_http_jsc` sits below `bun_runtime`.
+// Also declared in `bun_runtime::api::bun::x509`, which is above this crate.
 unsafe extern "C" {
     safe fn Bun__X509__toJSLegacyEncoding(
         cert: &mut boringssl::c::X509,

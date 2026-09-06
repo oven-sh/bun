@@ -221,8 +221,7 @@ static inline JSC::EncodedJSValue constructJSWebSocket3(JSGlobalObject* lexicalG
     // Native heap SSLConfig. RAII — freed on any early return, moved into
     // WebSocket::create() on success.
     WebSocketSSLConfigPtr sslConfig;
-    // Stored on the wrapper after creation (see below); the options object
-    // on the caller's frame keeps it alive until then.
+    // Set on the wrapper below; the options argument keeps it alive until then.
     JSValue checkServerIdentity;
     auto headersInit = std::optional<Converter<IDLUnion<IDLSequence<IDLSequence<IDLByteString>>, IDLRecord<IDLByteString, IDLByteString>>>::ReturnType>();
     // Default true — matches Bun's existing behavior of always offering permessage-deflate.

@@ -147,9 +147,8 @@ impl CppWebSocket {
         result
     }
 
-    /// The user's `tls.checkServerIdentity`, or `undefined`. Held weakly on
-    /// the C++ object and marked through the JS wrapper, so it is only valid
-    /// while the wrapper is alive (it is, while the upgrade is pending).
+    /// `tls.checkServerIdentity`, or `undefined`. Marked through the JS
+    /// wrapper, which is alive while the upgrade is pending.
     pub(crate) fn check_server_identity(&self) -> JSValue {
         WebSocket__checkServerIdentity(self)
     }

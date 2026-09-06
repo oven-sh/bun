@@ -358,8 +358,7 @@ private:
     // TLS options (native heap SSLConfig — ownership is released to the
     // upgrade client in connect(); freed by ~WebSocketSSLConfigPtr otherwise).
     WebSocketSSLConfigPtr m_sslConfig;
-    // `tls.checkServerIdentity`. Weak here; JSWebSocket::visitChildren marks
-    // it through the wrapper, so it lives exactly as long as the WebSocket.
+    // `tls.checkServerIdentity`, marked by JSWebSocket::visitChildren.
     JSValueInWrappedObject m_checkServerIdentity;
 
     NativeCallbacks m_native;

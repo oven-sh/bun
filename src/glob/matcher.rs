@@ -83,8 +83,7 @@ struct State {
 
     brace_depth: u8,
 
-    /// When false, a `.` at the start of a path segment may only be matched
-    /// by an explicit `.`, `\.`, or `[.]` in the pattern (minimatch `dot: false`).
+    /// False: a leading `.` in a segment needs an explicit `.`, `\.`, or `[.]`.
     dot: bool,
 }
 
@@ -158,14 +157,8 @@ pub fn r#match(glob: &[u8], path: &[u8]) -> MatchResult {
     match_with_dot(glob, path, true)
 }
 
-/// Like [`match`](r#match) for one path segment (`name` holds no separator),
-/// but a leading `.` only matches an explicit `.`, `\.`, or `[.]` at that
-/// position in the pattern. Wildcards (`*`, `?`, other `[...]` classes) do
-/// not consume it. This is minimatch's `dot: false` rule, applied per brace
-/// alternative, so `{.a,*}` matches `.a` but `{*,x}` does not.
-///
-/// One segment only: on a full path, a `**` that restarts on a later hidden
-/// segment would be rejected instead of matching zero segments there.
+/// [`match`](r#match) for one path segment with minimatch's `dot: false` rule:
+/// a leading `.` only matches an explicit `.`, `\.`, or `[.]`, per brace branch.
 pub(crate) fn match_no_dot(glob: &[u8], name: &[u8]) -> MatchResult {
     debug_assert!(!strings::contains_char(name, b'/'));
     debug_assert!(!cfg!(windows) || !strings::contains_char(name, b'\\'));
@@ -221,8 +214,6 @@ fn glob_match_impl(
         if (state.glob_index as usize) < glob.len() {
             'fallthrough: {
                 let ch = glob[state.glob_index as usize];
-                // Nothing before a segment start can backtrack into it, so
-                // this branch is dead rather than retried.
                 if !state.dot
                     && !matches!(ch, b'{' | b',' | b'}')
                     && at_hidden_segment_start(path, state.path_index)

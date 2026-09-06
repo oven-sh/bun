@@ -576,9 +576,7 @@ impl<'a> State<'a> {
         }
     }
 
-    /// Sends `signal` to every running script and finishes the rest. After a
-    /// failure cascade has already aborted, a signal still reaches the
-    /// scripts the cascade's SIGINT did not stop.
+    /// Sends `signal` to every running script and finishes the rest.
     fn abort(&mut self, signal: bun_sys::SignalCode) {
         if self.aborted {
             self.kill_running(signal);

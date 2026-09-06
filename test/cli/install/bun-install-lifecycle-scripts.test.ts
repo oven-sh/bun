@@ -732,6 +732,84 @@ test.concurrent(
   },
 );
 
+for (const linker of ["hoisted", "isolated"]) {
+  test.concurrent(`bun pm untrusted and trust skip workspace members, whose scripts ran at install (${linker})`, async () => {
+    using ctx = await setupTest();
+    const { packageDir, packageJson, env } = ctx;
+
+    await writeFile(
+      packageJson,
+      JSON.stringify({
+        name: "mono",
+        private: true,
+        workspaces: ["packages/*"],
+        dependencies: {
+          "@scope/a": "workspace:*",
+        },
+      }),
+    );
+    await mkdir(join(packageDir, "packages", "a"), { recursive: true });
+    await writeFile(
+      join(packageDir, "packages", "a", "package.json"),
+      JSON.stringify({
+        name: "@scope/a",
+        version: "1.0.0",
+        scripts: {
+          postinstall: `echo ran >> postinstall.log`,
+        },
+      }),
+    );
+
+    let { stdout, stderr, exited } = spawn({
+      cmd: [bunExe(), "install", `--linker=${linker}`],
+      cwd: packageDir,
+      stdout: "pipe",
+      stdin: "ignore",
+      stderr: "pipe",
+      env,
+    });
+    let err = await stderr.text();
+    let out = await stdout.text();
+    expect(err).toContain("Saved lockfile");
+    expect(err).not.toContain("error:");
+    expect(out).not.toContain("Blocked");
+    expect(await exited).toBe(0);
+    expect(await file(join(packageDir, "packages", "a", "postinstall.log")).text()).toBe("ran\n");
+
+    ({ stdout, stderr, exited } = spawn({
+      cmd: [bunExe(), "pm", "untrusted"],
+      cwd: packageDir,
+      stdout: "pipe",
+      stdin: "ignore",
+      stderr: "pipe",
+      env,
+    }));
+    err = await stderr.text();
+    out = await stdout.text();
+    expect(err).not.toContain("error:");
+    expect(out).toContain("Found 0 untrusted dependencies with scripts");
+    expect(out).not.toContain("@scope/a");
+    expect(await exited).toBe(0);
+
+    // `bun pm trust` must not run the member's scripts a second time or write
+    // the member's name into `trustedDependencies`.
+    ({ stdout, stderr, exited } = spawn({
+      cmd: [bunExe(), "pm", "trust", "--all"],
+      cwd: packageDir,
+      stdout: "pipe",
+      stdin: "ignore",
+      stderr: "pipe",
+      env,
+    }));
+    err = await stderr.text();
+    out = await stdout.text();
+    expect(err).toContain("0 scripts ran");
+    expect(await exited).toBe(1);
+    expect(await file(join(packageDir, "packages", "a", "postinstall.log")).text()).toBe("ran\n");
+    expect(await file(packageJson).json()).not.toHaveProperty("trustedDependencies");
+  });
+}
+
 // waiter thread is only a thing on Linux.
 for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
   describe.concurrent("lifecycle scripts" + (forceWaiterThread ? " (waiter thread)" : ""), async () => {

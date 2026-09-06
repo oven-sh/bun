@@ -663,7 +663,11 @@ impl NodeHTTPResponse {
         }
 
         if flags.contains(Flags::ENDED) {
-            return self.body_read_state.get() == BodyReadState::Pending;
+            // Still pending while the request body is being read, or while the
+            // bytes end() left in the socket buffer drain (REQUEST_HAS_COMPLETED
+            // is set once they have).
+            return self.body_read_state.get() == BodyReadState::Pending
+                || !flags.contains(Flags::REQUEST_HAS_COMPLETED);
         }
 
         true
@@ -1817,6 +1821,18 @@ impl NodeHTTPResponse {
             return false;
         }
 
+        if flags.contains(Flags::ENDED) {
+            // Armed by end() when it left bytes in the socket buffer.
+            // HttpContext::onWritable only calls back once that buffer is
+            // empty, so the response has now finished: complete the request,
+            // then tell JS (the `onwritable` slot holds its 'finish' emitter).
+            let _guard = self.ref_guard();
+            response.clear_on_writable();
+            self.on_request_complete();
+            response.corked(|| self.on_drain_corked(offset));
+            return true;
+        }
+
         // Partial pinned progress: return false so onWritable's close gate
         // waits (bufferedAmount does not count the pinned tail). Zero progress
         // after the peer's FIN is handed to the buffered path (spill) so the
@@ -2038,6 +2054,25 @@ impl NodeHTTPResponse {
             } else {
                 raw_response.end_stream(state.is_http_connection_close());
             }
+
+            // Like Node.js, the response has only finished once every byte of
+            // it has been handed to the kernel. Bytes that end() had to leave in
+            // the socket's backpressure buffer keep this request in flight
+            // (poll ref, pending-request count, `finished === false`) until
+            // HttpContext::onWritable reports them written out (on_drain) or
+            // the connection closes first (on_abort). The caller learns which
+            // by the sign of the result: `-(len + 1)` means still draining.
+            // `raw_response` is re-read: an inline close during end() can have
+            // cleared it.
+            if let Some(raw_response) = self.raw_response.get() {
+                if !self.flags.get().contains(Flags::SOCKET_CLOSED)
+                    && !raw_response.is_closed()
+                    && raw_response.get_buffered_amount() > 0
+                {
+                    raw_response.on_writable(on_drain_shim, self.as_ctx_ptr());
+                    return Ok(JSValue::js_number(-(bytes.len() as f64) - 1.0));
+                }
+            }
             self.on_request_complete();
 
             Ok(JSValue::js_number_from_uint64(bytes.len() as u64))
@@ -2147,7 +2182,12 @@ impl NodeHTTPResponse {
         global_object: &JSGlobalObject,
         value: JSValue,
     ) {
-        if self.is_done() || value.is_undefined_or_null() {
+        // Still settable after end() while its bytes drain: that callback is
+        // how JS learns the response finished.
+        let flags = self.flags.get();
+        if flags.intersects(Flags::REQUEST_HAS_COMPLETED | Flags::SOCKET_CLOSED)
+            || value.is_undefined_or_null()
+        {
             js::on_writable_set_cached(this_value, global_object, JSValue::ZERO);
         } else {
             js::on_writable_set_cached(

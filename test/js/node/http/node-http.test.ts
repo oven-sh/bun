@@ -2618,20 +2618,23 @@ it("ClientRequest.destroy(err) with a throwing error listener still tears down; 
 });
 
 it("captureRejections: a rejecting async listener on a Server event other than 'request' emits 'error'", async () => {
-  // node: http.Server's [captureRejectionSymbol] handles 'request' itself and
-  // hands every other event to net.Server's handler, whose default is
-  // this.emit('error', err). The rejection must not be dropped.
+  // node: http.Server's and Http2Server's [captureRejectionSymbol] handle
+  // 'request' (and 'stream') themselves and hand every other event to
+  // net.Server's handler, whose default is this.emit('error', err). The
+  // rejection must not be dropped.
   const script = `
     const events = require("node:events");
     events.captureRejections = true;
     const http = require("node:http");
-    const server = http.createServer();
-    server.on("error", err => console.log("error event: " + err.message));
+    const http2 = require("node:http2");
     process.on("unhandledRejection", err => console.log("unhandledRejection: " + err.message));
-    server.on("custom", async () => {
-      throw new Error("custom-rejects");
-    });
-    server.emit("custom");
+    for (const [name, server] of [["http", http.createServer()], ["http2", http2.createServer()]]) {
+      server.on("error", err => console.log(name + " error event: " + err.message));
+      server.on("custom", async () => {
+        throw new Error(name + " custom-rejects");
+      });
+      server.emit("custom");
+    }
     // rejection (microtask) -> nextTick -> 'error'; all settle within one turn.
     setImmediate(() => setImmediate(() => console.log("done")));
   `;
@@ -2644,7 +2647,11 @@ it("captureRejections: a rejecting async listener on a Server event other than '
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect(stderr).toBe("");
   // node v26.3.0 verified.
-  expect(stdout.trim().split("\n")).toEqual(["error event: custom-rejects", "done"]);
+  expect(stdout.trim().split("\n")).toEqual([
+    "http error event: http custom-rejects",
+    "http2 error event: http2 custom-rejects",
+    "done",
+  ]);
   expect(exitCode).toBe(0);
 });
 

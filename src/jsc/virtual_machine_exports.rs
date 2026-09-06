@@ -240,31 +240,13 @@ pub unsafe fn is_no_proxy(
 
 // HOST_EXPORT(Bun__getEnvHttpProxy, c)
 /// The `http_proxy` (`is_http`) or `https_proxy` href `fetch()` would use for this host, or empty for direct.
-///
-/// # Safety
-/// Same contract as [`is_no_proxy`].
-pub unsafe fn get_env_http_proxy(
-    is_http: bool,
-    hostname_ptr: *const u8,
-    hostname_len: usize,
-    host_ptr: *const u8,
-    host_len: usize,
-) -> BunString {
-    // SAFETY: VM singleton is process-lifetime.
-    let vm = VirtualMachine::get();
-    let hostname: Option<&[u8]> = if hostname_len > 0 {
-        // SAFETY: caller guarantees `hostname_ptr[..hostname_len]` is valid for reads.
-        Some(unsafe { bun_core::ffi::slice(hostname_ptr, hostname_len) })
-    } else {
-        None
-    };
-    let host: Option<&[u8]> = if host_len > 0 {
-        // SAFETY: caller guarantees `host_ptr[..host_len]` is valid for reads.
-        Some(unsafe { bun_core::ffi::slice(host_ptr, host_len) })
-    } else {
-        None
-    };
-    match vm.env_loader().get_http_proxy(is_http, hostname, host) {
+pub fn get_env_http_proxy(is_http: bool, hostname: &[u8], host: &[u8]) -> BunString {
+    let hostname = (!hostname.is_empty()).then_some(hostname);
+    let host = (!host.is_empty()).then_some(host);
+    match VirtualMachine::get()
+        .env_loader()
+        .get_http_proxy(is_http, hostname, host)
+    {
         // `HTTPThread::dial` treats a schemeless value (`proxy:3128`) as http (#11343).
         Some(url) if url.protocol.is_empty() => {
             BunString::clone_utf8(&[b"http://".as_slice(), url.href].concat())

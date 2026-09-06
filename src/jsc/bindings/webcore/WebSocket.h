@@ -122,6 +122,9 @@ public:
     static ExceptionOr<Ref<WebSocket>> create(ScriptExecutionContext&, const String& url, const String& protocol);
     static ExceptionOr<Ref<WebSocket>> create(ScriptExecutionContext&, const String& url, const Vector<String>& protocols);
     static ExceptionOr<Ref<WebSocket>> create(ScriptExecutionContext&, const String& url, const Vector<String>& protocols, std::optional<FetchHeaders::Init>&&);
+    static ExceptionOr<Ref<WebSocket>> create(ScriptExecutionContext&, const String& url, const Vector<String>& protocols, std::optional<FetchHeaders::Init>&&, bool useEnvProxy);
+    // For Bun's own connections (the WebView DevTools socket): never through http_proxy / https_proxy.
+    static ExceptionOr<Ref<WebSocket>> createDirect(ScriptExecutionContext&, const String& url);
     // With proxy support
     static ExceptionOr<Ref<WebSocket>> create(ScriptExecutionContext&, const String& url, const Vector<String>& protocols, std::optional<FetchHeaders::Init>&&, const String& proxyUrl, std::optional<FetchHeaders::Init>&& proxyHeaders, WebSocketSSLConfigPtr&& sslConfig, bool offerPerMessageDeflate, bool useEnvProxy);
     static ExceptionOr<Ref<WebSocket>> create(ScriptExecutionContext& context, const String& url, const Vector<String>& protocols, std::optional<FetchHeaders::Init>&& headers, bool rejectUnauthorized, const String& proxyUrl, std::optional<FetchHeaders::Init>&& proxyHeaders, WebSocketSSLConfigPtr&& sslConfig, bool offerPerMessageDeflate, bool useEnvProxy);
@@ -162,11 +165,10 @@ public:
         ProxyTLS // ws:// or wss:// through HTTPS proxy (TLS socket to proxy)
     };
 
-    ExceptionOr<void> connect(const String& url, const Vector<String>& protocols, std::optional<FetchHeaders::Init>&&);
-    // Report a connect() failure found before a socket exists like a refused connection: error event, then close 1006.
-    void dispatchConnectFailure(String&& reason);
     // useEnvProxy: with no proxy config, take the proxy from http_proxy / https_proxy like fetch().
     ExceptionOr<void> connect(const String& url, const Vector<String>& protocols, std::optional<FetchHeaders::Init>&&, std::optional<struct ProxyConfig>&&, bool useEnvProxy);
+    // Report a connect() failure found before a socket exists like a refused connection: error event, then close 1006.
+    void dispatchConnectFailure(String&& reason);
 
     ExceptionOr<void> send(const String& message);
     ExceptionOr<void> send(JSC::ArrayBuffer&);

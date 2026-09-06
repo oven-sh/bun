@@ -287,6 +287,16 @@ ExceptionOr<Ref<WebSocket>> WebSocket::create(ScriptExecutionContext& context, c
 
 ExceptionOr<Ref<WebSocket>> WebSocket::create(ScriptExecutionContext& context, const String& url, const Vector<String>& protocols, std::optional<FetchHeaders::Init>&& headers)
 {
+    return create(context, url, protocols, WTF::move(headers), true);
+}
+
+ExceptionOr<Ref<WebSocket>> WebSocket::createDirect(ScriptExecutionContext& context, const String& url)
+{
+    return create(context, url, Vector<String> {}, std::nullopt, false);
+}
+
+ExceptionOr<Ref<WebSocket>> WebSocket::create(ScriptExecutionContext& context, const String& url, const Vector<String>& protocols, std::optional<FetchHeaders::Init>&& headers, bool useEnvProxy)
+{
     if (url.isNull())
         return Exception { SyntaxError };
 
@@ -296,8 +306,7 @@ ExceptionOr<Ref<WebSocket>> WebSocket::create(ScriptExecutionContext& context, c
     if (socket->m_state == CLOSED)
         return socket;
 
-    auto result = socket->connect(url, protocols, WTF::move(headers));
-    // auto result = socket->connect(url, protocols);
+    auto result = socket->connect(url, protocols, WTF::move(headers), std::nullopt, useEnvProxy);
 
     if (result.hasException())
         return result.releaseException();
@@ -377,11 +386,6 @@ static String hostName(const URL& url, bool secure)
     if (url.port() && ((!secure && url.port().value() != 80) || (secure && url.port().value() != 443)))
         return makeString(asASCIILowercase(url.host()), ':', url.port().value());
     return url.host().convertToASCIILowercase();
-}
-
-ExceptionOr<void> WebSocket::connect(const String& url, const Vector<String>& protocols, std::optional<FetchHeaders::Init>&& headersInit)
-{
-    return connect(url, protocols, WTF::move(headersInit), std::nullopt, true);
 }
 
 size_t WebSocket::memoryCost() const
@@ -554,7 +558,7 @@ __attribute__((minsize)) ExceptionOr<void> WebSocket::connect(const String& url,
         hasProxy = false;
     }
 
-    if (!is_unix) {
+    if (!is_unix && (hasProxy || useEnvProxy)) {
         auto hostStr = m_url.host().toString();
         auto hostWithPort = hostName(m_url, is_secure);
         auto hostUtf8 = hostStr.utf8();

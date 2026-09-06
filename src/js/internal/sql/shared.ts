@@ -1,6 +1,8 @@
 import type { Query as QueryType } from "./query";
 
 const PublicArray = globalThis.Array;
+const ObjectDefineProperty = Object.defineProperty;
+const kInspectCustom = Symbol.for("nodejs.util.inspect.custom");
 const {
   Query,
   SQLQueryFlags,
@@ -2160,7 +2162,7 @@ function parseOptions(
   // `password` stays a plain enumerable property so that `new SQL(sql.options)`
   // (which spreads the object) keeps working. Inspection prints "[REDACTED]"
   // instead, the same as S3Client.
-  Object.defineProperty(ret, Symbol.for("nodejs.util.inspect.custom"), {
+  ObjectDefineProperty(ret, kInspectCustom, {
     value: function inspect(this: typeof ret) {
       const copy = { ...this };
       if (copy.password) copy.password = "[REDACTED]";

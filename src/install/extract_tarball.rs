@@ -488,6 +488,10 @@ impl ExtractTarball {
                         name,
                         self.resolution.npm().version,
                         None,
+                        directories::NpmCacheKey {
+                            url: self.url.slice(),
+                            integrity: &self.integrity,
+                        },
                     )
                     .as_bytes()
                 }

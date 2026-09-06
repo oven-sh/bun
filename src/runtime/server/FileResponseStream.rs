@@ -48,6 +48,11 @@ pub(crate) struct FileResponseStream {
     reader: JsCell<BufferedReader>,
     sendfile: JsCell<Sendfile>,
 
+    /// The body length the caller framed (its `Content-Length`), if any.
+    length: Cell<Option<u64>>,
+    /// Body bytes handed to `resp` so far.
+    delivered: Cell<u64>,
+
     state: Cell<State>,
 }
 
@@ -180,6 +185,8 @@ impl FileResponseStream {
                 }),
                 reader: JsCell::new(BufferedReader::init::<FileResponseStream>()),
                 sendfile: JsCell::new(Sendfile::default()),
+                length: Cell::new(opts.length),
+                delivered: Cell::new(0),
                 state: Cell::new(State::default()),
             }));
         // SAFETY: `this` is the live allocation above; the guard's ref defers
@@ -314,8 +321,14 @@ impl FileResponseStream {
 
         let resp = self.resp.get();
         resp.timeout(self.idle_timeout.get());
+        self.delivered
+            .set(self.delivered.get().saturating_add(chunk.len() as u64));
 
         if state == ReadState::Eof {
+            if self.is_short() {
+                self.fail_with(short_read_error(self.fd.get()));
+                return false;
+            }
             self.insert_state(State::RESPONSE_DONE);
             self.detach_resp();
             resp.end(chunk, resp.should_close_connection());
@@ -438,11 +451,20 @@ impl FileResponseStream {
                 sf.remain = sf.remain.saturating_sub(sent);
                 (errno, sent, sf.remain)
             });
+            self.delivered
+                .set(self.delivered.get().saturating_add(sent));
 
             match errno {
                 sys::E::SUCCESS => {
-                    if remain == 0 || sent == 0 {
+                    if remain == 0 {
                         self.end_sendfile();
+                        return false;
+                    }
+                    if sent == 0 {
+                        // EOF before the framed length: the file shrank
+                        // after the stat, or the stat size was never its
+                        // length. The response cannot be completed.
+                        self.fail_with(short_read_error(self.fd.get()));
                         return false;
                     }
                     return self.arm_sendfile_writable();
@@ -566,12 +588,21 @@ impl FileResponseStream {
             self.insert_state(State::RESPONSE_DONE);
             self.detach_resp();
             let resp = self.resp.get();
-            resp.end_without_body(resp.should_close_connection());
-            self.deliver(resp, StreamEnd::Complete);
-            // This end runs uncorked (reader callbacks), so no cork or parser
-            // gate will run the close check; do it here, after `on_complete`
-            // like `end_sendfile`, so the callbacks see a live socket.
-            resp.close_if_done_and_marked();
+            if self.is_short() {
+                self.insert_state(State::ERRORED);
+                resp.force_close();
+                self.deliver(resp, StreamEnd::Error(short_read_error(self.fd.get())));
+            } else {
+                // The reader produced no bytes. `end` writes `Content-Length: 0`
+                // (or the terminating chunk) so the client does not wait for a
+                // close-delimited body.
+                resp.end(b"", resp.should_close_connection());
+                self.deliver(resp, StreamEnd::Complete);
+                // This end runs uncorked (reader callbacks), so no cork or parser
+                // gate will run the close check; do it here, after `on_complete`
+                // like `end_sendfile`, so the callbacks see a live socket.
+                resp.close_if_done_and_marked();
+            }
         }
 
         // Release the owner ref from `heap::into_raw` in `start()`. Every entry
@@ -579,6 +610,14 @@ impl FileResponseStream {
         // that guard's drop, not here.
         // SAFETY: `self` is live and owns the ref; nothing touches `self` after.
         unsafe { Self::deref(self.as_ptr()) };
+    }
+
+    /// The caller framed a length and the file ended before it. Completing
+    /// the response would leave a `Content-Length` client waiting forever.
+    fn is_short(&self) -> bool {
+        self.length
+            .get()
+            .is_some_and(|len| self.delivered.get() < len)
     }
 
     fn event_loop(&self) -> EventLoopHandle {
@@ -638,6 +677,10 @@ impl Drop for FileResponseStream {
             Closer::close(self.fd.get(), ());
         }
     }
+}
+
+fn short_read_error(fd: Fd) -> sys::Error {
+    sys::Error::from_code(sys::E::EIO, sys::Tag::read).with_fd(fd)
 }
 
 fn can_sendfile(resp: AnyResponse, file_type: FileType, length: Option<u64>) -> bool {

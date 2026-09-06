@@ -151,6 +151,10 @@ impl DirectoryRoute {
         };
 
         let size: u64 = u64::try_from(stat.st_size.max(0)).expect("int cast");
+        // procfs, sysfs and cgroupfs files are regular files whose `st_size`
+        // is 0 with content behind it. Stream those to EOF instead of framing
+        // an empty body; a `Range` cannot be resolved without a length.
+        let size_unknown = size == 0;
 
         let (last_modified_ms, lm_buf, lm_len) = this.stat_cache_lookup(rel, &stat);
         let last_modified = (lm_len > 0).then(|| &lm_buf[..lm_len]);
@@ -158,7 +162,7 @@ impl DirectoryRoute {
         let mut etag_buf = [0u8; 40];
         let etag = format_weak_etag(&mut etag_buf, size, last_modified_ms);
 
-        let range = if method == Method::GET || method == Method::HEAD {
+        let range = if (method == Method::GET || method == Method::HEAD) && !size_unknown {
             RangeRequest::from_request(&req, size)
         } else {
             RangeRequest::Result::None
@@ -207,24 +211,28 @@ impl DirectoryRoute {
             return;
         }
 
-        let (body_offset, body_len): (u64, u64) = match range {
+        let (body_offset, body_len): (u64, Option<u64>) = match range {
             RangeRequest::Result::Satisfiable { .. } => {
-                write_content_range(resp, range, size).unwrap()
+                let (start, len) = write_content_range(resp, range, size).unwrap();
+                (start, Some(len))
             }
             RangeRequest::Result::Unsatisfiable => {
                 write_content_range(resp, range, size);
                 resp.end(b"", resp.should_close_connection());
                 return;
             }
+            RangeRequest::Result::None if size_unknown => (0, None),
             RangeRequest::Result::None => {
                 resp.write_header(b"accept-ranges", b"bytes");
-                (0, size)
+                (0, Some(size))
             }
         };
 
-        if !resp.state().has_written_content_length_header() {
-            resp.write_header_int(b"content-length", body_len);
-            resp.mark_wrote_content_length_header();
+        if let Some(len) = body_len {
+            if !resp.state().has_written_content_length_header() {
+                resp.write_header_int(b"content-length", len);
+                resp.mark_wrote_content_length_header();
+            }
         }
 
         if method == Method::HEAD {
@@ -248,7 +256,7 @@ impl DirectoryRoute {
             file_type: FileType::File,
             pollable: false,
             offset: body_offset,
-            length: Some(body_len),
+            length: body_len,
             idle_timeout: server.config().idle_timeout,
             owner: StreamOwner::DirectoryRoute(guard.into_route()),
         });

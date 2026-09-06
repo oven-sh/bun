@@ -1,8 +1,8 @@
 import type { Server } from "bun";
 import { afterAll, beforeAll, describe, expect, it, mock, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, isWindows, rmScope, rss, tempDir, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, isASAN, isLinux, isWindows, rmScope, rss, tempDir, tempDirWithFiles } from "harness";
 import { mkfifo } from "mkfifo";
-import { closeSync, openSync, unlinkSync, writeSync } from "node:fs";
+import { closeSync, openSync, readFileSync, statSync, unlinkSync, writeSync } from "node:fs";
 import { join } from "node:path";
 
 const LARGE_SIZE = 1024 * 1024 * 8;
@@ -1513,4 +1513,27 @@ test("file route serves a burst of concurrent requests after reloads", async () 
 
   const a = await fetch(`${server.url}a`).then(r => r.text());
   expect(a).toBe("a-new");
+});
+
+// sysfs attributes stat as one page (4096) but read fewer bytes. Both the
+// handler path and a static `Bun.file` route frame the body with the stat
+// size. When the file ends early the server must close the connection, not
+// complete the response and leave a Content-Length client waiting.
+test.skipIf(!isLinux)("a file that ends before its Content-Length closes the connection", async () => {
+  const path = "/sys/devices/system/cpu/online";
+  const content = readFileSync(path);
+  const size = statSync(path).size;
+  if (size === 0 || content.length >= size) return;
+
+  using server = Bun.serve({
+    port: 0,
+    idleTimeout: 255,
+    routes: { "/static": new Response(Bun.file(path)) },
+    fetch: () => new Response(Bun.file(path)),
+  });
+
+  for (const url of [`${server.url}handler`, `${server.url}static`]) {
+    // The close can arrive before or after the headers are parsed.
+    await expect(fetch(url).then(res => res.text())).rejects.toThrow("closed unexpectedly");
+  }
 });

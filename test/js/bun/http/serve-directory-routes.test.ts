@@ -1,6 +1,6 @@
 import { serve, type Server } from "bun";
 import { afterEach, describe, expect, it } from "bun:test";
-import { symlinkSync } from "fs";
+import { readFileSync, statSync, symlinkSync } from "fs";
 import { bunEnv, bunExe, isLinux, tempDir } from "harness";
 import { join } from "path";
 
@@ -755,6 +755,63 @@ describe("Bun.serve() directory routes", () => {
       headers: { range: "bytes=999999999999999999999999-" },
     });
     expect([200, 416]).toContain(hugeRange.status);
+  });
+
+  // procfs files are regular files whose st_size is 0 but that have content.
+  it.skipIf(!isLinux)("serves the content of a procfs file whose stat size is 0", async () => {
+    const expected = readFileSync("/proc/sys/kernel/ostype", "utf8");
+    expect(statSync("/proc/sys/kernel/ostype").size).toBe(0);
+
+    server = serve({
+      port: 0,
+      routes: { "/k/*": { dir: "/proc/sys/kernel" } },
+    });
+
+    const res = await fetch(`${server.url}k/ostype`);
+    expect(res.status).toBe(200);
+    expect(await res.text()).toBe(expected);
+
+    // A Range cannot be resolved against an unknown length: it is ignored.
+    const ranged = await fetch(`${server.url}k/ostype`, { headers: { range: "bytes=0-1" } });
+    expect(ranged.status).toBe(200);
+    expect(await ranged.text()).toBe(expected);
+  });
+
+  // sysfs attributes stat as one page (4096) but read fewer bytes. The
+  // response is framed with the stat size; when the file ends before that,
+  // the server must close the connection instead of completing the
+  // response and leaving the client waiting for the rest.
+  it.skipIf(!isLinux)("closes the connection when a file ends before its Content-Length", async () => {
+    const path = "/sys/devices/system/cpu/online";
+    const content = readFileSync(path);
+    const size = statSync(path).size;
+    if (size === 0 || content.length >= size) return;
+
+    server = serve({
+      port: 0,
+      idleTimeout: 255,
+      routes: { "/s/*": { dir: "/sys/devices/system/cpu" } },
+    });
+
+    // The close can arrive before or after the headers are parsed.
+    await expect(fetch(`${server.url}s/online`).then(res => res.text())).rejects.toThrow("closed unexpectedly");
+  });
+
+  it("serves an empty file as an empty body", async () => {
+    using dir = tempDir("serve-dir-empty", { "public/empty.txt": "" });
+
+    server = serve({
+      port: 0,
+      routes: { "/*": { dir: join(String(dir), "public") } },
+    });
+
+    const res = await fetch(`${server.url}empty.txt`);
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-length")).toBe("0");
+    expect(await res.text()).toBe("");
+
+    const again = await fetch(`${server.url}empty.txt`);
+    expect(await again.text()).toBe("");
   });
 
   it("survives server.reload()", async () => {

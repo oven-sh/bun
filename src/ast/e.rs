@@ -41,8 +41,7 @@ impl Default for NameOfSymbol {
 pub struct Array {
     pub items: ExprNodeList,
     pub comma_after_spread: crate::Loc,
-    /// `[(a = 1)]`: an item that is a parenthesized assignment. Like
-    /// `comma_after_spread`, an error only if this literal is a pattern.
+    /// `[(a = 1)]`: an error only if this literal is a pattern.
     pub parenthesized_assign: crate::Loc,
     pub is_single_line: bool,
     pub is_parenthesized: bool,

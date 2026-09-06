@@ -1315,8 +1315,7 @@ pub struct DeferredErrors {
     pub(crate) invalid_expr_default_value: Option<bun_ast::Range>,
     pub(crate) invalid_expr_after_question: Option<bun_ast::Range>,
 
-    /// An item that is a parenthesized assignment: `[(a = 1)]`. Stored on the
-    /// enclosing literal (`E::Array::parenthesized_assign`), not merged upward.
+    /// `[(a = 1)]`: stored on the enclosing literal, not merged upward.
     pub(crate) parenthesized_assign: Option<bun_ast::Loc>,
 }
 

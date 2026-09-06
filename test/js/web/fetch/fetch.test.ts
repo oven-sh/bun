@@ -843,6 +843,45 @@ describe("fetch", () => {
     expect(await response2.text()).toBe("0");
   });
 
+  // The body's type (Blob.type, URLSearchParams, File) sets Content-Type
+  // independent of its length. A zero-length typed body must still carry it.
+  it.concurrent("content type is inferred from a zero-length typed body", async () => {
+    using server = Bun.serve({
+      port: 0,
+      fetch(req) {
+        return Response.json({
+          type: req.headers.get("content-type"),
+          length: req.headers.get("content-length"),
+        });
+      },
+    });
+
+    const bodies = {
+      "URLSearchParams empty": new URLSearchParams(),
+      "URLSearchParams a=1": new URLSearchParams("a=1"),
+      "Blob empty": new Blob([], { type: "application/json" }),
+      "Blob 1 byte": new Blob(["{"], { type: "application/json" }),
+      "File empty": new File([], "a.txt", { type: "text/plain" }),
+      "Blob empty untyped": new Blob([]),
+    };
+    const results = Object.fromEntries(
+      await Promise.all(
+        Object.entries(bodies).map(async ([name, body]) => {
+          const res = await fetch(server.url, { method: "POST", body });
+          return [name, await res.json()] as const;
+        }),
+      ),
+    );
+    expect(results).toEqual({
+      "URLSearchParams empty": { type: "application/x-www-form-urlencoded;charset=UTF-8", length: "0" },
+      "URLSearchParams a=1": { type: "application/x-www-form-urlencoded;charset=UTF-8", length: "3" },
+      "Blob empty": { type: "application/json;charset=utf-8", length: "0" },
+      "Blob 1 byte": { type: "application/json;charset=utf-8", length: "1" },
+      "File empty": { type: "text/plain;charset=utf-8", length: "0" },
+      "Blob empty untyped": { type: null, length: "0" },
+    });
+  });
+
   it.concurrent("should work with ipv6 localhost", async () => {
     using server = Bun.serve({
       port: 0,

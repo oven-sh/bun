@@ -11,9 +11,9 @@ import { bunEnv, bunExe, tempDir } from "harness";
 // zero UTF-16 units, so a conversion pass that sees 0x41 there writes one
 // unit more than was allocated.
 const fixture = String.raw`
-  const { Worker, isMainThread, workerData, parentPort } = require("worker_threads");
-  const { transcode } = require("buffer");
-  const { StringDecoder } = require("string_decoder");
+  import { Worker, isMainThread, workerData, parentPort } from "node:worker_threads";
+  import { transcode } from "node:buffer";
+  import { StringDecoder } from "node:string_decoder";
   if (!isMainThread) {
     const u8 = new Uint8Array(workerData);
     parentPort.postMessage("go");
@@ -23,7 +23,7 @@ const fixture = String.raw`
     const iterations = Number(process.argv[3]);
     const sab = new SharedArrayBuffer(64);
     const buf = Buffer.from(sab).fill(0x41);
-    const worker = new Worker(__filename, { workerData: sab });
+    const worker = new Worker(import.meta.path, { workerData: sab });
     worker.on("message", async () => {
       let total = 0;
       if (mode === "toString") {
@@ -50,10 +50,11 @@ const fixture = String.raw`
           total += (await reader.read()).value.length;
         }
       } else if (mode === "textStream") {
+        let enqueued = 0;
         const source = new ReadableStream({
           pull(controller) {
             controller.enqueue(buf);
-            if (++total >= iterations) controller.close();
+            if (++enqueued >= iterations) controller.close();
           },
         });
         for await (const text of new Response(source).textStream()) total += text.length;
@@ -66,9 +67,9 @@ const fixture = String.raw`
 
 for (const mode of ["toString", "transcode", "string_decoder", "TextDecoderStream", "textStream"]) {
   test.concurrent(`${mode} on a SharedArrayBuffer that another thread writes`, async () => {
-    using dir = tempDir("buffer-shared-decode-race", { "fixture.cjs": fixture });
+    using dir = tempDir("buffer-shared-decode-race", { "fixture.mjs": fixture });
     await using proc = Bun.spawn({
-      cmd: [bunExe(), "fixture.cjs", mode, "5000"],
+      cmd: [bunExe(), "fixture.mjs", mode, "5000"],
       env: bunEnv,
       cwd: String(dir),
       stdout: "pipe",

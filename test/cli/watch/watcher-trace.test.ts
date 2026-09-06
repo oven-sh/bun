@@ -210,7 +210,7 @@ describe.each(traceDirKinds)("BUN_WATCHER_TRACE inside the watched directory via
         (fileEvent: any) => Array.isArray(fileEvent.changed) && fileEvent.changed.includes("trace.log"),
       );
     });
-    expect(selfReferences.slice(0, 3)).toEqual([]);
+    expect(selfReferences).toHaveLength(0);
     expect(lines.length).toBeLessThan(50);
   });
 });

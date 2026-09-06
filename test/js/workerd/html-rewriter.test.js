@@ -3207,3 +3207,41 @@ describe("GC pressure mid-rewrite", () => {
     });
   });
 });
+
+describe("selector VM complexity", () => {
+  // The selector VM used to re-run every ancestor's descendant-combinator
+  // jumps for every start tag, and each ancestor held one copy per partial
+  // match, so "div div div div" over N nested <div>s was O(N^4): depth 600
+  // (6.6 KB) took about two minutes. A stray end tag scanned the whole open
+  // stack, so "<a></b>" x 40k (280 KB) was O(N^2) and took about 2.5 s.
+  // Both now run in well under a second. The spawn timeout is the assertion.
+  it("descendant combinators and stray end tags stay linear in nesting depth", async () => {
+    const depth = 600;
+    const fixture = /* js */ `
+      const depth = ${depth};
+      const deep = Buffer.alloc(depth * 5, "<div>").toString() + "x" + Buffer.alloc(depth * 6, "</div>").toString();
+      let matched = 0;
+      const deepOut = new HTMLRewriter().on("div div div div", { element() { matched++; } }).transform(deep);
+
+      const stray = Buffer.alloc(40_000 * 7, "<a></b>").toString();
+      let strayMatched = 0;
+      const strayOut = new HTMLRewriter().on("nomatch", { element() { strayMatched++; } }).transform(stray);
+
+      console.log(JSON.stringify({ matched, deepSame: deepOut === deep, strayMatched, straySame: strayOut === stray }));
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+      timeout: 30_000,
+      killSignal: "SIGKILL",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+      stdout: JSON.stringify({ matched: depth - 3, deepSame: true, strayMatched: 0, straySame: true }),
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+});

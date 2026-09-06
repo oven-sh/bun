@@ -1192,9 +1192,7 @@ impl<const SSL: bool> NewSocket<SSL> {
             // one outside the errno table) falls back to ECONNREFUSED.
             let (errno_, code_): (c_int, BunString) = match sys::SystemErrno::init(i64::from(errno))
             {
-                Some(e)
-                    if errno > 0 && e != sys::SystemErrno::EUNKNOWN && (e as u16) < 3000 =>
-                {
+                Some(e) if errno > 0 && e != sys::SystemErrno::EUNKNOWN && (e as u16) < 3000 => {
                     (e as c_int, BunString::static_(<&'static str>::from(e)))
                 }
                 _ => (

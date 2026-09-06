@@ -380,6 +380,10 @@ struct us_connecting_socket_t {
     unsigned char kind;
     uint16_t port;
     int error;
+    /* The errno of the last candidate that failed to connect. It becomes
+     * `error` only once every candidate has failed: a nonzero `error` marks
+     * the connecting socket as errored while other candidates are in flight. */
+    int last_connect_error;
     struct addrinfo *addrinfo_head;
     // this is used to track pending connecting sockets in the context
     struct us_connecting_socket_t* next_pending;

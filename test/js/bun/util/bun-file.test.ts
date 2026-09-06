@@ -1,7 +1,23 @@
 import { expect, test } from "bun:test";
+import { utimesSync } from "fs";
 import fsPromises from "fs/promises";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "path";
+
+test("lastModified is negative for a file dated before 1970", async () => {
+  using dir = tempDir("bun-file-lastmodified-negative", { "old.txt": "x" });
+  const filename = join(dir, "old.txt");
+  const mtime = new Date("1960-01-01T00:00:00Z");
+  utimesSync(filename, mtime, mtime);
+
+  // lazy stat path
+  expect(Bun.file(filename).lastModified).toBe(mtime.getTime());
+
+  // fstat-during-read path
+  const file = Bun.file(filename);
+  expect(await file.text()).toBe("x");
+  expect(file.lastModified).toBe(mtime.getTime());
+});
 
 test("delete() and stat() should work with unicode paths", async () => {
   await using dir = tempDir("delete-stat-unicode-path", {

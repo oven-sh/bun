@@ -1539,18 +1539,17 @@ pub type OpaqueCallback = unsafe extern "C" fn(current: *mut c_void);
 /// under both names.
 pub type Error = ErrorCode;
 
-/// Maximum Date in JavaScript is less than Number.MAX_SAFE_INTEGER (u52).
-pub const INIT_TIMESTAMP: JSTimeType = (1u64 << 52) - 1;
-pub type JSTimeType = u64;
+/// Milliseconds since the Unix epoch, signed like `fs.Stats.mtimeMs` (a file
+/// can be dated before 1970).
+pub type JSTimeType = i64;
+/// "stat has not run yet" marker for `webcore::File::last_modified`.
+pub const INIT_TIMESTAMP: JSTimeType = (1 << 52) - 1;
 
-/// Compute in `i128` first so the
-/// `sec * 1000` widening cannot overflow `isize`, then cast to `u64`
-/// (non-negative inputs) before masking to 52 bits.
+/// Truncates toward zero, like `new Date(stat.mtimeMs).getTime()`.
 pub fn to_js_time(sec: isize, nsec: isize) -> JSTimeType {
-    const MS_PER_S: i128 = bun_core::time::MS_PER_S as i128;
-    let millisec = (nsec as i128) / bun_core::time::NS_PER_MS as i128;
-    let total = (sec as i128) * MS_PER_S + millisec;
-    (total as u64) & ((1u64 << 52) - 1)
+    let ns = (sec as i128) * bun_core::time::NS_PER_S as i128 + nsec as i128;
+    let ms = ns / bun_core::time::NS_PER_MS as i128;
+    ms.clamp(i64::MIN as i128, i64::MAX as i128) as i64
 }
 
 pub const MAX_SAFE_INTEGER: i64 = 9007199254740991;

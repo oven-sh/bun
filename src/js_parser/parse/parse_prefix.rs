@@ -813,7 +813,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             E::Array {
                 items: items_list,
                 comma_after_spread,
-                parenthesized_assign: self_errors.parenthesized_assign.unwrap_or(bun_ast::Loc::EMPTY),
+                parenthesized_assign: self_errors
+                    .parenthesized_assign
+                    .unwrap_or(bun_ast::Loc::EMPTY),
                 is_single_line,
                 close_bracket_loc,
                 ..Default::default()
@@ -904,7 +906,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             E::Object {
                 properties: properties_list,
                 comma_after_spread,
-                parenthesized_assign: self_errors.parenthesized_assign.unwrap_or(bun_ast::Loc::EMPTY),
+                parenthesized_assign: self_errors
+                    .parenthesized_assign
+                    .unwrap_or(bun_ast::Loc::EMPTY),
                 is_single_line,
                 close_brace_loc,
                 ..Default::default()

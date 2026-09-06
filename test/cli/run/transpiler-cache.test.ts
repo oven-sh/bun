@@ -12,7 +12,7 @@ import {
   unlinkSync,
   writeFileSync,
 } from "fs";
-import { bunEnv, bunExe, bunRun, isWindows, tmpdirSync } from "harness";
+import { bunEnv, bunExe, bunRun, isMacOS, isWindows, tmpdirSync } from "harness";
 import { mkfifo } from "mkfifo";
 import { join } from "path";
 
@@ -209,6 +209,36 @@ describe("transpiler cache", () => {
     // A per-user cache location still works.
     expect(await bunRun(join(temp_dir, "a.js"), env)).toSpawn("no-tmpdir-cache");
     expect(newCacheCount()).toBe(1);
+  });
+  test.each([
+    ["an empty", ""],
+    ["a relative", "relxdg"],
+  ])("ignores %s XDG_CACHE_HOME instead of caching next to the project", async (_label, xdg_cache_home) => {
+    writeFileSync(join(temp_dir, "a.js"), dummyFile((50 * 1024 * 1.5) | 0, "1", "xdg-not-absolute"));
+
+    // The XDG base directory specification requires an absolute path, so the
+    // next candidate in the chain is HOME.
+    const home = join(temp_dir, "home");
+    mkdirSync(home, { recursive: true });
+    const home_cache = isMacOS
+      ? join(home, "Library", "Caches", "bun", "@t@")
+      : join(home, ".bun", "install", "cache", "@t@");
+
+    expect(
+      await bunRun(join(temp_dir, "a.js"), {
+        ...env,
+        BUN_RUNTIME_TRANSPILER_CACHE_PATH: undefined,
+        XDG_CACHE_HOME: xdg_cache_home,
+        HOME: home,
+        USERPROFILE: home,
+      }),
+    ).toSpawn("xdg-not-absolute");
+
+    expect(readdirSync(home_cache)).toHaveLength(1);
+    // The cwd is not a cache location: neither `bun/@t@` (empty value) nor
+    // `relxdg/bun/@t@` (relative value) may appear in the project.
+    expect(existsSync(join(temp_dir, "bun"))).toBeFalse();
+    expect(existsSync(join(temp_dir, "relxdg"))).toBeFalse();
   });
   test("works if the cache is not user-readable", async () => {
     mkdirSync(cache_dir, { recursive: true });

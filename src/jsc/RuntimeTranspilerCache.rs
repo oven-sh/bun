@@ -635,7 +635,10 @@ impl RuntimeTranspilerCache {
         // that `absBufZ` used.
         let top = FileSystem::instance().top_level_dir;
 
-        if let Some(dir) = env_var::XDG_CACHE_HOME.get() {
+        if let Some(dir) = env_var::XDG_CACHE_HOME
+            .get()
+            .filter(|d| paths::is_absolute(d))
+        {
             let parts: &[&[u8]] = &[dir, b"bun", b"@t@"];
             return path_handler::join_abs_string_buf_z::<platform::Loose>(
                 top,
@@ -649,7 +652,7 @@ impl RuntimeTranspilerCache {
         {
             // On a mac, default to ~/Library/Caches/bun/*
             // This is different than ~/.bun/install/cache, and not configurable by the user.
-            if let Some(home) = env_var::HOME.get() {
+            if let Some(home) = env_var::HOME.get().filter(|d| paths::is_absolute(d)) {
                 let parts: &[&[u8]] = &[home, b"Library/", b"Caches/", b"bun", b"@t@"];
                 return path_handler::join_abs_string_buf_z::<platform::Loose>(
                     top,
@@ -660,7 +663,7 @@ impl RuntimeTranspilerCache {
             }
         }
 
-        if let Some(dir) = env_var::HOME.get() {
+        if let Some(dir) = env_var::HOME.get().filter(|d| paths::is_absolute(d)) {
             let parts: &[&[u8]] = &[dir, b".bun", b"install", b"cache", b"@t@"];
             return path_handler::join_abs_string_buf_z::<platform::Loose>(
                 top,

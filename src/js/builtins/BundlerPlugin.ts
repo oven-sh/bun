@@ -219,7 +219,6 @@ export function runSetupFunction(
 
     var callbacks = map.$get(namespace);
 
-    // The bundle thread dispatches the hook later, outside any async frame.
     var entry = isOnBeforeParse
       ? [filter, callback, symbol, external]
       : [filter, callback, $getInternalField($asyncContext, 0)];

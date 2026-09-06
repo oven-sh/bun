@@ -870,3 +870,30 @@ describe.concurrent("bumping a direct dependency re-points its dependents", () =
     await expectInSync(dir);
   });
 });
+
+// The locked version (no-deps@1.1.0) satisfies the new range in every row, so only the package name tells the edit apart.
+describe.concurrent("pointing a dependency at a different package re-resolves it", () => {
+  test.each([
+    { key: "aliased", before: "npm:no-deps@^1.0.0", after: "npm:a-dep@^1.0.0" },
+    { key: "a-dep", before: "npm:no-deps@^1.0.0", after: "^1.0.1" },
+    { key: "no-deps", before: "^1.0.0", after: "npm:a-dep@^1.0.2" },
+  ])('"$key": "$before" -> "$after"', async ({ key, before, after }) => {
+    const dir = await setup({ "package.json": root({ dependencies: { [key]: before } }) });
+    expect(await installed(dir, key)).toMatchObject({ name: "no-deps", version: "1.1.0" });
+
+    await writePkg(dir, root({ dependencies: { [key]: after } }));
+    const frozen = await tryRun(dir, "", "install", "--frozen-lockfile");
+    expect(frozen.stderr).toContain("error: lockfile had changes, but lockfile is frozen");
+    expect(frozen.exitCode).toBe(1);
+    expect(await installed(dir, key)).toMatchObject({ name: "no-deps", version: "1.1.0" });
+
+    await runBunInstall(envFor(dir), dir);
+    expect(await installed(dir, key)).toMatchObject({ name: "a-dep", version: "1.0.10" });
+    const { workspaces, packages } = await lock(dir);
+    expect(workspaces[""].dependencies).toStrictEqual({ [key]: after });
+    expect(Object.fromEntries(Object.entries(packages).map(([path, entry]) => [path, (entry as string[])[0]]))).toStrictEqual(
+      { [key]: "a-dep@1.0.10" },
+    );
+    await expectInSync(dir, [""], { reinstall: true });
+  });
+});

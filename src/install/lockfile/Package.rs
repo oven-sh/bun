@@ -1574,7 +1574,8 @@ impl Diff {
                 }
             }
 
-            // Changed literal: keep the locked resolution while it still satisfies the new range (npm's sticky rule), unless this row is being updated.
+            // Changed literal: keep the locked resolution while it is still the package the edge names and
+            // still satisfies the new range (npm's sticky rule), unless this row is being updated.
             let is_explicit_update_target = matches!(update_requests, Some(updates)
             if updates.is_empty()
                 || (named_update_here
@@ -1588,9 +1589,15 @@ impl Diff {
                     if (from_res_id as usize) < from_lockfile.packages.len() {
                         let from_pkg_resolution =
                             from_lockfile.packages.items_resolution()[from_res_id as usize];
+                        let from_pkg_name = from_lockfile.packages.items_name()[from_res_id as usize];
                         let to_dep = &to_deps!()[cur_to_i];
                         if to_dep.version.tag == dependency::version::Tag::Npm
                             && from_pkg_resolution.tag == ResolutionTag::Npm
+                            && to_dep.version.npm().name.eql(
+                                from_pkg_name,
+                                to_lockfile.buffers.string_bytes.as_slice(),
+                                from_lockfile.buffers.string_bytes.as_slice(),
+                            )
                             && to_dep.version.npm().version.satisfies(
                                 from_pkg_resolution.npm().version,
                                 to_lockfile.buffers.string_bytes.as_slice(),

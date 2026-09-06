@@ -1059,7 +1059,7 @@ pub struct HTTPServerWritable<const SSL: bool> {
     pub(crate) auto_flusher: AutoFlusher,
     /// The allocation's root pointer (what C++ holds as `m_sinkPtr`), set by
     /// the owner right after boxing; the auto-flush callback writes through it.
-    pub(crate) root: core::cell::Cell<Option<NonNull<Self>>>,
+    pub(crate) root: core::cell::Cell<Option<core::ptr::NonNull<Self>>>,
 }
 
 impl<const SSL: bool> Default for HTTPServerWritable<SSL> {

@@ -597,11 +597,11 @@ impl ReadableStream {
     pub fn from_bytes_then_error(
         global_this: &JSGlobalObject,
         bytes: Vec<u8>,
-        err: syscall::Error,
+        err: bun_sys::Error,
     ) -> JsResult<JSValue> {
-        let source = NewSource::<FileReader>::new_mut(NewSource {
-            global_this: Some(bun_ptr::BackRef::new(global_this)),
-            context: FileReader {
+        // The JS wrapper made by `to_readable_stream()` owns the source.
+        let source = NewSource::new(
+            FileReader {
                 event_loop: core::cell::Cell::new(jsc::EventLoopHandle::init(
                     global_this.bun_vm().as_mut().event_loop().cast(),
                 )),
@@ -611,8 +611,8 @@ impl ReadableStream {
                 done: Cell::new(true),
                 ..Default::default()
             },
-            ..Default::default()
-        });
+            global_this,
+        );
         source.to_readable_stream(global_this)
     }
 

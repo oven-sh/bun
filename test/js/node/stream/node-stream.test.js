@@ -1675,7 +1675,9 @@ describe("node v26 stream semantics", () => {
     const composed = compose(src, new TransformStream());
     let ended = false;
     composed.on("end", () => (ended = true));
-    const big = Buffer.alloc(40000, "a");
+    // One chunk fits under the high water mark, two do not. The default high
+    // water mark is 16 KiB on Windows and 64 KiB elsewhere.
+    const big = Buffer.alloc(Math.floor(composed.readableHighWaterMark * 0.75), "a");
 
     // The first reader loop starts.
     composed.read(0);

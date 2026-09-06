@@ -626,9 +626,9 @@ impl Options {
             for registry_key in REGISTRY_KEYS {
                 if let Some(registry_) = env.get(registry_key) {
                     // Any non-empty value is the registry, as it is for `registry=`
-                    // in .npmrc and `install.registry` in bunfig.toml. A value whose
-                    // scheme is not http(s) fails loudly at request time instead of
-                    // falling through to the next layer's registry.
+                    // in .npmrc and `install.registry` in bunfig.toml, so an unusable
+                    // value surfaces as a request error instead of a silent fall
+                    // through to the next layer's registry.
                     let registry_ = strings::trim(registry_, b" \t\r\n");
                     if !registry_.is_empty() {
                         let mut api_registry = Api::NpmRegistry::from_url(registry_);

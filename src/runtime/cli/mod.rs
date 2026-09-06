@@ -1342,10 +1342,13 @@ pub mod command {
                 // table / rodata) or walks the per-tag dispatch `match` below.
                 // Dispatches to exactly the arm `which()` would have selected,
                 // so config loading / arg parsing / passthrough are unchanged.
-                if argv
-                    .get(1)
-                    .map(bun_core::ZStr::as_bytes)
-                    .is_some_and(looks_like_run_entrypoint)
+                // With BUN_OPTIONS set, argv[1] is a spliced token that only
+                // `which()` may judge.
+                if bun::bun_options_argc() == 0
+                    && argv
+                        .get(1)
+                        .map(bun_core::ZStr::as_bytes)
+                        .is_some_and(looks_like_run_entrypoint)
                 {
                     return exec_auto_or_run(Tag::AutoCommand, log);
                 }

@@ -151,6 +151,7 @@ describe("BUN_OPTIONS contributes flags, not the subcommand", () => {
     ["build", ["app.ts"]],
     ["foo", ["run", "hello"]],
     ["--smol foo", ["test"]],
+    ["./pre.ts", ["test"]],
   ])("a bare word (BUN_OPTIONS=%p) is an error, not the subcommand: bun %p", (options, cmd) => {
     using dir = tempDir("bun-options-bare-word", files);
     const { stdout, stderr, exitCode } = run(String(dir), cmd, options);

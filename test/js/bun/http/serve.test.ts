@@ -2114,7 +2114,10 @@ it.concurrent("dev error page embeds the thrown error, its stack, and build/reso
 });
 
 it.concurrent("dev error page caps each source line like the terminal printer does", async () => {
-  // One minified line: 3000 string literals, then the throw at the end of the line.
+  // One minified line: a 3-byte "€" that starts at byte 1023 (so the 1024-byte cap lands inside it),
+  // then 3000 string literals, then the throw at the end of the line.
+  const head = `var keep=["${Buffer.alloc(1012, "a").toString()}`;
+  expect(Buffer.byteLength(head)).toBe(1023);
   const literals = Array.from({ length: 3000 }, (_, i) => `"literal-${i}-0123456789"`).join(",");
   using dir = tempDir("serve-dev-error-page-long-line", {
     "server.ts": `
@@ -2134,12 +2137,12 @@ it.concurrent("dev error page caps each source line like the terminal printer do
       console.log(JSON.stringify({
         status: res.status,
         literalMentions: html.split("literal-2999-0123456789").length - 1,
-        sourceLines: payload.problems.exceptions[0].stack.source_lines.map(l => ({ line: l.line, length: l.text.length })),
+        sourceLines: payload.problems.exceptions[0].stack.source_lines,
       }));
       server.stop(true);
       process.exit(0);
     `,
-    "minified.js": `var keep=[${literals}];export function boom(){keep.length;throw new Error("long-line boom")}\n`,
+    "minified.js": `${head}€",${literals}];export function boom(){keep.length;throw new Error("long-line boom")}\n`,
   });
   await using proc = Bun.spawn({
     cmd: [bunExe(), "server.ts"],
@@ -2152,8 +2155,8 @@ it.concurrent("dev error page caps each source line like the terminal printer do
   const out = JSON.parse(stdout.trim().split("\n").at(-1)!);
 
   expect(out.status).toBe(500);
-  expect(out.sourceLines).toEqual([{ line: 1, length: expect.any(Number) }]);
-  expect(out.sourceLines[0].length).toBeLessThanOrEqual(1025);
+  // The cut backs up to the start of the "€" instead of splitting it.
+  expect(out.sourceLines).toEqual([{ line: 1, text: `${head}…` }]);
   // The literals live past the cap, so the page must not carry them.
   expect(out.literalMentions).toBe(0);
   expect(stderr).toContain("long-line boom");

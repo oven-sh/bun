@@ -5833,13 +5833,8 @@ impl VirtualMachine {
         }
 
         let already_remapped = frames[top].remapped;
-        // Only read a frame's source URL from disk for a code-frame excerpt
-        // when the module loader loaded that URL. The already-remapped branch
-        // parses frames out of an `error.stack` string, so the URL can be a
-        // name the running code chose (a `//# sourceURL` directive in node:vm
-        // or eval code), not a module the loader ever loaded. The non-remapped
-        // branch resolves through the source-map table, which is already the
-        // loaded-module check.
+        // A frame parsed from an `error.stack` string names whatever the thrown
+        // code chose (`//# sourceURL`). Read it from disk only if the loader loaded it.
         let allow_source_from_disk = if already_remapped {
             let url = frames[top].source_url.to_utf8();
             self.source_mappings.has_mapping(url.slice())

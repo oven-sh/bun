@@ -2118,12 +2118,19 @@ describe.concurrent("test file discovery (scanner)", () => {
 
   // root bypasses permission checks, so the unreadable directory is only
   // unreadable for a different user.
+  function hasNobodyUser(): boolean {
+    try {
+      return /^nobody:/m.test(readFileSync("/etc/passwd", "utf8"));
+    } catch {
+      return false;
+    }
+  }
   const canUseRunuser =
     isLinux &&
     typeof process.getuid === "function" &&
     process.getuid() === 0 &&
     !!Bun.which("runuser") &&
-    /^nobody:/m.test(readFileSync("/etc/passwd", "utf8"));
+    hasNobodyUser();
 
   test.skipIf(!canUseRunuser)("a directory that cannot be read is reported and fails the run", async () => {
     using dir = tempDir("scanner-unreadable", {

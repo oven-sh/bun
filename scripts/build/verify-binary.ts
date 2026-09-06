@@ -645,9 +645,14 @@ function coffDefinitions(objdump: string, inputs: string[]): { defs: Definition[
     // One block per object: `<path>:\tfile format coff-…` or `<archive>(<member>):…`.
     for (const block of out.split(/^(?=\S.*:\tfile format )/m)) {
       const header = block.match(/^(.*?)(?:\(([^()]*)\))?:\tfile format (\S+)/);
-      if (!header || !header[3]!.startsWith("coff")) continue;
+      if (!header || !/^coff/i.test(header[3]!)) continue;
       const obj = header[2] !== undefined ? `${header[1]}:${header[2]}` : header[1]!; // nm -A's spelling
       objects.add(obj);
+      // Import-library members (`COFF-import-file` stubs, and the descriptor
+      // objects an import library names after its DLL — rustc bundles both
+      // for raw-dylib links) are import-table glue, not definitions; two
+      // crates importing the same DLL legitimately repeat them.
+      if (header[3] !== undefined && (/import/i.test(header[3]) || /\.(dll|exe)$/i.test(header[2] ?? ""))) continue;
       const comdat = new Map<number, number>(); // section number → COMDAT selection (0 = not COMDAT)
       const externals: { sec: number; name: string }[] = [];
       const lines = block.split("\n");

@@ -456,12 +456,18 @@ describe("WebSocket options are read through the prototype chain", () => {
   it("ignores options placed on Object.prototype", async () => {
     using server = headerEchoServer();
     (Object.prototype as any).headers = { "X-Polluted": "1" };
+    (Object.prototype as any).protocols = ["polluted"];
+    (Object.prototype as any).perMessageDeflate = false;
     let headers: Record<string, string>;
     try {
       headers = await upgradeHeaders(server.url.href, {});
     } finally {
       delete (Object.prototype as any).headers;
+      delete (Object.prototype as any).protocols;
+      delete (Object.prototype as any).perMessageDeflate;
     }
     expect(headers["x-polluted"]).toBeUndefined();
+    expect(headers["sec-websocket-protocol"]).toBeUndefined();
+    expect(headers["sec-websocket-extensions"]).toContain("permessage-deflate");
   });
 });

@@ -2206,3 +2206,97 @@ describe("auto-discovered bunfig.toml [run] section", () => {
     expect(r.exitCode).toBe(1);
   });
 });
+
+// ─── SIGNALS ──────────────────────────────────────────────────────────────────
+
+// A script that reports the signal it receives and then exits 0. The sleep is
+// long enough that a run which only reacts once its children exit on their own
+// shows up as the wrong exit code, not as a slow pass.
+const TRAP_FIXTURE = `
+  const sig = process.argv[2];
+  process.on(sig, () => {
+    console.log("got " + sig);
+    process.exit(0);
+  });
+  console.log("ready");
+  setTimeout(() => {}, 30_000);
+`;
+
+/** Reads `stream` to the end. `onChunk` sees the text read so far after each chunk. */
+async function collect(stream: ReadableStream<Uint8Array>, onChunk: (text: string) => void): Promise<string> {
+  const decoder = new TextDecoder();
+  let text = "";
+  for await (const chunk of stream) {
+    text += decoder.decode(chunk, { stream: true });
+    onChunk(text);
+  }
+  return text;
+}
+
+/**
+ * Starts `bun run <args>` in a package whose scripts each run the trap fixture
+ * with `signal`, waits until `readyCount` scripts printed "ready", then sends
+ * `signal` to the runner alone (not to the children).
+ */
+async function runAndSignal(
+  args: string[],
+  dir: string,
+  signal: "SIGINT" | "SIGTERM",
+  readyCount: number,
+): Promise<{ stdout: string; stderr: string; exitCode: number }> {
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "run", ...args],
+    env: { ...bunEnv, NO_COLOR: "1" },
+    cwd: dir,
+    stderr: "pipe",
+    stdout: "pipe",
+  });
+  const ready = Promise.withResolvers<void>();
+  const stdoutPromise = collect(proc.stdout, text => {
+    if (text.split("ready").length - 1 >= readyCount) ready.resolve();
+  });
+  await ready.promise;
+  proc.kill(signal);
+  const [stdout, stderr, exitCode] = await Promise.all([stdoutPromise, proc.stderr.text(), proc.exited]);
+  return { stdout, stderr, exitCode };
+}
+
+function trapPackage(signal: string) {
+  return {
+    "trap.js": TRAP_FIXTURE,
+    "package.json": JSON.stringify({
+      scripts: {
+        a: `${bunExe()} trap.js ${signal}`,
+        b: `${bunExe()} trap.js ${signal}`,
+      },
+    }),
+  };
+}
+
+// proc.kill() is TerminateProcess on Windows; it never reaches the console control handler.
+describe.concurrent.skipIf(isWindows)("signals", () => {
+  test("SIGINT to the runner is forwarded to every script at once and exits 130", async () => {
+    using dir = tempDir("mr-sig-int", trapPackage("SIGINT"));
+    const r = await runAndSignal(["--parallel", "a", "b"], String(dir), "SIGINT", 2);
+    expectPrefixed(r.stdout, "a", "got SIGINT");
+    expectPrefixed(r.stdout, "b", "got SIGINT");
+    expect(r.exitCode).toBe(130);
+  });
+
+  test("SIGTERM to the runner is forwarded to every script and exits 143", async () => {
+    using dir = tempDir("mr-sig-term", trapPackage("SIGTERM"));
+    const r = await runAndSignal(["--parallel", "a", "b"], String(dir), "SIGTERM", 2);
+    expectPrefixed(r.stdout, "a", "got SIGTERM");
+    expectPrefixed(r.stdout, "b", "got SIGTERM");
+    expect(r.exitCode).toBe(143);
+  });
+
+  test("sequential: SIGINT stops the chain and exits 130 even though the script exited 0", async () => {
+    using dir = tempDir("mr-sig-seq", trapPackage("SIGINT"));
+    const r = await runAndSignal(["--sequential", "a", "b"], String(dir), "SIGINT", 1);
+    expectPrefixed(r.stdout, "a", "got SIGINT");
+    expectDone(r.stderr, "a");
+    expect(r.stdout).not.toMatch(/^b\s+\|/m);
+    expect(r.exitCode).toBe(130);
+  });
+});

@@ -219,12 +219,7 @@ impl<'a> Coordinator<'a> {
         for w in self.workers[..self.spawned_count as usize].iter_mut() {
             if let Some(p) = &w.process {
                 #[cfg(unix)]
-                {
-                    // SAFETY: FFI call; -pid targets the worker's process group.
-                    unsafe {
-                        let _ = libc::kill(-(p.pid as libc::pid_t), libc::SIGTERM);
-                    }
-                }
+                terminate_process_group(p.pid);
                 #[cfg(not(unix))]
                 {
                     // SIGKILL → TerminateProcess; libuv-win ENOSYSes signals
@@ -233,7 +228,11 @@ impl<'a> Coordinator<'a> {
                 }
             }
         }
-        self.aborted = Some(128 + signal as u32);
+        self.aborted = Some(u32::from(
+            bun_sys::SignalCode(signal as u8)
+                .to_exit_code()
+                .unwrap_or(130),
+        ));
     }
 
     fn spawn_worker(&mut self) -> bool {
@@ -603,10 +602,7 @@ impl<'a> Coordinator<'a> {
             // test spawned; it led its own process group, so kill(-pid) does it.
             #[cfg(unix)]
             if let Some(p) = &w.process {
-                // SAFETY: FFI call; -pid targets the worker's process group.
-                unsafe {
-                    let _ = libc::kill(-(p.pid as libc::pid_t), libc::SIGTERM);
-                }
+                terminate_process_group(p.pid);
             }
             self.break_dots();
             self.ensure_header(idx);
@@ -839,12 +835,7 @@ impl<'a> Coordinator<'a> {
             // through *mut forms no `&mut Worker` aliasing the caller's `w`.
             if let Some(p) = unsafe { &(*other).process } {
                 #[cfg(unix)]
-                {
-                    // SAFETY: FFI call; -pid targets the worker's process group.
-                    unsafe {
-                        let _ = libc::kill(-(p.pid as libc::pid_t), libc::SIGTERM);
-                    }
-                }
+                terminate_process_group(p.pid);
                 #[cfg(not(unix))]
                 {
                     // SIGKILL → TerminateProcess (libuv-win ENOSYSes most
@@ -930,6 +921,17 @@ impl<'a> Coordinator<'a> {
             }
             Some(job)
         }
+    }
+}
+
+/// SIGTERM to the process group a worker leads: the worker and everything it
+/// spawned. Safe after the worker exited: the pid stays reserved while any
+/// member of the group lives, and an empty group gives ESRCH.
+#[cfg(unix)]
+fn terminate_process_group(pid: libc::pid_t) {
+    // SAFETY: FFI call; -pid targets the worker's process group.
+    unsafe {
+        let _ = libc::kill(-pid, libc::SIGTERM);
     }
 }
 

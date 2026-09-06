@@ -1925,6 +1925,20 @@ describe.concurrent("arguments after --", () => {
     expect(auto.exitCode).toBe(0);
   });
 
+  test("a bare trailing -- adds no args and is not a script", async () => {
+    using dir = tempDir("mr-pt-bare", {
+      "args.js": ARGS_JS,
+      "package.json": JSON.stringify({
+        scripts: { one: `${bunExe()} args.js one`, two: `${bunExe()} args.js two` },
+      }),
+    });
+    const r = await runMulti(["run", "--parallel", "one", "two", "--"], String(dir));
+    expect(argvFor(r.stdout, "one")).toEqual(["one"]);
+    expect(argvFor(r.stdout, "two")).toEqual(["two"]);
+    expect(r.stderr).not.toMatch(/^--\s+\|/m);
+    expect(r.exitCode).toBe(0);
+  });
+
   test("sequential: args are passed literally to every script", async () => {
     using dir = tempDir("mr-pt-sequential", {
       "args.js": ARGS_JS,

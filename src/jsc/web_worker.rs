@@ -130,6 +130,10 @@ struct WorkerVmInit {
     transform_options: bun_options_types::schema::api::TransformOptions,
     env_loader: bun_dotenv::Loader,
     proxy_env_slots: jsc::rare_data::ProxyEnvSlots,
+    /// The entry point's Blob when the specifier is a `blob:` URL, captured
+    /// now so a later `URL.revokeObjectURL` cannot affect the load (the URL
+    /// spec resolves a blob URL's entry when the URL is parsed).
+    entry_blob: Option<jsc::module_loader::WorkerEntryBlob>,
 }
 
 enum EntryOutcome {
@@ -391,6 +395,7 @@ impl WebWorker {
             transform_options,
             env_loader,
             proxy_env_slots,
+            entry_blob: capture_blob_url_entry(spec_slice.slice()),
         };
 
         // The construction ref: handed to C++ on success, dropped on failure.
@@ -667,6 +672,7 @@ impl WebWorker {
             transform_options,
             env_loader,
             proxy_env_slots,
+            entry_blob,
         } = init;
 
         // worker-thread only field; no other thread reads `arena`.
@@ -711,6 +717,7 @@ impl WebWorker {
                 .with_mut(|a| NonNull::new(std::ptr::from_mut(a.as_mut().unwrap())));
 
             *vm_ref.proxy_env_storage.lock() = proxy_env_slots;
+            vm_ref.module_loader.worker_entry_blob = entry_blob;
 
             vm_ref.is_main_thread = false;
             VirtualMachine::set_is_main_thread_vm(false);
@@ -1262,6 +1269,33 @@ fn on_unhandled_rejection(
     vm.handle_ref().request_termination();
 }
 
+/// The `<uuid>` of a `blob:<uuid>` specifier. Mirrors
+/// `bun.webcore.ObjectURLRegistry.isBlobURL`: prefix `"blob:"` AND
+/// `len >= "blob:".len + UUID.stringLength` (41). A short `"blob:foo"` is
+/// `None`, so it falls through to the resolver instead of reporting
+/// "Blob URL is missing".
+fn blob_url_id(specifier: &[u8]) -> Option<&[u8]> {
+    const BLOB_SPECIFIER_LEN: usize = b"blob:".len() + crate::uuid::UUID::STRING_LENGTH;
+    (specifier.len() >= BLOB_SPECIFIER_LEN)
+        .then(|| specifier.strip_prefix(b"blob:".as_slice()))
+        .flatten()
+}
+
+/// `new Worker("blob:<uuid>")` on the parent thread: dupe the registry entry
+/// now so the worker owns its entry point. `None` when the specifier is not a
+/// blob URL or the URL is already revoked (the worker thread then reports
+/// "Blob URL is missing").
+fn capture_blob_url_entry(specifier: &[u8]) -> Option<jsc::module_loader::WorkerEntryBlob> {
+    let blob_id = blob_url_id(specifier)?;
+    let uuid = crate::uuid::UUID::parse(blob_id).ok()?;
+    let hooks = runtime_hooks().expect("RuntimeHooks not installed");
+    let blob = (hooks.dupe_blob_url)(blob_id)?;
+    Some(jsc::module_loader::WorkerEntryBlob {
+        uuid: uuid.bytes,
+        blob,
+    })
+}
+
 /// Resolve a worker entry-point specifier to a path the module loader can
 /// consume. The returned slice is BORROWED — it aliases `str`, the
 /// standalone module graph, or the resolver's arena; the caller must NOT
@@ -1295,14 +1329,10 @@ unsafe fn resolve_entry_point_specifier<'s>(
         return Some(str);
     }
 
-    // Spec `bun.webcore.ObjectURLRegistry.isBlobURL(str)` — prefix `"blob:"`
-    // AND `len >= specifier_len` (`"blob:".len + UUID.stringLength = 41`).
-    // A short `"blob:foo"` must fall through to the resolver below, not enter
-    // this arm and report "Blob URL is missing".
-    const BLOB_SPECIFIER_LEN: usize = b"blob:".len() + crate::uuid::UUID::STRING_LENGTH;
-    if str.len() >= BLOB_SPECIFIER_LEN && str.starts_with(b"blob:") {
-        let hooks = runtime_hooks().expect("RuntimeHooks not installed");
-        if (hooks.has_blob_url)(&str[b"blob:".len()..]) {
+    if let Some(blob_id) = blob_url_id(str) {
+        // SAFETY: per fn contract; `module_loader` is only mutated on `parent`'s
+        // owning thread, the caller's thread.
+        if unsafe { (*parent).has_blob_url(blob_id) } {
             return Some(str);
         } else {
             *error_message = BunString::static_("Blob URL is missing");

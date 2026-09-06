@@ -1343,6 +1343,11 @@ fn has_blob_url(blob_id: &[u8]) -> bool {
     crate::webcore::object_url_registry::ObjectURLRegistry::singleton().has(blob_id)
 }
 
+fn dupe_blob_url(blob_id: &[u8]) -> Option<crate::webcore::Blob> {
+    crate::webcore::object_url_registry::ObjectURLRegistry::singleton()
+        .dupe_thread_shareable(blob_id)
+}
+
 /// `Response::get_blob_without_call_frame` /
 /// `Request::get_blob_without_call_frame`. Downcasts
 /// `value` to a `Response`/`Request` (whose data shapes + `BodyMixin` impl live
@@ -1520,6 +1525,7 @@ static __BUN_RUNTIME_HOOKS: RuntimeHooks = RuntimeHooks {
     ssl_ctx_cache_get_or_create,
     create_node_fs,
     has_blob_url,
+    dupe_blob_url,
     body_mixin_get_blob,
     process_exit,
     console_on_before_print,
@@ -3989,10 +3995,19 @@ unsafe fn get_loader_and_virtual_source<'a>(
 
     // `blob:` ObjectURL → in-memory virtual source.
     if crate::webcore::object_url_registry::is_blob_url(specifier) {
-        match crate::webcore::object_url_registry::ObjectURLRegistry::singleton()
-            // SAFETY: per fn contract — `jsc_vm` is the live per-thread VM.
-            .resolve_and_dupe(&specifier[b"blob:".len()..], unsafe { &*jsc_vm }.global())
-        {
+        let blob_id = &specifier[b"blob:".len()..];
+        // SAFETY: per fn contract — `jsc_vm` is the live per-thread VM.
+        let vm = unsafe { &*jsc_vm };
+        // A worker's captured entry point outlives a revoke of its URL.
+        let captured = vm.worker_entry_blob(blob_id).map(|entry| {
+            let blob = entry.dupe_with_content_type(true);
+            blob.global_this.set(vm.global());
+            blob
+        });
+        match captured.or_else(|| {
+            crate::webcore::object_url_registry::ObjectURLRegistry::singleton()
+                .resolve_and_dupe(blob_id, vm.global())
+        }) {
             Some(blob) => {
                 *blob_to_deinit = Some(blob);
                 // SAFETY: `blob_to_deinit` is `Some` (just written); we hold

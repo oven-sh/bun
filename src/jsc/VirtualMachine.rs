@@ -2268,6 +2268,10 @@ pub struct RuntimeHooks {
     pub create_node_fs: unsafe fn(vm: *mut VirtualMachine) -> *mut c_void,
     /// `ObjectURLRegistry` lookup. Registry lives in `bun_runtime::webcore`.
     pub has_blob_url: fn(blob_id: &[u8]) -> bool,
+    /// `ObjectURLRegistry` dupe of the entry for `blob_id`: null `global_this`,
+    /// thread-shareable `name`, so any thread may own it. `None` when revoked
+    /// or never registered.
+    pub dupe_blob_url: fn(blob_id: &[u8]) -> Option<crate::webcore_types::Blob>,
     /// `Response::get_blob_without_call_frame` /
     /// `Request::get_blob_without_call_frame`. If
     /// `value` downcasts to a `Response` or `Request` (both live in
@@ -4440,6 +4444,25 @@ impl VirtualMachine {
         slice
     }
 
+    /// The module loader's view of `blob:<blob_id>`: a worker's captured entry
+    /// point first, then the process-wide `ObjectURLRegistry` (which lives in
+    /// `bun_runtime`, hence [`RuntimeHooks::has_blob_url`]).
+    pub fn has_blob_url(&self, blob_id: &[u8]) -> bool {
+        self.worker_entry_blob(blob_id).is_some()
+            || runtime_hooks()
+                .map(|h| (h.has_blob_url)(blob_id))
+                .unwrap_or(false)
+    }
+
+    /// The Blob captured by `new Worker("blob:<blob_id>")`, when this VM is
+    /// that worker's.
+    pub fn worker_entry_blob(&self, blob_id: &[u8]) -> Option<&crate::webcore_types::Blob> {
+        self.module_loader
+            .worker_entry_blob
+            .as_ref()?
+            .matches(blob_id)
+    }
+
     /// Note: `is_a_file_path` is a runtime
     /// arg to avoid duplicating the body for both monomorphizations.
     pub(crate) fn _resolve(
@@ -4499,12 +4522,7 @@ impl VirtualMachine {
         }
         if let Some(blob_id) = specifier.strip_prefix(b"blob:".as_slice()) {
             ret.result = None;
-            // `WebCore.ObjectURLRegistry` lives in `bun_runtime`; routed
-            // through [`RuntimeHooks::has_blob_url`].
-            let has = runtime_hooks()
-                .map(|h| (h.has_blob_url)(blob_id))
-                .unwrap_or(false);
-            if has {
+            if self.has_blob_url(blob_id) {
                 ret.path = self.dupe_resolved_path(specifier);
                 return Ok(());
             }

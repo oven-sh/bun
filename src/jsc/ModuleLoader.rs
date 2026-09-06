@@ -28,6 +28,31 @@ pub struct ModuleLoader {
     pub eval_source: Option<Box<bun_ast::Source>>,
     /// User's `-e` bytes under `--interactive` (see `Eval::interactive_script`).
     pub interactive_eval_script: Option<Box<[u8]>>,
+    /// A worker's `blob:` entry point, captured by `new Worker()` on the parent
+    /// thread. The loader reads it ahead of the `ObjectURLRegistry`, so a
+    /// `URL.revokeObjectURL` after construction does not break the worker.
+    pub worker_entry_blob: Option<WorkerEntryBlob>,
+}
+
+/// The Blob behind a worker's `blob:<uuid>` entry point. `blob` is a dupe of
+/// the registry entry: null `global_this`, thread-shareable `name`.
+pub struct WorkerEntryBlob {
+    pub uuid: [u8; 16],
+    pub blob: crate::webcore_types::Blob,
+}
+
+impl WorkerEntryBlob {
+    /// `Some` when `blob_id` (the part after `blob:`) names this entry.
+    pub fn matches(&self, blob_id: &[u8]) -> Option<&crate::webcore_types::Blob> {
+        let uuid = crate::uuid::UUID::parse(blob_id).ok()?;
+        (uuid.bytes == self.uuid).then_some(&self.blob)
+    }
+}
+
+impl Drop for WorkerEntryBlob {
+    fn drop(&mut self) {
+        self.blob.deinit();
+    }
 }
 
 pub static IS_ALLOWED_TO_USE_INTERNAL_TESTING_APIS: core::sync::atomic::AtomicBool =

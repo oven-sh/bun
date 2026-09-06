@@ -64,32 +64,41 @@ test("Worker from a blob errors on invalid blob", async () => {
   expect(promise).rejects.toBe('BuildMessage: ModuleNotFound resolving "blob:i dont exist!" (entry point)');
 });
 
-test("Revoking an object URL after a Worker is created before it loads should throw an error", async () => {
-  const blob = new Blob([`self.postMessage("I survived. I should not have survived. That is a bug.");`], {
-    type: "application/javascript",
-  });
-
-  // This is inherently kind of racy.
-  // So we try a few times to make sure it's not just a fluke.
-  for (let attempt = 0; attempt < 10; attempt++) {
+// The Worker constructor parses the URL, and a parsed blob URL carries its
+// blob, so a revoke after construction does not affect the worker's load.
+test.each(["synchronously", "in a microtask", "in a setTimeout"])(
+  "Revoking an object URL after a Worker is created %s still loads the worker",
+  async when => {
+    const blob = new Blob([`self.postMessage("worker ran");`], { type: "application/javascript" });
     const url = URL.createObjectURL(blob);
     const worker = new Worker(url);
-    URL.revokeObjectURL(url);
+    const { promise, resolve, reject } = Promise.withResolvers<string>();
+    worker.onmessage = e => resolve(e.data);
+    worker.onerror = e => reject(new Error(e.message));
+
+    if (when === "synchronously") URL.revokeObjectURL(url);
+    else if (when === "in a microtask") await Promise.resolve().then(() => URL.revokeObjectURL(url));
+    else setTimeout(() => URL.revokeObjectURL(url), 0);
 
     try {
-      const result = await new Promise((resolve, reject) => {
-        worker.onmessage = reject;
-        worker.onerror = resolve;
-      });
-      expect(result).toBeInstanceOf(ErrorEvent);
-      expect((result as ErrorEvent).message).toBe("BuildMessage: Blob URL is missing");
-      break;
-    } catch (e) {
-      if (attempt === 9) {
-        throw e;
-      }
+      expect(await promise).toBe("worker ran");
+    } finally {
+      worker.terminate();
     }
-  }
+  },
+);
+
+test("Revoking an object URL before a Worker is created errors", async () => {
+  const blob = new Blob([`self.postMessage("should not run");`], { type: "application/javascript" });
+  const url = URL.createObjectURL(blob);
+  URL.revokeObjectURL(url);
+  const worker = new Worker(url);
+  const { promise, resolve, reject } = Promise.withResolvers<ErrorEvent>();
+  worker.onmessage = reject;
+  worker.onerror = resolve;
+  const result = await promise;
+  expect(result).toBeInstanceOf(ErrorEvent);
+  expect(result.message).toBe("BuildMessage: Blob URL is missing");
 });
 
 test("Worker on a revoked blob still works", async () => {

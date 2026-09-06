@@ -1912,7 +1912,12 @@ impl Data {
                             E::EString::init(key_bytes),
                             row.key_loc,
                         )),
-                        value: Some(json_value_deep_clone(&row.value, value_loc, bump, stack_check)?),
+                        value: Some(json_value_deep_clone(
+                            &row.value,
+                            value_loc,
+                            bump,
+                            stack_check,
+                        )?),
                         kind: G::PropertyKind::Normal,
                         initializer: None,
                         ..Default::default()
@@ -2063,7 +2068,9 @@ impl Data {
                         Some(tag) => Some(tag.deep_clone_no_detach(bump, stack_check)?),
                         None => None,
                     },
-                    properties: el.properties.try_deep_clone_with(|p| p.deep_clone(bump, stack_check))?,
+                    properties: el
+                        .properties
+                        .try_deep_clone_with(|p| p.deep_clone(bump, stack_check))?,
                     children: el
                         .children
                         .try_deep_clone_with(|e| e.deep_clone_no_detach(bump, stack_check))?,
@@ -2075,7 +2082,9 @@ impl Data {
             }
             Data::EObject(el) => {
                 let item = bump.alloc(E::Object {
-                    properties: el.properties.try_deep_clone_with(|p| p.deep_clone(bump, stack_check))?,
+                    properties: el
+                        .properties
+                        .try_deep_clone_with(|p| p.deep_clone(bump, stack_check))?,
                     comma_after_spread: el.comma_after_spread,
                     is_single_line: el.is_single_line,
                     is_parenthesized: el.is_parenthesized,

@@ -427,15 +427,13 @@ class PostgresAdapter
     const { path, hostname, port } = this.connectionInfo;
     const net = require("node:net");
 
-    // net.connect hands back the socket before the handshake completes, so
-    // the timeout also bounds a connect attempt that never gets a SYN-ACK.
+    // net.connect returns before the handshake, so the timeout covers it too.
     const socket = net.connect(path ? { path } : { host: hostname, port });
     socket.setTimeout(CANCEL_REQUEST_TIMEOUT_MS);
     socket.on("timeout", () => socket.destroy());
     // Best effort: a cancel that never arrives leaves the query running.
     socket.on("error", () => {});
-    // Write only once connected: a write queued before that counts as pending
-    // data and net.Socket suppresses its timeout while any is outstanding.
+    // A write queued before connect suppresses net.Socket's timeout; write after.
     socket.on("connect", () => socket.end(request));
   }
 

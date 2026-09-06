@@ -8,13 +8,7 @@
 
 const MASK = (1n << 64n) - 1n;
 const M128 = (1n << 128n) - 1n;
-const P = [
-  0xa0761d6478bd642fn,
-  0xe7037ed1a0b428dbn,
-  0x8ebc6af09c88c6e3n,
-  0x589965cc75374cc3n,
-  0x1d8e4e27c47d124fn,
-];
+const P = [0xa0761d6478bd642fn, 0xe7037ed1a0b428dbn, 0x8ebc6af09c88c6e3n, 0x589965cc75374cc3n, 0x1d8e4e27c47d124fn];
 
 function rd(n: number, d: Uint8Array, o: number): bigint {
   let r = 0n;
@@ -62,7 +56,10 @@ function finalSeed(seed: bigint, k: Uint8Array, o: number, len: number): bigint 
   // 17..=31: head over the first 16 bytes, tail over the remainder.
   const head = mix0(rd8sw(k, o), rd8sw(k, o + 8), seed);
   const remLen = len - 16;
-  const tail = remLen <= 7 ? mix1(byteWord(k, o + 16, remLen), P[4], seed) : mix1(rd8sw(k, o + 16), remLen === 8 ? P[4] : byteWord(k, o + 24, remLen - 8), seed);
+  const tail =
+    remLen <= 7
+      ? mix1(byteWord(k, o + 16, remLen), P[4], seed)
+      : mix1(rd8sw(k, o + 16), remLen === 8 ? P[4] : byteWord(k, o + 24, remLen - 8), seed);
   return (head ^ tail) & MASK;
 }
 
@@ -73,8 +70,7 @@ export function wyhash11(seed: bigint | number, bytes: Uint8Array): bigint {
   let off = 0;
   while (off < aligned) {
     s =
-      (mix0(rd(8, bytes, off), rd(8, bytes, off + 8), s) ^
-        mix1(rd(8, bytes, off + 16), rd(8, bytes, off + 24), s)) &
+      (mix0(rd(8, bytes, off), rd(8, bytes, off + 8), s) ^ mix1(rd(8, bytes, off + 16), rd(8, bytes, off + 24), s)) &
       MASK;
     off += 32;
   }

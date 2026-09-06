@@ -332,24 +332,6 @@ describe("spawn stdin ReadableStream edge cases", () => {
     }).toThrow();
   });
 
-  test("locked ReadableStream throws from spawn", () => {
-    const stream = new ReadableStream({
-      start(controller) {
-        controller.enqueue(new Uint8Array(3));
-        controller.close();
-      },
-    });
-    stream.getReader();
-
-    expect(() => {
-      spawn({
-        cmd: [bunExe(), "-e", "process.stdin.pipe(process.stdout)"],
-        stdin: stream,
-        env: bunEnv,
-      });
-    }).toThrow("ReadableStream is locked");
-  });
-
   test("ReadableStream errored in start() throws its reason from spawn", () => {
     const reason = new Error("boom");
     const stream = new ReadableStream({
@@ -428,19 +410,18 @@ describe("spawn stdin ReadableStream edge cases", () => {
     expect(exitCode).toBe(0);
   });
 
+  // A locked stream is rejected before the child is forked (covered in
+  // spawn-stdin-readable-stream.test.ts). These fail inside the pump, after the fork.
   const failingStdinStreams = {
-    locked: {
+    "errored in start()": {
       make() {
-        const stream = new ReadableStream({
+        return new ReadableStream({
           start(controller) {
-            controller.enqueue(new Uint8Array(3));
-            controller.close();
+            controller.error(new Error("start boom"));
           },
         });
-        stream.getReader();
-        return stream;
       },
-      message: "ReadableStream is locked",
+      message: "start boom",
     },
     "non-byte chunk": {
       make() {

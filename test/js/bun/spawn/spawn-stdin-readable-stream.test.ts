@@ -545,6 +545,121 @@ describe("spawn stdin ReadableStream", () => {
     }).toThrow("'stdin' ReadableStream has already been used");
   });
 
+  // A locked stream can never be pumped into the child (the pump's reader
+  // acquisition throws), so spawn rejects it before forking and leaves it untouched.
+  test.each([
+    {
+      how: "getReader()",
+      lock(stream: ReadableStream<string>) {
+        const reader = stream.getReader();
+        return () => reader.read();
+      },
+    },
+    {
+      how: "tee()",
+      lock(stream: ReadableStream<string>) {
+        const [branch] = stream.tee();
+        return () => branch.getReader().read();
+      },
+    },
+  ])("ReadableStream locked by $how throws synchronously instead of spawning", async ({ lock }) => {
+    const stream = new ReadableStream<string>({
+      start(controller) {
+        controller.enqueue("still readable by the lock holder");
+        controller.close();
+      },
+    });
+    const readFirstChunk = lock(stream);
+    expect(stream.locked).toBe(true);
+
+    const locked = expect.objectContaining({ code: "ERR_INVALID_STATE", message: "'stdin' ReadableStream is locked" });
+    expect(() => spawn({ cmd: [bunExe(), "-e", ""], stdin: stream, env: bunEnv })).toThrow(locked);
+    expect(() => spawn({ cmd: [bunExe(), "-e", ""], stdio: [stream, "ignore", "ignore"], env: bunEnv })).toThrow(
+      locked,
+    );
+
+    // The rejected spawn must not have cancelled the stream out from under whoever holds the lock.
+    expect(await readFirstChunk()).toEqual({ done: false, value: "still readable by the lock holder" });
+  });
+
+  test("ReadableStream rejected while locked still works as stdin once the lock is released", async () => {
+    const stream = new ReadableStream<string>({
+      start(controller) {
+        controller.enqueue("delivered on the second try");
+        controller.close();
+      },
+    });
+    const reader = stream.getReader();
+    expect(() => spawn({ cmd: [bunExe(), "-e", ""], stdin: stream, env: bunEnv })).toThrow(
+      "'stdin' ReadableStream is locked",
+    );
+    reader.releaseLock();
+
+    await using proc = spawn({
+      cmd: [bunExe(), "-e", "process.stdin.pipe(process.stdout)"],
+      stdin: stream,
+      stdout: "pipe",
+      env: bunEnv,
+    });
+    expect(await proc.stdout.text()).toBe("delivered on the second try");
+    expect(await proc.exited).toBe(0);
+  });
+
+  test.each([
+    { kind: "Response", wrap: (body: ReadableStream) => new Response(body) },
+    { kind: "Request", wrap: (body: ReadableStream) => new Request("http://localhost/", { method: "POST", body }) },
+  ])("$kind whose body stream is locked throws synchronously instead of spawning", ({ wrap }) => {
+    const wrapper = wrap(
+      new ReadableStream({
+        start(controller) {
+          controller.enqueue("body");
+          controller.close();
+        },
+      }),
+    );
+    wrapper.body!.getReader();
+
+    expect(() => spawn({ cmd: [bunExe(), "-e", ""], stdin: wrapper, env: bunEnv })).toThrow(
+      expect.objectContaining({ code: "ERR_INVALID_STATE", message: "ReadableStream is locked" }),
+    );
+  });
+
+  test("rejecting a locked stdin stream is catchable and does not fail the process", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        const stream = new ReadableStream({
+          start(controller) {
+            controller.enqueue("data");
+            controller.close();
+          },
+        });
+        stream.getReader();
+        try {
+          Bun.spawn({
+            cmd: [process.execPath, "-e", "process.stdin.pipe(process.stdout)"],
+            stdin: stream,
+            stdout: "ignore",
+          });
+          console.log("spawned");
+        } catch (e) {
+          console.log(e.code + ": " + e.message);
+        }
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout.trim()).toBe("ERR_INVALID_STATE: 'stdin' ReadableStream is locked");
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+  });
+
   test("ReadableStream with abort signal calls cancel", async () => {
     const controller = new AbortController();
     const cancel = mock();

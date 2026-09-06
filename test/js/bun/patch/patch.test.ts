@@ -727,9 +727,32 @@ describe("apply", () => {
 
     test("a pure insertion past the end of the file does not apply", async () => {
       await using dir = tempDir("patch-u0", { "index.js": "line 1\nline 2\n" });
-      const patchfile = "diff --git a/index.js b/index.js\n--- a/index.js\n+++ b/index.js\n@@ -9,0 +10 @@\n+X\n";
-      expect(() => apply(patchfile, String(dir))).toThrow("hunk #1 does not apply to index.js (expected at line 9)");
+      const header = "diff --git a/index.js b/index.js\n--- a/index.js\n+++ b/index.js\n";
+      expect(() => apply(header + "@@ -9,0 +10 @@\n+X\n", String(dir))).toThrow(
+        "hunk #1 does not apply to index.js (expected at line 9)",
+      );
+      // One past the last line: the file has 2 lines, there is no line 3 to insert after.
+      expect(() => apply(header + "@@ -3,0 +4 @@\n+X\n", String(dir))).toThrow(
+        "hunk #1 does not apply to index.js (expected at line 3)",
+      );
       expect(await fs.readFile(join(String(dir), "index.js"), "utf8")).toBe("line 1\nline 2\n");
+    });
+
+    test("a no-newline pragma in the middle of a hunk does not apply instead of crashing", async () => {
+      await using dir = tempDir("patch-pragma", { "index.js": "line 1\nline 2" });
+      const patchfile = [
+        "diff --git a/index.js b/index.js",
+        "--- a/index.js",
+        "+++ b/index.js",
+        "@@ -1,2 +1,1 @@",
+        "+X",
+        "\\ No newline at end of file",
+        "-line 1",
+        "-line 2",
+        "",
+      ].join("\n");
+      expect(() => apply(patchfile, String(dir))).toThrow("hunk #1 does not apply to index.js (expected at line 1)");
+      expect(await fs.readFile(join(String(dir), "index.js"), "utf8")).toBe("line 1\nline 2");
     });
 
     test("a header start far past the end of the file is still found or rejected quickly", async () => {

@@ -313,7 +313,9 @@ fn apply_patch(
         let original_start = hunk.header.original.start as isize + line_delta;
         let mut line_cursor = if hunk.header.original.len == 0 {
             // `-N,0`: nothing to match, the new lines go after line N (0 = top).
-            if original_start < 0 || original_start as usize > lines.len() {
+            // The empty element after a trailing newline is not a line.
+            let line_count = lines.len() - (lines.last() == Some(&&b""[..])) as usize;
+            if original_start < 0 || original_start as usize > line_count {
                 return Err(does_not_apply(hunk_index, hunk));
             }
             original_start as usize
@@ -324,6 +326,8 @@ fn apply_patch(
             }
         };
 
+        // The match proved every context and deleted line exists, but a misplaced
+        // `\ No newline at end of file` pops a line mid-hunk, so keep the ranges checked.
         for part in &hunk.parts {
             let part: &PatchMutationPart = part;
             match part.ty {
@@ -331,6 +335,9 @@ fn apply_patch(
                     line_cursor += part.lines.len();
                 }
                 PartType::Insertion => {
+                    if line_cursor > lines.len() {
+                        return Err(does_not_apply(hunk_index, hunk));
+                    }
                     lines.splice(line_cursor..line_cursor, part.lines.iter().copied());
                     line_cursor += part.lines.len();
                     line_delta += part.lines.len() as isize;
@@ -339,6 +346,9 @@ fn apply_patch(
                     }
                 }
                 PartType::Deletion => {
+                    if line_cursor + part.lines.len() > lines.len() {
+                        return Err(does_not_apply(hunk_index, hunk));
+                    }
                     lines.drain(line_cursor..line_cursor + part.lines.len());
                     line_delta -= part.lines.len() as isize;
                     if part.no_newline_at_end_of_file {

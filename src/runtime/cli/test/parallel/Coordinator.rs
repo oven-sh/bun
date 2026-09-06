@@ -181,8 +181,7 @@ impl<'a> Coordinator<'a> {
     /// the coordinator can't run this (SIGKILL): PDEATHSIG on Linux,
     /// kill-on-close Job Object on Windows. macOS has neither; the process
     /// group kill here plus stdin EOF in the worker loop is the best effort.
-    /// Exits with 128 + the signal number, the status a shell reports for a
-    /// process that the same signal killed.
+    /// Exits with 128 + `signal`, the status a shell reports for a signal death.
     fn abort_all(&mut self, signal: i32) {
         abort_handler::uninstall();
         let now = bun_core::time::milli_timestamp();
@@ -600,11 +599,8 @@ impl<'a> Coordinator<'a> {
         let startup_failure = w.inflight.is_none() && !w.reached_ready;
         let worker_idx = w.idx;
         if let Some(idx) = w.inflight {
-            // A worker that dies mid-file never reaches the `--isolate`
-            // cleanup between files that kills the processes its tests
-            // spawned. It is its own process group leader, so kill(-pid)
-            // reaches them. The pid stays reserved while any group member
-            // lives, so it cannot name an unrelated process here.
+            // The dead worker skipped the between-files cleanup of what its
+            // test spawned; it led its own process group, so kill(-pid) does it.
             #[cfg(unix)]
             if let Some(p) = &w.process {
                 // SAFETY: FFI call; -pid targets the worker's process group.
@@ -1048,8 +1044,7 @@ fn describe_status<'b>(buf: &'b mut [u8; 32], status: &SpawnStatus) -> &'b [u8] 
 pub(crate) mod abort_handler {
     use super::*;
 
-    /// The signal that asked for the abort (SIGINT or SIGTERM), or 0 when none
-    /// arrived. On Windows a console control event is reported as SIGINT.
+    /// The signal that asked for the abort, or 0. Windows console events count as SIGINT.
     pub(crate) static ABORT_SIGNAL: AtomicI32 = AtomicI32::new(0);
 
     // PORTING.md §Global mutable state: written once in `install()` (single

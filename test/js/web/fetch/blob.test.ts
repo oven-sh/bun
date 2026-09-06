@@ -1,3 +1,4 @@
+import { heapStats } from "bun:jsc";
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isASAN, tempDir } from "harness";
 import type { BlobOptions } from "node:buffer";
@@ -829,7 +830,6 @@ test.each([
 // A slice shares the parent's bytes. It must not report them to the GC as a
 // new allocation, or each slice of a large Blob triggers a collection.
 test("Blob.slice() does not report the shared bytes as extra memory", () => {
-  const { heapStats } = require("bun:jsc");
   const size = 1 << 20;
   const blob = new Blob([new Uint8Array(size)]);
   const before = heapStats().extraMemorySize;

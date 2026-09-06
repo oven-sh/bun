@@ -348,9 +348,7 @@ fn parse_classic(
     Ok(out)
 }
 
-/// Logs the depth-limit error for a JSON document at `loc`. Callers that walk
-/// a parsed tree again (`Expr::deep_clone`) report their own overflow with
-/// the same message.
+/// Logs the depth-limit error for a JSON document at `loc`.
 #[cold]
 pub fn add_too_deeply_nested_error(
     log: &mut bun_ast::Log,

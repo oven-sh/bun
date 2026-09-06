@@ -38,7 +38,6 @@ const {
   emitCloseNT,
   NodeHTTPResponseAbortEvent,
   STATUS_CODES,
-  isTlsSymbol,
   hasServerResponseFinished,
   NodeHTTPBodyReadState,
   eofInProgress,
@@ -260,8 +259,98 @@ function connectionListener(this: Server, socket) {
   });
 }
 
+// Builds the `tls` object handed to Bun.serve from Node-style https.Server
+// options. Returns a TLS config even when no key/cert is given, so the
+// listener speaks TLS (and fails handshakes) the way Node's tls.Server does.
+function serverTlsOptions(options) {
+  const tlsHelpers = require("internal/tls");
+
+  // Node's https.Server accepts PKCS#12 bundles (pfx [+ passphrase]); fold
+  // them into plain key/cert/ca so the native TLS config sees PEM material.
+  let tlsOptions = options;
+  if (options.pfx) {
+    tlsOptions = tlsHelpers.processPfxOptions(options);
+  }
+
+  let cert = tlsOptions.cert;
+  if (cert) {
+    tlsHelpers.throwOnInvalidTLSArray("options.cert", cert);
+  }
+
+  let key = tlsOptions.key;
+  if (key) {
+    tlsHelpers.throwOnInvalidTLSArray("options.key", key);
+  }
+
+  let ca = tlsOptions.ca;
+  // PKCS#12-embedded CAs extend the trust set; the server path hands raw
+  // {key, cert, ca} to the native config and has no addCACert hook, so fold
+  // them into `ca` (mirrors tls.Server.setSecureContext).
+  const pfxExtraCAs = tlsOptions._pfxExtraCACerts;
+  if (pfxExtraCAs?.length) {
+    ca = ca == null ? pfxExtraCAs : $isArray(ca) ? [...ca, ...pfxExtraCAs] : [ca, ...pfxExtraCAs];
+  }
+  if (ca) {
+    tlsHelpers.throwOnInvalidTLSArray("options.ca", ca);
+  }
+
+  let passphrase = options.passphrase;
+  if (passphrase && typeof passphrase !== "string") {
+    throw $ERR_INVALID_ARG_TYPE("options.passphrase", "string", passphrase);
+  }
+
+  let serverName = options.servername;
+  if (serverName && typeof serverName !== "string") {
+    throw $ERR_INVALID_ARG_TYPE("options.servername", "string", serverName);
+  }
+
+  let secureOptions = options.secureOptions || 0;
+  if (secureOptions && typeof secureOptions !== "number") {
+    throw $ERR_INVALID_ARG_TYPE("options.secureOptions", "number", secureOptions);
+  }
+
+  const { validateSecureProtocol, secureProtocolToVersionRange, tlsStringToProtocolVersion } = tlsHelpers;
+  // Translate minVersion/maxVersion/secureProtocol into the integer
+  // protocol range the native layer applies (secureProtocol wins, like
+  // Node's SecureContext::Init); 0 keeps the native defaults.
+  validateSecureProtocol(options.secureProtocol);
+  let minVersion, maxVersion;
+  const range = secureProtocolToVersionRange(options.secureProtocol);
+  if (range) {
+    minVersion = range[0];
+    maxVersion = range[1];
+  } else {
+    minVersion = tlsStringToProtocolVersion(options.minVersion);
+    maxVersion = tlsStringToProtocolVersion(options.maxVersion);
+  }
+  return normalizeServerTls({
+    serverName,
+    key,
+    cert,
+    ca,
+    passphrase,
+    secureOptions,
+    minVersion,
+    maxVersion,
+    ciphers: typeof options.ciphers === "string" && options.ciphers ? options.ciphers : undefined,
+    requestCert: options.requestCert,
+    rejectUnauthorized: options.rejectUnauthorized,
+  });
+}
+
+// Node's http.Server ignores TLS material (key, cert, ca, pfx) in its
+// options and always serves plaintext. Only https.Server reads them.
 function Server(options, callback): void {
   if (!(this instanceof Server)) return new Server(options, callback);
+  return initServer.$call(this, options, callback, false);
+}
+
+function HttpsServer(options, callback): void {
+  if (!(this instanceof HttpsServer)) return new HttpsServer(options, callback);
+  return initServer.$call(this, options, callback, true);
+}
+
+function initServer(options, callback, isTls: boolean) {
   EventEmitter.$call(this);
   this.on("listening", setupConnectionsTracking);
   this.on("connection", connectionListener);
@@ -288,87 +377,9 @@ function Server(options, callback): void {
   } else {
     validateObject(options, "options");
     options = { ...options };
-    const tlsHelpers = options.pfx || options.cert || options.key || options.ca ? require("internal/tls") : undefined;
-
-    // Node's https.Server accepts PKCS#12 bundles (pfx [+ passphrase]); fold
-    // them into plain key/cert/ca so the native TLS config sees PEM material.
-    let tlsOptions = options;
-    if (options.pfx) {
-      tlsOptions = tlsHelpers.processPfxOptions(options);
-      this[isTlsSymbol] = true;
-    }
-
-    let cert = tlsOptions.cert;
-    if (cert) {
-      tlsHelpers.throwOnInvalidTLSArray("options.cert", cert);
-      this[isTlsSymbol] = true;
-    }
-
-    let key = tlsOptions.key;
-    if (key) {
-      tlsHelpers.throwOnInvalidTLSArray("options.key", key);
-      this[isTlsSymbol] = true;
-    }
-
-    let ca = tlsOptions.ca;
-    // PKCS#12-embedded CAs extend the trust set; the server path hands raw
-    // {key, cert, ca} to the native config and has no addCACert hook, so fold
-    // them into `ca` (mirrors tls.Server.setSecureContext).
-    const pfxExtraCAs = tlsOptions._pfxExtraCACerts;
-    if (pfxExtraCAs?.length) {
-      ca = ca == null ? pfxExtraCAs : $isArray(ca) ? [...ca, ...pfxExtraCAs] : [ca, ...pfxExtraCAs];
-    }
-    if (ca) {
-      tlsHelpers.throwOnInvalidTLSArray("options.ca", ca);
-      this[isTlsSymbol] = true;
-    }
-
-    let passphrase = options.passphrase;
-    if (passphrase && typeof passphrase !== "string") {
-      throw $ERR_INVALID_ARG_TYPE("options.passphrase", "string", passphrase);
-    }
-
-    let serverName = options.servername;
-    if (serverName && typeof serverName !== "string") {
-      throw $ERR_INVALID_ARG_TYPE("options.servername", "string", serverName);
-    }
-
-    let secureOptions = options.secureOptions || 0;
-    if (secureOptions && typeof secureOptions !== "number") {
-      throw $ERR_INVALID_ARG_TYPE("options.secureOptions", "number", secureOptions);
-    }
-
-    if (this[isTlsSymbol]) {
-      const { validateSecureProtocol, secureProtocolToVersionRange, tlsStringToProtocolVersion } = tlsHelpers;
-      // Translate minVersion/maxVersion/secureProtocol into the integer
-      // protocol range the native layer applies (secureProtocol wins, like
-      // Node's SecureContext::Init); 0 keeps the native defaults.
-      validateSecureProtocol(options.secureProtocol);
-      let minVersion, maxVersion;
-      const range = secureProtocolToVersionRange(options.secureProtocol);
-      if (range) {
-        minVersion = range[0];
-        maxVersion = range[1];
-      } else {
-        minVersion = tlsStringToProtocolVersion(options.minVersion);
-        maxVersion = tlsStringToProtocolVersion(options.maxVersion);
-      }
-      this[tlsSymbol] = normalizeServerTls({
-        serverName,
-        key,
-        cert,
-        ca,
-        passphrase,
-        secureOptions,
-        minVersion,
-        maxVersion,
-        ciphers: typeof options.ciphers === "string" && options.ciphers ? options.ciphers : undefined,
-        requestCert: options.requestCert,
-        rejectUnauthorized: options.rejectUnauthorized,
-      });
-    } else {
-      this[tlsSymbol] = null;
-    }
+  }
+  if (isTls) {
+    this[tlsSymbol] = serverTlsOptions(options);
   }
 
   this[optionsSymbol] = options;
@@ -378,6 +389,7 @@ function Server(options, callback): void {
   return this;
 }
 $toClass(Server, "Server", EventEmitter);
+$toClass(HttpsServer, "Server", Server);
 
 Server.prototype[kIncomingMessage] = undefined;
 
@@ -3813,6 +3825,7 @@ function storeHTTPOptions(options) {
 
 export default {
   Server,
+  HttpsServer,
   ServerResponse,
   kConnectionsCheckingInterval,
 };

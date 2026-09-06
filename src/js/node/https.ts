@@ -2,6 +2,7 @@
 // The client portions (Agent, request, get) are a port of Node.js's lib/https.js
 // https://github.com/nodejs/node/blob/v26.3.0/lib/https.js
 const http = require("node:http");
+const { HttpsServer } = require("node:_http_server");
 const { isIP } = require("internal/net/isIP");
 const { urlToHttpOptions } = require("internal/url");
 const { kEmptyObject, once } = require("internal/shared");
@@ -514,7 +515,7 @@ function createServer(options, requestListener) {
     // ALPN requests are always answered with http/1.1.
     options.ALPNProtocols = ["http/1.1"];
   }
-  const server = http.createServer(options, requestListener);
+  const server = new HttpsServer(options, requestListener);
   const optionsALPNProtocols = options.ALPNProtocols;
   if (optionsALPNProtocols) {
     require("node:tls").convertALPNProtocols(optionsALPNProtocols, server);
@@ -531,7 +532,7 @@ var https = {
     timeout: 5000,
     proxyEnv: shouldUseEnvProxy() ? process.env : undefined,
   }),
-  Server: http.Server,
+  Server: HttpsServer,
   createServer,
   get,
   request,

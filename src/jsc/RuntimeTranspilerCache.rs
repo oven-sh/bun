@@ -496,11 +496,22 @@ impl Entry {
         };
 
         if self.metadata.sourcemap_byte_length > 0 {
-            self.sourcemap = pread_box(
+            let sourcemap = pread_box(
                 file,
                 self.metadata.sourcemap_byte_length as usize,
                 self.metadata.sourcemap_byte_offset,
             )?;
+
+            // A cache hit hands this blob to `SavedSourceMap::put_mappings` and
+            // then `InternalSourceMap::find`, which reads `SyncEntry[]` and the
+            // window streams by the offsets in the blob header. Validate the
+            // header so a damaged entry regenerates instead of reading
+            // out of bounds during stack remapping.
+            if !bun_sourcemap::InternalSourceMap::is_valid_blob(&sourcemap) {
+                return Err(crate::CrateError::InvalidSourceMap);
+            }
+
+            self.sourcemap = sourcemap;
         }
 
         if self.metadata.esm_record_byte_length > 0 {

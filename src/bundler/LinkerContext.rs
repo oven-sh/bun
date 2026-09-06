@@ -5105,8 +5105,8 @@ pub struct StmtList {
 
 /// The dependency statements that run inside a wrapper before the module
 /// body, in source order. From the first async dependency on they share one
-/// `await Promise.all([init_a(), init_b(), ns = require_c()])`, so each one
-/// starts before the wrapper suspends.
+/// `await Promise.all([init_a(), init_b(), void (ns = require_c())])`, so
+/// each one starts before the wrapper suspends.
 pub struct InsideWrapperPrefix {
     pub(crate) stmts: Vec<Stmt>,
     /// Index in `stmts` of the `await` statement, once one exists.
@@ -5137,7 +5137,7 @@ impl InsideWrapperPrefix {
         };
 
         match stmt.data {
-            bun_ast::StmtData::SExpr(s) => self.join_awaited(await_index, s.value),
+            bun_ast::StmtData::SExpr(s) => self.join_awaited(await_index, Self::discarded(s.value)),
             bun_ast::StmtData::SLocal(local)
                 if local.decls.iter().all(|decl| {
                     decl.value.is_some()
@@ -5145,7 +5145,7 @@ impl InsideWrapperPrefix {
                 }) =>
             {
                 // `var ns = require_x();` becomes `var ns;` before the await and
-                // `ns = require_x()` in the awaited list.
+                // `void (ns = require_x())` in the awaited list.
                 let mut hoisted = G::DeclList::init_capacity(local.decls.len());
                 for decl in local.decls.iter() {
                     let bun_ast::binding::Data::BIdentifier(id) = decl.binding.data else {
@@ -5157,10 +5157,10 @@ impl InsideWrapperPrefix {
                     });
                     self.join_awaited(
                         await_index,
-                        Expr::assign(
+                        Self::discarded(Expr::assign(
                             Expr::init_identifier(id.get().r#ref, decl.binding.loc),
                             decl.value.expect("infallible: checked above"),
-                        ),
+                        )),
                     );
                 }
                 self.stmts.insert(
@@ -5178,6 +5178,19 @@ impl InsideWrapperPrefix {
             _ => self.stmts.push(stmt),
         }
         Ok(())
+    }
+
+    /// `Promise.all` would await a statement's value if it were a thenable,
+    /// for example the `module.exports` a `require_x()` returns.
+    fn discarded(value: Expr) -> Expr {
+        Expr::init(
+            E::Unary {
+                op: bun_ast::OpCode::UnVoid,
+                value,
+                flags: E::UnaryFlags::empty(),
+            },
+            value.loc,
+        )
     }
 
     pub(crate) fn append_non_dependency_slice(&mut self, stmts: &[Stmt]) -> Result<(), AllocError> {

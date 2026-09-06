@@ -4149,6 +4149,8 @@ describe("bundler", () => {
       `,
     },
   });
+  // The CommonJS module's exports are a thenable: joining the `require_c()`
+  // with the awaited dependencies must not await them.
   itBundled("edgecase/WrappedCommonJSDependencyAfterAsyncDependencyKeepsImportOrder", {
     files: {
       "/entry.js": /* js */ `import "./x.js"; console.log("entry");`,
@@ -4156,7 +4158,7 @@ describe("bundler", () => {
         import "./a.js";
         import c from "./c.cjs";
         import "./b.js";
-        console.log("x body", c);
+        console.log("x body", c.value);
       `,
       "/a.js": /* js */ `
         console.log("a start");
@@ -4167,7 +4169,10 @@ describe("bundler", () => {
         console.log("b");
         setTimeout(() => import("./x.js").then(() => console.log("dyn x")));
       `,
-      "/c.cjs": /* js */ `console.log("c"); module.exports = "C";`,
+      "/c.cjs": /* js */ `
+        console.log("c");
+        module.exports = { value: "C", then(resolve) { console.log("then called"); resolve(); } };
+      `,
     },
     format: "esm",
     run: {

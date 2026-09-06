@@ -140,7 +140,7 @@ describe.concurrent("socket.connect() re-entry", () => {
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect({ stderr, exitCode }).toEqual({ stderr, exitCode: 0 });
+    expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
     return JSON.parse(stdout);
   }
 

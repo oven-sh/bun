@@ -1492,7 +1492,10 @@ function traceConnectEnd(req) {
 function kConnectTcp(self, addressType, req, address, port) {
   $debug("SocketHandle.kConnectTcp", addressType, address, port);
   // uv_ip4_addr/uv_ip6_addr reject an address of the other family.
-  if (isIP(address) !== addressType) return uv().UV_EINVAL;
+  if (isIP(address) !== addressType) {
+    traceConnectEnd(req);
+    return uv().UV_EINVAL;
+  }
   return kConnectDispatch(self, req, {
     hostname: address,
     port,
@@ -1541,7 +1544,10 @@ function kConnectPipe(self, req, address) {
 
 function kConnectDispatch(self, req, opts) {
   const handle = self._handle;
-  if (handle[kConnectReq] !== undefined) return uv().UV_EALREADY;
+  if (handle[kConnectReq] !== undefined) {
+    traceConnectEnd(req);
+    return uv().UV_EALREADY;
+  }
   // Node's TCPWrap returns errno for sync uv_*_connect failure and defers
   // oncomplete; doConnect instead fires connectError inside this call. Bracket
   // it so connectError hands the errno back here instead of re-entering.

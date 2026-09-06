@@ -129,3 +129,44 @@ describe("BUN_OPTIONS environment variable", () => {
     expect(result.stdout.toString()).toContain("NORMAL");
   });
 });
+
+describe("BUN_OPTIONS contributes flags, not the subcommand", () => {
+  const files = {
+    "package.json": JSON.stringify({ name: "t", scripts: { hello: "echo SCRIPT-RAN" } }),
+    "app.ts": `console.log("FILE-RAN", process.argv.slice(2))`,
+    "pre.ts": `console.log("PRELOAD")`,
+    "a.test.ts": `import { test } from "bun:test"; test("a", () => {});`,
+  };
+
+  function run(dir: string, cmd: string[], BUN_OPTIONS: string) {
+    const result = spawnSync({ cmd: [bunExe(), ...cmd], cwd: dir, env: { ...bunEnv, BUN_OPTIONS } });
+    return { stdout: result.stdout.toString(), stderr: result.stderr.toString(), exitCode: result.exitCode };
+  }
+
+  // The tokens are spliced into argv after argv[0]. A bare word there used
+  // to be read as the subcommand: BUN_OPTIONS=test turned `bun app.ts` into
+  // `bun test app.ts`, and BUN_OPTIONS=build printed the bundled source.
+  test.concurrent.each(["test", "build"])("a bare %s does not select the subcommand", word => {
+    using dir = tempDir("bun-options-bare-word", files);
+    const { stdout, stderr, exitCode } = run(String(dir), ["app.ts"], word);
+    expect(stdout).not.toContain("bun test v");
+    expect(stdout).not.toContain("// app.ts");
+    expect(stderr).toContain(`error: Script not found "${word}"`);
+    expect(exitCode).toBe(1);
+  });
+
+  // A value given with a space is the flag's value, not the subcommand.
+  test.concurrent.each([
+    ["--shell bun", ["app.ts"], "FILE-RAN"],
+    ["-r ./pre.ts", ["app.ts"], "PRELOAD\nFILE-RAN"],
+    ["--cwd .", ["app.ts"], "FILE-RAN"],
+    ["-r ./pre.ts", ["run", "hello"], "SCRIPT-RAN"],
+    ["--shell bun", ["run", "hello"], "SCRIPT-RAN"],
+    ["--cwd .", ["test"], "1 pass"],
+  ])("BUN_OPTIONS=%p bun %p", (options, cmd, expected) => {
+    using dir = tempDir("bun-options-space-value", files);
+    const { stdout, stderr, exitCode } = run(String(dir), cmd, options);
+    expect(stdout + stderr).toContain(expected);
+    expect(exitCode).toBe(0);
+  });
+});

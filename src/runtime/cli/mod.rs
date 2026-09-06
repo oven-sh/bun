@@ -966,31 +966,41 @@ pub mod command {
             return Tag::RunAsNodeCommand;
         }
 
+        // The tokens BUN_OPTIONS splices in sit at argv[1..bun_options_end].
+        // They supply flags and flag values only: a bare word there is a
+        // positional of the selected command, never the keyword.
+        let bun_options_end = 1 + bun::bun_options_argc();
         let mut idx: usize = 1;
         let Some(mut first_arg_name) = iter.next() else {
             return Tag::AutoCommand;
         };
         // `--filter`/`--workspaces` before `test` or `build` name a script.
         let mut saw_filter_flag = false;
-        while !first_arg_name.is_empty() && first_arg_name[0] == b'-' {
-            // `--interactive` stays on AutoCommand: Arguments.rs parses it and the no-target check
-            // routes to RunCommand::exec_node_repl. An early ReplCommand return here would bypass
-            // that and boot the legacy `bun repl` implementation instead.
-            let next_is_keyword = argv
-                .get(idx + 1)
-                .is_some_and(|next| keyword_tag(next).is_some());
-            match arguments::LeadingFlag::classify(first_arg_name, next_is_keyword) {
-                arguments::LeadingFlag::Program => return Tag::AutoCommand,
-                arguments::LeadingFlag::Flag {
-                    consumes_value,
-                    filter,
-                } => {
-                    saw_filter_flag |= filter;
-                    if consumes_value {
-                        if iter.next().is_none() {
-                            return Tag::AutoCommand;
+        loop {
+            let is_flag = !first_arg_name.is_empty() && first_arg_name[0] == b'-';
+            if !is_flag && idx >= bun_options_end {
+                break;
+            }
+            if is_flag {
+                // `--interactive` stays on AutoCommand: Arguments.rs parses it and the no-target check
+                // routes to RunCommand::exec_node_repl. An early ReplCommand return here would bypass
+                // that and boot the legacy `bun repl` implementation instead.
+                let next_is_keyword = argv
+                    .get(idx + 1)
+                    .is_some_and(|next| keyword_tag(next).is_some());
+                match arguments::LeadingFlag::classify(first_arg_name, next_is_keyword) {
+                    arguments::LeadingFlag::Program => return Tag::AutoCommand,
+                    arguments::LeadingFlag::Flag {
+                        consumes_value,
+                        filter,
+                    } => {
+                        saw_filter_flag |= filter;
+                        if consumes_value {
+                            if iter.next().is_none() {
+                                return Tag::AutoCommand;
+                            }
+                            idx += 1;
                         }
-                        idx += 1;
                     }
                 }
             }
@@ -1561,7 +1571,17 @@ pub mod command {
         // InitCommand parses its own argv (no Context).
         apply_leading_cwd();
         let argv = argv_zslice();
-        let start = (subcommand_argv_index() + 1).min(argv.len());
+        let keyword = subcommand_argv_index();
+        // `bun --help init`: the flags before the keyword are not init's, but
+        // a help request among them is answered with init's help.
+        if argv[1..keyword.min(argv.len())]
+            .iter()
+            .any(|a| matches!(a.as_bytes(), b"--help" | b"-h"))
+        {
+            tag_print_help(Tag::InitCommand, true);
+            Global::exit(0);
+        }
+        let start = (keyword + 1).min(argv.len());
         super::init_command::InitCommand::exec(&argv[start..])
     }
 

@@ -143,8 +143,7 @@ void CryptoAlgorithm::dispatchOperationInWorkQueue(WorkQueue& workQueue, ScriptE
 
 void CryptoAlgorithm::dispatchKeyPairGeneration(ScriptExecutionContext& context, Function<EvpPKeyPair()>&& generate, Function<CryptoKeyPair(EvpPKeyPair&&)>&& wrap, KeyPairCallback&& callback, KeyPairFailureCallback&& failureCallback)
 {
-    auto workQueue = Bun::PhonyWorkQueue::create("key pair generation"_s);
-    workQueue->dispatch(context.globalObject(),
+    Bun::PhonyWorkQueue::dispatchToPool(context.globalObject(),
         [generate = WTF::move(generate), wrap = WTF::move(wrap), callback = WTF::move(callback), failureCallback = WTF::move(failureCallback), contextIdentifier = context.identifier(), loopKind = context.currentLoopKind()]() mutable {
             auto keys = generate();
             ScriptExecutionContext::postTaskTo(contextIdentifier, loopKind, [keys = WTF::move(keys), wrap = WTF::move(wrap), callback = WTF::move(callback), failureCallback = WTF::move(failureCallback)](auto&) mutable {

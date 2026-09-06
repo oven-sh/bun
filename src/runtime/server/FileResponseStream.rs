@@ -233,9 +233,7 @@ impl FileResponseStream {
         );
     }
 
-    /// Streams `length` bytes (or to EOF) through the `BufferedReader`:
     /// `pread` from `offset` when given, else `read` from the fd's position.
-    /// Also the fallback when `sendfile(2)` refuses the fd.
     fn start_reader(
         &self,
         file_type: FileType,
@@ -463,11 +461,8 @@ impl FileResponseStream {
                 }
                 sys::E::EINTR => continue,
                 sys::E::EAGAIN => return self.arm_sendfile_writable(),
-                // The kernel, a seccomp policy, or the source's filesystem
-                // refuses sendfile(2) for this fd (the same set
-                // `bun_sys::copy_file` falls back on). The header section is
-                // already on the wire, so serve the rest of the declared
-                // Content-Length with read+write.
+                // sendfile(2) is refused for this fd (the set `bun_sys::copy_file`
+                // falls back on): serve the rest of the body with read+write.
                 sys::E::EINVAL | sys::E::ENOSYS | sys::E::ENOTSUP | sys::E::EPERM => {
                     bun_output::scoped_log!(
                         FileResponseStream,
@@ -701,7 +696,6 @@ fn can_sendfile(resp: AnyResponse, file_type: FileType, length: Option<u64>) -> 
     }
 }
 
-/// Set once `sendfile(2)` answers `ENOSYS`: the kernel has no such syscall,
-/// so no later response tries it.
+/// Set once `sendfile(2)` answers `ENOSYS`.
 #[cfg(any(target_os = "linux", target_os = "android"))]
 static SENDFILE_UNAVAILABLE: AtomicBool = AtomicBool::new(false);

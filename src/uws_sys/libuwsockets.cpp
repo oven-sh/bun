@@ -1558,10 +1558,8 @@ __attribute__((callback (corker, ctx)))
     }
   }
 
-  /* Terminates the header section and flushes it ahead of the sendfile(2)
-   * body. HTTP_WRITE_CALLED records that the blank line is out, so a later
-   * write() (the read+write fallback when sendfile is refused) does not
-   * terminate the headers a second time inside the body. */
+  /* Terminates and flushes the header section; HTTP_WRITE_CALLED keeps a
+   * later write() (the fallback when sendfile is refused) from doing it again. */
   void uws_res_prepare_for_sendfile(int ssl, uws_res_r res)
   {
     if (ssl)

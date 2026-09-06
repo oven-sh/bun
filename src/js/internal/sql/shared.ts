@@ -1855,8 +1855,9 @@ function parseOptions(
   }
 
   let channelBinding: ChannelBinding = ChannelBinding.prefer;
-  if (adapter === "postgres" && env.PGCHANNELBINDING) {
-    channelBinding = normalizeChannelBinding(env.PGCHANNELBINDING);
+  if (adapter === "postgres") {
+    const envChannelBinding = env.PGCHANNELBINDING;
+    if (envChannelBinding) channelBinding = normalizeChannelBinding(envChannelBinding);
   }
 
   let url = _url;

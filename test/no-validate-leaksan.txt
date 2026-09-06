@@ -399,3 +399,9 @@ test/bundler/native-plugin.test.ts
 
 # Slow
 test/js/bun/typescript/type-export.test.ts
+
+# A define value that fails to parse (any syntax error, not only deep nesting)
+# leaves the log messages of the failed Bun.Transpiler constructor and the
+# Bun.build bundler thread unfreed at exit. The test exercises that error path
+# on purpose. Remove once those error paths free the transpiler they built.
+test/bundler/transpiler/define-deep-nesting-stack-overflow.test.ts

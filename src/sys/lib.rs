@@ -8896,14 +8896,9 @@ pub(crate) fn move_file_z_slow(
     }
     r
 }
-/// `copyFileZSlowWithHandle`: the cross-device arm of the move helpers.
-///
-/// Copies `in_handle` into a hidden temporary file in the directory of
-/// `destination`, stamps the source mode and owner on it, then renames it over
-/// `destination`. So `destination` is the old file or the complete new file at
-/// every moment: a copy that fails part-way (ENOSPC) removes the temporary
-/// file and leaves `destination` as it was. A running executable at
-/// `destination` is never opened for write, so Linux cannot answer ETXTBSY.
+/// `copyFileZSlowWithHandle`, the cross-device arm of the move helpers: copy
+/// into a temporary file beside `destination`, then rename it over
+/// `destination`, so a failed copy leaves `destination` as it was.
 pub(crate) fn copy_file_z_slow_with_handle(
     in_handle: Fd,
     to_dir: Fd,
@@ -8924,8 +8919,10 @@ pub(crate) fn copy_file_z_slow_with_handle(
     if r.is_ok() {
         let _ = safe_libc::fchmod(dst.native(), st.st_mode);
         let _ = safe_libc::fchown(dst.native(), st.st_uid, st.st_gid);
+        // Deferred write errors must fail the move here, not vanish in close().
+        r = fsync(dst);
     }
-    // Windows renames by opening the source with DELETE access, so close first.
+    // Close before the rename: on Windows the rename opens `temp` for DELETE.
     let _ = close(dst);
     if r.is_ok() {
         r = renameat(to_dir, temp, to_dir, destination);
@@ -8935,8 +8932,7 @@ pub(crate) fn copy_file_z_slow_with_handle(
     }
     r
 }
-/// Creates `<dir of destination>/.<random>.tmp` with `O_EXCL`, relative to
-/// `to_dir` like `destination` itself, and returns its fd and that name.
+/// Creates `<dirname(destination)>/.<random>.tmp` with `O_EXCL` under `to_dir`.
 fn create_temp_file_beside<'a>(
     to_dir: Fd,
     destination: &ZStr,
@@ -9003,8 +8999,7 @@ pub(crate) fn move_file_z_slow_maybe(
 
 /// `renameatConcurrently`. Tries an atomic NOREPLACE rename,
 /// then EXCHANGE, then a racy delete-tree + rename. With `move_fallback` set,
-/// an EXDEV result falls through to a copy into a temporary file beside the
-/// destination that is then renamed over it.
+/// an EXDEV result falls through to copy + rename beside the destination.
 pub fn renameat_concurrently(
     from_dir_fd: Fd,
     from: &ZStr,
@@ -9048,9 +9043,7 @@ pub(crate) fn renameat_concurrently_without_fallback(
                 },
             ) {
                 Err(err) => {
-                    // ENOENT: nothing to retry. EXDEV: the mounts differ, so
-                    // deleting the destination below cannot help and would
-                    // only destroy it before the caller's copy fallback runs.
+                    // Neither is fixed by deleting the destination below.
                     if matches!(err.get_errno(), E::ENOENT | E::EXDEV) {
                         return Err(err);
                     }
@@ -9086,10 +9079,8 @@ pub(crate) fn renameat_concurrently_without_fallback(
             }
         }
 
-        // A plain rename replaces a file or an empty directory atomically. It
-        // also reports EXDEV before anything is deleted where the flagged
-        // renames above are not supported (ENOSYS on FreeBSD, EINVAL on some
-        // filesystems). On Windows the first attempt already was a plain rename.
+        // Replaces a file or empty dir atomically, and sees EXDEV before the
+        // delete when the flagged renames are unsupported (ENOSYS, EINVAL).
         #[cfg(not(windows))]
         match renameat(from_dir_fd, from, to_dir_fd, to) {
             Ok(()) => break 'attempt,

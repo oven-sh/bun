@@ -62,10 +62,7 @@ impl<C: WriterContext> NewWriter<C> {
         C::pwrite(self.wrapped, data, i)
     }
 
-    /// Run `f`. If it fails, discard every byte it wrote so that a partial
-    /// message never reaches the wire. Encoding a Bind parameter can throw in
-    /// JS (a `toString` that throws, a detached buffer) after the message
-    /// header and earlier parameters are already in the buffer.
+    /// Run `f`. If it fails, discard every byte it wrote.
     pub fn atomically(
         self,
         f: impl FnOnce(Self) -> Result<(), AnyPostgresError>,

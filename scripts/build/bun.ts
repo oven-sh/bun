@@ -996,7 +996,8 @@ function emitJscProgram(
           ...["zstd", "mimalloc"].flatMap(d => (deps.get(d)?.includes ?? []).map(i => `-I${i}`)),
           "-Wno-undef", // mimalloc's internal headers under JSC's -Wundef
         ],
-        implicitInputs: webkit.outputs,
+        // zstd's and mimalloc's stamps too: their headers exist only once fetched.
+        implicitInputs: [...webkit.outputs, ...["zstd", "mimalloc"].flatMap(d => deps.get(d)?.outputs ?? [])],
         orderOnlyInputs: webkit.generatedHeaders,
       }),
     );

@@ -6,8 +6,7 @@ use bun_core::EncodedSlice;
 use bun_core::Output;
 use bun_jsc::EncodedSliceJsc as _;
 
-/// Waits until stdin is readable and runs the JS listeners of every signal that arrives meanwhile
-/// (a blocking `read(2)` cannot: the handlers are SA_RESTART and only queue the signal).
+/// Waits until stdin is readable, running JS signal listeners as signals arrive (a blocking `read(2)` cannot: handlers are SA_RESTART).
 #[cfg(unix)]
 fn wait_for_stdin(global: &JSGlobalObject) {
     use bun_jsc::PosixSignalHandle;
@@ -233,8 +232,7 @@ pub mod prompt {
         type Error = bun_core::Error;
         #[inline]
         fn read_byte(&mut self) -> Result<u8, Self::Error> {
-            // SAFETY: process-global static, JS thread only. Each `&mut` ends before
-            // `wait_for_stdin`, which can run a JS listener that calls `prompt()` again.
+            // SAFETY: process-global static, JS thread only; no `&mut` is live across `wait_for_stdin` (a listener may re-enter `prompt()`).
             if !unsafe { &*Output::buffered_stdin_reader() }.has_buffered() {
                 wait_for_stdin(self.global);
             }

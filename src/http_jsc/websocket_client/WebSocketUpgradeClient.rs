@@ -704,11 +704,8 @@ where
         };
 
         match parsed {
-            // The completed head must also respect the cap. `head_len` is the
-            // header size alone, so pipelined WebSocket frames after the head
-            // are not counted. Without this, a head larger than the cap is
-            // accepted whenever no single `recv` boundary lands inside the
-            // incomplete header (the only place the `ShortRead` arm checks).
+            // Cap the completed head by `head_len`, not `full.len()`, so
+            // pipelined frames after the head are not counted.
             Ok(HeadParse::Done { head_len, .. }) if head_len > bun_http::max_http_header_size() => {
                 HeadParse::Invalid
             }

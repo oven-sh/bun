@@ -228,20 +228,25 @@ void CryptoKeyRSA::generatePair(CryptoAlgorithmIdentifier algorithm, CryptoAlgor
     callback(CryptoKeyPair { WTF::move(publicKey), WTF::move(privateKey) });
 }
 
-RefPtr<CryptoKeyRSA> CryptoKeyRSA::importSpki(CryptoAlgorithmIdentifier identifier, std::optional<CryptoAlgorithmIdentifier> hash, Vector<uint8_t>&& keyData, bool extractable, CryptoKeyUsageBitmap usages)
+RefPtr<CryptoKeyRSA> CryptoKeyRSA::importSpki(CryptoAlgorithmIdentifier identifier, std::optional<CryptoAlgorithmIdentifier> hash, Vector<uint8_t>&& keyData, bool extractable, CryptoKeyUsageBitmap usages, bool* keyTypeMismatch)
 {
     // We need a local pointer variable to pass to d2i (DER to internal) functions().
     const uint8_t* ptr = keyData.begin();
 
     // We use d2i_PUBKEY() to import a public key.
     auto pkey = EvpPKeyPtr(d2i_PUBKEY(nullptr, &ptr, keyData.size()));
-    if (!pkey || EVP_PKEY_id(pkey.get()) != EVP_PKEY_RSA)
+    if (!pkey)
         return nullptr;
+    if (EVP_PKEY_id(pkey.get()) != EVP_PKEY_RSA) {
+        if (keyTypeMismatch)
+            *keyTypeMismatch = true;
+        return nullptr;
+    }
 
     return adoptRef(new CryptoKeyRSA(identifier, hash.value_or(CryptoAlgorithmIdentifier::SHA_1), !!hash, CryptoKeyType::Public, WTF::move(pkey), extractable, usages));
 }
 
-RefPtr<CryptoKeyRSA> CryptoKeyRSA::importPkcs8(CryptoAlgorithmIdentifier identifier, std::optional<CryptoAlgorithmIdentifier> hash, Vector<uint8_t>&& keyData, bool extractable, CryptoKeyUsageBitmap usages)
+RefPtr<CryptoKeyRSA> CryptoKeyRSA::importPkcs8(CryptoAlgorithmIdentifier identifier, std::optional<CryptoAlgorithmIdentifier> hash, Vector<uint8_t>&& keyData, bool extractable, CryptoKeyUsageBitmap usages, bool* keyTypeMismatch)
 {
     // We need a local pointer variable to pass to d2i (DER to internal) functions().
     const uint8_t* ptr = keyData.begin();
@@ -252,8 +257,13 @@ RefPtr<CryptoKeyRSA> CryptoKeyRSA::importPkcs8(CryptoAlgorithmIdentifier identif
         return nullptr;
 
     auto pkey = EvpPKeyPtr(EVP_PKCS82PKEY(p8inf.get()));
-    if (!pkey || EVP_PKEY_id(pkey.get()) != EVP_PKEY_RSA)
+    if (!pkey)
         return nullptr;
+    if (EVP_PKEY_id(pkey.get()) != EVP_PKEY_RSA) {
+        if (keyTypeMismatch)
+            *keyTypeMismatch = true;
+        return nullptr;
+    }
 
     return adoptRef(new CryptoKeyRSA(identifier, hash.value_or(CryptoAlgorithmIdentifier::SHA_1), !!hash, CryptoKeyType::Private, WTF::move(pkey), extractable, usages));
 }

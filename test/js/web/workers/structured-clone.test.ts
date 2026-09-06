@@ -3,6 +3,7 @@ import { openSync } from "fs";
 import { bunEnv, bunExe, tls } from "harness";
 import { createPrivateKey, createPublicKey, createSecretKey, KeyObject, X509Certificate } from "node:crypto";
 import { BlockList } from "node:net";
+import { deflate } from "node:zlib";
 import { join } from "path";
 
 // Terminal object types that were never entered into the structured clone object
@@ -449,6 +450,40 @@ for (const structuredCloneFn of [structuredClone, jscSerializeRoundtrip, jscSeri
             structuredCloneFn(buffer, { transfer: [buffer] });
           }).toThrow(DOMException);
         });
+        // Bun's native borrows call ArrayBuffer::pin(), which makes the buffer
+        // non-detachable without setting the C-API lock flag. Transferring a
+        // pinned buffer must copy via transferTo()'s copyTo() fallback, not
+        // throw (see bindings.cpp JSC__JSValue__pinArrayBuffer). Locks this in
+        // so a future WebKit sync that re-adds upstream's !isDetachable() gate
+        // in SerializedScriptValue::create fails CI.
+        test("A Bun-pinned ArrayBuffer copies on transfer instead of detaching", async () => {
+          const ab = new ArrayBuffer(64);
+          new Uint8Array(ab).fill(42);
+          const { promise, resolve, reject } = Promise.withResolvers<void>();
+          // Starting the async deflate pins ab for the duration of the call.
+          deflate(new Uint8Array(ab), e => (e ? reject(e) : resolve()));
+          try {
+            const clone = structuredCloneFn(ab, { transfer: [ab] });
+            expect({
+              cloneLength: clone.byteLength,
+              origLength: ab.byteLength,
+              sameObject: clone === ab,
+              cloneFirst: new Uint8Array(clone)[0],
+            }).toEqual({ cloneLength: 64, origLength: 64, sameObject: false, cloneFirst: 42 });
+          } finally {
+            await promise;
+          }
+          expect(ab.byteLength).toBe(64);
+        });
+        // WebAssembly.Memory buffers carry a non-undefined [[ArrayBufferDetachKey]]
+        // and must be rejected from a transfer list (per HTML's
+        // StructuredSerializeWithTransfer), unlike a Bun-pinned buffer above.
+        test("A WebAssembly.Memory buffer is rejected from the transfer list", () => {
+          const mem = new WebAssembly.Memory({ initial: 1 });
+          const buf = mem.buffer;
+          expect(() => structuredCloneFn(buf, { transfer: [buf] })).toThrow(TypeError);
+          expect(buf.byteLength).toBe(65536);
+        });
         // https://html.spec.whatwg.org/multipage/structured-data.html#structuredserializeinternal
         // Serializing (not transferring) a detached ArrayBuffer must throw a
         // "DataCloneError" DOMException, not a TypeError.
@@ -551,13 +586,15 @@ function createBlob(arr: number[]): Blob {
 describe("structuredClone with ArrayBuffer larger than serialization buffer capacity", () => {
   // The serialization buffer is a WTF::Vector<uint8_t> capped at 2GiB. Cloning an
   // ArrayBuffer at or above that size must throw DataCloneError instead of aborting.
-  // Run in a subprocess so the ~2GiB allocation does not bloat the test runner.
-  for (const [label, expr] of [
-    ["ArrayBuffer", "new ArrayBuffer(2 ** 31)"],
-    ["resizable ArrayBuffer", "new ArrayBuffer(2 ** 31, { maxByteLength: 2 ** 31 + 1 })"],
-    ["SharedArrayBuffer", "new SharedArrayBuffer(2 ** 31)"],
-    ["growable SharedArrayBuffer", "new SharedArrayBuffer(2 ** 31, { maxByteLength: 2 ** 31 + 1 })"],
-    ["Uint8Array", "new Uint8Array(2 ** 31)"],
+  // SharedArrayBuffer shares its backing store (no serialization copy), so it
+  // succeeds regardless of size. Run in a subprocess so the ~2GiB allocation
+  // does not bloat the test runner.
+  for (const [label, expr, expected] of [
+    ["ArrayBuffer", "new ArrayBuffer(2 ** 31)", "DataCloneError"],
+    ["resizable ArrayBuffer", "new ArrayBuffer(2 ** 31, { maxByteLength: 2 ** 31 + 1 })", "DataCloneError"],
+    ["SharedArrayBuffer", "new SharedArrayBuffer(2 ** 31)", "SHARED"],
+    ["growable SharedArrayBuffer", "new SharedArrayBuffer(2 ** 31, { maxByteLength: 2 ** 31 + 1 })", "SHARED"],
+    ["Uint8Array", "new Uint8Array(2 ** 31)", "DataCloneError"],
   ] as const) {
     test(label, async () => {
       const script = `
@@ -569,8 +606,8 @@ describe("structuredClone with ArrayBuffer larger than serialization buffer capa
           process.exit(0);
         }
         try {
-          structuredClone(buf);
-          console.log("UNEXPECTED_SUCCESS");
+          const cloned = structuredClone(buf);
+          console.log(cloned instanceof SharedArrayBuffer && cloned.byteLength === buf.byteLength ? "SHARED" : "UNEXPECTED_SUCCESS");
         } catch (e) {
           console.log(e.name);
         }
@@ -582,7 +619,7 @@ describe("structuredClone with ArrayBuffer larger than serialization buffer capa
         stderr: "inherit",
       });
       const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
-      expect(["DataCloneError", "SKIP"]).toContain(stdout.trim());
+      expect([expected, "SKIP"]).toContain(stdout.trim());
       expect(exitCode).toBe(0);
     });
   }
@@ -603,8 +640,10 @@ describe("structuredClone with ArrayBuffer larger than serialization buffer capa
     ],
   ] as const) {
     test(`${label} under 2GiB clones without crashing`, async () => {
+      // The smallest size (plus margin) whose 1.5x serialization-buffer growth
+      // exceeds the 2GiB cap (2**31 / 1.5 = ~1.43e9); peak child memory is ~3x.
       const script = `
-        const size = 1600000000;
+        const size = 1_500_000_000;
         let v;
         try {
           v = ${expr};
@@ -622,6 +661,9 @@ describe("structuredClone with ArrayBuffer larger than serialization buffer capa
         stderr: "inherit",
       });
       const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+      // The host's OOM killer reclaiming the child on a small CI runner is not a
+      // structuredClone failure; any other signal (SIGSEGV/SIGABRT/...) still is.
+      if (proc.signalCode === "SIGKILL" && stdout === "") return;
       expect(["OK", "SKIP"]).toContain(stdout.trim());
       expect(proc.signalCode).toBe(null);
       expect(exitCode).toBe(0);
@@ -803,5 +845,277 @@ describe("structuredClone(Object.prototype)", () => {
   test("bun:jsc serialize/deserialize round-trips it too", () => {
     const cloned = deserialize(serialize(Object.prototype));
     expect(cloned).toEqual({});
+  });
+});
+
+describe("Error serialization semantics", () => {
+  // .message uses OWN data descriptor (HTML spec / Node); .stack uses [[Get]].
+  test("new Error() with no message clones without an own .message", () => {
+    const cloned = structuredClone(new Error());
+    expect(Object.hasOwn(cloned, "message")).toBe(false);
+  });
+
+  test("accessor .message is not serialized", () => {
+    const e = new Error();
+    Object.defineProperty(e, "message", { get: () => "from-getter" });
+    const cloned = structuredClone(e);
+    expect(Object.hasOwn(cloned, "message")).toBe(false);
+  });
+
+  test("inherited .message is not serialized", () => {
+    class MyErr extends Error {}
+    MyErr.prototype.message = "inherited";
+    const cloned = structuredClone(new MyErr());
+    expect(Object.hasOwn(cloned, "message")).toBe(false);
+  });
+
+  // The own data descriptor is ToString'd, not required to already be a string.
+  test.each([
+    [42, "42"],
+    [null, "null"],
+    [undefined, "undefined"],
+    [{ toString: () => "obj" }, "obj"],
+  ])("own data .message %p is coerced to %p", (value, expected) => {
+    const e = new Error("original");
+    e.message = value as any;
+    expect(structuredClone(e).message).toBe(expected);
+  });
+
+  // A throwing coercion propagates the original error rather than dropping the
+  // field. A Symbol message must not reach ErrorInstance's .line materialization.
+  test("Symbol .message throws TypeError instead of crashing", () => {
+    const e = new Error("original");
+    e.message = Symbol("s") as any;
+    expect(() => structuredClone(e)).toThrow(TypeError);
+  });
+
+  test("a throwing .message toString propagates the thrown error", () => {
+    class MyDomainError extends Error {}
+    const e = new Error("original");
+    e.message = {
+      toString() {
+        throw new MyDomainError("nope");
+      },
+    } as any;
+    expect(() => structuredClone(e)).toThrow(MyDomainError);
+  });
+
+  test("a throwing prepareStackTrace propagates the thrown error", () => {
+    const original = Error.prepareStackTrace;
+    Error.prepareStackTrace = () => {
+      throw new Error("boom");
+    };
+    try {
+      const e = new Error("payload");
+      expect(() => structuredClone(e)).toThrow("boom");
+    } finally {
+      Error.prepareStackTrace = original;
+    }
+  });
+
+  // An own accessor replaces the materialized .stack, so this exercises the
+  // [[Get]] on .stack rather than prepareStackTrace. Node propagates it too.
+  test("a throwing .stack getter propagates, like node", () => {
+    class StackBoom extends Error {}
+    const e = new Error("payload");
+    Object.defineProperty(e, "stack", {
+      get() {
+        throw new StackBoom("boom");
+      },
+      configurable: true,
+    });
+    expect(() => structuredClone(e)).toThrow(StackBoom);
+  });
+
+  test("a custom Error.prepareStackTrace is serialized", () => {
+    const original = Error.prepareStackTrace;
+    Error.prepareStackTrace = () => "custom";
+    try {
+      expect(structuredClone(new Error("payload")).stack).toBe("custom");
+    } finally {
+      Error.prepareStackTrace = original;
+    }
+  });
+});
+
+describe("options.transfer iterator error propagation", () => {
+  test("user-thrown error from Symbol.iterator propagates unchanged", () => {
+    class MyDomainError extends Error {}
+    const transfer = {
+      [Symbol.iterator]() {
+        throw new MyDomainError("bad state");
+      },
+    };
+    let caught: unknown;
+    try {
+      structuredClone(1, { transfer } as any);
+    } catch (e) {
+      caught = e;
+    }
+    expect(caught).toBeInstanceOf(MyDomainError);
+    expect((caught as any).code).toBeUndefined();
+  });
+
+  test("non-object transfer still throws ERR_INVALID_ARG_TYPE", () => {
+    expect(() => structuredClone(1, { transfer: 42 } as any)).toThrow(
+      expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }),
+    );
+  });
+});
+
+// The transfer list is read through the iterator protocol. A Set iterator hands back plain
+// {value, done} objects; a custom next() can return anything, including accessors, and those
+// must still run in IteratorComplete, IteratorValue order.
+describe("options.transfer iterator results", () => {
+  test("a Set of buffers is transferred", () => {
+    const a = new ArrayBuffer(4);
+    const b = new ArrayBuffer(8);
+    const cloned = structuredClone([a, b], { transfer: new Set([a, b]) } as any);
+    expect({
+      clonedLengths: cloned.map((x: ArrayBuffer) => x.byteLength),
+      originalLengths: [a.byteLength, b.byteLength],
+    }).toEqual({ clonedLengths: [4, 8], originalLengths: [0, 0] });
+  });
+
+  test("done and value accessors on a custom iterator result are honored", () => {
+    const buffers = [new ArrayBuffer(4), new ArrayBuffer(8)];
+    const reads: string[] = [];
+    let i = 0;
+    const transfer = {
+      [Symbol.iterator]() {
+        return {
+          next() {
+            const n = i++;
+            return {
+              get done() {
+                reads.push(`done${n}`);
+                return n >= buffers.length;
+              },
+              get value() {
+                reads.push(`value${n}`);
+                // IteratorStepValue: the value of a done result is never read.
+                if (n >= buffers.length) throw new Error("value read on a done result");
+                return buffers[n];
+              },
+            };
+          },
+        };
+      },
+    };
+    const cloned = structuredClone(buffers, { transfer } as any);
+    expect({
+      clonedLengths: cloned.map((x: ArrayBuffer) => x.byteLength),
+      originalLengths: buffers.map(x => x.byteLength),
+      reads,
+    }).toEqual({
+      clonedLengths: [4, 8],
+      originalLengths: [0, 0],
+      reads: ["done0", "value0", "done1", "value1", "done2"],
+    });
+  });
+
+  test("a {value, done} result given a done accessor afterwards uses the accessor", () => {
+    const buffer = new ArrayBuffer(4);
+    let i = 0;
+    const transfer = {
+      [Symbol.iterator]() {
+        return {
+          next() {
+            const n = i++;
+            const result = { value: buffer, done: false };
+            Object.defineProperty(result, "done", { get: () => n >= 1 });
+            return result;
+          },
+        };
+      },
+    };
+    const cloned = structuredClone(buffer, { transfer } as any);
+    expect([cloned.byteLength, buffer.byteLength]).toEqual([4, 0]);
+  });
+});
+
+describe("truncated Set/Map payloads are rejected without hanging", () => {
+  // Wire header + tag bytes derived from a real serialize() so a CurrentVersion
+  // bump doesn't invalidate the crafted payloads.
+  const setBytes = Array.from(new Uint8Array(serialize(new Set([1, 0]))));
+  const mapBytes = Array.from(new Uint8Array(serialize(new Map([[1, 1]]))));
+  // valid payloads end in NonSetPropertiesTag/NonMapPropertiesTag + 4x 0xFF
+  const setBody = setBytes.slice(0, -5);
+  const mapBody = mapBytes.slice(0, -5);
+
+  const cases: [string, number[]][] = [
+    ["Set truncated after one element", setBody.slice(0, -1)],
+    ["Set truncated after two elements", setBody],
+    ["Set truncated before any element", setBody.slice(0, -2)],
+    ["Map truncated after key/value pair", mapBody],
+    ["Map truncated after key only", mapBody.slice(0, -1)],
+    ["Map truncated before any entry", mapBody.slice(0, -2)],
+  ];
+
+  test.concurrent.each([
+    ["bun:jsc", `import {deserialize} from "bun:jsc"`],
+    ["node:v8", `import {deserialize} from "node:v8"`],
+  ])("%s deserialize rejects every truncation point", async (_api, importLine) => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `${importLine};
+         for (const [name, bytes] of ${JSON.stringify(cases)}) {
+           try {
+             deserialize(new Uint8Array(bytes));
+             console.log(name + ": RETURNED");
+           } catch (e) {
+             console.log(name + ": " + e.message);
+           }
+         }`,
+      ],
+      env: bunEnv,
+      stdin: "ignore",
+      stdout: "pipe",
+      stderr: "pipe",
+      timeout: 4_000,
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect({ stdout: stdout.trim().split("\n"), stderr, signalCode: proc.signalCode, exitCode }).toEqual({
+      stdout: cases.map(([name]) => name + ": Unable to deserialize data."),
+      stderr: expect.any(String),
+      signalCode: null,
+      exitCode: 0,
+    });
+  });
+
+  test("valid Set and Map payloads still round-trip", () => {
+    expect(deserialize(serialize(new Set([1, 0])))).toEqual(new Set([1, 0]));
+    expect(deserialize(serialize(new Map([[1, 1]])))).toEqual(new Map([[1, 1]]));
+  });
+});
+
+describe("string constant pool entries survive GC during deserialization", () => {
+  // A string that appears twice in one payload is materialized once and referenced by index the
+  // second time. If the only object holding the first JSString drops it (here: a Map key that the
+  // payload sets twice) and the heap is collected before the back-reference is read, the
+  // deserializer must still hand back the original string.
+  test("Map value re-set during serialization", () => {
+    for (let iteration = 0; iteration < 1; iteration++) {
+      const expected = "Expected result " + iteration;
+      const map = new Map();
+      map.set("free", expected);
+      map.set("tmp", {
+        get a() {
+          map.delete("free");
+          map.set("free", 0x1234);
+          for (let i = 0; i < 0x10; i++) map.set("gc1_" + i, new ArrayBuffer(1024 * 1024 * 0x10));
+          for (let i = 0; i < 0x800; i++) map.set("gc2_" + i, new Date());
+          map.set("expected", expected);
+          return 1;
+        },
+      });
+      const result = structuredClone(map);
+      expect(result.get("expected")).toBe(expected);
+      expect(result.get("free")).toBe(0x1234);
+      expect(result.get("tmp")).toEqual({ a: 1 });
+    }
   });
 });

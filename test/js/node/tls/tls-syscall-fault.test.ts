@@ -20,21 +20,22 @@ afterEach(() => fault.clear());
 // stream; anything past "ARMED" means a TLS socket survived the failed
 // allocation and reached its read loop.
 const OOM_FIXTURE_MARKERS = ["ARMED", "READ DATA", "CLOSED", "CLIENT ERROR"];
-// How `CrashReason::OutOfMemory` is phrased depends on whether a crash report is
-// being generated, and CI configures that per job (BUN_CRASH_REPORT_URL is only
-// set when its remap server came up). Match either phrasing.
-const OOM_CRASH_MESSAGES = ["Bun ran out of memory", "Bun has run out of memory"];
 test.skipIf(!fault.available())(
   "a failed per-loop TLS buffer allocation reports out of memory instead of faulting inside SSL_read",
   async () => {
     await using proc = Bun.spawn({
       cmd: [bunExe(), join(import.meta.dir, "tls-loop-buffer-oom-fixture.ts")],
-      env: bunEnv,
+      // BUN_CRASH_REPORT_URL="": this OOM is deliberate; uploading it to CI's
+      // remap server would pin a spurious "crash reported" error on the next
+      // unrelated failing test.
+      env: { ...bunEnv, BUN_CRASH_REPORT_URL: "", BUN_ENABLE_CRASH_REPORTING: "0" },
       stdout: "pipe",
       stderr: "pipe",
     });
     const [stdout, stderr] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    const outOfMemory = OOM_CRASH_MESSAGES.some(message => stderr.includes(message));
+    // `CrashReason::OutOfMemory` phrasing varies with SHOW_CRASH_TRACE, so
+    // match the shared substring (see run-crash-handler.test.ts).
+    const outOfMemory = stderr.toLowerCase().includes("out of memory");
     expect({
       markers: stdout
         .split("\n")
@@ -186,6 +187,46 @@ describe.skipIf(skip)("node:tls under injected syscall faults", () => {
 });
 
 describe.skipIf(skip)("node:tls close_notify / shutdown under faults", () => {
+  test("paused client resumed after the peer's end()+destroySoon() receives every byte", async () => {
+    // The peer's data AND its FIN are already queued when the client resumes
+    // (kqueue flags EV_EOF on the same readable event), and the paused-mode
+    // consumer makes the stream's backpressure pause the socket mid-burst.
+    // No byte may be lost, and 'end' must come only after all of them.
+    const BIG = 192 * 1024;
+    const server = tls.createServer({ key: certs.key, cert: certs.cert });
+    const serverClosed = Promise.withResolvers<void>();
+    server.on("secureConnection", s => {
+      s.on("error", () => {});
+      s.on("close", () => serverClosed.resolve());
+      s.end(Buffer.alloc(BIG, "Y"));
+      s.destroySoon();
+    });
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    const port = (server.address() as import("node:net").AddressInfo).port;
+    const client = tls.connect({ port, host: "127.0.0.1", ca: certs.cert, rejectUnauthorized: true });
+    client.on("error", () => {});
+    try {
+      await once(client, "secureConnect");
+      client.pause();
+      await serverClosed.promise;
+      fault.set({ syscall: "recv", action: "short", bytes: 65536, repeat: -1 });
+      let bytes = 0;
+      client.on("readable", () => {
+        let chunk;
+        while ((chunk = client.read()) !== null) bytes += chunk.length;
+      });
+      const ended = once(client, "end");
+      client.resume();
+      await ended;
+      fault.clear();
+      expect(bytes).toBe(BIG);
+    } finally {
+      client.destroy();
+      server.close();
+    }
+  });
+
   test("client.end() under 1-byte sends still delivers close_notify and peer sees clean 'end'", async () => {
     using p = await connectedTLSPair();
     let serverGotEnd = false;
@@ -202,6 +243,10 @@ describe.skipIf(skip)("node:tls close_notify / shutdown under faults", () => {
     // have been read yet when the transport reports EOF.
     using p = await connectedTLSPair();
     p.client.on("error", () => {});
+    // The client must consume its readable side for the allowHalfOpen:false
+    // teardown to run: with "bye" left unread, Node never emits 'end' and never
+    // destroys (stream_base_commons.js defers kMaybeDestroy until 'end').
+    p.client.resume();
     fault.set({ syscall: "recv", action: "zero", after: 1, repeat: -1 });
     p.serverSock.end("bye");
     await once(p.client, "close");

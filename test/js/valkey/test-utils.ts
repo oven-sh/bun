@@ -441,10 +441,10 @@ if (isEnabled) {
     // if (!context.initialized) {
     //   console.warn("Test initialization failed - tests may be skipped");
     // }
-    // Cold container start is bounded by `compose up --wait-timeout 60` plus
+    // Cold container start is bounded by `compose up --wait-timeout 180` plus
     // a `compose build` step; the default 5s hook timeout fires long before
     // that on a cold cache.
-  }, 120_000);
+  }, 240_000);
 }
 
 if (isEnabled) {

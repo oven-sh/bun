@@ -24,15 +24,16 @@ describe.skipIf(isDebug)("does not leak", () => {
 
   test("hashSync", async () => {
     await run(/* js */ `
+        const rss = process.platform === "darwin" && typeof Bun.unsafe.memoryFootprint === "function" ? Bun.unsafe.memoryFootprint : process.memoryUsage.rss;
         const opts = { algorithm: "argon2id", memoryCost: 8, timeCost: 1 };
         // Large warm-up so the JSC heap and allocator arenas reach steady state
         // before we start measuring (debug/ASAN builds especially need this).
         for (let i = 0; i < 60000; i++) Bun.password.hashSync("hey", opts);
         Bun.gc(true);
-        const before = process.memoryUsage.rss();
+        const before = rss();
         for (let i = 0; i < 60000; i++) Bun.password.hashSync("hey", opts);
         Bun.gc(true);
-        const growthMB = (process.memoryUsage.rss() - before) / 1024 / 1024;
+        const growthMB = (rss() - before) / 1024 / 1024;
         // ASAN's free quarantine (default 256 MB) plus redzones and glibc page
         // retention inflate RSS even when nothing is leaking.
         const limit = ${isASAN ? 400 : 4};
@@ -42,6 +43,7 @@ describe.skipIf(isDebug)("does not leak", () => {
 
   test("hash", async () => {
     await run(/* js */ `
+        const rss = process.platform === "darwin" && typeof Bun.unsafe.memoryFootprint === "function" ? Bun.unsafe.memoryFootprint : process.memoryUsage.rss;
         const opts = { algorithm: "argon2id", memoryCost: 8, timeCost: 1 };
         async function batch(n) {
           const promises = [];
@@ -50,10 +52,10 @@ describe.skipIf(isDebug)("does not leak", () => {
         }
         for (let i = 0; i < 500; i++) await batch(100);
         Bun.gc(true);
-        const before = process.memoryUsage.rss();
+        const before = rss();
         for (let i = 0; i < 2000; i++) await batch(100);
         Bun.gc(true);
-        const growthMB = (process.memoryUsage.rss() - before) / 1024 / 1024;
+        const growthMB = (rss() - before) / 1024 / 1024;
         // ASAN's free quarantine (default 256 MB) plus redzones and glibc page
         // retention inflate RSS even when nothing is leaking.
         const limit = ${isASAN ? 400 : 20};
@@ -119,7 +121,7 @@ describe("hash", () => {
               algorithm: "argon2id",
               memoryCost: invalid,
             }),
-          ).toThrow("Memory cost must be between 8 and 4194304");
+          ).toThrow("Memory cost must be an integer between 8 and 4194304");
         }
 
         expect(() =>
@@ -140,29 +142,78 @@ describe("hash", () => {
       // hash() must enforce the same upper bounds that verify() applies to
       // PHC params, so Bun never produces a hash it cannot verify.
       test("argon2 cost upper bounds match verify", () => {
-        expect(() => hash(placeholder, { algorithm: "argon2id", memoryCost: 8, timeCost: 65537 })).toThrow(
-          "Time cost must be between 1 and 65536",
-        );
-        expect(() => hash(placeholder, { algorithm: "argon2id", memoryCost: 4194305, timeCost: 1 })).toThrow(
-          "Memory cost must be between 8 and 4194304",
-        );
-      });
-
-      test("out-of-i32-range cost options throw instead of wrapping", () => {
         for (const algorithm of ["argon2id", "argon2d", "argon2i"] as const) {
-          expect(() => hash(placeholder, { algorithm, memoryCost: 8, timeCost: 2 ** 32 + 2 })).toThrow(
-            "Time cost must be between 1 and 65536",
+          expect(() => hash(placeholder, { algorithm, memoryCost: 8, timeCost: 65537 })).toThrow(
+            "Time cost must be an integer between 1 and 65536",
           );
-          expect(() => hash(placeholder, { algorithm, memoryCost: 2 ** 32 + 64, timeCost: 1 })).toThrow(
-            "Memory cost must be between 8 and 4194304",
-          );
-          expect(() => hash(placeholder, { algorithm, memoryCost: 8, timeCost: 2 ** 31 })).toThrow(
-            "Time cost must be between 1 and 65536",
+          expect(() => hash(placeholder, { algorithm, memoryCost: 4194305, timeCost: 1 })).toThrow(
+            "Memory cost must be an integer between 8 and 4194304",
           );
         }
-        expect(() => hash(placeholder, { algorithm: "bcrypt", cost: 2 ** 32 + 5 })).toThrow(
-          "Rounds must be between 4 and 31",
-        );
+      });
+
+      test("cost values are range-checked before ToInt32 narrowing", () => {
+        // These used to wrap modulo 2^32 (cost: 2^32 + 4 hashed with cost 4)
+        // or truncate (cost: 4.5 hashed with cost 4) instead of throwing.
+        expect(() =>
+          hash(placeholder, {
+            algorithm: "bcrypt",
+            cost: 2 ** 32 + 4,
+          }),
+        ).toThrow("Rounds must be an integer between 4 and 31");
+
+        expect(() =>
+          hash(placeholder, {
+            algorithm: "bcrypt",
+            cost: 4.5,
+          }),
+        ).toThrow("Rounds must be an integer between 4 and 31");
+
+        expect(() =>
+          hash(placeholder, {
+            algorithm: "argon2id",
+            timeCost: 2 ** 32 + 2,
+          }),
+        ).toThrow("Time cost must be an integer between 1 and 65536");
+
+        expect(() =>
+          hash(placeholder, {
+            algorithm: "argon2id",
+            timeCost: 2 ** 31,
+          }),
+        ).toThrow("Time cost must be an integer between 1 and 65536");
+
+        expect(() =>
+          hash(placeholder, {
+            algorithm: "argon2id",
+            timeCost: 1.5,
+          }),
+        ).toThrow("Time cost must be an integer between 1 and 65536");
+
+        expect(() =>
+          hash(placeholder, {
+            algorithm: "argon2id",
+            memoryCost: 2 ** 32 + 4608,
+          }),
+        ).toThrow("Memory cost must be an integer between 8 and 4194304");
+
+        expect(() =>
+          hash(placeholder, {
+            algorithm: "argon2id",
+            memoryCost: 8.5,
+          }),
+        ).toThrow("Memory cost must be an integer between 8 and 4194304");
+
+        for (const timeCost of [NaN, -Infinity, Infinity]) {
+          expect(() => hash(placeholder, { algorithm: "argon2id", timeCost })).toThrow(
+            "Time cost must be an integer between 1 and 65536",
+          );
+        }
+        for (const memoryCost of [NaN, -Infinity, Infinity]) {
+          expect(() => hash(placeholder, { algorithm: "argon2id", memoryCost })).toThrow(
+            "Memory cost must be an integer between 8 and 4194304",
+          );
+        }
       });
 
       test("coercion throwing doesn't crash", () => {
@@ -304,6 +355,35 @@ test.concurrent("argon2 memoryCost at the 8 minimum is encoded faithfully (regre
   // while still reporting `m=8`; this pins the minimum at 8 as advertised.
   expect(hashed).toContain("m=8,t=1,p=1");
   expect(await password.verify("test", hashed)).toBeTrue();
+});
+
+describe.concurrent("argon2 hashes with memoryCost below 8 from earlier Bun versions still verify", () => {
+  // Generated by Bun 1.3.14, which accepted memoryCost < 8.
+  const legacy = {
+    argon2id:
+      "$argon2id$v=19$m=4,t=1,p=1$jaFm03353WIBtbqnvp4hx6Pd0Pk2keYfomedORTs6bI$Q+62iWiDQhCP3VFQvnMnGptmDAHFQGqY3d/dmRcGVOw",
+    argon2i:
+      "$argon2i$v=19$m=4,t=1,p=1$ccFUBS8pl1c6HrbfKTnDVnFuL7ZzrWWfn/HmEmPhXZs$SnmF2IobheA3dXrQ6PTAIFOI2mW7cmXaEdYOyeepuCc",
+    argon2d:
+      "$argon2d$v=19$m=4,t=1,p=1$l/aF7c94XVVjN+DEIojRJp2DueSSsSnIugDMmAm1h1E$h7CusZJfNR1nJQPyQsJMoHVpwlC/rCjYBS7Mc1bQdD0",
+    "argon2id m=1":
+      "$argon2id$v=19$m=1,t=1,p=1$BigwogH2c6TyJp0Po2odtNo1utvkW2MJbgm3liMV4xU$cw5OZZOZRBfd+bOnf1knGDZ67UwQN9j4nzpzt8P6JDY",
+  };
+
+  for (const [name, hash] of Object.entries(legacy)) {
+    test(name, async () => {
+      expect(await password.verify("hello", hash)).toBeTrue();
+      expect(await password.verify("hellp", hash)).toBeFalse();
+      expect(password.verifySync("hello", hash)).toBeTrue();
+      expect(password.verifySync("hellp", hash)).toBeFalse();
+    });
+  }
+
+  test("hashing with memoryCost below 8 is still rejected", () => {
+    expect(() => password.hashSync("hello", { algorithm: "argon2id", memoryCost: 4 })).toThrow(
+      "Memory cost must be an integer between 8 and 4194304",
+    );
+  });
 });
 
 const defaultAlgorithm = "argon2id";
@@ -461,4 +541,29 @@ test("verify rejects encoded argon2 hashes with cost parameters above the suppor
   expect(hugeParallelism).not.toBe(hashed);
   expect(() => password.verifySync("correct horse", hugeParallelism)).toThrow("WeakParameters");
   await expect(password.verify("correct horse", hugeParallelism)).rejects.toThrow("WeakParameters");
+
+  // The argon2 decoder accepts a leading `+` on the cost fields (Rust's integer
+  // grammar), so the ceiling check must too rather than skipping the field.
+  const plusMemory = hashed.replace("$m=8,", "$m=+4294967294,");
+  expect(plusMemory).not.toBe(hashed);
+  expect(() => password.verifySync("correct horse", plusMemory)).toThrow("WeakParameters");
+  await expect(password.verify("correct horse", plusMemory)).rejects.toThrow("WeakParameters");
+
+  // A cost field the decoder can't parse is rejected up front as well.
+  const junkMemory = hashed.replace("$m=8,", "$m=8x,");
+  expect(() => password.verifySync("correct horse", junkMemory)).toThrow("InvalidEncoding");
+  await expect(password.verify("correct horse", junkMemory)).rejects.toThrow("InvalidEncoding");
+});
+
+test("verifySync reads the password buffer only after every argument has been coerced", () => {
+  const hashed = password.hashSync("correct horse", { algorithm: "argon2id", memoryCost: 8, timeCost: 1 });
+  const passwordBytes = new TextEncoder().encode("correct horse");
+  const hashObject = new String(hashed);
+  hashObject.toString = () => {
+    structuredClone(passwordBytes.buffer, { transfer: [passwordBytes.buffer] });
+    Bun.gc(true);
+    return hashed;
+  };
+  expect(password.verifySync(passwordBytes, hashObject as any)).toBeFalse();
+  expect(passwordBytes.byteLength).toBe(0);
 });

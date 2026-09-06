@@ -52,10 +52,13 @@ If you're not sure which: run the binary under `qemu-x86_64 -cpu Nehalem`
 
 ### Data-in-`.text` false positives
 
-The tool linear-sweeps every byte in `.text`. There's no general way to do
-better for x86: toolchains don't emit "this byte is data" markers the way
-ARM EABI's `$d` mapping symbols do, and code/data separation in x86 binaries
-is undecidable in general
+The tool linear-sweeps every byte in `.text`, restarting the decoder at every
+symbol start (an instruction that would straddle one is discarded), so data at
+the end of a function — JSC's LLInt puts a 4-byte opcode id in front of every
+`llint_op_*` label — cannot desynchronise the decode of the functions after
+it. Within one symbol there's no general way to do better for x86: toolchains
+don't emit "this byte is data" markers the way ARM EABI's `$d` mapping symbols
+do, and code/data separation in x86 binaries is undecidable in general
 ([Schwarz & Debray 2002](https://www2.cs.arizona.edu/~debray/Publications/disasm.pdf)).
 
 MSVC inlines jump tables and small `static const` arrays into `.text` right
@@ -63,10 +66,12 @@ after the function that uses them (LLVM puts them in `.rodata`, so ELF builds
 are typically clean). When those bytes form a valid instruction encoding,
 the decoder reports it.
 
-**Filtered automatically:** 3DNow!, SMM, Cyrix, VIA Padlock — ISA extensions
-no toolchain targeting x86-64 emits in any configuration. Their two-byte
-`0f xx` encodings tend to surface when a lookup table uses `0x0f` as a
-sentinel value.
+**Filtered automatically:** 3DNow!, SMM, Cyrix, VIA Padlock, RTM/TSX — ISA
+extensions no toolchain targeting x86-64 emits without explicit intrinsics.
+Their encodings (`0f xx` for the defunct extensions, `C7/C6 F8` for
+XBEGIN/XABORT) surface when a jump table's bytes happen to line up; the MSVC
+CRT strspn/strcspn/strpbrk switch tables are the observed source of the
+latter.
 
 **Not filtered (very rare):** a table whose bytes form a valid
 VEX/EVEX-prefixed encoding. Looks like a real AVX hit. Triage the same way:
@@ -100,10 +105,12 @@ instead of stack-frame setup, it's a table. Allowlist the symbol.
 | PE     | PDB DBI module stream (`S_*PROC32`, has real sizes) → `S_PUB32` | PDB section contributions → `<lib:NAME.lib>` |
 
 The Windows fallback handles code with no per-function PDB record (stripped
-CRT objects, anonymized staticlib helpers). Section contributions are the
-linker-map data in structured form — they say which `.obj`/`.lib` every byte
-came from. Attribution is by library basename, which doesn't move when
-unrelated code shifts the link layout.
+CRT objects, anonymized staticlib helpers, an asm file's leading local
+routine). Section contributions are the linker-map data in structured form —
+they say which `.obj`/`.lib` every byte came from. Attribution is by
+library/object basename, which doesn't move when unrelated code shifts the
+link layout; a zero-size `S_PUB32`'s synthesized range is also cut at its own
+contribution so it cannot absorb the next object's unnamed code.
 
 PDB coverage for the same code can vary across linker versions — a function
 that gets an `S_LPROC32` record on one toolchain may fall through to `<lib:>`

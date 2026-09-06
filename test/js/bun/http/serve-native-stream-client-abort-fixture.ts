@@ -8,17 +8,22 @@
 // still executing. ASAN: heap-use-after-free in
 // HTTPServerWritable::flush_promise.
 
-const children: Bun.Subprocess[] = [];
+const children: Bun.Subprocess<"pipe", "pipe", "ignore">[] = [];
 
-// Writes a single chunk, then holds its stdout pipe open without writing.
-// The 30s timer is a backstop so nothing outlives a crashed run.
+// A subprocess whose stdout pipe emits one byte then stalls with the pipe held
+// open. Using `cat` on posix avoids a second debug/ASAN bun startup per
+// iteration (~1.5s each); the parent writes the byte to its stdin and cat
+// blocks on the next read until killed. Windows has no `cat` and no ASAN lane,
+// so it keeps a bun child that pipes stdin to stdout.
 function spawnStalledChild() {
   const child = Bun.spawn({
-    cmd: [process.execPath, "-e", 'process.stdout.write("x"); setTimeout(() => {}, 30_000)'],
+    cmd: process.platform === "win32" ? [process.execPath, "-e", "process.stdin.pipe(process.stdout)"] : ["cat"],
+    stdin: "pipe",
     stdout: "pipe",
-    stdin: "ignore",
     stderr: "ignore",
   });
+  child.stdin.write("x");
+  child.stdin.flush();
   children.push(child);
   return child;
 }

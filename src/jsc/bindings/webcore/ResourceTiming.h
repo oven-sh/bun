@@ -33,11 +33,8 @@
 
 namespace WebCore {
 
-class CachedResource;
 class PerformanceServerTiming;
-class ResourceResponse;
 class ResourceLoadTiming;
-class SecurityOrigin;
 
 DECLARE_ALLOCATOR_WITH_HEAP_IDENTIFIER(ResourceTiming);
 
@@ -45,10 +42,6 @@ class ResourceTiming {
     WTF_DEPRECATED_MAKE_FAST_ALLOCATED_WITH_HEAP_IDENTIFIER(ResourceTiming, ResourceTiming);
 
 public:
-    // static ResourceTiming fromMemoryCache(const URL&, const String& initiator const ResourceResponse&, const NetworkLoadMetrics&, const SecurityOrigin&);
-    // static ResourceTiming fromLoad(CachedResource&, const URL&, const String& initiator const NetworkLoadMetrics&, const SecurityOrigin&);
-    // static ResourceTiming fromSynchronousLoad(const URL&, const String& initiator const NetworkLoadMetrics&, const ResourceResponse&, const SecurityOrigin&);
-
     const URL& url() const { return m_url; }
     const String& initiatorType() const { return m_initiatorType; }
     const ResourceLoadTiming& resourceLoadTiming() const { return m_resourceLoadTiming; }
@@ -56,23 +49,11 @@ public:
     NetworkLoadMetrics& networkLoadMetrics() { return m_networkLoadMetrics; }
     Vector<Ref<PerformanceServerTiming>> populateServerTiming() const;
     bool isSameOriginRequest() const { return m_isSameOriginRequest; }
-    ResourceTiming isolatedCopy() const&;
-    ResourceTiming isolatedCopy() &&;
 
-    // void updateExposure(const SecurityOrigin&);
-    void overrideInitiatorType(const String& type) { m_initiatorType = type; }
     bool isLoadedFromServiceWorker() const { return m_isLoadedFromServiceWorker; }
 
 private:
     ResourceTiming(const URL& url, const String& initiatorType, const NetworkLoadMetrics& networkLoadMetrics);
-    ResourceTiming(URL&& url, String&& initiatorType, NetworkLoadMetrics&& networkLoadMetrics, Vector<ServerTiming>&& serverTiming)
-        : m_url(WTF::move(url))
-        , m_initiatorType(WTF::move(initiatorType))
-        , m_resourceLoadTiming(ResourceLoadTiming())
-        , m_networkLoadMetrics(WTF::move(networkLoadMetrics))
-        , m_serverTiming(WTF::move(serverTiming))
-    {
-    }
 
     URL m_url;
     String m_initiatorType;

@@ -22,7 +22,6 @@
 #include <JavaScriptCore/ObjectConstructor.h>
 #include <JavaScriptCore/SlotVisitorMacros.h>
 #include <JavaScriptCore/SubspaceInlines.h>
-#include <JavaScriptCore/TopExceptionScope.h>
 #include <wtf/Locker.h>
 
 namespace Bun {
@@ -30,31 +29,11 @@ namespace WebStreams {
 
 using namespace JSC;
 
-// WebIDL "invoke a callback function" with a Promise<T> return type: an abrupt completion is
-// converted into a rejected promise (a completion-record conversion), never a synchronous throw.
-static JSC::JSPromise* invokePromiseReturningMethod(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSObject* method, JSC::JSValue thisValue, const JSC::MarkedArgumentBuffer& args)
-{
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    JSC::JSValue result;
-    JSC::JSValue thrown;
-    {
-        auto catchScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-        auto callData = JSC::getCallData(method);
-        ASSERT(callData.type != JSC::CallData::Type::None);
-        result = JSC::call(globalObject, method, callData, thisValue, args);
-        if (catchScope.exception()) [[unlikely]]
-            thrown = takeAbruptCompletion(globalObject, catchScope);
-    }
-    if (!thrown.isEmpty())
-        RELEASE_AND_RETURN(scope, promiseRejectedWith(globalObject, thrown));
-    if (result.isEmpty())
-        return nullptr;
-    RELEASE_AND_RETURN(scope, promiseResolvedWith(globalObject, result));
-}
-
 // The [[writeAlgorithm]] dispatch. The reachable SinkKind set on a writable default
 // controller is {JavaScript, Nothing, Transform} (CrossRealm: transferable streams are not
-// implemented, so setUpCrossRealmTransformWritable never creates one).
+// implemented, so nothing creates one).
+// Returns nullptr with no exception pending when the write completed synchronously with a
+// non-thenable result: the caller queues the upon-fulfillment handler without a wrapper promise.
 static JSC::JSPromise* performWriteAlgorithm(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSWritableStreamDefaultController* controller, JSC::JSValue chunk)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -62,7 +41,7 @@ static JSC::JSPromise* performWriteAlgorithm(JSC::VM& vm, JSC::JSGlobalObject* g
     case SinkKind::JavaScript: {
         JSC::JSObject* writeMethod = controller->m_algorithms.method1.get();
         if (!writeMethod)
-            RELEASE_AND_RETURN(scope, promiseFulfilledWith(globalObject, JSC::jsUndefined()));
+            return nullptr;
         JSC::MarkedArgumentBuffer args;
         args.append(chunk);
         args.append(controller);
@@ -70,10 +49,10 @@ static JSC::JSPromise* performWriteAlgorithm(JSC::VM& vm, JSC::JSGlobalObject* g
             JSC::throwOutOfMemoryError(globalObject, scope);
             return nullptr;
         }
-        RELEASE_AND_RETURN(scope, invokePromiseReturningMethod(vm, globalObject, writeMethod, controller->m_algorithms.underlyingObject.get(), args));
+        RELEASE_AND_RETURN(scope, invokeCallbackReturningPromiseFast(globalObject, writeMethod, controller->m_algorithms.underlyingObject.get(), args));
     }
     case SinkKind::Nothing:
-        RELEASE_AND_RETURN(scope, promiseFulfilledWith(globalObject, JSC::jsUndefined()));
+        return nullptr;
     case SinkKind::Transform:
         RELEASE_AND_RETURN(scope, transformStreamDefaultSinkWriteAlgorithm(globalObject, uncheckedDowncast<JSTransformStream>(controller->m_algorithms.algorithmContext.get()), chunk));
     case SinkKind::CrossRealm:
@@ -84,6 +63,8 @@ static JSC::JSPromise* performWriteAlgorithm(JSC::VM& vm, JSC::JSGlobalObject* g
 }
 
 // The [[closeAlgorithm]] dispatch. Same reachable kind set as the write dispatch.
+// Returns nullptr with no exception pending when the close completed synchronously with a
+// non-thenable result: the caller queues the upon-fulfillment handler without a wrapper promise.
 static JSC::JSPromise* performCloseAlgorithm(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSWritableStreamDefaultController* controller)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -91,16 +72,12 @@ static JSC::JSPromise* performCloseAlgorithm(JSC::VM& vm, JSC::JSGlobalObject* g
     case SinkKind::JavaScript: {
         JSC::JSObject* closeMethod = controller->m_algorithms.method2.get();
         if (!closeMethod)
-            RELEASE_AND_RETURN(scope, promiseFulfilledWith(globalObject, JSC::jsUndefined()));
-        JSC::MarkedArgumentBuffer args;
-        if (args.hasOverflowed()) [[unlikely]] {
-            JSC::throwOutOfMemoryError(globalObject, scope);
             return nullptr;
-        }
-        RELEASE_AND_RETURN(scope, invokePromiseReturningMethod(vm, globalObject, closeMethod, controller->m_algorithms.underlyingObject.get(), args));
+        JSC::MarkedArgumentBuffer args;
+        RELEASE_AND_RETURN(scope, invokeCallbackReturningPromiseFast(globalObject, closeMethod, controller->m_algorithms.underlyingObject.get(), args));
     }
     case SinkKind::Nothing:
-        RELEASE_AND_RETURN(scope, promiseFulfilledWith(globalObject, JSC::jsUndefined()));
+        return nullptr;
     case SinkKind::Transform:
         RELEASE_AND_RETURN(scope, transformStreamDefaultSinkCloseAlgorithm(globalObject, uncheckedDowncast<JSTransformStream>(controller->m_algorithms.algorithmContext.get())));
     case SinkKind::CrossRealm:
@@ -125,7 +102,7 @@ static JSC::JSPromise* performAbortAlgorithm(JSC::VM& vm, JSC::JSGlobalObject* g
             JSC::throwOutOfMemoryError(globalObject, scope);
             return nullptr;
         }
-        RELEASE_AND_RETURN(scope, invokePromiseReturningMethod(vm, globalObject, abortMethod, controller->m_algorithms.underlyingObject.get(), args));
+        RELEASE_AND_RETURN(scope, invokeCallbackReturningPromise(globalObject, abortMethod, controller->m_algorithms.underlyingObject.get(), args));
     }
     case SinkKind::Nothing:
         RELEASE_AND_RETURN(scope, promiseFulfilledWith(globalObject, JSC::jsUndefined()));
@@ -156,7 +133,7 @@ public:
     using Base = JSC::JSNonFinalObject;
     static JSWritableStreamDefaultControllerPrototype* create(JSC::VM& vm, JSDOMGlobalObject* globalObject, JSC::Structure* structure)
     {
-        JSWritableStreamDefaultControllerPrototype* ptr = new (NotNull, JSC::allocateCell<JSWritableStreamDefaultControllerPrototype>(vm)) JSWritableStreamDefaultControllerPrototype(vm, globalObject, structure);
+        JSWritableStreamDefaultControllerPrototype* ptr = new (NotNull, Bun::allocatePlainObjectCell(vm, sizeof(JSWritableStreamDefaultControllerPrototype))) JSWritableStreamDefaultControllerPrototype(vm, globalObject, structure);
         ptr->finishCreation(vm);
         return ptr;
     }
@@ -170,7 +147,7 @@ public:
     }
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
     {
-        return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
+        return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
     }
 
 private:
@@ -207,9 +184,9 @@ JSC_DEFINE_HOST_FUNCTION(jsWritableStreamDefaultControllerPrototype_inspectCusto
 void JSWritableStreamDefaultControllerPrototype::finishCreation(VM& vm)
 {
     Base::finishCreation(vm);
-    reifyStaticProperties(vm, JSWritableStreamDefaultController::info(), JSWritableStreamDefaultControllerPrototypeTableValues, *this);
+    Bun::reifyStaticPropertyTable(vm, JSWritableStreamDefaultController::info(), JSWritableStreamDefaultControllerPrototypeTableValues, *this);
     Bun::WebStreams::installInspectCustom(vm, this, jsWritableStreamDefaultControllerPrototype_inspectCustom);
-    JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
+    Bun::putToStringTagWithoutTransition(vm, this, info());
 }
 
 template<> const ClassInfo JSWritableStreamDefaultControllerConstructor::s_info = { "WritableStreamDefaultController"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSWritableStreamDefaultControllerConstructor) };
@@ -222,11 +199,7 @@ template<> JSValue JSWritableStreamDefaultControllerConstructor::prototypeForStr
 
 template<> void JSWritableStreamDefaultControllerConstructor::initializeProperties(VM& vm, JSDOMGlobalObject& globalObject)
 {
-    putDirect(vm, vm.propertyNames->length, jsNumber(0), JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontEnum);
-    JSString* nameString = jsNontrivialString(vm, "WritableStreamDefaultController"_s);
-    m_originalName.set(vm, this, nameString);
-    putDirect(vm, vm.propertyNames->name, nameString, JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontEnum);
-    putDirect(vm, vm.propertyNames->prototype, JSWritableStreamDefaultController::prototype(vm, globalObject), JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::DontDelete);
+    initializeBaseProperties(vm, 0, "WritableStreamDefaultController"_s, JSWritableStreamDefaultController::prototype(vm, globalObject));
 }
 
 const ClassInfo JSWritableStreamDefaultController::s_info = { "WritableStreamDefaultController"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSWritableStreamDefaultController) };
@@ -258,7 +231,7 @@ void JSWritableStreamDefaultController::destroy(JSCell* cell)
 
 Structure* JSWritableStreamDefaultController::createStructure(VM& vm, JSGlobalObject* globalObject, JSValue prototype)
 {
-    return Structure::create(vm, globalObject, prototype, TypeInfo(ObjectType, StructureFlags), info());
+    return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(ObjectType, StructureFlags), info());
 }
 
 JSObject* JSWritableStreamDefaultController::createPrototype(VM& vm, JSDOMGlobalObject& globalObject)
@@ -280,12 +253,7 @@ JSValue JSWritableStreamDefaultController::getConstructor(VM& vm, const JSGlobal
 
 GCClient::IsoSubspace* JSWritableStreamDefaultController::subspaceForImpl(VM& vm)
 {
-    return WebCore::subspaceForImpl<JSWritableStreamDefaultController, UseCustomHeapCellType::No>(
-        vm,
-        [](auto& spaces) { return spaces.m_clientSubspaceForWritableStreamDefaultController.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForWritableStreamDefaultController = std::forward<decltype(space)>(space); },
-        [](auto& spaces) { return spaces.m_subspaceForWritableStreamDefaultController.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_subspaceForWritableStreamDefaultController = std::forward<decltype(space)>(space); });
+    return WebCore::subspaceForImpl<JSWritableStreamDefaultController, UseCustomHeapCellType::No>(vm, BUN_SUBSPACE_SLOTS(m_clientSubspaceForWritableStreamDefaultController, m_subspaceForWritableStreamDefaultController));
 }
 
 template<typename Visitor>
@@ -537,8 +505,10 @@ void writableStreamDefaultControllerError(JSGlobalObject* globalObject, JSWritab
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* stream = controller->m_stream.get();
     ASSERT(stream->m_state == WritableStreamState::Writable);
+    writableStreamStartErroring(globalObject, stream, error);
+    // After StartErroring, not before as in the spec: it reaches an in-flight codec chunk through the algorithms.
     writableStreamDefaultControllerClearAlgorithms(controller);
-    RELEASE_AND_RETURN(scope, writableStreamStartErroring(globalObject, stream, error));
+    RETURN_IF_EXCEPTION(scope, );
 }
 
 void writableStreamDefaultControllerErrorIfNeeded(JSGlobalObject* globalObject, JSWritableStreamDefaultController* controller, JSValue error)
@@ -565,31 +535,20 @@ double writableStreamDefaultControllerGetChunkSize(JSGlobalObject* globalObject,
     if (!sizeAlgorithm)
         return 1;
 
-    // "interpreting the result as a completion record": the size() call AND the WebIDL
-    // `unrestricted double` conversion of its return value (the sanctioned size() catch family).
-    double size = 1;
-    JSValue thrown;
-    bool abrupt = false;
     MarkedArgumentBuffer args;
     args.append(chunk);
     ASSERT(!args.hasOverflowed());
-    {
-        auto catchScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-        auto callData = getCallData(sizeAlgorithm);
-        ASSERT(callData.type != CallData::Type::None);
-        JSValue returnValue = call(globalObject, sizeAlgorithm, callData, jsUndefined(), args);
-        if (!catchScope.exception())
-            size = returnValue.toNumber(globalObject);
-        if (catchScope.exception()) [[unlikely]] {
-            abrupt = true;
-            thrown = takeAbruptCompletion(globalObject, catchScope);
-        }
-    }
-    if (abrupt) [[unlikely]] {
-        // A VM termination is never consumed: it is still pending on the scope.
-        if (thrown.isEmpty())
-            return 1;
-        writableStreamDefaultControllerErrorIfNeeded(globalObject, controller, thrown);
+    auto callData = getCallData(sizeAlgorithm);
+    ASSERT(callData.type != CallData::Type::None);
+    JSValue returnValue = call(globalObject, sizeAlgorithm, callData, jsUndefined(), args);
+    double size = 1;
+    if (!scope.exception()) [[likely]]
+        size = returnValue.toNumber(globalObject); // WebIDL `unrestricted double`
+    if (JSC::Exception* exception = scope.exception()) [[unlikely]] {
+        // Spec step 3: "If returnValue is an abrupt completion, perform
+        // ! WritableStreamDefaultControllerErrorIfNeeded(controller, returnValue.[[Value]]) and return 1."
+        TRY_CLEAR_EXCEPTION(scope, 1);
+        writableStreamDefaultControllerErrorIfNeeded(globalObject, controller, exception->value());
         RETURN_IF_EXCEPTION(scope, 1);
         return 1;
     }
@@ -616,6 +575,9 @@ void writableStreamDefaultControllerProcessClose(JSGlobalObject* globalObject, J
     RETURN_IF_EXCEPTION(scope, );
     writableStreamDefaultControllerClearAlgorithms(controller);
     auto* runtime = JSStreamsRuntime::from(globalObject);
+    // See readableStreamDefaultControllerCallPullIfNeeded.
+    if (!sinkClosePromise || sinkClosePromise->status() == JSPromise::Status::Fulfilled)
+        return queueStreamsMicrotask(globalObject, runtime->onWSSinkCloseFulfilled(), jsUndefined(), controller);
     sinkClosePromise->performPromiseThenWithContext(vm, globalObject, runtime->onWSSinkCloseFulfilled(), runtime->onWSSinkCloseRejected(), jsUndefined(), controller);
 }
 
@@ -627,6 +589,9 @@ void writableStreamDefaultControllerProcessWrite(JSGlobalObject* globalObject, J
     JSPromise* sinkWritePromise = performWriteAlgorithm(vm, globalObject, controller, chunk);
     RETURN_IF_EXCEPTION(scope, );
     auto* runtime = JSStreamsRuntime::from(globalObject);
+    // See readableStreamDefaultControllerCallPullIfNeeded.
+    if (!sinkWritePromise || sinkWritePromise->status() == JSPromise::Status::Fulfilled)
+        return queueStreamsMicrotask(globalObject, runtime->onWSSinkWriteFulfilled(), jsUndefined(), controller);
     sinkWritePromise->performPromiseThenWithContext(vm, globalObject, runtime->onWSSinkWriteFulfilled(), runtime->onWSSinkWriteRejected(), jsUndefined(), controller);
 }
 
@@ -635,23 +600,13 @@ void writableStreamDefaultControllerWrite(JSGlobalObject* globalObject, JSWritab
     auto& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    // "If enqueueResult is an abrupt completion" — EnqueueValueWithSize's RangeError on an
-    // invalid size is interpreted as a completion record (no user JS runs).
-    JSValue enqueueError;
-    bool abrupt = false;
-    {
-        auto catchScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-        controller->m_queue.enqueueValueWithSize(globalObject, controller, chunk, chunkSize);
-        if (catchScope.exception()) [[unlikely]] {
-            abrupt = true;
-            enqueueError = takeAbruptCompletion(globalObject, catchScope);
-        }
-    }
-    if (abrupt) [[unlikely]] {
-        // A VM termination is never consumed: it is still pending on the scope.
-        if (enqueueError.isEmpty())
-            return;
-        RELEASE_AND_RETURN(scope, writableStreamDefaultControllerErrorIfNeeded(globalObject, controller, enqueueError));
+    controller->m_queue.enqueueValueWithSize(globalObject, controller, chunk, chunkSize);
+    if (JSC::Exception* exception = scope.exception()) [[unlikely]] {
+        // Spec step 2: "If enqueueResult is an abrupt completion, perform
+        // ! WritableStreamDefaultControllerErrorIfNeeded(controller, enqueueResult.[[Value]]) and return."
+        // (EnqueueValueWithSize's RangeError on an invalid size; no user JS runs.)
+        TRY_CLEAR_EXCEPTION(scope, );
+        RELEASE_AND_RETURN(scope, writableStreamDefaultControllerErrorIfNeeded(globalObject, controller, exception->value()));
     }
 
     auto* stream = controller->m_stream.get();

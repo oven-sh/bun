@@ -39,9 +39,8 @@ const unicodeCases = [
 function testLatin1Cases(str) {
   assert.strictEqual(test_string.TestLatin1(str), str);
   assert.strictEqual(test_string.TestLatin1AutoLength(str), str);
-  // BUN: skip these tests until we support making empty external strings
-  if (str.length > 0) assert.strictEqual(test_string.TestLatin1External(str), str);
-  if (str.length > 0) assert.strictEqual(test_string.TestLatin1ExternalAutoLength(str), str);
+  assert.strictEqual(test_string.TestLatin1External(str), str);
+  assert.strictEqual(test_string.TestLatin1ExternalAutoLength(str), str);
   assert.strictEqual(test_string.TestPropertyKeyLatin1(str), str);
   assert.strictEqual(test_string.TestPropertyKeyLatin1AutoLength(str), str);
   assert.strictEqual(test_string.Latin1Length(str), str.length);
@@ -56,9 +55,8 @@ function testUnicodeCases(str, utf8Length, utf8InsufficientIdx) {
   assert.strictEqual(test_string.TestUtf16(str), str);
   assert.strictEqual(test_string.TestUtf8AutoLength(str), str);
   assert.strictEqual(test_string.TestUtf16AutoLength(str), str);
-  // BUN: skip these tests until we support making empty external strings
-  if (str.length > 0) assert.strictEqual(test_string.TestUtf16External(str), str);
-  if (str.length > 0) assert.strictEqual(test_string.TestUtf16ExternalAutoLength(str), str);
+  assert.strictEqual(test_string.TestUtf16External(str), str);
+  assert.strictEqual(test_string.TestUtf16ExternalAutoLength(str), str);
   assert.strictEqual(test_string.TestPropertyKeyUtf8(str), str);
   assert.strictEqual(test_string.TestPropertyKeyUtf8AutoLength(str), str);
   assert.strictEqual(test_string.TestPropertyKeyUtf16(str), str);

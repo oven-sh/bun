@@ -86,7 +86,7 @@ void writableStreamDefaultWriterEnsureReadyPromiseRejected(JSGlobalObject* globa
     auto& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* readyPromise = writer->m_readyPromise.get();
-    if (readyPromise->status() == JSPromise::Status::Pending) {
+    if (readyPromise && readyPromise->status() == JSPromise::Status::Pending) {
         rejectPromise(globalObject, readyPromise, error);
         RETURN_IF_EXCEPTION(scope, );
     } else {
@@ -178,7 +178,7 @@ public:
     using Base = JSC::JSNonFinalObject;
     static JSWritableStreamDefaultWriterPrototype* create(JSC::VM& vm, JSDOMGlobalObject* globalObject, JSC::Structure* structure)
     {
-        JSWritableStreamDefaultWriterPrototype* ptr = new (NotNull, JSC::allocateCell<JSWritableStreamDefaultWriterPrototype>(vm)) JSWritableStreamDefaultWriterPrototype(vm, structure);
+        JSWritableStreamDefaultWriterPrototype* ptr = new (NotNull, Bun::allocatePlainObjectCell(vm, sizeof(JSWritableStreamDefaultWriterPrototype))) JSWritableStreamDefaultWriterPrototype(vm, structure);
         ptr->finishCreation(vm);
         return ptr;
     }
@@ -192,7 +192,7 @@ public:
     }
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
     {
-        return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
+        return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
     }
 
 private:
@@ -237,36 +237,15 @@ DEFINE_VISIT_CHILDREN_WITH_MODIFIER(template<>, JSWritableStreamDefaultWriterCon
 
 template<> GCClient::IsoSubspace* JSWritableStreamDefaultWriterConstructor::subspaceForImpl(JSC::VM& vm)
 {
-    return WebCore::subspaceForImpl<JSWritableStreamDefaultWriterConstructor, UseCustomHeapCellType::No>(
-        vm,
-        [](auto& spaces) { return spaces.m_clientSubspaceForWritableStreamDefaultWriterConstructor.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForWritableStreamDefaultWriterConstructor = std::forward<decltype(space)>(space); },
-        [](auto& spaces) { return spaces.m_subspaceForWritableStreamDefaultWriterConstructor.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_subspaceForWritableStreamDefaultWriterConstructor = std::forward<decltype(space)>(space); });
+    return WebCore::subspaceForImpl<JSWritableStreamDefaultWriterConstructor, UseCustomHeapCellType::No>(vm, BUN_SUBSPACE_SLOTS(m_clientSubspaceForWritableStreamDefaultWriterConstructor, m_subspaceForWritableStreamDefaultWriterConstructor));
 }
 
 template<> void JSWritableStreamDefaultWriterConstructor::finishCreation(VM& vm, JSDOMGlobalObject& globalObject)
 {
     Base::finishCreation(vm);
     ASSERT(inherits(info()));
-    putDirect(vm, vm.propertyNames->length, jsNumber(1), JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontEnum);
-    JSString* nameString = jsNontrivialString(vm, "WritableStreamDefaultWriter"_s);
-    m_originalName.set(vm, this, nameString);
-    putDirect(vm, vm.propertyNames->name, nameString, JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontEnum);
-    putDirect(vm, vm.propertyNames->prototype, JSWritableStreamDefaultWriter::prototype(vm, globalObject), JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::DontDelete);
+    initializeBaseProperties(vm, 1, "WritableStreamDefaultWriter"_s, JSWritableStreamDefaultWriter::prototype(vm, globalObject));
     m_instanceStructure.set(vm, this, getDOMStructure<JSWritableStreamDefaultWriter>(vm, globalObject));
-}
-
-static Structure* structureForNewTarget(JSC::VM& vm, JSWritableStreamDefaultWriterConstructor* constructor, JSGlobalObject* lexicalGlobalObject, JSObject* newTarget)
-{
-    if (newTarget == constructor) [[likely]]
-        return constructor->instanceStructure();
-
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    auto* newTargetGlobalObject = JSC::getFunctionRealm(lexicalGlobalObject, newTarget);
-    RETURN_IF_EXCEPTION(scope, nullptr);
-    auto* baseStructure = getDOMStructure<JSWritableStreamDefaultWriter>(vm, *uncheckedDowncast<JSDOMGlobalObject>(newTargetGlobalObject));
-    RELEASE_AND_RETURN(scope, JSC::InternalFunction::createSubclassStructure(lexicalGlobalObject, newTarget, baseStructure));
 }
 
 template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSWritableStreamDefaultWriterConstructor::construct(JSGlobalObject* lexicalGlobalObject, CallFrame* callFrame)
@@ -312,24 +291,24 @@ JSC_DEFINE_HOST_FUNCTION(jsWritableStreamDefaultWriterPrototype_inspectCustom, (
     if (!thisObject) [[unlikely]]
         return JSValue::encode(thisValue);
     JSObject* data = constructEmptyObject(lexicalGlobalObject);
-    data->putDirect(vm, Identifier::fromString(vm, "stream"_s), thisObject->m_stream.get() ? JSValue(thisObject->m_stream.get()) : jsUndefined(), 0);
-    data->putDirect(vm, Identifier::fromString(vm, "close"_s), thisObject->m_closedPromise.get() ? JSValue(thisObject->m_closedPromise.get()) : jsUndefined(), 0);
-    data->putDirect(vm, Identifier::fromString(vm, "ready"_s), thisObject->m_readyPromise.get() ? JSValue(thisObject->m_readyPromise.get()) : jsUndefined(), 0);
+    Bun::putDirectNamed(vm, data, "stream"_s, thisObject->m_stream.get() ? JSValue(thisObject->m_stream.get()) : jsUndefined());
+    Bun::putDirectNamed(vm, data, "close"_s, thisObject->m_closedPromise.get() ? JSValue(thisObject->m_closedPromise.get()) : jsUndefined());
+    Bun::putDirectNamed(vm, data, "ready"_s, thisObject->m_readyPromise.get() ? JSValue(thisObject->m_readyPromise.get()) : jsUndefined());
     JSValue desiredSizeValue = jsNull();
     if (thisObject->m_stream.get()) {
         auto desiredSize = writableStreamDefaultWriterGetDesiredSize(thisObject);
         desiredSizeValue = desiredSize ? jsNumber(*desiredSize) : jsNull();
     }
-    data->putDirect(vm, Identifier::fromString(vm, "desiredSize"_s), desiredSizeValue, 0);
+    Bun::putDirectNamed(vm, data, "desiredSize"_s, desiredSizeValue);
     RELEASE_AND_RETURN(scope, Bun::WebStreams::customInspect(lexicalGlobalObject, callFrame, thisValue, "WritableStreamDefaultWriter"_s, data));
 }
 
 void JSWritableStreamDefaultWriterPrototype::finishCreation(VM& vm)
 {
     Base::finishCreation(vm);
-    reifyStaticProperties(vm, JSWritableStreamDefaultWriter::info(), JSWritableStreamDefaultWriterPrototypeTableValues, *this);
+    Bun::reifyStaticPropertyTable(vm, JSWritableStreamDefaultWriter::info(), JSWritableStreamDefaultWriterPrototypeTableValues, *this);
     Bun::WebStreams::installInspectCustom(vm, this, jsWritableStreamDefaultWriterPrototype_inspectCustom);
-    JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
+    Bun::putToStringTagWithoutTransition(vm, this, info());
 }
 
 // JSWritableStreamDefaultWriter
@@ -356,7 +335,7 @@ JSWritableStreamDefaultWriter* JSWritableStreamDefaultWriter::create(VM& vm, Str
 
 Structure* JSWritableStreamDefaultWriter::createStructure(VM& vm, JSGlobalObject* globalObject, JSValue prototype)
 {
-    return Structure::create(vm, globalObject, prototype, TypeInfo(ObjectType, StructureFlags), info());
+    return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(ObjectType, StructureFlags), info());
 }
 
 JSObject* JSWritableStreamDefaultWriter::createPrototype(VM& vm, JSDOMGlobalObject& globalObject)
@@ -378,12 +357,7 @@ JSValue JSWritableStreamDefaultWriter::getConstructor(VM& vm, const JSGlobalObje
 
 GCClient::IsoSubspace* JSWritableStreamDefaultWriter::subspaceForImpl(VM& vm)
 {
-    return WebCore::subspaceForImpl<JSWritableStreamDefaultWriter, UseCustomHeapCellType::No>(
-        vm,
-        [](auto& spaces) { return spaces.m_clientSubspaceForWritableStreamDefaultWriter.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForWritableStreamDefaultWriter = std::forward<decltype(space)>(space); },
-        [](auto& spaces) { return spaces.m_subspaceForWritableStreamDefaultWriter.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_subspaceForWritableStreamDefaultWriter = std::forward<decltype(space)>(space); });
+    return WebCore::subspaceForImpl<JSWritableStreamDefaultWriter, UseCustomHeapCellType::No>(vm, BUN_SUBSPACE_SLOTS(m_clientSubspaceForWritableStreamDefaultWriter, m_subspaceForWritableStreamDefaultWriter));
 }
 
 DEFINE_VISIT_CHILDREN(JSWritableStreamDefaultWriter);
@@ -448,10 +422,25 @@ JSC_DEFINE_CUSTOM_GETTER(jsWritableStreamDefaultWriterPrototypeGetter_desiredSiz
 
 JSC_DEFINE_CUSTOM_GETTER(jsWritableStreamDefaultWriterPrototypeGetter_ready, (JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, PropertyName))
 {
-    const auto* writer = dynamicDowncast<JSWritableStreamDefaultWriter>(JSValue::decode(thisValue));
+    auto* writer = dynamicDowncast<JSWritableStreamDefaultWriter>(JSValue::decode(thisValue));
     if (!writer) [[unlikely]]
         return JSValue::encode(promiseRejectedWith(lexicalGlobalObject, createTypeError(lexicalGlobalObject, "The 'ready' getter can only be used on a WritableStreamDefaultWriter"_s)));
-    return JSValue::encode(writer->m_readyPromise.get());
+    return JSValue::encode(writer->readyPromise(lexicalGlobalObject));
+}
+
+JSPromise* JSWritableStreamDefaultWriter::readyPromise(JSGlobalObject* globalObject)
+{
+    if (auto* ready = m_readyPromise.get())
+        return ready;
+    // Only writableStreamUpdateBackpressure clears the slot (while Writable); every other
+    // state transition sets it eagerly. Materialize pending if backpressure, else fulfilled.
+    auto& vm = getVM(globalObject);
+    auto* stream = m_stream.get();
+    auto* ready = (stream && stream->m_backpressure)
+        ? JSPromise::create(vm, globalObject->promiseStructure())
+        : Bun::WebStreams::promiseFulfilledWith(globalObject, JSC::jsUndefined());
+    m_readyPromise.set(vm, this, ready);
+    return ready;
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsWritableStreamDefaultWriterPrototypeFunction_abort, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
@@ -479,7 +468,7 @@ JSC_DEFINE_HOST_FUNCTION(jsWritableStreamDefaultWriterPrototypeFunction_close, (
     if (!stream)
         RELEASE_AND_RETURN(scope, JSValue::encode(promiseRejectedWith(lexicalGlobalObject, Bun::createError(lexicalGlobalObject, Bun::ErrorCode::ERR_INVALID_STATE_TypeError, "Invalid state: Writer is not bound to a WritableStream"_s))));
     if (writableStreamCloseQueuedOrInFlight(stream))
-        RELEASE_AND_RETURN(scope, JSValue::encode(promiseRejectedWith(lexicalGlobalObject, createTypeError(lexicalGlobalObject, "Cannot close a WritableStream that is already closing"_s))));
+        RELEASE_AND_RETURN(scope, JSValue::encode(promiseRejectedWith(lexicalGlobalObject, Bun::createError(lexicalGlobalObject, Bun::ErrorCode::ERR_INVALID_STATE_TypeError, "Invalid state: Cannot close a WritableStream that is already closing"_s))));
     auto* promise = writableStreamDefaultWriterClose(lexicalGlobalObject, writer);
     RETURN_IF_EXCEPTION(scope, {});
     return JSValue::encode(promise);

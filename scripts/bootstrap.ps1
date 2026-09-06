@@ -1,4 +1,4 @@
-# Version: 21
+# Version: 23
 # A script that installs the dependencies needed to build and test Bun on Windows.
 # Supports both x64 and ARM64 using Scoop for package management.
 # Used by Azure [build images] pipeline.
@@ -260,11 +260,26 @@ function Install-Llvm {
   if (Which clang-cl) {
     return
   }
-  if ($script:IsARM64) {
-    Install-Scoop-Package "llvm-arm64@$LLVM_VERSION" -Command clang-cl
-  } else {
-    Install-Scoop-Package "llvm@$LLVM_VERSION" -Command clang-cl
+
+  # The pinned release's own installer, not `scoop install llvm@<version>`:
+  # scoop generates a manifest for a non-current version from its autoupdate
+  # template, and that template follows whatever installer format the latest
+  # LLVM ships (.msi since 23), which older releases (.exe) do not have.
+  $llvmArch = if ($script:IsARM64) { "woa64" } else { "win64" }
+  $installDir = "C:\Program Files\LLVM"
+  Write-Output "Installing LLVM $LLVM_VERSION ($llvmArch)..."
+  $installer = Download-File "https://github.com/llvm/llvm-project/releases/download/llvmorg-$LLVM_VERSION/LLVM-$LLVM_VERSION-$llvmArch.exe" -Name "llvm-$LLVM_VERSION-$llvmArch.exe"
+  # NSIS installer: /S silent, /D= install dir (must be last, unquoted).
+  $process = Start-Process $installer -ArgumentList "/S /D=$installDir" -Wait -PassThru -NoNewWindow
+  if ($process.ExitCode -ne 0) {
+    throw "Failed to install LLVM: code $($process.ExitCode)"
   }
+  if (-not (Test-Path "$installDir\bin\clang-cl.exe")) {
+    throw "LLVM installer finished but $installDir\bin\clang-cl.exe is missing"
+  }
+  Remove-Item $installer -ErrorAction SilentlyContinue
+  Add-To-Path "$installDir\bin"
+  Refresh-Path
 }
 
 function Install-Ninja {
@@ -751,7 +766,12 @@ Install-Make
 Install-Llvm
 Install-Cygwin
 Install-Nssm
+# perl/ruby/python: JavaScriptCore's code generators; zstd: packs the ICU
+# data. CI cross-compiles the Windows targets on Linux, so these serve
+# native builds on the image.
 Install-Scoop-Package perl
+Install-Scoop-Package ruby
+Install-Scoop-Package zstd
 
 # x64-only packages (not needed on ARM64)
 if (-not $script:IsARM64) {
@@ -814,7 +834,6 @@ function Prefetch-Build-Deps {
   } finally {
     Pop-Location
   }
-  Remove-Item -Recurse -Force $cloneDir
 
   # Read-only: download.ts only ever copies FROM here, and a writable baked
   # input is something a misbehaving job could corrupt for later jobs on the
@@ -822,6 +841,38 @@ function Prefetch-Build-Deps {
   & attrib +R "$prefetchDir\*" /S /D
 
   Set-Env "BUN_BUILD_PREFETCH_DIR" $prefetchDir
+
+  # Warm a shared `bun install` download cache so every test shard's
+  # `bun install` (root + test/) hits disk instead of npm. Keyed by
+  # name@version, so a test/package.json bump after the bake just misses for
+  # that one package. Left writable: bun install extracts new tarballs into the
+  # cache dir itself, so a read-only cache would fail on the first unseen
+  # package rather than fall through. The agent runs as SYSTEM, which can
+  # write here by default.
+  $installCacheDir = "C:\bun-install-cache"
+  New-Item -ItemType Directory -Force -Path $installCacheDir | Out-Null
+  $env:BUN_INSTALL_CACHE_DIR = $installCacheDir
+  try {
+    foreach ($dir in @($cloneDir, (Join-Path $cloneDir "test"))) {
+      Push-Location $dir
+      try { & bun install --ignore-scripts } finally { Pop-Location }
+      if ($LASTEXITCODE -ne 0) { throw "bun install in $dir failed" }
+    }
+    Set-Env "BUN_INSTALL_CACHE_DIR" $installCacheDir
+  } catch {
+    Write-Output "warning: bun install prefetch failed; baking without warm install cache: $_"
+    Remove-Item -Recurse -Force -ErrorAction SilentlyContinue $installCacheDir
+  } finally {
+    Remove-Item Env:\BUN_INSTALL_CACHE_DIR -ErrorAction SilentlyContinue
+  }
+
+  # The installs leave ~2 GB of node_modules in the clone (test/ uses the
+  # isolated linker); cmd's rmdir handles the junctions/deep paths that
+  # Remove-Item -Recurse trips over. Redirect inside cmd so 5.1's
+  # NativeCommandError-under-Stop quirk never sees stderr. The clone lives
+  # under $env:TEMP so a leftover is wiped at sysprep anyway.
+  & cmd /c "rmdir /s /q `"$cloneDir`" 2>nul"
+  Remove-Item -Recurse -Force -ErrorAction SilentlyContinue $cloneDir
 }
 
 if ($CI) {

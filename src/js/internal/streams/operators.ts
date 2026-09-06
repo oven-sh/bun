@@ -1,7 +1,7 @@
 "use strict";
 
 const { validateAbortSignal, validateFunction, validateInteger, validateObject } = require("internal/validators");
-const { kWeakHandler, kResistStopPropagation } = require("internal/shared");
+const { kWeakHandler, resistStopPropagation } = require("internal/shared");
 const { finished } = require("internal/streams/end-of-stream");
 
 const MathFloor = Math.floor;
@@ -233,7 +233,7 @@ async function reduce(reducer, initialValue, options) {
   const ac = new AbortController();
   const signal = ac.signal;
   if (options?.signal) {
-    const opts = { once: true, [kWeakHandler]: this, [kResistStopPropagation]: true };
+    const opts = resistStopPropagation({ once: true, [kWeakHandler]: this });
     options.signal.addEventListener("abort", () => ac.abort(), opts);
   }
   let gotAnyItemFromStream = false;

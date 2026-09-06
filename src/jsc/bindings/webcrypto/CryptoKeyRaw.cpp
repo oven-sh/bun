@@ -32,8 +32,8 @@
 
 namespace WebCore {
 
-CryptoKeyRaw::CryptoKeyRaw(CryptoAlgorithmIdentifier identifier, Vector<uint8_t>&& keyData, CryptoKeyUsageBitmap usages)
-    : CryptoKey(identifier, CryptoKeyType::Secret, false, usages)
+CryptoKeyRaw::CryptoKeyRaw(CryptoAlgorithmIdentifier identifier, Vector<uint8_t>&& keyData, CryptoKeyUsageBitmap usages, bool extractable)
+    : CryptoKey(identifier, CryptoKeyType::Secret, extractable, usages)
     , m_key(WTF::move(keyData))
 {
 }
@@ -48,7 +48,8 @@ auto CryptoKeyRaw::algorithm() const -> KeyAlgorithm
 bool CryptoKeyRaw::isValidRawAlgorithm(CryptoAlgorithmIdentifier algorithm)
 {
     return algorithm == CryptoAlgorithmIdentifier::HKDF
-        || algorithm == CryptoAlgorithmIdentifier::PBKDF2;
+        || algorithm == CryptoAlgorithmIdentifier::PBKDF2
+        || algorithm == CryptoAlgorithmIdentifier::ChaCha20_Poly1305;
 }
 
 } // namespace WebCore

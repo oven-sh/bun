@@ -1,10 +1,17 @@
 import { sleep } from "bun";
 import { describe, expect, mock, test } from "bun:test";
+import { bunEnv, bunExe } from "harness";
 import { createRequire } from "module";
 
 // this is also testing that imports with default and named imports in the same statement work
 // our transpiler transform changes this to a var with import.meta.require
-import EventEmitter, { captureRejectionSymbol, getEventListeners, getMaxListeners, setMaxListeners } from "node:events";
+import EventEmitter, {
+  captureRejectionSymbol,
+  getEventListeners,
+  getMaxListeners,
+  listenerCount,
+  setMaxListeners,
+} from "node:events";
 
 describe("node:events", () => {
   test("captureRejectionSymbol", () => {
@@ -94,6 +101,35 @@ describe("node:events", () => {
     const p = EventEmitter.once(ee, "foo", "hi" as any);
     expect(p).toBeInstanceOf(Promise);
     await expect(p).rejects.toMatchObject({ code: "ERR_INVALID_ARG_TYPE" });
+  });
+
+  test("once rejects with the value emitted on 'error' and removes both listeners", async () => {
+    const emitter = new EventEmitter();
+    const p = EventEmitter.once(emitter, "hey");
+    const err = new Error("boom");
+    emitter.emit("error", err);
+    await expect(p).rejects.toBe(err);
+    expect([emitter.listenerCount("hey"), emitter.listenerCount("error")]).toEqual([0, 0]);
+  });
+
+  test("once settles once when the event fires and the signal aborts afterwards", async () => {
+    const emitter = new EventEmitter();
+    const controller = new AbortController();
+    const p = EventEmitter.once(emitter, "hey", { signal: controller.signal });
+    emitter.emit("hey", 42);
+    controller.abort();
+    expect(await p).toEqual([42]);
+    expect([emitter.listenerCount("hey"), emitter.listenerCount("error")]).toEqual([0, 0]);
+  });
+
+  test("once resolves with the Event dispatched on an EventTarget and ignores later events", async () => {
+    const target = new EventTarget();
+    const p = EventEmitter.once(target, "ping");
+    const event = new Event("ping");
+    target.dispatchEvent(event);
+    target.dispatchEvent(new Event("ping"));
+    const [received] = await p;
+    expect(received).toBe(event);
   });
 });
 
@@ -565,7 +601,7 @@ describe("EventEmitter.on", () => {
     ]);
   });
 
-  test("AbortController", () => {
+  test("AbortController", async () => {
     const { on, EventEmitter } = require("node:events");
 
     const ac = new AbortController();
@@ -577,32 +613,35 @@ describe("EventEmitter.on", () => {
       ee.emit("foo", 42);
       ee.emit("foo", "baz");
     });
-    (async () => {
+    const consumed = (async () => {
       try {
         for await (const event of on(ee, "foo", { signal: ac.signal })) {
           output.push([1, event]);
         }
-        console.log("unreachable");
+        output.push(["unreachable"]);
       } catch (error: any) {
-        const { code, message } = error;
-        output.push([2, { code, message }]);
-
-        expect(output).toEqual([
-          [1, ["bar"]],
-          [1, [42]],
-          [1, ["baz"]],
-          [
-            2,
-            {
-              code: "ABORT_ERR",
-              message: "The operation was aborted.",
-            },
-          ],
-        ]);
+        const { name, code, message, cause } = error;
+        output.push([2, { name, code, message, cause }]);
       }
     })();
 
     process.nextTick(() => ac.abort());
+    await consumed;
+
+    expect(output).toEqual([
+      [1, ["bar"]],
+      [1, [42]],
+      [1, ["baz"]],
+      [
+        2,
+        {
+          name: "AbortError",
+          code: "ABORT_ERR",
+          message: "The operation was aborted",
+          cause: ac.signal.reason,
+        },
+      ],
+    ]);
   });
 
   // Checks for potential issues with FixedQueue size
@@ -876,6 +915,85 @@ test("using addAbortListener", async () => {
   expect(mocked).not.toHaveBeenCalled();
 });
 
+describe("addAbortListener resists stopImmediatePropagation", () => {
+  test("runs after an earlier listener stopped propagation", () => {
+    const controller = new AbortController();
+    const signal = controller.signal;
+    const order: string[] = [];
+
+    signal.addEventListener("abort", e => {
+      order.push("stopper");
+      e.stopImmediatePropagation();
+    });
+    EventEmitter.addAbortListener(signal, e => {
+      order.push(`cleanup:${(e as Event).target === signal}`);
+    });
+    signal.addEventListener("abort", () => order.push("plain-after"));
+
+    controller.abort();
+    expect(order).toEqual(["stopper", "cleanup:true"]);
+  });
+
+  test("runs when it was registered before the listener that stops propagation", () => {
+    const controller = new AbortController();
+    const signal = controller.signal;
+    const order: string[] = [];
+
+    EventEmitter.addAbortListener(signal, () => order.push("cleanup"));
+    signal.addEventListener("abort", e => {
+      order.push("stopper");
+      e.stopImmediatePropagation();
+    });
+    signal.addEventListener("abort", () => order.push("plain-after"));
+
+    controller.abort();
+    expect(order).toEqual(["cleanup", "stopper"]);
+  });
+
+  test("is not run once disposed", () => {
+    const controller = new AbortController();
+    const signal = controller.signal;
+    const mocked = mock();
+
+    signal.addEventListener("abort", e => e.stopImmediatePropagation());
+    {
+      using _ = EventEmitter.addAbortListener(signal, mocked);
+    }
+
+    controller.abort();
+    expect(mocked).not.toHaveBeenCalled();
+  });
+
+  test("once(emitter, event, { signal }) still rejects on a suppressed signal", async () => {
+    const emitter = new EventEmitter();
+    const controller = new AbortController();
+    controller.signal.addEventListener("abort", e => e.stopImmediatePropagation());
+
+    const promise = EventEmitter.once(emitter, "never", { signal: controller.signal });
+    expect(emitter.listenerCount("never")).toBe(1);
+    controller.abort();
+
+    // once()'s abort listener detaches the emitter listener and rejects, both synchronously.
+    expect(emitter.listenerCount("never")).toBe(0);
+    expect(await promise.catch(err => err.code)).toBe("ABORT_ERR");
+  });
+
+  test("stopImmediatePropagation still suppresses ordinary listeners", () => {
+    const target = new EventTarget();
+    const order: string[] = [];
+
+    target.addEventListener("x", () => order.push("a"));
+    target.addEventListener("x", e => {
+      order.push("b");
+      e.stopImmediatePropagation();
+    });
+    target.addEventListener("x", () => order.push("c"));
+
+    target.dispatchEvent(new Event("x"));
+    expect(order).toEqual(["a", "b"]);
+  });
+});
+
 test("getMaxListeners", () => {
   const emitter = new EventEmitter();
   expect(emitter.getMaxListeners()).toBe(10);
@@ -909,6 +1027,164 @@ test("getEventListeners", () => {
   expect(getEventListeners(target, "hey").length).toBe(0);
 });
 
+test("EventEmitter.prototype.listenerCount", () => {
+  const ee = new EventEmitter();
+  const a = () => {};
+  const b = () => {};
+
+  expect(ee.listenerCount("x")).toBe(0);
+  expect(ee.listenerCount("x", a)).toBe(0);
+
+  ee.on("x", a);
+  expect(ee.listenerCount("x")).toBe(1);
+  expect(ee.listenerCount("x", a)).toBe(1);
+  expect(ee.listenerCount("x", b)).toBe(0);
+
+  ee.on("x", b);
+  expect(ee.listenerCount("x")).toBe(2);
+  expect(ee.listenerCount("x", a)).toBe(1);
+  expect(ee.listenerCount("x", b)).toBe(1);
+
+  ee.once("y", a);
+  expect(ee.listenerCount("y")).toBe(1);
+  expect(ee.listenerCount("y", a)).toBe(1);
+
+  // null/undefined listener arg means "count all", same as omitting it
+  expect(ee.listenerCount("x", null as any)).toBe(2);
+  expect(ee.listenerCount("x", undefined)).toBe(2);
+});
+
+test("events.listenerCount validates emitter argument", () => {
+  const ee = new EventEmitter();
+  ee.on("y", () => {});
+  expect(listenerCount(ee, "y")).toBe(1);
+
+  const et = new EventTarget();
+  et.addEventListener("k", () => {});
+  et.addEventListener("k", () => {});
+  expect(listenerCount(et, "k")).toBe(2);
+
+  const np = Object.create(null);
+  EventEmitter.call(np);
+  EventEmitter.prototype.on.call(np, "y", () => {});
+
+  for (const bad of [{}, 42, np]) {
+    expect(() => listenerCount(bad as any, "y")).toThrow(
+      expect.objectContaining({ name: "TypeError", code: "ERR_INVALID_ARG_TYPE" }),
+    );
+  }
+});
+
 test("EventEmitter.name", () => {
   expect(EventEmitter.name).toBe("EventEmitter");
+});
+
+// A fired once() wrapper must drop its closure refs so holding it (a cached
+// rawListeners() result, the COW array emit() iterates) does not retain the
+// emitter. wrapped.listener stays: node asserts it survives emit.
+test("once() wrapper releases its target after firing", async () => {
+  const src = `
+    const { EventEmitter } = require("events");
+    const held = [];
+    const total = 8;
+    let collected = 0;
+    const registry = new FinalizationRegistry(() => collected++);
+    (function () {
+      for (let i = 0; i < total; i++) {
+        const ee = new EventEmitter();
+        ee.once("x", function () {});
+        held.push(ee.rawListeners("x")[0]);
+        ee.emit("x");
+        registry.register(ee);
+      }
+    })();
+    let iters = 0;
+    setImmediate(function check() {
+      Bun.gc(true);
+      if (collected === total) {
+        console.log("collected " + collected + "/" + total + " holding " + held.length + " wrappers");
+        return;
+      }
+      if (++iters > 50) {
+        console.log("stuck " + collected + "/" + total + " holding " + held.length + " wrappers");
+        process.exit(1);
+      }
+      setImmediate(check);
+    });
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", src],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+    stdout: "collected 8/8 holding 8 wrappers",
+    stderr: "",
+    exitCode: 0,
+  });
+});
+
+describe("native EventEmitter propagates an exception from a `_events` getter", () => {
+  // The native EventEmitter prototype (process's) reads `this._events` when `this` is not a native
+  // emitter; a throwing getter must propagate rather than become "invalid this".
+  const nativeProto = Object.getPrototypeOf(process);
+
+  const cases: Array<[string, (obj: object) => void]> = [
+    ["on", obj => nativeProto.on.call(obj, "foo", () => {})],
+    ["addListener", obj => nativeProto.addListener.call(obj, "foo", () => {})],
+    ["once", obj => nativeProto.once.call(obj, "foo", () => {})],
+    ["emit", obj => nativeProto.emit.call(obj, "foo")],
+    ["removeListener", obj => nativeProto.removeListener.call(obj, "foo", () => {})],
+    ["removeAllListeners", obj => nativeProto.removeAllListeners.call(obj)],
+    ["eventNames", obj => nativeProto.eventNames.call(obj)],
+    ["listenerCount", obj => nativeProto.listenerCount.call(obj, "foo")],
+    ["listeners", obj => nativeProto.listeners.call(obj, "foo")],
+    ["getMaxListeners", obj => nativeProto.getMaxListeners.call(obj)],
+  ];
+
+  test.each(cases)("%s", (_name, invoke) => {
+    const sentinel = new Error("getter threw");
+    const obj = {};
+    Object.defineProperty(obj, "_events", {
+      get() {
+        throw sentinel;
+      },
+    });
+    let caught: unknown;
+    try {
+      invoke(obj);
+    } catch (e) {
+      caught = e;
+    }
+    expect(caught).toBe(sentinel);
+  });
+
+  test("Proxy get trap that throws", () => {
+    const sentinel = new Error("proxy get threw");
+    const obj = new Proxy(
+      {},
+      {
+        get(_t, key) {
+          if (key === "_events") throw sentinel;
+        },
+      },
+    );
+    let caught: unknown;
+    try {
+      nativeProto.on.call(obj, "foo", () => {});
+    } catch (e) {
+      caught = e;
+    }
+    expect(caught).toBe(sentinel);
+  });
+
+  test("a plain object receiver gets a working emitter", () => {
+    const obj: any = {};
+    let fired = 0;
+    nativeProto.on.call(obj, "x", () => fired++);
+    nativeProto.emit.call(obj, "x");
+    expect(fired).toBe(1);
+  });
 });

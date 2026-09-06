@@ -11,7 +11,7 @@ use bun_core::strings::CodePoint;
 use crate::json::JSONOptions;
 use crate::json_index::{self as jidx, StructuralIndex};
 
-type PResult<T = ()> = Result<T, bun_core::Error>;
+type PResult<T = ()> = crate::Result<T>;
 
 type DupMap = bun_collections::HashMap<u64, (), bun_collections::IdentityContext<u64>>;
 
@@ -38,7 +38,7 @@ pub(crate) struct Parser<'a, 's, 'i> {
 }
 
 impl<'s> LexerLog<'s> for Parser<'_, 's, '_> {
-    type Err = bun_core::Error;
+    type Err = crate::Error;
     #[inline]
     fn log_mut(&mut self) -> &mut Log {
         self.log
@@ -59,8 +59,8 @@ impl<'s> LexerLog<'s> for Parser<'_, 's, '_> {
     fn is_log_disabled(&self) -> bool {
         false
     }
-    fn syntax_err() -> bun_core::Error {
-        bun_core::err!("SyntaxError")
+    fn syntax_err() -> crate::Error {
+        crate::Error::SyntaxError
     }
 }
 
@@ -189,7 +189,7 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
     }
 
     #[cold]
-    fn unexpected(&mut self, cursor: usize) -> bun_core::Error {
+    fn unexpected(&mut self, cursor: usize) -> crate::Error {
         let r = self.token_range(cursor);
         let p = self.pos_at(cursor);
         if p >= self.contents.len() {
@@ -198,7 +198,7 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
             let raw = &self.contents[p..p + (r.len as usize).max(1)];
             let _ = self.add_range_error(r, format_args!("Unexpected {}", bstr::BStr::new(raw)));
         }
-        bun_core::err!("ParserError")
+        crate::Error::ParserError
     }
 
     #[cold]
@@ -230,10 +230,10 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
     }
 
     #[cold]
-    fn junk_byte_error(&mut self, cursor: usize, pos: usize, c: u8) -> bun_core::Error {
+    fn junk_byte_error(&mut self, cursor: usize, pos: usize, c: u8) -> crate::Error {
         if let Some(msg) = Self::js_punct_message(c) {
             self.add_error(pos + 1, format_args!("Unsupported syntax: {msg}"));
-            return bun_core::err!("SyntaxError");
+            return crate::Error::SyntaxError;
         }
         self.unexpected(cursor)
     }
@@ -333,18 +333,13 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
             let b = self.contents[q];
             let run = self.run(j);
             if (b >= 0x80 || b == 0x0B || b == 0x0C) && self.rest_is_ws_cold(run) {
-                if self.contents[q..hi]
-                    .iter()
-                    .any(|&b| matches!(b, b'\n' | b'\r'))
-                {
+                if strings::contains_any(&self.contents[q..hi], b"\n\r") {
                     return true;
                 }
                 hi = q;
                 continue;
             }
-            return self.contents[q + 1..hi]
-                .iter()
-                .any(|&b| matches!(b, b'\n' | b'\r'));
+            return strings::contains_any(&self.contents[q + 1..hi], b"\n\r");
         }
         false
     }
@@ -365,7 +360,7 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
         }
     }
 
-    pub(crate) fn unexpected_here(&mut self) -> bun_core::Error {
+    pub(crate) fn unexpected_here(&mut self) -> crate::Error {
         self.unexpected(self.cursor)
     }
 
@@ -541,7 +536,7 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
     }
 
     #[cold]
-    fn string_control_char_error(&mut self, c: u8) -> bun_core::Error {
+    fn string_control_char_error(&mut self, c: u8) -> crate::Error {
         if c == b'\r' || c == b'\n' {
             match self.add_default_error(b"Unterminated string literal") {
                 Err(e) => e,
@@ -603,12 +598,10 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
                 b'/' => match rest.get(i + 1) {
                     Some(b'/') => {
                         i += 2;
-                        while i < rest.len() && !matches!(rest[i], b'\n' | b'\r') {
-                            i += 1;
-                        }
+                        i += strings::index_of_any(&rest[i..], b"\n\r").unwrap_or(rest.len() - i);
                     }
                     Some(b'*') => {
-                        let Some(close) = rest[i + 2..].windows(2).position(|w| w == b"*/") else {
+                        let Some(close) = strings::index_of(&rest[i + 2..], b"*/") else {
                             return false;
                         };
                         i += 2 + close + 2;
@@ -643,7 +636,7 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
             if p >= self.contents.len() {
                 self.token_start = self.contents.len();
                 self.expected(cursor, "\"]\"");
-                break Err(bun_core::err!("ParserError"));
+                break Err(crate::Error::ParserError);
             }
             if b == b']' {
                 if is_single_line && self.newline_before(p) {
@@ -657,10 +650,10 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
                 if b != b',' {
                     if let Some(msg) = Self::js_punct_message(b) {
                         self.add_error(p + 1, format_args!("Unsupported syntax: {msg}"));
-                        break Err(bun_core::err!("SyntaxError"));
+                        break Err(crate::Error::SyntaxError);
                     }
                     self.expected(cursor, "\",\"");
-                    break Err(bun_core::err!("ParserError"));
+                    break Err(crate::Error::ParserError);
                 }
                 if is_single_line && self.newline_before(p) {
                     is_single_line = false;
@@ -732,7 +725,7 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
             if p >= self.contents.len() {
                 self.token_start = self.contents.len();
                 self.expected(cursor, "\"}\"");
-                break Err(bun_core::err!("ParserError"));
+                break Err(crate::Error::ParserError);
             }
             if b == b'}' {
                 if is_single_line && self.newline_before(p) {
@@ -746,10 +739,10 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
                 if b != b',' {
                     if let Some(msg) = Self::js_punct_message(b) {
                         self.add_error(p + 1, format_args!("Unsupported syntax: {msg}"));
-                        break Err(bun_core::err!("SyntaxError"));
+                        break Err(crate::Error::SyntaxError);
                     }
                     self.expected(cursor, "\",\"");
-                    break Err(bun_core::err!("ParserError"));
+                    break Err(crate::Error::ParserError);
                 }
                 if is_single_line && self.newline_before(p) {
                     is_single_line = false;
@@ -807,7 +800,7 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
                 self.cursor += 1;
             } else {
                 self.expected(colon_cursor, "\":\"");
-                break Err(bun_core::err!("ParserError"));
+                break Err(crate::Error::ParserError);
             }
 
             let (value, value_loc) = match self.parse_json_value() {
@@ -873,12 +866,12 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
     }
 
     #[cold]
-    fn too_deeply_nested(&mut self, loc: Loc) -> bun_core::Error {
+    fn too_deeply_nested(&mut self, loc: Loc) -> crate::Error {
         let _ = self.add_range_error(
             Range { loc, len: 1 },
             format_args!("JSON document is too deeply nested"),
         );
-        bun_core::err!("StackOverflow")
+        crate::Error::StackOverflow
     }
 
     #[cold]
@@ -940,7 +933,7 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
     }
 
     #[cold]
-    fn number_trailing_junk(&mut self, pos: usize) -> bun_core::Error {
+    fn number_trailing_junk(&mut self, pos: usize) -> crate::Error {
         let c = self.contents[pos];
         if is_identifier_start(c) || c == b'\\' {
             self.token_start = pos;
@@ -1056,7 +1049,7 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
                 Some(v) => v,
                 None => {
                     self.add_error(pos, format_args!("Invalid number"));
-                    return Err(bun_core::err!("SyntaxError"));
+                    return Err(crate::Error::SyntaxError);
                 }
             }
         };
@@ -1142,7 +1135,7 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
                         pos,
                         format_args!("Invalid number {}", bstr::BStr::new(text)),
                     );
-                    return Err(bun_core::err!("SyntaxError"));
+                    return Err(crate::Error::SyntaxError);
                 }
             }
         }
@@ -1150,7 +1143,7 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
     }
 
     #[cold]
-    fn syntax_err_at(&mut self, pos: usize) -> bun_core::Error {
+    fn syntax_err_at(&mut self, pos: usize) -> crate::Error {
         self.token_start = pos;
         match self.syntax_error() {
             Err(e) => e,
@@ -1226,7 +1219,7 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
                 let raw = &tail[..ident_len(tail)];
                 let _ =
                     self.add_range_error(r, format_args!("Unexpected {}", bstr::BStr::new(raw)));
-                Err(bun_core::err!("ParserError"))
+                Err(crate::Error::ParserError)
             }
             b'\\' => self.parse_escaped_identifier(pos, loc_tail),
             c => Err(self.junk_byte_error(self.cursor, pos, c)),
@@ -1322,11 +1315,7 @@ fn read_trail_surrogate_escape(
     Some(value as u16)
 }
 
-fn decode_string_escapes<
-    's,
-    const ALLOW_RAW_CONTROL: bool,
-    L: LexerLog<'s, Err = bun_core::Error>,
->(
+fn decode_string_escapes<'s, const ALLOW_RAW_CONTROL: bool, L: LexerLog<'s, Err = crate::Error>>(
     l: &mut L,
     body: &[u8],
     buf: &mut Vec<u8>,
@@ -1404,7 +1393,7 @@ struct MiniLog<'a, 's> {
 }
 
 impl<'s> LexerLog<'s> for MiniLog<'_, 's> {
-    type Err = bun_core::Error;
+    type Err = crate::Error;
     fn log_mut(&mut self) -> &mut Log {
         self.log
     }
@@ -1417,8 +1406,8 @@ impl<'s> LexerLog<'s> for MiniLog<'_, 's> {
     fn start(&self) -> usize {
         0
     }
-    fn syntax_err() -> bun_core::Error {
-        bun_core::err!("SyntaxError")
+    fn syntax_err() -> crate::Error {
+        crate::Error::SyntaxError
     }
 }
 
@@ -1428,7 +1417,7 @@ pub(crate) fn decode_auto_quoted(
     bump: &Bump,
     body: &[u8],
     opts: JSONOptions,
-) -> Result<E::String, bun_core::Error> {
+) -> crate::Result<E::String> {
     let mut l = MiniLog {
         log,
         source,

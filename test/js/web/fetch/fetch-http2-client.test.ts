@@ -385,6 +385,66 @@ describe.concurrent("fetch() over HTTP/2 (BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP2_CL
     );
   });
 
+  test("concurrent ReadableStream uploads route each chunk to its own stream", async () => {
+    // Exercises the async_http_id -> stream index on the client session: each
+    // JS-side body chunk wakes the HTTP thread which must resolve the target
+    // stream without crossing the other 23 in-flight uploads.
+    let sessions = 0;
+    const server = makeH2Server();
+    server.on("session", () => sessions++);
+    server.on("stream", stream => {
+      const chunks: Buffer[] = [];
+      stream.on("data", c => chunks.push(c));
+      stream.on("end", () => {
+        stream.respond({ ":status": 200 });
+        stream.end(Buffer.concat(chunks));
+      });
+    });
+    server.listen(0);
+    await once(server, "listening");
+    const { port } = server.address() as import("node:net").AddressInfo;
+    try {
+      await using proc = await spawnFetch(`
+        const url = "https://localhost:${port}/";
+        const opts = { tls: { rejectUnauthorized: false } };
+        const N = 24, M = 24;
+        // Warmup so the h2 session exists and SETTINGS have been exchanged
+        // before the concurrent burst; otherwise requests can fan out to
+        // additional connections while the first is still handshaking.
+        await fetch(url, { ...opts, method: "POST", body: "warmup" }).then(r => r.text());
+        const results = await Promise.all(
+          Array.from({ length: N }, (_, i) => {
+            let k = 0;
+            const body = new ReadableStream({
+              pull(ctrl) {
+                if (k < M) {
+                  ctrl.enqueue(new TextEncoder().encode(i + ":" + k + ","));
+                  k++;
+                } else ctrl.close();
+              },
+            });
+            return fetch(url, { ...opts, method: "POST", body, duplex: "half" }).then(r => r.text());
+          }),
+        );
+        const bad = results
+          .map((got, i) => {
+            const want = Array.from({ length: M }, (_, k) => i + ":" + k + ",").join("");
+            return got === want ? null : i + " got=" + JSON.stringify(got);
+          })
+          .filter(Boolean);
+        if (bad.length) throw new Error("mismatch: " + bad.join(" | "));
+        console.log("ok", results.length);
+      `);
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(stdout.trim()).toBe("ok 24");
+      expect(exitCode).toBe(0);
+      expect(sessions).toBe(1);
+    } finally {
+      server.close();
+    }
+  });
+
   test("POST with ReadableStream body larger than initial send window", async () => {
     await withH2Server(
       (req, res) => {
@@ -420,6 +480,70 @@ describe.concurrent("fetch() over HTTP/2 (BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP2_CL
         expect(exitCode).toBe(0);
       },
     );
+  });
+
+  test("upload larger than the write-buffer high-water mark when the peer window never runs out", async () => {
+    // The peer advertises a 1 MiB stream window and a 16 MiB connection
+    // window, so flow control never pauses a 2 MB body; the client must keep
+    // framing after a flush that fully drains instead of waiting for a
+    // writable event that never comes.
+    const received = new Map<number, number>();
+    const server = nodetls.createServer({ ...tls, ALPNProtocols: ["h2"] }, socket => {
+      let buf = Buffer.alloc(0);
+      let prefaceSeen = false;
+      socket.on("error", () => {});
+      socket.on("data", chunk => {
+        buf = Buffer.concat([buf, chunk]);
+        if (!prefaceSeen) {
+          if (buf.length < 24) return;
+          buf = buf.subarray(24);
+          prefaceSeen = true;
+          // SETTINGS_INITIAL_WINDOW_SIZE (0x4) = 1 MiB, then open the connection window by 16 MiB.
+          socket.write(frame(4, 0, 0, Buffer.concat([Buffer.from([0, 4]), u32be(1 << 20)])));
+          socket.write(frame(8, 0, 0, u32be(1 << 24)));
+        }
+        while (buf.length >= 9) {
+          const len = buf.readUIntBE(0, 3);
+          if (buf.length < 9 + len) return;
+          const type = buf[3],
+            flags = buf[4],
+            id = buf.readUInt32BE(5) & 0x7fffffff;
+          buf = buf.subarray(9 + len);
+          if (type === 4 && !(flags & 1)) socket.write(frame(4, 1, 0));
+          if (type === 0) {
+            received.set(id, (received.get(id) ?? 0) + len);
+            // Top the stream window back up in 1 MiB steps so it is never the limiter.
+            if ((received.get(id)! & ((1 << 20) - 1)) < len) socket.write(frame(8, 0, id, u32be(1 << 20)));
+            if (flags & 1) {
+              socket.write(frame(1, 4, id, hpackStatus(200)));
+              socket.write(frame(0, 1, id, Buffer.from(String(received.get(id)))));
+            }
+          }
+        }
+      });
+    });
+    server.listen(0);
+    await once(server, "listening");
+    const { port } = server.address() as import("node:net").AddressInfo;
+    try {
+      await using proc = await spawnFetch(`
+        const opts = { method: "POST", tls: { rejectUnauthorized: false } };
+        const one = await fetch("https://localhost:${port}/", { ...opts, body: new Blob([new Uint8Array(2_000_000)]) });
+        console.log(one.status, await one.text());
+        const many = await Promise.all(
+          Array.from({ length: 4 }, () =>
+            fetch("https://localhost:${port}/", { ...opts, body: new Blob([new Uint8Array(512 * 1024)]) }).then(r => r.text()),
+          ),
+        );
+        console.log(many.join(","));
+      `);
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(stdout.trim()).toBe("200 2000000\n524288,524288,524288,524288");
+      expect(exitCode).toBe(0);
+    } finally {
+      server.close();
+    }
   });
 
   test("cold-start: parallel requests coalesce onto one TLS connect", async () => {
@@ -758,6 +882,53 @@ describe.concurrent("fetch() over HTTP/2 (BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP2_CL
     }
   });
 
+  test("a 204, a 205 and the response to a HEAD request have a null body", async () => {
+    const server = makeH2Server();
+    server.on("stream", (stream, headers) => {
+      stream.on("error", () => {});
+      if (headers[":method"] === "HEAD") {
+        stream.respond({ ":status": 200, "content-length": "5" }, { endStream: true });
+      } else if (headers[":path"] === "/204") {
+        stream.respond({ ":status": 204 }, { endStream: true });
+      } else {
+        // RFC 9110 section 15.3.6 forbids content on a 205. A server that sends
+        // some anyway must not get it into the body.
+        stream.respond({ ":status": 205 });
+        stream.end("hello");
+      }
+    });
+    server.listen(0);
+    await once(server, "listening");
+    const { port } = server.address() as import("node:net").AddressInfo;
+    try {
+      await using proc = await spawnFetch(`
+        const results = [];
+        for (const [path, init] of [["/204", {}], ["/205", {}], ["/head", { method: "HEAD" }]]) {
+          const r = await fetch("https://localhost:${port}" + path, { ...init, tls: { rejectUnauthorized: false } });
+          results.push({
+            status: r.status,
+            contentLength: r.headers.get("content-length"),
+            body: r.body,
+            text: await r.text(),
+            bodyUsed: r.bodyUsed,
+            cloneBody: r.clone().body,
+          });
+        }
+        console.log(JSON.stringify(results));
+      `);
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(JSON.parse(stdout)).toEqual([
+        { status: 204, contentLength: null, body: null, text: "", bodyUsed: false, cloneBody: null },
+        { status: 205, contentLength: null, body: null, text: "", bodyUsed: false, cloneBody: null },
+        { status: 200, contentLength: "5", body: null, text: "", bodyUsed: false, cloneBody: null },
+      ]);
+      expect(exitCode).toBe(0);
+    } finally {
+      server.close();
+    }
+  });
+
   describe("raw frame server", () => {
     test("REFUSED_STREAM is transparently retried on the same connection", async () => {
       let attempts = 0;
@@ -778,6 +949,31 @@ describe.concurrent("fetch() over HTTP/2 (BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP2_CL
           expect(exitCode).toBe(0);
           expect(attempts).toBe(2);
           expect(state.connections).toBe(1);
+        },
+      );
+    });
+
+    test("RST_STREAM(NO_ERROR) after a complete response keeps the response; a later RST is ignored", async () => {
+      // RFC 9113 §8.1: the server may finish the response before the request
+      // body and reset with NO_ERROR; DATA we had in flight can then draw a
+      // second RST_STREAM(STREAM_CLOSED), which must not clobber the result.
+      await withRawH2Server(
+        (conn, id) => {
+          conn.headers(id, hpackStatus(200));
+          conn.data(id, "early", true);
+          conn.rst(id, http2.constants.NGHTTP2_NO_ERROR);
+          conn.rst(id, http2.constants.NGHTTP2_STREAM_CLOSED);
+        },
+        async url => {
+          await using proc = await spawnFetch(`
+            const body = new ReadableStream({ start(c) { c.enqueue(new Uint8Array(1024)); /* never closes */ } });
+            const r = await fetch("${url}", { method: "POST", body, duplex: "half", tls: { rejectUnauthorized: false } });
+            console.log(r.status, await r.text());
+          `);
+          const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+          expect(stderr).toBe("");
+          expect(stdout.trim()).toBe("200 early");
+          expect(exitCode).toBe(0);
         },
       );
     });

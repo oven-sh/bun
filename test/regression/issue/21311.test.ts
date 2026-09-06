@@ -96,8 +96,7 @@ describeWithContainer(
       allQueryResults.forEach((row, i) => {
         expect(row.should_be_null).toBeNumber();
         if (row.should_be_null) {
-          expect(row.date).toBeDefined();
-          expect(row.date?.getTime()).toBeNaN();
+          expect(row.date).toBe(Infinity);
         } else {
           expect(row.date).toBeNull();
         }

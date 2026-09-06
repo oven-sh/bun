@@ -732,12 +732,8 @@ pub fn cached_npm_package_folder_print_basename<'a>(
     w.finish_z()
 }
 
-/// `@T@<32 hex>@@@<cache version>`: the first 16 bytes of `sha256(url)`.
-///
-/// A 64-bit wyhash of the URL has cheap multicollisions, so two distinct
-/// tarball URLs could share one extraction folder and the second extraction
-/// overwrote the first. No colliding pair is feasible to construct for 128
-/// bits of SHA-256.
+/// `@T@<first 16 bytes of sha256(url) as hex>@@@<cache version>`. The name is
+/// the entry's only identity in the shared cache, so the hash must not collide.
 pub fn cached_tarball_folder_name_print<'a>(
     buf: &'a mut [u8],
     url: &[u8],

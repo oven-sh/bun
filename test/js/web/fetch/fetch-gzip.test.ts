@@ -961,3 +961,82 @@ describe("empty compressed responses", () => {
     });
   }
 });
+
+describe("ranged requests", () => {
+  // https://fetch.spec.whatwg.org/#http-network-or-cache-fetch: "If httpRequest's
+  // header list contains `Range`, then append (`Accept-Encoding`, `identity`)".
+  // This origin applies Range to its gzip representation when the client
+  // accepts gzip (a precompressed asset behind a CDN does the same), so a
+  // client that advertises codings on a ranged request receives ten
+  // undecodable bytes from the middle of a gzip stream.
+  async function withRangeOrigin(fn: (url: string, acceptEncodings: string[]) => Promise<void>) {
+    const plain = Buffer.alloc(1000, "0123456789");
+    const gzipped = gzipSync(plain);
+    const acceptEncodings: string[] = [];
+    const server = createNetServer(socket => {
+      socket.on("error", () => {});
+      let head = "";
+      socket.on("data", chunk => {
+        head += chunk.toString("latin1");
+        if (!head.includes("\r\n\r\n")) return;
+        const acceptEncoding = /^accept-encoding:[ \t]*([^\r]*)\r\n/im.exec(head)?.[1] ?? "(absent)";
+        acceptEncodings.push(acceptEncoding);
+        if (!/^range:/im.test(head)) {
+          socket.end(`HTTP/1.1 200 OK\r\nContent-Length: ${plain.length}\r\nConnection: close\r\n\r\n${plain}`);
+          return;
+        }
+        const representation = /\bgzip\b/.test(acceptEncoding) ? gzipped : plain;
+        socket.end(
+          Buffer.concat([
+            Buffer.from(
+              "HTTP/1.1 206 Partial Content\r\n" +
+                `Content-Range: bytes 0-9/${representation.length}\r\n` +
+                (representation === gzipped ? "Content-Encoding: gzip\r\n" : "") +
+                "Vary: Accept-Encoding\r\n" +
+                "Content-Length: 10\r\n" +
+                "Connection: close\r\n\r\n",
+            ),
+            representation.subarray(0, 10),
+          ]),
+        );
+      });
+    });
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    try {
+      const { port } = server.address() as import("node:net").AddressInfo;
+      await fn(`http://127.0.0.1:${port}/asset.txt`, acceptEncodings);
+    } finally {
+      server.close();
+    }
+  }
+
+  it("send Accept-Encoding: identity by default", async () => {
+    await withRangeOrigin(async (url, acceptEncodings) => {
+      const res = await fetch(url, { headers: { Range: "bytes=0-9" } });
+      expect({ status: res.status, body: await res.text(), acceptEncodings }).toEqual({
+        status: 206,
+        body: "0123456789",
+        acceptEncodings: ["identity"],
+      });
+    });
+  });
+
+  it("keep an explicit Accept-Encoding, the decompress: false opt-out, and the non-ranged default", async () => {
+    await withRangeOrigin(async (url, acceptEncodings) => {
+      const explicit = await fetch(url, { headers: { Range: "bytes=0-9", "Accept-Encoding": "zstd" } });
+      const optOut = await fetch(url, { headers: { Range: "bytes=0-9" }, decompress: false });
+      const nonRanged = await fetch(url);
+      expect({
+        explicit: [explicit.status, await explicit.text()],
+        optOut: [optOut.status, await optOut.text()],
+        nonRanged: [nonRanged.status, (await nonRanged.text()).length],
+        acceptEncodings,
+      }).toEqual({
+        explicit: [206, "0123456789"],
+        optOut: [206, "0123456789"],
+        nonRanged: [200, 1000],
+        acceptEncodings: ["zstd", "(absent)", "gzip, deflate, br, zstd"],
+      });
+    });
+  });
+});

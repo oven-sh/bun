@@ -2362,6 +2362,7 @@ impl<'a> HTTPClient<'a> {
         let mut override_connection_header = false;
         let mut connection_close_requested = false;
         let mut override_user_agent = false;
+        let mut has_range_header = false;
         let mut add_transfer_encoding = true;
         let mut original_content_length: Option<&[u8]> = None;
 
@@ -2433,6 +2434,11 @@ impl<'a> HTTPClient<'a> {
                         override_accept_encoding = true;
                     }
                 }
+                h if h == hash_header_const(b"Range") => {
+                    if will_append {
+                        has_range_header = true;
+                    }
+                }
                 h if h == hash_header_const(b"Upgrade") => {
                     if will_append {
                         if upgrade_header_is_not_h2(self.header_str(header_values[i])) {
@@ -2485,7 +2491,14 @@ impl<'a> HTTPClient<'a> {
         }
 
         if !override_accept_encoding && !self.flags.disable_decompression {
-            request_headers_buf[header_count] = ACCEPT_ENCODING_HEADER;
+            // https://fetch.spec.whatwg.org/#http-network-or-cache-fetch: a ranged
+            // request asks for `identity`, since a 206 slice of an encoded
+            // representation cannot be decoded on its own.
+            request_headers_buf[header_count] = if has_range_header {
+                ACCEPT_ENCODING_HEADER_NO_COMPRESSION
+            } else {
+                ACCEPT_ENCODING_HEADER
+            };
             header_count += 1;
         }
 

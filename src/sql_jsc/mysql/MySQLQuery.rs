@@ -1,5 +1,5 @@
 use crate::error::ThrowSqlError;
-use crate::jsc::{JSGlobalObject, JSValue, MarkedArgumentBuffer};
+use crate::jsc::{JSGlobalObject, JSValue, JsResult, MarkedArgumentBuffer, bun_string_jsc};
 use bun_core::String as BunString;
 
 use super::my_sql_value::Value;
@@ -10,6 +10,7 @@ use bun_sql::mysql::protocol::column_definition41::ColumnFlags;
 use bun_sql::mysql::protocol::new_writer::{NewWriter, WriterContext};
 use bun_sql::mysql::protocol::prepared_statement;
 use bun_sql::mysql::query_status::Status;
+use bun_sql::mysql::statement_keyword::keyword_of_statement;
 use bun_sql::shared::sql_query_result_mode::SQLQueryResultMode;
 
 use crate::jsc::js_error_to_mysql;
@@ -29,9 +30,63 @@ pub struct MySQLQuery {
     /// one ref).
     statement: Option<RefPtr<MySQLStatement>>,
     query: BunString,
+    /// Results delivered so far. A multi-statement query gets one result per
+    /// statement, so this is also the index of the statement that the next
+    /// result belongs to.
+    results_received: u32,
 
     status: Status,
     flags: Flags,
+}
+
+/// `result.command` is passed to JS as an index into this table (offset by
+/// one) for the common statements, so they do not allocate a string per
+/// query. Keep in sync with `commands` in src/js/internal/sql/mysql.ts.
+const KNOWN_KEYWORDS: [&[u8]; 16] = [
+    b"SELECT",
+    b"INSERT",
+    b"UPDATE",
+    b"DELETE",
+    b"REPLACE",
+    b"CALL",
+    b"WITH",
+    b"SHOW",
+    b"SET",
+    b"START",
+    b"BEGIN",
+    b"COMMIT",
+    b"ROLLBACK",
+    b"SAVEPOINT",
+    b"RELEASE",
+    b"USE",
+];
+
+/// Upper-cases an ASCII keyword and converts it to the value JS receives as
+/// the command: a number for `KNOWN_KEYWORDS`, a string otherwise, `null`
+/// when there is no keyword.
+fn keyword_to_js<T: Copy + Into<u32>>(
+    global: &JSGlobalObject,
+    keyword: &[T],
+) -> JsResult<JSValue> {
+    if keyword.is_empty() {
+        return Ok(JSValue::NULL);
+    }
+    let mut stack = [0u8; 16];
+    let mut heap = Vec::new();
+    let upper: &mut [u8] = if keyword.len() <= stack.len() {
+        &mut stack[..keyword.len()]
+    } else {
+        heap.resize(keyword.len(), 0);
+        &mut heap
+    };
+    for (dst, &c) in upper.iter_mut().zip(keyword) {
+        // `keyword_of_statement` only yields ASCII letters.
+        *dst = (c.into() as u8).to_ascii_uppercase();
+    }
+    if let Some(i) = KNOWN_KEYWORDS.iter().position(|k| *k == &*upper) {
+        return Ok(JSValue::js_number((i + 1) as f64));
+    }
+    bun_string_jsc::create_utf8_for_js(global, upper)
 }
 
 /// Not all fields are `bool`, so per PORTING.md this is a transparent `u8` with shift accessors.
@@ -397,8 +452,20 @@ impl MySQLQuery {
         Self {
             statement: None,
             query,
+            results_received: 0,
             status: Status::Pending,
             flags: Flags::new(bigint, simple),
+        }
+    }
+
+    /// `result.command` for the result about to be delivered: the leading
+    /// keyword of its statement in the query text (see `keyword_to_js`).
+    pub(crate) fn command(&self, global: &JSGlobalObject) -> JsResult<JSValue> {
+        let index = self.results_received as usize;
+        if self.query.is_utf16() {
+            keyword_to_js(global, keyword_of_statement(self.query.utf16(), index))
+        } else {
+            keyword_to_js(global, keyword_of_statement(self.query.latin1(), index))
         }
     }
 
@@ -445,6 +512,7 @@ impl MySQLQuery {
         } else {
             Status::PartialResponse
         };
+        self.results_received += 1;
 
         true
     }

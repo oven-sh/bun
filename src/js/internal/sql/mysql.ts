@@ -26,11 +26,36 @@ function wrapError(error: Error | MySQLErrorOptions) {
   }
   return new MySQLError(error.message, error);
 }
+
+// MySQL replies carry no command tag, so the native side derives `command`
+// from the leading keyword of the statement and passes these as a 1-based
+// index. Keep in sync with KNOWN_KEYWORDS in src/sql_jsc/mysql/MySQLQuery.rs.
+const commands = [
+  null,
+  "SELECT",
+  "INSERT",
+  "UPDATE",
+  "DELETE",
+  "REPLACE",
+  "CALL",
+  "WITH",
+  "SHOW",
+  "SET",
+  "START",
+  "BEGIN",
+  "COMMIT",
+  "ROLLBACK",
+  "SAVEPOINT",
+  "RELEASE",
+  "USE",
+];
+
 initMySQL(
-  function onResolveMySQLQuery(query, result, commandTag, count, queries, is_last, last_insert_rowid, affected_rows) {
+  function onResolveMySQLQuery(query, result, command, count, queries, is_last, last_insert_rowid, affected_rows) {
     $assert(result instanceof SQLResultArray, "Invalid result array");
 
     result.count = count || 0;
+    result.command = typeof command === "number" ? commands[command] : command;
     result.lastInsertRowid = last_insert_rowid;
     result.affectedRows = affected_rows || 0;
 
@@ -84,10 +109,12 @@ export interface MySQLDotZig {
     onResolveQuery: (
       query: Query<any, any>,
       result: SQLResultArray,
-      commandTag: string,
+      command: number | string | null,
       count: number,
       queries: any,
       is_last: boolean,
+      last_insert_rowid: number,
+      affected_rows: number,
     ) => void,
     onRejectQuery: (query: Query<any, any>, err: Error, queries) => void,
   ) => void;

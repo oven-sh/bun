@@ -1432,8 +1432,19 @@ impl MySQLConnection {
         }
 
         // Short-lived borrow via the audited accessor; dropped before the
-        // re-entrant `on_query_result` call below.
-        let result_count = request.get_statement().map_or(0, |s| s.result_count);
+        // re-entrant `on_query_result` call below. HEADER_RECEIVED means a
+        // result set preceded this OK/EOF, so `count` is its row count;
+        // otherwise the OK packet answers a statement with no result set and
+        // `count` is the rows it affected, matching PostgreSQL's command tag.
+        let count = request.get_statement().map_or(affected_rows, |s| {
+            if s.execution_flags
+                .contains(mysql_statement::ExecutionFlags::HEADER_RECEIVED)
+            {
+                s.result_count
+            } else {
+                affected_rows
+            }
+        });
         // R-2: `on_query_result` is `&self`; `js_connection_ref()` is the
         // audited container_of accessor. The `&JSMySQLConnection` lives only for
         // this call (same footprint as the prior `(*ptr).on_query_result()`
@@ -1443,7 +1454,7 @@ impl MySQLConnection {
         self.js_connection_ref().on_query_result(
             request,
             &MySQLQueryResult {
-                result_count,
+                count,
                 last_insert_id,
                 affected_rows,
                 is_last_result,

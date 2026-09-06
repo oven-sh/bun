@@ -177,6 +177,64 @@ if (isDockerEnabled()) {
             await sql`UPDATE ${sql(random_name)} SET name = "test2" WHERE id = ${lastInsertRowid}`;
           expect(affectedRows).toBe(1);
         });
+        test("result count and command are set for statements without a result set", async () => {
+          // MySQL answers INSERT/UPDATE/DELETE/DDL with an OK packet and no
+          // command tag. `count` is the OK packet's affected rows and
+          // `command` is the statement's leading keyword, so both match what
+          // the PostgreSQL and SQLite adapters report for the same statement.
+          await using db = new SQL({ ...getOptions(), max: 1 });
+          using sql = await db.reserve();
+          const t = "cc_" + randomUUIDv7("hex").replaceAll("-", "");
+          const meta = (r: any) => ({ count: r.count, command: r.command, affectedRows: r.affectedRows });
+
+          expect(meta(await sql`CREATE TEMPORARY TABLE ${sql(t)} (a INT, b VARCHAR(9))`)).toEqual({
+            count: 0,
+            command: "CREATE",
+            affectedRows: 0,
+          });
+          // Prepared-statement path (binary protocol).
+          expect(meta(await sql`INSERT INTO ${sql(t)} (a, b) VALUES (1, ${"x"}), (2, ${"y"}), (3, ${"z"})`)).toEqual({
+            count: 3,
+            command: "INSERT",
+            affectedRows: 3,
+          });
+          expect(meta(await sql`update ${sql(t)} set b = ${"q"} where a < ${3}`)).toEqual({
+            count: 2,
+            command: "UPDATE",
+            affectedRows: 2,
+          });
+          expect(meta(await sql`  /* hint */ DELETE FROM ${sql(t)} WHERE a = ${3}`)).toEqual({
+            count: 1,
+            command: "DELETE",
+            affectedRows: 1,
+          });
+          const rows = await sql`SELECT a FROM ${sql(t)} ORDER BY a`;
+          expect(rows).toEqual([{ a: 1 }, { a: 2 }]);
+          expect(meta(rows)).toEqual({ count: 2, command: "SELECT", affectedRows: 0 });
+          // Text protocol, one result per statement. Quotes and comments that
+          // contain `;` do not split statements.
+          const results = await sql`
+            insert into ${sql(t)} values (4, 'a;b'); -- not a DELETE;
+            select b from ${sql(t)} where a = 4; # also ; ignored
+            (select 7 as n);
+            delete from ${sql(t)}`.simple();
+          expect(results.map(meta)).toEqual([
+            { count: 1, command: "INSERT", affectedRows: 1 },
+            { count: 1, command: "SELECT", affectedRows: 0 },
+            { count: 1, command: "SELECT", affectedRows: 0 },
+            { count: 3, command: "DELETE", affectedRows: 3 },
+          ]);
+          expect(meta(await sql.unsafe("replace into " + t + " values (1, 'r')"))).toEqual({
+            count: 1,
+            command: "REPLACE",
+            affectedRows: 1,
+          });
+          expect(meta(await sql.unsafe("truncate table " + t))).toEqual({
+            count: 0,
+            command: "TRUNCATE",
+            affectedRows: 0,
+          });
+        });
         test("MEDIUMINT not in the last column reads following columns correctly", async () => {
           // MySQL's binary protocol sends MYSQL_TYPE_INT24 as a fixed 4-byte
           // field. Reading only 3 left the cursor 1 byte behind, silently

@@ -11,12 +11,10 @@ use bun_jsc::JsCell;
 use bun_ptr::{AsCtxPtr, BackRef, ParentRef, RefPtr};
 use bun_sql::mysql::MySQLQueryResult;
 use bun_sql::mysql::protocol::any_mysql_error::{self as AnyMySQLError};
-use bun_sql::postgres::command_tag::CommandTag;
 use bun_sql::shared::sql_query_result_mode::SQLQueryResultMode;
 
 use super::js_mysql_connection::MySQLConnection;
 use crate::mysql::protocol::any_mysql_error_jsc::mysql_error_to_js;
-use crate::postgres::command_tag_jsc::CommandTagJsc as _;
 // `my_sql_query` exports both the `MySQLQuery` *struct* and a
 // `declare_scope!`-generated `MySQLQuery` *static* (ScopedLogger). Importing
 // the name once pulls in both namespaces, so the `debug!` macro below resolves
@@ -221,6 +219,16 @@ impl JSMySQLQuery {
         // allocation outlives the closure body.
         let _guard = self.ref_guard();
         let is_last_result = result.is_last_result;
+        let global = self.global_object();
+        // Computed before `result()` marks the query as answered, so that a
+        // failure here can still reject it.
+        let js_command = match self.query.get().command(global) {
+            Ok(command) => command,
+            Err(err) => {
+                return self.reject_with_js_value(queries_array, global.take_exception(err));
+            }
+        };
+        js_command.ensure_still_alive();
         // R-2: `&Self` is `Copy`; the guard captures it by value and runs on
         // every exit path (defer). All mutation is `JsCell`-backed.
         let _downgrade = scopeguard::guard(self, move |s| {
@@ -240,12 +248,6 @@ impl JSMySQLQuery {
             return;
         };
         this_value.ensure_still_alive();
-        let tag = CommandTag::Select(result.result_count);
-        let Ok(js_tag) = tag.to_js_tag(self.global_object()) else {
-            debug_assert!(false, "in MySQLQuery Tag should always be a number");
-            return;
-        };
-        js_tag.ensure_still_alive();
 
         let Some(function) = self
             .vm_mut()
@@ -271,8 +273,8 @@ impl JSMySQLQuery {
             &[
                 target_value,
                 pending_value,
-                js_tag,
-                tag.to_js_number(),
+                js_command,
+                JSValue::js_number(result.count as f64),
                 if queries_array.is_empty() {
                     JSValue::UNDEFINED
                 } else {

@@ -10,7 +10,6 @@ const {
   tlsStringToProtocolVersion,
   secureProtocolToVersionRange,
   processPfxOptions,
-  validateSecureProtocol,
   validateSecureContextOptions,
   SSL_OP_CIPHER_SERVER_PREFERENCE,
 } = require("internal/tls");

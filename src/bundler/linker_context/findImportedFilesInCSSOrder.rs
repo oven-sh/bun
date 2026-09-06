@@ -52,11 +52,13 @@ fn memcpy_and_reset(order: &mut Vec<CssImportOrder>, wip: &mut Vec<CssImportOrde
 /// unlike JavaScript import statements, CSS "@import" rules are evaluated every
 /// time instead of just the first time.
 ///
-///      A
-///     / \
-///    B   C
-///     \ /
-///      D
+/// ```text
+///   A
+///  / \
+/// B   C
+///  \ /
+///   D
+/// ```
 ///
 /// If A imports B and then C, B imports D, and C imports D, then the CSS
 /// traversal order is D B D C A.
@@ -70,7 +72,7 @@ fn memcpy_and_reset(order: &mut Vec<CssImportOrder>, wip: &mut Vec<CssImportOrde
 /// as far as "@layer" is concerned. So we may in some cases keep both the
 /// first and last locations and only write out the "@layer" information
 /// for the first location.
-pub fn find_imported_files_in_css_order<'a>(
+pub(crate) fn find_imported_files_in_css_order<'a>(
     this: &'a mut LinkerContext,
     temp_arena: &'a Arena,
     entry_points: &[Index],
@@ -103,7 +105,7 @@ pub fn find_imported_files_in_css_order<'a>(
             BStr::new(&sources[source_index.get() as usize].path.pretty)
         }
 
-        pub(crate) fn visit(
+        fn visit(
             &mut self,
             source_index: Index,
             wrapping_conditions: &mut Vec<ImportConditions>,
@@ -824,7 +826,7 @@ fn import_conditions_are_equal(a: &[ImportConditions], b: &[ImportConditions]) -
 ///
 /// Note that all of this deliberately ignores the existence of "@layer" because
 /// that is handled separately. All of this is only for handling unlayered styles.
-pub(crate) fn is_conditional_import_redundant(
+fn is_conditional_import_redundant(
     earlier: &Vec<ImportConditions>,
     later: &Vec<ImportConditions>,
 ) -> bool {

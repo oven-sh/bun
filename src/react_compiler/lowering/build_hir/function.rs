@@ -36,7 +36,7 @@ pub(super) fn lower_function_to_value(
     })
 }
 
-pub(super) fn lower_function(
+fn lower_function(
     builder: &mut HirBuilder<'_>,
     func: FunctionNode<'_>,
     func_loc: Loc,
@@ -231,7 +231,7 @@ pub(super) fn lower_function_declaration(
 }
 
 /// Lower a function expression used as an object method.
-pub(super) fn lower_function_for_object_method(
+fn lower_function_for_object_method(
     builder: &mut HirBuilder<'_>,
     method: &G::Fn,
     method_loc: Loc,
@@ -360,7 +360,7 @@ pub(super) fn lower_object_method(
     }))
 }
 
-pub(super) fn lower_object_property_key(
+fn lower_object_property_key(
     builder: &mut HirBuilder<'_>,
     key: &Expr,
     computed: bool,

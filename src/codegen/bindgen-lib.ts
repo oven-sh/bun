@@ -115,7 +115,7 @@ interface TypePropsMap<T> {
 type PropertyMapKeys = keyof TypePropsMap<any>;
 type Props<T, K extends TypeKind> = K extends PropertyMapKeys ? TypePropsMap<T>[K] : BaseTypeProps<T, K>;
 
-export type AcceptedDictionaryTypeKind = Exclude<TypeKind, "globalObject" | "zigVirtualMachine">;
+export type AcceptedDictionaryTypeKind = Exclude<TypeKind, "globalObject" | "virtualMachine">;
 
 function builtinType<T>() {
   return <K extends TypeKind>(kind: K) => new TypeImpl(kind, undefined as any, {}) as Type<T, any> as Type<T, K>;
@@ -124,15 +124,15 @@ function builtinType<T>() {
 /** Contains all primitive types provided by the bindings generator */
 export namespace t {
   /**
-   * Can only be used as an argument type.
-   * Tells the code generator to pass `*JSC.JSGlobalObject` as a parameter
+   * Can only be used as an argument type. The generated host function passes the
+   * `JSGlobalObject*` for this argument.
    */
   export const globalObject = builtinType<never>()("globalObject");
   /**
-   * Can only be used as an argument type.
-   * Tells the code generator to pass `*JSC.VirtualMachine` as a parameter
+   * Can only be used as an argument type. The generated host function passes the
+   * `JSGlobalObject*` for this argument; the native side takes its `VirtualMachine` from it.
    */
-  export const zigVirtualMachine = builtinType<never>()("zigVirtualMachine");
+  export const virtualMachine = builtinType<never>()("virtualMachine");
 
   /**
    * Provides the raw JSValue from the JavaScriptCore API. Avoid using this if
@@ -211,9 +211,9 @@ export namespace t {
    * })
    * ```
    *
-   * ```zig
-   * pub fn foo(bar: []const u8) void {
-   *   // ...
+   * ```rust
+   * pub fn foo(bar: &[u8]) {
+   *     // ...
    * }
    * ```
    */
@@ -285,17 +285,9 @@ export namespace t {
   > {
     return new TypeImpl("stringEnum", values.sort());
   }
-
-  /**
-   * Equivalent to `stringEnum`, but using an enum sourced from the given
-   * file. Use this to get an enum type that can have functions added.
-   */
-  export function zigEnum(file: string, impl: string): Type<string, "zigEnum"> {
-    return new TypeImpl("zigEnum", { file, impl });
-  }
 }
 
-interface FuncOptionsWithVariant extends FuncMetadata {
+interface FuncOptionsWithVariant {
   /**
    * Declare a function with multiple overloads. Each overload gets its own
    * native function named "name`n`" where `n` is the 1-based index of the
@@ -320,36 +312,21 @@ interface FuncOptionsWithVariant extends FuncMetadata {
    * });
    * ```
    *
-   * ```zig
-   * pub fn foo1(a: i32) i32 {
-   *    return a;
+   * ```rust
+   * pub fn foo1(a: i32) -> i32 {
+   *     a
    * }
    *
-   * pub fn foo2(a: i32, b: i32) bool {
-   *     return a == b;
+   * pub fn foo2(a: i32, b: i32) -> bool {
+   *     a == b
    * }
    * ```
    */
   variants: FuncVariant[];
 }
-type FuncWithoutOverloads = FuncMetadata & FuncVariant;
-export type FuncOptions = FuncOptionsWithVariant | FuncWithoutOverloads;
-
-export interface FuncMetadata {
-  /**
-   * The namespace where the implementation is, by default it's in the root.
-   */
-  implNamespace?: string;
-  /**
-   * TODO:
-   * Automatically generate code to expose this function on a well-known object
-   */
-  exposedOn?: ExposedOn;
-}
+export type FuncOptions = FuncOptionsWithVariant | FuncVariant;
 
 export type FuncReference = { [isFunc]: true };
-
-export type ExposedOn = "JSGlobalObject" | "BunObject";
 
 export interface FuncVariant {
   /** Ordered record. Cannot include ".required" types since required is the default. */

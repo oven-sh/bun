@@ -8,17 +8,28 @@
  */
 
 import { spawn as nodeSpawn, spawnSync } from "node:child_process";
-import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  cpSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
 import { basename, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { generateOrderFile } from "../orderfile/generate.ts";
+import { generateOrderFile, readTextSymbols } from "../orderfile/generate.ts";
 // @ts-ignore — utils.mjs has JSDoc types but no .d.ts
 import * as utils from "../utils.mjs";
 import { bunExeName, shouldStrip, type BunOutput } from "./bun.ts";
 import type { Config } from "./config.ts";
+import { webkitTestFFIPath } from "./deps/webkit.ts";
 import { BuildError } from "./error.ts";
 import { crossFeaturesJson } from "./features-json.ts";
-import { orderFilePath, usesOrderFile } from "./flags.ts";
+import { linkerMapOutputs, orderFilePath, usesOrderFile } from "./flags.ts";
 
 /** True if running under any CI (env: CI, BUILDKITE, or GITHUB_ACTIONS). */
 export const isCI: boolean = utils.isCI;
@@ -203,13 +214,13 @@ export async function spawnWithAnnotations(
 //
 // CI splits builds per-platform into three parallel steps:
 //   build-cpp  → libbun.a + all dep libs (this node uploads)
-//   build-rust → libbun_rust.a (this node uploads)
+//   build-rust → libbun_runtime.a (this node uploads)
 //   build-bun  → downloads both, links (this node downloads first)
 //
 // Paths are uploaded RELATIVE TO buildDir. buildkite-agent recreates the
 // directory structure on download. The link-only ninja graph expects files
-// at the SAME relative paths cpp-only produced them at — computeDepLibs()
-// and emitNestedCmake() share the same path formula.
+// at the SAME relative paths cpp-only produced them at (computeDepLibs()
+// is the one formula both sides use).
 // ───────────────────────────────────────────────────────────────────────────
 
 /**
@@ -274,6 +285,12 @@ export function uploadArtifacts(cfg: Config, output: BunOutput): void {
     upload(depPaths, cfg.buildDir);
   }
 
+  const testFFI = webkitTestFFIPath(cfg);
+  if (existsSync(testFFI)) {
+    console.log("Uploading testFFI...");
+    upload([relative(cfg.buildDir, testFFI)], cfg.buildDir);
+  }
+
   // ─── Phase 2: free disk, gzip (posix only), upload archive ───
   // CI agents are disk-constrained. Free what we no longer need: codegen/
   // (sources already compiled into the archive), obj/ (.o files archived),
@@ -323,8 +340,12 @@ function upload(paths: string[], cwd: string): void {
 //   ${bunTriplet}-profile.zip   (plain release)
 //     └── ${bunTriplet}-profile/
 //           ├── bun-profile[.exe]
+//           ├── testFFI[.exe]            (WebKit FFI test binary, when shipped)
 //           ├── features.json
-//           ├── bun-profile.linker-map   (linux/mac non-asan)
+//           ├── bun-profile.linker-map   (linkerMapOutputs: release, non-asan)
+//           ├── bun-profile.map          (windows; with the above, what the
+//           │                             trace-order step resolves addresses with)
+//           ├── linker.order             (the order file this binary was linked with, if any)
 //           ├── bun-profile.pdb          (windows)
 //           └── bun-profile.dSYM         (mac)
 //
@@ -359,14 +380,14 @@ export function computeBunTriplet(cfg: Config): string {
 }
 
 /**
- * Post-link packaging and upload for link-only / rust-and-link mode. Runs
+ * Post-link packaging and upload for the modes that link in CI. Runs
  * AFTER ninja succeeds — at that point bun-profile (and stripped bun) exist.
  *
  * Generates features.json, packages into zips,
  * uploads. Contract with test steps: see block comment above.
  */
 export function packageAndUpload(cfg: Config, output: BunOutput): void {
-  if (!isBuildkite || (cfg.mode !== "link-only" && cfg.mode !== "rust-and-link")) return;
+  if (!isBuildkite) return;
 
   const exe = output.exe;
   if (exe === undefined) {
@@ -405,16 +426,21 @@ export function packageAndUpload(cfg: Config, output: BunOutput): void {
   // Result: bun-linux-x64-profile, bun-linux-x64-asan, etc.
   const bunPath = exeName.replace(/^bun/, bunTriplet);
   const files: string[] = [basename(exe), "features.json"];
+  const testFFI = webkitTestFFIPath(cfg);
+  if (existsSync(testFFI)) {
+    chmodSync(testFFI, 0o755);
+    files.push(testFFI);
+  }
   // Debug symbols / linker map — platform-specific extras.
   if (cfg.windows) {
     files.push(`${exeName}.pdb`);
   } else if (cfg.darwin) {
     files.push(`${exeName}.dSYM`);
   }
-  // Linker map: posix non-asan (cmake gate: (APPLE OR LINUX) AND NOT ENABLE_ASAN).
-  if (cfg.unix && !cfg.asan) {
-    files.push(`${exeName}.linker-map`);
-  }
+  // Linker map(s). On windows they are also what the trace-order step
+  // (.buildkite/ci.mjs) resolves traced addresses against, the PE itself
+  // having no symbol table, so without them that step has nothing to work from.
+  files.push(...linkerMapOutputs(cfg).map(map => basename(map)));
   // The symbol ordering file this binary was linked with, next to the linker
   // map. Skip the seeded placeholder — it has no functions in it.
   const hasOrderFile = usesOrderFile(cfg) && orderFileFunctionCount(cfg) > 0;
@@ -699,7 +725,7 @@ export function orderFileContext(): OrderFileContext {
 /** Only builds that link, on targets that use an order file, outside PRs. */
 export function orderFileEligible(cfg: Config, ctx: OrderFileContext): boolean {
   if (!usesOrderFile(cfg) || !ctx.buildkite || ctx.pullRequest) return false;
-  return cfg.mode === "full" || cfg.mode === "link-only" || cfg.mode === "rust-and-link";
+  return cfg.mode !== "cpp-only" && cfg.mode !== "rust-only";
 }
 
 /** Tracing runs the binary we just linked, so the host must be able to execute it. */
@@ -970,24 +996,21 @@ export function verifyOrderFileApplied(cfg: Config, ctx: OrderFileContext, exe: 
     return;
   }
 
-  // Same resolution as generate.ts: honor NM, else llvm-nm, else nm.
-  let nm = { status: null, stdout: "" } as { status: number | null; stdout: string };
-  for (const tool of [process.env.NM, "llvm-nm", "nm"].filter(Boolean) as string[]) {
-    nm = spawnSync(tool, ["--defined-only", exe], { encoding: "utf8", maxBuffer: 1 << 29 });
-    if (nm.status === 0) break;
-  }
-  if (nm.status !== 0) {
-    console.log("~ symbol order: no working nm — skipping verification");
+  // The same names the generator traces against: nm's, or on windows the link's maps'.
+  let symbols: Map<number, string[]>;
+  try {
+    symbols = readTextSymbols(exe);
+  } catch (error) {
+    console.log(
+      `~ symbol order: cannot read the binary's symbols — skipping verification (${(error as Error).message})`,
+    );
     return;
   }
 
   const addresses = new Map<string, number>();
   let textBase = Number.MAX_SAFE_INTEGER;
-  for (const line of nm.stdout.split("\n")) {
-    const m = /^([0-9a-f]+) ([tT]) (\S+)$/.exec(line);
-    if (!m) continue;
-    const address = parseInt(m[1]!, 16);
-    addresses.set(m[3]!, address);
+  for (const [address, names] of symbols) {
+    for (const name of names) addresses.set(name, address);
     if (address < textBase) textBase = address;
   }
 
@@ -1032,7 +1055,9 @@ export function verifyOrderFileApplied(cfg: Config, ctx: OrderFileContext, exe: 
       `the order file had no effect: hot functions sit at ${mb(hot)}, a typical one at ${mb(control)}`,
       cfg.darwin
         ? "Apple ld ignored it — check -order_file and that the names match nm's"
-        : "lld ignored it — check --symbol-ordering-file and that -ffunction-sections survived",
+        : cfg.windows
+          ? "lld-link ignored it — check /order and that /Gy survived"
+          : "lld ignored it — check --symbol-ordering-file and that -ffunction-sections survived",
     );
     return;
   }

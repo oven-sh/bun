@@ -1,0 +1,8 @@
+{
+  "name": "v9-git-urls",
+  "version": "1.0.0",
+  "dependencies": {
+    "a": "git+ssh://git@example.com:2222/org/a.git",
+    "b": "git+https://TOKEN:x-oauth-basic@github.com/foo/bar.git"
+  }
+}

@@ -1,6 +1,6 @@
-use bun_jsc::ZigStringJsc as _;
+use bun_core::EncodedSlice;
+use bun_jsc::EncodedSliceJsc as _;
 use bun_jsc::virtual_machine::GCLevel;
-use bun_jsc::zig_string::ZigString;
 use bun_jsc::{self as jsc, CallFrame, JSGlobalObject, JSType, JSValue, JsResult};
 
 pub(crate) fn create(global: &JSGlobalObject) -> JSValue {
@@ -18,7 +18,7 @@ pub(crate) fn create(global: &JSGlobalObject) -> JSValue {
 }
 
 #[bun_jsc::host_fn]
-pub(crate) fn gc_aggression_level(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+fn gc_aggression_level(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     // SAFETY: `bun_vm()` returns a non-null `*mut VirtualMachine` for a Bun-owned global;
     // we hold no other Rust borrow of the VM across these accesses.
     let vm = global.bun_vm().as_mut();
@@ -37,10 +37,7 @@ pub(crate) fn gc_aggression_level(global: &JSGlobalObject, frame: &CallFrame) ->
 }
 
 #[bun_jsc::host_fn]
-pub(crate) fn array_buffer_to_string(
-    global: &JSGlobalObject,
-    frame: &CallFrame,
-) -> JsResult<JSValue> {
+fn array_buffer_to_string(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     let args = frame.arguments();
     if args.len() < 1 || !args[0].is_cell() || !args[0].js_type().is_typed_array_or_array_buffer() {
         return Err(global.throw_invalid_arguments(format_args!("Expected an ArrayBuffer")));
@@ -52,10 +49,9 @@ pub(crate) fn array_buffer_to_string(
             // Uint16Array/Int16Array storage is u16-aligned with even byte length;
             // bytemuck checks both at runtime.
             let utf16: &[u16] = bytemuck::cast_slice(array_buffer.byte_slice());
-            let zig_str = ZigString::init_utf16(utf16);
-            Ok(zig_str.to_js(global))
+            Ok(EncodedSlice::utf16(utf16).to_js(global))
         }
-        _ => Ok(ZigString::init(array_buffer.slice()).to_js(global)),
+        _ => Ok(EncodedSlice::latin1(array_buffer.slice()).to_js(global)),
     }
 }
 

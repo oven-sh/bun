@@ -122,6 +122,29 @@ describe("postgres dynamic identifier validation", () => {
   });
 });
 
+const identifierAdapters: [string, () => SQL][] = [
+  ["sqlite", () => new SQL("sqlite://:memory:")],
+  ["mysql", () => new SQL("mysql://bun_sql_test@127.0.0.1:1/bun_sql_test", { max: 1 })],
+];
+
+describe.each(identifierAdapters)("%s dynamic identifier validation", (_adapter, makeSql) => {
+  test("identifiers containing a NUL byte are rejected", async () => {
+    await using sql = makeSql();
+    const err = await (sql("col\0umn") as unknown as Promise<any>).catch(e => e);
+    expect(err).toBeInstanceOf(TypeError);
+    expect(err.code).toBe("ERR_INVALID_ARG_VALUE");
+    expect(err.message).toStartWith("The argument 'name' must not contain null bytes. Received ");
+  });
+
+  test("insert helper column names containing a NUL byte are rejected", async () => {
+    await using sql = makeSql();
+    const err = await sql`INSERT INTO t ${sql([{ ["col\0umn"]: 1 }])}`.catch(e => e);
+    expect(err).toBeInstanceOf(TypeError);
+    expect(err.code).toBe("ERR_INVALID_ARG_VALUE");
+    expect(err.message).toStartWith("The argument 'name' must not contain null bytes. Received ");
+  });
+});
+
 // Behaviors that must keep working; these execute real queries, so they run
 // against sqlite only.
 describe("sqlite helper behavior preserved", () => {

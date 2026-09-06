@@ -6,7 +6,7 @@ use core::fmt;
 use bun_alloc::Arena as Bump;
 
 use bun_alloc::AllocError;
-use bun_collections::VecExt;
+use bun_collections::{VecExt, index_sort};
 use bun_core::strings;
 
 use crate::{Expr, ExprNodeIndex, ExprNodeList, G, OptionalChain, Ref, StoreRef};
@@ -124,7 +124,7 @@ impl Array {
                 debug_assert!(matches!(item.data, crate::expr::Data::EString(_)));
             }
         }
-        self.items.slice_mut().sort_by(array_sorter_is_less_than);
+        index_sort::sort_slice_by(self.items.slice_mut(), array_sorter_is_less_than);
     }
 }
 
@@ -135,7 +135,7 @@ pub struct Unary {
 }
 
 bitflags::bitflags! {
-    #[derive(Clone, Copy, Default, PartialEq, Eq)]
+    #[derive(Clone, Copy, Default, PartialEq, Eq, Debug)]
     #[repr(transparent)]
     pub struct UnaryFlags: u8 {
         /// The expression "typeof (0, x)" must not become "typeof x" if "x"
@@ -313,6 +313,12 @@ pub struct Dot {
     /// unwrapped if the resulting value is unused. Unwrapping means discarding
     /// the call target but keeping any arguments with side effects.
     pub call_can_be_unwrapped_if_unused: CallUnwrap,
+
+    /// `target` is an `EImportIdentifier` and this read was counted in
+    /// `Part::import_symbol_property_uses` instead of as a use of the import,
+    /// so the linker may bind it straight to the export it names
+    /// (`LinkerGraph::import_member_bindings`).
+    pub is_import_property_use: bool,
 }
 impl Default for Dot {
     fn default() -> Self {
@@ -323,6 +329,7 @@ impl Default for Dot {
             optional_chain: None,
             can_be_removed_if_unused: false,
             call_can_be_unwrapped_if_unused: CallUnwrap::Never,
+            is_import_property_use: false,
         }
     }
 }
@@ -330,6 +337,8 @@ pub struct Index {
     pub index: ExprNodeIndex,
     pub target: ExprNodeIndex,
     pub optional_chain: Option<OptionalChain>,
+    /// See `Dot::is_import_property_use`.
+    pub is_import_property_use: bool,
 }
 
 pub struct Arrow {
@@ -721,11 +730,11 @@ impl Number {
     /// by calling out to the APIs in WebKit which are responsible for this operation.
     ///
     /// This can return `None` in wasm builds to avoid linking JSC
-    pub fn to_string(self, bump: &Bump) -> Option<Str> {
+    pub(crate) fn to_string(self, bump: &Bump) -> Option<Str> {
         Self::to_string_from_f64(self.value(), bump)
     }
 
-    pub fn to_string_from_f64(value: f64, bump: &Bump) -> Option<Str> {
+    pub(crate) fn to_string_from_f64(value: f64, bump: &Bump) -> Option<Str> {
         if value == value.trunc() && (value < i32::MAX as f64 && value > i32::MIN as f64) {
             let int_value = value as i64;
             let abs = int_value.unsigned_abs();
@@ -779,11 +788,11 @@ impl Number {
     }
 
     #[inline]
-    pub fn to_u32(self) -> u32 {
+    pub(crate) fn to_u32(self) -> u32 {
         self.to::<u32>()
     }
 
-    pub fn to<T: NumberCast>(self) -> T {
+    pub(crate) fn to<T: NumberCast>(self) -> T {
         let clamped = self.value().trunc().max(0.0).min(T::MAX_AS_F64);
         T::from_f64(clamped)
     }
@@ -819,7 +828,7 @@ impl BigInt {
     /// a syntax error, so any literal that starts with `0` and has more than
     /// one character is a radix literal.
     #[inline]
-    pub fn has_radix(v: &[u8]) -> bool {
+    pub(crate) fn has_radix(v: &[u8]) -> bool {
         v.len() >= 2 && v[0] == b'0'
     }
 
@@ -840,22 +849,24 @@ impl BigInt {
 // Compact, read-only object/array nodes: the JSON parser's native output.
 // Children are `PropertyJSON` rows / inline `JsonValue`s in the document's `JsonTape`.
 
-/// A JSON value inside an `ObjectJSON` / `ArrayJSON`.
+/// A JSON value inside an `ObjectJSON` / `ArrayJSON`. The layout is read
+/// from C++ (`JSONRowsToJS.cpp`).
 #[derive(Clone, Copy)]
+#[repr(C, u32)]
 pub enum JsonValue {
-    Null,
-    Boolean(bool),
-    Number(Number),
-    String(Str),
-    Object(StoreRef<ObjectJSON>),
-    Array(StoreRef<ArrayJSON>),
+    Null = 0,
+    Boolean(bool) = 1,
+    Number(Number) = 2,
+    String(Str) = 3,
+    Object(StoreRef<ObjectJSON>) = 4,
+    Array(StoreRef<ArrayJSON>) = 5,
 }
 
 const _: () = assert!(core::mem::size_of::<JsonValue>() == 16);
 const _: () = assert!(core::mem::align_of::<JsonValue>() == 4);
 
 impl JsonValue {
-    pub fn write_to_hasher<H: bun_core::Hasher + ?Sized>(&self, hasher: &mut H) {
+    pub(crate) fn write_to_hasher<H: bun_core::Hasher + ?Sized>(&self, hasher: &mut H) {
         match self {
             JsonValue::Null => hasher.update(&[0]),
             JsonValue::Boolean(b) => hasher.update(&[1, *b as u8]),
@@ -912,8 +923,9 @@ impl JsonValue {
     }
 }
 
-/// One `"key": value` row of an [`ObjectJSON`].
+/// One `"key": value` row of an [`ObjectJSON`]. Layout read from C++.
 #[derive(Clone, Copy)]
+#[repr(C)]
 pub struct PropertyJSON {
     pub key: Str,
     pub key_loc: crate::Loc,
@@ -921,6 +933,10 @@ pub struct PropertyJSON {
 }
 
 const _: () = assert!(core::mem::size_of::<PropertyJSON>() == 32);
+// Read from C++ (JSONRowsToJS.cpp), which asserts the same offsets.
+const _: () = assert!(core::mem::offset_of!(PropertyJSON, key) == 0);
+const _: () = assert!(core::mem::offset_of!(PropertyJSON, key_loc) == 12);
+const _: () = assert!(core::mem::offset_of!(PropertyJSON, value) == 16);
 
 /// Where a [`JsonTape`]'s buffers (and, in arena mode, the tape itself) live.
 #[derive(Clone, Copy)]
@@ -966,6 +982,17 @@ unsafe impl core::alloc::Allocator for TapeAlloc {
     }
 }
 
+/// How the bytes behind every [`Str`] on one tape are encoded. JSON tapes are
+/// UTF-8 (WTF-8 where an escape named a lone surrogate); the XML parser also
+/// produces Latin-1 tapes when its input was a Latin-1 string.
+#[derive(Clone, Copy, PartialEq, Eq)]
+#[repr(u8)]
+pub enum StrEncoding {
+    Utf8 = 0,
+    Latin1 = 1,
+    Utf16 = 2,
+}
+
 /// Everything one parsed JSON document allocates that does not borrow the source.
 pub struct JsonTape {
     props: Vec<PropertyJSON, TapeAlloc>,
@@ -973,7 +1000,7 @@ pub struct JsonTape {
     prop_value_locs: Vec<crate::Loc, TapeAlloc>,
     item_locs: Vec<crate::Loc, TapeAlloc>,
     str_chunks: Vec<Vec<u8, TapeAlloc>, TapeAlloc>,
-    str_used: usize,
+    pub encoding: StrEncoding,
 }
 
 // SAFETY: only the parsing thread writes it; shared use afterwards is read-only.
@@ -995,8 +1022,16 @@ impl JsonTape {
             prop_value_locs: Vec::new_in(alloc),
             item_locs: Vec::new_in(alloc),
             str_chunks: Vec::new_in(alloc),
-            str_used: 0,
+            encoding: StrEncoding::Utf8,
         }
+    }
+
+    /// Pre-size the row buffers (a growth step copies the whole tape).
+    pub fn reserve(&mut self, props: usize, items: usize) {
+        self.props.reserve(props);
+        self.prop_value_locs.reserve(props);
+        self.items.reserve(items);
+        self.item_locs.reserve(items);
     }
 
     /// The tape allocation's own pointer, for [`ObjectJSON::new`] /
@@ -1033,24 +1068,38 @@ impl JsonTape {
         (first, rows.len() as u32)
     }
 
-    /// Copy decoded string bytes into the tape; chunks never move once handed out.
+    /// Copy decoded string bytes into the tape; chunks grow only within capacity and so never move.
     pub fn alloc_str(&mut self, bytes: &[u8]) -> Str {
+        self.alloc_str_join(bytes, b"")
+    }
+
+    /// [`alloc_str`](Self::alloc_str) of the concatenation `a ++ b`.
+    pub fn alloc_str_join(&mut self, a: &[u8], b: &[u8]) -> Str {
+        let len = a.len() + b.len();
         let fits = self
             .str_chunks
             .last()
-            .is_some_and(|c| c.len() - self.str_used >= bytes.len());
+            .is_some_and(|c| c.capacity() - c.len() >= len);
         if !fits {
-            let cap = bytes.len().max(Self::STR_CHUNK);
-            let mut chunk: Vec<u8, TapeAlloc> = Vec::with_capacity_in(cap, self.alloc());
-            chunk.resize(cap, 0);
+            let cap = len.max(Self::STR_CHUNK);
+            let chunk: Vec<u8, TapeAlloc> = Vec::with_capacity_in(cap, self.alloc());
             self.str_chunks.push(chunk);
-            self.str_used = 0;
         }
         let chunk = self.str_chunks.last_mut().expect("chunk pushed above");
-        let out = &mut chunk[self.str_used..self.str_used + bytes.len()];
-        out.copy_from_slice(bytes);
-        self.str_used += bytes.len();
-        Str::new(out)
+        let start = chunk.len();
+        if len <= 32 {
+            chunk.extend(a.iter().chain(b));
+        } else {
+            chunk.extend_from_slice(a);
+            chunk.extend_from_slice(b);
+        }
+        Str::new(&chunk[start..])
+    }
+
+    /// The row buffers, for a reader that resolves spans itself.
+    #[inline]
+    pub fn raw_rows(&self) -> (*const PropertyJSON, *const JsonValue) {
+        (self.props.as_ptr(), self.items.as_ptr())
     }
 
     #[inline]
@@ -1077,6 +1126,7 @@ impl JsonTape {
 }
 
 /// `Data::EObjectJSON`: a `(first, count)` span of the document's property-row tape.
+#[repr(C)]
 pub struct ObjectJSON {
     tape: core::ptr::NonNull<JsonTape>,
     first: u32,
@@ -1084,6 +1134,11 @@ pub struct ObjectJSON {
     pub close_brace_loc: crate::Loc,
     pub is_single_line: bool,
 }
+
+const _: () = assert!(core::mem::offset_of!(ObjectJSON, first) == 8);
+const _: () = assert!(core::mem::offset_of!(ObjectJSON, count) == 12);
+const _: () = assert!(core::mem::offset_of!(ArrayJSON, first) == 8);
+const _: () = assert!(core::mem::offset_of!(ArrayJSON, count) == 12);
 
 // SAFETY: the tape outlives the AST (`StoreRef`'s contract) and is read-only once parsing returns.
 unsafe impl Send for ObjectJSON {}
@@ -1117,6 +1172,13 @@ impl ObjectJSON {
         }
     }
 
+    /// The tape this node's rows live on.
+    #[inline]
+    pub fn tape(&self) -> &JsonTape {
+        // SAFETY: per the constructor's contract the tape outlives this node.
+        unsafe { self.tape.as_ref() }
+    }
+
     #[inline]
     pub fn properties(&self) -> &[PropertyJSON] {
         if self.count == 0 {
@@ -1146,6 +1208,7 @@ impl ObjectJSON {
 }
 
 /// `Data::EArrayJSON`: a `(first, count)` span of the document's item tape.
+#[repr(C)]
 pub struct ArrayJSON {
     tape: core::ptr::NonNull<JsonTape>,
     first: u32,
@@ -1179,6 +1242,13 @@ impl ArrayJSON {
             close_bracket_loc,
             is_single_line,
         }
+    }
+
+    /// The tape this node's rows live on.
+    #[inline]
+    pub fn tape(&self) -> &JsonTape {
+        // SAFETY: see `ObjectJSON::properties`.
+        unsafe { self.tape.as_ref() }
     }
 
     #[inline]
@@ -1257,7 +1327,7 @@ impl Rope {
     /// the one `unsafe` so the `get_or_put_object`/`get_rope` walkers
     /// don't repeat `if !next.is_null() { unsafe { &*next } }` at every hop.
     #[inline]
-    pub fn next_ref<'a>(&self) -> Option<&'a Rope> {
+    pub(crate) fn next_ref<'a>(&self) -> Option<&'a Rope> {
         // SAFETY: `next` is either null or a bump-arena allocation valid until
         // arena reset. Read-only borrow; no `&mut` alias is
         // outstanding at any caller (the chain is fully built before walking).
@@ -1273,14 +1343,6 @@ pub enum SetError {
 }
 bun_core::impl_tag_error!(SetError);
 bun_core::oom_from_alloc!(SetError);
-impl From<SetError> for crate::Error {
-    fn from(e: SetError) -> Self {
-        match e {
-            SetError::OutOfMemory => crate::Error::Alloc(bun_alloc::AllocError),
-            SetError::Clobber => crate::Error::Clobber,
-        }
-    }
-}
 
 // ── live Object accessor surface ───────────────────────────────────────────
 // Adapted to the current `Vec` API (`append(v)`, `slice()`, `slice_mut()`).
@@ -1459,15 +1521,11 @@ impl Object {
                 ));
             }
         }
-        self.properties
-            .slice_mut()
-            .sort_by(object_sorter_is_less_than);
+        index_sort::sort_slice_by(self.properties.slice_mut(), object_sorter_is_less_than);
     }
 
     pub fn package_json_sort(&mut self) {
-        self.properties
-            .slice_mut()
-            .sort_by(package_json_sort_is_less_than);
+        index_sort::sort_slice_by(self.properties.slice_mut(), package_json_sort_is_less_than);
     }
 }
 
@@ -1575,6 +1633,33 @@ pub struct Spread {
     pub value: ExprNodeIndex,
 }
 
+/// Discriminants are shared with the C++ switch in
+/// `Bun__Temporal__fromDateTimeLiteral`.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[repr(u8)]
+pub enum TomlDateTimeKind {
+    /// `1979-05-27T00:32:00-07:00` → `Temporal.Instant`
+    OffsetDateTime = 1,
+    /// `1979-05-27T07:32:00` → `Temporal.PlainDateTime`
+    LocalDateTime = 2,
+    /// `1979-05-27` → `Temporal.PlainDate`
+    LocalDate = 3,
+    /// `07:32:00` → `Temporal.PlainTime`
+    LocalTime = 4,
+}
+
+impl TomlDateTimeKind {
+    /// Unqualified Temporal class name (`Instant`, `PlainDateTime`, …).
+    pub fn temporal_class(self) -> &'static [u8] {
+        match self {
+            TomlDateTimeKind::OffsetDateTime => b"Instant",
+            TomlDateTimeKind::LocalDateTime => b"PlainDateTime",
+            TomlDateTimeKind::LocalDate => b"PlainDate",
+            TomlDateTimeKind::LocalTime => b"PlainTime",
+        }
+    }
+}
+
 /// JavaScript string literal type
 // repr(C, align(8)): `StoreStr`/`StoreRef` are `packed(4)`, so under
 // `repr(Rust)` the `data.ptr: NonNull<u8>` lands at a 4-but-not-8-aligned
@@ -1600,9 +1685,31 @@ pub struct EString {
     pub rope_len: u32,
     pub prefer_template: bool,
     pub is_utf16: bool,
+    /// Set only by the TOML parser on a date/time literal (`data` is its
+    /// ASCII source text). The TOML AST never enters the JS visit passes;
+    /// the sinks that materialize or print it check this tag and produce a
+    /// Temporal value instead of a string.
+    pub toml_datetime: Option<TomlDateTimeKind>,
 }
 // Also exported as `String`; `EString` avoids colliding with bun_core::String.
 pub use EString as String;
+
+/// [`EString::flattened`] result: the node itself, or an owned copy when a rope was flattened.
+pub enum Flattened<'a> {
+    Borrowed(&'a EString),
+    Owned(EString),
+}
+
+impl core::ops::Deref for Flattened<'_> {
+    type Target = EString;
+    #[inline]
+    fn deref(&self) -> &EString {
+        match self {
+            Flattened::Borrowed(s) => s,
+            Flattened::Owned(s) => s,
+        }
+    }
+}
 
 impl Default for EString {
     fn default() -> Self {
@@ -1613,6 +1720,7 @@ impl Default for EString {
             end: None,
             rope_len: 0,
             is_utf16: false,
+            toml_datetime: None,
         }
     }
 }
@@ -1660,6 +1768,7 @@ impl EString {
             end: None,
             rope_len: 0,
             is_utf16: false,
+            toml_datetime: None,
         }
     }
     /// `data` is arena-owned (source text or `Expr.Data.Store` / bump arena)
@@ -1667,6 +1776,16 @@ impl EString {
     pub fn init(data: &[u8]) -> Self {
         Self {
             data: Str::new(data),
+            ..Default::default()
+        }
+    }
+
+    /// A TOML date/time literal; `data` must be ASCII text `Temporal.*.from`
+    /// accepts verbatim.
+    pub fn init_toml_datetime(data: &[u8], kind: TomlDateTimeKind) -> Self {
+        Self {
+            data: Str::new(data),
+            toml_datetime: Some(kind),
             ..Default::default()
         }
     }
@@ -1782,10 +1901,28 @@ impl EString {
         true
     }
 
+    /// Flatten in place. Parser only; shared-AST readers use [`Self::flattened`].
     pub fn resolve_rope_if_needed(&mut self, bump: &Bump) {
         if self.next.is_none() || !self.is_utf8() {
             return;
         }
+        self.data = Str::new(self.flatten_rope(bump));
+        self.next = None;
+    }
+
+    /// `self` if not a rope, else a copy flattened into `bump`. Never writes to `self`.
+    pub fn flattened(&self, bump: &Bump) -> Flattened<'_> {
+        if self.next.is_none() || !self.is_utf8() {
+            return Flattened::Borrowed(self);
+        }
+        let mut copy = self.shallow_clone();
+        copy.data = Str::new(self.flatten_rope(bump));
+        copy.next = None;
+        Flattened::Owned(copy)
+    }
+
+    /// The rope's bytes, concatenated into a fresh `bump` slice.
+    fn flatten_rope<'b>(&self, bump: &'b Bump) -> &'b [u8] {
         let mut bytes = bun_alloc::ArenaVec::<u8>::with_capacity_in(self.rope_len as usize, bump);
         bytes.extend_from_slice(&self.data);
         let mut str_ = self.next;
@@ -1793,8 +1930,7 @@ impl EString {
             bytes.extend_from_slice(&part.get().data);
             str_ = part.get().next;
         }
-        self.data = Str::new(bytes.into_bump_slice());
-        self.next = None;
+        bytes.into_bump_slice()
     }
 
     /// Return UTF-8 bytes, transcoding if UTF-16.
@@ -1810,7 +1946,7 @@ impl EString {
         }
     }
 
-    pub fn string_cloned<'b>(&self, bump: &'b Bump) -> Result<&'b [u8], AllocError> {
+    pub(crate) fn string_cloned<'b>(&self, bump: &'b Bump) -> Result<&'b [u8], AllocError> {
         if self.is_utf8() {
             Ok(bump.alloc_slice_copy(&self.data))
         } else {
@@ -1855,15 +1991,6 @@ impl EString {
         }
     }
 
-    pub fn clone(&self, bump: &Bump) -> Result<EString, AllocError> {
-        Ok(EString {
-            data: Str::new(bump.alloc_slice_copy(&self.data)),
-            prefer_template: self.prefer_template,
-            is_utf16: !self.is_utf8(),
-            ..EString::default()
-        })
-    }
-
     pub fn javascript_length(&self) -> Option<u32> {
         if self.rope_len > 0 {
             // We only support ascii ropes for now
@@ -1905,6 +2032,7 @@ impl EString {
             end: self.end,
             rope_len: self.rope_len,
             is_utf16: self.is_utf16,
+            toml_datetime: self.toml_datetime,
         }
     }
 
@@ -1913,7 +2041,7 @@ impl EString {
     /// `other` MUST be Store/arena-allocated (callers pass
     /// `Expr::init(EString, ...).data.e_string_mut()` or a freshly
     /// `Store::append`ed node); its address is captured as a `StoreRef`.
-    pub fn push(&mut self, other: &mut EString) {
+    pub(crate) fn push(&mut self, other: &mut EString) {
         debug_assert!(self.is_utf8());
         debug_assert!(other.is_utf8());
 
@@ -2025,7 +2153,7 @@ pub enum TemplateContents {
     Raw(Str),
 }
 impl TemplateContents {
-    pub fn is_utf8(&self) -> bool {
+    pub(crate) fn is_utf8(&self) -> bool {
         matches!(self, TemplateContents::Cooked(c) if c.is_utf8())
     }
 
@@ -2282,22 +2410,29 @@ pub struct Yield {
 }
 
 pub struct If {
-    pub test_: ExprNodeIndex,
+    pub test: ExprNodeIndex,
     pub yes: ExprNodeIndex,
     pub no: ExprNodeIndex,
 }
+
+pub enum UnwrappedRequireMarker {}
+/// Index into the parser's `imports_to_convert_from_require`.
+pub type UnwrappedRequireIndex = bun_core::GenericIndex<u32, UnwrappedRequireMarker>;
+pub type UnwrappedRequireIndexOptional =
+    bun_core::GenericIndexOptional<u32, UnwrappedRequireMarker>;
 
 #[derive(Clone, Copy)]
 pub struct RequireString {
     pub import_record_index: u32,
 
-    pub unwrapped_id: u32,
+    /// Set when `unwrap_commonjs_to_esm` turned this `require()` into an import.
+    pub unwrapped_id: UnwrappedRequireIndexOptional,
 }
 impl Default for RequireString {
     fn default() -> Self {
         Self {
             import_record_index: 0,
-            unwrapped_id: u32::MAX,
+            unwrapped_id: UnwrappedRequireIndexOptional::NONE,
         }
     }
 }
@@ -2319,6 +2454,12 @@ pub struct Import {
     pub expr: ExprNodeIndex,
     pub options: ExprNodeIndex,
     pub import_record_index: u32,
+    /// When bundling a string-literal `import("...")`, this is the synthetic
+    /// namespace symbol minted by `transpose_import`. Property accesses /
+    /// destructuring of the awaited result are recorded under this ref so the
+    /// linker can tree-shake unused exports of the importee. `Ref::NONE` when
+    /// not bundling or the specifier is non-constant.
+    pub namespace_ref: Ref,
     // TODO:
     // Comments inside "import()" expressions have special meaning for Webpack.
     // Preserving comments inside these expressions makes it possible to use

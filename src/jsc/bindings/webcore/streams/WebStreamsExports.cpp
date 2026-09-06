@@ -7,6 +7,7 @@
 #include "JSDOMGlobalObject.h"
 #include "JSDOMWrapperCache.h"
 #include "JSReadableStream.h"
+#include "JSReadableStreamDefaultController.h"
 #include "WebCoreJSBuiltins.h"
 #include "ZigGeneratedClasses.h"
 #include "ZigGlobalObject.h"
@@ -44,11 +45,40 @@ using namespace JSC;
 using namespace WebCore;
 using namespace Bun::WebStreams;
 
+// A JSReadableStream's tag and native source. Pure: no scope, no traps, no script.
+static int32_t tagOfStream(JSReadableStream* stream, void** ptr)
+{
+    // The RAW handle slot, not nativePtrForJS(): a transferred stream still tags.
+    JSValue handle = stream->m_nativePtr.get();
+    if (handle.isEmpty() || !handle.isCell())
+        return 0;
+    JSCell* handleCell = handle.asCell();
+    if (auto* blobSource = dynamicDowncast<JSBlobInternalReadableStreamSource>(handleCell)) {
+        *ptr = blobSource->wrapped();
+        return 1;
+    }
+    if (auto* fileSource = dynamicDowncast<JSFileInternalReadableStreamSource>(handleCell)) {
+        *ptr = fileSource->wrapped();
+        return 2;
+    }
+    if (auto* bytesSource = dynamicDowncast<JSBytesInternalReadableStreamSource>(handleCell)) {
+        *ptr = bytesSource->wrapped();
+        return 4;
+    }
+    return 0;
+}
+
+// Re-tag a value known to be a stream (one a Strong/Weak handle holds). -1, `*ptr` untouched, if it is not one after all.
+extern "C" int32_t ReadableStreamTag__taggedStream(JSC::EncodedJSValue value, void** ptr)
+{
+    auto* stream = dynamicDowncast<JSReadableStream>(JSValue::decode(value));
+    return stream ? tagOfStream(stream, ptr) : -1;
+}
+
 extern "C" int32_t ReadableStreamTag__tagged(Zig::GlobalObject* globalObject, JSC::EncodedJSValue* possibleReadableStream, void** ptr)
 {
-    *ptr = nullptr;
     JSValue value = JSValue::decode(*possibleReadableStream);
-    if (value.isEmpty() || !value.isCell())
+    if (!value.isCell())
         return -1;
     JSObject* object = value.getObject();
     if (!object)
@@ -56,26 +86,8 @@ extern "C" int32_t ReadableStreamTag__tagged(Zig::GlobalObject* globalObject, JS
 
     auto& vm = JSC::getVM(globalObject);
 
-    if (auto* stream = dynamicDowncast<JSReadableStream>(object)) {
-        // The RAW handle slot, not nativePtrForJS(): a transferred stream still tags.
-        JSValue handle = stream->m_nativePtr.get();
-        if (handle.isEmpty() || !handle.isCell())
-            return 0;
-        JSCell* handleCell = handle.asCell();
-        if (auto* blobSource = dynamicDowncast<JSBlobInternalReadableStreamSource>(handleCell)) {
-            *ptr = blobSource->wrapped();
-            return 1;
-        }
-        if (auto* fileSource = dynamicDowncast<JSFileInternalReadableStreamSource>(handleCell)) {
-            *ptr = fileSource->wrapped();
-            return 2;
-        }
-        if (auto* bytesSource = dynamicDowncast<JSBytesInternalReadableStreamSource>(handleCell)) {
-            *ptr = bytesSource->wrapped();
-            return 4;
-        }
-        return 0;
-    }
+    if (auto* stream = dynamicDowncast<JSReadableStream>(object))
+        return tagOfStream(stream, ptr);
 
     auto scope = DECLARE_THROW_SCOPE(vm);
     if (!isNonHostAsyncGeneratorFunction(object)) {
@@ -99,7 +111,10 @@ extern "C" bool ReadableStream__tee(JSC::EncodedJSValue possibleReadableStream, 
 
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    auto branches = readableStreamTee(globalObject, stream, /* cloneForBranch2 */ true);
+    // Body clone tees with cloneForBranch2 = false (share chunk refs) like Node/Chrome/Firefox;
+    // the spec's per-chunk StructuredClone makes an N-deep clone chain retain N copies of the body
+    // (whatwg/streams#1156).
+    auto branches = readableStreamTee(globalObject, stream);
     RETURN_IF_EXCEPTION(scope, false);
 
     *possibleReadableStream1 = JSValue::encode(branches.first);
@@ -124,7 +139,9 @@ extern "C" bool ReadableStream__isLocked(JSC::EncodedJSValue possibleReadableStr
     return stream && isReadableStreamLocked(stream);
 }
 
-extern "C" void ReadableStream__cancel(JSC::EncodedJSValue possibleReadableStream, Zig::GlobalObject* globalObject)
+// cancel / cancelWithReason / error: the source's own cancel failure is the cancel promise's rejection
+// (marked handled); anything thrown synchronously is left pending for the Rust wrapper (check_slow).
+extern "C" [[ZIG_EXPORT(check_slow)]] void ReadableStream__cancel(JSC::EncodedJSValue possibleReadableStream, Zig::GlobalObject* globalObject)
 {
     auto* stream = dynamicDowncast<JSReadableStream>(JSValue::decode(possibleReadableStream));
     if (!stream) [[unlikely]]
@@ -135,37 +152,34 @@ extern "C" void ReadableStream__cancel(JSC::EncodedJSValue possibleReadableStrea
         return;
 
     auto& vm = JSC::getVM(globalObject);
-    // The native caller cannot observe VM exception state, so nothing may stay pending
-    // here (a termination does, by design).
-    auto catchScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     JSValue reason = WebCore::createDOMException(globalObject, WebCore::ExceptionCode::AbortError);
-    if (catchScope.exception()) [[unlikely]] {
-        catchScope.clearExceptionExceptTermination();
-        return;
-    }
+    RETURN_IF_EXCEPTION(scope, );
     auto* result = readableStreamCancel(globalObject, stream, reason);
-    if (catchScope.exception()) [[unlikely]] {
-        catchScope.clearExceptionExceptTermination();
-        return;
-    }
+    RETURN_IF_EXCEPTION(scope, );
     markPromiseAsHandled(vm, result);
 }
 
-extern "C" void ReadableStream__cancelWithReason(JSC::EncodedJSValue possibleReadableStream, Zig::GlobalObject* globalObject, JSC::EncodedJSValue reason)
+extern "C" [[ZIG_EXPORT(check_slow)]] void ReadableStream__cancelWithReason(JSC::EncodedJSValue possibleReadableStream, Zig::GlobalObject* globalObject, JSC::EncodedJSValue reason)
 {
     auto* stream = dynamicDowncast<JSReadableStream>(JSValue::decode(possibleReadableStream));
     if (!stream) [[unlikely]]
         return;
 
     auto& vm = JSC::getVM(globalObject);
-    // See ReadableStream__cancel: never return to the native caller with a pending exception.
-    auto catchScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     auto* result = readableStreamCancel(globalObject, stream, JSValue::decode(reason));
-    if (catchScope.exception()) [[unlikely]] {
-        catchScope.clearExceptionExceptTermination();
-        return;
-    }
+    RETURN_IF_EXCEPTION(scope, );
     markPromiseAsHandled(vm, result);
+}
+
+extern "C" [[ZIG_EXPORT(check_slow)]] void ReadableStream__error(JSC::EncodedJSValue possibleReadableStream, Zig::GlobalObject* globalObject, JSC::EncodedJSValue reason)
+{
+    auto* stream = dynamicDowncast<JSReadableStream>(JSValue::decode(possibleReadableStream));
+    if (!stream) [[unlikely]]
+        return;
+
+    Bun::WebStreams::webStreamControllerError(globalObject, stream, JSValue::decode(reason));
 }
 
 extern "C" void ReadableStream__detach(JSC::EncodedJSValue possibleReadableStream, Zig::GlobalObject* globalObject)
@@ -174,8 +188,19 @@ extern "C" void ReadableStream__detach(JSC::EncodedJSValue possibleReadableStrea
     if (!stream) [[unlikely]]
         return;
     stream->m_nativePtr.set(globalObject->vm(), stream, jsNumber(-1));
-    stream->m_nativeType = 0;
     stream->m_disturbed = true;
+}
+
+// A native sink (fetch body / S3 / FileSink) has attached directly without a reader.
+// Mark the stream disturbed+locked so .locked, .getReader(), and the body-mixin
+// disturbed checks behave as they do after readStreamIntoSink acquires a reader.
+extern "C" void ReadableStream__lockNative(JSC::EncodedJSValue possibleReadableStream, Zig::GlobalObject*)
+{
+    auto* stream = dynamicDowncast<JSReadableStream>(JSValue::decode(possibleReadableStream));
+    if (!stream) [[unlikely]]
+        return;
+    stream->m_disturbed = true;
+    stream->m_lockedWithoutReader = true;
 }
 
 extern "C" JSC::EncodedJSValue ReadableStream__empty(Zig::GlobalObject* globalObject)
@@ -221,6 +246,48 @@ extern "C" JSC::EncodedJSValue ZigGlobalObject__createNativeReadableStream(Zig::
     // Nothing native runs until a consumer materializes the stream.
     stream->m_bunMode = BunStreamMode::NativePending;
     stream->m_nativePtr.set(vm, stream, JSValue::decode(nativePtr));
+    return JSValue::encode(stream);
+}
+
+extern "C" JSC::EncodedJSValue ZigGlobalObject__createNativeTextReadableStream(Zig::GlobalObject* globalObject, JSC::EncodedJSValue nativePtr)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto* stream = JSReadableStream::create(vm, WebCore::getDOMStructure<JSReadableStream>(vm, *globalObject));
+    RETURN_IF_EXCEPTION(scope, {});
+    initializeReadableStream(stream);
+    stream->m_bunMode = BunStreamMode::NativePending;
+    stream->m_nativeTextMode = true;
+    stream->m_nativePtr.set(vm, stream, JSValue::decode(nativePtr));
+    return JSValue::encode(stream);
+}
+
+extern "C" JSC::EncodedJSValue ReadableStream__fromDecodedText(Zig::GlobalObject* globalObject, JSC::EncodedJSValue string)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto* stream = createReadableStream(globalObject, SourceKind::Nothing, nullptr, jsUndefined());
+    RETURN_IF_EXCEPTION(scope, {});
+    auto* controller = uncheckedDowncast<JSReadableStreamDefaultController>(stream->m_controller.get());
+    JSValue chunk = JSValue::decode(string);
+    if (chunk.isString() && asString(chunk)->length()) {
+        readableStreamDefaultControllerEnqueue(globalObject, controller, chunk);
+        RETURN_IF_EXCEPTION(scope, {});
+    }
+    readableStreamDefaultControllerClose(globalObject, controller);
+    RETURN_IF_EXCEPTION(scope, {});
+    return JSValue::encode(stream);
+}
+
+extern "C" JSC::EncodedJSValue ReadableStream__textDecodeFrom(Zig::GlobalObject* globalObject, JSC::EncodedJSValue sourceValue)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto* source = dynamicDowncast<JSReadableStream>(JSValue::decode(sourceValue));
+    if (!source) [[unlikely]]
+        return throwVMTypeError(globalObject, scope, "Expected a ReadableStream"_s);
+    auto* stream = readableStreamTextDecodeFrom(globalObject, source);
+    RETURN_IF_EXCEPTION(scope, {});
     return JSValue::encode(stream);
 }
 
@@ -276,22 +343,4 @@ extern "C" JSC::EncodedJSValue ZigGlobalObject__readableStreamToFormData(Zig::Gl
     auto* stream = toReadableStream(globalObject, scope, streamValue);
     RETURN_IF_EXCEPTION(scope, {});
     RELEASE_AND_RETURN(scope, JSValue::encode(readableStreamToFormData(globalObject, stream, JSValue::decode(contentType))));
-}
-
-extern "C" JSC::EncodedJSValue Bun__assignStreamIntoResumableSink(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue streamValue, JSC::EncodedJSValue sinkValue)
-{
-    auto& vm = JSC::getVM(globalObject);
-    auto catchScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-    auto* stream = dynamicDowncast<JSReadableStream>(JSValue::decode(streamValue));
-    JSObject* sink = JSValue::decode(sinkValue).getObject();
-    if (!stream || !sink) [[unlikely]]
-        return JSValue::encode(jsUndefined());
-    JSValue result = assignStreamIntoResumableSink(globalObject, stream, sink);
-    if (auto* exception = catchScope.exception()) [[unlikely]] {
-        // The native caller cannot observe VM exception state: hand back the Exception
-        // cell and leave nothing pending (a termination stays pending by design).
-        catchScope.clearExceptionExceptTermination();
-        return JSValue::encode(exception);
-    }
-    return JSValue::encode(result);
 }

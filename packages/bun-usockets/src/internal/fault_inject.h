@@ -48,6 +48,12 @@ enum us_fault_syscall {
      * always fresh from the kernel here, so the failure path is unreachable
      * without fault injection. Only US_FAULT_ERRNO applies. */
     US_FAULT_POLL_START,
+    /* Not a syscall: the JS Buffer allocated for a TLS session/keylog payload
+     * in the Rust on_session/on_keylog dispatch. It only fails on JSC heap
+     * OOM, so the failure path is unreachable without injection. Only
+     * US_FAULT_ERRNO applies, and the errno value is ignored — the simulated
+     * failure is a thrown JS out-of-memory error, not an errno. */
+    US_FAULT_SESSION_BUFFER,
     US_FAULT_COUNT
 };
 

@@ -59,7 +59,7 @@ HandleScope::~HandleScope()
         // frame (a no-op when the frame created no handles, since the newest remaining grant
         // then already matches the restored limit).
         if (auto* current = m_isolate->globalInternals()->currentHandleScope()) {
-            current->m_buffer->deleteGrantsBack(data->limit);
+            current->m_buffer->deleteGrantsBack(m_isolate, data->limit);
         }
         // This frame is an escapable scope going through the exported destructor (old ABI);
         // drop its escape reservation if Escape() was never called.
@@ -79,6 +79,13 @@ HandleScope::~HandleScope()
     auto* data = shim::getHandleScopeData(m_isolate);
     data->next = m_buffer->savedNext();
     data->limit = m_buffer->savedLimit();
+    // A live callback frame's return value may point into this buffer (scopes
+    // popping mid-callback: old-ABI addon scopes, Bun-internal ones like
+    // Array::Iterate's). Move it to the enclosing scope so it survives until
+    // the frame is read.
+    if (m_previousHandleScope) {
+        m_buffer->evacuateActiveReturnValues(m_isolate, m_previousHandleScope->m_buffer);
+    }
     m_buffer->clear();
     m_buffer = nullptr;
 }
@@ -144,7 +151,7 @@ void HandleScope::DeleteExtensions(Isolate* isolate)
         return;
     }
     auto* data = shim::getHandleScopeData(isolate);
-    handleScope->m_buffer->deleteGrantsBack(data->limit);
+    handleScope->m_buffer->deleteGrantsBack(isolate, data->limit);
 }
 
 } // namespace v8

@@ -1,0 +1,11 @@
+{
+  "name": "v9-reference-shapes",
+  "version": "1.0.0",
+  "dependencies": {
+    "@types/no-deps": "^1.0.0",
+    "nd": "npm:no-deps@1.0.1",
+    "one-dep": "^1.0.0",
+    "tb": "file:tb-1.0.0.tgz",
+    "tnd": "npm:@types/no-deps@2.0.0"
+  }
+}

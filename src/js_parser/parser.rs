@@ -42,7 +42,7 @@ pub mod options {
     }
     impl Format {
         #[inline]
-        pub const fn is_esm(self) -> bool {
+        pub(crate) const fn is_esm(self) -> bool {
             matches!(self, Format::Esm)
         }
     }
@@ -93,7 +93,7 @@ pub mod options {
         }
 
         /// shape is the extracted template representation (may be "").
-        pub fn allows(&self, shape: &[u8]) -> bool {
+        pub(crate) fn allows(&self, shape: &[u8]) -> bool {
             match self {
                 AllowUnresolved::All => true,
                 AllowUnresolved::None => false,
@@ -145,13 +145,6 @@ pub mod options {
     #[derive(Clone)]
     pub struct ReactFastRefresh {
         pub import_source: Cow<'static, [u8]>,
-    }
-    impl Default for ReactFastRefresh {
-        fn default() -> Self {
-            Self {
-                import_source: Cow::Borrowed(b"react-refresh/runtime"),
-            }
-        }
     }
 }
 pub use crate::parse::parse_entry::{Options as ParserOptions, Parser};
@@ -264,6 +257,9 @@ pub mod Runtime {
         /// in watch/dev-server mode.
         pub bundler_feature_flags: Option<Box<StringSet>>,
 
+        /// `Define::user_hash` of this parse's define table (runtime transpiler cache key).
+        pub define_hash: Option<u64>,
+
         /// REPL mode: transforms code for interactive evaluation
         /// - Wraps lone object literals `{...}` in parentheses
         /// - Hoists variable declarations for REPL persistence
@@ -311,6 +307,7 @@ pub mod Runtime {
                 runtime_transpiler_cache: None,
                 lower_using: true,
                 bundler_feature_flags: None,
+                define_hash: None,
                 repl_mode: false,
                 jsx_optimization_inline: false,
             }
@@ -327,7 +324,7 @@ pub mod Runtime {
         /// deref so the four parse-entry use sites stay safe.
         #[inline]
         #[allow(clippy::mut_from_ref)]
-        pub fn runtime_transpiler_cache_mut(&self) -> Option<&mut RuntimeTranspilerCache> {
+        pub(crate) fn runtime_transpiler_cache_mut(&self) -> Option<&mut RuntimeTranspilerCache> {
             // SAFETY: `runtime_transpiler_cache` is `Option<*mut _>` (see PORT
             // NOTE on the field) — the caller that populated it guarantees the
             // pointee is unique to this parse and outlives `Features`.
@@ -347,7 +344,7 @@ pub mod Runtime {
             // so sort the inputs first; the resulting `keys()` iteration order
             // is then byte-lexicographic.
             let mut sorted: Vec<&[u8]> = feature_flags.to_vec();
-            sorted.sort_unstable();
+            bun_collections::index_sort::sort_slice_unstable_by(&mut sorted, |a, b| a.cmp(b));
             let mut set = StringSet::new();
             for flag in sorted {
                 let _ = set.insert(flag);
@@ -359,7 +356,7 @@ pub mod Runtime {
         // the feature fields that affect transpiled output.
         //
         // Takes `Wyhash` (NOT `Wyhash11`).
-        pub fn hash_for_runtime_transpiler(&self, hasher: &mut Wyhash) {
+        pub(crate) fn hash_for_runtime_transpiler(&self, hasher: &mut Wyhash) {
             debug_assert!(self.runtime_transpiler_cache.is_some());
 
             let bools: [bool; 17] = [
@@ -398,9 +395,15 @@ pub mod Runtime {
                     hasher.update(b"\x00");
                 }
             }
+
+            // Define pairs and `--drop` entries. `None` adds nothing, like an empty flag set.
+            if let Some(define_hash) = self.define_hash {
+                hasher.update(b"define");
+                hasher.update(&define_hash.to_le_bytes());
+            }
         }
 
-        pub fn should_unwrap_require(&self, package_name: &[u8]) -> bool {
+        pub(crate) fn should_unwrap_require(&self, package_name: &[u8]) -> bool {
             !package_name.is_empty()
                 && strings::index_equal_any(self.unwrap_commonjs_packages, package_name).is_some()
         }
@@ -413,109 +416,6 @@ pub mod Runtime {
     pub(crate) use bun_ast::runtime::{
         Imports, ReactCompilerMode, ReplaceableExport, ReplaceableExportMap, ServerComponentsMode,
     };
-
-    // ───────────────────────────── Runtime / Fallback ─────────────────────
-
-    // ───────────────────────────── Fallback ───────────────────────────────
-    // REFACTOR_BUN_AST: moved here from `bun_ast::runtime` — needs
-    // `bun_options_types::schema`, `bun_io`, `bun_base64`, all of which would
-    // form a cycle inside `bun_ast`.
-
-    use bun_options_types::schema;
-    use bun_options_types::schema::api;
-    use core::fmt;
-
-    pub struct Fallback;
-
-    impl Fallback {
-        pub const HTML_BACKEND_TEMPLATE: &'static [u8] = include_bytes!("../fallback-backend.html");
-
-        #[inline]
-        pub fn error_js() -> &'static [u8] {
-            bun_core::runtime_embed_file!(Codegen, "bun-error/index.js").as_bytes()
-        }
-
-        #[inline]
-        pub fn error_css() -> &'static [u8] {
-            bun_core::runtime_embed_file!(Codegen, "bun-error/bun-error.css").as_bytes()
-        }
-
-        #[inline]
-        pub fn fallback_decoder_js() -> &'static [u8] {
-            bun_core::runtime_embed_file!(Codegen, "fallback-decoder.js").as_bytes()
-        }
-
-        pub fn render_backend(
-            msg: &api::FallbackMessageContainer,
-            writer: &mut impl bun_io::Write,
-        ) -> bun_io::Result<()> {
-            let blob = Base64FallbackMessage { msg };
-            let bun_error_css = Self::error_css();
-            let bun_error = Self::error_js();
-            let bun_error_page_css: &[u8] = b"";
-            let fallback = Self::fallback_decoder_js();
-            render_named_template(
-                writer,
-                Self::HTML_BACKEND_TEMPLATE,
-                &mut |w, name| match name {
-                    b"blob" => w.write_fmt(format_args!("{}", blob)),
-                    b"bun_error_css" => w.write_all(bun_error_css),
-                    b"bun_error" => w.write_all(bun_error),
-                    b"bun_error_page_css" => w.write_all(bun_error_page_css),
-                    b"fallback" => w.write_all(fallback),
-                    _ => Ok(()),
-                },
-            )
-        }
-    }
-
-    /// Tiny substitutor for `{[name]s}` / `{[name]f}` named placeholders
-    /// (the only specifiers used in fallback.html / fallback-backend.html).
-    fn render_named_template<W: bun_io::Write>(
-        writer: &mut W,
-        template: &'static [u8],
-        subst: &mut dyn FnMut(&mut W, &[u8]) -> bun_io::Result<()>,
-    ) -> bun_io::Result<()> {
-        let mut i = 0usize;
-        let mut last = 0usize;
-        let bytes = template;
-        while i + 1 < bytes.len() {
-            if bytes[i] == b'{' && bytes[i + 1] == b'[' {
-                let mut j = i + 2;
-                while j < bytes.len() && bytes[j] != b']' {
-                    j += 1;
-                }
-                if j + 2 < bytes.len() && bytes[j] == b']' && bytes[j + 2] == b'}' {
-                    writer.write_all(&bytes[last..i])?;
-                    let name = &bytes[i + 2..j];
-                    subst(writer, name)?;
-                    i = j + 3;
-                    last = i;
-                    continue;
-                }
-            }
-            i += 1;
-        }
-        writer.write_all(&bytes[last..])
-    }
-
-    pub(crate) struct Base64FallbackMessage<'a> {
-        pub msg: &'a api::FallbackMessageContainer,
-    }
-
-    impl fmt::Display for Base64FallbackMessage<'_> {
-        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-            let mut bb: Vec<u8> = Vec::new();
-            let mut encoder = schema::Writer::new(&mut bb);
-            self.msg.encode(&mut encoder); // catch {}
-            // Standard alphabet, no '=' padding.
-            let enc = &bun_base64::zig_base64::STANDARD_NO_PAD.encoder;
-            let mut out = vec![0u8; enc.calc_size(bb.len())];
-            let s = enc.encode(&mut out, &bb); // catch {}
-            // SAFETY: STANDARD_ALPHABET_CHARS is pure ASCII; encoder output contains only those bytes.
-            f.write_str(unsafe { core::str::from_utf8_unchecked(s) })
-        }
-    }
 }
 pub type RuntimeFeatures = Runtime::Features;
 pub(crate) type RuntimeImports = Runtime::Imports;
@@ -528,8 +428,8 @@ pub use crate::p::P;
 pub use bun_ast as js_ast;
 use js_ast::G;
 pub use js_ast::{
-    B, Binding, BindingNodeIndex, BindingNodeList, E, Expr, ExprNodeIndex, ExprNodeList, LocRef, S,
-    Scope, Stmt, StmtNodeIndex, StmtNodeList, Symbol,
+    B, Binding, BindingNodeIndex, E, Expr, ExprNodeIndex, ExprNodeList, LocRef, S, Scope, Stmt,
+    StmtNodeIndex, StmtNodeList, Symbol,
 };
 
 pub use js_ast::Op;
@@ -542,16 +442,21 @@ use crate::defines::Define;
 
 // ──────────────────────────────────────────────────────────────────────────
 
-pub struct ExprListLoc {
-    pub list: ExprNodeList,
-    pub loc: bun_ast::Loc,
+pub(crate) struct ExprListLoc {
+    pub(crate) list: ExprNodeList,
+    pub(crate) loc: bun_ast::Loc,
 }
 
 pub(crate) const LOC_MODULE_SCOPE: bun_ast::Loc = bun_ast::Loc { start: -100 };
 
 pub struct DeferredImportNamespace {
-    pub namespace: LocRef,
-    pub import_record_id: u32,
+    pub(crate) namespace: LocRef,
+    pub(crate) import_record_id: u32,
+    /// Scope the namespace binding lives in. Used by
+    /// `imports_to_convert_from_dynamic_import` to bail when a direct
+    /// `eval()` can observe the binding by name. Unused by
+    /// `imports_to_convert_from_require`.
+    pub(crate) scope: Option<bun_ast::StoreRef<bun_ast::Scope>>,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -598,15 +503,15 @@ impl JSXImport {
 
 #[derive(Default)]
 pub struct JSXImportSymbols {
-    pub jsx: Option<LocRef>,
-    pub jsx_dev: Option<LocRef>,
-    pub jsxs: Option<LocRef>,
-    pub fragment: Option<LocRef>,
-    pub create_element: Option<LocRef>,
+    pub(crate) jsx: Option<LocRef>,
+    pub(crate) jsx_dev: Option<LocRef>,
+    pub(crate) jsxs: Option<LocRef>,
+    pub(crate) fragment: Option<LocRef>,
+    pub(crate) create_element: Option<LocRef>,
 }
 
 impl JSXImportSymbols {
-    pub(crate) fn get(&self, name: &[u8]) -> Option<Ref> {
+    fn get(&self, name: &[u8]) -> Option<Ref> {
         if name == b"jsx" {
             return self.jsx.map(|jsx| jsx.ref_);
         }
@@ -743,18 +648,18 @@ pub(crate) const EXPORTS_STRING_NAME: &[u8] = b"exports";
 
 #[derive(Clone, Copy)]
 pub struct MacroRefData<'a> {
-    pub import_record_id: u32,
+    pub(crate) import_record_id: u32,
     /// if name is None the macro is imported as a namespace import
     /// import * as macros from "./macros.js" with {type: "macro"};
-    pub name: Option<&'a [u8]>,
+    pub(crate) name: Option<&'a [u8]>,
 }
 
 type MacroRefs<'a> = ArrayHashMap<Ref, MacroRefData<'a>>;
 
-pub enum Substitution {
+pub(crate) enum Substitution {
     Success(Expr),
     Failure(Expr),
-    Continue(Expr),
+    Continue,
 }
 
 /// If we are currently in a hoisted child of the module scope, relocate these
@@ -769,8 +674,8 @@ pub enum Substitution {
 /// Because "foo" was defined. And now it's not.
 #[derive(Default)]
 pub struct RelocateVars {
-    pub stmt: Option<Stmt>,
-    pub ok: bool,
+    pub(crate) stmt: Option<Stmt>,
+    pub(crate) ok: bool,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -781,21 +686,28 @@ pub enum RelocateVarsMode {
 
 #[derive(Default)]
 pub struct VisitArgsOpts<'a> {
-    pub body: &'a [Stmt],
-    pub has_rest_arg: bool,
+    pub(crate) body: &'a [Stmt],
+    pub(crate) has_rest_arg: bool,
     /// This is true if the function is an arrow function or a method
-    pub is_unique_formal_parameters: bool,
+    pub(crate) is_unique_formal_parameters: bool,
+}
+
+#[derive(Clone, Copy)]
+pub struct VisitDeclOpts {
+    pub(crate) was_anonymous_named_expr: bool,
+    pub(crate) could_be_const_value: bool,
+    pub(crate) could_be_macro: bool,
 }
 
 #[derive(Clone, Copy)]
 pub struct TransposeState {
-    pub is_await_target: bool,
-    pub is_then_catch_target: bool,
-    pub is_require_immediately_assigned_to_decl: bool,
-    pub loc: bun_ast::Loc,
-    pub import_record_tag: Option<bun_ast::ImportRecordTag>,
-    pub import_loader: Option<bun_ast::Loader>,
-    pub import_options: Expr,
+    pub(crate) is_await_target: bool,
+    pub(crate) is_then_catch_target: bool,
+    pub(crate) is_require_immediately_assigned_to_decl: bool,
+    pub(crate) loc: bun_ast::Loc,
+    pub(crate) import_record_tag: Option<bun_ast::ImportRecordTag>,
+    pub(crate) import_loader: Option<bun_ast::Loader>,
+    pub(crate) import_options: Expr,
 }
 
 impl Default for TransposeState {
@@ -812,13 +724,13 @@ impl Default for TransposeState {
     }
 }
 
-pub enum JSXTagData {
-    Fragment(u8),
+pub(crate) enum JSXTagData {
+    Fragment,
     Tag(Expr),
 }
 
 impl JSXTagData {
-    pub fn as_expr(&self) -> Option<ExprNodeIndex> {
+    pub(crate) fn as_expr(&self) -> Option<ExprNodeIndex> {
         match self {
             JSXTagData::Tag(tag) => Some(*tag),
             _ => None,
@@ -846,7 +758,7 @@ impl<'a> JSXTag<'a> {
         if p.lexer().token == T::TGreaterThan {
             return Ok(JSXTag {
                 range: bun_ast::Range { loc, len: 0 },
-                data: JSXTagData::Fragment(1),
+                data: JSXTagData::Fragment,
                 name: b"",
             });
         }
@@ -860,8 +772,8 @@ impl<'a> JSXTag<'a> {
         // Certain identifiers are strings
         // <div
         // <button
-        // <Hello-:Button
-        if strings::contains_comptime(name, b"-:")
+        // <Hello-Button, <ns:button (any name containing '-' or ':')
+        if strings::contains_any(name, b"-:")
             || (p.lexer().token != T::TDot && name[0] >= b'a' && name[0] <= b'z')
         {
             return Ok(JSXTag {
@@ -932,13 +844,13 @@ impl<'a> JSXTag<'a> {
 }
 
 pub struct ExprOrLetStmt {
-    pub stmt_or_expr: js_ast::StmtOrExpr,
+    pub(crate) stmt_or_expr: js_ast::StmtOrExpr,
     // `decls` borrows the heap buffer that was just moved into `S::Local`.
     // The buffer pointer is stable across
     // the move, but borrowck can't see that — store as `RawSlice` to record the
     // outlives-holder invariant without a per-site unsafe cast. Read by the
     // for-loop parser so for-in/for-of heads can validate "let"/"using" decls.
-    pub decls: bun_collections::RawSlice<G::Decl>,
+    pub(crate) decls: bun_collections::RawSlice<G::Decl>,
 }
 
 impl Default for ExprOrLetStmt {
@@ -948,12 +860,6 @@ impl Default for ExprOrLetStmt {
             decls: bun_collections::RawSlice::EMPTY,
         }
     }
-}
-
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub enum FunctionKind {
-    Stmt,
-    Expr,
 }
 
 #[repr(u8)]
@@ -1004,6 +910,7 @@ impl IdentifierOpts {
     const IS_DELETE_TARGET: u8 = 1 << 2;
     const WAS_ORIGINALLY_IDENTIFIER: u8 = 1 << 3;
     const IS_CALL_TARGET: u8 = 1 << 4;
+    const IS_TEMPLATE_TAG: u8 = 1 << 5;
 
     #[inline]
     pub(crate) const fn assign_target(self) -> js_ast::AssignTarget {
@@ -1031,6 +938,11 @@ impl IdentifierOpts {
     pub(crate) const fn is_call_target(self) -> bool {
         self.0 & Self::IS_CALL_TARGET != 0
     }
+    /// The tag of a tagged template, which passes `this` like a call target.
+    #[inline]
+    pub(crate) const fn is_template_tag(self) -> bool {
+        self.0 & Self::IS_TEMPLATE_TAG != 0
+    }
 
     // Builder-style helpers (this stays a packed u8 rather than a
     // named-field struct).
@@ -1056,6 +968,11 @@ impl IdentifierOpts {
     #[inline]
     pub(crate) const fn with_is_call_target(mut self, v: bool) -> Self {
         self.0 = (self.0 & !Self::IS_CALL_TARGET) | ((v as u8) << 4);
+        self
+    }
+    #[inline]
+    pub(crate) const fn with_is_template_tag(mut self, v: bool) -> Self {
+        self.0 = (self.0 & !Self::IS_TEMPLATE_TAG) | ((v as u8) << 5);
         self
     }
 }
@@ -1105,13 +1022,13 @@ pub struct ExprIn {
     /// For example, we shouldn't transform "undefined = 1" into "void 0 = 1". This
     /// isn't something real-world code would do but it matters for conformance
     /// tests.
-    pub assign_target: js_ast::AssignTarget,
+    pub(crate) assign_target: js_ast::AssignTarget,
 
     /// Currently this is only used when unwrapping a call to `require()`
     /// with `__toESM()`.
-    pub is_immediately_assigned_to_decl: bool,
+    pub(crate) is_immediately_assigned_to_decl: bool,
 
-    pub property_access_for_method_call_maybe_should_replace_with_undefined: bool,
+    pub(crate) property_access_for_method_call_maybe_should_replace_with_undefined: bool,
 }
 
 /// This function exists to tie all of these checks together in one place
@@ -1123,7 +1040,7 @@ pub(crate) fn is_eval_or_arguments(name: &[u8]) -> bool {
 
 #[derive(Clone, Copy, Default)]
 pub struct PrependTempRefsOpts {
-    pub kind: StmtsKind,
+    pub(crate) kind: StmtsKind,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Default)]
@@ -1137,56 +1054,40 @@ pub enum StmtsKind {
 
 #[derive(Default)]
 pub struct ExprBindingTuple {
-    pub expr: Option<ExprNodeIndex>,
-    pub binding: Option<Binding>,
+    pub(crate) expr: Option<ExprNodeIndex>,
+    pub(crate) binding: Option<Binding>,
 }
 
 #[derive(Default)]
 pub struct TempRef {
-    pub r#ref: Ref,
-    pub value: Option<Expr>,
+    pub(crate) r#ref: Ref,
 }
 
 pub struct ThenCatchChain {
-    pub next_target: js_ast::ExprData,
-    pub has_multiple_args: bool,
-    pub has_catch: bool,
-}
-impl Default for ThenCatchChain {
-    fn default() -> Self {
-        Self {
-            next_target: js_ast::ExprData::EMissing(E::Missing {}),
-            has_multiple_args: false,
-            has_catch: false,
-        }
-    }
+    pub(crate) next_target: js_ast::ExprData,
+    pub(crate) has_multiple_args: bool,
+    pub(crate) has_catch: bool,
 }
 
 #[derive(Clone, Copy)]
 pub struct ParsedPath<'a> {
-    pub loc: bun_ast::Loc,
-    pub text: &'a [u8],
-    pub is_macro: bool,
-    pub import_tag: bun_ast::ImportRecordTag,
-    pub loader: Option<bun_ast::Loader>,
+    pub(crate) loc: bun_ast::Loc,
+    pub(crate) text: &'a [u8],
+    pub(crate) is_macro: bool,
+    pub(crate) import_tag: bun_ast::ImportRecordTag,
+    pub(crate) loader: Option<bun_ast::Loader>,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum StrictModeFeature {
-    WithStatement,
-    DeleteBareName,
-    ForInVarInit,
     EvalOrArguments,
     ReservedWord,
-    LegacyOctalLiteral,
-    LegacyOctalEscape,
-    IfElseFunctionStmt,
 }
 
 #[derive(Clone, Copy)]
 pub struct InvalidLoc {
-    pub loc: bun_ast::Loc,
-    pub kind: InvalidLocTag,
+    pub(crate) loc: bun_ast::Loc,
+    pub(crate) kind: InvalidLocTag,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Default)]
@@ -1216,7 +1117,7 @@ impl InvalidLoc {
 }
 
 pub(crate) type LocList<'bump> = bun_alloc::ArenaVec<'bump, InvalidLoc>;
-pub type StmtList<'bump> = bun_alloc::ArenaVec<'bump, Stmt>;
+pub(crate) type StmtList<'bump> = bun_alloc::ArenaVec<'bump, Stmt>;
 
 /// This hash table is used every time we parse function args
 /// Rather than allocating a new hash table each time, we can just reuse the previous allocation
@@ -1239,7 +1140,7 @@ impl StringVoidMap {
         })
     }
 
-    pub(crate) fn reset(&mut self) {
+    fn reset(&mut self) {
         // We must reset or the hash table will contain invalid pointers
         self.map.clear();
     }
@@ -1272,13 +1173,13 @@ pub(crate) type RefRefMap = HashMap<Ref, Ref>;
 // indexable + truncatable. The Scope itself is arena-owned for `'arena`.
 #[derive(Clone, Copy)]
 pub struct ScopeOrder<'arena> {
-    pub loc: bun_ast::Loc,
-    pub scope: *mut Scope,
+    pub(crate) loc: bun_ast::Loc,
+    pub(crate) scope: *mut Scope,
     _phantom: core::marker::PhantomData<&'arena Scope>,
 }
 impl<'arena> ScopeOrder<'arena> {
     #[inline]
-    pub fn new(loc: bun_ast::Loc, scope: *mut Scope) -> Self {
+    pub(crate) fn new(loc: bun_ast::Loc, scope: *mut Scope) -> Self {
         Self {
             loc,
             scope,
@@ -1289,7 +1190,7 @@ impl<'arena> ScopeOrder<'arena> {
     /// so callers read `order.scope_ref().kind` instead of open-coding
     /// `unsafe { &*order.scope }` at every visit-pass check.
     #[inline]
-    pub fn scope_ref(&self) -> js_ast::StoreRef<Scope> {
+    pub(crate) fn scope_ref(&self) -> js_ast::StoreRef<Scope> {
         // `scope` is always set from a live arena allocation in
         // `push_scope_for_parse_pass`; never null in practice.
         js_ast::StoreRef::from(
@@ -1298,21 +1199,11 @@ impl<'arena> ScopeOrder<'arena> {
     }
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Default)]
 pub struct ParenExprOpts {
-    pub async_range: bun_ast::Range,
-    pub is_async: bool,
-    pub force_arrow_fn: bool,
-}
-
-impl Default for ParenExprOpts {
-    fn default() -> Self {
-        Self {
-            async_range: bun_ast::Range::NONE,
-            is_async: false,
-            force_arrow_fn: false,
-        }
-    }
+    pub(crate) is_async: bool,
+    pub(crate) force_arrow_fn: bool,
+    pub(crate) is_after_question_and_before_colon: bool,
 }
 
 #[repr(u8)]
@@ -1329,36 +1220,34 @@ pub enum AwaitOrYield {
 /// arrow expressions.
 #[derive(Clone)]
 pub struct FnOrArrowDataParse {
-    pub async_range: bun_ast::Range,
-    pub needs_async_loc: bun_ast::Loc,
-    pub allow_await: AwaitOrYield,
-    pub allow_yield: AwaitOrYield,
-    pub allow_super_call: bool,
-    pub allow_super_property: bool,
-    pub is_top_level: bool,
-    pub is_constructor: bool,
-    pub is_typescript_declare: bool,
+    pub(crate) needs_async_loc: bun_ast::Loc,
+    pub(crate) allow_await: AwaitOrYield,
+    pub(crate) allow_yield: AwaitOrYield,
+    pub(crate) allow_super_call: bool,
+    pub(crate) allow_super_property: bool,
+    pub(crate) is_top_level: bool,
+    pub(crate) is_constructor: bool,
+    pub(crate) is_typescript_declare: bool,
 
-    pub has_argument_decorators: bool,
-    pub has_decorators: bool,
+    pub(crate) has_argument_decorators: bool,
+    pub(crate) has_decorators: bool,
 
-    pub is_return_disallowed: bool,
-    pub is_this_disallowed: bool,
+    pub(crate) is_return_disallowed: bool,
+    pub(crate) is_this_disallowed: bool,
 
-    pub arrow_arg_errors: DeferredArrowArgErrors,
-    pub track_arrow_arg_errors: bool,
+    pub(crate) arrow_arg_errors: DeferredArrowArgErrors,
+    pub(crate) track_arrow_arg_errors: bool,
 
     /// In TypeScript, forward declarations of functions have no bodies
-    pub allow_missing_body_for_type_script: bool,
+    pub(crate) allow_missing_body_for_type_script: bool,
 
     /// Allow TypeScript decorators in function arguments
-    pub allow_ts_decorators: bool,
+    pub(crate) allow_ts_decorators: bool,
 }
 
 impl Default for FnOrArrowDataParse {
     fn default() -> Self {
         Self {
-            async_range: bun_ast::Range::NONE,
             needs_async_loc: bun_ast::Loc::EMPTY,
             allow_await: AwaitOrYield::AllowIdent,
             allow_yield: AwaitOrYield::AllowIdent,
@@ -1384,47 +1273,22 @@ impl Default for FnOrArrowDataParse {
 /// arrow expressions.
 #[derive(Clone, Copy, Default)]
 pub struct FnOrArrowDataVisit {
-    pub is_async: bool,
-    pub is_inside_loop: bool,
-    pub is_inside_switch: bool,
-    pub is_outside_fn_or_arrow: bool,
+    pub(crate) is_inside_loop: bool,
+    pub(crate) is_inside_switch: bool,
+    pub(crate) is_outside_fn_or_arrow: bool,
 
     /// This is used to silence unresolvable imports due to "require" calls inside
     /// a try/catch statement. The assumption is that the try/catch statement is
-    /// there to handle the case where the reference to "require" crashes.
-    pub try_body_count: i32,
+    /// there to handle the case where the reference to "require" crashes. Counts
+    /// both the try body and the catch body.
+    pub(crate) try_body_count: i32,
 }
 
 /// This is function-specific information used during visiting. It is saved and
 /// restored on the call stack around code that parses nested functions (but not
 /// nested arrow functions).
 #[derive(Default)]
-pub struct FnOnlyDataVisit<'a> {
-    /// This is a reference to the magic "arguments" variable that exists inside
-    /// functions in JavaScript. It will be non-nil inside functions and nil
-    /// otherwise.
-    pub arguments_ref: Option<Ref>,
-
-    /// This is a reference to the enclosing class name if there is one. It's used
-    /// to implement "this" and "super" references. A name is automatically generated
-    /// if one is missing so this will always be present inside a class body.
-    ///
-    /// `&Cell<Ref>` (not `&mut Ref`): the visit pass needs to
-    /// both share this slot into nested `fn_only_data_visit` frames *and* read/write
-    /// it from the enclosing `visit_class` frame. `Cell` gives shared interior
-    /// mutability for the `Copy` `Ref` payload with zero `unsafe`.
-    pub class_name_ref: Option<&'a core::cell::Cell<Ref>>,
-
-    /// If true, we're inside a static class context where "this" expressions
-    /// should be replaced with the class name.
-    pub should_replace_this_with_class_name_ref: bool,
-
-    /// If we're inside an async arrow function and async functions are not
-    /// supported, then we will have to convert that arrow function to a generator
-    /// function. That means references to "arguments" inside the arrow function
-    /// will have to reference a captured variable instead of the real variable.
-    pub is_inside_async_arrow_fn: bool,
-
+pub struct FnOnlyDataVisit {
     /// If false, the value for "this" is the top-level module scope "this" value.
     /// That means it's "undefined" for ECMAScript modules and "exports" for
     /// CommonJS modules. We track this information so that we can substitute the
@@ -1435,7 +1299,7 @@ pub struct FnOnlyDataVisit<'a> {
     /// If true, the value for "this" is nested inside something (either a function
     /// or a class declaration). That means the top-level module scope "this" value
     /// has been shadowed and is now inaccessible.
-    pub is_this_nested: bool,
+    pub(crate) is_this_nested: bool,
 }
 
 /// Due to ES6 destructuring patterns, there are many cases where it's
@@ -1446,8 +1310,8 @@ pub struct FnOnlyDataVisit<'a> {
 #[derive(Clone, Copy, Default)]
 pub struct DeferredErrors {
     /// These are errors for expressions
-    pub invalid_expr_default_value: Option<bun_ast::Range>,
-    pub invalid_expr_after_question: Option<bun_ast::Range>,
+    pub(crate) invalid_expr_default_value: Option<bun_ast::Range>,
+    pub(crate) invalid_expr_after_question: Option<bun_ast::Range>,
 }
 
 impl DeferredErrors {
@@ -1461,29 +1325,29 @@ impl DeferredErrors {
     }
 }
 
-pub struct ImportClause<'a> {
+pub(crate) struct ImportClause<'a> {
     /// Arena-owned. `&mut` (not `&`) so callers can hand it to AST nodes
     /// (`S::Import.items: StoreSlice<ClauseItem>`).
-    pub items: &'a mut [js_ast::ClauseItem],
-    pub is_single_line: bool,
-    pub had_type_only_imports: bool,
+    pub(crate) items: &'a mut [js_ast::ClauseItem],
+    pub(crate) is_single_line: bool,
+    pub(crate) had_type_only_imports: bool,
 }
 
 pub struct PropertyOpts {
-    pub async_range: bun_ast::Range,
-    pub declare_range: bun_ast::Range,
-    pub is_async: bool,
-    pub is_generator: bool,
+    pub(crate) async_range: bun_ast::Range,
+    pub(crate) declare_range: bun_ast::Range,
+    pub(crate) is_async: bool,
+    pub(crate) is_generator: bool,
 
     // Class-related options
-    pub is_static: bool,
-    pub is_class: bool,
-    pub class_has_extends: bool,
-    pub allow_ts_decorators: bool,
-    pub is_ts_abstract: bool,
-    pub ts_decorators: ExprNodeList,
-    pub has_argument_decorators: bool,
-    pub has_class_decorators: bool,
+    pub(crate) is_static: bool,
+    pub(crate) is_class: bool,
+    pub(crate) class_has_extends: bool,
+    pub(crate) allow_ts_decorators: bool,
+    pub(crate) is_ts_abstract: bool,
+    pub(crate) ts_decorators: ExprNodeList,
+    pub(crate) has_argument_decorators: bool,
+    pub(crate) has_class_decorators: bool,
 }
 
 impl Default for PropertyOpts {
@@ -1507,16 +1371,15 @@ impl Default for PropertyOpts {
 
 pub struct ScanPassResult {
     pub import_records: Vec<ImportRecord>,
-    pub named_imports: bun_ast::ast_result::NamedImports,
-    pub used_symbols: ParsePassSymbolUsageMap,
-    pub approximate_newline_count: usize,
+    pub(crate) named_imports: bun_ast::ast_result::NamedImports,
+    pub(crate) used_symbols: ParsePassSymbolUsageMap,
+    pub(crate) approximate_newline_count: usize,
 }
 
 #[derive(Clone, Copy)]
 pub struct ParsePassSymbolUse {
-    pub r#ref: Ref,
-    pub used: bool,
-    pub import_record_index: u32,
+    pub(crate) used: bool,
+    pub(crate) import_record_index: u32,
 }
 
 pub(crate) type ParsePassSymbolUsageMap = StringArrayHashMap<ParsePassSymbolUse>;
@@ -1541,33 +1404,33 @@ impl ScanPassResult {
 
 #[derive(Clone, Copy)]
 pub struct FindLabelSymbolResult {
-    pub r#ref: Ref,
-    pub is_loop: bool,
-    pub found: bool,
+    pub(crate) r#ref: Ref,
+    pub(crate) is_loop: bool,
+    pub(crate) found: bool,
 }
 
 #[derive(Clone, Copy, Default)]
 pub struct FindSymbolResult {
-    pub r#ref: Ref,
-    pub declare_loc: Option<bun_ast::Loc>,
-    pub is_inside_with_scope: bool,
+    pub(crate) r#ref: Ref,
+    pub(crate) declare_loc: Option<bun_ast::Loc>,
+    pub(crate) is_inside_with_scope: bool,
 }
 
-pub struct ExportClauseResult<'a> {
+pub(crate) struct ExportClauseResult<'a> {
     /// Arena-owned. `&mut` (not `&`) so callers can hand it to AST nodes
     /// (`S::Export{From,Clause}.items: StoreSlice<ClauseItem>`).
-    pub clauses: &'a mut [js_ast::ClauseItem],
-    pub is_single_line: bool,
-    pub had_type_only_exports: bool,
+    pub(crate) clauses: &'a mut [js_ast::ClauseItem],
+    pub(crate) is_single_line: bool,
+    pub(crate) had_type_only_exports: bool,
 }
 
 #[derive(Clone, Copy)]
 pub struct DeferredTsDecorators<'a> {
-    pub values: &'a [js_ast::Expr],
+    pub(crate) values: &'a [js_ast::Expr],
 
     /// If this turns out to be a "declare class" statement, we need to undo the
     /// scopes that were potentially pushed while parsing the decorator arguments.
-    pub scope_index: usize,
+    pub(crate) scope_index: usize,
 }
 
 #[repr(u8)]
@@ -1582,23 +1445,45 @@ pub enum LexicalDecl {
 
 #[derive(Default)]
 pub struct ParseClassOptions<'a> {
-    pub ts_decorators: &'a [Expr],
-    pub allow_ts_decorators: bool,
-    pub is_type_script_declare: bool,
+    pub(crate) ts_decorators: &'a [Expr],
+    pub(crate) allow_ts_decorators: bool,
+    pub(crate) is_type_script_declare: bool,
+}
+
+#[repr(u8)]
+#[derive(Clone, Copy, PartialEq, Eq, Default)]
+pub enum StatementScope {
+    /// Any nested block/function body. ESM import/export are disallowed here.
+    #[default]
+    Nested,
+    /// Top-level module statement list.
+    Module,
+    /// Inside a TypeScript `namespace`/`module` block.
+    Namespace,
+}
+
+impl StatementScope {
+    #[inline]
+    pub(crate) fn is_module(self) -> bool {
+        matches!(self, Self::Module)
+    }
+    #[inline]
+    pub(crate) fn is_namespace(self) -> bool {
+        matches!(self, Self::Namespace)
+    }
 }
 
 #[derive(Default, Clone, Copy)]
 pub struct ParseStatementOptions<'a> {
-    pub ts_decorators: Option<DeferredTsDecorators<'a>>,
-    pub lexical_decl: LexicalDecl,
-    pub is_module_scope: bool,
-    pub is_namespace_scope: bool,
-    pub is_export: bool,
-    pub is_using_statement: bool,
+    pub(crate) ts_decorators: Option<DeferredTsDecorators<'a>>,
+    pub(crate) lexical_decl: LexicalDecl,
+    pub(crate) scope: StatementScope,
+    pub(crate) is_export: bool,
+    pub(crate) is_using_statement: bool,
     /// For "export default" pseudo-statements,
-    pub is_name_optional: bool,
-    pub is_typescript_declare: bool,
-    pub is_for_loop_init: bool,
+    pub(crate) is_name_optional: bool,
+    pub(crate) is_typescript_declare: bool,
+    pub(crate) is_for_loop_init: bool,
 }
 
 impl<'a> ParseStatementOptions<'a> {
@@ -1608,28 +1493,37 @@ impl<'a> ParseStatementOptions<'a> {
         };
         !decs.values.is_empty()
     }
+
+    #[inline]
+    pub(crate) fn allows_esm_import_export(&self) -> bool {
+        match self.scope {
+            StatementScope::Module => true,
+            StatementScope::Namespace => self.is_typescript_declare,
+            StatementScope::Nested => false,
+        }
+    }
 }
 
 // Only const-able AST node singletons live here. Callers needing the rest
 // (missing nodes, empty statements, the HMR helper exprs) construct them
 // directly — they are cheap value types, so a shared-singleton optimization
 // isn't worth `static mut`/`LazyLock` plumbing.
-pub mod prefill {
+pub(crate) mod prefill {
     use super::*;
 
-    pub mod value {
+    pub(crate) mod value {
         use super::*;
         pub(crate) const ZERO: E::Number = E::Number::new(0.0);
     }
 
-    pub mod string {
+    pub(crate) mod string {
         use super::*;
         pub(crate) const CHILDREN: E::String = E::String::from_static(b"children");
     }
 
-    pub mod data {
+    pub(crate) mod data {
         use super::*;
-        pub const THIS: js_ast::ExprData = js_ast::ExprData::EThis(E::This {});
+        pub(crate) const THIS: js_ast::ExprData = js_ast::ExprData::EThis(E::This {});
         pub(crate) const ZERO: js_ast::ExprData = js_ast::ExprData::ENumber(value::ZERO);
     }
 }
@@ -1665,11 +1559,11 @@ impl JSXTransformType {
 pub type ImportItemForNamespaceMap = StringArrayHashMap<LocRef>;
 
 pub struct MacroState<'a> {
-    pub refs: MacroRefs<'a>,
+    pub(crate) refs: MacroRefs<'a>,
 }
 
 impl<'a> MacroState<'a> {
-    pub fn init() -> MacroState<'a> {
+    pub(crate) fn init() -> MacroState<'a> {
         MacroState {
             refs: MacroRefs::default(),
         }
@@ -1677,20 +1571,20 @@ impl<'a> MacroState<'a> {
 }
 
 pub struct Jest {
-    pub test: Ref,
-    pub it: Ref,
-    pub describe: Ref,
-    pub expect: Ref,
-    pub expect_type_of: Ref,
-    pub before_all: Ref,
-    pub before_each: Ref,
-    pub after_each: Ref,
-    pub after_all: Ref,
-    pub jest: Ref,
-    pub vi: Ref,
-    pub xit: Ref,
-    pub xtest: Ref,
-    pub xdescribe: Ref,
+    pub(crate) test: Ref,
+    pub(crate) it: Ref,
+    pub(crate) describe: Ref,
+    pub(crate) expect: Ref,
+    pub(crate) expect_type_of: Ref,
+    pub(crate) before_all: Ref,
+    pub(crate) before_each: Ref,
+    pub(crate) after_each: Ref,
+    pub(crate) after_all: Ref,
+    pub(crate) jest: Ref,
+    pub(crate) vi: Ref,
+    pub(crate) xit: Ref,
+    pub(crate) xtest: Ref,
+    pub(crate) xdescribe: Ref,
 }
 
 impl Jest {
@@ -1764,8 +1658,8 @@ pub use crate::parse::parse_entry::{JavaScriptParser, TSXParser};
 ///   function* foo() { (x = yield y) => {} }
 #[derive(Clone, Copy)]
 pub struct DeferredArrowArgErrors {
-    pub invalid_expr_await: bun_ast::Range,
-    pub invalid_expr_yield: bun_ast::Range,
+    pub(crate) invalid_expr_await: bun_ast::Range,
+    pub(crate) invalid_expr_yield: bun_ast::Range,
 }
 
 impl Default for DeferredArrowArgErrors {
@@ -1821,6 +1715,7 @@ pub fn new_lazy_export_ast_impl<'bump>(
         define,
         source,
         log: log_ptr,
+        orig_error_count: 0,
     };
     let result = match parser.to_lazy_export_ast(expr, runtime_api_call, symbols) {
         Ok(r) => r,
@@ -1890,9 +1785,11 @@ pub enum WrapMode {
 /// The upstream transforms do not declare `$RefreshReg$` or `$RefreshSig$`. A typical
 /// implementation might look like this, prepending this data to the module start:
 ///
-///     import * as Refresh from 'react-refresh/runtime';
-///     const $RefreshReg$ = (type, id) => Refresh.register(type, "<file id here>" + id);
-///     const $RefreshSig$ = Refresh.createSignatureFunctionForTransform;
+/// ```js
+/// import * as Refresh from 'react-refresh/runtime';
+/// const $RefreshReg$ = (type, id) => Refresh.register(type, "<file id here>" + id);
+/// const $RefreshSig$ = Refresh.createSignatureFunctionForTransform;
+/// ```
 ///
 /// Since Bun is a transpiler *and* bundler, we take a slightly different approach. Aside
 /// from including the link to the refresh runtime, our notation of $RefreshReg$ is just
@@ -1901,28 +1798,28 @@ pub enum WrapMode {
 pub struct ReactRefresh<'a> {
     /// Set if this JSX/TSX file uses the refresh runtime. If so,
     /// we must insert an import statement to it.
-    pub register_used: bool,
-    pub signature_used: bool,
+    pub(crate) register_used: bool,
+    pub(crate) signature_used: bool,
 
     /// $RefreshReg$ is called on all top-level variables that are
     /// components, as well as HOCs found in the `export default` clause.
-    pub register_ref: Ref,
+    pub(crate) register_ref: Ref,
 
     /// $RefreshSig$ is called to create a signature function, which is
     /// used by the refresh runtime to perform smart hook tracking.
-    pub create_signature_ref: Ref,
+    pub(crate) create_signature_ref: Ref,
 
     /// If a comment with '@refresh reset' is seen, we will forward a
     /// force refresh to the refresh runtime. This lets you reset the
     /// state of hooks on an update on a per-component basis.
     // TODO: this is never set
-    pub force_reset: bool,
+    pub(crate) force_reset: bool,
 
     /// The last hook that was scanned. This is used when visiting
     /// `.s_local`, as we must hash the variable destructure if the
     /// hook's result is assigned directly to a local.
     // ARENA: identity-compared against Store-allocated AST node.
-    pub last_hook_seen: Option<*const E::Call>,
+    pub(crate) last_hook_seen: Option<*const E::Call>,
 
     /// Every function sets up stack memory to hold data related to it's
     /// hook tracking. This is a pointer to that ?HookContext, where an
@@ -1940,13 +1837,13 @@ pub struct ReactRefresh<'a> {
     /// modeled as `Option<NonNull<_>>`
     /// (Copy) so the save/set/restore dance in visitStmt/visitExpr can take a
     /// stack-local address without the `'a` borrow the visitor cannot satisfy.
-    pub hook_ctx_storage: Option<core::ptr::NonNull<Option<HookContext>>>,
+    pub(crate) hook_ctx_storage: Option<core::ptr::NonNull<Option<HookContext>>>,
 
     /// This is the most recently generated `_s` call. This is used to compare
     /// against seen calls to plain identifiers when in "export default" and in
     /// "const Component =" to know if an expression had been wrapped in a hook
     /// signature function.
-    pub latest_signature_ref: Ref,
+    pub(crate) latest_signature_ref: Ref,
 
     _phantom: core::marker::PhantomData<&'a ()>,
 }
@@ -1968,9 +1865,9 @@ impl<'a> Default for ReactRefresh<'a> {
 }
 
 pub struct HookContext {
-    pub hasher: Wyhash,
-    pub signature_cb: Ref,
-    pub user_hooks: ArrayHashMap<Ref, Expr>,
+    pub(crate) hasher: Wyhash,
+    pub(crate) signature_cb: Ref,
+    pub(crate) user_hooks: ArrayHashMap<Ref, Expr>,
 }
 
 impl ReactRefresh<'_> {
@@ -2085,5 +1982,5 @@ pub(crate) fn float_to_int32(f: f64) -> i32 {
 pub struct ParseBindingOptions {
     /// This will prevent parsing of destructuring patterns, as using statement
     /// is only allowed to be `using name, name2, name3`, nothing special.
-    pub is_using_statement: bool,
+    pub(crate) is_using_statement: bool,
 }

@@ -113,10 +113,9 @@ function simd(path: string, x64: boolean) {
 
 export const libwebp: Dependency = {
   name: "libwebp",
-  versionMacro: "LIBWEBP",
 
   source: () => ({
-    kind: "github-archive",
+    kind: "github",
     repo: "webmproject/libwebp",
     commit: LIBWEBP_COMMIT,
   }),

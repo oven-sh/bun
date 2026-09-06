@@ -21,12 +21,7 @@ public:
     {
         if constexpr (mode == JSC::SubspaceAccess::Concurrently)
             return nullptr;
-        return WebCore::subspaceForImpl<MyClassT, WebCore::UseCustomHeapCellType::No>(
-            vm,
-            [](auto& spaces) { return spaces.m_clientSubspaceForJSMIMEType.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForJSMIMEType = std::forward<decltype(space)>(space); },
-            [](auto& spaces) { return spaces.m_subspaceForJSMIMEType.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_subspaceForJSMIMEType = std::forward<decltype(space)>(space); });
+        return WebCore::subspaceForImpl<MyClassT, WebCore::UseCustomHeapCellType::No>(vm, BUN_SUBSPACE_SLOTS(m_clientSubspaceForJSMIMEType, m_subspaceForJSMIMEType));
     }
 
     static JSMIMEType* create(JSC::VM& vm, JSC::Structure* structure, WTF::String type, WTF::String subtype, JSMIMEParams* params);

@@ -14,7 +14,7 @@ pub struct Crypto {}
 
 impl Crypto {
     #[bun_jsc::host_fn(method)]
-    pub fn timing_safe_equal(
+    pub(crate) fn timing_safe_equal(
         &self,
         global: &JSGlobalObject,
         callframe: &CallFrame,
@@ -28,7 +28,7 @@ impl Crypto {
     // the JIT checks for a pending exception after the call.
 
     #[bun_jsc::host_fn(method)]
-    pub fn get_random_values(
+    pub(crate) fn get_random_values(
         &self,
         global: &JSGlobalObject,
         callframe: &CallFrame,
@@ -79,12 +79,12 @@ impl Crypto {
     // DOMJIT fast path.
 
     #[bun_jsc::host_fn(method)]
-    pub fn random_uuid(
+    pub(crate) fn random_uuid(
         &self,
         global: &JSGlobalObject,
         _callframe: &CallFrame,
     ) -> JsResult<JSValue> {
-        let (mut str, bytes) = BunString::create_uninitialized_latin1(36);
+        let (str, bytes) = BunString::create_uninitialized_latin1(36);
 
         // SAFETY: `bun_vm()` never returns null for a Bun-owned global.
         let uuid = global.bun_vm().as_mut().rare_data().next_uuid();
@@ -94,13 +94,16 @@ impl Crypto {
                 .try_into()
                 .expect("infallible: size matches"),
         );
-        str.transfer_to_js(global)
+        str.into_js(global)
     }
 
     // DOMJIT fast path.
 
     // `#[JsClass]` emits `CryptoClass__construct` calling this.
-    pub fn constructor(global: &JSGlobalObject, _callframe: &CallFrame) -> JsResult<*mut Crypto> {
+    pub(crate) fn constructor(
+        global: &JSGlobalObject,
+        _callframe: &CallFrame,
+    ) -> JsResult<*mut Crypto> {
         Err(global.throw_illegal_constructor())
     }
 }
@@ -128,10 +131,7 @@ fn random_data(global: &JSGlobalObject, slice: &mut [u8]) {
 // The #[bun_jsc::host_fn] attribute macro emits the `extern "C"` shim with the
 // correct calling convention and `#[unsafe(no_mangle)]` under the exported name.
 #[bun_jsc::host_fn(export = "Bun__randomUUIDv7")]
-pub(crate) fn bun_random_uuid_v7(
-    global: &JSGlobalObject,
-    callframe: &CallFrame,
-) -> JsResult<JSValue> {
+fn bun_random_uuid_v7(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
     let arguments = callframe.arguments_undef::<2>();
 
     let mut encoding_value: JSValue = JSValue::UNDEFINED;
@@ -221,23 +221,20 @@ pub(crate) fn bun_random_uuid_v7(
     );
 
     if encoding == Encoding::Hex {
-        let (mut str, bytes) = BunString::create_uninitialized_latin1(36);
+        let (str, bytes) = BunString::create_uninitialized_latin1(36);
         uuid.print(
             (&mut bytes[0..36])
                 .try_into()
                 .expect("infallible: size matches"),
         );
-        return str.transfer_to_js(global);
+        return str.into_js(global);
     }
 
     encoding.encode_with_max_size(global, 32, &uuid.bytes)
 }
 
 #[bun_jsc::host_fn(export = "Bun__randomUUIDv5")]
-pub(crate) fn bun_random_uuid_v5(
-    global: &JSGlobalObject,
-    callframe: &CallFrame,
-) -> JsResult<JSValue> {
+fn bun_random_uuid_v5(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
     let arguments = callframe.arguments_undef::<3>();
 
     if arguments.len == 0 || arguments.ptr[0].is_undefined_or_null() {
@@ -283,16 +280,13 @@ pub(crate) fn bun_random_uuid_v5(
     let name_value = arguments.ptr[0];
     let namespace_value = arguments.ptr[1];
 
-    // `bun_core::ZigStringSlice` is a borrow-or-own UTF-8 slice.
-    let name: bun_core::ZigStringSlice = 'brk: {
+    let name_buffer;
+    let name: bun_core::Utf8Bytes = 'brk: {
         if name_value.is_string() {
-            let name_str = bun_core::OwnedString::new(name_value.to_bun_string(global)?);
-            let result = name_str.to_utf8();
-
-            break 'brk result;
+            break 'brk name_value.to_utf8(global)?;
         } else if let Some(array_buffer) = name_value.as_array_buffer(global) {
-            let bytes: &[u8] = array_buffer.byte_slice();
-            break 'brk bun_core::ZigStringSlice::from_utf8_never_free(bytes);
+            name_buffer = array_buffer;
+            break 'brk bun_core::Utf8Bytes::Borrowed(name_buffer.byte_slice());
         } else {
             return Err(global
                 .err(
@@ -302,11 +296,10 @@ pub(crate) fn bun_random_uuid_v5(
                 .throw());
         }
     };
-    // `defer name.deinit()` — Utf8Slice's Drop handles cleanup.
 
     let namespace: [u8; 16] = 'brk: {
         if namespace_value.is_string() {
-            let namespace_str = bun_core::OwnedString::new(namespace_value.to_bun_string(global)?);
+            let namespace_str = namespace_value.to_bun_string(global)?;
             let namespace_slice = namespace_str.to_utf8();
 
             if namespace_slice.slice().len() != 36 {
@@ -355,20 +348,20 @@ pub(crate) fn bun_random_uuid_v5(
     let uuid = UUID5::init(&namespace, name.slice());
 
     if encoding == Encoding::Hex {
-        let (mut str, bytes) = BunString::create_uninitialized_latin1(36);
+        let (str, bytes) = BunString::create_uninitialized_latin1(36);
         uuid.print(
             (&mut bytes[0..36])
                 .try_into()
                 .expect("infallible: size matches"),
         );
-        return str.transfer_to_js(global);
+        return str.into_js(global);
     }
 
     encoding.encode_with_max_size(global, 32, &uuid.bytes)
 }
 
 #[unsafe(no_mangle)]
-pub(crate) extern "C" fn CryptoObject__create(global: &JSGlobalObject) -> JSValue {
+extern "C" fn CryptoObject__create(global: &JSGlobalObject) -> JSValue {
     bun_jsc::mark_binding!();
 
     // Box::new aborts on OOM, so an out-of-memory throw arm is unreachable.

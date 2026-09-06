@@ -4,7 +4,6 @@
 use core::ops::{Deref, DerefMut};
 use core::ptr::NonNull;
 
-pub use bun_collections::VecExt as _VecExtReexport;
 use bun_collections::{ArrayHashMap, AutoContext, MultiArrayList, StringHashMap};
 use bun_core::Output;
 
@@ -138,7 +137,7 @@ pub type BindingNodeIndex = Binding;
 // declarations / call sites that spell `ArenaStr` continue to compile.
 pub(crate) type ArenaStr = StoreStr;
 #[inline]
-pub(crate) const fn empty_arena_str() -> ArenaStr {
+const fn empty_arena_str() -> ArenaStr {
     StoreStr::EMPTY
 }
 // (former `empty_arena_slice_mut<T>()` removed — use `StoreSlice::<T>::EMPTY`.)
@@ -526,11 +525,10 @@ pub const NAMESPACE_EXPORT_PART_INDEX: u32 = 0;
 /// Slice that stores capacity and length in the same space as a regular slice.
 pub type ExprNodeList = Vec<Expr, bun_alloc::AstAlloc>;
 
-// Arena-owned `[Stmt]` / `[Binding]` views — see `StoreSlice<T>` doc above.
+// Arena-owned `[Stmt]` view — see `StoreSlice<T>` doc above.
 // A `PhantomData<&'arena ()>` can be added to `StoreSlice` later as a
 // one-struct change once `'arena` is threaded through `Expr`/`Stmt`/`Data`.
 pub type StmtNodeList = StoreSlice<Stmt>;
-pub type BindingNodeList = StoreSlice<Binding>;
 
 #[repr(u8)]
 #[derive(Copy, Clone, PartialEq, Eq, Debug, strum::IntoStaticStr)]
@@ -629,13 +627,13 @@ impl SlotCounts {
 
 pub struct NameMinifier {
     pub head: Vec<u8>,
-    pub tail: Vec<u8>,
+    pub(crate) tail: Vec<u8>,
 }
 
 impl NameMinifier {
-    pub const DEFAULT_HEAD: &'static [u8] =
+    pub(crate) const DEFAULT_HEAD: &'static [u8] =
         b"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ_$";
-    pub const DEFAULT_TAIL: &'static [u8] =
+    pub(crate) const DEFAULT_TAIL: &'static [u8] =
         b"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_$";
 
     pub fn init() -> NameMinifier {
@@ -771,7 +769,7 @@ impl Default for Span {
 /// to encode both a 64-bit pointer or a 64-bit float using 64 bits.
 #[derive(Copy, Clone)]
 pub struct InlinedEnumValue {
-    pub raw_data: u64,
+    pub(crate) raw_data: u64,
 }
 
 #[derive(Copy, Clone)]
@@ -880,9 +878,6 @@ impl ExportsKind {
             Self::EsmWithDynamicFallback | Self::EsmWithDynamicFallbackFromCjs
         )
     }
-
-    // `to_module_type()` lives in `bun_options_types` as
-    // `impl From<ExportsKind> for ModuleType` (would cycle here).
 }
 
 #[derive(Copy, Clone)]
@@ -892,7 +887,7 @@ pub struct DeclaredSymbol {
 }
 
 pub struct DeclaredSymbolList {
-    pub entries: MultiArrayList<DeclaredSymbol, bun_alloc::AstAlloc>,
+    pub(crate) entries: MultiArrayList<DeclaredSymbol, bun_alloc::AstAlloc>,
 }
 
 impl Default for DeclaredSymbolList {
@@ -941,7 +936,7 @@ impl DeclaredSymbolList {
         Ok(())
     }
 
-    pub fn append_list_assume_capacity(&mut self, other: &DeclaredSymbolList) {
+    pub(crate) fn append_list_assume_capacity(&mut self, other: &DeclaredSymbolList) {
         self.entries.append_list_assume_capacity(&other.entries);
     }
 
@@ -1023,15 +1018,6 @@ pub struct Dependency {
     pub part_index: u32, // Index.Int
 }
 
-impl Default for Dependency {
-    fn default() -> Self {
-        Self {
-            source_index: Index::INVALID,
-            part_index: 0,
-        }
-    }
-}
-
 pub type DependencyList = bun_alloc::AstVec<Dependency>;
 
 // PERF: these may be arena-backed in callers; revisit with
@@ -1093,8 +1079,6 @@ pub enum PartTag {
     None,
     JsxImport,
     Runtime,
-    CjsImports,
-    ReactFastRefresh,
     ReactCompiler,
     DirnameFilename,
     BunTest,
@@ -1106,10 +1090,18 @@ pub enum PartTag {
 pub type PartSymbolUseMap = ArrayHashMap<Ref, symbol::Use, AutoContext, bun_alloc::AstAlloc>;
 pub type PartSymbolPropertyUseMap = ArrayHashMap<
     Ref,
-    StringHashMap<symbol::Use, bun_alloc::AstAlloc>,
+    StringHashMap<PropertyUse, bun_alloc::AstAlloc>,
     AutoContext,
     bun_alloc::AstAlloc,
 >;
+
+/// The reads of one `X.name` in `Part::import_symbol_property_uses`.
+#[derive(Default, Clone, Copy)]
+pub struct PropertyUse {
+    pub count_estimate: u32,
+    /// Some read is called, as `X.name()` or a template tag, with `X` as `this`.
+    pub is_call_target: bool,
+}
 
 impl Default for Part {
     fn default() -> Self {
@@ -1191,20 +1183,6 @@ pub struct NamedImport {
     pub is_exported: bool,
 }
 
-impl Default for NamedImport {
-    fn default() -> Self {
-        Self {
-            local_parts_with_uses: bun_alloc::AstAlloc::vec(),
-            alias: None,
-            alias_loc: crate::Loc::EMPTY,
-            namespace_ref: Ref::NONE,
-            import_record_index: 0,
-            alias_is_star: false,
-            is_exported: false,
-        }
-    }
-}
-
 #[derive(Copy, Clone)]
 pub struct NamedExport {
     pub ref_: Ref,
@@ -1229,10 +1207,8 @@ pub enum ToJSError {
     CannotConvertArgumentTypeToJS,
     #[strum(serialize = "Cannot convert identifier to JS. Try a statically-known value")]
     CannotConvertIdentifierToJS,
-    MacroError,
     OutOfMemory,
     JSError,
-    JSTerminated,
 }
 bun_core::impl_tag_error!(ToJSError);
 
@@ -1245,9 +1221,9 @@ bun_core::impl_tag_error!(ToJSError);
 // ─── from bun_jsc::math ─────────────────────────────────────────────────────
 pub mod math {
     /// `Number.MAX_SAFE_INTEGER` (2^53 - 1)
-    pub const MAX_SAFE_INTEGER: f64 = 9007199254740991.0;
+    pub(crate) const MAX_SAFE_INTEGER: f64 = 9007199254740991.0;
     /// `Number.MIN_SAFE_INTEGER` (-(2^53 - 1))
-    pub const MIN_SAFE_INTEGER: f64 = -9007199254740991.0;
+    pub(crate) const MIN_SAFE_INTEGER: f64 = -9007199254740991.0;
 
     unsafe extern "C" {
         // Pure FFI (value-type args, no pointers, no errno) → no caller preconditions.

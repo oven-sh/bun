@@ -1179,7 +1179,7 @@ it.skipIf(isWindows)("Bun.write(Bun.stdout, ...) to a full nonblocking pipe comp
     const describe = fd => {
       try {
         const st = fstatSync(fd);
-        return { fd, mode: st.mode.toString(8), fifo: st.isFIFO(), sock: st.isSocket(), file: st.isFile(), chr: st.isCharacterDevice() };
+        return { fd, mode: st.mode.toString(8), fifo: st.isFIFO(), dupOfStdout: st.ino === fstatSync(1).ino };
       } catch (e) {
         return { fd, err: e.code };
       }
@@ -1220,22 +1220,25 @@ it.skipIf(isWindows)("Bun.write(Bun.stdout, ...) to a full nonblocking pipe comp
 // The sync fast path used to re-enter the async path with the whole payload after a partial
 // write, so the bytes already in the pipe were sent twice. It must also not block the thread
 // while the pipe is full: here the only reader runs on the same event loop.
-it.skipIf(isWindows)("Bun.write to a full pipe resumes async after a partial write", async () => {
-  using dir = tempDir("bun-write-fifo", {});
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), join(import.meta.dir, "bun-write-fifo-fixture.js"), join(String(dir), "fifo")],
-    env: bunEnv,
-    stdout: "pipe",
-    stderr: "pipe",
-    timeout: 20_000,
-    killSignal: "SIGKILL",
-  });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  // stderr carries the fixture's progress markers. It is only shown on failure.
-  expect({ stdout, exitCode, signalCode: proc.signalCode, stderr: exitCode === 0 ? "" : stderr }).toEqual({
-    stdout: JSON.stringify({ n: 200 * 1024, got: 200 * 1024 }) + "\n",
-    stderr: "",
-    exitCode: 0,
-    signalCode: null,
+// 200 KiB takes the sync fast path first and resumes async. 300 KiB goes async directly.
+describe.skipIf(isWindows)("Bun.write to a full pipe", () => {
+  it.each([200 * 1024, 300 * 1024])("completes a %d byte write that only this process drains", async size => {
+    using dir = tempDir("bun-write-fifo", {});
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), join(import.meta.dir, "bun-write-fifo-fixture.js"), join(String(dir), "fifo"), String(size)],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+      timeout: 20_000,
+      killSignal: "SIGKILL",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    // stderr carries the fixture's progress markers. It is only shown on failure.
+    expect({ stdout, exitCode, signalCode: proc.signalCode, stderr: exitCode === 0 ? "" : stderr }).toEqual({
+      stdout: JSON.stringify({ n: size, got: size }) + "\n",
+      stderr: "",
+      exitCode: 0,
+      signalCode: null,
+    });
   });
 });

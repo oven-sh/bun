@@ -1526,8 +1526,12 @@ impl<'a> Headers8Bit<'a> {
     fn isomorphic_encode(s: &'a BunString) -> Cow<'a, [u8]> {
         if s.is_utf16() {
             let units = s.utf16();
-            debug_assert!(units.iter().all(|&u| u <= 0xFF));
-            Cow::Owned(units.iter().map(|&u| u as u8).collect())
+            if units.iter().any(|&unit| unit > 0xFF) {
+                return Cow::Owned(s.to_utf8().into_vec());
+            }
+            let mut bytes = vec![0u8; units.len()];
+            strings::copy_u16_into_u8(&mut bytes, units);
+            Cow::Owned(bytes)
         } else if s.is_8bit() && !s.is_utf8() {
             Cow::Borrowed(s.latin1())
         } else {

@@ -325,7 +325,7 @@ void JSEventEmitter::emitMaxListenersExceededWarning(JSC::JSGlobalObject* lexica
     // `String(type)`: a symbol becomes "Symbol(desc)" instead of throwing.
     String typeName;
     if (type.isSymbol()) {
-        typeName = asSymbol(type)->tryGetDescriptiveString().value_or(String());
+        typeName = asSymbol(type)->tryGetDescriptiveString().value_or("Symbol()"_s);
     } else {
         typeName = type.toWTFString(lexicalGlobalObject);
         RETURN_IF_EXCEPTION(scope, void());

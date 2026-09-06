@@ -104,7 +104,8 @@ describe.concurrent("process MaxListenersExceededWarning", () => {
         warned.push({ name: w.name, message: w.message, type: w.type, count: w.count, emitter: w.emitter === process });
       });
       const sym = Symbol("sym");
-      for (const ev of ["SIGINT", "exit", "custom", sym]) {
+      const bare = Symbol();
+      for (const ev of ["SIGINT", "exit", "custom", sym, bare]) {
         for (let i = 0; i < 12; i++) process.on(ev, () => {});
       }
       process.nextTick(() => {
@@ -113,7 +114,7 @@ describe.concurrent("process MaxListenersExceededWarning", () => {
     `);
     expect(stderr).toContain("MaxListenersExceededWarning");
     expect(JSON.parse(stdout)).toEqual(
-      ["SIGINT", "exit", "custom", "Symbol(sym)"].map(type => ({
+      ["SIGINT", "exit", "custom", "Symbol(sym)", "Symbol()"].map(type => ({
         name: "MaxListenersExceededWarning",
         message: `Possible EventEmitter memory leak detected. 11 ${type} listeners added to [process]. MaxListeners is 10. Use emitter.setMaxListeners() to increase limit`,
         type,

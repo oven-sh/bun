@@ -686,7 +686,9 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
         break 'extract_ssl_config ssl_config;
     };
 
-    // unix: string | undefined
+    // unix: string | undefined. A falsy value means "no unix socket", like
+    // `Bun.connect`. Any other non-string is a TypeError: ignoring it would
+    // send the request to the URL's host over TCP instead.
     unix_socket_path = 'extract_unix_socket_path: {
         let objects_to_try = [
             options_object.unwrap_or_default(),
@@ -696,11 +698,19 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
         for obj in objects_to_try {
             if !obj.is_empty() {
                 if let Some(socket_path) = obj.get(global_this, "unix")? {
-                    if socket_path.is_string() && socket_path.get_length(ctx)? > 0 {
-                        break 'extract_unix_socket_path absolute_unix_socket_path(
-                            vm.top_level_dir(),
-                            socket_path.to_bun_string(global_this)?.to_owned_slice(),
-                        );
+                    if socket_path.is_string() {
+                        if socket_path.get_length(ctx)? > 0 {
+                            break 'extract_unix_socket_path absolute_unix_socket_path(
+                                vm.top_level_dir(),
+                                socket_path.to_bun_string(global_this)?.to_owned_slice(),
+                            );
+                        }
+                    } else if socket_path.to_boolean() {
+                        let received =
+                            JSGlobalObject::determine_specific_type(global_this, socket_path)?;
+                        return Err(global_this.throw_invalid_arguments(format_args!(
+                            "fetch: 'unix' must be a string. Received {received}"
+                        )));
                     }
                 }
             }

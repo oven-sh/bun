@@ -59,7 +59,7 @@ describe.each(["serial", "--concurrent"])("a returned fulfilled promise still wa
     await using proc = Bun.spawn({
       cmd: [bunExe(), "test", ...(mode === "serial" ? [] : [mode]), "done.test.ts"],
       cwd: String(dir),
-      stdout: "pipe",
+      stdout: "ignore",
       stderr: "pipe",
       env: bunEnv,
     });

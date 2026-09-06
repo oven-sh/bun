@@ -612,10 +612,17 @@ describe("junit reporter", () => {
   it.each(["", "--parallel=2"])("exits non-zero when the report file cannot be written %s", async parallelFlag => {
     await using tmpDir = tempDir("junit-unwritable", {
       "package.json": "{}",
+      // Two files, so --parallel=2 runs the coordinator and not the serial fallback.
       "a.test.js": `
         import { expect, test } from "bun:test";
         test("passes", () => {
           expect(1).toBe(1);
+        });
+      `,
+      "b.test.js": `
+        import { expect, test } from "bun:test";
+        test("also passes", () => {
+          expect(2).toBe(2);
         });
       `,
       "not-a-dir": "",
@@ -633,7 +640,7 @@ describe("junit reporter", () => {
       },
     );
     const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stderr).toContain("1 pass");
+    expect(stderr).toContain("2 pass");
     expect(stderr).toContain("Failed to write JUnit report to");
     expect(exitCode).toBe(1);
   });

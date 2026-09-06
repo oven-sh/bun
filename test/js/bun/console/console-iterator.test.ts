@@ -149,6 +149,17 @@ describe("a later stdin consumer keeps the process alive after the reader is rel
     const decoder = new TextDecoder();
     let output = "";
     let waiting: { marker: string; resolve: () => void } | undefined;
+    await using proc = spawn({
+      cmd: [bunExe(), "-e", script],
+      env: bunEnv,
+      terminal: {
+        data(_terminal, chunk) {
+          output += decoder.decode(chunk, { stream: true });
+          if (waiting && output.includes(waiting.marker)) waiting.resolve();
+        },
+      },
+    });
+    await using terminal = proc.terminal!;
     function waitFor(marker: string) {
       return new Promise<void>((resolve, reject) => {
         waiting = { marker, resolve };
@@ -160,23 +171,11 @@ describe("a later stdin consumer keeps the process alive after the reader is rel
         if (output.includes(marker)) resolve();
       });
     }
-    const proc = spawn({
-      cmd: [bunExe(), "-e", script],
-      env: bunEnv,
-      terminal: {
-        data(_terminal, chunk) {
-          output += decoder.decode(chunk, { stream: true });
-          if (waiting && output.includes(waiting.marker)) waiting.resolve();
-        },
-      },
-    });
-    const terminal = proc.terminal!;
     terminal.write("first\n");
     await waitFor("READY");
     terminal.write("second\n");
     await waitFor("DONE");
     expect(await proc.exited).toBe(0);
-    terminal.close();
     return output;
   }
 

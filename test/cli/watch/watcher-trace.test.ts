@@ -1,6 +1,6 @@
-import { expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
-import { existsSync, readFileSync } from "node:fs";
+import { describe, expect, test } from "bun:test";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import { existsSync, readFileSync, symlinkSync } from "node:fs";
 import { join } from "node:path";
 
 test("BUN_WATCHER_TRACE creates trace file with watch events", async () => {
@@ -148,6 +148,72 @@ test("BUN_WATCHER_TRACE with --watch flag", async () => {
 
   expect(foundScriptEvent).toBe(true);
 }, 10000);
+
+// Windows needs a privilege to create symlinks, and the inotify path under test is Linux only.
+const traceDirKinds: [string, boolean][] = isWindows
+  ? [["its real path", false]]
+  : [
+      ["its real path", false],
+      ["a symlink", true],
+    ];
+describe.each(traceDirKinds)("BUN_WATCHER_TRACE inside the watched directory via %s", (_, viaSymlink) => {
+  test("does not trace its own writes", async () => {
+    using dir = tempDir("watcher-trace-self", {
+      "project/script.js": `console.log("run", 0);\nsetInterval(() => {}, 1000);`,
+    });
+    const project = join(String(dir), "project");
+    let traceDir = project;
+    if (viaSymlink) {
+      traceDir = join(String(dir), "link");
+      symlinkSync(project, traceDir, "dir");
+    }
+
+    const traceFile = join(traceDir, "trace.log");
+    const env = { ...bunEnv, BUN_WATCHER_TRACE: traceFile };
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "--hot", "script.js"],
+      env,
+      cwd: project,
+      stdout: "pipe",
+      stderr: "inherit",
+      stdin: "ignore",
+    });
+
+    // Each reload is one seed event. Every trace write is itself a write
+    // event on the directory, so the trace must not report it.
+    const decoder = new TextDecoder();
+    let stdout = "";
+    let i = 0;
+    for await (const chunk of proc.stdout) {
+      stdout += decoder.decode(chunk, { stream: true });
+      if (stdout.includes(`run ${i}`)) {
+        i++;
+        if (i === 3) break;
+        await Bun.write(join(project, "script.js"), `console.log("run", ${i});\nsetInterval(() => {}, 1000);`);
+      }
+    }
+
+    proc.kill();
+    await proc.exited;
+    expect(i).toBe(3);
+
+    const lines = readFileSync(traceFile, "utf-8")
+      .trim()
+      .split("\n")
+      .filter(l => l.trim());
+    expect(lines.length).toBeGreaterThan(0);
+
+    const selfReferences = lines.filter(line => {
+      const event = JSON.parse(line);
+      return Object.values(event.files).some(
+        (fileEvent: any) => Array.isArray(fileEvent.changed) && fileEvent.changed.includes("trace.log"),
+      );
+    });
+    expect(selfReferences.slice(0, 3)).toEqual([]);
+    expect(lines.length).toBeLessThan(50);
+  });
+});
 
 test("BUN_WATCHER_TRACE with empty path does not create trace", async () => {
   using dir = tempDir("watcher-trace-empty", {

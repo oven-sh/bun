@@ -52,7 +52,9 @@ function fakeGithub(url: URL): unknown {
   if (mStatus) {
     const build = SHA2BUILD[mStatus[1]];
     return {
-      statuses: build ? [{ context: "buildkite/bun", target_url: `https://buildkite.com/bun/bun/builds/${build}` }] : [],
+      statuses: build
+        ? [{ context: "buildkite/bun", target_url: `https://buildkite.com/bun/bun/builds/${build}` }]
+        : [],
     };
   }
   throw new Error(`unexpected GitHub request: ${url.pathname}`);

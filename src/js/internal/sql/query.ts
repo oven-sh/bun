@@ -10,6 +10,8 @@ const _values = Symbol("values");
 const _flags = Symbol("flags");
 const _results = Symbol("results");
 const _adapter = Symbol("adapter");
+const _requeue = Symbol("requeue");
+const _slot = Symbol("slot");
 
 const PublicPromise = Promise;
 
@@ -31,6 +33,8 @@ class Query<T, Handle extends BaseQueryHandle<any>> extends PublicPromise<T> {
   public [_strings]: QueryStrings;
   public [_values]: any[];
   public [_flags]: SQLQueryFlags;
+  /** The pool connection that counts this query as its own. `undefined` until a pool connection takes it, `null` while none holds it after that. */
+  public [_slot]: object | null | undefined;
 
   public readonly [_adapter]: DatabaseAdapter<any, any, Handle>;
 
@@ -94,6 +98,7 @@ class Query<T, Handle extends BaseQueryHandle<any>> extends PublicPromise<T> {
     this[_strings] = strings;
     this[_values] = values;
     this[_flags] = flags;
+    this[_slot] = undefined;
 
     this[_results] = null;
   }
@@ -209,6 +214,22 @@ class Query<T, Handle extends BaseQueryHandle<any>> extends PublicPromise<T> {
     }
 
     return this[_reject](x);
+  }
+
+  /** Asks its handler for a connection again: the one it was queued on closed before writing any of it. */
+  [_requeue]() {
+    const status = this[_queryStatus];
+    if (status & (SQLQueryStatus.error | SQLQueryStatus.invalidHandle)) {
+      return;
+    }
+    if (status & SQLQueryStatus.cancelled) {
+      return this.reject(this[_adapter].queryCancelledError());
+    }
+    try {
+      this[_handler](this, this[_handle]!);
+    } catch (err) {
+      this.reject(err as Error);
+    }
   }
 
   cancel() {
@@ -361,5 +382,7 @@ export default {
     _strings,
     _values,
     _results,
+    _requeue,
+    _slot,
   },
 };

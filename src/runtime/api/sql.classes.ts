@@ -32,6 +32,10 @@ for (const type of types) {
         flush: {
           fn: "doFlush",
         },
+        takeUnsent: {
+          fn: "takeUnsent",
+          length: 0,
+        },
         queries: {
           getter: "getQueries",
           this: true,

@@ -997,6 +997,14 @@ await sql.close({ timeout: 5 }); // wait 5 seconds and close all connections fro
 await sql.close({ timeout: 0 }); // close all connections from the pool immediately
 ```
 
+### When a connection closes
+
+If a connection closes, the queries it already sent reject with the connection error (`ERR_POSTGRES_CONNECTION_CLOSED` or `ERR_MYSQL_CONNECTION_CLOSED`). The server may have run them, so Bun does not send them again.
+
+Queries that were still queued on that connection were never sent. Bun runs them on another connection and opens a new one if it needs to. If the new connection cannot be opened, they reject with its error.
+
+Queries inside `sql.begin()` or on a reserved connection belong to that one connection, so they always reject. Statements that depend on each other's session state (`SET`, temporary tables, a manual `BEGIN`) belong in `sql.begin()` or `sql.reserve()`: otherwise a closed connection can split them across two sessions, even with `max: 1`.
+
 ---
 
 ## Reserved Connections

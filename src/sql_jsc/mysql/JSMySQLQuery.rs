@@ -403,6 +403,22 @@ impl JSMySQLQuery {
         );
     }
 
+    /// The JS `Query` of a request no byte of which was written.
+    pub(crate) fn unsent_target(&self) -> Option<JSValue> {
+        if !self.query.get().is_unsent() {
+            return None;
+        }
+        self.get_target()
+    }
+
+    /// Undoes `run` for a request whose connection closed before writing any of it, so that the
+    /// pool can run it on another connection.
+    pub(crate) fn take_back(&self) {
+        self.query.with_mut(|q| q.take_back());
+        self.set_target(JSValue::ZERO);
+        self.this_value.with_mut(|v| v.downgrade());
+    }
+
     pub(crate) fn run(&self, connection: &MySQLConnection) -> Result<(), AnyMySQLError::Error> {
         {
             let q = self.query.get();

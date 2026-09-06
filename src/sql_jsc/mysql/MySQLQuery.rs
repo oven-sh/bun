@@ -392,6 +392,7 @@ impl MySQLQuery {
                             global_object.throw_sql_error(err.into(), "failed to prepare query");
                         return Err(crate::Error::JSError);
                     }
+                    self.status = Status::Preparing;
                     // `self.statement` was set in both branches above; route
                     // through the single-unsafe accessor instead of a raw
                     // `(*stmt)` deref so the write goes via the same audited
@@ -511,18 +512,31 @@ impl MySQLQuery {
     pub(crate) fn is_running(&self) -> bool {
         match self.status {
             Status::Running | Status::Binding | Status::PartialResponse => true,
-            Status::Success | Status::Fail | Status::Pending => false,
+            Status::Success | Status::Fail | Status::Pending | Status::Preparing => false,
         }
     }
 
     #[inline]
     pub(crate) fn is_pending(&self) -> bool {
+        self.status.awaits_write()
+    }
+
+    /// No byte of this query was written, so the server cannot have seen it.
+    #[inline]
+    pub(crate) fn is_unsent(&self) -> bool {
         self.status == Status::Pending
+    }
+
+    /// Undoes `run_query` for a query whose connection closed before writing any of it: the next
+    /// `run_query` looks its statement up on another connection.
+    pub(crate) fn take_back(&mut self) {
+        debug_assert!(self.is_unsent());
+        self.statement = None;
     }
 
     #[inline]
     pub(crate) fn is_being_prepared(&self) -> bool {
-        self.status == Status::Pending
+        self.status.awaits_write()
             && self
                 .get_statement()
                 .is_some_and(|s| s.status == my_sql_statement::Status::Parsing)
@@ -550,7 +564,7 @@ impl MySQLQuery {
 
     #[inline]
     pub(crate) fn mark_as_prepared(&mut self) {
-        if self.status == Status::Pending {
+        if self.status.awaits_write() {
             if let Some(statement) = self.get_statement() {
                 if statement.status == my_sql_statement::Status::Parsing
                     && statement.params.len() == statement.params_received as usize

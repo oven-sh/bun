@@ -115,7 +115,7 @@ pub struct PostgresSQLConnection {
     /// number of non-pipelined requests (Simple/Copy)
     pub(crate) nonpipelinable_requests: Cell<u32>,
     /// number of queued requests whose bytes have not been written yet
-    /// (QueryStatus::Pending); gates the enqueue-time pipeline fast path so a
+    /// (`QueryStatus::awaits_write`); gates the enqueue-time pipeline fast path so a
     /// later prepared-statement execute cannot be emitted ahead of an earlier
     /// queued request whose Parse/Bind/Execute is still unwritten.
     pub(crate) pending_requests: Cell<u32>,
@@ -1413,6 +1413,45 @@ impl PostgresSQLConnection {
         Ok(JSValue::UNDEFINED)
     }
 
+    /// For the pool's `onclose`, which runs before `clean_up_requests`: the requests no byte of
+    /// which was written leave the queue, and their `Query` objects are returned in queue order.
+    /// The server never saw them, so the pool runs them on another connection.
+    pub fn take_unsent(
+        this: &Self,
+        global_object: &JSGlobalObject,
+        _: &CallFrame,
+    ) -> JsResult<JSValue> {
+        if this.status.get() != Status::Failed {
+            return JSValue::create_empty_array(global_object, 0);
+        }
+        let unsent = || {
+            this.requests
+                .get()
+                .iter()
+                .filter_map(|request| request.unsent_target(global_object))
+        };
+        // Nothing leaves the queue before the array is complete: if this throws,
+        // `clean_up_requests` still rejects every request.
+        let queries = JSValue::create_empty_array(global_object, unsent().count())?;
+        for (index, target) in unsent().enumerate() {
+            queries.put_index(global_object, index as u32, target)?;
+        }
+        this.requests.with_mut(|queue| {
+            for _ in 0..queue.len() {
+                let Some(request) = queue.pop_front() else {
+                    break;
+                };
+                if request.unsent_target(global_object).is_none() {
+                    queue.push_back(request);
+                    continue;
+                }
+                this.note_request_written();
+                request.take_back(global_object);
+            }
+        });
+        Ok(queries)
+    }
+
     pub(crate) fn stop_timers(&self) {
         self.timer.with_mut(|t| {
             if t.state == EventLoopTimerState::ACTIVE {
@@ -1439,7 +1478,7 @@ impl PostgresSQLConnection {
         while let Some(request) = self.current() {
             match request.status.get() {
                 // pending we will fail the request and the stmt will be marked as error ConnectionClosed too
-                QueryStatus::Pending => {
+                QueryStatus::Pending | QueryStatus::Preparing => {
                     self.note_request_written();
                     let Some(stmt) = request.statement_mut() else {
                         // The deref/discard at the bottom of the loop is intentionally skipped here.
@@ -1783,7 +1822,7 @@ impl PostgresSQLConnection {
                     }
                 }
             }
-            QueryStatus::Pending => {
+            QueryStatus::Pending | QueryStatus::Preparing => {
                 // ErrorResponse on a Parse-in-flight request: it never reached
                 // Binding, so account for it leaving the pending set here.
                 self.note_request_written();
@@ -1877,10 +1916,9 @@ impl PostgresSQLConnection {
             // yields `&T` only — `PostgresSQLQuery` is Cell/JsCell-backed.
             let req = ParentRef::from(self.requests.get()[offset].as_non_null());
             match req.status.get() {
-                QueryStatus::Pending => {
+                QueryStatus::Pending | QueryStatus::Preparing => {
                     debug_assert!(
-                        offset == 0
-                            || self.requests.get()[offset - 1].status.get() != QueryStatus::Pending,
+                        offset == 0 || !self.requests.get()[offset - 1].status.get().awaits_write(),
                         "advance() passed a request that is not written yet"
                     );
                     // Optimistically account for this request leaving Pending; the
@@ -2232,6 +2270,7 @@ impl PostgresSQLConnection {
                                         f.insert(ConnectionFlags::WAITING_TO_PREPARE);
                                     });
                                     statement.status = StatementStatus::Parsing;
+                                    req.status.set(QueryStatus::Preparing);
                                     // Parse+Describe+Sync written; Bind+Execute deferred to the
                                     // next advance(), so the request is still pending on the wire.
                                     self.note_request_pending();

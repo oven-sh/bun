@@ -263,6 +263,30 @@ impl MySQLRequestQueue {
         self.requests.get().front().map(RefPtr::this_ptr)
     }
 
+    /// The JS `Query` of each request no byte of which was written, in queue order.
+    pub(crate) fn unsent_targets(&self) -> impl Iterator<Item = JSValue> + '_ {
+        self.requests
+            .get()
+            .iter()
+            .filter_map(|request| request.unsent_target())
+    }
+
+    /// Removes the requests of `unsent_targets` from the queue.
+    pub(crate) fn take_unsent(&self) {
+        self.requests.with_mut(|queue| {
+            for _ in 0..queue.len() {
+                let Some(request) = queue.pop_front() else {
+                    break;
+                };
+                if request.unsent_target().is_none() {
+                    queue.push_back(request);
+                    continue;
+                }
+                request.take_back();
+            }
+        });
+    }
+
     pub(crate) fn clean(&self, reason: Option<JSValue>, queries_array: JSValue) {
         // reject()/rejectWithJSValue() run JS which can synchronously call .close()
         // (or otherwise fail the connection) and re-enter clean(). Swap the queue

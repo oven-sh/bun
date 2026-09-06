@@ -102,7 +102,12 @@ Object.defineProperty(ReadStream, "prototype", {
       return this;
     };
 
-    Prototype.constructor = ReadStream;
+    Object.defineProperty(Prototype, "constructor", {
+      value: ReadStream,
+      writable: true,
+      enumerable: false,
+      configurable: true,
+    });
 
     Object.defineProperty(ReadStream, "prototype", { value: Prototype });
 
@@ -134,7 +139,12 @@ $toClass(WriteStream, "WriteStream", fs.WriteStream);
 Object.defineProperty(WriteStream, "prototype", {
   get() {
     const Prototype = Object.create(fs.WriteStream.prototype);
-    Prototype.constructor = WriteStream;
+    Object.defineProperty(Prototype, "constructor", {
+      value: WriteStream,
+      writable: true,
+      enumerable: false,
+      configurable: true,
+    });
     Prototype.isTTY = true;
 
     Prototype._refreshSize = function () {

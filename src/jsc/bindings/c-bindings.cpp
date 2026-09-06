@@ -600,17 +600,14 @@ extern "C" void bun_restore_stdio()
 {
 
 #if !OS(WINDOWS)
-    // We might be a background job that doesn't own the TTY so block SIGTTOU
-    // before making the tcsetattr() calls, otherwise that signal suspends us.
+    // tcsetattr() from a background job raises SIGTTOU, which would stop us.
     sigset_t sa;
     sigset_t old_mask;
     sigemptyset(&sa);
     sigaddset(&sa, SIGTTOU);
     pthread_sigmask(SIG_BLOCK, &sa, &old_mask);
 
-    // A tty that setRawMode() touched and that is not one of fds 0-2 (for
-    // example `fs.openSync("/dev/tty")`) is only known to the libuv-style
-    // snapshot. Node's ResetStdio() does the same call first.
+    // Covers a raw tty outside fds 0-2, like node's ResetStdio().
     uv_tty_reset_mode();
 
     // Only suppress the restore when Bun is a pipeline producer (stdout is a

@@ -7883,6 +7883,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
             M::MPromise => ident!(b"Promise"),
             M::MIdentifier(ref_) => {
+                if let Some(enum_metadata) = self.ts_enum_metadata(ref_) {
+                    return self.serialize_metadata(enum_metadata);
+                }
                 self.record_usage(ref_);
                 let e = if self.is_import_item.contains_key(&ref_) {
                     self.new_expr(
@@ -7899,6 +7902,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
             M::MDot(refs) => {
                 debug_assert!(refs.len() >= 2);
+                if let Some(enum_metadata) = self.ts_namespace_enum_metadata(&refs) {
+                    return self.serialize_metadata(enum_metadata);
+                }
                 // (refs.deinit(p.arena) — arena-backed; nothing to free in Rust)
 
                 macro_rules! ref_name {
@@ -8031,6 +8037,99 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
                 return Ok(root);
             }
+        })
+    }
+
+    /// `design:type` for a type annotation that names a same-file enum. TypeScript
+    /// serializes a numeric enum as `Number`, a string enum as `String`, and a
+    /// mixed one as `Object` instead of referencing the enum object.
+    fn ts_enum_metadata(&mut self, ref_: Ref) -> Option<bun_ast::ts::Metadata> {
+        let ref_ = self.resolve_metadata_ref(ref_)?;
+        if self.symbols[ref_.inner_index() as usize].kind != js_ast::symbol::Kind::TsEnum {
+            return None;
+        }
+        let js_ast::ts::Data::Namespace(members) = self.ref_to_ts_namespace_member.get(&ref_)?
+        else {
+            return None;
+        };
+        Self::enum_members_metadata(members)
+    }
+
+    /// Same as `ts_enum_metadata` for a dotted type `Ns.Inner.Enum`, or for an
+    /// enum member type `Enum.Member`.
+    fn ts_namespace_enum_metadata(&mut self, refs: &[Ref]) -> Option<bun_ast::ts::Metadata> {
+        let root = self.resolve_metadata_ref(refs[0])?;
+        let js_ast::ts::Data::Namespace(mut members) =
+            *self.ref_to_ts_namespace_member.get(&root)?
+        else {
+            return None;
+        };
+        for (i, &part) in refs[1..].iter().enumerate() {
+            let is_last = i + 2 == refs.len();
+            let name = self.load_name_from_ref(part);
+            let map: &js_ast::TSNamespaceMemberMap = &members;
+            match map.get(name)?.data {
+                js_ast::ts::Data::Namespace(next) => members = next,
+                js_ast::ts::Data::EnumNumber(_) | js_ast::ts::Data::EnumProperty if is_last => {
+                    return Some(bun_ast::ts::Metadata::MNumber);
+                }
+                js_ast::ts::Data::EnumString(_) if is_last => {
+                    return Some(bun_ast::ts::Metadata::MString);
+                }
+                _ => return None,
+            }
+        }
+        let map: &js_ast::TSNamespaceMemberMap = &members;
+        // A namespace has no enum members, so an empty map is a namespace.
+        if map.count() == 0 {
+            return None;
+        }
+        Self::enum_members_metadata(map)
+    }
+
+    /// The parse pass bound the type name before a later declaration in the same
+    /// scope could exist, so look the name up again from the class being visited,
+    /// as the visit pass does for identifiers. Then follow merged symbol links.
+    fn resolve_metadata_ref(&mut self, ref_: Ref) -> Option<Ref> {
+        if ref_.tag() != js_ast::base::RefTag::Symbol {
+            return None;
+        }
+        let name = self.load_name_from_ref(ref_);
+        let found = self
+            .find_symbol_with_record_usage::<false>(bun_ast::Loc::EMPTY, name)
+            .ok()?
+            .r#ref;
+        let mut ref_ = if found.is_empty() { ref_ } else { found };
+        let mut symbol = &self.symbols[ref_.inner_index() as usize];
+        while symbol.has_link() {
+            ref_ = symbol.link.get();
+            symbol = &self.symbols[ref_.inner_index() as usize];
+        }
+        Some(ref_)
+    }
+
+    /// A member without a literal value (`A = f()`) counts as a number. TypeScript
+    /// only allows computed enum values that are numbers.
+    fn enum_members_metadata(
+        members: &js_ast::TSNamespaceMemberMap,
+    ) -> Option<bun_ast::ts::Metadata> {
+        let mut has_number = false;
+        let mut has_string = false;
+        for member in members.values() {
+            match member.data {
+                js_ast::ts::Data::EnumNumber(_) | js_ast::ts::Data::EnumProperty => {
+                    has_number = true
+                }
+                js_ast::ts::Data::EnumString(_) => has_string = true,
+                js_ast::ts::Data::Property | js_ast::ts::Data::Namespace(_) => return None,
+            }
+        }
+        Some(if has_string && has_number {
+            bun_ast::ts::Metadata::MObject
+        } else if has_string {
+            bun_ast::ts::Metadata::MString
+        } else {
+            bun_ast::ts::Metadata::MNumber
         })
     }
 

@@ -56,5 +56,6 @@ test("correct reflect.metadata types for getters", () => {
   // is manually specified.
   expect(Reflect.getMetadata("design:type", User.prototype, "enum1")).toBe(Enum1);
   expect(Reflect.getMetadata("design:type", User.prototype, "enum2")).toBe(Enum2);
-  expect(Reflect.getMetadata("design:type", User.prototype, "enum3")).toBe(Enum3);
+  // an enum declared in the same file is classified like typescript does
+  expect(Reflect.getMetadata("design:type", User.prototype, "enum3")).toBe(String);
 });

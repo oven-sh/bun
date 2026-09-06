@@ -1,5 +1,16 @@
 import "reflect-metadata";
 
+namespace MetadataNs {
+  export enum Inner {
+    X,
+  }
+  export namespace Deep {
+    export enum Inner {
+      S = "s",
+    }
+  }
+}
+
 describe("decorator metadata", () => {
   test("type serialization", () => {
     function d1() {}
@@ -542,5 +553,134 @@ describe("decorator metadata", () => {
     expect(Reflect.getMetadata("design:paramtypes", A.prototype, "method4")[0]).toBe(Object);
     expect(Reflect.getMetadata("design:type", A.prototype, "method4")).toBe(Function);
     expect(Reflect.getMetadata("design:returntype", A.prototype, "method4")).toBeUndefined();
+  });
+
+  // tsc serializes an enum type as Number, String, or Object, never as the enum object.
+  test("enum types", () => {
+    function d2(target: any, key: string) {}
+
+    class Declared {
+      @d2
+      later: Later;
+      @d2
+      laterString: LaterString;
+      @d2
+      laterAlias: LaterAlias;
+    }
+
+    enum Later {
+      A,
+      B,
+    }
+    enum LaterString {
+      A = "a",
+    }
+    enum LaterAlias {
+      A = "a",
+      B = A,
+    }
+    enum Numeric {
+      A,
+      B = 5,
+      C = A + B,
+    }
+    enum Str {
+      A = "a",
+      B = "b",
+    }
+    enum Mixed {
+      A = 1,
+      B = "b",
+    }
+    const enum Const {
+      X,
+      Y,
+    }
+    enum Computed {
+      A = (1 + 1) * 2,
+      B = Math.max(1, 2),
+    }
+    enum Merged {
+      A,
+    }
+    enum Merged {
+      B = "b",
+    }
+
+    class A {
+      @d2
+      numeric: Numeric;
+      @d2
+      str: Str;
+      @d2
+      mixed: Mixed;
+      @d2
+      constEnum: Const;
+      @d2
+      computed: Computed;
+      @d2
+      merged: Merged;
+      @d2
+      nullable: Numeric | null;
+      @d2
+      optional?: Str;
+      @d2
+      array: Numeric[];
+      @d2
+      nsInner: MetadataNs.Inner;
+      @d2
+      nsDeep: MetadataNs.Deep.Inner;
+      @d2
+      ns: typeof MetadataNs;
+      @d2
+      member: Numeric.B;
+      @d2
+      strMember: Str.A;
+      @d2
+      nsMember: MetadataNs.Deep.Inner.S;
+
+      @d2
+      method(a: Numeric, b: Str = Str.A, c: Mixed, ...rest: Numeric[]): Numeric {
+        return Numeric.A;
+      }
+    }
+
+    const type = (target: any, key: string) => Reflect.getMetadata("design:type", target, key);
+
+    expect(type(A.prototype, "numeric")).toBe(Number);
+    expect(type(A.prototype, "str")).toBe(String);
+    expect(type(A.prototype, "mixed")).toBe(Object);
+    expect(type(A.prototype, "constEnum")).toBe(Number);
+    expect(type(A.prototype, "computed")).toBe(Number);
+    expect(type(A.prototype, "merged")).toBe(Object);
+    expect(type(A.prototype, "nullable")).toBe(Number);
+    expect(type(A.prototype, "optional")).toBe(String);
+    expect(type(A.prototype, "array")).toBe(Array);
+    expect(type(A.prototype, "nsInner")).toBe(Number);
+    expect(type(A.prototype, "nsDeep")).toBe(String);
+    expect(type(A.prototype, "ns")).toBe(Object);
+    expect(type(A.prototype, "member")).toBe(Number);
+    expect(type(A.prototype, "strMember")).toBe(String);
+    expect(type(A.prototype, "nsMember")).toBe(String);
+
+    expect(Reflect.getMetadata("design:paramtypes", A.prototype, "method")).toEqual([Number, String, Object, Array]);
+    expect(Reflect.getMetadata("design:returntype", A.prototype, "method")).toBe(Number);
+
+    expect(type(Declared.prototype, "later")).toBe(Number);
+    expect(type(Declared.prototype, "laterString")).toBe(String);
+    expect(type(Declared.prototype, "laterAlias")).toBe(String);
+  });
+
+  // Unions are folded while the type is parsed, before the enum can be classified.
+  test.todo("enum in a union with its own primitive", () => {
+    function d2(target: any, key: string) {}
+    enum Numeric {
+      A,
+    }
+    class A {
+      @d2
+      value: Numeric | number;
+    }
+    expect(Reflect.getMetadata("design:type", A.prototype, "value")).toBe(Number);
   });
 });

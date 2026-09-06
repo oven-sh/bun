@@ -446,18 +446,20 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
   const windowsRes = cfg.windows ? [emitWindowsResources(n, cfg)] : [];
 
   // Full link.
-  // The Rust staticlib goes into `$in` between bun's own objects and the
-  // dependency archives so symbol resolution order is preserved: C++
-  // objects create the `Bun__*` undefined refs, the Rust archive satisfies
-  // them (and `main`, via crt1.o) and in turn references JSC/WTF, depLibs
-  // satisfies those. Every `#[no_mangle]` export the C++ side touches is
-  // reached transitively from those roots, so no `--whole-archive` wrapping
-  // is needed; if a member ever isn't, `rustLinkFlags()` in rust.ts is the
-  // wrapping helper.
+  // Order in `$in`: bun's own objects, the dependencies' objects (lazy — see
+  // LinkOpts.lazyObjects: each is taken only if referenced, which on Windows
+  // is what keeps an uncalled asm object out of bun.exe), the Rust staticlib,
+  // then the dependency archives. C++ objects create the `Bun__*` undefined
+  // refs, the Rust archive satisfies them (and `main`, via crt1.o) and in
+  // turn references JSC/WTF, which the dep objects/libs satisfy. Every
+  // `#[no_mangle]` export the C++ side touches is reached transitively from
+  // those roots, so no `--whole-archive` wrapping is needed; if a member ever
+  // isn't, `rustLinkFlags()` in rust.ts is the wrapping helper.
   const linkObjects = [...allObjects, ...rustObjects, ...windowsRes];
   const ldflags = [...flags.ldflags, ...systemLibs(cfg), ...shims.ldflags];
-  const exe = link(n, cfg, exeName, linkObjects, {
-    libs: depLibs,
+  const exe = link(n, cfg, exeName, [...cxxObjects, ...cObjects, ...windowsRes], {
+    lazyObjects: depObjects,
+    libs: [...rustObjects, ...depLibs],
     flags: ldflags,
     implicitInputs: [...linkImplicitInputs(cfg), ...shims.implicitInputs],
     // Declare the maps the release link writes as side-products (`perf`
@@ -959,7 +961,8 @@ function emitJscProgram(
     }),
   );
   const shims = emitShims(n, cfg);
-  const exe = link(n, cfg, name, [...objects, ...fromDep("WebKit"), ...fromDep("icu"), ...fromDep("mimalloc")], {
+  const exe = link(n, cfg, name, objects, {
+    lazyObjects: [...fromDep("WebKit"), ...fromDep("icu"), ...fromDep("mimalloc")],
     libs: [],
     // Debug info stripped at link: nothing symbolizes these, and with full
     // DWARF testFFI is 0.5 GB on the non-LTO lanes' artifacts. (Windows never

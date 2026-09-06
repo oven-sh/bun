@@ -170,13 +170,20 @@ export function registerCompileRules(n: Ninja, cfg: Config): void {
   // --ld-path= spelling, and `-fuse-ld=<abs path>` mangles the path with the
   // target triple.
   //
+  // $lazy (Windows): LinkOpts.lazyObjects as `/clang:-Wl,@<rsp>`. The rsp
+  // holds `/start-lib <objects> /end-lib`, which must reach lld-link as one
+  // positional group: behind /link the driver would expand the file itself
+  // and keep only its first token there; as a -Wl, value it is a linker
+  // *input*, rendered in order after the object inputs and left for
+  // lld-link to expand in place.
+  //
   // Darwin cross links append `&& macho-postlink $out ...` (the suffix is
   // empty everywhere else): ninja runs the whole command through `sh -c`,
   // so the fixup runs after the link succeeds and the declared output is
   // already the final, patched, re-signed artifact. See shims.ts.
   n.rule("link", {
     command: cfg.windows
-      ? `${cxx} /nologo -fuse-ld=lld ${q(`/clang:-B${dirname(cfg.ld)}`)} @$out.rsp /Fe$out /link $ldflags`
+      ? `${cxx} /nologo -fuse-ld=lld ${q(`/clang:-B${dirname(cfg.ld)}`)} @$out.rsp $lazy /Fe$out /link $ldflags`
       : `${cxx} @$out.rsp $ldflags -o $out${elfDebugCompressPostlinkCommand(cfg)}${machoPostlinkCommand(cfg)}`,
     description: "link $out",
     rspfile: "$out.rsp",
@@ -439,6 +446,17 @@ export function pch(
 export interface LinkOpts {
   /** Static libraries to link (absolute paths). Included in $in. */
   libs: string[];
+  /**
+   * Objects the link may take or leave: each is pulled in only if it defines
+   * a symbol something else references — a static library's semantics, minus
+   * the archive (lld's `--start-lib … --end-lib` / `/start-lib … /end-lib`).
+   * bun.ts passes the dependencies' objects here. It matters on COFF, whose
+   * linkers discard unreferenced code only at COMDAT granularity: an object
+   * nothing calls (BoringSSL's AES-GCM-SIV asm, unused on Windows by design)
+   * would otherwise be linked whole. ELF and Mach-O dead-strip per section,
+   * so there these simply follow `objects` in `$in`.
+   */
+  lazyObjects?: string[];
   /** Linker flags. */
   flags: string[];
   /**
@@ -463,17 +481,30 @@ export function link(n: Ninja, cfg: Config, out: string, objects: string[], opts
   // Linker maps are implicit outputs (ninja tracks them but they're not in $out)
   const implicitOutputs = (opts.linkerMapOutputs ?? []).map(map => resolve(cfg.buildDir, map));
 
+  const lazy = opts.lazyObjects ?? [];
+  const implicitInputs = [...(opts.implicitInputs ?? [])];
+  const vars: Record<string, string> = { ldflags: opts.flags.join(" ") };
+  let inputs = [...objects, ...lazy, ...opts.libs];
+  if (cfg.windows && lazy.length > 0) {
+    // The group rides in a response file of its own (written now — the list
+    // is a configure-time constant); its objects stay ninja inputs of the
+    // edge as implicit inputs. See the link rule for why -Wl.
+    const rsp = absOut + ".lazy.rsp";
+    writeIfChanged(rsp, ["/start-lib", ...lazy.map(o => quote(n.rel(o), true)), "/end-lib"].join("\n") + "\n");
+    vars.lazy = quote(`/clang:-Wl,@${n.rel(rsp)}`, cfg.host.os === "windows");
+    inputs = [...objects, ...opts.libs];
+    implicitInputs.push(...lazy);
+  }
+
   const node: BuildNode = {
     outputs: [absOut],
     rule: "link",
-    inputs: [...objects, ...opts.libs],
-    vars: {
-      ldflags: opts.flags.join(" "),
-    },
+    inputs,
+    vars,
   };
   if (implicitOutputs.length > 0) node.implicitOutputs = implicitOutputs;
-  if (opts.implicitInputs !== undefined && opts.implicitInputs.length > 0) {
-    node.implicitInputs = opts.implicitInputs;
+  if (implicitInputs.length > 0) {
+    node.implicitInputs = implicitInputs;
   }
   if (opts.validations !== undefined && opts.validations.length > 0) node.validations = opts.validations;
   n.build(node);

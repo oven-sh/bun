@@ -1664,6 +1664,42 @@ async function connect(server: Server, clientList: Subprocess[] = clients): Prom
   await promise;
 }
 
+// RFC 6455 caps the close reason at 123 bytes. A cut inside a multi-byte
+// character puts invalid UTF-8 on the wire and the peer fails with 1007.
+describe.concurrent("close() cuts a long reason on a character boundary", () => {
+  for (const [label, reason, expected] of [
+    ["emoji (4-byte)", "😀".repeat(40), "😀".repeat(30)],
+    ["cjk (3-byte) off by one", "x" + "中".repeat(41), "x" + "中".repeat(40)],
+    ["ascii", Buffer.alloc(200, "a").toString(), Buffer.alloc(123, "a").toString()],
+  ] as const) {
+    it(label, async () => {
+      const { promise: serverClose, resolve: resolveServerClose } = Promise.withResolvers<[number, string]>();
+      using server = serve({
+        port: 0,
+        fetch(req, server) {
+          if (server.upgrade(req)) return;
+          return new Response();
+        },
+        websocket: {
+          open(ws) {
+            ws.close(1000, reason);
+          },
+          message() {},
+          close(_, code, reason) {
+            resolveServerClose([code, reason]);
+          },
+        },
+      });
+      const { promise: clientClose, resolve: resolveClientClose } = Promise.withResolvers<CloseEvent>();
+      const ws = new WebSocket(server.url.href.replace(/^http/, "ws"));
+      ws.onclose = resolveClientClose;
+      const [event, [serverCode, serverReason]] = await Promise.all([clientClose, serverClose]);
+      expect([event.code, event.wasClean, event.reason]).toEqual([1000, true, expected]);
+      expect([serverCode, serverReason]).toEqual([1000, expected]);
+    });
+  }
+});
+
 it("you can call server.subscriberCount() when its not a websocket server", async () => {
   using server = serve({
     port: 0,

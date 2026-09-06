@@ -156,6 +156,25 @@ pub mod js {
 /// RFC 6455 §5.5: control frame payloads are at most 125 bytes.
 const MAX_CONTROL_FRAME_PAYLOAD: usize = 125;
 
+/// RFC 6455 §5.5.1: a close frame carries a 2-byte status code, so the
+/// reason is at most 123 bytes.
+const MAX_CLOSE_REASON_BYTES: usize = MAX_CONTROL_FRAME_PAYLOAD - 2;
+
+/// Cuts a close reason to `MAX_CLOSE_REASON_BYTES` on a UTF-8 character
+/// boundary. A cut inside a multi-byte sequence puts invalid UTF-8 on the
+/// wire, and the peer fails the connection with 1007 instead of seeing the
+/// code the server sent.
+fn clamp_close_reason(reason: &[u8]) -> &[u8] {
+    if reason.len() <= MAX_CLOSE_REASON_BYTES {
+        return reason;
+    }
+    let mut end = MAX_CLOSE_REASON_BYTES;
+    while end > 0 && !bun_core::strings::is_utf8_char_boundary(reason[end]) {
+        end -= 1;
+    }
+    &reason[..end]
+}
+
 fn throw_control_frame_too_large(global: &JSGlobalObject, len: usize) -> JsError {
     let err = global.create_range_error_instance(format_args!(
         "The data size must not be greater than {} bytes. Received {} bytes.",
@@ -1362,7 +1381,8 @@ impl ServerWebSocket {
         // user's close handler may call stop(true), which clears handler.server.
         let server = self.handler().server;
         self.update_flags(|f| f.set_closed(true));
-        self.websocket().end(code, message_value.slice());
+        self.websocket()
+            .end(code, clamp_close_reason(message_value.slice()));
         // on_close re-entered with was_closed=true so it skipped the
         // accounting; balance the count here.
         if let Some(server) = server {

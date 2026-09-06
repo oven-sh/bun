@@ -1056,6 +1056,7 @@ it("should throw on a tls array instead of starting a plaintext socket", async (
   }
 
   // The same entry as a plain object still produces a TLS listener.
+  const { promise, resolve, reject } = Promise.withResolvers<string>();
   using server = Bun.listen({
     hostname: "127.0.0.1",
     port: 0,
@@ -1067,9 +1068,9 @@ it("should throw on a tls array instead of starting a plaintext socket", async (
       },
       open() {},
       close() {},
+      error: reject,
     },
   });
-  const { promise, resolve } = Promise.withResolvers<string>();
   let received = "";
   await Bun.connect({
     hostname: "127.0.0.1",
@@ -1085,6 +1086,8 @@ it("should throw on a tls array instead of starting a plaintext socket", async (
       close() {
         resolve(received);
       },
+      error: reject,
+      connectError: reject,
     },
   });
   expect(await promise).toBe("hello");

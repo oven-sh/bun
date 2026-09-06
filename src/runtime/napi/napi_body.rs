@@ -155,7 +155,7 @@ impl NapiEnv {
     /// Assert that we're not currently performing garbage collection
     pub(crate) fn check_gc(&self) {
         // SAFETY: env is non-null; C++ side is read-only here.
-        unsafe { napi_internal_check_gc(self.as_mut_ptr()) };
+        unsafe { Bun__napi_check_gc(self.as_mut_ptr()) };
     }
 
     pub(crate) fn get_and_clear_pending_exception(&self) -> Option<JSValue> {
@@ -2058,7 +2058,7 @@ extern "C" fn napi_fatal_error(
     message_len_: usize,
 ) -> ! {
     bun_output::scoped_log!(napi, "napi_fatal_error");
-    napi_internal_suppress_crash_on_abort_if_desired();
+    Bun__napi_suppress_crash_on_abort_if_desired();
     let mut message = napi_span(message_ptr, message_len_);
     if message.is_empty() {
         message = b"fatal error";
@@ -2330,32 +2330,32 @@ unsafe extern "C" {
         data: *mut c_void,
     ) -> napi_status;
 
-    fn napi_internal_cleanup_env_cpp(env: napi_env);
-    fn napi_internal_check_gc(env: napi_env);
+    fn Bun__napi_cleanup_env_cpp(env: napi_env);
+    fn Bun__napi_check_gc(env: napi_env);
 
     /// Returns false if the env has already torn down its registry.
     fn NapiEnv__registerThreadSafeFunction(env: *mut NapiEnv, tsfn: *mut c_void) -> bool;
     fn NapiEnv__unregisterThreadSafeFunction(env: *mut NapiEnv, tsfn: *mut c_void);
 }
 
-extern "C" fn napi_internal_register_cleanup_callback(data: *mut c_void) {
+extern "C" fn Bun__napi_register_cleanup_callback(data: *mut c_void) {
     // SAFETY: data is the napi_env we registered below.
-    unsafe { napi_internal_cleanup_env_cpp(data as napi_env) };
+    unsafe { Bun__napi_cleanup_env_cpp(data as napi_env) };
 }
 
 #[unsafe(no_mangle)]
-extern "C" fn napi_internal_register_cleanup_zig(env_: napi_env) {
+extern "C" fn Bun__napi_register_cleanup_zig(env_: napi_env) {
     // SAFETY: caller guarantees env_ is non-null.
     let env = unsafe { &*env_ };
     env.to_js().bun_vm().as_mut().rare_data().push_cleanup_hook(
         env.to_js(),
         env_.cast::<c_void>(),
-        napi_internal_register_cleanup_callback,
+        Bun__napi_register_cleanup_callback,
     );
 }
 
 #[unsafe(no_mangle)]
-extern "C" fn napi_internal_suppress_crash_on_abort_if_desired() {
+extern "C" fn Bun__napi_suppress_crash_on_abort_if_desired() {
     if bun_core::env_var::feature_flag::BUN_INTERNAL_SUPPRESS_CRASH_ON_NAPI_ABORT
         .get()
         .unwrap_or(false)
@@ -2365,7 +2365,7 @@ extern "C" fn napi_internal_suppress_crash_on_abort_if_desired() {
 }
 
 unsafe extern "C" {
-    fn napi_internal_remove_finalizer(
+    fn Bun__napi_remove_finalizer(
         env: napi_env,
         fun: napi_finalize,
         hint: *mut c_void,
@@ -2395,7 +2395,7 @@ impl Finalizer {
 
         (self.fun)(env, self.data, self.hint);
         // SAFETY: env is valid; passes the C finalizer back for bookkeeping.
-        unsafe { napi_internal_remove_finalizer(env, Some(self.fun), self.hint, self.data) };
+        unsafe { Bun__napi_remove_finalizer(env, Some(self.fun), self.hint, self.data) };
 
         env_ref.surface_exception(env_ref.to_js())
     }
@@ -2412,7 +2412,7 @@ impl Finalizer {
 /// immediate task queue instead of run immediately. This lets finalizers perform allocations,
 /// which they couldn't if they ran immediately while the garbage collector is still running.
 #[unsafe(no_mangle)]
-extern "C" fn napi_internal_enqueue_finalizer(
+extern "C" fn Bun__napi_enqueue_finalizer(
     env: napi_env,
     fun: napi_finalize,
     data: *mut c_void,
@@ -3172,7 +3172,7 @@ impl ThreadSafeFunction {
 /// Called from `NapiEnv::cleanup()` (JS thread) for every threadsafe function
 /// still registered with the env that is being torn down.
 #[unsafe(no_mangle)]
-extern "C" fn napi_internal_threadsafe_function_env_teardown(tsfn: *mut c_void) {
+extern "C" fn Bun__napi_threadsafe_function_env_teardown(tsfn: *mut c_void) {
     let this = tsfn.cast::<ThreadSafeFunction>();
     // SAFETY: the registry only holds live TSFN pointers — `finalize` and
     // `env_teardown` both remove the entry before freeing. Exclusive borrow

@@ -38,7 +38,7 @@ pub(crate) const WRITE_BUFFER_HIGH_WATER: usize = 256 * 1024;
 pub(crate) const WRITE_BUFFER_CONTROL_LIMIT: usize = 1024 * 1024;
 
 /// Live-object counters for the leak test in fetch-http2-leak.test.ts.
-/// Incremented at allocation, decremented in deinit. Read from the JS thread
+/// Incremented at allocation, decremented on drop. Read from the JS thread
 /// via TestingAPIs.liveCounts so they must be atomic.
 // Lower-case names kept so cross-crate readers (`bun_http_jsc`) and the gated
 // submodules share one identifier; SCREAMING_SNAKE alias preserved for the
@@ -66,21 +66,17 @@ pub use pending_connect::PendingConnect;
 pub use stream::Stream;
 
 // ═══════════════════════════════════════════════════════════════════════
-// Thin `h2_*` forwarders on HTTPClient / HTTPContext that the h2_client
-// modules call. The real bodies live in lib.rs
-// (`register_abort_tracker` … `progress_update`) and HTTPContext.rs
-// (`register_h2` / `unregister_h2`); these now monomorphize the const-generic
-// `<IS_SSL>` callees to `<true>` (HTTP/2 is TLS-only) and erase the
-// `picohttp::Request<'_>` borrow back to `'static` so ClientSession can keep
-// using `client` after building the request. Kept as inherent methods so the
-// many call sites in `h2_client/*.rs` need no churn.
+// Thin `h2_*` forwarders on HTTPClient that the h2_client modules call. The
+// real bodies live in lib.rs (`register_abort_tracker` … `progress_update`);
+// these monomorphize the const-generic `<IS_SSL>` callees to `<true>` (HTTP/2
+// is TLS-only). Kept as inherent methods so the many call sites in
+// `h2_client/*.rs` need no churn.
 // ═══════════════════════════════════════════════════════════════════════
 mod bridge {
     use crate::http_context::HTTPSocket;
-    use crate::{HTTPClient, NewHTTPContext};
-    use bun_picohttp as picohttp;
+    use crate::{CtxRef, HTTPClient};
 
-    impl HTTPClient<'_> {
+    impl HTTPClient {
         #[inline]
         pub(crate) fn h2_register_abort_tracker(&mut self, socket: HTTPSocket<true>) {
             self.register_abort_tracker::<true>(socket);
@@ -98,19 +94,11 @@ mod bridge {
             self.fail_from_h2(err);
         }
         #[inline]
-        pub(crate) fn h2_progress_update(
-            &mut self,
-            ctx: *mut NewHTTPContext<true>,
-            socket: HTTPSocket<true>,
-        ) {
+        pub(crate) fn h2_progress_update(&mut self, ctx: CtxRef<true>, socket: HTTPSocket<true>) {
             self.progress_update::<true>(ctx, socket);
         }
         #[inline]
-        pub(crate) fn h2_do_redirect(
-            &mut self,
-            ctx: *mut NewHTTPContext<true>,
-            socket: HTTPSocket<true>,
-        ) {
+        pub(crate) fn h2_do_redirect(&mut self, ctx: CtxRef<true>, socket: HTTPSocket<true>) {
             self.do_redirect::<true>(ctx, socket);
         }
         #[inline]
@@ -128,24 +116,6 @@ mod bridge {
         #[inline]
         pub(crate) fn h2_drain_response_body(&mut self, socket: HTTPSocket<true>) {
             self.drain_response_body::<true>(socket);
-        }
-        #[inline]
-        pub(crate) fn h2_build_request(&mut self, body_len: usize) -> picohttp::Request<'static> {
-            // SAFETY: `build_request` returns a `Request<'_>` whose borrowed
-            // slices point only at (a) the thread-local
-            // `SHARED_REQUEST_HEADERS_BUF` static and (b) `self.header_buf`,
-            // which is itself `&'static [u8]` — neither is tied to the `&mut
-            // self` borrow. Erasing to `'static` lets
-            // `ClientSession::attach` re-borrow `client` while the
-            // `Request` is still live. Same pattern as lib.rs `on_writable`.
-            unsafe { self.build_request(body_len).detach_lifetime() }
-        }
-    }
-
-    impl NewHTTPContext<true> {
-        #[inline]
-        pub(crate) fn h2_register(&mut self, session: *mut super::ClientSession) {
-            self.register_h2(session);
         }
     }
 }

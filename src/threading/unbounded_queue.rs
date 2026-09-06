@@ -63,6 +63,36 @@ pub unsafe trait Linked: Sized {
     unsafe fn link(item: *mut Self) -> *const Link<Self>;
 }
 
+/// Implements [`Linked`] for a type by naming its embedded [`Link<Self>`] field.
+///
+/// ```ignore
+/// bun_threading::intrusive_linked!(NetworkTask, next);
+/// bun_threading::intrusive_linked!(['a] Request<'a>, next);
+/// ```
+#[macro_export]
+macro_rules! intrusive_linked {
+    ([$($gen:tt)*] $ty:ty, $field:ident) => {
+        // SAFETY: projects the one embedded `Link<Self>` field, by name.
+        unsafe impl<$($gen)*> $crate::Linked for $ty {
+            #[inline]
+            unsafe fn link(item: *mut Self) -> *const $crate::Link<Self> {
+                // SAFETY: `item` is valid per the `UnboundedQueue` contract.
+                unsafe { ::core::ptr::addr_of!((*item).$field) }
+            }
+        }
+    };
+    ($ty:ty, $field:ident) => {
+        // SAFETY: projects the one embedded `Link<Self>` field, by name.
+        unsafe impl $crate::Linked for $ty {
+            #[inline]
+            unsafe fn link(item: *mut Self) -> *const $crate::Link<Self> {
+                // SAFETY: `item` is valid per the `UnboundedQueue` contract.
+                unsafe { ::core::ptr::addr_of!((*item).$field) }
+            }
+        }
+    };
+}
+
 // SAFETY: all four accessors route through `T::link(item)`, which by `Linked`'s
 // contract returns the same embedded `Link<Self>` field every time; `Link` is a
 // `#[repr(transparent)]` `AtomicPtr`, so atomic ops are truly atomic at the

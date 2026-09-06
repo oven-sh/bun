@@ -1,6 +1,3 @@
-#[cfg(all(unix, not(any(target_os = "linux", target_os = "android"))))]
-use core::ptr;
-
 use bun_core::feature_flags;
 use bun_sys::{self, Fd};
 use bun_url::URL;
@@ -37,16 +34,12 @@ impl SendFile {
             let mut signed_offset: i64 = i64::try_from(self.offset).expect("int cast");
             let begin = self.offset;
             // this does the syscall directly, without libc
-            // SAFETY: fds are valid open descriptors owned by `self`/caller; offset ptr is a
-            // live stack local.
-            let val = unsafe {
-                bun_sys::linux::sendfile(
-                    socket_fd.native(),
-                    self.fd.native(),
-                    &raw mut signed_offset,
-                    self.remain,
-                )
-            };
+            let val = bun_sys::linux::sendfile_at(
+                socket_fd.native(),
+                self.fd.native(),
+                &mut signed_offset,
+                self.remain,
+            );
             self.offset = u64::try_from(signed_offset).expect("int cast") as usize;
 
             let errcode = bun_sys::get_errno(val);
@@ -69,19 +62,13 @@ impl SendFile {
             let mut sbytes: i64 = 0; // C off_t
             // Same-width signedness flip; `as` is a bit-reinterpret here.
             let signed_offset: i64 = self.offset as u64 as i64;
-            // FreeBSD: sendfile(fd, s, offset, nbytes, hdtr, *sbytes, flags)
-            // SAFETY: fds valid; sbytes is a live stack local; hdtr is null (no headers).
-            let errcode = bun_sys::get_errno(unsafe {
-                bun_sys::c::sendfile(
-                    self.fd.native(),
-                    socket_fd.native(),
-                    signed_offset,
-                    adjusted_count as usize,
-                    ptr::null_mut(),
-                    &mut sbytes,
-                    0,
-                )
-            });
+            let errcode = bun_sys::get_errno(bun_sys::c::sendfile_plain(
+                self.fd.native(),
+                socket_fd.native(),
+                signed_offset,
+                adjusted_count as usize,
+                &mut sbytes,
+            ));
             let wrote: u64 = u64::try_from(sbytes).expect("int cast");
             self.offset = (self.offset as u64).saturating_add(wrote) as usize;
             self.remain = (self.remain as u64).saturating_sub(wrote) as usize;
@@ -102,17 +89,12 @@ impl SendFile {
             let mut sbytes: i64 = i64::try_from(adjusted_count).expect("int cast"); // C off_t
             // Same-width signedness flip; `as` is a bit-reinterpret here.
             let signed_offset: i64 = self.offset as u64 as i64;
-            // SAFETY: fds valid; sbytes is a live stack local; hdtr is null (no headers).
-            let errcode = bun_sys::get_errno(unsafe {
-                bun_sys::c::sendfile(
-                    self.fd.native(),
-                    socket_fd.native(),
-                    signed_offset,
-                    &raw mut sbytes,
-                    ptr::null_mut(),
-                    0,
-                )
-            });
+            let errcode = bun_sys::get_errno(bun_sys::c::sendfile_plain(
+                self.fd.native(),
+                socket_fd.native(),
+                signed_offset,
+                &mut sbytes,
+            ));
             let wrote: u64 = u64::try_from(sbytes).expect("int cast");
             self.offset = (self.offset as u64).saturating_add(wrote) as usize;
             self.remain = (self.remain as u64).saturating_sub(wrote) as usize;

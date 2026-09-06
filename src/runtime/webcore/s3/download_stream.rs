@@ -55,6 +55,15 @@ impl Taskable for S3HttpDownloadStreamingTask {
     }
 }
 
+impl bun_http::RawResultCallback for S3HttpDownloadStreamingTask {
+    fn on_result(this: *mut Self, result: HTTPClientResult<'_>) {
+        Self::http_callback(this, result)
+    }
+    fn release_at_shutdown(this: *mut Self) {
+        Self::release_at_shutdown(this)
+    }
+}
+
 impl S3HttpDownloadStreamingTask {
     const HOLDS_TICKET: &str = "S3 download on the HTTP thread holds a ticket";
 
@@ -192,7 +201,6 @@ impl S3HttpDownloadStreamingTask {
     /// should only be called when already locked
     fn update_state(
         &mut self,
-        async_http: &mut AsyncHTTP<'static>,
         // borrowed so the caller (process_http_callback) can still read
         // `result.body` afterward.
         result: &HTTPClientResult,
@@ -210,7 +218,7 @@ impl S3HttpDownloadStreamingTask {
                 // `certificate_info` / `metadata` free their owned buffers via `Drop`
                 // when `HTTPClientResult` is dropped by the caller after this returns.
                 if let Some(m) = &result.metadata {
-                    state.set_status_code(m.response.status_code);
+                    state.set_status_code(m.status_code());
                 }
             }
             match state.status_code() {
@@ -219,23 +227,13 @@ impl S3HttpDownloadStreamingTask {
             }
             // store the new state
             self.set_state(*state);
-            // SAFETY: `async_http` points to a live AsyncHTTP owned by the HTTP thread; a
-            // bitwise read+write copies its current state into `self.http` without running
-            // destructors (the HTTP thread retains ownership of the source until the request
-            // completes). `self.http` was previously initialised in
-            // `client::download_stream`.
-            unsafe { core::ptr::write(self.http.as_mut_ptr(), core::ptr::read(async_http)) };
         }
         wait_until_done
     }
 
     /// this functions is only called from the http callback in the HTTPThread and returns true if
     /// we should enqueue another task
-    fn process_http_callback(
-        &mut self,
-        async_http: &mut AsyncHTTP<'static>,
-        mut result: HTTPClientResult,
-    ) -> bool {
+    fn process_http_callback(&mut self, mut result: HTTPClientResult) -> bool {
         // lets lock and unlock to be safe we know the state is not in the middle of a callback when locked
         // The RAII guard unlocks on every
         // return path. The guard holds the mutex by raw pointer (see
@@ -249,7 +247,7 @@ impl S3HttpDownloadStreamingTask {
         // old state should have more otherwise it's an HTTP-client bug
         debug_assert!(state.has_more());
         let is_done = !result.has_more;
-        let wait_until_done = self.update_state(async_http, &result, &mut state);
+        let wait_until_done = self.update_state(&result, &mut state);
         let should_enqueue = !wait_until_done || is_done;
         bun_core::scoped_log!(
             S3,
@@ -295,11 +293,7 @@ impl S3HttpDownloadStreamingTask {
     /// `this` must be a live heap pointer produced by `Self::new`, valid for the duration of the
     /// HTTP request; `mutex` serializes against `on_response`. `async_http` must be a valid
     /// pointer to an initialised `AsyncHTTP` for the duration of this call.
-    pub(crate) fn http_callback(
-        this: *mut Self,
-        async_http: *mut AsyncHTTP<'static>,
-        result: HTTPClientResult,
-    ) {
+    pub(crate) fn http_callback(this: *mut Self, result: HTTPClientResult) {
         // SAFETY: `this` is live for the duration of the HTTP request; HTTPThread holds the only
         // concurrent reference and `mutex` serializes against `on_response`. `async_http` is the
         // live HTTP-thread copy, non-null for the callback's duration. Borrows scoped to the call.
@@ -311,7 +305,7 @@ impl S3HttpDownloadStreamingTask {
             unsafe { (*this).http_ticket.take() }.expect(Self::HOLDS_TICKET)
         });
         // SAFETY: as above; the HTTP thread is the only one touching it here.
-        if unsafe { (*this).process_http_callback(&mut *async_http, result) } {
+        if unsafe { (*this).process_http_callback(result) } {
             // we are always unlocked here and its safe to enqueue
             // SAFETY: same exclusivity as above; `task` is the inline `concurrent_task` field of
             // this heap request and the queue takes ownership of its `next` link. Not done ⇒
@@ -336,8 +330,7 @@ impl S3HttpDownloadStreamingTask {
     ///
     /// # Safety
     /// `this` is the live task registered with the callback; HTTP thread parked.
-    pub(crate) unsafe fn release_at_shutdown(this: *mut ()) {
-        let this = this.cast::<Self>();
+    pub(crate) fn release_at_shutdown(this: *mut Self) {
         // SAFETY: fn contract — nothing else touches the task now (the JS
         // thread is waiting in the HTTP shutdown).
         unsafe {
@@ -385,11 +378,9 @@ impl S3HttpDownloadStreamingTask {
     }
 
     fn release_portable(&mut self) {
-        // SAFETY: `http` is always initialised before the task is scheduled / dropped.
-        let http = unsafe { self.http.assume_init_mut() };
-        http.clear_data();
-        http.request_headers = Default::default();
-        http.client.header_entries = Default::default();
+        // SAFETY: `http` is always initialised before the task is scheduled /
+        // dropped; this runs once, from `Drop`.
+        unsafe { self.http.assume_init_drop() };
     }
 }
 

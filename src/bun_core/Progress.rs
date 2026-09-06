@@ -318,16 +318,24 @@ impl Node {
     }
 
     /// Tell the parent node that this node is actively being worked on. Thread-safe.
-    pub fn activate(&mut self) {
-        let self_ptr: *mut Node = self;
-        let ctx_ptr = self.context_ptr();
+    pub fn activate(&self) {
+        let self_ptr: *mut Node = core::ptr::from_ref(self).cast_mut();
         if let Some(parent) = self.parent() {
             parent
                 .recently_updated_child
                 .store(self_ptr, Ordering::Release);
-            // SAFETY: see `context_ptr` — `&mut Progress` would alias the node tree.
-            unsafe { (*ctx_ptr).maybe_refresh() };
+            self.maybe_refresh();
         }
+    }
+
+    /// Redraw if enough time has passed since the last update. Thread-safe.
+    pub fn maybe_refresh(&self) {
+        let context = self.context_ptr();
+        if context.is_null() {
+            return;
+        }
+        // SAFETY: see `context_ptr` — `&mut Progress` would alias the node tree.
+        unsafe { (*context).maybe_refresh() };
     }
 
     /// Thread-safe. 0 means unknown.

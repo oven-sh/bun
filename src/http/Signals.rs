@@ -45,8 +45,8 @@ impl BodyReceiveMode {
 impl Signals {
     /// Resolve `field` to a [`BackRef`] over its `AtomicBool` slot, if wired.
     ///
-    /// Centralises the back-reference upgrade so [`get`]/[`store`] are
-    /// unsafe-free. Every non-None pointer here was created via
+    /// Centralises the back-reference upgrade for [`get`]/[`store`]. Every
+    /// non-None pointer here was created via
     /// `NonNull::from(&store.<field>)` in `Store::to` (or an equivalent
     /// caller-side `NonNull::from(&signal_store.<field>)`); the BACKREF
     /// invariant — the `Store` outlives every `Signals` derived from it — is

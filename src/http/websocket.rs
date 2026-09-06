@@ -33,7 +33,7 @@ impl Opcode {
     /// Caller must guarantee `n <= 0xF`;
     /// debug-asserted. Public so call sites that already range-check the raw
     /// nibble (e.g. the WS client's extern-C `op: u8` entry points) don't have
-    /// to repeat the `unsafe` block.
+    /// to repeat the range check.
     #[inline]
     pub const fn from_raw(n: u8) -> Opcode {
         debug_assert!(n <= 0xF);

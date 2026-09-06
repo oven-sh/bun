@@ -2772,11 +2772,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         // `return g()` is a tail call: JSC drops this frame.
                         // The runtime forces `minify_syntax` on, so only a bundle may.
                         if !self.options.bundle
-                            && Self::any_in_tail_position(&replacement, &mut |e| {
+                            && self.any_in_tail_position(&replacement, &mut |e| {
                                 matches!(e.data, js_ast::ExprData::ECall(_))
                                     || matches!(e.data, js_ast::ExprData::ETemplate(t) if t.tag.is_some())
                             })
-                            && Self::any_in_tail_position(value, &mut |e| {
+                            && self.any_in_tail_position(value, &mut |e| {
                                 matches!(e.data, js_ast::ExprData::EIdentifier(ident)
                                     if ident.ref_.eql(r#ref)
                                         || self.symbols[ident.ref_.inner_index() as usize].link.get().eql(r#ref))
@@ -2860,10 +2860,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
     /// JSC's tail positions: the expression, a comma's last operand,
     /// the right side of `&&` / `||` / `??`, both branches of `?:`.
-    fn any_in_tail_position(expr: &Expr, pred: &mut impl FnMut(&Expr) -> bool) -> bool {
+    fn any_in_tail_position(&self, expr: &Expr, pred: &mut impl FnMut(&Expr) -> bool) -> bool {
+        if !self.stack_check.is_safe_to_recurse() || self.reported_stack_overflow.get() {
+            return false;
+        }
         match expr.data {
             js_ast::ExprData::EIf(e) => {
-                Self::any_in_tail_position(&e.yes, pred) || Self::any_in_tail_position(&e.no, pred)
+                self.any_in_tail_position(&e.yes, pred) || self.any_in_tail_position(&e.no, pred)
             }
             js_ast::ExprData::EBinary(e)
                 if matches!(
@@ -2874,7 +2877,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         | js_ast::op::Code::BinNullishCoalescing
                 ) =>
             {
-                Self::any_in_tail_position(&e.right, pred)
+                self.any_in_tail_position(&e.right, pred)
             }
             _ => pred(expr),
         }

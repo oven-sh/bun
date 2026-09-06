@@ -461,9 +461,11 @@ impl WebWorker {
         }
         // SAFETY: `WebWorker` is shared across threads by design (atomics,
         // `Guarded`, thread-confined cells — see the struct doc) and holds no
-        // parent-VM state; `init` is an owned copy — byte buffers, scalars and
-        // `Arc<RefCountedEnvValue>`s, no JSC or atom strings; the parent VM
-        // itself is kept by `_parent_ticket`.
+        // parent-VM state; `init` is an owned copy — byte buffers, scalars,
+        // `Arc<RefCountedEnvValue>`s, and `entry_blob`, a registry dupe with a
+        // null `global_this`, a `make_thread_shareable()`d `name` and
+        // atomically refcounted `store`/`content_type` (no JSC or atom
+        // strings); the parent VM itself is kept by `_parent_ticket`.
         unsafe impl Send for ThreadStart {}
         let start = ThreadStart {
             worker: thread_ref,

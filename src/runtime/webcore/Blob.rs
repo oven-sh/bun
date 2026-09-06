@@ -3416,11 +3416,12 @@ impl BlobExt for Blob {
             match &store.data {
                 store::Data::Bytes(bytes) => {
                     size += bytes.stored_name.len();
-                    size += if self.size.get() != MAX_SIZE {
-                        self.size.get() as usize
-                    } else {
-                        bytes.len() as usize
-                    };
+                    // The bytes belong to the shared store, not to this view.
+                    // Count them once, for the sole owner. A slice shares the
+                    // store and allocates nothing.
+                    if store.has_one_ref() {
+                        size += bytes.len() as usize;
+                    }
                 }
                 store::Data::File(file) => size += file.pathlike.estimated_size(),
                 store::Data::S3(s3) => size += s3.estimated_size(),

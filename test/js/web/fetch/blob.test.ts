@@ -825,3 +825,19 @@ test.each([
   const blob = new Blob(["abc"], { type });
   expect(blob.slice(0, 1).type).toBe(expected);
 });
+
+// A slice shares the parent's bytes. It must not report them to the GC as a
+// new allocation, or each slice of a large Blob triggers a collection.
+test("Blob.slice() does not report the shared bytes as extra memory", () => {
+  const { heapStats } = require("bun:jsc");
+  const size = 1 << 20;
+  const blob = new Blob([new Uint8Array(size)]);
+  const before = heapStats().extraMemorySize;
+  const slices: Blob[] = [];
+  for (let i = 0; i < 100; i++) {
+    slices.push(blob.slice(0, size));
+  }
+  const delta = heapStats().extraMemorySize - before;
+  expect(slices.length).toBe(100);
+  expect(delta).toBeLessThan(size);
+});

@@ -5287,6 +5287,11 @@ describe("css tests", () => {
     minify_test(":nth-last-col(-n+2) {width: 20px}", ":nth-last-col(-n+2){width:20px}");
     minify_test(":nth-last-col(even) {width: 20px}", ":nth-last-col(2n){width:20px}");
     minify_test(":nth-last-col(odd) {width: 20px}", ":nth-last-col(odd){width:20px}");
+    // `0n+1` has no `:first-col` shorthand, unlike `:nth-child(1)`.
+    minify_test(":nth-col(1) {width: 20px}", ":nth-col(1){width:20px}");
+    minify_test(":nth-col(0n+1) {width: 20px}", ":nth-col(1){width:20px}");
+    minify_test(":nth-last-col(1) {width: 20px}", ":nth-last-col(1){width:20px}");
+    minify_test(":nth-col(1) {c: d} :nth-last-col(1) {e: f} .after {g: h}", ":nth-col(1){c:d}:nth-last-col(1){e:f}.after{g:h}");
     minify_test(":nth-child(odd) {width: 20px}", ":nth-child(odd){width:20px}");
     minify_test(":nth-child(2n) {width: 20px}", ":nth-child(2n){width:20px}");
     minify_test(":nth-child(2n+1) {width: 20px}", ":nth-child(odd){width:20px}");

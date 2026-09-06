@@ -1,6 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isASAN, isDebug, isWindows, tempDir } from "harness";
 import { exec } from "node:child_process";
+import { truncateSync } from "node:fs";
+import { join } from "node:path";
 
 test.concurrent("pipe does the right thing", async () => {
   // Note: Bun.spawnSync uses memfd_create on Linux for pipe, which means we see
@@ -32,6 +34,55 @@ test.concurrent("file does the right thing", async () => {
   `);
   expect(await result.stderr.text()).toMatchInlineSnapshot(`""`);
   expect(await result.exited).toBe(0);
+});
+
+// A regular file or a character device on fd 0 cannot be polled. Reading it
+// must still let the event loop turn between chunks, so timers and immediates
+// run while a large (or endless) input is consumed.
+describe.skipIf(isWindows)("stdin that is not pollable does not starve the event loop", () => {
+  test("regular file: an immediate runs before 'end'", async () => {
+    using dir = tempDir("stdin-regular-file", { "big.sparse": "" });
+    const big = join(String(dir), "big.sparse");
+    // Sparse: costs no disk, reads as zeros.
+    truncateSync(big, 32 * 1024 * 1024);
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `let bytes = 0, chunks = 0, immediateAt = -1;
+         process.stdin.on("data", d => { bytes += d.length; chunks++; });
+         process.stdin.on("end", () => { console.log(JSON.stringify({ bytes, immediateFired: immediateAt >= 0 && immediateAt < chunks })); });
+         setImmediate(() => { immediateAt = chunks; });`,
+      ],
+      stdin: Bun.file(big),
+      stdout: "pipe",
+      stderr: "pipe",
+      env: bunEnv,
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({ bytes: 32 * 1024 * 1024, immediateFired: true });
+    expect(exitCode).toBe(0);
+  });
+
+  test("/dev/zero: a timer can destroy the stream", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `process.stdin.on("data", () => {});
+         setImmediate(() => { console.log("immediate"); process.stdin.destroy(); });`,
+      ],
+      stdin: Bun.file("/dev/zero"),
+      stdout: "pipe",
+      stderr: "pipe",
+      env: bunEnv,
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe("immediate\n");
+    expect(exitCode).toBe(0);
+  });
 });
 
 test.concurrent("stdin with 'readable' event handler should receive data when paused", async () => {

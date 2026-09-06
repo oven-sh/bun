@@ -9,7 +9,7 @@ import {
 import { describe, expect, it, test } from "bun:test";
 import { bunEnv, bunExe, isASAN, isDebug, isLinux, isMacOS, isWindows, tempDir, tmpdirSync } from "harness";
 import { mkfifo } from "mkfifo";
-import { closeSync, createReadStream, openSync, realpathSync, unlinkSync, writeFileSync } from "node:fs";
+import { closeSync, createReadStream, openSync, realpathSync, truncateSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 it("TransformStream", async () => {
@@ -1946,9 +1946,47 @@ it("Bun.file().stream() read text from large file", async () => {
   }
 });
 
-// A POSIX file is read synchronously inside the stream's pull, so a failing
-// read(2) arrives with no pending read to reject. Windows reads files through
-// libuv, where the error always lands on a pending read.
+// A regular file cannot be polled, so each chunk is read on the thread pool and
+// delivered through the event loop. Reading a large file must not run as one
+// unbroken chain of microtasks that keeps timers and immediates from running.
+it("Bun.file().stream() lets the event loop turn between chunks", async () => {
+  using dir = tempDir("file-stream-event-loop", { "big.sparse": "" });
+  const big = join(String(dir), "big.sparse");
+  // Sparse: costs no disk, reads as zeros.
+  truncateSync(big, 16 * 1024 * 1024);
+  let chunks = 0;
+  let bytes = 0;
+  let immediateAt = -1;
+  setImmediate(() => {
+    immediateAt = chunks;
+  });
+  for await (const chunk of Bun.file(big).stream()) {
+    chunks++;
+    bytes += chunk.length;
+  }
+  expect(bytes).toBe(16 * 1024 * 1024);
+  expect(chunks).toBeGreaterThan(1);
+  // The immediate ran before the last chunk arrived, not after the whole read.
+  expect(immediateAt).toBeGreaterThanOrEqual(0);
+  expect(immediateAt).toBeLessThan(chunks);
+});
+
+it("Bun.file().stream() of a slice stops at the slice end", async () => {
+  using dir = tempDir("file-stream-slice", {});
+  const path = join(String(dir), "data.bin");
+  const data = Buffer.alloc(3 * 1024 * 1024);
+  for (let i = 0; i < data.length; i += 4) data.writeUInt32LE(i >>> 2, i);
+  writeFileSync(path, data);
+  const start = 1024 * 1024 + 17;
+  const end = 2 * 1024 * 1024 + 5;
+  const out = Buffer.concat(await Array.fromAsync(Bun.file(path).slice(start, end).stream()));
+  expect(out.length).toBe(end - start);
+  expect(out.equals(data.subarray(start, end))).toBe(true);
+});
+
+// A POSIX file is read on the thread pool, so a failing read(2) may arrive with
+// no pending read to reject. Windows reads files through libuv, where the error
+// always lands on a pending read.
 describe.skipIf(isWindows)("Bun.file().stream() surfaces read() errors", () => {
   // read(2) on /proc/self/mem fails with EIO: nothing is mapped at address 0.
   const eioPath = "/proc/self/mem";

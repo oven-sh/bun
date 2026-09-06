@@ -3764,7 +3764,9 @@ pub(crate) mod __gated_printer {
                         (n == self.stmt_start || n == self.for_init_start)
                             && !matches!(e.index.data, ExprData::EPrivateIdentifier(_))
                             && match &e.target.data {
-                                ExprData::EIdentifier(id) => self.name_for_symbol(id.ref_) == b"let",
+                                ExprData::EIdentifier(id) => {
+                                    self.name_for_symbol(id.ref_) == b"let"
+                                }
                                 _ => false,
                             }
                     };

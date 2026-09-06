@@ -1142,11 +1142,10 @@ static JSC::EncodedJSValue jsBufferPrototypeFunction_compareBody(JSC::JSGlobalOb
     size_t sourceEndInit = castedThis->byteLength();
     size_t sourceEnd = sourceEndInit;
 
-    // Node's validateOffset, in argument order: a start is bounded by 2**53 - 1
-    // (past the end is an empty range, not an error), an end by its buffer.
+    // Node's validateOffset, in argument order: a start by kMaxOffset, an end by its buffer.
     JSValue targetStartValue = callFrame->argument(1);
     if (!targetStartValue.isUndefined()) {
-        Bun::V::validateInteger(throwScope, lexicalGlobalObject, targetStartValue, "targetStart"_s, jsNumber(0), jsDoubleNumber(JSC::maxSafeInteger()), &targetStart);
+        Bun::V::validateInteger(throwScope, lexicalGlobalObject, targetStartValue, "targetStart"_s, jsNumber(0), jsDoubleNumber(Bun::Buffer::kMaxOffset), &targetStart);
         RETURN_IF_EXCEPTION(throwScope, {});
     }
     JSValue targetEndValue = callFrame->argument(2);
@@ -1156,7 +1155,7 @@ static JSC::EncodedJSValue jsBufferPrototypeFunction_compareBody(JSC::JSGlobalOb
     }
     JSValue sourceStartValue = callFrame->argument(3);
     if (!sourceStartValue.isUndefined()) {
-        Bun::V::validateInteger(throwScope, lexicalGlobalObject, sourceStartValue, "sourceStart"_s, jsNumber(0), jsDoubleNumber(JSC::maxSafeInteger()), &sourceStart);
+        Bun::V::validateInteger(throwScope, lexicalGlobalObject, sourceStartValue, "sourceStart"_s, jsNumber(0), jsDoubleNumber(Bun::Buffer::kMaxOffset), &sourceStart);
         RETURN_IF_EXCEPTION(throwScope, {});
     }
     JSValue sourceEndValue = callFrame->argument(4);
@@ -1411,15 +1410,14 @@ static JSC::EncodedJSValue jsBufferPrototypeFunction_fillBody(JSC::JSGlobalObjec
     // ── 2. Pure offset / end coercion (no user JS) ──────────────────────
     // Node routes both through validateOffset (= validateInteger), so a
     // fractional or NaN offset/end throws ERR_OUT_OF_RANGE "an integer"
-    // instead of being truncated. The offset is bounded by 2**53 - 1, not
-    // the buffer: past `end` is an empty range below. parseEncoding above
-    // may have detached/resized the buffer, but the `limit` captured
-    // pre-coercion is still the correct Node-compat upper bound for
-    // ERR_OUT_OF_RANGE; the final write range is clamped against a
-    // separate post-coercion byteLength read further down.
+    // instead of being truncated. parseEncoding above may have
+    // detached/resized the buffer, but the `limit` captured pre-coercion
+    // is still the correct Node-compat upper bound for ERR_OUT_OF_RANGE;
+    // the final write range is clamped against a separate post-coercion
+    // byteLength read further down.
     //     https://github.com/nodejs/node/blob/v22.9.0/lib/buffer.js#L1066-L1079
     if (!offsetValue.isUndefined()) {
-        Bun::V::validateInteger(scope, lexicalGlobalObject, offsetValue, "offset"_s, jsNumber(0), jsDoubleNumber(JSC::maxSafeInteger()), &offset);
+        Bun::V::validateInteger(scope, lexicalGlobalObject, offsetValue, "offset"_s, jsNumber(0), jsDoubleNumber(Bun::Buffer::kMaxOffset), &offset);
         RETURN_IF_EXCEPTION(scope, {});
         // Node only reads `end` once `offset` is present: fill(v, undefined, end)
         // ignores end (it is never validated) and fills the whole buffer.

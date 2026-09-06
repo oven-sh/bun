@@ -4427,8 +4427,7 @@ fn write_file_with_empty_source_to_destination(
     ))
 }
 
-/// `already_written` is the byte count the synchronous fast path committed to
-/// the destination before it fell back; the bytes source resumes after it.
+/// `already_written`: bytes the sync fast path wrote before it fell back.
 pub(crate) fn write_file_with_source_destination(
     ctx: &JSGlobalObject,
     source_blob: &mut Blob,
@@ -4787,10 +4786,6 @@ pub(crate) fn write_file_internal(
     // This is a heuristic, but it's a good one.
     //
     // except if you're on Windows. Windows I/O is slower. Let's not even try.
-    //
-    // When the fast path hits EAGAIN after a partial write it hands off to the
-    // async `WriteFile`, which resumes at `already_written` instead of
-    // re-sending the prefix.
     #[cfg(windows)]
     let already_written: usize = 0;
     #[cfg(not(windows))]

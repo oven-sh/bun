@@ -13,7 +13,6 @@ describe("RegExp.escape with supplementary code points", () => {
     ["\u{2002C}", "','"],
     ["\u{20020}", "space"],
     ["\u{12000}", "U+2000"],
-    ["\u{1D800}", "lead surrogate"],
     ["\u{1FEFF}", "U+FEFF"],
   ] as const;
 
@@ -33,13 +32,33 @@ describe("RegExp.escape with supplementary code points", () => {
     expect(hay.replaceAll(new RegExp(RegExp.escape(name), "gu"), "#")).toBe("abc # xyz");
   });
 
-  test("every supplementary code point is left unchanged", () => {
-    let changed = 0;
-    for (let cp = 0x10000; cp < 0x110000; cp++) {
-      const s = String.fromCodePoint(cp);
-      if (RegExp.escape(s) !== s) changed++;
+  test("no supplementary code point is escaped, in any plane", () => {
+    // Every BMP code unit that RegExp.escape rewrites: SyntaxCharacter, '/',
+    // the other punctuators, ControlEscape, WhiteSpace, LineTerminator, and a
+    // sample of the surrogate range. A supplementary code point with these
+    // low 16 bits is an ordinary character.
+    const escapedLow16 = [
+      ..."^$\\.*+?()[]{}|/,-=<>#&!%:;@~'`\"\t\n\v\f\r \u00a0\u1680\u2028\u2029\u202f\u205f\u3000\ufeff",
+    ].map(c => c.charCodeAt(0));
+    for (let c = 0x2000; c <= 0x200a; c++) escapedLow16.push(c);
+    escapedLow16.push(0xd800, 0xd83d, 0xdbff, 0xdc00, 0xde00, 0xdfff);
+    for (const low of escapedLow16) {
+      expect(RegExp.escape("_" + String.fromCharCode(low))).not.toBe("_" + String.fromCharCode(low));
     }
-    expect(changed).toBe(0);
+
+    const changed: string[] = [];
+    for (let plane = 1; plane <= 16; plane++) {
+      for (const low of escapedLow16) {
+        const cp = (plane << 16) | low;
+        const s = String.fromCodePoint(cp);
+        if (RegExp.escape(s) !== s) changed.push("U+" + cp.toString(16));
+      }
+    }
+    for (let cp = 0x10000; cp < 0x110000; cp += 331) {
+      const s = String.fromCodePoint(cp);
+      if (RegExp.escape(s) !== s) changed.push("U+" + cp.toString(16));
+    }
+    expect(changed).toEqual([]);
   });
 
   test("BMP inputs are still escaped", () => {

@@ -3537,13 +3537,21 @@ impl Pattern {
                 return Ok(None);
             }
 
-            // `**/foo` matches the same as `foo`
+            // `**/foo` matches the same as `foo`. `**/foo/bar` keeps its `**/` so the
+            // glob matches `foo/bar` at any depth instead of only at the ignore file's dir.
             if remain.starts_with(b"**/") {
-                remain = &remain[b"**/".len()..];
-                if remain.is_empty() {
+                let after = &remain[b"**/".len()..];
+                if after.is_empty() {
                     return Ok(None);
                 }
-                has_leading_doublestar_could_start_with_bang = true;
+                let has_middle_slash = match strings::index_of_char(after, b'/') {
+                    Some(i) => (i as usize) != after.len() - 1,
+                    None => false,
+                };
+                if !has_middle_slash {
+                    remain = after;
+                    has_leading_doublestar_could_start_with_bang = true;
+                }
             }
 
             let trailing_slash = remain[remain.len() - 1] == b'/';
@@ -3677,10 +3685,33 @@ impl IgnorePatterns {
         Global::crash();
     }
 
+    /// Strips unescaped trailing spaces, like git's `trim_trailing_spaces` in dir.c.
+    /// A backslash escapes the next byte, so `foo\ ` keeps its space.
     fn trim_trailing_spaces(line: &[u8]) -> &[u8] {
-        // TODO: copy this function
-        // https://github.com/git/git/blob/17d4b10aea6bda2027047a0e3548a6f8ad667dde/dir.c#L986
-        line
+        let mut last_space: Option<usize> = None;
+        let mut i = 0;
+        while i < line.len() {
+            match line[i] {
+                b' ' => {
+                    if last_space.is_none() {
+                        last_space = Some(i);
+                    }
+                }
+                b'\\' => {
+                    i += 1;
+                    if i == line.len() {
+                        return line;
+                    }
+                    last_space = None;
+                }
+                _ => last_space = None,
+            }
+            i += 1;
+        }
+        match last_space {
+            Some(end) => &line[..end],
+            None => line,
+        }
     }
 
     /// ignore files are always ignored, don't need to worry about opening or reading twice

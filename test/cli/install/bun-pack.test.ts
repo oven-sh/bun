@@ -1774,6 +1774,37 @@ describe.concurrent("files", () => {
       "package/src/index.ts",
     ]);
   });
+
+  test("leading **/ with a multi-segment pattern matches at any depth", async () => {
+    using dir = tempDir("pack-files-doublestar-path", {
+      "package.json": JSON.stringify({
+        name: "pack-files-doublestar-path",
+        version: "1.0.0",
+        files: ["**/build/out.js", "**/lib/", "!**/lib/skip.js"],
+      }),
+      "build/out.js": "x",
+      "build/other.js": "x",
+      "sub/build/out.js": "x",
+      "a/b/build/out.js": "x",
+      "out.js": "x",
+      "lib/a.js": "x",
+      "lib/skip.js": "x",
+      "sub/lib/b.js": "x",
+      "sub/lib/skip.js": "x",
+    });
+
+    const { out, err, exitCode } = await runPack(dir);
+    expect(err).toBe("");
+    expect(exitCode).toBe(0);
+    expect(tarballEntries(join(dir, "pack-files-doublestar-path-1.0.0.tgz"))).toEqual([
+      "package/package.json",
+      "package/a/b/build/out.js",
+      "package/build/out.js",
+      "package/lib/a.js",
+      "package/sub/build/out.js",
+      "package/sub/lib/b.js",
+    ]);
+  });
 });
 
 describe.concurrent(".gitignore/.npmignore", () => {
@@ -1874,6 +1905,58 @@ describe.concurrent(".gitignore/.npmignore", () => {
     expect(exitCode).toBe(0);
 
     expect(tarballEntries(join(dir, "pack-ignore-2-1.2.1.tgz"))).toEqual(["package/package.json"]);
+  });
+
+  test.each([".gitignore", ".npmignore"])(
+    "leading **/ with a multi-segment pattern matches at any depth (%s)",
+    async ignoreFile => {
+      using dir = tempDir("pack-ignore-doublestar-path", {
+        "package.json": JSON.stringify({ name: "pack-ignore-doublestar-path", version: "1.0.0" }),
+        [ignoreFile]: "**/build/out.js\n**/fixtures/tmp/\n!**/build/keep.js\n",
+        "keep.js": "keep",
+        "build/out.js": "x",
+        "build/keep.js": "x",
+        "sub/build/out.js": "x",
+        "sub/build/keep.js": "x",
+        "a/b/build/out.js": "x",
+        "a/b/build/other.js": "x",
+        "sub/fixtures/tmp/file.txt": "x",
+        "sub/fixtures/tmp.txt": "x",
+      });
+
+      const { out, err, exitCode } = await runPack(dir);
+      expect(err).toBe("");
+      expect(exitCode).toBe(0);
+      expect(tarballEntries(join(dir, "pack-ignore-doublestar-path-1.0.0.tgz"))).toEqual([
+        "package/package.json",
+        "package/a/b/build/other.js",
+        "package/build/keep.js",
+        "package/keep.js",
+        "package/sub/build/keep.js",
+        "package/sub/fixtures/tmp.txt",
+      ]);
+    },
+  );
+
+  test.each([".gitignore", ".npmignore"])("trailing spaces are trimmed unless escaped (%s)", async ignoreFile => {
+    using dir = tempDir("pack-ignore-trailing-space", {
+      "package.json": JSON.stringify({ name: "pack-ignore-trailing-space", version: "1.0.0" }),
+      [ignoreFile]: "secrets   \nnotes.txt \nspaced\\ \n",
+      "index.js": indexJs,
+      "secrets/prod.env": "TOKEN=abc",
+      "notes.txt": "notes",
+      "spaced ": "has a trailing space in its name",
+      "spaced": "no trailing space",
+    });
+
+    const { out, err, exitCode } = await runPack(dir);
+    expect(err).toBe("");
+    expect(exitCode).toBe(0);
+    expect(tarballEntries(join(dir, "pack-ignore-trailing-space-1.0.0.tgz"))).toEqual([
+      "package/package.json",
+      "package/index.js",
+      "package/spaced",
+    ]);
   });
 });
 

@@ -173,8 +173,6 @@ impl OutdatedCommand {
                 );
                 (ids, true)
             } else {
-                // A bun.lock with no `packages` table parses to an empty package
-                // list, so there is no root package to look up.
                 if manager.lockfile.packages.len() == 0 {
                     return Ok(());
                 }

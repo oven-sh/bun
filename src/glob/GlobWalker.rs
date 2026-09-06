@@ -1771,7 +1771,7 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
             && !Self::starts_with_dot(pattern_component.pattern_slice(&self.pattern))
         {
             if pattern_component.syntax_hint == SyntaxHint::None {
-                return crate::match_no_dot(
+                return crate::matcher::match_no_dot(
                     pattern_component.pattern_slice(&self.pattern),
                     filepath,
                 )

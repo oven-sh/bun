@@ -158,13 +158,17 @@ pub fn r#match(glob: &[u8], path: &[u8]) -> MatchResult {
     match_with_dot(glob, path, true)
 }
 
-/// Like [`match`](r#match), but a `.` at the start of a path segment only
-/// matches an explicit `.`, `\.`, or `[.]` at that position in the pattern.
-/// Wildcards (`*`, `?`, other `[...]` classes) do not consume it. This is
-/// minimatch's `dot: false` rule, applied per brace alternative, so
-/// `{.a,*}` matches `.a` but `{*,x}` does not.
-pub fn match_no_dot(glob: &[u8], path: &[u8]) -> MatchResult {
-    match_with_dot(glob, path, false)
+/// Like [`match`](r#match) for one path segment (`name` holds no separator),
+/// but a leading `.` only matches an explicit `.`, `\.`, or `[.]` at that
+/// position in the pattern. Wildcards (`*`, `?`, other `[...]` classes) do
+/// not consume it. This is minimatch's `dot: false` rule, applied per brace
+/// alternative, so `{.a,*}` matches `.a` but `{*,x}` does not.
+///
+/// One segment only: on a full path, a `**` that restarts on a later hidden
+/// segment would be rejected instead of matching zero segments there.
+pub(crate) fn match_no_dot(glob: &[u8], name: &[u8]) -> MatchResult {
+    debug_assert!(strings::index_of_any(name, b"/\\").is_none());
+    match_with_dot(glob, name, false)
 }
 
 fn match_with_dot(glob: &[u8], path: &[u8], dot: bool) -> MatchResult {
@@ -216,12 +220,14 @@ fn glob_match_impl(
         if (state.glob_index as usize) < glob.len() {
             'fallthrough: {
                 let ch = glob[state.glob_index as usize];
+                // Nothing before a segment start can backtrack into it, so
+                // this branch is dead rather than retried.
                 if !state.dot
                     && !matches!(ch, b'{' | b',' | b'}')
                     && at_hidden_segment_start(path, state.path_index)
                     && !is_explicit_dot(glob, state.glob_index)
                 {
-                    break 'fallthrough;
+                    return false;
                 }
                 'to_else: {
                     match ch {

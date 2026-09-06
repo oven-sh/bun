@@ -252,6 +252,17 @@ impl FileResponseStream {
             return;
         }
 
+        // A Windows file read runs on the libuv threadpool and cannot be
+        // cancelled once it runs, so only the reader's file source can close
+        // the fd safely: it closes after the read in flight. Hand it the fd.
+        #[cfg(windows)]
+        if opts.auto_close {
+            this_ref
+                .reader
+                .with_mut(|reader| reader.flags.insert(ReaderFlags::CLOSE_HANDLE));
+            this_ref.auto_close.set(false);
+        }
+
         // SAFETY: as above — `update_ref` re-enters `event_loop` through the parent pointer.
         this_ref.reader_mut().update_ref(true);
 
@@ -639,25 +650,12 @@ bun_io::impl_buffered_reader_parent! {
 impl Drop for FileResponseStream {
     fn drop(&mut self) {
         bun_output::scoped_log!(FileResponseStream, "deinit");
-        // `start()` cleared CLOSE_HANDLE, so the reader's own `Drop` leaves
-        // the poll handle alone: return the FilePoll to the loop here, and
-        // close the fd below if `auto_close` owns it.
-        #[cfg(unix)]
-        self.reader
-            .with_mut(|reader| reader.handle.close_without_closing_fd());
+        // `self.reader` (BufferedReader) is torn down by its own `Drop` as a
+        // field — closes the poll handle. `bun.destroy(this)` is owned by
+        // `heap::take` in `deref`, not here.
         if self.auto_close.get() {
             #[cfg(windows)]
-            {
-                // A read already running on the libuv threadpool cannot be
-                // cancelled: let the detached source close the fd once that
-                // read completes, instead of closing it out from under it.
-                if !self
-                    .reader
-                    .with_mut(|reader| reader.close_fd_after_pending_op())
-                {
-                    Closer::close(self.fd.get(), bun_sys::windows::libuv::Loop::get());
-                }
-            }
+            Closer::close(self.fd.get(), bun_sys::windows::libuv::Loop::get());
             #[cfg(not(windows))]
             Closer::close(self.fd.get(), ());
         }

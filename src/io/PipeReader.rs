@@ -324,6 +324,14 @@ impl PosixBufferedReader {
         // clearAndFree — release capacity, not just length.
         self._buffer = Vec::new();
         self.close_without_reporting();
+        self.release_poll();
+    }
+
+    /// `CLOSE_HANDLE` says who closes the fd. The `FilePoll` is always the
+    /// reader's, so a reader that goes away returns it even when the fd stays
+    /// with the parent.
+    fn release_poll(&mut self) {
+        self.handle.close_without_closing_fd();
     }
 
     fn close_without_reporting(&mut self) {
@@ -976,6 +984,7 @@ impl Drop for PosixBufferedReader {
     fn drop(&mut self) {
         MaxBuf::remove_from_pipereader(&mut self.maxbuf);
         self.close_without_reporting();
+        self.release_poll();
     }
 }
 
@@ -1779,23 +1788,6 @@ impl WindowsBufferedReader {
                 self.done();
             }
         }
-    }
-
-    /// Hands the fd close to the file source when a threadpool op is still in
-    /// flight: `complete()` closes the fd once the op's callback fires, and
-    /// `on_close_complete` then frees the source. Returns `false` when idle,
-    /// in which case the caller still closes the fd itself.
-    pub fn close_fd_after_pending_op(&mut self) -> bool {
-        if let Some(Source::File(file) | Source::SyncFile(file)) = self.source.as_mut() {
-            if matches!(
-                file.state,
-                crate::source::FileState::Operating | crate::source::FileState::Canceling
-            ) {
-                file.close_after_operation = true;
-                return true;
-            }
-        }
-        false
     }
 
     /// Close the reader and call the done callback.

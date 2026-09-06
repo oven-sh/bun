@@ -436,6 +436,8 @@ scripts.build              # dot notation
 contributors[0]            # array access
 workspaces.0               # dot with numeric index
 scripts[test:watch]        # bracket for special chars
+scripts[a.b]               # bracket keeps the dot in the key
+files[]                    # append to an array (set only)
 ```
 
 Examples:
@@ -451,6 +453,7 @@ bun pm pkg get scripts.build                      # nested property
 bun pm pkg set name="my-package"                  # simple property
 bun pm pkg set scripts.test="jest" version=2.0.0  # multiple properties
 bun pm pkg set private=true --json                # JSON values with --json flag
+bun pm pkg set files[2]=c.js files[]=d.js         # index into or append to an array
 
 # delete
 bun pm pkg delete description                     # single property

@@ -344,10 +344,100 @@ describe.concurrent("bun pm pkg", () => {
       expect(await readPkg(dir)).toEqual({
         name: "x",
         version: "1.0.0",
-        contributors: { "0": "alice" },
-        nested: { deep: { "0": "value" } },
+        contributors: ["alice"],
+        nested: { deep: ["value"] },
         scripts: { lint: "eslint ." },
       });
+    });
+
+    it("should index into an existing array with a numeric segment", async () => {
+      using dir = tempDir("pm-pkg-array-index", {
+        "package.json": JSON.stringify(
+          {
+            name: "x",
+            contributors: [{ name: "ann" }, { name: "bob" }],
+            files: ["a.js", "b.js"],
+            workspaces: ["pkgs/*"],
+          },
+          null,
+          2,
+        ),
+      });
+
+      const { code } = await runPmPkg(
+        ["set", "files[2]=c.js", "workspaces[1]=apps/*", "contributors[0].name=amy", "contributors.1.name=bobby"],
+        dir,
+      );
+      expect(code).toBe(0);
+
+      expect(await readPkg(dir)).toEqual({
+        name: "x",
+        contributors: [{ name: "amy" }, { name: "bobby" }],
+        files: ["a.js", "b.js", "c.js"],
+        workspaces: ["pkgs/*", "apps/*"],
+      });
+    });
+
+    it("should fill holes with null when the index is past the end", async () => {
+      using dir = tempDir("pm-pkg-array-holes", {
+        "package.json": JSON.stringify({ name: "x", files: ["a.js"] }, null, 2),
+      });
+
+      const { code } = await runPmPkg(["set", "files[3]=d.js", "list[1].name=n"], dir);
+      expect(code).toBe(0);
+
+      expect(await readPkg(dir)).toEqual({
+        name: "x",
+        files: ["a.js", null, null, "d.js"],
+        list: [null, { name: "n" }],
+      });
+    });
+
+    it("should append with empty brackets", async () => {
+      using dir = tempDir("pm-pkg-array-append", {
+        "package.json": JSON.stringify({ name: "x", files: ["a.js", "b.js"], empty: {} }, null, 2),
+      });
+
+      const { code } = await runPmPkg(["set", "files[]=c.js", "keywords[]=k", "empty[]=e"], dir);
+      expect(code).toBe(0);
+
+      expect(await readPkg(dir)).toEqual({
+        name: "x",
+        files: ["a.js", "b.js", "c.js"],
+        keywords: ["k"],
+        empty: ["e"],
+      });
+    });
+
+    it("should treat bracketed text with dots as one key", async () => {
+      using dir = tempDir("pm-pkg-bracket-dots", {
+        "package.json": JSON.stringify({ name: "x" }, null, 2),
+      });
+
+      const { code } = await runPmPkg(["set", "scripts[c.d]=v", "deps[@scope/pkg.js]=1.0.0"], dir);
+      expect(code).toBe(0);
+      expect(await readPkg(dir)).toEqual({
+        name: "x",
+        scripts: { "c.d": "v" },
+        deps: { "@scope/pkg.js": "1.0.0" },
+      });
+
+      const { output } = await runPmPkg(["get", "scripts[c.d]"], dir);
+      expect(output.trim()).toBe('"v"');
+
+      const { code: deleteCode } = await runPmPkg(["delete", "scripts[c.d]"], dir);
+      expect(deleteCode).toBe(0);
+      expect(await readPkg(dir)).toEqual({ name: "x", scripts: {}, deps: { "@scope/pkg.js": "1.0.0" } });
+    });
+
+    it("should keep a numeric key on a non-empty object", async () => {
+      using dir = tempDir("pm-pkg-numeric-object-key", {
+        "package.json": JSON.stringify({ name: "x", config: { a: 1 } }, null, 2),
+      });
+
+      const { code } = await runPmPkg(["set", "config[0]=zero"], dir);
+      expect(code).toBe(0);
+      expect(await readPkg(dir)).toEqual({ name: "x", config: { a: 1, "0": "zero" } });
     });
 
     it("should fail with invalid key=value format", async () => {
@@ -385,6 +475,23 @@ describe.concurrent("bun pm pkg", () => {
       const { code } = await runPmPkg(["delete", "scripts.test"], dir);
       expect(code).toBe(0);
       expect((await readPkg(dir)).scripts).toEqual({ build: "echo 'build'" });
+    });
+
+    it("should delete array items by index", async () => {
+      using dir = makeTestDir();
+      const { code } = await runPmPkg(["delete", "contributors[0]", "keywords.1", "contributors[0].name"], dir);
+      expect(code).toBe(0);
+      const pkg = await readPkg(dir);
+      expect(pkg.contributors).toEqual([{}]);
+      expect(pkg.keywords).toEqual(["test"]);
+    });
+
+    it("should leave arrays alone when the index is missing or out of range", async () => {
+      using dir = makeTestDir();
+      const before = await readPkg(dir);
+      const { code } = await runPmPkg(["delete", "keywords[5]", "keywords[abc]", "keywords[]"], dir);
+      expect(code).toBe(0);
+      expect(await readPkg(dir)).toEqual(before);
     });
 
     it("should handle deleting non-existent properties", async () => {

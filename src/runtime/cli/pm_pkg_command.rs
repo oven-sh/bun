@@ -41,6 +41,23 @@ impl SubCommand {
     }
 }
 
+/// One step of a `bun pm pkg` key path such as `contributors[0].name`.
+#[derive(Copy, Clone)]
+enum Segment<'a> {
+    Key(&'a [u8]),
+    /// `[]`: the slot after the last item of an array (set only).
+    Append,
+}
+
+impl Segment<'_> {
+    fn is_index(&self) -> bool {
+        match self {
+            Segment::Append => true,
+            Segment::Key(part) => bun_core::fmt::parse_decimal::<usize>(part).is_some(),
+        }
+    }
+}
+
 struct PackageJson {
     root: Expr,
     contents: Box<[u8]>,
@@ -494,124 +511,63 @@ impl PmPkgCommand {
             return Err(crate::Error::NotFound);
         }
 
-        let mut parts = strings::tokenize(key, b".");
         let mut current = root;
-
-        while let Some(part) = parts.next() {
-            if let Some(first_bracket) = strings::index_of(part, b"[") {
-                let mut remaining_part = part;
-
-                if first_bracket > 0 {
-                    let prop_name = &part[..first_bracket];
-                    if !matches!(current.data, ExprData::EObject(_)) {
-                        return Err(crate::Error::NotFound);
-                    }
-                    current = current.get(prop_name).ok_or(crate::Error::NotFound)?;
-                    remaining_part = &part[first_bracket..];
+        for segment in Self::parse_key_path(key)? {
+            let Segment::Key(part) = segment else {
+                return Err(crate::Error::InvalidPath);
+            };
+            match &current.data {
+                ExprData::EArray(arr) => {
+                    let index = bun_core::fmt::parse_decimal::<usize>(part)
+                        .ok_or(crate::Error::NotFound)?;
+                    current = *arr.items.get(index).ok_or(crate::Error::NotFound)?;
                 }
-
-                while let Some(bracket_start) = strings::index_of(remaining_part, b"[") {
-                    let bracket_end = strings::index_of(&remaining_part[bracket_start..], b"]")
-                        .ok_or(crate::Error::InvalidPath)?;
-                    let actual_bracket_end = bracket_start + bracket_end;
-                    let index_str = &remaining_part[bracket_start + 1..actual_bracket_end];
-
-                    if index_str.is_empty() {
-                        return Err(crate::Error::InvalidPath);
-                    }
-
-                    if let Some(index) = bun_core::fmt::parse_decimal::<usize>(index_str) {
-                        let ExprData::EArray(arr) = &current.data else {
-                            return Err(crate::Error::NotFound);
-                        };
-
-                        if index >= arr.items.len_u32() as usize {
-                            return Err(crate::Error::NotFound);
-                        }
-
-                        current = arr.items.slice()[index];
-                    } else {
-                        if !matches!(current.data, ExprData::EObject(_)) {
-                            return Err(crate::Error::NotFound);
-                        }
-                        current = current.get(index_str).ok_or(crate::Error::NotFound)?;
-                    }
-
-                    remaining_part = &remaining_part[actual_bracket_end + 1..];
-                    if remaining_part.is_empty() {
-                        break;
-                    }
-                }
-            } else {
-                if let Some(index) = bun_core::fmt::parse_decimal::<usize>(part) {
-                    match &current.data {
-                        ExprData::EArray(arr) => {
-                            if index >= arr.items.len_u32() as usize {
-                                return Err(crate::Error::NotFound);
-                            }
-                            current = arr.items.slice()[index];
-                        }
-                        ExprData::EObject(_) => {
-                            current = current.get(part).ok_or(crate::Error::NotFound)?;
-                        }
-                        _ => return Err(crate::Error::NotFound),
-                    }
-                } else {
-                    if !matches!(current.data, ExprData::EObject(_)) {
-                        return Err(crate::Error::NotFound);
-                    }
+                ExprData::EObject(_) => {
                     current = current.get(part).ok_or(crate::Error::NotFound)?;
                 }
+                _ => return Err(crate::Error::NotFound),
             }
         }
 
         Ok(current)
     }
 
-    /// Splits `a.b[0][c]` into `["a", "b", "0", "c"]`. Segments are sub-slices
-    /// of `key`: `E::Object::put` stores keys by reference (no copy into the
-    /// AST arena), so they must outlive the `Expr` tree, which `key` (an argv
-    /// slice) does. Returning owned buffers here would leave dangling keys.
-    fn parse_key_path(key: &[u8]) -> Result<Vec<&[u8]>, Error> {
-        let mut path_parts: Vec<&[u8]> = Vec::new();
+    /// Splits `a.b[0][c.d]` into `[Key("a"), Key("b"), Key("0"), Key("c.d")]`.
+    /// Text inside `[...]` is one segment, dots included. `[]` is `Append`.
+    /// Segments are sub-slices of `key`: `E::Object::put` stores keys by
+    /// reference (no copy into the AST arena), so they must outlive the
+    /// `Expr` tree, which `key` (an argv slice) does.
+    fn parse_key_path(key: &[u8]) -> Result<Vec<Segment<'_>>, Error> {
+        let mut segments: Vec<Segment<'_>> = Vec::new();
+        let mut rest = key;
 
-        let mut parts = strings::tokenize(key, b".");
-
-        while let Some(part) = parts.next() {
-            if let Some(first_bracket) = strings::index_of(part, b"[") {
-                let mut remaining_part = part;
-
-                if first_bracket > 0 {
-                    path_parts.push(&part[..first_bracket]);
-                    remaining_part = &part[first_bracket..];
-                }
-
-                while let Some(bracket_start) = strings::index_of(remaining_part, b"[") {
-                    let Some(bracket_end) =
-                        strings::index_of(&remaining_part[bracket_start..], b"]")
-                    else {
-                        return Err(crate::Error::InvalidPath);
-                    };
-                    let actual_bracket_end = bracket_start + bracket_end;
-                    let index_str = &remaining_part[bracket_start + 1..actual_bracket_end];
-
-                    if index_str.is_empty() {
-                        return Err(crate::Error::InvalidPath);
-                    }
-
-                    path_parts.push(index_str);
-
-                    remaining_part = &remaining_part[actual_bracket_end + 1..];
-                    if remaining_part.is_empty() {
-                        break;
-                    }
-                }
+        while !rest.is_empty() {
+            let Some(stop) = strings::index_of_any(rest, b".[") else {
+                segments.push(Segment::Key(rest));
+                break;
+            };
+            if stop > 0 {
+                segments.push(Segment::Key(&rest[..stop]));
+            }
+            if rest[stop] == b'.' {
+                rest = &rest[stop + 1..];
+                continue;
+            }
+            let inner = &rest[stop + 1..];
+            let close =
+                strings::index_of_char_usize(inner, b']').ok_or(crate::Error::InvalidPath)?;
+            segments.push(if close == 0 {
+                Segment::Append
             } else {
-                path_parts.push(part);
+                Segment::Key(&inner[..close])
+            });
+            rest = &inner[close + 1..];
+            if let Some(b'.') = rest.first() {
+                rest = &rest[1..];
             }
         }
 
-        Ok(path_parts)
+        Ok(segments)
     }
 
     fn set_value(root: &mut Expr, key: &[u8], value: &[u8], parse_json: bool) -> Result<(), Error> {
@@ -619,70 +575,81 @@ impl PmPkgCommand {
             return Err(crate::Error::InvalidRoot);
         }
 
-        let path_parts = Self::parse_key_path(key)?;
-
-        if path_parts.is_empty() {
+        let path = Self::parse_key_path(key)?;
+        if path.is_empty() {
             return Err(crate::Error::EmptyKey);
         }
 
-        if path_parts.len() == 1 {
-            let expr = Self::parse_value(value, parse_json)?;
-
-            root.data
-                .e_object_mut()
-                .unwrap()
-                .put(dummy_bump(), path_parts[0], expr)?;
-
-            return Ok(());
-        }
-
-        Self::set_nested(root, &path_parts, value, parse_json)
+        let expr = Self::parse_value(value, parse_json)?;
+        Self::set_path(root, &path, expr)
     }
 
-    fn set_nested(
-        root: &mut Expr,
-        path: &[&[u8]],
-        value: &[u8],
-        parse_json: bool,
-    ) -> Result<(), Error> {
-        if path.is_empty() {
-            return Ok(());
+    /// Walks `path` from `container`, creating missing containers, and stores
+    /// `value` at the end. Like `npm pkg set`: a numeric segment indexes an
+    /// existing array (holes become `null`), and a missing container becomes
+    /// an array when the segment after it is numeric or `[]`.
+    fn set_path(container: &mut Expr, path: &[Segment<'_>], value: Expr) -> Result<(), Error> {
+        let (segment, rest) = path.split_first().ok_or(crate::Error::EmptyKey)?;
+
+        match &mut container.data {
+            ExprData::EArray(arr) => {
+                let index = match segment {
+                    Segment::Append => arr.items.len(),
+                    Segment::Key(part) => bun_core::fmt::parse_decimal::<usize>(part)
+                        .ok_or(crate::Error::ExpectedObject)?,
+                };
+                if index >= arr.items.len() {
+                    arr.items.resize(index + 1, Expr::init(E::Null, Loc::EMPTY));
+                }
+                let slot = &mut arr.items[index];
+                if rest.is_empty() {
+                    *slot = value;
+                    return Ok(());
+                }
+                if !Self::is_writable_container(slot, &rest[0]) {
+                    *slot = Self::new_container(&rest[0]);
+                }
+                Self::set_path(slot, rest, value)
+            }
+            ExprData::EObject(obj) => {
+                let Segment::Key(part) = segment else {
+                    return Err(crate::Error::ExpectedObject);
+                };
+                if rest.is_empty() {
+                    obj.put(dummy_bump(), part, value)?;
+                    return Ok(());
+                }
+                let mut child = match E::Object::get(obj, part) {
+                    Some(child) if Self::is_writable_container(&child, &rest[0]) => child,
+                    _ => {
+                        let child = Self::new_container(&rest[0]);
+                        obj.put(dummy_bump(), part, child)?;
+                        child
+                    }
+                };
+                Self::set_path(&mut child, rest, value)
+            }
+            _ => Err(crate::Error::ExpectedObject),
         }
+    }
 
-        let current_key = path[0];
-        let remaining_path = &path[1..];
-
-        if remaining_path.is_empty() {
-            let expr = Self::parse_value(value, parse_json)?;
-
-            root.data
-                .e_object_mut()
-                .unwrap()
-                .put(dummy_bump(), current_key, expr)?;
-
-            return Ok(());
+    /// True when `next` can be stored into `expr` without replacing it. An
+    /// empty object is replaced by an array when `next` is an index, as npm
+    /// does.
+    fn is_writable_container(expr: &Expr, next: &Segment<'_>) -> bool {
+        match &expr.data {
+            ExprData::EArray(_) => true,
+            ExprData::EObject(obj) => !(next.is_index() && obj.properties.is_empty()),
+            _ => false,
         }
+    }
 
-        let mut nested_obj = root.get(current_key);
-        if nested_obj.is_none()
-            || !matches!(nested_obj.as_ref().unwrap().data, ExprData::EObject(_))
-        {
-            let new_obj = Expr::init(E::Object::default(), Loc::EMPTY);
-
-            root.data
-                .e_object_mut()
-                .unwrap()
-                .put(dummy_bump(), current_key, new_obj)?;
-
-            nested_obj = root.get(current_key);
+    fn new_container(next: &Segment<'_>) -> Expr {
+        if next.is_index() {
+            Expr::init(E::Array::default(), Loc::EMPTY)
+        } else {
+            Expr::init(E::Object::default(), Loc::EMPTY)
         }
-
-        if !matches!(nested_obj.as_ref().unwrap().data, ExprData::EObject(_)) {
-            return Err(crate::Error::ExpectedObject);
-        }
-
-        let mut nested = nested_obj.unwrap();
-        Self::set_nested(&mut nested, remaining_path, value, parse_json)
     }
 
     fn parse_value(value: &[u8], parse_json: bool) -> Result<Expr, Error> {
@@ -724,60 +691,46 @@ impl PmPkgCommand {
             return Ok(false);
         }
 
-        let mut path_parts: Vec<&[u8]> = Vec::new();
-        for part in strings::tokenize(key, b".") {
-            path_parts.push(part);
-        }
-
-        if path_parts.is_empty() {
-            return Ok(false);
-        }
-
-        if path_parts.len() == 1 {
-            let exists = root.get(path_parts[0]).is_some();
-            if exists {
-                return Self::remove_property(root, path_parts[0]);
-            }
-            return Ok(false);
-        }
-
-        Self::delete_nested(root, &path_parts)
-    }
-
-    fn delete_nested(root: &mut Expr, path: &[&[u8]]) -> Result<bool, Error> {
+        let path = Self::parse_key_path(key)?;
         if path.is_empty() {
             return Ok(false);
         }
 
-        let current_key = path[0];
-        let remaining_path = &path[1..];
+        Self::delete_path(root, &path)
+    }
 
-        if remaining_path.is_empty() {
-            let exists = root.get(current_key).is_some();
-            if exists {
-                return Self::remove_property(root, current_key);
+    /// Removes the value at `path`. An index into an array removes that item
+    /// and shifts the rest down, like `npm pkg delete`.
+    fn delete_path(container: &mut Expr, path: &[Segment<'_>]) -> Result<bool, Error> {
+        let Some((Segment::Key(part), rest)) = path.split_first() else {
+            return Ok(false);
+        };
+
+        match &mut container.data {
+            ExprData::EArray(arr) => {
+                let Some(index) = bun_core::fmt::parse_decimal::<usize>(part) else {
+                    return Ok(false);
+                };
+                if index >= arr.items.len() {
+                    return Ok(false);
+                }
+                if rest.is_empty() {
+                    arr.items.remove(index);
+                    return Ok(true);
+                }
+                Self::delete_path(&mut arr.items[index], rest)
             }
-            return Ok(false);
+            ExprData::EObject(obj) => {
+                if rest.is_empty() {
+                    return Self::remove_property(container, part);
+                }
+                let Some(mut child) = E::Object::get(obj, part) else {
+                    return Ok(false);
+                };
+                Self::delete_path(&mut child, rest)
+            }
+            _ => Ok(false),
         }
-
-        let nested_obj = root.get(current_key);
-        if nested_obj.is_none()
-            || !matches!(nested_obj.as_ref().unwrap().data, ExprData::EObject(_))
-        {
-            return Ok(false);
-        }
-
-        let mut nested = nested_obj.unwrap();
-        let deleted = Self::delete_nested(&mut nested, remaining_path)?;
-
-        if deleted {
-            root.data
-                .e_object_mut()
-                .unwrap()
-                .put(dummy_bump(), current_key, nested)?;
-        }
-
-        Ok(deleted)
     }
 
     fn remove_property(obj: &mut Expr, key: &[u8]) -> Result<bool, Error> {

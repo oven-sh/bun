@@ -11,6 +11,8 @@ const {
   secureProtocolToVersionRange,
   processPfxOptions,
   validateSecureProtocol,
+  validateSecureContextOptions,
+  SSL_OP_CIPHER_SERVER_PREFERENCE,
 } = require("internal/tls");
 const {
   validateString,
@@ -181,104 +183,6 @@ function validateCiphers(ciphers: string, name: string = "options") {
     }
     if (sawLegacyEntry && !sawUsableEntry) {
       throw $ERR_SSL_NO_CIPHER_MATCH();
-    }
-  }
-}
-
-const VALID_TLS_VERSIONS = new Set(["TLSv1", "TLSv1.1", "TLSv1.2", "TLSv1.3"]);
-
-const SUPPORTED_ECDH_GROUPS = new Set([
-  "P-256",
-  "prime256v1",
-  "P-384",
-  "secp384r1",
-  "P-521",
-  "secp521r1",
-  "X25519",
-  "x25519",
-  "X25519MLKEM768",
-  "MLKEM1024",
-]);
-
-// Subset of Node's configSecureContext() validations:
-// https://github.com/nodejs/node/blob/843dc5f0d5ad/lib/internal/tls/secure-context.js#L318
-function validateSecureContextOptions(options) {
-  const {
-    ciphers,
-    passphrase,
-    ecdhCurve,
-    minVersion,
-    maxVersion,
-    sessionTimeout,
-    sigalgs,
-    ticketKeys,
-    clientCertEngine,
-    dhparam,
-    secureProtocol,
-  } = options;
-  validateSecureProtocol(secureProtocol);
-  if (ciphers !== undefined && ciphers !== null) validateString(ciphers, "options.ciphers");
-  if (passphrase !== undefined && passphrase !== null) validateString(passphrase, "options.passphrase");
-  if (sigalgs !== undefined && sigalgs !== null) {
-    validateString(sigalgs, "options.sigalgs");
-    if (sigalgs === "") throw $ERR_INVALID_ARG_VALUE("options.sigalgs", sigalgs);
-  }
-  if (ecdhCurve !== undefined) {
-    validateString(ecdhCurve, "options.ecdhCurve");
-    if (ecdhCurve !== "auto") {
-      for (const curve of StringPrototypeSplit.$call(ecdhCurve, ":")) {
-        if (!SUPPORTED_ECDH_GROUPS.has(curve)) {
-          // Not $ERR_*: Node's THROW_ERR_CRYPTO_OPERATION_FAILED has no bracketed
-          // toString; test-tls-ecdh-multiple.js pins /Error: Failed to set ECDH curve/.
-          const err = new Error("Failed to set ECDH curve") as Error & { code: string };
-          err.code = "ERR_CRYPTO_OPERATION_FAILED";
-          throw err;
-        }
-      }
-    }
-  }
-  // clientCertEngine must be a string (engine name); a provided engine then
-  // fails because BoringSSL (which Bun always uses) has no OpenSSL ENGINE
-  // support, matching Node's setClientCertEngine. Node:
-  // https://github.com/nodejs/node/blob/614050b657e9757c1097aa85f92f2cb51149dc0d/lib/internal/tls/secure-context.js#L296
-  if (clientCertEngine !== undefined && clientCertEngine !== null) {
-    if (typeof clientCertEngine !== "string") {
-      throw $ERR_INVALID_ARG_TYPE("options.clientCertEngine", ["string", "null", "undefined"], clientCertEngine);
-    }
-    throw $ERR_CRYPTO_CUSTOM_ENGINE_NOT_SUPPORTED("Custom engines not supported by this OpenSSL");
-  }
-  // BoringSSL (always used by Bun) has no automatic DH parameter selection.
-  // Matches Node's setDHParam('auto') throwing ERR_CRYPTO_UNSUPPORTED_OPERATION.
-  // https://github.com/nodejs/node/blob/614050b657e9757c1097aa85f92f2cb51149dc0d/lib/internal/tls/secure-context.js#L254
-  if (dhparam === "auto") {
-    throw $ERR_CRYPTO_UNSUPPORTED_OPERATION("Automatic DH parameter selection is not supported");
-  }
-  if (minVersion != null && !VALID_TLS_VERSIONS.has(minVersion))
-    throw $ERR_TLS_INVALID_PROTOCOL_VERSION(String(minVersion), "minimum");
-  if (maxVersion != null && !VALID_TLS_VERSIONS.has(maxVersion))
-    throw $ERR_TLS_INVALID_PROTOCOL_VERSION(String(maxVersion), "maximum");
-  if (ticketKeys !== undefined && ticketKeys !== null) {
-    validateBuffer(ticketKeys, "options.ticketKeys");
-    const ticketKeysByteLength = ticketKeys.byteLength;
-    if (ticketKeysByteLength !== 48) {
-      throw $ERR_INVALID_ARG_VALUE("options.ticketKeys", ticketKeysByteLength, "must be exactly 48 bytes");
-    }
-  }
-  // Negative session timeouts are rejected (min 0), matching Node — newer
-  // OpenSSL/BoringSSL do not handle negative values as users expect.
-  // https://github.com/nodejs/node/blob/614050b657e9757c1097aa85f92f2cb51149dc0d/lib/internal/tls/secure-context.js#L319
-  if (sessionTimeout !== undefined && sessionTimeout !== null) {
-    // Node validates this with validateInt32(..., 0), whose range message
-    // reads ">= 0 && <= 2147483647"; the shared validator here words it
-    // differently, so spell the check out to match.
-    if (typeof sessionTimeout !== "number") {
-      throw $ERR_INVALID_ARG_TYPE("options.sessionTimeout", "number", sessionTimeout);
-    }
-    if (!Number.isInteger(sessionTimeout)) {
-      throw $ERR_OUT_OF_RANGE("options.sessionTimeout", "an integer", sessionTimeout);
-    }
-    if (sessionTimeout < 0 || sessionTimeout > 2147483647) {
-      throw $ERR_OUT_OF_RANGE("options.sessionTimeout", ">= 0 && <= 2147483647", sessionTimeout);
     }
   }
 }
@@ -535,8 +439,6 @@ function normalizePemKeyOption(key, ctxPassphrase) {
     return createPrivateKey({ key: k.pem, passphrase }).export({ type: "pkcs8", format: "pem" });
   });
 }
-
-const SSL_OP_CIPHER_SERVER_PREFERENCE = 0x00400000;
 
 function newNativeSecureContext(options, cached = false) {
   maybeWarnAboutExtraCACerts();

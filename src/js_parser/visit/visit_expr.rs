@@ -648,8 +648,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         VecExt::append(&mut args, p.new_expr(E::Undefined {}, expr.loc));
                         // `this` is unreadable in a derived constructor until
                         // `super()` has run. Omit the `self` argument there,
-                        // as esbuild and Babel do.
-                        if !p.fn_or_arrow_data_visit.is_derived_class_ctor {
+                        // as Babel does.
+                        if !p.fn_only_data_visit.is_derived_class_ctor {
                             VecExt::append(
                                 &mut args,
                                 Expr {

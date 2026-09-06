@@ -1365,7 +1365,8 @@ describe("bundler", () => {
 });
 
 // `this` is in its temporal dead zone inside a derived class constructor until
-// `super()` returns. The jsxDEV `self` argument must not read it there.
+// `super()` returns. The jsxDEV `self` argument must not read it there, and an
+// arrow function shares the constructor's `this`.
 describe.concurrent("jsx/derivedClassCtorSelf", () => {
   const files = {
     "node_modules/react/package.json": `{ "name": "react" }`,
@@ -1376,29 +1377,31 @@ describe.concurrent("jsx/derivedClassCtorSelf", () => {
     `,
     "index.tsx": /* tsx */ `
       class Base {
-        constructor(el) {
+        constructor(el, items) {
           this.el = el;
+          this.items = items;
         }
       }
       class Derived extends Base {
         constructor() {
-          super(<a />);
-          this.after = <b />;
-          this.arrow = (() => <c />)();
+          super(<a />, [1].map(x => <b />));
+          this.after = <c />;
+          this.arrow = (() => <d />)();
           this.nested = function () {
-            return <d />;
+            return <e />;
           }.call(this);
         }
         method() {
-          return <e />;
+          return <f />;
         }
       }
       const d = new Derived();
       console.log(
         JSON.stringify({
           ctor: d.el.self,
+          ctorArrow: d.items[0].self,
           after: d.after.self,
-          arrow: d.arrow.self === d,
+          arrow: d.arrow.self,
           nested: d.nested.self === d,
           method: d.method().self === d,
         }),
@@ -1417,11 +1420,11 @@ describe.concurrent("jsx/derivedClassCtorSelf", () => {
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).toBe("");
-    expect(JSON.parse(stdout)).toEqual({ arrow: true, nested: true, method: true });
+    expect(JSON.parse(stdout)).toEqual({ nested: true, method: true });
     expect(exitCode).toBe(0);
   });
 
-  test("the self argument is omitted only inside the derived constructor", async () => {
+  test("the self argument is omitted only where this is the derived constructor's", async () => {
     using dir = tempDir("jsx-derived-ctor-out", files);
     await using proc = Bun.spawn({
       cmd: [bunExe(), "build", "--no-bundle", "index.tsx"],
@@ -1438,9 +1441,10 @@ describe.concurrent("jsx/derivedClassCtorSelf", () => {
     expect(selfArgs).toEqual([
       ["a", false],
       ["b", false],
-      ["c", true],
-      ["d", true],
+      ["c", false],
+      ["d", false],
       ["e", true],
+      ["f", true],
     ]);
     expect(exitCode).toBe(0);
   });

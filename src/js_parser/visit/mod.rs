@@ -91,12 +91,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let old_fn_or_arrow_data = self.fn_or_arrow_data_visit;
         let old_fn_only_data = core::mem::take(&mut self.fn_only_data_visit);
         self.fn_or_arrow_data_visit = FnOrArrowDataVisit {
-            is_derived_class_ctor: core::mem::take(&mut self.next_fn_is_derived_class_ctor),
             ..Default::default()
         };
         self.fn_only_data_visit = FnOnlyDataVisit {
             is_this_nested: true,
-            ..Default::default()
+            is_derived_class_ctor: core::mem::take(&mut self.next_fn_is_derived_class_ctor),
         };
 
         if let Some(name) = func.name {

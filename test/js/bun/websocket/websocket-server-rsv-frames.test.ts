@@ -154,7 +154,13 @@ describe.concurrent("permessage-deflate RSV1 frames", () => {
   // Every test here needs a connection that really negotiated compression.
   async function connectDeflated() {
     const raw = await connectRaw({ perMessageDeflate: true });
-    expect(raw.negotiated).toContain("permessage-deflate");
+    try {
+      expect(raw.negotiated).toContain("permessage-deflate");
+    } catch (error) {
+      // The caller's `using` never binds when this throws, so release here.
+      raw[Symbol.dispose]();
+      throw error;
+    }
     return raw;
   }
 

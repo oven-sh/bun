@@ -523,9 +523,10 @@ declare module "bun" {
           /**
            * The compressor for messages the server sends.
            *
-           * `false` or `"disable"` keeps the extension negotiated (so inbound
-           * messages are still inflated) but the server never compresses an
-           * outbound message, even when `send()` asks for it.
+           * With `false` or `"disable"` the server never compresses an
+           * outbound message, even when `send()` asks for it. If `decompress`
+           * is on, the extension is still negotiated and inbound messages are
+           * still inflated. If `decompress` is not set, the extension is off.
            *
            * @default "shared" when `decompress` is set
            */

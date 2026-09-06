@@ -2159,9 +2159,7 @@ function parseOptions(
     max: max || 10,
   };
 
-  // `password` stays a plain enumerable property so that `new SQL(sql.options)`
-  // (which spreads the object) keeps working. Inspection prints "[REDACTED]"
-  // instead, the same as S3Client.
+  // An inspect hook, not a non-enumerable `password`: `new SQL(sql.options)` spreads this object.
   ObjectDefineProperty(ret, kInspectCustom, {
     value: function inspect(this: typeof ret) {
       const copy = { ...this };

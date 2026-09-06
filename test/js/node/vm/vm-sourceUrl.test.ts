@@ -67,8 +67,8 @@ describe.concurrent("error printer does not read attacker-named source files", (
         test(`vm code does not leak a named file's contents (${label})`, async () => {
           using dir = tempDir("vm-sourceurl-leak", {
             "secret.txt": CANARY + "\n",
-            "run.js": `
-              const vm = require("node:vm");
+            "run.mjs": `
+              import * as vm from "node:vm";
               const target = process.env.CANARY_PATH + ${JSON.stringify(nul ? "\0.js" : "")};
               const code = 'function f(){ throw new Error("boom") }; f()' ${
                 via === "sourceURL" ? `+ '\\n//# sourceURL=' + target` : ""
@@ -83,7 +83,7 @@ describe.concurrent("error printer does not read attacker-named source files", (
           });
 
           await using proc = Bun.spawn({
-            cmd: [bunExe(), path.join(String(dir), "run.js")],
+            cmd: [bunExe(), path.join(String(dir), "run.mjs")],
             env: { ...bunEnv, CANARY_PATH: path.join(String(dir), "secret.txt") },
             stdout: "pipe",
             stderr: "pipe",

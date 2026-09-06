@@ -2119,20 +2119,22 @@ function parseOptions(
     }
   }
 
-  if (sslMode !== SSLMode.disable && !tls?.serverName) {
-    if (hostname) {
-      tls = { ...tls, serverName: hostname };
-    } else if (tls) {
-      tls = true;
-    }
-  }
-
   // Explicit tls/ssl options request an encrypted connection: if the server
   // declines TLS, the connection is aborted instead of continuing in plaintext.
   // Certificate verification is only enabled when explicitly requested
   // (ca, caFile, rejectUnauthorized, or a verify-* sslmode).
   if (explicitTls && sslMode <= SSLMode.prefer) {
     sslMode = SSLMode.require;
+  }
+
+  // sslMode is final here. Every TLS connection gets a serverName: the native
+  // side sends it as SNI and checks it against the certificate for verify-full.
+  if (sslMode !== SSLMode.disable && !tls?.serverName) {
+    if (hostname) {
+      tls = { ...tls, serverName: hostname };
+    } else if (tls) {
+      tls = true;
+    }
   }
 
   port = Number(port);

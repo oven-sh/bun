@@ -52,7 +52,7 @@ import type { BuildNode, Ninja } from "./ninja.ts";
 import { emitRust, rustLibPath } from "./rust.ts";
 import { quote, slash } from "./shell.ts";
 import { emitShims, machoPostlinkCommand, machoPostlinkImplicitInputs } from "./shims.ts";
-import { computeDepLibs, resolveDep, type ResolvedDep } from "./source.ts";
+import { computeDepLibs, resolveDep, type ResolvedDep, writeFetchStaticOutputs } from "./source.ts";
 import { streamPath } from "./stream.ts";
 import { generateUnifiedSources } from "./unified.ts";
 
@@ -169,6 +169,7 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
       depsByName.set(dep.name, resolved);
     }
   }
+  writeFetchStaticOutputs(cfg, deps);
 
   // Collect all dep lib paths, include dirs, output stamps, and directly-
   // compiled source files (deps like picohttpparser that provide .c files
@@ -555,6 +556,7 @@ function emitRustOnly(n: Ninja, cfg: Config, sources: Sources): BunOutput {
   assert(lolhtmlDep !== null, "lolhtml resolveDep returned null — should never be skipped");
   const rustArgon2Dep = resolveDep(n, cfg, rustArgon2, new Map());
   assert(rustArgon2Dep !== null, "rust-argon2 resolveDep returned null — should never be skipped");
+  writeFetchStaticOutputs(cfg, [lolhtmlDep, rustArgon2Dep]);
 
   // Codegen: emitted fully, but only the embed-input subset is pulled.
   // The cpp-related outputs (cppSources, bindgenV2Cpp) have no consumer
@@ -674,6 +676,7 @@ function emitRustAndLink(n: Ninja, cfg: Config, sources: Sources): BunOutput {
   assert(lolhtmlDep !== null, "lolhtml resolveDep returned null — should never be skipped");
   const rustArgon2Dep = resolveDep(n, cfg, rustArgon2, new Map());
   assert(rustArgon2Dep !== null, "rust-argon2 resolveDep returned null — should never be skipped");
+  writeFetchStaticOutputs(cfg, [lolhtmlDep, rustArgon2Dep]);
 
   const codegen = emitCodegen(n, cfg, sources);
 

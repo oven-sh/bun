@@ -42,11 +42,10 @@ Change the `commit` field. That's it. The build system computes a source
 identity hash from `sha256(commit + sparse set + patch_contents)` — changing
 the commit invalidates `.ref` and triggers a re-fetch. The new version is
 extracted beside the old tree and synced into it in place (`fetch-cli.ts`
-`syncTree`): a file whose bytes did not change keeps its mtime, so a bump
-recompiles only the sources and header-includers the bump actually touched,
-in the same build (`bun run build` runs the changed fetches in a first ninja
-pass so the main pass stats the final tree; raw `ninja` falls back to a clean
-re-fetch of that dep).
+`syncTree`): a file whose bytes did not change keeps its mtime, and the tree's
+files are declared to ninja as outputs of the sync (a dyndep file the `plan`
+edge writes), so a bump recompiles only the sources and header-includers the
+bump actually touched, in the same build.
 
 The `.github/workflows/update-<name>.yml` jobs do this automatically by
 sed'ing the `const <NAME>_COMMIT = "..."` line. If you rename that

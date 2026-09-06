@@ -7,7 +7,7 @@
  */
 
 import { spawnSync } from "node:child_process";
-import { existsSync, globSync, mkdirSync, rmSync, utimesSync } from "node:fs";
+import { existsSync, globSync, mkdirSync, utimesSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { globAllSources } from "../glob-sources.ts";
 import { type BunOutput, bunExeName, emitBun, shouldStrip, validateBunConfig } from "./bun.ts";
@@ -131,15 +131,6 @@ export interface ConfigureResult {
   changed: boolean;
   /** Final executable name (e.g. "bun-debug"). For status messages. */
   exe: string;
-  /**
-   * Fetch stamps to build BEFORE the main ninja pass, as ninja target names
-   * (`ninja -C <buildDir> <these>`), with the dep names for the status line.
-   * Non-empty when a dependency's pinned version changed while an older tree
-   * is still in vendor/: that pass syncs the tree in place, so the main
-   * pass's startup stat sees the final mtimes and rebuilds exactly the
-   * objects whose inputs changed (source.ts emitFetch, ResolvedDep.staleFetch).
-   */
-  fetchFirst: { targets: string[]; names: string[] };
 }
 
 /**
@@ -394,21 +385,6 @@ export async function configure(input: ConfigureInput, fromNinja = false): Promi
   mark("emitBun");
   emitGeneratorRule(n, cfg, input);
 
-  // Deps whose pinned version moved past the tree in vendor/. build.ts syncs
-  // them in a fetch-only ninja pass before the main one. When ninja itself is
-  // running configure (its regen edge) there is no such pass — delete the old
-  // tree instead: ninja re-stats after regenerating the manifest, finds the
-  // files missing, fetches, and rebuilds their dependents in this same
-  // invocation (a full rebuild of that dep rather than an incremental one).
-  const staleDeps = output.deps.filter(d => d.staleFetch !== undefined);
-  const fetchFirst =
-    fromNinja || staleDeps.length === 0
-      ? { targets: [], names: [] }
-      : { targets: staleDeps.map(d => n.rel(d.staleFetch!)), names: staleDeps.map(d => d.name) };
-  if (fromNinja) {
-    for (const d of staleDeps) rmSync(dirname(d.staleFetch!), { recursive: true, force: true });
-  }
-
   // Default targets. cpp-only sets its own default inside emitBun (archive,
   // no smoke test). Full/link-only: `bun` phony (or stripped file); the
   // smoke test and ClassInfo check ride along as validations of the link.
@@ -472,5 +448,5 @@ export async function configure(input: ConfigureInput, fromNinja = false): Promi
   const elapsed = Math.round(performance.now() - start);
   const exe = bunExeName(cfg) + (shouldStrip(cfg) ? " → bun (stripped)" : "");
 
-  return { cfg, output, ninjaFile, env: ccacheEnv(cfg), elapsed, changed, exe, fetchFirst };
+  return { cfg, output, ninjaFile, env: ccacheEnv(cfg), elapsed, changed, exe };
 }

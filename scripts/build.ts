@@ -146,13 +146,6 @@ async function main(): Promise<void> {
         env: ninjaEnv(result.cfg, result.env),
       });
 
-    // Dependencies whose pinned version changed under an existing vendor/
-    // tree are synced to the new version before the main pass stats them
-    // (ConfigureResult.fetchFirst). CI checkouts are fresh, so this is rare.
-    if (result.fetchFirst.targets.length > 0) {
-      await startGroup(`Update ${result.fetchFirst.names.join(", ")}`, () => runNinja(result.fetchFirst.targets));
-    }
-
     // rust-and-link: build libbun_runtime.a first so cargo overlaps with the
     // sibling build-cpp job, THEN poll for build-cpp's outcome + download
     // its archive, THEN link. link-only skips straight to the full build
@@ -260,31 +253,6 @@ async function main(): Promise<void> {
     if (!quiet && interactive) {
       stdio[STREAM_FD] = 2;
     }
-
-    // Dependencies whose pinned version changed while an older tree is still
-    // in vendor/: sync them to the new version in a fetch-only pass first, so
-    // the main pass stats the final tree and recompiles exactly the objects
-    // whose sources or headers changed (ConfigureResult.fetchFirst).
-    if (result.fetchFirst.targets.length > 0) {
-      if (!quiet) status(`[fetch] updating ${result.fetchFirst.names.map(d => nameColor(d)).join(", ")}`);
-      const fetch = spawnSync("ninja", ["-C", result.cfg.buildDir, ...result.fetchFirst.targets], {
-        stdio,
-        env: ninjaEnv(result.cfg, result.env),
-        maxBuffer: 1024 * 1024 * 1024,
-      });
-      if (fetch.error) {
-        process.stderr.write(`Failed to exec ninja: ${fetch.error.message}\nIs ninja in your PATH?\n`);
-        process.exit(127);
-      }
-      if (fetch.status !== 0) {
-        if (quiet) {
-          if (fetch.stdout) process.stderr.write(fetch.stdout);
-          if (fetch.stderr) process.stderr.write(fetch.stderr);
-        }
-        process.exit(fetch.status ?? 1);
-      }
-    }
-
     const ninja = spawnSync("ninja", ninjaArgv(result.cfg), {
       stdio,
       env: ninjaEnv(result.cfg, result.env),

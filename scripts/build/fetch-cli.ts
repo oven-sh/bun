@@ -23,8 +23,8 @@
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { createReadStream, existsSync, lstatSync, readFileSync, type Stats } from "node:fs";
-import { lstat, mkdir, readdir, readFile, readlink, rename, rm, writeFile } from "node:fs/promises";
-import { basename, join } from "node:path";
+import { lstat, mkdir, open, readdir, readFile, readlink, rename, rm, writeFile } from "node:fs/promises";
+import { basename, join, relative } from "node:path";
 import { downloadWithRetry, extractTarGz, fetchPrebuilt, gitArchive, parseGitArchiveUrl } from "./download.ts";
 import { BuildError, assert } from "./error.ts";
 import { writeIfChanged } from "./fs.ts";
@@ -47,6 +47,18 @@ async function main(): Promise<void> {
   const [, , kind, ...args] = process.argv;
 
   switch (kind) {
+    case "plan": {
+      // fetch-cli.ts plan <name> <url> <ref> <dest> <cache> <dyndep> <static-outputs> <build-dir> [...patches]
+      const [name, url, ref, dest, cache, dyndep, staticOutputs, buildDir, ...patches] = args;
+      assert(name !== undefined && url !== undefined && ref !== undefined, "plan: missing name/url/ref");
+      assert(dest !== undefined && cache !== undefined, "plan: missing dest/cache");
+      assert(
+        dyndep !== undefined && staticOutputs !== undefined && buildDir !== undefined,
+        "plan: missing dyndep/static-outputs/build-dir",
+      );
+      return planDep(name, url, ref, dest, cache, dyndep, staticOutputs, buildDir, patches);
+    }
+
     case "dep": {
       // fetch-cli.ts dep <name> <url> <ref> <dest> <cache> [...patches]
       const [name, url, ref, dest, cache, ...patches] = args;
@@ -212,18 +224,8 @@ function checkUndefined(name: string, nm: string, rspfile: string, stamp: string
  * if the tarball already exists. Useful when re-extraction is needed after
  * a failed patch (you don't re-download).
  */
-export async function fetchDep(
-  name: string,
-  url: string,
-  ref: string,
-  dest: string,
-  cache: string,
-  patches: string[],
-): Promise<void> {
-  const refPath = join(dest, ".ref");
-  assertManagedSource(name, dest, refPath);
-
-  // Read patch contents (needed for identity + applying later).
+/** Identity, patch contents and git-archive spec shared by `plan` and `dep`. */
+async function describeFetch(name: string, url: string, ref: string, patches: string[]) {
   // If a listed patch doesn't exist, that's a bug in the dep definition.
   const patchContents: string[] = [];
   for (const patch of patches) {
@@ -236,36 +238,47 @@ export async function fetchDep(
       });
     }
   }
-
   const git = parseGitArchiveUrl(url);
   const identity = computeSourceIdentity(ref, git?.sparse ?? [], patchContents);
+  return { git, identity, patchContents };
+}
 
-  // Short-circuit: already fetched at this identity?
-  if (existsSync(refPath)) {
-    const existing = readFileSync(refPath, "utf8").trim();
-    if (existing === identity) {
-      // No-op. Don't touch .ref — restat will see unchanged mtime.
-      // Printed so the ninja [N/M] line has closure instead of silence.
-      console.log(`up to date`);
-      return;
-    }
-    console.log(`source identity changed (was ${existing.slice(0, 8)}, now ${identity.slice(0, 8)})`);
+const readStamp = (path: string): string | undefined => {
+  try {
+    return readFileSync(path, "utf8").trim();
+  } catch {
+    return undefined;
   }
+};
 
+/**
+ * `<dest>.staging`: the new version's tree, extracted and patched, with its
+ * identity in `.ref`. Prepared by `plan` (or by `dep` itself when run without
+ * a plan), consumed by `dep`'s sync. Reused as-is when it already holds the
+ * wanted identity.
+ */
+async function prepareStaging(
+  name: string,
+  url: string,
+  ref: string,
+  dest: string,
+  cache: string,
+  patches: string[],
+  fetch: Awaited<ReturnType<typeof describeFetch>>,
+): Promise<string> {
+  const staging = `${dest}.staging`;
+  if (readStamp(join(staging, ".ref")) === fetch.identity) return staging;
+  const { git, identity, patchContents } = fetch;
   console.log(`fetching ${git ? `${git.repo}@${git.commit.slice(0, 8)}` : url}`);
-  const started = performance.now();
 
   // ─── Download (with cache) ───
   const urlHash = createHash("sha256").update(url).digest("hex").slice(0, 16);
   const tarballPath = join(cache, `${name}-${urlHash}.tar.gz`);
-
   await mkdir(cache, { recursive: true });
-
   if (!existsSync(tarballPath)) {
     if (git) await gitArchive(git.repo, git.commit, git.sparse, tarballPath);
     else await downloadWithRetry(url, tarballPath, name);
   }
-
   // A `sha256:<hex>` ref pins the file's contents (release tarballs, whose
   // URL says nothing about the bytes). Checked on the cached copy too, and a
   // mismatching file is removed so the next run downloads afresh.
@@ -280,34 +293,136 @@ export async function fetchDep(
     }
   }
 
-  // ─── Extract + patch into a staging tree ───
-  // The new tree is prepared complete (github archives and release tarballs
-  // have one top-level directory, stripped) next to dest, then synced into it.
-  // An existing dest is not wiped: files whose content is unchanged between
-  // the two versions keep their inode and mtime, so the objects compiled from
-  // them stay valid and a version bump recompiles only what actually changed.
-  const staging = `${dest}.staging`;
+  // ─── Extract + patch ───
+  // Github archives and release tarballs have one top-level directory; stripped.
   await rm(staging, { recursive: true, force: true });
   await mkdir(staging, { recursive: true });
   await extractTarGz(tarballPath, staging);
   for (let i = 0; i < patches.length; i++) {
     const p = patches[i]!;
-    const name = basename(p);
+    const base = basename(p);
     if (p.endsWith(".patch")) {
-      console.log(`applying ${name}`);
+      console.log(`applying ${base}`);
       applyPatch(staging, p, patchContents[i]!);
     } else {
       // Overlay file: copy into source root. Used for e.g. injecting a
       // CMakeLists.txt into a project that doesn't have one (tinycc).
-      console.log(`overlay ${name}`);
-      await writeFile(join(staging, name), patchContents[i]!);
+      console.log(`overlay ${base}`);
+      await writeFile(join(staging, base), patchContents[i]!);
     }
   }
+  // Identity LAST, so an interrupted extraction is never mistaken for a
+  // prepared tree.
+  await writeFile(join(staging, ".ref"), identity + "\n");
+  return staging;
+}
+
+/**
+ * `fetch-cli.ts plan`: make the tree of the pinned version available — the
+ * live `dest` when it is already at that identity, otherwise a freshly
+ * prepared `<dest>.staging` — and write the ninja dyndep file that declares
+ * every regular file of that tree as an output of the `dep` edge (minus the
+ * ones build.ninja already declares statically, listed in `staticOutputsFile`;
+ * ninja refuses a file produced by two declarations). Loading that file is
+ * what lets ninja see, within the same invocation, which headers the sync
+ * that follows rewrote: they become restat outputs of the fetch edge, so an
+ * object whose depfile names a changed one is rebuilt and one that names only
+ * untouched files is left alone.
+ */
+export async function planDep(
+  name: string,
+  url: string,
+  ref: string,
+  dest: string,
+  cache: string,
+  dyndepFile: string,
+  staticOutputsFile: string,
+  buildDir: string,
+  patches: string[],
+): Promise<void> {
+  const refPath = join(dest, ".ref");
+  assertManagedSource(name, dest, refPath);
+  const fetch = await describeFetch(name, url, ref, patches);
+  const tree =
+    readStamp(refPath) === fetch.identity ? dest : await prepareStaging(name, url, ref, dest, cache, patches, fetch);
+
+  const declared = new Set(
+    readFileSync(staticOutputsFile, "utf8")
+      .split("\n")
+      .filter(l => l.length > 0),
+  );
+  const files: string[] = [];
+  const walk = async (rel: string): Promise<void> => {
+    for (const e of await readdir(join(tree, rel), { withFileTypes: true })) {
+      const r = rel === "" ? e.name : `${rel}/${e.name}`;
+      if (e.isDirectory()) await walk(r);
+      else if (e.isFile() && r !== ".ref") {
+        const abs = join(dest, r);
+        if (!declared.has(abs)) files.push(abs);
+      }
+    }
+  };
+  await walk("");
+  files.sort();
+  // Each file under both spellings, build-dir-relative and absolute — to
+  // ninja those are two nodes, and a depfile may use either (an include found
+  // through a relative -I lands in the deps log as ../../vendor/…, one found
+  // through an absolute -I as /abs/vendor/…). build.ninja declares its static
+  // outputs the same way (ninja.ts). A declaration only connects to the node
+  // with the identical spelling.
+  const spellings = (abs: string): string[] => {
+    const rel = relative(buildDir, abs);
+    return rel === abs ? [abs] : [rel, abs];
+  };
+  const esc = (path: string) =>
+    path.replaceAll("\\", "/").replaceAll("$", "$$").replaceAll(" ", "$ ").replaceAll(":", "$:");
+  const outs = files.flatMap(spellings).map(esc).join(" ");
+  writeIfChanged(
+    dyndepFile,
+    `ninja_dyndep_version = 1\nbuild ${esc(refPath)}${outs.length > 0 ? " | " + outs : ""}: dyndep\n`,
+  );
+  console.log(tree === dest ? `up to date` : `planned ${files.length} files`);
+}
+
+/**
+ * `fetch-cli.ts dep`: bring `dest` to the pinned version. A no-op when its
+ * `.ref` already names that identity. Otherwise the new tree (prepared by
+ * `plan`, or here when there was none) is synced into `dest` in place —
+ * unchanged files keep their inode and mtime, so the objects compiled from
+ * them stay valid and a version bump recompiles only what actually changed —
+ * and `.ref` is written last.
+ */
+export async function fetchDep(
+  name: string,
+  url: string,
+  ref: string,
+  dest: string,
+  cache: string,
+  patches: string[],
+): Promise<void> {
+  const refPath = join(dest, ".ref");
+  assertManagedSource(name, dest, refPath);
+  const fetch = await describeFetch(name, url, ref, patches);
+
+  const existing = readStamp(refPath);
+  if (existing === fetch.identity) {
+    // No-op. Don't touch .ref — restat will see unchanged mtime.
+    // Printed so the ninja [N/M] line has closure instead of silence.
+    await rm(`${dest}.staging`, { recursive: true, force: true });
+    console.log(`up to date`);
+    return;
+  }
+  if (existing !== undefined) {
+    console.log(`source identity changed (was ${existing.slice(0, 8)}, now ${fetch.identity.slice(0, 8)})`);
+  }
+  const started = performance.now();
+  const staging = await prepareStaging(name, url, ref, dest, cache, patches, fetch);
 
   // ─── Sync into dest ───
   // The old .ref goes first: until the new one is written at the end, dest
   // carries no identity, so an interrupted sync is redone by the next build.
   await rm(refPath, { force: true });
+  await rm(join(staging, ".ref"), { force: true });
   let stats: SyncStats | undefined;
   if (existsSync(dest)) {
     stats = await syncTree(staging, dest);
@@ -318,7 +433,7 @@ export async function fetchDep(
 
   // ─── Write stamp ───
   // Written LAST — if anything above failed, no stamp means next build retries.
-  await writeFile(refPath, identity + "\n");
+  await writeFile(refPath, fetch.identity + "\n");
   const summary =
     stats === undefined
       ? ""
@@ -399,8 +514,20 @@ async function sameContent(a: string, b: string, symlink: boolean): Promise<bool
   }
   const [sa, sb] = await Promise.all([lstat(a), lstat(b)]);
   if (!sb.isFile() || sa.size !== sb.size) return false;
-  const [ca, cb] = await Promise.all([readFile(a), readFile(b)]);
-  return ca.equals(cb);
+  // Chunked compare, stopping at the first difference.
+  const [fa, fb] = await Promise.all([open(a, "r"), open(b, "r")]);
+  try {
+    const ba = Buffer.allocUnsafe(256 * 1024);
+    const bb = Buffer.allocUnsafe(256 * 1024);
+    for (;;) {
+      const [ra, rb] = await Promise.all([fa.read(ba, 0, ba.length, null), fb.read(bb, 0, bb.length, null)]);
+      if (ra.bytesRead !== rb.bytesRead) return false;
+      if (ra.bytesRead === 0) return true;
+      if (!ba.subarray(0, ra.bytesRead).equals(bb.subarray(0, rb.bytesRead))) return false;
+    }
+  } finally {
+    await Promise.all([fa.close(), fb.close()]);
+  }
 }
 
 /**
@@ -420,31 +547,6 @@ export function assertManagedSource(name: string, srcDir: string, refStamp: stri
           `(--local-deps=WebKit=$BUN_WEBKIT_PATH), plain \`bun run build\` fetches the pinned commit here.`
         : `To build that clone, pass --local-deps=${name}=${srcDir}. To let the build fetch the pinned commit here instead, move or delete it.`,
   });
-}
-
-/**
- * The identity a dep's `.ref` should hold for (ref, sparse, patches), with
- * the patch files read from disk. A missing patch hashes as "<missing>" so the
- * identity can't match and the fetch that follows reports the real error.
- */
-export function expectedSourceIdentity(ref: string, sparse: string[], patchPaths: string[]): string {
-  const patchContents = patchPaths.map(p => {
-    try {
-      return readFileSync(p, "utf8");
-    } catch {
-      return "<missing>";
-    }
-  });
-  return computeSourceIdentity(ref, sparse, patchContents);
-}
-
-/** Whether `dest/.ref` records exactly this (ref, sparse, patches). */
-export function sourceIsCurrent(dest: string, ref: string, sparse: string[], patchPaths: string[]): boolean {
-  try {
-    return readFileSync(join(dest, ".ref"), "utf8").trim() === expectedSourceIdentity(ref, sparse, patchPaths);
-  } catch {
-    return false;
-  }
 }
 
 async function sha256File(path: string): Promise<string> {

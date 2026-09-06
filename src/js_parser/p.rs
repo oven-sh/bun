@@ -8040,9 +8040,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         })
     }
 
-    /// `design:type` for a type annotation that names a same-file enum. TypeScript
-    /// serializes a numeric enum as `Number`, a string enum as `String`, and a
-    /// mixed one as `Object` instead of referencing the enum object.
+    /// tsc serializes an enum type as `Number`, `String`, or `Object`, never as the enum object.
     fn ts_enum_metadata(&mut self, ref_: Ref) -> Option<bun_ast::ts::Metadata> {
         let ref_ = self.resolve_metadata_ref(ref_)?;
         if self.symbols[ref_.inner_index() as usize].kind != js_ast::symbol::Kind::TsEnum {
@@ -8055,8 +8053,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Self::enum_members_metadata(members)
     }
 
-    /// Same as `ts_enum_metadata` for a dotted type `Ns.Inner.Enum`, or for an
-    /// enum member type `Enum.Member`.
+    /// `ts_enum_metadata` for `Ns.Inner.Enum` and for a member type `Enum.Member`.
     fn ts_namespace_enum_metadata(&mut self, refs: &[Ref]) -> Option<bun_ast::ts::Metadata> {
         let root = self.resolve_metadata_ref(refs[0])?;
         let js_ast::ts::Data::Namespace(mut members) =
@@ -8087,9 +8084,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Self::enum_members_metadata(map)
     }
 
-    /// The parse pass bound the type name before a later declaration in the same
-    /// scope could exist, so look the name up again from the class being visited,
-    /// as the visit pass does for identifiers. Then follow merged symbol links.
+    /// Re-resolve the name from the class scope, as `visit_expr` does: the parse
+    /// pass bound it before a later declaration in a nested scope existed.
     fn resolve_metadata_ref(&mut self, ref_: Ref) -> Option<Ref> {
         if ref_.tag() != js_ast::base::RefTag::Symbol {
             return None;
@@ -8108,8 +8104,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Some(ref_)
     }
 
-    /// A member without a literal value (`A = f()`) counts as a number. TypeScript
-    /// only allows computed enum values that are numbers.
+    /// A computed member (`A = f()`) counts as a number, the only type tsc allows there.
     fn enum_members_metadata(
         members: &js_ast::TSNamespaceMemberMap,
     ) -> Option<bun_ast::ts::Metadata> {

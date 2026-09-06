@@ -171,8 +171,7 @@ pub enum Metadata {
     MSymbol,
     MPromise,
     MIdentifier(Ref),
-    /// "a.b.c": the refs of each part, arena-owned like the AST node that holds
-    /// the metadata, so nothing is left behind when the arena is reset.
+    /// "a.b.c": one ref per part, arena-owned.
     MDot(crate::nodes::StoreSlice<Ref>),
 }
 

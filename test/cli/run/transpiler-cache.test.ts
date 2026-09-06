@@ -240,6 +240,26 @@ describe("transpiler cache", () => {
     expect(existsSync(join(temp_dir, "bun"))).toBeFalse();
     expect(existsSync(join(temp_dir, "relxdg"))).toBeFalse();
   });
+  test.each([
+    ["an empty", ""],
+    ["a relative", "relhome"],
+  ])("disables the cache for %s HOME instead of caching next to the project", async (_label, home) => {
+    writeFileSync(join(temp_dir, "a.js"), dummyFile((50 * 1024 * 1.5) | 0, "1", "home-not-absolute"));
+
+    // HOME is the last candidate, so a value that is not absolute leaves no
+    // cache location and the cache is disabled.
+    expect(
+      await bunRun(join(temp_dir, "a.js"), {
+        ...env,
+        BUN_RUNTIME_TRANSPILER_CACHE_PATH: undefined,
+        XDG_CACHE_HOME: undefined,
+        HOME: home,
+        USERPROFILE: home,
+      }),
+    ).toSpawn("home-not-absolute");
+
+    expect(readdirSync(temp_dir)).toEqual(["a.js"]);
+  });
   test("works if the cache is not user-readable", async () => {
     mkdirSync(cache_dir, { recursive: true });
     writeFileSync(join(temp_dir, "a.js"), dummyFile((50 * 1024 * 1.5) | 0, "1", "b"));

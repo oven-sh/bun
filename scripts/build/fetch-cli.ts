@@ -26,7 +26,7 @@ import { createReadStream, existsSync, lstatSync, readFileSync, type Stats } fro
 import { lstat, mkdir, readdir, readFile, readlink, rename, rm, writeFile } from "node:fs/promises";
 import { basename, join } from "node:path";
 import { downloadWithRetry, extractTarGz, fetchPrebuilt, gitArchive, parseGitArchiveUrl } from "./download.ts";
-import { BuildError, assert } from "./error.ts";
+import { assert, BuildError } from "./error.ts";
 import { writeIfChanged } from "./fs.ts";
 import { formatElapsed } from "./tty.ts";
 

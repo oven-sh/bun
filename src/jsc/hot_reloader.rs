@@ -1118,9 +1118,7 @@ where
                             }
                         }
 
-                        // Match by `dir + name`, not by the cached `Entry.abs_path`:
-                        // the resolver fills that lazily, so it is empty after a
-                        // cache bust.
+                        // Not keyed by `Entry.abs_path`: the resolver fills it lazily.
                         let mut last_file_hash: bun_watcher::HashType = bun_watcher::HashType::MAX;
                         let dir_path = strings::trim_right(file_path, &[SEP]);
 
@@ -1151,14 +1149,11 @@ where
                                 continue;
                             }
 
-                            // Make the resolver re-stat this entry. It never gates
-                            // the reload.
+                            // Make the resolver re-stat this entry.
                             if let Some(dir_ent) = entries_option {
                                 // SAFETY: dir_ent points into rfs.entries (or a
                                 // tombstoned copy); both outlive this loop iteration.
                                 let dir_ent = unsafe { &*dir_ent };
-                                // The entry pointer stays valid after unlock
-                                // (EntryStore-owned).
                                 let looked_up = {
                                     let _entries_lock = rfs.entries_mutex.lock_guard();
                                     dir_ent.entries().get(changed_name)

@@ -63,6 +63,7 @@ namespace WebCore {
 WTF_MAKE_TZONE_ALLOCATED_IMPL(WebSocket);
 extern "C" int Bun__getTLSRejectUnauthorizedValue();
 extern "C" bool Bun__isNoProxy(const char* hostname, size_t hostname_len, const char* host, size_t host_len);
+extern "C" BunString Bun__getEnvHttpProxy(bool is_http, const char* hostname, size_t hostname_len, const char* host, size_t host_len);
 
 static ErrorEvent::Init createErrorEventInit(WebSocket& webSocket, const String& reason, JSC::JSGlobalObject* globalObject)
 {
@@ -321,7 +322,9 @@ ExceptionOr<Ref<WebSocket>> WebSocket::create(ScriptExecutionContext& context, c
     socket->m_sslConfig = WTF::move(sslConfig); // Set BEFORE connect() so it's available during connection
     socket->setOfferPerMessageDeflate(offerPerMessageDeflate);
 
-    auto result = socket->connect(url, protocols, WTF::move(headers), proxyConfigResult.releaseReturnValue());
+    // A null proxyUrl means the constructor got no `proxy` key. An empty
+    // (non-null) one means `proxy: null` / `proxy: ""`: force a direct connection.
+    auto result = socket->connect(url, protocols, WTF::move(headers), proxyConfigResult.releaseReturnValue(), proxyUrl.isNull());
     if (result.hasException())
         return result.releaseException();
 
@@ -346,7 +349,9 @@ ExceptionOr<Ref<WebSocket>> WebSocket::create(ScriptExecutionContext& context, c
     socket->m_sslConfig = WTF::move(sslConfig); // Set BEFORE connect() so it's available during connection
     socket->setOfferPerMessageDeflate(offerPerMessageDeflate);
 
-    auto result = socket->connect(url, protocols, WTF::move(headers), proxyConfigResult.releaseReturnValue());
+    // A null proxyUrl means the constructor got no `proxy` key. An empty
+    // (non-null) one means `proxy: null` / `proxy: ""`: force a direct connection.
+    auto result = socket->connect(url, protocols, WTF::move(headers), proxyConfigResult.releaseReturnValue(), proxyUrl.isNull());
     if (result.hasException())
         return result.releaseException();
 
@@ -380,7 +385,7 @@ static String hostName(const URL& url, bool secure)
 
 ExceptionOr<void> WebSocket::connect(const String& url, const Vector<String>& protocols, std::optional<FetchHeaders::Init>&& headersInit)
 {
-    return connect(url, protocols, WTF::move(headersInit), std::nullopt);
+    return connect(url, protocols, WTF::move(headersInit), std::nullopt, true);
 }
 
 size_t WebSocket::memoryCost() const
@@ -410,7 +415,7 @@ size_t WebSocket::memoryCost() const
     return cost;
 }
 
-__attribute__((minsize)) ExceptionOr<void> WebSocket::connect(const String& url, const Vector<String>& protocols, std::optional<FetchHeaders::Init>&& headersInit, std::optional<ProxyConfig>&& proxyConfig)
+__attribute__((minsize)) ExceptionOr<void> WebSocket::connect(const String& url, const Vector<String>& protocols, std::optional<FetchHeaders::Init>&& headersInit, std::optional<ProxyConfig>&& proxyConfig, bool useEnvProxy)
 {
     // LOG(Network, "WebSocket %p connect() url='%s'", this, url.utf8().data());
     m_url = URL { url };
@@ -553,15 +558,30 @@ __attribute__((minsize)) ExceptionOr<void> WebSocket::connect(const String& url,
         hasProxy = false;
     }
 
-    // Check NO_PROXY even for explicitly-provided proxies
-    if (hasProxy) {
+    if (!is_unix) {
         auto hostStr = m_url.host().toString();
         auto hostWithPort = hostName(m_url, is_secure);
         auto hostUtf8 = hostStr.utf8();
         auto hostWithPortUtf8 = hostWithPort.utf8();
-        if (Bun__isNoProxy(hostUtf8.data(), hostUtf8.length(), hostWithPortUtf8.data(), hostWithPortUtf8.length())) {
-            proxyConfig = std::nullopt;
-            hasProxy = false;
+        if (hasProxy) {
+            // Check NO_PROXY even for explicitly-provided proxies
+            if (Bun__isNoProxy(hostUtf8.data(), hostUtf8.length(), hostWithPortUtf8.data(), hostWithPortUtf8.length())) {
+                proxyConfig = std::nullopt;
+                hasProxy = false;
+            }
+        } else if (useEnvProxy) {
+            // No `proxy` option: use the proxy fetch() would pick from
+            // http_proxy / https_proxy (NO_PROXY already applied).
+            String envProxyUrl = Bun__getEnvHttpProxy(!is_secure, hostUtf8.data(), hostUtf8.length(), hostWithPortUtf8.data(), hostWithPortUtf8.length()).transferToWTFString();
+            if (!envProxyUrl.isEmpty()) {
+                auto envProxyConfig = setupProxy(envProxyUrl, std::nullopt);
+                if (envProxyConfig.hasException()) {
+                    m_state = CLOSED;
+                    return envProxyConfig.releaseException();
+                }
+                proxyConfig = envProxyConfig.releaseReturnValue();
+                hasProxy = proxyConfig.has_value();
+            }
         }
     }
 

@@ -4896,12 +4896,20 @@ declare module "bun" {
      * Can be a string URL, a URL instance, or an object with `url` and
      * optional `headers`.
      *
+     * When omitted, the proxy comes from the `http_proxy` (for `ws://`) or
+     * `https_proxy` (for `wss://`) environment variables, subject to
+     * `NO_PROXY`, like `fetch()`. Pass `null` (or `""`) to connect directly
+     * and ignore the environment variables.
+     *
      * @example
      * ```ts
      * // String format
      * const ws = new WebSocket("wss://example.com", {
      *   proxy: "http://proxy.example.com:8080"
      * });
+     *
+     * // Ignore $HTTP_PROXY / $HTTPS_PROXY for this connection
+     * const direct = new WebSocket("wss://example.com", { proxy: null });
      *
      * // With credentials
      * const ws = new WebSocket("wss://example.com", {
@@ -4922,6 +4930,7 @@ declare module "bun" {
     proxy?:
       | string
       | URL
+      | null
       | {
           /**
            * The proxy URL (http:// or https://), as a string or a `URL`.

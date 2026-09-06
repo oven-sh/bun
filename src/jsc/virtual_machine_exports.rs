@@ -238,6 +238,41 @@ pub unsafe fn is_no_proxy(
     vm.env_loader().is_no_proxy(hostname, host)
 }
 
+// HOST_EXPORT(Bun__getEnvHttpProxy, c)
+/// The proxy `fetch()` would pick for a target from `http_proxy` /
+/// `https_proxy` (NO_PROXY applied), or an empty string for a direct
+/// connection. `is_http` selects `http_proxy`, otherwise `https_proxy`.
+///
+/// # Safety
+/// `hostname_ptr[..hostname_len]` and `host_ptr[..host_len]` must each be valid
+/// for reads for the duration of the call (or the corresponding len must be 0).
+pub unsafe fn get_env_http_proxy(
+    is_http: bool,
+    hostname_ptr: *const u8,
+    hostname_len: usize,
+    host_ptr: *const u8,
+    host_len: usize,
+) -> BunString {
+    // SAFETY: VM singleton is process-lifetime.
+    let vm = VirtualMachine::get();
+    let hostname: Option<&[u8]> = if hostname_len > 0 {
+        // SAFETY: caller guarantees `hostname_ptr[..hostname_len]` is valid for reads.
+        Some(unsafe { bun_core::ffi::slice(hostname_ptr, hostname_len) })
+    } else {
+        None
+    };
+    let host: Option<&[u8]> = if host_len > 0 {
+        // SAFETY: caller guarantees `host_ptr[..host_len]` is valid for reads.
+        Some(unsafe { bun_core::ffi::slice(host_ptr, host_len) })
+    } else {
+        None
+    };
+    match vm.env_loader().get_http_proxy(is_http, hostname, host) {
+        Some(url) => BunString::clone_utf8(url.href),
+        None => BunString::EMPTY,
+    }
+}
+
 // HOST_EXPORT(Bun__setVerboseFetchValue, c)
 pub fn set_verbose_fetch_value(value: i32) {
     use bun_http::HTTPVerboseLevel;

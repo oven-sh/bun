@@ -163,8 +163,10 @@ public:
     };
 
     ExceptionOr<void> connect(const String& url, const Vector<String>& protocols, std::optional<FetchHeaders::Init>&&);
-    // Internal connect with proxy config (used by create() with proxy support)
-    ExceptionOr<void> connect(const String& url, const Vector<String>& protocols, std::optional<FetchHeaders::Init>&&, std::optional<struct ProxyConfig>&&);
+    // Internal connect with proxy config (used by create() with proxy support).
+    // With no proxy config and `useEnvProxy`, the proxy comes from
+    // http_proxy / https_proxy like fetch(). `proxy: null` / `""` pass false.
+    ExceptionOr<void> connect(const String& url, const Vector<String>& protocols, std::optional<FetchHeaders::Init>&&, std::optional<struct ProxyConfig>&&, bool useEnvProxy);
 
     ExceptionOr<void> send(const String& message);
     ExceptionOr<void> send(JSC::ArrayBuffer&);

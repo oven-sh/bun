@@ -1959,6 +1959,35 @@ describe.concurrent("NO_PROXY with explicit proxy option", () => {
     expect(exitCode).toBe(0);
   });
 
+  // HTTP_PROXY points at the dead proxy, so a fetch that consults the env
+  // fails. `null` and "" opt out of the env; `undefined` is the same as absent.
+  test.each([
+    ["proxy: null ignores HTTP_PROXY", "null", "200"],
+    ['proxy: "" ignores HTTP_PROXY', '""', "200"],
+    ["proxy: undefined uses HTTP_PROXY", "undefined", "error: ECONNRESET"],
+  ])("%s", async (_, proxy, expected) => {
+    const noProxyEnv = { ...bunEnv };
+    for (const k of PROXY_ENV_KEYS) delete noProxyEnv[k];
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `try {
+          const resp = await fetch("http://127.0.0.1:${httpServer.port}", { proxy: ${proxy} });
+          console.log(resp.status);
+        } catch (error) {
+          console.log("error:", error.code);
+        }`,
+      ],
+      env: { ...noProxyEnv, HTTP_PROXY: `http://127.0.0.1:${deadProxyPort}` },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: `${expected}\n`, stderr: "", exitCode: 0 });
+  });
+
   test("S3 ops use runtime process.env.HTTP_PROXY and survive overwrite while in flight", async () => {
     // Covers two things this PR introduced:
     //  1) S3's getHttpProxy() observes a runtime process.env.HTTP_PROXY write.

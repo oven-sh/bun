@@ -298,17 +298,14 @@ class BunWebSocket extends EventEmitter {
   #createWebSocket(url, protocols, headers, method, proxy, tls, disableDeflate) {
     // The native WebSocket keeps permessage-deflate enabled by default;
     // forward `perMessageDeflate: false` only when the caller asked to disable.
-    let wsOptions;
-    if (headers || proxy || tls || disableDeflate) {
-      wsOptions = { protocols };
-      if (headers) wsOptions.headers = headers;
-      if (method) wsOptions.method = method;
-      if (proxy) wsOptions.proxy = proxy;
-      if (tls) wsOptions.tls = tls;
-      if (disableDeflate) wsOptions.perMessageDeflate = false;
-    } else {
-      wsOptions = protocols;
-    }
+    // `proxy: null` keeps ws direct unless a proxy agent is given, like the
+    // npm package, which dials with its own createConnection and never reads
+    // http_proxy / https_proxy.
+    const wsOptions = { protocols, proxy: proxy || null };
+    if (headers) wsOptions.headers = headers;
+    if (method) wsOptions.method = method;
+    if (tls) wsOptions.tls = tls;
+    if (disableDeflate) wsOptions.perMessageDeflate = false;
     let ws = (this.#ws = new WebSocket(url, wsOptions));
     ws.binaryType = "nodebuffer";
 

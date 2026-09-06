@@ -137,7 +137,10 @@ describe("WebSocket upgrade with non-ASCII inputs", () => {
     const ws = new WebSocket(`ws://127.0.0.1:${server.port}/`, {
       headers: { "X-Latin1": latin1Value },
     });
-    ws.onerror = () => wsDone.resolve();
+    ws.onerror = e => {
+      gotHeader.reject(e);
+      wsDone.resolve();
+    };
     ws.onclose = () => wsDone.resolve();
 
     expect(await gotHeader.promise).toBe(latin1Value);

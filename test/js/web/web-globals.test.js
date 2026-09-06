@@ -119,6 +119,60 @@ test.concurrent("onmessage/onerror assignment through a Proxy of globalThis", as
   expect(exitCode).toBe(0);
 });
 
+// Only a worker has a parent that can post to its global scope. On the main thread a
+// global "message" listener can never fire, so it must not keep the process alive.
+test.concurrent("main thread: global 'message' listener does not keep the process alive", async () => {
+  const script = `
+    self.onmessage = e => console.log("onmessage", e.data);
+    addEventListener("message", e => console.log("listener", e.data));
+    process.on("beforeExit", () => console.log("beforeExit"));
+    console.log("installed");
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", script],
+    env: bunEnv,
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(stdout).toBe("installed\nbeforeExit\n");
+  expect(exitCode).toBe(0);
+});
+
+test.concurrent("worker: global 'message' listener keeps the worker alive until it is removed", async () => {
+  using dir = tempDir("worker-global-message-keepalive", {
+    "worker.js": `
+      const onMessage = e => {
+        postMessage("echo:" + e.data);
+        if (e.data === "two") removeEventListener("message", onMessage);
+      };
+      addEventListener("message", onMessage);
+      postMessage("ready");
+    `,
+    "main.js": `
+      const worker = new Worker(new URL("./worker.js", import.meta.url).href);
+      worker.onmessage = e => {
+        console.log(e.data);
+        if (e.data === "ready") {
+          worker.postMessage("one");
+          worker.postMessage("two");
+        }
+      };
+      worker.addEventListener("close", e => console.log("close", e.code));
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "main.js"],
+    env: bunEnv,
+    cwd: String(dir),
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(stdout).toBe("ready\necho:one\necho:two\nclose 0\n");
+  expect(exitCode).toBe(0);
+});
+
 test.concurrent("worker: onmessage assignment through a Proxy of self", async () => {
   using dir = tempDir("worker-proxy-onmessage", {
     "worker.js": `

@@ -198,4 +198,39 @@ describe("a later stdin consumer keeps the process alive after the reader is rel
     expect(output).toContain("FIRST first");
     expect(output).toContain("SECOND second");
   });
+
+  // Only a ref that the release itself dropped comes back. A source the user
+  // unref'd on purpose stays unref'd across a releaseLock()/getReader() cycle.
+  it("a second reader does not undo an explicit unref()", async () => {
+    await using proc = spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        const child = Bun.spawn({
+          cmd: [${JSON.stringify(bunExe())}, "-e", "console.log('hi'); setTimeout(() => {}, 60_000)"],
+          stdin: "ignore",
+          stdout: "pipe",
+          stderr: "ignore",
+        });
+        process.on("exit", () => child.kill());
+        child.unref();
+        const first = child.stdout.getReader();
+        await first.read();
+        first.releaseLock();
+        const second = child.stdout.getReader();
+        second.read().then(() => console.log("unexpected second read"));
+        console.log("DONE");
+        `,
+      ],
+      stdin: "ignore",
+      stdout: "pipe",
+      stderr: "pipe",
+      env: bunEnv,
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe("DONE\n");
+    expect(exitCode).toBe(0);
+  });
 });

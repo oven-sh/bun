@@ -145,6 +145,14 @@ impl JSMySQLQuery {
         if !target.is_object() {
             return Err(global_object.throw_invalid_argument_type("run", "query", "Query"));
         }
+        // A closed connection never answers; queueing on it would hang the query.
+        if connection.connection.get().status != super::my_sql_connection::Status::Connected {
+            return Err(global_object.throw_value(mysql_error_to_js(
+                global_object,
+                "Connection closed",
+                AnyMySQLError::Error::ConnectionClosed,
+            )));
+        }
         this.set_target(target);
         if let Err(err) = this.run(connection) {
             if !global_object.has_exception() {
@@ -363,6 +371,58 @@ impl JSMySQLQuery {
         );
     }
 
+    /// The connection closed before it ran this query, so the server never
+    /// executed it. Drops the state that tied the query to that connection and
+    /// hands it back to JS, which runs it on another connection or rejects it
+    /// with `reason`. `run()` can be called again afterwards.
+    pub(crate) fn requeue(&self, queries_array: JSValue, reason: Option<JSValue>) {
+        let _guard = self.ref_guard();
+        debug_assert!(self.is_unsent());
+        self.query.with_mut(|q| q.reset_for_requeue());
+        let Some(this_value) = self.this_value.get().try_get() else {
+            return;
+        };
+        let Some(target_value) = self.get_target() else {
+            return;
+        };
+        // JS owns the query again until the next `run()` upgrades this ref, and
+        // that `run()` can happen inside the callback below.
+        this_value.ensure_still_alive();
+        self.this_value.with_mut(|v| v.downgrade());
+        let reason = match reason.map(|r| r.to_error().unwrap_or(r)) {
+            Some(r) if !r.is_empty() => r,
+            _ => mysql_error_to_js(
+                self.global_object(),
+                "Connection closed",
+                AnyMySQLError::Error::ConnectionClosed,
+            ),
+        };
+        reason.ensure_still_alive();
+        let Some(function) = self
+            .vm_mut()
+            .sql_state()
+            .mysql_context
+            .on_query_requeue_fn
+            .get()
+        else {
+            return;
+        };
+        debug_assert!(function.is_callable(), "onQueryRequeueFn is not callable");
+        let js_array = if queries_array.is_empty() {
+            JSValue::UNDEFINED
+        } else {
+            queries_array
+        };
+        js_array.ensure_still_alive();
+        let event_loop = self.event_loop();
+        event_loop.run_callback(
+            function,
+            self.global_object(),
+            this_value,
+            &[target_value, reason, js_array],
+        );
+    }
+
     pub(crate) fn run(&self, connection: &MySQLConnection) -> Result<(), AnyMySQLError::Error> {
         {
             let q = self.query.get();
@@ -424,6 +484,10 @@ impl JSMySQLQuery {
     #[inline]
     pub(crate) fn is_pending(&self) -> bool {
         self.query.get().is_pending()
+    }
+    #[inline]
+    pub(crate) fn is_unsent(&self) -> bool {
+        self.query.get().is_unsent()
     }
     #[inline]
     pub(crate) fn is_being_prepared(&self) -> bool {

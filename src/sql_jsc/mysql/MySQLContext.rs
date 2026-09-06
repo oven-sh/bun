@@ -5,6 +5,8 @@ use crate::jsc::{CallFrame, JSGlobalObject, JSValue, StrongOptional, VirtualMach
 pub struct MySQLContext {
     pub(crate) on_query_resolve_fn: StrongOptional,
     pub(crate) on_query_reject_fn: StrongOptional,
+    /// Called for a queued query that its connection closed without running.
+    pub(crate) on_query_requeue_fn: StrongOptional,
 }
 
 // The binding object is built in Rust (`mysql.rs` registers this fn through
@@ -16,5 +18,6 @@ pub(crate) fn init(global: &JSGlobalObject, frame: &CallFrame) -> JSValue {
     let ctx = &mut global.bun_vm().as_mut().sql_state().mysql_context;
     ctx.on_query_resolve_fn.set(global, frame.argument(0));
     ctx.on_query_reject_fn.set(global, frame.argument(1));
+    ctx.on_query_requeue_fn.set(global, frame.argument(2));
     JSValue::UNDEFINED
 }

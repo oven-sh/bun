@@ -280,12 +280,17 @@ impl MySQLRequestQueue {
         self.waiting_to_prepare.set(false);
 
         for req in requests {
-            if !req.is_completed() {
-                if let Some(r) = reason {
-                    req.reject_with_js_value(queries_array, r);
-                } else {
-                    req.reject(queries_array, AnyMySQLError::ConnectionClosed);
-                }
+            if req.is_completed() {
+                continue;
+            }
+            // The server has not seen a byte of it: hand it back to run on
+            // another connection instead of failing it.
+            if req.is_unsent() {
+                req.requeue(queries_array, reason);
+            } else if let Some(r) = reason {
+                req.reject_with_js_value(queries_array, r);
+            } else {
+                req.reject(queries_array, AnyMySQLError::ConnectionClosed);
             }
         }
     }

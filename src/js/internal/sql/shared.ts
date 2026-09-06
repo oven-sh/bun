@@ -596,8 +596,7 @@ const enum PooledConnectionFlags {
 }
 export type { PooledConnectionState };
 
-function onQueryFinish(this: BasePooledConnection, onClose: (err: Error) => void) {
-  this.queries.delete(onClose);
+function onQueryFinish(this: BasePooledConnection) {
   this.adapter.release(this);
 }
 
@@ -606,7 +605,8 @@ abstract class BasePooledConnection<ConnectionHandle extends { close(): void; fl
   connection: ConnectionHandle | null = null;
   state: PooledConnectionState = PooledConnectionState.pending;
   storedError: Error | null = null;
-  queries: Set<(err: Error) => void> = new Set();
+  /// reservations holding this connection (sql.reserve(), sql.begin()); its queries are settled by the driver
+  closeHandlers: Set<(err: Error) => void> = new Set();
   onFinish: ((err: Error | null) => void) | null = null;
   connectionInfo: Bun.SQL.__internal.DefinedPostgresOrMySQLOptions;
   flags: number = 0;
@@ -695,6 +695,7 @@ abstract class BasePooledConnection<ConnectionHandle extends { close(): void; fl
     if (err) {
       err = this.wrapError(err);
     }
+    const dropped = this.state === PooledConnectionState.connected;
     this.connection = null;
     this.storedError = err;
     if (this.#shouldRetryConnecting(err)) {
@@ -709,7 +710,7 @@ abstract class BasePooledConnection<ConnectionHandle extends { close(): void; fl
     }
     // this connect cycle is over; a later retry() starts a fresh one
     this.connectStartedAt = 0;
-    this.#finishClose(err);
+    this.#finishClose(err, dropped);
   }
 
   static #retryTimerFired(self: BasePooledConnection) {
@@ -760,7 +761,9 @@ abstract class BasePooledConnection<ConnectionHandle extends { close(): void; fl
     return false;
   }
 
-  #finishClose(err: any) {
+  /// `dropped`: the connection was established and then lost, as opposed to a
+  /// connect attempt that failed.
+  #finishClose(err: any, dropped: boolean = false) {
     const connectionInfo = this.connectionInfo;
     const poolClosedSlotBeforeOnconnect =
       this.onFinish !== null && !(this.flags & PooledConnectionFlags.onConnectFired);
@@ -775,12 +778,11 @@ abstract class BasePooledConnection<ConnectionHandle extends { close(): void; fl
 
       // remove from ready connections if its there
       this.adapter.readyConnections.delete(this);
-      const queries = new Set(this.queries);
-      this.queries?.clear?.();
+      const closeHandlers = new Set(this.closeHandlers);
+      this.closeHandlers.clear();
       this.flags &= ~PooledConnectionFlags.reserved;
 
-      // notify all queries that the connection is closed
-      for (const onClose of queries) {
+      for (const onClose of closeHandlers) {
         onClose(err);
       }
       const onFinish = this.onFinish;
@@ -788,17 +790,29 @@ abstract class BasePooledConnection<ConnectionHandle extends { close(): void; fl
         onFinish(err);
       }
 
-      this.adapter.release(this, true);
+      const adapter = this.adapter;
+      // Queries still waiting on the pool never reached the server. When the
+      // connection they waited for drops and no other one can take them, dial
+      // again instead of failing them in release(). They fail if that dial fails.
+      if (
+        dropped &&
+        (adapter.waitingQueue.length > 0 || adapter.reservedQueue.length > 0) &&
+        !adapter.hasConnectionsAvailable()
+      ) {
+        this.retry();
+      }
+      adapter.release(this, true);
     }
   }
 
   onClose(onClose: (err: Error) => void) {
-    this.queries.add(onClose);
+    this.closeHandlers.add(onClose);
   }
 
-  bindQuery(query: QueryType<any, any>, onClose: (err: Error) => void) {
-    this.queries.add(onClose);
-    query.finally(onQueryFinish.bind(this, onClose));
+  /// The query holds one count on this slot until it settles, wherever that
+  /// happens: a query this connection never sent can settle on another one.
+  bindQuery(query: QueryType<any, any>) {
+    query.finally(onQueryFinish.bind(this));
   }
 
   protected doRetry() {
@@ -1059,10 +1073,7 @@ abstract class BaseSQLAdapter<PooledConnection extends BasePooledConnection, Con
   }
 
   detachConnectionCloseHandler(connection: PooledConnection, handler: () => void): void {
-    const queries = connection.queries;
-    if (queries) {
-      queries.delete(handler);
-    }
+    connection.closeHandlers?.delete(handler);
   }
 
   validateTransactionOptions(options: string): { valid: boolean; error?: string } {

@@ -77,6 +77,10 @@ pub struct Flags {
     pub(crate) binary: bool,
     pub(crate) bigint: bool,
     pub(crate) simple: bool,
+    /// This request wrote Parse+Describe for its statement and waits for the
+    /// server before Bind+Execute. Its status is still `Pending`, but bytes of
+    /// it are on the wire, so it no longer counts as unsent.
+    pub(crate) prepare_sent: bool,
     /// Which connection counter this request's dispatch incremented; reset to
     /// `None` when `finish_request` consumes that contribution, so the
     /// decrement is idempotent across its call sites.
@@ -100,6 +104,7 @@ impl Default for Flags {
             binary: false,
             bigint: false,
             simple: false,
+            prepare_sent: false,
             counter: RequestCounter::None,
             result_mode: PostgresSQLQueryResultMode::Objects,
         }
@@ -150,6 +155,13 @@ impl PostgresSQLQuery {
     #[inline]
     pub(crate) fn release_statement(&self) {
         self.statement.set(None);
+    }
+
+    /// No byte of this request has been written to its connection, so the
+    /// server cannot have seen it.
+    #[inline]
+    pub(crate) fn is_unsent(&self) -> bool {
+        self.status.get() == Status::Pending && !self.flags.get().prepare_sent
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -252,6 +264,57 @@ impl PostgresSQLQuery {
             return;
         };
         self.on_js_error(e, global_object);
+    }
+
+    /// The connection closed before it wrote this query, so the server never
+    /// saw it. Drops the state that tied the query to that connection and
+    /// hands it back to JS, which runs it on another connection or rejects it
+    /// with `reason`. `run()` can be called again afterwards.
+    pub(crate) fn requeue(
+        &self,
+        reason: Option<JSValue>,
+        global_object: &JSGlobalObject,
+        queries_array: JSValue,
+    ) {
+        let _guard = self.ref_guard();
+        debug_assert!(self.is_unsent());
+        self.release_statement();
+        self.update_flags(|f| f.counter = RequestCounter::None);
+        let Some(this_value) = self.this_value.get().try_get() else {
+            return;
+        };
+        let Some(target_value) = self.get_target(global_object, true) else {
+            return;
+        };
+        // JS owns the query again until the next `run()` upgrades this ref, and
+        // that `run()` can happen inside the callback below.
+        this_value.ensure_still_alive();
+        self.this_value.with_mut(|r| r.downgrade());
+        let reason = match reason.map(|r| r.to_error().unwrap_or(r)) {
+            Some(r) if !r.is_empty() => r,
+            _ => postgres_error_to_js(
+                global_object,
+                Some(b"Connection closed"),
+                AnyPostgresError::ConnectionClosed,
+            ),
+        };
+        reason.ensure_still_alive();
+
+        // SAFETY: JS-thread only; short-lived `&mut` to the singleton VM, no other live borrow.
+        let vm = crate::jsc::VirtualMachine::get().as_mut();
+        let function = vm
+            .sql_state()
+            .postgresql_context
+            .on_query_requeue_fn
+            .get()
+            .unwrap();
+        let event_loop = vm.event_loop_mut();
+        event_loop.run_callback(
+            function,
+            global_object,
+            this_value,
+            &[target_value, reason, queries_array],
+        );
     }
 
     pub(crate) fn allow_gc(this_value: JSValue, global_object: &JSGlobalObject) {
@@ -457,6 +520,14 @@ impl PostgresSQLQuery {
 
         if !query.is_object() {
             return Err(global_object.throw_invalid_argument_type("run", "query", "Query"));
+        }
+        // A closed connection never answers; queueing on it would hang the query.
+        if connection.status.get() != bun_sql::postgres::Status::Connected {
+            return Err(global_object.throw_value(postgres_error_to_js(
+                global_object,
+                Some(b"Connection closed"),
+                AnyPostgresError::ConnectionClosed,
+            )));
         }
 
         let this_value = callframe.this();
@@ -728,6 +799,7 @@ impl PostgresSQLQuery {
                         f.set(ConnectionFlags::WAITING_TO_PREPARE, true);
                         connection.flags.set(f);
                     }
+                    this.update_flags(|f| f.prepare_sent = true);
                     did_write = true;
                 }
                 // Unnamed prepared statements with params: skip writeQuery+Sync here.

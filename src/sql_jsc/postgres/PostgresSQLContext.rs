@@ -9,6 +9,8 @@ use crate::jsc::{CallFrame, JSGlobalObject, JSValue, StrongOptional, VirtualMach
 pub struct PostgresSQLContext {
     pub(crate) on_query_resolve_fn: StrongOptional,
     pub(crate) on_query_reject_fn: StrongOptional,
+    /// Called for a queued query that its connection closed without writing.
+    pub(crate) on_query_requeue_fn: StrongOptional,
 }
 
 impl PostgresSQLContext {
@@ -22,6 +24,7 @@ impl PostgresSQLContext {
         let ctx = &mut global.bun_vm().as_mut().sql_state().postgresql_context;
         ctx.on_query_resolve_fn.set(global, frame.argument(0));
         ctx.on_query_reject_fn.set(global, frame.argument(1));
+        ctx.on_query_requeue_fn.set(global, frame.argument(2));
         JSValue::UNDEFINED
     }
 }

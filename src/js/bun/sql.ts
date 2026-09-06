@@ -71,20 +71,6 @@ const SQL: typeof Bun.SQL = function SQL(
   const connectionInfo = parseOptions(stringOrUrlOrOptions, definitelyOptionsButMaybeEmpty);
   const pool = adapterFromOptions(connectionInfo);
 
-  function onQueryDisconnected(this: Query<any, any>, err: Error) {
-    // connection closed mid query this will not be called if the query finishes first
-    const query = this;
-
-    if (err) {
-      return query.reject(err);
-    }
-
-    // query is cancelled when waiting for a connection from the pool
-    if (query.cancelled) {
-      return query.reject(pool.queryCancelledError());
-    }
-  }
-
   function onQueryConnected(
     this: Query<any, any>,
     handle: BaseQueryHandle<any>,
@@ -102,9 +88,9 @@ const SQL: typeof Bun.SQL = function SQL(
       return query.reject(pool.queryCancelledError());
     }
 
-    if (connectionHandle.bindQuery) {
-      connectionHandle.bindQuery(query, onQueryDisconnected.bind(query));
-    }
+    // The driver settles the query from here on. If the connection closes
+    // before sending it, the driver hands it back and it is queued again.
+    connectionHandle.bindQuery?.(query);
 
     try {
       const connection = pool.getConnectionForQuery ? pool.getConnectionForQuery(connectionHandle) : connectionHandle;
@@ -139,7 +125,7 @@ const SQL: typeof Bun.SQL = function SQL(
       return new Query(
         strings,
         values,
-        connectionInfo.bigint ? SQLQueryFlags.bigint : SQLQueryFlags.none,
+        connectionInfo.bigint ? SQLQueryFlags.pooled | SQLQueryFlags.bigint : SQLQueryFlags.pooled,
         queryFromPoolHandler,
         pool,
       );
@@ -153,7 +139,9 @@ const SQL: typeof Bun.SQL = function SQL(
     values: any[],
   ) {
     try {
-      let flags = connectionInfo.bigint ? SQLQueryFlags.bigint | SQLQueryFlags.unsafe : SQLQueryFlags.unsafe;
+      let flags = connectionInfo.bigint
+        ? SQLQueryFlags.pooled | SQLQueryFlags.bigint | SQLQueryFlags.unsafe
+        : SQLQueryFlags.pooled | SQLQueryFlags.unsafe;
       if ((values?.length ?? 0) === 0) {
         flags |= SQLQueryFlags.simple;
       }

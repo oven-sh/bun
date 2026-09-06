@@ -10,6 +10,7 @@ const _values = Symbol("values");
 const _flags = Symbol("flags");
 const _results = Symbol("results");
 const _adapter = Symbol("adapter");
+const _requeue = Symbol("requeue");
 
 const PublicPromise = Promise;
 
@@ -210,6 +211,28 @@ class Query<T, Handle extends BaseQueryHandle<any>> extends PublicPromise<T> {
     return this[_reject](x);
   }
 
+  // The connection this query was queued on closed before sending it, so the
+  // server never saw it. A pool query goes back to the pool and runs on
+  // another connection. A query bound to that one connection (transaction,
+  // reserved) fails with the close error.
+  [_requeue](err: Error) {
+    const status = this[_queryStatus];
+    if (status & (SQLQueryStatus.error | SQLQueryStatus.invalidHandle)) {
+      return;
+    }
+    if (status & SQLQueryStatus.cancelled) {
+      return this.reject(this[_adapter].queryCancelledError());
+    }
+    if (!(this[_flags] & SQLQueryFlags.pooled)) {
+      return this.reject(err);
+    }
+    try {
+      this[_handler](this, this[_handle]!);
+    } catch (err) {
+      this.reject(err as Error);
+    }
+  }
+
   cancel() {
     const status = this[_queryStatus];
     if (status & SQLQueryStatus.cancelled) {
@@ -335,6 +358,8 @@ const enum SQLQueryFlags {
   bigint = 1 << 2,
   simple = 1 << 3,
   notTagged = 1 << 4,
+  /** dispatched by the pool to any free connection, so it can move to another one */
+  pooled = 1 << 5,
 }
 
 const enum SQLQueryStatus {
@@ -356,5 +381,6 @@ export default {
     _strings,
     _values,
     _results,
+    _requeue,
   },
 };

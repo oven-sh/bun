@@ -10,7 +10,7 @@ const {
 } = require("internal/sql/shared");
 const {
   SQLQueryFlags,
-  symbols: { _results, _handle },
+  symbols: { _results, _handle, _requeue },
 } = require("internal/sql/query");
 const { MySQLError } = require("internal/sql/errors");
 
@@ -77,6 +77,18 @@ initMySQL(
       query.reject(reject as Error);
     } catch {}
   },
+
+  // The connection closed before it ran this query: the server has not
+  // executed it, so the query can run again on another connection.
+  function onRequeueMySQLQuery(query: Query<any, any>, reason: Error | MySQLErrorOptions, queries: Query<any, any>[]) {
+    if (queries) {
+      const queriesIndex = queries.indexOf(query);
+      if (queriesIndex !== -1) {
+        queries.splice(queriesIndex, 1);
+      }
+    }
+    query[_requeue](wrapError(reason));
+  },
 );
 
 export interface MySQLDotZig {
@@ -90,6 +102,7 @@ export interface MySQLDotZig {
       is_last: boolean,
     ) => void,
     onRejectQuery: (query: Query<any, any>, err: Error, queries) => void,
+    onRequeueQuery: (query: Query<any, any>, err: Error, queries) => void,
   ) => void;
   createConnection: (
     hostname: string | undefined,

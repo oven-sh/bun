@@ -1,8 +1,10 @@
-// Pool slot accounting across the paths that hand a connection back to the pool.
-// The mock servers record every statement per connection, so a transaction that
-// lands on a connection somebody else still holds shows up in the recorded order.
-// They also drop the socket on demand, which a real container will not do.
-// Wire bytes come from ./wire-frames.ts.
+// Pool slot accounting across the paths that hand a connection back to the pool,
+// and what happens to queued work when a connection drops. The mock servers
+// record every statement per connection, so a transaction that lands on a
+// connection somebody else still holds shows up in the recorded order, and so
+// does the connection a re-queued query ends up on. They also drop the socket
+// on demand, which a real container will not do. Wire bytes come from
+// ./wire-frames.ts.
 import { SQL } from "bun";
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
@@ -14,8 +16,14 @@ import {
   mysqlOkPacket,
   mysqlReadPackets,
   pgAuthenticationOk,
+  pgBindComplete,
   pgCommandComplete,
+  pgDataRow,
+  pgMockServer as pgExtendedMockServer,
+  pgParameterDescription,
+  pgParseComplete,
   pgReadyForQuery,
+  pgRowDescription,
 } from "./wire-frames";
 
 type Received = { conn: number; sql: string };
@@ -109,9 +117,24 @@ function firstInterleaving(received: Received[]): string | null {
   return null;
 }
 
-const adapters: Array<{ adapter: "postgres" | "mysql"; mockServer: MockServer; beginCommand: string }> = [
-  { adapter: "postgres", mockServer: pgMockServer, beginCommand: "BEGIN" },
-  { adapter: "mysql", mockServer: mysqlMockServer, beginCommand: "START TRANSACTION" },
+const adapters: Array<{
+  adapter: "postgres" | "mysql";
+  mockServer: MockServer;
+  beginCommand: string;
+  closedCode: string;
+}> = [
+  {
+    adapter: "postgres",
+    mockServer: pgMockServer,
+    beginCommand: "BEGIN",
+    closedCode: "ERR_POSTGRES_CONNECTION_CLOSED",
+  },
+  {
+    adapter: "mysql",
+    mockServer: mysqlMockServer,
+    beginCommand: "START TRANSACTION",
+    closedCode: "ERR_MYSQL_CONNECTION_CLOSED",
+  },
 ];
 
 // reserved.begin() / beginDistributed() calls that reject before anything is sent.
@@ -128,7 +151,7 @@ const rejectedBeforeBegin = [
   },
 ];
 
-describe.each(adapters)("$adapter", ({ adapter, mockServer, beginCommand }) => {
+describe.each(adapters)("$adapter", ({ adapter, mockServer, beginCommand, closedCode }) => {
   const options = (port: number): Bun.SQL.Options => ({
     adapter,
     hostname: "127.0.0.1",
@@ -148,7 +171,9 @@ describe.each(adapters)("$adapter", ({ adapter, mockServer, beginCommand }) => {
     try {
       await sql.unsafe("SELECT 'warm'");
 
-      // Two queries are bound to the slot when the server drops it.
+      // Two queries are bound to the slot when the server drops it. The first is
+      // on the wire and fails; the second was never sent, so it runs once the
+      // slot has dialled again.
       const die1 = sql.unsafe("SELECT 'KILL'").execute();
       const die2 = sql.unsafe("SELECT 'never sent'").execute();
       const [e1, e2] = await Promise.all([
@@ -162,7 +187,7 @@ describe.each(adapters)("$adapter", ({ adapter, mockServer, beginCommand }) => {
         ),
       ]);
       expect(e1).toBeInstanceOf(Error);
-      expect(e2).toBeInstanceOf(Error);
+      expect(e2).toBeNull();
 
       await sql.unsafe("SELECT 'revive'");
 
@@ -191,6 +216,140 @@ describe.each(adapters)("$adapter", ({ adapter, mockServer, beginCommand }) => {
       expect(results[4]).toEqual({ status: "fulfilled", value: "t3" });
 
       expect(firstInterleaving(received)).toBeNull();
+    } finally {
+      await sql.close({ timeout: 0 }).catch(() => {});
+      await new Promise<void>(r => server.close(() => r()));
+    }
+  });
+
+  // The query on the wire when the connection drops fails: the server may have run
+  // it. The queries queued behind it on that connection were never written, so
+  // they run, in order, on the connection the slot dials next.
+  test("queries the dropped connection never sent run on the re-dialled connection", async () => {
+    const received: Received[] = [];
+    const { port, server } = await mockServer(received);
+    const sql = new SQL(options(port));
+    try {
+      await sql.unsafe("SELECT 'warm'");
+
+      const results = await Promise.allSettled([
+        sql.unsafe("SELECT 'KILL'"),
+        sql.unsafe("SELECT 'q1'"),
+        sql.unsafe("SELECT 'q2'"),
+        sql.unsafe("SELECT 'q3'"),
+      ]);
+
+      expect(results.map(r => r.status)).toEqual(["rejected", "fulfilled", "fulfilled", "fulfilled"]);
+      expect((results[0] as PromiseRejectedResult).reason.code).toBe(closedCode);
+      expect(received).toEqual([
+        { conn: 0, sql: "SELECT 'warm'" },
+        { conn: 0, sql: "SELECT 'KILL'" },
+        { conn: 1, sql: "SELECT 'q1'" },
+        { conn: 1, sql: "SELECT 'q2'" },
+        { conn: 1, sql: "SELECT 'q3'" },
+      ]);
+    } finally {
+      await sql.close({ timeout: 0 }).catch(() => {});
+      await new Promise<void>(r => server.close(() => r()));
+    }
+  });
+
+  test("a query the dropped connection never sent moves to a live connection without a new dial", async () => {
+    const received: Received[] = [];
+    const { port, server } = await mockServer(received);
+    const sql = new SQL({ ...options(port), max: 2 });
+    try {
+      // Two concurrent queries only spread across both slots once both are connected.
+      do {
+        await Promise.all([sql.unsafe("SELECT 'ping'"), sql.unsafe("SELECT 'ping'")]);
+      } while (new Set(received.map(r => r.conn)).size < 2);
+      received.length = 0;
+
+      // The pool alternates: KILL and q2 share one connection, q1 and q3 the other.
+      // q2 is queued behind KILL and not yet written when that connection drops.
+      const results = await Promise.allSettled([
+        sql.unsafe("SELECT 'KILL'"),
+        sql.unsafe("SELECT 'q1'"),
+        sql.unsafe("SELECT 'q2'"),
+        sql.unsafe("SELECT 'q3'"),
+      ]);
+      expect(results.map(r => r.status)).toEqual(["rejected", "fulfilled", "fulfilled", "fulfilled"]);
+
+      const killedConn = received.find(r => r.sql === "SELECT 'KILL'")!.conn;
+      const liveConn = received.find(r => r.sql === "SELECT 'q1'")!.conn;
+      expect(liveConn).not.toBe(killedConn);
+      expect(received.filter(r => r.sql === "SELECT 'q2'")).toEqual([{ conn: liveConn, sql: "SELECT 'q2'" }]);
+      expect([...new Set(received.map(r => r.conn))].sort()).toEqual([killedConn, liveConn].sort());
+    } finally {
+      await sql.close({ timeout: 0 }).catch(() => {});
+      await new Promise<void>(r => server.close(() => r()));
+    }
+  });
+
+  // A transaction is bound to its connection, so its unsent queries cannot move.
+  test("a transaction's unsent queries fail with the dropped connection", async () => {
+    const received: Received[] = [];
+    const { port, server } = await mockServer(received);
+    const sql = new SQL(options(port));
+    try {
+      await sql.unsafe("SELECT 'warm'");
+
+      // begin() rejects as soon as the connection drops, before its callback settles.
+      let inner!: Promise<PromiseSettledResult<any>[]>;
+      const err = await sql
+        .begin(async tx => {
+          inner = Promise.allSettled([tx.unsafe("SELECT 'KILL'"), tx.unsafe("SELECT 'in tx, never sent'")]);
+          await inner;
+        })
+        .then(
+          () => null,
+          e => e,
+        );
+      expect(err).toBeInstanceOf(Error);
+      const settled = await inner;
+      expect(settled.map(r => r.status)).toEqual(["rejected", "rejected"]);
+      expect((settled[1] as PromiseRejectedResult).reason.code).toBe(closedCode);
+
+      await sql.unsafe("SELECT 'revive'");
+      expect(received).toEqual([
+        { conn: 0, sql: "SELECT 'warm'" },
+        { conn: 0, sql: beginCommand },
+        { conn: 0, sql: "SELECT 'KILL'" },
+        { conn: 1, sql: "SELECT 'revive'" },
+      ]);
+    } finally {
+      await sql.close({ timeout: 0 }).catch(() => {});
+      await new Promise<void>(r => server.close(() => r()));
+    }
+  });
+
+  // Nothing a pending reservation asked for reached the server either, so the pool
+  // dials again for it instead of failing it along with the dropped connection.
+  test("a reservation waiting on the dropped connection gets the re-dialled one", async () => {
+    const received: Received[] = [];
+    const { port, server } = await mockServer(received);
+    const sql = new SQL(options(port));
+    try {
+      await sql.unsafe("SELECT 'warm'");
+
+      // execute() sends KILL right away, so reserve() finds the pool's only slot busy and waits.
+      const killed = sql.unsafe("SELECT 'KILL'").execute();
+      const reserving = sql.reserve();
+      expect(
+        await killed.then(
+          () => null,
+          e => e,
+        ),
+      ).toBeInstanceOf(Error);
+
+      const reserved = await reserving;
+      await reserved.unsafe("SELECT 'R1'");
+      reserved.release();
+      expect(received).toEqual([
+        { conn: 0, sql: "SELECT 'warm'" },
+        { conn: 0, sql: "SELECT 'KILL'" },
+        { conn: 1, sql: "SELECT 'R1'" },
+      ]);
     } finally {
       await sql.close({ timeout: 0 }).catch(() => {});
       await new Promise<void>(r => server.close(() => r()));
@@ -436,6 +595,76 @@ describe.each(adapters)("$adapter", ({ adapter, mockServer, beginCommand }) => {
         { conn: 0, sql: "SELECT 'still reserved'" },
       ]);
     } finally {
+      await new Promise<void>(r => server.close(() => r()));
+    }
+  });
+});
+
+// With parameters, postgres prepares a named statement first (Parse/Describe/
+// Sync) and sends Bind/Execute once the server has answered. A query whose Parse
+// went out already counts as sent: when the connection drops it fails like a
+// query mid-flight, even though it never executed. Only the queries behind it,
+// with nothing on the wire, move to the next connection.
+describe("postgres extended protocol", () => {
+  test("a query with its Parse on the wire fails with the dropped connection, the unsent ones behind it move", async () => {
+    const parsed: Received[] = [];
+    let nextConn = 0;
+    const ids = new WeakMap<net.Socket, { conn: number; params: number; stalled: boolean }>();
+    const state = (socket: net.Socket) => {
+      let s = ids.get(socket);
+      if (!s) ids.set(socket, (s = { conn: nextConn++, params: 0, stalled: false }));
+      return s;
+    };
+    // The server answers Parse and Describe of the 'stall' query but never its
+    // Sync, so Bind/Execute are never sent; then it drops the connection.
+    const { port, server } = await pgExtendedMockServer((type, body, socket) => {
+      const s = state(socket);
+      switch (type) {
+        case "P": {
+          const from = body.indexOf(0) + 1;
+          const sql = body.toString("utf8", from, body.indexOf(0, from));
+          parsed.push({ conn: s.conn, sql });
+          s.params = body.readInt16BE(body.indexOf(0, from) + 1);
+          if (sql.includes("stall")) s.stalled = true;
+          return pgParseComplete();
+        }
+        case "D":
+          return [pgParameterDescription(Array(s.params).fill(23)), pgRowDescription([{ name: "v", typeOid: 25 }])];
+        case "B":
+          return pgBindComplete();
+        case "E":
+          return s.stalled ? undefined : [pgDataRow([Buffer.from("7")]), pgCommandComplete("SELECT 1")];
+        case "S":
+          if (!s.stalled) return pgReadyForQuery();
+          socket.destroy();
+          return;
+      }
+    });
+    const sql = new SQL({
+      url: `postgres://u:p@127.0.0.1:${port}/db`,
+      max: 1,
+      idleTimeout: 5,
+    });
+    try {
+      await sql`select 'warm' as v`;
+
+      const results = await Promise.allSettled([
+        sql`select 'stall' as v, ${0}::int`,
+        sql`select ${1}::int as v`,
+        sql`select ${2}::int as v`,
+        sql`select ${3}::int as v`,
+      ]);
+
+      expect(results.map(r => r.status)).toEqual(["rejected", "fulfilled", "fulfilled", "fulfilled"]);
+      expect((results[0] as PromiseRejectedResult).reason.code).toBe("ERR_POSTGRES_CONNECTION_CLOSED");
+      // q1..q3 share one prepared statement, so the new connection parses it once.
+      expect(parsed.map(p => [p.conn, p.sql.replace(/\s+/g, " ")])).toEqual([
+        [0, "select 'warm' as v"],
+        [0, "select 'stall' as v, $1 ::int"],
+        [1, "select $1 ::int as v"],
+      ]);
+    } finally {
+      await sql.close({ timeout: 0 }).catch(() => {});
       await new Promise<void>(r => server.close(() => r()));
     }
   });

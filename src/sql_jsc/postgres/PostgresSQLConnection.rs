@@ -1434,44 +1434,44 @@ impl PostgresSQLConnection {
         // `&T` only — `PostgresSQLQuery` is Cell/JsCell-backed.
         while let Some(request) = self.current() {
             match request.status.get() {
-                // pending we will fail the request and the stmt will be marked as error ConnectionClosed too
                 QueryStatus::Pending => {
-                    self.note_request_written();
-                    let Some(stmt) = request.statement_mut() else {
-                        // The deref/discard at the bottom of the loop is intentionally skipped here.
-                        continue;
-                    };
-                    stmt.error_response = Some(StatementError::PostgresError(
-                        AnyPostgresError::ConnectionClosed,
-                    ));
-                    stmt.status = StatementStatus::Failed;
-                    let global = self.global();
-                    if let Some(reason) = js_reason {
-                        request.on_js_error(reason, global);
+                    self.finish_request(&request);
+                    // a statement still being prepared dies with this connection
+                    if let Some(stmt) = request.statement_mut() {
+                        stmt.error_response = Some(StatementError::PostgresError(
+                            AnyPostgresError::ConnectionClosed,
+                        ));
+                        stmt.status = StatementStatus::Failed;
+                    }
+                    if request.is_unsent() {
+                        // The server has not seen a byte of it: hand it back to
+                        // run on another connection instead of failing it.
+                        request.requeue(js_reason, self.global(), self.get_queries_array());
                     } else {
-                        request.on_error(
-                            &StatementError::PostgresError(AnyPostgresError::ConnectionClosed),
-                            global,
-                        );
+                        self.fail_request(&request, js_reason);
                     }
                 }
                 // in the middle of running
                 QueryStatus::Binding | QueryStatus::Running | QueryStatus::PartialResponse => {
                     self.finish_request(&request);
-                    let global = self.global();
-                    if let Some(reason) = js_reason {
-                        request.on_js_error(reason, global);
-                    } else {
-                        request.on_error(
-                            &StatementError::PostgresError(AnyPostgresError::ConnectionClosed),
-                            global,
-                        );
-                    }
+                    self.fail_request(&request, js_reason);
                 }
                 // just ignore success and fail cases
                 QueryStatus::Success | QueryStatus::Fail => {}
             }
             self.discard_request(&request);
+        }
+    }
+
+    fn fail_request(&self, request: &PostgresSQLQuery, js_reason: Option<JSValue>) {
+        let global = self.global();
+        if let Some(reason) = js_reason {
+            request.on_js_error(reason, global);
+        } else {
+            request.on_error(
+                &StatementError::PostgresError(AnyPostgresError::ConnectionClosed),
+                global,
+            );
         }
     }
 
@@ -2227,6 +2227,7 @@ impl PostgresSQLConnection {
                                         f.insert(ConnectionFlags::WAITING_TO_PREPARE);
                                     });
                                     statement.status = StatementStatus::Parsing;
+                                    req.update_flags(|f| f.prepare_sent = true);
                                     // Parse+Describe+Sync written; Bind+Execute deferred to the
                                     // next advance(), so the request is still pending on the wire.
                                     self.note_request_pending();

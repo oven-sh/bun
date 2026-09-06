@@ -1302,9 +1302,7 @@ impl CreateCommand {
         // var unsupported_packages = UnsupportedPackages{};
         // SAFETY: single-threaded CLI access to module-level static path buffer
         let home_dir_buf = unsafe { &mut *HOME_DIR_BUF.get() };
-        // Leave one byte for the NUL written after each join. The positional
-        // is argv of any length: a join that does not fit is not a local
-        // template, so that lookup is skipped.
+        // One byte stays free for the NUL written after each join.
         let join_buf_len = home_dir_buf.len() - 1;
         let template: &[u8] = 'brk: {
             let positional = positionals[0];

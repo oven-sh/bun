@@ -304,8 +304,7 @@ pub(crate) fn on_create(
                 }
             }
 
-            // RFC 7692 negotiates both directions at once, so decompress off
-            // means no extension. Zero compressor bits make send() skip RSV1.
+            // Zero compressor bits make `WebSocket::send` skip RSV1.
             server.compression = match (compress, decompress) {
                 (None, None) | (Some(0), None) | (None | Some(0), Some(0)) => 0,
                 (Some(_), Some(0)) => {

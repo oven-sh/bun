@@ -194,7 +194,12 @@ impl<'a> HTMLProcessorHandler for HTMLLoader<'a> {
             {
                 element.remove();
             } else {
-                set_attribute(element, url_attribute, import_record.path.pretty);
+                set_attribute_with_suffix(
+                    element,
+                    url_attribute,
+                    import_record.path.pretty,
+                    suffix,
+                );
             }
             return;
         }

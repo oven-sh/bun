@@ -319,9 +319,7 @@ pub(crate) fn for_each_multipart_entry<C>(
                         value = &value[1..];
                     }
 
-                    // The multipart/form-data serializer (HTML spec, browsers, undici)
-                    // percent-encodes `"`, CR and LF and writes `\` verbatim, so the
-                    // first `"` always ends the value: there are no quoted-pairs here.
+                    // No quoted-pairs: the serializer percent-encodes `"` and writes `\` as is.
                     let field_value = match strings::index_of_char_usize(value, b'"') {
                         Some(end) => {
                             let field_value = &value[..end];

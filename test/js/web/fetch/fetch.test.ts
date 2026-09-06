@@ -3639,3 +3639,31 @@ it("verbose fetch logging prints [redacted] in place of Authorization credential
   expect(stderr).not.toContain("sekret-token");
   expect(exitCode).toBe(0);
 });
+
+it("network error `path` masks the URL password", async () => {
+  // A TCP peer that hangs up at once: fetch rejects with a SystemError that
+  // carries `path`, an enumerable property that loggers serialize.
+  using listener = Bun.listen({
+    hostname: "127.0.0.1",
+    port: 0,
+    socket: {
+      open(socket) {
+        socket.end();
+      },
+      data() {},
+    },
+  });
+  const url = `http://alice:sekret-password@127.0.0.1:${listener.port}/v1/items?access_token=tok`;
+
+  const err = await fetch(url).then(
+    () => {
+      throw new Error("expected fetch to reject");
+    },
+    e => e,
+  );
+
+  expect(err).toBeInstanceOf(Error);
+  expect(err.path).toBe(`http://alice:***@127.0.0.1:${listener.port}/v1/items?access_token=tok`);
+  expect(err.message).not.toContain("sekret-password");
+  expect(JSON.stringify(err)).not.toContain("sekret-password");
+});

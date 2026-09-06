@@ -298,6 +298,34 @@ pub fn redacted_npm_url(str: &[u8]) -> RedactedNpmUrlFormatter<'_> {
 }
 
 // ───────────────────────────────────────────────────────────────────────────
+// RedactedUrlPasswordFormatter
+// ───────────────────────────────────────────────────────────────────────────
+
+/// Writes `url` with the userinfo password (`scheme://user:PASSWORD@host`)
+/// replaced by `***`. Nothing else in the URL is touched, so the result still
+/// identifies the request (host, path, query).
+pub struct RedactedUrlPasswordFormatter<'a> {
+    pub(crate) url: &'a [u8],
+}
+
+impl Display for RedactedUrlPasswordFormatter<'_> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        match strings::find_url_password(self.url) {
+            Some((offset, len)) => {
+                write_bytes(f, &self.url[..offset])?;
+                f.write_str("***")?;
+                write_bytes(f, &self.url[offset + len..])
+            }
+            None => write_bytes(f, self.url),
+        }
+    }
+}
+
+pub fn redacted_url_password(url: &[u8]) -> RedactedUrlPasswordFormatter<'_> {
+    RedactedUrlPasswordFormatter { url }
+}
+
+// ───────────────────────────────────────────────────────────────────────────
 // RedactedSourceFormatter
 // ───────────────────────────────────────────────────────────────────────────
 

@@ -214,13 +214,31 @@ impl ClientSession {
         }
     }
 
-    /// A stream closed before any response headers arrived. If the request
-    /// hasn't been retried yet and the body wasn't a JS stream (which may
-    /// already be consumed), re-enqueue it on a fresh session — this is the
-    /// standard h2/h3 client behavior for the GOAWAY / stateless-reset /
-    /// port-reuse race where a pooled session goes stale between the
-    /// `matches()` check and the first stream open.
-    pub(crate) fn retry_or_fail(&mut self, stream: *mut Stream, err: crate::Error) {
+    /// A stream closed before any response headers arrived. If the retry
+    /// budget allows and the body wasn't a JS stream (which may already be
+    /// consumed), re-enqueue it on a fresh session — this is the standard
+    /// h2/h3 client behavior for the GOAWAY / stateless-reset / port-reuse
+    /// race where a pooled session goes stale between the `matches()` check
+    /// and the first stream open.
+    ///
+    /// The first retry fires for any such failure, preserving the original
+    /// one-shot behavior. Past that, the request is re-sent only when it is
+    /// safe and cheap:
+    /// - `fast` is false for a no-response handshake timeout, so an
+    ///   unreachable origin fails in about one timeout rather than
+    ///   `MAX_H3_RETRIES` of them.
+    /// - `not_applied` is true only when the origin provably never processed
+    ///   the request (the connection never finished its handshake). When it is
+    ///   false the request may have run, so a non-idempotent method is not
+    ///   replayed, matching the h1 (`is_idempotent`) and h2 (REFUSED_STREAM)
+    ///   clients and RFC 9110 section 9.2.2.
+    pub(crate) fn retry_or_fail(
+        &mut self,
+        stream: *mut Stream,
+        err: crate::Error,
+        fast: bool,
+        not_applied: bool,
+    ) {
         // Shaped for Stacked Borrows like `fail` below — `detach()`
         // re-derives `&mut HTTPClient` from the same raw ptr to null `h3`, which
         // would invalidate any `&mut HTTPClient` held across it. Hold the raw
@@ -230,16 +248,23 @@ impl ClientSession {
             return self.fail(stream, err);
         };
         // `Stream.client` is a live backref while attached; `ParentRef::from`
-        // (NonNull → shared deref) reads the Copy `flags` field without
-        // forming `&mut HTTPClient` across the `detach()` below.
-        if bun_ptr::ParentRef::from(client_ptr).flags.h3_retried || st.is_streaming_body {
+        // (NonNull → shared deref) reads the Copy fields without forming
+        // `&mut HTTPClient` across the `detach()` below.
+        let client_ref = bun_ptr::ParentRef::from(client_ptr);
+        let retries = client_ref.h3_retries;
+        let replayable = not_applied || client_ref.method.is_idempotent();
+        // Always allow the first retry. Past that, keep retrying only a fast
+        // failure whose request is safe to replay, and never past the cap.
+        let budget_left =
+            retries < crate::MAX_H3_RETRIES && (retries == 0 || (fast && replayable));
+        if !budget_left || st.is_streaming_body {
             return self.fail(stream, err);
         }
         let Some(ctx) = ClientContext::get() else {
             return self.fail(stream, err);
         };
         // Same backref as above; short-lived write before detach().
-        client_mut(client_ptr).flags.h3_retried = true;
+        client_mut(client_ptr).h3_retries = retries + 1;
         // The old session is dead from our perspective; make sure connect()
         // can't pick it again.
         self.closed = true;
@@ -349,7 +374,10 @@ impl ClientSession {
 
         if client.state.response_stage != HTTPStage::Body {
             if done {
-                // Stream closed before headers — handshake/reset failure.
+                // Stream closed before headers. The connection still lives, so
+                // this is a fast peer reset, not a no-response timeout. The
+                // request was already sent on this stream, so the origin may
+                // have processed it: not a "not applied" case.
                 return self.retry_or_fail(
                     stream,
                     if st.status_code == 0 {
@@ -357,6 +385,8 @@ impl ClientSession {
                     } else {
                         crate::Error::ConnectionClosed
                     },
+                    true,
+                    false,
                 );
             }
             return;

@@ -1689,6 +1689,7 @@ dependencies = [
  "bun_errno",
  "bun_http_types",
  "bun_libuv_sys",
+ "bun_lsquic_sys",
  "bun_opaque",
  "bun_paths",
  "bun_ptr",

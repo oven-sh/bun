@@ -206,6 +206,7 @@ export function dictionary(
         #include "root.h"
         #include "Generated${name}.h"
         #include "Bindgen/IDLConvert.h"
+        #include <JavaScriptCore/ArrayConstructor.h>
         #include <JavaScriptCore/Identifier.h>
 
         template<> Bun::Bindgen::Generated::${name}
@@ -217,8 +218,14 @@ export function dictionary(
           auto throwScope = DECLARE_THROW_SCOPE(vm);
           auto ctx = Bun::Bindgen::LiteralConversionContext { ${toASCIILiteral(userFacingName)} };
           auto* object = value.getObject();
+          if (!object) [[unlikely]] {
+            ctx.throwNotObject(globalObject, throwScope);
+            return {};
+          }
           // An array has none of the named members, so it is never a valid options bag.
-          if (!object || JSC::isJSArray(object)) [[unlikely]] {
+          bool isArray = JSC::isArray(&globalObject, value);
+          RETURN_IF_EXCEPTION(throwScope, {});
+          if (isArray) [[unlikely]] {
             ctx.throwNotObject(globalObject, throwScope);
             return {};
           }

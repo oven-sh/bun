@@ -1045,17 +1045,28 @@ it("should throw on empty unix path from truthy non-string value", () => {
   expect(() => Bun.connect({ unix: [] as any, socket })).toThrow("SocketOptions.unix must be a string");
 });
 
-it("should throw on a tls array instead of starting a plaintext socket", async () => {
+// An array has none of the TLSOptions fields. Without the check it parses as
+// an empty config and the listener comes up as plain TCP.
+describe.each([
+  ["one entry", () => [tls]],
+  ["SNI-style entries", () => [tls, { serverName: "a.test", ...tls }]],
+  ["empty", () => []],
+  ["Proxy around an array", () => new Proxy([tls], {})],
+  ["Array subclass", () => new (class extends Array {})(tls)],
+])("tls option is an array (%s)", (_label, makeTls) => {
   const socket = { data() {}, open() {}, close() {} };
-  // An array has none of the TLSOptions fields. Without the check it parses as
-  // an empty config and the listener comes up as plain TCP.
   const message = "TLSOptions must be an object";
-  for (const tlsOption of [[tls], [tls, { serverName: "a.test", ...tls }], []]) {
-    expect(() => Bun.listen({ hostname: "127.0.0.1", port: 0, tls: tlsOption as any, socket })).toThrow(message);
-    expect(() => Bun.connect({ hostname: "127.0.0.1", port: 1, tls: tlsOption as any, socket })).toThrow(message);
-  }
 
-  // The same entry as a plain object still produces a TLS listener.
+  it("Bun.listen throws instead of starting a plaintext listener", () => {
+    expect(() => Bun.listen({ hostname: "127.0.0.1", port: 0, tls: makeTls() as any, socket })).toThrow(message);
+  });
+
+  it("Bun.connect throws instead of opening a plaintext connection", () => {
+    expect(() => Bun.connect({ hostname: "127.0.0.1", port: 1, tls: makeTls() as any, socket })).toThrow(message);
+  });
+});
+
+it("the same tls entry as a plain object still produces a TLS listener", async () => {
   const { promise, resolve, reject } = Promise.withResolvers<string>();
   using server = Bun.listen({
     hostname: "127.0.0.1",
@@ -1068,7 +1079,9 @@ it("should throw on a tls array instead of starting a plaintext socket", async (
       },
       open() {},
       close() {},
-      error: reject,
+      error(_s, err) {
+        reject(err);
+      },
     },
   });
   let received = "";
@@ -1086,8 +1099,12 @@ it("should throw on a tls array instead of starting a plaintext socket", async (
       close() {
         resolve(received);
       },
-      error: reject,
-      connectError: reject,
+      error(_s, err) {
+        reject(err);
+      },
+      connectError(_s, err) {
+        reject(err);
+      },
     },
   });
   expect(await promise).toBe("hello");

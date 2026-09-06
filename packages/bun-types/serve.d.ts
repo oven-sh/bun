@@ -981,13 +981,19 @@ declare module "bun" {
     reload<R extends string>(options: Serve.Options<WebSocketData, R>): Server<WebSocketData>;
 
     /**
-     * Mock the fetch handler for a running server.
+     * Call this server's `fetch` handler with a request, in-process and
+     * without a socket. The handler receives `(request, server)` as it does
+     * for a real request.
      *
-     * This feature is not fully implemented: it doesn't normalize URLs
-     * consistently in all cases and it doesn't always call the `error`
-     * handler.
+     * A string or `URL` becomes a `GET` request unless `init` says otherwise.
+     * A bare path such as `"/foo"` is resolved against the server's origin.
+     *
+     * This feature is not fully implemented: the request does not go through
+     * `routes`, URLs are not normalized consistently in all cases, and the
+     * `error` handler is not always called.
      */
-    fetch(request: Request | string): Response | Promise<Response>;
+    fetch(request: Request): Promise<Response>;
+    fetch(url: string | URL, init?: RequestInit): Promise<Response>;
 
     /**
      * Upgrade a {@link Request} to a {@link ServerWebSocket}

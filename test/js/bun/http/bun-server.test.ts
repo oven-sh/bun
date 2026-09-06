@@ -352,6 +352,57 @@ describe.concurrent("Server", () => {
     }
   });
 
+  test("server.fetch should work with a URL object", async () => {
+    using server = Bun.serve({
+      port: 0,
+      fetch(req) {
+        return new Response(`${req.method} ${req.url}`);
+      },
+    });
+    const url = new URL("/from-url?x=1", server.url);
+    expect(await (await server.fetch(url)).text()).toBe(`GET ${url.href}`);
+    expect(await (await server.fetch(url, { method: "POST", body: "b" })).text()).toBe(`POST ${url.href}`);
+    // Any other object goes through its string form, as with fetch().
+    const hrefLike = { toString: () => url.href };
+    // @ts-expect-error
+    expect(await (await server.fetch(hrefLike)).text()).toBe(`GET ${url.href}`);
+    // A string form that throws rejects the promise; server.fetch() itself does not throw.
+    const throwing = {
+      toString: () => {
+        throw new Error("no href");
+      },
+    };
+    // @ts-expect-error
+    const rejected = server.fetch(throwing);
+    expect(rejected).toBeInstanceOf(Promise);
+    await expect(rejected).rejects.toThrow("no href");
+  });
+
+  test("server.fetch passes the server as the handler's second argument", async () => {
+    using server = Bun.serve({
+      port: 0,
+      fetch(req, srv) {
+        return Response.json({
+          argc: arguments.length,
+          isThis: srv === this,
+          isServer: srv === server,
+          // The documented `fetch(req, server) { server.upgrade(req) ... }`
+          // shape must not throw for a socketless request.
+          upgrade: srv.upgrade(req),
+          requestIP: srv.requestIP(req),
+        });
+      },
+      websocket: { message() {} },
+    });
+    expect(await (await server.fetch("/")).json()).toEqual({
+      argc: 2,
+      isThis: true,
+      isServer: true,
+      upgrade: false,
+      requestIP: null,
+    });
+  });
+
   test("server should return a body for a OPTIONS Request", async () => {
     using server = Bun.serve({
       port: 0,

@@ -2610,8 +2610,12 @@ where
         let body_value = response.get_body_value();
         match body_value {
             Body::Value::InternalBlob(_) | Body::Value::WTFStringImpl(_) => {
-                let mut blob = body_value.use_as_any_blob_allow_non_utf8_string();
-                let size = blob.size();
+                // `render_metadata` derives Content-Type from `this.blob`, so
+                // hold the body there as GET does. It replaces a file blob left
+                // by a `do_sendfile` that failed and ran `error()`.
+                this.blob
+                    .set(body_value.use_as_any_blob_allow_non_utf8_string());
+                let size = this.blob.get().size();
                 this.render_metadata();
 
                 if size == crate::webcore::blob::MAX_SIZE {
@@ -2620,7 +2624,7 @@ where
                     resp.write_header_int(b"content-length", size as u64);
                 }
                 this.end_without_body(this.should_close_connection());
-                blob.detach();
+                this.blob.with_mut(|b| b.detach());
             }
 
             Body::Value::Blob(blob) => {

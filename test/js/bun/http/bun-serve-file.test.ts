@@ -798,27 +798,42 @@ describe("Bun.file in serve routes", () => {
     // file body is resolved with open + fstat for both, so a missing file or
     // a directory reaches error() on HEAD too, instead of a 200 sized from a
     // bare stat (0 for a missing file, the inode size for a directory).
+    // The error() Response's headers come from its own body, not from the
+    // file that failed: no text/html from "nope.html", no filename.
     it("HEAD of a missing file or a directory from the fetch handler fails like GET", async () => {
       using handlerServer = Bun.serve({
         port: 0,
         fetch: req =>
-          new Response(Bun.file(new URL(req.url).pathname === "/dir" ? tempDir : join(tempDir, "nope.bin"))),
+          new Response(Bun.file(new URL(req.url).pathname === "/dir" ? tempDir : join(tempDir, "nope.html"))),
         error: e => new Response(`err ${(e as NodeJS.ErrnoException).code}`, { status: 500 }),
       });
       const probe = async (pathname: string, method: string) => {
         const res = await fetch(new URL(pathname, handlerServer.url), { method });
-        return { status: res.status, contentLength: res.headers.get("Content-Length"), text: await res.text() };
+        return {
+          status: res.status,
+          contentLength: res.headers.get("Content-Length"),
+          contentType: res.headers.get("Content-Type"),
+          contentDisposition: res.headers.get("Content-Disposition"),
+          text: await res.text(),
+        };
       };
+      const error = (text: string) => ({
+        status: 500,
+        contentLength: "10",
+        contentType: "text/plain;charset=utf-8",
+        contentDisposition: null,
+        text,
+      });
       expect({
         "GET /missing": await probe("/missing", "GET"),
         "HEAD /missing": await probe("/missing", "HEAD"),
         "GET /dir": await probe("/dir", "GET"),
         "HEAD /dir": await probe("/dir", "HEAD"),
       }).toEqual({
-        "GET /missing": { status: 500, contentLength: "10", text: "err ENOENT" },
-        "HEAD /missing": { status: 500, contentLength: "10", text: "" },
-        "GET /dir": { status: 500, contentLength: "10", text: "err EISDIR" },
-        "HEAD /dir": { status: 500, contentLength: "10", text: "" },
+        "GET /missing": error("err ENOENT"),
+        "HEAD /missing": error(""),
+        "GET /dir": error("err EISDIR"),
+        "HEAD /dir": error(""),
       });
     });
 

@@ -178,10 +178,7 @@ pub mod external_string {
             lhs_buf: &[u8],
             rhs_buf: &[u8],
         ) -> Ordering {
-            if self.hash == rhs.hash && self.hash > 0 {
-                return Ordering::Equal;
-            }
-
+            // An equal hash is not an equal string. Order by the bytes.
             self.value.order(rhs.value, lhs_buf, rhs_buf)
         }
 

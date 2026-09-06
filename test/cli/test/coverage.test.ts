@@ -4,22 +4,17 @@ import { readFileSync } from "node:fs";
 import path from "path";
 
 /// Runs `bun test --coverage <args>` in `dir` and returns the normalized
-/// output plus the lcov report, if one was written.
+/// stderr and the exit code.
 async function runCoverage(dir: string, args: string[] = []) {
   await using proc = Bun.spawn({
     cmd: [bunExe(), "test", "--coverage", ...args],
     cwd: dir,
     env: bunEnv,
-    stdout: "pipe",
+    stdout: "ignore",
     stderr: "pipe",
   });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  let lcov: string | null = null;
-  const lcovFile = Bun.file(path.join(dir, "coverage", "lcov.info"));
-  if (await lcovFile.exists()) {
-    lcov = normalizeBunSnapshot(await lcovFile.text(), dir);
-  }
-  return { stdout, stderr: normalizeBunSnapshot(stderr, dir), exitCode, lcov };
+  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+  return { stderr: normalizeBunSnapshot(stderr, dir), exitCode };
 }
 
 test("coverage crash", () => {

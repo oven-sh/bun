@@ -1527,9 +1527,13 @@ impl<'a> Headers8Bit<'a> {
 
     /// An 8-bit (Latin-1) string is already one byte per code unit. A 16-bit
     /// string only reaches here after `FetchHeaders` validation rejected every
-    /// code unit above 0x7F, so UTF-8 transcoding is the identity.
+    /// code unit above 0xFF, so each unit narrows to one byte.
     fn isomorphic_encode(s: &'a BunString) -> Cow<'a, [u8]> {
-        if s.is_8bit() && !s.is_utf8() {
+        if s.is_utf16() {
+            let units = s.utf16();
+            debug_assert!(units.iter().all(|&u| u <= 0xFF));
+            Cow::Owned(units.iter().map(|&u| u as u8).collect())
+        } else if s.is_8bit() && !s.is_utf8() {
             Cow::Borrowed(s.latin1())
         } else {
             Cow::Owned(s.to_utf8().into_vec())

@@ -17,6 +17,7 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { once } from "node:events";
 import net from "node:net";
+import { basename } from "node:path";
 
 // "path-\u{1F525}" forces JSC to materialize the backing StringImpl as
 // 16-bit UTF-16, which is the other half of the regression path.
@@ -85,10 +86,14 @@ describe("WebSocket upgrade with non-ASCII inputs", () => {
     // "vàlüé-ñ" contains U+00E0, U+00FC, U+00E9, U+00F1 — all in Latin1
     // range, so the underlying WTFStringImpl stays 8-bit.
     const latin1Value = "vàlüé-ñ";
+    // path.basename returns a 16-bit-backed string whose code units are all
+    // <= 0xFF. It passes ByteString validation but is not 8-bit in memory.
+    const utf16BackedValue = basename("café.txt");
     const wsDone = Promise.withResolvers<void>();
     const ws = new WebSocket(`ws://127.0.0.1:${port}/`, {
       headers: {
         "X-Latin1": latin1Value,
+        "X-Utf16": utf16BackedValue,
       },
     });
     ws.onerror = () => wsDone.resolve();
@@ -99,14 +104,15 @@ describe("WebSocket upgrade with non-ASCII inputs", () => {
 
     // Header values are ByteStrings: U+00E0 goes out as the single byte 0xE0,
     // not the UTF-8 pair 0xC3 0xA0. This matches fetch(), Node and Deno.
-    const line = request
-      .toString("latin1")
-      .split("\r\n")
-      .find(l => l.startsWith("X-Latin1:"));
-    expect(line).toBeDefined();
-    const wire = Buffer.from(line!, "latin1").subarray("X-Latin1: ".length);
-    expect(wire).toEqual(Buffer.from(latin1Value, "latin1"));
-    expect(wire.toString("latin1")).toBe(latin1Value);
+    const lines = request.toString("latin1").split("\r\n");
+    const wire = (name: string) => {
+      const line = lines.find(l => l.startsWith(name + ":"));
+      expect(line).toBeDefined();
+      return Buffer.from(line!, "latin1").subarray(name.length + 2);
+    };
+    expect(wire("X-Latin1")).toEqual(Buffer.from(latin1Value, "latin1"));
+    expect(wire("X-Latin1").toString("latin1")).toBe(latin1Value);
+    expect(wire("X-Utf16")).toEqual(Buffer.from(utf16BackedValue, "latin1"));
   });
 
   test("Latin1 header value round-trips through a Bun.serve upgrade handler", async () => {

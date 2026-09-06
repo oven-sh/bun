@@ -5632,10 +5632,8 @@ impl VirtualMachine {
                     bun_sourcemap::SourceContentHandling::NoSourceContents,
                 )
                 .map(|lookup| {
-                    (
-                        lookup.display_source_url_if_needed(source_url.slice()),
-                        lookup,
-                    )
+                    let display_url = self.remapped_source_url(&lookup, source_url.slice());
+                    (display_url, lookup)
                 })
             };
             if let Some((display_url, lookup)) = resolved {
@@ -5836,7 +5834,7 @@ impl VirtualMachine {
         // A frame parsed from `error.stack` names whatever the thrown code chose.
         let allow_source_from_disk = if already_remapped {
             let url = frames[top].source_url.to_utf8();
-            self.source_mappings.has_mapping(url.slice())
+            self.source_mappings.is_loaded_path(url.slice()) || self.is_embedded_module(url.slice())
         } else {
             true
         };
@@ -5872,7 +5870,7 @@ impl VirtualMachine {
             maybe_lookup.map(|lookup| {
                 let mapping = lookup.mapping;
                 let display_url = if !already_remapped {
-                    lookup.display_source_url_if_needed(top_source_url.slice())
+                    self.remapped_source_url(&lookup, top_source_url.slice())
                 } else {
                     None
                 };
@@ -5989,10 +5987,8 @@ impl VirtualMachine {
                         bun_sourcemap::SourceContentHandling::NoSourceContents,
                     )
                     .map(|lookup| {
-                        (
-                            lookup.display_source_url_if_needed(source_url.slice()),
-                            lookup,
-                        )
+                        let display_url = self.remapped_source_url(&lookup, source_url.slice());
+                        (display_url, lookup)
                     })
                 };
                 if let Some((display_url, lookup)) = resolved {
@@ -6853,6 +6849,26 @@ impl VirtualMachine {
 
         let _ = writer.write_all(b"\n");
         let _ = writer.flush();
+    }
+
+    /// Whether `path` is a file embedded in this `bun build --compile` executable.
+    fn is_embedded_module(&self, path: &[u8]) -> bool {
+        bun_options_types::standalone_path::is_bun_standalone_file_path(path)
+            && self
+                .standalone_module_graph
+                .is_some_and(|graph| graph.find_assume_standalone_path(path).is_some())
+    }
+
+    /// The URL a frame at `source_url` displays after `lookup` remaps it, if it changes.
+    /// The new URL comes from a loaded module's own map, so the printer may read it later.
+    fn remapped_source_url(
+        &mut self,
+        lookup: &bun_sourcemap::mapping::Lookup,
+        source_url: &[u8],
+    ) -> Option<bun_core::String> {
+        let display_url = lookup.display_source_url_if_needed(source_url)?;
+        self.source_mappings.trust_path(display_url.to_utf8().slice());
+        Some(display_url)
     }
 
     /// Looks up the source-map mapping for `path` at `line:column`.

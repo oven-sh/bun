@@ -258,8 +258,17 @@ impl SavedSourceMap {
         Ok(())
     }
 
-    /// Whether the module loader registered a source map for exactly `path`.
-    pub(crate) fn has_mapping(&mut self, path: &[u8]) -> bool {
+    /// Records a path that a loaded module's own source map names as an original source.
+    pub(crate) fn trust_path(&mut self, path: &[u8]) {
+        self.lock();
+        if !self.paths.contains(path) {
+            self.paths.insert(path, ());
+        }
+        self.unlock();
+    }
+
+    /// Whether `path` is exactly a loaded module, or an original source one of them maps to.
+    pub(crate) fn is_loaded_path(&mut self, path: &[u8]) -> bool {
         self.lock();
         let found = self.paths.contains(path);
         self.unlock();

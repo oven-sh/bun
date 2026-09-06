@@ -104,19 +104,57 @@ describe.concurrent("error printer does not read attacker-named source files", (
   }
 });
 
-test.concurrent("a real module still shows its source code frame", async () => {
-  using dir = tempDir("vm-sourceurl-real", {
-    "app.ts": `function doWork(): void {\n  throw new Error("real module error");\n}\ndoWork();\n`,
+// Frames parsed back out of an already-materialized `error.stack` are the
+// gated path. A loaded module, an original source named by a loaded module's
+// source map, and a file embedded in a compiled executable must keep their
+// code frame there.
+describe.concurrent("a loaded module still shows its source code frame", () => {
+  const app = `function doWork(): void {
+  throw new Error("real module error");
+}
+try {
+  doWork();
+} catch (e) {
+  void (e as Error).stack;
+  console.error(e);
+}
+`;
+
+  async function run(cmd: string[], cwd: string) {
+    await using proc = Bun.spawn({ cmd, env: bunEnv, cwd, stdout: "pipe", stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { output: stdout + stderr, exitCode };
+  }
+
+  test("run from source", async () => {
+    using dir = tempDir("vm-sourceurl-real", { "app.ts": app });
+    const { output, exitCode } = await run([bunExe(), "app.ts"], String(dir));
+    expect(output).toContain(`throw new Error("real module error");`);
+    expect(output).toContain("app.ts:2:");
+    expect(exitCode).toBe(0);
   });
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), path.join(String(dir), "app.ts")],
-    env: bunEnv,
-    stdout: "pipe",
-    stderr: "pipe",
+
+  test("bundled with an external source map", async () => {
+    using dir = tempDir("vm-sourceurl-bundled", { "src/app.ts": app });
+    const build = await run(
+      [bunExe(), "build", "--target=bun", "--sourcemap=external", "--outdir=dist", "src/app.ts"],
+      String(dir),
+    );
+    expect(build.exitCode).toBe(0);
+    const { output, exitCode } = await run([bunExe(), "dist/app.js"], String(dir));
+    // The frame names the original `src/app.ts`, which the map points at.
+    expect(output).toContain(`throw new Error("real module error");`);
+    expect(output).toContain(`${path.join("src", "app.ts")}:2:`);
+    expect(exitCode).toBe(0);
   });
-  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
-  expect(stderr).toContain("real module error");
-  // The original source line is read from disk and shown as the code frame.
-  expect(stderr).toContain(`throw new Error("real module error");`);
-  expect(exitCode).not.toBe(0);
+
+  test("compiled executable", async () => {
+    using dir = tempDir("vm-sourceurl-compiled", { "app.ts": app });
+    const exe = path.join(String(dir), process.platform === "win32" ? "app.exe" : "app");
+    const build = await run([bunExe(), "build", "--compile", "app.ts", "--outfile", exe], String(dir));
+    expect(build.exitCode).toBe(0);
+    const { output, exitCode } = await run([exe], String(dir));
+    expect(output).toContain(`throw new Error("real module error");`);
+    expect(exitCode).toBe(0);
+  });
 });

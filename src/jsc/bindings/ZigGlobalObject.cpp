@@ -1,6 +1,7 @@
 #include "root.h"
 
 #include "ZigGlobalObject.h"
+#include "bun_dependency_versions.h"
 #include "BuiltinModuleKeys.h"
 #include "IsolatedModuleCache.h"
 #include "MessagePort.h"
@@ -252,20 +253,11 @@ namespace JSCastingHelpers = JSC::JSCastingHelpers;
 
 Structure* createMemoryFootprintStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject);
 
-#ifndef BUN_WEBKIT_VERSION
-#ifndef ASSERT_ENABLED
-#warning "BUN_WEBKIT_VERSION is not defined. WebKit's cmakeconfig.h is supposed to define that. If you're building a release build locally, ignore this warning. If you're seeing this warning in CI, please file an issue."
-#endif
-
-#define WEBKIT_BYTECODE_CACHE_HASH_KEY __TIMESTAMP__
-#else
-#define WEBKIT_BYTECODE_CACHE_HASH_KEY BUN_WEBKIT_VERSION
-#endif
+// The bytecode cache is keyed on the JSC commit bun was built with.
 static consteval unsigned getWebKitBytecodeCacheVersion()
 {
-    return WTF::SuperFastHash::computeHash(WEBKIT_BYTECODE_CACHE_HASH_KEY);
+    return WTF::SuperFastHash::computeHash(BUN_VERSION_WEBKIT);
 }
-#undef WEBKIT_BYTECODE_CACHE_HASH_KEY
 
 // Declare fuzzilli function registration from FuzzilliREPRL.cpp
 #ifdef FUZZILLI_ENABLED

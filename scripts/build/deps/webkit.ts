@@ -447,9 +447,10 @@ function cmakeConfigHeader(cfg: Config): string {
     const v = typeof value === "function" ? value(cfg) : value;
     if (v !== undefined) out += `#define ${name} ${v}\n`;
   }
-  // The prebuilt release workflow appends this; bun keys the bytecode cache
-  // on it (ZigGlobalObject.cpp) and reports it in process.versions.
-  out += `#define BUN_WEBKIT_VERSION "${cfg.webkitVersion}"\n`;
+  // No BUN_WEBKIT_VERSION here (the prebuilt release workflow appends one):
+  // this header reaches every WebKit and bun translation unit, so a commit
+  // hash in it would recompile all of them on every WebKit bump. The two
+  // readers use bun_dependency_versions.h's BUN_VERSION_WEBKIT instead.
   out += "\n#endif /* CMAKECONFIG_H */\n";
   return out;
 }

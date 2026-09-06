@@ -1439,9 +1439,9 @@ describe.concurrent("jsx/derivedClassCtorSelf", () => {
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).toBe("");
-    const selfArgs = [...stdout.matchAll(/jsxDEV\w*\("(\w)", \{\}, undefined, false, undefined, (this|undefined)\)/g)].map(
-      m => [m[1], m[2]],
-    );
+    const selfArgs = [
+      ...stdout.matchAll(/jsxDEV\w*\("(\w)", \{\}, undefined, false, undefined, (this|undefined)\)/g),
+    ].map(m => [m[1], m[2]]);
     expect(selfArgs).toEqual([
       ["a", "undefined"],
       ["b", "undefined"],

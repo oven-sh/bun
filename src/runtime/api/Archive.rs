@@ -1,11 +1,9 @@
 //! `Bun.Archive` — tar/tgz pack + extract over libarchive.
 
-use std::ffi::CString;
-
 use crate::webcore::Blob;
 use crate::webcore::BlobExt as _;
 use crate::webcore::blob::Store;
-use bun_core::{self, EncodedSlice, Output, Utf8Bytes, ZBox, strings};
+use bun_core::{self, EncodedSlice, Output, Utf8Bytes, ZBox};
 use bun_glob as glob;
 use bun_jsc::{
     self as jsc, CallFrame, JSGlobalObject, JSMap, JSPromise, JSPromiseStrong, JSValue, JsResult,
@@ -13,7 +11,7 @@ use bun_jsc::{
 use bun_jsc::{EncodedSliceJsc as _, StringJsc as _, SysErrorJsc as _};
 use bun_libarchive as libarchive;
 use bun_ptr::RefPtr;
-use bun_sys::{self, Fd, FdDirExt as _, FdExt as _, Mode};
+use bun_sys::{self, Fd};
 
 /// libarchive `AE_IFREG` (== `S_IFREG`). The Rust `bun_libarchive::lib` port
 /// does not yet expose `FileType`, so mirror the constant locally.
@@ -700,22 +698,74 @@ impl<C: TaskContext> AsyncTask<C> {
 // Task Contexts
 // ============================================================================
 
-#[derive(thiserror::Error, strum::IntoStaticStr, Debug)]
-pub enum ExtractError {
-    #[error("ReadError")]
-    ReadError,
+/// Why an extract or `files()` operation failed, carried from the work pool
+/// to the JS thread.
+enum TaskError {
+    /// A syscall failed; surfaces as a `SystemError` with `code`, `errno`,
+    /// `syscall` and `path`.
+    Sys(bun_sys::Error),
+    /// libarchive rejected the input, or the archive is inconsistent. The
+    /// bytes are the message.
+    Archive(Box<[u8]>),
+    OutOfMemory,
+    Named(&'static str),
 }
 
-pub enum ExtractResult {
-    Success(u32),
-    Err(ExtractError),
+impl TaskError {
+    fn to_js(&self, global: &JSGlobalObject) -> JSValue {
+        match self {
+            TaskError::Sys(err) => err.to_js(global),
+            TaskError::Archive(msg) => EncodedSlice::utf8(msg).to_error_instance(global),
+            TaskError::OutOfMemory => global.create_out_of_memory_error(),
+            TaskError::Named(name) => global.create_error_instance(format_args!("{name}")),
+        }
+    }
+
+    fn read_error(archive: &libarchive::lib::Archive, fallback: &str) -> TaskError {
+        match archive.read_error(fallback) {
+            libarchive::Error::Archive(msg) => TaskError::Archive(msg),
+            other => TaskError::from(other),
+        }
+    }
+}
+
+impl From<libarchive::Error> for TaskError {
+    fn from(err: libarchive::Error) -> Self {
+        match err {
+            libarchive::Error::Sys(err) => TaskError::Sys(err),
+            libarchive::Error::Archive(msg) => TaskError::Archive(msg),
+            libarchive::Error::Alloc(_) => TaskError::OutOfMemory,
+            libarchive::Error::Fail => TaskError::Named("ReadError"),
+            libarchive::Error::MakeLibUvOwned(e) => TaskError::Named(<&'static str>::from(e)),
+            libarchive::Error::Paths(e) => TaskError::Named(e.name()),
+        }
+    }
+}
+
+impl From<bun_alloc::AllocError> for TaskError {
+    fn from(_: bun_alloc::AllocError) -> Self {
+        TaskError::OutOfMemory
+    }
+}
+
+/// Hands `Bun.Archive`'s glob option to the shared extractor.
+struct GlobFilter<'a> {
+    patterns: &'a [Box<[u8]>],
+}
+
+impl libarchive::ArchiveAppender for GlobFilter<'_> {
+    const HAS_FILTER: bool = true;
+
+    fn filter(&mut self, path: &[u8]) -> bool {
+        match_glob_patterns(self.patterns, &[path])
+    }
 }
 
 pub struct ExtractContext {
     store: RefPtr<Store>,
     path: Box<[u8]>,
     glob_patterns: Option<Vec<Box<[u8]>>>,
-    result: ExtractResult,
+    result: Result<u32, TaskError>,
 }
 
 impl TaskContext for ExtractContext {
@@ -725,48 +775,32 @@ impl TaskContext for ExtractContext {
 
     fn run_from_js(&mut self, global: &JSGlobalObject) -> JsResult<PromiseResult> {
         Ok(match &self.result {
-            ExtractResult::Success(count) => {
-                PromiseResult::Resolve(JSValue::js_number(*count as f64))
-            }
-            ExtractResult::Err(e) => PromiseResult::Reject(
-                global.create_error_instance(format_args!("{}", <&'static str>::from(e))),
-            ),
+            Ok(count) => PromiseResult::Resolve(JSValue::js_number(*count as f64)),
+            Err(err) => PromiseResult::Reject(err.to_js(global)),
         })
     }
 }
 
 impl ExtractContext {
-    fn do_run(&mut self) -> ExtractResult {
-        // If we have glob patterns, use filtered extraction
-        if self.glob_patterns.is_some() {
-            let count = match extract_to_disk_filtered(
-                self.store.shared_view(),
-                &self.path,
-                self.glob_patterns.as_deref(),
-            ) {
-                Ok(c) => c,
-                Err(_) => return ExtractResult::Err(ExtractError::ReadError),
-            };
-            return ExtractResult::Success(count);
-        }
-
-        // Otherwise use the fast path without filtering
-        let count = match libarchive::Archiver::extract_to_disk(
-            self.store.shared_view(),
-            &self.path,
-            None,
-            &mut (),
-            libarchive::ExtractOptions {
-                depth_to_skip: 0,
-                close_handles: true,
-                log: false,
-                npm: false,
-            },
-        ) {
-            Ok(c) => c,
-            Err(_) => return ExtractResult::Err(ExtractError::ReadError),
+    fn do_run(&mut self) -> Result<u32, TaskError> {
+        let options = libarchive::ExtractOptions {
+            depth_to_skip: 0,
+            close_handles: true,
+            log: false,
+            npm: false,
         };
-        ExtractResult::Success(count)
+        let data = self.store.shared_view();
+        let count = match self.glob_patterns.as_deref() {
+            Some(patterns) => libarchive::Archiver::extract_to_disk(
+                data,
+                &self.path,
+                None,
+                &mut GlobFilter { patterns },
+                options,
+            ),
+            None => libarchive::Archiver::extract_to_disk(data, &self.path, None, &mut (), options),
+        }?;
+        Ok(count)
     }
 }
 
@@ -790,7 +824,7 @@ fn start_extract_task(
             store,
             path: path_copy,
             glob_patterns,
-            result: ExtractResult::Err(ExtractError::ReadError),
+            result: Err(TaskError::Named("ReadError")),
         },
     ))
 }
@@ -986,64 +1020,93 @@ fn start_write_task(
 
 struct FileEntry {
     path: Box<[u8]>,
-    data: Vec<u8>,
+    data: FileData,
     mtime: i64,
+}
+
+enum FileData {
+    Bytes(Vec<u8>),
+    /// A hard link to the entry at this index (always an earlier one). Both
+    /// `File`s share one store.
+    SameAs(usize),
 }
 
 type FileEntryList = Vec<FileEntry>;
 
-#[derive(thiserror::Error, strum::IntoStaticStr, Debug)]
-enum FilesError {
-    #[error("OutOfMemory")]
-    OutOfMemory,
-    #[error("ReadError")]
-    ReadError,
-}
-
-enum FilesResult {
-    Success(FileEntryList),
-    LibarchiveErr(CString),
-    Err(FilesError),
-}
-
-// freeEntries deleted — Vec<FileEntry> drops each entry; FileEntry fields drop their boxes.
-
 pub struct FilesContext {
     store: RefPtr<Store>,
     glob_patterns: Option<Vec<Box<[u8]>>>,
-    result: FilesResult,
+    result: Result<FileEntryList, TaskError>,
+}
+
+/// Hard-link target as UTF-8 bytes; see [`entry_pathname_utf8`].
+#[cfg(windows)]
+fn entry_hardlink_utf8(
+    entry: &libarchive::lib::Entry,
+) -> Result<Option<Vec<u8>>, bun_alloc::AllocError> {
+    match entry.hardlink_w() {
+        Some(target) => {
+            bun_core::strings::to_utf8_list_with_type(Vec::new(), target.as_slice()).map(Some)
+        }
+        None => Ok(None),
+    }
+}
+
+/// The form `extract()` creates on disk and matches globs against: `./` and
+/// repeated separators folded, `..` clamped at the root.
+fn normalize_entry_path<'a>(pathname: &[u8], buf: &'a mut bun_paths::PathBuffer) -> &'a [u8] {
+    if pathname.len() >= buf.len() {
+        return &[];
+    }
+    let normalized = bun_paths::resolve_path::normalize_buf::<bun_paths::platform::Posix>(
+        pathname,
+        &mut buf[..],
+    );
+    if &*normalized == b"." {
+        &[]
+    } else {
+        normalized
+    }
 }
 
 impl FilesContext {
-    fn clone_error_string(archive: &libarchive::lib::Archive) -> Option<CString> {
-        let err_str = archive.error_string();
-        if err_str.is_empty() {
-            return None;
-        }
-        CString::new(err_str).ok()
-    }
-
-    fn do_run(&mut self) -> Result<FilesResult, bun_alloc::AllocError> {
+    fn do_run(&mut self) -> Result<FileEntryList, TaskError> {
         use libarchive::lib;
         let archive = lib::ReadArchive::new();
         configure_archive_reader(&archive);
 
         if archive.read_open_memory(self.store.shared_view()) != lib::Result::Ok {
-            // SAFETY: `archive` is the live `read_new()` handle opened above.
-            return Ok(if let Some(err) = Self::clone_error_string(&archive) {
-                FilesResult::LibarchiveErr(err)
-            } else {
-                FilesResult::Err(FilesError::ReadError)
-            });
+            return Err(TaskError::read_error(&archive, "failed to open archive"));
         }
 
         let mut entries: FileEntryList = Vec::new();
-        // errdefer freeEntries(&entries) — handled by Drop on `entries`
+        // Normalized path of each collected entry -> its index, to resolve hard links.
+        let mut index_by_path: bun_collections::StringHashMap<usize> = Default::default();
+        let mut normalized_buf = bun_paths::path_buffer_pool::get();
+        let mut target_buf = bun_paths::path_buffer_pool::get();
 
         let mut entry: *mut lib::Entry = core::ptr::null_mut();
-        while archive.read_next_header(&mut entry).succeeded() {
+        loop {
+            match archive.read_next_header(&mut entry) {
+                lib::Result::Eof => break,
+                lib::Result::Ok | lib::Result::Warn => {}
+                lib::Result::Retry | lib::Result::Failed | lib::Result::Fatal => {
+                    return Err(TaskError::read_error(
+                        &archive,
+                        "failed to read archive header",
+                    ));
+                }
+            }
             let entry_ref = lib::Entry::opaque_ref(entry);
-            if entry_ref.filetype() != FILETYPE_REGULAR {
+
+            #[cfg(not(windows))]
+            let hardlink_target = entry_ref.hardlink().map(|t| t.as_bytes());
+            #[cfg(windows)]
+            let hardlink_target_owned = entry_hardlink_utf8(entry_ref)?;
+            #[cfg(windows)]
+            let hardlink_target = hardlink_target_owned.as_deref();
+
+            if hardlink_target.is_none() && entry_ref.filetype() != FILETYPE_REGULAR {
                 continue;
             }
 
@@ -1056,15 +1119,41 @@ impl FilesContext {
             let pathname_owned = entry_pathname_utf8(entry_ref)?;
             #[cfg(windows)]
             let pathname: &[u8] = &pathname_owned;
+            let normalized = normalize_entry_path(pathname, &mut normalized_buf);
+            if normalized.is_empty() {
+                continue;
+            }
+
             // Apply glob pattern filtering (supports both positive and negative patterns)
             if let Some(patterns) = &self.glob_patterns {
-                if !match_glob_patterns(patterns, pathname) {
+                if !match_glob_patterns(patterns, &[pathname, normalized]) {
                     continue;
                 }
             }
 
-            let size: usize = usize::try_from(entry_ref.size().max(0)).expect("int cast");
             let mtime: i64 = entry_ref.mtime();
+
+            if let Some(target) = hardlink_target {
+                let target = normalize_entry_path(target, &mut target_buf);
+                let Some(&index) = index_by_path.get(target) else {
+                    let mut msg = Vec::new();
+                    msg.extend_from_slice(b"Cannot hard link ");
+                    msg.extend_from_slice(pathname);
+                    msg.extend_from_slice(b" to ");
+                    msg.extend_from_slice(target);
+                    msg.extend_from_slice(b": no such file earlier in the archive");
+                    return Err(TaskError::Archive(msg.into_boxed_slice()));
+                };
+                index_by_path.put(normalized, entries.len())?;
+                entries.push(FileEntry {
+                    path: Box::from(pathname),
+                    data: FileData::SameAs(index),
+                    mtime,
+                });
+                continue;
+            }
+
+            let size: usize = usize::try_from(entry_ref.size().max(0)).expect("int cast");
 
             // Read data incrementally so untrusted entry sizes don't drive allocation.
             let mut data: Vec<u8> = Vec::new();
@@ -1076,14 +1165,7 @@ impl FilesContext {
                 let dest = unsafe { &mut bun_core::vec::spare_bytes_mut(&mut data)[..to_read] };
                 let read = archive.read_data(dest);
                 if read < 0 {
-                    // Read error.
-                    // NOTE: both `data` and `entries` drop automatically here.
-                    // SAFETY: `archive` is the live `read_new()` handle opened above.
-                    return Ok(if let Some(err) = Self::clone_error_string(&archive) {
-                        FilesResult::LibarchiveErr(err)
-                    } else {
-                        FilesResult::Err(FilesError::ReadError)
-                    });
+                    return Err(TaskError::read_error(&archive, "failed to read entry data"));
                 }
                 if read == 0 {
                     break;
@@ -1092,65 +1174,64 @@ impl FilesContext {
                 // SAFETY: `archive_read_data` returns exactly the byte count it wrote (`<= to_read`).
                 unsafe { bun_core::vec::commit_spare(&mut data, bytes_read) };
             }
-            // errdefer free(data) — handled by Drop
 
-            let path_copy: Box<[u8]> = Box::from(pathname);
-            // errdefer free(path_copy) — handled by Drop
-
+            index_by_path.put(normalized, entries.len())?;
             entries.push(FileEntry {
-                path: path_copy,
-                data,
+                path: Box::from(pathname),
+                data: FileData::Bytes(data),
                 mtime,
             });
         }
 
-        Ok(FilesResult::Success(entries))
+        Ok(entries)
     }
 }
 
 impl TaskContext for FilesContext {
     fn run(&mut self) {
-        self.result = match self.do_run() {
-            Ok(r) => r,
-            Err(_) => FilesResult::Err(FilesError::OutOfMemory),
-        };
+        self.result = self.do_run();
     }
 
     fn run_from_js(&mut self, global: &JSGlobalObject) -> JsResult<PromiseResult> {
-        match &mut self.result {
-            FilesResult::Success(entries) => {
-                let map = JSMap::create(global);
-                let Some(mut map_ptr) = JSMap::from_js(map) else {
-                    return Ok(PromiseResult::Reject(
-                        global.create_error_instance(format_args!("Failed to create Map")),
-                    ));
-                };
+        let entries = match &mut self.result {
+            Ok(entries) => entries,
+            Err(err) => return Ok(PromiseResult::Reject(err.to_js(global))),
+        };
 
-                for entry in entries.iter_mut() {
-                    let data = core::mem::take(&mut entry.data); // Ownership transferred
-                    let blob_ptr =
-                        Blob::new(Blob::create_with_bytes_and_allocator(data, global, false));
-                    // SAFETY: blob_ptr is the heap allocation just produced by Blob::new.
-                    let blob = unsafe { &mut *blob_ptr };
-                    blob.is_jsdom_file.set(true);
-                    blob.name.set(bun_core::String::clone_utf8(&entry.path));
-                    blob.last_modified.set((entry.mtime * 1000) as f64);
+        let map = JSMap::create(global);
+        let Some(mut map_ptr) = JSMap::from_js(map) else {
+            return Ok(PromiseResult::Reject(
+                global.create_error_instance(format_args!("Failed to create Map")),
+            ));
+        };
 
-                    let name_js = blob.name.get().to_js(global)?;
-                    let blob_js = blob.to_js(global);
-                    // SAFETY: map_ptr came from JSMap::from_js on a live value.
-                    unsafe { map_ptr.as_mut() }.set(global, name_js, blob_js)?;
+        let mut stores: Vec<Option<RefPtr<Store>>> = Vec::with_capacity(entries.len());
+        for entry in entries.iter_mut() {
+            let blob = match &mut entry.data {
+                FileData::Bytes(data) => {
+                    // Ownership transferred
+                    Blob::create_with_bytes_and_allocator(core::mem::take(data), global, false)
                 }
+                FileData::SameAs(index) => match &stores[*index] {
+                    Some(store) => Blob::init_with_store(store.clone(), global),
+                    None => Blob::init(Vec::new(), global),
+                },
+            };
+            stores.push(blob.store.get().clone());
+            let blob_ptr = Blob::new(blob);
+            // SAFETY: blob_ptr is the heap allocation just produced by Blob::new.
+            let blob = unsafe { &mut *blob_ptr };
+            blob.is_jsdom_file.set(true);
+            blob.name.set(bun_core::String::clone_utf8(&entry.path));
+            blob.last_modified.set((entry.mtime * 1000) as f64);
 
-                Ok(PromiseResult::Resolve(map))
-            }
-            FilesResult::LibarchiveErr(err_msg) => Ok(PromiseResult::Reject(
-                EncodedSlice::utf8(err_msg.to_bytes()).to_error_instance(global),
-            )),
-            FilesResult::Err(e) => Ok(PromiseResult::Reject(
-                global.create_error_instance(format_args!("{}", <&'static str>::from(&*e))),
-            )),
+            let name_js = blob.name.get().to_js(global)?;
+            let blob_js = blob.to_js(global);
+            // SAFETY: map_ptr came from JSMap::from_js on a live value.
+            unsafe { map_ptr.as_mut() }.set(global, name_js, blob_js)?;
         }
+
+        Ok(PromiseResult::Resolve(map))
     }
 }
 
@@ -1171,7 +1252,7 @@ fn start_files_task(
         FilesContext {
             store,
             glob_patterns,
-            result: FilesResult::Err(FilesError::ReadError),
+            result: Err(TaskError::Named("ReadError")),
         },
     ))
 }
@@ -1217,59 +1298,33 @@ fn compress_gzip(data: &[u8], level: u8) -> Result<Vec<u8>, CompressError> {
     Ok(output)
 }
 
-/// Check if a path is safe (no absolute paths or path traversal)
-pub(crate) fn is_safe_path(pathname: &[u8]) -> bool {
-    // Reject empty paths
-    if pathname.is_empty() {
-        return false;
-    }
-
-    // Reject absolute paths
-    if pathname[0] == b'/' || pathname[0] == b'\\' {
-        return false;
-    }
-
-    // Check for Windows drive letters (e.g., "C:")
-    if pathname.len() >= 2 && pathname[1] == b':' {
-        return false;
-    }
-
-    // Reject paths with ".." components
-    for component in strings::split(pathname, b"/") {
-        if component == b".." {
-            return false;
-        }
-        // Also check Windows-style separators
-        for win_component in strings::split(component, b"\\") {
-            if win_component == b".." {
-                return false;
-            }
-        }
-    }
-
-    true
-}
-
-/// Match a path against multiple glob patterns with support for negative patterns.
+/// Match an entry against multiple glob patterns with support for negative patterns.
+/// `paths` are the forms of the entry's path a pattern may match (e.g. the raw
+/// archive name and its normalized form); a pattern matches if it matches any.
 /// Positive patterns: at least one must match for the path to be included.
 /// Negative patterns (starting with "!"): if any matches, the path is excluded.
 /// Returns true if the path should be included, false if excluded.
-pub(crate) fn match_glob_patterns(patterns: &[Box<[u8]>], pathname: &[u8]) -> bool {
+pub(crate) fn match_glob_patterns(patterns: &[Box<[u8]>], paths: &[&[u8]]) -> bool {
     let mut has_positive_patterns = false;
     let mut matches_positive = false;
+    let matches_any = |pattern: &[u8]| {
+        paths
+            .iter()
+            .any(|path| glob::r#match(pattern, path).matches())
+    };
 
     for pattern in patterns {
         // Check if it's a negative pattern
         if !pattern.is_empty() && pattern[0] == b'!' {
             // Negative pattern - if it matches, exclude the file
             let neg_pattern = &pattern[1..];
-            if !neg_pattern.is_empty() && glob::r#match(neg_pattern, pathname).matches() {
+            if !neg_pattern.is_empty() && matches_any(neg_pattern) {
                 return false;
             }
         } else {
             // Positive pattern - at least one must match
             has_positive_patterns = true;
-            if glob::r#match(pattern, pathname).matches() {
+            if !matches_positive && matches_any(pattern) {
                 matches_positive = true;
             }
         }
@@ -1278,210 +1333,4 @@ pub(crate) fn match_glob_patterns(patterns: &[Box<[u8]>], pathname: &[u8]) -> bo
     // If there are no positive patterns, include everything (that wasn't excluded)
     // If there are positive patterns, at least one must match
     !has_positive_patterns || matches_positive
-}
-
-/// Extract archive to disk with glob pattern filtering.
-/// Supports negative patterns with "!" prefix (e.g., "!node_modules/**").
-fn extract_to_disk_filtered(
-    file_buffer: &[u8],
-    root: &[u8],
-    glob_patterns: Option<&[Box<[u8]>]>,
-) -> crate::Result<u32> {
-    use libarchive::lib;
-    let archive = lib::ReadArchive::new();
-    configure_archive_reader(&archive);
-
-    if archive.read_open_memory(file_buffer) != lib::Result::Ok {
-        return Err(crate::Error::ReadError);
-    }
-
-    // Open/create target directory using bun.sys
-    let cwd = Fd::cwd();
-    let _ = cwd.make_path(root);
-    let dir_fd: Fd = 'brk: {
-        if bun_paths::is_absolute(root) {
-            break 'brk match bun_sys::open_a(root, bun_sys::O::RDONLY | bun_sys::O::DIRECTORY, 0) {
-                Ok(fd) => fd,
-                Err(_) => return Err(crate::Error::OpenError),
-            };
-        } else {
-            break 'brk match bun_sys::openat_a(
-                cwd,
-                root,
-                bun_sys::O::RDONLY | bun_sys::O::DIRECTORY,
-                0,
-            ) {
-                Ok(fd) => fd,
-                Err(_) => return Err(crate::Error::OpenError),
-            };
-        }
-    };
-    let _dir_close = bun_sys::CloseOnDrop::new(dir_fd);
-
-    let mut count: u32 = 0;
-    let mut entry: *mut lib::Entry = core::ptr::null_mut();
-    let mut stack_buf = bun_core::vec::UninitBuf::<{ 64 * 1024 }>::uninit();
-    // SAFETY: `archive_read_data` is the only writer of `buf`; each chunk reads back only `buf[..bytes_read]`.
-    let buf = unsafe { stack_buf.as_bytes_mut() };
-
-    while archive.read_next_header(&mut entry).succeeded() {
-        let entry_ref = lib::Entry::opaque_ref(entry);
-        // Same platform split as `FilesContext::do_run`; see `entry_pathname_utf8`.
-        #[cfg(not(windows))]
-        let raw_pathname_z = entry_ref.pathname();
-        #[cfg(windows)]
-        let raw_pathname_zbox = ZBox::from_vec_with_nul(
-            entry_pathname_utf8(entry_ref)
-                .map_err(|_| crate::Error::Alloc(bun_alloc::AllocError))?,
-        );
-        #[cfg(windows)]
-        let raw_pathname_z = raw_pathname_zbox.as_zstr();
-        let raw_pathname = raw_pathname_z.as_bytes();
-
-        let mut normalized_buf = bun_paths::path_buffer_pool::get();
-        if raw_pathname.len() >= normalized_buf.len() {
-            continue;
-        }
-        let pathname_z: &bun_core::ZStr = bun_paths::resolve_path::normalize_buf_z::<
-            bun_paths::platform::Posix,
-        >(raw_pathname, &mut normalized_buf[..]);
-        let pathname = pathname_z.as_bytes();
-
-        // Validate path safety (reject absolute paths, path traversal)
-        if pathname == b"." || !is_safe_path(pathname) {
-            continue;
-        }
-
-        // Apply glob pattern filtering. Supports negative patterns with "!" prefix.
-        // Positive patterns: at least one must match
-        // Negative patterns: if any matches, the file is excluded
-        if let Some(patterns) = glob_patterns {
-            if !match_glob_patterns(patterns, pathname) {
-                continue;
-            }
-        }
-
-        let filetype = entry_ref.filetype();
-        let kind = bun_sys::kind_from_mode(filetype);
-
-        match kind {
-            bun_sys::FileKind::Directory => {
-                match dir_fd.make_path(pathname) {
-                    // Directory already exists - don't count as extracted
-                    Err(e) if e.get_errno() == bun_sys::E::EEXIST => continue,
-                    Err(_) => continue,
-                    Ok(()) => {}
-                }
-                count += 1;
-            }
-            bun_sys::FileKind::File => {
-                let size: usize = usize::try_from(entry_ref.size().max(0)).expect("int cast");
-                // Sanitize permissions: use entry perms masked to 0o777, or default 0o644
-                let entry_perm = entry_ref.perm();
-                let mode: Mode = if entry_perm != 0 {
-                    Mode::try_from(entry_perm & 0o777).expect("int cast")
-                } else {
-                    0o644
-                };
-
-                // Create parent directories if needed (ignore expected errors)
-                if let Some(parent_dir) = bun_core::dirname(pathname) {
-                    match dir_fd.make_path(parent_dir) {
-                        // Expected: directory already exists
-                        Err(e) if e.get_errno() == bun_sys::E::EEXIST => {}
-                        // Permission errors: skip this file, will fail at openat
-                        Err(e) if e.get_errno() == bun_sys::E::EACCES => {}
-                        // Other errors: skip, will fail at openat
-                        Err(_) => {}
-                        Ok(()) => {}
-                    }
-                }
-
-                // Create and write the file using bun.sys
-                let file_fd: Fd = match bun_sys::openat(
-                    dir_fd,
-                    pathname_z,
-                    bun_sys::O::WRONLY | bun_sys::O::CREAT | bun_sys::O::TRUNC,
-                    mode,
-                ) {
-                    Ok(fd) => fd,
-                    Err(_) => continue,
-                };
-
-                let mut write_success = true;
-                if size > 0 {
-                    // Read archive data and write to file
-                    let mut remaining = size;
-                    while remaining > 0 {
-                        let to_read = remaining.min(buf.len());
-                        let read = archive.read_data(&mut buf[..to_read]);
-                        if read <= 0 {
-                            write_success = false;
-                            break;
-                        }
-                        let bytes_read: usize = usize::try_from(read).expect("int cast");
-                        // Write all bytes, handling partial writes
-                        let mut written: usize = 0;
-                        while written < bytes_read {
-                            let w = match bun_sys::write(file_fd, &buf[written..bytes_read]) {
-                                Ok(w) => w,
-                                Err(_) => {
-                                    write_success = false;
-                                    break;
-                                }
-                            };
-                            if w == 0 {
-                                write_success = false;
-                                break;
-                            }
-                            written += w;
-                        }
-                        if !write_success {
-                            break;
-                        }
-                        remaining -= bytes_read;
-                    }
-                }
-                let _ = file_fd.close();
-
-                if write_success {
-                    count += 1;
-                } else {
-                    // Remove partial file on failure
-                    let _ = bun_sys::unlinkat(dir_fd, pathname_z);
-                }
-            }
-            bun_sys::FileKind::SymLink => {
-                let link_target_z = entry_ref.symlink();
-                // Validate symlink target is also safe
-                if !is_safe_path(link_target_z.as_bytes()) {
-                    continue;
-                }
-                // Symlinks are only extracted on POSIX systems (Linux/macOS).
-                // On Windows, symlinks are skipped since they require elevated privileges.
-                #[cfg(unix)]
-                {
-                    match bun_sys::symlinkat(link_target_z, dir_fd, pathname_z) {
-                        Err(err) => {
-                            if matches!(err.get_errno(), bun_sys::E::EPERM | bun_sys::E::ENOENT) {
-                                if let Some(parent) = bun_core::dirname(pathname) {
-                                    let _ = dir_fd.make_path(parent);
-                                }
-                                if bun_sys::symlinkat(link_target_z, dir_fd, pathname_z).is_err() {
-                                    continue;
-                                }
-                            } else {
-                                continue;
-                            }
-                        }
-                        Ok(()) => {}
-                    }
-                    count += 1;
-                }
-            }
-            _ => {}
-        }
-    }
-
-    Ok(count)
 }

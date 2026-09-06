@@ -1,22 +1,29 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isWindows, tempDir } from "harness";
-import { existsSync, readdirSync, rmSync } from "node:fs";
+import { bunEnv, bunExe, isPosix, isWindows, tempDir } from "harness";
+import { chmodSync, existsSync, lstatSync, readdirSync, readFileSync, rmSync, statSync } from "node:fs";
 import { join } from "path";
 
 // Minimal ustar tarball builder (pathnames must be <100 bytes). `name` accepts
 // a Buffer so tests can put raw, non-UTF-8 byte sequences into the name field.
-function ustarHeader(name: string | Buffer, size: number, typeflag: string = "0"): Buffer {
+function ustarHeader(
+  name: string | Buffer,
+  size: number,
+  typeflag: string = "0",
+  { linkname = "", mode = 0o644 }: { linkname?: string; mode?: number } = {},
+): Buffer {
   const nameBytes = typeof name === "string" ? Buffer.from(name) : name;
   if (nameBytes.length > 99) throw new Error("ustar name too long: " + name);
+  if (Buffer.byteLength(linkname) > 99) throw new Error("ustar linkname too long: " + linkname);
   const h = Buffer.alloc(512);
   nameBytes.copy(h, 0);
-  h.write("0000644\0", 100);
+  h.write(mode.toString(8).padStart(7, "0") + "\0", 100);
   h.write("0000000\0", 108);
   h.write("0000000\0", 116);
   h.write(size.toString(8).padStart(11, "0") + "\0", 124);
   h.write("00000000000\0", 136);
   h.write("        ", 148);
   h.write(typeflag, 156);
+  h.write(linkname, 157);
   h.write("ustar\0", 257);
   h.write("00", 263);
   let sum = 0;
@@ -1923,6 +1930,279 @@ describe("Bun.Archive", () => {
       const readArchive = new Bun.Archive(await bunFile.bytes());
       const files = await readArchive.files();
       expect(await files.get("test.txt")!.text()).toBe("test content");
+    });
+  });
+
+  describe("damaged input is an error on every read path", () => {
+    // Three regular members. Each read path must reject the same bytes the
+    // same way instead of reporting the members it reached as the whole archive.
+    const members = [
+      { name: "one.txt", data: Buffer.alloc(1200, "1").toString() },
+      { name: "two.txt", data: Buffer.alloc(1200, "2").toString() },
+      { name: "three.txt", data: Buffer.alloc(1800, "3").toString() },
+    ];
+    const good = Buffer.from(buildTarball(members));
+    // one.txt: header at 0, data 512..2048. two.txt: header at 2048.
+    const secondHeader = 2048;
+
+    async function readAllWays(bytes: Uint8Array, dir: string) {
+      const results: Record<string, string> = {};
+      for (const [label, run] of [
+        ["extract", () => new Bun.Archive(bytes).extract(join(dir, "extract"))],
+        ["extract-glob", () => new Bun.Archive(bytes).extract(join(dir, "extract-glob"), { glob: "**" })],
+        ["files", () => new Bun.Archive(bytes).files()],
+      ] as const) {
+        try {
+          const value = await run();
+          results[label] = "resolved: " + (value instanceof Map ? [...value.keys()].join(",") : value);
+        } catch (e) {
+          results[label] = "rejected: " + (e as Error).message;
+        }
+      }
+      return results;
+    }
+
+    test("intact archive", async () => {
+      using dir = tempDir("archive-damaged-intact", {});
+      expect(await readAllWays(good, String(dir))).toEqual({
+        "extract": "resolved: 3",
+        "extract-glob": "resolved: 3",
+        "files": "resolved: one.txt,two.txt,three.txt",
+      });
+    });
+
+    test("bad header checksum", async () => {
+      const bad = Buffer.from(good);
+      bad.write("000000\0 ", secondHeader + 148);
+      using dir = tempDir("archive-damaged-checksum", {});
+      const message = "rejected: Damaged tar archive (bad header checksum)";
+      expect(await readAllWays(bad, String(dir))).toEqual({
+        "extract": message,
+        "extract-glob": message,
+        "files": message,
+      });
+      // GNU tar and bsdtar also stop trusting the stream here; the member
+      // before the damage is on disk, the one after it is not.
+      expect(readdirSync(join(String(dir), "extract")).sort()).toEqual(["one.txt"]);
+    });
+
+    test("header cut short", async () => {
+      using dir = tempDir("archive-damaged-short-header", {});
+      const message = "rejected: Truncated tar archive detected while reading next header";
+      expect(await readAllWays(good.subarray(0, secondHeader + 200), String(dir))).toEqual({
+        "extract": message,
+        "extract-glob": message,
+        "files": message,
+      });
+    });
+
+    test("member data cut short", async () => {
+      using dir = tempDir("archive-damaged-short-data", {});
+      const results = await readAllWays(good.subarray(0, secondHeader + 512 + 600), String(dir));
+      for (const label of ["extract", "extract-glob", "files"]) {
+        expect(results[label]).toStartWith("rejected: Truncated tar archive");
+      }
+    });
+  });
+
+  describe("entry types", () => {
+    test("extract() counts only the entries it creates", async () => {
+      const tarball = new Uint8Array(
+        Buffer.concat([
+          ustarEntry("ok.txt", Buffer.from("ok")),
+          ustarHeader("char-device", 0, "3"),
+          ustarHeader("block-device", 0, "4"),
+          ustarHeader("fifo", 0, "6"),
+          Buffer.alloc(1024),
+        ]),
+      );
+      using dir = tempDir("archive-count-created", {});
+      expect(await new Bun.Archive(tarball).extract(join(String(dir), "a"))).toBe(1);
+      expect(await new Bun.Archive(tarball).extract(join(String(dir), "b"), { glob: "**" })).toBe(1);
+      expect(readdirSync(join(String(dir), "a"))).toEqual(["ok.txt"]);
+      expect(readdirSync(join(String(dir), "b"))).toEqual(["ok.txt"]);
+    });
+
+    test("hard links", async () => {
+      const tarball = new Uint8Array(
+        Buffer.concat([
+          ustarEntry("orig.txt", Buffer.from("DATA\n")),
+          ustarHeader("link.txt", 0, "1", { linkname: "orig.txt" }),
+          ustarHeader("sub/link2.txt", 0, "1", { linkname: "./orig.txt" }),
+          Buffer.alloc(1024),
+        ]),
+      );
+
+      const files = await new Bun.Archive(tarball).files();
+      expect([...files.keys()]).toEqual(["orig.txt", "link.txt", "sub/link2.txt"]);
+      expect(await files.get("link.txt")!.text()).toBe("DATA\n");
+      expect(await files.get("sub/link2.txt")!.text()).toBe("DATA\n");
+      expect([...(await new Bun.Archive(tarball).files("**/link2.txt")).keys()]).toEqual(["sub/link2.txt"]);
+
+      using dir = tempDir("archive-hardlink", {});
+      const count = await new Bun.Archive(tarball).extract(String(dir));
+      if (isPosix) {
+        expect(count).toBe(3);
+        expect(readFileSync(join(String(dir), "link.txt"), "utf8")).toBe("DATA\n");
+        expect(readFileSync(join(String(dir), "sub/link2.txt"), "utf8")).toBe("DATA\n");
+        const orig = statSync(join(String(dir), "orig.txt"));
+        expect(statSync(join(String(dir), "link.txt")).ino).toBe(orig.ino);
+        expect(orig.nlink).toBe(3);
+      } else {
+        // Like symlinks, hard links are not created on Windows.
+        expect(count).toBe(1);
+      }
+    });
+
+    test.skipIf(!isPosix)("a hard link to a member that was not extracted rejects", async () => {
+      const tarball = new Uint8Array(
+        Buffer.concat([
+          ustarEntry("orig.txt", Buffer.from("DATA\n")),
+          // Clamped to `etc/passwd` under the root like any entry path, and no
+          // such member was extracted.
+          ustarHeader("evil.txt", 0, "1", { linkname: "../../etc/passwd" }),
+          Buffer.alloc(1024),
+        ]),
+      );
+      using dir = tempDir("archive-hardlink-missing", {});
+      let error: any;
+      try {
+        await new Bun.Archive(tarball).extract(String(dir));
+      } catch (e) {
+        error = e;
+      }
+      expect(error?.code).toBe("ENOENT");
+      expect(error?.syscall).toBe("link");
+      expect(readdirSync(String(dir))).toEqual(["orig.txt"]);
+
+      await expect(new Bun.Archive(tarball).files()).rejects.toThrow("Cannot hard link evil.txt to etc/passwd");
+      // Selecting only the link has nothing to link to either, as with tar.
+      await expect(new Bun.Archive(tarball).files("evil.txt")).rejects.toThrow("Cannot hard link");
+    });
+
+    test.skipIf(!isPosix)("extract({ glob }) creates symlinks last, like extract()", async () => {
+      // `sw` first points at victim.txt, then a regular `sw` member follows.
+      // Creating the symlink eagerly would write the regular member through it.
+      const tarball = new Uint8Array(
+        Buffer.concat([
+          ustarEntry("victim.txt", Buffer.from("VICTIM\n")),
+          ustarHeader("sw", 0, "2", { linkname: "victim.txt" }),
+          ustarEntry("sw", Buffer.from("THROUGH\n")),
+          Buffer.alloc(1024),
+        ]),
+      );
+      for (const options of [undefined, { glob: "**" }]) {
+        using dir = tempDir("archive-symlink-order", {});
+        expect(await new Bun.Archive(tarball).extract(String(dir), options)).toBe(2);
+        expect(readFileSync(join(String(dir), "victim.txt"), "utf8")).toBe("VICTIM\n");
+        expect(lstatSync(join(String(dir), "sw")).isSymbolicLink()).toBe(false);
+        expect(readFileSync(join(String(dir), "sw"), "utf8")).toBe("THROUGH\n");
+      }
+    });
+
+    test("a directory entry replaces an earlier non-directory of the same name", async () => {
+      const tarball = new Uint8Array(
+        Buffer.concat([
+          ustarEntry("fd", Buffer.from("was a file\n")),
+          ustarHeader("fd/", 0, "5", { mode: 0o755 }),
+          ustarEntry("fd/inner.txt", Buffer.from("inner\n")),
+          Buffer.alloc(1024),
+        ]),
+      );
+      using dir = tempDir("archive-type-change", {});
+      expect(await new Bun.Archive(tarball).extract(String(dir))).toBe(3);
+      expect(statSync(join(String(dir), "fd")).isDirectory()).toBe(true);
+      expect(readFileSync(join(String(dir), "fd/inner.txt"), "utf8")).toBe("inner\n");
+    });
+
+    test("members of a read-only directory are extracted before its mode applies", async () => {
+      const tarball = new Uint8Array(
+        Buffer.concat([
+          ustarHeader("ro/", 0, "5", { mode: 0o555 }),
+          ustarEntry("ro/inside.txt", Buffer.from("x\n")),
+          ustarHeader("ro/deeper/", 0, "5", { mode: 0o500 }),
+          ustarEntry("ro/deeper/bottom.txt", Buffer.from("y\n")),
+          ustarEntry("after.txt", Buffer.from("z\n")),
+          Buffer.alloc(1024),
+        ]),
+      );
+      using dir = tempDir("archive-readonly-dir", {});
+      try {
+        expect(await new Bun.Archive(tarball).extract(String(dir))).toBe(5);
+        expect(readFileSync(join(String(dir), "ro/inside.txt"), "utf8")).toBe("x\n");
+        expect(readFileSync(join(String(dir), "ro/deeper/bottom.txt"), "utf8")).toBe("y\n");
+        expect(readFileSync(join(String(dir), "after.txt"), "utf8")).toBe("z\n");
+        if (isPosix) {
+          expect(statSync(join(String(dir), "ro")).mode & 0o777).toBe(0o555);
+          expect(statSync(join(String(dir), "ro/deeper")).mode & 0o777).toBe(0o500);
+        }
+      } finally {
+        // Let `tempDir` clean up.
+        if (isPosix) {
+          for (const sub of ["ro", "ro/deeper"]) {
+            try {
+              chmodSync(join(String(dir), sub), 0o755);
+            } catch {}
+          }
+        }
+      }
+    });
+
+    test("sparse members extract through the glob path too", async () => {
+      const tarData = await Bun.file(join(import.meta.dir, "fixtures", "sparse-tars", "large-hole.tar")).bytes();
+      using dir = tempDir("archive-sparse-glob", {});
+      expect(await new Bun.Archive(tarData).extract(String(dir), { glob: "*.bin" })).toBe(1);
+      const extracted = await Bun.file(join(String(dir), "large-hole.bin")).bytes();
+      expect(extracted.length).toBe(67584);
+      expect(extracted.slice(1024, 66560)).toEqual(new Uint8Array(65536).fill(0));
+    });
+
+    test("files(glob) matches the normalized entry path as extract({ glob }) does", async () => {
+      const tarball = buildTarball([
+        { name: "./src/index.ts", data: "export {}" },
+        { name: "src//util.ts", data: "export {}" },
+        { name: "./README.md", data: "# hi" },
+      ]);
+      const files = await new Bun.Archive(tarball).files("src/*");
+      expect([...files.keys()]).toEqual(["./src/index.ts", "src//util.ts"]);
+      // The stored name still matches, as before.
+      expect([...(await new Bun.Archive(tarball).files("./README.md")).keys()]).toEqual(["./README.md"]);
+    });
+  });
+
+  describe("extract() errors name the syscall and path", () => {
+    test("destination is a file", async () => {
+      using dir = tempDir("archive-error-destination", { "not-a-dir": "file" });
+      let error: any;
+      try {
+        await new Bun.Archive({ "a.txt": "a" }).extract(join(String(dir), "not-a-dir"));
+      } catch (e) {
+        error = e;
+      }
+      expect(error).toBeInstanceOf(Error);
+      expect(error.code).toMatch(/^E[A-Z]+$/);
+      expect(typeof error.syscall).toBe("string");
+      if (isPosix) expect(error.code).toBe("ENOTDIR");
+    });
+
+    test.skipIf(!isPosix)("an entry under a path that is a regular file", async () => {
+      const tarball = buildTarball([
+        { name: "a", data: "file" },
+        { name: "a/b.txt", data: "nested" },
+      ]);
+      using dir = tempDir("archive-error-entry", {});
+      let error: any;
+      try {
+        await new Bun.Archive(tarball).extract(String(dir));
+      } catch (e) {
+        error = e;
+      }
+      expect(error).toBeInstanceOf(Error);
+      expect({ code: error.code, syscall: error.syscall, path: error.path }).toEqual({
+        code: "ENOTDIR",
+        syscall: "open",
+        path: "a/b.txt",
+      });
     });
   });
 

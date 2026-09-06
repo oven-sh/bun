@@ -400,7 +400,8 @@ impl From<bun_libarchive::Error> for Error {
     fn from(e: bun_libarchive::Error) -> Self {
         match e {
             bun_libarchive::Error::Fail => Self::Fail,
-            bun_libarchive::Error::Sys(s) => Self::Sys(s),
+            bun_libarchive::Error::Archive(_) => Self::TarballFailedToExtract,
+            bun_libarchive::Error::Sys(s) => Self::Sys(s.into()),
             bun_libarchive::Error::Alloc(a) => Self::Alloc(a),
             bun_libarchive::Error::MakeLibUvOwned(_) => Self::SystemFdQuotaExceeded,
             bun_libarchive::Error::Paths(p) => Self::Paths(p),

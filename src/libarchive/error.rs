@@ -2,8 +2,14 @@
 pub enum Error {
     #[error("Fail")]
     Fail,
-    #[error(transparent)]
-    Sys(#[from] bun_errno::SystemErrno),
+    /// libarchive could not parse the input (damaged header, truncated
+    /// archive, ...). Carries `archive_error_string()`.
+    #[error("{}", bstr::BStr::new(.0))]
+    Archive(Box<[u8]>),
+    /// A syscall failed while writing an entry to disk. Keeps the errno,
+    /// syscall tag and path so callers can surface them.
+    #[error("{0}")]
+    Sys(bun_sys::Error),
     #[error(transparent)]
     Alloc(#[from] bun_alloc::AllocError),
     #[error(transparent)]
@@ -17,7 +23,10 @@ impl Error {
     pub(crate) fn name(&self) -> &'static str {
         match self {
             Self::Fail => "Fail",
-            Self::Sys(e) => <&'static str>::from(e),
+            Self::Archive(_) => "InvalidArchive",
+            Self::Sys(e) => e
+                .get_error_code_tag_name()
+                .map_or("UNKNOWN", |(name, _)| name),
             Self::Alloc(_) => "OutOfMemory",
             Self::MakeLibUvOwned(e) => <&'static str>::from(e),
             Self::Paths(e) => e.name(),
@@ -33,7 +42,7 @@ impl bun_core::output::ErrName for Error {
 
 impl From<bun_sys::Error> for Error {
     fn from(e: bun_sys::Error) -> Self {
-        Self::Sys(e.into())
+        Self::Sys(e)
     }
 }
 

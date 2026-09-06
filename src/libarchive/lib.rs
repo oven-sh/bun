@@ -137,6 +137,9 @@ pub mod lib {
         #[cfg(windows)]
         fn archive_entry_pathname_w(e: *mut Entry) -> *const u16;
         fn archive_entry_symlink(e: *mut Entry) -> *const c_char;
+        fn archive_entry_hardlink(e: *mut Entry) -> *const c_char;
+        #[cfg(windows)]
+        fn archive_entry_hardlink_w(e: *mut Entry) -> *const u16;
         fn archive_entry_perm(e: *mut Entry) -> bun_sys::Mode;
         fn archive_entry_size(e: *mut Entry) -> la_int64_t;
         fn archive_entry_filetype(e: *mut Entry) -> bun_sys::Mode;
@@ -237,18 +240,23 @@ pub mod lib {
         }
 
         pub fn write_zeros_to_file(file: &bun_sys::File, count: usize) -> Result {
+            match Self::write_zeros(file, count) {
+                Ok(()) => Result::Ok,
+                Err(_) => Result::Failed,
+            }
+        }
+
+        fn write_zeros(file: &bun_sys::File, count: usize) -> bun_sys::Maybe<()> {
             // Use a runtime memset (vs `[0u8; _]`) to keep .rodata small.
             let mut zero_buf = [0u8; 16 * 1024];
             zero_buf.fill(0);
             let mut remaining = count;
             while remaining > 0 {
                 let to_write = &zero_buf[..remaining.min(zero_buf.len())];
-                if file.write_all(to_write).is_err() {
-                    return Result::Failed;
-                }
+                file.write_all(to_write)?;
                 remaining -= to_write.len();
             }
-            Result::Ok
+            Ok(())
         }
 
         /// Reads data from the archive and writes it to the given file
@@ -258,12 +266,15 @@ pub mod lib {
         /// - Falls back to lseek + write if pwrite is not available
         /// - Falls back to writing zeros if lseek is not available
         /// - Truncates the file to the final size to handle trailing sparse holes
+        ///
+        /// `Ok(status)` is libarchive's status for the entry body (`Result::Ok`
+        /// once it is fully written); `Err` is a failed write to `fd`.
         pub(crate) fn read_data_into_fd(
             &self,
             fd: Fd,
             can_use_pwrite: &mut bool,
             can_use_lseek: &mut bool,
-        ) -> Result {
+        ) -> core::result::Result<Result, bun_sys::Error> {
             #[cfg(windows)]
             {
                 *can_use_pwrite = false;
@@ -275,7 +286,7 @@ pub mod lib {
 
             while let Some(block) = self.next(&mut target_offset) {
                 if block.result != Result::Ok {
-                    return block.result;
+                    return Ok(block.result);
                 }
                 let data = block.bytes;
 
@@ -320,24 +331,17 @@ pub mod lib {
                         if block.offset > actual_offset {
                             // Write zeros to fill the gap
                             let zero_count = (block.offset - actual_offset) as usize;
-                            let zero_result = Self::write_zeros_to_file(file, zero_count);
-                            if zero_result != Result::Ok {
-                                return zero_result;
-                            }
+                            Self::write_zeros(file, zero_count)?;
                             actual_offset = block.offset;
                         } else {
                             // Can't seek backward without lseek
-                            return Result::Failed;
+                            return Ok(Result::Failed);
                         }
                     }
                 }
 
-                match file.write_all(data) {
-                    Err(_) => return Result::Failed,
-                    Ok(()) => {
-                        actual_offset += data.len() as i64;
-                    }
-                }
+                file.write_all(data)?;
+                actual_offset += data.len() as i64;
             }
 
             // Handle trailing sparse hole by truncating file to final size.
@@ -346,7 +350,7 @@ pub mod lib {
                 let _ = bun_sys::ftruncate(fd, final_offset);
             }
 
-            Result::Ok
+            Ok(Result::Ok)
         }
 
         // `self` must be a live archive handle from `archive_{read,write}_new()`.
@@ -363,6 +367,17 @@ pub mod lib {
             // `'static` here is a lifetime erasure — the caller must not let
             // the slice outlive the archive.
             unsafe { ZStr::from_c_ptr(p) }.as_bytes()
+        }
+
+        /// [`crate::Error::Archive`] with a copy of `error_string()`, or
+        /// `fallback` when libarchive did not set one.
+        pub fn read_error(&self, fallback: &str) -> crate::Error {
+            let msg = slice_to_nul(self.error_string());
+            crate::Error::Archive(Box::from(if msg.is_empty() {
+                fallback.as_bytes()
+            } else {
+                msg
+            }))
         }
 
         // ── write side ─────────────────────────────────────────────────────
@@ -439,6 +454,29 @@ pub mod lib {
         pub fn symlink(&self) -> &ZStr {
             // SAFETY: self valid.
             unsafe { ZStr::from_c_ptr(archive_entry_symlink(self.as_mut_ptr())) }
+        }
+        /// The link target of a hard-link entry (tar typeflag '1'), or `None`
+        /// for every other entry. libarchive leaves `filetype()` as whatever
+        /// the mode field held for these, so this is the only reliable test.
+        pub fn hardlink(&self) -> Option<&ZStr> {
+            // SAFETY: self valid; returned string owned by libarchive for the
+            // lifetime of this entry.
+            let p = unsafe { archive_entry_hardlink(self.as_mut_ptr()) };
+            if p.is_null() {
+                return None;
+            }
+            // SAFETY: non-null, NUL-terminated, owned by the entry.
+            Some(unsafe { ZStr::from_c_ptr(p) })
+        }
+        #[cfg(windows)]
+        pub fn hardlink_w(&self) -> Option<&bun_core::WStr> {
+            // SAFETY: self valid.
+            let p = unsafe { archive_entry_hardlink_w(self.as_mut_ptr()) };
+            if p.is_null() {
+                return None;
+            }
+            // SAFETY: non-null, NUL-terminated, owned by the entry.
+            Some(unsafe { bun_core::WStr::from_ptr(p) })
         }
         pub fn perm(&self) -> u32 {
             // SAFETY: self valid.
@@ -1161,6 +1199,70 @@ fn make_path_u16(dir_fd: Fd, sub_path: &[u16]) -> crate::Result<()> {
     })
 }
 
+/// Drops `depth` leading `/`-separated components, and any separators that
+/// follow them, from a raw archive pathname. `None` when no component is left.
+fn strip_components(path: &[OSPathChar], depth: usize) -> Option<&[OSPathChar]> {
+    const SEP_CHAR: OSPathChar = b'/' as OSPathChar;
+    fn trim_leading(mut s: &[OSPathChar]) -> &[OSPathChar] {
+        while let [first, rest @ ..] = s {
+            if *first != SEP_CHAR {
+                break;
+            }
+            s = rest;
+        }
+        s
+    }
+    let mut remaining = path;
+    for _ in 0..depth {
+        remaining = trim_leading(remaining);
+        if remaining.is_empty() {
+            return None;
+        }
+        remaining = match strings::index_of_scalar(remaining, SEP_CHAR) {
+            Some(i) => &remaining[i..],
+            None => &remaining[remaining.len()..],
+        };
+    }
+    Some(trim_leading(remaining))
+}
+
+/// Normalizes an archive pathname (already stripped, shorter than `buf`) into
+/// `buf`, NUL-terminates it and returns its length. `None` when nothing is
+/// left to create: the result is empty or `.`, or on Windows absolute
+/// (`openatWindows` ignores the directory fd for those, so such an entry could
+/// land outside the extraction root). `..` components cannot climb above the
+/// root: leading separators are gone, so normalization clamps them.
+fn normalize_entry_path(path: &[OSPathChar], buf: &mut [OSPathChar]) -> Option<usize> {
+    let len = bun_paths::resolve_path::normalize_buf_t::<OSPathChar, bun_paths::platform::Auto>(
+        path, buf,
+    )
+    .len();
+    if len == 0 || len >= buf.len() || (len == 1 && buf[0] == b'.' as OSPathChar) {
+        return None;
+    }
+    #[cfg(windows)]
+    if bun_paths::is_absolute_windows_t::<u16>(&buf[..len]) {
+        return None;
+    }
+    buf[len] = 0;
+    Some(len)
+}
+
+/// `err` tagged with the archive entry it happened on.
+fn entry_error(err: bun_sys::Error, entry_path: &[OSPathChar]) -> crate::Error {
+    #[cfg(not(windows))]
+    {
+        crate::Error::Sys(err.with_path(entry_path))
+    }
+    #[cfg(windows)]
+    {
+        match strings::to_utf8_list_with_type(Vec::new(), entry_path) {
+            Ok(utf8) => crate::Error::Sys(err.with_path(&utf8)),
+            Err(_) => crate::Error::Sys(err),
+        }
+    }
+}
+
 pub struct Archiver;
 
 pub mod archiver {
@@ -1224,6 +1326,14 @@ pub trait ArchiveAppender {
         let _ = path;
         unreachable!()
     }
+
+    /// When `true`, `extract_to_dir` calls [`filter`](Self::filter) with each
+    /// entry's normalized, `/`-separated path and skips entries it rejects.
+    const HAS_FILTER: bool = false;
+
+    fn filter(&mut self, _path: &[u8]) -> bool {
+        true
+    }
 }
 
 impl ArchiveAppender for () {}
@@ -1271,9 +1381,9 @@ impl Archiver {
 
             match r {
                 lib::Result::Eof => break 'loop_,
-                lib::Result::Retry => continue 'loop_,
-                lib::Result::Failed | lib::Result::Fatal => {
-                    return Err(crate::Error::Fail);
+                lib::Result::Retry | lib::Result::Failed | lib::Result::Fatal => {
+                    // SAFETY: archive valid for stream lifetime
+                    return Err(unsafe { &*archive }.read_error("failed to read archive header"));
                 }
                 _ => {
                     // do not use the utf8 name there
@@ -1393,7 +1503,7 @@ impl Archiver {
         // SAFETY: `file_buffer` outlives `stream` (stack-local, dropped at fn exit).
         let mut stream = unsafe { BufferReadStream::init(file_buffer) };
         let _ = stream.open_read();
-        let archive = stream.archive;
+        let archive = stream.archive();
         let mut count: u32 = 0;
         let dir_fd = dir;
 
@@ -1402,25 +1512,37 @@ impl Archiver {
 
         #[cfg(unix)]
         let mut symlink_join_buf: Option<bun_paths::path_buffer_pool::Guard> = None;
+        #[cfg(unix)]
+        let mut link_target_buf: Option<bun_paths::path_buffer_pool::Guard> = None;
 
         #[cfg(unix)]
         let mut deferred_symlinks: Vec<DeferredSymlink> = Vec::new();
+        // Directories whose archived mode denies their owner write or search
+        // access are created `0o700 | mode` so their contents can be written,
+        // then set to the archived mode once everything is in place (what tar
+        // does). Applied deepest-first.
+        #[cfg(unix)]
+        let mut deferred_dir_modes: Vec<(bun_core::ZBox, bun_sys::Mode)> = Vec::new();
 
         let mut normalized_buf = bun_paths::os_path_buffer_pool::get();
+        #[cfg(windows)]
+        let mut filter_path_buf: Vec<u8> = Vec::new();
         let mut use_pwrite = cfg!(unix);
         let mut use_lseek = true;
 
         'loop_: loop {
-            // SAFETY: archive valid for stream lifetime
-            let r = unsafe { (*archive).read_next_header(&mut entry) };
+            let r = archive.read_next_header(&mut entry);
 
             match r {
                 lib::Result::Eof => break 'loop_,
-                lib::Result::Retry => continue 'loop_,
-                lib::Result::Failed | lib::Result::Fatal => {
-                    return Err(crate::Error::Fail);
+                // The whole archive is in memory, so `Retry` only ever means
+                // libarchive discarded a damaged header block.
+                lib::Result::Retry | lib::Result::Failed | lib::Result::Fatal => {
+                    return Err(archive.read_error("failed to read archive header"));
                 }
                 _ => {
+                    let entry_ref = lib::Entry::opaque_ref(entry);
+
                     // TODO:
                     // Due to path separator replacement and other copies that happen internally, libarchive changes the
                     // storage type of paths on windows to wide character strings. Using `archive_entry_pathname` or `archive_entry_pathname_utf8`
@@ -1429,12 +1551,10 @@ impl Archiver {
                     //
                     // Ideally, we find a way to tell libarchive to not convert the strings to wide characters and also to not
                     // replace path separators. We can do both of these with our own normalization and utf8/utf16 string conversion code.
-                    // SAFETY: entry was just populated by read_next_header
                     #[cfg(windows)]
-                    let pathname_z = lib::Entry::opaque_ref(entry).pathname_w();
-                    // SAFETY: entry was just populated by read_next_header
+                    let pathname_z = entry_ref.pathname_w();
                     #[cfg(not(windows))]
-                    let pathname_z = lib::Entry::opaque_ref(entry).pathname();
+                    let pathname_z = entry_ref.pathname();
 
                     if A::HAS_ON_FIRST_DIRECTORY_NAME {
                         if appender.needs_first_dirname() {
@@ -1458,13 +1578,13 @@ impl Archiver {
                         }
                     }
 
-                    // SAFETY: entry valid
-                    let kind = bun_sys::kind_from_mode(lib::Entry::opaque_ref(entry).filetype());
+                    let hardlink_target = entry_ref.hardlink();
+                    let kind = bun_sys::kind_from_mode(entry_ref.filetype());
 
                     if options.npm {
                         // - ignore entries other than files (`true` can only be returned if type is file)
                         //   https://github.com/npm/cli/blob/93883bb6459208a916584cad8c6c72a315cf32af/node_modules/pacote/lib/fetcher.js#L419-L441
-                        if kind != bun_sys::FileKind::File {
+                        if kind != bun_sys::FileKind::File || hardlink_target.is_some() {
                             continue;
                         }
 
@@ -1476,40 +1596,10 @@ impl Archiver {
                     // `pathname_z` is `&ZStr` on POSIX (`as_bytes() → &[u8]`)
                     // and `&WStr` on Windows (`as_slice() → &[u16]`); both
                     // deref to `&[OSPathChar]`.
-                    let pathname_slice: &[OSPathChar] = &pathname_z[..];
-                    let mut remaining: &[OSPathChar] = pathname_slice;
-                    {
-                        let sep: OSPathChar = b'/' as OSPathChar;
-                        let mut i = 0usize;
-                        while i < options.depth_to_skip {
-                            while let [first, rest @ ..] = remaining {
-                                if *first == sep {
-                                    remaining = rest;
-                                } else {
-                                    break;
-                                }
-                            }
-                            if remaining.is_empty() {
-                                continue 'loop_;
-                            }
-                            match strings::index_of_scalar(remaining, sep) {
-                                Some(j) => remaining = &remaining[j..],
-                                None => remaining = &remaining[remaining.len()..],
-                            }
-                            i += 1;
-                        }
-                        while let [first, rest @ ..] = remaining {
-                            if *first == sep {
-                                remaining = rest;
-                            } else {
-                                break;
-                            }
-                        }
-                    }
-                    // pathname = rest.ptr[0..rest.len :0]  (NUL is at original buffer end)
-                    // SAFETY: `remaining` is a tail slice of `pathname_z`, which is NUL-terminated
-                    // at its original `.len()`; therefore `remaining[remaining.len()] == 0`.
-                    let pathname: &[OSPathChar] = remaining;
+                    let Some(pathname) = strip_components(&pathname_z[..], options.depth_to_skip)
+                    else {
+                        continue 'loop_;
+                    };
 
                     if pathname.len() >= normalized_buf.len() {
                         if options.log {
@@ -1521,27 +1611,29 @@ impl Archiver {
                         continue;
                     }
 
-                    let normalized = bun_paths::resolve_path::normalize_buf_t::<
-                        OSPathChar,
-                        bun_paths::platform::Auto,
-                    >(pathname, &mut normalized_buf[..]);
-                    let normalized_len = normalized.len();
-                    normalized_buf[normalized_len] = 0;
-                    // SAFETY: we just wrote a NUL at normalized_buf[normalized_len]
+                    let Some(normalized_len) =
+                        normalize_entry_path(pathname, &mut normalized_buf[..])
+                    else {
+                        continue 'loop_;
+                    };
                     let path: &mut [OSPathChar] = &mut normalized_buf[..normalized_len];
-                    if path.is_empty() || (path.len() == 1 && path[0] == b'.' as OSPathChar) {
-                        continue;
-                    }
 
-                    // Skip entries whose normalized path is absolute on Windows.
-                    // `openatWindows` ignores `dir_fd` for absolute inputs (drive
-                    // letter or UNC), so without this guard a tar entry could
-                    // resolve outside the extraction directory. On POSIX the
-                    // tokenize-on-'/' step already strips any leading separators,
-                    // so `normalizeBufT` cannot produce an absolute output.
-                    #[cfg(windows)]
-                    {
-                        if bun_paths::is_absolute_windows_t::<u16>(path) {
+                    if A::HAS_FILTER {
+                        #[cfg(not(windows))]
+                        let keep = appender.filter(path);
+                        #[cfg(windows)]
+                        let keep = {
+                            filter_path_buf.clear();
+                            filter_path_buf = strings::to_utf8_list_with_type(
+                                core::mem::take(&mut filter_path_buf),
+                                path,
+                            )?;
+                            bun_paths::resolve_path::platform_to_posix_in_place(
+                                &mut filter_path_buf[..],
+                            );
+                            appender.filter(&filter_path_buf)
+                        };
+                        if !keep {
                             continue 'loop_;
                         }
                     }
@@ -1573,7 +1665,10 @@ impl Archiver {
                         }
                     }
 
-                    let path_slice: &[OSPathChar] = &path[..];
+                    let path_slice: &[OSPathChar] = &normalized_buf[..normalized_len];
+                    // `normalize_entry_path` NUL-terminates.
+                    #[cfg(not(windows))]
+                    let path_z: &ZStr = ZStr::from_buf(&normalized_buf[..], normalized_len);
 
                     if options.log {
                         bun_core::prettyln!(
@@ -1582,13 +1677,61 @@ impl Archiver {
                         );
                     }
 
-                    count += 1;
+                    if let Some(link_target) = hardlink_target {
+                        // Hard links are created on POSIX only, like symlinks.
+                        #[cfg(unix)]
+                        {
+                            // The target names an earlier member of this archive, so it
+                            // gets the same strip + normalize treatment as entry paths,
+                            // which also keeps it inside the extraction root.
+                            let target_buf: &mut PathBuffer = link_target_buf
+                                .get_or_insert_with(bun_paths::path_buffer_pool::get);
+                            let target_len =
+                                strip_components(link_target.as_bytes(), options.depth_to_skip)
+                                    .filter(|t| t.len() < target_buf.len())
+                                    .and_then(|t| normalize_entry_path(t, &mut target_buf[..]));
+                            let Some(target_len) = target_len else {
+                                return Err(bun_sys::Error::new(
+                                    bun_sys::E::ENOENT,
+                                    bun_sys::Tag::link,
+                                )
+                                .with_path_dest(link_target.as_bytes(), path_slice)
+                                .into());
+                            };
+                            let target_z = ZStr::from_buf(&target_buf[..], target_len);
+                            let link = || bun_sys::linkat(dir_fd, target_z, dir_fd, path_z);
+                            let result = match link() {
+                                Err(err) if err.get_errno() == bun_sys::E::EEXIST => {
+                                    bun_sys::unlinkat(dir_fd, path_z).and_then(|()| link())
+                                }
+                                Err(err) if err.get_errno() == bun_sys::E::ENOENT => {
+                                    let dirname = bun_paths::dirname_simple(path_slice);
+                                    if dirname.is_empty() {
+                                        Err(err)
+                                    } else {
+                                        let _ = dir.make_path_u8(dirname);
+                                        link()
+                                    }
+                                }
+                                other => other,
+                            };
+                            if let Err(err) = result {
+                                return Err(err
+                                    .with_path_dest(target_z.as_bytes(), path_slice)
+                                    .into());
+                            }
+                            count += 1;
+                        }
+                        #[cfg(not(unix))]
+                        {
+                            let _ = link_target;
+                        }
+                        continue 'loop_;
+                    }
 
                     match kind {
                         bun_sys::FileKind::Directory => {
-                            // SAFETY: entry valid
-                            let mut mode = i32::try_from(lib::Entry::opaque_ref(entry).perm())
-                                .expect("int cast");
+                            let mut mode = i32::try_from(entry_ref.perm()).expect("int cast");
 
                             // if dirs are readable, then they should be listable
                             // https://github.com/npm/node-tar/blob/main/lib/mode-fix.js
@@ -1609,38 +1752,61 @@ impl Archiver {
                             }
                             #[cfg(not(windows))]
                             {
-                                // SAFETY: normalized_buf[path_slice.len()] == 0 (written above),
-                                // so path_slice is a NUL-terminated [:0]u8.
-                                let path_z: &ZStr = unsafe {
-                                    ZStr::from_raw(path_slice.as_ptr(), path_slice.len())
+                                let mode = bun_sys::Mode::try_from(mode).expect("int cast");
+                                let create_mode = mode | 0o700;
+                                let created = match bun_sys::mkdirat_z(dir_fd, path_z, create_mode)
+                                {
+                                    Ok(()) => true,
+                                    Err(err) => match err.get_errno() {
+                                        // Tarballs commonly list a directory twice (`x` and
+                                        // `./x`), and parents are created on demand, so an
+                                        // existing directory is fine. Anything else in the
+                                        // way is replaced, as tar does.
+                                        bun_sys::E::EEXIST => {
+                                            let existing = bun_sys::lstatat(dir_fd, path_z)
+                                                .map_err(|e| entry_error(e, path_slice))?;
+                                            if bun_sys::kind_from_mode(
+                                                existing.st_mode as bun_sys::Mode,
+                                            ) == bun_sys::FileKind::Directory
+                                            {
+                                                false
+                                            } else {
+                                                bun_sys::unlinkat(dir_fd, path_z)
+                                                    .and_then(|()| {
+                                                        bun_sys::mkdirat_z(
+                                                            dir_fd,
+                                                            path_z,
+                                                            create_mode,
+                                                        )
+                                                    })
+                                                    .map_err(|e| entry_error(e, path_slice))?;
+                                                true
+                                            }
+                                        }
+                                        bun_sys::E::ENOENT => {
+                                            let dirname = bun_paths::dirname_simple(path_slice);
+                                            if dirname.is_empty() {
+                                                return Err(entry_error(err, path_slice));
+                                            }
+                                            dir.make_path_u8(dirname)
+                                                .and_then(|()| {
+                                                    bun_sys::mkdirat_z(dir_fd, path_z, create_mode)
+                                                })
+                                                .map_err(|e| entry_error(e, path_slice))?;
+                                            true
+                                        }
+                                        _ => return Err(entry_error(err, path_slice)),
+                                    },
                                 };
-                                match bun_sys::mkdirat_z(
-                                    dir_fd,
-                                    path_z,
-                                    bun_sys::Mode::try_from(mode).expect("int cast"),
-                                ) {
-                                    Ok(()) => {}
-                                    Err(err) => {
-                                        // It's possible for some tarballs to return a directory twice, with and
-                                        // without `./` in the beginning. So if it already exists, continue to the
-                                        // next entry.
-                                        match err.get_errno() {
-                                            bun_sys::E::EEXIST | bun_sys::E::ENOTDIR => continue,
-                                            _ => {}
-                                        }
-                                        let dirname = bun_paths::dirname_simple(path_slice);
-                                        if dirname.is_empty() {
-                                            return Err(err.into());
-                                        }
-                                        let _ = dir.make_path_u8(dirname);
-                                        let _ = bun_sys::mkdirat_z(dir_fd, path_z, 0o777);
-                                    }
+                                if created && create_mode != mode {
+                                    deferred_dir_modes
+                                        .push((bun_core::ZBox::from_bytes(path_slice), mode));
                                 }
                             }
+                            count += 1;
                         }
                         bun_sys::FileKind::SymLink => {
-                            // SAFETY: entry valid
-                            let link_target = lib::Entry::opaque_ref(entry).symlink();
+                            let link_target = entry_ref.symlink();
                             #[cfg(unix)]
                             {
                                 // Validate that the symlink target doesn't escape the extraction directory.
@@ -1657,13 +1823,15 @@ impl Archiver {
                                             "Skipping symlink with unsafe target: {} -> {}\n",
                                             bun_core::fmt::fmt_os_path(
                                                 path_slice,
-                                                Default::default(),
+                                                Default::default()
                                             ),
                                             bstr::BStr::new(link_target.as_bytes()),
                                         );
                                     }
                                     continue;
                                 }
+                                // Created (and counted) after every other entry so that no
+                                // later entry is written through it.
                                 deferred_symlinks
                                     .push(DeferredSymlink::new(path_slice, link_target.as_bytes()));
                             }
@@ -1680,11 +1848,9 @@ impl Archiver {
                             //
                             // we simplify and turn it into `entry.mode || 0o666` because we aren't accepting a umask or fmask option.
                             #[cfg(not(windows))]
-                            let mode: bun_sys::Mode = bun_sys::Mode::try_from(
-                                // SAFETY: entry valid
-                                (lib::Entry::opaque_ref(entry).perm() & 0o777) | 0o666,
-                            )
-                            .unwrap();
+                            let mode: bun_sys::Mode =
+                                bun_sys::Mode::try_from((entry_ref.perm() & 0o777) | 0o666)
+                                    .unwrap();
 
                             let flags = bun_sys::O::WRONLY | bun_sys::O::CREAT | bun_sys::O::TRUNC;
 
@@ -1699,22 +1865,18 @@ impl Archiver {
                                             let Some(dirname) =
                                                 bun_paths::Dirname::dirname(path_slice)
                                             else {
-                                                return Err(e.into());
+                                                return Err(entry_error(e, path_slice));
                                             };
                                             let _ = make_path_u16(dir, dirname);
-                                            bun_sys::openat_windows(dir_fd, path_slice, flags, 0)?
+                                            bun_sys::openat_windows(dir_fd, path_slice, flags, 0)
+                                                .map_err(|e| entry_error(e, path_slice))?
                                         }
-                                        _ => return Err(e.into()),
+                                        _ => return Err(entry_error(e, path_slice)),
                                     },
                                 };
 
                             #[cfg(not(windows))]
                             let file_handle_native: Fd = {
-                                // dir.createFileZ(.{truncate, mode}) → bun_sys::openat
-                                // SAFETY: normalized_buf[path_slice.len()] == 0 (written above).
-                                let path_z: &ZStr = unsafe {
-                                    ZStr::from_raw(path_slice.as_ptr(), path_slice.len())
-                                };
                                 match bun_sys::openat(dir_fd, path_z, flags, mode) {
                                     Ok(fd) => fd,
                                     Err(err) => match err.get_errno() {
@@ -1723,12 +1885,13 @@ impl Archiver {
                                         | bun_sys::E::ENOENT => {
                                             let dirname = bun_paths::dirname_simple(path_slice);
                                             if dirname.is_empty() {
-                                                return Err(err.into());
+                                                return Err(entry_error(err, path_slice));
                                             }
                                             let _ = dir.make_path_u8(dirname);
-                                            bun_sys::openat(dir_fd, path_z, flags, mode)?
+                                            bun_sys::openat(dir_fd, path_z, flags, mode)
+                                                .map_err(|e| entry_error(e, path_slice))?
                                         }
-                                        _ => return Err(err.into()),
+                                        _ => return Err(entry_error(err, path_slice)),
                                     },
                                 }
                             };
@@ -1766,10 +1929,7 @@ impl Archiver {
                                 });
                             let (file_handle, plucked_file) = &mut *close_guard;
 
-                            // SAFETY: entry valid
-                            let size: usize =
-                                usize::try_from(lib::Entry::opaque_ref(entry).size().max(0))
-                                    .unwrap();
+                            let size: usize = usize::try_from(entry_ref.size().max(0)).unwrap();
 
                             if size > 0 {
                                 if let Some(ctx_) = ctx.as_deref_mut() {
@@ -1784,20 +1944,12 @@ impl Archiver {
                                             plucker_.contents.inflate(size)?;
                                             let cap = plucker_.contents.list.capacity();
                                             plucker_.contents.list.resize(cap, 0);
-                                            // SAFETY: archive valid
-                                            let read = unsafe {
-                                                (*archive).read_data(
-                                                    plucker_.contents.list.as_mut_slice(),
-                                                )
-                                            };
+                                            let read = archive
+                                                .read_data(plucker_.contents.list.as_mut_slice());
                                             if read < 0 {
+                                                let err =
+                                                    archive.read_error("failed to read entry data");
                                                 if options.log {
-                                                    // SAFETY: `archive` is the live
-                                                    // `read_new()` handle this
-                                                    // extraction loop is iterating.
-                                                    let archive_error = slice_to_nul(
-                                                        unsafe { &*archive }.error_string(),
-                                                    );
                                                     Output::err(
                                                         "libarchive error",
                                                         "extracting {}: {}",
@@ -1806,11 +1958,11 @@ impl Archiver {
                                                                 path_slice,
                                                                 Default::default(),
                                                             ),
-                                                            bstr::BStr::new(archive_error),
+                                                            &err,
                                                         ),
                                                     );
                                                 }
-                                                return Err(crate::Error::Fail);
+                                                return Err(err);
                                             }
                                             plucker_.contents.inflate(
                                                 usize::try_from(read).expect("int cast"),
@@ -1818,6 +1970,7 @@ impl Archiver {
                                             plucker_.found = read > 0;
                                             plucker_.fd = *file_handle;
                                             *plucked_file = true;
+                                            count += 1;
                                             continue 'loop_;
                                         }
                                     }
@@ -1838,17 +1991,18 @@ impl Archiver {
                                 let mut retries_remaining: u8 = 5;
 
                                 'possibly_retry: while retries_remaining != 0 {
-                                    // SAFETY: archive valid
-                                    match unsafe {
-                                        (*archive).read_data_into_fd(
-                                            *file_handle,
-                                            &mut use_pwrite,
-                                            &mut use_lseek,
-                                        )
-                                    } {
-                                        lib::Result::Eof => break 'loop_,
-                                        lib::Result::Ok => break 'possibly_retry,
-                                        lib::Result::Retry => {
+                                    match archive.read_data_into_fd(
+                                        *file_handle,
+                                        &mut use_pwrite,
+                                        &mut use_lseek,
+                                    ) {
+                                        Err(write_err) => {
+                                            return Err(entry_error(write_err, path_slice));
+                                        }
+                                        Ok(lib::Result::Ok | lib::Result::Eof) => {
+                                            break 'possibly_retry;
+                                        }
+                                        Ok(lib::Result::Retry) => {
                                             if options.log {
                                                 Output::err(
                                                     "libarchive error",
@@ -1864,14 +2018,10 @@ impl Archiver {
                                                 );
                                             }
                                         }
-                                        _ => {
+                                        Ok(_) => {
+                                            let err =
+                                                archive.read_error("failed to read entry data");
                                             if options.log {
-                                                // SAFETY: `archive` is the live
-                                                // `read_new()` handle this
-                                                // extraction loop is iterating.
-                                                let archive_error = slice_to_nul(
-                                                    unsafe { &*archive }.error_string(),
-                                                );
                                                 Output::err(
                                                     "libarchive error",
                                                     "extracting {}: {}",
@@ -1880,17 +2030,19 @@ impl Archiver {
                                                             path_slice,
                                                             Default::default(),
                                                         ),
-                                                        bstr::BStr::new(archive_error),
+                                                        &err,
                                                     ),
                                                 );
                                             }
-                                            return Err(crate::Error::Fail);
+                                            return Err(err);
                                         }
                                     }
                                     retries_remaining -= 1;
                                 }
                             }
+                            count += 1;
                         }
+                        // Character/block devices, FIFOs and sockets are never created.
                         _ => {}
                     }
                 }
@@ -1898,7 +2050,13 @@ impl Archiver {
         }
 
         #[cfg(unix)]
-        create_deferred_symlinks(dir_fd, &deferred_symlinks, options.log);
+        {
+            count += create_deferred_symlinks(dir_fd, &deferred_symlinks, options.log);
+            for (path, mode) in deferred_dir_modes.iter().rev() {
+                bun_sys::fchmodat(dir_fd, path.as_zstr(), *mode, 0)
+                    .map_err(|e| entry_error(e, path.as_bytes()))?;
+            }
+        }
 
         Ok(count)
     }

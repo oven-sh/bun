@@ -1571,8 +1571,7 @@ pub mod command {
         Ok(())
     }
 
-    /// `bun --help init`: a help flag in front of the keyword, for the commands
-    /// that parse their own argv instead of a clap table.
+    /// A help flag in front of the keyword (`bun --help init`).
     fn help_requested_before_keyword() -> bool {
         bun::argv()
             .iter()

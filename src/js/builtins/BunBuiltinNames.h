@@ -192,7 +192,6 @@ using namespace JSC;
     macro(writable) \
     macro(writableType) \
     macro(write) \
-    macro(writer) \
     macro(written) \
     BUN_ADDITIONAL_BUILTIN_NAMES(macro)
 // --- END of BUN_COMMON_PRIVATE_IDENTIFIERS_EACH_PROPERTY_NAME ---

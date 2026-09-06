@@ -5354,8 +5354,9 @@ pub mod form_data {
         }
     }
 
-    /// `FormData.getBoundary` — borrow the `boundary=` value out of a
-    /// `Content-Type` header. Returns `None` on malformed quoting.
+    /// `FormData.getBoundary` — the `boundary=` value out of a
+    /// `Content-Type` header. Returns `None` when there is no boundary or
+    /// the boundary is empty.
     ///
     /// Parameters are `;`-delimited per RFC 7231 and the parameter *name* must
     /// be exactly `boundary`, so a different parameter (`xboundary=FAKE`) or a
@@ -5363,7 +5364,15 @@ pub mod form_data {
     /// by an unanchored substring search. A `;` inside a quoted parameter
     /// value (RFC 7230 quoted-string, `\` escapes the next byte) does not
     /// delimit parameters.
-    pub fn get_boundary(content_type: &[u8]) -> Option<&[u8]> {
+    ///
+    /// The value follows WHATWG "parse a MIME type": an unquoted value runs
+    /// to the next `;` with trailing HTTP whitespace removed (`boundary=abc ;
+    /// charset=utf-8` is `abc`, not `abc `). A quoted value is unescaped
+    /// (`"ab\c"` is `abc`), runs to the end of the header when the closing
+    /// quote is missing, and anything between the closing quote and the next
+    /// `;` is discarded.
+    pub fn get_boundary(content_type: &[u8]) -> Option<std::borrow::Cow<'_, [u8]>> {
+        use std::borrow::Cow;
         let mut rest = content_type;
         loop {
             let semi = index_of_unquoted_semicolon(rest)?;
@@ -5379,18 +5388,35 @@ pub mod form_data {
                 continue;
             }
             let begin = &param[eq + 1..];
-            if begin.is_empty() {
-                return None;
+            if begin.first() == Some(&b'"') {
+                let mut value = Vec::new();
+                let mut i = 1;
+                while i < begin.len() {
+                    match begin[i] {
+                        b'"' => break,
+                        b'\\' => {
+                            i += 1;
+                            if i >= begin.len() {
+                                value.push(b'\\');
+                                break;
+                            }
+                            value.push(begin[i]);
+                        }
+                        c => value.push(c),
+                    }
+                    i += 1;
+                }
+                if value.is_empty() {
+                    return None;
+                }
+                return Some(Cow::Owned(value));
             }
             let end = crate::strings::index_of_char_usize(begin, b';').unwrap_or(begin.len());
-            if begin[0] == b'"' {
-                if end > 1 && begin[end - 1] == b'"' {
-                    return Some(&begin[1..end - 1]);
-                }
-                // Opening quote with no matching closing quote — malformed.
+            let value = crate::strings_impl::trim_right(&begin[..end], b" \t\r\n");
+            if value.is_empty() {
                 return None;
             }
-            return Some(&begin[..end]);
+            return Some(Cow::Borrowed(value));
         }
     }
 

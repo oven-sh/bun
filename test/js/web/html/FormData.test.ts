@@ -300,6 +300,66 @@ describe("FormData", () => {
     }
   });
 
+  // WHATWG "parse a MIME type": an unquoted parameter value ends at the next
+  // ";" with trailing HTTP whitespace removed; a quoted value is unescaped and
+  // runs to the end of the header when the closing quote is missing.
+  describe("Content-Type boundary parameter value", () => {
+    const body = '--abc\r\nContent-Disposition: form-data; name="k"\r\n\r\nv\r\n--abc--\r\n';
+    const parses = [
+      "multipart/form-data; boundary=abc ; charset=utf-8",
+      "multipart/form-data; boundary=abc\t; charset=utf-8",
+      "multipart/form-data; boundary=abc \t ",
+      'multipart/form-data; boundary="ab\\c"',
+      'multipart/form-data; boundary="abc',
+      'multipart/form-data; boundary="abc" junk; charset=utf-8',
+    ];
+    const rejects = [
+      // The delimiter in the body is "--abc", not "--abc ".
+      { ct: "multipart/form-data; boundary=abc ; charset=utf-8", body: body.replaceAll("--abc", "--abc ") },
+      // An empty boundary is not a boundary.
+      {
+        ct: 'multipart/form-data; boundary=""',
+        body: "--\r\n" + body.slice("--abc\r\n".length, -"--abc--\r\n".length) + "----\r\n",
+      },
+      { ct: "multipart/form-data; boundary= ; charset=utf-8", body },
+    ];
+
+    for (const C of [Response, Request] as const) {
+      const make = (b: string, ct: string) =>
+        C === Response
+          ? new Response(b, { headers: { "Content-Type": ct } })
+          : new Request("http://x/", { method: "POST", body: b, headers: { "Content-Type": ct } });
+
+      it.each(parses)(`${C.name}: %j parses`, async ct => {
+        expect([...(await make(body, ct).formData())]).toEqual([["k", "v"]]);
+      });
+
+      it.each(rejects)(`${C.name}: $ct rejects`, async ({ ct, body }) => {
+        await expect(make(body, ct).formData()).rejects.toThrow();
+      });
+    }
+
+    it("Bun.serve request.formData() trims whitespace before ';'", async () => {
+      await using server = Bun.serve({
+        port: 0,
+        async fetch(req) {
+          try {
+            return Response.json([...(await req.formData())]);
+          } catch (e) {
+            return new Response(String(e), { status: 400 });
+          }
+        },
+      });
+      const res = await fetch(server.url, {
+        method: "POST",
+        headers: { "Content-Type": "multipart/form-data; boundary=abc ; charset=utf-8" },
+        body,
+      });
+      expect(await res.json()).toEqual([["k", "v"]]);
+      expect(res.status).toBe(200);
+    });
+  });
+
   // RFC 2183 §2: the disposition type is a case-insensitive token.
   // RFC 9112 §5.6.3: OWS = *( SP / HTAB ), so HTAB is valid after the colon.
   describe("Content-Disposition: form-data token + OWS", () => {

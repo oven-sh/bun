@@ -107,8 +107,7 @@ pub(super) mod ffi {
         pub(crate) safe fn SSL_get_session(ssl: &SSL) -> *mut SSL_SESSION;
         // Borrowed from the SSL's ex_data; no caller-side precondition.
         pub(crate) safe fn us_ssl_get_new_session(ssl: &SSL) -> *mut SSL_SESSION;
-        /// 1 once the handshake has started (usockets openssl.c records
-        /// SSL_CB_HANDSHAKE_START). SSL_set_session abort()s after that.
+        /// 1 once SSL_CB_HANDSHAKE_START fired (usockets openssl.c).
         pub(crate) safe fn us_ssl_handshake_started(ssl: &SSL) -> c_int;
         // Both handles are opaque-ZST refs (`UnsafeCell` body); BoringSSL bumps
         // `session`'s refcount internally — no caller-side precondition.
@@ -1180,8 +1179,7 @@ pub(super) fn set_session(
         // so we must release the one returned by d2i_SSL_SESSION on every path.
         // SAFETY: `s` is the +1 SSL_SESSION reference returned by d2i_SSL_SESSION; we own it.
         let _guard = scopeguard::guard(session, |s| unsafe { ffi::SSL_SESSION_free(s) });
-        // BoringSSL abort()s the process if SSL_set_session runs after the
-        // handshake state machine has left its initial state.
+        // SSL_set_session abort()s once the handshake has started.
         if ffi::us_ssl_handshake_started(boringssl::SSL::opaque_ref(ssl_ptr)) != 0 {
             return Err(global.throw(format_args!("Already started.")));
         }

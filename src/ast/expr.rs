@@ -1347,7 +1347,9 @@ impl Expr {
         None
     }
 
-    pub(crate) fn to_string_expr_without_side_effects(&self, bump: &Bump) -> Option<Expr> {
+    /// The string `String(expr)` evaluates to, when it is known statically and
+    /// the conversion cannot run user code. `None` otherwise.
+    pub fn to_string_expr_without_side_effects(&self, bump: &Bump) -> Option<Expr> {
         let expr = self;
         let unwrapped = expr.unwrap_inlined();
         let slice: Option<&[u8]> = match unwrapped.data {

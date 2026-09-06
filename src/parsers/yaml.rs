@@ -2651,11 +2651,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                 match self.token.data {
                     TokenData::CollectEntry => {
                         let value = Expr::init(E::Null {}, self.token.start.loc());
-                        props.append(G::Property {
-                            key: Some(key),
-                            value: Some(value),
-                            ..Default::default()
-                        })?;
+                        props.append(self.bump, key, value)?;
 
                         self.context.set(Context::FlowKey)?;
                         let r = self.scan(ScanOptions::default());
@@ -2665,11 +2661,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                     }
                     TokenData::MappingEnd => {
                         let value = Expr::init(E::Null {}, self.token.start.loc());
-                        props.append(G::Property {
-                            key: Some(key),
-                            value: Some(value),
-                            ..Default::default()
-                        })?;
+                        props.append(self.bump, key, value)?;
                         continue;
                     }
                     TokenData::MappingValue => {}
@@ -2685,11 +2677,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                     TokenData::MappingEnd | TokenData::CollectEntry
                 ) {
                     let value = Expr::init(E::Null {}, self.token.start.loc());
-                    props.append(G::Property {
-                        key: Some(key),
-                        value: Some(value),
-                        ..Default::default()
-                    })?;
+                    props.append(self.bump, key, value)?;
                 } else {
                     // [147] the value is ns-flow-node; threading the value's
                     // own indent as current_mapping_indent makes the Scalar
@@ -2979,11 +2967,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                         TokenData::Eof => {
                             if explicit_key {
                                 let value = Expr::init(E::Null {}, self.pos.loc());
-                                props.append(G::Property {
-                                    key: Some(key),
-                                    value: Some(value),
-                                    ..Default::default()
-                                })?;
+                                props.append(self.bump, key, value)?;
                                 continue;
                             }
                             return Err(Self::unexpected_token());
@@ -2995,11 +2979,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                                     // [189] e-node — `:` belongs to an outer
                                     // construct; this entry has no value.
                                     let value = Expr::init(E::Null {}, self.pos.loc());
-                                    props.append(G::Property {
-                                        key: Some(key),
-                                        value: Some(value),
-                                        ..Default::default()
-                                    })?;
+                                    props.append(self.bump, key, value)?;
                                     continue;
                                 }
                                 return Err(if self.tab_after_indent {
@@ -3020,11 +3000,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                                 // [189] explicit-value is optional; the current
                                 // token is the next entry's key.
                                 let value = Expr::init(E::Null {}, self.pos.loc());
-                                props.append(G::Property {
-                                    key: Some(key),
-                                    value: Some(value),
-                                    ..Default::default()
-                                })?;
+                                props.append(self.bump, key, value)?;
                                 continue;
                             }
                             return Err(Self::unexpected_token());
@@ -3112,11 +3088,27 @@ impl MappingProps {
         }
     }
 
-    pub(crate) fn append(&mut self, mut prop: G::Property) -> Result<(), AllocError> {
-        if let Some(key) = &prop.key {
-            prop.flags |= E::own_key_property_flags(key);
-        }
-        self.list.push(prop);
+    /// Appends `key: value`. The entry becomes a property of a JS object, so
+    /// the key ends up as `String(key)`: a scalar key is stored as that string
+    /// (`true` -> `"true"`, `0x10` -> `"16"`). A sequence or mapping key has no
+    /// literal spelling; it stays a node under a computed key and is
+    /// stringified when the object is materialized.
+    pub(crate) fn append(
+        &mut self,
+        bump: &bun_alloc::Arena,
+        key: Expr,
+        value: Expr,
+    ) -> Result<(), AllocError> {
+        let (key, flags) = match key.to_string_expr_without_side_effects(bump) {
+            Some(key) => (key, E::own_key_property_flags(&key)),
+            None => (key, ast::flags::Property::IsComputed.into()),
+        };
+        self.list.push(G::Property {
+            key: Some(key),
+            value: Some(value),
+            flags,
+            ..Default::default()
+        });
         Ok(())
     }
 
@@ -3211,11 +3203,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
             }
         }
 
-        Ok(props.append(G::Property {
-            key: Some(key),
-            value: Some(value),
-            ..Default::default()
-        })?)
+        Ok(props.append(self.bump, key, value)?)
     }
 
     fn reject_open_merge_source(&mut self, node: &Expr) -> Result<(), ParseError> {

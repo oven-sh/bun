@@ -315,6 +315,68 @@ describe("bundler", async () => {
     run: { stdout: '[true,true,null,"{\\"__proto__\\":{\\"x\\":1},\\"a\\":2}"]' },
   });
 
+  // A YAML mapping key that is not a string scalar becomes the property key
+  // `String(key)`, the same key the runtime `.yaml` import and Bun.YAML.parse
+  // produce. Sequence and mapping keys are emitted as computed keys.
+  const yamlNonStringKeys = {
+    "/entry.ts": /* js */ `
+    import data from './data.yaml';
+    import * as ns from './data.yaml';
+    console.write(JSON.stringify([data, ns["true"], ns["false"], ns["null"], ns.str]));
+  `,
+    "/data.yaml": [
+      `[1, 2]: seq`,
+      `{a: 1}: map`,
+      `? - nested`,
+      `  - [deep, [1.5, null]]`,
+      `: nseq`,
+      `true: t`,
+      `false: f`,
+      `null: n`,
+      `1: one`,
+      `-1: neg`,
+      `0x10: hex`,
+      `1e21: big`,
+      `1e-7: tiny`,
+      `.inf: inf`,
+      `-.inf: ninf`,
+      `.nan: nan`,
+      `str: plain`,
+      ``,
+    ].join("\n"),
+  };
+  const yamlNonStringKeysStdout =
+    '[{"1":"one","16":"hex","1,2":"seq","[object Object]":"map","nested,deep,1.5,":"nseq","true":"t","false":"f","null":"n","-1":"neg","1e+21":"big","1e-7":"tiny","Infinity":"inf","-Infinity":"ninf","NaN":"nan","str":"plain"},"t","f","n","plain"]';
+  for (const minify of [false, true]) {
+    itBundled(`bun/loader-yaml-non-string-keys${minify ? "-minify" : ""}`, {
+      target: "bun",
+      files: yamlNonStringKeys,
+      minifySyntax: minify,
+      minifyWhitespace: minify,
+      minifyIdentifiers: minify,
+      run: { stdout: yamlNonStringKeysStdout },
+    });
+  }
+  itBundled("bun/loader-yaml-non-string-keys-no-bundle", {
+    target: "bun",
+    bundling: false,
+    entryPoints: ["/data.yaml"],
+    files: {
+      "/data.yaml": `[1, 2]: seq\n{a: 1}: map\n1: one\n-1: neg\n0x10: hex\nstr: plain\n`,
+    },
+    runtimeFiles: {
+      "/test.mjs": /* js */ `
+      import data, * as ns from './out.js';
+      console.write(JSON.stringify([data, ns["1"], ns["-1"], ns["16"], ns.str]));
+    `,
+    },
+    run: {
+      file: "/test.mjs",
+      stdout:
+        '[{"1":"one","16":"hex","1,2":"seq","[object Object]":"map","-1":"neg","str":"plain"},"one","neg","hex","plain"]',
+    },
+  });
+
   itBundled("bun/loader-xml-proto-key-is-own-property", {
     target: "bun",
     files: {

@@ -165,11 +165,7 @@ describe("Bun.deepEquals with mixed enumerability", () => {
 
   const cases: [string, () => object, () => object][] = [
     ["string key", () => ({ a: 1, h: 2 }), () => nonEnumerable({ a: 1 }, "h", 2)],
-    [
-      "symbol key",
-      () => ({ [Symbol.for("h")]: 2 }),
-      () => nonEnumerable({}, Symbol.for("h"), 2),
-    ],
+    ["symbol key", () => ({ [Symbol.for("h")]: 2 }), () => nonEnumerable({}, Symbol.for("h"), 2)],
     ["nested", () => ({ x: { a: 1, h: 2 } }), () => ({ x: nonEnumerable({ a: 1 }, "h", 2) })],
     ["inside an array", () => [{ a: 1, h: 2 }], () => [nonEnumerable({ a: 1 }, "h", 2)]],
     [

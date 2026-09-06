@@ -200,8 +200,7 @@ describe("WebSocket upgrade split across reads", () => {
   test("completed header larger than the cap is rejected even when split under the cap", async () => {
     // A full 101 head (terminated with \r\n\r\n) whose total size is over the
     // default cap (16384). The server splits it so the first write stays under
-    // the cap. The old code only checked the cap in the ShortRead arm, so the
-    // head completed on the second read with no size check and was accepted.
+    // the cap, so no single read of an incomplete head exceeds the cap.
     using server = Bun.listen<{ buf: string; done: boolean }>({
       hostname: "127.0.0.1",
       port: 0,
@@ -230,7 +229,6 @@ describe("WebSocket upgrade split across reads", () => {
             Buffer.alloc(21000, "p").toString("latin1") + // head_len > 16384
             "\r\n\r\n";
           const bytes = Buffer.from(head, "latin1");
-          // First write stays under the cap so the ShortRead arm never rejects.
           socket.write(bytes.subarray(0, 16000));
           socket.flush();
           setTimeout(() => {

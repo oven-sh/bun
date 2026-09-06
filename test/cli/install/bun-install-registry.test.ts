@@ -9795,7 +9795,7 @@ describe.concurrent("install.scopes rejects a scope that would fall back to the 
       stderr: "pipe",
       env,
     });
-    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).not.toContain("Invalid Bunfig");
     expect(stderr).toContain(`error: GET http://localhost:${server.port}/no-deps - 404`);
     expect(exitCode).toBe(1);

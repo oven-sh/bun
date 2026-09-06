@@ -805,9 +805,12 @@ function binaryVerifyStamp(cfg: Config, exeName: string): string | undefined {
   return binaryVerifyTools(cfg) !== undefined ? resolve(cfg.buildDir, `${exeName}.binary-verified`) : undefined;
 }
 
-/** Report written by the duplicate-definition scan of the link inputs. */
-function duplicateSymbolsReport(cfg: Config, exeName: string): string | undefined {
-  return cfg.nm !== undefined ? resolve(cfg.buildDir, `${exeName}.duplicate-symbols.txt`) : undefined;
+/** Stamp of the duplicate-definition scan of the link inputs (its report is `<exe>.duplicate-symbols.txt`). */
+function duplicateSymbolsStamp(cfg: Config, exeName: string): string | undefined {
+  // COFF objects need llvm-objdump to tell COMDAT from strong (verify-binary.ts coffDefinitions).
+  return cfg.nm !== undefined && !(cfg.windows && cfg.objdump === undefined)
+    ? resolve(cfg.buildDir, `${exeName}.duplicate-symbols-checked`)
+    : undefined;
 }
 
 function binaryVerifyTools(cfg: Config): { nm: string; readobj: string; objdump: string; cxxfilt: string } | undefined {
@@ -827,7 +830,7 @@ export function postLinkChecks(cfg: Config, exeName: string): string[] {
     smokeTestStamp(cfg, exeName),
     classInfoStamp(cfg, exeName),
     binaryVerifyStamp(cfg, exeName),
-    duplicateSymbolsReport(cfg, exeName),
+    duplicateSymbolsStamp(cfg, exeName),
   ].filter((p): p is string => p !== undefined);
 }
 
@@ -889,24 +892,25 @@ function emitDuplicateSymbolCheck(
   linkInputs: string[],
   strippedExe: string | undefined,
 ): string[] {
-  const report = duplicateSymbolsReport(cfg, exeName);
-  // COFF objects need llvm-objdump to tell COMDAT from strong (verify-binary.ts coffDefinitions).
-  if (report === undefined || cfg.nm === undefined || (cfg.windows && cfg.objdump === undefined)) return [];
+  const stamp = duplicateSymbolsStamp(cfg, exeName);
+  if (stamp === undefined) return [];
+  const report = resolve(cfg.buildDir, `${exeName}.duplicate-symbols.txt`);
   const q = (p: string) => quote(p, cfg.windows);
+  // The report is always written; $out is the stamp, written only on success.
   n.rule("duplicate_symbols", {
-    command: `${cfg.jsRuntime} ${q(streamPath)} check --label=${exeName} --elapsed ${cfg.jsRuntime} ${q(verifyBinaryPath)} duplicates ${q(cfg.nm)} $out.rsp $out${cfg.windows ? ` ${q(cfg.objdump!)}` : ""}`,
+    command: `${cfg.jsRuntime} ${q(streamPath)} check --label=${exeName} --elapsed --stamp=$out ${cfg.jsRuntime} ${q(verifyBinaryPath)} duplicates ${q(cfg.nm!)} $out.rsp ${q(report)}${cfg.windows ? ` ${q(cfg.objdump!)}` : ""}`,
     description: `check ${exeName} link inputs for duplicate definitions`,
     rspfile: "$out.rsp",
     rspfile_content: "$in_newline",
   });
   n.build({
-    outputs: [report],
+    outputs: [stamp],
     rule: "duplicate_symbols",
     inputs: linkInputs,
     implicitInputs: [verifyBinaryPath],
     ...(strippedExe !== undefined ? { orderOnlyInputs: [strippedExe] } : {}),
   });
-  return [report];
+  return [stamp];
 }
 
 /**
@@ -971,12 +975,13 @@ function emitClassInfoCheck(
   // NM: the toolchain's llvm-nm (the script otherwise searches PATH). On
   // success the script's report is reduced to one `N distinct ClassInfo`
   // line like the other checks; on failure it is shown whole.
-  // ($$1/$$2: ninja's escape for the shell's positional parameters.)
+  // (The paths ride as positional parameters — $$1 script, $$2 exe, $$3
+  // stamp; `$$` is ninja's escape — so none is spliced into the quoted text.)
   const nmEnv = cfg.nm === undefined ? "" : ` --env=NM=${quote(cfg.nm, false)}`;
   n.rule("classinfo_check", {
     command:
       `${cfg.jsRuntime} ${quote(streamPath, false)} check --label=${exeName} --elapsed --stamp=$out${nmEnv} sh -c ` +
-      `'python3 ${quote(script, false)} "$$1" > "$$2.log" 2>&1 && sed -n "s/^check-classinfo-uniqueness: [^:]*: \\([0-9]*\\) ClassInfo.*/\\1 distinct ClassInfo/p" "$$2.log" || { cat "$$2.log"; exit 1; }' sh $in $out`,
+      `'python3 "$$1" "$$2" > "$$3.log" 2>&1 && sed -n "s/^check-classinfo-uniqueness: [^:]*: \\([0-9]*\\) ClassInfo.*/\\1 distinct ClassInfo/p" "$$3.log" || { cat "$$3.log"; exit 1; }' sh ${quote(script, false)} $in $out`,
     description: `check ${exeName} JSC ClassInfo uniqueness`,
   });
   n.build({

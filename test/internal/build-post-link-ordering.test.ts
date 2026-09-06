@@ -142,7 +142,7 @@ describe("emitPostLink ninja ordering", () => {
     // the static scans (ClassInfo canary, verify-binary, duplicate
     // definitions) run on any host.
     expect(buildEdge(out, "phony")).toBe(
-      "build check: phony bun-profile bun-profile.classinfo-unique bun-profile.binary-verified bun-profile.duplicate-symbols.txt",
+      "build check: phony bun-profile bun-profile.classinfo-unique bun-profile.binary-verified bun-profile.duplicate-symbols-checked",
     );
   });
 });

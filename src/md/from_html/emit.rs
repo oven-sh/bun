@@ -207,7 +207,7 @@ impl<'o> Converter<'o> {
                     if let Some(alt) = node.attr(&local_name!("alt")) {
                         let mut cleaned = String::new();
                         clean_attribute(alt, &mut cleaned);
-                        escape_markdown_into(&cleaned, true, out);
+                        escape_markdown_into(&cleaned, false, out);
                     }
                     out.push_str("](");
                     push_link_destination(out, src);
@@ -405,6 +405,8 @@ impl<'o> Converter<'o> {
                 // character that starts a line inside the code.
                 let mut fence_len = 3;
                 for line in lines(&code) {
+                    // A closing fence may be indented by up to three spaces.
+                    let line = line.trim_start_matches(' ');
                     let run = line.chars().take_while(|&c| c == fence_char).count();
                     if run >= fence_len {
                         fence_len = run + 1;
@@ -456,13 +458,22 @@ impl<'o> Converter<'o> {
             }
         }
 
-        // Column count = widest row, counting colspans.
+        // Column count = widest row, counting colspans. The header row and
+        // the delimiter row are that wide; body rows are only padded up to
+        // it for tables of ordinary width — GFM readers fill in missing
+        // cells themselves, and padding every row of a tall table to one
+        // freakishly wide row would make the output rows × columns.
         let ncols = rows
             .iter()
             .map(|&r| table_cells(r).map(colspan).sum::<usize>())
             .max()
             .unwrap_or(0)
             .max(1);
+        let pad_to = if ncols <= MAX_PADDED_COLUMNS {
+            ncols
+        } else {
+            0
+        };
 
         for (row_index, &row) in rows.iter().enumerate() {
             let mut col = 0usize;
@@ -479,7 +490,7 @@ impl<'o> Converter<'o> {
                 }
                 col += span;
             }
-            for _ in col..ncols {
+            for _ in col..(if row_index == 0 { ncols } else { pad_to }) {
                 rep.push_str("  |");
             }
             rep.push('\n');
@@ -735,6 +746,7 @@ fn inline_code(content: &str, rep: &mut String) {
 
     // Shortest backtick run that does not occur in the content.
     let mut runs: u64 = 0; // bit n set → a run of exactly n backticks exists (n < 64)
+    let mut longest = 0usize;
     let mut run = 0usize;
     for b in code.bytes().chain(core::iter::once(0)) {
         if b == b'`' {
@@ -743,12 +755,17 @@ fn inline_code(content: &str, rep: &mut String) {
             if run < 64 {
                 runs |= 1 << run;
             }
+            longest = longest.max(run);
             run = 0;
         }
     }
     let mut delim_len = 1;
     while delim_len < 64 && runs & (1 << delim_len) != 0 {
         delim_len += 1;
+    }
+    if delim_len == 64 {
+        // Every length below 64 occurs; go past the longest run instead.
+        delim_len = longest + 1;
     }
 
     for _ in 0..delim_len {
@@ -768,7 +785,20 @@ fn inline_code(content: &str, rep: &mut String) {
 
 /// `language-xxx` / `lang-xxx` on the `<code>` or `<pre>`, or GitHub-style
 /// `highlight-source-xxx` on a wrapping `<div>`.
+/// The info string for a fenced block, or empty. Anything that could not
+/// stand on the fence line — whitespace, or a backtick/tilde that would read
+/// as part of the fence — disqualifies the candidate.
 fn code_language(pre: Ref<'_>) -> String {
+    let l = code_language_candidate(pre);
+    if l.bytes()
+        .any(|b| b.is_ascii_whitespace() || b == b'`' || b == b'~' || b < 0x20)
+    {
+        return String::new();
+    }
+    l
+}
+
+fn code_language_candidate(pre: Ref<'_>) -> String {
     fn from_class(node: Ref<'_>, prefixes: &[&str]) -> Option<String> {
         let class = node.attr(&local_name!("class"))?;
         for token in class.split_ascii_whitespace() {
@@ -793,7 +823,7 @@ fn code_language(pre: Ref<'_>) -> String {
     // GitHub's rendered-markdown HTML: `<pre lang="ts"><code>`.
     if let Some(l) = pre.attr(&local_name!("lang")) {
         let l = js_trim(l);
-        if !l.is_empty() && !strings::contains_char(l.as_bytes(), b' ') {
+        if !l.is_empty() {
             return l.to_owned();
         }
     }
@@ -845,7 +875,7 @@ fn push_link_destination(rep: &mut String, dest: &str) {
         rep.push('<');
     }
     let mut rest = dest;
-    while let Some(i) = scan::find_any(rest.as_bytes(), b"()<>\t\n\r") {
+    while let Some(i) = scan::find_any(rest.as_bytes(), b"()<>\\\t\n\r") {
         rep.push_str(&rest[..i]);
         let c = rest.as_bytes()[i];
         if !matches!(c, b'\t' | b'\n' | b'\r') {
@@ -871,7 +901,7 @@ fn push_link_title(rep: &mut String, node: Ref<'_>) {
     }
     rep.push_str(" \"");
     for c in cleaned.chars() {
-        if c == '"' {
+        if c == '"' || c == '\\' {
             rep.push('\\');
         }
         rep.push(c);
@@ -928,12 +958,19 @@ fn table_cells<'a>(row: Ref<'a>) -> impl Iterator<Item = Ref<'a>> {
         .filter(|c| matches!(c.tag(), Tag::Td | Tag::Th))
 }
 
+/// Body rows are padded to the table's width only up to this many columns.
+const MAX_PADDED_COLUMNS: usize = 64;
+
+/// Widest `colspan` honoured. (HTML clamps to 1000; a pipe table that wide
+/// is not a table anyone reads, and each extra column costs output on the
+/// header and delimiter rows.)
+const MAX_COLSPAN: usize = 64;
+
 fn colspan(cell: Ref<'_>) -> usize {
     cell.attr(&local_name!("colspan"))
         .and_then(|v| js_trim(v).parse::<usize>().ok())
         .filter(|&n| n >= 1)
-        // The HTML spec clamps colspan to 1000.
-        .map_or(1, |n| n.min(1000))
+        .map_or(1, |n| n.min(MAX_COLSPAN))
 }
 
 #[derive(Clone, Copy)]
@@ -992,11 +1029,13 @@ fn push_one_line(rep: &mut String, content: &str, escape_pipes: bool) {
         match bytes[i] {
             b'\n' | b'\r' => {
                 rep.push_str(&content[run_start..i]);
-                // Drop the hard-break marker that preceded the newline.
+                // Drop the hard-break marker that preceded the newline: the
+                // two spaces, or a backslash that is not itself escaped (an
+                // odd-length run, since text backslashes arrive doubled).
                 while rep.ends_with(' ') {
                     rep.pop();
                 }
-                if rep.ends_with('\\') && !rep.ends_with("\\\\") {
+                if rep.bytes().rev().take_while(|&b| b == b'\\').count() % 2 == 1 {
                     rep.pop();
                 }
                 while i < bytes.len() && matches!(bytes[i], b'\n' | b'\r' | b' ' | b'\t') {

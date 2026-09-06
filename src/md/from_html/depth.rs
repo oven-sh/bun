@@ -111,7 +111,7 @@ impl<'a> Tracer for HandleCounter<'a> {
 /// elements (they never deepen the tree), the elements that switch the
 /// tokenizer into a raw-text state (dropping `<script>` would spill its
 /// source into the document as text), and the document-structure tags the
-/// tree builder ignores or merges anyway.
+/// tree builder merges into an existing element rather than nesting.
 fn always_forward(name: &LocalName) -> bool {
     matches!(
         &**name,
@@ -146,7 +146,6 @@ fn always_forward(name: &LocalName) -> bool {
             | "html"
             | "head"
             | "body"
-            | "frameset"
     )
 }
 

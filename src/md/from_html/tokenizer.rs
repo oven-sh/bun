@@ -25,7 +25,7 @@
 //! a corpus of real pages and windows into them, and random markup.
 
 use bun_core::strings;
-use html5ever::data::{C1_REPLACEMENTS, NAMED_ENTITIES};
+use html5ever::data::C1_REPLACEMENTS;
 use html5ever::tendril::StrTendril;
 use html5ever::tokenizer::states::RawKind;
 use html5ever::tokenizer::{Doctype, Tag, TagKind, Token, TokenSink, TokenSinkResult};
@@ -1013,25 +1013,27 @@ impl<'t, S: TokenSink + AttrBuf> FastTokenizer<'t, S> {
                     out.push_char(c);
                     return;
                 }
-                // Longest match against the entity table, which also holds
-                // every proper prefix of every name (mapped to 0) so the
-                // scan knows when to stop.
-                let mut len = 0usize;
-                let mut matched: Option<(usize, (u32, u32))> = None;
-                while let Some(&b) = bytes.get(name_start + len) {
-                    if !b.is_ascii() {
-                        break;
-                    }
-                    let Some(&m) = NAMED_ENTITIES.get(&self.src[name_start..name_start + len + 1])
-                    else {
-                        break;
-                    };
-                    len += 1;
-                    if m.0 != 0 {
-                        matched = Some((len, m));
-                    }
-                }
-                let Some((mlen, (c1, c2))) = matched else {
+                // Longest match. Every name is ASCII alphanumerics plus,
+                // for all but the 106 legacy names, a closing `;` — so the
+                // candidates are the whole alphanumeric run with its `;`, or
+                // a legacy name that is a prefix of the run.
+                let run = bytes[name_start..]
+                    .iter()
+                    .take(entities::MAX_NAME_LEN)
+                    .take_while(|b| b.is_ascii_alphanumeric())
+                    .count();
+                let with_semicolon = if bytes.get(name_start + run) == Some(&b';') {
+                    // `pos - 1` is the `&`, which the shared table's keys
+                    // include.
+                    crate::entity::lookup(&bytes[name_start - 1..name_start + run + 1])
+                        .map(|cp| (run + 1, cp))
+                } else {
+                    None
+                };
+                let matched = with_semicolon.or_else(|| {
+                    entities::longest_legacy_prefix(&bytes[name_start..name_start + run])
+                });
+                let Some((mlen, [c1, c2])) = matched else {
                     out.push_char('&');
                     return;
                 };
@@ -1429,6 +1431,55 @@ fn lowercase_with_replacement(s: &str) -> String {
         });
     }
     out
+}
+
+/// Named character references without html5ever's `NAMED_ENTITIES` (a
+/// 9,854-entry map of every name *and every prefix of every name*, ~320 KB
+/// of static data). The Markdown parser already ships the 2,125 `;`-terminated
+/// names in a compact sorted table ([`crate::entity`]); the only other names
+/// the HTML tokenizer accepts are the 106 legacy ones that may omit the `;`,
+/// listed here. Longest-match semantics are unchanged: see the call site.
+mod entities {
+    /// Longest entity name, `;` included (`CounterClockwiseContourIntegral;`).
+    pub(super) const MAX_NAME_LEN: usize = 32;
+
+    /// The names the HTML standard allows without a trailing semicolon,
+    /// sorted, NUL-padded to six bytes. Each expands exactly like its
+    /// `;`-terminated form.
+    #[rustfmt::skip]
+    static LEGACY: [[u8; 6]; 106] = [
+        *b"AElig\0", *b"AMP\0\0\0", *b"Aacute", *b"Acirc\0", *b"Agrave", *b"Aring\0", *b"Atilde", *b"Auml\0\0",
+        *b"COPY\0\0", *b"Ccedil", *b"ETH\0\0\0", *b"Eacute", *b"Ecirc\0", *b"Egrave", *b"Euml\0\0", *b"GT\0\0\0\0",
+        *b"Iacute", *b"Icirc\0", *b"Igrave", *b"Iuml\0\0", *b"LT\0\0\0\0", *b"Ntilde", *b"Oacute", *b"Ocirc\0",
+        *b"Ograve", *b"Oslash", *b"Otilde", *b"Ouml\0\0", *b"QUOT\0\0", *b"REG\0\0\0", *b"THORN\0", *b"Uacute",
+        *b"Ucirc\0", *b"Ugrave", *b"Uuml\0\0", *b"Yacute", *b"aacute", *b"acirc\0", *b"acute\0", *b"aelig\0",
+        *b"agrave", *b"amp\0\0\0", *b"aring\0", *b"atilde", *b"auml\0\0", *b"brvbar", *b"ccedil", *b"cedil\0",
+        *b"cent\0\0", *b"copy\0\0", *b"curren", *b"deg\0\0\0", *b"divide", *b"eacute", *b"ecirc\0", *b"egrave",
+        *b"eth\0\0\0", *b"euml\0\0", *b"frac12", *b"frac14", *b"frac34", *b"gt\0\0\0\0", *b"iacute", *b"icirc\0",
+        *b"iexcl\0", *b"igrave", *b"iquest", *b"iuml\0\0", *b"laquo\0", *b"lt\0\0\0\0", *b"macr\0\0", *b"micro\0",
+        *b"middot", *b"nbsp\0\0", *b"not\0\0\0", *b"ntilde", *b"oacute", *b"ocirc\0", *b"ograve", *b"ordf\0\0",
+        *b"ordm\0\0", *b"oslash", *b"otilde", *b"ouml\0\0", *b"para\0\0", *b"plusmn", *b"pound\0", *b"quot\0\0",
+        *b"raquo\0", *b"reg\0\0\0", *b"sect\0\0", *b"shy\0\0\0", *b"sup1\0\0", *b"sup2\0\0", *b"sup3\0\0", *b"szlig\0",
+        *b"thorn\0", *b"times\0", *b"uacute", *b"ucirc\0", *b"ugrave", *b"uml\0\0\0", *b"uuml\0\0", *b"yacute",
+        *b"yen\0\0\0", *b"yuml\0\0",
+    ];
+
+    /// The longest legacy (semicolon-optional) name that `run` — a run of
+    /// ASCII alphanumerics — starts with, as `(length, codepoints)`.
+    pub(super) fn longest_legacy_prefix(run: &[u8]) -> Option<(usize, [u32; 2])> {
+        for len in (2..=run.len().min(6)).rev() {
+            let mut key = [0u8; 6];
+            key[..len].copy_from_slice(&run[..len]);
+            if LEGACY.binary_search(&key).is_ok() {
+                let mut name = [0u8; 8];
+                name[0] = b'&';
+                name[1..=len].copy_from_slice(&run[..len]);
+                name[len + 1] = b';';
+                return crate::entity::lookup(&name[..len + 2]).map(|cp| (len, cp));
+            }
+        }
+        None
+    }
 }
 
 /// The numeric character reference end state's mapping.

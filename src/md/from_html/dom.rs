@@ -37,7 +37,7 @@ pub(crate) type Arena<'a> = &'a Arenas<'a>;
 pub(crate) type Ref<'a> = &'a Node<'a>;
 type Link<'a> = Cell<Option<Ref<'a>>>;
 
-/// Kept to 96 bytes (links + one cache line of payload): every pass over the
+/// Kept small (88 bytes: five links plus payload): every pass over the
 /// document is a pointer walk, so node size is traversal speed.
 pub(crate) struct Node<'a> {
     pub(crate) parent: Link<'a>,
@@ -67,9 +67,8 @@ pub(crate) enum NodeData<'a> {
     Element {
         ns: Namespace,
         local: LocalName,
-        /// Lives in [`Arenas::attrs`]; replaced wholesale in the rare case
-        /// the tree builder merges attributes into an existing element.
-        attrs: Cell<&'a [Attribute]>,
+        /// Lives in [`Arenas::attrs`].
+        attrs: &'a [Attribute],
     },
 }
 
@@ -134,7 +133,6 @@ impl<'a> Node<'a> {
             return None;
         };
         attrs
-            .get()
             .iter()
             .find(|a| a.name.local == *name && a.name.ns == ns!())
             .map(|a| &*a.value)
@@ -447,7 +445,7 @@ impl<'a> TreeSink for Sink<'a> {
                 NodeData::Element {
                     ns: name.ns,
                     local: name.local,
-                    attrs: Cell::new(attrs),
+                    attrs,
                 },
                 tag,
             )
@@ -501,31 +499,11 @@ impl<'a> TreeSink for Sink<'a> {
             .append(self.new_node(NodeData::Ignored, Tag::NotAnElement));
     }
 
-    fn add_attrs_if_missing(&self, target: &Ref<'a>, attrs: Vec<Attribute>) {
-        let NodeData::Element {
-            attrs: ref existing,
-            ..
-        } = target.data
-        else {
-            panic!("not an element")
-        };
-        // Only reached for a repeated `<html>`/`<body>` tag: rebuild the
-        // list with the additions (the old slice stays in the arena).
-        let current = existing.get();
-        let mut merged: Vec<Attribute> = Vec::new();
-        for attr in attrs {
-            if !current.iter().any(|e| e.name == attr.name)
-                && !merged.iter().any(|e| e.name == attr.name)
-            {
-                merged.push(attr);
-            }
-        }
-        if merged.is_empty() {
-            return;
-        }
-        let mut all = current.to_vec();
-        all.append(&mut merged);
-        existing.set(self.arena.attrs.alloc_extend(all));
+    fn add_attrs_if_missing(&self, _target: &Ref<'a>, _attrs: Vec<Attribute>) {
+        // Only ever called to merge a repeated `<html>`/`<body>` start tag's
+        // attributes into the existing element. Nothing here reads either
+        // element's attributes, and honouring it would let `<body a1><body
+        // a2>…` grow one element's attribute list without bound.
     }
 
     fn remove_from_parent(&self, target: &Ref<'a>) {

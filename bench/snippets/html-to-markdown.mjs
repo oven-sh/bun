@@ -15,12 +15,9 @@ import TurndownService from "turndown";
 import { gfm } from "turndown-plugin-gfm";
 import { bench, group, run } from "../runner.mjs";
 
-function turndown(html) {
-  const td = new TurndownService({ headingStyle: "atx", codeBlockStyle: "fenced", bulletListMarker: "-", hr: "---" });
-  td.use(gfm);
-  td.remove(["script", "style"]);
-  return td.turndown(html);
-}
+const td = new TurndownService({ headingStyle: "atx", codeBlockStyle: "fenced", bulletListMarker: "-", hr: "---" });
+td.use(gfm);
+td.remove(["script", "style"]);
 
 const section = i => `
 <section id="s${i}">
@@ -91,7 +88,7 @@ for (const [name, html] of inputs) {
     if (hasBun) {
       bench("Bun.markdown.fromHTML", () => Bun.markdown.fromHTML(html));
     }
-    bench("turndown + gfm", () => turndown(html));
+    bench("turndown + gfm", () => td.turndown(html));
   });
 }
 

@@ -178,6 +178,41 @@ describe("Bun.markdown.fromHTML", () => {
     }
   });
 
+  // Output must not be re-readable as different Markdown syntax.
+  describe("syntax safety", () => {
+    const cases: [string, string, string][] = [
+      [
+        "backslashes in link destinations and titles are escaped",
+        `<p><a href="C:\\dir\\">x</a> <a href="/p" title="a\\">y</a></p>`,
+        `[x](C:\\\\dir\\\\) [y](/p "a\\\\")`,
+      ],
+      [
+        "`1)` at line start is an ordered-list marker too",
+        "<p>1) call</p><p>2. x</p><p>3)no</p>",
+        "1\\) call\n\n2\\. x\n\n3)no",
+      ],
+      [
+        "an indented fence inside code widens the outer fence",
+        "<pre><code>  ```\n  npm i\n  ```</code></pre><p>after</p>",
+        "````\n  ```\n  npm i\n  ```\n````\n\nafter",
+      ],
+      [
+        "an info string that cannot sit on the fence line is dropped",
+        '<pre><code class="language-`x">a</code></pre><pre lang="a\nb"><code>b</code></pre><pre lang="ts"><code>c</code></pre>',
+        "```\na\n```\n\n```\nb\n```\n\n```ts\nc\n```",
+      ],
+      ["image alt text is not at a line start", '<p><img alt="- 1. # x" src="/i.png"></p>', "![- 1. # x](/i.png)"],
+      ["a backslash before <br> stays one backslash when the break is dropped", "<h1>a\\<br>b</h1>", "# a\\\\ b"],
+    ];
+    for (const [name, html, md] of cases) {
+      test(name, () => expect(fromHTML(html)).toBe(md));
+    }
+    test("br: backslash marker before a dropped break", () => {
+      expect(fromHTML("<h1>a\\<br>b</h1>", { br: "\\" })).toBe("# a\\\\ b");
+      expect(fromHTML("<h1>a<br>b</h1>", { br: "\\" })).toBe("# a b");
+    });
+  });
+
   // HTML tokenizer behaviour (entities, CR/NUL handling, raw-text elements,
   // comments, doctypes, malformed tags). The expected strings were produced
   // with html5ever's reference tokenizer driving the same tree builder; the
@@ -341,6 +376,26 @@ describe("Bun.markdown.fromHTML", () => {
       expect(
         fromHTML("<table><tr><th>a</th><th>b</th></tr><tr><td>1</td><td>2</td></tr></table>", { tables: false }),
       ).toBe("a\n\nb\n\n1\n\n2");
+    });
+  });
+
+  describe("table width bounds", () => {
+    const repeat = (s: string, n: number) => Buffer.alloc(s.length * n, s).toString();
+    test("colspan is clamped to 64 columns", () => {
+      const md = fromHTML('<table><tr><th colspan="999">h</th></tr><tr><td>a</td><td>b</td></tr></table>');
+      expect(md.split("\n")[1]).toBe("|" + repeat(" --- |", 64));
+    });
+    test("body rows of a very wide table are not padded to its width", () => {
+      const md = fromHTML("<table><tr>" + repeat("<th>h</th>", 100) + "</tr><tr><td>x</td></tr></table>");
+      const lines = md.split("\n");
+      expect(lines[0]).toBe("|" + repeat(" h |", 100));
+      expect(lines[2]).toBe("| x |");
+    });
+    test("repeated <body> tags with attributes do not accumulate", () => {
+      expect(fromHTML(repeat("<body a=1 b=2 c=3>", 20_000) + "<p>ok</p>")).toBe("ok");
+    });
+    test("nested framesets are depth-capped like everything else", () => {
+      expect(fromHTML(repeat("<frameset>", 50_000) + repeat("<div>", 50_000) + "x")).toBe("");
     });
   });
 

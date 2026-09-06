@@ -301,11 +301,13 @@ fn escape_line_start(text: &str, out: &mut String) -> usize {
             0
         }
         b'0'..=b'9' => {
-            // `/^(\d+)\. /` → `$1\. `
+            // `/^(\d+)\. /` → `$1\. `, and the same for the `1) ` form of an
+            // ordered-list marker (which turndown misses).
             let n = bytes.iter().take_while(|b| b.is_ascii_digit()).count();
-            if bytes.get(n) == Some(&b'.') && bytes.get(n + 1) == Some(&b' ') {
+            if matches!(bytes.get(n), Some(b'.' | b')')) && bytes.get(n + 1) == Some(&b' ') {
                 out.push_str(&text[..n]);
-                out.push_str("\\.");
+                out.push('\\');
+                out.push(bytes[n] as char);
                 n + 1
             } else {
                 0

@@ -49,10 +49,7 @@ pub struct JSTranspiler {
     // address is stable across the move into `Box<JSTranspiler>` —
     // `transpiler.arena` holds a `&'static Arena` pointing into it.
     pub arena: Box<Arena>,
-    /// Native bytes this instance retains, computed once at the end of
-    /// construction (everything sized here is fixed after that) and reported
-    /// to the GC through the `estimatedSize` class hook. A plain field because
-    /// the GC reads it from its own thread, concurrently with the mutator.
+    /// Computed once at the end of construction: the GC thread reads it concurrently.
     estimated_size: usize,
     pub(crate) ref_count: bun_ptr::RefCount<JSTranspiler>,
 }
@@ -1070,9 +1067,7 @@ impl JSTranspiler {
         self.estimated_size
     }
 
-    /// The inline struct, the config arena, the config buffers and the define
-    /// tables `configure_defines` filled. Mutator thread only: it reads the
-    /// hash maps.
+    /// Mutator thread only: it reads the define hash maps.
     fn compute_estimated_size(&self) -> usize {
         use bun_js_parser::defines::{DotDefine, IdentifierDefine};
         use core::mem::size_of;

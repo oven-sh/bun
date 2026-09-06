@@ -187,9 +187,7 @@ pub trait JsSinkAbi {
         global: &crate::webcore::jsc::JSGlobalObject,
         ptr: *mut c_void,
     ) -> crate::webcore::jsc::JSValue;
-    /// `${abi_name}__reportMemoryCost`: caches `cost` on the sink or
-    /// controller cell `value` and reports any growth to the GC as extra
-    /// memory (a no-op for any other value).
+    /// `${abi_name}__reportMemoryCost`: GC extra memory for the sink or controller cell `value`.
     fn report_memory_cost_extern(value: crate::webcore::jsc::JSValue, cost: usize);
 }
 
@@ -422,10 +420,7 @@ impl<T: JsSinkType> JSSink<T> {
         }
     }
 
-    /// Tells the GC how many bytes the sink holds after a JS-driven call on
-    /// `this_value` (the sink or controller cell). The sink's buffer is native
-    /// memory the GC cannot see otherwise, so a loop that drops sinks holding
-    /// data never triggers a collection.
+    /// After a JS-driven call on `this_value` (the sink or controller cell).
     fn sync_memory_cost(this: &JSSink<T>, this_value: crate::webcore::jsc::JSValue) {
         T::report_memory_cost_extern(this_value, Self::js_memory_cost(&this.sink));
     }

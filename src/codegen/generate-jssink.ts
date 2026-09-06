@@ -99,8 +99,7 @@ function header() {
             static void analyzeHeap(JSCell*, JSC::HeapAnalyzer&);
             static size_t estimatedSize(JSCell* cell, JSC::VM& vm);
             static size_t memoryCost(void* sinkPtr);
-            // ${name}__reportMemoryCost: the sink's buffered bytes, reported to the GC as extra
-            // memory so a dropped sink that still holds data counts toward the next collection.
+            // ${name}__reportMemoryCost: the buffered bytes, as GC extra memory.
             void reportMemoryCost(size_t cost);
 
             void ref();

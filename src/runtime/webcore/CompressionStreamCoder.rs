@@ -143,9 +143,8 @@ pub struct CompressionStreamCoder {
     high_water_mark: usize,
     /// Set while a chunk's transform spans steps; `None` between chunks.
     pending: Option<Pending>,
-    /// Bytes the zlib / brotli state holds right now, kept by the
-    /// `bun_alloc::c_thunks::counted_*` hooks (zstd reports its own size).
-    /// Boxed so the hooks' `opaque` pointer stays valid while the coder moves.
+    /// Bytes zlib / brotli hold now (zstd reports its own size). Boxed: the
+    /// allocator hooks keep its address.
     native_bytes: Box<AtomicUsize>,
 }
 
@@ -296,9 +295,7 @@ impl CompressionStreamCoder {
         }))
     }
 
-    /// Bytes this coder holds outside the JS heap: the codec state (window,
-    /// hash tables, workspace) plus a parked chunk's unconsumed input. Read on
-    /// the JS thread between steps only: zstd walks its context to answer.
+    /// JS thread, between steps only: zstd walks its context to answer.
     fn memory_cost(&self) -> usize {
         let codec = match &self.backend {
             Backend::Deflate(_)
@@ -821,8 +818,7 @@ pub extern "C" fn CompressionStreamCoder__destroy(this: *mut CompressionStreamCo
     }
 }
 
-/// See [`CompressionStreamCoder::memory_cost`]. JS thread only, with no
-/// off-thread step in flight.
+/// See [`CompressionStreamCoder::memory_cost`].
 #[unsafe(no_mangle)]
 #[allow(clippy::not_unsafe_ptr_arg_deref)]
 pub extern "C" fn CompressionStreamCoder__memoryCost(this: *const CompressionStreamCoder) -> usize {

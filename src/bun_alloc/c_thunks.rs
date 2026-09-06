@@ -7,8 +7,7 @@
 //! | JSC `JSTypedArrayBytesDeallocator` | —                                      | `(bytes, ctx)`             |
 //!
 //! The plain (non-zone-tagged) variants are free functions below; the
-//! zone-tagged variants are minted per-label by [`c_thunks_for_zone!`]. The
-//! counted variants keep a running byte total in the `opaque` cookie.
+//! zone-tagged variants are minted per-label by [`c_thunks_for_zone!`].
 
 use core::ffi::{c_uint, c_void};
 use core::sync::atomic::{AtomicUsize, Ordering};
@@ -41,21 +40,17 @@ pub unsafe extern "C" fn mi_free_bytes(bytes: *mut c_void, _ctx: *mut c_void) {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// Counted thunks: the `opaque` cookie is a `*mut AtomicUsize` that tracks the
-// bytes currently held through these hooks, for GC extra-memory reporting.
-// The counter must outlive every allocation made through them.
+// Counted thunks: `opaque` is a `*mut AtomicUsize` holding the bytes in use
 // ──────────────────────────────────────────────────────────────────────────
 
-/// brotli-shape `(opaque, size)` → default allocator `malloc(size)`, adding the
-/// block's usable size to the counter at `opaque`. Null on failure.
+/// brotli-shape `(opaque, size)` → `malloc(size)`, counting the block's usable size.
 ///
 /// # Safety
-/// `opaque` points to a live `AtomicUsize`.
+/// `opaque` points to an `AtomicUsize` that outlives every block allocated here.
 pub unsafe extern "C" fn counted_malloc_size(opaque: *mut c_void, size: usize) -> *mut c_void {
     let ptr = raw::malloc(size);
     if !ptr.is_null() {
-        // SAFETY: the caller passes a live `AtomicUsize` as `opaque`, and `ptr`
-        // is a live default-allocator allocation.
+        // SAFETY: `opaque` is live (caller contract); `ptr` is a live allocation.
         unsafe {
             (*opaque.cast::<AtomicUsize>()).fetch_add(raw::usable_size(ptr), Ordering::Relaxed);
         }
@@ -76,18 +71,15 @@ pub unsafe extern "C" fn counted_malloc_items(
     unsafe { counted_malloc_size(opaque, items as usize * size as usize) }
 }
 
-/// `(opaque, ptr)` → default allocator `free(ptr)`, subtracting the block's
-/// usable size from the counter at `opaque`. Pairs with either counted alloc.
+/// `(opaque, ptr)` → `free(ptr)`, uncounting the block's usable size.
 ///
 /// # Safety
-/// `opaque` points to a live `AtomicUsize` and `ptr` is null or came from a
-/// counted alloc above.
+/// `opaque` points to a live `AtomicUsize`; `ptr` is null or from a counted alloc above.
 pub unsafe extern "C" fn counted_free(opaque: *mut c_void, ptr: *mut c_void) {
     if ptr.is_null() {
         return;
     }
-    // SAFETY: the caller's contract: a live counter and a live default-allocator
-    // allocation.
+    // SAFETY: caller contract.
     unsafe {
         (*opaque.cast::<AtomicUsize>()).fetch_sub(raw::usable_size(ptr), Ordering::Relaxed);
         raw::free(ptr);

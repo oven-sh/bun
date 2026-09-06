@@ -80,7 +80,6 @@ public:
 
     // Lockless snapshot for the GC visitor / hasPendingActivity.
     uint64_t state(uint8_t side) const { return m_sides[side].state.load(std::memory_order_acquire); }
-    // Serialized bytes queued for `side` (SerializedScriptValue::memoryCost of each message).
     // Lockless: the receiving port's wrapper reports it to the GC as extra memory.
     size_t queuedBytes(uint8_t side) const { return m_sides[side].queuedBytes.load(std::memory_order_acquire); }
     bool isOtherSideOpen(uint8_t side) const { return !(state(1 - side) & Closed); }

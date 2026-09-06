@@ -2809,3 +2809,56 @@ it("a deserialized Database that is never closed releases its connection when co
   // Unfixed: every dropped 1 MB image stays allocated, about 230 MiB. Fixed: under 5 MiB.
   await expectRssDeltaBelow(["-e", code], { release: 60, debug: 80 });
 });
+
+// Every Database owns one entry in a process-wide native registry, indexed by
+// `db.handle`. The entry used to live for the rest of the process even after
+// close() and GC, so each new Database cost a little native memory forever.
+// A freed entry's handle is reused, which is what these tests observe.
+describe("native registry entry is released", () => {
+  async function expectHandleReuse(openOne, highest) {
+    // GC sweeps (and the finalizers they run) are not synchronous with Bun.gc;
+    // poll with a deadline instead of waiting a fixed time.
+    const deadline = Date.now() + 3_000;
+    let handle;
+    do {
+      Bun.gc(true);
+      await Bun.sleep(1);
+      const db = openOne();
+      handle = db.handle;
+      db.close();
+    } while (handle > highest && Date.now() < deadline);
+    expect(handle).toBeLessThanOrEqual(highest);
+  }
+
+  it("after close() and GC of the Database", async () => {
+    function openAndClose() {
+      const db = new Database(":memory:");
+      db.exec("create table t(a)");
+      db.close();
+      return db.handle;
+    }
+    let highest = -1;
+    for (let i = 0; i < 1000; i++) {
+      highest = Math.max(highest, openAndClose());
+    }
+    await expectHandleReuse(() => new Database(":memory:"), highest);
+  });
+
+  it("after GC of a deserialized Database that was never closed", async () => {
+    const src = new Database(":memory:");
+    src.exec("create table t(a)");
+    const serialized = src.serialize();
+    src.close();
+
+    function openAndDrop() {
+      const db = Database.deserialize(serialized);
+      db.exec("insert into t values (1)");
+      return db.handle;
+    }
+    let highest = -1;
+    for (let i = 0; i < 1000; i++) {
+      highest = Math.max(highest, openAndDrop());
+    }
+    await expectHandleReuse(() => Database.deserialize(serialized), highest);
+  });
+});

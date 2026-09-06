@@ -72,7 +72,10 @@ pub fn is_identifier_utf16(text: &[u16]) -> bool {
     true
 }
 
-// The tables below are generated from Unicode 15.1 ID_Start / ID_Continue. Do not edit by hand.
+// ──────────────────────────────────────────────────────────────────────────
+// The remainder of this file is auto-generated. Do not edit.
+// To regenerate, re-run the identifier-table generator with .rs output.
+// ──────────────────────────────────────────────────────────────────────────
 
 // Callers must pass cp <= 0x10FFFF (stage1 tables are sized for that range);
 // out-of-range indexes panic.

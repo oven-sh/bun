@@ -178,5 +178,5 @@ compile edges that follow wait for it; from there they are ordinary
 No dep is described by reading its tree at configure time. Where upstream
 derives file sets from the tree (JSC's unified bundles from `Sources.txt`,
 its framework header directories, ICU's `sources.txt`), the lists are
-checked in — `deps/webkit-{bmalloc,wtf,jsc}-sources.ts`, `deps/icu-sources.ts`
+checked in — `deps/webkit-{bmalloc,wtf,jsc,llint,inspector}-sources.ts`, `deps/icu-sources.ts`
 — and updated by hand on a version bump.

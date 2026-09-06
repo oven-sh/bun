@@ -47,23 +47,20 @@ import {
 import { migcomPath } from "./bootstrap-cmds.ts";
 import { buildsIcu, icuIncludes } from "./icu.ts";
 import { bmallocCSources, bmallocFrameworkHeaders, bmallocSources } from "./webkit-bmalloc-sources.ts";
+import { jscExtraSourcesFor, jscInspectorDomains, jscInspectorScripts } from "./webkit-inspector-sources.ts";
 import {
   jscBuiltinsScripts,
   jscBuiltinsSources,
-  jscExtraSourcesFor,
   jscGeneratorRuby,
   jscIncludeDirs,
-  jscInspectorDomains,
-  jscInspectorScripts,
   jscLutSources,
   jscNonUnifiedSources,
-  jscOfflineasmRuby,
   jscPrivateHeaders,
   jscPublicHeaders,
   jscUcdFiles,
   jscUnifiedBundles,
-  llintAsm,
 } from "./webkit-jsc-sources.ts";
+import { jscOfflineasmRuby, llintAsm } from "./webkit-llint-sources.ts";
 import { wtfIncludeDirs, wtfSourcesCommon, wtfSourcesFor } from "./webkit-wtf-sources.ts";
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -496,10 +493,10 @@ function inspectorFeatureDefines(cfg: Config): string {
 //
 // What WebKit's cmake does, and where it lives here:
 //
-//   source lists            webkit-{bmalloc,wtf,jsc}-sources.ts: sources,
-//                           include dirs, framework header names, JSC's
-//                           unified bundles and @no-unify TUs, codegen and
-//                           generator-script inputs — maintained by hand
+//   source lists            webkit-{bmalloc,wtf,jsc,llint,inspector}-sources.ts:
+//                           sources, include dirs, framework header names,
+//                           JSC's unified bundles and @no-unify TUs, codegen
+//                           and generator-script inputs — kept by hand
 //   cmakeconfig.h           cmakeConfigHeader table, a `headers` entry
 //   framework headers       forwarding stubs as `headers` entries:
 //                           <bmalloc/X.h>, <JavaScriptCore/X.h> flattened dirs

@@ -3,8 +3,8 @@
  * WebKit's cmake would compile, generate and install for the JSCOnly port
  * with bun's options, written out (Source/JavaScriptCore/CMakeLists.txt: include
  * directories, framework headers, the unified bundles Sources.txt forms,
- * OBJECT_LUT_SOURCES, BUILTINS_SOURCES, INSPECTOR_DOMAINS, LLINT_ASM, and the
- * generator scripts' own files).
+ * OBJECT_LUT_SOURCES, BUILTINS_SOURCES, and the bytecode / builtins / yarr
+ * generator scripts' own files; LLInt and the inspector have their own files).
  * Paths are relative to Source/JavaScriptCore.
  *
  * Maintained by hand on a WebKit bump: a file added, removed or renamed
@@ -12,8 +12,6 @@
  * duplicate symbol at link; fix the list (.claude/commands/upgrade-webkit.md
  * says which cmake variable maps to which list).
  */
-
-import type { Config } from "../config.ts";
 
 /** JavaScriptCore_PRIVATE_INCLUDE_DIRECTORIES inside the tree (relative to Source/JavaScriptCore). */
 export const jscIncludeDirs: readonly string[] = [
@@ -4122,15 +4120,6 @@ export const jscNonUnifiedSources: readonly string[] = [
   "wasm/js/JSWebAssemblyArray.cpp",
 ];
 
-/** JavaScriptCore_SOURCES: compiled outside the unified bundles (the generated JSCBuiltins.cpp is added by the emitter). */
-export function jscExtraSourcesFor(cfg: Config): string[] {
-  return [
-    cfg.windows
-      ? "inspector/remote/socket/win/RemoteInspectorSocketWin.cpp"
-      : "inspector/remote/socket/posix/RemoteInspectorSocketPOSIX.cpp",
-  ];
-}
-
 /** JavaScriptCore_OBJECT_LUT_SOURCES: each gets a DerivedSources/<Name>.lut.h from create_hash_table. */
 export const jscLutSources: readonly string[] = [
   "runtime/ArrayConstructor.cpp",
@@ -4264,76 +4253,6 @@ export const jscBuiltinsSources: readonly string[] = [
   "inspector/InjectedScriptSource.js",
 ];
 
-/** JavaScriptCore_INSPECTOR_DOMAINS: protocol JSON combined into CombinedDomains.json. */
-export const jscInspectorDomains: readonly string[] = [
-  "inspector/protocol/Animation.json",
-  "inspector/protocol/Audit.json",
-  "inspector/protocol/Browser.json",
-  "inspector/protocol/CPUProfiler.json",
-  "inspector/protocol/CSS.json",
-  "inspector/protocol/Canvas.json",
-  "inspector/protocol/Console.json",
-  "inspector/protocol/DOM.json",
-  "inspector/protocol/DOMDebugger.json",
-  "inspector/protocol/DOMStorage.json",
-  "inspector/protocol/Debugger.json",
-  "inspector/protocol/GenericTypes.json",
-  "inspector/protocol/Heap.json",
-  "inspector/protocol/IndexedDB.json",
-  "inspector/protocol/Inspector.json",
-  "inspector/protocol/LayerTree.json",
-  "inspector/protocol/Memory.json",
-  "inspector/protocol/Network.json",
-  "inspector/protocol/Page.json",
-  "inspector/protocol/Recording.json",
-  "inspector/protocol/Runtime.json",
-  "inspector/protocol/ScriptProfiler.json",
-  "inspector/protocol/Security.json",
-  "inspector/protocol/ServiceWorker.json",
-  "inspector/protocol/Storage.json",
-  "inspector/protocol/Target.json",
-  "inspector/protocol/Timeline.json",
-  "inspector/protocol/Worker.json",
-  "inspector/protocol/LifecycleReporter.json",
-  "inspector/protocol/TestReporter.json",
-  "inspector/protocol/BunFrontendDevServer.json",
-  "inspector/protocol/HTTPServer.json",
-  "inspector/protocol/File.json",
-  "inspector/protocol/Process.json",
-];
-
-/** LLINT_ASM: the offlineasm inputs (LowLevelInterpreter.asm includes the rest). */
-export const llintAsm: readonly string[] = [
-  "llint/InPlaceInterpreter.asm",
-  "llint/InPlaceInterpreter64.asm",
-  "llint/LowLevelInterpreter.asm",
-  "llint/LowLevelInterpreter64.asm",
-];
-
-/** offlineasm/*.rb — inputs of the LLInt generator steps. */
-export const jscOfflineasmRuby: readonly string[] = [
-  "offlineasm/arm64.rb",
-  "offlineasm/arm64e.rb",
-  "offlineasm/asm.rb",
-  "offlineasm/ast.rb",
-  "offlineasm/backends.rb",
-  "offlineasm/cloop.rb",
-  "offlineasm/config.rb",
-  "offlineasm/generate_offset_extractor.rb",
-  "offlineasm/generate_settings_extractor.rb",
-  "offlineasm/instructions.rb",
-  "offlineasm/offsets.rb",
-  "offlineasm/opt.rb",
-  "offlineasm/parser.rb",
-  "offlineasm/registers.rb",
-  "offlineasm/risc.rb",
-  "offlineasm/riscv64.rb",
-  "offlineasm/self_hash.rb",
-  "offlineasm/settings.rb",
-  "offlineasm/transform.rb",
-  "offlineasm/x86.rb",
-];
-
 /** generator/*.rb — inputs of the bytecode generator step. */
 export const jscGeneratorRuby: readonly string[] = [
   "generator/Argument.rb",
@@ -4393,35 +4312,4 @@ export const jscBuiltinsScripts: readonly string[] = [
   "Scripts/wkbuiltins/builtins_model.py",
   "Scripts/wkbuiltins/builtins_templates.py",
   "Scripts/wkbuiltins/wkbuiltins.py",
-];
-
-/** inspector/scripts/*.py and codegen/*.py — inputs of the inspector protocol bindings step. */
-export const jscInspectorScripts: readonly string[] = [
-  "inspector/scripts/generate-inspector-protocol-bindings.py",
-  "inspector/scripts/codegen/__init__.py",
-  "inspector/scripts/codegen/cpp_generator.py",
-  "inspector/scripts/codegen/cpp_generator_templates.py",
-  "inspector/scripts/codegen/generate_cpp_alternate_backend_dispatcher_header.py",
-  "inspector/scripts/codegen/generate_cpp_backend_dispatcher_header.py",
-  "inspector/scripts/codegen/generate_cpp_backend_dispatcher_implementation.py",
-  "inspector/scripts/codegen/generate_cpp_frontend_dispatcher_header.py",
-  "inspector/scripts/codegen/generate_cpp_frontend_dispatcher_implementation.py",
-  "inspector/scripts/codegen/generate_cpp_protocol_types_header.py",
-  "inspector/scripts/codegen/generate_cpp_protocol_types_implementation.py",
-  "inspector/scripts/codegen/generate_js_backend_commands.py",
-  "inspector/scripts/codegen/generate_objc_backend_dispatcher_header.py",
-  "inspector/scripts/codegen/generate_objc_backend_dispatcher_implementation.py",
-  "inspector/scripts/codegen/generate_objc_configuration_header.py",
-  "inspector/scripts/codegen/generate_objc_configuration_implementation.py",
-  "inspector/scripts/codegen/generate_objc_frontend_dispatcher_implementation.py",
-  "inspector/scripts/codegen/generate_objc_header.py",
-  "inspector/scripts/codegen/generate_objc_internal_header.py",
-  "inspector/scripts/codegen/generate_objc_protocol_type_conversions_header.py",
-  "inspector/scripts/codegen/generate_objc_protocol_type_conversions_implementation.py",
-  "inspector/scripts/codegen/generate_objc_protocol_types_implementation.py",
-  "inspector/scripts/codegen/generator.py",
-  "inspector/scripts/codegen/generator_templates.py",
-  "inspector/scripts/codegen/models.py",
-  "inspector/scripts/codegen/objc_generator.py",
-  "inspector/scripts/codegen/objc_generator_templates.py",
 ];

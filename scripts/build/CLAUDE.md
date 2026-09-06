@@ -56,32 +56,36 @@ build obj/src/foo.c.o: cc ../../src/foo.c | deps/zstd/libzstd.a || codegen/gener
 
 ```ninja
 rule dep_fetch
-  command = bun fetch-cli.ts dep $name $repo $commit $dest ...
+  command = bun fetch-cli.ts dep $name $url $ref $dest ...
   restat = 1
   pool = dep
 
-build ../../vendor/zstd/.ref: dep_fetch | ../../scripts/build/fetch-cli.ts
+build deps/zstd/sources.dd: dep_fetch_plan | ../../scripts/build/fetch-cli.ts deps/static-outputs.txt
+  ...
+build ../../vendor/zstd/.ref | ../../vendor/zstd/lib/common/debug.c ...: dep_fetch | ../../scripts/build/fetch-cli.ts deps/zstd/sources.dd
+  dyndep = deps/zstd/sources.dd
   name = zstd
-  repo = facebook/zstd
-  commit = abc123...
+  url = https://github.com/facebook/zstd/archive/abc123....tar.gz
+  ref = abc123...
 ```
 
-`restat = 1`: if fetch was a no-op (`.ref` unchanged), prune everything downstream. `pool = dep` throttles to 4 concurrent fetches.
+Two edges per fetched dep. `plan` downloads and extracts the pinned version beside `vendor/zstd` (only when `.ref` names another version) and writes `sources.dd`, a **dyndep** file declaring every file of that tree as an output of the `dep_fetch` edge; `dep_fetch` (which names `sources.dd` as its `dyndep`) syncs the new tree into place — a file whose bytes did not change keeps its mtime — and writes `.ref` last. `restat = 1`: if fetch was a no-op (`.ref` unchanged), prune everything downstream; after a version bump the untouched files are pruned the same way while an object whose depfile names a rewritten header rebuilds in the same run. `pool = dep` throttles to 4 concurrent fetches.
 
 All rules and edges are written to `build/<profile>/build.ninja` by `n.write()` at the end of configure. `compile_commands.json` (for clangd/LSP) is written alongside it.
 
 Edge dependency types:
 
 - **explicit inputs** (`$in`) — listed on the build line, passed to the command
-- **implicit inputs** (`| foo`) — tracked for rebuild but not in `$in`. Use for the PCH, dep lib outputs (invalidation signal for their headers), or a per-file generated header this source is known to read
-- **order-only inputs** (`|| stamp`) — must exist before this edge runs, but mtime doesn't trigger rebuild. Use for bulk codegen headers: "must be generated first, but the compiler's `.d` depfile will track which ones I actually read". A group of them goes behind one phony (`obj/.codegen-ready`, a dep group's `.<group>-ready`) so each compile edge names one input, not the list
+- **implicit inputs** (`| foo`) — tracked for rebuild but not in `$in`. Use for the PCH, prebuilt/cargo dep outputs (invalidation signal for headers rewritten mid-build), or a per-file generated header this source is known to read
+- **order-only inputs** (`|| stamp`) — must exist before this edge runs, but mtime doesn't trigger rebuild. Use for bulk codegen headers and fetched dep trees: "must be generated/fetched first, but the compiler's `.d` depfile will track which ones I actually read". A group of them goes behind one phony (`obj/.codegen-ready`, `obj/.dep-headers-ready`, a dep group's `.<group>-ready`) so each compile edge names one input, not the list
+- **dyndep** (`dyndep = file`, ninja ≥ 1.10) — extra inputs/outputs of an edge that are only known at build time, read from a file another edge produces (which must also be an input of this edge). Ninja loads it before running the edge and re-evaluates everything downstream of the outputs it adds. Used once: the fetch edges, whose `plan` half lists the files of a freshly extracted dependency tree so they become restat outputs of the sync (`source.ts` emitFetch)
 - **validations** (`|@ check`) — built whenever this edge is, but not an input of it or of anything downstream. The smoke test and the ClassInfo check are validations of bun's link: relinking runs them, nothing waits on them
 
 **`restat = 1`** — after the command runs, re-stat outputs; if mtime didn't change, prune downstream. Critical for idempotent steps (fetch no-op, codegen unchanged).
 
 **`console` pool** — depth 1 and owns the terminal. Only for jobs with a TTY UI worth watching (cargo, dsymutil); never for links, checks, or anything else the graph has several of, since it serializes them.
 
-**`depfile`** — compiler writes `foo.o.d` listing every `#include`d header. Ninja reads it on the next build to know which headers this `.o` depends on. Codegen headers are order-only for this reason: they're declared outputs with restat, the depfile gives exact per-file header deps on build 2+, and order-only just ensures they exist for build 1. Prebuilt/cargo dep outputs are a different story — PCH, cc, and no-PCH cxx use them as _implicit_ deps, because those edges rewrite headers as undeclared side effects and order-only would lag one build behind (see Gotchas).
+**`depfile`** — compiler writes `foo.o.d` listing every `#include`d header. Ninja reads it on the next build to know which headers this `.o` depends on. Codegen headers and fetched dep trees are order-only for this reason: they're declared outputs with restat (the trees through the fetch edge's dyndep file), the depfile gives exact per-file header deps on build 2+, and order-only just ensures they exist for build 1. Prebuilt dep outputs are a different story — PCH, cc, and no-PCH cxx use them as _implicit_ deps, because that edge rewrites headers as undeclared side effects and order-only would lag one build behind (see Gotchas).
 
 ## Iterating on the build system
 
@@ -241,7 +245,9 @@ Why not auto-register in emit functions? Some rules are shared (`cc`/`cxx` by `b
 
 **Dep order in `allDeps` matters.** `fetchDeps: ["X"]` means X must come first (its `.ref` stamp node must exist). Link order matters too: static linking resolves left→right, providers after users.
 
-**PCH, cc, and no-PCH cxx need implicit dep on `depHeaderSignal`**, not order-only. A prebuilt or cargo dep rewrites its headers as an undeclared side effect (only the stamp / `lib*.a` are declared outputs). Depfiles record those headers, but ninja stats them before that edge runs — order-only lags one build. The declared output is the invalidation signal. Codegen headers and the direct WebKit build's generated headers stay exact: they're declared outputs with restat.
+**PCH, cc, and no-PCH cxx need implicit dep on `depHeaderSignal`**, not order-only — for prebuilt deps (`ResolvedDep.headerSignal === "implicit"`). A prebuilt tarball rewrites its headers as an undeclared side effect (only the stamp / `lib*.a` are declared outputs). Depfiles record those headers, but ninja stats them before that edge runs — order-only lags one build. The declared output is the invalidation signal. Fetched source trees (github/tarball deps) are order-only instead: every file in them is a declared restat output of the fetch edge through its dyndep file, so depfile tracking is exact within the same run. Codegen headers and the direct WebKit build's generated headers stay exact the same way: declared outputs with restat.
+
+**A dependency bump is incremental.** The fetch is two edges: `plan` extracts the new version beside `vendor/<name>` and writes `deps/<name>/sources.dd` (dyndep: the tree's files as outputs of the sync), `dep_fetch` syncs it in (unchanged bytes keep their mtime; changed/added files are replaced; removed ones deleted; `.ref` written last), so only what the bump touched recompiles, in that same ninja run, and configure never reads or deletes the tree. Two rules keep it working: a file may have one producer, so sources that some compile edge names as `$in` stay static outputs of the fetch edge of the tree they live in (a dep compiling a sibling's file — lsquic builds `vendor/lsqpack/lsqpack.c` — relies on the sibling's `treeFiles`; configure errors otherwise) and are listed in `deps/static-outputs.txt` (`writeFetchStaticOutputs`) for `plan` to leave out; and the dyndep declares each file under both its build-dir-relative and absolute spelling, because depfiles use either and ninja treats them as distinct nodes (`ninja.ts` does the same for static outputs). Anything that puts a version hash into a widely-included header (`cmakeconfig.h` had `BUN_WEBKIT_VERSION`), wipes the tree, or makes a fetched dep's stamp an implicit compile input turns every bump back into a full rebuild.
 
 **`isExecutable` must check `isFile()`.** `X_OK` on a directory means traversable — a `cmake/` dir in PATH would shadow the real cmake binary.
 

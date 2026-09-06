@@ -119,8 +119,8 @@ export class Ninja {
   constructor(opts: NinjaOptions) {
     assert(isAbsolute(opts.buildDir), `Ninja buildDir must be absolute, got: ${opts.buildDir}`);
     this.buildDir = resolve(opts.buildDir);
-    // 1.11: validations (`|@`). Below that: implicit outputs (1.7),
-    // console pool (1.5), restat (1.0). No dyndep.
+    // 1.11: validations (`|@`). Below that: dyndep (1.10, the dep fetch
+    // edges), implicit outputs (1.7), console pool (1.5), restat (1.0).
     this.ninjaVersion = opts.ninjaVersion ?? "1.11";
   }
 

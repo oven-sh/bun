@@ -23,43 +23,13 @@ import { ar, cc, cxx, link, nasm, pch } from "./compile.ts";
 import type { Config } from "./config.ts";
 import { gitArchiveUrl, githubArchiveUrl } from "./download.ts";
 import { assert } from "./error.ts";
-import { assertManagedSource, fetchCliPath, sourceIsCurrent } from "./fetch-cli.ts";
+import { assertManagedSource, fetchCliPath } from "./fetch-cli.ts";
 import { computeDepFlags, computeTargetLinkFlags } from "./flags.ts";
 import { writeIfChanged } from "./fs.ts";
 import type { Ninja } from "./ninja.ts";
 import { quote, quoteArgs } from "./shell.ts";
 import { emitShims } from "./shims.ts";
 import { streamPath } from "./stream.ts";
-
-/**
- * If the source dir exists with a stale (or missing) identity stamp,
- * delete it. Called at configure time so ninja's startup stat sees the
- * headers as missing — correctly marking dependent .o files dirty.
- *
- * See emitFetch() comment for the full why.
- *
- * Only called for github deps (via emitFetch). Local-mode deps never go
- * through here — their source is user-managed. Identity is commit + sparse
- * set + patch-content, NOT disk content, so hand-edits to vendor/<dep>/*.c
- * are preserved (identity still matches, no wipe).
- */
-function invalidateStaleSource(
-  name: string,
-  srcDir: string,
-  refStamp: string,
-  ref: string,
-  sparse: string[],
-  patchPaths: string[],
-): void {
-  if (!existsSync(srcDir)) return;
-  assertManagedSource(name, srcDir, refStamp);
-  // .ref missing counts as stale: can't verify what's there (previous commit,
-  // manual rm) — untrusted, wipe. A missing patch file also mismatches; the
-  // fetch then fails with the clearer "patch file not found".
-  if (!sourceIsCurrent(srcDir, ref, sparse, patchPaths)) {
-    rmSync(srcDir, { recursive: true, force: true });
-  }
-}
 
 // ───────────────────────────────────────────────────────────────────────────
 // Types
@@ -549,21 +519,39 @@ export interface ResolvedDep {
    */
   sources: string[];
   /**
-   * The final build output(s). Use these as implicit inputs on anything
-   * downstream that needs this dep built first.
-   * For cargo deps, these ARE the libs. For header-only deps, this is
-   * the source stamp (.ref).
+   * The "this dep is ready" signal for anything downstream: for cargo deps
+   * the libs, for prebuilt deps the libs (or the identity stamp when it ships
+   * none), for direct / header-only deps the source stamp (.ref). How a
+   * consumer's compile edges name them (implicit vs order-only) is
+   * `headerSignal`.
    */
   outputs: string[];
   /**
    * A direct dep's generated headers (`headers` substitutions, the steps'
    * `consumerOutputs`). Declared, restat outputs, so a consumer names them
    * ORDER-ONLY — they exist before its first compile and its depfile tracks
-   * the ones it actually includes from then on — where `outputs` (fetch
-   * stamps, prebuilt/cargo libs: edges with undeclared header side effects)
-   * must be implicit. Empty for every other build kind.
+   * the ones it actually includes from then on. Empty for every other build
+   * kind.
    */
   generatedHeaders: string[];
+  /**
+   * How a consumer's compile edges name `outputs`. "order-only" for a fetched
+   * source tree: every file in it is a declared (dyndep) restat output of the
+   * fetch edge, so a consumer's depfile is exact — a version bump rebuilds the
+   * includers of the headers it changed, in the same run, and nothing else.
+   * "implicit" when the edge behind `outputs` rewrites headers as undeclared
+   * side effects (prebuilt tarballs): depfiles would lag one build, so "the
+   * dep was refetched" itself has to invalidate every consumer.
+   */
+  headerSignal: "implicit" | "order-only";
+  /**
+   * Files under vendor/ that build.ninja declares as static outputs of this
+   * dep's fetch edge (the sources some compile edge names as `$in`, which
+   * must have a producing edge before any dyndep file exists). The union over
+   * all deps is what every `plan` edge leaves out of its dyndep file — see
+   * writeFetchStaticOutputs(). Empty for deps that are not fetched.
+   */
+  fetchDeclares: string[];
   /**
    * Stamps of this dep's `forbidUndefined` checks (static `nm` scans of its
    * objects). Ninja validations of whatever the objects go into next — the
@@ -599,14 +587,22 @@ export function registerDepRules(n: Ninja, cfg: Config): void {
   // terminal directly. Deps run 4-at-a-time, every line streams live.
   const stream = `${cfg.jsRuntime} ${q(streamPath)} $name`;
 
-  // Fetch: downloads a source tree (archive tarball, release tarball, or
-  // sparse git fetch), extracts, patches, writes .ref. The command encodes:
-  // name, url, identity ref, dest path, cache path, and patch files. If any
-  // of those change, the ninja command string changes, and ninja re-runs
-  // fetch. The fetch script is also an implicit input.
+  // Fetch, in two edges (see emitFetch). `plan` downloads a source tree
+  // (archive tarball, release tarball, or sparse git fetch), extracts and
+  // patches it beside the live one, and writes the dyndep file declaring its
+  // files as outputs of `dep`; `dep` syncs it into place and writes .ref.
+  // The commands encode name, url, identity ref, dest path, cache path, and
+  // patch files: if any of those change, the command strings change and ninja
+  // re-runs them. The fetch script is also an implicit input.
+  n.rule("dep_fetch_plan", {
+    command: `${stream} ${cfg.jsRuntime} ${fetchCli} plan $name $url $ref $dest $cache $ddfile $static_outputs $builddir $patches`,
+    description: "fetch $name",
+    restat: true,
+    pool: "dep",
+  });
   n.rule("dep_fetch", {
     command: `${stream} ${cfg.jsRuntime} ${fetchCli} dep $name $url $ref $dest $cache $patches`,
-    description: "fetch $name",
+    description: "sync $name",
     restat: true,
     pool: "dep",
   });
@@ -867,7 +863,9 @@ export function resolveDep(
     // out of lsqpack's) — come out of a fetch; build-dir products and repo
     // files do not.
     const inSrcTree = (p: string): string[] => {
-      const abs = isAbsolute(p) ? p : resolve(srcDir, p);
+      // resolve() either way: an absolute path a dep spelled with "/" must
+      // compare equal to the native spelling other edges use (Windows hosts).
+      const abs = resolve(srcDir, p);
       const fetched =
         abs.startsWith(srcDir + sep) || (abs.startsWith(cfg.vendorDir + sep) && !abs.startsWith(cfg.buildDir + sep));
       return fetched ? [abs] : [];
@@ -896,8 +894,30 @@ export function resolveDep(
   // For local/in-tree: source is already on disk; we use a sentinel file
   //   (CMakeLists.txt) as the stamp. Editing it → reconfigure.
   let sourceStamp: string | undefined;
+  let fetchDeclares: string[] = [];
   if (source.kind === "github" || source.kind === "tarball") {
-    sourceStamp = emitFetch(n, cfg, dep.name, source, patches, [...resolvedSources, ...directSources]);
+    // A fetch edge declares files of ITS tree only. A source this dep compiles
+    // out of a sibling's tree (lsquic builds vendor/lsqpack/lsqpack.c) has to
+    // be an output of the sibling's fetch — the edge that actually rewrites it
+    // on a bump — which the sibling arranges by naming it in `treeFiles`.
+    const own: string[] = [];
+    for (const file of [...resolvedSources, ...directSources]) {
+      if (file.startsWith(srcDir + sep)) {
+        own.push(file);
+        continue;
+      }
+      const owner = relative(cfg.vendorDir, file).split(sep)[0]!;
+      assert(
+        resolved.get(owner)?.fetchDeclares.includes(file),
+        `${dep.name} compiles ${file}, which lives in ${owner}'s source tree, but ${owner} does not declare it`,
+        {
+          hint: `Add "${relative(resolve(cfg.vendorDir, owner), file)}" to treeFiles in deps/${owner}.ts (and keep ${owner} before ${dep.name} in allDeps)`,
+        },
+      );
+    }
+    const fetch = emitFetch(n, cfg, dep.name, source, patches, own);
+    sourceStamp = fetch.refStamp;
+    fetchDeclares = fetch.declares;
   } else {
     // Local/in-tree: no .ref to write. Use the build system's manifest file
     // as the stamp — touching it triggers reconfigure/rebuild.
@@ -992,6 +1012,8 @@ export function resolveDep(
     sources: resolvedSources,
     outputs,
     generatedHeaders,
+    headerSignal: "order-only",
+    fetchDeclares,
     checks,
   };
 }
@@ -1045,11 +1067,30 @@ export function computeDepLibs(cfg: Config, dep: Dependency): string[] {
 }
 
 /**
- * Emit a ninja fetch rule. Returns absolute path to the .ref stamp.
+ * Emit a dep's fetch edges. Returns the absolute path to the .ref stamp.
  *
- * The .ref stamp contains the "source identity": hash(commit + patch contents).
- * If the identity matches what's on disk, fetch is a no-op (and restat kicks in).
- * If it doesn't match, fetch blows away the source dir and re-extracts.
+ * The .ref stamp contains the "source identity": hash(commit + sparse set +
+ * patch contents). If the identity matches what's on disk, both edges are
+ * no-ops (and restat kicks in). If it doesn't:
+ *
+ *   plan: download, extract and patch the new version into
+ *         vendor/<name>.staging, and write deps/<name>/sources.dd — a ninja
+ *         dyndep file declaring every file of that tree as an output of the
+ *         `dep` edge below.
+ *   dep:  (dyndep = sources.dd) sync the staging tree into vendor/<name> in
+ *         place — a file whose bytes did not change keeps its mtime — and
+ *         write .ref last.
+ *
+ * Ninja loads the dyndep file before running `dep`, so by then every header
+ * in the tree is a restat output of that edge: objects whose depfiles name a
+ * header the sync rewrote are rebuilt in the same invocation, objects that
+ * only include untouched files are pruned. That is what makes a version bump
+ * recompile just what the bump changed, without configure ever reading or
+ * deleting the tree. (One dyndep rule to respect: a file may be declared by
+ * one edge only, so the sources build.ninja already names as static outputs
+ * of the fetch edge — the ones bun or a dep compiles from this tree, which
+ * must have a producer before any dyndep exists for a fresh checkout to
+ * schedule — are listed for `plan` to leave out: writeFetchStaticOutputs().)
  */
 function emitFetch(
   n: Ninja,
@@ -1058,56 +1099,75 @@ function emitFetch(
   source: Extract<Source, { kind: "github" | "tarball" }>,
   patches: string[],
   compiledSources: string[],
-): string {
+): { refStamp: string; declares: string[] } {
   const srcDir = depSourceDir(cfg, name);
   const refStamp = resolve(srcDir, ".ref");
   const patchPaths = patches.map(p => resolve(cfg.cwd, p));
-  const { url, ref, sparse } = fetchSpec(source);
+  const { url, ref } = fetchSpec(source);
 
-  // ─── Preemptive stale-source cleanup ───
-  // If vendor/<dep>/ exists but .ref is missing OR doesn't match the
-  // expected identity, wipe the source dir NOW (configure-time, before
-  // ninja starts). This forces header files to be missing when ninja does
-  // its startup stat, correctly marking .o files that depend on them as
-  // dirty — so they recompile on THIS build, not the next one.
-  //
-  // Without this: ninja stats everything at startup. Stale headers still
-  // have OLD mtimes. .o files look clean. Fetch runs, headers get NEW
-  // mtimes. Too late — ninja already scheduled .o as clean. You'd need
-  // a SECOND build to pick up the header changes. This closes that gap.
-  //
-  // Only deletes when identity is demonstrably wrong — normal no-op
-  // builds skip it (identity matches, nothing touched).
-  invalidateStaleSource(name, srcDir, refStamp, ref, sparse, patchPaths);
+  // A git clone where the build's own tree belongs is refused up front
+  // (fetch-cli refuses too; this just fails at configure instead of mid-build).
+  if (existsSync(srcDir)) assertManagedSource(name, srcDir, refStamp);
 
+  const staticOutputs = [...new Set(compiledSources)];
+  const dyndep = resolve(cfg.buildDir, "deps", name, "sources.dd");
+  const staticOutputsFile = fetchStaticOutputsPath(cfg);
+
+  const vars = {
+    name,
+    // Quoted: a sparse git URL carries gitignore-syntax patterns (`*`, `!`).
+    url: quote(url, cfg.host.os === "windows"),
+    ref: quote(ref, cfg.host.os === "windows"),
+    dest: srcDir,
+    cache: resolve(cfg.cacheDir, "tarballs"),
+    // Pass patches space-separated. Shell-safe because patch paths are
+    // under our control (no spaces in repo paths per convention).
+    patches: patchPaths.join(" "),
+  };
+  n.build({
+    outputs: [dyndep],
+    rule: "dep_fetch_plan",
+    inputs: [],
+    implicitInputs: [fetchCliPath, staticOutputsFile, ...patchPaths],
+    // (`ddfile`, not `dyndep`: that binding name would make ninja treat the
+    // file as this edge's own dyndep input.)
+    vars: { ...vars, ddfile: dyndep, static_outputs: staticOutputsFile, builddir: cfg.buildDir },
+  });
   n.build({
     outputs: [refStamp],
-    // Source files bun compiles directly (picohttpparser.c). Declaring
-    // them as outputs tells ninja "fetch creates these" — otherwise ninja
-    // errors "missing and no known rule to make it" on fresh checkouts.
-    ...(compiledSources.length > 0 && { implicitOutputs: [...new Set(compiledSources)] }),
+    // Source files compiled from this tree (the dep's own groups, or bun's
+    // for picohttpparser.c). Declaring them as outputs tells ninja "fetch
+    // creates these" — otherwise ninja errors "missing and no known rule to
+    // make it" on fresh checkouts. Every other file of the tree joins them
+    // through the dyndep file.
+    ...(staticOutputs.length > 0 && { implicitOutputs: staticOutputs }),
     rule: "dep_fetch",
     inputs: [],
     // fetch-cli.ts (which has fetchDep) + patch files. Not this file —
     // it's configure-time ninja emission, not fetch logic.
-    implicitInputs: [fetchCliPath, ...patchPaths],
-    vars: {
-      name,
-      // Quoted: a sparse git URL carries gitignore-syntax patterns (`*`, `!`).
-      url: quote(url, cfg.host.os === "windows"),
-      ref: quote(ref, cfg.host.os === "windows"),
-      dest: srcDir,
-      cache: resolve(cfg.cacheDir, "tarballs"),
-      // Pass patches space-separated. Shell-safe because patch paths are
-      // under our control (no spaces in repo paths per convention).
-      patches: patchPaths.join(" "),
-    },
+    implicitInputs: [fetchCliPath, dyndep, ...patchPaths],
+    vars: { ...vars, dyndep: n.rel(dyndep) },
   });
 
   // Phony convenience target: `ninja clone-<name>`
   n.phony(`clone-${name}`, [refStamp]);
 
-  return refStamp;
+  return { refStamp, declares: staticOutputs };
+}
+
+const fetchStaticOutputsPath = (cfg: Config): string => resolve(cfg.buildDir, "deps", "static-outputs.txt");
+
+/**
+ * Write the list every `plan` edge reads (an implicit input of each): all
+ * files under vendor/ that build.ninja declares as static outputs of some
+ * fetch edge, which a dyndep file must therefore not declare again (ninja
+ * refuses a file with two producers). Call once, after every dep of the
+ * graph is resolved.
+ */
+export function writeFetchStaticOutputs(cfg: Config, deps: ResolvedDep[]): void {
+  const all = [...new Set(deps.flatMap(d => d.fetchDeclares))].sort();
+  mkdirSync(resolve(cfg.buildDir, "deps"), { recursive: true });
+  writeIfChanged(fetchStaticOutputsPath(cfg), all.map(o => o + "\n").join(""));
 }
 
 /**
@@ -1174,6 +1234,8 @@ function emitPrebuilt(
     sources: [],
     outputs,
     generatedHeaders: [],
+    headerSignal: "implicit",
+    fetchDeclares: [],
   };
 }
 

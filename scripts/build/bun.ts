@@ -52,7 +52,7 @@ import type { BuildNode, Ninja } from "./ninja.ts";
 import { emitRust, rustLibPath } from "./rust.ts";
 import { quote, slash } from "./shell.ts";
 import { emitShims, machoPostlinkCommand, machoPostlinkImplicitInputs } from "./shims.ts";
-import { computeDepLibs, resolveDep, type ResolvedDep } from "./source.ts";
+import { computeDepLibs, resolveDep, writeFetchStaticOutputs, type ResolvedDep } from "./source.ts";
 import { streamPath } from "./stream.ts";
 import { generateUnifiedSources } from "./unified.ts";
 
@@ -169,6 +169,7 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
       depsByName.set(dep.name, resolved);
     }
   }
+  writeFetchStaticOutputs(cfg, deps);
 
   // Collect all dep lib paths, include dirs, output stamps, and directly-
   // compiled source files (deps like picohttpparser that provide .c files
@@ -177,17 +178,21 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
   const depObjects: string[] = [];
   const depIncludes: string[] = [];
   const depDefines: string[] = [];
-  // Outputs of deps that provide headers — used as implicit inputs on PCH/cc/
-  // no-PCH cxx so a dep rebuild invalidates compiles that #include its headers
-  // (the .a is the signal — see comment at the PCH step). Deps with no provided
-  // includes (tinycc, lolhtml) are skipped: nothing to invalidate, and a tinycc
-  // no-op rebuild (ar has no restat) would otherwise cascade to a full PCH+cxx
-  // rebuild. Link still gets every dep via depLibs/depObjects.
+  // Outputs of header-providing deps whose build edge rewrites headers during
+  // the main pass (prebuilt tarballs, cargo builds: `headerSignal` "implicit")
+  // — implicit inputs on PCH/cc/no-PCH cxx so a dep rebuild invalidates the
+  // compiles that #include its headers (see comment at the PCH step). Deps with
+  // no provided includes (tinycc, lolhtml) are skipped: nothing to invalidate,
+  // and a tinycc no-op rebuild (ar has no restat) would otherwise cascade to a
+  // full PCH+cxx rebuild. Link still gets every dep via depLibs/depObjects.
   const depHeaderSignal: string[] = [];
-  // Direct deps' generated headers (WebKit's DerivedSources, zlib's zlib.h…):
-  // declared restat outputs, so order-only — depfiles then track exactly
-  // which ones a TU includes, and regenerating one recompiles its includers
-  // rather than every file (and the PCH) that names the dep.
+  // Everything else a compile only has to wait for, order-only: fetched
+  // deps' source stamps (their trees are final before ninja stats them —
+  // ResolvedDep.headerSignal) and direct deps' generated headers (WebKit's
+  // DerivedSources, zlib's zlib.h…: declared restat outputs). Depfiles then
+  // track exactly which headers a TU includes, so a version bump or a
+  // regenerated header recompiles its includers rather than every file (and
+  // the PCH) that names the dep.
   const depHeadersReady: string[] = [];
   // forbidUndefined stamps (source.ts): validations of whatever the dep
   // objects go into next, the archive or the link — a dep that regrows a
@@ -199,11 +204,8 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
     depChecks.push(...d.checks);
     depIncludes.push(...d.includes);
     depDefines.push(...d.defines);
-    // d.outputs is the "headers are ready" signal: for prebuilt that's the
-    // stamp (headers are undeclared side-effects), for direct deps
-    // it's the generated-header set + source stamp.
     if (d.includes.length > 0) {
-      depHeaderSignal.push(...d.outputs);
+      (d.headerSignal === "implicit" ? depHeaderSignal : depHeadersReady).push(...d.outputs);
       depHeadersReady.push(...d.generatedHeaders);
     }
   }
@@ -305,17 +307,18 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
 
   // All deps must be ready (headers extracted, libs built) before compile.
   //
-  // depHeaderSignal are IMPLICIT inputs, not order-only. A locally-built dep's
-  // sub-build (e.g. WebKit) rewrites forwarding headers as an undeclared side
-  // effect of the edge whose declared outputs are only lib*.a. Depfiles record
-  // those headers, but ninja stats them BEFORE the sub-build runs — so with
-  // order-only, any compile that #includes a dep header lags one build behind
-  // a dep rebuild (observed: uv-posix-*.c → wtf/Compiler.h).
+  // depHeaderSignal are IMPLICIT inputs, not order-only. A prebuilt tarball
+  // or a cargo build rewrites headers as an undeclared side effect of the edge
+  // whose declared outputs are only the stamp / lib*.a. Depfiles record those
+  // headers, but ninja stats them BEFORE that edge runs — so with order-only,
+  // any compile that #includes such a header lags one build behind a dep
+  // rebuild (observed: uv-posix-*.c → wtf/Compiler.h, prebuilt WebKit).
   // Implicit deps on the libs make "dep rebuilt" itself the invalidation
   // signal. Cost is negligible: if the libs changed you're relinking anyway.
   //
-  // codegen.cppAll stays order-only: those headers ARE declared ninja outputs
-  // with restat, so depfile tracking is exact and doesn't lag.
+  // Fetched source trees and codegen/generated headers stay order-only: both
+  // ARE declared ninja outputs with restat (a fetched tree's files through the
+  // fetch edge's dyndep file), so depfile tracking is exact and doesn't lag.
   //
   // PCH also has implicit deps on depHeaderSignal (see above). When PCH is enabled,
   // cxx inherits the dep transitively via its implicit dep on the PCH, so we
@@ -552,6 +555,7 @@ function emitRustOnly(n: Ninja, cfg: Config, sources: Sources): BunOutput {
   assert(lolhtmlDep !== null, "lolhtml resolveDep returned null — should never be skipped");
   const rustArgon2Dep = resolveDep(n, cfg, rustArgon2, new Map());
   assert(rustArgon2Dep !== null, "rust-argon2 resolveDep returned null — should never be skipped");
+  writeFetchStaticOutputs(cfg, [lolhtmlDep, rustArgon2Dep]);
 
   // Codegen: emitted fully, but only the embed-input subset is pulled.
   // The cpp-related outputs (cppSources, bindgenV2Cpp) have no consumer
@@ -671,6 +675,7 @@ function emitRustAndLink(n: Ninja, cfg: Config, sources: Sources): BunOutput {
   assert(lolhtmlDep !== null, "lolhtml resolveDep returned null — should never be skipped");
   const rustArgon2Dep = resolveDep(n, cfg, rustArgon2, new Map());
   assert(rustArgon2Dep !== null, "rust-argon2 resolveDep returned null — should never be skipped");
+  writeFetchStaticOutputs(cfg, [lolhtmlDep, rustArgon2Dep]);
 
   const codegen = emitCodegen(n, cfg, sources);
 
@@ -970,14 +975,17 @@ function emitJscProgram(
     const d = deps.get(dep);
     return d === undefined ? [] : [...d.objects, ...d.libs];
   };
+  // A compile's wait on the deps whose headers it includes, split the way
+  // emitBun splits it (ResolvedDep.headerSignal).
+  const headerInputs = (names: string[]): { implicitInputs: string[]; orderOnlyInputs: string[] } => {
+    const used = names.flatMap(d => deps.get(d) ?? []);
+    return {
+      implicitInputs: used.flatMap(d => (d.headerSignal === "implicit" ? d.outputs : [])),
+      orderOnlyInputs: used.flatMap(d => [...(d.headerSignal === "implicit" ? [] : d.outputs), ...d.generatedHeaders]),
+    };
+  };
   n.comment(`─── ${name} (JSC standalone program) ───`);
-  const objects = spec.sources.map(src =>
-    cxx(n, cfg, src, {
-      flags: spec.cxxflags,
-      implicitInputs: webkit.outputs,
-      orderOnlyInputs: webkit.generatedHeaders,
-    }),
-  );
+  const objects = spec.sources.map(src => cxx(n, cfg, src, { flags: spec.cxxflags, ...headerInputs(["WebKit"]) }));
   // Where JSC links bun's ICU (everywhere but macOS), its data archive is the
   // zstd-repacked one (deps/icu.ts), read through the bun_icu_maybe_decompress
   // hook bun defines in src/jsc/bindings/bun_icu_decompress.cpp. Compile that
@@ -996,9 +1004,7 @@ function emitJscProgram(
           ...["zstd", "mimalloc"].flatMap(d => (deps.get(d)?.includes ?? []).map(i => `-I${i}`)),
           "-Wno-undef", // mimalloc's internal headers under JSC's -Wundef
         ],
-        // zstd's and mimalloc's stamps too: their headers exist only once fetched.
-        implicitInputs: [...webkit.outputs, ...["zstd", "mimalloc"].flatMap(d => deps.get(d)?.outputs ?? [])],
-        orderOnlyInputs: webkit.generatedHeaders,
+        ...headerInputs(["WebKit", "zstd", "mimalloc"]),
       }),
     );
     icuHook.push(...fromDep("zstd"));

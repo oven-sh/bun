@@ -3,7 +3,7 @@
  * prebuilt tarball's release tag). Override via `--webkit-version=<hash>` to test a
  * branch. From https://github.com/oven-sh/WebKit releases.
  */
-export const WEBKIT_VERSION = "6f60e0c81bb98ad0ba580a60069972a4bac6ee9b";
+export const WEBKIT_VERSION = "b4abe53232448ba1868afccb23e8e0e045368cd0";
 
 /**
  * WebKit (JavaScriptCore) — the JS engine, with WTF and bmalloc.

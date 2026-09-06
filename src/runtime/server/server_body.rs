@@ -2272,8 +2272,39 @@ where
         // TODO: set Host header
         // TODO: set User-Agent header
         // TODO: unify with fetch() implementation.
-        let existing_request: Box<Request> = if first_arg.is_string() {
-            let url_utf8 = arguments[0].to_utf8(ctx)?;
+        let existing_request: Box<Request> = if let Some(request_) = first_arg
+            .is_object()
+            .then(|| <Request as bun_jsc::JsClass>::from_js(first_arg))
+            .flatten()
+        {
+            // SAFETY: JsClass::from_js returns a live *mut Request.
+            // NOTE: `Request::clone()` (Request.rs:1627) seeds a fully-initialized
+            // sentinel and calls `clone_into(.., preserve_url=false)`.
+            unsafe { (*request_).clone(ctx)? }
+        } else {
+            // A string is used as given, so a bare path can be joined onto this
+            // server's origin below. Any other object (a URL, or anything with
+            // a string form) goes through its href, as it does for fetch().
+            let url_utf8 = if first_arg.is_string() {
+                first_arg.to_utf8(ctx)?
+            } else {
+                let href = if first_arg.is_object() {
+                    <jsc::URL as jsc::URLJsc>::href_from_js(first_arg, ctx)?
+                } else {
+                    BunString::DEAD
+                };
+                if href.tag() == bun_core::Tag::Dead {
+                    let fetch_error = Fetch::fetch_type_error_string(first_arg);
+                    let err =
+                        jsc::ErrorCode::INVALID_ARG_TYPE.fmt(ctx, format_args!("{}", fetch_error));
+                    return Ok(
+                        JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
+                            ctx, err,
+                        ),
+                    );
+                }
+                href.into_utf8()
+            };
             let temp_url_str = url_utf8.slice();
 
             if temp_url_str.is_empty() {
@@ -2350,21 +2381,6 @@ where
                 crate::webcore::body::hive_alloc(body),
                 method,
             ))
-        } else if let Some(request_) = first_arg
-            .is_object()
-            .then(|| <Request as bun_jsc::JsClass>::from_js(first_arg))
-            .flatten()
-        {
-            // SAFETY: JsClass::from_js returns a live *mut Request.
-            // NOTE: `Request::clone()` (Request.rs:1627) seeds a fully-initialized
-            // sentinel and calls `clone_into(.., preserve_url=false)`.
-            unsafe { (*request_).clone(ctx)? }
-        } else {
-            let fetch_error = Fetch::fetch_type_error_string(first_arg);
-            let err = jsc::ErrorCode::INVALID_ARG_TYPE.fmt(ctx, format_args!("{}", fetch_error));
-            return Ok(
-                JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(ctx, err),
-            );
         };
 
         // `Request::to_js` stores `self as *mut
@@ -2379,8 +2395,10 @@ where
         // SAFETY: `request` was just allocated via `heap::alloc`; ownership
         // transfers to the JS wrapper inside `to_js`.
         let request_value = unsafe { (*request).to_js(&global_this) };
+        let this_value = self.js_value_assert_alive();
+        // Same `(request, server)` signature as a request that arrives on a socket.
         let response_value =
-            match on_request.call(&global_this, self.js_value_assert_alive(), &[request_value]) {
+            match on_request.call(&global_this, this_value, &[request_value, this_value]) {
                 Ok(v) => v,
                 Err(err) => global_this.take_exception(err),
             };

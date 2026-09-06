@@ -422,7 +422,7 @@ test.concurrent("pause() and resume() churn while data is in flight never destro
 });
 
 // Windows cannot hand a directory handle to a child as stdin.
-test.skipIf(isWindows)("process.stdin ends when fd 0 is a directory, like node", async () => {
+test.concurrent.skipIf(isWindows)("process.stdin ends when fd 0 is a directory, like node", async () => {
   using dir = tempDir("stdin-directory", {});
   const dirFd = openSync(String(dir), "r");
   try {

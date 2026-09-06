@@ -6490,7 +6490,7 @@ pub mod bv2_impl {
                             .unwrap_or(Loader::File);
                         let import_record_loader = import_record.loader.unwrap_or(path_loader);
                         import_record.loader = Some(import_record_loader);
-                        let key = import_record_module_key(
+                        let key = super::import_record_module_key(
                             &mut module_key_buf,
                             import_record,
                             path_primary.text,
@@ -6859,7 +6859,7 @@ pub mod bv2_impl {
                     break 'brk resolved_loader;
                 };
                 import_record.loader = Some(import_record_loader);
-                let key = import_record_module_key(
+                let key = super::import_record_module_key(
                     &mut module_key_buf,
                     import_record,
                     path.text,
@@ -7153,7 +7153,7 @@ pub mod bv2_impl {
                             .flags
                             .contains(bun_ast::ImportRecordFlags::KEYED_BY_LOADER) =>
                     {
-                        loader_module_key(&mut module_key_buf, record.path.text, loader)
+                        super::loader_module_key(&mut module_key_buf, record.path.text, loader)
                     }
                     _ => record.path.text,
                 };

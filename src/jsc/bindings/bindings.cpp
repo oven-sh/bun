@@ -719,28 +719,26 @@ static ALWAYS_INLINE bool hasExtraOwnProperties(JSC::Structure* structure)
         || hasIndexedProperties(structure->indexingType());
 }
 
-// Like getIfPropertyExists(), but a non-enumerable match counts as absent. The
+// Finds `propertyName` on `object` (prototype chain included) like
+// getIfPropertyExists(), but a non-enumerable match counts as absent. The
 // callers iterate enumerable names only, so a non-enumerable property on the
 // other side must not satisfy one of them or the result would depend on the
-// argument order.
-static JSValue getEnumerablePropertyIfExists(JSC::JSGlobalObject* globalObject, JSC::JSObject* object, JSC::PropertyName propertyName)
+// argument order. On true, the value is in `slot`.
+static bool findEnumerableProperty(JSC::JSGlobalObject* globalObject, JSC::JSObject* object, JSC::PropertyName propertyName, PropertySlot& slot)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    PropertySlot slot(object, PropertySlot::InternalMethodType::HasProperty);
     bool hasProperty = object->getPropertySlot(globalObject, propertyName, slot);
-    RETURN_IF_EXCEPTION(scope, {});
+    RETURN_IF_EXCEPTION(scope, false);
     if (!hasProperty)
-        return {};
+        return false;
 
+    // A Proxy reports no attributes. Its properties count as enumerable.
     if (slot.isTaintedByOpaqueObject()) [[unlikely]]
-        RELEASE_AND_RETURN(scope, object->get(globalObject, propertyName));
+        return true;
 
-    if (slot.attributes() & PropertyAttribute::DontEnum)
-        return {};
-
-    RELEASE_AND_RETURN(scope, slot.getValue(globalObject, propertyName));
+    return !(slot.attributes() & PropertyAttribute::DontEnum);
 }
 
 // node compares the non-index own properties of typed arrays as well;
@@ -1282,8 +1280,16 @@ bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
             prop2 = slot2.getValue(globalObject, propertyName1);
             RETURN_IF_EXCEPTION(scope, false);
         } else {
-            prop2 = getEnumerablePropertyIfExists(globalObject, o2, propertyName1);
+            PropertySlot slot2(o2, PropertySlot::InternalMethodType::HasProperty);
+            bool has = findEnumerableProperty(globalObject, o2, propertyName1, slot2);
             RETURN_IF_EXCEPTION(scope, false);
+            if (has) {
+                if (slot2.isTaintedByOpaqueObject()) [[unlikely]]
+                    prop2 = o2->get(globalObject, propertyName1);
+                else
+                    prop2 = slot2.getValue(globalObject, propertyName1);
+                RETURN_IF_EXCEPTION(scope, false);
+            }
         }
 
         if constexpr (!isStrict) {
@@ -1314,9 +1320,10 @@ bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
                 continue;
             }
 
-            JSValue prop1 = getEnumerablePropertyIfExists(globalObject, o1, propertyName2);
+            PropertySlot slot1(o1, PropertySlot::InternalMethodType::HasProperty);
+            bool has = findEnumerableProperty(globalObject, o1, propertyName2, slot1);
             RETURN_IF_EXCEPTION(scope, false);
-            if (!prop1) {
+            if (!has) {
                 return false;
             }
         }

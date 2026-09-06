@@ -2278,13 +2278,9 @@ where
             .flatten()
         {
             // SAFETY: JsClass::from_js returns a live *mut Request.
-            // NOTE: `Request::clone()` (Request.rs:1627) seeds a fully-initialized
-            // sentinel and calls `clone_into(.., preserve_url=false)`.
             unsafe { (*request_).clone(ctx)? }
         } else {
-            // A string is used as given, so a bare path can be joined onto this
-            // server's origin below. Any other object (a URL, or anything with
-            // a string form) goes through its href, as it does for fetch().
+            // A string skips href parsing so that a bare path ("/foo") can be joined below.
             let url_utf8 = if first_arg.is_string() {
                 first_arg.to_utf8(ctx)?
             } else {

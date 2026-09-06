@@ -1512,3 +1512,129 @@ describe.skipIf(!isPosix)("child.stdout pull nested in a 'data' event", () => {
     // their own error, not a test timeout, is what gets reported.
   }, 30_000);
 });
+
+// subprocess.unref() releases only the process handle. Like Node, an un-read
+// stdout/stderr pipe keeps the parent alive until the child closes it (or the
+// stream's highWaterMark fills), so the child does not die of SIGPIPE on its
+// next write. An unref'd child with no readable pipe still lets the parent
+// exit.
+describe("spawn().unref() with piped stdio", () => {
+  // The parent sends "go" from an unref'd timer. A due unref'd timer never
+  // fires once nothing else keeps the loop alive, so the child reads "go"
+  // only if the un-read pipe kept the parent running. If the parent exited
+  // first, the child sees a bare EOF instead.
+  const child = `
+    const fs = require("fs");
+    let input = "";
+    process.stdin.setEncoding("utf8");
+    process.stdin.on("data", d => (input += d));
+    process.stdin.on("end", () => {
+      let write;
+      try {
+        fs.writeSync(1, "hello\\n");
+        write = "ok";
+      } catch (e) {
+        write = e.code;
+      }
+      fs.writeFileSync(process.argv[1], JSON.stringify({ input, write }));
+    });
+  `;
+
+  async function run(stdio: string) {
+    using dir = tempDir("unref-pipe", {});
+    const marker = path.join(String(dir), "marker.json");
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          const { spawn } = require("node:child_process");
+          const c = spawn(${JSON.stringify(bunExe())}, ["-e", ${JSON.stringify(child)}, ${JSON.stringify(marker)}], {
+            stdio: ${stdio},
+            env: ${JSON.stringify(bunEnv)},
+          });
+          c.unref();
+          setTimeout(() => c.stdin.end("go"), 1).unref();
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    // The child writes the marker before it closes its stdio, so a parent
+    // that waited for the pipe sees it at once.
+    const result = fs.existsSync(marker) ? JSON.parse(fs.readFileSync(marker, "utf8")) : "missing";
+    return { stdout, stderr, exitCode, marker: result };
+  }
+
+  it.concurrent("keeps the parent alive until an un-read stdout pipe closes", async () => {
+    expect(await run(`["pipe", "pipe", "ignore"]`)).toEqual({
+      stdout: "",
+      stderr: "",
+      exitCode: 0,
+      marker: { input: "go", write: "ok" },
+    });
+  });
+
+  it.concurrent("keeps the parent alive until an un-read stderr pipe closes", async () => {
+    expect(await run(`["pipe", "ignore", "pipe"]`)).toEqual({
+      stdout: "",
+      stderr: "",
+      exitCode: 0,
+      marker: { input: "go", write: "ok" },
+    });
+  });
+
+  async function runAndKill(stdio: string, childScript: string) {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          const { spawn } = require("node:child_process");
+          const c = spawn(${JSON.stringify(bunExe())}, ["-e", ${JSON.stringify(childScript)}], {
+            stdio: ${stdio},
+            env: ${JSON.stringify(bunEnv)},
+          });
+          c.unref();
+          process.on("exit", () => console.log(JSON.stringify({ pid: c.pid, exitCode: c.exitCode })));
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const { pid, exitCode: childExitCode } = JSON.parse(stdout);
+    try {
+      process.kill(pid);
+    } catch {}
+    return { stderr, exitCode, childExitCode };
+  }
+
+  it.concurrent("lets the parent exit when only stdin is piped", async () => {
+    // The child blocks on stdin, which the parent never closes.
+    expect(await runAndKill(`["pipe", "ignore", "ignore"]`, "process.stdin.resume()")).toEqual({
+      stderr: "",
+      exitCode: 0,
+      childExitCode: null,
+    });
+  });
+
+  it.concurrent("lets the parent exit once the un-read stdout buffer is full", async () => {
+    // The child fills the pipe past the stream's highWaterMark, then blocks
+    // on stdin. Reading stops at the highWaterMark, so nothing keeps the
+    // parent alive. Node exits here as well instead of deadlocking.
+    expect(
+      await runAndKill(
+        `["pipe", "pipe", "ignore"]`,
+        "process.stdout.write(Buffer.alloc(4 << 20, 97)); process.stdin.resume()",
+      ),
+    ).toEqual({
+      stderr: "",
+      exitCode: 0,
+      childExitCode: null,
+    });
+  });
+});

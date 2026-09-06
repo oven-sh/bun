@@ -1257,6 +1257,11 @@ class ChildProcess extends EventEmitter {
             const pipe = require("internal/streams/native-readable").constructNativeReadable(value, {});
             this.#closesNeeded++;
             pipe.once("close", () => this.#maybeClose());
+            // Start reading into the stream's buffer now, like net.Socket does
+            // for a readable handle. The armed pipe poll keeps the event loop
+            // alive until EOF or the highWaterMark, so child.unref() alone does
+            // not let the parent exit while the child still writes.
+            pipe.read(0);
             if (autoResume) pipe.resume();
             return pipe;
           }

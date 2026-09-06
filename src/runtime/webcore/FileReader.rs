@@ -803,7 +803,8 @@ impl FileReader {
             }
         }
 
-        if self.reader().is_done() {
+        // A stored error also ends a reader that never started (`from_bytes_then_error`).
+        if self.reader().is_done() || self.read_error.get().is_some() {
             return self.end_of_reader();
         }
 

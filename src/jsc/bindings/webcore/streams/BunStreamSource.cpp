@@ -995,6 +995,10 @@ static void rsisAbrupt(JSC::VM& vm, JSGlobalObject* globalObject, JSReadStreamIn
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
     op->m_didThrow = true;
+    auto* reader = op->m_reader.get();
+    const bool pumpHoldsLock = !!reader;
+    if (reader)
+        reader->m_pipeOperation.clear();
     op->m_reader.clear();
     auto* result = op->m_result.get();
     JSObject* sink = op->m_didClose ? nullptr : op->m_sink.get();
@@ -1002,13 +1006,17 @@ static void rsisAbrupt(JSC::VM& vm, JSGlobalObject* globalObject, JSReadStreamIn
     JSReadableStream* stream = op->m_stream.get();
     rejectPromise(globalObject, result, error);
     RETURN_IF_EXCEPTION(scope, );
-    rsisFinally(vm, globalObject, op);
-    RETURN_IF_EXCEPTION(scope, );
-    if (stream && !isReadableStreamLocked(stream)) {
+    // The orphaned reader keeps the stream locked, so the lock says nothing about whether the
+    // pump may cancel. Cancel before rsisFinally: it clears the controller slots, and the
+    // source's cancel(reason) (a piped stdin ReadableStream learning of a write error) runs
+    // through the controller.
+    if (stream && (pumpHoldsLock || !isReadableStreamLocked(stream))) {
         auto* cancelPromise = readableStreamCancel(globalObject, stream, error);
         RETURN_IF_EXCEPTION(scope, );
         markPromiseAsHandled(vm, cancelPromise);
     }
+    rsisFinally(vm, globalObject, op);
+    RETURN_IF_EXCEPTION(scope, );
     if (sink)
         RELEASE_AND_RETURN(scope, rsisSinkClose(vm, globalObject, sink, error));
 }

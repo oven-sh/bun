@@ -53,11 +53,12 @@ test("ERR_* code is writable and deletable like in node", () => {
   const e = capture(() => Buffer.alloc(-1));
   e.code = "CUSTOM";
   expect(e.code).toBe("CUSTOM");
+  // Node's toString closes over the original code instead of reading this.code.
+  expect(e.toString()).toStartWith("RangeError [ERR_OUT_OF_RANGE]: ");
   delete e.code;
   expect(Object.hasOwn(e, "code")).toBe(false);
   expect(e.code).toBeUndefined();
-  // The Node-style toString lives on the shared prototype and keeps working.
-  expect(capture(() => Buffer.alloc(-1)).toString()).toStartWith("RangeError [ERR_OUT_OF_RANGE]: ");
+  expect(e.toString()).toStartWith("RangeError [ERR_OUT_OF_RANGE]: ");
 });
 
 test("ERR_SYSTEM_ERROR code is enumerable next to info, errno and syscall", () => {

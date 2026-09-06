@@ -425,8 +425,6 @@ fn enable_with_dir(dir: &[u8], portable: bool) -> EnableResult {
                 };
             }
         };
-        // `dir` is user input of any length. The checked join returns `None`
-        // instead of writing past `abs_buf`.
         match bun_paths::resolve_path::join_abs_string_buf_checked::<
             bun_paths::resolve_path::platform::Auto,
         >(&cwd_buf[..cwd_len], &mut abs_buf[..], &[dir])

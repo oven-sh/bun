@@ -1,5 +1,6 @@
 function urlToHttpOptions(url) {
   const options = {
+    __proto__: null,
     ...url,
     protocol: url.protocol,
     hostname:

@@ -46,12 +46,15 @@ test.skipIf(process.platform === "win32")("bun exec does not forward the inherit
   expect(out).toContain("NODE_CHANNEL_SERIALIZATION_MODE=[]");
 });
 
-test.skipIf(process.platform === "win32")("bun run --shell=bun does not forward the inherited IPC channel", async () => {
-  using dir = tempDir("ipc-scrub-bunshell", {
-    "package.json": JSON.stringify({ name: "x", version: "1.0.0", scripts: { show: "sh show.sh" } }),
-    "show.sh": SHOW_CHANNEL,
-  });
-  const out = await channelSeenByGrandchild(["run", "--shell=bun", "show"], String(dir));
-  expect(out).toContain("NODE_CHANNEL_FD=[]");
-  expect(out).toContain("NODE_CHANNEL_SERIALIZATION_MODE=[]");
-});
+test.skipIf(process.platform === "win32")(
+  "bun run --shell=bun does not forward the inherited IPC channel",
+  async () => {
+    using dir = tempDir("ipc-scrub-bunshell", {
+      "package.json": JSON.stringify({ name: "x", version: "1.0.0", scripts: { show: "sh show.sh" } }),
+      "show.sh": SHOW_CHANNEL,
+    });
+    const out = await channelSeenByGrandchild(["run", "--shell=bun", "show"], String(dir));
+    expect(out).toContain("NODE_CHANNEL_FD=[]");
+    expect(out).toContain("NODE_CHANNEL_SERIALIZATION_MODE=[]");
+  },
+);

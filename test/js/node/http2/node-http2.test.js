@@ -5976,3 +5976,330 @@ describe("frames issued from inside a user-supplied Duplex transport's _write", 
     },
   );
 });
+
+// A header call that throws on validation must leave the connection's HPACK encoder table in
+// step with the peer. Before the fix, the fields before the invalid one were already inserted
+// into the dynamic table (and never sent), so every later header block on the connection decoded
+// against the wrong entries: the next response carried a header from an earlier stream, then the
+// session died with a protocol error.
+describe("http2 a header call that throws leaves the HPACK encoder in sync with the peer", () => {
+  class Boom extends Error {
+    code = "BOOM";
+  }
+  const throwingToString = {
+    toString() {
+      throw new Boom("boom");
+    },
+  };
+  // Each poison has two valid fields (which used to reach the table) before the invalid one, and
+  // the error the call reports for it.
+  const poisons = {
+    "invalid value": {
+      headers: { "x-a": "AAAA", "x-b": "BBBB", "x-v": "a\r\nb" },
+      error: "ERR_HTTP2_INVALID_HEADER_VALUE",
+    },
+    "invalid array element": {
+      headers: { "x-a": "AAAA", "x-b": "BBBB", "x-v": ["ok", "a\nb"] },
+      error: "ERR_HTTP2_INVALID_HEADER_VALUE",
+    },
+    "invalid name": { headers: { "x-a": "AAAA", "x-b": "BBBB", "bad name": "v" }, error: "ERR_INVALID_HTTP_TOKEN" },
+    "undefined value": {
+      headers: { "x-a": "AAAA", "x-b": "BBBB", "x-u": undefined },
+      error: "ERR_HTTP2_INVALID_HEADER_VALUE",
+    },
+    "null value": { headers: { "x-a": "AAAA", "x-b": "BBBB", "x-n": null }, error: "ERR_HTTP2_INVALID_HEADER_VALUE" },
+    "symbol value": { headers: { "x-a": "AAAA", "x-b": "BBBB", "x-s": Symbol("s") }, error: "TypeError" },
+    "throwing toString": { headers: { "x-a": "AAAA", "x-b": "BBBB", "x-t": throwingToString }, error: "BOOM" },
+  };
+  const kinds = Object.keys(poisons);
+  // respond() drops a string value with CR/LF/NUL instead of throwing, so those two kinds do not
+  // apply to it. pushStream() skips an undefined or null value (node's mapToHeaders does the same).
+  const respondKinds = kinds.filter(k => k !== "invalid value" && k !== "invalid array element");
+  const pushKinds = kinds.filter(k => k !== "undefined value" && k !== "null value");
+  const errorOf = err => err.code ?? err.constructor.name;
+  const cleanResponse = { ":status": 200, "x-clean": "clean-value", "content-type": "text/plain" };
+
+  async function withServer(onStream, run, createServer = http2.createServer) {
+    const server = createServer();
+    server.on("stream", onStream);
+    await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
+    const client = http2.connect(`http://127.0.0.1:${server.address().port}`);
+    const sessionErrors = [];
+    client.on("error", err => sessionErrors.push(err.code));
+    try {
+      return await run(client, sessionErrors);
+    } finally {
+      client.destroy();
+      server.close();
+    }
+  }
+
+  // One request on `client`: resolves with the response headers (no date), the trailers, and the body.
+  function get(client, path, reqHeaders = {}, onRequest = () => {}, reqOptions = undefined) {
+    const { promise, resolve, reject } = Promise.withResolvers();
+    const result = { headers: null, trailers: null, body: "" };
+    const req = client.request({ ":path": path, ...reqHeaders }, reqOptions);
+    // Object.entries drops the sensitiveHeaders symbol key.
+    req.on("response", headers => {
+      delete headers.date;
+      result.headers = Object.fromEntries(Object.entries(headers));
+    });
+    req.on("trailers", trailers => (result.trailers = Object.fromEntries(Object.entries(trailers))));
+    req.setEncoding("utf8");
+    req.on("data", chunk => (result.body += chunk));
+    req.on("error", reject);
+    req.on("close", () => resolve(result));
+    onRequest(req);
+    return promise;
+  }
+
+  const clean = { headers: cleanResponse, trailers: null, body: "c" };
+  const serveClean = stream => {
+    stream.respond(cleanResponse);
+    stream.end("c");
+  };
+
+  it.each(kinds)("additionalHeaders() that throws on an %s", async kind => {
+    const thrown = [];
+    await withServer(
+      (stream, headers) => {
+        if (headers[":path"] !== "/poison") return serveClean(stream);
+        try {
+          stream.additionalHeaders({ ":status": 103, ...poisons[kind].headers });
+        } catch (err) {
+          thrown.push(errorOf(err));
+        }
+        stream.respond({ ":status": 200, "x-after-info": "1" });
+        stream.end("p");
+      },
+      async (client, sessionErrors) => {
+        expect(await get(client, "/clean1")).toEqual(clean);
+        expect(await get(client, "/poison")).toEqual({
+          headers: { ":status": 200, "x-after-info": "1" },
+          trailers: null,
+          body: "p",
+        });
+        expect(await get(client, "/clean2")).toEqual(clean);
+        expect(thrown).toEqual([poisons[kind].error]);
+        expect(sessionErrors).toEqual([]);
+      },
+    );
+  });
+
+  it.each(respondKinds)("respond() that throws on a %s", async kind => {
+    const thrown = [];
+    await withServer(
+      (stream, headers) => {
+        if (headers[":path"] !== "/poison") return serveClean(stream);
+        try {
+          stream.respond({ ":status": 200, ...poisons[kind].headers, "x-c": "CCCC" });
+        } catch (err) {
+          thrown.push(errorOf(err));
+        }
+        stream.respond({ ":status": 503, "x-fallback": "1" });
+        stream.end("p");
+      },
+      async (client, sessionErrors) => {
+        expect(await get(client, "/clean1")).toEqual(clean);
+        expect(await get(client, "/poison")).toEqual({
+          headers: { ":status": 503, "x-fallback": "1" },
+          trailers: null,
+          body: "p",
+        });
+        expect(await get(client, "/clean2")).toEqual(clean);
+        expect(thrown).toEqual([poisons[kind].error]);
+        expect(sessionErrors).toEqual([]);
+      },
+    );
+  });
+
+  // The compat layer's setHeader() accepts a Symbol or an object whose toString throws, and the
+  // implicit respond() inside res.end() is where the value fails.
+  it.each(["symbol value", "throwing toString"])(
+    "compat res.end() whose implicit respond() throws on a %s",
+    async kind => {
+      const thrown = [];
+      await withServer(
+        () => {},
+        async (client, sessionErrors) => {
+          expect(await get(client, "/clean1")).toEqual(clean);
+          expect(await get(client, "/poison")).toEqual({
+            headers: { ":status": 503, "x-fallback": "1" },
+            trailers: null,
+            body: "p",
+          });
+          expect(await get(client, "/clean2")).toEqual(clean);
+          expect(thrown).toEqual([poisons[kind].error]);
+          expect(sessionErrors).toEqual([]);
+        },
+        () =>
+          http2.createServer((req, res) => {
+            if (req.url !== "/poison") {
+              res.writeHead(200, { "x-clean": "clean-value", "content-type": "text/plain" });
+              res.end("c");
+              return;
+            }
+            for (const [name, value] of Object.entries(poisons[kind].headers)) res.setHeader(name, value);
+            try {
+              res.end("never sent");
+            } catch (err) {
+              thrown.push(errorOf(err));
+            }
+            req.stream.respond({ ":status": 503, "x-fallback": "1" });
+            req.stream.end("p");
+          }),
+      );
+    },
+  );
+
+  it.each(kinds)("server sendTrailers() that throws on an %s", async kind => {
+    const thrown = [];
+    await withServer(
+      (stream, headers) => {
+        if (headers[":path"] !== "/poison") return serveClean(stream);
+        stream.respond({ ":status": 200 }, { waitForTrailers: true });
+        stream.on("wantTrailers", () => {
+          try {
+            stream.sendTrailers(poisons[kind].headers);
+          } catch (err) {
+            thrown.push(errorOf(err));
+          }
+          stream.sendTrailers({ "x-t": "v2" });
+        });
+        stream.end("p");
+      },
+      async (client, sessionErrors) => {
+        expect(await get(client, "/clean1")).toEqual(clean);
+        expect(await get(client, "/poison")).toEqual({
+          headers: { ":status": 200 },
+          trailers: { "x-t": "v2" },
+          body: "p",
+        });
+        expect(await get(client, "/clean2")).toEqual(clean);
+        expect(thrown).toEqual([poisons[kind].error]);
+        expect(sessionErrors).toEqual([]);
+      },
+    );
+  });
+
+  it.each(kinds)("client sendTrailers() that throws on an %s", async kind => {
+    const thrown = [];
+    const seenTrailers = [];
+    await withServer(
+      (stream, headers) => {
+        stream.on("trailers", trailers => seenTrailers.push(Object.fromEntries(Object.entries(trailers))));
+        // Echo the request's custom headers so the client can see which ones decoded on its stream.
+        const echoed = {};
+        for (const name of Object.keys(headers)) {
+          if (name.startsWith("x-")) echoed[name] = headers[name];
+        }
+        stream.on("end", () => {
+          stream.respond({ ":status": 200, "x-echo": JSON.stringify(echoed) });
+          stream.end("c");
+        });
+        stream.resume();
+      },
+      async (client, sessionErrors) => {
+        const echo = headers => ({
+          headers: { ":status": 200, "x-echo": JSON.stringify(headers) },
+          trailers: null,
+          body: "c",
+        });
+        expect(await get(client, "/clean1", { "x-clean": "clean-value" })).toEqual(echo({ "x-clean": "clean-value" }));
+        expect(
+          await get(
+            client,
+            "/poison",
+            { ":method": "POST", "x-poison": "1" },
+            req => {
+              req.on("wantTrailers", () => {
+                try {
+                  req.sendTrailers(poisons[kind].headers);
+                } catch (err) {
+                  thrown.push(errorOf(err));
+                }
+                req.sendTrailers({ "x-t": "v2" });
+              });
+              req.end("body");
+            },
+            { waitForTrailers: true },
+          ),
+        ).toEqual(echo({ "x-poison": "1" }));
+        expect(await get(client, "/clean2", { "x-other": "other-value" })).toEqual(echo({ "x-other": "other-value" }));
+        expect(seenTrailers).toEqual([{ "x-t": "v2" }]);
+        expect(thrown).toEqual([poisons[kind].error]);
+        expect(sessionErrors).toEqual([]);
+      },
+    );
+  });
+
+  it.each(pushKinds)("pushStream() that fails on an %s", async kind => {
+    const pushErrors = [];
+    await withServer(
+      (stream, headers) => {
+        if (headers[":path"] !== "/poison") return serveClean(stream);
+        const respond = () => {
+          stream.respond({ ":status": 200, "x-after-push": "1" });
+          stream.end("p");
+        };
+        try {
+          stream.pushStream({ ":path": "/pushed", ...poisons[kind].headers }, err => {
+            pushErrors.push(err ? errorOf(err) : null);
+            respond();
+          });
+        } catch (err) {
+          pushErrors.push(errorOf(err));
+          respond();
+        }
+      },
+      async (client, sessionErrors) => {
+        const pushed = [];
+        client.on("stream", push => {
+          pushed.push(push);
+          push.resume();
+        });
+        expect(await get(client, "/clean1")).toEqual(clean);
+        expect(await get(client, "/poison")).toEqual({
+          headers: { ":status": 200, "x-after-push": "1" },
+          trailers: null,
+          body: "p",
+        });
+        expect(await get(client, "/clean2")).toEqual(clean);
+        expect(pushErrors).toEqual([poisons[kind].error]);
+        expect(pushed).toEqual([]);
+        expect(sessionErrors).toEqual([]);
+      },
+    );
+  });
+
+  it.each(kinds)("client request() that throws on an %s", async kind => {
+    await withServer(
+      (stream, headers) => {
+        // Echo the request's custom headers so the client can see which ones decoded on its stream.
+        const echoed = {};
+        for (const name of Object.keys(headers)) {
+          if (name.startsWith("x-")) echoed[name] = headers[name];
+        }
+        stream.respond({ ":status": 200, "x-echo": JSON.stringify(echoed) });
+        stream.end("c");
+      },
+      async (client, sessionErrors) => {
+        const echo = headers => ({
+          headers: { ":status": 200, "x-echo": JSON.stringify(headers) },
+          trailers: null,
+          body: "c",
+        });
+        expect(await get(client, "/clean1", { "x-clean": "clean-value" })).toEqual(echo({ "x-clean": "clean-value" }));
+        let thrown = null;
+        try {
+          client.request({ ":path": "/poison", ...poisons[kind].headers });
+        } catch (err) {
+          thrown = errorOf(err);
+        }
+        expect(thrown).toBe(poisons[kind].error);
+        expect(await get(client, "/clean2", { "x-other": "other-value" })).toEqual(echo({ "x-other": "other-value" }));
+        expect(sessionErrors).toEqual([]);
+      },
+    );
+  });
+});

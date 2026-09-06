@@ -1,4 +1,4 @@
-use std::collections::VecDeque;
+use std::collections::{HashSet, VecDeque};
 use std::rc::Rc;
 
 use bun_alloc::AllocError;
@@ -32,6 +32,12 @@ pub struct Scanner<'a> {
     pub(crate) options: &'a BundleOptions<'a>,
     pub(crate) has_iterated: bool,
     pub(crate) search_count: usize,
+    /// Directories that could not be opened or read. Each one is reported as
+    /// it happens; the count makes the run exit non-zero.
+    pub(crate) unreadable_dirs: usize,
+    /// `(st_dev, st_ino)` of every directory scanned so far. A symlink that
+    /// points back into the tree is skipped instead of walked again.
+    visited_dirs: HashSet<(u64, u64)>,
     /// The directory being iterated; its fd closes once every child `ScanEntry` has been opened.
     current_dir: Option<Rc<Dir>>,
 }
@@ -88,8 +94,30 @@ impl<'a> Scanner<'a> {
             open_dir_buf: PathBuffer::uninit(),
             has_iterated: false,
             search_count: 0,
+            unreadable_dirs: 0,
+            visited_dirs: HashSet::new(),
             current_dir: None,
         })
+    }
+
+    fn report_unreadable_dir(&mut self, path: &[u8], err: &bun_sys::Error) {
+        self.unreadable_dirs += 1;
+        bun_core::pretty_errorln!(
+            "<r><red>error<r>: could not scan {} for tests\n{}",
+            bun_core::fmt::quote(path),
+            err.with_path(path)
+        );
+    }
+
+    /// Records `fd`'s directory identity. Returns `false` when that directory
+    /// was scanned before (reached again through a symlink).
+    fn mark_visited(&mut self, fd: Fd) -> bool {
+        match bun_sys::fstat(fd) {
+            Ok(st) => self
+                .visited_dirs
+                .insert((st.st_dev as u64, st.st_ino as u64)),
+            Err(_) => true,
+        }
     }
 
     #[inline]
@@ -158,6 +186,18 @@ impl<'a> Scanner<'a> {
                     bstr::BStr::new(path),
                     root_err.original_err.name()
                 );
+                if let bun_resolver::Error::Sys(errno) = e {
+                    self.report_unreadable_dir(
+                        path,
+                        &bun_sys::Error::from_code(errno, bun_sys::Tag::open),
+                    );
+                }
+            }
+        } else {
+            let zpath = bun_core::ZBox::from_bytes(path);
+            if let Ok(st) = bun_sys::fstatat(Fd::cwd(), &zpath) {
+                self.visited_dirs
+                    .insert((st.st_dev as u64, st.st_ino as u64));
             }
         }
 
@@ -204,10 +244,17 @@ impl<'a> Scanner<'a> {
             let opened = bun_sys::open_dir_no_renaming_or_deleting_windows(parent, rel_path);
             // Dropping `entry` releases the parent fd once its last child is opened.
             drop(entry);
-            let Ok(child_fd) = opened else {
-                continue;
+            let child_fd = match opened {
+                Ok(fd) => fd,
+                Err(err) => {
+                    self.report_unreadable_dir(path2, &err);
+                    continue;
+                }
             };
             let child_dir = Rc::new(Dir::from_fd(child_fd));
+            if !self.mark_visited(child_dir.fd) {
+                continue;
+            }
             let path2 = self
                 .fs()
                 .dirname_store
@@ -216,7 +263,14 @@ impl<'a> Scanner<'a> {
             self.current_dir = Some(Rc::clone(&child_dir));
             let result = self.read_dir_with_name(path2, Some(child_dir.fd));
             self.current_dir = None;
-            result.map_err(|_| ScanError::OutOfMemory)?;
+            if let EntriesOption::Err(dir_err) = result.map_err(|_| ScanError::OutOfMemory)? {
+                if let bun_resolver::Error::Sys(errno) = dir_err.original_err {
+                    self.report_unreadable_dir(
+                        path2,
+                        &bun_sys::Error::from_code(errno, bun_sys::Tag::scandir),
+                    );
+                }
+            }
         }
 
         Ok(())

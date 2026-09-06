@@ -192,7 +192,9 @@ describe.concurrent("Bun.serve perMessageDeflate", () => {
       await using server = startServer({ compress, decompress: true });
       const peer = await connect(server, "permessage-deflate");
       try {
-        expect(peer.extensions).toBe(["permessage-deflate", "client_no_context_takeover", window].filter(Boolean).join("; "));
+        expect(peer.extensions).toBe(
+          ["permessage-deflate", "client_no_context_takeover", window].filter(Boolean).join("; "),
+        );
         expect(await secondCopySize(peer, fits)).toBeLessThan(fits / 10);
         expect(await secondCopySize(peer, tooFar)).toBeGreaterThan(tooFar / 2);
       } finally {

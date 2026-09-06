@@ -46,6 +46,13 @@ std::optional<size_t> byteLength(JSC::JSString* str, JSC::JSGlobalObject* lexica
 // RangeError `new ArrayBuffer(length)` would throw, and returns true.
 bool rejectBytesNoCopyAboveArrayBufferLimit(JSC::JSGlobalObject*, JSC::ThrowScope&, const void* bytes, size_t length, JSTypedArrayBytesDeallocator, void* deallocatorContext);
 
+// Input for a decoder that reads its bytes more than once (a pass that sizes
+// the output, then a pass that writes it). Another thread can change a
+// SharedArrayBuffer between the passes, so when `shared` is set the bytes are
+// copied into `storage` and the copy is returned. On allocation failure this
+// throws OutOfMemoryError and returns an empty span.
+std::span<const uint8_t> stableBytes(JSC::JSGlobalObject*, JSC::ThrowScope&, std::span<const uint8_t> bytes, bool shared, WTF::Vector<uint8_t>& storage);
+
 namespace Buffer {
 
 const size_t kMaxLength = MAX_ARRAY_BUFFER_SIZE;

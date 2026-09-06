@@ -1,6 +1,7 @@
 #include "root.h"
 #include "ErrorCode.h"
 #include "AsyncStackTrace.h"
+#include "JSBuffer.h"
 
 #include "WebStreamsInternals.h"
 
@@ -1030,12 +1031,17 @@ void textDecodeReadRequestChunkSteps(JSGlobalObject* globalObject, JSReadableStr
     // WebIDL "get a copy of the bytes held by the buffer source": a detached
     // buffer is still a BufferSource whose bytes are the empty sequence.
     std::span<const uint8_t> bytes;
+    bool shared = false;
     if (auto* view = dynamicDowncast<JSC::JSArrayBufferView>(chunk)) {
-        if (!view->isDetached())
+        if (!view->isDetached()) {
             bytes = view->span();
+            shared = view->isShared();
+        }
     } else if (auto* buffer = dynamicDowncast<JSC::JSArrayBuffer>(chunk)) {
-        if (buffer->impl() && !buffer->impl()->isDetached())
+        if (buffer->impl() && !buffer->impl()->isDetached()) {
             bytes = buffer->impl()->span();
+            shared = buffer->impl()->isShared();
+        }
     } else {
         auto* error = createTypeError(globalObject, "Body.textStream() received a chunk that is not a BufferSource"_s);
         RETURN_IF_EXCEPTION(scope, void());
@@ -1057,6 +1063,9 @@ void textDecodeReadRequestChunkSteps(JSGlobalObject* globalObject, JSReadableStr
         }
         return;
     }
+    WTF::Vector<uint8_t> storage;
+    bytes = Bun::stableBytes(globalObject, scope, bytes, shared, storage);
+    RETURN_IF_EXCEPTION(scope, void());
     auto* decoded = streamingUTF8Decode(globalObject, bytes, controller->m_algorithms.textDecodeState, /* flush */ false);
     RETURN_IF_EXCEPTION(scope, void());
     if (!decoded || !decoded->length()) {

@@ -113,7 +113,7 @@ void JSStringDecoder::finishCreation(JSC::VM& vm, JSC::JSGlobalObject* globalObj
 // Checks at most 3 bytes at the end of a Buffer in order to detect an
 // incomplete multi-byte UTF-8 character. The total number of bytes (2, 3, or 4)
 // needed to complete the UTF-8 character (if applicable) are returned.
-uint8_t JSStringDecoder::utf8CheckIncomplete(uint8_t* bufPtr, uint32_t length, uint32_t i)
+uint8_t JSStringDecoder::utf8CheckIncomplete(const uint8_t* bufPtr, uint32_t length, uint32_t i)
 {
     uint32_t j = length - 1;
     if (j < i)
@@ -147,7 +147,7 @@ uint8_t JSStringDecoder::utf8CheckIncomplete(uint8_t* bufPtr, uint32_t length, u
     return 0;
 }
 
-JSC::JSString* JSStringDecoder::fillLast(JSC::VM& vm, JSC::JSGlobalObject* globalObject, uint8_t* bufPtr, uint32_t length)
+JSC::JSString* JSStringDecoder::fillLast(JSC::VM& vm, JSC::JSGlobalObject* globalObject, const uint8_t* bufPtr, uint32_t length)
 {
     auto throwScope = DECLARE_THROW_SCOPE(vm);
 
@@ -202,7 +202,7 @@ JSC::JSString* JSStringDecoder::fillLast(JSC::VM& vm, JSC::JSGlobalObject* globa
 }
 
 // This is not the exposed text
-JSC::JSString* JSStringDecoder::text(JSC::VM& vm, JSC::JSGlobalObject* globalObject, uint8_t* bufPtr, uint32_t length, uint32_t offset)
+JSC::JSString* JSStringDecoder::text(JSC::VM& vm, JSC::JSGlobalObject* globalObject, const uint8_t* bufPtr, uint32_t length, uint32_t offset)
 {
     auto throwScope = DECLARE_THROW_SCOPE(vm);
 
@@ -262,7 +262,7 @@ JSC::JSString* JSStringDecoder::text(JSC::VM& vm, JSC::JSGlobalObject* globalObj
     __builtin_unreachable();
 }
 
-JSC::JSString* JSStringDecoder::write(JSC::VM& vm, JSC::JSGlobalObject* globalObject, uint8_t* bufPtr, uint32_t length)
+JSC::JSString* JSStringDecoder::write(JSC::VM& vm, JSC::JSGlobalObject* globalObject, const uint8_t* bufPtr, uint32_t length)
 {
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     if (length == 0)
@@ -325,7 +325,7 @@ ResetScope::~ResetScope()
 }
 
 JSC::JSString*
-JSStringDecoder::end(JSC::VM& vm, JSC::JSGlobalObject* globalObject, uint8_t* bufPtr, uint32_t length)
+JSStringDecoder::end(JSC::VM& vm, JSC::JSGlobalObject* globalObject, const uint8_t* bufPtr, uint32_t length)
 {
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     auto resetScope = ResetScope(this);
@@ -420,7 +420,10 @@ static inline JSC::EncodedJSValue jsStringDecoderPrototypeFunction_writeBody(JSC
 
         return Bun::ERR::INVALID_ARG_TYPE(throwScope, lexicalGlobalObject, "buf"_s, "Buffer, TypedArray, or DataView"_s, buffer);
     }
-    RELEASE_AND_RETURN(throwScope, JSC::JSValue::encode(castedThis->write(vm, lexicalGlobalObject, reinterpret_cast<uint8_t*>(view->vector()), view->byteLength())));
+    WTF::Vector<uint8_t> storage;
+    auto bytes = Bun::stableBytes(lexicalGlobalObject, throwScope, view->span(), view->isShared(), storage);
+    RETURN_IF_EXCEPTION(throwScope, {});
+    RELEASE_AND_RETURN(throwScope, JSC::JSValue::encode(castedThis->write(vm, lexicalGlobalObject, bytes.data(), bytes.size())));
 }
 static inline JSC::EncodedJSValue jsStringDecoderPrototypeFunction_endBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, JSStringDecoder* castedThis)
 {
@@ -436,7 +439,10 @@ static inline JSC::EncodedJSValue jsStringDecoderPrototypeFunction_endBody(JSC::
         throwVMTypeError(lexicalGlobalObject, throwScope, "Expected Uint8Array"_s);
         return {};
     }
-    RELEASE_AND_RETURN(throwScope, JSC::JSValue::encode(castedThis->end(vm, lexicalGlobalObject, reinterpret_cast<uint8_t*>(view->vector()), view->byteLength())));
+    WTF::Vector<uint8_t> storage;
+    auto bytes = Bun::stableBytes(lexicalGlobalObject, throwScope, view->span(), view->isShared(), storage);
+    RETURN_IF_EXCEPTION(throwScope, {});
+    RELEASE_AND_RETURN(throwScope, JSC::JSValue::encode(castedThis->end(vm, lexicalGlobalObject, bytes.data(), bytes.size())));
 }
 static inline JSC::EncodedJSValue jsStringDecoderPrototypeFunction_textBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, JSStringDecoder* castedThis)
 {
@@ -458,7 +464,10 @@ static inline JSC::EncodedJSValue jsStringDecoderPrototypeFunction_textBody(JSC:
     uint32_t byteLength = view->byteLength();
     if (offset < 0 || static_cast<uint32_t>(offset) > byteLength)
         RELEASE_AND_RETURN(throwScope, JSC::JSValue::encode(JSC::jsEmptyString(vm)));
-    RELEASE_AND_RETURN(throwScope, JSC::JSValue::encode(castedThis->write(vm, lexicalGlobalObject, reinterpret_cast<uint8_t*>(view->vector()) + offset, byteLength - offset)));
+    WTF::Vector<uint8_t> storage;
+    auto bytes = Bun::stableBytes(lexicalGlobalObject, throwScope, view->span().subspan(offset), view->isShared(), storage);
+    RETURN_IF_EXCEPTION(throwScope, {});
+    RELEASE_AND_RETURN(throwScope, JSC::JSValue::encode(castedThis->write(vm, lexicalGlobalObject, bytes.data(), bytes.size())));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsStringDecoderPrototypeFunction_write,

@@ -243,7 +243,16 @@ fn convert_utf8_bytes_into_utf16_with_length(
     len: U3Fast,
     remaining_len: usize,
 ) -> UTF16Replacement {
-    debug_assert!(sequence[0] > 127);
+    // The caller found a non-ASCII byte with a separate scan. `sequence` is a
+    // fresh read of the same memory. A SharedArrayBuffer can change between
+    // the two reads, so decode the snapshot as-is instead of asserting on it.
+    if sequence[0] < 0x80 {
+        return UTF16Replacement {
+            len: 1,
+            code_point: u32::from(sequence[0]),
+            ..Default::default()
+        };
+    }
     match len {
         2 => {
             debug_assert!(sequence[0] >= 0xC0);
@@ -404,7 +413,6 @@ pub(super) fn convert_utf8_bytes_into_utf16(bytes: &[u8]) -> UTF16Replacement {
         3 => [bytes[0], bytes[1], bytes[2], 0],
         _ => bytes[..4].try_into().expect("infallible: size matches"),
     };
-    debug_assert!(sequence[0] > 127);
     let sequence_length = non_ascii_sequence_length(sequence[0]);
     convert_utf8_bytes_into_utf16_with_length(sequence, sequence_length, bytes.len())
 }
@@ -649,6 +657,8 @@ pub enum ToUTF16Error {
 
 crate::oom_from_alloc!(ToUTF16Error);
 
+/// `bytes` must not change during the call: the output is sized by one pass
+/// and written by a second. Copy a SharedArrayBuffer before calling.
 pub fn to_utf16_alloc_maybe_buffered<const FAIL_IF_INVALID: bool, const FLUSH: bool>(
     bytes: &[u8],
 ) -> Result<Option<(Vec<u16>, [u8; 3], u8)>, ToUTF16Error> {

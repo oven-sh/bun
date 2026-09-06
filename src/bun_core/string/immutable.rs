@@ -2556,6 +2556,9 @@ impl From<ToUTF16Error> for crate::CrateError {
 /// `Err(InvalidByteSequence)`; otherwise invalid sequences are replaced with
 /// U+FFFD. When `sentinel` is set the result
 /// includes a trailing 0 u16.
+///
+/// `bytes` must not change during the call: the output is sized by one pass
+/// and written by a second. Copy a SharedArrayBuffer before calling.
 pub fn to_utf16_alloc(
     bytes: &[u8],
     fail_if_invalid: bool,

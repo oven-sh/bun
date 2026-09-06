@@ -414,6 +414,17 @@ bool Bun::rejectBytesNoCopyAboveArrayBufferLimit(JSC::JSGlobalObject* globalObje
     return true;
 }
 
+std::span<const uint8_t> Bun::stableBytes(JSC::JSGlobalObject* globalObject, JSC::ThrowScope& scope, std::span<const uint8_t> bytes, bool shared, WTF::Vector<uint8_t>& storage)
+{
+    if (!shared) [[likely]]
+        return bytes;
+    if (!storage.tryAppend(bytes)) [[unlikely]] {
+        JSC::throwOutOfMemoryError(globalObject, scope);
+        return {};
+    }
+    return storage.span();
+}
+
 JSC::EncodedJSValue JSBuffer__bufferFromPointerAndLengthAndDeinit(JSC::JSGlobalObject* lexicalGlobalObject, char* ptr, size_t length, void* ctx, JSTypedArrayBytesDeallocator bytesDeallocator)
 {
     JSC::JSUint8Array* uint8Array = nullptr;
@@ -2148,7 +2159,13 @@ JSC::EncodedJSValue jsBufferToString(JSC::JSGlobalObject* lexicalGlobalObject, T
         length = byteLength - offset;
     }
 
-    return jsBufferToStringFromBytes(lexicalGlobalObject, scope, castedThis->span().subspan(offset, length), encoding);
+    // Only the UTF-8 decoder reads its input twice. The other encodings size
+    // their output from the byte count and read each byte once.
+    WTF::Vector<uint8_t> storage;
+    auto bytes = Bun::stableBytes(lexicalGlobalObject, scope, castedThis->span().subspan(offset, length), encoding == WebCore::BufferEncodingType::utf8 && castedThis->isShared(), storage);
+    RETURN_IF_EXCEPTION(scope, {});
+
+    return jsBufferToStringFromBytes(lexicalGlobalObject, scope, bytes, encoding);
 }
 
 // Mirrors v8::Value::IntegerValue(): NaN becomes 0 and anything outside the

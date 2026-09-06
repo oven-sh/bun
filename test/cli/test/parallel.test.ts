@@ -1424,10 +1424,15 @@ test.skipIf(isWindows)(
       "c.test.ts": `import { test } from "bun:test"; test("ok", () => {});`,
     });
     const pids = String(dir) + "/pids.txt";
+    // The ASAN lanes run every test with no-orphans on. That makes the kernel
+    // SIGKILL the grandchild when the worker dies, before the coordinator's
+    // SIGTERM (the path under test) can reach it.
+    const env: Record<string, string | undefined> = { ...bunEnv, PIDS: pids };
+    delete env.BUN_FEATURE_FLAG_NO_ORPHANS;
 
     await using proc = Bun.spawn({
       cmd: [bunExe(), "test", "--parallel=2", "--parallel-delay=0"],
-      env: { ...bunEnv, PIDS: pids },
+      env,
       cwd: String(dir),
       stdout: "ignore",
       stderr: "pipe",

@@ -8921,12 +8921,10 @@ pub(crate) fn copy_file_z_slow_with_handle(
     if r.is_ok() {
         let _ = safe_libc::fchmod(dst.native(), st.st_mode);
         let _ = safe_libc::fchown(dst.native(), st.st_uid, st.st_gid);
+        // Deferred write errors (NFS, delayed allocation) surface here; close() drops them.
+        r = fsync(dst);
     }
-    // NFS reports a deferred write error only at close().
-    let closed = close(dst);
-    if r.is_ok() {
-        r = closed;
-    }
+    let _ = close(dst);
     if r.is_ok() {
         r = renameat(to_dir, tmp, to_dir, destination);
     }

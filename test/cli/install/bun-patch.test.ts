@@ -1,7 +1,7 @@
 import { $, ShellOutput } from "bun";
 import { afterAll, beforeAll, describe, expect, setDefaultTimeout, test } from "bun:test";
 import { accessSync, constants, lstatSync, mkdirSync, readFileSync, rmSync, statfsSync, statSync } from "fs";
-import { bunEnv, bunExe, isASAN, isLinux, tempDir, tmpdirSync, VerdaccioRegistry } from "harness";
+import { bunEnv, bunExe, isASAN, isLinux, tempDir, VerdaccioRegistry } from "harness";
 import { tmpdir } from "os";
 import { isAbsolute, join, sep } from "path";
 
@@ -1254,19 +1254,16 @@ describe("bun patch --commit with the project and the cache on different filesys
   }
   function findProjectFilesystem(): "private" | "shm" | undefined {
     if (!isLinux) return undefined;
-    const probeDir = tmpdirSync();
     try {
+      using probeDir = tempDir("patch-xdev-probe", {});
       const probe = Bun.spawnSync({
-        cmd: inPrivateTmpfs(probeDir, "true"),
+        cmd: inPrivateTmpfs(String(probeDir), "true"),
         env: bunEnv,
         stdout: "ignore",
         stderr: "ignore",
       });
       if (probe.exitCode === 0) return "private";
-    } catch {
-    } finally {
-      rmSync(probeDir, { recursive: true, force: true });
-    }
+    } catch {}
     try {
       const dev = statSync("/dev/shm").dev;
       if (dev === statSync(tmpdir()).dev || dev === statSync("/dev").dev) return undefined;

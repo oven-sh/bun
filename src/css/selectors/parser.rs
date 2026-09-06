@@ -2553,11 +2553,9 @@ impl NthSelectorData {
         })
     }
 
-    /// Whether the selector prints in functional form. `0n+1` collapses to
-    /// `:first-child` and friends, but `:nth-col()` and `:nth-last-col()` have
-    /// no such shorthand.
     pub(crate) fn is_function_(&self) -> bool {
         match self.ty {
+            // No `:first-col` shorthand exists.
             NthType::Col | NthType::LastCol => true,
             NthType::OnlyChild | NthType::OnlyOfType => false,
             _ => self.a != 0 || self.b != 1,

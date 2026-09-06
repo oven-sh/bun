@@ -1846,7 +1846,8 @@ impl Error {
             "c-ares status {rc} out of range",
         );
         // SAFETY: `n` is in `1..=ARES_ENOSERVER`; `Error` is `#[repr(i32)]` with
-        // contiguous discriminants `1..=ARES_ENOSERVER`.
+        // contiguous discriminants `1..=ARES_ENOSERVER + 1`, so every value in
+        // the asserted range is a valid discriminant.
         Some(unsafe { core::mem::transmute::<i32, Error>(n as i32) })
     }
 }

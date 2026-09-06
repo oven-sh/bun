@@ -632,6 +632,43 @@ describe("sync compression argument handling", () => {
     ).toThrow("windowBits option was read");
   });
 
+  // memLevel and strategy are documented in ZlibCompressionOptions and must reach deflateInit2.
+  // node:zlib links the same zlib, so the bytes must match node's output for the same options.
+  describe("gzipSync and deflateSync honor memLevel and strategy", () => {
+    // Large enough that the memLevel (the pending block buffer size) changes the block layout.
+    const input = Buffer.alloc(200_000);
+    for (let i = 0; i < input.length; i++) input[i] = (i * 31 + (i % 7) + (i >> 9)) & 255;
+    const cases = [
+      { memLevel: 1 },
+      { memLevel: 4 },
+      { strategy: zlib.constants.Z_HUFFMAN_ONLY },
+      { strategy: zlib.constants.Z_RLE },
+      { strategy: zlib.constants.Z_FIXED },
+      { level: 9, memLevel: 2, strategy: zlib.constants.Z_FILTERED },
+    ];
+
+    it.each(cases)("gzipSync(%o) matches node:zlib", options => {
+      const compressed = gzipSync(input, options);
+      expect(Buffer.from(compressed).equals(zlib.gzipSync(input, options))).toBe(true);
+      expect(Buffer.from(compressed).equals(gzipSync(input))).toBe(false);
+      expect(Buffer.from(gunzipSync(compressed)).equals(input)).toBe(true);
+    });
+
+    it.each(cases)("deflateSync(%o) matches node:zlib", options => {
+      const compressed = deflateSync(input, options);
+      expect(Buffer.from(compressed).equals(zlib.deflateRawSync(input, options))).toBe(true);
+      expect(Buffer.from(compressed).equals(deflateSync(input))).toBe(false);
+      expect(Buffer.from(inflateSync(compressed)).equals(input)).toBe(true);
+    });
+
+    it("rejects a memLevel or strategy zlib does not accept", () => {
+      expect(() => gzipSync(input, { memLevel: 0 as any })).toThrow("Invalid argument");
+      expect(() => gzipSync(input, { memLevel: 10 as any })).toThrow("Invalid argument");
+      expect(() => deflateSync(input, { strategy: 5 })).toThrow("Invalid argument");
+      expect(() => deflateSync(input, { strategy: -1 })).toThrow("Invalid argument");
+    });
+  });
+
   // An empty result must not register a GC-time deallocator: the backing Vec is
   // empty, so its pointer is dangling and freeing it at collection is an invalid
   // free (aborts under ASAN/debug allocators).

@@ -1,5 +1,5 @@
 import { spawn } from "bun";
-import { afterAll, afterEach, beforeAll, beforeEach, expect, it, test } from "bun:test";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, test } from "bun:test";
 import { exists, mkdir, writeFile } from "fs/promises";
 import { bunEnv, bunExe, bunEnv as env, normalizeBunSnapshot, readdirSorted, tempDir, tmpdirSync } from "harness";
 import { cpSync } from "node:fs";
@@ -1083,4 +1083,79 @@ test("bun pm cache rm does not create the directory named by a project-local .en
   expect(stdout).toInclude("Cleared 'bun install' cache");
   expect(stderr).not.toContain("error");
   expect(exitCode).toBe(0);
+});
+
+describe.concurrent("bun pm bin -g resolves the global directories", () => {
+  async function pmBinGlobal(cwd: string, envOverrides: NodeJS.Dict<string>) {
+    const spawnEnv: NodeJS.Dict<string> = { ...env, ...envOverrides };
+    for (const [key, value] of Object.entries(envOverrides)) {
+      if (value === undefined) delete spawnEnv[key];
+    }
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "pm", "bin", "-g"],
+      cwd,
+      stdout: "pipe",
+      stderr: "pipe",
+      env: spawnEnv,
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+
+  test("a relative BUN_INSTALL resolves against the cwd", async () => {
+    using dir = tempDir("pm-bin-g-relative-bun-install", {
+      "bun-install-rel/install/global/package.json": JSON.stringify({ name: "global", version: "1.0.0" }),
+    });
+    const dirStr = String(dir);
+
+    const { stdout, stderr, exitCode } = await pmBinGlobal(dirStr, {
+      BUN_INSTALL: "bun-install-rel",
+      BUN_INSTALL_BIN: undefined,
+      BUN_INSTALL_GLOBAL_DIR: undefined,
+    });
+
+    expect(stderr).not.toContain("error");
+    expect(stdout.trim()).toBe(join(dirStr, "bun-install-rel", "bin"));
+    expect(await exists(join(dirStr, "bun-install-rel", "bin"))).toBeTrue();
+    expect(exitCode).toBe(0);
+  });
+
+  test("an empty BUN_INSTALL is ignored", async () => {
+    using dir = tempDir("pm-bin-g-empty-bun-install", {
+      "xdg-cache/.bun/install/global/package.json": JSON.stringify({ name: "global", version: "1.0.0" }),
+    });
+    const dirStr = String(dir);
+
+    const { stdout, stderr, exitCode } = await pmBinGlobal(dirStr, {
+      BUN_INSTALL: "",
+      BUN_INSTALL_BIN: undefined,
+      BUN_INSTALL_GLOBAL_DIR: undefined,
+      XDG_CACHE_HOME: join(dirStr, "xdg-cache"),
+    });
+
+    expect(stderr).not.toContain("error");
+    expect(stdout.trim()).toBe(join(dirStr, "xdg-cache", ".bun", "bin"));
+    expect(await exists(join(dirStr, "xdg-cache", ".bun", "bin"))).toBeTrue();
+    expect(exitCode).toBe(0);
+  });
+
+  test("empty BUN_INSTALL, XDG_CACHE_HOME and HOME is an error", async () => {
+    using dir = tempDir("pm-bin-g-no-home", {
+      "package.json": JSON.stringify({ name: "no-home", version: "1.0.0" }),
+    });
+    const dirStr = String(dir);
+
+    const { stdout, stderr, exitCode } = await pmBinGlobal(dirStr, {
+      BUN_INSTALL: "",
+      BUN_INSTALL_BIN: undefined,
+      BUN_INSTALL_GLOBAL_DIR: undefined,
+      XDG_CACHE_HOME: "",
+      HOME: "",
+      USERPROFILE: "",
+    });
+
+    expect(stdout).toBe("");
+    expect(stderr).toContain("No global directory found");
+    expect(exitCode).not.toBe(0);
+  });
 });

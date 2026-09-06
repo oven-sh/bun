@@ -803,6 +803,23 @@ mod holder {
     /// reads these asynchronously after `init()` returns, so they must outlive
     /// the local that builds them.
     pub(super) static CA: std::sync::OnceLock<Vec<bun_core::ZBox>> = std::sync::OnceLock::new();
+
+    /// `(global_dir, startup_cwd)` for `--global`, opened once. `init()` runs
+    /// again after it creates a missing package.json, by then `fchdir` has
+    /// moved the cwd into the global dir, so a relative `BUN_INSTALL` must not
+    /// be resolved a second time. The bin dir is opened later (the bunfig
+    /// override loads inside `init()`), so it resolves against `startup_cwd`.
+    pub(super) static GLOBAL_DIRS: std::sync::OnceLock<(bun_sys::Fd, bun_sys::Fd)> =
+        std::sync::OnceLock::new();
+}
+
+/// The cwd to resolve a relative global bin dir against: the cwd from before
+/// `init()` moved into the global dir, or the process cwd outside `--global`.
+pub(crate) fn global_bin_dir_base() -> Fd {
+    match holder::GLOBAL_DIRS.get() {
+        Some((_, startup_cwd)) => *startup_cwd,
+        None => Fd::cwd(),
+    }
 }
 
 // PORTING.md §Global mutable state: single-thread (main) scratch buffers →
@@ -1490,15 +1507,23 @@ pub fn init(
     subcommand: Subcommand,
 ) -> Result<(&'static mut PackageManager, Box<[u8]>), Error> {
     if cli.global {
-        // Non-consuming peek: `ctx.install` is
-        // `Option<Box<BunInstall>>` borrowed via `&mut ContextData`; reborrow with
-        // `as_deref()` so the boxed config remains in `ctx` for the
-        // `get_or_insert_with` calls below (npmrc loading).
-        let mut explicit_global_dir: &[u8] = b"";
-        if let Some(opts) = ctx.install.as_deref() {
-            explicit_global_dir = opts.global_dir.as_deref().unwrap_or(explicit_global_dir);
-        }
-        let global_dir = package_manager_options::open_global_dir(explicit_global_dir)?;
+        let (global_dir, _) = match holder::GLOBAL_DIRS.get() {
+            Some(dirs) => *dirs,
+            None => {
+                // Non-consuming peek: `ctx.install` is
+                // `Option<Box<BunInstall>>` borrowed via `&mut ContextData`; reborrow with
+                // `as_deref()` so the boxed config remains in `ctx` for the
+                // `get_or_insert_with` calls below (npmrc loading).
+                let mut explicit_global_dir: &[u8] = b"";
+                if let Some(opts) = ctx.install.as_deref() {
+                    explicit_global_dir =
+                        opts.global_dir.as_deref().unwrap_or(explicit_global_dir);
+                }
+                let startup_cwd = bun_sys::open_dir_at(Fd::cwd(), b".")?;
+                let global_dir = package_manager_options::open_global_dir(explicit_global_dir)?;
+                *holder::GLOBAL_DIRS.get_or_init(|| (global_dir, startup_cwd))
+            }
+        };
         bun_sys::fchdir(global_dir)?;
     }
 

@@ -781,7 +781,8 @@ pub fn is_package_in_cache(
 // ─────────────────────────── global directories ───────────────────────────────
 
 pub fn setup_global_dir(manager: &mut PackageManager, ctx: &Command::Context) -> Result<(), Error> {
-    manager.options.global_bin_dir = options::open_global_bin_dir(ctx.install.as_deref())?;
+    manager.options.global_bin_dir =
+        options::open_global_bin_dir(ctx.install.as_deref(), super::global_bin_dir_base())?;
     let mut out_buffer = bun_paths::path_buffer_pool::get();
     let result = sys::get_fd_path_z(manager.options.global_bin_dir, &mut out_buffer)?;
     let path = FileSystem::instance()

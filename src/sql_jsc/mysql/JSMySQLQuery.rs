@@ -147,6 +147,9 @@ impl JSMySQLQuery {
         }
         this.set_target(target);
         if let Err(err) = this.run(connection) {
+            // The query was never enqueued; the JS caller rejects the promise
+            // with the exception thrown below.
+            let _ = this.query.with_mut(|q| q.fail());
             if !global_object.has_exception() {
                 return Err(global_object.throw_value(mysql_error_to_js(
                     global_object,
@@ -377,9 +380,14 @@ impl JSMySQLQuery {
         // R-2: errdefer rollback — `&Self` is `Copy`; the guard captures it by
         // value, mutation is `JsCell`-backed, and `into_inner` disarms on the
         // success path below.
+        //
+        // The query is deliberately not marked failed here. When `run` fails
+        // from the queue (`MySQLRequestQueue::advance`, e.g. a bind error after
+        // PREPARE_OK), `on_error` -> `reject_with_js_value` is what settles the
+        // promise, and that path is a no-op once `fail()` has already flipped
+        // the status. `do_run` marks the query failed itself after the throw.
         let errguard = scopeguard::guard(self, |s| {
             s.this_value.with_mut(|v| v.downgrade());
-            let _ = s.query.with_mut(|q| q.fail());
         });
 
         let columns_value = self.get_columns().unwrap_or(JSValue::UNDEFINED);

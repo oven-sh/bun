@@ -1187,6 +1187,26 @@ if (isDockerEnabled()) {
           expect((await sql`select CAST(123 AS SIGNED) as x`)[0].x).toBe(123);
         });
 
+        test("a parameter that fails to serialize rejects on a statement that is not yet prepared", async () => {
+          await using sql = new SQL({ ...getOptions(), max: 1 });
+          // Each text is new to this connection, so the bind runs from the
+          // PREPARE_OK handler, not from the JS caller.
+          const cyclic: any = { x: 1 };
+          cyclic.self = cyclic;
+          expect(await sql`select ${{ id: 10n }} as bind_error_bigint`.catch((e: any) => e.message)).toBe(
+            "JSON.stringify cannot serialize BigInt.",
+          );
+          expect(await sql`select ${cyclic} as bind_error_cyclic`.catch((e: any) => e.message)).toStartWith(
+            "JSON.stringify cannot serialize cyclic structures",
+          );
+          // The connection is still usable, also from inside a transaction.
+          expect(await sql`select ${"ok"} as v`).toEqual([{ v: "ok" }]);
+          expect(
+            await sql.begin(tx => tx`select ${{ big: 1n }} as bind_error_in_tx`).catch((e: any) => e.message),
+          ).toBe("JSON.stringify cannot serialize BigInt.");
+          expect(await sql`select ${"after"} as v`).toEqual([{ v: "after" }]);
+        });
+
         test("flush should work", async () => {
           await sql`select 1`;
           sql.flush();

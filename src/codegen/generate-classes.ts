@@ -2115,16 +2115,22 @@ function generateRust(
 
   // ── structuredClone ──────────────────────────────────────────────────────
   if (structuredClone) {
+    // `Err` leaves the exception pending; the C++ serializer checks for it
+    // right after the call (e.g. a DataCloneError for an uncloneable state).
     thunk(
       symbolName(typeName, "onStructuredCloneSerialize"),
       `(this: ${recv}, global: &JSGlobalObject, ctx: *mut c_void, write_bytes: WriteBytesFn) -> ()`,
-      `    ${T}::on_structured_clone_serialize(this, global, ctx, write_bytes)`,
+      `    if let Err(err) = ${T}::on_structured_clone_serialize(this, global, ctx, write_bytes) {
+        let _ = host_fn::host_call_error_value(global, err);
+    }`,
     );
     if (typeof structuredClone === "object" && structuredClone.transferable) {
       thunk(
         symbolName(typeName, "onStructuredCloneTransfer"),
         `(this: ${recv}, global: &JSGlobalObject, ctx: *mut c_void, write_bytes: WriteBytesFn) -> ()`,
-        `    ${T}::on_structured_clone_transfer(this, global, ctx, write_bytes)`,
+        `    if let Err(err) = ${T}::on_structured_clone_transfer(this, global, ctx, write_bytes) {
+        let _ = host_fn::host_call_error_value(global, err);
+    }`,
       );
     }
     thunk(

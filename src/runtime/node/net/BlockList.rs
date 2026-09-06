@@ -410,7 +410,7 @@ impl BlockList {
         ctx: *mut c_void,
         // codegen `WriteBytesFn` typedef (jsc.conv).
         write_bytes: crate::generated_classes::WriteBytesFn,
-    ) {
+    ) -> JsResult<()> {
         use bun_io::Write as _;
         let _guard = this.mutex.lock_guard();
         this.ref_();
@@ -425,6 +425,7 @@ impl BlockList {
         // through `SERIALIZED_REFS` and never forms `&mut Self` (only `ref_()` +
         // `to_js_ptr`, both `&self`/raw-ptr), so `from_ref` provenance is fine.
         _ = writer.write_int_le(this.serialize_nonce);
+        Ok(())
     }
 
     // C++ codegen calls this with a live `*mut *mut u8` cursor and end pointer; the

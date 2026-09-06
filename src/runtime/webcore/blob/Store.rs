@@ -197,14 +197,9 @@ impl StoreExt for Store {
                     }
                 }
             }
-            Data::S3(s3) => {
-                let pathlike_tag = PathOrFileDescriptorSerializeTag::Path;
-                writer.write_int_le::<u8>(pathlike_tag as u8)?;
-
-                let path_slice = s3.pathlike.slice();
-                writer.write_int_le::<u32>(path_slice.len() as u32)?;
-                writer.write_all(path_slice)?;
-            }
+            // The key alone would deserialize as a local file path, and no
+            // wire format carries the bucket and credentials.
+            Data::S3(_) => return Err(crate::Error::InvalidValue),
             Data::Bytes(bytes) => {
                 let slice = bytes.slice();
                 writer.write_int_le::<u32>(slice.len() as u32)?;

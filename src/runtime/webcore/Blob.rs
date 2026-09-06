@@ -177,12 +177,13 @@ pub trait BlobExt {
     fn get_content_type(&self) -> Option<Utf8Bytes<'_>>;
     fn _on_structured_clone_serialize<W: bun_io::Write>(&self, writer: &mut W)
     -> crate::Result<()>;
+    /// `Err`: a `DataCloneError` is pending (S3-backed blobs are not cloneable).
     fn on_structured_clone_serialize(
         &self,
-        _global_this: &JSGlobalObject,
+        global_this: &JSGlobalObject,
         ctx: *mut c_void,
         write_bytes: crate::generated_classes::WriteBytesFn,
-    );
+    ) -> JsResult<()>;
     /// `Ok(None)`: the bytes are not a valid record (the deserializer reports its usual error).
     fn on_structured_clone_deserialize(
         global_this: &JSGlobalObject,
@@ -724,14 +725,17 @@ impl BlobExt for Blob {
         &self,
         writer: &mut W,
     ) -> crate::Result<()> {
-        let is_memory_backed = if let Some(store) = self.store.get() {
-            matches!(store.data, store::Data::Bytes(_))
-        } else {
-            false
+        let store = self.store.get();
+        let store_tag = match store.as_deref().map(|store| &store.data) {
+            None => store::SerializeTag::Empty,
+            Some(store::Data::Bytes(_)) => store::SerializeTag::Bytes,
+            Some(store::Data::File(_)) => store::SerializeTag::File,
+            // No wire format carries the bucket and credentials.
+            Some(store::Data::S3(_)) => return Err(crate::Error::InvalidValue),
         };
 
         writer.write_int_le::<u8>(SERIALIZATION_VERSION)?;
-        writer.write_int_le::<u64>(if is_memory_backed {
+        writer.write_int_le::<u64>(if matches!(store_tag, store::SerializeTag::Bytes) {
             0
         } else {
             self.offset.get()
@@ -742,19 +746,9 @@ impl BlobExt for Blob {
         writer.write_all(ct)?;
         writer.write_int_le::<u8>(self.content_type_was_set.get() as u8)?;
 
-        let store_tag: store::SerializeTag = if let Some(store) = self.store.get() {
-            if matches!(store.data, store::Data::File(_)) {
-                store::SerializeTag::File
-            } else {
-                store::SerializeTag::Bytes
-            }
-        } else {
-            store::SerializeTag::Empty
-        };
-
         writer.write_int_le::<u8>(store_tag as u8)?;
 
-        if let Some(store) = self.store.get() {
+        if let Some(store) = store {
             if let store::Data::Bytes(bytes) = &store.data {
                 let view = self.shared_view();
                 writer.write_int_le::<u32>(view.len() as u32)?;
@@ -792,15 +786,27 @@ impl BlobExt for Blob {
 
     fn on_structured_clone_serialize(
         &self,
-        _global_this: &JSGlobalObject,
+        global_this: &JSGlobalObject,
         ctx: *mut c_void,
         write_bytes: crate::generated_classes::WriteBytesFn,
-    ) {
+    ) -> JsResult<()> {
+        if self.is_s3() {
+            return Err(global_this.throw_dom_exception(
+                jsc::DOMExceptionCode::DataCloneError,
+                format_args!("S3File cannot be structured cloned or sent with postMessage()"),
+            ));
+        }
         let mut writer = StructuredCloneWriter {
             ctx,
             impl_: write_bytes,
         };
-        let _ = self._on_structured_clone_serialize(&mut writer);
+        self._on_structured_clone_serialize(&mut writer)
+            .map_err(|_| {
+                global_this.throw_dom_exception(
+                    jsc::DOMExceptionCode::DataCloneError,
+                    format_args!("The object can not be cloned."),
+                )
+            })
     }
 
     // C++ codegen calls this with a live `*mut *mut u8` cursor and end pointer; the

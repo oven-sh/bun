@@ -361,6 +361,38 @@ describe("structuredClone with Blob and File", () => {
     });
   });
 
+  describe("S3File structured clone", () => {
+    const credentials = { bucket: "bucket", accessKeyId: "a", secretAccessKey: "s", endpoint: "http://127.0.0.1:1" };
+    const dataCloneError = expect.objectContaining({ name: "DataCloneError" });
+
+    test.each([
+      ["Bun.s3.file()", () => Bun.s3.file("key", credentials), "key"],
+      ["S3Client.file()", () => new Bun.S3Client(credentials).file("some/longer/key.txt"), "some/longer/key.txt"],
+      ['Bun.file("s3://")', () => Bun.file("s3://bucket/key"), "bucket/key"],
+    ])("%s throws DataCloneError and leaves the source untouched", (_, make, name) => {
+      const file = make();
+      expect(file.size).toBeNaN();
+
+      // The wire format has no representation for the bucket and credentials,
+      // so every attempt throws up front instead of writing a record that
+      // deserializes as something else.
+      for (let attempt = 0; attempt < 2; attempt++) {
+        expect(() => structuredClone(file)).toThrow(dataCloneError);
+        expect(() => structuredClone({ nested: [file] })).toThrow(dataCloneError);
+        expect(() => serialize(file)).toThrow(dataCloneError);
+      }
+
+      const { port1, port2 } = new MessageChannel();
+      expect(() => port1.postMessage(file)).toThrow(dataCloneError);
+      port1.close();
+      port2.close();
+
+      // A failed attempt used to resolve the unknown size to 0 on the source.
+      expect(file.size).toBeNaN();
+      expect(file.name).toBe(name);
+    });
+  });
+
   describe("deserialize of crafted payloads", () => {
     // The Blob structured-clone wire format carries an `offset` (u64 LE) that
     // the sender controls. A malicious payload can set it past the end of the

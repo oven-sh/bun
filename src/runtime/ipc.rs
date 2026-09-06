@@ -482,8 +482,7 @@ mod json {
             json_data = &json_data[1..];
             kind = Kind::Internal;
         }
-        // An empty payload (a bare newline, or the internal tag byte alone) is
-        // invalid JSON. `create_external` below rejects an empty slice.
+        // A bare newline or a lone tag byte is invalid JSON.
         if json_data.is_empty() {
             return Err(IPCDecodeError::InvalidFormat);
         }

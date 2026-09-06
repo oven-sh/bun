@@ -61,9 +61,7 @@ function restoreBuffers(envelope: unknown): unknown {
     throw new Error("failed to parse serialized buffer envelope");
   }
   const buffers = (envelope as unknown[])[1] as unknown[];
-  // Fresh from deserialization, a tagged Buffer is a plain Uint8Array. Buffer
-  // methods read the backing bytes as Uint8, so any other view is rejected
-  // rather than given the Buffer prototype.
+  // Only a Uint8Array may become a Buffer; the sender tags Buffers and nothing else.
   for (let i = 0; i < buffers.length; i++) {
     if (!isUint8Array(buffers[i])) throw new Error("failed to parse serialized buffer envelope");
   }

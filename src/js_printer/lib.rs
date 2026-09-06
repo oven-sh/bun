@@ -1658,8 +1658,7 @@ pub(crate) mod __gated_printer {
         pub(crate) export_default_start: i32,
         pub(crate) arrow_expr_start: i32,
         pub(crate) for_of_init_start: i32,
-        /// Start of the expression in a for, for-in, or for-of head. No such
-        /// expression may begin with the tokens `let [`.
+        /// Start of the expression in a for, for-in, or for-of head.
         pub(crate) for_init_start: i32,
         pub(crate) prev_op: Op::Code,
         pub(crate) prev_op_end: i32,
@@ -3757,8 +3756,7 @@ pub(crate) mod __gated_printer {
                     // The index target is not directly followed by `of`.
                     flags.remove(ExprFlag::IsFollowedByOf);
 
-                    // An expression statement or a for loop head must not start
-                    // with the tokens "let [", so "let[0] = 1" prints as "(let)[0] = 1".
+                    // A statement or for loop head must not start with "let [".
                     let wrap_let = {
                         let n = self.writer.written();
                         (n == self.stmt_start || n == self.for_init_start)

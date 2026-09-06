@@ -1342,12 +1342,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             p.lexer.expect(T::TStringLiteral)?;
         }
 
-        // Import Assertions are deprecated.
-        // Import Attributes are the new way to do this.
-        // But some code may still use "assert"
-        // We support both and treat them identically.
-        // Only "assert" has a [no LineTerminator here] restriction. "with" may
-        // start on the next line.
+        // Import attributes ("with") and the deprecated import assertions ("assert")
+        // are treated identically. Only "assert" has a [no LineTerminator here] restriction.
         if p.lexer.token == T::TWith
             || (!p.lexer.has_newline_before && p.lexer.is_contextual_keyword(b"assert"))
         {
@@ -1621,8 +1617,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         // In TypeScript, "async <ident>" not followed by "=>" treats "async" as
                         // a plain identifier (e.g. "async as T"), matching tsc's two-token
                         // lookahead in isUnParenthesizedAsyncArrowFunctionWorker (TypeScript#8444).
-                        // "async of" is only an arrow function if "=>" follows, so that
-                        // "for await (async of xs)" parses as a for-of over the identifier "async".
+                        // "async of" needs the same lookahead: "for await (async of xs)".
                         let is_arrow_fn = (!Self::IS_TYPESCRIPT_ENABLED
                             && !p.lexer.is_contextual_keyword(b"of"))
                             || p.check_for_arrow_after_the_current_token();

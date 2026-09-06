@@ -482,6 +482,34 @@ describe("otp", async () => {
       expect(exitCode).toBe(0);
     });
   }
+
+  // `--otp` is written into `npm-otp: <value>` as-is, so a value holding "\r\n"
+  // used to end that header line and send whatever followed it as additional
+  // header lines. It must be rejected before any request is made.
+  test.each([
+    ["CRLF", "abc\r\nX-Injected: 1"],
+    ["a bare LF", "abc\ndef"],
+    ["a bare CR", "abc\rdef"],
+  ])("--otp containing %s is rejected", async (_, otp) => {
+    const seen: { injected: string | null }[] = [];
+    using mockRegistry = Bun.serve({
+      port: 0,
+      fetch(req) {
+        seen.push({ injected: req.headers.get("x-injected") });
+        return new Response("not found", { status: 404 });
+      },
+    });
+
+    using dir = tempDir("publish-otp-crlf", {
+      "package.json": JSON.stringify({ name: "otp-pkg-crlf", version: "1.0.0" }),
+      "bunfig.toml": `[install]\ncache = false\nregistry = { url = "http://localhost:${mockRegistry.port}", token = "tok" }\n`,
+    });
+
+    const { err, exitCode } = await publish(env, String(dir), "--otp", otp);
+    expect(seen).toEqual([]);
+    expect(err).toContain("invalid `otp` value: must not contain a newline or NUL byte");
+    expect(exitCode).toBe(1);
+  });
 });
 
 test("can publish a package then install it", async () => {

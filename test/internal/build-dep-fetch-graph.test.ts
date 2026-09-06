@@ -86,7 +86,7 @@ function setup(root: string): { cfg: Config; n: Ninja; buildDir: string } {
 
 /** The `build` statement in build.ninja whose first output is `firstOutput` (buildDir-relative), joined onto one line. */
 function edgeFor(ninjaText: string, firstOutput: string): string {
-  const start = ninjaText.indexOf(`build ${firstOutput} `);
+  const start = ninjaText.search(new RegExp(`^build ${RegExp.escape(firstOutput)}[ :]`, "m"));
   expect(start).toBeGreaterThanOrEqual(0);
   const rest = ninjaText.slice(start);
   const next = rest.indexOf("\nbuild ", 1);

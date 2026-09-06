@@ -170,15 +170,27 @@ export const mydep: Dependency = {
 
 ## How the fetch works
 
-Each fetched dep gets one ninja build statement with `restat = 1`:
+Each fetched dep gets two ninja build statements, both `restat = 1`:
 
-- **fetch** → `vendor/<name>/.ref` stamp
-  - Downloads the tarball (or sparse git fetch), extracts, applies patches
-  - `.ref` contains `sha256(commit + sparse + patches)[:16]`
-  - restat: if identity unchanged, no write, downstream pruned
+- **plan** → `deps/<name>/sources.dd`
+  - If `vendor/<name>/.ref` already names the pinned identity: nothing to
+    fetch. Otherwise downloads the tarball (or sparse git fetch), extracts and
+    applies patches into `vendor/<name>.staging`
+  - Writes `sources.dd`, a ninja dyndep file declaring every file of that
+    tree as an output of the fetch edge below (minus the ones build.ninja
+    already declares, listed in `deps/static-outputs.txt`)
+- **fetch** (`dyndep = sources.dd`) → `vendor/<name>/.ref` stamp
+  - Syncs the staging tree into `vendor/<name>` in place: unchanged files
+    keep their mtime, changed/added files are moved in, removed ones deleted
+  - `.ref` contains `sha256(commit + sparse + patches)[:16]`, written last
+  - restat: if identity unchanged, no write, downstream pruned; after a bump,
+    untouched files are pruned the same way and the includers of rewritten
+    headers rebuild in the same run
 
-The dep's sources are declared as implicit outputs of that edge, so the
-compile edges that follow wait for it; from there they are ordinary
+The sources a compile edge names as `$in` are declared as static implicit
+outputs of the fetch edge (they need a producer before any dyndep file
+exists), so the compile edges that follow wait for it; every other file of
+the tree joins them through the dyndep file. From there they are ordinary
 `cc`/`cxx` edges with depfiles.
 
 No dep is described by reading its tree at configure time. Where upstream

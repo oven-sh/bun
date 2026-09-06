@@ -2127,6 +2127,14 @@ function parseOptions(
     }
   }
 
+  // A verify-* sslmode is an explicit request to verify the certificate. The
+  // native side only verifies when rejectUnauthorized is set, and an unset
+  // rejectUnauthorized falls back to NODE_TLS_REJECT_UNAUTHORIZED, which must
+  // not be able to silently turn the request off.
+  if (sslMode >= SSLMode.verify_ca && (!$isObject(tls) || tls.rejectUnauthorized !== false)) {
+    tls = { ...($isObject(tls) ? tls : {}), rejectUnauthorized: true };
+  }
+
   // Explicit tls/ssl options request an encrypted connection: if the server
   // declines TLS, the connection is aborted instead of continuing in plaintext.
   // Certificate verification is only enabled when explicitly requested

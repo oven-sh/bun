@@ -1195,6 +1195,8 @@ pub(crate) fn run(ctx: &mut Command::ContextData) -> Result<core::convert::Infal
         unsafe { (*event_loop).tick_once((&raw const state).cast_mut().cast::<c_void>()) };
     }
 
+    // A signal from here on ends the process through its default disposition.
+    run_abort::uninstall();
     let status = state.finalize();
     // Exit 128 + signal even when every started script exited 0 before the abort.
     let status = match run_abort::pending() {

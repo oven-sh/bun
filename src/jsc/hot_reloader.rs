@@ -1118,14 +1118,9 @@ where
                             }
                         }
 
-                        // Map each changed name onto the watchlist by joining it to
-                        // the watched directory's path. The per-file watch follows
-                        // the inode, so a file replaced by an atomic save (write a
-                        // temp file, rename it over) stops reporting once the rename
-                        // lands and this directory event is the only signal left. The
-                        // resolver's cached `Entry.abs_path` is not a usable key: it
-                        // is filled lazily, so after a cache bust (a failed lookup in
-                        // the directory does that) watched files map to an empty path.
+                        // Match by `dir + name`, not by the cached `Entry.abs_path`:
+                        // the resolver fills that lazily, so it is empty after a
+                        // cache bust.
                         let mut last_file_hash: bun_watcher::HashType = bun_watcher::HashType::MAX;
                         let dir_path = strings::trim_right(file_path, &[SEP]);
 
@@ -1156,27 +1151,20 @@ where
                                 continue;
                             }
 
-                            // The resolver must re-stat this entry on its next
-                            // resolution. Bookkeeping only; it never gates the reload.
+                            // Make the resolver re-stat this entry. It never gates
+                            // the reload.
                             if let Some(dir_ent) = entries_option {
                                 // SAFETY: dir_ent points into rfs.entries (or a
                                 // tombstoned copy); both outlive this loop iteration.
-                                // Shared access only: `entries()` takes `&self` and the
-                                // per-entry mutation goes through the entry's own
-                                // mutex + cells.
                                 let dir_ent = unsafe { &*dir_ent };
-                                // Probe `.data` under `entries_mutex`; a resolver at a
-                                // newer generation rewrites the map in place under
-                                // that lock. The entry pointer stays valid after
-                                // unlock (EntryStore-owned).
+                                // The entry pointer stays valid after unlock
+                                // (EntryStore-owned).
                                 let looked_up = {
                                     let _entries_lock = rfs.entries_mutex.lock_guard();
                                     dir_ent.entries().get(changed_name)
                                 };
                                 if let Some(file_ent) = looked_up {
                                     let ent = file_ent.entry();
-                                    // Every cached-`Entry` rewrite takes the per-entry
-                                    // mutex.
                                     let _entry_guard = ent.mutex.lock_guard();
                                     ent.set_cache_fd(Fd::INVALID);
                                     ent.need_stat
@@ -1214,9 +1202,7 @@ where
                                         bstr::BStr::new(watched_path)
                                     ));
                                 }
-                                // The entry's watch (and cached fd) may point at the
-                                // replaced inode; evict it so the reload re-arms a
-                                // watch on the current one.
+                                // Evict the watch on the old inode; the reload re-arms it.
                                 // SAFETY: see the File-arm call above.
                                 unsafe {
                                     (*ctx).remove_at_index::<false>(

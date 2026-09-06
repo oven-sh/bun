@@ -19,8 +19,7 @@ pub enum Authentication {
     Unknown,
 }
 
-/// The SASL mechanisms the server listed in AuthenticationSASL that this
-/// client implements.
+/// Mechanisms from the AuthenticationSASL list that this client implements.
 #[derive(Copy, Clone, Default, Debug, Eq, PartialEq)]
 pub struct SASLMechanisms {
     pub scram_sha_256: bool,
@@ -148,8 +147,7 @@ impl Authentication {
                     // remain valid because `bytes` is moved into the result below).
                     let mut iter = bun_core::split(bytes.slice(), b",");
                     while let Some(item) = iter.next() {
-                        // RFC 5802 §5.1: `m=` is a mandatory extension. A
-                        // client that does not understand it must fail.
+                        // RFC 5802 §5.1: unsupported mandatory extension.
                         if item.starts_with(b"m=") {
                             bun_core::scoped_log!(
                                 Postgres,

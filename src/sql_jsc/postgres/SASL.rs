@@ -11,18 +11,14 @@ const SERVER_SIGNATURE_BASE64_LEN: usize =
 
 const SALTED_PASSWORD_BYTE_LEN: usize = 32;
 
-/// RFC 5802 §7 GS2 header flag: what the client tells the server about
-/// channel binding in the client-first-message.
+/// RFC 5802 §7 GS2 channel binding flag of the client-first-message.
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]
 pub enum ChannelBindingFlag {
-    /// `n,,`: the client does not support channel binding (no TLS, or
-    /// `channel_binding=disable`).
+    /// `n,,`
     NotSupported,
-    /// `y,,`: the client supports channel binding but the server did not
-    /// offer `SCRAM-SHA-256-PLUS`. The server detects a downgrade from this.
+    /// `y,,`: supported by the client, not offered by the server.
     SupportedNotOffered,
-    /// `p=tls-server-end-point,,`: `SCRAM-SHA-256-PLUS` with the peer
-    /// certificate hash as the binding data.
+    /// `p=tls-server-end-point,,`
     TlsServerEndPoint,
 }
 
@@ -43,9 +39,7 @@ impl ChannelBindingFlag {
     }
 }
 
-/// RFC 5802 §5.1 `c=` attribute: base64 of the GS2 header followed by the
-/// channel binding data (empty unless `TlsServerEndPoint`). The header is at
-/// most 24 bytes and the certificate hash at most `EVP_MAX_MD_SIZE`.
+/// `c=` is base64(gs2-header + cbind-data): at most 24 + `EVP_MAX_MD_SIZE` bytes.
 pub(crate) const CBIND_INPUT_MAX_LEN: usize = 24 + EVP_MAX_MD_SIZE;
 pub(crate) const CBIND_BASE64_MAX_LEN: usize =
     bun_base64::encode_len_from_size(CBIND_INPUT_MAX_LEN);

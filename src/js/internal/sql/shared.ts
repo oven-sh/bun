@@ -1911,8 +1911,6 @@ function parseOptions(
       } else if (lowerKey === "path") {
         path = queryObject[key];
       } else if (lowerKey === "channel_binding" || lowerKey === "channelbinding" || lowerKey === "channel-binding") {
-        // libpq keyword, consumed here: it is not a server parameter and must
-        // not be forwarded in the StartupMessage.
         channelBinding = normalizeChannelBinding(queryObject[key]);
       } else {
         // this is valid for postgres for other databases it might not be valid

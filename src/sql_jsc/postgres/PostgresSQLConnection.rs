@@ -306,9 +306,7 @@ impl PostgresSQLConnection {
         matches!(self.socket.get(), Socket::SocketTls(_))
     }
 
-    /// RFC 5929 `tls-server-end-point` binding data for the current TLS
-    /// session. `None` on a plaintext socket, when the peer sent no
-    /// certificate, or when its signature algorithm has no usable digest.
+    /// RFC 5929 `tls-server-end-point` hash of the peer certificate, if any.
     fn peer_certificate_hash(
         &self,
         out: &mut [u8; BoringSSL::c::EVP_MAX_MD_SIZE as usize],
@@ -2627,10 +2625,7 @@ impl PostgresSQLConnection {
                             return Ok(());
                         }
 
-                        // Mechanism selection follows libpq's pg_SASL_init:
-                        // SCRAM-SHA-256-PLUS whenever the connection is TLS,
-                        // the server offers it, and binding is not disabled;
-                        // otherwise SCRAM-SHA-256.
+                        // Mechanism selection matches libpq's pg_SASL_init.
                         let mut sasl = crate::postgres::sasl::SASL::default();
                         let binding_allowed =
                             tls_in_use && self.channel_binding != ChannelBinding::Disable;

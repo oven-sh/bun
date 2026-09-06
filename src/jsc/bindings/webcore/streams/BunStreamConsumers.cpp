@@ -1028,6 +1028,7 @@ static JSValue oneShotCallPull(JSC::VM& vm, JSGlobalObject* globalObject, JSValu
     }
     MarkedArgumentBuffer arguments;
     arguments.append(sink);
+    StreamAsyncContextScope asyncContextScope(globalObject, sink->m_stream.get());
     RELEASE_AND_RETURN(scope, JSC::call(globalObject, pullFunction, callData, jsUndefined(), arguments));
 }
 

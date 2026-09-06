@@ -817,11 +817,13 @@ JSValue readDirectStream(JSGlobalObject* globalObject, JSReadableStream* stream,
     bool pullIsTruthy = pull.toBoolean(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
     if (!pullIsTruthy) {
+        StreamAsyncContextScope asyncContextScope(globalObject, stream);
         readDirectStreamCloseImpl(vm, globalObject, state, jsUndefined(), jsUndefined());
         RETURN_IF_EXCEPTION(scope, {});
         return jsUndefined();
     }
     if (!pull.isCallable()) {
+        StreamAsyncContextScope asyncContextScope(globalObject, stream);
         readDirectStreamCloseImpl(vm, globalObject, state, jsUndefined(), jsUndefined());
         RETURN_IF_EXCEPTION(scope, {});
         throwTypeError(globalObject, scope, "pull is not a function"_s);
@@ -856,7 +858,11 @@ JSValue readDirectStream(JSGlobalObject* globalObject, JSReadableStream* stream,
     MarkedArgumentBuffer pullArgs;
     pullArgs.append(sinkController);
     ASSERT(!pullArgs.hasOverflowed());
-    JSValue maybePromise = call(globalObject, pull, getCallData(pull), underlyingSource, pullArgs);
+    JSValue maybePromise;
+    {
+        StreamAsyncContextScope asyncContextScope(globalObject, stream);
+        maybePromise = call(globalObject, pull, getCallData(pull), underlyingSource, pullArgs);
+    }
     RETURN_IF_EXCEPTION(scope, {});
 
     if (auto* pullPromise = dynamicDowncast<JSPromise>(maybePromise)) {

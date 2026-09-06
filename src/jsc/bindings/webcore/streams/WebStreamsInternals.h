@@ -368,12 +368,15 @@ void readableStreamDefaultReaderErrorReadRequests(JSC::JSGlobalObject*, JSReadab
 // Bun public `reader.readMany()`: returns the `{value,size,done}` object synchronously OR
 // a promise of one.
 // Restores the stream's construction-time async-context snapshot around a user
-// source callback (pull/cancel and the direct pull). Defined in WebStreamsMisc.cpp.
+// source callback (pull/cancel/close and the direct pull). Defined in WebStreamsMisc.cpp.
+// Closing or erroring the stream clears its snapshot (readableStreamClearSourceBarriers), so a
+// hook that runs after that takes the snapshot read beforehand.
 class StreamAsyncContextScope {
     WTF_MAKE_NONCOPYABLE(StreamAsyncContextScope);
 
 public:
     StreamAsyncContextScope(JSC::JSGlobalObject*, JSReadableStream*);
+    StreamAsyncContextScope(JSC::JSGlobalObject*, JSC::JSValue snapshot);
     ~StreamAsyncContextScope();
 
 private:

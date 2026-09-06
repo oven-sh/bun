@@ -428,7 +428,7 @@ static void closeDirectSinkForError(JSC::VM& vm, JSGlobalObject* globalObject, J
 }
 
 // The Bun-only `underlyingSource.close(reason)` lifecycle callback.
-static void callUnderlyingSourceClose(JSC::VM& vm, JSGlobalObject* globalObject, JSObject* underlyingSource, JSValue reason)
+static void callUnderlyingSourceClose(JSC::VM& vm, JSGlobalObject* globalObject, JSValue asyncContext, JSObject* underlyingSource, JSValue reason)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
     if (!underlyingSource)
@@ -440,6 +440,7 @@ static void callUnderlyingSourceClose(JSC::VM& vm, JSGlobalObject* globalObject,
         return;
     MarkedArgumentBuffer args;
     args.append(reason);
+    StreamAsyncContextScope asyncContextScope(globalObject, asyncContext);
     JSC::call(globalObject, closeFunction, callData, underlyingSource, args);
     RELEASE_AND_RETURN(scope, );
 }
@@ -455,6 +456,7 @@ bool JSDirectStreamController::handleError(JSGlobalObject* globalObject, JSValue
     const bool wasClosed = m_closed;
     m_closed = true;
     JSObject* underlyingSource = m_underlyingSource.get();
+    JSValue asyncContext = m_stream ? m_stream->m_asyncContext.get() : JSValue();
     directStreamControllerClearSource(this);
 
     bool delivered = false;
@@ -477,7 +479,7 @@ bool JSDirectStreamController::handleError(JSGlobalObject* globalObject, JSValue
         return delivered;
     closeDirectSinkForError(vm, globalObject, this, error);
     RETURN_IF_EXCEPTION(scope, false);
-    callUnderlyingSourceClose(vm, globalObject, underlyingSource, error);
+    callUnderlyingSourceClose(vm, globalObject, asyncContext, underlyingSource, error);
     RETURN_IF_EXCEPTION(scope, false);
     return delivered;
 }
@@ -661,6 +663,7 @@ void JSDirectStreamController::onClose(JSGlobalObject* globalObject, JSValue rea
     // No "Closing" stream state exists: m_closed set here is what blocks re-entry.
     m_closed = true;
     JSObject* underlyingSource = m_underlyingSource.get();
+    JSValue asyncContext = stream->m_asyncContext.get();
     directStreamControllerClearSource(this);
 
     JSValue flushed = endDirectSink(vm, globalObject, this);
@@ -669,7 +672,7 @@ void JSDirectStreamController::onClose(JSGlobalObject* globalObject, JSValue rea
     RETURN_IF_EXCEPTION(scope, );
     // The user's close(reason) hook runs once the stream is fully closed, so a throw from it
     // propagates to whoever closed with nothing left half-done.
-    RELEASE_AND_RETURN(scope, callUnderlyingSourceClose(vm, globalObject, underlyingSource, reason));
+    RELEASE_AND_RETURN(scope, callUnderlyingSourceClose(vm, globalObject, asyncContext, underlyingSource, reason));
 }
 
 // The rest of close(): hand end()'s final chunk to whoever is reading (or arm it for the next read),

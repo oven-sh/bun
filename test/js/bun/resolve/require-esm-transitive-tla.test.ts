@@ -1,13 +1,130 @@
-// $esmLoadSync's Pending fallback used to accept any record at status >=
-// Evaluating with !hasTLA(). hasTLA() only reports the *self* flag, so a
-// module with no TLA whose dependency has TLA (status EvaluatingAsync) was
-// returned with bindings still in TDZ. It must throw "async module" instead.
+// require() of an ES module graph that contains top-level await.
 //
-// Separately, when the Pending path *does* throw, it used to removeEntry()
-// unconditionally. If an outer import() already created the entry, deleting
-// it forces a second evaluation when the outer import settles.
-import { expect, test } from "bun:test";
+// Like Node, Bun rejects it with ERR_REQUIRE_ASYNC_MODULE, decided from the
+// records' [[HasTLA]] flags once the graph is loaded and before any module
+// body in it runs. $esmLoadSync used to load+link+evaluate in one step and
+// infer "async" from a still-pending promise afterwards, so side effects ran
+// before the throw, graphs whose awaits settled on microtasks alone were
+// returned, and a graph that import() had already evaluated was returned too.
+//
+// Separately, when $esmLoadSync does throw for a load it cannot finish
+// synchronously, it must only removeEntry() an entry it created itself. If an
+// outer import() already created the entry, deleting it forces a second
+// evaluation when the outer import settles.
+import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
+
+describe("require(esm) rejects top-level await before evaluating anything", () => {
+  const fixtures = {
+    "tla-value.mjs": `globalThis.order.push("tla-value"); await 0; export const x = "value";`,
+    "tla-resolved.mjs": `globalThis.order.push("tla-resolved"); await Promise.resolve(); export const x = "resolved";`,
+    "tla-task.mjs": `globalThis.order.push("tla-task"); await new Promise(r => setTimeout(r, 1)); export const x = "task";`,
+    "dep-tla.mjs": `globalThis.order.push("dep-tla"); await 0; export const y = "dep";`,
+    "parent.mjs": `import { y } from "./dep-tla.mjs"; globalThis.order.push("parent"); export const x = "parent:" + y;`,
+    "plain.mjs": `globalThis.order.push("plain"); export const x = "plain";`,
+    "attempt.cjs": `
+      globalThis.order = [];
+      exports.attempt = function attempt(file) {
+        try {
+          return { returned: require(file).x };
+        } catch (e) {
+          return { name: e.name, code: e.code };
+        }
+      };
+    `,
+  };
+  const rejected = { name: "Error", code: "ERR_REQUIRE_ASYNC_MODULE" };
+
+  async function run(dir: string, file: string) {
+    await using proc = Bun.spawn({ cmd: [bunExe(), file], env: bunEnv, cwd: dir, stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+    return JSON.parse(stdout);
+  }
+
+  test.concurrent("whatever the await shape, and a later import() still evaluates each module once", async () => {
+    using dir = tempDir("require-esm-tla-shapes", {
+      ...fixtures,
+      "main.cjs": `
+        const { attempt } = require("./attempt.cjs");
+        const files = ["./tla-value.mjs", "./tla-resolved.mjs", "./tla-task.mjs", "./parent.mjs", "./plain.mjs"];
+        const required = {};
+        // Twice each: a failed require() must fail the same way when retried.
+        for (const f of files) required[f] = [attempt(f), attempt(f)];
+        const orderAfterRequire = [...globalThis.order];
+        (async () => {
+          const imported = {};
+          for (const f of files) imported[f] = (await import(f)).x;
+          console.log(JSON.stringify({ required, orderAfterRequire, imported, order: globalThis.order }));
+        })();
+      `,
+    });
+    expect(await run(String(dir), "main.cjs")).toEqual({
+      required: {
+        "./tla-value.mjs": [rejected, rejected],
+        "./tla-resolved.mjs": [rejected, rejected],
+        "./tla-task.mjs": [rejected, rejected],
+        "./parent.mjs": [rejected, rejected],
+        "./plain.mjs": [{ returned: "plain" }, { returned: "plain" }],
+      },
+      // No module with top-level await in its graph ran any part of its body.
+      orderAfterRequire: ["plain"],
+      imported: {
+        "./tla-value.mjs": "value",
+        "./tla-resolved.mjs": "resolved",
+        "./tla-task.mjs": "task",
+        "./parent.mjs": "parent:dep",
+        "./plain.mjs": "plain",
+      },
+      order: ["plain", "tla-value", "tla-resolved", "tla-task", "dep-tla", "parent"],
+    });
+  });
+
+  test.concurrent("also when import() already evaluated the graph", async () => {
+    using dir = tempDir("require-esm-tla-cached", {
+      ...fixtures,
+      "main.cjs": `
+        const { attempt } = require("./attempt.cjs");
+        (async () => {
+          const first = await import("./parent.mjs");
+          const required = attempt("./parent.mjs");
+          const requiredDep = attempt("./dep-tla.mjs");
+          const second = await import("./parent.mjs");
+          console.log(JSON.stringify({ required, requiredDep, same: first === second, order: globalThis.order }));
+        })();
+      `,
+    });
+    expect(await run(String(dir), "main.cjs")).toEqual({
+      required: rejected,
+      requiredDep: rejected,
+      same: true,
+      order: ["dep-tla", "parent"],
+    });
+  });
+
+  test.concurrent("with a message that names the requiring module and the one with the await", async () => {
+    using dir = tempDir("require-esm-tla-message", {
+      ...fixtures,
+      "main.cjs": `
+        const { sep } = require("node:path");
+        globalThis.order = [];
+        try {
+          require("./parent.mjs");
+          console.log(JSON.stringify("returned"));
+        } catch (e) {
+          console.log(JSON.stringify(e.message.replaceAll(__dirname, "<dir>").replaceAll(sep, "/")));
+        }
+      `,
+    });
+    expect(await run(String(dir), "main.cjs")).toBe(
+      "require() cannot be used on an ESM graph with top-level await. Use import() instead.\n" +
+        "  From <dir>/main.cjs\n" +
+        "  Requiring <dir>/parent.mjs\n" +
+        "  The top-level await is in <dir>/dep-tla.mjs",
+    );
+  });
+});
 
 test("require(esm) rejects when a transitive dependency has top-level await", async () => {
   using dir = tempDir("require-esm-transitive-tla", {
@@ -28,7 +145,7 @@ test("require(esm) rejects when a transitive dependency has top-level await", as
       try {
         require("./middle.mjs");
       } catch (e) {
-        threw = e instanceof TypeError && String(e.message).includes("async module");
+        threw = e.code === "ERR_REQUIRE_ASYNC_MODULE";
       }
       if (!threw) throw new Error("expected require(transitive-TLA) to throw");
       console.log("ok");

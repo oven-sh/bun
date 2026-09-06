@@ -296,6 +296,7 @@ const errors: ErrorCodeMapping = [
   ["HPE_INVALID_EOF_STATE", Error],
   ["HPE_INVALID_METHOD", Error],
   ["HPE_INTERNAL", Error],
+  ["ERR_REQUIRE_ASYNC_MODULE", Error],
   ["ERR_VM_MODULE_STATUS", Error],
   ["ERR_VM_MODULE_ALREADY_LINKED", Error],
   ["ERR_VM_MODULE_CANNOT_CREATE_CACHED_DATA", Error],

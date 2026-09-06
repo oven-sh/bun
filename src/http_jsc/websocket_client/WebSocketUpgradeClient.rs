@@ -704,8 +704,6 @@ where
         };
 
         match parsed {
-            // Cap the completed head by `head_len`, not `full.len()`, so
-            // pipelined frames after the head are not counted.
             Ok(HeadParse::Done { head_len, .. }) if head_len > bun_http::max_http_header_size() => {
                 HeadParse::Invalid
             }

@@ -1344,8 +1344,7 @@ fn index_of_line(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResul
         return Ok(JSValue::js_number_from_int32(-1));
     }
 
-    // A newline byte is never part of a multi-byte UTF-8 sequence, so a
-    // plain byte search is correct for valid and invalid input alike.
+    // 0x0A never appears inside a multi-byte UTF-8 sequence.
     Ok(
         match strings::index_of_char_usize(&bytes[offset..], b'\n') {
             Some(i) => JSValue::js_number((offset + i) as f64),

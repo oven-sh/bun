@@ -170,7 +170,7 @@ When the destination is a file descriptor (`Bun.file(fd)`), `Bun.write` writes a
 ```ts
 import { rename } from "node:fs/promises";
 
-const tmp = `config.json.${process.pid}.tmp`;
+const tmp = `config.json.${crypto.randomUUID()}.tmp`; // unique per write, same directory as the destination
 await Bun.write(tmp, JSON.stringify(config));
 await rename(tmp, "config.json"); // atomic on the same filesystem
 ```

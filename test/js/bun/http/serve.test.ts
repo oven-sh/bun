@@ -3167,7 +3167,7 @@ it.concurrent("server.timeout() validates its seconds argument", async () => {
     negative: -1,
     fractionalLow: 0.4,
     fractionalHigh: 1.9,
-    tooLarge: 300,
+    tooLarge: 256,
     huge: 2 ** 64,
     zero: 0,
     max: 255,
@@ -3181,7 +3181,7 @@ it.concurrent("server.timeout() validates its seconds argument", async () => {
       try {
         server.timeout(req, inputs[key]);
       } catch (e) {
-        message = (e as Error).message;
+        message = `${(e as Error).name}: ${(e as Error).message}`;
       }
       return new Response(message);
     },
@@ -3201,13 +3201,13 @@ it.concurrent("server.timeout() validates its seconds argument", async () => {
     max: await probe("max"),
     mid: await probe("mid"),
   }).toEqual({
-    nan: "timeout() expects an integer number of seconds",
-    infinity: "timeout() expects an integer number of seconds",
-    negative: "timeout() expects seconds to be between 0 and 255, received -1",
-    fractionalLow: "timeout() expects an integer number of seconds",
-    fractionalHigh: "timeout() expects an integer number of seconds",
-    tooLarge: "timeout() expects seconds to be between 0 and 255, received 300",
-    huge: "timeout() expects an integer number of seconds",
+    nan: "TypeError: timeout() expects an integer number of seconds",
+    infinity: "TypeError: timeout() expects an integer number of seconds",
+    negative: `RangeError: The value of "seconds" is out of range. It must be >= 0 and <= 255. Received -1`,
+    fractionalLow: "TypeError: timeout() expects an integer number of seconds",
+    fractionalHigh: "TypeError: timeout() expects an integer number of seconds",
+    tooLarge: `RangeError: The value of "seconds" is out of range. It must be >= 0 and <= 255. Received 256`,
+    huge: "TypeError: timeout() expects an integer number of seconds",
     zero: "ok",
     max: "ok",
     mid: "ok",

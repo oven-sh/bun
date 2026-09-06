@@ -310,7 +310,7 @@ fn bun_fetch(ctx: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
 
 /// WHATWG fetch step 3: an exception thrown while processing `input`/`init`
 /// rejects the returned promise; `fetch()` never throws synchronously.
-fn reject_on_exception(
+pub(crate) fn reject_on_exception(
     global_this: &JSGlobalObject,
     result: JsResult<JSValue>,
 ) -> JsResult<JSValue> {

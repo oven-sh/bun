@@ -2237,6 +2237,13 @@ where
         ctx: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
+        // Like fetch(): an exception raised while reading the arguments
+        // rejects the returned promise instead of escaping the call.
+        let result = self.on_fetch_impl(ctx, callframe);
+        Fetch::reject_on_exception(ctx, result)
+    }
+
+    fn on_fetch_impl(&mut self, ctx: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
         jsc::mark_binding!();
 
         if self.config.on_request.is_empty() {

@@ -366,6 +366,16 @@ describe.concurrent("Server", () => {
     const hrefLike = { toString: () => url.href };
     // @ts-expect-error
     expect(await (await server.fetch(hrefLike)).text()).toBe(`GET ${url.href}`);
+    // A string form that throws rejects the promise; server.fetch() itself does not throw.
+    const throwing = {
+      toString: () => {
+        throw new Error("no href");
+      },
+    };
+    // @ts-expect-error
+    const rejected = server.fetch(throwing);
+    expect(rejected).toBeInstanceOf(Promise);
+    await expect(rejected).rejects.toThrow("no href");
   });
 
   test("server.fetch passes the server as the handler's second argument", async () => {

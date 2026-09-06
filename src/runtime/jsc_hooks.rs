@@ -4798,12 +4798,8 @@ fn __bun_get_vm_ctx(kind: bun_io::AllocatorType) -> bun_io::EventLoopCtx {
 /// `bun.String`, call `String.parseDate(&s, vm.global)`, return the integer
 /// value if finite and non-negative, else `None`. Lives in this crate (the
 /// caller is `server::StaticRoute`) so `bun_uws_sys` (T0) has no upward hook
-/// into `bun_jsc`.
-///
-/// This is the lenient `Date.parse` grammar. It is only for the server's own
-/// `Last-Modified` header. A client's `If-Modified-Since` /
-/// `If-Unmodified-Since` goes through `bun_http_types::HTTPDate::parse`, which
-/// accepts only an RFC 9110 HTTP-date.
+/// into `bun_jsc`. Lenient `Date.parse` grammar: for the server's own
+/// `Last-Modified` only. Client dates use `bun_http_types::HTTPDate::parse`.
 pub(crate) fn parse_http_date(value: &[u8]) -> Option<u64> {
     let vm = bun_jsc::virtual_machine::VirtualMachine::get();
     // SAFETY: `vm.global` is set during `VirtualMachine::init` and outlives

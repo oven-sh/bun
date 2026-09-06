@@ -1,21 +1,10 @@
-//! RFC 9110 §5.6.7 `HTTP-date` parser.
-//!
-//! Accepts exactly the three grammars the RFC lists and nothing else:
+//! RFC 9110 §5.6.7 `HTTP-date` parser: IMF-fixdate, rfc850-date, asctime-date.
 //!
 //! ```text
-//! IMF-fixdate  = day-name "," SP day SP month SP year SP time-of-day SP GMT
-//!                  Sun, 06 Nov 1994 08:49:37 GMT
-//! rfc850-date  = day-name-l "," SP day "-" month "-" 2DIGIT SP time-of-day SP GMT
-//!                  Sunday, 06-Nov-94 08:49:37 GMT
-//! asctime-date = day-name SP month SP ( 2DIGIT / ( SP 1DIGIT ) ) SP time-of-day SP year
-//!                  Sun Nov  6 08:49:37 1994
+//! Sun, 06 Nov 1994 08:49:37 GMT
+//! Sunday, 06-Nov-94 08:49:37 GMT
+//! Sun Nov  6 08:49:37 1994
 //! ```
-//!
-//! The conditional request headers (`If-Modified-Since`,
-//! `If-Unmodified-Since`, `If-Range`) MUST be ignored when the value is not
-//! a valid HTTP-date (§13.1.3, §13.1.4, §13.1.5). The ECMAScript `Date.parse`
-//! grammar accepts far more (`2030`, `12345`, `1/1/2030`, time zones other
-//! than GMT), so it must not be used for those headers.
 
 use bun_core::strings;
 
@@ -46,11 +35,8 @@ struct Civil {
     second: u32,
 }
 
-/// Parse an `HTTP-date` into milliseconds since the Unix epoch.
-///
-/// Returns `None` for any value that is not one of the three RFC 9110
-/// grammars, for a calendar date that does not exist (`30 Feb`), and for a
-/// date before 1970.
+/// Parse an `HTTP-date` into milliseconds since the Unix epoch. `None` for
+/// any other grammar, a calendar date that does not exist, or a date before 1970.
 pub fn parse(value: &[u8]) -> Option<u64> {
     let value = strings::trim(value, b" \t");
     let civil = parse_imf_fixdate(value)
@@ -111,9 +97,7 @@ fn parse_asctime(value: &[u8]) -> Option<Civil> {
     Civil::new(year, month, day, hour, minute, second)
 }
 
-/// §5.6.7: a two-digit year that appears to be more than 50 years in the
-/// future is the most recent past year with the same last two digits. The
-/// result is the year with those digits in the window `(now - 50, now + 50]`.
+/// §5.6.7: the year with these two digits in the window `(now - 50, now + 50]`.
 fn two_digit_year(yy: u32, now_year: u32) -> u32 {
     let year = now_year - now_year % 100 + yy;
     if year > now_year + 50 {
@@ -220,8 +204,7 @@ fn days_in_month(year: u32, month: u32) -> u32 {
     }
 }
 
-/// Days since 1970-01-01 for a proleptic Gregorian date (Howard Hinnant's
-/// `days_from_civil`).
+/// Days since 1970-01-01 (Howard Hinnant's `days_from_civil`).
 fn days_from_civil(year: u32, month: u32, day: u32) -> i64 {
     let y = i64::from(year) - i64::from(month <= 2);
     let era = y.div_euclid(400);
@@ -232,7 +215,7 @@ fn days_from_civil(year: u32, month: u32, day: u32) -> i64 {
     era * 146_097 + doe - 719_468
 }
 
-/// The calendar year of a Unix timestamp (Howard Hinnant's `civil_from_days`).
+/// Calendar year of a Unix timestamp (Howard Hinnant's `civil_from_days`).
 fn civil_year_from_unix_seconds(seconds: i64) -> u32 {
     let z = seconds.div_euclid(86_400) + 719_468;
     let era = z.div_euclid(146_097);

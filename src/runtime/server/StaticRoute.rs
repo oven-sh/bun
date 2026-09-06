@@ -496,8 +496,7 @@ impl StaticRoute {
         };
 
         // Step 1: If-Match (strong comparison); step 2: If-Unmodified-Since
-        // (only when If-Match is absent). A client date that is not a valid
-        // HTTP-date is ignored (§13.1.3, §13.1.4).
+        // (only when If-Match is absent).
         let precondition_failed =
             if let Some(im) = req.header(b"if-match").filter(|v| !v.is_empty()) {
                 !ETag::if_match(etag, im)

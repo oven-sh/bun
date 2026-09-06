@@ -137,11 +137,9 @@ impl Lazy {
 
         let fd: Fd = match &file.pathlike {
             PathOrFileDescriptor::Fd(pl_fd) => {
-                // A tty is read through a private O_NONBLOCK description of the
-                // same terminal, so the reader can poll it and stop at any time
-                // without touching the flags of the caller's fd. stdio falls
-                // back to polling the shared fd; any other fd falls back to a
-                // dup the reader owns.
+                // A tty is polled through a private O_NONBLOCK reopen, which
+                // leaves the caller's fd flags alone. Fallback: stdio polls the
+                // shared fd, any other fd polls a dup the reader owns.
                 #[cfg(not(unix))]
                 let reopened_tty: Option<Fd> = None;
                 #[cfg(unix)]

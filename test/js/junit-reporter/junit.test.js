@@ -1,6 +1,6 @@
 import { file, spawn } from "bun";
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "node:path";
 
 const xml2js = require("xml2js");
@@ -609,7 +609,8 @@ describe("junit reporter", () => {
     expect(pathCase.failure[0]._).toContain("at fromPath (generated.js:1:");
   });
 
-  it("reports a --reporter-outfile longer than PATH_MAX instead of crashing", async () => {
+  // A PathBuffer holds 98302 bytes on Windows; a command line cannot carry a path that long.
+  it.skipIf(isWindows)("reports a --reporter-outfile longer than PATH_MAX instead of crashing", async () => {
     using dir = tempDir("junit-long-outfile", {
       "package.json": "{}",
       "a.test.js": `import { test, expect } from "bun:test"; test("ok", () => { expect(1).toBe(1); });`,

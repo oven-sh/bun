@@ -950,7 +950,8 @@ describe("selectors", () => {
     runInCwdFailure(graph_root, "...", "present", /is missing a workspace name or path/);
   });
 
-  test("a path longer than the path buffer is rejected, not a crash", () => {
+  // A PathBuffer holds 98302 bytes on Windows; a command line cannot carry a path that long.
+  test.skipIf(isWindows)("a path longer than the path buffer is rejected, not a crash", () => {
     // 4220 bytes of valid components; joining it with the cwd into a
     // fixed-size path buffer used to abort the process.
     const long = "./" + Array(21).fill(Buffer.alloc(200, "a").toString()).join("/");

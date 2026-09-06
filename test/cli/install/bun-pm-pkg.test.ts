@@ -1,7 +1,7 @@
 import { spawn } from "bun";
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { mkdirSync, rmSync, writeFileSync } from "fs";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "path";
 
 async function runPmPkg(args: string[], cwd: string, expectSuccess = true) {
@@ -918,7 +918,8 @@ describe.concurrent("bun pm pkg", () => {
       expect((await readPkg(multiIssueDir)).name).toBe("multiple-issues-package");
     });
 
-    it("should warn instead of crashing on a bin path longer than PATH_MAX", async () => {
+    // A PathBuffer holds 98302 bytes on Windows; package.json would need a 96 KB bin value.
+    it.skipIf(isWindows)("should warn instead of crashing on a bin path longer than PATH_MAX", async () => {
       // 4220 bytes of valid components; joining it with the package directory
       // into a fixed-size path buffer used to abort the process.
       const binPath = "./" + Array(21).fill(Buffer.alloc(200, "a").toString()).join("/") + ".js";

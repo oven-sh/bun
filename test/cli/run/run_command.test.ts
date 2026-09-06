@@ -43,7 +43,8 @@ describe("bun", () => {
 
   // `./<long>` and absolute paths were length-checked; the `../` and `~` arm
   // joined the argument with the cwd into a fixed-size path buffer unchecked.
-  test.each([["../"], ["run", "../"]])(
+  // A PathBuffer holds 98302 bytes on Windows; a command line cannot carry a path that long.
+  test.skipIf(isWindows).each([["../"], ["run", "../"]])(
     "a %s-prefixed path longer than PATH_MAX is a module-not-found error",
     (...args) => {
       const prefix = args.pop();

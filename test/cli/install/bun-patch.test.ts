@@ -1,7 +1,7 @@
 import { $, ShellOutput } from "bun";
 import { afterAll, beforeAll, describe, expect, setDefaultTimeout, test } from "bun:test";
 import { lstatSync, readFileSync } from "fs";
-import { bunEnv, bunExe, isASAN, tempDir, VerdaccioRegistry } from "harness";
+import { bunEnv, bunExe, isASAN, isWindows, tempDir, VerdaccioRegistry } from "harness";
 import { isAbsolute, join, sep } from "path";
 
 const expectNoError = (o: ShellOutput) => expect(o.stderr.toString()).not.toContain("error");
@@ -11,7 +11,8 @@ const platformPath = (path: string) => path;
 setDefaultTimeout(1000 * 60 * 5);
 
 describe("error messages", () => {
-  test("'bun patch' with a path longer than PATH_MAX reports an error", async () => {
+  // A PathBuffer holds 98302 bytes on Windows; a command line cannot carry a path that long.
+  test.skipIf(isWindows)("'bun patch' with a path longer than PATH_MAX reports an error", async () => {
     await using dir = tempDir("bun-patch-long-path", {
       "package.json": JSON.stringify({ name: "t" }),
     });

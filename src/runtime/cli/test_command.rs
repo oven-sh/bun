@@ -1495,28 +1495,22 @@ impl CommandLineReporter {
         }
     }
 
+    /// Errors only from writing `lcov.info`; the caller fails the run.
     pub(crate) fn generate_code_coverage(
         &mut self,
         vm: &mut VirtualMachine,
         opts: &mut CodeCoverageOptions,
-    ) {
+    ) -> bun_sys::Result<()> {
         let _trace = bun::perf::trace("TestCommand.printCodeCoverage");
         if ByteRangeMapping::map().is_none_or(|m| {
             // SAFETY: see `for_each_coverage_report`.
             unsafe { m.as_ref() }.is_empty()
         }) {
-            return;
+            return Ok(());
         }
         let mut reports: Vec<CodeCoverageReport<'static>> = Vec::new();
         Self::for_each_coverage_report(vm, opts, |report| reports.push(report.into_owned()));
-        if let Err(err) = print_coverage_reports(opts, &reports) {
-            Output::err(
-                err,
-                "Failed to write lcov.info to {}",
-                (bstr::BStr::new(&opts.reports_directory),),
-            );
-            Global::exit(1);
-        }
+        print_coverage_reports(opts, &reports)
     }
 }
 
@@ -2442,6 +2436,7 @@ impl TestCommand {
         Output::flush();
 
         let mut failed_to_find_any_tests = false;
+        let mut failed_to_write_coverage = false;
 
         if test_files.is_empty() && !pass_with_no_tests_from_filter {
             failed_to_find_any_tests = true;
@@ -2516,7 +2511,14 @@ impl TestCommand {
             pretty_error!("\n");
 
             if coverage_options.enabled && !ran_parallel {
-                reporter.generate_code_coverage(vm, &mut coverage_options);
+                if let Err(err) = reporter.generate_code_coverage(vm, &mut coverage_options) {
+                    Output::err(
+                        err,
+                        "Failed to write lcov.info to {}",
+                        (bstr::BStr::new(&coverage_options.reports_directory),),
+                    );
+                    failed_to_write_coverage = true;
+                }
             }
 
             // `Summary` is `Copy`; take a value snapshot so the `&mut` from
@@ -2683,6 +2685,7 @@ impl TestCommand {
                 && coverage_options.fractions.failing
                 && coverage_options.fail_on_low_coverage)
             || !write_snapshots_success
+            || failed_to_write_coverage
             || reporter.jest.unhandled_errors_between_tests > 0
         {
             vm.exit_handler.exit_code = 1;

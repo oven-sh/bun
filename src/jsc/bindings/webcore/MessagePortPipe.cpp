@@ -41,6 +41,7 @@ void MessagePortPipe::send(uint8_t fromSide, MessageWithMessagePorts&& message)
         if (s & Closed)
             return;
 
+        dst.queuedBytes.fetch_add(message.memoryCost(), std::memory_order_relaxed);
         dst.inbox.append(WTF::move(message));
 
         uint64_t ns = s + QueuedOne;
@@ -161,6 +162,7 @@ void MessagePortPipe::drainAndDispatch(uint8_t side, ScriptExecutionContextIdent
                 limit -= n;
             }
             message = s.draining.takeFirst();
+            s.queuedBytes.fetch_sub(message->memoryCost(), std::memory_order_relaxed);
             s.state.store(st - QueuedOne, std::memory_order_release);
         }
 
@@ -203,7 +205,9 @@ std::optional<MessageWithMessagePorts> MessagePortPipe::takeOne(uint8_t side)
     if (queue.isEmpty())
         return std::nullopt;
     s.state.fetch_sub(QueuedOne, std::memory_order_acq_rel);
-    return queue.takeFirst();
+    auto message = queue.takeFirst();
+    s.queuedBytes.fetch_sub(message.memoryCost(), std::memory_order_relaxed);
+    return message;
 }
 
 void MessagePortPipe::attach(uint8_t side, ScriptExecutionContext& context, ThreadSafeWeakPtr<MessagePort> port)
@@ -303,6 +307,7 @@ void MessagePortPipe::close(uint8_t side, CloseKind kind)
             dropped = std::exchange(s.inbox, {});
             while (!s.draining.isEmpty())
                 dropped.prepend(s.draining.takeLast());
+            s.queuedBytes.store(0, std::memory_order_relaxed);
         }
 
         // Harvest transferred pipes before `dropped` destructs so their

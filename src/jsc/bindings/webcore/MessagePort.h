@@ -101,6 +101,9 @@ public:
 
     MessagePortPipe* pipe() const { return m_pipe.ptr(); }
     uint8_t side() const { return m_side; }
+    // Bytes of messages queued for this port and not yet delivered. Lockless (GC thread safe:
+    // m_pipe is a Ref held for the port's whole life); the wrapper reports it as extra memory.
+    size_t memoryCost() const { return m_pipe->queuedBytes(m_side); }
 
     // EventTarget.
     EventTargetInterface eventTargetInterface() const final { return MessagePortEventTargetInterfaceType; }

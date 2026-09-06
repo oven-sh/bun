@@ -142,7 +142,13 @@ ExceptionOr<void> MessagePort::postMessage(JSC::JSGlobalObject& state, JSC::JSVa
         }
     }
 
-    m_pipe->send(m_side, MessageWithMessagePorts { messageData.releaseReturnValue(), WTF::move(transferredPorts) });
+    MessageWithMessagePorts message { messageData.releaseReturnValue(), WTF::move(transferredPorts) };
+    size_t cost = message.memoryCost();
+    m_pipe->send(m_side, WTF::move(message));
+    // The serialized bytes now sit in the peer's inbox, native memory the GC cannot see. The
+    // peer's wrapper (if any, maybe on another thread) reports them as visited; this tells the
+    // GC about the growth now, so a loop that posts to a never-started port still triggers one.
+    vm.heap.reportExtraMemoryAllocated(nullptr, cost);
     return {};
 }
 

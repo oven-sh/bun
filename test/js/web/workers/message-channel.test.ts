@@ -1,3 +1,5 @@
+import { expectNativeMemoryReportedToGC } from "harness";
+
 test("simple usage", done => {
   const channel = new MessageChannel();
   const port1 = channel.port1;
@@ -252,6 +254,19 @@ test("many message channels", done => {
       expect().fail("branch should not be reached");
     }
   };
+});
+
+// A message queued on a port that never started is a SerializedScriptValue in
+// the pipe's inbox, outside the JS heap. The receiving port's wrapper reports
+// it as extra memory and postMessage reports the growth, so dropping channels
+// with queued messages still triggers collections (2000 x 1 MiB reached
+// 2 GiB RSS before).
+test("queued messages are reported to the GC", async () => {
+  await expectNativeMemoryReportedToGC(
+    "const payload = new Uint8Array(1 << 20);",
+    "(() => { const { port1, port2 } = new MessageChannel(); port1.postMessage(payload); return port2; })()",
+    { drop: 300, live: 20, minBytesEach: 1 << 20 },
+  );
 });
 
 test("gc", () => {

@@ -12691,8 +12691,7 @@ describe("shared createInstance validation (no server)", () => {
   // the native parser must refuse it before connecting. The rejection is an
   // ERR_INVALID_ARG_TYPE TypeError, matching the MySQL adapter and the Zig
   // reference (`PostgresSQLConnection.zig` `throwInvalidArguments`). `path`
-  // is guarded the same way natively, but the JS layer drops it via
-  // `existsSync` before it ever reaches createInstance.
+  // is guarded the same way natively.
   test.concurrent.each(["username", "password", "database"] as const)(
     "rejects %s containing null bytes",
     async field => {

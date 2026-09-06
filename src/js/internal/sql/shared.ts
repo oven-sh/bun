@@ -1941,6 +1941,12 @@ function parseOptions(
 
   path ||= options.path || "";
 
+  // libpq semantics: a host that starts with "/" is the unix socket directory
+  // for postgres, and the socket file for mysql and mariadb
+  if (!path && hostname.startsWith("/")) {
+    path = adapter === "postgres" ? `${hostname}/.s.PGSQL.${Number(port)}` : hostname;
+  }
+
   if (adapter === "postgres") {
     // libpq semantics: a directory names the socket dir, the socket file inside
     // it is /.s.PGSQL.${port}

@@ -914,6 +914,19 @@ describe("SQL adapter environment variable precedence", () => {
         expect(options.options.database).toBe("envdb");
       });
 
+      test.each([
+        ["hostname option", () => new SQL({ adapter: "postgres", hostname: "/run/pg", port: 5433 })],
+        ["PGHOST", () => ((process.env.PGHOST = "/run/pg"), new SQL({ adapter: "postgres", port: 5433 }))],
+      ])("a host that starts with / is the socket directory (%s)", (_, make) => {
+        const options = make().options;
+        expect(options.path).toBe("/run/pg/.s.PGSQL.5433");
+      });
+
+      test("mysql: a host that starts with / is the socket path", () => {
+        const options = new SQL({ adapter: "mysql", hostname: "/run/mysqld/mysqld.sock" });
+        expect(options.options.path).toBe("/run/mysqld/mysqld.sock");
+      });
+
       test("a host-less postgres URL names the database, not a socket path", () => {
         const options = new SQL("postgres:///urldb");
         expect(options.options.database).toBe("urldb");

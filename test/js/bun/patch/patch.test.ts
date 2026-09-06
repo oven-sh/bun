@@ -541,8 +541,7 @@ describe("apply", () => {
     // matching their `-` side context (like `git apply`), not by trusting the
     // stated `+` offset.
     test("hunk with stale + start line is placed by context", async () => {
-      const afile =
-        Array.from({ length: 12 }, (_, i) => `line${String(i + 1).padStart(2, "0")}`).join("\n") + "\n";
+      const afile = Array.from({ length: 12 }, (_, i) => `line${String(i + 1).padStart(2, "0")}`).join("\n") + "\n";
       await using tempdir = tempDir("patch-test", {
         "a/hello.txt": afile,
       });
@@ -648,8 +647,7 @@ describe("apply", () => {
     });
 
     test("hunk is found by context when the file shifted by more than 20 lines", async () => {
-      const afile =
-        Array.from({ length: 60 }, (_, i) => (i === 49 ? "target" : `filler${i + 1}`)).join("\n") + "\n";
+      const afile = Array.from({ length: 60 }, (_, i) => (i === 49 ? "target" : `filler${i + 1}`)).join("\n") + "\n";
       await using tempdir = tempDir("patch-test", {
         "a/hello.txt": afile,
       });
@@ -684,7 +682,12 @@ describe("apply", () => {
     // of the file. Every case below is what `git apply --unidiff-zero` produces.
     const numbered = (n: number) => Array.from({ length: n }, (_, i) => `line ${i + 1}`).join("\n") + "\n";
     test.each([
-      ["delete one line", numbered(8), "@@ -6 +5,0 @@\n-line 6\n", "line 1\nline 2\nline 3\nline 4\nline 5\nline 7\nline 8\n"],
+      [
+        "delete one line",
+        numbered(8),
+        "@@ -6 +5,0 @@\n-line 6\n",
+        "line 1\nline 2\nline 3\nline 4\nline 5\nline 7\nline 8\n",
+      ],
       [
         "delete a run of lines",
         numbered(8),

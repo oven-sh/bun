@@ -89,7 +89,9 @@ impl<'a> PatchFile<'a> {
             match part {
                 PatchFilePart::FileDeletion(file_deletion) => {
                     if !is_safe_patch_path(file_deletion.path) {
-                        return Some(sys::Error::from_code(sys::E::EINVAL, sys::Tag::unlink).into());
+                        return Some(
+                            sys::Error::from_code(sys::E::EINVAL, sys::Tag::unlink).into(),
+                        );
                     }
                     let pathz = ZBox::from_vec_with_nul(file_deletion.path.to_vec());
 
@@ -101,7 +103,9 @@ impl<'a> PatchFile<'a> {
                     if !is_safe_patch_path(file_rename.from_path)
                         || !is_safe_patch_path(file_rename.to_path)
                     {
-                        return Some(sys::Error::from_code(sys::E::EINVAL, sys::Tag::rename).into());
+                        return Some(
+                            sys::Error::from_code(sys::E::EINVAL, sys::Tag::rename).into(),
+                        );
                     }
                     let from_path = ZBox::from_vec_with_nul(file_rename.from_path.to_vec());
                     let to_path = ZBox::from_vec_with_nul(file_rename.to_path.to_vec());
@@ -210,7 +214,9 @@ impl<'a> PatchFile<'a> {
                 }
                 PatchFilePart::FileModeChange(file_mode_change) => {
                     if !is_safe_patch_path(file_mode_change.path) {
-                        return Some(sys::Error::from_code(sys::E::EINVAL, sys::Tag::fchmodat).into());
+                        return Some(
+                            sys::Error::from_code(sys::E::EINVAL, sys::Tag::fchmodat).into(),
+                        );
                     }
                     let newmode = file_mode_change.new_mode;
                     let filepath = ZBox::from_vec_with_nul(file_mode_change.path.to_vec());

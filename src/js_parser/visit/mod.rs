@@ -91,6 +91,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let old_fn_or_arrow_data = self.fn_or_arrow_data_visit;
         let old_fn_only_data = core::mem::take(&mut self.fn_only_data_visit);
         self.fn_or_arrow_data_visit = FnOrArrowDataVisit {
+            is_derived_class_ctor: core::mem::take(&mut self.next_fn_is_derived_class_ctor),
             ..Default::default()
         };
         self.fn_only_data_visit = FnOnlyDataVisit {
@@ -1047,6 +1048,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 .expect("unreachable");
 
             let mut constructor_function: Option<bun_ast::StoreRef<E::Function>> = None;
+            let is_derived_class = class.extends.is_some();
             let properties: &mut [G::Property] = class.properties.slice_mut();
             for property in properties.iter_mut() {
                 if property.kind == PropertyKind::ClassStaticBlock {
@@ -1153,6 +1155,15 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 }
 
                 if let Some(val) = property.value {
+                    self.next_fn_is_derived_class_ctor = is_derived_class
+                        && property.flags.contains(flags::Property::IsMethod)
+                        && !property.flags.contains(flags::Property::IsStatic)
+                        && !property.flags.contains(flags::Property::IsComputed)
+                        && matches!(val.data, ExprData::EFunction(_))
+                        && matches!(
+                            property.key.map(|k| k.data),
+                            Some(ExprData::EString(s)) if s.eql_comptime(b"constructor")
+                        );
                     if let Some(name) = name_to_keep {
                         let was_anon = val.is_anonymous_named();
                         let prev_dcn = self.decorator_class_name;
@@ -1171,6 +1182,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     } else {
                         self.visit_expr(property.value.as_mut().unwrap());
                     }
+                    self.next_fn_is_derived_class_ctor = false;
 
                     if Self::IS_TYPESCRIPT_ENABLED {
                         if constructor_function_.is_some() {

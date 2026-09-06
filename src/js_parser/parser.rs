@@ -1277,6 +1277,12 @@ pub struct FnOrArrowDataVisit {
     pub(crate) is_inside_switch: bool,
     pub(crate) is_outside_fn_or_arrow: bool,
 
+    /// The body of a `constructor` in a class with an `extends` clause. `this`
+    /// is in its temporal dead zone until `super()` runs, so generated code
+    /// must not read it. Arrow functions inside the constructor reset this,
+    /// as in esbuild.
+    pub(crate) is_derived_class_ctor: bool,
+
     /// This is used to silence unresolvable imports due to "require" calls inside
     /// a try/catch statement. The assumption is that the try/catch statement is
     /// there to handle the case where the reference to "require" crashes. Counts

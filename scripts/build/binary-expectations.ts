@@ -308,8 +308,9 @@ export function binaryExpectations(cfg: Config): BinaryExpectations {
       } else if (android) {
         neededLibs = ["libc.so", "libdl.so", "libm.so"];
         maxSymbolVersions = {};
-        // API 28 (Android 9): bionic's version nodes up to P.
-        versionNames = ["LIBC", "LIBC_N", "LIBC_O", "LIBC_P"];
+        // API 28 (Android 9): bionic's libc nodes up to P, and liblog's up to
+        // O for when -llog is live (allowedLibs above).
+        versionNames = ["LIBC", "LIBC_N", "LIBC_O", "LIBC_P", "LIBLOG", "LIBLOG_L", "LIBLOG_M", "LIBLOG_O"];
       } else {
         // FreeBSD 13's libc is FBSD_1.7; its libc++/libcxxrt carry
         // GLIBCXX_3.4 / CXXABI_1.3 tags for the libstdc++-compatible subset.

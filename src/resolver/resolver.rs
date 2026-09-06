@@ -4028,9 +4028,7 @@ impl<'a> Resolver<'a> {
             };
 
         if result.has_base_url() && !bun_paths::is_absolute(&result.base_url) {
-            // NOTE: `base_url: Box<[u8]>` owns its bytes, so
-            // copy `abs_buf`'s thread-local result directly instead of
-            // double-copying through the `dirname_store` arena.
+            // `base_url` owns its bytes, so copy the buffer result into it directly.
             let Some(abs) = self
                 .fs_ref()
                 .abs_buf_checked(&[file_dir, &result.base_url[..]], bufs!(tsconfig_base_url))

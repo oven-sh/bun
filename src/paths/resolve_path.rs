@@ -1476,9 +1476,8 @@ pub fn join_z_spill<'a, P: PlatformT>(spill: &'a mut Vec<u8>, parts: &[&[u8]]) -
     join_z_buf::<P>(&mut spill[..], parts)
 }
 
-/// Like [`join_z_buf`], but returns `None` when the normalized result (plus
-/// its NUL) does not fit `buf`. Use this when `parts` may contain
-/// user-controlled input of arbitrary length.
+/// [`join_z_buf`] for parts of user-controlled length: `None` when the
+/// normalized result plus its NUL does not fit `buf`.
 pub fn join_z_buf_checked<'a, P: PlatformT>(
     buf: &'a mut [u8],
     parts: &[&[u8]],
@@ -1725,8 +1724,8 @@ pub fn join_abs_string_buf_checked<'a, P: PlatformT>(
     Some(&buf[..len])
 }
 
-/// [`join_abs_string_buf_checked`] with a NUL terminator: `None` when the
-/// normalized result plus its NUL does not fit `buf`.
+/// [`join_abs_string_buf_checked`], NUL-terminated: `None` when the result
+/// plus its NUL does not fit `buf`.
 pub fn join_abs_string_buf_z_checked<'a, P: PlatformT>(
     cwd: &'a [u8],
     buf: &'a mut [u8],

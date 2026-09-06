@@ -53,8 +53,7 @@ impl Snapshots {
     #[cfg(not(windows))]
     const SNAPSHOTS_DIR_NAME: &'static [u8] = b"__snapshots__/";
 
-    /// Appends `parts` to `buf` at `*pos` and NUL-terminates. `None` when the
-    /// result does not fit in `buf`.
+    /// Appends `parts` at `*pos` and NUL-terminates; `None` when the result does not fit `buf`.
     fn append_path_z<'b>(buf: &'b mut [u8], pos: &mut usize, parts: &[&[u8]]) -> Option<&'b ZStr> {
         let end = parts
             .iter()

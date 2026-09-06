@@ -22,9 +22,8 @@ import { BuildError } from "./error.ts";
  * Returns the first X.Y.Z found, or undefined.
  */
 function parseVersion(text: string): string | undefined {
-  // X.Y.Z, or X.Y for tools that print two components (nasm 3.x: "NASM version 3.02").
-  const m = text.match(/(\d+)\.(\d+)\.(\d+)/) ?? text.match(/(\d+)\.(\d+)()/);
-  return m ? `${m[1]}.${m[2]}.${m[3] || "0"}` : undefined;
+  const m = text.match(/(\d+)\.(\d+)\.(\d+)/);
+  return m ? `${m[1]}.${m[2]}.${m[3]}` : undefined;
 }
 
 /**
@@ -562,11 +561,8 @@ export function resolveLlvmToolchain(
   }
 
   // nasm: BoringSSL win-x64 and libjpeg-turbo x86_64 SIMD; compile.ts:nasm() asserts at the use site.
-  // 2.16 for the win64 `comdat=` section attribute (shims/nasm-comdat.inc).
   const nasm = findTool({
     names: ["nasm"],
-    version: ">=2.16.0",
-    versionArg: "-v",
     required: false,
     hint:
       os === "windows"

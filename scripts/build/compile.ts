@@ -272,24 +272,12 @@ export function nasm(
         : "Install nasm from your distro (apt/dnf/brew install nasm) or https://nasm.us",
   });
   const out = objectPath(cfg, src);
-  // COFF: wrap the object's sections in COMDATs so the linker can drop it
-  // when nothing references it (shims/nasm-comdat.inc says why and how). The
-  // COMDAT symbol must be unique across the link: the source path.
-  const comdatInc = resolve(cfg.cwd, "scripts", "build", "shims", "nasm-comdat.inc");
-  const comdat = cfg.windows
-    ? [
-        // -D before -P: nasm evaluates them in argv order and the include reads the define.
-        `-DNASM_COMDAT_ID=nasm_${relative(cfg.cwd, resolve(cfg.cwd, src)).replace(/[^A-Za-z0-9]/g, "_")}`,
-        `-P${quote(comdatInc, cfg.host.os === "windows")}`,
-      ]
-    : [];
   n.build({
     outputs: [out],
     rule: "nasm",
     inputs: [resolve(cfg.cwd, src)],
-    implicitInputs: cfg.windows ? [comdatInc] : [],
     orderOnlyInputs: [objectDirStamp(cfg), ...(opts.orderOnlyInputs ?? [])],
-    vars: { nasmflags: [...opts.flags, ...comdat].join(" ") },
+    vars: { nasmflags: opts.flags.join(" ") },
   });
   return out;
 }

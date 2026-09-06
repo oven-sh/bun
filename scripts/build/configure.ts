@@ -424,10 +424,12 @@ export async function configure(input: ConfigureInput, fromNinja = false): Promi
   }
   mark("restat");
 
-  // Pre-create all object file parent directories. Ninja doesn't mkdir;
-  // CMake pre-creates CMakeFiles/<target>.dir/* at generate time, we do
-  // the same. Derived from output.objects so there's no hidden state —
-  // the orchestrator already knows every .o path.
+  // Pre-create all object file parent directories (ninja would create them
+  // edge by edge; having the tree up front serves tools that read
+  // compile_commands.json before any edge ran). CMake pre-creates
+  // CMakeFiles/<target>.dir/* at generate time, we do the same. Derived
+  // from output.objects so there's no hidden state — the orchestrator
+  // already knows every .o path.
   mkdirAll(output.objects.map(dirname));
   mark("mkdirAll");
 

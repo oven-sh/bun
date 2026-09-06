@@ -306,7 +306,7 @@ function verifyElf(spec: VerifySpec): void {
       // Version nodes without a number are requirements too: GLIBC_ABI_DT_RELR
       // (packed relative relocations, glibc >= 2.36) and GLIBC_PRIVATE would
       // both raise or break the floor while passing a numeric ceiling.
-      for (const m of verneed.matchAll(/Name: (\S+)\s*$/gm)) {
+      for (const m of verneed.matchAll(/^\s*Name: (\S+)\s*$/gm)) {
         const name = m[1]!;
         if (!/^[A-Za-z+]+_[0-9][0-9.]*$/.test(name))
           violations.push(`${name} required (not a numbered version: raises or breaks the libc floor)`);

@@ -3699,17 +3699,50 @@ console.log(resolve.length)
     ts.expectPrinted_("new (a?.b as any)(2)", "new (a?.b)(2)");
     ts.expectPrinted_("new (a?.b!)()", "new (a?.b)");
     expectPrinted_("new a.b()", "new a.b");
+    expectPrinted_("new (a.b.c)()", "new a.b.c");
     expectPrinted_("new (a())()", "new (a())");
+    expectPrinted_("new (a().b)()", "new (a()).b");
+    expectPrinted_("new (a()[b])()", "new (a())[b]");
+    expectPrinted_("new (a().b())()", "new (a().b())");
     expectPrinted_("new (a?.b.c).d()", "new (a?.b.c).d");
     expectPrinted_("new (a?.b().c).d()", "new (a?.b().c).d");
+    expectPrinted_("new ((a?.b)[c])()", "new (a?.b)[c]");
+    expectPrinted_("new ((a?.()).b)()", "new (a?.()).b");
   });
 
-  it("tagged template with a call in the tag as new callee", () => {
+  it("tagged template as new callee", () => {
     expectPrinted_("new (a()`x`)()", "new (a())`x`");
     expectPrinted_("new (a()`x`.b)()", "new (a())`x`.b");
     expectPrinted_("new (a.b`x`)()", "new a.b`x`");
+    expectPrinted_("new (a`x`)()", "new a`x`");
     expectPrinted_("new a`x`()", "new a`x`");
+    expectPrinted_("new ((a?.b)`x`)()", "new (a?.b)`x`");
+    expectPrinted_("new ((a?.b())`x`)()", "new (a?.b())`x`");
+    expectPrinted_("new ((a?.b)`x`.c)()", "new (a?.b)`x`.c");
+    expectPrinted_("new (import(x)`y`)()", "new (import(x))`y`");
+    expectPrinted_('new (require("m")`y`)()', 'new (require("m"))`y`');
     expectPrinted_("a()`x`", "a()`x`");
+  });
+
+  // https://github.com/oven-sh/bun/issues/31812
+  it("runs a new expression whose callee needs parentheses", async () => {
+    const run = async code => {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", code],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { stdout, stderr, exitCode };
+    };
+    const ok = { stdout: "A {}\n", stderr: "", exitCode: 0 };
+    expect(
+      await Promise.all([
+        run("const foo = () => (args) => class A {}; console.log(new (foo()`bar`)());"),
+        run("const baz = () => ({ qux: class A {} }); console.log(new (baz()?.qux)());"),
+      ]),
+    ).toEqual([ok, ok]);
   });
 
   it("useDefineForConst TypeScript class initialization", () => {

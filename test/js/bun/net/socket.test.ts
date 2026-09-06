@@ -2889,10 +2889,12 @@ Reo=
       expect(t.received.join("")).toBe("hello-from-server\nping");
     });
 
+    // With no `handshake` handler, a client socket reports `open` only after
+    // the handshake, so a failed handshake must not report `open` at all: the
+    // error goes to `error` and the connect promise rejects with it.
     it("closes an untrusted connection when no handshake callback is provided", async () => {
-      const opened = Promise.withResolvers<{ authorized: boolean; error: string | null }>();
+      const events: string[] = [];
       const closed = Promise.withResolvers<void>();
-      const received: string[] = [];
       using server = Bun.listen({
         hostname: "127.0.0.1",
         port: 0,
@@ -2907,36 +2909,156 @@ Reo=
           error() {},
         },
       });
-      using client = await Bun.connect({
+      const connecting = Bun.connect({
+        hostname: "127.0.0.1",
+        port: server.port,
+        tls: { ca: CA_CRT },
+        socket: {
+          open() {
+            events.push("open");
+          },
+          data(_socket, data) {
+            events.push(`data:${data}`);
+          },
+          close(socket, err) {
+            events.push(`close:${err?.message ?? "undefined"}:${socket.getAuthorizationError()?.message}`);
+            closed.resolve();
+          },
+          error(_socket, err) {
+            events.push(`error:${err.message}`);
+          },
+          connectError(_socket, err) {
+            events.push(`connectError:${err.message}`);
+          },
+        },
+      });
+      expect(await connecting.then(() => "resolved", (e: Error) => `rejected:${e.message}`)).toBe(
+        `rejected:${UNTRUSTED_MESSAGE}`,
+      );
+      await closed.promise;
+      expect(events).toEqual([`error:${UNTRUSTED_MESSAGE}`, `close:undefined:${UNTRUSTED_MESSAGE}`]);
+    });
+
+    it("rejects the connect promise for an untrusted server when there is no handshake or error handler", async () => {
+      const events: string[] = [];
+      const closed = Promise.withResolvers<void>();
+      using server = Bun.listen({
+        hostname: "127.0.0.1",
+        port: 0,
+        tls: { key: ROGUE_KEY, cert: ROGUE_CRT },
+        socket: { data() {}, error() {} },
+      });
+      const connecting = Bun.connect({
+        hostname: "127.0.0.1",
+        port: server.port,
+        tls: { ca: CA_CRT },
+        socket: {
+          open() {
+            events.push("open");
+          },
+          data() {},
+          close() {
+            events.push("close");
+            closed.resolve();
+          },
+        },
+      });
+      expect(await connecting.then(() => "resolved", (e: Error) => `rejected:${e.message}`)).toBe(
+        `rejected:${UNTRUSTED_MESSAGE}`,
+      );
+      await closed.promise;
+      expect(events).toEqual(["close"]);
+    });
+
+    it("rejects the connect promise when the peer closes before the handshake completes", async () => {
+      const events: string[] = [];
+      const closed = Promise.withResolvers<void>();
+      // A plain TCP server that hangs up on connect: the ClientHello never
+      // gets an answer.
+      using server = Bun.listen({
+        hostname: "127.0.0.1",
+        port: 0,
+        socket: {
+          open(socket) {
+            socket.end();
+          },
+          data() {},
+        },
+      });
+      const connecting = Bun.connect({
+        hostname: "127.0.0.1",
+        port: server.port,
+        tls: { rejectUnauthorized: false },
+        socket: {
+          open() {
+            events.push("open");
+          },
+          data() {},
+          close() {
+            events.push("close");
+            closed.resolve();
+          },
+          error(_socket, err) {
+            events.push(`error:${(err as NodeJS.ErrnoException).code}`);
+          },
+        },
+      });
+      expect(
+        await connecting.then(
+          () => "resolved",
+          (e: NodeJS.ErrnoException) => `rejected:${e.code}`,
+        ),
+      ).toBe("rejected:ECONNRESET");
+      await closed.promise;
+      expect(events).toEqual(["error:ECONNRESET", "close"]);
+    });
+
+    // Without a `handshake` handler, the promise resolves where `open` fires:
+    // after the handshake, so a write right after `await Bun.connect` reaches
+    // the peer instead of returning 0.
+    it("resolves the connect promise after the handshake when no handshake callback is provided", async () => {
+      const events: string[] = [];
+      const serverGot = Promise.withResolvers<string>();
+      const closed = Promise.withResolvers<void>();
+      let serverReceived = "";
+      using server = Bun.listen({
+        hostname: "127.0.0.1",
+        port: 0,
+        tls: { key: SERVER_KEY, cert: SERVER_CRT },
+        socket: {
+          data(_socket, data) {
+            serverReceived += data.toString();
+          },
+          end(socket) {
+            serverGot.resolve(serverReceived);
+            socket.end();
+          },
+          error() {},
+        },
+      });
+      const client = await Bun.connect({
         hostname: "127.0.0.1",
         port: server.port,
         tls: { ca: CA_CRT },
         socket: {
           open(socket) {
-            opened.resolve({
-              authorized: socket.authorized,
-              error: socket.getAuthorizationError()?.message ?? null,
-            });
+            events.push(`open:${socket.authorized}:${socket.write("from-open\n")}`);
           },
-          data(_socket, data) {
-            received.push(data.toString());
-          },
+          data() {},
           close() {
             closed.resolve();
           },
           error(_socket, err) {
-            opened.reject(err);
-            closed.reject(err);
-          },
-          connectError(_socket, err) {
-            opened.reject(err);
+            serverGot.reject(err);
             closed.reject(err);
           },
         },
       });
-      expect(await opened.promise).toEqual({ authorized: false, error: UNTRUSTED_MESSAGE });
+      events.push(`resolved:${client.readyState}:${client.write("after-await\n")}`);
+      client.end();
+      expect(await serverGot.promise).toBe("from-open\nafter-await\n");
       await closed.promise;
-      expect(received).toEqual([]);
+      expect(events).toEqual(["open:true:10", "resolved:1:12"]);
     });
 
     it("refuses writes issued from the handshake callback of a rejected connection", async () => {

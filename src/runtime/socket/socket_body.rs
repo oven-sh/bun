@@ -1566,7 +1566,14 @@ impl<const SSL: bool> NewSocket<SSL> {
         let callback = handlers.on_open();
         let handshake_callback = handlers.on_handshake();
 
-        handlers.resolve_promise(this_value)?;
+        // A TLS socket without a `handshake` handler reports `open` only once
+        // the handshake is done, and its connect promise settles at that same
+        // point (`on_handshake`): a write right after `await Bun.connect` is
+        // then a post-handshake write instead of a dropped one, and a failed
+        // handshake rejects instead of resolving a socket about to close.
+        if !(SSL && handshake_callback.is_empty()) {
+            handlers.resolve_promise(this_value)?;
+        }
 
         if SSL {
             // only calls open callback if handshake callback is provided
@@ -1865,12 +1872,18 @@ impl<const SSL: bool> NewSocket<SSL> {
 
         // Use open callback when handshake is not provided
         if callback.is_empty() {
-            callback = handlers.on_open();
-            if callback.is_empty() {
+            if transport_unusable && !this.acts_as_tls_server() {
+                let delivered = Self::deliver_handshake_failure(this, &handlers, &ssl_error);
                 if reject_unauthorized {
                     this.reject_unauthorized_connection();
                 }
-                return Ok(());
+                return delivered;
+            }
+            callback = handlers.on_open();
+            if callback.is_empty() {
+                let global = handlers.global_object;
+                let this_value = this.get_this_value(&global);
+                return handlers.resolve_promise(this_value);
             }
             is_open = true;
         }
@@ -1889,6 +1902,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         // open callback only have 1 parameters and its the socket
         // you should use getAuthorizationError and authorized getter to get those values in this case
         if is_open {
+            handlers.resolve_promise(this_value)?;
             result = match callback.call(&global, this_value, &[this_value]) {
                 Ok(v) => v,
                 Err(err) => global.take_exception(err),
@@ -1951,6 +1965,50 @@ impl<const SSL: bool> NewSocket<SSL> {
             );
             f.set(Flags::REJECT_UNAUTHORIZED, reject_unauthorized);
         });
+    }
+
+    /// A failed handshake on a client with no `handshake` handler: `open`
+    /// never fires for the connection about to be torn down. The error goes
+    /// to `error`, and the pending `Bun.connect` promise rejects with it
+    /// (marked handled when `error` took it, like `connectError`). With
+    /// neither, it is reported as uncaught, like node's unhandled `'error'`.
+    fn deliver_handshake_failure(
+        this: bun_ptr::ThisPtr<Self>,
+        handlers: &Rc<Handlers>,
+        ssl_error: &uws::us_bun_verify_error_t,
+    ) -> JsResult<()> {
+        let _scope = ScopeExit {
+            socket: this,
+            scope: Some(handlers.enter()),
+        };
+        let global = handlers.global_object;
+        let this_value = this.get_this_value(&global);
+        let err_value = if ssl_error.error_no != 0 {
+            super::uws_jsc::verify_error_to_js(ssl_error, &global)
+        } else if let Some(stored) = this.stored_verify_error_to_js(&global) {
+            stored
+        } else {
+            SystemError {
+                code: BunString::static_("EPROTO"),
+                message: BunString::static_("TLS handshake failed"),
+                ..Default::default()
+            }
+            .to_error_instance(&global)
+        };
+
+        if !handlers.on_error().is_empty() {
+            handlers.call_error_handler(this_value, &[this_value, err_value])?;
+            if let Some(promise) = handlers.take_promise() {
+                if let Some(promise) = promise.as_promise() {
+                    jsc::JSPromise::opaque_mut(promise).reject_as_handled(&global, err_value)?;
+                }
+            }
+            return Ok(());
+        }
+        if handlers.reject_promise(err_value)? {
+            return Ok(());
+        }
+        handlers.call_error_handler(this_value, &[this_value, err_value])
     }
 
     /// Callers hold `on_handshake`'s ref guard, which outlives the

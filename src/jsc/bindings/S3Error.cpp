@@ -45,7 +45,7 @@ SYSV_ABI JSC::EncodedJSValue S3Error__toErrorInstance(const S3Error* arg0,
             scope.clearException();
         } else {
             result->putDirect(vm, names.codePublicName(), code,
-                JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::DontEnum | 0);
+                JSC::PropertyAttribute::DontDelete | 0);
         }
     }
 

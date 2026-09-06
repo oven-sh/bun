@@ -422,7 +422,12 @@ test("confirm (no) windows newline", async () => {
 // prompt(), confirm() and alert() block the JS thread on stdin. A JS signal
 // listener must still run when the signal arrives, not after the next line.
 describe.skipIf(isWindows)("dialogs run JS signal listeners while they wait for input", () => {
-  async function run(dialog, signal, code, listener = `() => { console.error("[listener ran]"); process.exit(${code}); }`) {
+  async function run(
+    dialog,
+    signal,
+    code,
+    listener = `() => { console.error("[listener ran]"); process.exit(${code}); }`,
+  ) {
     const script = `
       process.on(${JSON.stringify(signal)}, ${listener});
       const answer = ${dialog};

@@ -330,28 +330,31 @@ const initEnv = { ...bunEnv, BUN_AGENT_RULE_DISABLED: "1" };
       manifest: { name: "cjs-app", type: "commonjs", main: "main.js", module: "esm.js", ...blankDeps },
       expected: { name: "cjs-app", type: "commonjs", main: "main.js", module: "esm.js", ...blankDeps },
     },
-  ])("bun init -y keeps an explicit type and private in an existing package.json with $name", async ({ manifest, expected }) => {
-    await using temp = tempDir("bun-init-keeps-type", {
-      "package.json": JSON.stringify(manifest, null, 2) + "\n",
-      "index.js": `const os = require("os"); console.log("require works:", os.platform());\n`,
-    });
+  ])(
+    "bun init -y keeps an explicit type and private in an existing package.json with $name",
+    async ({ manifest, expected }) => {
+      await using temp = tempDir("bun-init-keeps-type", {
+        "package.json": JSON.stringify(manifest, null, 2) + "\n",
+        "index.js": `const os = require("os"); console.log("require works:", os.platform());\n`,
+      });
 
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "init", "-y"],
-      cwd: temp,
-      stdio: ["ignore", "pipe", "pipe"],
-      env: initEnv,
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "init", "-y"],
+        cwd: temp,
+        stdio: ["ignore", "pipe", "pipe"],
+        env: initEnv,
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-    expect(await Bun.file(path.join(temp, "package.json")).json()).toEqual(expected);
-    if (JSON.stringify(manifest) === JSON.stringify(expected)) {
-      expect(stdout).not.toContain("package.json");
-    } else {
-      expect(stdout).toContain(" ~ package.json (updated)");
-    }
-    expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
-  });
+      expect(await Bun.file(path.join(temp, "package.json")).json()).toEqual(expected);
+      if (JSON.stringify(manifest) === JSON.stringify(expected)) {
+        expect(stdout).not.toContain("package.json");
+      } else {
+        expect(stdout).toContain(" ~ package.json (updated)");
+      }
+      expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
+    },
+  );
 
   test.each(["    ", "\t"])(
     "bun init -y keeps an existing package.json's indentation (%j) and does not add private",

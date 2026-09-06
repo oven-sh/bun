@@ -731,6 +731,16 @@ describe("apply", () => {
       expect(() => apply(patchfile, String(dir))).toThrow("hunk #1 does not apply to index.js (expected at line 9)");
       expect(await fs.readFile(join(String(dir), "index.js"), "utf8")).toBe("line 1\nline 2\n");
     });
+
+    test("a header start far past the end of the file is still found or rejected quickly", async () => {
+      await using dir = tempDir("patch-far", { "index.js": "line 1\nline 2\nline 3\n" });
+      const header = "diff --git a/index.js b/index.js\n--- a/index.js\n+++ b/index.js\n";
+      await apply(header + "@@ -4000000000 +4000000000 @@\n-line 2\n+TWO\n", String(dir));
+      expect(await fs.readFile(join(String(dir), "index.js"), "utf8")).toBe("line 1\nTWO\nline 3\n");
+      expect(() => apply(header + "@@ -4000000000 +4000000000 @@\n-nowhere\n+X\n", String(dir))).toThrow(
+        "hunk #1 does not apply to index.js (expected at line 4000000000)",
+      );
+    });
   });
 
   describe("No newline at end of file", () => {

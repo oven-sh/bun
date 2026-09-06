@@ -258,8 +258,7 @@ impl<'a> PatchFile<'a> {
     }
 }
 
-/// Hunks are placed by matching their `-` side against the file, as `git
-/// apply` does. The `+` start is not used: `yarn patch-commit` emits stale ones.
+/// Hunks are placed by matching their `-` side, as `git apply` does; `+` starts can be stale.
 fn apply_patch(
     patch: &FilePatch<'_>,
     patch_dir: Fd,
@@ -377,6 +376,8 @@ fn apply_patch(
 /// The index nearest to `expected` where the hunk's `-` side matches, forward first.
 fn find_hunk_position(hunk: &Hunk<'_>, lines: &[&[u8]], expected: isize) -> Option<usize> {
     let last = lines.len() as isize;
+    // A header start far outside the file would otherwise spin until `offset` reaches it.
+    let expected = expected.clamp(0, last);
     let mut offset: isize = 0;
     loop {
         let forward = expected + offset;

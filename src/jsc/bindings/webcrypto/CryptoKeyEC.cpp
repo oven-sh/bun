@@ -29,6 +29,7 @@
 #if ENABLE(WEB_CRYPTO)
 
 #include "CryptoAlgorithmRegistry.h"
+#include "CryptoAlgorithm.h"
 #include "JsonWebKey.h"
 #include <wtf/text/Base64.h>
 
@@ -59,17 +60,34 @@ CryptoKeyEC::CryptoKeyEC(CryptoAlgorithmIdentifier identifier, NamedCurve curve,
     ASSERT(platformSupportedCurve(curve));
 }
 
-ExceptionOr<CryptoKeyPair> CryptoKeyEC::generatePair(CryptoAlgorithmIdentifier identifier, const String& curve, bool extractable, CryptoKeyUsageBitmap usages)
+void CryptoKeyEC::generatePair(CryptoAlgorithmIdentifier identifier, const String& curve, bool extractable, CryptoKeyUsageBitmap usages, KeyPairCallback&& callback, FailureCallback&& failureCallback, ScriptExecutionContext& context)
 {
     auto namedCurve = toNamedCurve(curve);
-    if (!namedCurve || !platformSupportedCurve(*namedCurve))
-        return Exception { NotSupportedError };
+    if (!namedCurve || !platformSupportedCurve(*namedCurve)) {
+        failureCallback(NotSupportedError);
+        return;
+    }
 
-    auto result = platformGeneratePair(identifier, *namedCurve, extractable, usages);
-    if (!result)
-        return Exception { OperationError };
+    auto wrap = [identifier, namedCurve = *namedCurve, extractable, usages](EvpPKeyPair&& keys) {
+        auto publicKey = CryptoKeyEC::create(identifier, namedCurve, CryptoKeyType::Public, WTF::move(keys.publicKey), true, usages);
+        auto privateKey = CryptoKeyEC::create(identifier, namedCurve, CryptoKeyType::Private, WTF::move(keys.privateKey), extractable, usages);
+        return CryptoKeyPair { WTF::move(publicKey), WTF::move(privateKey) };
+    };
 
-    return WTF::move(*result);
+    // A P-256 pair costs about 15 us, as much as the round trip through the work pool, so it is
+    // generated inline. P-384 (0.5 ms) and P-521 (1.2 ms) would stall the event loop.
+    if (*namedCurve == NamedCurve::P256) {
+        auto keys = platformGeneratePair(*namedCurve);
+        if (!keys) {
+            failureCallback(OperationError);
+            return;
+        }
+        callback(wrap(WTF::move(keys)));
+        return;
+    }
+
+    CryptoAlgorithm::dispatchKeyPairGeneration(
+        context, [namedCurve = *namedCurve] { return platformGeneratePair(namedCurve); }, WTF::move(wrap), WTF::move(callback), WTF::move(failureCallback));
 }
 
 RefPtr<CryptoKeyEC> CryptoKeyEC::importRaw(CryptoAlgorithmIdentifier identifier, const String& curve, Vector<uint8_t>&& keyData, bool extractable, CryptoKeyUsageBitmap usages)

@@ -37,6 +37,7 @@
 #include <wtf/ThreadSafeRefCounted.h>
 #include <wtf/Vector.h>
 #include "SubtleCrypto.h"
+#include "OpenSSLCryptoUniquePtr.h"
 
 #if ENABLE(WEB_CRYPTO)
 
@@ -83,6 +84,12 @@ public:
 
     static void dispatchOperationInWorkQueue(WorkQueue&, ScriptExecutionContext&, VectorCallback&&, ExceptionCallback&&, Function<ExceptionOr<Vector<uint8_t>>()>&&);
     static void dispatchOperationInWorkQueue(WorkQueue&, ScriptExecutionContext&, BoolCallback&&, ExceptionCallback&&, Function<ExceptionOr<bool>()>&&);
+
+    using KeyPairCallback = Function<void(CryptoKeyPair&&)>;
+    using KeyPairFailureCallback = Function<void(ExceptionCode)>;
+    // Runs `generate` on the work pool, then `wrap` (which builds the CryptoKey wrappers) and one
+    // of the callbacks on the context's thread. Null keys from `generate` become OperationError.
+    static void dispatchKeyPairGeneration(ScriptExecutionContext&, Function<EvpPKeyPair()>&& generate, Function<CryptoKeyPair(EvpPKeyPair&&)>&& wrap, KeyPairCallback&&, KeyPairFailureCallback&&);
 
     // Truncates `secret` to the first `length` bits, zeroing the unused trailing bits of the
     // final byte, per https://w3c.github.io/webcrypto/#SubtleCrypto-method-deriveBits. A null

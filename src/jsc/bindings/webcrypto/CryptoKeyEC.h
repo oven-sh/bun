@@ -28,6 +28,7 @@
 #include "CryptoKey.h"
 #include "CryptoKeyPair.h"
 #include "ExceptionOr.h"
+#include <wtf/Function.h>
 
 #if ENABLE(WEB_CRYPTO)
 
@@ -40,6 +41,7 @@ typedef WebCore::EvpPKeyPtr PlatformECKeyContainer;
 namespace WebCore {
 
 struct JsonWebKey;
+class ScriptExecutionContext;
 
 class CryptoKeyEC final : public CryptoKey {
 public:
@@ -55,7 +57,12 @@ public:
     }
     virtual ~CryptoKeyEC() = default;
 
-    WEBCORE_EXPORT static ExceptionOr<CryptoKeyPair> generatePair(CryptoAlgorithmIdentifier, const String& curve, bool extractable, CryptoKeyUsageBitmap);
+    using KeyPairCallback = Function<void(CryptoKeyPair&&)>;
+    using FailureCallback = Function<void(ExceptionCode)>;
+    // Runs one of the callbacks on the context's thread. P-384 and P-521 pairs are generated on the
+    // work pool; a P-256 pair inline. An unsupported curve fails synchronously with NotSupportedError,
+    // a failed generation with OperationError.
+    WEBCORE_EXPORT static void generatePair(CryptoAlgorithmIdentifier, const String& curve, bool extractable, CryptoKeyUsageBitmap, KeyPairCallback&&, FailureCallback&&, ScriptExecutionContext&);
     WEBCORE_EXPORT static RefPtr<CryptoKeyEC> importRaw(CryptoAlgorithmIdentifier, const String& curve, Vector<uint8_t>&& keyData, bool extractable, CryptoKeyUsageBitmap);
     static RefPtr<CryptoKeyEC> importJwk(CryptoAlgorithmIdentifier, const String& curve, JsonWebKey&&, bool extractable, CryptoKeyUsageBitmap);
     // On failure, `keyTypeMismatch` (when given) reports whether the data held a
@@ -84,7 +91,8 @@ private:
     KeyAlgorithm algorithm() const final;
 
     static bool platformSupportedCurve(NamedCurve);
-    static std::optional<CryptoKeyPair> platformGeneratePair(CryptoAlgorithmIdentifier, NamedCurve, bool extractable, CryptoKeyUsageBitmap);
+    // Safe to call off the context's thread.
+    static EvpPKeyPair platformGeneratePair(NamedCurve);
     static RefPtr<CryptoKeyEC> platformImportRaw(CryptoAlgorithmIdentifier, NamedCurve, Vector<uint8_t>&& keyData, bool extractable, CryptoKeyUsageBitmap);
     static RefPtr<CryptoKeyEC> platformImportJWKPublic(CryptoAlgorithmIdentifier, NamedCurve, Vector<uint8_t>&& x, Vector<uint8_t>&& y, bool extractable, CryptoKeyUsageBitmap);
     static RefPtr<CryptoKeyEC> platformImportJWKPrivate(CryptoAlgorithmIdentifier, NamedCurve, Vector<uint8_t>&& x, Vector<uint8_t>&& y, Vector<uint8_t>&& d, bool extractable, CryptoKeyUsageBitmap);

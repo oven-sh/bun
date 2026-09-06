@@ -101,38 +101,36 @@ bool CryptoKeyEC::platformSupportedCurve(NamedCurve curve)
     return curve == NamedCurve::P256 || curve == NamedCurve::P384 || curve == NamedCurve::P521;
 }
 
-std::optional<CryptoKeyPair> CryptoKeyEC::platformGeneratePair(CryptoAlgorithmIdentifier identifier, NamedCurve curve, bool extractable, CryptoKeyUsageBitmap usages)
+EvpPKeyPair CryptoKeyEC::platformGeneratePair(NamedCurve curve)
 {
     // To generate a key pair, we generate a private key and extract the public key from the private key.
     auto privateECKey = createECKey(curve);
     if (!privateECKey)
-        return std::nullopt;
+        return {};
 
     if (EC_KEY_generate_key(privateECKey.get()) <= 0)
-        return std::nullopt;
+        return {};
 
     auto point = ECPointPtr(EC_POINT_dup(EC_KEY_get0_public_key(privateECKey.get()), EC_KEY_get0_group(privateECKey.get())));
     if (!point)
-        return std::nullopt;
+        return {};
 
     auto publicECKey = createECKey(curve);
     if (!publicECKey)
-        return std::nullopt;
+        return {};
 
     if (EC_KEY_set_public_key(publicECKey.get(), point.get()) <= 0)
-        return std::nullopt;
+        return {};
 
     auto privatePKey = EvpPKeyPtr(EVP_PKEY_new());
-    if (EVP_PKEY_set1_EC_KEY(privatePKey.get(), privateECKey.get()) <= 0)
-        return std::nullopt;
+    if (!privatePKey || EVP_PKEY_set1_EC_KEY(privatePKey.get(), privateECKey.get()) <= 0)
+        return {};
 
     auto publicPKey = EvpPKeyPtr(EVP_PKEY_new());
-    if (EVP_PKEY_set1_EC_KEY(publicPKey.get(), publicECKey.get()) <= 0)
-        return std::nullopt;
+    if (!publicPKey || EVP_PKEY_set1_EC_KEY(publicPKey.get(), publicECKey.get()) <= 0)
+        return {};
 
-    auto publicKey = CryptoKeyEC::create(identifier, curve, CryptoKeyType::Public, WTF::move(publicPKey), true, usages);
-    auto privateKey = CryptoKeyEC::create(identifier, curve, CryptoKeyType::Private, WTF::move(privatePKey), extractable, usages);
-    return CryptoKeyPair { WTF::move(publicKey), WTF::move(privateKey) };
+    return { WTF::move(publicPKey), WTF::move(privatePKey) };
 }
 
 RefPtr<CryptoKeyEC> CryptoKeyEC::platformImportRaw(CryptoAlgorithmIdentifier identifier, NamedCurve curve, Vector<uint8_t>&& keyData, bool extractable, CryptoKeyUsageBitmap usages)

@@ -1453,3 +1453,121 @@ describe("exception scope discipline", () => {
     });
   });
 });
+
+// RSA, P-384 and P-521 key pairs used to be generated on the JS thread, and the
+// promise resolved before generateKey returned. They now run on the work pool
+// and the promise settles from a task posted back to the JS thread. P-256 pairs
+// cost about as much as the round trip and stay inline.
+describe("generateKey runs slow key pairs on the work pool", () => {
+  const rejection = (p: Promise<unknown>) =>
+    p.then(
+      () => "resolved",
+      e => `${e.name}: ${e.message}`,
+    );
+  const ecdsa = (namedCurve: string) => ({ name: "ECDSA", namedCurve }) as const;
+  const ecdh = { name: "ECDH", namedCurve: "P-521" } as const;
+  const rsa = (name: string, modulusLength = 2048) =>
+    ({ name, hash: "SHA-256", modulusLength, publicExponent: new Uint8Array([1, 0, 1]) }) as const;
+
+  it("the promise is still pending when generateKey returns, except for P-256", async () => {
+    const pending = {
+      p256: crypto.subtle.generateKey(ecdsa("P-256"), true, ["sign", "verify"]),
+      p384: crypto.subtle.generateKey(ecdsa("P-384"), true, ["sign", "verify"]),
+      p521: crypto.subtle.generateKey(ecdsa("P-521"), true, ["sign", "verify"]),
+      ecdh: crypto.subtle.generateKey(ecdh, true, ["deriveBits"]),
+      rsaPss: crypto.subtle.generateKey(rsa("RSA-PSS"), true, ["sign", "verify"]),
+      rsaOaep: crypto.subtle.generateKey(rsa("RSA-OAEP"), true, ["encrypt", "decrypt"]),
+      rsaSsa: crypto.subtle.generateKey(rsa("RSASSA-PKCS1-v1_5"), true, ["sign", "verify"]),
+    };
+    expect(Object.fromEntries(Object.entries(pending).map(([k, p]) => [k, Bun.peek.status(p)]))).toEqual({
+      p256: "fulfilled",
+      p384: "pending",
+      p521: "pending",
+      ecdh: "pending",
+      rsaPss: "pending",
+      rsaOaep: "pending",
+      rsaSsa: "pending",
+    });
+
+    const data = new Uint8Array([1, 2, 3]);
+    const ec = await pending.p521;
+    const ecSignature = await crypto.subtle.sign({ name: "ECDSA", hash: "SHA-512" }, ec.privateKey, data);
+    const rsaKeys = await pending.rsaSsa;
+    const rsaSignature = await crypto.subtle.sign("RSASSA-PKCS1-v1_5", rsaKeys.privateKey, data);
+    const { privateKey, publicKey } = await pending.ecdh;
+    const other = await crypto.subtle.generateKey(ecdh, true, ["deriveBits"]);
+    const a = await crypto.subtle.deriveBits({ name: "ECDH", public: other.publicKey }, privateKey, 256);
+    const b = await crypto.subtle.deriveBits({ name: "ECDH", public: publicKey }, other.privateKey, 256);
+    expect({
+      ecVerified: await crypto.subtle.verify({ name: "ECDSA", hash: "SHA-512" }, ec.publicKey, ecSignature, data),
+      rsaVerified: await crypto.subtle.verify("RSASSA-PKCS1-v1_5", rsaKeys.publicKey, rsaSignature, data),
+      ecdhAgreed: Buffer.from(a).equals(Buffer.from(b)),
+    }).toEqual({ ecVerified: true, rsaVerified: true, ecdhAgreed: true });
+  });
+
+  it("a batch of concurrent P-521 generations all resolve with distinct usable keys", async () => {
+    const pairs = await Promise.all(
+      Array.from({ length: 16 }, () => crypto.subtle.generateKey(ecdsa("P-521"), true, ["sign", "verify"])),
+    );
+    const raws = await Promise.all(pairs.map(pair => crypto.subtle.exportKey("raw", pair.publicKey)));
+    expect(raws.map(raw => raw.byteLength)).toEqual(Array(16).fill(133));
+    expect(new Set(raws.map(raw => Buffer.from(raw).toString("hex"))).size).toBe(16);
+  });
+
+  it("rejections keep their names", async () => {
+    expect({
+      unsupportedCurve: await rejection(crypto.subtle.generateKey(ecdsa("P-999"), true, ["sign", "verify"])),
+      // Rejected synchronously, before the generation is dispatched.
+      evenExponent: await rejection(
+        crypto.subtle.generateKey({ ...rsa("RSA-OAEP"), publicExponent: new Uint8Array([4]) }, true, ["encrypt"]),
+      ),
+      // RSA_generate_key_ex fails on the pool thread.
+      tinyModulus: await rejection(crypto.subtle.generateKey(rsa("RSA-OAEP", 8), true, ["encrypt"])),
+      // Checked after the pair comes back from the pool.
+      emptyUsages: await rejection(crypto.subtle.generateKey(ecdsa("P-384"), true, [])),
+    }).toEqual({
+      unsupportedCurve: "NotSupportedError: The algorithm is not supported",
+      evenExponent: "OperationError: The operation failed for an operation-specific reason",
+      tinyModulus: "OperationError: The operation failed for an operation-specific reason",
+      emptyUsages: "SyntaxError: Usages cannot be empty when creating a key.",
+    });
+  });
+
+  it("a floating generateKey keeps the process alive until it resolves", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `crypto.subtle.generateKey({ name: "ECDH", namedCurve: "P-384" }, true, ["deriveBits"]).then(k => console.log(k.privateKey.algorithm.namedCurve));
+         crypto.subtle.generateKey({ name: "RSA-PSS", hash: "SHA-256", modulusLength: 1024, publicExponent: new Uint8Array([1, 0, 1]) }, true, ["sign"]).then(k => console.log(k.privateKey.algorithm.modulusLength));`,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ lines: stdout.split("\n").sort(), stderr, exitCode }).toEqual({
+      lines: ["", "1024", "P-384"],
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  it("generates inside a Worker", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const w = new Worker(URL.createObjectURL(new Blob([
+          'crypto.subtle.generateKey({ name: "ECDSA", namedCurve: "P-384" }, true, ["sign", "verify"]).then(k => postMessage(k.publicKey.type));'
+        ], { type: "application/javascript" })));
+        w.onmessage = e => { console.log(e.data); w.terminate(); };`,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "public\n", stderr: "", exitCode: 0 });
+  });
+});

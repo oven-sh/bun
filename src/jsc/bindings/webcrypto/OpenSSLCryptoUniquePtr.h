@@ -73,4 +73,13 @@ DEFINE_OPENSSL_CRYPTO_PTR_FULL(ASN1SequencePtr, ASN1_SEQUENCE_ANY, sk_ASN1_TYPE_
 #undef DEFINE_OPENSSL_CRYPTO_PTR
 #undef DEFINE_OPENSSL_CRYPTO_PTR_FULL
 
+// A generated key pair before its CryptoKey wrappers exist. It has no thread affinity, so a work
+// pool thread can generate it and hand it to the context's thread. Both keys are null on failure.
+struct EvpPKeyPair {
+    EvpPKeyPtr publicKey;
+    EvpPKeyPtr privateKey;
+
+    explicit operator bool() const { return publicKey && privateKey; }
+};
+
 } // namespace WebCore

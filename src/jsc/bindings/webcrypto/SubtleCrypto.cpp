@@ -1023,9 +1023,11 @@ void SubtleCrypto::generateKey(JSC::JSGlobalObject& state, AlgorithmIdentifier&&
             rejectWithException(promise.releaseNonNull(), ec, msg);
     };
 
-    // The 26 January 2017 version of the specification suggests we should perform the following task asynchronously
-    // regardless what kind of keys it produces: https://www.w3.org/TR/WebCryptoAPI/#SubtleCrypto-method-generateKey
-    // That's simply not efficient for AES, HMAC and EC keys. Therefore, we perform it as an async task only for RSA keys.
+    // The specification performs this task asynchronously regardless of what kind of key it
+    // produces: https://www.w3.org/TR/WebCryptoAPI/#SubtleCrypto-method-generateKey
+    // Keys that take longer than a round trip through the work pool (RSA, and EC P-384 and
+    // P-521) are generated there (CryptoAlgorithm::dispatchKeyPairGeneration). AES, HMAC, OKP,
+    // ML-DSA, ML-KEM and EC P-256 keys take well under a millisecond and are generated inline.
     RELEASE_AND_RETURN(scope, algorithm->generateKey(*params, extractable, keyUsagesBitmap, WTF::move(callback), WTF::move(exceptionCallback), *scriptExecutionContext()));
 }
 

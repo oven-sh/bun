@@ -530,12 +530,8 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
     // immediately move that buffer into `url_proxy_buffer` and re-parse `url` to
     // borrow it.
     //
-    // An `s3://` URL is a bucket and a key, not a WHATWG URL. `Bun.file` and
-    // `S3Client.file` take the key bytes as written and the signer
-    // percent-encodes them once. The WHATWG serializer would percent-encode
-    // spaces and non-ASCII, drop `.`/`..` segments and strip tabs first, so
-    // `fetch` would then address a different object than `Bun.file` does.
-    let mut url_proxy_buffer = if url_str.starts_with_ascii(b"s3://") {
+    // An `s3://` URL skips the WHATWG serializer: see `bun_url::is_s3_url`.
+    let mut url_proxy_buffer = if bun_url::is_s3_url(&url_str) {
         url_str.to_utf8().to_vec()
     } else {
         let owned_url = match ZigURL::from_string(&url_str) {

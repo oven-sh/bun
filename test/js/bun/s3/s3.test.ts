@@ -2182,16 +2182,16 @@ describe("presigned url signature", () => {
 });
 
 describe("s3:// url key encoding", () => {
-  // fetch("s3://...") must address the same object as Bun.file("s3://...")
-  // and S3Client.file(key): the key bytes after "s3://bucket/" are taken as
-  // written and percent-encoded exactly once on the wire.
+  // fetch("s3://..."), fetch(new Request("s3://...")), Bun.file("s3://...")
+  // and S3Client.file(key) must address the same object: the key bytes after
+  // "s3://bucket/" are taken as written and percent-encoded once on the wire.
   it.each([
     ["my file.txt", "/bkt/my%20file.txt"],
     ["\u00fc.txt", "/bkt/%C3%BC.txt"],
     ["my%20file.txt", "/bkt/my%2520file.txt"],
     ["dir/../x.txt", "/bkt/dir/../x.txt"],
     ["a\tb", "/bkt/a%09b"],
-  ])("fetch, Bun.file and S3Client.file send the same path for key %j", async (key, expectedPath) => {
+  ])("fetch, Request, Bun.file and S3Client.file send the same path for key %j", async (key, expectedPath) => {
     const fixture = `
       const http = require("node:http");
       const seen = [];
@@ -2215,6 +2215,7 @@ describe("s3:// url key encoding", () => {
       const key = ${JSON.stringify(key)};
       const url = "s3://bkt/" + key;
       await (await fetch(url, { s3: options })).text();
+      await (await fetch(new Request(url), { s3: options })).text();
       await Bun.file(url, options).text();
       await new Bun.S3Client({ ...options, bucket: "bkt" }).file(key).text();
       server.close();
@@ -2229,7 +2230,7 @@ describe("s3:// url key encoding", () => {
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).toBe("");
-    expect(JSON.parse(stdout.trim())).toEqual([expectedPath, expectedPath, expectedPath]);
+    expect(JSON.parse(stdout.trim())).toEqual([expectedPath, expectedPath, expectedPath, expectedPath]);
     expect(exitCode).toBe(0);
   });
 });

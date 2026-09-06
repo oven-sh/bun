@@ -192,6 +192,238 @@ describe("ReadStream.prototype.setRawMode", () => {
   });
 });
 
+// Runs `script` in a child attached to a fresh PTY and drives it through a
+// phase protocol: the child prints a marker, the parent reads termios and
+// types the next line. Resolves with the child's exit code.
+async function runInPty(
+  script: string,
+  phases: ((terminal: Bun.Terminal, output: () => string) => void | Promise<void>)[],
+  opts: { markers: string[] },
+) {
+  const decoder = new TextDecoder();
+  let buffer = "";
+  const waiters: { marker: string; resolve: () => void }[] = [];
+  await using terminal = new Bun.Terminal({
+    data(_terminal, chunk: Uint8Array) {
+      buffer += decoder.decode(chunk, { stream: true });
+      for (let i = waiters.length - 1; i >= 0; i--) {
+        if (buffer.includes(waiters[i].marker)) {
+          waiters[i].resolve();
+          waiters.splice(i, 1);
+        }
+      }
+    },
+  });
+  const proc = Bun.spawn({ cmd: [bunExe(), "-e", script], env: bunEnv, terminal });
+  const exitedEarly = proc.exited.then(code => {
+    throw new Error(`child exited early with code ${code}; terminal output: ${JSON.stringify(buffer)}`);
+  });
+  exitedEarly.catch(() => {});
+  const phase = (marker: string) => {
+    const seen = buffer.includes(marker)
+      ? Promise.resolve()
+      : new Promise<void>(resolve => waiters.push({ marker, resolve }));
+    return Promise.race([seen, exitedEarly]);
+  };
+  for (let i = 0; i < phases.length; i++) {
+    await phase(opts.markers[i]);
+    await phases[i](terminal, () => buffer);
+  }
+  const code = await proc.exited;
+  return { code, output: () => buffer };
+}
+
+describe.skipIf(isWindows)("tty.ReadStream is a net.Socket over a native TTY handle", () => {
+  test("process.stdin has Node's shape under a PTY", async () => {
+    const { code, output } = await runInPty(
+      `
+        const net = require("node:net");
+        const tty = require("node:tty");
+        const { Duplex } = require("node:stream");
+        const { TTY } = process.binding("tty_wrap");
+        const s = process.stdin;
+        const out = {
+          isReadStream: s instanceof tty.ReadStream,
+          isSocket: s instanceof net.Socket,
+          isDuplex: s instanceof Duplex,
+          constructor: s.constructor === tty.ReadStream,
+          readStreamExtendsSocket: Object.getPrototypeOf(tty.ReadStream) === net.Socket,
+          protoChain: Object.getPrototypeOf(tty.ReadStream.prototype) === net.Socket.prototype,
+          handleIsTTY: s._handle instanceof TTY,
+          handleMethods: ["readStart", "readStop", "setRawMode", "getWindowSize", "ref", "unref", "close"].every(
+            m => typeof s._handle[m] === "function",
+          ),
+          highWaterMark: s.readableHighWaterMark,
+          readingBeforeConsumer: s._handle.reading,
+          fd: s.fd,
+          isTTY: s.isTTY,
+          isRaw: s.isRaw,
+          bytesReadGetter: typeof Object.getOwnPropertyDescriptor(TTY.prototype, "bytesRead").get,
+        };
+        process.stdout.write("RESULT " + JSON.stringify(out) + "\\n");
+        process.exit(0);
+      `,
+      [() => {}],
+      { markers: ["RESULT "] },
+    );
+    expect(code).toBe(0);
+    const match = Bun.stripANSI(output()).match(/RESULT (\{.*\})/);
+    expect(JSON.parse(match![1])).toEqual({
+      isReadStream: true,
+      isSocket: true,
+      isDuplex: true,
+      constructor: true,
+      readStreamExtendsSocket: true,
+      protoChain: true,
+      handleIsTTY: true,
+      handleMethods: true,
+      highWaterMark: 0,
+      readingBeforeConsumer: false,
+      fd: 0,
+      isTTY: true,
+      isRaw: false,
+      bytesReadGetter: "function",
+    });
+  });
+
+  // readableHighWaterMark: 0 makes every push() report backpressure, so the
+  // handle stops reading after each chunk and only reads again when the
+  // stream asks for more. That is what hands fd 0 to a child.
+  test("the handle stops reading after every chunk and resumes on demand", async () => {
+    const { code, output } = await runInPty(
+      `
+        const s = process.stdin;
+        const log = [];
+        const ack = () => new Promise(resolve => s.once("data", () => resolve()));
+        (async () => {
+          s.setRawMode(true);
+          log.push(["idle", s._handle.reading]);
+          process.stdout.write("P1\\n"); await ack();
+          // The push() that delivered the byte stopped the handle; by the time
+          // this continuation runs, the nextTick read(0) of flowing mode has
+          // re-armed it. Same sequence as Node.
+          log.push(["in-data", s._handle.reading]);
+          await new Promise(r => setTimeout(r, 0));
+          log.push(["flowing", s._handle.reading, s._handle.bytesRead]);
+          s.pause();
+          await new Promise(r => process.nextTick(r));
+          log.push(["paused", s._handle.reading, s.readableFlowing]);
+          s.resume();
+          await new Promise(r => setTimeout(r, 0));
+          log.push(["resumed", s._handle.reading]);
+          s.unref();
+          process.stdout.write("RESULT " + JSON.stringify(log) + "\\n");
+        })();
+      `,
+      [
+        terminal => {
+          terminal.write("x");
+        },
+      ],
+      { markers: ["P1"] },
+    );
+    expect(code).toBe(0);
+    const match = Bun.stripANSI(output()).match(/RESULT (\[.*\])/);
+    expect(JSON.parse(match![1])).toEqual([
+      ["idle", false],
+      ["in-data", true],
+      ["flowing", true, 1],
+      ["paused", false, false],
+      ["resumed", true],
+    ]);
+  });
+
+  // https://github.com/oven-sh/bun/issues/29126: a TUI reads stdin with a
+  // 'readable' listener, removes it, then spawns an interactive child with
+  // stdio: "inherit". Bun kept polling fd 0 and stole the child's keystrokes.
+  test("a child with stdio: 'inherit' owns stdin after the last 'readable' listener is removed", async () => {
+    const { code, output } = await runInPty(
+      `
+        const { spawn } = require("node:child_process");
+        const s = process.stdin;
+        s.setRawMode(true);
+        const seen = [];
+        const handler = () => {
+          let c;
+          while ((c = s.read()) !== null) seen.push(c.toString());
+        };
+        s.on("readable", handler);
+        process.stdout.write("P1\\n");
+        s.once("readable", () => setTimeout(() => {
+          s.setRawMode(false);
+          s.removeListener("readable", handler);
+          s.unref();
+          process.stdout.write("P2\\n");
+          const child = spawn("cat", [], { stdio: "inherit" });
+          child.on("exit", exitCode => {
+            process.stdout.write("RESULT " + JSON.stringify({ parentSaw: seen, childExit: exitCode }) + "\\n");
+            process.exit(0);
+          });
+        }, 50));
+      `,
+      [
+        terminal => {
+          terminal.write("a");
+        },
+        async terminal => {
+          // Give cat time to block in read(2) on the shared terminal.
+          await new Promise(r => setTimeout(r, 200));
+          terminal.write("hello from cat\n");
+          await new Promise(r => setTimeout(r, 200));
+          terminal.write("\x04");
+        },
+      ],
+      { markers: ["P1", "P2"] },
+    );
+    expect(code).toBe(0);
+    const text = Bun.stripANSI(output());
+    const match = text.match(/RESULT (\{.*\})/);
+    expect(JSON.parse(match![1])).toEqual({ parentSaw: ["a"], childExit: 0 });
+    // cat echoes the line it read; the terminal echoes the typed line too.
+    expect(text.split("hello from cat").length - 1).toBe(2);
+  });
+
+  test("tty_wrap.TTY delivers reads through onread and reports EOF", async () => {
+    const { code, output } = await runInPty(
+      `
+        const { TTY } = process.binding("tty_wrap");
+        const handle = new TTY(0, {});
+        const events = [];
+        handle.onread = function (nread, buf) {
+          events.push([nread, buf === undefined ? null : buf.toString(), this === handle]);
+          if (nread === -4095) {
+            process.stdout.write("RESULT " + JSON.stringify({ events, bytesRead: handle.bytesRead, fd: handle.fd }) + "\\n");
+            handle.close();
+            process.exit(0);
+          }
+        };
+        process.stdout.write("started=" + handle.readStart() + "\\n");
+      `,
+      [
+        async terminal => {
+          // Cooked mode: a line per read, and ^D at the start of a line is EOF.
+          terminal.write("abc\n");
+          await new Promise(r => setTimeout(r, 100));
+          terminal.write("\x04");
+        },
+      ],
+      { markers: ["started=0"] },
+    );
+    expect(code).toBe(0);
+    const match = Bun.stripANSI(output()).match(/RESULT (\{.*\})/);
+    const result = JSON.parse(match![1]);
+    expect(result.events.at(-1)).toEqual([-4095, null, true]);
+    expect(
+      result.events
+        .slice(0, -1)
+        .map(e => e[1])
+        .join(""),
+    ).toBe("abc\n");
+    expect(result.events.every(e => e[2])).toBe(true);
+    expect(result).toMatchObject({ bytesRead: 4, fd: 0 });
+  });
+});
+
 describe("WriteStream.prototype.getColorDepth", () => {
   const getColorDepth = (env: Record<string, string>) => WriteStream.prototype.getColorDepth.call(undefined, env);
 

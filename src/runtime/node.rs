@@ -103,6 +103,8 @@ pub mod node_fs_binding;
 pub mod node_fs_stat_watcher;
 #[path = "node/node_fs_watcher.rs"]
 pub mod node_fs_watcher;
+#[path = "node/tty_wrap.rs"]
+pub mod tty_wrap;
 #[cfg(windows)]
 #[path = "node/uv_signal_handle_windows.rs"]
 pub mod uv_signal_handle_windows;

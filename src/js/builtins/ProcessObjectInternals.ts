@@ -136,6 +136,38 @@ export function getStdinStream(
   fdType: BunProcessStdinFdType,
 ) {
   $assert(fd === 0);
+
+  if (isTTY) {
+    // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/bootstrap/switches/is_main_thread.js#L190
+    const stdin = new (require("node:tty").ReadStream)(fd);
+
+    // stdin starts out paused, but the handle does not know yet: stop it so
+    // nothing reads fd 0 until a consumer shows up.
+    if (stdin._handle?.readStop) {
+      stdin._handle.reading = false;
+      stdin._readableState.reading = false;
+      stdin._handle.readStop();
+    }
+
+    // pause() leaves the handle reading; stop it one tick later (once the
+    // stream itself has settled) so the process can exit and a child can
+    // take over the terminal.
+    stdin.on("pause", () => {
+      process.nextTick(onpause);
+    });
+
+    function onpause() {
+      if (!stdin._handle) return;
+      if (stdin._handle.reading && !stdin.readableFlowing) {
+        stdin._readableState.reading = false;
+        stdin._handle.reading = false;
+        stdin._handle.readStop();
+      }
+    }
+
+    return stdin;
+  }
+
   const native = Bun.stdin.stream();
   const source = native.$bunNativePtr;
 
@@ -174,8 +206,7 @@ export function getStdinStream(
     source?.updateRef?.(false);
   }
 
-  const ReadStream = isTTY ? require("node:tty").ReadStream : require("node:fs").ReadStream;
-  const stream = new ReadStream(null, { fd, autoClose: false });
+  const stream = new (require("node:fs").ReadStream)(null, { fd, autoClose: false });
 
   const originalOn = stream.on;
 
@@ -199,9 +230,8 @@ export function getStdinStream(
 
   stream.fd = fd;
 
-  // tty.ReadStream is supposed to extend from net.Socket.
-  // but we haven't made that work yet. Until then, we need to manually add some of net.Socket's methods
-  if (isTTY || fdType !== BunProcessStdinFdType.file) {
+  // A pipe stdin is a net.Socket in Node; give the fs.ReadStream its ref/unref.
+  if (fdType !== BunProcessStdinFdType.file) {
     stream.ref = function () {
       forceUnref = false;
       own();

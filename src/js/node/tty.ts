@@ -1,114 +1,56 @@
 // Hardcoded module "node:tty"
 
-// Note: please keep this module's loading constrants light, as some users
-// import it just to call `isatty`. In that case, `node:stream` is not needed.
-
-const {
-  setRawMode: ttySetMode,
-  isatty,
-  getWindowSize: _getWindowSize,
-  rawModeStateSize,
-} = $cpp("ProcessBindingTTYWrap.cpp", "createBunTTYFunctions");
+const { isatty, getWindowSize: _getWindowSize } = $cpp("ProcessBindingTTYWrap.cpp", "createBunTTYFunctions");
 
 const { validateInteger } = require("internal/validators");
 const fs = require("internal/fs/streams");
+const net = require("node:net");
+const { TTY } = process.binding("tty_wrap");
 
-// libuv stores the mode and the saved termios on each uv_tty_t, so a stream
-// going back to cooked never disturbs another one on the same terminal. Keep
-// that state per ReadStream rather than per process.
-const kRawModeState = Symbol("rawModeState");
-
-function ReadStream(fd): void {
+// https://github.com/nodejs/node/blob/v26.3.0/lib/tty.js#L50
+//
+// A net.Socket over a native TTY handle. readableHighWaterMark: 0 makes every
+// push() report backpressure, so the handle stops reading after each chunk
+// and only reads again when a consumer pulls. That is what lets a stopped
+// stdin hand fd 0 to a child.
+function ReadStream(fd, options): void {
   if (!(this instanceof ReadStream)) {
-    return new ReadStream(fd);
+    return new ReadStream(fd, options);
   }
-  fs.ReadStream.$apply(this, ["", { fd }]);
+  if (fd >> 0 !== fd || fd < 0) {
+    throw $ERR_INVALID_FD(fd);
+  }
+
+  const ctx: { code?: string; syscall?: string; message?: string } = {};
+  const tty = new TTY(fd, ctx);
+  if (ctx.code !== undefined) {
+    throw $ERR_TTY_INIT_FAILED(`${ctx.syscall} returned ${ctx.code} (${ctx.message})`);
+  }
+
+  net.Socket.$call(this, {
+    readableHighWaterMark: 0,
+    handle: tty,
+    manualStart: true,
+    ...options,
+  });
+
+  this.fd = fd;
   this.isRaw = false;
-  // Only set isTTY to true if the fd is actually a TTY
-  this.isTTY = isatty(fd);
+  this.isTTY = true;
 }
-$toClass(ReadStream, "ReadStream", fs.ReadStream);
+$toClass(ReadStream, "ReadStream", net.Socket);
 
-Object.defineProperty(ReadStream, "prototype", {
-  get() {
-    const Prototype = Object.create(fs.ReadStream.prototype);
-
-    // Add ref/unref methods to make tty.ReadStream behave like Node.js
-    // where TTY streams have socket-like behavior
-    Prototype.ref = function () {
-      // Get the underlying native stream source if available
-      const source = this.$bunNativePtr;
-      if (source?.updateRef) {
-        source.updateRef(true);
-      }
-      return this;
-    };
-
-    Prototype.unref = function () {
-      // Get the underlying native stream source if available
-      const source = this.$bunNativePtr;
-      if (source?.updateRef) {
-        source.updateRef(false);
-      }
-      return this;
-    };
-
-    Prototype.setRawMode = function (flag) {
-      flag = !!flag;
-
-      // On windows, this goes through the stream handle itself, as it must call
-      // uv_tty_set_mode on the uv_tty_t.
-      //
-      // On POSIX, I tried to use the same approach, but it didn't work reliably,
-      // so we just use the file descriptor and use termios APIs directly.
-      if (process.platform === "win32") {
-        // Special case for stdin, as it has a shared uv_tty handle
-        // and it's stream is constructed differently
-        if (this.fd === 0) {
-          const err = ttySetMode(flag);
-          if (err) {
-            this.emit("error", new Error("setRawMode failed with errno: " + err));
-            return this;
-          }
-        } else {
-          const handle = this.$bunNativePtr;
-          if (!handle) {
-            this.emit("error", new Error("setRawMode failed because it was called on something that is not a TTY"));
-            return this;
-          }
-
-          // If you call setRawMode before you call on('data'), the stream will
-          // not be constructed, leading to EBADF
-          // This corresponds to the `ensureConstructed` function in `native-readable.ts`
-          this.$start();
-
-          const err = handle.setRawMode(flag);
-          if (err) {
-            this.emit("error", err);
-            return this;
-          }
-        }
-      } else {
-        const state = (this[kRawModeState] ??= new Uint8Array(rawModeStateSize));
-        const err = ttySetMode(this.fd, flag, state);
-        if (err) {
-          this.emit("error", new Error("setRawMode failed with errno: " + err));
-          return this;
-        }
-      }
-
-      this.isRaw = flag;
-
-      return this;
-    };
-
-    Object.defineProperty(ReadStream, "prototype", { value: Prototype });
-
-    return Prototype;
-  },
-  enumerable: true,
-  configurable: true,
-});
+ReadStream.prototype.setRawMode = function (flag) {
+  flag = !!flag;
+  // Node does not throw when setting the mode fails: an error event is emitted.
+  const err = this._handle?.setRawMode(flag);
+  if (err) {
+    this.emit("error", new Error("setRawMode failed with errno: " + -err));
+    return this;
+  }
+  this.isRaw = flag;
+  return this;
+};
 
 function WriteStream(fd): void {
   if (!(this instanceof WriteStream)) return new WriteStream(fd);

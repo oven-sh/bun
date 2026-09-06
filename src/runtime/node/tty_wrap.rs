@@ -1,0 +1,611 @@
+//! `process.binding("tty_wrap").TTY`: the native handle behind
+//! `tty.ReadStream`, shaped like Node's `LibuvStreamWrap`.
+//!
+//! `net.Socket` drives it with `readStart()` / `readStop()` and receives bytes
+//! through `handle.onread(nread, buffer)`, where `nread < 0` is a negative
+//! libuv errno and `UV_EOF` ends the stream. Reads come from a
+//! `bun_io::BufferedReader` polling the fd. `readStop()` unregisters that
+//! poll, so a stopped stdin releases fd 0 to a child spawned with
+//! `stdio: "inherit"`.
+//!
+//! Lifecycle: the JS wrapper holds one ref, released in `finalize`. The reader
+//! holds a second ref from `start()` until its terminal callback. `this_value`
+//! is strong while reading so the wrapper (and the `onread` callback it
+//! roots) survives GC while the poll is live, and weak otherwise.
+
+use core::cell::Cell;
+use core::ffi::c_void;
+
+use bun_io::pipe_reader::BufferedReaderParent;
+#[cfg(unix)]
+use bun_io::pipe_reader::PosixFlags;
+use bun_io::{BufferedReader, ReadState};
+use bun_jsc::{
+    self as jsc, CallFrame, EventLoopHandle, JSGlobalObject, JSValue, JsCell, JsRef, JsResult,
+    MarkedArrayBuffer, StringJsc as _,
+};
+#[cfg(unix)]
+use bun_sys::FdExt as _;
+use bun_sys::{self as sys, Fd};
+
+bun_output::declare_scope!(TTYWrap, hidden);
+
+pub use self::js::to_js;
+pub mod js {
+    pub use crate::generated_classes::js_TTY::{
+        from_js, get_constructor, onread_get_cached, onread_set_cached, to_js,
+    };
+}
+
+const UV_EOF: i32 = -4095;
+
+unsafe extern "C" {
+    safe fn Bun__ttyGetWindowSize(fd: i32, width: *mut usize, height: *mut usize) -> bool;
+    #[cfg(unix)]
+    safe fn open_as_nonblocking_tty(fd: i32, flags: i32) -> i32;
+    #[cfg(windows)]
+    safe fn Source__setRawModeStdin(uv_loop: *mut bun_libuv_sys::Loop, raw: bool) -> i32;
+}
+
+bitflags::bitflags! {
+    #[derive(Clone, Copy, Default)]
+    pub struct Flags: u8 {
+        /// Between `readStart()` and `readStop()`.
+        const READING        = 1 << 0;
+        const CLOSED         = 1 << 1;
+        /// `reader.start()` succeeded and the reader holds a ref on this struct.
+        const READER_STARTED = 1 << 2;
+        /// The reader hit EOF or an error: `readStart()` is a no-op from now on.
+        const READER_DONE    = 1 << 3;
+        /// JS called `unref()`; `readStart()` must not re-ref the loop.
+        const UNREFFED       = 1 << 4;
+        const FINALIZED      = 1 << 5;
+    }
+}
+
+#[bun_jsc::JsClass(no_construct, no_finalize)]
+#[derive(bun_ptr::RefCounted)]
+pub struct TTY {
+    ref_count: bun_ptr::RefCount<TTY>,
+
+    /// The fd JS passed in. `setRawMode`/`getWindowSize` act on it.
+    fd: Fd,
+
+    /// What the reader polls. On POSIX a nonblocking reopen of the terminal
+    /// (or a dup of `fd` when that fails) that the reader owns and closes; on
+    /// Windows `fd` itself.
+    read_fd: Cell<Fd>,
+
+    reader: JsCell<BufferedReader>,
+    event_loop_handle: EventLoopHandle,
+    global_this: bun_ptr::BackRef<JSGlobalObject>,
+    this_value: JsCell<JsRef>,
+    bytes_read: Cell<u64>,
+    flags: Cell<Flags>,
+
+    /// Per-handle raw-mode state (libuv keeps it on each `uv_tty_t`), so one
+    /// handle leaving raw mode never disturbs another on the same terminal.
+    #[cfg(unix)]
+    tty_state: Cell<bun_core::tty::State>,
+}
+
+/// libuv's `uv_tty_init` accepts a tty, pipe or socket fd and rejects a
+/// regular file or anything it cannot classify with `UV_EINVAL`.
+fn uv_tty_init_accepts(fd: Fd) -> bool {
+    #[cfg(unix)]
+    {
+        if sys::isatty(fd) {
+            return true;
+        }
+        let Ok(st) = sys::fstat(fd) else {
+            return false;
+        };
+        let mode = st.st_mode as _;
+        sys::S::ISFIFO(mode) || sys::S::ISSOCK(mode)
+    }
+    #[cfg(windows)]
+    {
+        use bun_libuv_sys::HandleType;
+        matches!(
+            bun_libuv_sys::uv_guess_handle(fd.uv()),
+            HandleType::Tty | HandleType::NamedPipe | HandleType::Tcp | HandleType::Udp
+        )
+    }
+}
+
+impl TTY {
+    #[inline]
+    fn global(&self) -> &JSGlobalObject {
+        self.global_this.get()
+    }
+
+    #[inline]
+    fn update_flags(&self, f: impl FnOnce(&mut Flags)) {
+        let mut v = self.flags.get();
+        f(&mut v);
+        self.flags.set(v);
+    }
+
+    #[inline]
+    fn as_ctx_ptr(&self) -> *mut Self {
+        std::ptr::from_ref::<Self>(self).cast_mut()
+    }
+
+    fn ref_(&self) {
+        // SAFETY: `self` is the live heap allocation; the intrusive count is a
+        // `Cell`, so no `&mut` is materialized.
+        unsafe { bun_ptr::RefCount::<TTY>::ref_(self.as_ctx_ptr()) };
+    }
+
+    /// `self` may be freed on return; callers use this in tail position only.
+    fn deref_(&self) {
+        // SAFETY: see `ref_`.
+        unsafe { bun_ptr::RefCount::<TTY>::deref(self.as_ctx_ptr()) };
+    }
+
+    /// `new TTY(fd, ctx)`. Like Node, an fd `uv_tty_init` rejects does not
+    /// throw: the failure is reported on `ctx` and a closed handle is returned
+    /// so `tty.ReadStream` can raise `ERR_TTY_INIT_FAILED`.
+    pub(crate) fn constructor(
+        global_object: &JSGlobalObject,
+        callframe: &CallFrame,
+        this_value: JSValue,
+    ) -> JsResult<*mut TTY> {
+        let [fd_value, ctx] = callframe.arguments_as_array::<2>();
+        if !fd_value.is_number() {
+            return Err(global_object.throw(format_args!("fd must be a number")));
+        }
+        let fd_int = fd_value.to_int32();
+        if fd_int < 0 {
+            return Err(global_object.throw(format_args!("fd must be a non-negative integer")));
+        }
+        let fd = Fd::from_uv(fd_int);
+
+        let event_loop_handle =
+            EventLoopHandle::init(global_object.bun_vm().as_mut().event_loop().cast());
+
+        let tty: *mut TTY = bun_core::heap::into_raw(Box::new(TTY {
+            ref_count: bun_ptr::RefCount::init(),
+            fd,
+            read_fd: Cell::new(Fd::INVALID),
+            reader: JsCell::new(BufferedReader::init::<TTY>()),
+            event_loop_handle,
+            global_this: bun_ptr::BackRef::new(global_object),
+            this_value: JsCell::new(JsRef::init_weak(this_value)),
+            bytes_read: Cell::new(0),
+            flags: Cell::new(Flags::empty()),
+            #[cfg(unix)]
+            tty_state: Cell::new(bun_core::tty::State::new()),
+        }));
+        // SAFETY: just allocated; field writes go through the cells.
+        let this = unsafe { &*tty };
+        this.reader.with_mut(|r| r.set_parent(tty.cast::<c_void>()));
+
+        if !uv_tty_init_accepts(fd) {
+            if ctx.is_object() {
+                ctx.put(
+                    global_object,
+                    b"code",
+                    bun_core::String::static_("EINVAL").to_js(global_object)?,
+                );
+                ctx.put(
+                    global_object,
+                    b"syscall",
+                    bun_core::String::static_("uv_tty_init").to_js(global_object)?,
+                );
+                ctx.put(
+                    global_object,
+                    b"message",
+                    bun_core::String::static_("invalid argument").to_js(global_object)?,
+                );
+            }
+            this.update_flags(|f| f.insert(Flags::CLOSED));
+            return Ok(tty);
+        }
+
+        if let Err(err) = this.start_reader() {
+            this.update_flags(|f| f.insert(Flags::CLOSED));
+            this.this_value.with_mut(|v| v.finalize());
+            this.deref_();
+            let value = bun_sys_jsc::ErrorJsc::to_js(&err, global_object)?;
+            return Err(global_object.throw_value(value));
+        }
+
+        Ok(tty)
+    }
+
+    /// Opens the reader on its own fd and parks it paused: the poll is only
+    /// registered by `readStart()`. On success the reader holds a ref.
+    fn start_reader(&self) -> sys::Result<()> {
+        #[cfg(unix)]
+        let (read_fd, nonblocking) = {
+            // Like libuv, read through a fresh nonblocking open of the
+            // terminal so this handle never flips O_NONBLOCK on a shared
+            // stdin. The fallback dup shares the description, so it keeps the
+            // caller's blocking mode and is only read when poll says ready.
+            let reopened = open_as_nonblocking_tty(self.fd.native(), sys::O::RDONLY);
+            if reopened > -1 {
+                (Fd::from_native(reopened), true)
+            } else {
+                let duped = sys::dup_with_flags(self.fd, 0)?;
+                let nonblocking = sys::get_fcntl_flags(duped)
+                    .map(|flags| flags & sys::O::NONBLOCK as isize != 0)
+                    .unwrap_or(false);
+                (duped, nonblocking)
+            }
+        };
+        #[cfg(windows)]
+        let read_fd = self.fd;
+
+        self.read_fd.set(read_fd);
+
+        let started = self.reader.with_mut(|r| {
+            #[cfg(unix)]
+            {
+                r.flags.set(PosixFlags::NONBLOCKING, nonblocking);
+                r.flags.insert(PosixFlags::POLLABLE);
+            }
+            r.start(read_fd, true)
+        });
+        if let Err(err) = started {
+            #[cfg(unix)]
+            read_fd.close();
+            self.read_fd.set(Fd::INVALID);
+            return Err(err);
+        }
+        // A poll the loop refused is reported through `on_reader_error`, which
+        // already closed the reader: nothing holds a ref to release.
+        if self.flags.get().contains(Flags::READER_DONE) {
+            self.read_fd.set(Fd::INVALID);
+            return Err(sys::Error::from_code(sys::E::EINVAL, sys::Tag::open));
+        }
+        self.ref_();
+        self.update_flags(|f| f.insert(Flags::READER_STARTED));
+
+        self.reader.with_mut(|r| {
+            #[cfg(unix)]
+            if let Some(poll) = r.handle.get_poll() {
+                if nonblocking {
+                    poll.set_flag(bun_io::FilePollFlag::Nonblocking);
+                }
+            }
+            r.pause();
+        });
+        Ok(())
+    }
+
+    // ── JS methods ────────────────────────────────────────────────────────
+
+    pub(crate) fn read_start(&self, _g: &JSGlobalObject, _f: &CallFrame) -> JsResult<JSValue> {
+        bun_output::scoped_log!(TTYWrap, "readStart");
+        let flags = self.flags.get();
+        if flags.intersects(Flags::CLOSED | Flags::READER_DONE) {
+            return Ok(JSValue::js_number_from_int32(0));
+        }
+        self.update_flags(|f| f.insert(Flags::READING));
+        let global = self.global();
+        self.this_value.with_mut(|v| v.upgrade(global));
+        self.reader.with_mut(|r| {
+            r.unpause();
+            #[cfg(unix)]
+            if !r.has_pending_read() {
+                r.watch();
+            }
+        });
+        if !self.flags.get().contains(Flags::UNREFFED) {
+            self.reader.with_mut(|r| r.update_ref(true));
+        }
+        Ok(JSValue::js_number_from_int32(0))
+    }
+
+    pub(crate) fn read_stop(&self, _g: &JSGlobalObject, _f: &CallFrame) -> JsResult<JSValue> {
+        bun_output::scoped_log!(TTYWrap, "readStop");
+        self.update_flags(|f| f.remove(Flags::READING));
+        if self.flags.get().contains(Flags::READER_STARTED) {
+            self.reader.with_mut(|r| r.pause());
+        }
+        self.this_value.with_mut(|v| v.downgrade());
+        Ok(JSValue::js_number_from_int32(0))
+    }
+
+    pub(crate) fn do_ref(&self, _g: &JSGlobalObject, _f: &CallFrame) -> JsResult<JSValue> {
+        self.update_flags(|f| f.remove(Flags::UNREFFED));
+        // A ref'd but idle handle does not hold the loop (libuv: ref'd *and*
+        // active); `readStart()` adds the hold once reading.
+        if self.flags.get().contains(Flags::READING) {
+            self.reader.with_mut(|r| r.update_ref(true));
+        }
+        Ok(JSValue::UNDEFINED)
+    }
+
+    pub(crate) fn do_unref(&self, _g: &JSGlobalObject, _f: &CallFrame) -> JsResult<JSValue> {
+        self.update_flags(|f| f.insert(Flags::UNREFFED));
+        self.reader.with_mut(|r| r.update_ref(false));
+        Ok(JSValue::UNDEFINED)
+    }
+
+    pub(crate) fn set_raw_mode(
+        &self,
+        _g: &JSGlobalObject,
+        callframe: &CallFrame,
+    ) -> JsResult<JSValue> {
+        let raw = callframe.argument(0).to_boolean();
+        if self.flags.get().contains(Flags::CLOSED) {
+            return Ok(JSValue::js_number_from_int32(-(sys::E::EBADF as i32)));
+        }
+        #[cfg(unix)]
+        {
+            let mut state = self.tty_state.get();
+            let rc = state.set_mode(
+                self.fd.native(),
+                if raw {
+                    bun_core::tty::Mode::Raw
+                } else {
+                    bun_core::tty::Mode::Normal
+                },
+                bun_core::tty::SetAttrWhen::Drain,
+            );
+            self.tty_state.set(state);
+            Ok(JSValue::js_number_from_int32(-rc))
+        }
+        #[cfg(windows)]
+        {
+            // stdin shares one process-wide `uv_tty_t`; its raw mode is VT
+            // (control sequences stay sequences) so readline sees the same
+            // bytes as on POSIX.
+            if self.fd == Fd::stdin() {
+                let rc = Source__setRawModeStdin(self.event_loop_handle.uv_loop(), raw);
+                return Ok(JSValue::js_number_from_int32(-rc));
+            }
+            let rc = match self.reader.with_mut(|r| r.set_raw_mode(raw)) {
+                Ok(()) => 0,
+                Err(err) => -(err.errno as i32),
+            };
+            Ok(JSValue::js_number_from_int32(rc))
+        }
+    }
+
+    pub(crate) fn get_window_size(
+        &self,
+        global_object: &JSGlobalObject,
+        callframe: &CallFrame,
+    ) -> JsResult<JSValue> {
+        let array = callframe.argument(0);
+        if !array.is_object() {
+            return Err(global_object.throw(format_args!("getWindowSize expects an array")));
+        }
+        let mut width: usize = 0;
+        let mut height: usize = 0;
+        if !Bun__ttyGetWindowSize(self.fd.uv(), &raw mut width, &raw mut height) {
+            return Ok(JSValue::from(false));
+        }
+        array.put_index(global_object, 0, JSValue::js_number(width as f64))?;
+        array.put_index(global_object, 1, JSValue::js_number(height as f64))?;
+        Ok(JSValue::from(true))
+    }
+
+    pub(crate) fn close(&self, _g: &JSGlobalObject, _f: &CallFrame) -> JsResult<JSValue> {
+        self.close_internal();
+        Ok(JSValue::UNDEFINED)
+    }
+
+    pub(crate) fn get_onread(&self, this_value: JSValue, _g: &JSGlobalObject) -> JSValue {
+        js::onread_get_cached(this_value).unwrap_or(JSValue::UNDEFINED)
+    }
+
+    pub(crate) fn set_onread(
+        &self,
+        this_value: JSValue,
+        global_object: &JSGlobalObject,
+        value: JSValue,
+    ) -> bool {
+        js::onread_set_cached(this_value, global_object, value);
+        true
+    }
+
+    pub(crate) fn get_bytes_read(&self, _g: &JSGlobalObject) -> JSValue {
+        JSValue::js_number(self.bytes_read.get() as f64)
+    }
+
+    pub(crate) fn get_bytes_written(&self, _g: &JSGlobalObject) -> JSValue {
+        JSValue::js_number_from_int32(0)
+    }
+
+    pub(crate) fn get_fd(&self, _g: &JSGlobalObject) -> JSValue {
+        JSValue::js_number_from_int32(self.fd.uv())
+    }
+
+    pub(crate) fn get_external_stream(&self, _g: &JSGlobalObject) -> JSValue {
+        JSValue::NULL
+    }
+
+    // ── internals ─────────────────────────────────────────────────────────
+
+    fn close_internal(&self) {
+        if self.flags.get().contains(Flags::CLOSED) {
+            return;
+        }
+        self.update_flags(|f| {
+            f.insert(Flags::CLOSED);
+            f.remove(Flags::READING);
+        });
+        if self.flags.get().contains(Flags::READER_STARTED) {
+            // Closes the poll and `read_fd`, then reports through
+            // `on_reader_done`, which releases the reader's ref.
+            self.reader.with_mut(|r| r.close());
+        }
+        self.read_fd.set(Fd::INVALID);
+        self.this_value.with_mut(|v| v.downgrade());
+    }
+
+    fn call_onread(&self, nread: i32, buffer: JSValue) {
+        if self.flags.get().contains(Flags::FINALIZED) {
+            return;
+        }
+        let Some(this_value) = self.this_value.get().try_get() else {
+            return;
+        };
+        let Some(callback) = js::onread_get_cached(this_value) else {
+            return;
+        };
+        if !callback.is_callable() {
+            return;
+        }
+        let global = self.global();
+        global.bun_vm().event_loop_mut().run_callback(
+            callback,
+            global,
+            this_value,
+            &[JSValue::js_number_from_int32(nread), buffer],
+        );
+    }
+
+    fn on_read_chunk(&self, chunk: &[u8], _has_more: ReadState) -> bool {
+        bun_output::scoped_log!(TTYWrap, "onReadChunk: {} bytes", chunk.len());
+        if chunk.is_empty() {
+            return self.flags.get().contains(Flags::READING);
+        }
+        if !self.flags.get().contains(Flags::READING) {
+            return false;
+        }
+        self.bytes_read
+            .set(self.bytes_read.get().wrapping_add(chunk.len() as u64));
+
+        let mut v: Vec<u8> = Vec::new();
+        if v.try_reserve_exact(chunk.len()).is_err() {
+            return true;
+        }
+        v.extend_from_slice(chunk);
+        // The Buffer owns this allocation (freed on the C++ side when collected).
+        let bytes: &'static mut [u8] = Box::leak(v.into_boxed_slice());
+        let buffer = match MarkedArrayBuffer::from_bytes(bytes, jsc::JSType::Uint8Array)
+            .to_node_buffer(self.global())
+        {
+            Ok(buffer) => buffer,
+            Err(err) => {
+                crate::dispatch::fold(Err(err));
+                return true;
+            }
+        };
+        // `nread` fits: one read is bounded by the loop's scratch buffer.
+        self.call_onread(chunk.len() as i32, buffer);
+        // `readStop()` from inside the callback ends this read loop.
+        self.flags.get().contains(Flags::READING)
+    }
+
+    fn on_reader_done(&self) {
+        bun_output::scoped_log!(TTYWrap, "onReaderDone");
+        let was_closed = self.flags.get().contains(Flags::CLOSED);
+        let already_done = self.flags.get().contains(Flags::READER_DONE);
+        self.update_flags(|f| {
+            f.insert(Flags::READER_DONE);
+            f.remove(Flags::READING);
+        });
+        self.reader.with_mut(|r| r.update_ref(false));
+        if !was_closed && !already_done {
+            self.call_onread(UV_EOF, JSValue::UNDEFINED);
+        }
+        self.this_value.with_mut(|v| v.downgrade());
+        self.reader_terminated();
+    }
+
+    fn on_reader_error(&self, err: &sys::Error) {
+        bun_output::scoped_log!(TTYWrap, "onReaderError: {:?}", err);
+        let was_closed = self.flags.get().contains(Flags::CLOSED);
+        self.update_flags(|f| {
+            f.insert(Flags::READER_DONE);
+            f.remove(Flags::READING);
+        });
+        self.reader.with_mut(|r| {
+            r.pause();
+            r.update_ref(false);
+        });
+        if !was_closed {
+            self.call_onread(-(err.errno as i32), JSValue::UNDEFINED);
+        }
+        self.this_value.with_mut(|v| v.downgrade());
+        // Releases the poll and fd; `on_reader_done` then drops the reader's ref.
+        self.reader.with_mut(|r| r.close());
+    }
+
+    /// Releases the ref the reader took in `start_reader`. May free `self`.
+    fn reader_terminated(&self) {
+        if self.flags.get().contains(Flags::READER_STARTED) {
+            self.update_flags(|f| f.remove(Flags::READER_STARTED));
+            self.deref_();
+        }
+    }
+
+    pub(crate) fn finalize(&self) {
+        bun_output::scoped_log!(TTYWrap, "finalize");
+        jsc::mark_binding();
+        self.this_value.with_mut(|v| v.finalize());
+        self.update_flags(|f| f.insert(Flags::FINALIZED));
+        self.close_internal();
+    }
+
+    fn loop_(&self) -> *mut bun_io::pipe_reader::Loop {
+        #[cfg(windows)]
+        {
+            self.event_loop_handle.uv_loop().cast()
+        }
+        #[cfg(not(windows))]
+        {
+            self.event_loop_handle.r#loop().cast()
+        }
+    }
+}
+
+impl Drop for TTY {
+    fn drop(&mut self) {
+        bun_output::scoped_log!(TTYWrap, "deinit");
+        self.update_flags(|f| f.insert(Flags::FINALIZED));
+        // The reader's ref is already gone by the time the count reaches zero;
+        // this only releases fds on the constructor's failure paths.
+        self.update_flags(|f| f.remove(Flags::READER_STARTED));
+        self.reader.with_mut(|r| r.deinit());
+    }
+}
+
+bun_io::buffered_reader_parent_link!(TTYWrap for TTY);
+impl BufferedReaderParent for TTY {
+    const KIND: bun_io::BufferedReaderParentLinkKind =
+        bun_io::BufferedReaderParentLinkKind::TTYWrap;
+    const HAS_ON_READ_CHUNK: bool = true;
+
+    unsafe fn on_read_chunk(
+        this: *mut Self,
+        chunk: bun_io::Chunk<'_>,
+        has_more: ReadState,
+    ) -> bool {
+        // SAFETY: `this` is the live parent registered via `set_parent`.
+        unsafe { &*this }.on_read_chunk(&chunk, has_more)
+    }
+    unsafe fn on_reader_done(this: *mut Self) {
+        // SAFETY: see `on_read_chunk`.
+        unsafe { &*this }.on_reader_done();
+    }
+    unsafe fn on_reader_error(this: *mut Self, err: sys::Error) {
+        // SAFETY: see `on_read_chunk`.
+        unsafe { &*this }.on_reader_error(&err);
+    }
+    unsafe fn loop_(this: *mut Self) -> *mut bun_io::pipe_reader::Loop {
+        // SAFETY: see `on_read_chunk`.
+        unsafe { &*this }.loop_()
+    }
+    unsafe fn event_loop(this: *mut Self) -> bun_io::EventLoopHandle {
+        // SAFETY: see `on_read_chunk`.
+        unsafe { &*this }.event_loop_handle.as_event_loop_ctx()
+    }
+    // The read loop touches the reader after `on_read_chunk` returns, and that
+    // callback runs JS which can `close()` the handle: keep the struct alive
+    // for the loop's duration.
+    unsafe fn ref_(this: *mut Self) {
+        // SAFETY: see `on_read_chunk`.
+        unsafe { bun_ptr::RefCount::<TTY>::ref_(this) };
+    }
+    unsafe fn deref(this: *mut Self) {
+        // SAFETY: see `on_read_chunk`; this may be the last ref.
+        unsafe { bun_ptr::RefCount::<TTY>::deref(this) };
+    }
+}

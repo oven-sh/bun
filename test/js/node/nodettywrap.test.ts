@@ -48,7 +48,15 @@ test("process.binding('tty_wrap')", () => {
       expect(array[1]).toBe(-1);
     }
   } else {
-    expect(() => new tty(0)).toThrow();
+    // Like Node's TTYWrap, an fd uv_tty_init rejects does not throw: the
+    // error lands on the ctx object and the handle comes back closed.
+    const ctx: { code?: string; syscall?: string } = {};
+    const handle = new tty(0, ctx);
+    expect(ctx).toEqual({ code: "EINVAL", syscall: "uv_tty_init", message: "invalid argument" });
+    expect(handle.readStart()).toBe(0);
+    expect(() => new (require("node:tty").ReadStream)(0)).toThrow(
+      expect.objectContaining({ code: "ERR_TTY_INIT_FAILED" }),
+    );
     console.warn("warn: Skipping tty tests because stdin is not a tty");
   }
 });

@@ -24,15 +24,11 @@ unsafe impl bytemuck::NoUninit for Integrity {}
 
 impl Default for Integrity {
     fn default() -> Self {
-        Self::NONE
+        Self {
+            tag: Tag::UNKNOWN,
+            value: EMPTY_DIGEST_BUF,
+        }
     }
-}
-
-impl Integrity {
-    pub const NONE: Integrity = Integrity {
-        tag: Tag::UNKNOWN,
-        value: EMPTY_DIGEST_BUF,
-    };
 }
 
 const EMPTY_DIGEST_BUF: [u8; DIGEST_BUF_LEN] = [0u8; DIGEST_BUF_LEN];

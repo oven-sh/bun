@@ -3,11 +3,11 @@ use std::io::Write as _;
 use bun_alloc::AllocError;
 
 use crate::Error;
+use crate::Npm;
 use crate::bun_fs::FileSystem;
 use crate::lockfile_real::bun_lock::url_is_under_registry;
 use crate::lockfile_real::package::PackageColumns;
 use crate::repository::Repository;
-use crate::{Integrity, Npm};
 use bun_core::ZStr;
 use bun_core::{Global, Output, ZBox, env_var, fmt as bun_fmt};
 use bun_dotenv::Loader as DotEnvLoader;
@@ -613,48 +613,14 @@ pub fn cached_github_folder_name_print_auto(
     ZStr::EMPTY
 }
 
-/// What fills an npm package's cache slot, so the slot is named by it: the
-/// integrity the registry or the lockfile advertised for the tarball, else the
-/// tarball URL the bytes came from. Two registries on one host (Nexus or
-/// Artifactory repository paths, two Verdaccio ports) and a lockfile that
-/// points at another registry each get their own slot, so one registry's
-/// extraction never satisfies another registry's lookup.
-#[derive(Clone, Copy)]
-pub struct NpmCacheKey<'a> {
-    pub url: &'a [u8],
-    pub integrity: &'a Integrity,
-}
-
-impl<'a> NpmCacheKey<'a> {
-    /// A lockfile or a disk-cache resolution without a tarball URL or an
-    /// integrity. The slot is named by the configured registry alone.
-    pub const NONE: NpmCacheKey<'static> = NpmCacheKey {
-        url: b"",
-        integrity: &Integrity::NONE,
-    };
-
-    #[inline]
-    pub fn is_none(&self) -> bool {
-        self.url.is_empty() && !self.integrity.tag.is_supported()
-    }
-
-    /// The 16 hex digits after `@@<hostname>__`: the digest's first 8 bytes,
-    /// or the hash of the tarball URL when the registry gave no integrity.
-    fn slot_hash(&self) -> u64 {
-        if self.integrity.tag.is_supported() {
-            u64::from_be_bytes(self.integrity.value[..8].try_into().expect("8 bytes"))
-        } else {
-            Semver::semver_string::Builder::string_hash(self.url)
-        }
-    }
-}
-
-/// Bytes of `hostname` that appear in a cache folder name.
-#[inline]
-fn visible_hostname(hostname: &[u8]) -> &[u8] {
-    &hostname[..hostname.len().min(32)]
-}
-
+/// `tarball_url` is the URL the package's bytes come from (`resolution.npm().url`:
+/// the lockfile row, or the manifest's `dist.tarball`). A package from
+/// registry.npmjs.org lives in `<name>@<version>@@@<ver>`. Any other tarball lives
+/// in `<name>@<version>@@<host>__<16 hex>@@@<ver>`, keyed by the whole URL, so two
+/// registries on one host (a Nexus or Artifactory repository path, two Verdaccio
+/// ports) and a lockfile that pins another registry's tarball each get their own
+/// slot. An empty URL (a lockfile written before bun stored it, a disk-cache
+/// resolution) keeps the older `@@<configured hostname>` name.
 // TODO: normalize to alphanumeric
 pub fn cached_npm_package_folder_name_print<'a>(
     this: &PackageManager,
@@ -662,14 +628,14 @@ pub fn cached_npm_package_folder_name_print<'a>(
     name: &[u8],
     version: Semver::Version,
     patch_hash: Option<u64>,
-    key: NpmCacheKey<'_>,
+    tarball_url: &[u8],
 ) -> &'a ZStr {
     let scope = this.scope_for_package_name(name);
 
-    let on_default_registry = if key.url.is_empty() {
+    let on_default_registry = if tarball_url.is_empty() {
         scope.name.is_empty() && !this.options.did_override_default_scope
     } else {
-        url_is_under_registry(key.url, Npm::Registry::DEFAULT_URL.as_bytes())
+        url_is_under_registry(tarball_url, Npm::Registry::DEFAULT_URL.as_bytes())
     };
     if on_default_registry {
         let include_version_number = true;
@@ -694,29 +660,21 @@ pub fn cached_npm_package_folder_name_print<'a>(
         buf,
         at: spanned_len,
     };
-    if key.is_none() {
-        let available = w.buf.len() - spanned_len;
-        if scope_url.hostname.len() > 32 || available < 64 {
-            let visible_hostname = &scope_url.hostname[..scope_url.hostname.len().min(12)];
-            w.put(b"@@");
-            w.put(visible_hostname);
-            w.put(b"__");
-            w.put_u64_hex16::<true>(Semver::semver_string::Builder::string_hash(scope_url.href));
-        } else {
-            w.put(b"@@");
-            w.put(scope_url.hostname);
-        }
-    } else {
-        let tarball_url = URL::parse(key.url);
-        let hostname = if tarball_url.hostname.is_empty() {
-            scope_url.hostname
-        } else {
-            tarball_url.hostname
-        };
+    if !tarball_url.is_empty() {
+        let hostname = URL::parse(tarball_url).hostname;
         w.put(b"@@");
-        w.put(visible_hostname(hostname));
+        w.put(&hostname[..hostname.len().min(32)]);
         w.put(b"__");
-        w.put_u64_hex16::<true>(key.slot_hash());
+        w.put_u64_hex16::<true>(Semver::semver_string::Builder::string_hash(tarball_url));
+    } else if scope_url.hostname.len() > 32 || w.buf.len() - spanned_len < 64 {
+        let visible_hostname = &scope_url.hostname[..scope_url.hostname.len().min(12)];
+        w.put(b"@@");
+        w.put(visible_hostname);
+        w.put(b"__");
+        w.put_u64_hex16::<true>(Semver::semver_string::Builder::string_hash(scope_url.href));
+    } else {
+        w.put(b"@@");
+        w.put(scope_url.hostname);
     }
     w.put_cache_version(Some(CacheVersion::CURRENT));
     w.put_patch_hash(patch_hash);
@@ -746,7 +704,7 @@ pub fn cached_npm_package_folder_name(
     name: &[u8],
     version: Semver::Version,
     patch_hash: Option<u64>,
-    key: NpmCacheKey<'_>,
+    tarball_url: &[u8],
 ) -> &'static ZStr {
     cached_npm_package_folder_name_print(
         this,
@@ -754,21 +712,8 @@ pub fn cached_npm_package_folder_name(
         name,
         version,
         patch_hash,
-        key,
+        tarball_url,
     )
-}
-
-/// The `NpmCacheKey` of a lockfile package: its tarball URL and the integrity
-/// recorded for it.
-pub fn npm_cache_key_for_package<'l>(
-    lockfile: &'l Lockfile,
-    package_id: PackageID,
-    resolution: &'l Resolution,
-) -> NpmCacheKey<'l> {
-    NpmCacheKey {
-        url: lockfile.str(&resolution.npm().url),
-        integrity: &lockfile.packages.items_meta()[package_id as usize].integrity,
-    }
 }
 
 // TODO: normalize to alphanumeric
@@ -939,24 +884,19 @@ pub fn path_for_cached_npm_path<'a>(
     buf: &'a mut PathBuffer,
     package_name: &[u8],
     version: Semver::Version,
-    key: NpmCacheKey<'_>,
+    tarball_url: &[u8],
 ) -> Result<&'a mut [u8], Error> {
     let mut cache_path_buf = bun_paths::path_buffer_pool::get();
 
-    let cache_path_len = if key.is_none() {
-        find_cached_npm_index_entry(this, &mut cache_path_buf, package_name, version)?
-    } else {
-        cached_npm_package_folder_name_print(
-            this,
-            &mut cache_path_buf.0[..],
-            package_name,
-            version,
-            None,
-            key,
-        )
-        .as_bytes()
-        .len()
-    };
+    let cache_path = cached_npm_package_folder_name_print(
+        this,
+        &mut cache_path_buf.0[..],
+        package_name,
+        version,
+        None,
+        tarball_url,
+    );
+    let cache_path_len = cache_path.as_bytes().len();
     // reshaped for borrowck — drop borrow before mutating buffer
 
     debug_assert!(cache_path_buf[package_name.len()] == b'@');
@@ -999,69 +939,6 @@ pub fn path_for_cached_npm_path<'a>(
     }
 }
 
-/// A package resolved from the disk cache has no tarball URL and no integrity,
-/// so its slot name cannot be rebuilt. Find the `<cache>/<name>/<version>@@…`
-/// index entry that belongs to the configured registry instead. Writes
-/// `<name>@<entry>` into `out` and returns its length.
-fn find_cached_npm_index_entry(
-    this: &mut PackageManager,
-    out: &mut PathBuffer,
-    package_name: &[u8],
-    version: Semver::Version,
-) -> Result<usize, Error> {
-    let basename_len = cached_npm_package_folder_print_basename(
-        &mut out.0[..],
-        package_name,
-        version,
-        None,
-        false,
-    )
-    .as_bytes()
-    .len();
-    let entry_start = package_name.len() + 1;
-    let version_len = basename_len - entry_start;
-
-    let scope = this.scope_for_package_name(package_name);
-    let registry_label: Vec<u8> =
-        if scope.name.is_empty() && !this.options.did_override_default_scope {
-            b"@@@".to_vec()
-        } else {
-            let mut label = b"@@".to_vec();
-            label.extend_from_slice(visible_hostname(scope.url.url().hostname));
-            label
-        };
-
-    let cache_dir = get_cache_directory(this);
-    let dir = Dir::borrow(&cache_dir).open_at(package_name)?;
-    let mut iter = bun_sys::iterate_dir(dir.fd);
-    while let Some(entry) = iter.next()? {
-        if entry.kind != bun_sys::EntryKind::Directory && entry.kind != bun_sys::EntryKind::SymLink
-        {
-            continue;
-        }
-        let name: &[u8] = entry.name.slice_u8();
-        if name.len() < version_len + registry_label.len()
-            || name[..version_len] != out.0[entry_start..basename_len]
-            || !name[version_len..].starts_with(&registry_label)
-        {
-            continue;
-        }
-        let after_label = &name[version_len + registry_label.len()..];
-        if registry_label.len() > b"@@@".len()
-            && !(after_label.starts_with(b"@@@") || after_label.starts_with(b"__"))
-        {
-            continue;
-        }
-        if entry_start + name.len() >= out.0.len() {
-            continue;
-        }
-        out.0[entry_start..entry_start + name.len()].copy_from_slice(name);
-        out.0[entry_start + name.len()] = 0;
-        return Ok(entry_start + name.len());
-    }
-    Err(Error::Sys(bun_errno::SystemErrno::ENOENT))
-}
-
 pub fn path_for_resolution<'a>(
     this: &mut PackageManager,
     package_id: PackageID,
@@ -1077,19 +954,9 @@ pub fn path_for_resolution<'a>(
             // mutably (for `get_cache_directory`), so the `&this.lockfile`
             // borrow can't be held across it. Copy the name out first.
             let package_name = this.lockfile.str(&package_name_).to_vec();
-            let url = this.lockfile.str(&npm.url).to_vec();
-            let integrity = this.lockfile.packages.items_meta()[package_id as usize].integrity;
+            let tarball_url = this.lockfile.str(&npm.url).to_vec();
 
-            path_for_cached_npm_path(
-                this,
-                buf,
-                &package_name,
-                npm.version,
-                NpmCacheKey {
-                    url: &url,
-                    integrity: &integrity,
-                },
-            )
+            path_for_cached_npm_path(this, buf, &package_name, npm.version, &tarball_url)
         }
         _ => Ok(&mut buf.0[..0]),
     }
@@ -1108,7 +975,6 @@ pub fn compute_cache_dir_and_subpath<'a>(
     manager: &mut PackageManager,
     pkg_name: &[u8],
     resolution: &Resolution,
-    integrity: &Integrity,
     folder_path_buf: &'a mut PathBuffer,
     patch_hash: Option<u64>,
 ) -> CacheDirAndSubpath<'a> {
@@ -1119,12 +985,9 @@ pub fn compute_cache_dir_and_subpath<'a>(
     match resolution.tag {
         ResolutionTag::Npm => {
             let version = resolution.npm().version;
-            let key = NpmCacheKey {
-                url: manager.lockfile.str(&resolution.npm().url),
-                integrity,
-            };
+            let tarball_url = manager.lockfile.str(&resolution.npm().url);
             cache_dir_subpath =
-                cached_npm_package_folder_name(manager, name, version, patch_hash, key);
+                cached_npm_package_folder_name(manager, name, version, patch_hash, tarball_url);
             cache_dir = get_cache_directory(manager);
         }
         ResolutionTag::Git => {

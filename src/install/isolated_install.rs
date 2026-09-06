@@ -213,6 +213,49 @@ pub(crate) enum Timings {
     Quiet,
 }
 
+/// Warns when a peer context binds `peer_dep_id` to a version outside its
+/// range. The resolver already checked (and warned about) the one package the
+/// lockfile binds the peer to, so that binding is skipped here; a workspace
+/// package whose own copy of the peer differs from it is only seen by this pass.
+fn warn_on_incorrect_peer(
+    manager: &PackageManager,
+    lockfile: &Lockfile,
+    warned: &mut HashMap<(DependencyID, PackageID), ()>,
+    peer_dep_id: DependencyID,
+    pkg_id: PackageID,
+) -> Result<(), AllocError> {
+    if lockfile.buffers.resolutions[peer_dep_id as usize] == pkg_id {
+        return Ok(());
+    }
+    let peer_dep = &lockfile.buffers.dependencies[peer_dep_id as usize];
+    let res = &lockfile.packages.items_resolution()[pkg_id as usize];
+    if peer_dep.version.tag != VersionTag::Npm || res.tag != ResolutionTag::Npm {
+        return Ok(());
+    }
+    let string_buf = &lockfile.buffers.string_bytes[..];
+    if peer_dep
+        .version
+        .npm()
+        .version
+        .satisfies(res.npm().version, string_buf, string_buf)
+    {
+        return Ok(());
+    }
+    if warned.get_or_put((peer_dep_id, pkg_id))?.found_existing {
+        return Ok(());
+    }
+    manager.log_mut().add_warning_fmt(
+        None,
+        bun_ast::Loc::EMPTY,
+        format_args!(
+            "incorrect peer dependency \"{}@{}\"",
+            lockfile.packages.items_name()[pkg_id as usize].fmt(string_buf),
+            res.fmt(string_buf, bun_fmt::PathSep::Auto),
+        ),
+    );
+    Ok(())
+}
+
 pub(crate) fn build_store(
     manager: &PackageManager,
     lockfile: &Lockfile,
@@ -397,6 +440,8 @@ pub(crate) fn build_store(
     let mut peer_dep_ids: Vec<DependencyID> = Vec::new();
 
     let mut visited_parent_node_ids: Vec<store::node::Id> = Vec::new();
+
+    let mut warned_peers: HashMap<(DependencyID, PackageID), ()> = HashMap::default();
 
     // First pass: create full dependency tree with resolved peers
     'next_node: while let Some(entry) = node_queue.pop() {
@@ -745,24 +790,13 @@ pub(crate) fn build_store(
                             continue;
                         }
 
-                        let res = &pkg_resolutions[ids.pkg_id as usize];
-
-                        if peer_dep.version.tag != VersionTag::Npm || res.tag != ResolutionTag::Npm
-                        {
-                            // TODO: print warning for this? we don't have a version
-                            // to compare to say if this satisfies or not.
-                            break 'resolved_pkg_id (ids.pkg_id, false);
-                        }
-
-                        // SAFETY: tag was checked == .Npm directly above for both
-                        // `peer_dep.version` and `res`.
-                        let peer_dep_version = &peer_dep.version.npm().version;
-                        let res_version = &res.npm().version;
-
-                        if !peer_dep_version.satisfies(*res_version, string_buf, string_buf) {
-                            // TODO: add warning!
-                        }
-
+                        warn_on_incorrect_peer(
+                            manager,
+                            lockfile,
+                            &mut warned_peers,
+                            peer_dep_id,
+                            ids.pkg_id,
+                        )?;
                         break 'resolved_pkg_id (ids.pkg_id, false);
                     }
 
@@ -780,8 +814,13 @@ pub(crate) fn build_store(
                         if !ids.auto_installed {
                             // The resolution was found here or above. Choose the same
                             // peer resolution. No need to mark this node or above.
-
-                            // TODO: add warning if not satisfies()!
+                            warn_on_incorrect_peer(
+                                manager,
+                                lockfile,
+                                &mut warned_peers,
+                                peer_dep_id,
+                                ids.pkg_id,
+                            )?;
                             break 'resolved_pkg_id (ids.pkg_id, false);
                         }
 

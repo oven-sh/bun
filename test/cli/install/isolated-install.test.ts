@@ -1,6 +1,6 @@
 import { file, spawn, write } from "bun";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { existsSync, lstatSync, readFileSync, readlinkSync, statSync } from "fs";
+import { existsSync, lstatSync, readFileSync, readlinkSync, realpathSync, statSync } from "fs";
 import { mkdir, readlink, rm, symlink } from "fs/promises";
 import { VerdaccioRegistry, bunEnv, bunExe, readdirSorted, runBunInstall, tempDir } from "harness";
 import { createRequire } from "module";
@@ -1575,6 +1575,61 @@ test("peer satisfied by a workspace package keeps the workspace across installs 
     version: "1.0.0",
     workspaceMarker: true,
   });
+});
+
+test("a peer outside its range warns in the workspace context that binds it", async () => {
+  // peer-deps-fixed peers on no-deps@^1.0.0. Each workspace package gives it
+  // its own no-deps, so it gets one store entry per context. The lockfile
+  // binds the peer to zzz's 1.0.0, which is in range; aaa's context wires
+  // 2.0.0, which only the store build sees.
+  const { packageDir } = await registry.createTestDir({
+    bunfigOpts: { linker: "isolated" },
+    files: {
+      "package.json": JSON.stringify({ name: "root", workspaces: ["packages/*"] }),
+      "packages/aaa/package.json": JSON.stringify({
+        name: "aaa",
+        dependencies: { "no-deps": "2.0.0", "peer-deps-fixed": "1.0.0" },
+      }),
+      "packages/zzz/package.json": JSON.stringify({
+        name: "zzz",
+        dependencies: { "no-deps": "1.0.0", "peer-deps-fixed": "1.0.0" },
+      }),
+    },
+  });
+
+  const peerVersionIn = async (workspace: string) =>
+    (
+      await file(
+        join(
+          realpathSync(join(packageDir, "packages", workspace, "node_modules", "peer-deps-fixed")),
+          "..",
+          "no-deps",
+          "package.json",
+        ),
+      ).json()
+    ).version;
+
+  let { err } = await runBunInstall(bunEnv, packageDir, { allowWarnings: true });
+  expect(err.match(/warn: incorrect peer dependency/g)).toEqual(["warn: incorrect peer dependency"]);
+  expect(err).toContain('warn: incorrect peer dependency "no-deps@2.0.0"');
+  expect(await peerVersionIn("aaa")).toBe("2.0.0");
+  expect(await peerVersionIn("zzz")).toBe("1.0.0");
+
+  // and again when the store is rebuilt from bun.lock
+  await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
+  ({ err } = await runBunInstall(bunEnv, packageDir, { allowWarnings: true, savesLockfile: false }));
+  expect(err.match(/warn: incorrect peer dependency/g)).toEqual(["warn: incorrect peer dependency"]);
+  expect(err).toContain('warn: incorrect peer dependency "no-deps@2.0.0"');
+
+  // A single context that is out of range is the resolver's to report, once.
+  await Promise.all([
+    rm(join(packageDir, "node_modules"), { recursive: true, force: true }),
+    rm(join(packageDir, "bun.lock"), { force: true }),
+    rm(join(packageDir, "packages", "zzz"), { recursive: true, force: true }),
+  ]);
+  ({ err } = await runBunInstall(bunEnv, packageDir, { allowWarnings: true }));
+  expect(err.match(/warn: incorrect peer dependency/g)).toEqual(["warn: incorrect peer dependency"]);
+  expect(await peerVersionIn("aaa")).toBe("2.0.0");
 });
 
 describe("existing node_modules, missing node_modules/.bun", () => {

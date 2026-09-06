@@ -47,6 +47,7 @@ import {
 import { migcomPath } from "./bootstrap-cmds.ts";
 import { buildsIcu, icuIncludes } from "./icu.ts";
 import { bmallocCSources, bmallocFrameworkHeaders, bmallocSources } from "./webkit-bmalloc-sources.ts";
+import { watchedFiles as cmakeWatchedFiles } from "./webkit-check-cmake.ts";
 import { jscExtraSourcesFor, jscInspectorDomains, jscInspectorScripts } from "./webkit-inspector-sources.ts";
 import {
   jscBuiltinsScripts,
@@ -61,7 +62,6 @@ import {
   jscUnifiedBundles,
 } from "./webkit-jsc-sources.ts";
 import { jscOfflineasmRuby, llintAsm } from "./webkit-llint-sources.ts";
-import { watchedFiles as cmakeWatchedFiles } from "./webkit-check-cmake.ts";
 import { wtfIncludeDirs, wtfSourcesCommon, wtfSourcesFor } from "./webkit-wtf-sources.ts";
 
 // ───────────────────────────────────────────────────────────────────────────

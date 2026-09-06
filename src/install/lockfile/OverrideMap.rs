@@ -1010,9 +1010,7 @@ fn parse_parent(
     selector: &PackageSelector<'_>,
 ) -> Option<Dependency> {
     let name_hash = SemverBuilder::string_hash(selector.name);
-    let name = ctx
-        .builder
-        .append_with_hash::<SemverString>(selector.name, name_hash);
+    let name = ctx.builder.append::<SemverString>(selector.name);
     let version = parse_range(ctx, key_loc, name, name_hash, selector.range)?;
     Some(Dependency {
         name,
@@ -1088,7 +1086,7 @@ fn parse_override_value(
     }
 
     let name_hash = SemverBuilder::string_hash(key);
-    let name = ctx.builder.append_with_hash::<SemverString>(key, name_hash);
+    let name = ctx.builder.append::<SemverString>(key);
 
     // https://docs.npmjs.com/cli/v9/configuring-npm/package-json#overrides
     let literal: SemverString = if value[0] == b'$' {

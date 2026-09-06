@@ -27,7 +27,6 @@ use bun_jsc::{
     self as jsc, CallFrame, JSGlobalObject, JSPromiseStrong, JSValue, JsCell, JsResult,
     SystemError, host_fn,
 };
-use bun_paths::PathBuffer;
 use bun_ptr::RefPtr;
 #[cfg(windows)]
 use bun_sys::windows::libuv;
@@ -258,7 +257,7 @@ pub(crate) mod lib_uv_backend {
         // SAFETY: port_buf[port_len] == 0 written above
         let port_z = ZStr::from_buf(&port_buf[..], port_len);
 
-        let mut hostname = PathBuffer::uninit();
+        let mut hostname = bun_paths::path_buffer_pool::get();
         // Reserve the last byte for the NUL terminator so the index below can never
         // exceed the buffer even if the upstream length guard in `doLookup` is bypassed.
         let cap = hostname.len() - 1;
@@ -1054,7 +1053,7 @@ pub mod get_addr_info_request {
             // SAFETY: NUL written at port_buf[port_len]
             let port_z = ZStr::from_buf(&port_buf[..], port_len);
 
-            let mut hostname = PathBuffer::uninit();
+            let mut hostname = bun_paths::path_buffer_pool::get();
             // Reserve the last byte for the NUL terminator so the index below
             // can never exceed the buffer even if the upstream length guard in
             // `doLookup` is bypassed.
@@ -2970,6 +2969,37 @@ pub mod internal {
         DNS_CACHE_SIZE.store(guard.len, Ordering::Relaxed);
         drop(guard);
         Ok(out)
+    }
+
+    /// `bun:internal-for-testing`: the error a lookup of `hostname` reports
+    /// when getaddrinfo(3) returns the `EAI_*` status named `code`.
+    pub(crate) fn getaddrinfo_error_for_testing(
+        global: &JSGlobalObject,
+        frame: &CallFrame,
+    ) -> JsResult<JSValue> {
+        let args = frame.arguments();
+        if args.len() < 2 || !args[0].is_string() || !args[1].is_string() {
+            return Err(global.throw_invalid_arguments(format_args!(
+                "expected (code: string, hostname: string)"
+            )));
+        }
+        let code = args[0].to_utf8(global)?;
+        let hostname = args[1].to_utf8(global)?;
+        let Some(rc) = c_ares::Error::eai_raw_by_name(code.slice()) else {
+            return Err(global.throw_invalid_arguments(format_args!(
+                "unknown getaddrinfo status name: {}",
+                bstr::BStr::new(code.slice())
+            )));
+        };
+        match c_ares::Error::init_eai(rc) {
+            Some(err) => crate::dns_jsc::cares_jsc::error_to_js_with_syscall_and_hostname(
+                err,
+                global,
+                b"getaddrinfo",
+                hostname.slice(),
+            ),
+            None => Ok(JSValue::UNDEFINED),
+        }
     }
 
     pub(crate) fn getaddrinfo(
@@ -6083,4 +6113,8 @@ export_host_fn!(
 export_host_fn!(
     internal::is_all_loopback_of_one_family_for_testing,
     "JS2Rust___src_runtime_dns_jsc_dns_rs__internal_isAllLoopbackOfOneFamilyForTesting"
+);
+export_host_fn!(
+    internal::getaddrinfo_error_for_testing,
+    "JS2Rust___src_runtime_dns_jsc_dns_rs__internal_getaddrinfoErrorForTesting"
 );

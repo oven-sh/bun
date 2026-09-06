@@ -76,10 +76,6 @@ use crate::cli::open::Editor;
 use bun_core::{EncodedSlice, String as BunString, strings};
 use bun_jsc::virtual_machine::{ResolveMode, VirtualMachine};
 use bun_paths::MAX_PATH_BYTES;
-#[cfg(not(windows))]
-use bun_paths::PathBuffer;
-#[cfg(windows)]
-use bun_paths::WPathBuffer;
 use bun_shell_parser::braces as Braces;
 use bun_sys::{self as sys, Fd, FdExt as _};
 use bun_zlib as zlib;
@@ -822,7 +818,7 @@ pub fn get_main(global_this: &JSGlobalObject) -> JSValue {
             let _close = scopeguard::guard(fd, |fd: Fd| fd.close());
             #[cfg(windows)]
             {
-                let mut wpath = WPathBuffer::uninit();
+                let mut wpath = bun_paths::w_path_buffer_pool::get();
                 let Ok(fdpath) = bun_sys::get_fd_path_w(fd, &mut wpath) else {
                     break 'use_resolved_path;
                 };
@@ -830,7 +826,7 @@ pub fn get_main(global_this: &JSGlobalObject) -> JSValue {
             }
             #[cfg(not(windows))]
             {
-                let mut path = PathBuffer::uninit();
+                let mut path = bun_paths::path_buffer_pool::get();
                 let Ok(fdpath) = bun_sys::get_fd_path(fd, &mut path) else {
                     break 'use_resolved_path;
                 };
@@ -1340,29 +1336,17 @@ fn index_of_line(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResul
     };
 
     let bytes = buffer.byte_slice();
-    let mut current_offset = offset;
-    let end = bytes.len() as u32;
-
-    while current_offset < end as usize {
-        if let Some(i) = strings::index_of_newline_or_non_ascii(bytes, current_offset as u32) {
-            let byte = bytes[i as usize];
-            if byte > 0x7F {
-                current_offset =
-                    i as usize + (strings::wtf8_byte_sequence_length(byte) as usize).max(1);
-                continue;
-            }
-
-            if byte == b'\n' {
-                return Ok(JSValue::js_number(i as f64));
-            }
-
-            current_offset = i as usize + 1;
-        } else {
-            break;
-        }
+    if offset >= bytes.len() {
+        return Ok(JSValue::js_number_from_int32(-1));
     }
 
-    Ok(JSValue::js_number_from_int32(-1))
+    // 0x0A never appears inside a multi-byte UTF-8 sequence.
+    Ok(
+        match strings::index_of_char_usize(&bytes[offset..], b'\n') {
+            Some(i) => JSValue::js_number((offset + i) as f64),
+            None => JSValue::js_number_from_int32(-1),
+        },
+    )
 }
 
 #[bun_jsc::host_fn]
@@ -1575,7 +1559,7 @@ fn mmap_file(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JS
         let vm = global_this.bun_vm();
         let mut args = ArgumentsSlice::init(vm, callframe.arguments());
 
-        let mut buf = PathBuffer::uninit();
+        let mut buf = bun_paths::path_buffer_pool::get();
         let path = 'brk: {
             if let Some(path) = args.next_eat() {
                 if path.is_string() {

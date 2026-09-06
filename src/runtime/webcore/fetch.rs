@@ -46,7 +46,6 @@ use bun_http::{self as http, FetchRedirect, Headers, HeadersExt as _, MimeType};
 use bun_http_jsc::method_jsc;
 use bun_http_types::Method::Method;
 use bun_jsc::{HTTPHeaderName, StringJsc as _, SysErrorJsc as _, URLJsc as _};
-use bun_paths::{self, PathBuffer};
 use bun_sys::FdExt as _;
 // `FromJsEnum for FetchRedirect` lives in bun_http_jsc; importing the impl crate
 // brings the trait impl into scope for `JSValue::get_optional_enum::<FetchRedirect>`.
@@ -1227,8 +1226,8 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
     // We don't pass along headers, we ignore method, we ignore status code...
     // But it's better than status quo.
     if url_type != URLType::Remote {
-        let mut path_buf = PathBuffer::uninit();
-        let mut path_buf2 = PathBuffer::uninit();
+        let mut path_buf = bun_paths::path_buffer_pool::get();
+        let mut path_buf2 = bun_paths::path_buffer_pool::get();
         let decoded_len = match PercentEncoding::decode_into(
             &mut path_buf2[..],
             match url_type {
@@ -1307,7 +1306,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                 }
 
                 #[cfg(windows)]
-                let mut cwd_buf = PathBuffer::uninit();
+                let mut cwd_buf = bun_paths::path_buffer_pool::get();
                 #[cfg(windows)]
                 // `bun_sys::getcwd` returns the byte length written into
                 // `cwd_buf`; slice it here.
@@ -1479,7 +1478,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
             // A local `PathBuffer` serves as NUL-termination scratch for
             // `path.slice_z()` (the `vm.node_fs()` accessor is gated behind a
             // jsc↔runtime cycle).
-            let mut open_path_buf = PathBuffer::uninit();
+            let mut open_path_buf = bun_paths::path_buffer_pool::get();
             let opened_fd_res: bun_sys::Result<bun_sys::Fd> = {
                 let store = body.store().expect("needs_to_read_file implies store");
                 match &store.data.as_file().pathlike {

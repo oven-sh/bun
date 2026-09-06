@@ -40,8 +40,6 @@ use bun_jsc::GlobalRef;
 #[cfg(windows)]
 use bun_libuv_sys::UvHandle as _;
 #[cfg(windows)]
-use bun_paths::PathBuffer;
-#[cfg(windows)]
 use bun_sys::windows::libuv as uv;
 
 bun_output::define_scoped_log!(log, Listener, visible);
@@ -208,14 +206,14 @@ impl Listener {
         #[cfg(windows)]
         if port.is_none() {
             // we check if the path is a named pipe otherwise we try to connect using AF_UNIX
-            let mut buf = PathBuffer::uninit();
+            let mut buf = bun_paths::path_buffer_pool::get();
             if let Some(pipe_name) =
                 normalize_pipe_name(socket_config.hostname_or_unix.slice(), buf.as_mut_slice())
             {
                 // Note: reshaped — `pipe_name` borrows `buf`; copy to an owned
                 // buffer so the borrow ends before we `mem::take` from
                 // `socket_config` below.
-                let mut pipe_buf = PathBuffer::uninit();
+                let mut pipe_buf = bun_paths::path_buffer_pool::get();
                 let pipe_len = pipe_name.len();
                 pipe_buf[..pipe_len].copy_from_slice(pipe_name);
 
@@ -1172,7 +1170,7 @@ impl Listener {
             use crate::socket::windows_named_pipe_context::SocketType as PipeSocketType;
             use bun_sys::FdExt as _;
 
-            let mut buf = PathBuffer::uninit();
+            let mut buf = bun_paths::path_buffer_pool::get();
             // Note: reshaped for borrowck — `normalize_pipe_name` borrows
             // `buf` for the returned slice; store length and re-borrow after the
             // `connection` match drops.
@@ -1908,7 +1906,7 @@ impl WindowsNamedPipeListeningContext {
                 )
             }
         } else {
-            let mut path_buf = PathBuffer::uninit();
+            let mut path_buf = bun_paths::path_buffer_pool::get();
             // we need to null terminate the path
             let len = path.len().min(path_buf.len() - 1);
             path_buf[..len].copy_from_slice(&path[..len]);

@@ -2009,7 +2009,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         self.record_usage_impl(ref_, true);
     }
 
-    fn record_scope_use(&mut self, ref_: Ref) {
+    pub(crate) fn record_scope_use(&mut self, ref_: Ref) {
         if !self.track_scope_uses {
             return;
         }

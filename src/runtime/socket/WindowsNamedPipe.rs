@@ -58,8 +58,7 @@ use crate::jsc_hooks::timer_all_mut as timer_all;
 pub struct WindowsNamedPipe {
     pub(crate) wrapper: JsCell<Option<WrapperType>>,
     pub(crate) deferred_writer_close: Cell<bool>,
-    /// The TLS close reason of a close deferred by [`Flags::WRITER_BUSY`],
-    /// owned because the engine's stack buffer is gone by the time it runs.
+    /// Owned: the engine's stack buffer is gone when the deferred close runs.
     pub(crate) deferred_close_reason: JsCell<Option<Box<CStr>>>,
     pub(crate) root: Cell<*mut WindowsNamedPipe>,
     /// Non-owning alias of the heap `uv::Pipe`. The owning
@@ -137,9 +136,7 @@ pub struct Handlers {
     pub(crate) on_open: fn(*mut c_void),
     pub(crate) on_handshake: fn(*mut c_void, bool, us_bun_verify_error_t),
     pub(crate) on_data: fn(*mut c_void, &[u8]),
-    /// `reason` is the OpenSSL error string of a fatal `SSL_read` failure
-    /// after the handshake (see `ssl_wrapper::Handlers::on_close`), `None` for
-    /// a clean close. Valid for the call only.
+    /// `reason`: see `ssl_wrapper::Handlers::on_close`.
     pub on_close: fn(*mut c_void, Option<&CStr>),
     pub(crate) on_end: fn(*mut c_void),
     pub(crate) on_writable: fn(*mut c_void),

@@ -212,8 +212,7 @@ pub mod ssl_wrapper {
     /// See [`MAX_RENEGOTIATIONS`].
     const MAX_RENEGOTIATION_WINDOW: core::time::Duration = core::time::Duration::from_secs(600);
 
-    /// `US_SSL_FATAL_ERROR_REASON_MAX` in openssl.c: the buffer a fatal
-    /// OpenSSL reason string is formatted into.
+    /// `US_SSL_FATAL_ERROR_REASON_MAX` in openssl.c.
     const FATAL_REASON_MAX: usize = 256;
 
     pub struct SSLWrapper<T: Copy> {
@@ -351,10 +350,8 @@ pub mod ssl_wrapper {
         pub on_handshake: fn(T, bool, us_bun_verify_error_t),
         pub write: fn(T, &[u8]),
         pub on_data: fn(T, &[u8]),
-        /// The network connection must close. The reason is the OpenSSL error
-        /// string of the fatal `SSL_read` failure that caused it (a bad record,
-        /// a peer's fatal alert), `None` for every other close. It points at
-        /// the caller's stack and is valid for the call only.
+        /// The OpenSSL reason of the fatal `SSL_read` that forced the close,
+        /// `None` otherwise. Points at the caller's stack: valid for the call only.
         pub on_close: fn(T, Option<&CStr>),
         /// A new resumable TLS session arrived (serialized SSL_SESSION bytes)
         /// - node's `'session'` event. `None` opts the SSL out of session
@@ -861,10 +858,8 @@ pub mod ssl_wrapper {
             (handlers.on_close)(handlers.ctx, reason);
         }
 
-        /// Drain the thread's error queue after a fatal `SSL_read` into the
-        /// reason string node reports (the root cause, picked by openssl.c's
-        /// `us_ssl_take_fatal_reason` so both engines agree). `None` when
-        /// nothing was queued.
+        /// The root-cause reason of a fatal `SSL_read`, picked the way openssl.c
+        /// picks its own. `None` when nothing was queued.
         fn take_fatal_reason(buf: &mut [u8; FATAL_REASON_MAX]) -> Option<&CStr> {
             // SAFETY: `buf` is writable for `buf.len()` bytes; the helper
             // NUL-terminates within that length.
@@ -1015,10 +1010,8 @@ pub mod ssl_wrapper {
                     let err = unsafe { boring_sys::SSL_get_error(ssl.as_ptr(), just_read) };
                     let is_fatal =
                         err == boring_sys::SSL_ERROR_SSL || err == boring_sys::SSL_ERROR_SYSCALL;
-                    // A bad record, a peer's fatal alert, an unexpected message:
-                    // the close carries the OpenSSL reason so the owner reports
-                    // it (node: the socket's ERR_SSL_* 'error') instead of a
-                    // clean EOF. Taken before the queue is cleared.
+                    // The close carries the reason (node's ERR_SSL_* 'error').
+                    // Take it before the queue is cleared.
                     let mut reason_buf = [0u8; FATAL_REASON_MAX];
                     let close_reason = if is_fatal {
                         Self::take_fatal_reason(&mut reason_buf)
@@ -1089,10 +1082,8 @@ pub mod ssl_wrapper {
                             }
                         }
                         if is_fatal {
-                            // BoringSSL sealed a fatal alert into the write BIO
-                            // on the failure. Send it before the close tears the
-                            // wrapper down, so the peer gets its own SSL error
-                            // like it does on the uSockets path.
+                            // Send the alert BoringSSL sealed into the write BIO
+                            // before the close frees it, so the peer gets its error.
                             self.handle_writing(buffer);
                             if self.ssl.get().is_none() || self.flags.closed_notified() {
                                 return false;
@@ -1319,9 +1310,8 @@ pub mod ssl_wrapper {
         /// Implemented in uSockets C; reads
         /// `SSL_get_verify_result` and maps it onto the C `us_bun_verify_error_t`.
         fn us_ssl_socket_verify_error_from_ssl(ssl: *mut boring_sys::SSL) -> us_bun_verify_error_t;
-        /// Drain the thread's OpenSSL error queue into `out` as the root-cause
-        /// reason string (openssl.c picks the same entry for its own fatal
-        /// close). Returns 1 with a reason, 0 with nothing queued.
+        /// Drain the OpenSSL error queue into `out` as the root-cause reason.
+        /// Returns 1 with a reason, 0 with nothing queued.
         // SAFETY (unsafe fn): `out` writable for `out_len` bytes.
         fn us_ssl_take_fatal_reason(out: *mut core::ffi::c_char, out_len: usize) -> c_int;
         /// Opt this SSL into the parked new-session/keylog queues

@@ -99,9 +99,7 @@ pub struct Handlers {
     pub(crate) on_open: fn(*mut ()),
     pub(crate) on_handshake: fn(*mut (), bool, us_bun_verify_error_t),
     pub(crate) on_data: fn(*mut (), &[u8]),
-    /// `reason` is the OpenSSL error string of a fatal `SSL_read` failure
-    /// after the handshake (see `ssl_wrapper::Handlers::on_close`), `None` for
-    /// a clean close. Valid for the call only.
+    /// `reason`: see `ssl_wrapper::Handlers::on_close`.
     pub on_close: fn(*mut (), Option<&CStr>),
     pub(crate) on_end: fn(*mut ()),
     pub(crate) on_writable: fn(*mut ()),

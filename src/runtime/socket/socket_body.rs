@@ -81,10 +81,8 @@ fn read_error_from_close_code(code: c_int) -> sys::Error {
     }
 }
 
-/// The OpenSSL reason the TLS engine attaches to the close of a TLS socket
-/// whose `SSL_read` failed after the handshake: `us_internal_ssl_on_data` for
-/// a uSockets socket, `SSLWrapper::handle_reading` for a duplex or named pipe.
-/// Valid for the dispatch.
+/// The OpenSSL reason a TLS engine (openssl.c or `SSLWrapper`) attaches to
+/// the close of a socket whose `SSL_read` failed after the handshake.
 fn tls_close_reason<'a, const SSL: bool>(reason: Option<*mut c_void>) -> Option<&'a [u8]> {
     if !SSL {
         return None;

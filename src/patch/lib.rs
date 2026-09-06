@@ -341,9 +341,7 @@ fn apply_patch(patch: &FilePatch<'_>, patch_dir: Fd, state: &mut ApplyState) -> 
     }
 
     for hunk in &patch.hunks {
-        // In the unified format a range with a length of 0 (`+5,0`, as `git diff -U0`
-        // emits for a pure deletion) names the line *after which* the gap sits, not
-        // the first line of the range. `+0,0` is the gap before the first line.
+        // A zero-length range (`+5,0`) names the line after which the gap sits.
         let patched_start = hunk.header.patched.start as usize;
         let mut line_cursor = if hunk.header.patched.len == 0 {
             patched_start

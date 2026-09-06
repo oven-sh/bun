@@ -4,6 +4,7 @@ use crate::shared::sql_data_cell::SQLDataCell;
 use bun_sql::mysql::mysql_types as types;
 use bun_sql::mysql::mysql_types::FieldType;
 use bun_sql::mysql::protocol::new_reader::{NewReader, ReaderContext};
+use bun_sql::shared::float4;
 
 bun_core::declare_scope!(MySQLDecodeBinaryValue, visible);
 
@@ -114,9 +115,9 @@ pub(crate) fn decode_binary_value<Context: ReaderContext>(
                 let data = reader.read(4)?;
                 return Ok(SQLDataCell::raw(Some(&data)));
             }
-            Ok(SQLDataCell::float8(
-                f32::from_bits(reader.int::<u32>()?) as f64
-            ))
+            Ok(SQLDataCell::float8(float4::to_f64(f32::from_bits(
+                reader.int::<u32>()?,
+            ))))
         }
         FieldType::MYSQL_TYPE_DOUBLE => {
             if raw {

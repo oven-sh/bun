@@ -476,19 +476,19 @@ if (isDockerEnabled()) {
           // Query the data. The bound parameter makes Bind request binary
           // results (a parameterless statement is prepared and executed in one
           // round trip and gets text), which is what routes `time` through the
-          // binary decoder this test is about; the float4 sentinel proves the
-          // rows really arrived in binary (text "0.1" would decode to 0.1).
+          // binary decoder this test is about; the int4[] sentinel proves the
+          // rows really arrived in binary (a text array decodes to an Array).
           const result = await db`
       SELECT
         id,
         regular_time,
         time_with_tz,
-        0.1::real AS fmt
+        array[1]::int4[] AS fmt
       FROM bun_time_test
       WHERE id >= ${0}
       ORDER BY id
     `;
-          expect(result[0].fmt).toBe(Math.fround(0.1));
+          expect(result[0].fmt).toBeInstanceOf(Int32Array);
 
           // Verify that time values are returned as strings, not binary data
           expect(result[0].regular_time).toBe("09:00:00");
@@ -1027,6 +1027,19 @@ if (isDockerEnabled()) {
 
     test("Double", async () => {
       expect((await sql`select ${1.123456789} as x`)[0].x).toBe(1.123456789);
+    });
+
+    test("float4 reads the same on the binary and text protocols", async () => {
+      // A bound parameter makes the server send the row in binary, where a
+      // real is the raw 4-byte float; a parameterless query gets text, where
+      // the server prints the shortest decimal that round-trips. Widening the
+      // binary f32 with `as f64` gave 0.10000000149011612 for a stored 0.1.
+      const values = "unnest(array[0.1, 0.3, -2.5, 3.4e38, 1e-40, 16777217, 123456.789, 'NaN', 'Infinity']::real[])";
+      const expected = [0.1, 0.3, -2.5, 3.4e38, 1e-40, 16777216, 123456.79, NaN, Infinity];
+      const binary = await sql.unsafe(`select x from ${values} as x where $1 = 1`, [1]);
+      const text = await sql.unsafe(`select x from ${values} as x`);
+      expect(binary.map(row => row.x)).toEqual(expected);
+      expect(text.map(row => row.x)).toEqual(expected);
     });
 
     test("String", async () => {

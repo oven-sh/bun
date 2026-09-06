@@ -451,24 +451,41 @@ describe("web worker", () => {
 
     // A worker whose own nested worker dies with no listener sees that as its own uncaught error, so
     // the report repeats one level up until something listens or the main thread prints it.
-    test.concurrent("with no listener anywhere propagates from a nested worker to the main thread", async () => {
+    test.concurrent("with no listener on a nested worker propagates to that worker's parent", async () => {
       using dir = tempDir("worker-nested-error", {
         "inner.js": `setTimeout(() => { throw new Error("WEB-WORKER-NESTED-UNCAUGHT") }, 1);`,
-        "middle.js": `new Worker(new URL("inner.js", import.meta.url).href); setInterval(() => {}, 1000);`,
-        "main.js": `const w = new Worker(new URL("middle.js", import.meta.url).href);
-                    w.addEventListener("close", e => console.log("middle closed", e.code));`,
+        "middle.js": `new Worker(new URL("inner.js", import.meta.url).href);`,
+        "main-no-listener.js": `new Worker(new URL("middle.js", import.meta.url).href);`,
+        "main-listener.js": `const w = new Worker(new URL("middle.js", import.meta.url).href);
+          w.addEventListener("error", e => console.log("main saw", e.message.includes("WEB-WORKER-NESTED-UNCAUGHT")));
+          w.addEventListener("close", e => console.log("middle closed", e.code));`,
       });
-      await using proc = Bun.spawn({
-        cmd: [bunExe(), "main.js"],
-        env: bunEnv,
-        cwd: String(dir),
-        stdout: "pipe",
-        stderr: "pipe",
-      });
-      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      expect(stderr).toContain("error: WEB-WORKER-NESTED-UNCAUGHT");
-      expect(stdout).toContain("middle closed 1");
-      expect(exitCode).toBe(1);
+      const run = async (entry: string) => {
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), entry],
+          env: bunEnv,
+          cwd: String(dir),
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        return { stdout, stderr, exitCode };
+      };
+      // Nobody listens anywhere: the main thread prints it and exits 1.
+      {
+        const { stderr, exitCode } = await run("main-no-listener.js");
+        expect(stderr).toContain("error: WEB-WORKER-NESTED-UNCAUGHT");
+        expect(exitCode).toBe(1);
+      }
+      // The main thread listens on the middle worker: it receives inner's error as middle's, and
+      // middle itself exits 1 because the error was uncaught there.
+      {
+        const { stdout, stderr, exitCode } = await run("main-listener.js");
+        expect(stderr).not.toContain("WEB-WORKER-NESTED-UNCAUGHT");
+        expect(stdout).toContain("main saw true");
+        expect(stdout).toContain("middle closed 1");
+        expect(exitCode).toBe(0);
+      }
     });
 
     test.concurrent("with a listener present is not reported as unhandled", async () => {

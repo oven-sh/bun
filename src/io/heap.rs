@@ -96,11 +96,8 @@ impl<T: HeapNode, Context: HeapContext<T>> Intrusive<T, Context> {
         max_so_far
     }
 
-    /// Visit every node in depth-first order without recursion. The walk
-    /// climbs back up through the `prev` links, so it runs in constant stack
-    /// space. Inserts in decreasing order build one chain of `child` links
-    /// (and inserts in increasing order one chain of `next` links), so a
-    /// recursive walk overflows the stack at a few hundred thousand nodes.
+    /// Visit every node depth-first in constant stack space. A heap can be
+    /// one chain as long as the element count, so the walk must not recurse.
     ///
     /// # Safety
     /// All nodes reachable from `self.root` must be valid.
@@ -126,10 +123,8 @@ impl<T: HeapNode, Context: HeapContext<T>> Intrusive<T, Context> {
                     continue 'walk;
                 }
 
-                // `prev` is the left sibling, or the parent for the leftmost
-                // sibling. Every sibling to the left is already visited, so
-                // walk left to the leftmost one, step up to the parent, and
-                // try the parent's own `next`.
+                // `prev` is the left sibling, or the parent of the leftmost one.
+                // Climb to the parent and try its `next`.
                 let mut prev = (*node).heap().prev;
                 while !prev.is_null() && (*prev).heap().child != node {
                     node = prev;

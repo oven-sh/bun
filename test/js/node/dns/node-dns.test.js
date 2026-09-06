@@ -1081,3 +1081,74 @@ describe("getaddrinfo status mapping", () => {
     });
   });
 });
+
+// Node hands a non-ASCII hostname to getaddrinfo and to c-ares in its UTS #46
+// A-label form (`bücher.test` becomes `xn--bcher-kva.test`). The fullwidth
+// form of "localhost" maps to "localhost", so the result is checkable without
+// a hosts-file entry.
+describe("IDNA hostnames", () => {
+  const FULLWIDTH_LOCALHOST = "ｌｏｃａｌｈｏｓｔ";
+  const loopback = ["127.0.0.1", "::1"];
+
+  test("dns.lookup resolves a non-ASCII hostname through its A-label form", async () => {
+    const { promise, resolve, reject } = Promise.withResolvers();
+    dns.lookup(FULLWIDTH_LOCALHOST, (err, address) => (err ? reject(err) : resolve(address)));
+    expect(loopback).toContain(await promise);
+  });
+
+  test("dns.promises.lookup resolves a non-ASCII hostname through its A-label form", async () => {
+    const { address } = await dns_promises.lookup(FULLWIDTH_LOCALHOST);
+    expect(loopback).toContain(address);
+  });
+
+  test("dns.lookup reports the hostname as written when the lookup fails", async () => {
+    const { promise, resolve } = Promise.withResolvers();
+    dns.lookup("bücher.invalid", err => resolve(err));
+    const err = await promise;
+    expect(err).toMatchObject({
+      syscall: "getaddrinfo",
+      hostname: "bücher.invalid",
+      message: `getaddrinfo ${err.code} bücher.invalid`,
+    });
+  });
+
+  test.skipIf(isWindows)("dns.resolve4 queries the A-label form of a non-ASCII hostname", async () => {
+    const socket = dgram.createSocket("udp4");
+    try {
+      let qname;
+      socket.on("message", (query, rinfo) => {
+        const labels = [];
+        let off = 12;
+        while (query[off] !== 0) {
+          labels.push(query.toString("latin1", off + 1, off + 1 + query[off]));
+          off += query[off] + 1;
+        }
+        qname = labels.join(".");
+        off += 1 + 2 + 2;
+        const question = query.subarray(12, off);
+
+        const header = Buffer.alloc(12);
+        header[0] = query[0];
+        header[1] = query[1];
+        header[2] = 0x81; // QR=1, RD=1
+        header[3] = 0x80; // RA=1
+        header[5] = 1; // QDCOUNT
+        header[7] = 1; // ANCOUNT
+        // name pointer to QNAME, type A, class IN, TTL 60, RDLENGTH 4, 127.0.0.1
+        const answer = Buffer.from([
+          0xc0, 0x0c, 0x00, 0x01, 0x00, 0x01, 0x00, 0x00, 0x00, 0x3c, 0x00, 0x04, 127, 0, 0, 1,
+        ]);
+        socket.send(Buffer.concat([header, question, answer]), rinfo.port, rinfo.address);
+      });
+      socket.bind(0, "127.0.0.1");
+      await once(socket, "listening");
+
+      const resolver = new dns.promises.Resolver({ timeout: 1000, tries: 1 });
+      resolver.setServers(["127.0.0.1:" + socket.address().port]);
+      expect(await resolver.resolve4("bücher.test")).toEqual(["127.0.0.1"]);
+      expect(qname).toBe("xn--bcher-kva.test");
+    } finally {
+      socket.close();
+    }
+  });
+});

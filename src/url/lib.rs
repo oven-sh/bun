@@ -47,6 +47,7 @@ pub mod whatwg {
 
     use super::BunString as String;
     use super::strings;
+    use bun_core::Utf8Bytes;
 
     bun_opaque::opaque_ffi! {
         /// Opaque handle to a heap-allocated `WTF::URL` (C++); owned via
@@ -76,6 +77,22 @@ pub mod whatwg {
         safe fn URL__pathFromFileURL(input: &String) -> String;
         safe fn URL__getHrefJoin(base: &String, relative: &String) -> String;
         fn URL__originLength(latin1_slice: *const u8, len: usize) -> usize;
+        safe fn URL__idnaToASCII(input: &String) -> String;
+    }
+
+    /// The form of a hostname that goes to the resolver (`getaddrinfo`,
+    /// c-ares). A name with non-ASCII characters becomes its UTS #46 A-label
+    /// form (`bücher.test` → `xn--bcher-kva.test`), as Node does. An ASCII
+    /// name, or a name that is not a valid IDN, is returned as is.
+    pub fn hostname_to_ascii(name: &[u8]) -> Utf8Bytes<'_> {
+        if strings::first_non_ascii(name).is_none() {
+            return Utf8Bytes::Borrowed(name);
+        }
+        let ascii = URL__idnaToASCII(&String::from_bytes(name));
+        if ascii.is_dead() {
+            return Utf8Bytes::Borrowed(name);
+        }
+        ascii.into_utf8()
     }
 
     /// Percent-encodes the URL, punycode-encodes the hostname, and returns the normalized

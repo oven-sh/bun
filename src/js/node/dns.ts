@@ -342,10 +342,11 @@ function lookup(hostname, options, callback) {
     })
     .catch(err => {
       if (err.code?.startsWith("DNS_")) err.code = err.code.slice(4);
-      // Node.js getaddrinfo errors (DNSException) carry the looked-up
-      // hostname both as a property and at the end of the message.
+      // Node.js getaddrinfo errors (DNSException) carry the hostname as the
+      // caller wrote it (not its IDNA form) both as a property and at the end
+      // of the message.
       const syscall = err.syscall;
-      if (syscall === "getaddrinfo" && !err.hostname && hostname) {
+      if (syscall === "getaddrinfo" && hostname) {
         err.hostname = hostname;
         err.message = `${syscall} ${err.code} ${hostname}`;
       }

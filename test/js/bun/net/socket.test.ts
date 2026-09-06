@@ -1026,6 +1026,40 @@ it("should not leak memory when connect() fails again", async () => {
   await expectMaxObjectTypeCount(expect, "TCPSocket", 5, 50);
 });
 
+// Bun.connect hands getaddrinfo the UTS #46 A-label form of a non-ASCII
+// hostname. The fullwidth form of "localhost" maps to "localhost", so this
+// needs no hosts-file entry.
+it("Bun.connect resolves a non-ASCII hostname through its A-label form", async () => {
+  using server = Bun.listen({
+    hostname: "127.0.0.1",
+    port: 0,
+    socket: {
+      open(socket) {
+        socket.end();
+      },
+      data() {},
+    },
+  });
+  const { promise, resolve, reject } = Promise.withResolvers<string>();
+  await using socket = await connect({
+    hostname: "ｌｏｃａｌｈｏｓｔ",
+    port: server.port,
+    socket: {
+      open(socket) {
+        resolve(socket.remoteAddress);
+      },
+      data() {},
+      error(_, err) {
+        reject(err);
+      },
+      connectError(_, err) {
+        reject(err);
+      },
+    },
+  });
+  expect(await promise).toBe("127.0.0.1");
+});
+
 it("should throw on empty hostname from truthy non-string value", () => {
   const socket = { data() {}, open() {}, close() {} };
   // A truthy value whose toString() returns "" should throw, not crash

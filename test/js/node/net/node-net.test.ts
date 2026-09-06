@@ -2769,3 +2769,16 @@ describe("net.Server.listen({ fd })", () => {
     expect(exitCode).toBe(0);
   });
 });
+
+// Node resolves the host through dns.lookup, which hands getaddrinfo the UTS #46
+// A-label form of a non-ASCII name. The fullwidth form of "localhost" maps to
+// "localhost", so this needs no hosts-file entry.
+it("net.connect resolves a non-ASCII host through its A-label form", async () => {
+  await using server = createServer(c => c.end()).listen(0, "127.0.0.1");
+  await once(server, "listening");
+  const { port } = server.address() as { port: number };
+  const socket = connect({ host: "ｌｏｃａｌｈｏｓｔ", port });
+  await once(socket, "connect");
+  expect(socket.remoteAddress).toBe("127.0.0.1");
+  socket.destroy();
+});

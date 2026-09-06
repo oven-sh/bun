@@ -5221,9 +5221,10 @@ impl Resolver {
             return Ok(promise_value);
         }
 
+        let ascii_name = bun_url::whatwg::hostname_to_ascii(name);
         let mut opts = options;
         let mut backend = opts.backend;
-        let normalized = normalize_dns_name(name, &mut backend);
+        let normalized = normalize_dns_name(&ascii_name, &mut backend);
         opts.backend = backend;
         let query = GetAddrInfo {
             options: opts,
@@ -5423,6 +5424,8 @@ impl Resolver {
 
         let cache_field = T::CACHE_FIELD; // "pending_{TYPE_NAME}_cache_cares"
 
+        let ascii_name = bun_url::whatwg::hostname_to_ascii(name);
+        let name: &[u8] = &ascii_name;
         let key = resolve_info_request::PendingCacheKey::<T>::init(name);
 
         let cache =

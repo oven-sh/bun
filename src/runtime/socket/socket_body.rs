@@ -620,7 +620,7 @@ impl<const SSL: bool> NewSocket<SSL> {
                 } else {
                     raw
                 };
-                let hostz = bun_core::ZBox::from_bytes(clean);
+                let hostz = bun_core::ZBox::from_bytes(&bun_url::whatwg::hostname_to_ascii(clean));
                 let port = *port;
                 // `host` borrow ends here; `self.connection` no longer borrowed.
                 // `ZBox` guarantees a trailing NUL; host bytes contain no interior NUL.

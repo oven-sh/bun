@@ -100,6 +100,16 @@ static String icuToUnicode(const String& input)
     return runUIDNA(uidna_nameToUnicode, toUnicodeIDNA(), input, status, info);
 }
 
+// UTS #46 ToASCII of a bare hostname for the resolver (`bun_url::whatwg::
+// hostname_to_ascii`). Dead when the name is not a valid IDN.
+extern "C" BunString URL__idnaToASCII(const BunString* input)
+{
+    auto result = icuToASCII(input->toWTFString(), IDNAMode::Default);
+    if (result.isNull())
+        return { BunStringTag::Dead };
+    return Bun::toStringRef(result);
+}
+
 // WebKit's host parser fast-paths all-ASCII hosts without decoding xn--
 // labels; ada (Node) decodes and validates them. Used to reject hosts whose
 // punycode labels fail UTS #46.

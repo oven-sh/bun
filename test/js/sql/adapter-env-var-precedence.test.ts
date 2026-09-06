@@ -2,6 +2,8 @@ import { SQL } from "bun";
 import { afterAll, beforeEach, describe, expect, test } from "bun:test";
 import { isWindows, tempDir } from "harness";
 import { unlinkSync } from "js/node/fs/export-star-from";
+import { existsSync } from "node:fs";
+import { join } from "node:path";
 
 declare module "bun" {
   namespace SQL {
@@ -138,18 +140,33 @@ describe("SQL adapter environment variable precedence", () => {
       expect(sql.options.filename).toBe(":memory:");
     });
 
-    test.each(["sqlite://app.db", "file:data.db", ":memory:", "./relative.db"])(
-      'a url is a connection target for adapter: "sqlite" too (%s)',
-      url => {
-        const expected = new SQL(url, { adapter: "sqlite" }).options.filename;
-        expect(new SQL({ adapter: "sqlite", url }).options).toMatchObject({ adapter: "sqlite", filename: expected });
+    test('a url is a connection target for adapter: "sqlite" too', async () => {
+      using dir = tempDir("sql-sqlite-url-target", { placeholder: "" });
+      const file = (name: string) => join(String(dir), name);
+      const opened: InstanceType<typeof SQL>[] = [];
+      const filenameOf = (options: Bun.SQL.Options) => {
+        const sql = new SQL(options);
+        opened.push(sql);
+        return sql.options.filename;
+      };
+      process.env.DATABASE_URL = `sqlite://${file("env.db")}`;
+      process.env.SQLITE_URL = `sqlite://${file("env.db")}`;
 
-        process.env.DATABASE_URL = "sqlite://env.db";
-        process.env.SQLITE_URL = "sqlite://env.db";
-        expect(new SQL({ adapter: "sqlite", url }).options).toMatchObject({ adapter: "sqlite", filename: expected });
-        expect(new SQL({ adapter: "sqlite", url, filename: "wins.db" }).options.filename).toBe("wins.db");
-      },
-    );
+      try {
+        for (const [url, expected] of [
+          [`sqlite://${file("a.db")}`, file("a.db")],
+          [`sqlite:${file("b.db")}`, file("b.db")],
+          [file("c.db"), file("c.db")],
+          [":memory:", ":memory:"],
+        ]) {
+          expect(filenameOf({ adapter: "sqlite", url })).toBe(expected);
+          expect(filenameOf({ adapter: "sqlite", url, filename: file("wins.db") })).toBe(file("wins.db"));
+        }
+        expect(existsSync(file("env.db"))).toBe(false);
+      } finally {
+        await Promise.all(opened.map(sql => sql.close()));
+      }
+    });
 
     test("the host option alias is a connection target", () => {
       process.env.DATABASE_URL = ":memory:";

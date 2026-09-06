@@ -532,18 +532,10 @@ fn iterate_included_project_tree(
                         continue;
                     }
 
-                    // include patterns are not recursive unless they start with `**/`
-                    // normally the behavior of `index.js` and `**/index.js` are the same,
-                    // but includes require `**/`
-                    let match_path: &[u8] = if include
-                        .flags
-                        .contains(PatternFlags::LEADING_DOUBLESTAR_SLASH)
-                    {
-                        entry_name
-                    } else {
-                        entry_subpath.as_bytes()
-                    };
-                    if glob::r#match(include.glob.slice(), match_path).matches() {
+                    // include patterns are matched against the root-relative path, so
+                    // `index.js` only matches at the root and `**/index.js` matches at
+                    // any depth (unlike ignore files, where both mean the same).
+                    if glob::r#match(include.glob.slice(), entry_subpath.as_bytes()).matches() {
                         included = true;
                     }
                 }
@@ -559,15 +551,7 @@ fn iterate_included_project_tree(
                         continue;
                     }
 
-                    let match_path: &[u8] = if exclude
-                        .flags
-                        .contains(PatternFlags::LEADING_DOUBLESTAR_SLASH)
-                    {
-                        entry_name
-                    } else {
-                        entry_subpath.as_bytes()
-                    };
-                    let result = glob::r#match(exclude.glob.slice(), match_path);
+                    let result = glob::r#match(exclude.glob.slice(), entry_subpath.as_bytes());
                     if result.is_negated() && !result.matches() {
                         included = false;
                     }
@@ -3512,17 +3496,14 @@ bitflags::bitflags! {
         const REL_PATH = 1 << 0;
         /// can only match directories (had an ending slash, also trimmed)
         const DIRS_ONLY = 1 << 1;
-        const LEADING_DOUBLESTAR_SLASH = 1 << 2;
         /// true if the pattern starts with `!`
-        const NEGATED = 1 << 3;
-        // _: u4 padding implicit
+        const NEGATED = 1 << 2;
     }
 }
 
 impl Pattern {
     pub(crate) fn from_utf8(pattern: &[u8]) -> Result<Option<Pattern>, AllocError> {
         let mut remain = pattern;
-        let mut has_leading_doublestar_could_start_with_bang = false;
         let (has_leading_or_middle_slash, has_trailing_slash, add_negate) = 'check_slashes: {
             let before_length = remain.len();
 
@@ -3537,23 +3518,9 @@ impl Pattern {
                 return Ok(None);
             }
 
-            // `**/foo` matches the same as `foo`. `**/foo/bar` keeps its `**/` so the
-            // glob matches `foo/bar` at any depth instead of only at the ignore file's dir.
-            if remain.starts_with(b"**/") {
-                let after = &remain[b"**/".len()..];
-                if after.is_empty() {
-                    return Ok(None);
-                }
-                let has_middle_slash = match strings::index_of_char(after, b'/') {
-                    Some(i) => (i as usize) != after.len() - 1,
-                    None => false,
-                };
-                if !has_middle_slash {
-                    remain = after;
-                    has_leading_doublestar_could_start_with_bang = true;
-                }
-            }
-
+            // A leading `**/` is kept. The glob matcher treats it as zero or more
+            // directories, so `**/foo/bar` matches `foo/bar` at any depth when the
+            // pattern is matched against a relative path (the middle slash sets REL_PATH).
             let trailing_slash = remain[remain.len() - 1] == b'/';
             if trailing_slash {
                 // trim trailing slash
@@ -3592,9 +3559,6 @@ impl Pattern {
         let mut flags = PatternFlags::empty();
         if has_leading_or_middle_slash {
             flags |= PatternFlags::REL_PATH;
-        }
-        if has_leading_doublestar_could_start_with_bang {
-            flags |= PatternFlags::LEADING_DOUBLESTAR_SLASH;
         }
         if has_trailing_slash {
             flags |= PatternFlags::DIRS_ONLY;

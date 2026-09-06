@@ -312,8 +312,7 @@ fn apply_patch(
     for (hunk_index, hunk) in patch.hunks.iter().enumerate() {
         let original_start = hunk.header.original.start as isize + line_delta;
         let mut line_cursor = if hunk.header.original.len == 0 {
-            // `-N,0`: nothing to match, the new lines go after line N (0 = top).
-            // The empty element after a trailing newline is not a line.
+            // `-N,0`: nothing to match; insert after line N (0 = top, trailing "" is no line).
             let line_count = lines.len() - (lines.last() == Some(&&b""[..])) as usize;
             if original_start < 0 || original_start as usize > line_count {
                 return Err(does_not_apply(hunk_index, hunk));
@@ -326,8 +325,7 @@ fn apply_patch(
             }
         };
 
-        // The match proved every context and deleted line exists, but a misplaced
-        // `\ No newline at end of file` pops a line mid-hunk, so keep the ranges checked.
+        // Ranges stay checked: a misplaced `\ No newline at end of file` pops a line mid-hunk.
         for part in &hunk.parts {
             let part: &PatchMutationPart = part;
             match part.ty {

@@ -284,9 +284,8 @@ To work on JSC itself you want a full clone with history instead. Clone it anywh
 git clone https://github.com/oven-sh/WebKit ../WebKit
 export BUN_WEBKIT_PATH=$PWD/../WebKit
 
-# Check out the version pinned in WEBKIT_VERSION in scripts/build/deps/webkit.ts
-# (a commit sha or an autobuild-* release tag; this handles both)
-bun sync-webkit-source
+# Check out the version pinned in WEBKIT_VERSION (scripts/build/deps/webkit.ts)
+git -C ../WebKit checkout <WEBKIT_VERSION>
 
 # Build bun with JSC compiled from that clone
 bun run build:local

@@ -1,6 +1,5 @@
 import { describe, expect, it } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
-import { EventEmitter } from "node:events";
 import path from "path";
 
 describe("process.on", () => {
@@ -140,25 +139,27 @@ describe.concurrent("process MaxListenersExceededWarning", () => {
     expect(exitCode).toBe(0);
   });
 
-  it("process.setMaxListeners validates like EventEmitter.prototype.setMaxListeners", () => {
-    for (const bad of [-1, NaN, "3", undefined]) {
-      let processError: any, emitterError: any;
-      try {
-        process.setMaxListeners(bad as number);
-      } catch (e) {
-        processError = e;
+  it("process.setMaxListeners validates like EventEmitter.prototype.setMaxListeners", async () => {
+    const { stdout, exitCode } = await run(`
+      const { EventEmitter } = require("node:events");
+      const errorOf = fn => { try { fn(); return null; } catch (e) { return { code: e.code, message: e.message }; } };
+      const out = [];
+      for (const bad of [-1, NaN, "3", undefined]) {
+        const a = errorOf(() => process.setMaxListeners(bad));
+        const b = errorOf(() => new EventEmitter().setMaxListeners(bad));
+        out.push(a !== null && JSON.stringify(a) === JSON.stringify(b) ? a.code : "mismatch");
       }
-      try {
-        new EventEmitter().setMaxListeners(bad as number);
-      } catch (e) {
-        emitterError = e;
-      }
-      expect(processError?.code).toBe(emitterError.code);
-      expect(processError?.message).toBe(emitterError.message);
-    }
-    const before = process.getMaxListeners();
-    expect(process.setMaxListeners(2.5)).toBe(process);
-    process.setMaxListeners(before);
+      out.push(process.setMaxListeners(2.5) === process);
+      console.log(JSON.stringify(out));
+    `);
+    expect(JSON.parse(stdout)).toEqual([
+      "ERR_OUT_OF_RANGE",
+      "ERR_OUT_OF_RANGE",
+      "ERR_INVALID_ARG_TYPE",
+      "ERR_INVALID_ARG_TYPE",
+      true,
+    ]);
+    expect(exitCode).toBe(0);
   });
 
   it("follows events.defaultMaxListeners until process.setMaxListeners is called", async () => {

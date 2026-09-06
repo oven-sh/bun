@@ -1,6 +1,7 @@
 #include "config.h"
 #include "JSEventEmitter.h"
 
+#include "BunProcess.h"
 #include "ExtendedDOMClientIsoSubspaces.h"
 #include "ExtendedDOMIsoSubspaces.h"
 #include "IDLTypes.h"
@@ -287,7 +288,58 @@ inline JSC::EncodedJSValue JSEventEmitter::addListener(JSC::JSGlobalObject* lexi
 
     vm.writeBarrier(&static_cast<JSObject&>(*castedThis), argument1.value());
     impl.setThisObject(actualThis);
+
+    // see overflowWarning in events.ts
+    unsigned maxListeners = impl.getMaxListeners();
+    if (maxListeners > 0) {
+        int count = impl.listenerCount(eventType);
+        if (count > 0 && static_cast<unsigned>(count) > maxListeners && impl.markMaxListenersWarned(eventType)) {
+            emitMaxListenersExceededWarning(lexicalGlobalObject, actualThis, argument0.value(), count, maxListeners);
+            RETURN_IF_EXCEPTION(throwScope, {});
+        }
+    }
+
     RELEASE_AND_RETURN(throwScope, JSValue::encode(actualThis));
+}
+
+void JSEventEmitter::emitMaxListenersExceededWarning(JSC::JSGlobalObject* lexicalGlobalObject, JSC::JSValue emitter, JSC::JSValue type, int count, unsigned maxListeners)
+{
+    auto& vm = JSC::getVM(lexicalGlobalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    // node prints `inspect(emitter, { depth: -1 })`, which is `[process]` for
+    // the process object. The toStringTag is the closest thing we have here.
+    String emitterName;
+    if (JSObject* emitterObject = emitter.getObject()) {
+        JSValue tag = emitterObject->get(lexicalGlobalObject, vm.propertyNames->toStringTagSymbol);
+        RETURN_IF_EXCEPTION(scope, void());
+        if (tag.isString()) {
+            emitterName = tag.getString(lexicalGlobalObject);
+            RETURN_IF_EXCEPTION(scope, void());
+        }
+        if (emitterName.isEmpty())
+            emitterName = JSObject::calculatedClassName(emitterObject);
+    }
+
+    String typeName;
+    if (type.isSymbol()) {
+        JSString* symbolString = asSymbol(type)->toString(lexicalGlobalObject);
+        RETURN_IF_EXCEPTION(scope, void());
+        typeName = symbolString->value(lexicalGlobalObject);
+    } else {
+        typeName = type.toWTFString(lexicalGlobalObject);
+    }
+    RETURN_IF_EXCEPTION(scope, void());
+
+    auto message = makeString("Possible EventEmitter memory leak detected. "_s, count, ' ', typeName, " listeners added to ["_s, emitterName, "]. MaxListeners is "_s, maxListeners, ". Use emitter.setMaxListeners() to increase limit"_s);
+    JSObject* warning = createError(lexicalGlobalObject, message);
+    warning->putDirect(vm, vm.propertyNames->name, jsString(vm, String("MaxListenersExceededWarning"_s)), JSC::PropertyAttribute::DontEnum | 0);
+    warning->putDirect(vm, Identifier::fromString(vm, "emitter"_s), emitter, 0);
+    warning->putDirect(vm, vm.propertyNames->type, type, 0);
+    warning->putDirect(vm, Identifier::fromString(vm, "count"_s), jsNumber(count), 0);
+
+    Bun::Process::emitWarningErrorInstance(lexicalGlobalObject, warning);
+    RETURN_IF_EXCEPTION(scope, void());
 }
 
 static inline JSC::EncodedJSValue jsEventEmitterPrototypeFunction_addListenerBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<JSEventEmitter>::ClassParameter castedThis)

@@ -23,6 +23,7 @@ public:
     static void destroy(JSC::JSCell*);
 
     static inline JSC::EncodedJSValue addListener(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, JSEventEmitter* castedThis, bool once, bool prepend);
+    static void emitMaxListenersExceededWarning(JSC::JSGlobalObject* lexicalGlobalObject, JSC::JSValue emitter, JSC::JSValue type, int count, unsigned maxListeners);
     static inline JSC::EncodedJSValue removeListener(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, JSEventEmitter* castedThis);
 
     DECLARE_INFO;

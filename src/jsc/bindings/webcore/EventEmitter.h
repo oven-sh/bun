@@ -73,6 +73,11 @@ public:
 
     void setMaxListeners(unsigned count);
 
+    // Returns true the first time an event type goes over the max listener
+    // count. Later calls return false until the type drops back to one
+    // listener, matching node's `existing.warned` flag.
+    bool markMaxListenersWarned(const Identifier& eventType);
+
     bool fireEventListeners(const Identifier& eventName, const MarkedArgumentBuffer& arguments);
     bool isFiringEventListeners() const;
 
@@ -103,9 +108,11 @@ private:
     }
 
     bool innerInvokeEventListeners(const Identifier&, SimpleEventListenerVector, const MarkedArgumentBuffer& arguments);
+    void clearMaxListenersWarnedIfBelowLimit(const Identifier& eventType);
 
     EventEmitterData m_eventTargetData;
     unsigned m_maxListeners { 10 };
+    Vector<Identifier, 1> m_maxListenersWarned;
 
     mutable JSC::Weak<JSC::JSObject> m_thisObject { nullptr };
 };

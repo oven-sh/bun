@@ -44,7 +44,7 @@ check — together they catch most things; neither alone is bulletproof.
 
 - Data bytes in `.text` that happen to form a valid post-baseline encoding.
   Rare on ELF (LLVM puts tables in `.rodata`), common on Windows PE (MSVC
-  inlines jump tables). See `README.md:61-74`.
+  inlines jump tables). See `README.md:64-77`.
 
 When in doubt, the emulator is ground truth: `qemu -cpu Nehalem` and hit the
 code path. SIGILL = real bug. No SIGILL = either gated or a data-in-text

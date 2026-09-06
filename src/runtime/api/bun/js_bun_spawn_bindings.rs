@@ -1779,9 +1779,7 @@ fn spawn_maybe_sync(
             };
         }
 
-        // The stdin pump already failed (locked stream, start() errored, non-byte chunk). The
-        // child is watched, so it is reaped on exit. Kill it and throw the pump's reason: the
-        // caller gets the error from Bun.spawn, not from the unhandled rejection handler.
+        // The stdin pump already failed: throw its reason. The child is watched, so the kill is reaped.
         if let Some(promise) = promise_for_stream.as_promise() {
             // SAFETY: `as_promise` returned a live cell held by `promise_for_stream`.
             let promise = unsafe { &mut *promise };

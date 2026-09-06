@@ -1645,10 +1645,8 @@ impl FileSink {
         }
     }
 
-    /// Pump `stream` into this sink. `Ok(UNDEFINED)` when the native fast-path took the stream,
-    /// `Ok(promise)` for a JS pump. A pump still in flight settles the sink through `then`. A pump
-    /// that already failed comes back as a rejected promise marked handled, with the sink torn down,
-    /// so the caller can throw its reason. `Err` when the pump could not be created at all.
+    /// Returns the JS pump's promise (`UNDEFINED` on the native path). An already-rejected promise
+    /// is marked handled and the sink torn down; the caller throws its reason.
     pub fn assign_to_stream(
         &mut self,
         stream: &mut ReadableStream,
@@ -1741,10 +1739,7 @@ impl FileSink {
                         self.handle_resolve_stream();
                     }
                     bun_jsc::js_promise::Status::Rejected => {
-                        // The pump failed before it returned (the source errored in start(), or
-                        // the first chunk was not bytes). Nothing else holds this promise: mark
-                        // it handled here and return it, so the caller can read the reason and
-                        // rethrow it instead of the VM reporting an unhandled rejection.
+                        // Nothing else holds this promise; the caller rethrows its reason.
                         // These don't ref().
                         // SAFETY: `js_promise` is non-null (`as_any_promise`).
                         let result = unsafe { (*js_promise).result(global_this.vm()) };

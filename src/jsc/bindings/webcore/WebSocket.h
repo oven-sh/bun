@@ -39,6 +39,7 @@
 #include <wtf/Lock.h>
 #include "FetchHeaders.h"
 #include "WebSocketErrorCode.h"
+#include <JavaScriptCore/Strong.h>
 
 namespace WebCore {
 class JSBlob;
@@ -123,8 +124,8 @@ public:
     static ExceptionOr<Ref<WebSocket>> create(ScriptExecutionContext&, const String& url, const Vector<String>& protocols);
     static ExceptionOr<Ref<WebSocket>> create(ScriptExecutionContext&, const String& url, const Vector<String>& protocols, std::optional<FetchHeaders::Init>&&);
     // With proxy support
-    static ExceptionOr<Ref<WebSocket>> create(ScriptExecutionContext&, const String& url, const Vector<String>& protocols, std::optional<FetchHeaders::Init>&&, const String& proxyUrl, std::optional<FetchHeaders::Init>&& proxyHeaders, WebSocketSSLConfigPtr&& sslConfig, bool offerPerMessageDeflate);
-    static ExceptionOr<Ref<WebSocket>> create(ScriptExecutionContext& context, const String& url, const Vector<String>& protocols, std::optional<FetchHeaders::Init>&& headers, bool rejectUnauthorized, const String& proxyUrl, std::optional<FetchHeaders::Init>&& proxyHeaders, WebSocketSSLConfigPtr&& sslConfig, bool offerPerMessageDeflate);
+    static ExceptionOr<Ref<WebSocket>> create(ScriptExecutionContext&, const String& url, const Vector<String>& protocols, std::optional<FetchHeaders::Init>&&, const String& proxyUrl, std::optional<FetchHeaders::Init>&& proxyHeaders, WebSocketSSLConfigPtr&& sslConfig, bool offerPerMessageDeflate, JSC::Strong<JSC::Unknown>&& checkServerIdentity = {});
+    static ExceptionOr<Ref<WebSocket>> create(ScriptExecutionContext& context, const String& url, const Vector<String>& protocols, std::optional<FetchHeaders::Init>&& headers, bool rejectUnauthorized, const String& proxyUrl, std::optional<FetchHeaders::Init>&& proxyHeaders, WebSocketSSLConfigPtr&& sslConfig, bool offerPerMessageDeflate, JSC::Strong<JSC::Unknown>&& checkServerIdentity = {});
     ~WebSocket();
 
     enum State {
@@ -351,6 +352,9 @@ private:
     // TLS options (native heap SSLConfig — ownership is released to the
     // upgrade client in connect(); freed by ~WebSocketSSLConfigPtr otherwise).
     WebSocketSSLConfigPtr m_sslConfig;
+    // `tls.checkServerIdentity`. Handed to the upgrade client in connect()
+    // and cleared there, so it never outlives the handshake on this side.
+    JSC::Strong<JSC::Unknown> m_checkServerIdentity;
 
     NativeCallbacks m_native;
 };

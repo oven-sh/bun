@@ -555,7 +555,8 @@ ZIG_DECL WebSocketHTTPClient* Bun__WebSocketHTTPClient__connect(
     void* sslConfig, bool targetIsSecure,
     const BunString* targetAuthorization,
     const BunString* unixSocketPath,
-    bool offerPerMessageDeflate);
+    bool offerPerMessageDeflate,
+    JSC::EncodedJSValue checkServerIdentity);
 ZIG_DECL size_t Bun__WebSocketHTTPClient__memoryCost(WebSocketHTTPClient* arg0);
 #endif
 
@@ -572,7 +573,8 @@ ZIG_DECL WebSocketHTTPSClient* Bun__WebSocketHTTPSClient__connect(
     void* sslConfig, bool targetIsSecure,
     const BunString* targetAuthorization,
     const BunString* unixSocketPath,
-    bool offerPerMessageDeflate);
+    bool offerPerMessageDeflate,
+    JSC::EncodedJSValue checkServerIdentity);
 ZIG_DECL size_t Bun__WebSocketHTTPSClient__memoryCost(WebSocketHTTPSClient* arg0);
 
 // Parse TLS options from JavaScript object using SSLConfig.fromJS

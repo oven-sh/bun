@@ -97,6 +97,17 @@ impl UpgradeClientRef {
             HttpsUpgradeClient::on_proxy_tls_handshake_complete,
         );
     }
+
+    fn verify_peer_identity(self, ssl: &mut boringssl::c::SSL, hostname: &[u8]) -> bool {
+        match self {
+            UpgradeClientRef::Http(client) => {
+                HttpUpgradeClient::verify_peer_identity(client.this_ptr(), ssl, hostname)
+            }
+            UpgradeClientRef::Https(client) => {
+                HttpsUpgradeClient::verify_peer_identity(client.this_ptr(), ssl, hostname)
+            }
+        }
+    }
 }
 
 type WebSocketClient = crate::websocket_client::WebSocket<false>;
@@ -283,7 +294,7 @@ impl WebSocketProxyTunnel {
         let (upgrade_client, reject_unauthorized) =
             (this.upgrade_client.get(), this.reject_unauthorized);
 
-        let Some(upgrade_client) = upgrade_client else {
+        let Some(mut upgrade_client) = upgrade_client else {
             return;
         };
 
@@ -299,14 +310,20 @@ impl WebSocketProxyTunnel {
                 return;
             }
 
-            // Verify server identity.
+            // Verify server identity. A user `checkServerIdentity` callback
+            // runs here and may close the WebSocket, which detaches
+            // `upgrade_client`; re-read it before dispatching further.
             let ssl = this.wrapper.get().and_then(|w| w.ssl.get());
             let failed_identity = match (ssl, this.sni_hostname.as_deref()) {
-                (Some(ssl_ptr), Some(hostname)) => !boringssl::check_server_identity(
+                (Some(ssl_ptr), Some(hostname)) => !upgrade_client.verify_peer_identity(
                     bun_opaque::opaque_deref_mut(ssl_ptr.as_ptr()),
                     hostname,
                 ),
                 _ => false,
+            };
+            upgrade_client = match this.upgrade_client.get() {
+                Some(client) => client,
+                None => return,
             };
             if failed_identity {
                 upgrade_client.terminate(ErrorCode::TlsHandshakeFailed);

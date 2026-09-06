@@ -32,7 +32,7 @@ use bun_core::strings;
 use bun_core::{String as BunString, Utf8Bytes};
 use bun_http::{HeaderValueIterator, Headers};
 use bun_io::KeepAlive;
-use bun_jsc::{JSGlobalObject, VirtualMachineRef};
+use bun_jsc::{JSGlobalObject, JSValue, StrongOptional, VirtualMachineRef};
 use bun_picohttp as picohttp;
 use bun_ptr::{BackRef, JsCell, RefPtr, ThisPtr};
 
@@ -121,8 +121,13 @@ pub struct HTTPClient<const SSL: bool> {
     to_send_len: Cell<usize>,
     headers_buf: JsCell<[picohttp::Header; 128]>,
     body: JsCell<Vec<u8>>,
-    /// Owned NUL-terminated hostname for SNI; empty when unset.
+    /// Owned NUL-terminated hostname for SNI and certificate verification;
+    /// empty when unset. `tls.serverName` when given, else the dialed host.
     hostname: JsCell<ZBox>,
+    /// The user's `tls.checkServerIdentity` callback. Released right after
+    /// the handshake verdict so it cannot keep the `WebSocket` alive through
+    /// a closure that captures it.
+    check_server_identity: JsCell<StrongOptional>,
     poll_ref: JsCell<KeepAlive>,
     state: Cell<State>,
     subprotocols: JsCell<StringSet>,
@@ -196,10 +201,20 @@ where
         // Whether to advertise `permessage-deflate` in the upgrade request
         // (ws.WebSocket's `perMessageDeflate` option; true by default).
         offer_permessage_deflate: bool,
+        // `tls.checkServerIdentity` (callable), or empty/undefined.
+        check_server_identity: JSValue,
     ) -> Option<*mut Self> {
         let vm = global.bun_vm().as_mut();
 
         debug_assert!(vm.event_loop_handle.is_some());
+
+        // `tls.serverName` overrides the URL host for SNI and for the name the
+        // peer certificate is verified against, as in `fetch()`.
+        let server_name: Option<Box<[u8]>> = ssl_config
+            .as_deref()
+            .and_then(SSLConfig::server_name_bytes)
+            .filter(|name| !name.is_empty())
+            .map(Box::from);
 
         // Decode all BunString inputs into UTF-8 slices. The underlying
         // JavaScript strings may be Latin1 or UTF-16; `String.to_utf8()` either
@@ -274,7 +289,10 @@ where
             );
 
             // Duplicate target_host (needed for SNI during TLS handshake).
-            let target_host_dup: Box<[u8]> = Box::from(host_slice.slice());
+            let target_host_dup: Box<[u8]> = match &server_name {
+                Some(name) => name.clone(),
+                None => Box::from(host_slice.slice()),
+            };
 
             let proxy = WebSocketProxy::init(
                 target_host_dup,
@@ -378,6 +396,13 @@ where
             headers_buf: JsCell::new([picohttp::Header::ZERO; 128]),
             body: JsCell::new(Vec::new()),
             hostname: JsCell::new(ZBox::default()),
+            check_server_identity: JsCell::new(if !check_server_identity.is_empty_or_undefined_or_null()
+                && check_server_identity.is_callable()
+            {
+                StrongOptional::create(check_server_identity, global)
+            } else {
+                StrongOptional::empty()
+            }),
             poll_ref: JsCell::new(poll_ref),
             state: Cell::new(State::Initializing),
             proxy: JsCell::new(proxy_state),
@@ -409,14 +434,15 @@ where
             bun_analytics::features::web_socket.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
 
             if SSL {
-                // SNI uses the URL host (defaulted to "localhost" in
-                // C++ when absent), mirroring the TCP path below. A
-                // user-supplied Host header does NOT affect SNI; use
-                // `tls: { checkServerIdentity }` or put the hostname
-                // in the URL (wss+unix://name/path) to verify against
-                // a specific certificate name.
-                if !host_slice.slice().is_empty() {
-                    this.hostname.set(ZBox::from_bytes(host_slice.slice()));
+                // SNI uses `tls.serverName`, else the URL host (defaulted to
+                // "localhost" in C++ when absent), mirroring the TCP path
+                // below. A user-supplied Host header does NOT affect SNI.
+                let sni: &[u8] = match &server_name {
+                    Some(name) => name,
+                    None => host_slice.slice(),
+                };
+                if !sni.is_empty() {
+                    this.hostname.set(ZBox::from_bytes(sni));
                 }
             }
 
@@ -446,9 +472,14 @@ where
         if SSL {
             // SNI for the outer TLS socket must use the host we actually
             // dialed. For HTTPS proxy connections, that's the proxy host,
-            // not the wss:// target.
-            if !display_host.is_empty() {
-                this.hostname.set(ZBox::from_bytes(display_host));
+            // not the wss:// target; `tls.serverName` names the target and
+            // is applied to the tunnel handshake instead.
+            let sni: &[u8] = match &server_name {
+                Some(name) if !using_proxy => name,
+                _ => display_host,
+            };
+            if !sni.is_empty() {
+                this.hostname.set(ZBox::from_bytes(sni));
             }
         }
 
@@ -606,6 +637,9 @@ where
         if handshake_success {
             // handshake completed but we may have ssl errors
             if reject_unauthorized {
+                // `verify_peer_identity` may run the user's callback, which can
+                // close the WebSocket and release every other ref to `this`.
+                let _guard = RefPtr::from_this(this);
                 // only reject the connection if reject_unauthorized == true
                 if ssl_error.error_no != 0 {
                     log!(
@@ -621,17 +655,22 @@ where
                     Self::fail(this, ErrorCode::TlsHandshakeFailed);
                     return;
                 };
-                let identity_ok = {
+                // Owned copy: `verify_peer_identity` may run JS that clears
+                // `hostname` through `clear_data`.
+                let hostname: Vec<u8> = {
                     let own_hostname = this.hostname.get();
-                    let sni: Vec<u8>;
-                    let hostname: &[u8] = if !own_hostname.is_empty() {
-                        own_hostname.as_bytes()
+                    if !own_hostname.is_empty() {
+                        own_hostname.as_bytes().to_vec()
                     } else {
-                        sni = ssl.servername().map(<[u8]>::to_vec).unwrap_or_default();
-                        &sni
-                    };
-                    !hostname.is_empty() && boringssl::check_server_identity(ssl, hostname)
+                        ssl.servername().map(<[u8]>::to_vec).unwrap_or_default()
+                    }
                 };
+                let identity_ok = Self::verify_peer_identity(this, ssl, &hostname);
+                if this.cpp_websocket().is_none() {
+                    // The callback closed the WebSocket; `cancel` already
+                    // closed the socket.
+                    return;
+                }
                 if !identity_ok {
                     Self::fail(this, ErrorCode::TlsHandshakeFailed);
                 }
@@ -641,6 +680,33 @@ where
             // if we set reject_unauthorized == false this means the server requires custom CA aka NODE_EXTRA_CA_CERTS
             Self::fail(this, ErrorCode::TlsHandshakeFailed);
         }
+    }
+
+    /// Verifies the peer certificate against `hostname`. With a user
+    /// `tls.checkServerIdentity` callback, the callback's verdict replaces the
+    /// built-in name check (Node semantics, same as `fetch`). Without one,
+    /// the built-in SAN check runs.
+    ///
+    /// Takes `ThisPtr<Self>` because the callback runs JS that may close the
+    /// WebSocket and re-enter `cancel`. The caller must hold a `RefPtr` guard
+    /// and re-check `cpp_websocket()` before it touches the socket again.
+    pub(crate) fn verify_peer_identity(
+        this: ThisPtr<Self>,
+        ssl: &mut boringssl::c::SSL,
+        hostname: &[u8],
+    ) -> bool {
+        let Some(callback) = this.check_server_identity.get().get() else {
+            return !hostname.is_empty() && boringssl::check_server_identity(ssl, hostname);
+        };
+        // Keeps `this` alive across the callback so the `deinit` below is
+        // sound even if the callback releases every other ref.
+        let _guard = RefPtr::from_this(this);
+        let global = VirtualMachineRef::get().global();
+        let verdict = call_check_server_identity(global, callback, ssl, hostname);
+        // Single use. Release the root now so a callback that captures the
+        // WebSocket does not keep it alive for the life of the connection.
+        this.check_server_identity.with_mut(StrongOptional::deinit);
+        verdict
     }
 
     /// Takes `ThisPtr<Self>` because `terminate` may free `this`; see `fail`.
@@ -1479,6 +1545,7 @@ impl<const SSL: bool> HTTPClient<SSL> {
         if !self.hostname.get().is_empty() {
             self.hostname.set(ZBox::default());
         }
+        self.check_server_identity.with_mut(StrongOptional::deinit);
 
         // Clean up proxy state. Null the field and detach the tunnel's
         // back-reference before deinit so that SSLWrapper shutdown callbacks
@@ -1805,6 +1872,57 @@ fn compute_accept_value(key: &[u8]) -> [u8; 28] {
     result
 }
 
+/// Calls the user's `checkServerIdentity(hostname, cert)` for the peer's leaf
+/// certificate. `true` unless the callback returns an Error or throws, or the
+/// certificate cannot be read. Any pending JS exception is consumed: the only
+/// signal to the user is the 1015 close.
+fn call_check_server_identity(
+    global: &JSGlobalObject,
+    callback: JSValue,
+    ssl: &mut boringssl::c::SSL,
+    hostname: &[u8],
+) -> bool {
+    let Some(cert) = ssl.peer_leaf_certificate() else {
+        return false;
+    };
+    let js_cert = match bun_jsc::from_js_host_call(global, || {
+        Bun__X509__toJSLegacyEncoding(cert, global)
+    }) {
+        Ok(v) => v,
+        Err(e) => {
+            let _ = global.take_exception(e);
+            return false;
+        }
+    };
+    let js_hostname = match bun_jsc::bun_string_jsc::create_utf8_for_js(global, hostname) {
+        Ok(v) => v,
+        Err(e) => {
+            let _ = global.take_exception(e);
+            return false;
+        }
+    };
+    let verdict = match callback.call(global, JSValue::UNDEFINED, &[js_hostname, js_cert]) {
+        // > On success, returns <undefined>. Any non-error value passes.
+        Ok(v) => !v.is_any_error(),
+        Err(e) => {
+            let _ = global.take_exception(e);
+            false
+        }
+    };
+    js_hostname.ensure_still_alive();
+    js_cert.ensure_still_alive();
+    verdict
+}
+
+// Same C++ entry point `bun_runtime::api::bun::x509::to_js` uses; declared
+// here because `bun_http_jsc` sits below `bun_runtime`.
+unsafe extern "C" {
+    safe fn Bun__X509__toJSLegacyEncoding(
+        cert: &mut boringssl::c::X509,
+        global_object: &JSGlobalObject,
+    ) -> JSValue;
+}
+
 // LAYERING: `Bun__WebSocket__parseSSLConfig` / `Bun__WebSocket__freeSSLConfig`
 // live in `bun_runtime::socket::ssl_config` (src/runtime/socket/SSLConfig.rs).
 // `SSLConfig::from_js` walks Blob/JSCArrayBuffer/node_fs values (tier-6) and
@@ -1853,6 +1971,7 @@ pub fn bun__websockethttpclient__connect(
     target_authorization: Option<&BunString>,
     unix_socket_path: Option<&BunString>,
     offer_permessage_deflate: bool,
+    check_server_identity: JSValue,
 ) -> *mut crate::websocket_client::websocket_upgrade_client::HttpUpgradeClient {
     HttpUpgradeClient::connect(
         global,
@@ -1873,6 +1992,7 @@ pub fn bun__websockethttpclient__connect(
         target_authorization,
         unix_socket_path,
         offer_permessage_deflate,
+        check_server_identity,
     )
     .unwrap_or(ptr::null_mut())
 }
@@ -1912,6 +2032,7 @@ pub fn bun__websockethttpsclient__connect(
     target_authorization: Option<&BunString>,
     unix_socket_path: Option<&BunString>,
     offer_permessage_deflate: bool,
+    check_server_identity: JSValue,
 ) -> *mut crate::websocket_client::websocket_upgrade_client::HttpsUpgradeClient {
     HttpsUpgradeClient::connect(
         global,
@@ -1932,6 +2053,7 @@ pub fn bun__websockethttpsclient__connect(
         target_authorization,
         unix_socket_path,
         offer_permessage_deflate,
+        check_server_identity,
     )
     .unwrap_or(ptr::null_mut())
 }

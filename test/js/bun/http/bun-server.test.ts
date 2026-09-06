@@ -352,6 +352,35 @@ describe.concurrent("Server", () => {
     }
   });
 
+  // A synchronous throw used to reject with the engine-internal JSC::Exception
+  // cell instead of the thrown value. `await p` in a try/catch unwrapped it by
+  // accident; `.then(_, onRejected)` / `.catch()` saw the raw cell.
+  test.each([
+    ["an Error", () => new Error("boom")],
+    ["a non-Error value", () => ({ code: 42 })],
+  ])("server.fetch rejects with the thrown value when the handler throws %s synchronously", async (_, make) => {
+    const thrown: unknown = make();
+    using server = Bun.serve({
+      port: 0,
+      fetch(req) {
+        throw thrown;
+      },
+    });
+    let status: string | undefined;
+    let reason: unknown;
+    await server.fetch(`http://${server.hostname}:${server.port}/`).then(
+      () => (status = "fulfilled"),
+      r => ((status = "rejected"), (reason = r)),
+    );
+    expect(status).toBe("rejected");
+    // Plain `!==` first: `expect(reason).toBe(thrown)` deep-compares on a
+    // mismatch, and any property access on the leaked cell crashes the runner.
+    if (reason !== thrown) {
+      throw new Error(`server.fetch() rejected with ${Bun.inspect(reason)} instead of the thrown value`);
+    }
+    expect(Object.prototype.toString.call(reason)).toBe(thrown instanceof Error ? "[object Error]" : "[object Object]");
+  });
+
   test("server should return a body for a OPTIONS Request", async () => {
     using server = Bun.serve({
       port: 0,

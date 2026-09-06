@@ -6421,6 +6421,19 @@ impl<'a> Resolver<'a> {
                         }
                     }
                 }
+                if let Some(found) = tsconfig_path {
+                    if is_shared_scratch_dir(path) {
+                        let _ = self.log_mut().add_debug_fmt(
+                            None,
+                            bun_ast::Loc::EMPTY,
+                            format_args!(
+                                "Ignoring {} because its directory is writable by every user on the system. Pass --tsconfig-override to load it anyway.",
+                                bun_core::fmt::quote(found)
+                            ),
+                        );
+                        tsconfig_path = None;
+                    }
+                }
             } else if parent.is_none() {
                 // NOTE: re-borrow as 'static so the `&self.opts` borrow ends before
                 // `self.parse_tsconfig(&mut self, ...)`. `tsconfig_override` is owned by
@@ -6722,6 +6735,35 @@ fn is_dot_slash(path: &[u8]) -> bool {
     #[cfg(windows)]
     {
         path.len() == 2 && path[0] == b'.' && strings::char_is_any_slash(path[1])
+    }
+}
+
+/// True for a directory that is both world-writable and sticky (mode `1777`:
+/// `/tmp`, `/var/tmp`, `/dev/shm`).
+///
+/// Every user on the system can create a file in such a directory, so a file
+/// found there during the upward walk can belong to anyone. The sticky bit is
+/// the boundary that matters: a world-writable directory without it lets the
+/// same attacker rename the project itself, so nothing in the subtree is
+/// trustworthy either way.
+fn is_shared_scratch_dir(path: &[u8]) -> bool {
+    #[cfg(unix)]
+    {
+        const SHARED: libc::mode_t = libc::S_ISVTX | libc::S_IWOTH;
+        let mut buf = bun_paths::path_buffer_pool::get();
+        if path.is_empty() || path.len() >= buf.len() {
+            return false;
+        }
+        buf[..path.len()].copy_from_slice(path);
+        buf[path.len()] = 0;
+        // SAFETY: `buf[path.len()] == 0` written above.
+        let span = bun_core::ZStr::from_buf(&buf[..], path.len());
+        bun_sys::stat(span).is_ok_and(|st| (st.st_mode & SHARED) == SHARED)
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = path;
+        false
     }
 }
 

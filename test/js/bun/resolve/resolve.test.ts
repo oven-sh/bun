@@ -1758,6 +1758,107 @@ describe("tsconfig paths skip `.d.ts` substitutions", () => {
   });
 });
 
+// `/tmp`, `/var/tmp` and `/dev/shm` are world-writable and sticky (mode 1777).
+// Every user can create a file in them, so a `tsconfig.json` found there during
+// the upward walk can belong to any user on the system. Because tsconfig `paths`
+// win over the node_modules walk, such a file would rewrite a project's bare
+// imports to code the project never installed. Auto-discovery skips it.
+describe.skipIf(isWindows)("tsconfig in a world-writable sticky directory", () => {
+  // `shared/` stands in for `/tmp`: another user plants the config, the victim's
+  // project is a private subdirectory with its own package.json and node_modules.
+  function plantedFixture(configName: "tsconfig.json" | "jsconfig.json", extra: Record<string, string> = {}) {
+    const dir = tempDir("tsconfig-shared-dir", {
+      [`shared/${configName}`]: JSON.stringify({
+        compilerOptions: { paths: { "lib": ["./planted.js"] } },
+      }),
+      "shared/planted.js": `module.exports = "PLANTED";`,
+      "shared/proj/package.json": JSON.stringify({ name: "proj", dependencies: { lib: "1.0.0" } }),
+      "shared/proj/node_modules/lib/package.json": JSON.stringify({ name: "lib", version: "1.0.0" }),
+      "shared/proj/node_modules/lib/index.js": `module.exports = "GENUINE";`,
+      "shared/proj/app.js": `console.log(require("lib"));`,
+      ...extra,
+    });
+    return dir;
+  }
+
+  test.concurrent("a planted tsconfig does not rewrite a bare import at runtime", async () => {
+    using dir = plantedFixture("tsconfig.json");
+    const shared = join(String(dir), "shared");
+    chmodSync(shared, 0o1777);
+
+    expect(await runWildcardScript(join(shared, "proj"), "app.js")).toEqual({
+      stdout: "GENUINE",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  test.concurrent("a planted jsconfig does not rewrite a bare import at runtime", async () => {
+    using dir = plantedFixture("jsconfig.json");
+    const shared = join(String(dir), "shared");
+    chmodSync(shared, 0o1777);
+
+    expect(await runWildcardScript(join(shared, "proj"), "app.js")).toEqual({
+      stdout: "GENUINE",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  test.concurrent("a planted tsconfig does not reach the bundle", async () => {
+    using dir = plantedFixture("tsconfig.json");
+    const shared = join(String(dir), "shared");
+    chmodSync(shared, 0o1777);
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", "./app.js", "--target", "node"],
+      env: bunEnv,
+      cwd: join(shared, "proj"),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).not.toContain("error");
+    expect(stdout).toContain("GENUINE");
+    expect(stdout).not.toContain("PLANTED");
+    expect(exitCode).toBe(0);
+  });
+
+  // The sticky bit is the boundary. A directory that only the owner can write
+  // keeps supplying its tsconfig to every subdirectory, which is what a monorepo
+  // with a root tsconfig above per-package package.json files relies on.
+  test.concurrent("an owner-only ancestor directory still supplies its tsconfig", async () => {
+    using dir = plantedFixture("tsconfig.json");
+    const shared = join(String(dir), "shared");
+    chmodSync(shared, 0o755);
+
+    expect(await runWildcardScript(join(shared, "proj"), "app.js")).toEqual({
+      stdout: "PLANTED",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  // `--tsconfig-override` is an explicit choice by the person running bun, so it
+  // is loaded whatever the directory mode is.
+  test.concurrent("--tsconfig-override loads the file anyway", async () => {
+    using dir = plantedFixture("tsconfig.json");
+    const shared = join(String(dir), "shared");
+    chmodSync(shared, 0o1777);
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "--tsconfig-override", join(shared, "tsconfig.json"), "app.js"],
+      env: bunEnv,
+      cwd: join(shared, "proj"),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    expect(stdout.trim()).toBe("PLANTED");
+    expect(exitCode).toBe(0);
+  });
+});
+
 it.skipIf(isWindows)("runs a script from a working directory nested 256 directories deep", async () => {
   using dir = tempDir("resolver-deep-cwd", { ".keep": "" });
   const base = realpathSync(String(dir));

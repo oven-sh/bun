@@ -8894,11 +8894,8 @@ pub(crate) fn move_file_z_slow(
     let _ = close(in_handle);
     r
 }
-/// The EXDEV arm of the `move_file_z*` family. Copies `in_handle` into a
-/// temp file beside `destination`, then renames it over `destination`, so
-/// `destination` names the previous file or the complete copy at every
-/// moment. A failed copy removes the temp file and leaves `destination` as
-/// it was.
+/// EXDEV arm of the `move_file_z*` family: copy into a temp file beside
+/// `destination`, then rename it into place. `destination` is never partial.
 pub(crate) fn copy_file_z_slow_with_handle(
     in_handle: Fd,
     to_dir: Fd,
@@ -8926,7 +8923,7 @@ pub(crate) fn copy_file_z_slow_with_handle(
         let _ = safe_libc::fchmod(dst.native(), st.st_mode);
         let _ = safe_libc::fchown(dst.native(), st.st_uid, st.st_gid);
     }
-    // Some filesystems (NFS) report a deferred write error only here.
+    // NFS reports a deferred write error only at close().
     let closed = close(dst);
     if r.is_ok() {
         r = closed;
@@ -8940,9 +8937,8 @@ pub(crate) fn copy_file_z_slow_with_handle(
     r
 }
 
-/// Writes `dir/.base.<16 hex digits>.tmp` into `buf` for a `dest` of
-/// `dir/base`. The result is in the same directory as `dest`, so a rename
-/// from it onto `dest` never crosses a filesystem.
+/// `dir/.base.<16 hex digits>.tmp` for a `dest` of `dir/base`. Same
+/// directory, so the rename onto `dest` cannot cross a filesystem.
 fn tmpname_beside<'a>(buf: &'a mut [u8], dest: &[u8]) -> Maybe<&'a ZStr> {
     let split = if cfg!(windows) {
         bun_core::strings::last_index_of_any(dest, b"/\\:")
@@ -9045,9 +9041,8 @@ pub(crate) fn renameat_concurrently_without_fallback(
                     ..Default::default()
                 },
             ) {
-                // ENOENT: there is nothing to move. EXDEV: no rename of this
-                // pair can succeed, so the delete-tree below would remove `to`
-                // for nothing. The caller decides whether to copy instead.
+                // ENOENT: nothing to move. EXDEV: no rename of this pair can
+                // succeed, so do not delete `to` for it below.
                 Err(err) => {
                     if matches!(err.get_errno(), E::ENOENT | E::EXDEV) {
                         return Err(err);
@@ -9084,10 +9079,8 @@ pub(crate) fn renameat_concurrently_without_fallback(
             }
         }
 
-        // Sad path: the flagged renames are unsupported (FreeBSD, NFS,
-        // Windows) or the exchange failed. A plain rename still replaces a
-        // file atomically. Only when that fails too (a directory is in the
-        // way) is `to` deleted first.
+        // Sad path (no NOREPLACE/EXCHANGE support, or the exchange failed).
+        // A plain rename replaces a file; delete `to` only if it is in the way.
         let err = match renameat(from_dir_fd, from, to_dir_fd, to) {
             Ok(()) => break 'attempt,
             Err(err) => err,

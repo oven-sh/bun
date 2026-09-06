@@ -91,6 +91,20 @@ describe("tsconfig compilerOptions.jsx", () => {
     expect(stderr).toBe("");
     expect(exitCode).toBe(0);
   });
+
+  // https://github.com/oven-sh/bun/issues/3528
+  test.each(["react-jsx", "preserve"])(
+    'Bun.Transpiler with jsx "%s" and jsxImportSource "solid-js" uses the automatic runtime',
+    jsx => {
+      const transpiler = new Bun.Transpiler({
+        loader: "tsx",
+        tsconfig: { compilerOptions: { jsx, jsxImportSource: "solid-js" } },
+      });
+      const out = transpiler.transformSync(`export default <div>hi</div>;`);
+      expect(out).toMatch(/^export default jsx(DEV)?_\w+\("div"/);
+      expect(out).not.toContain("React.createElement");
+    },
+  );
 });
 
 describe("removed solid jsx runtime", () => {

@@ -273,6 +273,12 @@ The `.send(message)` method of `ServerWebSocket` returns a `number` indicating t
 - `0` — The message was dropped due to a connection issue
 - `1+` — The number of bytes sent
 
+`backpressureLimit` sets how many bytes a single connection can buffer. Bun checks the limit before it queues a message. If the connection already buffers more than the limit, Bun drops the message and `.send()` returns `0`. If the connection buffers less than the limit, Bun queues the whole message, even when the message is larger than the limit. So a single message can push a connection past the limit by its own size.
+
+`.publish()` writes the message to every subscriber in turn, on the JS thread. The part a subscriber's socket does not accept at once is copied into that subscriber's own buffer. There is no shared buffer between subscribers. A large message to many subscribers costs one copy of the message per subscriber, in both memory and loop time. With 150 subscribers and an 8 MB message, one `.publish()` call takes about 1 second and holds about 1.2 GB until the subscribers drain. A `backpressureLimit` below the message size does not change this, because every connection starts below the limit.
+
+Keep published messages small. To share a large payload with many clients, publish a short message that points at it, and serve the bytes over HTTP from a `Blob`, a `BunFile`, or a static route.
+
 ### Timeouts and limits
 
 By default, Bun closes a WebSocket connection that has been idle for 120 seconds. Configure this with the `idleTimeout` parameter.

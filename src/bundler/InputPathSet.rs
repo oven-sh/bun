@@ -1,6 +1,3 @@
-//! The on-disk input files of a build, so that no output file is written
-//! over one of them.
-
 use crate::mal_prelude::*;
 
 use bun_paths::resolve_path::{self, platform};
@@ -40,9 +37,8 @@ impl InputPathSet {
         Self { paths: set }
     }
 
-    /// The input file that writing `dest_path` under `root` would replace,
-    /// relative to the working directory for display. `root` comes from
-    /// [`resolve_output_root`].
+    /// The input that writing `dest_path` under `root` would replace, relative
+    /// to the working directory.
     pub fn overwritten_by(&self, root: &[u8], dest_path: &[u8]) -> Option<Box<[u8]>> {
         let abs = resolve_path::join_abs_string::<platform::Auto>(root, &[dest_path]);
         let index = self.paths.get_index(abs)?;
@@ -54,9 +50,8 @@ impl InputPathSet {
     }
 }
 
-/// The absolute, symlink-resolved directory that output files are written
-/// under. `root_path` is the outdir as the user gave it: absolute, or relative
-/// to the working directory. An empty `root_path` is the working directory.
+/// The absolute, symlink-resolved output directory. An empty `root_path` is
+/// the working directory.
 pub fn resolve_output_root(root_path: &[u8]) -> Box<[u8]> {
     let top_level_dir = bun_resolver::fs::FileSystem::get().top_level_dir;
     let mut abs_buf = bun_paths::path_buffer_pool::get();

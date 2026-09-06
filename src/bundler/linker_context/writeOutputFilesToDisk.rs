@@ -677,10 +677,8 @@ pub(crate) fn write_output_files_to_disk(
     Ok(())
 }
 
-/// Fails the build before the first write when any output path is one of the
-/// build's input files. The set of paths mirrors the writes above: every
-/// chunk, its `.map` when the sourcemap is a separate file, its `.jsc` when a
-/// bytecode cache is generated, and every additional output file.
+/// Checks every path the loops above write: each chunk, its `.map` and `.jsc`
+/// when those are written, and each additional output file.
 fn refuse_to_overwrite_inputs(
     c: &mut LinkerContext,
     root_path: &[u8],

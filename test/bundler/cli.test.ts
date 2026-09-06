@@ -924,6 +924,25 @@ describe.concurrent("bun build refuses to write an output over an input", () => 
     );
   });
 
+  // On Windows the executable gets an .exe suffix, so it cannot collide with the entry point.
+  test.skipIf(isWindows)("--compile with an --outfile that names the entry point", async () => {
+    using dir = tempDir("build-overwrite-compile", {
+      "app.js": `console.log("APP");\n`,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", "--compile", "./app.js", "--outfile", "app.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toContain('Refusing to overwrite input file "app.js"');
+    expect(exitCode).toBe(1);
+    expect(await Bun.file(path.join(String(dir), "app.js")).text()).toBe(`console.log("APP");\n`);
+  });
+
   test("Bun.build with outdir set to the source directory", async () => {
     using dir = tempDir("build-api-overwrite", {
       "a.js": `import "./b.js";\nconsole.log("A");\n`,

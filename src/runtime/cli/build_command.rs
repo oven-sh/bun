@@ -868,17 +868,12 @@ impl BuildCommand {
             }
 
             if !ctx.bundler_options.compile {
-                let root = resolve_output_root(root_path);
-                for f in output_files.iter() {
-                    if let Some(input) = input_paths.overwritten_by(&root, &f.dest_path) {
-                        Output::err_generic(
-                            "Refusing to overwrite input file {}",
-                            (bun_fmt::quote(&input),),
-                        );
-                        Output::flush();
-                        exit_or_watch(1, ctx.debug.hot_reload == HotReload::Watch);
-                    }
-                }
+                refuse_to_overwrite_inputs(
+                    &input_paths,
+                    root_path,
+                    output_files.iter().map(|f| &*f.dest_path),
+                    ctx.debug.hot_reload == HotReload::Watch,
+                );
             }
 
             if ctx.bundler_options.compile {
@@ -916,6 +911,28 @@ impl BuildCommand {
                     if bun_sys::directory_exists_at(root_dir.fd, z).unwrap_or(false) {
                         outfile = b"index";
                     }
+                }
+
+                {
+                    let exe_basename = bun_paths::basename(outfile);
+                    let mut dest_paths: Vec<Box<[u8]>> = vec![Box::from(exe_basename)];
+                    if opt_source_map == options::SourceMapOption::External {
+                        for f in output_files.iter() {
+                            if f.output_kind == options::OutputKind::Sourcemap {
+                                dest_paths.push(if f.dest_path.is_empty() {
+                                    strings::concat(&[exe_basename, b".map"])
+                                } else {
+                                    Box::from(bun_paths::basename(&f.dest_path))
+                                });
+                            }
+                        }
+                    }
+                    refuse_to_overwrite_inputs(
+                        &input_paths,
+                        root_path,
+                        dest_paths.iter().map(|d| &**d),
+                        ctx.debug.hot_reload == HotReload::Watch,
+                    );
                 }
 
                 let result = match bun_standalone_module_graph::StandaloneModuleGraph::to_executable(
@@ -1207,6 +1224,29 @@ fn compile_outfile(outfile: &[u8]) -> &[u8] {
         b"index"
     } else {
         outfile
+    }
+}
+
+/// Frees what it allocates before the exit: `exit_or_watch` never returns.
+fn refuse_to_overwrite_inputs<'a>(
+    input_paths: &InputPathSet,
+    root_path: &[u8],
+    dest_paths: impl Iterator<Item = &'a [u8]>,
+    watch: bool,
+) {
+    let overwritten = {
+        let root = resolve_output_root(root_path);
+        let mut dest_paths = dest_paths;
+        dest_paths.find_map(|dest_path| input_paths.overwritten_by(&root, dest_path))
+    };
+    if let Some(input) = overwritten {
+        Output::err_generic(
+            "Refusing to overwrite input file {}",
+            (bun_fmt::quote(&input),),
+        );
+        drop(input);
+        Output::flush();
+        exit_or_watch(1, watch);
     }
 }
 

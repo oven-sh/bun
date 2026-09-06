@@ -44,7 +44,10 @@ unsafe extern "C" fn TextEncoder__encode8(
         return JSValue::ZERO;
     };
     debug_assert!(array_buffer.len == utf8_len);
-    let written = simdutf::convert::latin1::to::utf8(slice, array_buffer.byte_slice_mut());
+    // SAFETY: the array was allocated with exactly `utf8_len` bytes, the
+    // number the conversion writes.
+    let written =
+        unsafe { simdutf::convert::latin1::to::utf8(slice, array_buffer.byte_slice_mut()) };
     debug_assert!(written == utf8_len);
     uint8array
 }

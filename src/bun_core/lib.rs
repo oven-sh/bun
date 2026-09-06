@@ -1604,8 +1604,10 @@ pub(crate) mod strings_impl {
         list.reserve(ascii.len() + element_length_latin1_into_utf8(rest));
         list.extend_from_slice(ascii);
         if !rest.is_empty() {
-            // SAFETY: the reserve above sized the spare slice for the whole
-            // conversion; simdutf writes only initialized bytes and reports the count.
+            // SAFETY: the reserve above sized the spare slice for
+            // `element_length_latin1_into_utf8(rest)` bytes, which is what
+            // the conversion writes; simdutf writes only initialized bytes
+            // and reports the count.
             unsafe {
                 crate::vec::fill_spare(&mut list, 0, |spare| {
                     (simdutf::convert::latin1::to::utf8(rest, spare), ())
@@ -1822,8 +1824,11 @@ pub(crate) mod strings_impl {
             if head < 16 {
                 break;
             }
-            written +=
-                simdutf::convert::latin1::to::utf8(&latin1[read..read + head], &mut buf[written..]);
+            // SAFETY: `head <= (buf.len() - written) / 2`, and each Latin-1
+            // byte expands to at most 2 bytes, so the output always fits.
+            written += unsafe {
+                simdutf::convert::latin1::to::utf8(&latin1[read..read + head], &mut buf[written..])
+            };
             read += head;
         }
         let tail =

@@ -1960,8 +1960,7 @@ mod _async_tasks {
                 }
             }
 
-            let open_flags =
-                sys::O::DIRECTORY | sys::O::RDONLY | sys::O::NOFOLLOW | sys::O::CLOEXEC;
+            let open_flags = sys::O::DIRECTORY | sys::O::RDONLY | sys::O::NOFOLLOW;
             let fd = match openat_os_path(FD::cwd(), src, open_flags, 0) {
                 Err(err) => {
                     this_ref.finish_concurrently(Err(
@@ -4491,7 +4490,7 @@ impl NodeFS {
             }
             PathOrFileDescriptor::Path(path_) => {
                 let path = path_.slice_z(&mut self.sync_error_buf);
-                let fd = Syscall::open(path, args.flag.as_int() | sys::O::CLOEXEC, args.mode)?;
+                let fd = Syscall::open(path, args.flag.as_int(), args.mode)?;
                 let _close = scopeguard::guard(fd, |fd| fd.close());
                 while !data.is_empty() {
                     let written = Syscall::write(fd, data)?;
@@ -4755,7 +4754,7 @@ impl NodeFS {
                         return Ok(());
                     }
                 } else {
-                    let src_fd = match Syscall::open(src, sys::O::RDONLY | sys::O::CLOEXEC, 0o644) {
+                    let src_fd = match Syscall::open(src, sys::O::RDONLY, 0o644) {
                         Ok(result) => result,
                         Err(err) => return Err(err.with_path(args.src.slice())),
                     };
@@ -4773,11 +4772,10 @@ impl NodeFS {
                         flags |= sys::O::EXCL;
                     }
 
-                    let dest_fd =
-                        match Syscall::open(dest, flags | sys::O::CLOEXEC, stat_.st_mode as Mode) {
-                            Ok(result) => result,
-                            Err(err) => return Err(err.with_path(args.dest.slice())),
-                        };
+                    let dest_fd = match Syscall::open(dest, flags, stat_.st_mode as Mode) {
+                        Ok(result) => result,
+                        Err(err) => return Err(err.with_path(args.dest.slice())),
+                    };
 
                     let result = Self::copy_file_using_read_write_loop(
                         src,
@@ -4824,7 +4822,7 @@ impl NodeFS {
                 });
             }
 
-            let src_fd = match Syscall::open(src, sys::O::RDONLY | sys::O::CLOEXEC, 0) {
+            let src_fd = match Syscall::open(src, sys::O::RDONLY, 0) {
                 Ok(result) => result,
                 Err(err) => return Err(err.with_path(args.src.slice())),
             };
@@ -4846,8 +4844,7 @@ impl NodeFS {
             if args.mode.shouldnt_overwrite() {
                 flags |= sys::O::EXCL;
             }
-            let dest_fd = match Syscall::open(dest, flags | sys::O::CLOEXEC, stat_.st_mode as Mode)
-            {
+            let dest_fd = match Syscall::open(dest, flags, stat_.st_mode as Mode) {
                 Ok(result) => result,
                 Err(err) => return Err(err),
             };
@@ -4929,7 +4926,7 @@ impl NodeFS {
             let src = args.src.slice_z(&mut src_buf);
             let dest = args.dest.slice_z(&mut dest_buf);
 
-            let src_fd = Syscall::open(src, sys::O::RDONLY | sys::O::CLOEXEC, 0o644)?;
+            let src_fd = Syscall::open(src, sys::O::RDONLY, 0o644)?;
             let _close_src = scopeguard::guard(src_fd, |fd| fd.close());
 
             let stat_ = Syscall::fstat(src_fd)?;
@@ -4954,7 +4951,7 @@ impl NodeFS {
                 flags |= sys::O::EXCL;
             }
 
-            let dest_fd = Syscall::open(dest, flags | sys::O::CLOEXEC, stat_.st_mode as Mode)?;
+            let dest_fd = Syscall::open(dest, flags, stat_.st_mode as Mode)?;
 
             let mut size: usize = stat_.st_size.max(0) as usize;
 
@@ -5776,7 +5773,7 @@ impl NodeFS {
         } else {
             args.path.slice_z(&mut self.sync_error_buf)
         };
-        match Syscall::open(path, args.flags.as_int() | sys::O::CLOEXEC, args.mode) {
+        match Syscall::open(path, args.flags.as_int(), args.mode) {
             Err(err) => Err(err.with_path(args.path.slice())),
             Ok(fd) => Ok(fd),
         }
@@ -6243,7 +6240,7 @@ impl NodeFS {
             unsafe { bun_ptr::detach_lifetime(&path[..path.len() - 1]) }
         };
         #[cfg(not(windows))]
-        let flags = sys::O::DIRECTORY | sys::O::RDONLY | sys::O::CLOEXEC;
+        let flags = sys::O::DIRECTORY | sys::O::RDONLY;
         let atfd = if is_root {
             FD::cwd()
         } else {
@@ -6444,7 +6441,7 @@ impl NodeFS {
                 &item[..item.len().saturating_sub(1)]
             };
 
-            let flags = sys::O::DIRECTORY | sys::O::RDONLY | sys::O::CLOEXEC;
+            let flags = sys::O::DIRECTORY | sys::O::RDONLY;
             let atfd = if *root_fd == FD::INVALID {
                 FD::cwd()
             } else {
@@ -6639,7 +6636,7 @@ impl NodeFS {
         }
 
         #[cfg(not(windows))]
-        let flags = sys::O::DIRECTORY | sys::O::RDONLY | sys::O::CLOEXEC;
+        let flags = sys::O::DIRECTORY | sys::O::RDONLY;
         #[cfg(not(windows))]
         let open_res = Syscall::open(path, flags, 0);
         #[cfg(windows)]
@@ -6823,7 +6820,7 @@ impl NodeFS {
 
                 match sys::open(
                     path,
-                    args.flag.as_int() | sys::O::NOCTTY | sys::O::CLOEXEC,
+                    args.flag.as_int() | sys::O::NOCTTY,
                     DEFAULT_PERMISSION,
                 ) {
                     Err(err) => return Err(err.with_path(p.slice())),
@@ -7160,7 +7157,7 @@ impl NodeFS {
                 if (flags & sys::O::APPEND) == 0 {
                     flags &= !sys::O::TRUNC;
                 }
-                match sys::openat(args.dirfd, path, flags | sys::O::CLOEXEC, args.mode) {
+                match sys::openat(args.dirfd, path, flags, args.mode) {
                     Err(err) => return Err(err.with_path(p.slice())),
                     Ok(fd) => fd,
                 }
@@ -7423,9 +7420,9 @@ impl NodeFS {
             let path = ZStr::from_buf(&inbuf[..], path_len);
 
             #[cfg(any(target_os = "linux", target_os = "android"))]
-            let flags = sys::O::PATH | sys::O::CLOEXEC; // O_PATH is faster
+            let flags = sys::O::PATH; // O_PATH is faster
             #[cfg(not(any(target_os = "linux", target_os = "android")))]
-            let flags = sys::O::RDONLY | sys::O::NONBLOCK | sys::O::NOCTTY | sys::O::CLOEXEC;
+            let flags = sys::O::RDONLY | sys::O::NONBLOCK | sys::O::NOCTTY;
 
             let fd = match sys::open(path, flags, 0) {
                 Err(err) => return Err(err.with_path(path)),
@@ -8060,7 +8057,7 @@ impl NodeFS {
         let fd = match openat_os_path(
             FD::cwd(),
             src,
-            sys::O::DIRECTORY | sys::O::RDONLY | sys::O::NOFOLLOW | sys::O::CLOEXEC,
+            sys::O::DIRECTORY | sys::O::RDONLY | sys::O::NOFOLLOW,
             0,
         ) {
             Err(err) => return Err(err.with_path(self.os_path_into_sync_error_buf(&src_buf[..sd]))),
@@ -8314,7 +8311,7 @@ impl NodeFS {
                     return Ok(());
                 }
             } else {
-                let src_fd = match Syscall::open(src, sys::O::RDONLY | sys::O::CLOEXEC, 0o644) {
+                let src_fd = match Syscall::open(src, sys::O::RDONLY, 0o644) {
                     Ok(result) => result,
                     Err(err) => {
                         self.sync_error_buf[..src.len()].copy_from_slice(src.as_bytes());
@@ -8391,11 +8388,7 @@ impl NodeFS {
                 return Err(sys::Error::todo());
             }
 
-            let src_fd = match Syscall::open(
-                src,
-                sys::O::RDONLY | sys::O::NOFOLLOW | sys::O::CLOEXEC,
-                0o644,
-            ) {
+            let src_fd = match Syscall::open(src, sys::O::RDONLY | sys::O::NOFOLLOW, 0o644) {
                 Ok(result) => result,
                 Err(err) => {
                     if err.get_errno() == E::ELOOP {
@@ -8566,11 +8559,7 @@ impl NodeFS {
                 });
             }
 
-            let src_fd = match Syscall::open(
-                src,
-                sys::O::RDONLY | sys::O::NOFOLLOW | sys::O::CLOEXEC,
-                0o644,
-            ) {
+            let src_fd = match Syscall::open(src, sys::O::RDONLY | sys::O::NOFOLLOW, 0o644) {
                 Ok(result) => result,
                 Err(err) => {
                     // O_NOFOLLOW on a symlink → recreate the link. FreeBSD's
@@ -8833,7 +8822,7 @@ impl NodeFS {
         // PORT: extracted from the mac/linux/freebsd arms of `copy_single_file_sync`
         // only — there `OSPathSliceZ == ZStr`. Taking `&ZStr` keeps the body
         // monomorphic (and lets it type-check on Windows where it's dead code).
-        match Syscall::open(dest, flags | sys::O::CLOEXEC, mode) {
+        match Syscall::open(dest, flags, mode) {
             Ok(result) => Ok(result),
             Err(err) => {
                 if err.get_errno() == E::ENOENT {
@@ -8849,7 +8838,7 @@ impl NodeFS {
                         ..Default::default()
                     });
                     mkdir_result?;
-                    if let Ok(result) = Syscall::open(dest, flags | sys::O::CLOEXEC, mode) {
+                    if let Ok(result) = Syscall::open(dest, flags, mode) {
                         return Ok(result);
                     }
                 }
@@ -9360,7 +9349,7 @@ fn dt_open_dir(parent: &sys::Dir, name: &[u8]) -> Result<sys::Dir, E> {
     match Syscall::openat(
         parent.fd,
         z,
-        sys::O::DIRECTORY | sys::O::RDONLY | sys::O::NOFOLLOW | sys::O::CLOEXEC,
+        sys::O::DIRECTORY | sys::O::RDONLY | sys::O::NOFOLLOW,
         0,
     ) {
         Ok(fd) => Ok(sys::Dir::from_fd(fd)),

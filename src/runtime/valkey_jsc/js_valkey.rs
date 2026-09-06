@@ -8,7 +8,7 @@ use bun_io::KeepAlive;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{
     self as jsc, CallFrame, GlobalRef, JSArray, JSGlobalObject, JSMap, JSPromise, JSValue, JsCell,
-    JsRef, JsResult,
+    JsRef, JsResult, StringJsc as _,
 };
 use bun_ptr::{AsCtxPtr, BackRef, RefPtr};
 use bun_uws as uws;
@@ -311,8 +311,8 @@ pub struct JSValkeyClient {
     /// `RareData.defaultClientSslCtx()` instead; `tls: false` leaves this null.
     pub(crate) _secure: JsCell<Option<boringssl::c::OwnedSslCtx>>,
 
-    /// The constructor's url argument, or the env / built-in default it fell back to, as UTF-8.
-    pub(crate) url: Box<[u8]>,
+    /// The constructor's url argument, or the env / built-in default it fell back to.
+    pub(crate) url: BunString,
 
     pub(crate) timer: RefCountedTimer,
     pub(crate) reconnect_timer: RefCountedTimer,
@@ -497,11 +497,10 @@ impl JSValkeyClient {
         } else {
             let env = vm_ref.env_loader();
             match env.get(b"REDIS_URL").or_else(|| env.get(b"VALKEY_URL")) {
-                Some(url) => BunString::borrow_utf8(url),
+                Some(url) => BunString::clone_utf8(url),
                 None => BunString::static_("valkey://localhost:6379"),
             }
         };
-        let url: Box<[u8]> = Box::<[u8]>::from(url_str.to_utf8().slice());
         let mut fallback_url_buf = [0u8; 2048];
 
         // Parse and validate the URL using `Parsed::from_utf8`, which returns null for invalid URLs
@@ -744,7 +743,7 @@ impl JSValkeyClient {
             this_value: JsCell::new(JsRef::empty()),
             poll_ref: JsCell::new(KeepAlive::default()),
             _secure: JsCell::new(None),
-            url,
+            url: url_str,
             timer: RefCountedTimer::new(Timer::Tag::ValkeyConnectionTimeout),
             reconnect_timer: RefCountedTimer::new(Timer::Tag::ValkeyConnectionReconnect),
         });
@@ -862,7 +861,7 @@ impl JSValkeyClient {
             this_value: JsCell::new(JsRef::empty()),
             poll_ref: JsCell::new(KeepAlive::default()),
             _secure: JsCell::new(None),
-            url: Box::<[u8]>::from(&self.url[..]),
+            url: self.url.clone(),
             timer: RefCountedTimer::new(Timer::Tag::ValkeyConnectionTimeout),
             reconnect_timer: RefCountedTimer::new(Timer::Tag::ValkeyConnectionReconnect),
         }))
@@ -937,7 +936,7 @@ impl JSValkeyClient {
 
     #[bun_jsc::host_fn(getter)]
     pub(crate) fn get_url(&self, global: &JSGlobalObject) -> JsResult<JSValue> {
-        jsc::bun_string_jsc::create_utf8_for_js(global, &self.url)
+        self.url.to_js(global)
     }
 
     /// `this_value` is the JS wrapper; it holds the cached `tls` option object.
@@ -1040,7 +1039,8 @@ impl JSValkeyClient {
 
             formatter.write_indent(writer)?;
             writer.write_str(pfmt!("<r>url<d>:<r> \"<r><b>"))?;
-            let (before, after) = self.url_split_at_password();
+            let url = self.url.to_utf8();
+            let (before, after) = Self::split_url_at_password(&url);
             write!(writer, "{}", bstr::BStr::new(before))?;
             if let Some(after) = after {
                 write!(writer, "[REDACTED]{}", bstr::BStr::new(after))?;
@@ -1098,8 +1098,7 @@ impl JSValkeyClient {
     }
 
     /// Returns (bytes before the userinfo password, bytes from its `@` on), or (url, None).
-    fn url_split_at_password(&self) -> (&[u8], Option<&[u8]>) {
-        let url: &[u8] = &self.url;
+    fn split_url_at_password(url: &[u8]) -> (&[u8], Option<&[u8]>) {
         let authority_start = strings::index_of(url, b"://").map_or(0, |i| i + 3);
         let authority = &url[authority_start..];
         let authority_end = strings::index_of_any(authority, b"/?#").unwrap_or(authority.len());

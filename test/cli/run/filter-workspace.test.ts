@@ -1355,6 +1355,7 @@ describe.skipIf(isWindows)("signals", () => {
         stdout += decoder.decode(chunk, { stream: true });
         if (stdout.split("ready").length - 1 >= 2) ready.resolve();
       }
+      ready.reject(new Error(`stdout ended before both packages were ready:\n${stdout}`));
     })();
     await ready.promise;
     // Signal the runner alone, not the children.

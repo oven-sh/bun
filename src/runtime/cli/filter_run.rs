@@ -665,8 +665,9 @@ impl<'a> State<'a> {
         for handle in handles {
             // SAFETY: points into `self.handles`, live for the whole run loop.
             if let Some(proc) = unsafe { (*handle).process.as_ref() } {
-                // if we get an error here we simply ignore it
-                let _ = proc.process.kill(signal.0);
+                if matches!(proc.status, Status::Running) {
+                    let _ = proc.process.kill(signal.0);
+                }
             }
             // An already-exited handle may be waiting on pipes a grandchild
             // still holds; with `aborted` set this finishes it now. Killed

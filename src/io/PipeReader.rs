@@ -536,8 +536,34 @@ impl PosixBufferedReader {
         }
 
         match poll.register_with_fd(lp.cast(), FilePollKind::Readable, poll.fd()) {
+            sys::Result::Err(err) if Self::is_unpollable(&err) => {
+                self.demote_to_unpollable();
+                Ok(())
+            }
             sys::Result::Err(err) => Err(err),
             sys::Result::Ok(()) => Ok(()),
+        }
+    }
+
+    /// The kernel refused to watch this fd: `epoll_ctl` returns `EPERM` and
+    /// kqueue `EINVAL` or `ENXIO` for a character device with no poll support
+    /// (`/dev/zero`, `/dev/null`, `/dev/urandom`).
+    fn is_unpollable(err: &sys::Error) -> bool {
+        match err.get_errno() {
+            sys::E::EPERM => true,
+            #[cfg(target_os = "macos")]
+            sys::E::EINVAL | sys::E::ENXIO => true,
+            _ => false,
+        }
+    }
+
+    /// A read on such an fd never waits, so drop the poll and read it
+    /// synchronously like a regular file.
+    fn demote_to_unpollable(&mut self) {
+        self.flags.remove(PosixFlags::POLLABLE);
+        let fd = self.handle.get_fd();
+        if let PollOrFd::Poll(poll) = mem::replace(&mut self.handle, PollOrFd::Fd(fd)) {
+            poll.deinit_force_unregister();
         }
     }
 

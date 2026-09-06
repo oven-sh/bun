@@ -2055,6 +2055,51 @@ describe.skipIf(isWindows)("Bun.file().stream() surfaces read() errors", () => {
   });
 });
 
+// epoll and kqueue refuse a character device with no poll support. The reader
+// must read such a device synchronously, not report the refusal as an error.
+describe.skipIf(isWindows)("Bun.file().stream() on a character device", () => {
+  it.each(["/dev/zero", "/dev/urandom"])("%s streams the sliced range", async path => {
+    let total = 0;
+    for await (const chunk of Bun.file(path).slice(0, 1 << 20).stream()) {
+      total += chunk.length;
+    }
+    expect(total).toBe(1 << 20);
+  });
+
+  it("/dev/null streams to a clean end", async () => {
+    const chunks = [];
+    for await (const chunk of Bun.file("/dev/null").stream()) chunks.push(chunk);
+    expect(chunks).toHaveLength(0);
+  });
+
+  it("Response(Bun.file(device).slice()).body delivers the slice", async () => {
+    let total = 0;
+    for await (const chunk of new Response(Bun.file("/dev/zero").slice(0, 1024)).body) {
+      total += chunk.length;
+    }
+    expect(total).toBe(1024);
+  });
+
+  it("a stream left mid-read does not keep the process alive", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        const reader = Bun.file("/dev/urandom").stream().getReader();
+        const { value } = await reader.read();
+        console.log("read", value.length > 0);
+        `,
+      ],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout).toBe("read true\n");
+    expect(exitCode).toBe(0);
+  });
+});
+
 it("fs.createReadStream(filename) should be able to break inside async loop", async () => {
   for (let i = 0; i < 10; i++) {
     const fileStream = createReadStream(join(import.meta.dir, "..", "fetch", "fixture.png"));

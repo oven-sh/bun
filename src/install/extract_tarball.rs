@@ -279,20 +279,15 @@ impl ExtractTarball {
             }
         };
 
-        // Every failure in `extract_into` leaves a partial (or, on a bad gzip
-        // trailer, complete) extraction behind. Remove it before the error
-        // propagates.
         let extracted = self.extract_into(log, tgz_bytes, &extract_destination, tmpname, name);
 
-        // Explicitly close the temp extraction dir before the rename (or the
-        // removal). On Windows a still-open handle to the source directory
-        // can fail `NtSetInformationFile` with EBUSY; spelling out the close
-        // keeps the timing visible instead of relying on block-end Drop.
+        // Windows cannot rename or delete a directory that still has an open handle.
         drop(extract_destination);
 
         let resolved = match extracted {
             Ok(resolved) => resolved,
             Err(err) => {
+                // A failed extract leaves the temp directory populated.
                 let _ = tmpdir.delete_tree(tmpname.as_bytes());
                 return Err(err);
             }

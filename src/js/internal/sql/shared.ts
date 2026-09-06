@@ -1720,8 +1720,6 @@ function parseConnectionDetailsFromOptionsOrEnvironment(
     }
   }
 
-  // The environment only supplies a connection URL (and with it an adapter and
-  // TLS mode) when neither the arguments nor the options object name one.
   if (resolvedUrl === null) {
     [resolvedUrl, sslMode, adapter] = getConnectionDetailsFromEnvironment(options.adapter);
   }
@@ -1956,16 +1954,14 @@ function parseOptions(
     throw $ERR_INVALID_ARG_VALUE("options.path", path, "must not contain null bytes");
   }
 
-  // libpq semantics: a host that starts with "/" is the unix socket directory
-  // for postgres, and the socket file for mysql and mariadb
+  // libpq: a host that starts with "/" is a unix socket directory
   if (!path && hostname.startsWith("/")) {
     path = adapter === "postgres" ? `${hostname}/.s.PGSQL.${Number(port)}` : hostname;
     hostname = "localhost";
   }
 
   if (adapter === "postgres") {
-    // libpq semantics: a directory names the socket dir, the socket file inside
-    // it is /.s.PGSQL.${port}
+    // libpq: a directory is the socket dir, the socket file is .s.PGSQL.<port>
     const portNumber = Number(port);
     if (path && Number.isSafeInteger(portNumber) && path.indexOf("/.s.PGSQL.") === -1 && isDirectory(path)) {
       path = `${path}/.s.PGSQL.${portNumber}`;
@@ -2147,9 +2143,7 @@ function parseOptions(
     sslMode = SSLMode.require;
   }
 
-  // verify-ca and verify-full verify the certificate chain. Without an explicit
-  // rejectUnauthorized the TLS layer would take NODE_TLS_REJECT_UNAUTHORIZED=0
-  // as an opt out, which a verify-* mode must not allow.
+  // verify-ca and verify-full must verify even with NODE_TLS_REJECT_UNAUTHORIZED=0
   if (
     sslMode >= SSLMode.verify_ca &&
     (!$isObject(tls) || !ObjectPrototypeHasOwnProperty.$call(tls, "rejectUnauthorized"))

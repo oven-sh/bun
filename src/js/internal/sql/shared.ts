@@ -1950,14 +1950,14 @@ function parseOptions(
 
   path ||= options.path || "";
 
-  if (path.includes("\0")) {
-    throw $ERR_INVALID_ARG_VALUE("options.path", path, "must not contain null bytes");
-  }
-
   // libpq: a host that starts with "/" is a unix socket directory
   if (!path && hostname.startsWith("/")) {
     path = adapter === "postgres" ? `${hostname}/.s.PGSQL.${Number(port)}` : hostname;
     hostname = "localhost";
+  }
+
+  if (path.includes("\0")) {
+    throw $ERR_INVALID_ARG_VALUE("options.path", path, "must not contain null bytes");
   }
 
   if (adapter === "postgres") {

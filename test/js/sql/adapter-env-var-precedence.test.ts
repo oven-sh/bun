@@ -568,6 +568,17 @@ describe("SQL adapter environment variable precedence", () => {
       expect(fromUrl.options.tls).toEqual({ caFile, serverName: "h", rejectUnauthorized: true });
     });
 
+    test("a polluted Object.prototype.rejectUnauthorized does not disable a verify mode", () => {
+      (Object.prototype as any).rejectUnauthorized = false;
+      try {
+        const options = new SQL("postgres://u@h:5432/db?sslmode=verify-full").options;
+        expect(Object.hasOwn(options.tls as object, "rejectUnauthorized")).toBe(true);
+        expect((options.tls as any).rejectUnauthorized).toBe(true);
+      } finally {
+        delete (Object.prototype as any).rejectUnauthorized;
+      }
+    });
+
     test.each(["verify-ca", "verify-full"])(
       "sslmode=%s sets rejectUnauthorized so NODE_TLS_REJECT_UNAUTHORIZED=0 cannot disable it",
       mode => {
@@ -796,6 +807,13 @@ describe("SQL adapter environment variable precedence", () => {
         expect(options.options.database).toBe("urldb");
       });
 
+      test("a host-less postgres URL names the database, not a socket path", () => {
+        const options = new SQL("postgres:///urldb");
+        expect(options.options.database).toBe("urldb");
+        expect(options.options.path).toBeUndefined();
+        expect(options.options.hostname).toBe("localhost");
+      });
+
       test("env database applies when the URL has no pathname", () => {
         process.env.PGDATABASE = "envdb";
         const options = new SQL("postgres://urluser@urlhost");
@@ -929,27 +947,14 @@ describe("SQL adapter environment variable precedence", () => {
         expect(options.tls).toEqual({ serverName: "localhost", rejectUnauthorized: true });
       });
 
-      test("a polluted Object.prototype.rejectUnauthorized does not disable a verify mode", () => {
-        (Object.prototype as any).rejectUnauthorized = false;
-        try {
-          const options = new SQL("postgres://u@h:5432/db?sslmode=verify-full").options;
-          expect(Object.hasOwn(options.tls as object, "rejectUnauthorized")).toBe(true);
-          expect((options.tls as any).rejectUnauthorized).toBe(true);
-        } finally {
-          delete (Object.prototype as any).rejectUnauthorized;
-        }
-      });
-
       test("mysql: a host that starts with / is the socket path", () => {
         const options = new SQL({ adapter: "mysql", hostname: "/run/mysqld/mysqld.sock" });
         expect(options.options.path).toBe("/run/mysqld/mysqld.sock");
       });
 
-      test("a host-less postgres URL names the database, not a socket path", () => {
-        const options = new SQL("postgres:///urldb");
-        expect(options.options.database).toBe("urldb");
-        expect(options.options.path).toBeUndefined();
-        expect(options.options.hostname).toBe("localhost");
+      test("a host with null bytes is rejected before it becomes a socket path", () => {
+        expect(() => new SQL({ adapter: "mysql", hostname: "/tmp\0injected" })).toThrow("null bytes");
+        expect(() => new SQL({ adapter: "postgres", hostname: "/tmp\0injected" })).toThrow("null bytes");
       });
     });
   });

@@ -641,7 +641,7 @@ function webkitBuildSpec(cfg: Config): DirectBuild {
       bmallocGroup(wk, flags),
       wtf.group,
       ...llint.groups,
-      jscGroup(wk, jsc, jscSources.sources, codegenReady, llint.assembly),
+      jscGroup(wk, jsc, jscSources.sources, [...codegenReady, jscSources.checked], llint.assembly),
     ],
     steps: wk.steps,
     // What a consumer's compile waits for: JSC's generated headers (bun
@@ -1429,8 +1429,24 @@ function llintSteps(
  * JavaScriptCore_SOURCES. The bundle files themselves are `headers` entries
  * written at configure.
  */
-function jscSourceList(wk: WebKitBuild): { sources: string[]; bundles: Record<string, string> } {
+function jscSourceList(wk: WebKitBuild): { sources: string[]; bundles: Record<string, string>; checked: string } {
   const { cfg, JSC, DS, B } = wk;
+  // The bundle and @no-unify lists are kept by hand; this step fails the
+  // build, before any JSC compile, if a fetched Sources.txt names a file they
+  // don't (or vice versa) — a WebKit bump that moved a TU.
+  const checked = join(B, ".jsc-sources-checked");
+  const checkScript = join(import.meta.dirname, "webkit-check-sources.ts");
+  gen(wk, {
+    outputs: [checked],
+    cmd: [...cfg.jsRuntimeArgv, checkScript, JSC, checked],
+    inputs: [
+      join(JSC, "Sources.txt"),
+      join(JSC, "inspector", "remote", "SourcesSocket.txt"),
+      checkScript,
+      join(import.meta.dirname, "webkit-jsc-sources.ts"),
+    ],
+    desc: "check Sources.txt against webkit-jsc-sources.ts",
+  });
   const bundleDir = join(DS, "unified-sources");
   const bundles: Record<string, string> = {};
   for (const [bundle, members] of jscUnifiedBundles) {
@@ -1444,7 +1460,7 @@ function jscSourceList(wk: WebKitBuild): { sources: string[]; bundles: Record<st
     join(DS, "JSCBuiltins.cpp"),
     ...inTree(JSC, jscExtraSourcesFor(cfg)),
   ];
-  return { sources, bundles };
+  return { sources, bundles, checked };
 }
 
 function jscGroup(

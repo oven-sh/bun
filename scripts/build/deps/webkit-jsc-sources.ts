@@ -2050,7 +2050,7 @@ export const jscPrivateHeaders: readonly string[] = [
   "ffi/tests/FFITestFixtures.h",
 ];
 
-/** JSC's unified-source bundles: bundle file → the Sources.txt entries it #includes, in order (WebKit's generate-unified-source-bundles.py over Sources.txt + inspector/remote/SourcesSocket.txt, --ignore-header-groups). Paths relative to Source/JavaScriptCore. */
+/** JSC's unified-source bundles: bundle file → the Sources.txt entries it #includes, in order (WebKit's generate-unified-source-bundles.py over Sources.txt + inspector/remote/SourcesSocket.txt, --ignore-header-groups). Paths relative to Source/JavaScriptCore. Checked against the fetched Sources.txt before JSC compiles (webkit-check-sources.ts): every translation unit there must be in a bundle here or in jscNonUnifiedSources. */
 export const jscUnifiedBundles: ReadonlyArray<readonly [string, readonly string[]]> = [
   ["UnifiedSource-root-1.cpp", ["BytecodeDumperGenerated.cpp"]],
   [

@@ -423,10 +423,8 @@ impl<const SSL: bool> App<SSL> {
         c::uws_filter(Self::SSL_FLAG, self.as_raw(), Some(handler), user_data)
     }
 
-    /// Registers a websocket route. Calls with the same non-null
-    /// `shared_context_key` share one uWS `WebSocketContext`, so they do not
-    /// allocate a context each time the routes are set again. The latest
-    /// call's `behavior` applies to every socket open on that context.
+    /// Calls with the same non-null `shared_context_key` share one uWS
+    /// `WebSocketContext`, and the latest `behavior` applies to it.
     pub fn ws(
         &mut self,
         pattern: &[u8],

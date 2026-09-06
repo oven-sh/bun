@@ -77,7 +77,7 @@ test("warning objects expose name, code and detail as enumerable properties", as
        process.on("warning", w => seen.push({ keys: Object.keys(w), json: JSON.parse(JSON.stringify(w)) }));
        process.emitWarning("w", { code: "MY_CODE", detail: "d" });
        // Like Node, an Error passed in is emitted as is: no name, code or detail are added to it.
-       process.emitWarning(new Error("e"), { type: "DeprecationWarning", code: "DEP0XXX", detail: "d" });
+       process.emitWarning(new Error("e"), { type: "DeprecationWarning", code: "DEP0199", detail: "d" });
        process.on("exit", () => console.log(JSON.stringify(seen)));`,
     ],
     env: bunEnv,

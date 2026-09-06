@@ -902,13 +902,25 @@ impl JunitReporter {
 
         // SAFETY: junit_path_buf[path.len()] == 0 written above
         let zpath = bun_core::ZStr::from_buf(&junit_path_buf[..], path.len());
-        let written = File::openat(
-            Fd::cwd(),
+        // `make_open` creates a missing parent directory, as jest-junit does.
+        let written = File::make_open(
             zpath,
             bun_sys::O::WRONLY | bun_sys::O::CREAT | bun_sys::O::TRUNC,
             0o664,
         )
-        .and_then(|fd| File::write_all(&fd, &self.contents));
+        .and_then(|file| {
+            let written = file.write_all(&self.contents);
+            drop(file);
+            // A truncated report is worse than none. `lstat` so a symlink such
+            // as /dev/stdout, or a device, is never unlinked.
+            if written.is_err()
+                && bun_sys::lstat(zpath)
+                    .is_ok_and(|st| bun_sys::is_regular_file(st.st_mode as bun_sys::Mode))
+            {
+                let _ = bun_sys::unlink(zpath);
+            }
+            written
+        });
         if let Err(err) = written {
             Output::err(
                 crate::Error::JUnitReportFailed,

@@ -1,6 +1,7 @@
 import { file, spawn } from "bun";
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import { existsSync } from "node:fs";
 import { join } from "node:path";
 
 const xml2js = require("xml2js");
@@ -609,7 +610,13 @@ describe("junit reporter", () => {
     expect(pathCase.failure[0]._).toContain("at fromPath (generated.js:1:");
   });
 
-  it.each(["", "--parallel=2"])("exits non-zero when the report file cannot be written %s", async parallelFlag => {
+  it.each([
+    // open() fails with ENOTDIR: the parent of the report path is a regular file.
+    ["the parent is a regular file", [], join("not-a-dir", "junit.xml")],
+    ["the parent is a regular file (--parallel)", ["--parallel=2"], join("not-a-dir", "junit.xml")],
+    // open() fails with EISDIR: the report path itself is a directory.
+    ["the path is a directory", [], "a-dir"],
+  ])("exits non-zero when the report file cannot be opened: %s", async (_label, extraArgs, outfile) => {
     await using tmpDir = tempDir("junit-unwritable", {
       "package.json": "{}",
       // Two files, so --parallel=2 runs the coordinator and not the serial fallback.
@@ -626,12 +633,78 @@ describe("junit reporter", () => {
         });
       `,
       "not-a-dir": "",
+      "a-dir": {},
     });
 
-    // The parent of the report path is a regular file, so open() fails with ENOTDIR.
-    const junitPath = join(tmpDir, "not-a-dir", "junit.xml");
+    const junitPath = join(tmpDir, outfile);
+    await using proc = spawn([bunExe(), "test", ...extraArgs, "--reporter=junit", "--reporter-outfile", junitPath], {
+      cwd: tmpDir,
+      env: { ...bunEnv, BUN_DEBUG_QUIET_LOGS: "1" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toContain("2 pass");
+    expect(stderr).toContain("Failed to write JUnit report to");
+    expect(exitCode).toBe(1);
+  });
+
+  it("creates the missing parent directory of --reporter-outfile", async () => {
+    await using tmpDir = tempDir("junit-mkdir", {
+      "package.json": "{}",
+      "a.test.js": `
+        import { expect, test } from "bun:test";
+        test("passes", () => {
+          expect(1).toBe(1);
+        });
+      `,
+    });
+
+    const junitPath = join(tmpDir, "out", "nested", "junit.xml");
+    await using proc = spawn([bunExe(), "test", "--reporter=junit", "--reporter-outfile", junitPath], {
+      cwd: tmpDir,
+      env: { ...bunEnv, BUN_DEBUG_QUIET_LOGS: "1" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toContain("1 pass");
+
+    const xmlContent = await file(junitPath).text();
+    const result = await new Promise((resolve, reject) => {
+      xml2js.parseString(xmlContent, { strict: true }, (err, r) => (err ? reject(err) : resolve(r)));
+    });
+    expect(result.testsuites.testsuite[0].testcase[0].$.name).toBe("passes");
+    expect(exitCode).toBe(0);
+  });
+
+  // RLIMIT_FSIZE makes write() stop at the limit and then fail with EFBIG,
+  // the same shape as ENOSPC on a full disk. bun ignores SIGXFSZ, so it sees
+  // the error instead of dying. Windows has no per-process file size limit.
+  it.skipIf(isWindows)("removes the partial report and exits non-zero when write() fails midway", async () => {
+    await using tmpDir = tempDir("junit-partial-write", {
+      "package.json": "{}",
+      "big.test.js": `
+        import { expect, test } from "bun:test";
+        const pad = Buffer.alloc(200, "x").toString();
+        for (let i = 0; i < 200; i++) {
+          test(pad + " " + i, () => {
+            expect(i).toBe(i);
+          });
+        }
+      `,
+    });
+
+    const junitPath = join(tmpDir, "junit.xml");
+    // `ulimit -f 8` is 4 KiB or 8 KiB depending on the shell. The report is about 58 KiB.
     await using proc = spawn(
-      [bunExe(), "test", ...(parallelFlag ? [parallelFlag] : []), "--reporter=junit", "--reporter-outfile", junitPath],
+      [
+        "/bin/sh",
+        "-c",
+        `ulimit -f 8 && exec "$0" test ./big.test.js --reporter=junit --reporter-outfile "$1"`,
+        bunExe(),
+        junitPath,
+      ],
       {
         cwd: tmpDir,
         env: { ...bunEnv, BUN_DEBUG_QUIET_LOGS: "1" },
@@ -640,8 +713,9 @@ describe("junit reporter", () => {
       },
     );
     const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stderr).toContain("2 pass");
+    expect(stderr).toContain("200 pass");
     expect(stderr).toContain("Failed to write JUnit report to");
+    expect(existsSync(junitPath)).toBe(false);
     expect(exitCode).toBe(1);
   });
 });

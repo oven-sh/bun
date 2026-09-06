@@ -150,7 +150,11 @@ test("a tree without a stamp (interrupted sync) is repaired in place rather than
 test("plan prepares the new tree, writes the dyndep file (both spellings, static outputs left out), and dep reuses it", async () => {
   using dir = tempDir("dep-fetch-plan", {});
   const work = String(dir);
-  const v1 = makeTarball(work, "v1", { "include/a.h": "a1\n", "src/lib.c": "int lib;\n" });
+  const v1 = makeTarball(work, "v1", {
+    "include/a.h": "a1\n",
+    "src/lib.c": "int lib;\n",
+    ...symlinks({ "include/alias.h": "a.h", "bin/dangling": "not-built-yet" }),
+  });
   const v2 = makeTarball(work, "v2", { "include/a.h": "a2\n", "include/b.h": "b\n", "src/lib.c": "int lib;\n" });
   await using server = await serve([v1, v2]);
   const dest = join(work, "vendor", "dep");
@@ -167,8 +171,11 @@ test("plan prepares the new tree, writes the dyndep file (both spellings, static
   await planDep("dep", server.url(v1), ref1, dest, cache, ddFile, staticOutputs, buildDir, []);
   expect(existsSync(join(`${dest}.staging`, "include/a.h"))).toBe(true);
   const both = (p: string) => `${dd(relative(buildDir, join(dest, p)))} ${dd(join(dest, p))}`;
+  // A symlink to a file in the tree is declared (compilers record the link's own path in depfiles);
+  // a dangling one is not (ninja would stat a missing output forever). No symlinks on Windows.
+  const listed = isWindows ? both("include/a.h") : `${both("include/a.h")} ${both("include/alias.h")}`;
   expect(readFileSync(ddFile, "utf8")).toBe(
-    `ninja_dyndep_version = 1\nbuild ${dd(join(dest, ".ref"))} | ${both("include/a.h")}: dyndep\n`,
+    `ninja_dyndep_version = 1\nbuild ${dd(join(dest, ".ref"))} | ${listed}: dyndep\n`,
   );
   await fetchDep("dep", server.url(v1), ref1, dest, cache, []);
   expect(readFileSync(join(dest, "include/a.h"), "utf8")).toBe("a1\n");

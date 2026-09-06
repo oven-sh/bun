@@ -22,9 +22,9 @@
 
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { createReadStream, existsSync, lstatSync, readFileSync, type Stats } from "node:fs";
+import { createReadStream, existsSync, lstatSync, readFileSync, realpathSync, statSync, type Stats } from "node:fs";
 import { lstat, mkdir, open, readdir, readFile, readlink, rename, rm, writeFile } from "node:fs/promises";
-import { basename, join, relative } from "node:path";
+import { basename, join, relative, sep } from "node:path";
 import { downloadWithRetry, extractTarGz, fetchPrebuilt, gitArchive, parseGitArchiveUrl } from "./download.ts";
 import { assert, BuildError } from "./error.ts";
 import { writeIfChanged } from "./fs.ts";
@@ -352,11 +352,25 @@ export async function planDep(
       .filter(l => l.length > 0),
   );
   const files: string[] = [];
+  // A symlink counts when it resolves to a regular file inside the tree
+  // (compilers record the path they opened, i.e. the link, in depfiles, so the
+  // link is the node ninja must restat). A dangling link, or one pointing out
+  // of the tree, is left out: ninja stats outputs through the link, and a
+  // missing target would keep the fetch edge dirty forever (zstd ships
+  // tests/cli-tests/bin/zstdcat -> zstd, a binary its own tests build).
+  const treeRoot = realpathSync(tree) + sep;
+  const linksToTreeFile = (path: string): boolean => {
+    try {
+      return statSync(path).isFile() && realpathSync(path).startsWith(treeRoot);
+    } catch {
+      return false;
+    }
+  };
   const walk = async (rel: string): Promise<void> => {
     for (const e of await readdir(join(tree, rel), { withFileTypes: true })) {
       const r = rel === "" ? e.name : `${rel}/${e.name}`;
       if (e.isDirectory()) await walk(r);
-      else if (e.isFile() && r !== ".ref") {
+      else if (r !== ".ref" && (e.isFile() || (e.isSymbolicLink() && linksToTreeFile(join(tree, r))))) {
         const abs = join(dest, r);
         if (!declared.has(abs)) files.push(abs);
       }

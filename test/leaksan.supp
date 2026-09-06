@@ -135,7 +135,7 @@ leak:bun_runtime::cli::multi_run::run
 # test/regression/issue/30205.test.ts — global_exit's final GC sweep fires
 # NAPI weak finalizers which enqueue Box<NapiFinalizerTask> into the event
 # loop; the loop is already exiting so they never drain.
-leak:napi_internal_enqueue_finalizer
+leak:Bun__napi_enqueue_finalizer
 # test/js/web/temporal/temporal.test.ts
 # TemporalCore::withTimeZone keeps up to 8 open UCalendars in a process-
 # lifetime LazyNeverDestroyed TinyLRUCache, one per time zone ID; LRU

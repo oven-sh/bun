@@ -93,7 +93,7 @@ function header() {
 
             void detach() {
                 m_sinkPtr = nullptr;
-
+                m_memoryCostForGC = 0;
             }
 
             static void analyzeHeap(JSCell*, JSC::HeapAnalyzer&);

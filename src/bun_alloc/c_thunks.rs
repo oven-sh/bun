@@ -39,14 +39,7 @@ pub unsafe extern "C" fn mi_free_bytes(bytes: *mut c_void, _ctx: *mut c_void) {
     unsafe { raw::free(bytes) };
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// Counted thunks: `opaque` is a `*mut AtomicUsize` holding the bytes in use
-// ──────────────────────────────────────────────────────────────────────────
-
-/// brotli-shape `(opaque, size)` → `malloc(size)`, counting the block's usable size.
-///
-/// # Safety
-/// `opaque` points to an `AtomicUsize` that outlives every block allocated here.
+/// brotli-shape alloc that adds the block's usable size to the `AtomicUsize` at `opaque`.
 pub unsafe extern "C" fn counted_malloc_size(opaque: *mut c_void, size: usize) -> *mut c_void {
     let ptr = raw::malloc(size);
     if !ptr.is_null() {
@@ -58,10 +51,7 @@ pub unsafe extern "C" fn counted_malloc_size(opaque: *mut c_void, size: usize) -
     ptr
 }
 
-/// zlib-shape `(opaque, items, size)` counterpart of [`counted_malloc_size`].
-///
-/// # Safety
-/// As [`counted_malloc_size`].
+/// zlib-shape counterpart of [`counted_malloc_size`].
 pub unsafe extern "C" fn counted_malloc_items(
     opaque: *mut c_void,
     items: c_uint,
@@ -71,10 +61,7 @@ pub unsafe extern "C" fn counted_malloc_items(
     unsafe { counted_malloc_size(opaque, items as usize * size as usize) }
 }
 
-/// `(opaque, ptr)` → `free(ptr)`, uncounting the block's usable size.
-///
-/// # Safety
-/// `opaque` points to a live `AtomicUsize`; `ptr` is null or from a counted alloc above.
+/// `free(ptr)` that subtracts the block's usable size from the `AtomicUsize` at `opaque`.
 pub unsafe extern "C" fn counted_free(opaque: *mut c_void, ptr: *mut c_void) {
     if ptr.is_null() {
         return;

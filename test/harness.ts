@@ -409,10 +409,10 @@ export async function expectNativeMemoryReportedToGC(
   await using proc = Bun.spawn({ cmd: [bunExe(), "-e", probe], env: bunEnv, stdout: "pipe", stderr: "pipe" });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect(stderr.trim()).toBe("");
-  expect(exitCode).toBe(0);
   const { collected, extraBytes } = JSON.parse(stdout.trim().split("\n").at(-1)!);
   expect(collected).toBeGreaterThan(drop / 10);
   expect(extraBytes).toBeGreaterThanOrEqual(live * minBytesEach);
+  expect(exitCode).toBe(0);
 }
 
 let emptyBunMaxRSS: Promise<number> | undefined;

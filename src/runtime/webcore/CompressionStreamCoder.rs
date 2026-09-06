@@ -143,8 +143,7 @@ pub struct CompressionStreamCoder {
     high_water_mark: usize,
     /// Set while a chunk's transform spans steps; `None` between chunks.
     pending: Option<Pending>,
-    /// Bytes zlib / brotli hold now (zstd reports its own size). Boxed: the
-    /// allocator hooks keep its address.
+    /// Bytes zlib / brotli hold now. Boxed: the allocator hooks keep its address.
     native_bytes: Box<AtomicUsize>,
 }
 
@@ -298,10 +297,12 @@ impl CompressionStreamCoder {
     /// JS thread, between steps only: zstd walks its context to answer.
     fn memory_cost(&self) -> usize {
         let codec = match &self.backend {
-            Backend::Deflate(_)
-            | Backend::Inflate { .. }
-            | Backend::BrotliEncode(_)
-            | Backend::BrotliDecode(_) => self.native_bytes.load(Ordering::Relaxed),
+            Backend::Deflate(_) | Backend::Inflate { .. } => {
+                core::mem::size_of::<zlib::z_stream>() + self.native_bytes.load(Ordering::Relaxed)
+            }
+            Backend::BrotliEncode(_) | Backend::BrotliDecode(_) => {
+                self.native_bytes.load(Ordering::Relaxed)
+            }
             // SAFETY: the context is live until `drop`, and no step runs
             // concurrently with this read.
             Backend::ZstdEncode(p) => unsafe { zstd::ZSTD_sizeof_CCtx(p.as_ptr()) },
@@ -309,7 +310,7 @@ impl CompressionStreamCoder {
             Backend::ZstdDecode(p) => unsafe { zstd::ZSTD_sizeof_DCtx(p.as_ptr()) },
         };
         let pending = self.pending.as_ref().map_or(0, |p| p.input.capacity());
-        core::mem::size_of::<Self>() + codec + pending
+        core::mem::size_of::<Self>() + core::mem::size_of::<AtomicUsize>() + codec + pending
     }
 
     const ZSTD_MAGIC: [u8; 4] = 0xFD2F_B528u32.to_le_bytes();

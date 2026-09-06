@@ -18,6 +18,7 @@ use super::valkey;
 use super::valkey_command_body as command;
 use super::valkey_command_body::Command;
 use bun_jsc::url::Parsed;
+use bun_url::PercentEncoding;
 use bun_valkey::valkey_protocol as protocol;
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -572,12 +573,12 @@ impl JSValkeyClient {
             valkey::Protocol::Standalone
         };
 
-        // Extract all URL components
-        let username_str = parsed_url.username();
-        let username_utf8 = username_str.to_utf8();
-
-        let password_str = parsed_url.password();
-        let password_utf8 = password_str.to_utf8();
+        // AUTH arguments are binary-safe bulk strings, so the userinfo is
+        // percent-decoded to raw bytes and sent as-is, UTF-8 or not.
+        let username: Box<[u8]> =
+            PercentEncoding::decode_whatwg(&parsed_url.username().to_utf8()).into();
+        let password: Box<[u8]> =
+            PercentEncoding::decode_whatwg(&parsed_url.password().to_utf8()).into();
 
         let hostname_str = parsed_url.host();
         let hostname_utf8 = hostname_str.to_utf8();
@@ -634,33 +635,7 @@ impl JSValkeyClient {
             valkey::Options::default()
         };
 
-        // Copy strings into a persistent buffer since the URL object will be deinitialized
-        let mut connection_strings: Box<[u8]> = Box::default();
-        let mut username: Box<[u8]> = Box::default();
-        let mut password: Box<[u8]> = Box::default();
-        let mut hostname: Box<[u8]> = Box::default();
-
-        // errdefer free(connection_strings) — handled by Box drop on `?`.
-
-        if !username_utf8.slice().is_empty()
-            || !password_utf8.slice().is_empty()
-            || !hostname_slice.is_empty()
-        {
-            let mut b = bun_core::StringBuilder::default();
-            b.count(username_utf8.slice());
-            b.count(password_utf8.slice());
-            b.count(hostname_slice);
-            b.allocate()?;
-            let user_sp = b.append_count(username_utf8.slice());
-            let pass_sp = b.append_count(password_utf8.slice());
-            let host_sp = b.append_count(hostname_slice);
-            connection_strings = b.move_to_slice();
-            // `ValkeyClient` owns each field as an independent
-            // `Box<[u8]>`, so re-slice from the pointers.
-            username = Box::<[u8]>::from(user_sp.slice(&connection_strings));
-            password = Box::<[u8]>::from(pass_sp.slice(&connection_strings));
-            hostname = Box::<[u8]>::from(host_sp.slice(&connection_strings));
-        }
+        let hostname: Box<[u8]> = Box::from(hostname_slice);
 
         // Parse database number from pathname (e.g., "/1" -> database 1)
         let database: u32 = match uri {
@@ -707,7 +682,6 @@ impl JSValkeyClient {
                 in_flight: command::promise_pair::Queue::new(),
                 queue: command::entry::Queue::new(),
                 status: valkey::Status::NeverConnected,
-                connection_strings,
                 socket: Socket::SocketTcp(uws::SocketTCP {
                     socket: uws::InternalSocket::Detached,
                 }),
@@ -777,12 +751,6 @@ impl JSValkeyClient {
         let client = self.client.get();
         let sub_ctx = self._subscription_ctx.get();
 
-        // `ValkeyClient` (see valkey.rs:290-299) owns `username`/`password`/
-        // `address.hostname` as independent `Box<[u8]>`s rather than sub-slices
-        // of the single `connection_strings` allocation, so rebase arithmetic
-        // against `connection_strings` would compute a garbage offset and read
-        // OOB. Clone each owned buffer directly.
-        let connection_strings_copy: Box<[u8]> = Box::<[u8]>::from(&client.connection_strings[..]);
         let username: Box<[u8]> = Box::<[u8]>::from(&client.username[..]);
         let password: Box<[u8]> = Box::<[u8]>::from(&client.password[..]);
         let hostname: Box<[u8]> = Box::<[u8]>::from(client.address.hostname());
@@ -816,7 +784,6 @@ impl JSValkeyClient {
                 in_flight: command::promise_pair::Queue::new(),
                 queue: command::entry::Queue::new(),
                 status: valkey::Status::NeverConnected,
-                connection_strings: connection_strings_copy,
                 socket: Socket::SocketTcp(uws::SocketTCP {
                     socket: uws::InternalSocket::Detached,
                 }),

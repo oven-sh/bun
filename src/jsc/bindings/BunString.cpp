@@ -687,14 +687,17 @@ extern "C" BunString URL__href(WTF::URL* url)
     return Bun::toStringRef(url->string());
 }
 
+/// Still percent-encoded, like JS `url.username`. `WTF::URL::user()` would
+/// decode and then return a null string for bytes that are not UTF-8.
 extern "C" BunString URL__username(WTF::URL* url)
 {
-    return Bun::toStringRef(url->user());
+    return Bun::toStringRef(url->encodedUser().toString());
 }
 
+/// Still percent-encoded, like JS `url.password`. See `URL__username`.
 extern "C" BunString URL__password(WTF::URL* url)
 {
-    return Bun::toStringRef(url->password());
+    return Bun::toStringRef(url->encodedPassword().toString());
 }
 
 /// Returns the host WITHOUT the port.

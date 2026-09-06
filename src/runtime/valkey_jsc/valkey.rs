@@ -254,15 +254,11 @@ pub struct ValkeyClient {
     pub(crate) queue: command::entry::Queue,
 
     // Connection parameters
-    // `connection_strings` is retained because `js_valkey.rs` still slices it
-    // when constructing/duplicating clients.
     pub(crate) password: Box<[u8]>,
     pub(crate) username: Box<[u8]>,
     pub(crate) database: u32,
     pub(crate) address: Address,
     pub(crate) protocol: Protocol,
-
-    pub(crate) connection_strings: Box<[u8]>,
 
     // TLS support
     pub(crate) tls: TLS,

@@ -7436,6 +7436,52 @@ describe("RedisClient URL parsing", () => {
       client.close();
     }
   });
+
+  // Each expected value is a latin1 string: one char per byte on the wire.
+  test.concurrent.each([
+    ["jos%C3%A9:pw", "jos\xc3\xa9", "pw"],
+    ["jos%E9:pw", "jos\xe9", "pw"],
+    ["user:p%E9ss", "user", "p\xe9ss"],
+    ["user:%ff%fe", "user", "\xff\xfe"],
+    ["us%00er:p%00w", "us\0er", "p\0w"],
+    [":%zz", "default", "%zz"],
+  ])("sends the percent-decoded credentials of redis://%s@host byte for byte", async (userinfo, user, pass) => {
+    // Parses one RESP command (`*N\r\n` then N bulk strings) out of a latin1 string.
+    const parseCommand = (text: string) => {
+      const args: string[] = [];
+      let rest = text.replace(/^\*\d+\r\n/, "");
+      while (rest.startsWith("$")) {
+        const header = rest.match(/^\$(\d+)\r\n/)!;
+        const length = Number(header[1]);
+        args.push(rest.slice(header[0].length, header[0].length + length));
+        rest = rest.slice(header[0].length + length + 2);
+      }
+      return args;
+    };
+    const hellos: string[][] = [];
+    using server = Bun.listen({
+      hostname: "127.0.0.1",
+      port: 0,
+      socket: {
+        data(socket, chunk) {
+          const text = chunk.toString("latin1");
+          if (text.includes("HELLO")) {
+            hellos.push(parseCommand(text));
+            socket.write("%1\r\n$5\r\nproto\r\n:3\r\n");
+          } else {
+            socket.write("+PONG\r\n");
+          }
+        },
+      },
+    });
+    const client = new RedisClient(`redis://${userinfo}@127.0.0.1:${server.port}`, { autoReconnect: false });
+    try {
+      expect(await client.send("PING", [])).toBe("PONG");
+    } finally {
+      client.close();
+    }
+    expect(hellos).toEqual([["HELLO", "3", "AUTH", user, pass]]);
+  });
 });
 
 describe("RedisClient argument validation", () => {

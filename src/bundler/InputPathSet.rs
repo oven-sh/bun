@@ -37,8 +37,7 @@ impl InputPathSet {
         Self { paths: set }
     }
 
-    /// The input that writing `dest_path` under `root` would replace, relative
-    /// to the working directory.
+    /// The input that writing `dest_path` under `root` would replace, relative to the working directory.
     pub fn overwritten_by(&self, root: &[u8], dest_path: &[u8]) -> Option<Box<[u8]>> {
         let abs = resolve_path::join_abs_string::<platform::Auto>(root, &[dest_path]);
         let index = self.paths.get_index(abs)?;
@@ -50,8 +49,7 @@ impl InputPathSet {
     }
 }
 
-/// The absolute, symlink-resolved output directory. An empty `root_path` is
-/// the working directory.
+/// The absolute, symlink-resolved output directory. Empty `root_path` is the working directory.
 pub fn resolve_output_root(root_path: &[u8]) -> Box<[u8]> {
     let top_level_dir = bun_resolver::fs::FileSystem::get().top_level_dir;
     let mut abs_buf = bun_paths::path_buffer_pool::get();

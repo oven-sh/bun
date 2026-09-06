@@ -677,8 +677,7 @@ pub(crate) fn write_output_files_to_disk(
     Ok(())
 }
 
-/// Checks every path the loops above write: each chunk, its `.map` and `.jsc`
-/// when those are written, and each additional output file.
+/// Checks every path the loops above write, before the first write.
 fn refuse_to_overwrite_inputs(
     c: &mut LinkerContext,
     root_path: &[u8],

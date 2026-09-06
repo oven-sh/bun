@@ -75,11 +75,8 @@ public:
     void set(const String& name, RefPtr<Blob>, const String& filename = {});
 
     size_t count() const { return m_items.size(); }
-    // All native bytes the entries hold, for heap snapshots.
-    size_t memoryCost() const;
-    // The subset no other JS cell reports: a Blob entry's store belongs to
-    // the JSBlob wrapper that get() creates.
-    size_t reportableMemoryCost() const;
+    size_t memoryCost() const; // every entry, for heap snapshots
+    size_t reportableMemoryCost() const; // excludes Blob stores, which their JSBlob wrapper reports
     static size_t stringMemoryCost(const String& string)
     {
         auto* impl = string.impl();

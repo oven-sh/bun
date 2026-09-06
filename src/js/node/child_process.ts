@@ -1257,10 +1257,7 @@ class ChildProcess extends EventEmitter {
             const pipe = require("internal/streams/native-readable").constructNativeReadable(value, {});
             this.#closesNeeded++;
             pipe.once("close", () => this.#maybeClose());
-            // Start reading into the stream's buffer now, like net.Socket does
-            // for a readable handle. The armed pipe poll keeps the event loop
-            // alive until EOF or the highWaterMark, so child.unref() alone does
-            // not let the parent exit while the child still writes.
+            // Like net.Socket: arm the pipe now so it keeps the loop alive after unref().
             pipe.read(0);
             if (autoResume) pipe.resume();
             return pipe;
@@ -1469,9 +1466,7 @@ class ChildProcess extends EventEmitter {
         if (options[kFromNode]) this.#closesNeeded += 1;
       }
 
-      // Node creates every stdio stream at spawn. Do the same so a piped
-      // stdout/stderr is read (and keeps the loop alive) from the start, for
-      // every stdio shape normalizeStdio pads to three entries.
+      // Like Node, create every stdio stream at spawn.
       for (let item of this.stdio) {
         item?.ref?.();
       }

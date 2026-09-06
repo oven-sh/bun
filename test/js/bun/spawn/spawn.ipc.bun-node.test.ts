@@ -19,6 +19,40 @@ p I am your father
   expect(await new Response(child.stderr).text()).toEqual("");
 });
 
+test.skipIf(!nodeExe())(
+  'a node child under the default serialization is reported, with the "json" remedy',
+  async () => {
+    // Bun.spawn({ ipc }) defaults to serialization: "advanced", which only Bun
+    // speaks. A Node.js child answers in v8's framing; the parent cannot decode it
+    // and must fail loudly instead of leaving the user with a channel that never
+    // delivers anything.
+    const parentSource = `
+    const child = Bun.spawn({
+      cmd: [process.env.NODE_BIN, "-e", 'process.send({ hello: "from node" }, () => process.disconnect())'],
+      stdio: ["ignore", "inherit", "inherit"],
+      ipc(message) { console.log("UNEXPECTED_IPC_MESSAGE", message); },
+    });
+    await child.exited;
+  `;
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", parentSource],
+      env: { ...bunEnv, NODE_BIN: nodeExe()! },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    // No uncaughtException handler: the parent exits 1 at the report.
+    expect(stdout).toBe("");
+    expect(normalizeBunSnapshot(stderr)).toContain(
+      `sent an IPC message that is not in Bun's "advanced" serialization format, so Bun closed the IPC channel. "advanced" serialization only works between two Bun processes. For IPC between Bun and Node.js, use serialization: "json".`,
+    );
+    expect(exitCode).toBe(1);
+  },
+);
+
 test.skipIf(isWindows || !nodeExe())(
   "receives a net.Socket handle from a node child and releases its descriptor",
   async () => {

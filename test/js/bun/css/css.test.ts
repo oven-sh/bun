@@ -5291,7 +5291,10 @@ describe("css tests", () => {
     minify_test(":nth-col(1) {width: 20px}", ":nth-col(1){width:20px}");
     minify_test(":nth-col(0n+1) {width: 20px}", ":nth-col(1){width:20px}");
     minify_test(":nth-last-col(1) {width: 20px}", ":nth-last-col(1){width:20px}");
-    minify_test(":nth-col(1) {c: d} :nth-last-col(1) {e: f} .after {g: h}", ":nth-col(1){c:d}:nth-last-col(1){e:f}.after{g:h}");
+    minify_test(
+      ":nth-col(1) {c: d} :nth-last-col(1) {e: f} .after {g: h}",
+      ":nth-col(1){c:d}:nth-last-col(1){e:f}.after{g:h}",
+    );
     minify_test(":nth-child(odd) {width: 20px}", ":nth-child(odd){width:20px}");
     minify_test(":nth-child(2n) {width: 20px}", ":nth-child(2n){width:20px}");
     minify_test(":nth-child(2n+1) {width: 20px}", ":nth-child(odd){width:20px}");

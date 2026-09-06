@@ -189,7 +189,10 @@ impl<'a> Scanner<'a> {
                 if let bun_resolver::Error::Sys(errno) = e {
                     self.report_unreadable_dir(
                         path,
-                        &bun_sys::Error::from_code(errno, bun_sys::Tag::open),
+                        &bun_sys::Error::from_code_int(
+                            errno as core::ffi::c_int,
+                            bun_sys::Tag::open,
+                        ),
                     );
                 }
             }
@@ -267,7 +270,10 @@ impl<'a> Scanner<'a> {
                 if let bun_resolver::Error::Sys(errno) = dir_err.original_err {
                     self.report_unreadable_dir(
                         path2,
-                        &bun_sys::Error::from_code(errno, bun_sys::Tag::scandir),
+                        &bun_sys::Error::from_code_int(
+                            errno as core::ffi::c_int,
+                            bun_sys::Tag::scandir,
+                        ),
                     );
                 }
             }

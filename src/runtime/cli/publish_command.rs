@@ -848,6 +848,12 @@ impl PublishCommand {
         let registry = ctx.manager.scope_for_package_name(&ctx.package_name);
         let registry_url = registry.url.url();
 
+        if !registry_url.has_http_like_protocol() {
+            return Err(PublishError::InvalidRegistryUrl(
+                registry_url.href_without_auth(),
+            ));
+        }
+
         if registry.token.is_empty()
             && registry.auth.is_empty()
             && (registry_url.password.is_empty() || registry_url.username.is_empty())
@@ -2079,6 +2085,10 @@ pub(crate) enum PublishError {
     OutOfMemory,
     #[error("NeedAuth")]
     NeedAuth,
+    /// The registry URL has a scheme other than http or https. The HTTP
+    /// client would send it as plaintext HTTP, with the token.
+    #[error("InvalidRegistryUrl")]
+    InvalidRegistryUrl(Box<[u8]>),
 }
 bun_core::oom_from_alloc!(PublishError);
 
@@ -2088,6 +2098,13 @@ impl PublishError {
             PublishError::OutOfMemory => bun_core::out_of_memory(),
             PublishError::NeedAuth => {
                 Output::err_generic("missing authentication (run <cyan>`bunx npm login`<r>)", ());
+                Global::crash();
+            }
+            PublishError::InvalidRegistryUrl(href) => {
+                Output::err_generic(
+                    "Registry URL must be http:// or https://\nReceived: \"{}/\"",
+                    (bstr::BStr::new(strings::without_trailing_slash(&href)),),
+                );
                 Global::crash();
             }
         }

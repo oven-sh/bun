@@ -921,6 +921,53 @@ describe.concurrent("credentials in the registry url", () => {
     expect(mock.requests).toEqual([]);
     expect(exitCode).toBe(1);
   });
+
+  // A scheme that is not http or https must not fall back to plaintext HTTP.
+  // The mock is a plain HTTP listener, so a downgraded request shows up in `mock.requests`.
+  test.each(["htps", "htp", "ftp"])("%s:// registry url scheme is rejected before sending a request", async scheme => {
+    using mock = registryMock();
+    const packageDir = await packageDirFor("bad-scheme-pkg");
+    await write(
+      join(packageDir, "bunfig.toml"),
+      `[install]\nregistry = { url = "${scheme}://localhost:${mock.port}/", token = "secret-token" }\n`,
+    );
+
+    const { err, exitCode } = await publish(env, packageDir);
+    expect(err).toBe(
+      `error: Registry URL must be http:// or https://\nReceived: "${scheme}://localhost:${mock.port}/"\n`,
+    );
+    expect(mock.requests).toEqual([]);
+    expect(exitCode).toBe(1);
+  });
+
+  test("scoped registry with a bad scheme is rejected before sending a request", async () => {
+    using mock = registryMock();
+    const packageDir = await packageDirFor("@corp/bad-scheme-pkg");
+    await write(
+      join(packageDir, "bunfig.toml"),
+      `[install.scopes]\n"@corp" = { url = "htps://localhost:${mock.port}/", token = "secret-token" }\n`,
+    );
+
+    const { err, exitCode } = await publish(env, packageDir);
+    expect(err).toBe(`error: Registry URL must be http:// or https://\nReceived: "htps://localhost:${mock.port}/"\n`);
+    expect(mock.requests).toEqual([]);
+    expect(exitCode).toBe(1);
+  });
+
+  test("bad scheme is rejected with --dry-run", async () => {
+    using mock = registryMock();
+    const packageDir = await packageDirFor("bad-scheme-dry-run-pkg");
+    await write(
+      join(packageDir, "bunfig.toml"),
+      `[install]\nregistry = "htps://:secret-token@localhost:${mock.port}/"\n`,
+    );
+
+    const { out, err, exitCode } = await publish(env, packageDir, "--dry-run");
+    expect(err).toBe(`error: Registry URL must be http:// or https://\nReceived: "htps://localhost:${mock.port}/"\n`);
+    expect(out).not.toContain("secret-token");
+    expect(mock.requests).toEqual([]);
+    expect(exitCode).toBe(1);
+  });
 });
 
 describe("lifecycle scripts", async () => {

@@ -2280,6 +2280,43 @@ describe("bundler", () => {
       stdout: "1 2 false",
     },
   });
+  // `exports.__proto__` is the prototype of `module.exports`, not an export
+  // named "__proto__". A lifted binding plus a namespace getter cannot stand in
+  // for it, so these files keep their `__commonJS` wrapper.
+  itBundled("cjs2esm/ExportsProtoMemberKeepsWrapper", {
+    files: {
+      "/entry.js": /* js */ `
+        import dot, * as dotNs from "./dot.cjs";
+        import bracket from "./bracket.cjs";
+        import viaModule from "./module.cjs";
+        import read, { c } from "./read.cjs";
+        const describe = m => [Object.keys(m), Object.hasOwn(m, "__proto__"), m.inherited, Object.getPrototypeOf(m).inherited];
+        console.log(JSON.stringify([describe(dot), describe(bracket), describe(viaModule), dotNs.a, dotNs.default === dot, read.isObjectPrototype, c]));
+      `,
+      "/dot.cjs": /* js */ `
+        exports.__proto__ = { inherited: 1 };
+        exports.a = 1;
+      `,
+      "/bracket.cjs": /* js */ `
+        exports.b = 2;
+        exports["__proto__"] = { inherited: 2 };
+      `,
+      "/module.cjs": /* js */ `
+        module.exports.c = 3;
+        module.exports.__proto__ = { inherited: 3 };
+      `,
+      "/read.cjs": /* js */ `
+        exports.c = 4;
+        exports.isObjectPrototype = exports.__proto__ === Object.prototype;
+      `,
+    },
+    cjs2esm: {
+      unhandled: ["/dot.cjs", "/bracket.cjs", "/module.cjs", "/read.cjs"],
+    },
+    run: {
+      stdout: JSON.stringify([[["a"], false, 1, 1], [["b"], false, 2, 2], [["c"], false, 3, 3], 1, true, true, 4]),
+    },
+  });
   // Module code makes a top-level function declaration lexical, so a `var`
   // with the same name is a SyntaxError there. A function body allows it, so
   // these files keep their `__commonJS` wrapper. In sloppy mode the bundler

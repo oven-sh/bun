@@ -462,7 +462,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     if p.should_unwrap_common_js_to_esm() {
                         if !p.is_control_flow_dead && id.ref_.eql(p.exports_ref) {
                             if !p.commonjs_named_exports_deoptimized {
-                                if identifier_opts.is_delete_target() {
+                                // `exports.__proto__` is the prototype of `module.exports`, not an export.
+                                if identifier_opts.is_delete_target() || name == b"__proto__" {
                                     p.deoptimize_common_js_named_exports();
                                     return None;
                                 }
@@ -673,7 +674,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         if p.should_unwrap_common_js_to_esm() {
                             if !p.is_control_flow_dead {
                                 if !p.commonjs_named_exports_deoptimized {
-                                    if identifier_opts.is_delete_target() {
+                                    if identifier_opts.is_delete_target() || name == b"__proto__" {
                                         p.deoptimize_common_js_named_exports();
                                         return None;
                                     }

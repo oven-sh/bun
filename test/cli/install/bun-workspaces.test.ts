@@ -2975,4 +2975,21 @@ describe("a workspace package's bin does not replace the bin of a registry depen
     await run(ctx, ["install", "--linker", "isolated"]);
     expect(join(packageDir, "packages", "app", "node_modules", ".bin", "what-bin")).toBeValidBin(registryBin);
   });
+
+  // A `file:` directory dependency is a local directory too and links in the same
+  // group as workspace packages.
+  test.concurrent("hoisted: file: directory dependency of the root", async () => {
+    using ctx = await setupTest();
+    const { packageDir, packageJson } = ctx;
+    await Promise.all([
+      write(
+        packageJson,
+        JSON.stringify({ name: "foo", dependencies: { aaa: "file:./packages/aaa", "what-bin": "1.0.0" } }),
+      ),
+      writeWorkspacePackageWithWhatBin(packageDir),
+    ]);
+
+    await run(ctx, ["install", "--linker", "hoisted"]);
+    expect(join(packageDir, "node_modules", ".bin", "what-bin")).toBeValidBin(registryBin);
+  });
 });

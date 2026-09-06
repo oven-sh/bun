@@ -237,12 +237,15 @@ impl<'a> Writable<'a> {
         match stdio {
             Stdio::Dup2(_) => panic!("TODO dup2 stdio"),
             Stdio::Pipe | Stdio::ReadableStream(_) => {
-                let pipe_ref = FileSink::create(evtloop, result.unwrap());
+                let fd = result.unwrap();
+                let pipe_ref = FileSink::create(evtloop, fd);
                 let pipe = Self::pipe_sink_mut(&pipe_ref);
 
-                match pipe.writer.with_mut(|w| w.start(pipe.fd.get(), true)) {
+                match pipe.writer.with_mut(|w| w.start(fd, true)) {
                     bun_sys::Result::Ok(()) => {}
                     bun_sys::Result::Err(_err) => {
+                        // The writer did not take `fd`; nothing else closes it.
+                        fd.close();
                         if let Stdio::ReadableStream(rs) = stdio {
                             rs.cancel(global)?;
                         }

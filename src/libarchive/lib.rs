@@ -13,7 +13,7 @@ use bun_core::{MutableString, slice_to_nul, strings};
 use bun_core::{Output, ZStr, slice_as_bytes};
 #[cfg(unix)]
 use bun_paths::PathBuffer;
-use bun_paths::{OSPathBuffer, OSPathChar, SEP, SEP_STR};
+use bun_paths::{OSPathChar, SEP, SEP_STR};
 use bun_sys::{self, Fd, FdExt};
 use bun_wyhash::hash;
 
@@ -1263,7 +1263,7 @@ impl Archiver {
         // a directory HANDLE on Windows. Mirrors the guard pattern in extract_to_disk.
         let _close_dir_guard = scopeguard::guard(dir, |d| d.close());
 
-        let mut normalized_buf = bun_paths::PathBuffer::uninit();
+        let mut normalized_buf = bun_paths::path_buffer_pool::get();
 
         'loop_: loop {
             // SAFETY: archive valid for stream lifetime
@@ -1406,7 +1406,7 @@ impl Archiver {
         #[cfg(unix)]
         let mut deferred_symlinks: Vec<DeferredSymlink> = Vec::new();
 
-        let mut normalized_buf = OSPathBuffer::uninit();
+        let mut normalized_buf = bun_paths::os_path_buffer_pool::get();
         let mut use_pwrite = cfg!(unix);
         let mut use_lseek = true;
 

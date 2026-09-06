@@ -892,7 +892,7 @@ impl Cmd {
             core::mem::take(&mut me.exec)
         };
         // `me`'s borrow ended above: the teardown below re-enters this Cmd
-        // via stdin `on_close_io` → `buffered_input_close` (a no-op once
+        // via stdin `on_stdin_writer_close` → `buffered_input_close` (a no-op once
         // `exec` is taken).
         match exec {
             Exec::None => {}
@@ -948,15 +948,16 @@ impl Cmd {
     }
 
     /// Mark the subprocess's buffered stdin as closed.
-    pub(crate) fn buffered_input_close(&mut self) {
-        if let Exec::Subproc(sub) = &mut self.exec {
-            sub.buffered_closed.close_stdin();
-        }
+    pub(crate) fn buffered_input_close(&mut self) -> Yield {
+        let Exec::Subproc(sub) = &mut self.exec else {
+            return Yield::suspended();
+        };
+        sub.buffered_closed.close_stdin();
+        self.finish_if_done()
     }
 
     /// Mark the subprocess's buffered stdout/stderr as closed (flushing the
-    /// captured bytes into the shell buffers); if that makes the command
-    /// finished, transition to `Done` and yield back to the trampoline.
+    /// captured bytes into the shell buffers).
     pub(crate) fn buffered_output_close(
         &mut self,
         kind: OutKind,
@@ -966,27 +967,36 @@ impl Cmd {
             OutKind::Stdout => self.buffered_output_close_stdout(err),
             OutKind::Stderr => self.buffered_output_close_stderr(err),
         }
-        if self.has_finished() {
-            // Set `state = Done` and hand the Yield back to the caller
-            // (`PipeReader::run_yield`), which drives the trampoline with the
-            // `*mut Interpreter` it already holds, landing in `Cmd::next` →
-            // `CmdState::Done` → `interp.child_done(...)`.
-            self.state = CmdState::Done;
-            let (interp, this_id) = match &self.exec {
-                Exec::Subproc(sub) => (sub.interp, sub.this_id),
-                // Only the subprocess path calls this; builtin output goes
-                // through `Builtin::done` → `on_exec_done`.
-                _ => return Yield::suspended(),
-            };
-            // Same gate as `on_exit`: `exec.interp` stays null until the spawn
-            // returns, so a Yield run here would reach `Cmd::deinit` and free the
-            // `ShellSubprocess` still on the spawn frame. `transition_to_exec` resumes.
-            if interp.is_null() {
-                return Yield::suspended();
-            }
-            return Yield::Next(this_id);
+        self.finish_if_done()
+    }
+
+    /// Called by `ShellSubprocess::on_process_exit`.
+    pub(crate) fn on_exit(&mut self, exit_code: ExitCode) -> Yield {
+        log!("cmd exit code={}", exit_code);
+        // Keep the errno a stdio error already recorded.
+        if self.exit_code.is_none() {
+            self.exit_code = Some(exit_code);
         }
-        Yield::suspended()
+        self.finish_if_done()
+    }
+
+    /// `Done` once the exit code and every piped stdio are in; the caller runs
+    /// the Yield.
+    fn finish_if_done(&mut self) -> Yield {
+        if matches!(self.state, CmdState::Done) || !self.has_finished() {
+            return Yield::suspended();
+        }
+        self.state = CmdState::Done;
+        let (interp, this_id) = match &self.exec {
+            Exec::Subproc(sub) => (sub.interp, sub.this_id),
+            // Builtins finish through `Builtin::done`.
+            _ => return Yield::suspended(),
+        };
+        // Still inside the spawn; `transition_to_exec` resumes from `state`.
+        if interp.is_null() {
+            return Yield::suspended();
+        }
+        Yield::Next(this_id)
     }
 
     fn buffered_output_close_stdout(&mut self, err: Option<bun_sys::SystemError>) {
@@ -1057,31 +1067,6 @@ impl Cmd {
             self.base.shell_mut().buffered_stderr(),
         );
         child.close_io(StdioKind::Stderr);
-    }
-
-    /// Called by `ShellSubprocess::on_process_exit`.
-    pub(crate) fn on_exit(&mut self, exit_code: ExitCode) {
-        self.exit_code = Some(exit_code);
-        let has_finished = self.has_finished();
-        log!("cmd exit code={} has_finished={}", exit_code, has_finished);
-        if has_finished {
-            self.state = CmdState::Done;
-            // `self` lives inside `interp.nodes`, so resume via the stashed
-            // backrefs.
-            let (interp, this_id) = match &self.exec {
-                Exec::Subproc(sub) => (sub.interp, sub.this_id),
-                _ => return,
-            };
-            if interp.is_null() {
-                return;
-            }
-            // SAFETY: `interp` outlives every spawned subprocess (it owns the
-            // arena slot containing `self`). `&mut self` is dead by NLL after
-            // this point so the `&Interpreter` borrow does not alias it.
-            // The caller (`ShellSubprocess::on_process_exit`) does not touch
-            // its `*mut Cmd` again after this returns.
-            Yield::Next(this_id).run(unsafe { &*interp });
-        }
     }
 }
 

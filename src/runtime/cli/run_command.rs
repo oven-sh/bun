@@ -911,7 +911,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         mini.top_level_dir = Box::<[u8]>::from(top_level_dir);
 
         // `initAndRunFromFile`: read source then hand off to the interpreter.
-        let mut path_buf = PathBuffer::uninit();
+        let mut path_buf = bun_paths::path_buffer_pool::get();
         path_buf[..entry_path.len()].copy_from_slice(entry_path);
         path_buf[entry_path.len()] = 0;
         // SAFETY: NUL-terminated above; `path_buf` outlives the call.
@@ -1029,7 +1029,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
                 runner_arena().alloc_slice_copy(cron_script.as_bytes());
 
             // entry_path must end with /[eval] for the transpiler to use eval_source
-            let mut cwd_buf = PathBuffer::uninit();
+            let mut cwd_buf = bun_paths::path_buffer_pool::get();
             let cwd = bun_core::getcwd_or_exe_dir(&mut cwd_buf);
             let cwd_bytes = cwd.as_bytes();
             let mut eval_path: Vec<u8> = Vec::with_capacity(cwd_bytes.len() + EVAL_TRIGGER.len());
@@ -1758,8 +1758,8 @@ impl RunCommand {
         }
         #[cfg(windows)]
         {
-            let mut temp_path_buffer = WPathBuffer::uninit();
-            let mut target_path_buffer = PathBuffer::uninit();
+            let mut temp_path_buffer = bun_paths::w_path_buffer_pool::get();
+            let mut target_path_buffer = bun_paths::path_buffer_pool::get();
             // SAFETY: FFI Win32 `GetTempPathW`. `temp_path_buffer` is a valid
             // writable WCHAR[MAX_PATH+] buffer and `nBufferLength` is its
             // capacity in WCHARs; the call writes at most that many wide chars.
@@ -2633,7 +2633,7 @@ impl RunCommand {
             }
 
             if !path_for_which.is_empty() {
-                let mut path_buf = PathBuffer::uninit();
+                let mut path_buf = bun_paths::path_buffer_pool::get();
                 if let Some(destination) =
                     which(&mut path_buf, path_for_which, top_level_dir, target_name)
                 {
@@ -2717,7 +2717,7 @@ impl RunCommand {
         // absolute path via `get_fd_path` before booting. The
         // get_fd_path step matters: it resolves symlinks so module-relative
         // resolution sees the real location.
-        let mut script_name_buf = PathBuffer::uninit();
+        let mut script_name_buf = bun_paths::path_buffer_pool::get();
 
         // Build a NUL-terminated path to open (branching for
         // absolute vs. simple-relative vs. `..`/`~`-prefixed).
@@ -2748,7 +2748,7 @@ impl RunCommand {
             target.len()
         } else {
             // `..foo` / `~foo` — resolve against cwd via joinAbsStringBuf.
-            let mut cwd_buf = PathBuffer::uninit();
+            let mut cwd_buf = bun_paths::path_buffer_pool::get();
             let Ok(cwd) = bun_core::getcwd(&mut cwd_buf) else {
                 return false;
             };
@@ -2838,7 +2838,7 @@ impl RunCommand {
         const STDIN_TRIGGER: &[u8] = b"/[stdin]";
 
         let mut entry_point_buf = [0u8; MAX_PATH_BYTES + STDIN_TRIGGER.len()];
-        let mut cwd_buf = PathBuffer::uninit();
+        let mut cwd_buf = bun_paths::path_buffer_pool::get();
         let cwd = bun_core::getcwd_or_exe_dir(&mut cwd_buf);
         let cwd_bytes = cwd.as_bytes();
         let cwd_len = cwd_bytes.len();
@@ -2900,7 +2900,7 @@ impl RunCommand {
         }
 
         let mut entry_point_buf = [0u8; MAX_PATH_BYTES + EVAL_TRIGGER.len()];
-        let mut cwd_buf = PathBuffer::uninit();
+        let mut cwd_buf = bun_paths::path_buffer_pool::get();
         let cwd = bun_core::getcwd_or_exe_dir(&mut cwd_buf);
         let cwd_bytes = cwd.as_bytes();
         let cwd_len = cwd_bytes.len();
@@ -2935,7 +2935,7 @@ impl RunCommand {
         if !ctx.runtime_options.eval.script.is_empty() {
             // synthetic `[eval]` path under cwd
             let mut entry_point_buf = [0u8; MAX_PATH_BYTES + EVAL_TRIGGER.len()];
-            let mut cwd_buf = PathBuffer::uninit();
+            let mut cwd_buf = bun_paths::path_buffer_pool::get();
             let cwd = bun_core::getcwd_or_exe_dir(&mut cwd_buf);
             let cwd_bytes = cwd.as_bytes();
             let cwd_len = cwd_bytes.len();
@@ -2969,11 +2969,11 @@ impl RunCommand {
             // `cwd_buf[cwd_len] = b'/'` (always `/`, NOT the
             // platform separator) and then run the result through
             // `join_abs_string_buf::<Loose>` to collapse `.`/`..`.
-            let mut cwd_buf = PathBuffer::uninit();
+            let mut cwd_buf = bun_paths::path_buffer_pool::get();
             let cwd = bun_core::getcwd_or_exe_dir(&mut cwd_buf);
             let cwd_len = cwd.as_bytes().len();
             cwd_buf[cwd_len] = b'/';
-            let mut out_buf = PathBuffer::uninit();
+            let mut out_buf = bun_paths::path_buffer_pool::get();
             let joined = paths::resolve_path::join_abs_string_buf::<paths::platform::Loose>(
                 &cwd_buf[..cwd_len + 1],
                 &mut out_buf.0,
@@ -3342,15 +3342,20 @@ impl RunCommand {
     }
 
     fn render_markdown_file_and_exit(path: &[u8]) -> ! {
-        // No explicit free() on contents / rendered below: every path out
-        // of this function calls Global::exit() or bun.outOfMemory() (both
-        // noreturn), so the OS reclaims the allocations on process exit.
+        // Render in a function that returns so its pooled buffers are dropped
+        // before `exit`; LeakSanitizer reports them otherwise.
+        let code = Self::render_markdown_file(path);
+        Global::exit(code);
+    }
+
+    /// Renders `path` to stdout. Returns the process exit code.
+    fn render_markdown_file(path: &[u8]) -> u32 {
         let contents = match sys::File::read_from(Fd::cwd(), path) {
             Ok(bytes) => bytes,
             Err(err) => {
                 pretty_errorln!("<r><red>error<r>: {}", err);
                 Output::flush();
-                Global::exit(1);
+                return 1;
             }
         };
 
@@ -3419,8 +3424,8 @@ impl RunCommand {
         // `bun ./docs/README.md` from `/home/user` can't find `./img.png`
         // that sits next to README.md. Resolve to an absolute dir first
         // so joinAbsString downstream doesn't double-apply cwd.
-        let mut base_buf = PathBuffer::uninit();
-        let mut cwd_buf = PathBuffer::uninit();
+        let mut base_buf = bun_paths::path_buffer_pool::get();
+        let mut cwd_buf = bun_paths::path_buffer_pool::get();
         let abs_md_path: &[u8] = 'blk: {
             if paths::is_absolute(path) {
                 break 'blk path;
@@ -3462,12 +3467,12 @@ impl RunCommand {
                     "<r><red>error<r>: markdown rendering exceeded the stack — input is too deeply nested",
                 );
                 Output::flush();
-                Global::exit(1);
+                return 1;
             }
             Err(_) | Ok(None) => {
                 pretty_errorln!("<r><red>error<r>: failed to render markdown");
                 Output::flush();
-                Global::exit(1);
+                return 1;
             }
             Ok(Some(r)) => r,
         };
@@ -3482,7 +3487,7 @@ impl RunCommand {
         // silently (q=2 suppresses the error). System tmp cleanup
         // (systemd-tmpfiles, /tmp reboot wipe) eventually removes the
         // bun-md-*.png files, which are small (~100KB each) and rare.
-        Global::exit(0);
+        0
     }
 
     /// Shell-completion entries for `bun run`. Called from
@@ -3576,7 +3581,7 @@ impl RunCommand {
                             .fs
                             .entries_mutex
                             .lock_guard();
-                        let mut path_buf = PathBuffer::uninit();
+                        let mut path_buf = bun_paths::path_buffer_pool::get();
                         let mut iter = entries.data.iter();
                         let mut has_copied = false;
                         let mut dir_slice_len: usize = 0;

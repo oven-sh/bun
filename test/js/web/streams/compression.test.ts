@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isASAN } from "harness";
+import { once } from "node:events";
 import { addAbortSignal } from "node:stream";
 import zlib from "node:zlib";
 
@@ -126,6 +127,50 @@ describe("CompressionStream and DecompressionStream", () => {
         const output = decoder.decode(decompressed);
         expect(output).toBe(input);
       }
+    });
+
+    // https://github.com/oven-sh/bun/issues/41439
+    // A flushed brotli chunk must come out in full once its write settles. The
+    // decoder used to stop after one 16 KiB output buffer and keep the rest
+    // until the next compressed chunk was written.
+    test("DecompressionStream delivers the whole flushed chunk before the next write", async () => {
+      const firstLine = Buffer.alloc(40000, "x").toString() + "\n";
+      const secondLine = "done\n";
+
+      const compressor = zlib.createBrotliCompress();
+      const compressed: Buffer[] = [];
+      compressor.on("data", chunk => compressed.push(chunk));
+      await new Promise<void>(resolve => {
+        compressor.write(firstLine);
+        compressor.flush(resolve);
+      });
+      const firstPart = Buffer.concat(compressed.splice(0));
+      compressor.end(secondLine);
+      await once(compressor, "end");
+      const restPart = Buffer.concat(compressed.splice(0));
+
+      const ds = new DecompressionStream("brotli");
+      const writer = ds.writable.getWriter();
+      const reader = ds.readable.getReader();
+      let received = 0;
+      const readAll = (async () => {
+        for (;;) {
+          const { value, done } = await reader.read();
+          if (done) break;
+          received += value.byteLength;
+        }
+      })();
+
+      // The write settles only once every output step of the chunk is done.
+      await writer.write(firstPart);
+      // Let the pending reads above settle before we count.
+      await new Promise(resolve => setImmediate(resolve));
+      expect(received).toBe(firstLine.length);
+
+      await writer.write(restPart);
+      await writer.close();
+      await readAll;
+      expect(received).toBe(firstLine.length + secondLine.length);
     });
   });
 

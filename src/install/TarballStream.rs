@@ -28,7 +28,7 @@ use bun_core::strings;
 use bun_core::{self, Output, ZBox, env_var, fmt as bun_fmt};
 use bun_libarchive::lib;
 use bun_paths::resolve_path::{self, platform};
-use bun_paths::{self, OSPathBuffer, OSPathChar, OSPathSliceZ, PathBuffer};
+use bun_paths::{self, OSPathChar, OSPathSliceZ};
 #[cfg(not(windows))]
 use bun_sys::FdDirExt;
 use bun_sys::{self, Dir, Fd, FdExt, FileKind, Mode, O};
@@ -708,7 +708,7 @@ impl TarballStream {
                 self.invalid_name = true;
                 return Err(crate::Error::InstallFailed);
             };
-        let mut buf = PathBuffer::uninit();
+        let mut buf = bun_paths::path_buffer_pool::get();
         let tmpname = FileSystem::tmpname(tmpname_suffix, &mut buf[..], bun_core::fast_random())?;
         // allocator.dupeZ → owned NUL-terminated copy.
         self.tmpname = ZBox::from_bytes(tmpname.as_bytes());
@@ -805,7 +805,7 @@ impl TarballStream {
         // `OSPathSliceZ` suffix view here.
         let rest: &[OSPathChar] = tokenize_rest_after_first(&pathname[..]);
 
-        let mut norm_buf = OSPathBuffer::uninit();
+        let mut norm_buf = bun_paths::os_path_buffer_pool::get();
         if rest.len() >= norm_buf.len() {
             bun_core::warn!(
                 "Skipping entry with a path longer than the maximum path length: {}\n",

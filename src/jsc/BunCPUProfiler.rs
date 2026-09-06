@@ -3,8 +3,6 @@ use std::io::Write as _;
 
 use crate::VM;
 use bun_core::String as BunString;
-#[cfg(windows)]
-use bun_paths::OSPathBuffer;
 use bun_paths::{AutoAbsPathChecked, PathBuffer};
 use bun_sys::{self, Errno, Fd, FdDirExt as _};
 
@@ -95,7 +93,7 @@ fn write_profile_to_file(
 
     // Convert to OS-specific path (UTF-16 on Windows, UTF-8 elsewhere)
     #[cfg(windows)]
-    let mut path_buf_os = OSPathBuffer::uninit();
+    let mut path_buf_os = bun_paths::os_path_buffer_pool::get();
     #[cfg(windows)]
     let output_path_os =
         bun_core::strings::convert_utf8_to_utf16_in_buffer_z(&mut path_buf_os, path_buf.slice_z());
@@ -137,7 +135,7 @@ fn build_output_path(
     is_md_format: bool,
 ) -> Result<(), ProfilerError> {
     // Generate filename
-    let mut filename_buf = PathBuffer::uninit();
+    let mut filename_buf = bun_paths::path_buffer_pool::get();
 
     // If both formats are being written and a custom name was specified,
     // we need to add the appropriate extension to disambiguate

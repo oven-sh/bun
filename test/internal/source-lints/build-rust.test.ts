@@ -43,7 +43,6 @@ const mockToolchain: Toolchain = {
   clangVersion: "21.1.8",
   clangResourceDir: "/fake/llvm/lib/clang/21",
   ar: "/fake/llvm/bin/llvm-ar",
-  ranlib: "/fake/llvm/bin/llvm-ranlib",
   ld: "/fake/llvm/bin/ld.lld",
   ld64Lld: "/fake/llvm/bin/ld64.lld",
   rustLld: undefined,
@@ -51,9 +50,13 @@ const mockToolchain: Toolchain = {
   strip: "/fake/bin/strip",
   llvmStrip: "/fake/llvm/bin/llvm-strip",
   nm: "/fake/llvm/bin/llvm-nm",
+  readobj: "/fake/llvm/bin/llvm-readobj",
+  objdump: "/fake/llvm/bin/llvm-objdump",
+  cxxfilt: "/fake/llvm/bin/llvm-cxxfilt",
   dsymutil: "/fake/llvm/bin/dsymutil",
   bun: "/fake/bin/bun",
   jsRuntime: "/fake/bin/bun",
+  jsRuntimeArgv: ["/fake/bin/bun"],
   esbuild: "/fake/bin/esbuild",
   ccache: undefined,
   cmake: "/fake/bin/cmake",
@@ -62,7 +65,6 @@ const mockToolchain: Toolchain = {
   rustupHome: undefined,
   msvcLinker: undefined,
   rc: undefined,
-  mt: undefined,
   nasm: undefined,
 };
 
@@ -185,7 +187,7 @@ describe("CPU baseline", () => {
     );
   }
 
-  test("arm64 linux, freebsd and windows assume armv8-a+crc tuned for Ampere, like the C++ side", () => {
+  test("arm64 linux and freebsd assume armv8-a+crc tuned for Ampere, windows armv8-a+crc generic, like the C++ side", () => {
     // flags.ts: `-march=armv8-a+crc -mtune=ampere1`. Naming a CPU instead
     // (this used to be `-Ctarget-cpu=cortex-a72`) also assumes that CPU's
     // aes/sha2/pmuv3, which the C++ side doesn't, and gives every Rust
@@ -197,8 +199,12 @@ describe("CPU baseline", () => {
     expect(cpuFlags(linuxGnu)).toEqual(expected);
     expect(cpuFlags(withAbi(linuxGnu, "musl"))).toEqual(expected);
     expect(cpuFlags(resolve({ os: "freebsd", arch: "aarch64", freebsdSysroot: "/fake" }))).toEqual(expected);
-    // clang-cl spells the same flags `/clang:-march=...`.
-    expect(cpuFlags(resolve({ os: "windows", arch: "aarch64", winsysroot: "/fake" }))).toEqual(expected);
+    // clang-cl spells it `/clang:-march=...`; no -mtune there (Windows-on-ARM
+    // is Snapdragon, generic tuning like MSVC/Chromium/Rust).
+    expect(cpuFlags(resolve({ os: "windows", arch: "aarch64", winsysroot: "/fake" }))).toEqual([
+      "-Ctarget-cpu=generic",
+      "-Ctarget-feature=+crc",
+    ]);
   });
 
   test("arm64 android assumes armv8-a+crc tuned for Cortex-A78, like the C++ side", () => {

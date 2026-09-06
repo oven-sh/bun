@@ -391,7 +391,7 @@ impl Lookup {
 
             let name: &[u8] = &source_map.external_source_names[index];
 
-            let mut buf = bun_paths::PathBuffer::uninit();
+            let mut buf = bun_paths::path_buffer_pool::get();
             // `platform::Auto` is
             // cfg-selected (Posix on unix, Windows on windows).
             let dir = bun_paths::resolve_path::dirname::<bun_paths::platform::Auto>(base_filename);

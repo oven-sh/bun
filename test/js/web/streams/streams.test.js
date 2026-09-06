@@ -7,9 +7,9 @@ import {
   readableStreamToText,
 } from "bun";
 import { describe, expect, it, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, isDebug, isMacOS, isWindows, tempDir, tmpdirSync } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, isLinux, isMacOS, isWindows, tempDir, tmpdirSync } from "harness";
 import { mkfifo } from "mkfifo";
-import { createReadStream, realpathSync, unlinkSync, writeFileSync } from "node:fs";
+import { closeSync, createReadStream, openSync, realpathSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 it("TransformStream", async () => {
@@ -1944,6 +1944,115 @@ it("Bun.file().stream() read text from large file", async () => {
   } finally {
     unlinkSync(tmpfile);
   }
+});
+
+// A POSIX file is read synchronously inside the stream's pull, so a failing
+// read(2) arrives with no pending read to reject. Windows reads files through
+// libuv, where the error always lands on a pending read.
+describe.skipIf(isWindows)("Bun.file().stream() surfaces read() errors", () => {
+  // read(2) on /proc/self/mem fails with EIO: nothing is mapped at address 0.
+  const eioPath = "/proc/self/mem";
+  const itEIO = isLinux ? it : it.skip;
+
+  async function expectReadError(promise, code) {
+    const err = await promise.then(
+      () => null,
+      e => e,
+    );
+    expect(err).toBeInstanceOf(Error);
+    expect(err.code).toBe(code);
+    return err;
+  }
+
+  itEIO("for await rejects with the read error", async () => {
+    const chunks = [];
+    await expectReadError(
+      (async () => {
+        for await (const chunk of Bun.file(eioPath).stream()) chunks.push(chunk);
+      })(),
+      "EIO",
+    );
+    expect(chunks).toHaveLength(0);
+  });
+
+  itEIO("getReader().read() rejects with the read error", async () => {
+    await expectReadError(Bun.file(eioPath).stream().getReader().read(), "EIO");
+  });
+
+  itEIO("pipeTo() rejects with the read error", async () => {
+    await expectReadError(
+      Bun.file(eioPath)
+        .stream()
+        .pipeTo(new WritableStream({ write() {} })),
+      "EIO",
+    );
+  });
+
+  itEIO("Bun.file().text() reports the same read error", async () => {
+    const err = await expectReadError(Bun.file(eioPath).text(), "EIO");
+    expect(err.syscall).toBe("read");
+  });
+
+  it("a stream over a write-only fd rejects with EBADF", async () => {
+    using dir = tempDir("file-stream-read-error", { "x.bin": "hello" });
+    const fd = openSync(join(String(dir), "x.bin"), "w");
+    try {
+      await expectReadError(Bun.file(fd).stream().getReader().read(), "EBADF");
+    } finally {
+      closeSync(fd);
+    }
+  });
+
+  // A pollable fd (here a non-blocking pty master, as node-pty sets it up) is
+  // read when its poll fires. A read error must release that poll, or the
+  // process never exits. The slave hangup fails the master read with EIO on
+  // Linux and ends it on macOS.
+  it("a read error on a pollable fd releases the poll so the process can exit", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        const { CString, dlopen } = require("bun:ffi");
+        const { closeSync, constants, openSync, writeSync } = require("node:fs");
+        const arch = process.arch === "x64" ? "x86_64" : process.arch === "arm64" ? "aarch64" : process.arch;
+        const candidates = process.platform === "darwin" ? ["libSystem.B.dylib"] : ["libc.so.6", "libc.musl-" + arch + ".so.1"];
+        let libc, lastError;
+        for (const lib of candidates) {
+          try {
+            libc = dlopen(lib, {
+              posix_openpt: { args: ["int"], returns: "int" },
+              grantpt: { args: ["int"], returns: "int" },
+              unlockpt: { args: ["int"], returns: "int" },
+              ptsname: { args: ["int"], returns: "ptr" },
+            }).symbols;
+            break;
+          } catch (err) {
+            lastError = err;
+          }
+        }
+        if (!libc) throw lastError;
+        const master = libc.posix_openpt(constants.O_RDWR | constants.O_NOCTTY | constants.O_NONBLOCK);
+        if (master < 0 || libc.grantpt(master) !== 0 || libc.unlockpt(master) !== 0) throw new Error("pty setup failed");
+        const slave = openSync(new CString(libc.ptsname(master)).toString(), constants.O_RDWR | constants.O_NOCTTY);
+        const reader = Bun.file(master).stream().getReader();
+        writeSync(slave, "x");
+        const first = await reader.read();
+        console.log("first", Buffer.from(first.value).toString());
+        // This read finds no data and waits on the poll. The hangup fires it.
+        const pending = reader.read();
+        closeSync(slave);
+        const result = await pending.then(r => (r.done ? "done" : "data"), e => e.code);
+        console.log("settled", result);
+        `,
+      ],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout).toMatch(/^first x\nsettled (EIO|done)\n$/);
+    expect(exitCode).toBe(0);
+  });
 });
 
 it("fs.createReadStream(filename) should be able to break inside async loop", async () => {

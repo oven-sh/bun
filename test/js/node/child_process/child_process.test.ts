@@ -1640,3 +1640,30 @@ describe("spawn().unref() with piped stdio", () => {
     });
   });
 });
+
+// Temporary diagnostic for the darwin-only backpressure failure. Samples how
+// many bytes reach the JS-side buffer over time with no consumer attached.
+it("probe2: darwin backpressure growth", async () => {
+  const SIZE = 1024 * 1024;
+  const c = spawn("sh", ["-c", `head -c ${SIZE} /dev/zero`], {
+    stdio: ["ignore", "pipe", "ignore"],
+    env: bunEnv,
+  });
+  const s: any = c.stdout!;
+  const samples: any[] = [];
+  const start = performance.now();
+  const deadline = Date.now() + 1000;
+  let last = -1;
+  while (Date.now() < deadline) {
+    await new Promise(r => setImmediate(r));
+    const len = s.readableLength;
+    if (len !== last || c.exitCode !== null) {
+      samples.push([Math.round(performance.now() - start), len, s._readableState.reading, s.readableFlowing, c.exitCode]);
+      last = len;
+      if (samples.length > 40) break;
+    }
+    if (c.exitCode !== null && samples.length > 3) break;
+  }
+  console.log("PROBE2", JSON.stringify({ platform: process.platform, hwm: s.readableHighWaterMark, final: s.readableLength, exitCode: c.exitCode, samples }));
+  c.kill();
+});

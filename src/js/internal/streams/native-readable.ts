@@ -256,8 +256,7 @@ function destroy(this: NativeReadable, error: any, cb: () => void) {
     ptr.cancel(error);
   }
   if (cb) {
-    // `_destroy` reports its error through the callback; dropping it here
-    // turns a read error into a plain 'close' with no 'error' event.
+    // `_destroy` reports its error through the callback.
     process.nextTick(cb, error);
   }
 }

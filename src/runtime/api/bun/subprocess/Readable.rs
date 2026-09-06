@@ -33,9 +33,7 @@ pub enum Readable {
     /// the owning `Readable` will be converted into this variant and the pipe's
     /// buffer will be taken as an owned `CowString`.
     Buffer(CowString),
-    /// A buffered `pipe` whose read failed before JS took the stream: the
-    /// bytes read before the error, then the error, delivered when JS asks
-    /// for the output.
+    /// A buffered `pipe` whose read failed: the bytes read before the error, then the error.
     Errored(CowString, bun_sys::Error),
 }
 

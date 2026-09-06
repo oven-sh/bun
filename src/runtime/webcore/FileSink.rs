@@ -513,8 +513,7 @@ impl FileSink {
                 }
             }
 
-            // A write error closed the writer: the source learns why, so a JS
-            // ReadableStream piped in here sees it as its cancel reason.
+            // A piped JS ReadableStream sees the write error as its cancel reason.
             let err = match (*this).stream_error.get() {
                 Some(streams::StreamError::Error(err)) => Some(err.clone()),
                 _ => None,

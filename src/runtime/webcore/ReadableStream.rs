@@ -604,8 +604,7 @@ impl ReadableStream {
         Ok(stream)
     }
 
-    /// A stream that delivers `bytes`, then errors with `err`: the output of a
-    /// subprocess pipe whose read failed before JS took the stream.
+    /// A stream that delivers `bytes`, then errors with `err`.
     pub fn from_bytes_then_error(
         global_this: &JSGlobalObject,
         bytes: Vec<u8>,

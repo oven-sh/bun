@@ -45,15 +45,17 @@ test("optimized code keeps the bounds check of a string access whose result is d
       const latin1 = "Hello, World!";
       const utf16 = "こんにちは世界";
 
-      for (let i = 0; i < 20000; ++i) {
+      // With the JIT thresholds below, the FTL compiles the probes after a few
+      // hundred calls. 1000 leaves margin and stays fast on a debug build.
+      for (let i = 0; i < 1000; ++i) {
         let index = i % latin1.length;
-        shouldBe(codePointAtIsUndefined(latin1, index), false, "codePointAt latin1 " + index);
-        shouldBe(atIsUndefined(latin1, index), false, "at latin1 " + index);
-        shouldBe(charCodeAtIsNaN(latin1, index), false, "charCodeAt latin1 " + index);
+        shouldBe(codePointAtIsUndefined(latin1, index), false, "codePointAt latin1 in bounds");
+        shouldBe(atIsUndefined(latin1, index), false, "at latin1 in bounds");
+        shouldBe(charCodeAtIsNaN(latin1, index), false, "charCodeAt latin1 in bounds");
         index = i % utf16.length;
-        shouldBe(codePointAtIsUndefined(utf16, index), false, "codePointAt utf16 " + index);
-        shouldBe(atIsUndefined(utf16, index), false, "at utf16 " + index);
-        shouldBe(charCodeAtIsNaN(utf16, index), false, "charCodeAt utf16 " + index);
+        shouldBe(codePointAtIsUndefined(utf16, index), false, "codePointAt utf16 in bounds");
+        shouldBe(atIsUndefined(utf16, index), false, "at utf16 in bounds");
+        shouldBe(charCodeAtIsNaN(utf16, index), false, "charCodeAt utf16 in bounds");
         step({ source: latin1, cursor: index % latin1.length, atEnd: false });
       }
 

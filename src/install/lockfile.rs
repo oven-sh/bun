@@ -2599,9 +2599,7 @@ impl<'a> StringBuilder<'a> {
     fn count_with_hash(&mut self, slice: &[u8], hash: u64) {
         self.assert_not_allocated();
 
-        // Reserve space unless the pool already holds this exact string. A hash
-        // hit alone is not enough: two distinct strings can share one hash, and
-        // `append` stores both, so both need reserved bytes.
+        // A hash hit with different bytes is a collision, and `append` stores it too.
         let already_pooled = match self.string_pool.get(hash) {
             Some(existing) => strings::eql(existing.slice(self.string_bytes.as_slice()), slice),
             None => false,
@@ -2653,10 +2651,6 @@ impl<'a> StringBuilder<'a> {
         let string_entry = self.string_pool.get_or_put(hash).expect("unreachable");
         if string_entry.found_existing {
             let existing = *string_entry.value_ptr;
-            // Two distinct strings can share one hash. Compare the bytes before
-            // the pooled string is reused, so a collision does not return
-            // another string's value. `count_with_hash` reserves space for the
-            // second string, so the fallback write stays inside the region.
             if strings::eql(existing.slice(self.string_bytes.as_slice()), slice) {
                 return T::from_pooled(existing, hash);
             }
@@ -2676,9 +2670,7 @@ impl<'a> StringBuilder<'a> {
         T::from_pooled(*string_entry.value_ptr, hash)
     }
 
-    /// Append `slice` into the reserved region without keeping it in the pool.
-    /// Used when a hash hit turns out to be a collision between two distinct
-    /// strings, so the second string still gets its own bytes.
+    /// Stores a string whose hash collides with a different pooled string.
     fn append_without_pool<T: StringBuilderType>(&mut self, slice: &[u8], hash: u64) -> T {
         debug_assert!(self.ptr.is_some());
         let start = self.off + self.len;

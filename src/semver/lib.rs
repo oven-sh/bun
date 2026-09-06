@@ -578,10 +578,6 @@ pub mod semver_string {
             let entry = self.pool.get_or_put(hash)?;
             if entry.found_existing {
                 let existing = *entry.value_ptr;
-                // Two distinct strings can share one hash. Compare the bytes
-                // before the pooled string is reused, so a collision does not
-                // return another string's value. `Builder::append_with_hash`
-                // does the same check.
                 if strings::eql(existing.slice(self.bytes), str) {
                     return Ok(existing);
                 }
@@ -827,8 +823,6 @@ pub mod semver_string {
         pub fn contains(&self, hash: u64) -> bool {
             self.map.contains_key(&hash)
         }
-        /// The pooled string for `hash`, if one is present. The caller compares
-        /// its bytes to guard against a hash collision.
         #[inline]
         pub fn get(&self, hash: u64) -> Option<String> {
             self.map.get(&hash).copied()

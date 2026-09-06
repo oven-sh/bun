@@ -191,6 +191,10 @@ impl Route {
         cost += mem::size_of::<Route>();
         cost += self.pending_responses.get().len() * mem::size_of::<PendingResponse>();
         cost += self.state.get().memory_cost();
+        // The `StaticRoute`s themselves are counted through the server's static route list.
+        for (path, _) in self.assets.get().iter() {
+            cost += mem::size_of::<(Box<[u8]>, RefPtr<StaticRoute>)>() + path.len();
+        }
         cost
     }
 

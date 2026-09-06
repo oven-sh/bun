@@ -262,11 +262,11 @@ macro_rules! cmd_key_varargs {
                 this, $name,
             )?;
 
-            let arguments = frame.arguments();
-            if arguments.is_empty() {
+            if frame.argument(0).is_undefined_or_null() {
                 return Err(global.throw_missing_arguments_value(&[$arg0_name]));
             }
 
+            let arguments = frame.arguments();
             let mut args: Vec<JSArgument> = Vec::with_capacity(arguments.len());
 
             for arg in arguments {

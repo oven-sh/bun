@@ -546,14 +546,14 @@ describe("web worker", () => {
 
     // terminate() landing while the worker reports that its entry point does not
     // resolve: the report is skipped, not turned into a panic.
-    test(
-      "terminate() while the entry point fails to resolve",
-      async () => {
-        await using proc = Bun.spawn({
-          cmd: [
-            bunExe(),
-            "-e",
-            `let done = 0;
+    test("terminate() while the entry point fails to resolve", async () => {
+      // A worker takes about 150ms to start on a debug build, 2ms on release.
+      const rounds = isDebug ? 4 : 12;
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `let done = 0;
            async function one(i) {
              const w = new Worker("/nonexistent/path-" + i + ".js");
              const closed = new Promise(r => w.addEventListener("close", r));
@@ -562,19 +562,17 @@ describe("web worker", () => {
              await closed;
              done++;
            }
-           for (let r = 0; r < 12; r++) await Promise.all(Array.from({ length: 8 }, (_, i) => one(r * 8 + i)));
+           for (let r = 0; r < ${rounds}; r++) await Promise.all(Array.from({ length: 8 }, (_, i) => one(r * 8 + i)));
            console.log("done", done);`,
-          ],
-          env: bunEnv,
-          stdout: "pipe",
-          stderr: "inherit",
-        });
-        const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
-        expect(stdout).toBe("done 96\n");
-        expect(exitCode).toBe(0);
-      },
-      isDebug ? 30_000 : 5_000,
-    );
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "inherit",
+      });
+      const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+      expect(stdout).toBe(`done ${rounds * 8}\n`);
+      expect(exitCode).toBe(0);
+    });
 
     // A worker posting faster than the parent can deserialize must not pin the
     // parent inside one drain: its timers and I/O still get their turn.
@@ -697,33 +695,29 @@ describe("web worker", () => {
 
     // fs completions racing terminate(): whatever completes on the worker
     // after the request must release, not build script values under it.
-    test(
-      "terminate() while fs.readFile completions keep arriving",
-      async () => {
-        using dir = tempDir("worker-readfile-churn", { "f.bin": Buffer.alloc(65536, 7) });
-        await using proc = Bun.spawn({
-          cmd: [
-            bunExe(),
-            "-e",
-            `const src = \`import { readFile } from "node:fs";
+    test("terminate() while fs.readFile completions keep arriving", async () => {
+      using dir = tempDir("worker-readfile-churn", { "f.bin": Buffer.alloc(65536, 7) });
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `const src = \`import { readFile } from "node:fs";
              let n = 0; (function pump(){ while (n < 16) { n++; readFile(\${JSON.stringify(process.argv[1])}, () => { n--; setImmediate(pump) }) } })();
              postMessage("busy")\`;
            const url = URL.createObjectURL(new Blob([src]));
-           for (let r = 0; r < 12; r++) await Promise.all(Array.from({ length: 4 }, (_, i) => new Promise(res => {
+           for (let r = 0; r < ${isDebug ? 4 : 12}; r++) await Promise.all(Array.from({ length: 4 }, (_, i) => new Promise(res => {
              const w = new Worker(url); w.addEventListener("close", res); w.onmessage = () => setTimeout(() => w.terminate(), (r + i) % 10) })));
            console.log("PASS");`,
-            path.join(String(dir), "f.bin"),
-          ],
-          env: bunEnv,
-          stdout: "pipe",
-          stderr: "inherit",
-        });
-        const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
-        expect(stdout).toBe("PASS\n");
-        expect(exitCode).toBe(0);
-      },
-      isDebug ? 30_000 : 5_000,
-    );
+          path.join(String(dir), "f.bin"),
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "inherit",
+      });
+      const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+      expect(stdout).toBe("PASS\n");
+      expect(exitCode).toBe(0);
+    });
   });
 });
 

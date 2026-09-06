@@ -1,6 +1,5 @@
 use core::ffi::{c_char, c_void};
 use core::ptr;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Instant;
 
 use crate::Error;
@@ -14,6 +13,7 @@ use bun_io::BufferedReader;
 use bun_paths as path;
 
 use crate::Command;
+use crate::cli::run_abort;
 use crate::filter_arg as FilterArg;
 use crate::run_command::{ConfigureEnvOptions, RunCommand};
 
@@ -502,7 +502,7 @@ impl<'a> State<'a> {
         };
 
         if failed && !self.no_exit_on_error {
-            self.abort();
+            self.abort(bun_sys::SignalCode::SIGINT);
             return Ok(());
         }
 
@@ -563,7 +563,8 @@ impl<'a> State<'a> {
         }
     }
 
-    fn abort(&mut self) {
+    /// Sends `signal` to every running script and finishes the rest.
+    fn abort(&mut self, signal: bun_sys::SignalCode) {
         if self.aborted {
             return;
         }
@@ -576,7 +577,7 @@ impl<'a> State<'a> {
             // SAFETY: points into `self.handles`, live for the whole run loop.
             if let Some(proc) = unsafe { (*handle).process.as_ref() } {
                 if matches!(proc.status, Status::Running) {
-                    let _ = proc.process.kill(bun_sys::SignalCode::SIGINT.0);
+                    let _ = proc.process.kill(signal.0);
                 }
             }
             // An already-exited handle may be waiting on pipes a grandchild
@@ -605,71 +606,6 @@ impl<'a> State<'a> {
             }
         }
         0
-    }
-}
-
-struct AbortHandler;
-
-static SHOULD_ABORT: AtomicBool = AtomicBool::new(false);
-
-impl AbortHandler {
-    #[cfg(unix)]
-    extern "C" fn posix_signal_handler(
-        _sig: i32,
-        _info: *const bun_sys::posix::siginfo_t,
-        _: *const c_void,
-    ) {
-        SHOULD_ABORT.store(true, Ordering::SeqCst);
-    }
-
-    #[cfg(windows)]
-    extern "system" fn windows_ctrl_handler(
-        dw_ctrl_type: bun_sys::windows::DWORD,
-    ) -> bun_sys::windows::BOOL {
-        if dw_ctrl_type == bun_sys::windows::CTRL_C_EVENT {
-            SHOULD_ABORT.store(true, Ordering::SeqCst);
-            return bun_sys::windows::TRUE;
-        }
-        bun_sys::windows::FALSE
-    }
-
-    fn install() {
-        #[cfg(unix)]
-        {
-            // bun_sys::posix::Sigaction is a re-export of libc::sigaction; construct
-            // via zeroed() (POD C struct) and populate sa_sigaction/sa_mask/sa_flags.
-            // SAFETY: all-zero is a valid `libc::sigaction`; sigemptyset/sigaction are
-            // FFI calls with no extra preconditions beyond valid pointers.
-            unsafe {
-                let mut action: bun_sys::posix::Sigaction = bun_core::ffi::zeroed();
-                action.sa_sigaction = Self::posix_signal_handler as *const () as usize;
-                libc::sigemptyset(&raw mut action.sa_mask);
-                action.sa_flags = (libc::SA_SIGINFO | libc::SA_RESTART | libc::SA_RESETHAND) as _;
-                bun_sys::posix::sigaction(libc::SIGINT, &raw const action, core::ptr::null_mut());
-            }
-        }
-        #[cfg(not(unix))]
-        {
-            let res = bun_sys::windows::SetConsoleCtrlHandler(
-                Some(Self::windows_ctrl_handler),
-                bun_sys::windows::TRUE,
-            );
-            if res == 0 {
-                if bun_core::env::IS_DEBUG {
-                    bun_core::warn!("Failed to set abort handler\n");
-                }
-            }
-        }
-    }
-
-    fn uninstall() {
-        #[cfg(windows)]
-        {
-            let _ = bun_sys::windows::SetConsoleCtrlHandler(
-                Some(Self::windows_ctrl_handler),
-                bun_sys::windows::FALSE,
-            );
-        }
     }
 }
 
@@ -1242,12 +1178,17 @@ pub(crate) fn run(ctx: &mut Command::ContextData) -> Result<core::convert::Infal
         }
     }
 
-    AbortHandler::install();
+    // SAFETY: event_loop points at the thread-lifetime MiniEventLoop singleton.
+    run_abort::install(unsafe { (*event_loop).loop_ptr() });
 
     while !state.is_done() {
-        if SHOULD_ABORT.load(Ordering::SeqCst) && !state.aborted {
-            AbortHandler::uninstall();
-            state.abort();
+        if let Some(signal) = run_abort::pending()
+            && !state.aborted
+        {
+            // A second signal now ends the runner at once, for a script that
+            // ignores the forwarded one.
+            run_abort::uninstall();
+            state.abort(signal);
             // The abort sweep may have finished the last script; re-check
             // before blocking in a tick no event may ever wake.
             continue;
@@ -1257,6 +1198,12 @@ pub(crate) fn run(ctx: &mut Command::ContextData) -> Result<core::convert::Infal
     }
 
     let status = state.finalize();
+    // An interrupted run is not a clean one, even if every script that
+    // started exited 0 before the signal reached it.
+    let status = match run_abort::pending() {
+        Some(signal) => signal.to_exit_code().unwrap_or(1),
+        None => status,
+    };
     Global::exit(status as u32);
 }
 

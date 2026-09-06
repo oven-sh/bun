@@ -346,6 +346,8 @@ pub mod filter_run;
 pub mod link_command;
 #[path = "multi_run.rs"]
 pub mod multi_run;
+#[path = "run_abort.rs"]
+pub(crate) mod run_abort;
 #[path = "outdated_command.rs"]
 pub mod outdated_command;
 #[path = "pack_command.rs"]

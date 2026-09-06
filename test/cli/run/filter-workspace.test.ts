@@ -1311,3 +1311,69 @@ describe("auto-discovered bunfig.toml [run] section", () => {
     expect(r.exitCode).toBe(1);
   });
 });
+
+// proc.kill() is TerminateProcess on Windows; it never reaches the console control handler.
+describe.skipIf(isWindows)("signals", () => {
+  // Each package runs a script that reports the signal it receives and exits 0.
+  // The sleep is long enough that a runner which only reacts once its children
+  // exit on their own shows up as the wrong exit code, not as a slow pass.
+  const trapFixture = `
+    const sig = process.argv[2];
+    process.on(sig, () => {
+      console.log("got " + sig);
+      process.exit(0);
+    });
+    console.log("ready");
+    setTimeout(() => {}, 30_000);
+  `;
+
+  async function runFilterAndSignal(signal: "SIGINT" | "SIGTERM") {
+    using dir = tempDir("filter-signal", {
+      "trap.js": trapFixture,
+      packages: {
+        pkga: {
+          "package.json": JSON.stringify({ name: "pkga", scripts: { wait: `${bunExe()} ../../trap.js ${signal}` } }),
+        },
+        pkgb: {
+          "package.json": JSON.stringify({ name: "pkgb", scripts: { wait: `${bunExe()} ../../trap.js ${signal}` } }),
+        },
+      },
+      "package.json": JSON.stringify({ name: "ws", workspaces: ["packages/*"] }),
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "run", "--filter", "*", "wait"],
+      cwd: String(dir),
+      env: { ...bunEnv, NO_COLOR: "1" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const ready = Promise.withResolvers<void>();
+    const decoder = new TextDecoder();
+    let stdout = "";
+    const stdoutDone = (async () => {
+      for await (const chunk of proc.stdout) {
+        stdout += decoder.decode(chunk, { stream: true });
+        if (stdout.split("ready").length - 1 >= 2) ready.resolve();
+      }
+    })();
+    await ready.promise;
+    // Signal the runner alone, not the children.
+    proc.kill(signal);
+    const [, stderr, exitCode] = await Promise.all([stdoutDone, proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+
+  test("SIGINT to the runner is forwarded to every package at once and exits 130", async () => {
+    const r = await runFilterAndSignal("SIGINT");
+    expect(r.stdout).toContain("pkga wait: got SIGINT");
+    expect(r.stdout).toContain("pkgb wait: got SIGINT");
+    expect(r.exitCode).toBe(130);
+  });
+
+  test("SIGTERM to the runner is forwarded to every package and exits 143", async () => {
+    const r = await runFilterAndSignal("SIGTERM");
+    expect(r.stdout).toContain("pkga wait: got SIGTERM");
+    expect(r.stdout).toContain("pkgb wait: got SIGTERM");
+    expect(r.exitCode).toBe(143);
+  });
+});

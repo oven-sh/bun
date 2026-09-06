@@ -2,7 +2,7 @@ import type { Subprocess } from "bun";
 import { spawn } from "bun";
 import { afterEach, expect, it } from "bun:test";
 import { bunEnv, bunExe, isBroken, isLinux, isWindows, tempDir, tmpdirSync } from "harness";
-import { readdirSync, rmSync } from "node:fs";
+import { readdirSync, renameSync, rmSync } from "node:fs";
 import { join } from "node:path";
 
 let watchee: Subprocess;
@@ -465,3 +465,60 @@ it.skipIf(isWindows)(
   },
   30000,
 );
+
+// The Linux watcher learns about a save that replaces the inode (write a temp
+// file and rename it over the target, or delete and recreate) from the
+// directory event only. The hot reloader used to map that event to the
+// watchlist through the cached directory entry's `abs_path`, which the
+// resolver fills in lazily. A lookup that resolves to nothing busts the
+// directory cache, so the re-read entry had an empty `abs_path` and every later
+// save of that kind in the directory was ignored.
+const replaceFile = {
+  "rename over": async (path: string, contents: string) => {
+    const tmp = `${path}.tmp`;
+    await Bun.write(tmp, contents);
+    renameSync(tmp, path);
+  },
+  "delete and recreate": async (path: string, contents: string) => {
+    rmSync(path);
+    await Bun.write(path, contents);
+  },
+};
+for (const [how, replace] of Object.entries(replaceFile)) {
+  it.skipIf(isWindows)(`--watch sees a ${how} save after a failed lookup in the same directory`, async () => {
+    using dir = tempDir("watch-dir-event-after-miss", {
+      "a.js": `export const a = 1;`,
+      "entry.js": `import { a } from "./a.js";
+console.log("EVAL a =", a);
+try {
+  require("./config.local.js");
+} catch {}
+console.log("MISS done");
+setInterval(() => {}, 1e6);
+`,
+    });
+    const cwd = String(dir);
+    const proc = spawn({
+      cwd,
+      cmd: [bunExe(), "--watch", "--no-clear-screen", "entry.js"],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "inherit",
+      stdin: "ignore",
+    });
+    watchee = proc;
+    const { waitFor, release } = stdoutWaiter(proc);
+
+    // "MISS done" means the failed lookup already busted the directory cache.
+    await waitFor("EVAL a = 1\nMISS done\n");
+
+    for (const v of [2, 3]) {
+      await replace(join(cwd, "a.js"), `export const a = ${v};`);
+      await waitFor(`EVAL a = ${v}\nMISS done\n`);
+    }
+
+    release();
+    proc.kill("SIGKILL");
+    await proc.exited;
+  });
+}

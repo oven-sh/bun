@@ -499,12 +499,49 @@ fn build_symbol_table_pdb(pdb_path: &Path, file: &object::File) -> Result<Vec<Sy
         raw.push((va, 0, p.name.to_string().into_owned()));
     }
 
+    // DBI section contributions: one record per (output section, source
+    // object) pair — "module M contributed bytes [offset, offset+size) of
+    // section S". Used twice: to bound a zero-size public's synthesized range
+    // to the object it came from (below), and to name code no symbol covers
+    // (pass 3).
+    let mut contribs_in_text: Vec<(u64, u64, usize)> = Vec::new();
+    {
+        let mut contribs = dbi
+            .section_contributions()
+            .map_err(|e| format!("pdb section_contributions: {e}"))?;
+        while let Some(c) = contribs
+            .next()
+            .map_err(|e| format!("pdb contrib iter: {e}"))?
+        {
+            let Some(rva) = c.offset.to_rva(&address_map) else {
+                continue;
+            };
+            let begin = image_base + u64::from(rva.0);
+            if c.size == 0 || !in_text(begin) {
+                continue;
+            }
+            contribs_in_text.push((begin, begin + u64::from(c.size), c.module));
+        }
+        contribs_in_text.sort_by_key(|c| c.0);
+    }
+    // End of the contribution containing `addr` (the object's last byte in
+    // this section), if any.
+    let contribution_end = |addr: u64| -> Option<u64> {
+        let i = contribs_in_text.partition_point(|c| c.0 <= addr);
+        (i > 0 && addr < contribs_in_text[i - 1].1).then(|| contribs_in_text[i - 1].1)
+    };
+
     // Finalize the PDB-named symbols FIRST, without .pdata entries in the mix.
     // Zero-size S_PUB32 markers for hand-written asm need their synthetic end
     // to reach the next *named* symbol. A .pdata entry nested inside such a
     // routine (covering an inner loop with its own unwind info) would
     // otherwise truncate the public's range and strand the rest of the
-    // function as <no-symbol>.
+    // function as <no-symbol>. The synthetic end never crosses into the next
+    // object, though: an asm file whose first routine is a local label (no
+    // PUBLIC record — aesni-gcm-x86_64's _aesni_ctr32_ghash_6x) would
+    // otherwise be attributed to whichever public the linker happened to lay
+    // out before it, and that changes with link order. Pass 3 names such
+    // code by its object instead.
     raw.sort_by(|a, b| a.0.cmp(&b.0).then(b.1.cmp(&a.1)));
     raw.dedup_by(|later, earlier| later.0 == earlier.0);
 
@@ -523,7 +560,8 @@ fn build_symbol_table_pdb(pdb_path: &Path, file: &object::File) -> Result<Vec<Sy
                 .copied()
                 .find(|&e| e > addr)
                 .unwrap_or(u64::MAX);
-            next_sym.min(sec_end)
+            let obj_end = contribution_end(addr).unwrap_or(u64::MAX);
+            next_sym.min(sec_end).min(obj_end)
         };
         if end > addr {
             syms.push(Sym { addr, end, name });
@@ -531,51 +569,43 @@ fn build_symbol_table_pdb(pdb_path: &Path, file: &object::File) -> Result<Vec<Sy
     }
 
     // ---- Pass 3: DBI section contributions — ONLY where nothing above reaches ----
-    // One record per (output section, source object) pair: "module M contributed
-    // bytes [offset, offset+size) of section S". This is the linker-map data in
-    // structured form — it tells you which .obj/.lib every byte came from, even
-    // when that .obj shipped no per-function symbols (stripped CRT, Rust
-    // staticlib std helpers that LTO anonymized).
+    // This is the linker-map data in structured form — it tells you which
+    // .obj/.lib every byte came from, even when that .obj shipped no
+    // per-function symbols (stripped CRT, Rust staticlib std helpers that LTO
+    // anonymized, an asm file's leading local routine).
     //
-    // Attribution is by library basename: <lib:foo.lib>. That name is stable
-    // across link reorderings and unrelated code changes — it only moves if
-    // the archive itself gets renamed.
+    // Attribution is by library / object basename: <lib:foo.lib>,
+    // <lib:bar.asm.obj>. That name is stable across link reorderings and
+    // unrelated code changes — it only moves if the file itself is renamed.
     //
-    // Multiple contributions from the same library collapse to one allowlist
+    // Multiple contributions from the same file collapse to one allowlist
     // entry. Unlike the .pdata-RVA approach this replaces, the result doesn't
     // churn when addresses shift.
     // Collect gap-fillers into a scratch vec so symbol_for() keeps operating
     // on the sorted pass-1/2 table. Pushing directly into `syms` mid-iteration
     // would break the binary search invariant.
     let mut gap_fillers: Vec<Sym> = Vec::new();
-    let mut contribs = dbi
-        .section_contributions()
-        .map_err(|e| format!("pdb section_contributions: {e}"))?;
-    while let Some(c) = contribs
-        .next()
-        .map_err(|e| format!("pdb contrib iter: {e}"))?
-    {
-        let Some(rva) = c.offset.to_rva(&address_map) else {
-            continue;
-        };
-        let begin = image_base + u64::from(rva.0);
-        let end = begin + u64::from(c.size);
-        if c.size == 0 || !in_text(begin) {
-            continue;
+    for &(begin, end, module) in &contribs_in_text {
+        // The leading part a named symbol covers needs nothing; the filler
+        // starts at the contribution's first byte no pass-1/2 symbol reaches
+        // (usually the first byte, or none at all).
+        let mut start = begin;
+        while start < end {
+            match symbol_for(&syms, start) {
+                Some(sym) => start = sym.end,
+                None => break,
+            }
         }
-        // Already covered by a named symbol? symbol_for() is the same lookup
-        // the scan loop uses, so this is exactly "would this address get a
-        // real name or <no-symbol>".
-        if symbol_for(&syms, begin).is_some() {
+        if start >= end {
             continue;
         }
         let lib = module_names
-            .get(c.module)
+            .get(module)
             .map(String::as_str)
             .filter(|s| !s.is_empty())
             .unwrap_or("unknown");
         gap_fillers.push(Sym {
-            addr: begin,
+            addr: start,
             end,
             name: format!("<lib:{lib}>"),
         });

@@ -88,8 +88,8 @@ static llvm::cl::opt<std::string> ExportSummaries(
     llvm::cl::cat(Category));
 static llvm::cl::list<std::string> ExportUnder(
     "export-under",
-    llvm::cl::desc(
-        "path substring that selects functions to export (repeatable)"),
+    llvm::cl::desc("path prefix that selects functions to export (repeatable, "
+                   "required with --export-summaries)"),
     llvm::cl::cat(Category));
 static llvm::cl::list<std::string> ImportSummaries(
     "import-summaries",
@@ -458,7 +458,7 @@ public:
   static bool matchesAny(const std::string &file,
                          const std::vector<std::string> &unders) {
     for (const std::string &u : unders)
-      if (file.find(u) != std::string::npos)
+      if (file.rfind(u, 0) == 0)
         return true;
     return false;
   }
@@ -490,8 +490,7 @@ public:
       if (!P.isValid())
         continue;
       std::string file = P.getFilename();
-      if (!matchesAny(file, under) ||
-          file.find("vendor/WebKit") != std::string::npos)
+      if (!matchesAny(file, under))
         continue;
       os << mangledKey(FD) << "\t" << summaryKey(FD) << "\t"
          << Summary::kindName(s.kind) << "\t" << s.exitStates << "\t"
@@ -1065,8 +1064,7 @@ private:
     if (file.find(m_onlyUnder) != std::string::npos)
       m_analyzer.analyzeFunction(FD);
     else if (!ExportSummaries.empty() &&
-             Analyzer::matchesAny(file, m_exportUnder) &&
-             file.find("vendor/WebKit") == std::string::npos)
+             Analyzer::matchesAny(file, m_exportUnder))
       m_analyzer.summarizeForExport(FD);
   }
 
@@ -1083,8 +1081,6 @@ public:
     Analyzer analyzer(Ctx, findings);
     std::vector<std::string> exportUnder(ExportUnder.begin(),
                                          ExportUnder.end());
-    if (exportUnder.empty())
-      exportUnder.push_back("/src/");
     Visitor visitor(Ctx, analyzer, OnlyPathPrefix, exportUnder);
     visitor.TraverseDecl(Ctx.getTranslationUnitDecl());
 

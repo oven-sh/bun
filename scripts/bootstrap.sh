@@ -1,5 +1,5 @@
 #!/bin/sh
-# Version: 41
+# Version: 42
 
 # A script that installs the dependencies needed to build and test Bun.
 # This should work on macOS and Linux with a POSIX shell.
@@ -1139,6 +1139,11 @@ install_build_essentials() {
 
 	case "$os" in
 		linux)
+			# ruby/perl/python3: JavaScriptCore's code generators (offlineasm,
+			# create_hash_table, builtins/inspector scripts). zstd: trains the
+			# dictionary for the ICU data package (scripts/build/icu-data.ts).
+			# flex/bison: build Apple's migcom (host tool) for the macOS lanes,
+			# which generates WTF's Mach exception stubs.
 			install_packages \
 				make \
 				nasm \
@@ -1146,6 +1151,9 @@ install_build_essentials() {
 				libtool \
 				ruby \
 				perl \
+				zstd \
+				flex \
+				bison \
 			;;
 	esac
 

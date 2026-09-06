@@ -212,6 +212,121 @@ it("recovers from a corrupted binary lockfile instead of panicking", async () =>
   expect(await exists(join(packageDir, "node_modules", "a-dep"))).toBe(true);
 });
 
+for (const frozen of [false, true]) {
+  it(`rejects a binary lockfile whose dependency slice offset points past the buffer (frozen: ${frozen})`, async () => {
+    const { packageDir, packageJson } = await registry.createTestDir({ bunfigOpts: { saveTextLockfile: false } });
+
+    await write(
+      packageJson,
+      JSON.stringify({
+        name: "corrupt-lockb-slice",
+        version: "1.0.0",
+        dependencies: {
+          "no-deps": "1.0.0",
+          "a-dep": "1.0.1",
+        },
+      }),
+    );
+
+    await runBunInstall(env, packageDir);
+    const lockbPath = join(packageDir, "bun.lockb");
+
+    // Packages are stored SoA. The `dependencies` column (an `(off, len)` u32
+    // pair per package) sits after name (8), name_hash (8) and resolution
+    // (72 for format v3, 64 for v2). Package 0 is the root.
+    const lockb = Buffer.from(await file(lockbPath).arrayBuffer());
+    const fmt = lockb.readUInt32LE(42);
+    const N = Number(lockb.readBigUInt64LE(86));
+    const begin = Number(lockb.readBigUInt64LE(110));
+    const resolutionSize = fmt === 2 ? 64 : 72;
+    const dependenciesStart = begin + N * (8 + 8 + resolutionSize);
+    expect(N).toBeGreaterThan(1);
+    expect(lockb.readUInt32LE(dependenciesStart)).toBe(0);
+    expect(lockb.readUInt32LE(dependenciesStart + 4)).toBe(2);
+    lockb.writeUInt32LE(0xffffffff, dependenciesStart);
+    await write(lockbPath, lockb);
+
+    await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
+
+    const { stdout, stderr, exited } = spawn({
+      cmd: [bunExe(), "install", "--no-progress", ...(frozen ? ["--frozen-lockfile"] : [])],
+      cwd: packageDir,
+      stdout: "pipe",
+      stderr: "pipe",
+      env,
+    });
+    const [out, err, code] = await Promise.all([stdout.text(), stderr.text(), exited]);
+
+    // Slicing `buffers.dependencies` with the garbage offset used to panic
+    // with "range start index 4294967295 out of range". The lockfile is now
+    // rejected at load time and the install re-resolves.
+    expect(err).toContain("Lockfile validation failed: index out of bounds");
+    expect(err).toContain("Ignoring lockfile");
+    if (frozen) {
+      expect(err).toContain("lockfile had changes, but lockfile is frozen");
+      expect(code).toBe(1);
+    } else {
+      expect(out).toContain("no-deps@1.0.0");
+      expect(out).toContain("a-dep@1.0.1");
+      expect(code).toBe(0);
+      expect(await exists(join(packageDir, "node_modules", "no-deps"))).toBe(true);
+      expect(await exists(join(packageDir, "node_modules", "a-dep"))).toBe(true);
+    }
+  });
+}
+
+it("rejects a binary lockfile whose resolution points at a package id past the package count", async () => {
+  const { packageDir, packageJson } = await registry.createTestDir({ bunfigOpts: { saveTextLockfile: false } });
+
+  await write(
+    packageJson,
+    JSON.stringify({
+      name: "corrupt-lockb-resolution",
+      version: "1.0.0",
+      dependencies: {
+        "no-deps": "1.0.0",
+        "a-dep": "1.0.1",
+      },
+    }),
+  );
+
+  await runBunInstall(env, packageDir);
+  const lockbPath = join(packageDir, "bun.lockb");
+
+  // Each buffer is written as a 16-byte (start, end) header, a type-name
+  // prefix, then the aligned payload. `hoisted_dependencies` and
+  // `resolutions` are both `u32` arrays, in that order.
+  const lockb = Buffer.from(await file(lockbPath).arrayBuffer());
+  const N = Number(lockb.readBigUInt64LE(86));
+  const u32Prefix = "\n<u32> 4 sizeof, 4 alignof\n";
+  const hoisted = lockb.indexOf(u32Prefix);
+  const resolutionsPrefix = lockb.indexOf(u32Prefix, hoisted + 1);
+  expect(resolutionsPrefix).toBeGreaterThan(hoisted);
+  const resolutionsStart = Number(lockb.readBigUInt64LE(resolutionsPrefix - 16));
+  const resolutionsEnd = Number(lockb.readBigUInt64LE(resolutionsPrefix - 8));
+  expect(resolutionsEnd - resolutionsStart).toBeGreaterThanOrEqual(4);
+  expect(lockb.readUInt32LE(resolutionsStart)).toBeLessThan(N);
+  lockb.writeUInt32LE(N, resolutionsStart);
+  await write(lockbPath, lockb);
+
+  await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
+
+  const { stdout, stderr, exited } = spawn({
+    cmd: [bunExe(), "install", "--no-progress"],
+    cwd: packageDir,
+    stdout: "pipe",
+    stderr: "pipe",
+    env,
+  });
+  const [out, err, code] = await Promise.all([stdout.text(), stderr.text(), exited]);
+
+  expect(err).toContain("Lockfile validation failed: index out of bounds");
+  expect(err).toContain("Ignoring lockfile");
+  expect(out).toContain("no-deps@1.0.0");
+  expect(out).toContain("a-dep@1.0.1");
+  expect(code).toBe(0);
+});
+
 it("recomputes a package name hash that disagrees with the name in a binary lockfile", async () => {
   const { packageDir, packageJson } = await registry.createTestDir({ bunfigOpts: { saveTextLockfile: false } });
 

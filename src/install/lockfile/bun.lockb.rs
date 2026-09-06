@@ -12,7 +12,7 @@ use super::PatchedDep;
 use super::override_map::ScopedOverride;
 use super::{
     FormatVersion, Lockfile, Scratch, Stream, StringPool, buffers, package,
-    package_index as PackageIndex,
+    package_index as PackageIndex, tree,
 };
 use crate::ALIGNMENT_BYTES_TO_REPEAT_BUFFER;
 use crate::config_version::ConfigVersion;
@@ -436,20 +436,6 @@ pub(crate) fn load(
 
     lockfile.packages = packages_load_result.list;
 
-    // `meta.id` is memcpy'd verbatim from disk with no range validation; a
-    // corrupt `bun.lockb` can make it garbage and trip `panic_bounds_check`
-    // in `Package::clone` / `preinstall_state` indexing later. Surface it
-    // here as a parse error so the installer can warn + re-resolve instead
-    // of aborting.
-    {
-        let len = lockfile.packages.len();
-        for meta in lockfile.packages.items_meta() {
-            if meta.id as usize >= len {
-                return Err(crate::Error::InvalidLockfile);
-            }
-        }
-    }
-
     res.packages_need_update = packages_load_result.needs_update;
     res.migrated_from_lockb_v2 = migrate_from_v2;
 
@@ -457,6 +443,8 @@ pub(crate) fn load(
     if stream.read_int_le::<u64>()? != 0 {
         return Err(crate::Error::LockfileIsMalformedExpected0AtTheEnd);
     }
+
+    validate_indices(lockfile)?;
 
     // `name_hash` is derived from `name`. Recompute it, as loading `bun.lock` does.
     {
@@ -877,4 +865,79 @@ pub(crate) fn load(
     debug_assert!(stream.pos as u64 == total_buffer_size);
 
     Ok(res)
+}
+
+/// Every index and `(off, len)` pair in the package table and the tree list is
+/// memcpy'd verbatim from disk. Check each one against the buffer it indexes
+/// before anything slices with it, so a corrupt `bun.lockb` is reported as a
+/// parse error (the installer warns and re-resolves) instead of a panic.
+fn validate_indices(lockfile: &Lockfile) -> Result<(), Error> {
+    let buffers = &lockfile.buffers;
+    let package_count = lockfile.packages.len();
+    let dependency_count = buffers.dependencies.len();
+    let tree_count = buffers.trees.len();
+
+    let slice_in_bounds = |off: u32, len: u32, buffer_len: usize| -> bool {
+        off as usize + len as usize <= buffer_len
+    };
+
+    if buffers.resolutions.len() != dependency_count {
+        return Err(Error::LockfileValidationFailedIndexOutOfBounds);
+    }
+
+    let metas = lockfile.packages.items_meta();
+    let dependency_lists = lockfile.packages.items_dependencies();
+    let resolution_lists = lockfile.packages.items_resolutions();
+    let bins = lockfile.packages.items_bin();
+    for id in 0..package_count {
+        let dependencies = dependency_lists[id];
+        let resolutions = resolution_lists[id];
+        if metas[id].id as usize >= package_count
+            || dependencies.off != resolutions.off
+            || dependencies.len != resolutions.len
+            || !slice_in_bounds(dependencies.off, dependencies.len, dependency_count)
+        {
+            return Err(Error::LockfileValidationFailedIndexOutOfBounds);
+        }
+
+        let bin = &bins[id];
+        if bin.tag == crate::bin::Tag::Map {
+            // SAFETY: tag == Map discriminates the active union field.
+            let map = unsafe { bin.value.map };
+            if !slice_in_bounds(map.off, map.len, buffers.extern_strings.len()) {
+                return Err(Error::LockfileValidationFailedIndexOutOfBounds);
+            }
+        }
+    }
+
+    for &package_id in buffers.resolutions.iter() {
+        if package_id != crate::invalid_package_id && package_id as usize >= package_count {
+            return Err(Error::LockfileValidationFailedIndexOutOfBounds);
+        }
+    }
+
+    for &dependency_id in buffers.hoisted_dependencies.iter() {
+        if dependency_id as usize >= dependency_count {
+            return Err(Error::LockfileValidationFailedIndexOutOfBounds);
+        }
+    }
+
+    for tree in buffers.trees.iter() {
+        let dependency_id_ok = tree.dependency_id == tree::ROOT_DEP_ID
+            || tree.dependency_id == crate::invalid_dependency_id
+            || (tree.dependency_id as usize) < dependency_count;
+        let parent_ok = tree.parent == tree::INVALID_ID || (tree.parent as usize) < tree_count;
+        if !dependency_id_ok
+            || !parent_ok
+            || !slice_in_bounds(
+                tree.dependencies.off,
+                tree.dependencies.len,
+                buffers.hoisted_dependencies.len(),
+            )
+        {
+            return Err(Error::LockfileValidationFailedIndexOutOfBounds);
+        }
+    }
+
+    Ok(())
 }

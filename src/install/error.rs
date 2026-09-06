@@ -192,6 +192,8 @@ pub enum Error {
     LockfileValidationFailedInvalidBinTag,
     #[error("Lockfile validation failed: invalid package scripts")]
     LockfileValidationFailedInvalidPackageScripts,
+    #[error("Lockfile validation failed: index out of bounds")]
+    LockfileValidationFailedIndexOutOfBounds,
     #[error("InvalidNPMLockfile")]
     InvalidNPMLockfile,
     #[error("NotSupported")]
@@ -358,6 +360,9 @@ impl Error {
             }
             Self::LockfileValidationFailedInvalidPackageScripts => {
                 "Lockfile validation failed: invalid package scripts"
+            }
+            Self::LockfileValidationFailedIndexOutOfBounds => {
+                "Lockfile validation failed: index out of bounds"
             }
             Self::InvalidNPMLockfile => "InvalidNPMLockfile",
             Self::NotSupported => "NotSupported",

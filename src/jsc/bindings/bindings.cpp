@@ -1383,9 +1383,7 @@ static constexpr DeepEqualsMode deepEqualsMode {
     checkPrototypes ? &nonIndexOwnPropertiesEqual<isStrict, enableAsymmetricMatchers, checkPrototypes, skipPrototypeIdentity> : nullptr,
 };
 
-// KeyObject and CryptoKey keep their state in C++ with no own properties, so
-// compare the key material like node's comparisons.js. std::nullopt means
-// "continue with the own-property walk".
+// Key material compare from node's comparisons.js. nullopt: continue with the own-property walk.
 static std::optional<bool> cryptoKeysDequal(const DeepEqualsMode& mode, JSC::JSGlobalObject* globalObject, MarkedArgumentBuffer& gcBuffer, Vector<std::pair<JSC::JSValue, JSC::JSValue>, 16>& stack, ThrowScope& scope, JSC::JSObject* o1, JSC::JSObject* o2)
 {
     if (auto* keyObject1 = dynamicDowncast<Bun::JSKeyObject>(o1)) {

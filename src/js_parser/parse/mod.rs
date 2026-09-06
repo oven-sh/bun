@@ -76,11 +76,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             self.lexer.has_pure_comment_before && !self.options.ignore_dce_annotations;
         let paren_assign_before = errors
             .as_deref()
-            .and_then(|errors| errors.invalid_pattern_paren_assign);
+            .and_then(|errors| errors.parenthesized_assign);
         *expr = self.parse_prefix(level, errors.as_deref_mut(), flags)?;
         let paren_assign_prefix = match errors.as_deref() {
-            Some(errors) if errors.invalid_pattern_paren_assign != paren_assign_before => {
-                Some(Self::pattern_item_ptr(expr))
+            Some(errors) if errors.parenthesized_assign != paren_assign_before => {
+                Self::assign_ptr(expr)
             }
             _ => None,
         };
@@ -108,24 +108,23 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         // "[(a = 1)] = []" is an error, "[(a = {}).b] = [1]" is not.
         if let (Some(errors), Some(prefix)) = (errors, paren_assign_prefix) {
-            let is_whole_item = Self::pattern_item_ptr(expr) == prefix
+            let is_whole_item = Self::assign_ptr(expr) == Some(prefix)
                 || matches!(&expr.data, js_ast::ExprData::EBinary(bin)
                     if bin.op == js_ast::OpCode::BinAssign
-                        && Self::pattern_item_ptr(&bin.left) == prefix);
+                        && Self::assign_ptr(&bin.left) == Some(prefix));
             if !is_whole_item {
-                errors.invalid_pattern_paren_assign = paren_assign_before;
+                errors.parenthesized_assign = paren_assign_before;
             }
         }
         Ok(())
     }
 
-    /// Identity of the nodes that can carry `invalid_pattern_paren_assign`.
-    fn pattern_item_ptr(expr: &Expr) -> *const u8 {
+    fn assign_ptr(expr: &Expr) -> Option<*const E::Binary> {
         match &expr.data {
-            js_ast::ExprData::EBinary(e) => e.as_ptr().cast(),
-            js_ast::ExprData::EArray(e) => e.as_ptr().cast(),
-            js_ast::ExprData::EObject(e) => e.as_ptr().cast(),
-            _ => core::ptr::null(),
+            js_ast::ExprData::EBinary(e) if e.op == js_ast::OpCode::BinAssign => {
+                Some(e.as_ptr().cast_const())
+            }
+            _ => None,
         }
     }
 
@@ -479,9 +478,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             p.latest_arrow_arg_loc = p.lexer.loc();
 
             let mut item = Expr::EMPTY;
+            let parenthesized_assign = errors.parenthesized_assign;
             p.parse_expr_or_bindings(Level::Comma, Some(&mut errors), &mut item)?;
 
             if is_spread {
+                // "...(a = 1)" is already an invalid rest argument without the parentheses
+                errors.parenthesized_assign = parenthesized_assign;
                 item = p.new_expr(E::Spread { value: item }, loc);
             }
 
@@ -607,10 +609,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             if is_arrow_fn || opts.force_arrow_fn {
                 p.maybe_comma_spread_error(comma_after_spread);
                 p.log_arrow_arg_errors(&mut arrow_arg_errors);
-                if let Some(r) = errors.invalid_pattern_paren_assign {
-                    p.log().add_range_error(
+                if let Some(paren) = errors.parenthesized_assign {
+                    p.log().add_error(
                         Some(p.source),
-                        r,
+                        paren,
                         b"Unexpected parentheses in binding pattern",
                     );
                 }

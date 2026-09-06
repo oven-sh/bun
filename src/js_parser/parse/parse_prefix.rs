@@ -51,7 +51,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         flags: EFlags,
     ) -> PResult<Expr> {
         let loc = p.lexer.loc();
-        let paren_range = p.lexer.range();
         p.lexer.next()?;
 
         // Arrow functions aren't allowed in the middle of expressions
@@ -83,7 +82,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             && let ExprData::EBinary(bin) = &value.data
             && bin.op == OpCode::BinAssign
         {
-            errors.invalid_pattern_paren_assign = Some(paren_range);
+            errors.parenthesized_assign = Some(loc);
         }
 
         Ok(value)
@@ -758,7 +757,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     p.lexer.next()?;
                     // Parse into a local then push.
                     let mut value = Expr::EMPTY;
+                    let parenthesized_assign = self_errors.parenthesized_assign;
                     p.parse_expr_or_bindings(Level::Comma, Some(&mut self_errors), &mut value)?;
+                    // "...(a = 1)" is already an invalid rest target without the parentheses
+                    self_errors.parenthesized_assign = parenthesized_assign;
                     items.push(p.new_expr(E::Spread { value }, dots_loc));
 
                     // Commas are not allowed here when destructuring
@@ -798,7 +800,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         // Is this a binding pattern?
         if p.will_need_binding_pattern() {
-            p.log_pattern_errors(&self_errors);
+            // noop
         } else if errors.is_none() {
             // Is this an expression?
             p.log_expr_errors(&mut self_errors);
@@ -811,6 +813,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             E::Array {
                 items: items_list,
                 comma_after_spread,
+                parenthesized_assign: self_errors.parenthesized_assign.unwrap_or(bun_ast::Loc::EMPTY),
                 is_single_line,
                 close_bracket_loc,
                 ..Default::default()
@@ -836,7 +839,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             if p.lexer.token == T::TDotDotDot {
                 p.lexer.next()?;
                 let mut value = Expr::EMPTY;
+                let parenthesized_assign = self_errors.parenthesized_assign;
                 p.parse_expr_or_bindings(Level::Comma, Some(&mut self_errors), &mut value)?;
+                self_errors.parenthesized_assign = parenthesized_assign;
                 properties.push(G::Property {
                     kind: PropertyKind::Spread,
                     value: Some(value),
@@ -885,7 +890,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         if p.will_need_binding_pattern() {
             // Is this a binding pattern?
-            p.log_pattern_errors(&self_errors);
         } else if errors.is_none() {
             // Is this an expression?
             p.log_expr_errors(&mut self_errors);
@@ -900,6 +904,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             E::Object {
                 properties: properties_list,
                 comma_after_spread,
+                parenthesized_assign: self_errors.parenthesized_assign.unwrap_or(bun_ast::Loc::EMPTY),
                 is_single_line,
                 close_brace_loc,
                 ..Default::default()

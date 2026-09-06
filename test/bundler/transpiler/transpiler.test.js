@@ -3043,13 +3043,35 @@ console.log(<div {...obj} key="after" />);`),
       expectParseError("({ ...{ a } } = {})", message);
       expectParseError("[{ ...[a] }] = [{}]", message);
 
+      // Several items share one pattern, in either order
+      expectParseError("[(a = 1), (b = 2).c] = []", message);
+      expectParseError("[(a = 1).c, (b = 2)] = []", message);
+      expectPrinted_("[(a = 1).c, (b = 2).d] = []", "[(a = 1).c, (b = 2).d] = []");
+      expectParseError("({ x: (a = 1), y: (b = 2).c } = {})", message);
+      expectParseError("({ x: (a = 1).c, y: (b = 2) } = {})", message);
+      expectPrinted_("({ x: (a = 1).c, y: (b = 2).d } = {})", "({ x: (a = 1).c, y: (b = 2).d } = {})");
+      expectParseError("[x, [(a = 1).c], (b = 2)] = []", message);
+      expectPrinted_("[x, [(a = 1)].c, (b = 2).d] = []", "[x, [a = 1].c, (b = 2).d] = []");
+
+      // A literal in a for-in initializer (Annex B) is not a pattern
+      expectPrinted_("for (var x = [(a = 1)] in o);", "x = [a = 1];\nfor (x in o)\n  ;\nvar x;\n");
+      expectPrinted_("for (var x = { y: (a = 1) } in o);", "x = { y: a = 1 };\nfor (x in o)\n  ;\nvar x;\n");
+
       // The same forms are not valid arrow parameters either
       const arrowMessage = "Unexpected parentheses in binding pattern";
       expectParseError("((a = 1)) => 0", arrowMessage);
       expectParseError("([(a = 1)]) => 0", arrowMessage);
-      expectParseError("([(a = 1)] = []) => 0", message);
+      expectParseError("([(a = 1)] = []) => 0", arrowMessage);
       expectParseError("async ((a = 1)) => 0", arrowMessage);
+      expectParseError("(...(a = 1)) => 0", "A rest argument cannot have a default initializer");
+      expectParseError("([...(a = 1)]) => 0", "A rest argument cannot have a default initializer");
+      expectParseError("(x, (b = 2)) => 0", arrowMessage);
+      expectParseError("((a = 1), x) => 0", arrowMessage);
+      expectPrinted_("x = ((a = 1).c, (b = 2))", "x = ((a = 1).c, b = 2)");
       expectPrinted_("x = ({ ...a }) => a", "x = ({ ...a }) => a");
+      ts.expectPrinted_("x = c ? ({ ...a = 1 }) : b", "x = c ? { ...a = 1 } : b");
+      ts.expectPrinted_("x = c ? ([...a = 1]) : b", "x = c ? [...a = 1] : b");
+      ts.expectPrinted_("x = c ? ([(a = 1)]) : b", "x = c ? [a = 1] : b");
       expectParseError("({ ...a = 1 }) => 0", "A rest argument cannot have a default initializer");
       expectParseError("({ ...[a] }) => 0", "Invalid binding pattern");
       expectParseError("({ ...{ a } }) => 0", "Invalid binding pattern");

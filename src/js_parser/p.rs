@@ -3959,6 +3959,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         kind: crate::parser::InvalidLocTag::Spread,
                     });
                 }
+                if let Some(paren) = ex.parenthesized_assign.to_nullable() {
+                    invalid_loc.push(InvalidLoc {
+                        loc: paren,
+                        kind: crate::parser::InvalidLocTag::Parentheses,
+                    });
+                }
 
                 if ex.is_parenthesized {
                     invalid_loc.push(InvalidLoc {
@@ -4012,6 +4018,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     invalid_loc.push(InvalidLoc {
                         loc: sp,
                         kind: crate::parser::InvalidLocTag::Spread,
+                    });
+                }
+                if let Some(paren) = ex.parenthesized_assign.to_nullable() {
+                    invalid_loc.push(InvalidLoc {
+                        loc: paren,
+                        kind: crate::parser::InvalidLocTag::Parentheses,
                     });
                 }
 
@@ -4117,17 +4129,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
 
         let bind = self.convert_expr_to_binding(expr, invalid_log);
-        if let Some(initial) = initializer {
-            let equals_range = self.source.range_of_operator_before(initial.loc, b"=");
-            if is_spread {
-                self.log().add_range_error(
-                    Some(self.source),
-                    equals_range,
-                    b"A rest argument cannot have a default initializer",
-                );
-            } else {
-                // p.markSyntaxFeature();
-            }
+        if is_spread && let Some(initial) = initializer {
+            invalid_log.push(InvalidLoc {
+                loc: self.source.range_of_operator_before(initial.loc, b"=").loc,
+                kind: crate::parser::InvalidLocTag::RestInitializer,
+            });
         }
         ExprBindingTuple {
             binding: bind,
@@ -4153,14 +4159,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // Rust, so this is a runtime assertion instead.
         if !TYPESCRIPT {
             unreachable!();
-        }
-    }
-
-    /// The literal turned out to be an assignment pattern.
-    pub(crate) fn log_pattern_errors(&mut self, errors: &DeferredErrors) {
-        if let Some(r) = errors.invalid_pattern_paren_assign {
-            self.log()
-                .add_range_error(Some(self.source), r, b"Invalid assignment target");
         }
     }
 

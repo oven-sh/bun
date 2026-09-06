@@ -1578,6 +1578,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let mut e_ = e.data.e_array().expect("infallible: variant checked");
         if in_.assign_target != js_ast::AssignTarget::None {
             p.maybe_comma_spread_error(e_.comma_after_spread);
+            p.maybe_parenthesized_assign_error(e_.parenthesized_assign);
         }
         let items = e_.items.slice_mut();
         let mut spread_item_count: usize = 0;
@@ -1687,6 +1688,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let mut e_ = e.data.e_object().expect("infallible: variant checked");
         if in_.assign_target != js_ast::AssignTarget::None {
             p.maybe_comma_spread_error(e_.comma_after_spread);
+            p.maybe_parenthesized_assign_error(e_.parenthesized_assign);
         }
 
         let mut has_spread = false;

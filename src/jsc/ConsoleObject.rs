@@ -521,8 +521,7 @@ fn message_with_type_and_level_(
                     // Clamp negatives to 0, then truncate (not saturate) to u16.
                     print_options.max_depth = depth_prop.to_int32().max(0) as u32 as u16;
                 } else if depth_prop.is_big_int() {
-                    // `to_int32` only handles numbers; on a BigInt cell it reads the
-                    // cell bits as the depth.
+                    // Negative clamps to 0, above u16::MAX saturates.
                     print_options.max_depth =
                         if depth_prop.is_big_int_in_int64_range(0, i64::from(u16::MAX)) {
                             depth_prop.coerce_to_int64(global)? as u16

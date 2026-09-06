@@ -31,8 +31,9 @@ check — together they catch most things; neither alone is bulletproof.
 **In scope but may miss:**
 
 - x64 linear-sweep may desync on data-in-`.text` and skip real instructions
-  that follow. Variable-length x86 encoding makes perfect code/data
-  separation undecidable (`README.md:53-59`). aarch64 is more reliable
+  that follow, up to the next symbol start (where the decoder resyncs).
+  Variable-length x86 encoding makes perfect code/data separation
+  undecidable (`README.md:53-62`). aarch64 is more reliable
   (fixed-width words, `$d` mapping symbols mark data), but a missing mapping
   symbol can still hide a hit.
 - Instructions deliberately ignored (TZCNT/XGETBV on x64, hint-space PAC/BTI
@@ -43,7 +44,7 @@ check — together they catch most things; neither alone is bulletproof.
 
 - Data bytes in `.text` that happen to form a valid post-baseline encoding.
   Rare on ELF (LLVM puts tables in `.rodata`), common on Windows PE (MSVC
-  inlines jump tables). See `README.md:61-74`.
+  inlines jump tables). See `README.md:64-77`.
 
 When in doubt, the emulator is ground truth: `qemu -cpu Nehalem` and hit the
 code path. SIGILL = real bug. No SIGILL = either gated or a data-in-text
@@ -238,14 +239,18 @@ use `<rust-hash>` in place of the hash:
 Either form works (the tool canonicalizes both before comparing), but
 `<rust-hash>` survives toolchain bumps.
 
-**Windows `<lib:NAME.lib>`.** When PDB has no per-function record for a hit
-(stripped CRT objects, anonymized staticlib helpers), the tool falls back to
-section-contribution attribution: the linker-map "which `.lib` did this byte
-come from" data. These attributions are stable across link layout changes.
-Allowlist them literally:
+**Windows `<lib:NAME.lib>` / `<lib:NAME.obj>`.** When PDB has no per-function
+record for a hit (stripped CRT objects, anonymized staticlib helpers, an asm
+file's leading local routine with no PUBLIC record, the MSVC STL when its own
+PDB isn't in the sysroot), the tool falls back to section-contribution
+attribution: the linker-map "which `.lib`/`.obj` did this byte come from"
+data. A zero-size public's synthesized range is likewise cut at its own
+contribution, so it never absorbs the next object's unnamed code. These
+attributions are stable across link layout changes. Allowlist them literally:
 
 ```
 <lib:lolhtml.lib>  [AVX, AVX2]
+<lib:aesni-gcm-x86_64-win.asm.obj> [AES, AVX, MOVBE, PCLMULQDQ]
 ```
 
 **`<no-symbol@0x...>`** — the address fell in padding between functions or the

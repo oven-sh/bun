@@ -64,6 +64,7 @@
           pkgs.libtool
           pkgs.ruby
           pkgs.perl
+          pkgs.zstd
 
           # Libraries
           pkgs.openssl

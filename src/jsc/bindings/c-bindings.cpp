@@ -867,6 +867,29 @@ extern "C" int32_t open_as_nonblocking_tty(int32_t fd, int32_t mode)
         return -1;
     }
 
+#if OS(DARWIN)
+    // An fd opened on /dev/tty names itself "/dev/tty": the controlling
+    // terminal alias, which kqueue rejects with EINVAL (libuv falls back to a
+    // select() thread for "some files from /dev mount on osx"). A stdio fd in
+    // the same session that is a tty is that same terminal under its real
+    // /dev/ttysNNN name, which kqueue accepts.
+    if (strcmp(pathbuf, "/dev/tty") == 0) {
+        pid_t sid = tcgetsid(fd);
+        if (sid == -1)
+            return -1;
+        bool found = false;
+        for (int candidate = 0; candidate < 3 && !found; candidate++) {
+            if (!isatty(candidate) || tcgetsid(candidate) != sid)
+                continue;
+            if (ttyname_r(candidate, pathbuf, sizeof(pathbuf)) != 0 || strcmp(pathbuf, "/dev/tty") == 0)
+                continue;
+            found = true;
+        }
+        if (!found)
+            return -1;
+    }
+#endif
+
     return open(pathbuf, mode | O_NONBLOCK | O_NOCTTY | O_CLOEXEC);
 }
 

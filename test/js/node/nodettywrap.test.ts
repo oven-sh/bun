@@ -1,5 +1,8 @@
 import { expect, test } from "bun:test";
-import { isatty } from "node:tty";
+import { closeSync, openSync } from "node:fs";
+import { join } from "node:path";
+import { ReadStream, isatty } from "node:tty";
+import { tempDir } from "harness";
 
 test("process.binding('tty_wrap')", () => {
   // @ts-expect-error
@@ -48,15 +51,20 @@ test("process.binding('tty_wrap')", () => {
       expect(array[1]).toBe(-1);
     }
   } else {
-    // Like Node's TTYWrap, an fd uv_tty_init rejects does not throw: the
-    // error lands on the ctx object and the handle comes back closed.
-    const ctx: { code?: string; syscall?: string } = {};
-    const handle = new tty(0, ctx);
+    console.warn("warn: Skipping tty tests because stdin is not a tty");
+  }
+
+  // Like Node's TTYWrap, an fd uv_tty_init rejects (a regular file) does not
+  // throw: the error lands on the ctx object and the handle comes back closed.
+  using dir = tempDir("tty-wrap", { "file.txt": "not a tty" });
+  const fd = openSync(join(String(dir), "file.txt"), "r");
+  try {
+    const ctx: { code?: string; syscall?: string; message?: string } = {};
+    const handle = new tty(fd, ctx);
     expect(ctx).toEqual({ code: "EINVAL", syscall: "uv_tty_init", message: "invalid argument" });
     expect(handle.readStart()).toBe(0);
-    expect(() => new (require("node:tty").ReadStream)(0)).toThrow(
-      expect.objectContaining({ code: "ERR_TTY_INIT_FAILED" }),
-    );
-    console.warn("warn: Skipping tty tests because stdin is not a tty");
+    expect(() => new ReadStream(fd)).toThrow(expect.objectContaining({ code: "ERR_TTY_INIT_FAILED" }));
+  } finally {
+    closeSync(fd);
   }
 });

@@ -335,8 +335,11 @@ describe.skipIf(isWindows)("tty.ReadStream is a net.Socket over a native TTY han
 
   // https://github.com/oven-sh/bun/issues/29126: a TUI reads stdin with a
   // 'readable' listener, removes it, then spawns an interactive child with
-  // stdio: "inherit". Bun kept polling fd 0 and stole the child's keystrokes.
-  test("a child with stdio: 'inherit' owns stdin after the last 'readable' listener is removed", async () => {
+  // stdio: "inherit". Bun kept polling fd 0 for good and stole the child's
+  // keystrokes. Node (and now Bun) keeps the handle armed until the next
+  // chunk arrives: that chunk is the stream's, push() reports backpressure,
+  // the handle stops, and everything after belongs to the child.
+  test("a child with stdio: 'inherit' owns stdin once the handle stops after the last 'readable' listener is removed", async () => {
     const { code, output } = await runInPty(
       `
         const { spawn } = require("node:child_process");
@@ -352,35 +355,54 @@ describe.skipIf(isWindows)("tty.ReadStream is a net.Socket over a native TTY han
         s.once("readable", () => setTimeout(() => {
           s.setRawMode(false);
           s.removeListener("readable", handler);
-          s.unref();
+          const armed = s._handle.reading;
+          // With no consumer left the next chunk is buffered in the stream and
+          // stops the handle; nothing re-arms it. A listener here would.
+          const timer = setInterval(() => {
+            if (s._handle.reading) return;
+            clearInterval(timer);
+            process.stdout.write("P3 " + JSON.stringify({ armed, buffered: s.readableLength }) + "\\n");
+            s.unref();
+            const child = spawn(
+              process.execPath,
+              ["-e", "process.stdin.on('data', d => process.stdout.write('CHILD:' + d)); process.stdin.on('end', () => process.exit(0))"],
+              { stdio: "inherit" },
+            );
+            child.on("exit", exitCode => {
+              process.stdout.write("RESULT " + JSON.stringify({ parentSaw: seen, readingAtExit: s._handle.reading, childExit: exitCode }) + "\\n");
+              process.exit(0);
+            });
+          }, 10);
           process.stdout.write("P2\\n");
-          const child = spawn("cat", [], { stdio: "inherit" });
-          child.on("exit", exitCode => {
-            process.stdout.write("RESULT " + JSON.stringify({ parentSaw: seen, childExit: exitCode }) + "\\n");
-            process.exit(0);
-          });
         }, 50));
       `,
       [
         terminal => {
           terminal.write("a");
         },
+        terminal => {
+          // Cooked mode now: a whole line.
+          terminal.write("b\n");
+        },
         async terminal => {
-          // Give cat time to block in read(2) on the shared terminal.
-          await new Promise(r => setTimeout(r, 200));
-          terminal.write("hello from cat\n");
+          // Give the child time to start reading the shared terminal.
+          await new Promise(r => setTimeout(r, 500));
+          terminal.write("hello child\n");
           await new Promise(r => setTimeout(r, 200));
           terminal.write("\x04");
         },
       ],
-      { markers: ["P1", "P2"] },
+      { markers: ["P1", "P2", "P3"] },
     );
     expect(code).toBe(0);
     const text = Bun.stripANSI(output());
-    const match = text.match(/RESULT (\{.*\})/);
-    expect(JSON.parse(match![1])).toEqual({ parentSaw: ["a"], childExit: 0 });
-    // cat echoes the line it read; the terminal echoes the typed line too.
-    expect(text.split("hello from cat").length - 1).toBe(2);
+    expect(JSON.parse(text.match(/P3 (\{.*\})/)![1])).toEqual({ armed: true, buffered: 2 });
+    expect(JSON.parse(text.match(/RESULT (\{.*\})/)![1])).toEqual({
+      parentSaw: ["a"],
+      readingAtExit: false,
+      childExit: 0,
+    });
+    expect(text).toContain("CHILD:hello child");
   });
 
   test("tty_wrap.TTY delivers reads through onread and reports EOF", async () => {

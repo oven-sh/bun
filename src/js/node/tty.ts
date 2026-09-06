@@ -23,8 +23,9 @@ function ReadStream(fd, options): void {
 
   const ctx: { code?: string; syscall?: string; message?: string } = {};
   const tty = new TTY(fd, ctx);
-  if (ctx.code !== undefined) {
-    throw $ERR_TTY_INIT_FAILED(`${ctx.syscall} returned ${ctx.code} (${ctx.message})`);
+  const { code } = ctx;
+  if (code !== undefined) {
+    throw $ERR_TTY_INIT_FAILED(`${ctx.syscall} returned ${code} (${ctx.message})`);
   }
 
   net.Socket.$call(this, {

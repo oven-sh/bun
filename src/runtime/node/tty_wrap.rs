@@ -60,6 +60,10 @@ bitflags::bitflags! {
         /// JS called `unref()`; `readStart()` must not re-ref the loop.
         const UNREFFED       = 1 << 4;
         const FINALIZED      = 1 << 5;
+        /// The event loop refused to poll the fd (kqueue and the macOS
+        /// `/dev/tty` alias). The handle still serves raw mode, window size
+        /// and ref/unref; `readStart()` reports `ENOTSUP`.
+        const UNPOLLABLE     = 1 << 6;
     }
 }
 
@@ -87,6 +91,11 @@ pub struct TTY {
     /// handle leaving raw mode never disturbs another on the same terminal.
     #[cfg(unix)]
     tty_state: Cell<bun_core::tty::State>,
+}
+
+enum StartError {
+    Sys(sys::Error),
+    Unpollable,
 }
 
 /// libuv's `uv_tty_init` accepts a tty, pipe or socket fd and rejects a
@@ -203,12 +212,18 @@ impl TTY {
             return Ok(tty);
         }
 
-        if let Err(err) = this.start_reader() {
-            this.update_flags(|f| f.insert(Flags::CLOSED));
-            this.this_value.with_mut(|v| v.finalize());
-            this.deref_();
-            let value = bun_sys_jsc::ErrorJsc::to_js(&err, global_object)?;
-            return Err(global_object.throw_value(value));
+        match this.start_reader() {
+            Ok(()) => {}
+            Err(StartError::Unpollable) => {
+                this.update_flags(|f| f.insert(Flags::UNPOLLABLE));
+            }
+            Err(StartError::Sys(err)) => {
+                this.update_flags(|f| f.insert(Flags::CLOSED));
+                this.this_value.with_mut(|v| v.finalize());
+                this.deref_();
+                let value = bun_sys_jsc::ErrorJsc::to_js(&err, global_object)?;
+                return Err(global_object.throw_value(value));
+            }
         }
 
         Ok(tty)
@@ -216,7 +231,7 @@ impl TTY {
 
     /// Opens the reader on its own fd and parks it paused: the poll is only
     /// registered by `readStart()`. On success the reader holds a ref.
-    fn start_reader(&self) -> sys::Result<()> {
+    fn start_reader(&self) -> Result<(), StartError> {
         #[cfg(unix)]
         let (read_fd, nonblocking) = {
             // Like libuv, read through a fresh nonblocking open of the
@@ -227,7 +242,7 @@ impl TTY {
             if reopened > -1 {
                 (Fd::from_native(reopened), true)
             } else {
-                let duped = sys::dup_with_flags(self.fd, 0)?;
+                let duped = sys::dup_with_flags(self.fd, 0).map_err(StartError::Sys)?;
                 let nonblocking = sys::get_fcntl_flags(duped)
                     .map(|flags| flags & sys::O::NONBLOCK as isize != 0)
                     .unwrap_or(false);
@@ -251,13 +266,13 @@ impl TTY {
             #[cfg(unix)]
             read_fd.close();
             self.read_fd.set(Fd::INVALID);
-            return Err(err);
+            return Err(StartError::Sys(err));
         }
         // A poll the loop refused is reported through `on_reader_error`, which
-        // already closed the reader: nothing holds a ref to release.
+        // already closed the reader and its fd: nothing holds a ref to release.
         if self.flags.get().contains(Flags::READER_DONE) {
             self.read_fd.set(Fd::INVALID);
-            return Err(sys::Error::from_code(sys::E::EINVAL, sys::Tag::open));
+            return Err(StartError::Unpollable);
         }
         self.ref_();
         self.update_flags(|f| f.insert(Flags::READER_STARTED));
@@ -279,6 +294,9 @@ impl TTY {
     pub(crate) fn read_start(&self, _g: &JSGlobalObject, _f: &CallFrame) -> JsResult<JSValue> {
         bun_output::scoped_log!(TTYWrap, "readStart");
         let flags = self.flags.get();
+        if flags.contains(Flags::UNPOLLABLE) {
+            return Ok(JSValue::js_number_from_int32(-(sys::E::ENOTSUP as i32)));
+        }
         if flags.intersects(Flags::CLOSED | Flags::READER_DONE) {
             return Ok(JSValue::js_number_from_int32(0));
         }

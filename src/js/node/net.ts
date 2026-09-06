@@ -1685,10 +1685,11 @@ function Socket(options?) {
   this._pendingEncoding = undefined; // for compatibility
   this._hadError = false;
   this.isServer = false;
-  this._handle = options?.handle || null;
-  if (this._handle && isStreamWrapHandle(this._handle)) {
-    this._handle[owner_symbol] = this;
-    this._handle.onread = onStreamRead;
+  const handle = options?.handle || null;
+  this._handle = handle;
+  if (handle && isStreamWrapHandle(handle)) {
+    handle[owner_symbol] = this;
+    handle.onread = onStreamRead;
     this._write = streamWrapSyncWrite;
     this._writev = streamWrapSyncWritev;
   }
@@ -2410,8 +2411,9 @@ function drainOnreadTailNT(socket) {
     socket[kOnreadPendingEnd] = false;
     finishSocketEnd(socket);
   } else if (fromRead || !socket.isPaused()) {
-    if (socket._handle) handleReadStart(socket, socket._handle);
-    restorePausedHold(socket, socket._handle);
+    const handle = socket._handle;
+    if (handle) handleReadStart(socket, handle);
+    restorePausedHold(socket, handle);
   }
 }
 
@@ -2420,11 +2422,12 @@ Socket.prototype.resume = function resume() {
   // kOnreadDraining is still set and does not queue a second drain: Node's
   // override sets handle.reading synchronously for the same reason.
   const ret = Duplex.prototype.resume.$call(this);
-  if (!this.connecting && !drainOnreadTail(this)) {
-    if (this._handle) handleReadStart(this, this._handle);
+  const handle = this._handle;
+  if (handle && !this.connecting && !drainOnreadTail(this)) {
+    handleReadStart(this, handle);
   }
   // Even while still connecting, so pause-then-resume stays symmetric.
-  restorePausedHold(this, this._handle);
+  restorePausedHold(this, handle);
   return ret;
 };
 
@@ -2520,8 +2523,9 @@ Socket.prototype[Symbol.for("::bunUpgradeServerTLS::")] = function (connection, 
 
 Socket.prototype.read = function read(size) {
   if (!this.connecting && !drainOnreadTail(this, true)) {
-    if (this._handle) handleReadStart(this, this._handle);
-    restorePausedHold(this, this._handle);
+    const handle = this._handle;
+    if (handle) handleReadStart(this, handle);
+    restorePausedHold(this, handle);
   }
   return Duplex.prototype.read.$call(this, size);
 };

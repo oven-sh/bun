@@ -143,10 +143,11 @@ export function getStdinStream(
 
     // stdin starts out paused, but the handle does not know yet: stop it so
     // nothing reads fd 0 until a consumer shows up.
-    if (stdin._handle?.readStop) {
-      stdin._handle.reading = false;
+    const handle = stdin._handle;
+    if (handle?.readStop) {
+      handle.reading = false;
       stdin._readableState.reading = false;
-      stdin._handle.readStop();
+      handle.readStop();
     }
 
     // pause() leaves the handle reading; stop it one tick later (once the
@@ -157,11 +158,12 @@ export function getStdinStream(
     });
 
     function onpause() {
-      if (!stdin._handle) return;
-      if (stdin._handle.reading && !stdin.readableFlowing) {
+      const handle = stdin._handle;
+      if (!handle) return;
+      if (handle.reading && !stdin.readableFlowing) {
         stdin._readableState.reading = false;
-        stdin._handle.reading = false;
-        stdin._handle.readStop();
+        handle.reading = false;
+        handle.readStop();
       }
     }
 

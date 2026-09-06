@@ -780,9 +780,9 @@ export function emitPostLink(
   // and, for running them by name, the `check` phony.
   n.phony("check", [
     ...emitSmokeTest(n, cfg, exe, exeName, strippedExe),
-    ...emitClassInfoCheck(n, cfg, exe, exeName),
-    ...emitBinaryVerify(n, cfg, exe, exeName),
-    ...emitDuplicateSymbolCheck(n, cfg, exeName, linkInputs),
+    ...emitClassInfoCheck(n, cfg, exe, exeName, strippedExe),
+    ...emitBinaryVerify(n, cfg, exe, exeName, strippedExe),
+    ...emitDuplicateSymbolCheck(n, cfg, exeName, linkInputs, strippedExe),
   ]);
 
   return { strippedExe, dsym };
@@ -840,7 +840,13 @@ const verifyBinaryPath = resolve(import.meta.dirname, "verify-binary.ts");
  * binary-expectations.ts says this target should look like. The
  * expectations are serialized now; the scan runs as a validation of the link.
  */
-function emitBinaryVerify(n: Ninja, cfg: Config, exe: string, exeName: string): string[] {
+function emitBinaryVerify(
+  n: Ninja,
+  cfg: Config,
+  exe: string,
+  exeName: string,
+  strippedExe: string | undefined,
+): string[] {
   const stamp = binaryVerifyStamp(cfg, exeName);
   const tools = binaryVerifyTools(cfg);
   if (stamp === undefined || tools === undefined) return [];
@@ -855,7 +861,16 @@ function emitBinaryVerify(n: Ninja, cfg: Config, exe: string, exeName: string): 
     outputs: [stamp],
     rule: "binary_verify",
     inputs: [exe],
-    implicitInputs: [spec, verifyBinaryPath, resolve(import.meta.dirname, "binary-expectations.ts")],
+    // linkDepends: the export lists in src/ the check reads (also link inputs).
+    implicitInputs: [
+      spec,
+      verifyBinaryPath,
+      resolve(import.meta.dirname, "binary-expectations.ts"),
+      ...linkDepends(cfg),
+    ],
+    // Same reason as emitSmokeTest: never run while strip is mid-write when
+    // the wrapper runtime is <buildDir>/bun itself.
+    ...(strippedExe !== undefined ? { orderOnlyInputs: [strippedExe] } : {}),
     vars: { spec: q(spec) },
   });
   return [stamp];
@@ -867,7 +882,13 @@ function emitBinaryVerify(n: Ninja, cfg: Config, exe: string, exeName: string): 
  * loads. verify-binary.ts scans every object and archive on the link line;
  * the report also lists weak definitions whose sizes differ (informational).
  */
-function emitDuplicateSymbolCheck(n: Ninja, cfg: Config, exeName: string, linkInputs: string[]): string[] {
+function emitDuplicateSymbolCheck(
+  n: Ninja,
+  cfg: Config,
+  exeName: string,
+  linkInputs: string[],
+  strippedExe: string | undefined,
+): string[] {
   const report = duplicateSymbolsReport(cfg, exeName);
   if (report === undefined || cfg.nm === undefined) return [];
   const q = (p: string) => quote(p, cfg.windows);
@@ -877,7 +898,13 @@ function emitDuplicateSymbolCheck(n: Ninja, cfg: Config, exeName: string, linkIn
     rspfile: "$out.rsp",
     rspfile_content: "$in_newline",
   });
-  n.build({ outputs: [report], rule: "duplicate_symbols", inputs: linkInputs, implicitInputs: [verifyBinaryPath] });
+  n.build({
+    outputs: [report],
+    rule: "duplicate_symbols",
+    inputs: linkInputs,
+    implicitInputs: [verifyBinaryPath],
+    ...(strippedExe !== undefined ? { orderOnlyInputs: [strippedExe] } : {}),
+  });
   return [report];
 }
 
@@ -930,7 +957,13 @@ function emitTestFFI(
  * on the unstripped executable. Reads the symbol table with llvm-nm, so it
  * runs for cross builds too. Part of `ninja check`.
  */
-function emitClassInfoCheck(n: Ninja, cfg: Config, exe: string, exeName: string): string[] {
+function emitClassInfoCheck(
+  n: Ninja,
+  cfg: Config,
+  exe: string,
+  exeName: string,
+  strippedExe: string | undefined,
+): string[] {
   const script = webkitClassInfoCheckScript(cfg);
   const stamp = classInfoStamp(cfg, exeName);
   if (script === undefined || stamp === undefined) return [];
@@ -945,7 +978,13 @@ function emitClassInfoCheck(n: Ninja, cfg: Config, exe: string, exeName: string)
       `'python3 ${quote(script, false)} "$$1" > "$$2.log" 2>&1 && sed -n "s/^check-classinfo-uniqueness: [^:]*: \\([0-9]*\\) ClassInfo.*/\\1 distinct ClassInfo/p" "$$2.log" || { cat "$$2.log"; exit 1; }' sh $in $out`,
     description: `check ${exeName} JSC ClassInfo uniqueness`,
   });
-  n.build({ outputs: [stamp], rule: "classinfo_check", inputs: [exe], implicitInputs: [script] });
+  n.build({
+    outputs: [stamp],
+    rule: "classinfo_check",
+    inputs: [exe],
+    implicitInputs: [script],
+    ...(strippedExe !== undefined ? { orderOnlyInputs: [strippedExe] } : {}),
+  });
   return [stamp];
 }
 

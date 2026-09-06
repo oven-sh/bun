@@ -31,7 +31,14 @@ export interface BinaryExpectations {
    * (linker.lds / symbols.txt / symbols.def) — on Windows a stray
    * `__declspec(dllexport)` does exactly that.
    */
-  exports: { exact: string[]; patterns: string[]; demangledPatterns: string[] };
+  exports: {
+    /** Read at check time (they are link inputs, so an edit relinks and re-checks without a reconfigure). */
+    versionScript?: string;
+    symbolList?: string;
+    /** On top of what the files list. */
+    exact: string[];
+    patterns: string[];
+  };
   /**
    * The dynamic libraries the executable loads (ELF DT_NEEDED, Mach-O
    * LC_LOAD_DYLIB install names, PE import + delay-import DLL names, compared
@@ -118,7 +125,7 @@ export interface BinaryExpectations {
  * plain ones match mangled names, those inside `extern "C++" { … }` match
  * demangled names — returned as `patterns` / `demangledPatterns`.
  */
-function versionScriptGlobals(path: string): { patterns: string[]; demangledPatterns: string[] } {
+export function versionScriptGlobals(path: string): { patterns: string[]; demangledPatterns: string[] } {
   const text = readFileSync(path, "utf8")
     .replace(/\/\*[\s\S]*?\*\//g, "")
     .replace(/#.*$/gm, "");
@@ -144,7 +151,7 @@ function versionScriptGlobals(path: string): { patterns: string[]; demangledPatt
 }
 
 /** One symbol per line, `#`/`;` comments and blank lines skipped (symbols.txt, symbols.def bodies). */
-function symbolList(path: string): string[] {
+export function symbolList(path: string): string[] {
   return readFileSync(path, "utf8")
     .split("\n")
     .map(l => l.trim())
@@ -292,7 +299,7 @@ export function binaryExpectations(cfg: Config): BinaryExpectations {
 
       return {
         format,
-        exports: { exact: [], ...versionScriptGlobals(src(cfg.freebsd ? "linker-freebsd.lds" : "linker.lds")) },
+        exports: { versionScript: src(cfg.freebsd ? "linker-freebsd.lds" : "linker.lds"), exact: [], patterns: [] },
         neededLibs: { names: neededLibs, exact: pinned, allowed: sanitizerLibs },
         ...(pinned && { maxSymbolVersions }),
         forbiddenImports: forbiddenImports(cfg),
@@ -315,7 +322,7 @@ export function binaryExpectations(cfg: Config): BinaryExpectations {
     case "macho":
       return {
         format,
-        exports: { exact: symbolList(src("symbols.txt")), patterns: [], demangledPatterns: [] },
+        exports: { symbolList: src("symbols.txt"), exact: [], patterns: [] },
         neededLibs: {
           names: [
             "/usr/lib/libSystem.B.dylib",
@@ -339,14 +346,14 @@ export function binaryExpectations(cfg: Config): BinaryExpectations {
       return {
         format,
         exports: {
-          exact: [...symbolList(src("symbols.def")), "node_module_register"],
+          symbolList: src("symbols.def"),
+          exact: ["node_module_register"],
           // Node-API and the V8 / node C++ embedder API are exported from the
           // source with __declspec(dllexport) (NAPI_EXTERN, BUN_EXPORT), the
           // C++ ones under their MSVC-mangled names; symbols.def adds libuv.
           // llhttp_*: node.exe exports llhttp's C API (its header dllexports
           // on _WIN32) and so does bun.exe, from the same header.
           patterns: ["napi_*", "node_api_*", "?*@v8@@*", "?*@node@@*", "llhttp_*"],
-          demangledPatterns: [],
         },
         neededLibs: {
           names: [

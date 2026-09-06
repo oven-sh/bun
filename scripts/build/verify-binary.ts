@@ -24,7 +24,7 @@
 
 import { spawnSync } from "node:child_process";
 import { closeSync, openSync, readFileSync, readSync, writeFileSync } from "node:fs";
-import type { BinaryExpectations } from "./binary-expectations.ts";
+import { type BinaryExpectations, symbolList, versionScriptGlobals } from "./binary-expectations.ts";
 import { BuildError, assert } from "./error.ts";
 
 export interface VerifySpec {
@@ -154,6 +154,18 @@ function setDifference(
   ];
 }
 
+/** The export allowlist: the spec's literals plus whatever the referenced files in src/ list right now. */
+function expectedExports(expect: BinaryExpectations): { exact: Set<string>; pat: RegExp; dpat: RegExp } {
+  const fromScript =
+    expect.exports.versionScript !== undefined ? versionScriptGlobals(expect.exports.versionScript) : undefined;
+  const fromList = expect.exports.symbolList !== undefined ? symbolList(expect.exports.symbolList) : [];
+  return {
+    exact: new Set([...expect.exports.exact, ...fromList]),
+    pat: globToRegExp([...expect.exports.patterns, ...(fromScript?.patterns ?? [])]),
+    dpat: globToRegExp(fromScript?.demangledPatterns ?? []),
+  };
+}
+
 /** Dynamic-library set vs expectations: `names` (exact or superset per `exact`); extras matching `allowed` are fine. */
 function libraryDifference(
   found: string[],
@@ -256,9 +268,7 @@ function verifyElf(spec: VerifySpec): void {
   const exported = dynsyms.map(d => d.name);
   {
     const demangled = demangle(spec.tools.cxxfilt, exported);
-    const exact = new Set(expect.exports.exact);
-    const pat = globToRegExp(expect.exports.patterns);
-    const dpat = globToRegExp(expect.exports.demangledPatterns);
+    const { exact, pat, dpat } = expectedExports(expect);
     // A non-PIE executable "defines" the libc data it touches (environ,
     // stdout, tzname …) through copy relocations; those are libc's exports,
     // not ours.
@@ -420,8 +430,7 @@ function verifyMachO(spec: VerifySpec): void {
   {
     const trie = run(objdump, ["--macho", "--exports-trie", exe]);
     const exported = [...trie.matchAll(/^0x[0-9A-Fa-f]+\s+(\S+)/gm)].map(m => m[1]!);
-    const exact = new Set(expect.exports.exact);
-    const pat = globToRegExp(expect.exports.patterns);
+    const { exact, pat } = expectedExports(expect);
     // dyld's own entry points every executable exports.
     const builtin = new Set(["__mh_execute_header", "_main"]);
     const bad = exported.filter(s => !exact.has(s) && !pat.test(s) && !builtin.has(s));
@@ -456,7 +465,8 @@ function verifyMachO(spec: VerifySpec): void {
     const imported = run(nm, ["--undefined-only", "--format=just-symbols", "--no-demangle", exe])
       .split("\n")
       .filter(s => s.length > 0);
-    const pat = globToRegExp(expect.forbiddenImports.map(p => (p.startsWith("_") ? p : `_${p}`)));
+    // Mach-O spells every C-level symbol with one more leading underscore.
+    const pat = globToRegExp(expect.forbiddenImports.map(p => `_${p}`));
     const bad = imported.filter(s => pat.test(s));
     report(
       "imports",
@@ -477,9 +487,7 @@ function verifyMachO(spec: VerifySpec): void {
         ?.text.match(/^\s+vmaddr (0x[0-9a-f]+)/m)?.[1] ?? "0x100000000",
     );
     const syms = symbolTable(nm, exe);
-    const allowed = globToRegExp(
-      expect.staticInitializers.map(p => (p.startsWith("_") ? `_${p}` : `_${p}`)).concat(expect.staticInitializers),
-    );
+    const allowed = globToRegExp(expect.staticInitializers.map(p => `_${p}`));
     for (const b of secs) {
       const name = field(b, "Name")?.replace(/ \(.*$/, "");
       if (name !== "__init_offsets" && name !== "__mod_init_func") continue;
@@ -541,8 +549,7 @@ function verifyPE(spec: VerifySpec): void {
     const exported = blocks(text, "Export")
       .map(b => field(b, "Name"))
       .filter((s): s is string => s !== undefined && s.length > 0);
-    const exact = new Set(expect.exports.exact);
-    const pat = globToRegExp(expect.exports.patterns);
+    const { exact, pat } = expectedExports(expect);
     const bad = exported.filter(s => !exact.has(s) && !pat.test(s));
     report(
       "exports",

@@ -79,7 +79,7 @@ Edge dependency types:
 
 **`restat = 1`** — after the command runs, re-stat outputs; if mtime didn't change, prune downstream. Critical for idempotent steps (fetch no-op, codegen unchanged).
 
-**`console` pool** — depth 1 and owns the terminal. Only for jobs with a TTY UI worth watching (cargo, dsymutil, the smoke test); never for links or anything else the graph has several of, since it serializes them.
+**`console` pool** — depth 1 and owns the terminal. Only for jobs with a TTY UI worth watching (cargo, dsymutil); never for links, checks, or anything else the graph has several of, since it serializes them.
 
 **`depfile`** — compiler writes `foo.o.d` listing every `#include`d header. Ninja reads it on the next build to know which headers this `.o` depends on. Codegen headers are order-only for this reason: they're declared outputs with restat, the depfile gives exact per-file header deps on build 2+, and order-only just ensures they exist for build 1. Prebuilt/cargo dep outputs are a different story — PCH, cc, and no-PCH cxx use them as _implicit_ deps, because those edges rewrite headers as undeclared side effects and order-only would lag one build behind (see Gotchas).
 

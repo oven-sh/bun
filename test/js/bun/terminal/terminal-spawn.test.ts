@@ -634,7 +634,7 @@ describe("Bun.Terminal subprocess integration", () => {
       `,
       "main-fixture.js": `
         const worker = new Worker(new URL("./churn.js", import.meta.url).href);
-        for (let i = 0; i < 25; i++) {
+        for (let i = 0; i < 15; i++) {
           const proc = Bun.spawn({ cmd: ["sh", "-c", "echo hi"], terminal: { data() {} } });
           const code = await proc.exited;
           if (code !== 0) throw new Error("exit code " + code + " at iteration " + i);

@@ -389,13 +389,7 @@ impl Process {
         self.on_exit(status, rusage);
     }
 
-    /// kqueue refuses `EVFILT_PROC` with ESRCH for a child that has started
-    /// to exit, while `wait4(WNOHANG)` still returns 0 until the exit
-    /// completes. The kernel finishes a pty session leader's exit only once
-    /// its terminal output drains, and the master is read by this event
-    /// loop. A blocking `wait4` here therefore deadlocks. Block on a thread
-    /// of its own instead. The result arrives through
-    /// [`Process::on_wait_pid_from_waiter_thread`].
+    /// A blocking `wait4` on this thread can deadlock: a pty session leader's exit ends only once this loop drains the master.
     #[cfg(target_os = "macos")]
     fn reap_on_thread(&mut self) -> Result<(), std::io::Error> {
         let ctx = self.event_loop_ctx();
@@ -429,8 +423,7 @@ impl Process {
             Err(err) => {
                 #[cfg(target_os = "macos")]
                 if err.get_errno() == bun_sys::E::ESRCH {
-                    // The child is mid-exit: reap it now, or from a thread
-                    // when the exit has not completed (see `reap_on_thread`).
+                    // Mid-exit: `WNOHANG` reaps it, or `on_wait_pid` hands it to `reap_on_thread`.
                     self.wait(false);
                     return Ok(self.has_exited());
                 }
@@ -1250,7 +1243,7 @@ pub mod waiter_thread_posix {
                     if matched {
                         remove = true;
                         // SAFETY: see `process_ref` above.
-                        unsafe { post_wait_result(process, result, rusage) };
+                        unsafe { post_wait_result(process, result, &rusage) };
                     }
                 }
 
@@ -1268,16 +1261,12 @@ pub mod waiter_thread_posix {
         }
     }
 
-    /// Hand a `wait4` result to the loop that owns `process`, which runs
-    /// `T::on_wait_pid_from_waiter_thread` there.
-    ///
-    /// # Safety
-    /// `process` is live and carries a +1 ref that the delivery (or this
-    /// function, when the loop refuses the task) releases.
+    /// Post a `wait4` result to the loop that owns `process`; it runs `T::on_wait_pid_from_waiter_thread` there.
+    /// SAFETY: `process` is live and carries a +1 ref that the delivery (or this function, if the loop refuses) releases.
     pub(crate) unsafe fn post_wait_result<T: ProcessLike>(
         process: *mut T,
         result: bun_sys::Result<WaitPidResult>,
-        rusage: Rusage,
+        rusage: &Rusage,
     ) {
         // SAFETY: caller contract — the +1 ref keeps the pointee live.
         let process_ref = unsafe { &*process };
@@ -1286,7 +1275,7 @@ pub mod waiter_thread_posix {
                 let rt = ResultTask::<T>::new(ResultTask {
                     result,
                     subprocess: process,
-                    rusage,
+                    rusage: *rusage,
                 });
                 let ct = ConcurrentTask::create(Task::init(rt));
                 let poster = T::js_poster(process_ref).expect("JS-owned process has a poster");
@@ -1318,42 +1307,32 @@ pub mod waiter_thread_posix {
                             core::ptr::addr_of_mut!((*out).task),
                         ));
                 }
-                // `out` is now owned by the mini queue;
-                // freed in `run_from_main_thread_mini`.
+                // `run_from_main_thread_mini` frees `out`.
             }
         }
     }
 
-    /// Send-wrapper for the one `*mut Process` [`reap_on_thread`] hands to its
-    /// thread. The pointee is refcounted (`ThreadSafeRefCount`) and the thread
-    /// reads only `pid`, `event_loop` and `js_poster`, exactly as the shared
-    /// waiter thread does with the pointers in its queue.
+    /// The one `*mut Process` that [`reap_on_thread`] moves to its thread.
     #[cfg(target_os = "macos")]
     #[repr(transparent)]
     struct SendPtr(*mut Process);
-    // SAFETY: see type doc.
+    // SAFETY: the pointee is refcounted (`ThreadSafeRefCount`) and the thread
+    // reads only `pid`, `event_loop` and `js_poster`, exactly as the shared
+    // waiter thread does with the pointers in its queue.
     #[cfg(target_os = "macos")]
     unsafe impl Send for SendPtr {}
 
     #[cfg(target_os = "macos")]
     impl SendPtr {
-        /// Takes `self` by value so the closure below captures the whole
-        /// wrapper (which is `Send`) and not the `*mut Process` field.
+        /// By value, so a closure captures the `Send` wrapper and not its `*mut` field.
         #[inline]
         fn get(self) -> *mut Process {
             self.0
         }
     }
 
-    /// Block in `wait4(pid, 0)` on a thread of its own and post the result to
-    /// the owning loop. For one child whose exit kqueue can no longer observe
-    /// (`EVFILT_PROC` returned ESRCH); see [`Process::reap_on_thread`].
-    ///
-    /// The caller took the +1 ref the delivery releases. On error the thread
-    /// did not start and the caller still owns that ref.
-    ///
-    /// # Safety
-    /// `process` must be a live, strong-ref'd `Process`.
+    /// Block in `wait4(pid, 0)` on a detached thread and post the result to the owning loop.
+    /// SAFETY: `process` is live and carries the +1 ref the delivery releases; on `Err` no thread started and the caller keeps that ref.
     #[cfg(target_os = "macos")]
     pub(crate) unsafe fn reap_on_thread(process: *mut Process) -> Result<(), std::io::Error> {
         // SAFETY: caller contract — `process` is live; raw read of a POD field.
@@ -1366,9 +1345,9 @@ pub mod waiter_thread_posix {
                 let mut rusage = rusage_zeroed();
                 let result = posix_spawn::wait4(pid, 0, Some(&mut rusage));
                 // SAFETY: the +1 ref taken before the spawn keeps the pointee live.
-                unsafe { post_wait_result(process.get(), result, rusage) };
+                unsafe { post_wait_result(process.get(), result, &rusage) };
             })?;
-        drop(thread); // detached: the thread outlives the handle
+        drop(thread);
         Ok(())
     }
 

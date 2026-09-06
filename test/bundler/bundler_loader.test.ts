@@ -148,6 +148,76 @@ describe("bundler", async () => {
             '[{"hello":{"@to":"world","#text":"hi ","b":"there"}},{"greeting":{"@__proto__":"1","to":["world","you"]}},{"@__proto__":"1","to":["world","you"]}]',
         },
       });
+      // One file imported under two `with { type }` loaders is two modules
+      // with two values, as it is at runtime. The bundler used to key modules
+      // by path alone, so the first loader won for every import of the file.
+      itBundled("bun/loader-same-file-under-two-import-attributes", {
+        target,
+        outdir: "/out",
+        files: {
+          "/entry.ts": /* js */ `
+        import obj from './data.json';
+        import { text } from './as-text';
+        import * as shadow from './as-text';
+        const dynamicText = (await import('./data.json', { with: { type: 'text' } })).default;
+        const dynamicObj = (await import('./data.json')).default;
+        import pageText from './page.html' with { type: 'text' };
+        import pageFile from './page.html' with { type: 'file' };
+        console.write(JSON.stringify([
+          typeof obj, obj.j,
+          typeof text, text,
+          dynamicText === text, dynamicObj === obj, shadow.text === text,
+          pageText,
+          typeof pageFile, pageFile !== pageText && !pageFile.includes('<p>'),
+        ]));
+      `,
+          "/as-text.ts": /* js */ `
+        import text from './data.json' with { type: 'text' };
+        export { text };
+      `,
+          "/data.json": `{"j":1}`,
+          "/page.html": `<p>hi</p>`,
+        },
+        run: { stdout: '["object",1,"string","{\\"j\\":1}",true,true,true,"<p>hi</p>","string",true]' },
+      });
+    });
+  }
+
+  // Every top-level key of a data file is a named export, not only the keys
+  // that are identifiers, so `import * as ns` has the keys it has at runtime.
+  for (const minify of [false, true]) {
+    itBundled(`bun/loader-data-file-non-identifier-keys-are-named-exports${minify ? "-minified" : ""}`, {
+      target: "bun",
+      minifyIdentifiers: minify,
+      minifySyntax: minify,
+      files: {
+        "/entry.ts": /* js */ `
+      import * as ns from './data.json';
+      import { "kebab-case" as kebab, "a b" as ab } from './data.json';
+      import * as y from './data.yaml';
+      console.write(JSON.stringify([
+        Object.keys(ns).sort(),
+        ns["a b"], ns[""], ns["1"], ns["😀"], ns.if, kebab, ab === ns["a b"],
+        ns["a b"] === ns.default["a b"], ns.obj === ns.default.obj,
+        Object.keys(y).sort(), y["1"], y.true, y.null, y["x y"],
+      ]));
+    `,
+        "/data.json": JSON.stringify({
+          "a b": { n: 1 },
+          "": 2,
+          "1": 3,
+          "😀": 4,
+          if: 5,
+          "kebab-case": 6,
+          obj: {},
+          ok: 7,
+        }),
+        "/data.yaml": `1: one\ntrue: t\nnull: n\nx y: xy\n`,
+      },
+      run: {
+        stdout:
+          '[["","1","a b","default","if","kebab-case","obj","ok","😀"],{"n":1},2,3,4,5,6,true,true,true,["1","default","null","true","x y"],"one","t","n","xy"]',
+      },
     });
   }
 

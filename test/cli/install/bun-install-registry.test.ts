@@ -9717,6 +9717,83 @@ describe("registry/token env var priority", () => {
 
     expect(hits).toEqual({ preferred: 1, other: 0 });
   });
+
+  // The registry from the environment is used whatever the case of its scheme,
+  // like `registry=` in .npmrc. It must never be dropped in favor of a lower
+  // layer (here the bunfig registry, otherwise the default public registry).
+  test.each(["HTTP://", "Http://", " http://"])("BUN_CONFIG_REGISTRY=%shost/ is used", async scheme => {
+    const hits = { fromEnv: 0, fromBunfig: 0 };
+    await using fromEnv = Bun.serve({
+      port: 0,
+      fetch() {
+        hits.fromEnv++;
+        return new Response("not found", { status: 404 });
+      },
+    });
+    await using fromBunfig = Bun.serve({
+      port: 0,
+      fetch() {
+        hits.fromBunfig++;
+        return new Response("not found", { status: 404 });
+      },
+    });
+
+    await Promise.all([
+      write(
+        join(packageDir, "bunfig.toml"),
+        Bun.TOML.stringify({ install: { cache: false, registry: `http://localhost:${fromBunfig.port}/` } }),
+      ),
+      write(packageJson, JSON.stringify({ name: "foo", version: "1.0.0", dependencies: { "no-deps": "1.0.0" } })),
+    ]);
+
+    const { stdout, stderr, exited } = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: packageDir,
+      stdout: "pipe",
+      stderr: "pipe",
+      env: { ...env, BUN_CONFIG_REGISTRY: `${scheme}localhost:${fromEnv.port}/` },
+    });
+    const [err, exitCode] = await Promise.all([stderr.text(), exited, stdout.text()]);
+
+    expect(hits).toEqual({ fromEnv: 1, fromBunfig: 0 });
+    expect(err).toContain(`GET http://localhost:${fromEnv.port}/no-deps - 404`);
+    expect(exitCode).toBe(1);
+  });
+
+  // A registry whose scheme is not http(s) is an error, as it is in bunfig.toml
+  // and .npmrc. It must not silently fall through to another registry.
+  test("BUN_CONFIG_REGISTRY with an unsupported scheme fails instead of falling through", async () => {
+    let hits = 0;
+    await using fromBunfig = Bun.serve({
+      port: 0,
+      fetch() {
+        hits++;
+        return new Response("not found", { status: 404 });
+      },
+    });
+
+    await Promise.all([
+      write(
+        join(packageDir, "bunfig.toml"),
+        Bun.TOML.stringify({ install: { cache: false, registry: `http://localhost:${fromBunfig.port}/` } }),
+      ),
+      write(packageJson, JSON.stringify({ name: "foo", version: "1.0.0", dependencies: { "no-deps": "1.0.0" } })),
+    ]);
+
+    const { stdout, stderr, exited } = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: packageDir,
+      stdout: "pipe",
+      stderr: "pipe",
+      env: { ...env, BUN_CONFIG_REGISTRY: `htp://localhost:${fromBunfig.port}/` },
+    });
+    const [err, exitCode] = await Promise.all([stderr.text(), exited, stdout.text()]);
+
+    expect(hits).toBe(0);
+    expect(err).toContain("Registry URL must be http:// or https://");
+    expect(err).toContain(`Received: "htp://localhost:${fromBunfig.port}/no-deps"`);
+    expect(exitCode).toBe(1);
+  });
 });
 
 test("npm manifest cache entries with invalid package version records are treated as invalid", async () => {

@@ -1,6 +1,6 @@
 use crate::bun_schema::api as Api;
 use bun_core::ZStr;
-use bun_core::{Output, env_var};
+use bun_core::{Output, env_var, strings};
 
 use super::Subcommand;
 use super::command_line_arguments::{self, CommandLineArguments};
@@ -625,9 +625,12 @@ impl Options {
 
             for registry_key in REGISTRY_KEYS {
                 if let Some(registry_) = env.get(registry_key) {
-                    if !registry_.is_empty()
-                        && (registry_.starts_with(b"https://") || registry_.starts_with(b"http://"))
-                    {
+                    // Any non-empty value is the registry, as it is for `registry=`
+                    // in .npmrc and `install.registry` in bunfig.toml. A value whose
+                    // scheme is not http(s) fails loudly at request time instead of
+                    // falling through to the next layer's registry.
+                    let registry_ = strings::trim(registry_, b" \t\r\n");
+                    if !registry_.is_empty() {
                         let mut api_registry = Api::NpmRegistry::from_url(registry_);
                         // Credentials in the URL win, as they do for `registry=` in .npmrc.
                         if !api_registry.has_credentials() {

@@ -154,6 +154,9 @@ pub(crate) unsafe extern "C" fn main(argc: c_int, argv: *const *const c_char) ->
     //    for the entire process.
     unsafe { bun_core::init_argv(argc, argv) };
 
+    #[cfg(unix)]
+    reset_inherited_signal_state();
+
     // 1. Crash handler first so anything below gets a usable trace.
     bun_crash_handler::init();
 
@@ -199,6 +202,25 @@ pub(crate) unsafe extern "C" fn main(argc: c_int, argv: *const *const c_char) ->
     crate::cli::Cli::start();
     // `Global::exit` is `-> !`; it coerces to the `c_int` return type.
     Global::exit(0)
+}
+
+/// The signal mask and `SIG_IGN` dispositions survive `execve`. A parent that
+/// blocked `SIGSEGV` around `fork` makes every fault JSC handles (wasm bounds
+/// checks, `VMTraps`) kill the process instead, and a parent that ignored
+/// `SIGCHLD` makes the kernel reap our children before `waitpid` sees them
+/// (`ECHILD` on every spawn). Node's `PlatformInit` resets both. Runs before
+/// the first thread is created, since new threads copy the creator's mask.
+/// Other inherited `SIG_IGN` dispositions (`nohup` on HUP/INT/TERM) are kept.
+#[cfg(unix)]
+fn reset_inherited_signal_state() {
+    // SAFETY: `sigset_t` is plain data, every pointer is to a local, and this
+    // runs on the main thread before any other thread exists.
+    unsafe {
+        let mut set: libc::sigset_t = core::mem::zeroed();
+        libc::sigemptyset(&raw mut set);
+        libc::pthread_sigmask(libc::SIG_SETMASK, &raw const set, core::ptr::null_mut());
+        libc::signal(libc::SIGCHLD, libc::SIG_DFL);
+    }
 }
 
 /// Linux's `expand_fdtable()` waits for an RCU grace period (tens of ms on a

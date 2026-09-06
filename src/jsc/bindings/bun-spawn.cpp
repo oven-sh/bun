@@ -290,7 +290,10 @@ extern "C" ssize_t posix_spawn_bun(
 #endif
 
     const auto startChild = [&]() -> ssize_t {
-        sigset_t childmask = oldmask;
+        // The child starts with an empty mask, not the spawning thread's
+        // (libuv and the posix_spawn path do the same).
+        sigset_t childmask;
+        sigemptyset(&childmask);
 
         // Reset signals
         struct sigaction sa = { 0 };

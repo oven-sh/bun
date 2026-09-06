@@ -264,9 +264,14 @@ impl TSConfigJSON {
     // "${configDir}" with "./" and then convert it to an absolute path sometimes.
     // We convert it to an absolute path during module resolution, so we shouldn't need to do that here.
     // https://github.com/microsoft/TypeScript/blob/ef802b1e4ddaf8d6e61d6005614dd796520448f8/src/compiler/commandLineParser.ts#L3243-L3245
+    //
+    // `config_dir` is the directory of the config that started the `extends`
+    // chain, not the directory of the file being parsed. tsc defines
+    // `${configDir}` that way so a shared base can point into the project
+    // that extends it.
     fn str_replacing_templates(
         input: Box<[u8]>,
-        source: &bun_ast::Source,
+        config_dir: &[u8],
     ) -> Result<Box<[u8]>, bun_alloc::AllocError> {
         const TEMPLATE: &[u8] = b"${configDir}";
         let mut remaining: &[u8] = &input;
@@ -275,7 +280,6 @@ impl TSConfigJSON {
             cap: 0,
             ptr: None,
         };
-        let config_dir = source.path.source_dir();
 
         // There's only one template variable we support, so we can keep this simple for now.
         while let Some(index) = strings::index_of(remaining, TEMPLATE) {
@@ -307,10 +311,15 @@ impl TSConfigJSON {
         Ok(Box::from(&written[..len]))
     }
 
+    /// `config_dir` replaces `${configDir}` in `baseUrl` and `paths`. It is
+    /// the directory (with a trailing separator) of the root config of the
+    /// `extends` chain. For a config with no `extends` chain it is the
+    /// directory of `source`.
     pub fn parse(
         log: &mut bun_ast::Log,
         source: &bun_ast::Source,
         json_cache: &mut JsonCache,
+        config_dir: &[u8],
     ) -> Result<Option<Box<TSConfigJSON>>, crate::Error> {
         // Unfortunately "tsconfig.json" isn't actually JSON. It's some other
         // format that appears to be defined by the implementation details of the
@@ -424,7 +433,7 @@ impl TSConfigJSON {
             if let Some(base_url_prop) = base_url_v {
                 if let Some(base_url) = base_url_prop.as_str() {
                     result.base_url =
-                        match Self::str_replacing_templates(Box::from(base_url), source) {
+                        match Self::str_replacing_templates(Box::from(base_url), config_dir) {
                             Ok(v) => v,
                             Err(_) => return Ok(None),
                         };
@@ -621,7 +630,7 @@ impl TSConfigJSON {
                                             let item_loc = this_item_loc;
                                             let str = match Self::str_replacing_templates(
                                                 Box::from(str_),
-                                                source,
+                                                config_dir,
                                             ) {
                                                 Ok(v) => v,
                                                 Err(_) => return Ok(None),

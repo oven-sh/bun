@@ -309,10 +309,13 @@ impl Config {
                 // TODO: JSC -> Ast conversion
                 // SAFETY: VirtualMachine::get() returns the live singleton on the JS thread.
                 let vm = VirtualMachine::get().as_mut();
+                let tsconfig_source =
+                    bun_ast::Source::init_path_string(b"tsconfig.json", &self.tsconfig_buf[..]);
                 if let Ok(Some(parsed_tsconfig)) = TSConfigJSON::parse(
                     &mut self.log,
-                    &bun_ast::Source::init_path_string(b"tsconfig.json", &self.tsconfig_buf[..]),
+                    &tsconfig_source,
                     &mut vm.transpiler.resolver.caches.json,
+                    tsconfig_source.path.source_dir(),
                 ) {
                     self.tsconfig = Some(parsed_tsconfig);
                 }

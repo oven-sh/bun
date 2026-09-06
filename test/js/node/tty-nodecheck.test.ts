@@ -37,8 +37,13 @@ async function runInPty(
     await phase(opts.markers[i]);
     await phases[i](terminal, () => buffer);
   }
-  const timeout = new Promise<number>((_, reject) => setTimeout(() => reject(new Error("TIMEOUT; output=" + JSON.stringify(buffer))), 8000));
-  const code = await Promise.race([proc.exited, timeout]).catch(e => { proc.kill(); throw e; });
+  const timeout = new Promise<number>((_, reject) =>
+    setTimeout(() => reject(new Error("TIMEOUT; output=" + JSON.stringify(buffer))), 8000),
+  );
+  const code = await Promise.race([proc.exited, timeout]).catch(e => {
+    proc.kill();
+    throw e;
+  });
   return { code, output: () => buffer };
 }
 

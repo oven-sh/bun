@@ -1,8 +1,8 @@
 import { expect, test } from "bun:test";
+import { tempDir } from "harness";
 import { closeSync, openSync } from "node:fs";
 import { join } from "node:path";
 import { ReadStream, isatty } from "node:tty";
-import { tempDir } from "harness";
 
 test("process.binding('tty_wrap')", () => {
   // @ts-expect-error

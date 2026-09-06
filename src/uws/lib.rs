@@ -70,9 +70,7 @@ impl ResponseKind {
     }
 }
 
-// Mirrors `CompressOptions` in packages/bun-uws/src/PerMessageDeflate.h: the
-// compressor is the low byte (windowBits << 4 | memLevel), the decompressor
-// is bits 8 to 11 (windowBits).
+// Mirrors `CompressOptions` in packages/bun-uws/src/PerMessageDeflate.h.
 pub const SHARED_COMPRESSOR: i32 = 1;
 pub const SHARED_DECOMPRESSOR: i32 = 1 << 8;
 pub const DEDICATED_DECOMPRESSOR_512B: i32 = 9 << 8;

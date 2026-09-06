@@ -204,8 +204,7 @@ bun_core::comptime_string_map! {
         b"disable" => 0,
         b"shared" => uws::SHARED_DECOMPRESSOR,
         b"dedicated" => uws::DEDICATED_DECOMPRESSOR,
-        // A size is the inflate window. Deflate windows stop at 32KB
-        // (15 bits), so the larger names get the largest window.
+        // The inflate window; deflate windows stop at 32KB.
         b"3KB" => uws::DEDICATED_DECOMPRESSOR_2KB,
         b"4KB" => uws::DEDICATED_DECOMPRESSOR_4KB,
         b"8KB" => uws::DEDICATED_DECOMPRESSOR_8KB,
@@ -256,8 +255,7 @@ pub(crate) fn on_create(
                 )));
             }
 
-            // `None` is an absent direction, `Some(0)` is one the user turned
-            // off with `false` or `"disable"`.
+            // `None` is absent, `Some(0)` is `false` or "disable".
             let mut compress: Option<i32> = None;
             if let Some(compression) = per_message_deflate.get_truthy(global_object, "compress")? {
                 if compression.is_boolean() {
@@ -306,11 +304,8 @@ pub(crate) fn on_create(
                 }
             }
 
-            // uWS negotiates permessage-deflate whenever `compression` is
-            // nonzero, and RFC 7692 has no way to accept inbound compression
-            // without inflating it, so `decompress` off turns the extension off.
-            // `compress` off leaves the compressor bits zero: `WebSocket::send`
-            // then never sets RSV1.
+            // RFC 7692 negotiates both directions at once, so decompress off
+            // means no extension. Zero compressor bits make send() skip RSV1.
             server.compression = match (compress, decompress) {
                 (None, None) | (Some(0), None) | (None | Some(0), Some(0)) => 0,
                 (Some(_), Some(0)) => {

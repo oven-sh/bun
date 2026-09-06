@@ -318,8 +318,26 @@ impl ExtractTarball {
                                 &mut zlib_pool.list,
                                 libdeflate::Encoding::Gzip,
                             );
-                            if result.status == libdeflate::Status::Success {
-                                decompressed_in_memory = true;
+                            match result.status {
+                                libdeflate::Status::Success => decompressed_in_memory = true,
+                                // The ISIZE trailer is only the size mod 2^32, so a
+                                // too-small buffer is not proof of corruption. Stream it.
+                                libdeflate::Status::InsufficientSpace => {}
+                                libdeflate::Status::BadData | libdeflate::Status::ShortOutput => {
+                                    log.add_error_fmt(
+                                        None,
+                                        bun_ast::Loc::EMPTY,
+                                        format_args!(
+                                            "Corrupt gzip data decompressing \"{}\" to \"{}\"",
+                                            bun_fmt::s(name),
+                                            bun_core::fmt::fmt_path_u8(
+                                                tmpname.as_bytes(),
+                                                Default::default()
+                                            ),
+                                        ),
+                                    );
+                                    return Err(crate::Error::InstallFailed);
+                                }
                             }
                         }
                     }

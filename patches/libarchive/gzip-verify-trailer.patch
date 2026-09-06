@@ -1,0 +1,62 @@
+--- a/libarchive/archive_read_support_filter_gzip.c
++++ b/libarchive/archive_read_support_filter_gzip.c
+@@ -68,6 +68,11 @@ struct private_data {
+ 	 * a gzip header).
+ 	 */
+ 	char		 trailer_pending;
++	/*
++	 * BUN PATCH: uncompressed byte count of the current member,
++	 * modulo 2^32, checked against the ISIZE trailer field.
++	 */
++	uint32_t	 member_isize;
+ };
+ 
+ /* Gzip Filter. */
+@@ -386,6 +391,7 @@ consume_header(struct archive_read_filter *self)
+ 
+ 	/* Initialize CRC accumulator. */
+ 	state->crc = crc32(0L, NULL, 0);
++	state->member_isize = 0;
+ 
+ 	/*
+ 	 * Initialize compression library. next_in / avail_in are
+@@ -469,7 +475,17 @@ consume_trailer(struct archive_read_filter *self)
+ 	if (p == NULL || avail == 0)
+ 		return (ARCHIVE_FATAL);
+ 
+-	/* XXX TODO: Verify the length and CRC. */
++	/*
++	 * BUN PATCH: verify the trailer. Upstream leaves this as a TODO,
++	 * which lets a corrupted member decompress without any error.
++	 */
++	if (archive_le32dec(p) != (uint32_t)state->crc ||
++	    archive_le32dec(p + 4) != state->member_isize) {
++		archive_set_error(&self->archive->archive,
++		    ARCHIVE_ERRNO_MISC,
++		    "gzip trailer mismatch: bad CRC32 or uncompressed size");
++		return (ARCHIVE_FATAL);
++	}
+ 
+ 	/* We've verified the trailer, so consume it now. */
+ 	__archive_read_filter_consume(self->upstream, 8);
+@@ -484,6 +500,8 @@ gzip_filter_read(struct archive_read_filter *self, const void **p)
+ 	struct private_data *state;
+ 	size_t decompressed;
+ 	ssize_t avail_in, max_in;
++	unsigned char *out_before;
++	size_t produced;
+ 	int ret;
+ 
+ 	state = (struct private_data *)self->data;
+@@ -548,7 +566,11 @@ gzip_filter_read(struct archive_read_filter *self, const void **p)
+ 		state->stream.avail_in = (uInt)avail_in;
+ 
+ 		/* Decompress and consume some of that data. */
++		out_before = state->stream.next_out;
+ 		ret = inflate(&(state->stream), 0);
++		produced = state->stream.next_out - out_before;
++		state->crc = crc32(state->crc, out_before, (uInt)produced);
++		state->member_isize += (uint32_t)produced;
+ 		switch (ret) {
+ 		case Z_OK: /* Decompressor made some progress. */
+ 			__archive_read_filter_consume(self->upstream,

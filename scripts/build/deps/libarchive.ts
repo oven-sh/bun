@@ -108,6 +108,10 @@ export const libarchive: Dependency = {
     // machinery (and its heap) are pure overhead and needless cross-thread
     // CRT-heap traffic.
     "patches/libarchive/archive_string-codepage-cache.patch",
+    // Upstream's gzip read filter never checks the CRC32/ISIZE trailer
+    // (it is a TODO there). Verify it, so a corrupted tarball fails the
+    // extract instead of installing the corrupted bytes.
+    "patches/libarchive/gzip-verify-trailer.patch",
   ],
 
   // zlib-ng generates zlib.h during its own build; libarchive's gzip filter

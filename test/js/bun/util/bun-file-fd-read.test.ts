@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { closeSync, openSync } from "fs";
-import { isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "path";
 
 // Reading a Bun.file() backed by a file descriptor goes through
@@ -48,5 +48,60 @@ describe.skipIf(isWindows)("Bun.file(fd) read", () => {
 
     expect(await withFd(path, fd => Bun.file(fd).text())).toBe("");
     expect((await withFd(path, fd => Bun.file(fd).arrayBuffer())).byteLength).toBe(0);
+  });
+
+  // A tty fd other than stdin used to be read like a regular file: the stream
+  // returned nothing and held nothing, so the process exited before any input.
+  // It now gets the same polled, privately reopened terminal as Bun.stdin.
+  test("stream() on a /dev/tty fd polls the terminal and cancel() releases it", async () => {
+    let output = "";
+    let wrote = false;
+    const decoder = new TextDecoder();
+    const proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          const fs = require("fs");
+          const fd = fs.openSync("/dev/tty", "r");
+          const reader = Bun.file(fd).stream().getReader();
+          const first = reader.read();
+          console.log("ready");
+          const { value } = await first;
+          console.log("chunk", JSON.stringify(Buffer.from(value).toString()));
+          // A second read is pending on the terminal while cancel() runs.
+          const second = reader.read();
+          await reader.cancel();
+          console.log("cancelled", JSON.stringify(await second));
+          // The caller still owns its fd.
+          console.log("fd", fs.fstatSync(fd).isCharacterDevice() ? "open" : "closed");
+        `,
+      ],
+      env: bunEnv,
+      terminal: {
+        cols: 200,
+        rows: 24,
+        data(terminal, chunk: Uint8Array) {
+          output += decoder.decode(chunk, { stream: true });
+          if (!wrote && output.includes("ready")) {
+            wrote = true;
+            terminal.write("hello\n");
+          }
+        },
+      },
+    });
+    const exitCode = await proc.exited;
+    proc.terminal?.close();
+    output += decoder.decode();
+
+    // The pty echoes the typed line before the child reads it.
+    expect(Bun.stripANSI(output).split(/\r?\n/).filter(Boolean)).toEqual([
+      "ready",
+      "hello",
+      'chunk "hello\\n"',
+      'cancelled {"done":true}',
+      "fd open",
+    ]);
+    expect(exitCode).toBe(0);
   });
 });

@@ -97,8 +97,7 @@ impl PosixSignalHandle {
             PosixSignalTask::run_from_js_thread(signal, global_object);
             ran = true;
         }
-        // Node runs the microtask checkpoint after a signal callback, so `async` listeners and
-        // `process.nextTick(() => process.exit())` complete here too. `Stopped` is left to the caller's read.
+        // Like Node after a signal callback: lets `async` and `nextTick` listeners finish. `Stopped` surfaces at the caller's read.
         if ran {
             let _ = global_object.drain_microtasks_and_next_ticks();
         }

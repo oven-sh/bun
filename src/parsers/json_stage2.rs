@@ -130,7 +130,7 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
             dup_hashes: Vec::new(),
             dup_maps: Vec::new(),
             spill_depth: 0,
-            ill_formed_utf8: !strings::is_valid_utf8(&source.contents),
+            ill_formed_utf8: !opts.assume_valid_utf8 && !strings::is_valid_utf8(&source.contents),
         }
     }
 

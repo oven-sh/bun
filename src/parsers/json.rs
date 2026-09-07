@@ -21,6 +21,9 @@ pub struct JSONOptions {
     pub was_originally_macro: bool,
     pub guess_indentation: bool,
     pub record_value_locs: bool,
+    /// The caller guarantees the document is UTF-8 (a registry response), so skip the validation
+    /// pass that otherwise lets the parser replace ill-formed bytes in strings with U+FFFD.
+    pub assume_valid_utf8: bool,
 }
 
 impl JSONOptions {
@@ -32,6 +35,7 @@ impl JSONOptions {
         was_originally_macro: false,
         guess_indentation: false,
         record_value_locs: false,
+        assume_valid_utf8: false,
     };
 }
 
@@ -387,6 +391,7 @@ impl ParsedJson {
     ) -> crate::Result<ParsedJson> {
         const MANIFEST_OPTS: JSONOptions = JSONOptions {
             json_warn_duplicate_keys: false,
+            assume_valid_utf8: true,
             ..JSONOptions::DEFAULT
         };
         parse_to_rows(source, log, MANIFEST_OPTS)

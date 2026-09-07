@@ -1366,8 +1366,7 @@ fn iterate_project_tree(
     Ok(())
 }
 
-/// npm refuses to publish when `manifest.private` is truthy in the JS sense,
-/// so `"true"`, `"yes"`, `"false"`, `1` and `{}` all count as private.
+/// JS truthiness of `private`, like npm's `if (manifest.private)` check.
 pub(crate) fn is_private_package(json: &Expr) -> bool {
     let Some(private) = json.get(b"private") else {
         return false;

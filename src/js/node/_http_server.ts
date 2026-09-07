@@ -2274,16 +2274,17 @@ function renderNativeHeaders(res) {
     // header is rendered so the advertised value matches the transport.
     let closeDelimited = false;
     let forceChunked = false;
-    // Node's _storeHeader shouldSendKeepAlive: without chunked encoding (HTTP/1.0,
-    // or the user cleared useChunkedEncodingByDefault) only an explicit
-    // Content-Length lets the connection persist.
-    const canPersist = storedContentLength !== undefined || !!res.useChunkedEncodingByDefault;
+    // False for HTTP/1.0 (set by the constructor) or when the user cleared it.
+    const chunkedByDefault = !!res.useChunkedEncodingByDefault;
+    // Node's _storeHeader shouldSendKeepAlive: without chunked encoding only an
+    // explicit Content-Length lets the connection persist.
+    const canPersist = chunkedByDefault || storedContentLength !== undefined;
     if (storedContentLength === undefined && storedTransferEncoding === undefined) {
       if (res._hasBody === false) {
         // HEAD / 204 / 304 / 1xx: there is no body to delimit, so removing the
         // framing headers must not close the connection (Node's _storeHeader
         // checks !_hasBody before its close-delimited else-branch).
-      } else if (!res.useChunkedEncodingByDefault) {
+      } else if (!chunkedByDefault) {
         // Node's _storeHeader `else if (!this.useChunkedEncodingByDefault) this._last = true`,
         // taken before the Content-Length branch: no framing header at all, the body
         // runs until the connection closes.

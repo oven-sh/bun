@@ -940,6 +940,20 @@ describe.concurrent("credentials in the registry url", () => {
     expect(exitCode).toBe(1);
   });
 
+  test("registry url without a scheme is rejected and echoed as written", async () => {
+    using mock = registryMock();
+    const packageDir = await packageDirFor("no-scheme-pkg");
+    await write(
+      join(packageDir, "bunfig.toml"),
+      `[install]\nregistry = { url = "localhost:${mock.port}/npm/", token = "secret-token" }\n`,
+    );
+
+    const { err, exitCode } = await publish(env, packageDir);
+    expect(err).toBe(`error: Registry URL must be http:// or https://\nReceived: "localhost:${mock.port}/npm/"\n`);
+    expect(mock.requests).toEqual([]);
+    expect(exitCode).toBe(1);
+  });
+
   test("scoped registry with a bad scheme is rejected before sending a request", async () => {
     using mock = registryMock();
     const packageDir = await packageDirFor("@corp/bad-scheme-pkg");

@@ -938,6 +938,135 @@ describe("FileSink flush() from a 'beforeExit' listener", () => {
   });
 });
 
+// A chunk larger than the pipe buffer leaves its tail in the sink's buffer
+// and write() returns a promise. end() after that takes a short flush and
+// hands back the same promise. The writable poll drains the tail over the
+// next loop ticks, so the process must stay alive until it is empty, with or
+// without an await on that promise. It used to exit on the next deferred
+// tick with the tail unwritten.
+describe("FileSink on a pipe stays alive until end() has drained the buffer", () => {
+  const size = 4 * 1024 * 1024;
+
+  // The parent reads stdout only after the child reports on stderr that
+  // end() returned, so the child's first write has already filled the pipe.
+  async function run(body: string) {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          let settled = "pending";
+          process.on("exit", code => console.error(JSON.stringify({ settled, code })));
+          ${body}
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const decoder = new TextDecoder();
+    const reader = proc.stderr.getReader();
+    let stderr = "";
+    while (!stderr.startsWith("ended\n")) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      stderr += decoder.decode(value, { stream: true });
+    }
+    const rest = (async () => {
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) return;
+        stderr += decoder.decode(value, { stream: true });
+      }
+    })();
+    const [stdout, , exitCode] = await Promise.all([proc.stdout.bytes(), rest, proc.exited]);
+    return { stdoutLength: stdout.length, stderr, exitCode };
+  }
+
+  // On Windows uv_write takes the whole chunk at once and end() can return a
+  // plain number, hence Promise.resolve().
+  it.concurrent("end() without await", async () => {
+    expect(
+      await run(`
+        const w = Bun.stdout.writer();
+        w.write(Buffer.alloc(${size}, 46));
+        Promise.resolve(w.end()).then(() => { settled = "resolved"; }, e => { settled = "rejected: " + e.code; });
+        console.error("ended");
+      `),
+    ).toEqual({
+      stdoutLength: size,
+      stderr: "ended\n" + JSON.stringify({ settled: "resolved", code: 0 }) + "\n",
+      exitCode: 0,
+    });
+  });
+
+  it.concurrent("await end() inside an async function", async () => {
+    expect(
+      await run(`
+        async function main() {
+          const w = Bun.stdout.writer();
+          w.write(Buffer.alloc(${size}, 46));
+          const p = w.end();
+          console.error("ended");
+          await p;
+          settled = "resolved";
+        }
+        main();
+      `),
+    ).toEqual({
+      stdoutLength: size,
+      stderr: "ended\n" + JSON.stringify({ settled: "resolved", code: 0 }) + "\n",
+      exitCode: 0,
+    });
+  });
+
+  // The unref'd child does not hold the loop. The bytes still owed to its
+  // stdin must. The child starts to read only once end() has been called, so
+  // the first write has filled the pipe by then. It inherits stdout, so its
+  // count arrives on the parent's stdout after it has read everything.
+  it.concurrent("Bun.spawn stdin pipe with an unref'd child", async () => {
+    const flag = join(tmpdirSync(), "ended");
+    // Polls for the flag with a deadline so that it cannot outlive a parent
+    // that died before writing it.
+    const reader = `
+      const fs = require("fs");
+      const deadline = Date.now() + 60_000;
+      while (!fs.existsSync(process.argv[1])) {
+        if (Date.now() > deadline) {
+          console.error("gave up waiting for " + process.argv[1]);
+          process.exit(3);
+        }
+        Bun.sleepSync(1);
+      }
+      console.log((await Bun.stdin.bytes()).length);
+    `;
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          const child = Bun.spawn(
+            [process.execPath, "-e", ${JSON.stringify(reader)}, ${JSON.stringify(flag)}],
+            { stdin: "pipe", stdout: "inherit", stderr: "inherit" },
+          );
+          try {
+            child.stdin.write(Buffer.alloc(${size}, 65));
+            child.stdin.end();
+            child.unref();
+          } finally {
+            require("fs").writeFileSync(${JSON.stringify(flag)}, "");
+          }
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: `${size}\n`, stderr: "", exitCode: 0 });
+  });
+});
+
 it("fs.promises.writeFile with iterables under GC pressure does not crash", async () => {
   const dir = tmpdirSync();
   await using proc = Bun.spawn({

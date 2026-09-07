@@ -1471,7 +1471,20 @@ install_linux_glibc_sysroot() {
 	if ! [ -f "$(which jq)" ]; then install_packages jq; fi
 	skopeo="$(require skopeo)"
 	jq_bin="$(require jq)"
+	ar_bin="$(require ar)"
 	if [ "$sudo" = "1" ] || [ -z "$can_sudo" ]; then _s=""; else _s="sudo -n"; fi
+	# extract_deb DEB DIR: unpack a .deb's payload into DIR with ar + tar (dpkg-deb exists on
+	# Debian-family hosts only).
+	extract_deb() {
+		member=$("$ar_bin" t "$1" | grep '^data\.tar')
+		case "$member" in
+		*.xz) decompress="xz -dc" ;;
+		*.zst) decompress="zstd -dc" ;;
+		*.gz) decompress="gzip -dc" ;;
+		*) decompress="cat" ;;
+		esac
+		"$ar_bin" p "$1" "$member" | $decompress | $_s tar -x -C "$2" || error "extracting $1 failed"
+	}
 
 	# This machine's architecture; the CI build host cross-compiles the other one too, and needs
 	# the cross-arch GNU strip for -R .eh_frame (host strip rejects foreign-arch ELF).
@@ -1526,7 +1539,7 @@ install_linux_glibc_sysroot() {
 			path=$(awk -v p="$pkg" '$1=="Package:"&&$2==p{f=1} f&&$1=="Filename:"{print $2; exit}' "$tmp/Packages")
 			if [ -n "$path" ]; then
 				deb=$(download_file "$apt_base/$path")
-				execute_sudo dpkg-deb -x "$deb" "$sysroot"
+				extract_deb "$deb" "$sysroot"
 			fi
 		done
 		# Absolute symlinks from the .debs point at host paths; rewrite them
@@ -1552,7 +1565,7 @@ install_linux_glibc_sysroot() {
 		mkdir -p "$tmp/gcc13"
 		execute tar -xzf "$gcc13" -C "$tmp/gcc13"
 		for deb in "$tmp/gcc13"/*.deb; do
-			execute_sudo dpkg-deb -x "$deb" "$sysroot"
+			extract_deb "$deb" "$sysroot"
 		done
 
 		execute_sudo rm -rf "$tmp"

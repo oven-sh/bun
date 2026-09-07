@@ -274,14 +274,15 @@ server.close();`,
   // An `index.*` entrypoint is named after its directory, like `bun build --compile`. When there is
   // no usable directory name (`./index.ts`), or the name is already a directory at the destination
   // (`./src/index.ts` built from the project root), the executable is named `index`. So is an
-  // explicit outfile of `.`. The executable is never written over the working directory or `outdir`.
+  // explicit outfile of `.` or `./`. The executable is never written over the working directory or
+  // `outdir`.
   test.each([
     { entry: "./index.ts", outdir: "", outfile: "", expected: "index" },
     { entry: "./index.ts", outdir: "out", outfile: "", expected: "out/index" },
     // A Windows executable gets `.exe`, so `src.exe` does not collide with `src/`.
     { entry: "./src/index.ts", outdir: "", outfile: "", expected: isWindows ? "src" : "index" },
     { entry: "./tools/cli/index.ts", outdir: "", outfile: "", expected: "cli" },
-    { entry: "./tools/cli/index.ts", outdir: "out", outfile: ".", expected: "out/index" },
+    { entry: "./tools/cli/index.ts", outdir: "out", outfile: "./", expected: "out/index" },
   ])(
     "compile $entry with outdir '$outdir' and outfile '$outfile' writes $expected",
     async ({ entry, outdir, outfile, expected }) => {

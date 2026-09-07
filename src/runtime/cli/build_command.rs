@@ -1156,9 +1156,13 @@ impl BuildCommand {
     }
 }
 
-/// An outfile that names no file (empty, `.`, `..`) names the executable `index`.
+/// An outfile that names no file (empty, `.`, `..`, `./`, `../`) names the executable `index`.
 pub(crate) fn compile_outfile(outfile: &[u8]) -> &[u8] {
-    if outfile.is_empty() || outfile == b"." || outfile == b".." || outfile == b"../" {
+    let name = match outfile.split_last() {
+        Some((&last, rest)) if bun_paths::is_sep_native(last) => rest,
+        _ => outfile,
+    };
+    if matches!(name, b"" | b"." | b"..") {
         b"index"
     } else {
         outfile

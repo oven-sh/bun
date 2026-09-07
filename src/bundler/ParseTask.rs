@@ -2377,9 +2377,7 @@ pub mod parse_worker {
         }
         *step = Step::Parse;
 
-        // The CSS tokenizer hands out raw sub-slices of its input as token
-        // values, so it must see well-formed UTF-8. Decode before `source` is
-        // built so token offsets, error text and source maps share one buffer.
+        // The CSS tokenizer needs valid UTF-8; decode before `source` is built so offsets match.
         let entry_contents: &[u8] = if loader == Loader::Css {
             strings::replace_invalid_utf8(entry.contents.as_slice(), bump)
         } else {

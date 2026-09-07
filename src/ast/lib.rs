@@ -1105,9 +1105,7 @@ impl BabyString {
         if substring.is_empty() {
             return BabyString::new(0, 0);
         }
-        // `container` is a formatted diagnostic that should embed `substring`
-        // verbatim. If a formatter rendered it lossily, report the error with
-        // no specifier rather than abort while reporting it.
+        // A lossily formatted `container` may not embed `substring`; report no specifier.
         let Some(off) = bun_core::strings::index_of(container, substring) else {
             return BabyString::new(0, 0);
         };

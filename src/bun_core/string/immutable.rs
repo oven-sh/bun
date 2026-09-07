@@ -1361,10 +1361,7 @@ pub fn str_utf8(bytes: &[u8]) -> Option<&str> {
     }
 }
 
-/// Well-formed UTF-8 view of `bytes`: `bytes` itself when already valid (one
-/// SIMD pass, no copy), else an `arena` copy with each maximal ill-formed
-/// subsequence replaced by U+FFFD (WHATWG "UTF-8 decode", what a browser does
-/// to a stylesheet or script before tokenizing it).
+/// `bytes` if already valid UTF-8, else an `arena` copy with each ill-formed sequence replaced by U+FFFD.
 pub fn replace_invalid_utf8<'a>(bytes: &'a [u8], arena: &'a MimallocArena) -> &'a [u8] {
     if is_valid_utf8(bytes) {
         return bytes;

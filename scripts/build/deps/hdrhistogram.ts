@@ -16,7 +16,7 @@ export const hdrhistogram: Dependency = {
   name: "hdrhistogram",
 
   source: () => ({
-    kind: "github",
+    kind: "github-archive",
     repo: "HdrHistogram/HdrHistogram_c",
     commit: HDRHISTOGRAM_COMMIT,
   }),

@@ -7446,30 +7446,42 @@ describe("RedisClient URL parsing", () => {
     ["us%00er:p%00w", "us\0er", "p\0w"],
     [":%zz", "default", "%zz"],
   ])("sends the percent-decoded credentials of redis://%s@host byte for byte", async (userinfo, user, pass) => {
-    // Parses one RESP command (`*N\r\n` then N bulk strings) out of a latin1 string.
-    const parseCommand = (text: string) => {
+    // Takes one complete RESP command (`*N\r\n` then N bulk strings) off the
+    // front of `state.buf`, or returns null when the frame is not all here yet.
+    const takeCommand = (state: { buf: string }): string[] | null => {
+      const head = state.buf.match(/^\*(\d+)\r\n/);
+      if (!head) return null;
       const args: string[] = [];
-      let rest = text.replace(/^\*\d+\r\n/, "");
-      while (rest.startsWith("$")) {
-        const header = rest.match(/^\$(\d+)\r\n/)!;
-        const length = Number(header[1]);
-        args.push(rest.slice(header[0].length, header[0].length + length));
-        rest = rest.slice(header[0].length + length + 2);
+      let offset = head[0].length;
+      for (let i = 0; i < Number(head[1]); i++) {
+        const bulk = state.buf.slice(offset).match(/^\$(\d+)\r\n/);
+        if (!bulk) return null;
+        const start = offset + bulk[0].length;
+        const end = start + Number(bulk[1]);
+        if (state.buf.length < end + 2) return null;
+        args.push(state.buf.slice(start, end));
+        offset = end + 2;
       }
+      state.buf = state.buf.slice(offset);
       return args;
     };
     const hellos: string[][] = [];
-    using server = Bun.listen({
+    using server = Bun.listen<{ buf: string }>({
       hostname: "127.0.0.1",
       port: 0,
       socket: {
+        open(socket) {
+          socket.data = { buf: "" };
+        },
         data(socket, chunk) {
-          const text = chunk.toString("latin1");
-          if (text.includes("HELLO")) {
-            hellos.push(parseCommand(text));
-            socket.write("%1\r\n$5\r\nproto\r\n:3\r\n");
-          } else {
-            socket.write("+PONG\r\n");
+          socket.data.buf += chunk.toString("latin1");
+          for (let command: string[] | null; (command = takeCommand(socket.data)); ) {
+            if (command[0] === "HELLO") {
+              hellos.push(command);
+              socket.write("%1\r\n$5\r\nproto\r\n:3\r\n");
+            } else {
+              socket.write("+PONG\r\n");
+            }
           }
         },
       },

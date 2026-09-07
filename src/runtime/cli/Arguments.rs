@@ -649,6 +649,338 @@ const TEST_PARAMS: &[ParamType] = concat_params!(
     BASE_PARAMS_
 );
 
+// ─── `bun test --parallel`: which flags reach the worker processes ──────────
+// Every named `TEST_PARAMS` flag is in exactly one of the two lists below
+// (a compile-time check follows them), so a new flag cannot silently go
+// missing from `--parallel` workers.
+
+/// Flags whose whole effect is inside the process that runs the test files.
+/// The coordinator re-serializes each one given on its command line as
+/// `--name[=value]` onto every worker's argv
+/// (`TestOptions::parallel_forwarded_argv`). A bunfig setting needs no entry:
+/// a worker loads the same bunfig, which is why `--config` is here.
+const TEST_WORKER_FORWARDED_FLAGS: &[&[u8]] = &[
+    b"--no-orphans",
+    // Module loading and transpilation.
+    b"--config",
+    b"--install",
+    b"--no-install",
+    b"-i",
+    b"--prefer-offline",
+    b"--prefer-latest",
+    b"--preserve-symlinks-main",
+    b"--ignore-dce-annotations",
+    b"--expose-internals",
+    b"--experimental-stream-iter",
+    // Network defaults.
+    b"--port",
+    b"--origin",
+    b"--fetch-preconnect",
+    b"--redis-preconnect",
+    b"--sql-preconnect",
+    b"--max-http-header-size",
+    b"--insecure-http-parser",
+    b"--user-agent",
+    b"--dns-result-order",
+    b"--use-system-ca",
+    b"--use-openssl-ca",
+    b"--use-bundled-ca",
+    b"--tls-min-v1.0",
+    b"--tls-min-v1.1",
+    b"--tls-min-v1.2",
+    b"--tls-min-v1.3",
+    b"--tls-max-v1.2",
+    b"--tls-max-v1.3",
+    // `process`, `console`, `Buffer` and warning behaviour.
+    b"--title",
+    b"--zero-fill-buffers",
+    b"--expose-gc",
+    b"--console-depth",
+    b"--unhandled-rejections",
+    b"--no-deprecation",
+    b"--throw-deprecation",
+    b"--no-warnings",
+    b"--trace-warnings",
+    b"--trace-deprecation",
+    b"--pending-deprecation",
+    b"--redirect-warnings",
+    b"--disable-warning",
+    b"--trace-events-enabled",
+    b"--trace-event-categories",
+    b"--trace-event-file-pattern",
+    b"--trace-env",
+    b"--trace-env-js-stack",
+    b"--trace-env-native-stack",
+    b"--trace-exit",
+    b"--stack-trace-limit",
+    // Profilers: one profile per worker process.
+    b"--cpu-prof",
+    b"--cpu-prof-name",
+    b"--cpu-prof-dir",
+    b"--cpu-prof-md",
+    b"--cpu-prof-interval",
+    b"--heap-prof",
+    b"--heap-prof-name",
+    b"--heap-prof-dir",
+    b"--heap-prof-md",
+    b"--heap-prof-interval",
+];
+
+/// Every other named flag `bun test` accepts.
+const TEST_WORKER_UNFORWARDED_FLAGS: &[&[u8]] = &[
+    // `build_worker_argv` forwards these from merged bunfig + command-line
+    // state instead.
+    b"--timeout",
+    b"--update-snapshots",
+    b"--rerun-each",
+    b"--retry",
+    b"--todo",
+    b"--only",
+    b"--concurrent",
+    b"--randomize",
+    b"--seed",
+    b"--coverage",
+    b"--test-name-pattern",
+    b"--reporter",
+    b"--dots",
+    b"--only-failures",
+    b"--max-concurrency",
+    b"--isolate",
+    b"--no-isolate",
+    b"--preload",
+    b"--require",
+    b"--import",
+    b"--smol",
+    b"--conditions",
+    b"--experimental-http2-fetch",
+    b"--experimental-http3-fetch",
+    b"--no-addons",
+    b"--no-ffi-cc",
+    b"--main-fields",
+    b"--preserve-symlinks",
+    b"--extension-order",
+    b"--tsconfig-override",
+    b"--define",
+    b"--drop",
+    b"--feature",
+    b"--loader",
+    b"--no-macros",
+    b"--jsx-factory",
+    b"--jsx-fragment",
+    b"--jsx-import-source",
+    b"--jsx-runtime",
+    b"--jsx-side-effects",
+    // Coordinator concerns: file discovery, reporting, supervision. A worker
+    // starts in the coordinator's working directory with the coordinator's
+    // environment, so `--cwd` and the env-file flags are already applied.
+    b"--test-worker",
+    b"--parallel",
+    b"--parallel-delay",
+    b"--pass-with-no-tests",
+    b"--bail",
+    b"--coverage-reporter",
+    b"--coverage-dir",
+    b"--reporter-outfile",
+    b"--path-ignore-patterns",
+    b"--changed",
+    b"--shard",
+    b"--timings",
+    b"--update-timings",
+    b"--watch",
+    b"--watch-kill-signal",
+    b"--hot",
+    b"--no-clear-screen",
+    b"--cwd",
+    b"--env-file",
+    b"--no-env-file",
+    b"--breakpoint-resolve",
+    // One debugger endpoint cannot serve N workers.
+    b"--inspect",
+    b"--inspect-wait",
+    b"--inspect-brk",
+    // No meaning for `bun test`.
+    b"--help",
+    b"--interactive",
+    b"--eval",
+    b"--print",
+    b"--if-present",
+    b"--cron-title",
+    b"--cron-period",
+];
+
+const fn const_bytes_eq(a: &[u8], b: &[u8]) -> bool {
+    if a.len() != b.len() {
+        return false;
+    }
+    let mut i = 0;
+    while i < a.len() {
+        if a[i] != b[i] {
+            return false;
+        }
+        i += 1;
+    }
+    true
+}
+
+/// Does `dashed` (`--long` or `-s`) name `param`?
+const fn param_has_name(param: &ParamType, dashed: &[u8]) -> bool {
+    if dashed.len() > 2 && dashed[0] == b'-' && dashed[1] == b'-' {
+        let (_, key) = dashed.split_at(2);
+        if let Some(long) = param.names.long {
+            if const_bytes_eq(long, key) {
+                return true;
+            }
+        }
+        let mut i = 0;
+        while i < param.names.long_aliases.len() {
+            if const_bytes_eq(param.names.long_aliases[i], key) {
+                return true;
+            }
+            i += 1;
+        }
+        false
+    } else if dashed.len() == 2 && dashed[0] == b'-' {
+        matches!(param.names.short, Some(s) if s == dashed[1])
+    } else {
+        false
+    }
+}
+
+const fn find_test_param(dashed: &[u8]) -> Option<&'static ParamType> {
+    let mut i = 0;
+    while i < TEST_PARAMS.len() {
+        if param_has_name(&TEST_PARAMS[i], dashed) {
+            return Some(&TEST_PARAMS[i]);
+        }
+        i += 1;
+    }
+    None
+}
+
+const fn flag_list_contains(list: &[&[u8]], param: &ParamType) -> bool {
+    let mut i = 0;
+    while i < list.len() {
+        if param_has_name(param, list[i]) {
+            return true;
+        }
+        i += 1;
+    }
+    false
+}
+
+/// Compile-time panic whose message is the concatenation of `parts`.
+#[track_caller]
+const fn const_panic_concat(parts: &[&[u8]]) -> ! {
+    let mut buf = [0u8; 256];
+    let mut len = 0;
+    let mut p = 0;
+    while p < parts.len() {
+        let mut i = 0;
+        while i < parts[p].len() && len < buf.len() {
+            buf[len] = parts[p][i];
+            len += 1;
+            i += 1;
+        }
+        p += 1;
+    }
+    let (msg, _) = buf.as_slice().split_at(len);
+    match core::str::from_utf8(msg) {
+        Ok(msg) => panic!("{}", msg),
+        Err(_) => panic!("TEST_WORKER_*_FLAGS classification error (non-UTF-8 flag name)"),
+    }
+}
+
+/// `TEST_WORKER_FORWARDED_FLAGS` with each flag's value arity, resolved
+/// against `TEST_PARAMS` at compile time.
+static TEST_WORKER_FORWARDED: [(&[u8], clap::Values); TEST_WORKER_FORWARDED_FLAGS.len()] = {
+    let mut out = [(b"" as &[u8], clap::Values::None); TEST_WORKER_FORWARDED_FLAGS.len()];
+    let mut i = 0;
+    while i < out.len() {
+        let name = TEST_WORKER_FORWARDED_FLAGS[i];
+        out[i] = match find_test_param(name) {
+            Some(param) => (name, param.takes_value),
+            None => const_panic_concat(&[
+                b"TEST_WORKER_FORWARDED_FLAGS lists `",
+                name,
+                b"`, which is not a `bun test` flag",
+            ]),
+        };
+        i += 1;
+    }
+    out
+};
+
+const _: () = {
+    let mut i = 0;
+    while i < TEST_PARAMS.len() {
+        let param = &TEST_PARAMS[i];
+        i += 1;
+        if param.names.long.is_none() && param.names.short.is_none() {
+            continue; // positional
+        }
+        let forwarded = flag_list_contains(TEST_WORKER_FORWARDED_FLAGS, param);
+        let unforwarded = flag_list_contains(TEST_WORKER_UNFORWARDED_FLAGS, param);
+        if forwarded != unforwarded {
+            continue;
+        }
+        let short = match param.names.short {
+            Some(s) => [b'-', s],
+            None => [0, 0],
+        };
+        let (dashes, name): (&[u8], &[u8]) = match param.names.long {
+            Some(long) => (b"--", long),
+            None => (b"", &short),
+        };
+        const_panic_concat(&[
+            b"`bun test` flag `",
+            dashes,
+            name,
+            b"` must be listed in exactly one of TEST_WORKER_FORWARDED_FLAGS / ",
+            b"TEST_WORKER_UNFORWARDED_FLAGS (does a `--parallel` worker need it?)",
+        ]);
+    }
+};
+
+/// `bun test --parallel`: every `TEST_WORKER_FORWARDED_FLAGS` entry given on
+/// this command line, one `--name[=value]` token per occurrence.
+#[cold]
+#[inline(never)]
+fn test_worker_forwarded_argv(args: &clap::Args<clap::Help>) -> Vec<Box<[u8]>> {
+    fn with_value(name: &[u8], value: &[u8]) -> Box<[u8]> {
+        let mut token = Vec::with_capacity(name.len() + 1 + value.len());
+        token.extend_from_slice(name);
+        token.push(b'=');
+        token.extend_from_slice(value);
+        token.into_boxed_slice()
+    }
+    let mut argv: Vec<Box<[u8]>> = Vec::new();
+    for &(name, takes_value) in TEST_WORKER_FORWARDED.iter() {
+        match takes_value {
+            clap::Values::None => {
+                if args.flag(name) {
+                    argv.push(name.into());
+                }
+            }
+            clap::Values::OneOptional => match args.option(name) {
+                Some(b"") => argv.push(name.into()),
+                Some(value) => argv.push(with_value(name, value)),
+                None => {}
+            },
+            clap::Values::One => {
+                if let Some(value) = args.option(name) {
+                    argv.push(with_value(name, value));
+                }
+            }
+            clap::Values::Many => {
+                for value in args.options(name) {
+                    argv.push(with_value(name, value));
+                }
+            }
+        }
+    }
+    argv
+}
+
 /// Fallback table for `Command::tag_params`.
 const BASE_RUNTIME_TRANSPILER_PARAMS: &[ParamType] =
     concat_params!(BASE_PARAMS_, RUNTIME_PARAMS_, TRANSPILER_PARAMS_);
@@ -1990,6 +2322,7 @@ fn parse_test_command_options(args: &clap::Args<clap::Help>, ctx: Context<'_>) {
         }
         ctx.test_options.parallel = parsed;
         ctx.test_options.isolate = !no_isolate;
+        ctx.test_options.parallel_forwarded_argv = test_worker_forwarded_argv(args);
     }
 
     if let Some(delay_str) = args.option(b"--parallel-delay") {

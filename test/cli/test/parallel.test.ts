@@ -1181,6 +1181,58 @@ test("--parallel forwards --conditions to workers", async () => {
   expect(exitCode).toBe(0);
 });
 
+test("--parallel forwards runtime flags and --config to workers", async () => {
+  // Serial `bun test` applies these to the one process that runs the tests; a
+  // worker must see the same values. `[console] depth` lives only in the
+  // bunfig named by --config, so the worker has to load that file itself.
+  const fixture = /* js */ `
+    import { test, expect } from "bun:test";
+    import { maxHeaderSize } from "node:http";
+    test("runtime flags", () => {
+      expect({
+        maxHeaderSize,
+        throwDeprecation: process.throwDeprecation,
+        noDeprecation: process.noDeprecation,
+        title: process.title,
+      }).toEqual({
+        maxHeaderSize: 7777,
+        throwDeprecation: true,
+        noDeprecation: true,
+        title: "parallel-title-probe",
+      });
+      // Printed in full at depth 8, "[Object ...]" at the default depth of 2.
+      console.log({ l1: { l2: { l3: { l4: { l5: "DEEP_MARKER" } } } } });
+    });
+  `;
+  using dir = tempDir("parallel-runtime-flags", {
+    "custom.bunfig.toml": `[console]\ndepth = 8\n`,
+    "a.test.js": fixture,
+    "b.test.js": fixture,
+  });
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "test",
+      "--parallel=2",
+      "--config=custom.bunfig.toml",
+      "--max-http-header-size=7777",
+      "--throw-deprecation",
+      "--no-deprecation",
+      "--title=parallel-title-probe",
+    ],
+    env: { ...bunEnv, BUN_TEST_PARALLEL_SCALE_MS: "0" },
+    cwd: String(dir),
+    stderr: "pipe",
+    stdout: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stdout).toContain("PARALLEL");
+  expect(stderr).toContain("2 pass");
+  expect(stderr).toContain("0 fail");
+  expect(stdout + stderr).toContain(`l5: "DEEP_MARKER"`);
+  expect(exitCode).toBe(0);
+});
+
 test("--parallel: workers get the --env-file values and skip the default .env", async () => {
   const fixture = `import {test,expect} from "bun:test"; test("env", () => { expect(process.env.BUNTEST_CUSTOM).toBe("1"); expect(process.env.BUNTEST_DOTENV).toBeUndefined(); });`;
   using dir = tempDir("parallel-env-file", {

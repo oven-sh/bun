@@ -445,6 +445,11 @@ pub struct TestOptions {
     /// appends to every worker's argv (`TEST_WORKER_FORWARDED_FLAGS` in
     /// Arguments.rs).
     pub parallel_forwarded_argv: Vec<Box<[u8]>>,
+    /// `bun test --parallel`: runtime flags from this command line,
+    /// re-serialized as one `--name[=value]` token each, that the coordinator
+    /// appends to every worker's argv (`TEST_WORKER_FORWARDED_FLAGS` in
+    /// Arguments.rs).
+    pub parallel_forwarded_argv: Vec<Box<[u8]>>,
     /// Internal: this process is a `--parallel` worker. Files arrive over
     /// fd 3, results are written back over fd 3; no discovery, no header.
     pub test_worker: bool,

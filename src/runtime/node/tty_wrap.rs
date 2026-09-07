@@ -163,10 +163,7 @@ impl TTY {
         unsafe { bun_ptr::RefCount::<TTY>::deref(self.as_ctx_ptr()) };
     }
 
-    /// Every reader access goes through here. The reader can report done or
-    /// an error synchronously (a refused poll registration), and `onread` may
-    /// re-enter this handle (`readStop()`, `close()`), so that report is
-    /// parked and delivered once the `&mut BufferedReader` is gone.
+    /// All reader access: a done/error reported during `f` reaches JS after `f`.
     fn with_reader<R>(&self, f: impl FnOnce(&mut BufferedReader) -> R) -> R {
         debug_assert!(!self.flags.get().contains(Flags::IN_READER));
         self.update_flags(|fl| fl.insert(Flags::IN_READER));
@@ -569,8 +566,7 @@ impl TTY {
         self.finish(nread);
     }
 
-    /// Reports the end to JS and drops the reader's ref. No reader borrow is
-    /// live here. May free `self`.
+    /// Reports the end to JS and drops the reader's ref. May free `self`.
     fn finish(&self, nread: i32) {
         if !self.flags.get().contains(Flags::CLOSED) {
             self.call_onread(nread, JSValue::UNDEFINED);

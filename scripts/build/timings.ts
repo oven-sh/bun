@@ -85,7 +85,8 @@ function classify(cfg: Config, output: BunOutput, edge: Edge): Phase {
 
 function fmt(ms: number): string {
   const s = ms / 1000;
-  return s >= 60 ? `${Math.floor(s / 60)}m${String(Math.round(s % 60)).padStart(2, "0")}s` : `${s.toFixed(1)}s`;
+  const r = Math.round(s);
+  return s >= 60 ? `${Math.floor(r / 60)}m${String(r % 60).padStart(2, "0")}s` : `${s.toFixed(1)}s`;
 }
 
 /** Print one line per phase: when it ran within the ninja invocation, its wall span, and summed CPU-time of its edges. */

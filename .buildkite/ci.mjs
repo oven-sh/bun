@@ -293,7 +293,7 @@ function getImageName(platform, options) {
   // per-lane /opt/bun-toolchain/<variant> from bun-toolchain-…-6464ba2b) instead of the published
   // v<N>, so follow-up commits need no rebake.
   if (hostOs === "linux" && !buildImages) {
-    return `${name}-build-110938`;
+    return `${name}-build-111903`;
   }
 
   if (buildImages && !publishImages && (!imageFilter || hostOs === imageFilter || distro === imageFilter)) {

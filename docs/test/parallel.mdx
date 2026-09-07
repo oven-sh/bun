@@ -55,7 +55,7 @@ Each worker gets `BUN_TEST_WORKER_ID` and `JEST_WORKER_ID` set to its 1-based in
 const dbName = `app_test_${process.env.BUN_TEST_WORKER_ID ?? "1"}`;
 ```
 
-Flags that affect how tests execute (`--timeout`, `--preload`, `--define`, `--coverage`, `--update-snapshots`, `-t`, `--retry`, `--rerun-each`, `--concurrent`, `--randomize`/`--seed`, …) are forwarded to workers. The coordinator handles `--bail` at file granularity: once the failure threshold is reached it starts no new files, but files already running finish.
+Flags that affect how tests execute (`--timeout`, `--preload`, `--define`, `--coverage`, `--update-snapshots`, `-t`, `--retry`, `--rerun-each`, `--concurrent`, `--randomize`/`--seed`, …) are forwarded to workers, and so are runtime flags such as `--config`, `--conditions`, `--smol`, `--console-depth`, `--throw-deprecation` or `--max-http-header-size`. `--cpu-prof` and `--heap-prof` write one profile per worker process. `--inspect`, `--watch` and `--hot` apply to the coordinator only. The coordinator handles `--bail` at file granularity: once the failure threshold is reached it starts no new files, but files already running finish.
 
 The coordinator merges coverage, JUnit XML and snapshot writes, so `--parallel --coverage --reporter=junit --reporter-outfile=junit.xml` produces one report.
 

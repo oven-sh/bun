@@ -2360,44 +2360,46 @@ describe("object tags", () => {
     for (const { actual, expected } of store.signatures) expect(actual).toBe(expected);
   });
 
-  // Windows cannot create the "s3:" directory and does not use the local write fast path.
-  it.concurrent.skipIf(isWindows).each([
+  describe.each([
     ["string", false],
     ["string", true],
     ["bytes", false],
     ["bytes", true],
-  ] as const)("routes small %s writes to S3 despite a local s3: directory (tags: %s)", async (bodyType, tagged) => {
-    using store = mockTagStore();
-    using dir = tempDir("s3-path-write", { "s3:": { object: "local sentinel" } });
-    const localFile = Bun.file(path.join(String(dir), "s3:", "object"));
-    expect(await localFile.text()).toBe("local sentinel");
-    const tags = tagged ? { state: "ready" } : undefined;
-    const options = { ...store.options, tags, type: "application/octet-stream" };
-    await using proc = Bun.spawn({
-      cmd: [
-        bunExe(),
-        "-e",
-        `const data = ${JSON.stringify(bodyType)} === "string" ? "payload" : new TextEncoder().encode("payload");
+  ] as const)("small S3 path writes (%s, tags: %p)", (bodyType, tagged) => {
+    // Windows cannot create the "s3:" directory and does not use the local write fast path.
+    it.concurrent.skipIf(isWindows)("routes small writes to S3 despite a local s3: directory", async () => {
+      using store = mockTagStore();
+      using dir = tempDir("s3-path-write", { "s3:": { object: "local sentinel" } });
+      const localFile = Bun.file(path.join(String(dir), "s3:", "object"));
+      expect(await localFile.text()).toBe("local sentinel");
+      const tags = tagged ? { state: "ready" } : undefined;
+      const options = { ...store.options, tags, type: "application/octet-stream" };
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `const data = ${JSON.stringify(bodyType)} === "string" ? "payload" : new TextEncoder().encode("payload");
          console.log(await Bun.write("s3://object", data, ${JSON.stringify(options)}));`,
-      ],
-      cwd: String(dir),
-      env: bunEnv,
-      stdout: "pipe",
-      stderr: "pipe",
+        ],
+        cwd: String(dir),
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout, stderr, exitCode }).toEqual({ stdout: "7\n", stderr: "", exitCode: 0 });
+      expect(store.requests).toEqual([
+        { method: "PUT", query: "", tagging: tagged ? "state=ready" : null, key: "object" },
+      ]);
+      expect(store.objects.get("object")).toEqual({
+        body: new TextEncoder().encode("payload"),
+        tags: tags ?? {},
+        type: options.type,
+      });
+      expect(await localFile.text()).toBe("local sentinel");
+      expect(store.signatures).toHaveLength(1);
+      expect(store.signatures[0].actual).toBe(store.signatures[0].expected);
     });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "7\n", stderr: "", exitCode: 0 });
-    expect(store.requests).toEqual([
-      { method: "PUT", query: "", tagging: tagged ? "state=ready" : null, key: "object" },
-    ]);
-    expect(store.objects.get("object")).toEqual({
-      body: new TextEncoder().encode("payload"),
-      tags: tags ?? {},
-      type: options.type,
-    });
-    expect(await localFile.text()).toBe("local sentinel");
-    expect(store.signatures).toHaveLength(1);
-    expect(store.signatures[0].actual).toBe(store.signatures[0].expected);
   });
 
   it("replaces the complete tag set and writes empty objects without inherited tags", async () => {

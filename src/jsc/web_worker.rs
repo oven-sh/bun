@@ -831,12 +831,7 @@ impl WebWorker {
         let vm_log = vm.log_mut().unwrap();
         // SAFETY: `vm_ptr` is the live worker-thread VM.
         let path = match unsafe {
-            resolve_entry_point_specifier(
-                vm_ptr,
-                &self.specifier,
-                &mut resolve_error,
-                vm_log,
-            )
+            resolve_entry_point_specifier(vm_ptr, &self.specifier, &mut resolve_error, vm_log)
         } {
             Some(p) => p,
             None => {

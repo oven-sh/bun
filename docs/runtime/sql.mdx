@@ -436,7 +436,7 @@ Simple queries cannot use parameters (`${value}`). If you need parameters, split
 
 ### Queries in files
 
-`sql.file` reads a query from a file and executes it. If the file uses placeholders like `$1` and `$2`, you can pass parameters to the query. Without parameters, the file can contain multiple commands.
+`sql.file` reads a query from a file and executes it. If the file uses placeholders (`$1` and `$2` on PostgreSQL, see [Unsafe Queries](#unsafe-queries) for the other adapters), you can pass parameters to the query. Without parameters, the file can contain multiple commands.
 
 ```ts
 const result = await sql.file("query.sql", [1, 2, 3]);
@@ -458,6 +458,8 @@ const result = await sql.unsafe(`
 // Using parameters (only one command is allowed)
 const result = await sql.unsafe("SELECT " + dangerous + " FROM users WHERE id = $1", [id]);
 ```
+
+The string goes to the database as written, so `sql.unsafe` and `sql.file` take the database's own placeholder syntax: `$1, $2` on PostgreSQL, `?` on MySQL, and either of those (or `?1`, `:name`, `$name`, `@name`) on SQLite. Only tagged template queries are placeholder-independent. On SQLite, a multi-command string in which any command returns rows (a `SELECT`, or `RETURNING`) runs only its first command.
 
 With the SQLite adapter, parameters can also be an object of named parameters using `:name`, `$name`, or `@name` placeholders. Object keys keep the prefix (`{ ":id": 1 }`) unless the connection sets `strict: true`, which allows bare keys:
 
@@ -835,9 +837,11 @@ await sqlite`INSERT INTO flexible VALUES (${1}, ${"text"}, ${123.45}, ${Buffer.f
 
 ## Transactions
 
-To start a new transaction, use `sql.begin`. This method works for both PostgreSQL and SQLite. For PostgreSQL, it reserves a dedicated connection from the pool. For SQLite, it begins a transaction on the single connection.
+To start a new transaction, use `sql.begin`. This method works on every adapter. For PostgreSQL and MySQL, it reserves a dedicated connection from the pool. For SQLite, it begins a transaction on the single connection.
 
-Bun sends the `BEGIN` command automatically, including any optional configurations you specify. If an error occurs during the transaction, Bun issues a `ROLLBACK`.
+Bun sends the `BEGIN` command automatically (`START TRANSACTION` on MySQL), including any optional configurations you specify. If an error occurs during the transaction, Bun issues a `ROLLBACK`.
+
+On MySQL, a DDL statement such as `CREATE TABLE`, `ALTER TABLE` or `DROP TABLE` [commits the open transaction implicitly](https://dev.mysql.com/doc/refman/en/implicit-commit.html) and ends it. Everything the callback ran before the DDL stays committed, every statement after it commits on its own, and the `ROLLBACK` that Bun sends when the callback throws undoes nothing. Keep DDL out of `sql.begin` on MySQL. PostgreSQL and SQLite roll DDL back with the rest of the transaction.
 
 ### Basic Transactions
 
@@ -1117,7 +1121,7 @@ try {
     console.log(error.hint); // Helpful hint from PostgreSQL
   } else if (error instanceof SQL.SQLiteError) {
     // SQLite-specific error
-    console.log(error.code); // SQLite error code (e.g., "SQLITE_CONSTRAINT")
+    console.log(error.code); // SQLite error code (e.g., "SQLITE_CONSTRAINT_UNIQUE")
     console.log(error.errno); // SQLite error number
     console.log(error.byteOffset); // Byte offset in SQL statement (if available)
   } else if (error instanceof SQL.SQLError) {
@@ -1200,26 +1204,31 @@ try {
 
 ### SQLite-Specific Errors
 
-SQLite errors carry SQLite's standard error codes and numbers:
+SQLite errors carry SQLite's [extended result codes](https://www.sqlite.org/rescode.html#extrc) and numbers. A constraint violation, for example, reports the specific constraint: `error.code` is `SQLITE_CONSTRAINT_UNIQUE` and `error.errno` is `2067`, not the primary code `SQLITE_CONSTRAINT` / `19`. Match a whole family with `error.code.startsWith("SQLITE_CONSTRAINT")` or `(error.errno & 0xff) === 19`.
 
 <Accordion title="Common SQLite Error Codes">
 
-| Error Code          | errno | Description                                          |
-| ------------------- | ----- | ---------------------------------------------------- |
-| `SQLITE_CONSTRAINT` | 19    | Constraint violation (UNIQUE, CHECK, NOT NULL, etc.) |
-| `SQLITE_BUSY`       | 5     | Database is locked                                   |
-| `SQLITE_LOCKED`     | 6     | Table in the database is locked                      |
-| `SQLITE_READONLY`   | 8     | Attempt to write to a readonly database              |
-| `SQLITE_IOERR`      | 10    | Disk I/O error                                       |
-| `SQLITE_CORRUPT`    | 11    | Database disk image is malformed                     |
-| `SQLITE_FULL`       | 13    | Database or disk is full                             |
-| `SQLITE_CANTOPEN`   | 14    | Unable to open database file                         |
-| `SQLITE_PROTOCOL`   | 15    | Database lock protocol error                         |
-| `SQLITE_SCHEMA`     | 17    | Database schema has changed                          |
-| `SQLITE_TOOBIG`     | 18    | String or BLOB exceeds size limit                    |
-| `SQLITE_MISMATCH`   | 20    | Data type mismatch                                   |
-| `SQLITE_MISUSE`     | 21    | Library used incorrectly                             |
-| `SQLITE_AUTH`       | 23    | Authorization denied                                 |
+| Error Code                     | errno | Description                                          |
+| ------------------------------ | ----- | ---------------------------------------------------- |
+| `SQLITE_CONSTRAINT_PRIMARYKEY` | 1555  | Duplicate primary key                                |
+| `SQLITE_CONSTRAINT_UNIQUE`     | 2067  | UNIQUE constraint failed                             |
+| `SQLITE_CONSTRAINT_NOTNULL`    | 1299  | NOT NULL constraint failed                           |
+| `SQLITE_CONSTRAINT_CHECK`      | 275   | CHECK constraint failed                              |
+| `SQLITE_CONSTRAINT_FOREIGNKEY` | 787   | FOREIGN KEY constraint failed                        |
+| `SQLITE_ERROR`                 | 1     | SQL error, such as a syntax error or a missing table |
+| `SQLITE_BUSY`                  | 5     | Database is locked                                   |
+| `SQLITE_LOCKED`                | 6     | Table in the database is locked                      |
+| `SQLITE_READONLY`              | 8     | Attempt to write to a readonly database              |
+| `SQLITE_IOERR`                 | 10    | Disk I/O error                                       |
+| `SQLITE_CORRUPT`               | 11    | Database disk image is malformed                     |
+| `SQLITE_FULL`                  | 13    | Database or disk is full                             |
+| `SQLITE_CANTOPEN`              | 14    | Unable to open database file                         |
+| `SQLITE_PROTOCOL`              | 15    | Database lock protocol error                         |
+| `SQLITE_SCHEMA`                | 17    | Database schema has changed                          |
+| `SQLITE_TOOBIG`                | 18    | String or BLOB exceeds size limit                    |
+| `SQLITE_MISMATCH`              | 20    | Data type mismatch                                   |
+| `SQLITE_MISUSE`                | 21    | Library used incorrectly                             |
+| `SQLITE_AUTH`                  | 23    | Authorization denied                                 |
 
 Example error handling:
 
@@ -1231,9 +1240,10 @@ try {
   await sqlite`INSERT INTO users (id, name) VALUES (1, 'Bob')`; // Duplicate ID
 } catch (error) {
   if (error instanceof SQL.SQLiteError) {
-    if (error.code === "SQLITE_CONSTRAINT") {
+    if (error.code === "SQLITE_CONSTRAINT_PRIMARYKEY") {
+      console.log("Duplicate id:", error.message); // "UNIQUE constraint failed: users.id"
+    } else if (error.code.startsWith("SQLITE_CONSTRAINT")) {
       console.log("Constraint violation:", error.message);
-      // Handle unique constraint violation
     }
   }
 }
@@ -1375,9 +1385,10 @@ Bun also sets `time_zone = '+00:00'` on every MySQL connection it opens. The ser
 
 The API is unified, but behavior differs:
 
-1. **Parameter placeholders**: MySQL uses `?` internally but Bun converts `$1, $2` style automatically
+1. **Parameter placeholders**: a tagged template query writes the placeholders for you (`?` on MySQL, `$1` on PostgreSQL). A string you pass to `sql.unsafe` or `sql.file` must use `?` itself: MySQL rejects `$1`
 2. **RETURNING clause**: MySQL doesn't support RETURNING; use `result.lastInsertRowid` or a separate SELECT
 3. **Array types**: MySQL doesn't have native array types like PostgreSQL
+4. **DDL in transactions**: `CREATE`, `ALTER` and `DROP` commit the open transaction on MySQL, so `sql.begin` cannot roll back past them (see [Transactions](#transactions))
 
 ### MySQL-Specific Features
 

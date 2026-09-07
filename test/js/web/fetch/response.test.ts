@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { normalizeBunSnapshot } from "harness";
+import { isASAN, isDebug, normalizeBunSnapshot } from "harness";
 
 test("zero args returns an otherwise empty 200 response", () => {
   const response = new Response();
@@ -201,19 +201,24 @@ test("new Response(123, { method: 456 }) does not throw", () => {
   expect(() => new Response("123", { method: 456 })).not.toThrow();
 });
 
-test("handle stack overflow", () => {
-  function f0(a1, a2) {
-    const v4 = new Response();
-    // @ts-ignore
-    const v5 = v4.text(a2, a2, v4, f0, f0);
-    a1(a1); // Recursive call causes stack overflow
-    return v5;
-  }
-  expect(() => {
-    // @ts-ignore
-    f0(f0);
-  }).toThrow("Maximum call stack size exceeded.");
-});
+test(
+  "handle stack overflow",
+  () => {
+    function f0(a1, a2) {
+      const v4 = new Response();
+      // @ts-ignore
+      const v5 = v4.text(a2, a2, v4, f0, f0);
+      a1(a1); // Recursive call causes stack overflow
+      return v5;
+    }
+    expect(() => {
+      // @ts-ignore
+      f0(f0);
+    }).toThrow("Maximum call stack size exceeded.");
+  },
+  // one Response and one pending text() per frame until the stack runs out: seconds under ASAN
+  isDebug || isASAN ? 30_000 : 5000,
+);
 
 describe("clone()", () => {
   test("does not lock original body when body was accessed before clone", async () => {

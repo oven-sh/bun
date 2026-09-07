@@ -1376,7 +1376,9 @@ describe("ill-formed UTF-8 in byte input", () => {
     expect(JSON5.parse(bytes("{a: 'caf", [0xe9], "', b: 1}"))).toEqual({ a: "caf\uFFFD", b: 1 });
     expect(JSON5.parse(bytes('{a: "caf', [0xe9], '"}'))).toEqual({ a: "caf\uFFFD" });
     expect(JSON5.parse(bytes("['", [0xe9], "']"))).toEqual(["\uFFFD"]);
-    // Truncated 3- and 4-byte sequences right before the quote.
+    // Truncated 3- and 4-byte sequences right before the quote. The parser keeps
+    // the bytes as they are; one U+FFFD per byte is how the bytes-to-string
+    // conversion of the result renders them.
     expect(JSON5.parse(bytes("{a: '", [0xe2, 0x80], "', b: '", [0xf0, 0x9f, 0x98], "'}"))).toEqual({
       a: "\uFFFD\uFFFD",
       b: "\uFFFD\uFFFD\uFFFD",

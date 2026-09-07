@@ -305,8 +305,20 @@ function isOurRustc(pid: number): boolean {
 
 if (mode === "meta") {
   if (unit.rmeta === undefined) throw new Error(`run.ts meta: ${unit.crateName} is not a pipelined unit`);
-  // A rustc from an interrupted build may still be running for this unit; it must not race the new one.
-  if (existsSync(pidPath) && !existsSync(exitPath)) killRecorded();
+  // A rustc from an interrupted build may still be running for this unit; it must not race the new one, and neither
+  // must its monitor, which on rustc's exit would publish a status (and remove the .rmeta) into the fresh state.
+  if (existsSync(pidPath) && !existsSync(exitPath)) {
+    killRecorded();
+    const monitorPid = Number(readFileSync(pidPath, "utf8").split(" ")[1]);
+    for (const deadline = Date.now() + 10_000; monitorPid > 0 && Date.now() < deadline; ) {
+      try {
+        process.kill(monitorPid, 0);
+      } catch {
+        break;
+      }
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 20); // sleep 20ms
+    }
+  }
   rmSync(stateDir, { recursive: true, force: true });
   mkdirSync(stateDir, { recursive: true });
   prepareOutputs();

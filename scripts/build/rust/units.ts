@@ -517,7 +517,6 @@ function buildScriptRunManifest(
 ): UnitManifest {
   const { cfg, graph } = ctx;
   const plan = graph.plan;
-  const hostOs = cfg.host.os;
   const isHost = unit.platform === "host";
   const compiled = unit.deps.find(d => d.unit.kind === "build-script");
   assert(

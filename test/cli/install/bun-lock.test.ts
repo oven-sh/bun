@@ -1,6 +1,6 @@
 import { file, spawn, write } from "bun";
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
-import { readlinkSync } from "fs";
+import { readlinkSync, realpathSync } from "fs";
 import { access, copyFile, cp, exists, open, rm, writeFile } from "fs/promises";
 import {
   bunExe,
@@ -1824,5 +1824,104 @@ describe.each(["hoisted", "isolated"] as const)("peer no published version satis
     ({ err } = await install(String(dir), "--frozen-lockfile"));
     expect(err).not.toContain("Ignoring lockfile");
     expect(await file(lockfilePath).text()).toBe(lockfile);
+  });
+});
+
+describe.concurrent("a file: folder listed in both dependencies and devDependencies", () => {
+  async function install(cwd: string, ...args: string[]) {
+    await using proc = spawn({
+      cmd: [bunExe(), "install", ...args],
+      cwd,
+      env,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [out, err, code] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    // the duplicate dependency warning is expected, an error is not
+    expect({ args, err, code }).toEqual({ args, err: expect.not.stringContaining("error:"), code: 0 });
+    return { out, err };
+  }
+
+  // every key of the "packages" object (only package entries have an array value)
+  const packageKeys = (lockfile: string) => lockfile.match(/^ {4}"[^"]*": \[/gm);
+
+  it.each(["hoisted", "isolated"] as const)(
+    "writes one packages entry and --frozen-lockfile accepts it (%s linker)",
+    async linker => {
+      using dir = tempDir("dup-folder-dep-", {
+        "vendor/a/package.json": JSON.stringify({ name: "a", version: "1.0.0" }),
+        "package.json": JSON.stringify({
+          name: "app",
+          dependencies: { a: "file:./vendor/a" },
+          devDependencies: { a: "file:./vendor/a" },
+        }),
+        "bunfig.toml": Bun.TOML.stringify({ install: { linker } }),
+      });
+      const lockfilePath = join(String(dir), "bun.lock");
+
+      let { err } = await install(String(dir));
+      expect(err).toContain("Saved lockfile");
+      const lockfile = await file(lockfilePath).text();
+      // one key, not two: a duplicate object key is rejected by bun's own lockfile parser
+      expect(packageKeys(lockfile)).toEqual(['    "a": [']);
+
+      ({ err } = await install(String(dir), "--frozen-lockfile"));
+      expect(err).not.toContain("Ignoring lockfile");
+      expect(await file(lockfilePath).text()).toBe(lockfile);
+    },
+  );
+
+  it("keeps one entry when the two groups point at different folders", async () => {
+    using dir = tempDir("dup-folder-dep-", {
+      "v1/a/package.json": JSON.stringify({ name: "a", version: "1.0.0" }),
+      "v2/a/package.json": JSON.stringify({ name: "a", version: "2.0.0" }),
+      "package.json": JSON.stringify({
+        name: "app",
+        dependencies: { a: "file:./v1/a" },
+        devDependencies: { a: "file:./v2/a" },
+      }),
+    });
+    const lockfilePath = join(String(dir), "bun.lock");
+
+    await install(String(dir));
+    const lockfile = await file(lockfilePath).text();
+    expect(packageKeys(lockfile)).toEqual(['    "a": [']);
+
+    const { err } = await install(String(dir), "--frozen-lockfile");
+    expect(err).not.toContain("Ignoring lockfile");
+    expect(await file(lockfilePath).text()).toBe(lockfile);
+  });
+
+  // A folder outside the project installs through per-file symlinks. Installing it
+  // twice into the same node_modules folder made the second pass hit EEXIST, and the
+  // EEXIST fallback linked each file to its own basename: `package.json -> package.json`.
+  it.skipIf(isWindows)("a folder outside the project does not become self-referencing symlinks", async () => {
+    using dir = tempDir("dup-folder-dep-", {
+      "a/package.json": JSON.stringify({ name: "a", version: "1.0.0", main: "index.js" }),
+      "a/index.js": `module.exports = "a from outside the project";`,
+      "app/package.json": JSON.stringify({
+        name: "app",
+        dependencies: { a: "file:../a" },
+        devDependencies: { a: "file:../a" },
+      }),
+      "app/bunfig.toml": Bun.TOML.stringify({ install: { linker: "hoisted" } }),
+    });
+    // the symlinks bun writes are absolute real paths (the tmpdir may sit behind a symlink)
+    const root = realpathSync(String(dir));
+    const appDir = join(root, "app");
+
+    await install(appDir);
+    expect(packageKeys(await file(join(appDir, "bun.lock")).text())).toEqual(['    "a": [']);
+    expect(readlinkSync(join(appDir, "node_modules", "a", "package.json"))).toBe(join(root, "a", "package.json"));
+
+    await using proc = spawn({
+      cmd: [bunExe(), "-p", `require("a")`],
+      cwd: appDir,
+      env,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [out, err, code] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ out: out.trim(), err, code }).toEqual({ out: "a from outside the project", err: "", code: 0 });
   });
 });

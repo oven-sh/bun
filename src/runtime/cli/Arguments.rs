@@ -713,7 +713,7 @@ const TEST_WORKER_FORWARDED_FLAGS: &[&[u8]] = &[
     b"--trace-env-native-stack",
     b"--trace-exit",
     b"--stack-trace-limit",
-    // Profilers: one profile per worker process.
+    // Profilers are per process; default profile names carry the pid.
     b"--cpu-prof",
     b"--cpu-prof-name",
     b"--cpu-prof-dir",

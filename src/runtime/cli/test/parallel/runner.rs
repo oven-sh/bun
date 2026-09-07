@@ -10,6 +10,7 @@ use std::io::Write as _;
 use bun_core::{Global, Output};
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_options_types::context::MacroOptions;
+use bun_options_types::jsx::JsxField;
 use bun_ptr::Interned;
 use bun_resolver::fs::FileSystem;
 use bun_sys::Fd;
@@ -384,28 +385,31 @@ fn build_worker_argv(ctx: &Command::ContextData) -> crate::Result<Box<[bun_spawn
         argv.push(lit(b"--no-macros\0"));
     }
     if let Some(jsx) = &ctx.args.jsx {
-        if !jsx.factory.is_empty() {
+        // Each --jsx-* flag marks its field user-set in the worker, so only forward user-set fields.
+        if jsx.set_fields.contains(JsxField::Factory) {
             argv.push(print_z(format_args!(
                 "--jsx-factory={}",
                 bstr::BStr::new(&jsx.factory)
             ))?);
         }
-        if !jsx.fragment.is_empty() {
+        if jsx.set_fields.contains(JsxField::Fragment) {
             argv.push(print_z(format_args!(
                 "--jsx-fragment={}",
                 bstr::BStr::new(&jsx.fragment)
             ))?);
         }
-        if !jsx.import_source.is_empty() {
+        if jsx.set_fields.contains(JsxField::ImportSource) {
             argv.push(print_z(format_args!(
                 "--jsx-import-source={}",
                 bstr::BStr::new(&jsx.import_source)
             ))?);
         }
-        argv.push(print_z(format_args!(
-            "--jsx-runtime={}",
-            jsx_runtime_tag_name(jsx.runtime)
-        ))?);
+        if jsx.set_fields.contains(JsxField::Runtime) {
+            argv.push(print_z(format_args!(
+                "--jsx-runtime={}",
+                jsx_runtime_tag_name(jsx.runtime)
+            ))?);
+        }
         if jsx.side_effects {
             argv.push(lit(b"--jsx-side-effects\0"));
         }

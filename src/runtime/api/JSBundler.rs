@@ -748,8 +748,10 @@ pub mod js_bundler {
                         bun_core::copy_lowercase(&slice.slice()[0..len], &mut str_lower[0..len]);
                     if let Some(runtime) = options::JSX::RUNTIME_MAP.get(&str_lower[0..len]) {
                         this.jsx.runtime = jsx_runtime_to_api(runtime.runtime);
+                        this.jsx.set_fields |= options::JSX::JsxField::Runtime;
                         if let Some(dev) = runtime.development {
                             this.jsx.development = dev;
+                            this.jsx.set_fields |= options::JSX::JsxField::Development;
                         }
                     } else {
                         return Err(global_this.throw_invalid_arguments(format_args!(
@@ -762,21 +764,25 @@ pub mod js_bundler {
 
                 if let Some(slice) = jsx_value.get_optional_slice(global_this, b"factory")? {
                     this.jsx.factory = Box::<[u8]>::from(slice.slice());
+                    this.jsx.set_fields |= options::JSX::JsxField::Factory;
                     drop(slice);
                 }
 
                 if let Some(slice) = jsx_value.get_optional_slice(global_this, b"fragment")? {
                     this.jsx.fragment = Box::<[u8]>::from(slice.slice());
+                    this.jsx.set_fields |= options::JSX::JsxField::Fragment;
                     drop(slice);
                 }
 
                 if let Some(slice) = jsx_value.get_optional_slice(global_this, b"importSource")? {
                     this.jsx.import_source = Box::<[u8]>::from(slice.slice());
+                    this.jsx.set_fields |= options::JSX::JsxField::ImportSource;
                     drop(slice);
                 }
 
                 if let Some(dev) = jsx_value.get_boolean_loose(global_this, "development")? {
                     this.jsx.development = dev;
+                    this.jsx.set_fields |= options::JSX::JsxField::Development;
                 }
 
                 if let Some(val) = jsx_value.get_boolean_loose(global_this, "sideEffects")? {

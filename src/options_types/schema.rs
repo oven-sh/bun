@@ -377,6 +377,8 @@ pub mod api {
         pub development: bool,
         pub import_source: Box<[u8]>,
         pub side_effects: bool,
+        /// Which of the above the user set explicitly; see [`crate::jsx::JsxField`].
+        pub set_fields: crate::jsx::JsxFieldSet,
     }
 
     /// Parallel-array string→string map as transmitted on the wire.

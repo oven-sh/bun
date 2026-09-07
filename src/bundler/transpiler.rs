@@ -733,10 +733,8 @@ impl<'a> Transpiler<'a> {
             let top_level_dir = self.fs().top_level_dir;
             if let Ok(Some(root_dir)) = self.resolver.read_dir_info(top_level_dir) {
                 if let Some(tsconfig) = root_dir.tsconfig_json() {
-                    // If we don't explicitly pass JSX, try to get it from the root tsconfig
-                    if self.options.transform_options.jsx.is_none() {
-                        self.options.jsx = jsx_pragma_from_resolver(&tsconfig.jsx);
-                    }
+                    // Skips fields in `set_fields` so explicit bunfig/CLI/Bun.build config wins.
+                    merge_tsconfig_jsx_into(tsconfig, &mut self.options.jsx);
                     self.options.emit_decorator_metadata = tsconfig.emit_decorator_metadata;
                     self.options.experimental_decorators = tsconfig.experimental_decorators;
                     if let Some(v) = tsconfig.use_define_for_class_fields {

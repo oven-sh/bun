@@ -1592,6 +1592,20 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
         || jsx_import_source.is_some()
         || jsx_runtime.is_some()
     {
+        use bun_options_types::jsx::{JsxField, JsxFieldSet};
+        let mut set = JsxFieldSet::empty();
+        if jsx_factory.is_some() {
+            set |= JsxField::Factory;
+        }
+        if jsx_fragment.is_some() {
+            set |= JsxField::Fragment;
+        }
+        if jsx_import_source.is_some() {
+            set |= JsxField::ImportSource;
+        }
+        if jsx_runtime.is_some() {
+            set |= JsxField::Runtime;
+        }
         let default_factory: &[u8] = b"";
         let default_fragment: &[u8] = b"";
         let default_import_source: &[u8] = b"";
@@ -1607,6 +1621,7 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
                 },
                 development: false,
                 side_effects: jsx_side_effects,
+                set_fields: set,
             });
         } else {
             let prev = opts.jsx.take().unwrap();
@@ -1621,8 +1636,9 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
                 } else {
                     prev.runtime
                 },
-                development: false,
-                side_effects: jsx_side_effects,
+                development: prev.development,
+                side_effects: jsx_side_effects || prev.side_effects,
+                set_fields: prev.set_fields | set,
             });
         }
     }

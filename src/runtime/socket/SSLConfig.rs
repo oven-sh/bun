@@ -41,10 +41,10 @@ pub(crate) enum ReadFromBlobError {
     NullStore,
     NotAFile,
     EmptyFile,
-    /// The `BunFile`'s path is not a regular file. `kind` names what it is.
+    /// The `BunFile`'s path is not a regular file. `kind` is what it is.
     NotRegularFile {
         path: Box<[u8]>,
-        kind: &'static str,
+        kind: bun_sys::FileKind,
     },
 }
 
@@ -91,16 +91,11 @@ type CStrSlice = Option<Box<[*const c_char]>>;
 // (`system_certs.rs`) and the `.env` loader (`bun_dotenv::env_loader`) do.
 // ──────────────────────────────────────────────────────────────────────────
 
-/// The noun for a mode that is not `S_IFREG`, or `None` for a regular file.
-fn non_regular_kind(mode: bun_sys::Mode) -> Option<&'static str> {
+/// The kind of a mode that is not `S_IFREG`, or `None` for a regular file.
+fn non_regular_kind(mode: bun_sys::Mode) -> Option<bun_sys::FileKind> {
     match bun_sys::kind_from_mode(mode) {
         bun_sys::FileKind::File => None,
-        bun_sys::FileKind::NamedPipe => Some("a FIFO"),
-        bun_sys::FileKind::Directory => Some("a directory"),
-        bun_sys::FileKind::CharacterDevice => Some("a character device"),
-        bun_sys::FileKind::BlockDevice => Some("a block device"),
-        bun_sys::FileKind::UnixDomainSocket => Some("a socket"),
-        _ => Some("not a regular file"),
+        kind => Some(kind),
     }
 }
 
@@ -108,13 +103,31 @@ fn non_regular_error(
     global: &JSGlobalObject,
     field: &'static str,
     path: &[u8],
-    kind: &'static str,
+    kind: bun_sys::FileKind,
 ) -> JsError {
+    use bun_sys::FileKind;
+    let noun = match kind {
+        FileKind::NamedPipe => "a FIFO",
+        FileKind::Directory => "a directory",
+        FileKind::CharacterDevice => "a character device",
+        FileKind::BlockDevice => "a block device",
+        FileKind::UnixDomainSocket => "a socket",
+        _ => "not a regular file",
+    };
+    // A pipe or a device can still carry PEM text. Say how to use it without
+    // a read that can block the event loop.
+    let remedy = match kind {
+        FileKind::NamedPipe | FileKind::CharacterDevice => {
+            ". Read it first and pass the contents as a string or Buffer instead"
+        }
+        _ => "",
+    };
     global.throw_invalid_arguments(format_args!(
-        "TLSOptions.{} must be a regular file, but {} is {}",
+        "TLSOptions.{} must be a regular file, but {} is {}{}",
         field,
         bun_fmt::quote(path),
-        kind
+        noun,
+        remedy
     ))
 }
 

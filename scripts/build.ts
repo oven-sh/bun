@@ -112,7 +112,12 @@ async function main(): Promise<void> {
       process.on("exit", () => jobserver?.close());
     }
     // BUN_BUILD_DRIVER_PID: rustc processes that outlive their ninja edge (rust/run.ts pipelining) end with this process.
-    const merged: NodeJS.ProcessEnv = { ...process.env, ...env, ...jobserver?.env, BUN_BUILD_DRIVER_PID: String(process.pid) };
+    const merged: NodeJS.ProcessEnv = {
+      ...process.env,
+      ...env,
+      ...jobserver?.env,
+      BUN_BUILD_DRIVER_PID: String(process.pid),
+    };
     if (cfg.windows && cfg.host.os !== "windows") {
       for (const name of ["CPATH", "C_INCLUDE_PATH", "CPLUS_INCLUDE_PATH", "OBJC_INCLUDE_PATH"]) {
         delete merged[name];

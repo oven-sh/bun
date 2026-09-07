@@ -268,7 +268,18 @@ if (mode === "meta") {
   `;
   const child = spawn(
     process.execPath,
-    ["-e", monitor, logPath, exitPath, pidPath, unit.rmeta, unit.cwd, process.env.BUN_BUILD_DRIVER_PID ?? "", rustc, ...argv],
+    [
+      "-e",
+      monitor,
+      logPath,
+      exitPath,
+      pidPath,
+      unit.rmeta,
+      unit.cwd,
+      process.env.BUN_BUILD_DRIVER_PID ?? "",
+      rustc,
+      ...argv,
+    ],
     { detached: true, stdio: "ignore", env },
   );
   child.unref();

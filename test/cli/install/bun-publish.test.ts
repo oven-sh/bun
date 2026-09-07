@@ -14,6 +14,7 @@ import {
   tmpdirSync,
 } from "harness";
 import { delimiter, join } from "path";
+import { gunzipSync, gzipSync } from "zlib";
 
 const registry = new VerdaccioRegistry();
 
@@ -550,6 +551,28 @@ test("can publish from a tarball", async () => {
 
   await runBunInstall(env, packageDir, { savesLockfile: false });
   expect(await file(join(packageDir, "node_modules", "publish-pkg-2", "package.json")).json()).toEqual(json);
+});
+test("refuses to publish a tarball in which a member's header is damaged", async () => {
+  // libarchive discards the damaged block and resyncs on the next header;
+  // `bun publish` used to list the tarball without that member and carry on.
+  using dir = tempDir("publish-damaged-header", {
+    "package.json": JSON.stringify({ name: "damaged-header-pkg", version: "1.0.0" }),
+    "index.js": "module.exports = 1;\n",
+  });
+  await pack(String(dir), env);
+  const tgz = join(String(dir), "damaged-header-pkg-1.0.0.tgz");
+  const tar = gunzipSync(readFileSync(tgz));
+  // A header block starts with the name field, so this is index.js's header.
+  const header = tar.indexOf("package/index.js\0");
+  expect(header).toBeGreaterThan(0);
+  expect(String.fromCharCode(tar[header + 104])).toMatch(/^[0-7]$/);
+  tar[header + 104] ^= 0x01; // one digit of the mode field: the stored checksum no longer matches
+  writeFileSync(tgz, gzipSync(tar));
+
+  const { out, err, exitCode } = await publish(env, String(dir), tgz, "--registry", "http://127.0.0.1:1/");
+  expect(err).toBe("error: failed to read archive header: Damaged tar archive (bad header checksum)\n");
+  expect(out).not.toContain("Total files");
+  expect(exitCode).toBe(1);
 });
 test("can publish scoped packages", async () => {
   const { packageDir, packageJson } = await registry.createTestDir();

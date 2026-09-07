@@ -52,6 +52,14 @@ pub mod lib {
     pub enum Result {
         Eof = 1,
         Ok = 0,
+        /// From `read_next_header` on a blocking source (`read_open_memory`)
+        /// this has exactly one meaning: the tar reader discarded a 512-byte
+        /// block whose header checksum did not match and is positioned on the
+        /// block after it. Calling again resyncs on whatever header comes next,
+        /// so the member that block belonged to is silently lost. Header loops
+        /// therefore treat it as a corrupt archive, the same as `Fatal`.
+        /// `TarballStream`'s non-blocking read callback also produces it when
+        /// it runs out of input (see the BUN PATCHes in `vendor/libarchive`).
         Retry = -10,
         Warn = -20,
         Failed = -25,
@@ -90,6 +98,7 @@ pub mod lib {
             offset: *mut la_int64_t,
         ) -> Result;
         fn archive_error_string(a: *mut Archive) -> *const c_char;
+        fn archive_file_count(a: *mut Archive) -> c_int;
         // streaming-read setup (used by TarballStream's resumable extractor)
         pub fn archive_read_set_format(a: *mut Archive, code: c_int) -> c_int;
         pub fn archive_read_append_filter(a: *mut Archive, code: c_int) -> c_int;
@@ -363,6 +372,17 @@ pub mod lib {
             // `'static` here is a lifetime erasure — the caller must not let
             // the slice outlive the archive.
             unsafe { ZStr::from_c_ptr(p) }.as_bytes()
+        }
+
+        /// `archive_file_count`: the number of headers `read_next_header` has
+        /// started so far. libarchive counts a header when it starts reading
+        /// it, so a block it then discards (see [`Result::Retry`]) is counted
+        /// even though no entry is returned for it; the final call that
+        /// returns `Eof` is not counted. A non-blocking yield and its resume
+        /// count once (`archive_read.c`, `read_header_in_progress`).
+        pub fn file_count(&self) -> c_int {
+            // SAFETY: `self` is a live archive handle.
+            unsafe { archive_file_count(self.as_mut_ptr()) }
         }
 
         // ── write side ─────────────────────────────────────────────────────
@@ -723,7 +743,6 @@ pub mod lib {
             let mut entry: *mut Entry = core::ptr::null_mut();
             loop {
                 return match a.read_next_header(&mut entry) {
-                    Result::Retry => continue,
                     Result::Eof => IteratorResult::init_res(None),
                     // `Warn` still yields a fully populated entry; see `Result::succeeded`.
                     Result::Ok | Result::Warn => {
@@ -1271,8 +1290,7 @@ impl Archiver {
 
             match r {
                 lib::Result::Eof => break 'loop_,
-                lib::Result::Retry => continue 'loop_,
-                lib::Result::Failed | lib::Result::Fatal => {
+                lib::Result::Retry | lib::Result::Failed | lib::Result::Fatal => {
                     return Err(crate::Error::Fail);
                 }
                 _ => {
@@ -1416,8 +1434,17 @@ impl Archiver {
 
             match r {
                 lib::Result::Eof => break 'loop_,
-                lib::Result::Retry => continue 'loop_,
-                lib::Result::Failed | lib::Result::Fatal => {
+                lib::Result::Retry | lib::Result::Failed | lib::Result::Fatal => {
+                    if options.log {
+                        // SAFETY: `archive` is the live `read_new()` handle this
+                        // extraction loop is iterating.
+                        let archive_error = slice_to_nul(unsafe { &*archive }.error_string());
+                        Output::err(
+                            "libarchive error",
+                            "reading next header: {}",
+                            (bstr::BStr::new(archive_error),),
+                        );
+                    }
                     return Err(crate::Error::Fail);
                 }
                 _ => {

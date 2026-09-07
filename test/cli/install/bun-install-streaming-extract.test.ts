@@ -26,7 +26,7 @@ function octal(n: number, width: number): string {
   return n.toString(8).padStart(width - 1, "0") + "\0";
 }
 
-function tarHeader(name: string, size: number, type: "0" | "5" | "x" | "g"): Buffer {
+function tarHeader(name: string, size: number, type: "0" | "5" | "x" | "g" | "L"): Buffer {
   const buf = Buffer.alloc(512, 0);
   buf.write(name, 0, 100, "utf8");
   buf.write(octal(0o644, 8), 100); // mode
@@ -747,73 +747,6 @@ describe("streaming tarball extraction", () => {
 });
 
 // -------------------------------------------------------------------
-// Regression: the nonblocking-read patch routed upstream libarchive's
-// pre-existing damaged-block ARCHIVE_RETRY through the same `bun_retry`
-// path as a non-blocking yield, so `seen_headers` / entry state leaked
-// across the retry. A second pax 'g' global header after the damaged
-// block would then trip "Redundant 'g' header" → ARCHIVE_FATAL even
-// though upstream libarchive (and a `tar` CLI) accepts this layout.
-//
-// This test goes through the buffered extractor only: local `file:`
-// tarballs are read fully into memory by PackageManagerTask.readAndExtract
-// and handed to Archiver.extractToDir, which loops on readNextHeader with
-// `.retry => continue`. The streaming reader is never involved, so any
-// behaviour change here is the libarchive patch leaking into the shared
-// buffered codepath.
-// -------------------------------------------------------------------
-test("buffered extract: damaged-block retry resets header state (upstream semantics)", async () => {
-  // One pax 'g' extended-header payload. libarchive's header_pax_global
-  // just skips it, but parsing it sets `seen_headers |= seen_g_header`;
-  // seeing a second one without an intervening state reset is what
-  // triggers the "Redundant 'g' header" FATAL.
-  const pax = Buffer.from("16 comment=test\n", "utf8");
-  expect(pax.length).toBe(16);
-  const paxEntry = () => [tarHeader("pax_global_header", pax.length, "g"), pax, pad512(pax.length)];
-
-  // A 512-byte block that is neither all-zero (would be treated as the
-  // end-of-archive marker) nor has a valid checksum: upstream tar emits
-  // "Damaged tar archive (bad header checksum)" and returns
-  // ARCHIVE_RETRY, which the Zig extract loop handles as `continue`.
-  const damaged = Buffer.alloc(512, 0);
-  damaged.write("junk", 0, "utf8");
-  damaged.fill(" ", 148, 156); // checksum field left as spaces → guaranteed mismatch
-
-  const fileBody = Buffer.from("damaged-block-retry ok\n", "utf8");
-  const file = [tarHeader("package/index.js", fileBody.length, "0"), fileBody, pad512(fileBody.length)];
-
-  const pkgJson = Buffer.from(JSON.stringify({ name: "damaged-pkg", version: "1.0.0", main: "index.js" }) + "\n");
-  const pkgJsonEntry = [tarHeader("package/package.json", pkgJson.length, "0"), pkgJson, pad512(pkgJson.length)];
-
-  // [g][damaged][g][package.json][index.js][EOF EOF]
-  const tar = Buffer.concat([...paxEntry(), damaged, ...paxEntry(), ...pkgJsonEntry, ...file, Buffer.alloc(1024, 0)]);
-  const tgz = gzipSync(tar);
-
-  using dir = tempDir("damaged-block-retry", {
-    "package.json": JSON.stringify({
-      name: "app",
-      version: "1.0.0",
-      dependencies: { "damaged-pkg": "file:./damaged-pkg.tgz" },
-    }),
-  });
-  writeFileSync(join(String(dir), "damaged-pkg.tgz"), tgz);
-
-  const { stderr, exitCode } = await runInstall(String(dir));
-
-  // With the broken patch the second 'g' header trips
-  // "Redundant 'g' header" → ARCHIVE_FATAL inside libarchive; the Zig
-  // extract loop surfaces that as `error.Fail` → "Fail extracting
-  // tarball". With upstream semantics restored the damaged block is
-  // skipped, state is fully reset, and the file following the second
-  // 'g' header is extracted normally.
-  expect(stderr).not.toContain("Fail extracting tarball");
-  expect(stderr).not.toContain("failed to resolve");
-  expect(exitCode).toBe(0);
-
-  const extracted = readFileSync(join(String(dir), "node_modules", "damaged-pkg", "index.js"));
-  expect(extracted.equals(fileBody)).toBe(true);
-});
-
-// -------------------------------------------------------------------
 // Buffered extract: the decompressed tar is never materialised in
 // memory. libarchive gunzips on the fly, so a highly compressible .tgz
 // installs without an RSS spike of roughly its decompressed size.
@@ -892,62 +825,170 @@ test("buffered extract does not hold the decompressed local tarball in memory", 
   expect(maxRssBytes).toBeLessThan(2 * PAYLOAD_SIZE);
 });
 
-test("streaming extract skips a damaged header block and extracts the entries after it byte-for-byte while more data is still arriving", async () => {
-  const pkgJson = Buffer.from(JSON.stringify({ name: "stream-pkg", version: "1.0.0" }) + "\n");
-  const before = Buffer.alloc(4 * 1024 * 1024, 0);
-  const after = Buffer.alloc(16 * 1024 * 1024, 0);
-  const tail = Buffer.alloc(8 * 1024 * 1024);
-  let seed = createHash("sha512").update("tail.bin").digest();
-  for (let off = 0; off < tail.length; off += seed.length) {
-    seed.copy(tail, off);
-    seed = createHash("sha512").update(seed).digest();
+// -------------------------------------------------------------------
+// libarchive discards a header block whose checksum does not match,
+// reports ARCHIVE_RETRY, and resyncs on the next intact header. Both
+// extractors used to take that status as "call again", so one flipped
+// byte in a member's header installed the package without that member
+// and exited 0. A damaged header has to fail the install like every
+// other corruption of the tarball does.
+//
+// The two tests that used to sit here asserted the skip: one pinned the
+// libarchive patch's state reset across the retry (#29430), the other
+// the streaming reader keeping its input buffer alive across it
+// (#37669). The streaming cases below still drive libarchive past the
+// discarded block while the rest of the body is arriving; the outcome
+// they assert is the failure.
+// -------------------------------------------------------------------
+describe.concurrent("a member whose tar header is damaged fails the install", () => {
+  // Incompressible bytes, so the .tgz arrives in many chunks.
+  function noise(label: string, size: number): Buffer {
+    const out = Buffer.alloc(size);
+    let seed = createHash("sha512").update(label).digest();
+    for (let off = 0; off < size; off += seed.length) {
+      seed.copy(out, off, 0, Math.min(seed.length, size - off));
+      seed = createHash("sha512").update(seed).digest();
+    }
+    return out;
   }
 
-  const damaged = Buffer.alloc(512, 0);
-  damaged.write("junk", 0, "utf8");
-  damaged.fill(" ", 148, 156);
+  // A complete member (header, body, padding) with bit 0 of one header
+  // byte flipped. Every offset used below is an octal digit of a numeric
+  // field, so the header stays well-formed and only its checksum is wrong.
+  function damagedFile(name: string, body: Buffer, headerOffset: number): Buffer[] {
+    const header = tarHeader(name, body.length, "0");
+    expect(String.fromCharCode(header[headerOffset])).toMatch(/^[0-7]$/);
+    header[headerOffset] ^= 0x01;
+    return [header, body, pad512(body.length)];
+  }
 
-  const damagedEntries: Entry[] = [
-    { path: "package.json", body: pkgJson },
-    { path: "before.bin", body: before },
-    { path: "after.bin", body: after },
-    { path: "tail.bin", body: tail },
-  ];
-  const tar = Buffer.concat([
-    ...tarFile("package/package.json", pkgJson),
-    ...tarFile("package/before.bin", before),
-    damaged,
-    ...tarFile("package/after.bin", after),
-    ...tarFile("package/tail.bin", tail),
-    Buffer.alloc(1024, 0),
-  ]);
-  const damagedTgz = gzipSync(tar);
-  const damagedShasum = createHash("sha1").update(damagedTgz).digest("hex");
-  const damagedIntegrity = "sha512-" + createHash("sha512").update(damagedTgz).digest("base64");
-  expect(damagedTgz.length).toBeGreaterThan(2 * 1024 * 1024);
+  // `file:` tarballs always take the buffered extractor (Archiver.extractToDir)
+  // and have no integrity to fall back on: extraction is the only check.
+  test.each([
+    ["mode", 104],
+    ["size", 130],
+    ["checksum", 150],
+  ] as const)("buffered: %s field of bin.js corrupted", async (_field, offset) => {
+    const pkgJson = Buffer.from(JSON.stringify({ name: "damaged-pkg", version: "1.0.0", bin: "bin.js" }) + "\n");
+    const tar = Buffer.concat([
+      ...tarFile("package/package.json", pkgJson),
+      ...damagedFile("package/bin.js", Buffer.from("#!/usr/bin/env node\nconsole.log('bin');\n"), offset),
+      ...tarFile("package/index.js", Buffer.from("module.exports = 'index';\n")),
+      Buffer.alloc(1024, 0),
+    ]);
 
-  await using reg = await makeRegistry(damagedTgz, damagedShasum, damagedIntegrity, 4096);
-  const registry = reg.url;
+    using dir = tempDir("damaged-header-buffered", {
+      "package.json": JSON.stringify({
+        name: "app",
+        version: "1.0.0",
+        dependencies: { "damaged-pkg": "file:./damaged-pkg.tgz" },
+      }),
+      "damaged-pkg.tgz": gzipSync(tar),
+    });
 
-  using dir = tempDir("streaming-extract-damaged-block", {
-    "package.json": JSON.stringify({
-      name: "app",
-      version: "1.0.0",
-      dependencies: { "stream-pkg": "1.0.0" },
-    }),
-    "bunfig.toml": Bun.TOML.stringify({ install: { registry } }),
+    const { stderr, exitCode } = await runInstall(String(dir));
+    // The first line is `--verbose` output from the extractor, the second
+    // is the regular install error.
+    expect(stderr).toContain("libarchive error: reading next header: Damaged tar archive (bad header checksum)");
+    expect(stderr).toContain("error: Fail extracting tarball from damaged-pkg");
+    expect(existsSync(join(String(dir), "node_modules", "damaged-pkg"))).toBe(false);
+    expect(exitCode).toBe(1);
   });
 
-  const { stderr, exitCode } = await runInstall(String(dir));
-  expect(stderr).not.toContain("extracting tarball for");
-  expect(stderr).not.toContain("error:");
-  expect(stderr).toContain("Streamed ");
-  expect(reg.tarballHits).toBe(1);
+  const streamPkgJson = Buffer.from(JSON.stringify({ name: "stream-pkg", version: "1.0.0" }) + "\n");
 
-  const pkgRoot = join(String(dir), "node_modules", "stream-pkg");
-  for (const { path, body } of damagedEntries) {
-    const got = readFileSync(join(pkgRoot, path));
-    expect([path, got.length, got.equals(body)]).toEqual([path, body.length, true]);
+  function appDir(label: string) {
+    return tempDir(label, {
+      "package.json": JSON.stringify({ name: "app", version: "1.0.0", dependencies: { "stream-pkg": "1.0.0" } }),
+    });
   }
-  expect(exitCode).toBe(0);
+
+  // Serves `tar` (gzipped, advertised with its own integrity so only the
+  // archive contents can fail the install) in `chunk`-byte pieces, and
+  // installs it through the streaming extractor: the threshold is lowered
+  // so this small tarball streams, and a drain runs after every chunk so
+  // libarchive keeps running out of input in the middle of headers.
+  async function installStreamed(dir: string, tar: Buffer, chunk: number) {
+    const tgz = gzipSync(tar);
+    expect(tgz.length).toBeGreaterThan(16 * chunk);
+    const shasum = createHash("sha1").update(tgz).digest("hex");
+    const integrity = "sha512-" + createHash("sha512").update(tgz).digest("base64");
+    await using reg = await makeRegistry(tgz, shasum, integrity, chunk);
+    writeFileSync(join(dir, "bunfig.toml"), Bun.TOML.stringify({ install: { registry: reg.url } }));
+    const { stderr, exitCode } = await runInstall(dir, {
+      BUN_INSTALL_STREAMING_MIN_SIZE: String(chunk),
+      BUN_INSTALL_STREAMING_DRAIN_THRESHOLD: String(chunk),
+    });
+    return { stderr, exitCode, tarballHits: reg.tarballHits };
+  }
+
+  // The streaming extractor (TarballStream) also gets ARCHIVE_RETRY when
+  // its read callback runs out of input, so it notices the discarded block
+  // at the next header libarchive does return ("middle") or at the end of
+  // the archive when the damaged member was the last one ("last").
+  test.each([
+    ["middle", true],
+    ["last", false],
+  ] as const)("streaming: damaged member in the %s of the archive", async (_position, membersFollow) => {
+    const tar = Buffer.concat([
+      ...tarFile("package/package.json", streamPkgJson),
+      ...tarFile("package/before.bin", noise("before.bin", 64 * 1024)),
+      ...damagedFile("package/damaged.bin", noise("damaged.bin", 64 * 1024), 104),
+      ...(membersFollow ? tarFile("package/after.bin", noise("after.bin", 64 * 1024)) : []),
+      Buffer.alloc(1024, 0),
+    ]);
+
+    using dir = appDir("damaged-header-streaming");
+    const { stderr, exitCode, tarballHits } = await installStreamed(String(dir), tar, 4096);
+    // This wording is TarballStream's; the buffered path says "from".
+    expect(stderr).toContain('error: Fail extracting tarball for "stream-pkg"');
+    expect(tarballHits).toBe(1);
+    expect(existsSync(join(String(dir), "node_modules", "stream-pkg"))).toBe(false);
+    expect(exitCode).toBe(1);
+  });
+
+  // The streaming check counts the headers libarchive starts. Extension
+  // headers (pax 'g' as at the top of every GitHub tarball, pax 'x', GNU
+  // 'L') are read as part of the member that follows them, also when the
+  // body runs dry between them, so an intact archive full of them must
+  // still install.
+  test("streaming: intact members behind pax global, pax and GNU long-name headers still install", async () => {
+    const global = Buffer.from("16 comment=test\n");
+    // Both names are longer than the 100 bytes a ustar header holds.
+    const paxName = "package/" + Buffer.alloc(96, "p").toString() + "/pax.bin";
+    const gnuName = "package/" + Buffer.alloc(96, "g").toString() + "/gnu.bin";
+    const gnuNameZ = Buffer.from(gnuName + "\0");
+    const entries: Entry[] = [
+      { path: "package.json", body: streamPkgJson },
+      { path: "plain.bin", body: noise("plain.bin", 1536) },
+      { path: paxName.slice("package/".length), body: noise("pax.bin", 1536) },
+      { path: gnuName.slice("package/".length), body: noise("gnu.bin", 1536) },
+    ];
+    const gnuBody = entries[3].body;
+    const tar = Buffer.concat([
+      tarHeader("pax_global_header", global.length, "g"),
+      global,
+      pad512(global.length),
+      ...tarFile("package/package.json", entries[0].body),
+      ...tarFile("package/plain.bin", entries[1].body),
+      ...tarFile(paxName, entries[2].body),
+      tarHeader("././@LongLink", gnuNameZ.length, "L"),
+      gnuNameZ,
+      pad512(gnuNameZ.length),
+      tarHeader(gnuName.slice(0, 99), gnuBody.length, "0"),
+      gnuBody,
+      pad512(gnuBody.length),
+      Buffer.alloc(1024, 0),
+    ]);
+
+    using dir = appDir("extension-headers-streaming");
+    const { stderr, exitCode } = await installStreamed(String(dir), tar, 64);
+    expect(stderr).not.toContain("error:");
+    expect(stderr).toContain("Streamed ");
+    const pkgRoot = join(String(dir), "node_modules", "stream-pkg");
+    for (const { path, body } of entries) {
+      expect([path, readFileSync(join(pkgRoot, path)).equals(body)]).toEqual([path, true]);
+    }
+    expect(exitCode).toBe(0);
+  });
 });

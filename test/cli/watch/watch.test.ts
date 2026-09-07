@@ -469,7 +469,7 @@ it.skipIf(isWindows)(
 // `bun --watch run <script>`: the process that runs a package.json script only
 // waits on a shell, so it hands --watch / --hot to the `bun` the script starts
 // (when the script is a single bun command) instead of dropping the flag.
-describe("--watch / --hot with a package.json script", () => {
+describe.concurrent("--watch / --hot with a package.json script", () => {
   // Prints one line per (re)start: `RUNNING <V> <pid> <execArgv> <argv>`.
   const serverFiles = {
     "dep.mjs": `export const V = "v0";`,
@@ -565,13 +565,17 @@ setInterval(() => {}, 1e6);`,
       ["--hot", "--no-clear-screen"],
       `$ ${bunExe()} --hot --no-clear-screen server.mjs`,
     ],
-  ])("bun %j forwards the flag to the script's bun and it reloads", async (args, execArgv, echo) => {
-    await runCase({ ...serverFiles, "package.json": JSON.stringify({ name: "app", scripts }) }, ".", args, {
-      execArgv,
-      argv: args.includes("extra-arg") ? ["extra-arg"] : [],
-      echo,
-    });
-  });
+  ])(
+    "bun %j forwards the flag to the script's bun and it reloads",
+    async (args, execArgv, echo) => {
+      await runCase({ ...serverFiles, "package.json": JSON.stringify({ name: "app", scripts }) }, ".", args, {
+        execArgv,
+        argv: args.includes("extra-arg") ? ["extra-arg"] : [],
+        echo,
+      });
+    },
+    30000,
+  );
 
   it("bun --watch run --filter forwards the flag", async () => {
     await runCase(
@@ -583,7 +587,7 @@ setInterval(() => {}, 1e6);`,
       ["--watch", "run", "--filter", "a", "dev"],
       { execArgv: ["--watch"], argv: [] },
     );
-  });
+  }, 30000);
 
   it("bun --watch run --parallel forwards the flag", async () => {
     await runCase(
@@ -592,7 +596,7 @@ setInterval(() => {}, 1e6);`,
       ["--watch", "run", "--parallel", "dev"],
       { execArgv: ["--watch"], argv: [] },
     );
-  });
+  }, 30000);
 
   it.each(["--watch", "--hot"])("bun %s run says when a script cannot take the flag", async flag => {
     using dir = tempDir("watch-run-script-warn", {

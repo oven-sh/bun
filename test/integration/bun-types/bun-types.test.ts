@@ -549,6 +549,36 @@ describe("@types/bun integration test", () => {
          export const composed: [EventTarget?] = e.composedPath();`,
       );
     });
+
+    // The runtime has no EventSource (#8474). bun-types still has to declare
+    // the variable, because @types/node derives its own declaration from it,
+    // so without lib.dom it is declared as `undefined`. With lib.dom the
+    // browser declaration applies, like every other UseLibDomIfAvailable global.
+    test("EventSource is undefined without lib.dom", async () => {
+      await checkEventFixture(
+        "eventsource-no-lib-dom-check",
+        ["ESNext"],
+        `export const absent: undefined = EventSource;
+         // @ts-expect-error
+         new EventSource("http://localhost");`,
+      );
+    });
+
+    test("EventSource is lib.dom's when lib.dom is loaded", async () => {
+      await checkEventFixture(
+        "eventsource-lib-dom-check",
+        ["ESNext", "DOM"],
+        `export const es: EventSource = new EventSource("http://localhost");
+         export const state: 0 | 1 | 2 = EventSource.CONNECTING;`,
+      );
+    });
+
+    // Ties the two declarations above to the binary. When this fails, the
+    // runtime gained the global: give it a real declaration in globals.d.ts.
+    test("the runtime has no EventSource and no Loader global", () => {
+      expect(typeof Reflect.get(globalThis, "EventSource")).toBe("undefined");
+      expect(typeof Reflect.get(globalThis, "Loader")).toBe("undefined");
+    });
   });
 
   // Also runs on debug builds: spawned tsc over a single file, like the
@@ -886,7 +916,7 @@ describe("@types/bun integration test", () => {
         },
         {
           code: 2353,
-          line: "globals.ts:307:5",
+          line: "globals.ts:322:5",
           message: "Object literal may only specify known properties, and 'headers' does not exist in type 'string[]'.",
         },
         {

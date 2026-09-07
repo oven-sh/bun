@@ -108,6 +108,10 @@ declare module "bun" {
       readonly timeStamp: number;
       /** The type of event, for example "click", "hashchange", or "submit". */
       readonly type: string;
+      readonly NONE: 0;
+      readonly CAPTURING_PHASE: 1;
+      readonly AT_TARGET: 2;
+      readonly BUBBLING_PHASE: 3;
     }
 
     type LibEmptyOrBunEvent = LibDomIsLoaded extends true ? {} : BunEvent;
@@ -596,101 +600,6 @@ interface AddEventListenerOptions extends Bun.EventListenerOptions {
   signal?: AbortSignal;
 }
 
-/**
- * Low-level JavaScriptCore API for accessing the native ES module loader (not a Bun API)
- *
- * Before using this, be aware of a few things:
- *
- * **Using this incorrectly will crash your application**.
- *
- * This API may change any time JavaScriptCore is updated.
- *
- * Bun may rewrite ESM import specifiers to point to bundled code, so this API
- * can return a string like "/node_modules.server.bun".
- *
- * Bun may inject additional imports into your code. These usually have a `bun:` prefix.
- */
-declare var Loader: {
-  /**
-   * The ES module registry. Keys are module specifiers; values are metadata
-   * about the module.
-   *
-   * Use this to implement live reloading: delete a module specifier from this
-   * map and the next import re-transpiles and reloads the module.
-   *
-   * The keys are an implementation detail for Bun that will change between
-   * versions.
-   *
-   * - Userland modules are absolute file paths
-   * - Virtual modules have a `bun:` or `node:` prefix
-   * - JS polyfills start with `"/bun-vfs/"`. `"buffer"` is an example of a JS polyfill
-   * - If you have a `node_modules.bun` file, many modules point to that file
-   *
-   * Virtual modules and JS polyfills are embedded in Bun's binary. They don't
-   * point to anywhere in your local filesystem.
-   */
-  registry: Map<
-    string,
-    {
-      key: string;
-      /**
-       * The load state of the ESM module
-       */
-      state: number;
-      fetch: Promise<any>;
-      instantiate: Promise<any>;
-      satisfy: Promise<any>;
-      dependencies: Array<(typeof Loader)["registry"] extends Map<any, infer V> ? V : any>;
-      /**
-       * Your application will probably crash if you mess with this.
-       */
-      module: {
-        dependenciesMap: (typeof Loader)["registry"];
-      };
-      linkError?: any;
-      linkSucceeded: boolean;
-      evaluated: boolean;
-      then?: any;
-      isAsync: boolean;
-    }
-  >;
-  /**
-   * Returns the dependencies of an already-evaluated module as module specifiers
-   *
-   * The list is sorted and deduplicated.
-   *
-   * @example
-   *
-   * For this code:
-   * ```js
-   * // /foo.js
-   * import classNames from 'classnames';
-   * import React from 'react';
-   * import {createElement} from 'react';
-   * ```
-   *
-   * This would return:
-   * ```js
-   * Loader.dependencyKeysIfEvaluated("/foo.js")
-   * ["bun:wrap", "/path/to/node_modules/classnames/index.js", "/path/to/node_modules/react/index.js"]
-   * ```
-   *
-   * @param specifier - module specifier as it appears in transpiled source code
-   */
-  dependencyKeysIfEvaluated: (specifier: string) => string[];
-  /**
-   * The function JavaScriptCore internally calls when you use an import statement.
-   *
-   * This may return a path to `node_modules.server.bun` rather than the
-   * original specifier. Consider {@link Bun.resolve} or
-   * {@link ImportMeta.resolve} instead.
-   *
-   * @param specifier - module specifier as it appears in transpiled source code
-   * @param referrer - module specifier that is resolving this specifier
-   */
-  resolve: (specifier: string, referrer: string) => string;
-};
-
 interface QueuingStrategy<T = any> {
   highWaterMark?: number;
   size?: QueuingStrategySize<T>;
@@ -804,6 +713,8 @@ interface ReadableWritablePair<R = any, W = any> {
 }
 
 interface WritableStreamDefaultController {
+  /** An `AbortSignal` that aborts when the stream is aborted or errored. */
+  readonly signal: AbortSignal;
   error(e?: any): void;
 }
 
@@ -1484,6 +1395,16 @@ interface Blob {
   readonly type: string;
 
   /**
+   * Returns a new `Blob` with the bytes from `start` up to but not including
+   * `end`. Negative indices count from the end.
+   *
+   * @param start byte offset to start at. Defaults to 0.
+   * @param end byte offset to stop at. Defaults to `size`.
+   * @param contentType the `type` of the new `Blob`. Defaults to `""`.
+   */
+  slice(start?: number, end?: number, contentType?: string): Blob;
+
+  /**
    * Read the data from the blob as a JSON object.
    *
    * This first decodes the data from UTF-8, then parses it as JSON.
@@ -1729,11 +1650,14 @@ interface FormData {
 }
 declare var FormData: Bun.__internal.UseLibDomIfAvailable<"FormData", { prototype: FormData; new (): FormData }>;
 
+/**
+ * Bun does not implement `EventSource` yet: https://github.com/oven-sh/bun/issues/8474
+ *
+ * The global is `undefined` at runtime. It is declared here only because
+ * `@types/node` derives the type of its own `EventSource` global from it.
+ */
 interface EventSource extends Bun.__internal.LibEmptyOrEventSource {}
-declare var EventSource: Bun.__internal.UseLibDomIfAvailable<
-  "EventSource",
-  { prototype: EventSource; new (): EventSource }
->;
+declare var EventSource: Bun.__internal.UseLibDomIfAvailable<"EventSource", undefined>;
 
 interface Performance extends Bun.__internal.LibPerformanceOrNodePerfHooksPerformance {}
 declare var performance: Bun.__internal.UseLibDomIfAvailable<"performance", Performance>;

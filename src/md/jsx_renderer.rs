@@ -34,6 +34,7 @@ enum ExprWriteMode {
 pub(crate) struct JsxRenderer<'src> {
     pub out: OutputBuffer,
     src_text: &'src [u8],
+    components_name: &'src [u8],
     expression_slots: &'src [ExpressionSlot],
     expression_prefix: &'src [u8],
     /// Insertion-ordered so generated `_components` objects are stable.
@@ -50,6 +51,7 @@ impl<'src> JsxRenderer<'src> {
     pub(crate) fn init(
         src_text: &'src [u8],
         expression_slots: &'src [ExpressionSlot],
+        components_name: &'src [u8],
     ) -> JsxRenderer<'src> {
         JsxRenderer {
             out: OutputBuffer {
@@ -57,6 +59,7 @@ impl<'src> JsxRenderer<'src> {
                 oom: false,
             },
             src_text,
+            components_name,
             expression_slots,
             expression_prefix: expression_slots
                 .first()
@@ -100,21 +103,27 @@ impl<'src> JsxRenderer<'src> {
 
     fn write_component_tag_open(&mut self, name: &'static [u8]) {
         self.track_component(name);
-        self.write(b"<_components.");
+        self.write(b"<");
+        self.write(self.components_name);
+        self.write(b".");
         self.write(name);
         self.write(b">");
     }
 
     fn write_component_tag_close(&mut self, name: &'static [u8]) {
         self.track_component(name);
-        self.write(b"</_components.");
+        self.write(b"</");
+        self.write(self.components_name);
+        self.write(b".");
         self.write(name);
         self.write(b">");
     }
 
     fn write_component_tag_self_close(&mut self, name: &'static [u8]) {
         self.track_component(name);
-        self.write(b"<_components.");
+        self.write(b"<");
+        self.write(self.components_name);
+        self.write(b".");
         self.write(name);
         self.write(b" />");
     }
@@ -204,7 +213,9 @@ impl<'src> JsxRenderer<'src> {
             BlockType::Ul => self.write_component_tag_open(b"ul"),
             BlockType::Ol => {
                 self.track_component(b"ol");
-                self.write(b"<_components.ol");
+                self.write(b"<");
+                self.write(self.components_name);
+                self.write(b".ol");
                 if data > 1 {
                     let mut buf = [0u8; 10];
                     let digits = format_u32(&mut buf, data);
@@ -219,7 +230,9 @@ impl<'src> JsxRenderer<'src> {
                 let task_mark = types::task_mark_from_data(data);
                 if task_mark != 0 {
                     self.track_component(b"input");
-                    self.write(b"<_components.input type=\"checkbox\" disabled checked={");
+                    self.write(b"<");
+                    self.write(self.components_name);
+                    self.write(b".input type=\"checkbox\" disabled checked={");
                     self.write(if types::is_task_checked(task_mark) {
                         b"true"
                     } else {
@@ -234,7 +247,11 @@ impl<'src> JsxRenderer<'src> {
                 self.in_code_block = true;
                 self.track_component(b"pre");
                 self.track_component(b"code");
-                self.write(b"<_components.pre><_components.code");
+                self.write(b"<");
+                self.write(self.components_name);
+                self.write(b".pre><");
+                self.write(self.components_name);
+                self.write(b".code");
                 // Copy the slice reference out of `self` so the language borrow
                 // is tied to 'src rather than to `self`.
                 let src_text: &'src [u8] = self.src_text;
@@ -268,7 +285,9 @@ impl<'src> JsxRenderer<'src> {
                     b"td"
                 };
                 self.track_component(name);
-                self.write(b"<_components.");
+                self.write(b"<");
+                self.write(self.components_name);
+                self.write(b".");
                 self.write(name);
                 if let Some(alignment) = types::alignment_name(types::alignment_from_data(data)) {
                     self.write(b" align=\"");
@@ -290,7 +309,11 @@ impl<'src> JsxRenderer<'src> {
             BlockType::H => self.write_component_tag_close(heading_tag(data)),
             BlockType::Code => {
                 self.in_code_block = false;
-                self.write(b"</_components.code></_components.pre>");
+                self.write(b"</");
+                self.write(self.components_name);
+                self.write(b".code></");
+                self.write(self.components_name);
+                self.write(b".pre>");
             }
             BlockType::P => self.write_component_tag_close(b"p"),
             BlockType::Table => self.write_component_tag_close(b"table"),
@@ -325,7 +348,9 @@ impl<'src> JsxRenderer<'src> {
             SpanType::Wikilink => self.write_component_tag_open(b"a"),
             SpanType::A => {
                 self.track_component(b"a");
-                self.write(b"<_components.a href=\"");
+                self.write(b"<");
+                self.write(self.components_name);
+                self.write(b".a href=\"");
                 self.write_attr_escaped(detail.href);
                 self.write(b"\"");
                 if !detail.title.is_empty() {
@@ -339,7 +364,9 @@ impl<'src> JsxRenderer<'src> {
                 self.track_component(b"img");
                 self.saved_img_title = Box::from(detail.title);
                 self.image_nesting_level += 1;
-                self.write(b"<_components.img src=\"");
+                self.write(b"<");
+                self.write(self.components_name);
+                self.write(b".img src=\"");
                 self.write_attr_escaped(detail.href);
                 self.write(b"\" alt=\"");
             }

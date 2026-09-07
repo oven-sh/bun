@@ -129,6 +129,62 @@ describe("Bun.mdx.compile", () => {
     expect(output).toContain("{props.count}");
   });
 
+  test.each([
+    "{/[}]/.test(props.value)}",
+    "{/[{]/.test(props.value)}",
+    "{`result: ${/[}]/.test(props.value)}`}",
+    "{props.show && <span title=\"}\">{'{'}</span>}",
+  ])("parses JavaScript expression syntax: %s", expression => {
+    const compiled = Mdx.compile(`Value: ${expression}`);
+    expect(compiled).toContain(expression);
+    expect(() => new Bun.Transpiler({ loader: "tsx" }).transformSync(compiled)).not.toThrow();
+  });
+
+  test("extracts exports after Markdown", () => {
+    const compiled = Mdx.compile("# Heading\n\nexport const pattern = /[}]/;\n\nValue: {pattern.source}");
+    expect(compiled).toContain("export const pattern = /[}]/;");
+    expect(new Bun.Transpiler({ loader: "tsx" }).scan(compiled).exports).toContain("pattern");
+  });
+
+  test("unmatched backticks do not hide expressions", () => {
+    expect(Mdx.compile("A ` tick and {props.value}")).toContain("{props.value}");
+  });
+
+  test("preserves import and export text in tilde fences", () => {
+    const compiled = Mdx.compile("~~~js\nexport const value = {a: 1};\n~~~");
+    expect(new Bun.Transpiler({ loader: "tsx" }).scan(compiled).exports).toEqual(["default"]);
+    expect(compiled).toContain("<_components.code");
+  });
+
+  test("rejects multiple default layouts", () => {
+    expect(() => Mdx.compile("export default () => null;\n\n# Hello\n\nexport default () => null;")).toThrow(
+      "MDX documents can only have one default layout",
+    );
+  });
+
+  test("handles namespace layout re-exports", () => {
+    const source = 'export * as default from "./layout";\n\n# Heading';
+    expect(new Bun.Transpiler({ loader: "mdx" }).scan(source).exports).toEqual(["default"]);
+  });
+
+  test("preserves named exports alongside a re-exported layout", () => {
+    const source = 'export { Layout as default, named } from "./layout";\n\n# Heading';
+    expect(new Bun.Transpiler({ loader: "mdx" }).scan(source).exports).toEqual(["default", "named"]);
+  });
+
+  test("keeps blank lines inside JavaScript modules", () => {
+    const source = "export function value() {\n\n  return /[}]/;\n}\n\n# Heading";
+    expect(new Bun.Transpiler({ loader: "mdx" }).scan(source).exports).toEqual(["default", "value"]);
+  });
+
+  test("preserves named default function bindings", () => {
+    const source =
+      "export default async function Layout({ children }) { return children; }\nexport const name = Layout.name;\n\n# Heading";
+    const compiled = Mdx.compile(source);
+    expect(compiled).toContain("async function Layout");
+    expect(new Bun.Transpiler({ loader: "tsx" }).scan(compiled).exports).toEqual(["default", "name"]);
+  });
+
   test("preserves expressions with closing brace in template/string literals", () => {
     const templateExpr = "Value: {`has } brace`}";
     const templateOut = Mdx.compile(templateExpr);
@@ -522,6 +578,84 @@ export const meta = { version: "2.0" };
     expect(exitCode).toBe(0);
   });
 
+  test.concurrent("generated bindings do not shadow user identifiers", async () => {
+    using dir = tempDir("mdx-bindings", {
+      "page.mdx": String.raw`export const MDXContent = "page";
+export const _components = "components";
+export const _content = "content";
+export const _MdxLayout = "layout";
+export const _components0 = "zero";
+export const _\u0063omponents1 = "escaped";
+
+{MDXContent}:{_components}:{_content}:{_MdxLayout}:{_components0}:{_\u0063omponents1}`,
+      "entry.tsx": `
+        import React from "react";
+        import { renderToStaticMarkup } from "react-dom/server";
+        import Page from "./page.mdx";
+        console.log(renderToStaticMarkup(<Page />));
+      `,
+    });
+    linkNodeModules(String(dir));
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "entry.tsx"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout).toBe("<p>page:components:content:layout:zero:escaped</p>\n");
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+  });
+
+  test.concurrent.each([
+    "export default function Layout({ children, title }) { return <main title={title}>{children}</main>; }",
+    "export default function ({ children, title }) { return <main title={title}>{children}</main>; }",
+    "export default ({ children, title }) => <main title={title}>{children}</main>;",
+    "export const Layout = ({ children, title }) => <main title={title}>{children}</main>;\nexport default Layout;",
+    "export const Layout = ({ children, title }) => <main title={title}>{children}</main>;\nexport { Layout as default };",
+    "export { Layout as default };\nexport const Layout = ({ children, title }) => <main title={title}>{children}</main>;",
+    'export { default } from "./layout";',
+    'export { Layout as default, named } from "./layout";',
+    'export { "named layout" as default, named } from "./layout";',
+    "",
+  ])("renders MDX with a layout: %s", async layout => {
+    using dir = tempDir("mdx-layout", {
+      "page.mdx": `${layout}\n\n# Hello`,
+      "layout.tsx": `
+        export function Layout({ children, title }) { return <main title={title}>{children}</main>; }
+        export const named = 42;
+        export { Layout as "named layout" };
+        export default Layout;
+      `,
+      "entry.tsx": `
+        import React from "react";
+        import { renderToStaticMarkup } from "react-dom/server";
+        import Page from "./page.mdx";
+        const wrapper = ({ children, title }) => <aside title={title}>{children}</aside>;
+        console.log(renderToStaticMarkup(<Page title="demo" components={{ wrapper }} />));
+        console.log(React.isValidElement(Page()));
+      `,
+    });
+    linkNodeModules(String(dir));
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "entry.tsx"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout).toBe(
+      layout
+        ? '<main title="demo"><h1>Hello</h1></main>\ntrue\n'
+        : '<aside title="demo"><h1>Hello</h1></aside>\ntrue\n',
+    );
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+  });
+
   test("complex fixture runtime SSR contains evaluated content and no placeholders", async () => {
     const fixture = fs.readFileSync(path.join(fixtureDir, "complex-frontmatter.mdx"), "utf8");
     using dir = tempDir("mdx-complex-runtime", {
@@ -578,6 +712,19 @@ export const meta = { version: "2.0" };
 });
 
 describe("MDX transpiler integration", () => {
+  test("scans MDX imports and exports", () => {
+    const transpiler = new Bun.Transpiler({ loader: "mdx" });
+    const source = 'import { Box } from "./box";\n\n# Hello\n\nexport const value = 42;\n\n<Box />';
+    expect(transpiler.scan(source).exports).toEqual(["default", "value"]);
+    expect(transpiler.scanImports(source)).toContainEqual({ path: "./box", kind: "import-statement" });
+  });
+
+  test("transforms MDX asynchronously", async () => {
+    const transpiler = new Bun.Transpiler({ loader: "mdx" });
+    const source = "# Hello\n\nValue: {/[}]/.test(props.value)}";
+    expect(await transpiler.transform(source)).toBe(transpiler.transformSync(source));
+  });
+
   test("Bun.Transpiler with loader mdx transformSync", () => {
     const transpiler = new Bun.Transpiler({ loader: "mdx" });
     const result = transpiler.transformSync("# Hello MDX");

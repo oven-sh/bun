@@ -63,14 +63,26 @@ Transpiles both TypeScript and JSX to vanilla JavaScript.
 
 **Markdown with JSX.** Default for `.mdx`.
 
-Compiles Markdown, JSX, and embedded JavaScript expressions into a module whose default export is a component. Leading
-`import` and named `export` declarations are preserved. A leading YAML frontmatter block becomes a named `frontmatter`
-export. Tables, strikethrough, and task lists are enabled by default.
+Compiles Markdown, JSX, and embedded JavaScript expressions into a module whose default export is a component. `import`
+and named `export` declarations can appear between Markdown blocks. A leading YAML frontmatter block becomes a named
+`frontmatter` export. Tables, strikethrough, and task lists are enabled by default.
 
 ```tsx
 import Page, { frontmatter } from "./page.mdx";
 
 const page = <Page components={{ h1: MyHeading }} />;
+```
+
+A default export in the MDX source defines a layout that receives the rendered content as `children`, along with the
+page's props. Layouts can also be re-exported from another module. Without a default-export layout, pass a wrapper through
+`components.wrapper`.
+
+```mdx
+export { default } from "./Layout";
+
+# Welcome
+
+Count: {props.count}
 ```
 
 Use `Bun.mdx.compile(source, options?)` to obtain the generated JSX as a string. Its `jsxImportSource` option defaults to
@@ -80,9 +92,8 @@ Running `bun page.mdx` starts a development server. Install `react` and `react-d
 MDX entry points are served relative to their common directory; `index.mdx` maps to its directory's route.
 
 <Note>
-  This compiler currently supports a subset of MDX syntax. Default-export layouts and import/export declarations after
-  Markdown content are not supported. Its expression scanner does not support regular expression literals containing
-  braces. Documents using these features require an external MDX compiler.
+  The native compiler does not run remark or rehype plugins. Source locations in generated JavaScript currently refer to
+  the intermediate JSX module. Use an external MDX compiler through a build plugin when you need those integrations.
 </Note>
 
 ---

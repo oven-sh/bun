@@ -1000,6 +1000,7 @@ dependencies = [
  "bun_ast",
  "bun_collections",
  "bun_core",
+ "bun_js_parser",
  "bun_parsers",
  "bun_paths",
  "bun_sys",

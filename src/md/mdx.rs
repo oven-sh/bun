@@ -22,14 +22,18 @@ use crate::root as md;
 pub enum MdxError {
     #[error("out of memory")]
     OutOfMemory,
-    #[error("unclosed MDX expression: missing '}}'")]
-    UnclosedExpression,
     #[error("internal error: MDX expression placeholder survived rendering")]
     UnresolvedPlaceholder,
     #[error("failed to parse YAML frontmatter")]
     YamlParse,
     #[error("{0}")]
     Parser(ParserError),
+    #[error("failed to parse MDX JavaScript: {0}")]
+    JavaScript(#[from] bun_js_parser::Error),
+    #[error("incomplete MDX JavaScript module")]
+    IncompleteJavaScript,
+    #[error("MDX documents can only have one default layout")]
+    DuplicateLayout,
 }
 
 bun_core::oom_from_alloc!(MdxError);
@@ -84,6 +88,8 @@ pub enum StmtKind {
 pub struct TopLevelStatement {
     pub text: Vec<u8>,
     pub kind: StmtKind,
+    pub layout: bool,
+    pub layout_alias: Option<Vec<u8>>,
 }
 
 // ========================================
@@ -116,219 +122,243 @@ pub fn extract_frontmatter(source: &[u8]) -> Option<FrontmatterResult<'_>> {
 // Top-level import/export extraction
 // ========================================
 
-#[derive(Default)]
-struct StatementParseState {
-    brace_depth: usize,
-    paren_depth: usize,
-    bracket_depth: usize,
-    string_quote: Option<u8>,
-    string_escaped: bool,
-}
-
-fn update_statement_parse_state(state: &mut StatementParseState, line: &[u8]) {
-    for &c in line {
-        if let Some(quote) = state.string_quote {
-            if state.string_escaped {
-                state.string_escaped = false;
-                continue;
+fn parse_module(
+    source: &[u8],
+    layout_name: &[u8],
+    names: &mut std::collections::HashSet<Vec<u8>>,
+) -> Result<Vec<TopLevelStatement>, MdxError> {
+    use bun_ast::{StmtOrExpr, stmt::Data};
+    let arena = bun_alloc::Arena::new();
+    let mut ast_allocator = bun_ast::ASTMemoryAllocator::borrowing(&arena);
+    let _ast_scope = ast_allocator.enter();
+    let mut log = bun_ast::Log::init();
+    let js_source = bun_ast::Source::init_path_string(b"document.mdx", source);
+    bun_js_parser::parse::parse_entry::with_fragment_parser(
+        &js_source,
+        &mut log,
+        &arena,
+        |parser| {
+            let statements = match parser.module_statements() {
+                Ok(statements) => statements,
+                Err(err)
+                    if parser.is_at_end()
+                        && matches!(
+                            err,
+                            bun_js_parser::Error::SyntaxError
+                                | bun_js_parser::Error::Lexer(
+                                    bun_js_parser::lexer::Error::SyntaxError
+                                        | bun_js_parser::lexer::Error::UnexpectedSyntax
+                                )
+                        ) =>
+                {
+                    return Err(MdxError::IncompleteJavaScript);
+                }
+                Err(err) => return Err(err.into()),
+            };
+            collect_names(parser, names)?;
+            let mut output = Vec::new();
+            for &(start, statement, end) in &statements {
+                let mut text = Vec::new();
+                let mut layout = false;
+                let mut layout_alias = None;
+                if let Data::SExportDefault(default) = &statement.data {
+                    layout = true;
+                    let value_start = parser.default_value_start(start)?;
+                    let name = match default.value {
+                        StmtOrExpr::Expr(_) => None,
+                        StmtOrExpr::Stmt(value) => match value.data {
+                            Data::SFunction(function) => function.func.name,
+                            Data::SClass(class) => class.class.class_name,
+                            _ => None,
+                        },
+                    };
+                    if let Some(name) = name {
+                        push_all(&mut text, &source[value_start..end])?;
+                        push_all(&mut text, b"\nconst ")?;
+                        push_all(&mut text, layout_name)?;
+                        push_all(&mut text, b" = ")?;
+                        let range = js_source.range_of_identifier(name.loc);
+                        push_all(
+                            &mut text,
+                            &source[range.loc.start as usize
+                                ..range.loc.start as usize + range.len as usize],
+                        )?;
+                        push_all(&mut text, b";\n")?;
+                    } else {
+                        push_all(&mut text, b"const ")?;
+                        push_all(&mut text, layout_name)?;
+                        push_all(&mut text, b" = ")?;
+                        push_all(&mut text, &source[value_start..end])?;
+                        push_all(&mut text, b";\n")?;
+                    }
+                } else if let Data::SExportStar(star) = &statement.data
+                    && star
+                        .alias
+                        .as_ref()
+                        .is_some_and(|alias| alias.original_name.slice() == b"default")
+                {
+                    layout = true;
+                    push_all(&mut text, b"import * as ")?;
+                    push_all(&mut text, layout_name)?;
+                    push_all(&mut text, b" from ")?;
+                    let range = parser.import_range(star.import_record_index);
+                    push_all(&mut text, &source[range.loc.start as usize..end])?;
+                } else if let Some((items, import)) = match statement.data {
+                    Data::SExportClause(clause) => Some((clause.items, None)),
+                    Data::SExportFrom(clause) => {
+                        Some((clause.items, Some(clause.import_record_index)))
+                    }
+                    _ => None,
+                }
+                .filter(|(items, _)| items.iter().any(|item| item.alias.slice() == b"default"))
+                {
+                    let mut exports = Vec::new();
+                    for item in items.iter() {
+                        let mut import_name = Vec::new();
+                        let name = if import.is_some() {
+                            push_all(&mut import_name, b"\"")?;
+                            append_json_string_escaped(
+                                &mut import_name,
+                                item.original_name.slice(),
+                            )?;
+                            push_all(&mut import_name, b"\"")?;
+                            import_name.as_slice()
+                        } else {
+                            let range = js_source.range_of_identifier(item.name.loc);
+                            &source[range.loc.start as usize
+                                ..range.loc.start as usize + range.len as usize]
+                        };
+                        if item.alias.slice() == b"default" {
+                            if layout {
+                                return Err(MdxError::DuplicateLayout);
+                            }
+                            layout = true;
+                            if let Some(import) = import {
+                                push_all(&mut text, b"import { ")?;
+                                push_all(&mut text, name)?;
+                                push_all(&mut text, b" as ")?;
+                                push_all(&mut text, layout_name)?;
+                                push_all(&mut text, b" } from ")?;
+                                let range = parser.import_range(import);
+                                push_all(&mut text, &source[range.loc.start as usize..end])?;
+                            } else {
+                                let mut alias = Vec::new();
+                                push_all(&mut alias, name)?;
+                                layout_alias = Some(alias);
+                            }
+                        } else {
+                            if !exports.is_empty() {
+                                push_all(&mut exports, b", ")?;
+                            }
+                            push_all(&mut exports, name)?;
+                            push_all(&mut exports, b" as \"")?;
+                            append_json_string_escaped(&mut exports, item.alias.slice())?;
+                            push_all(&mut exports, b"\"")?;
+                        }
+                    }
+                    if !exports.is_empty() {
+                        push_all(&mut text, b"\nexport { ")?;
+                        push_all(&mut text, &exports)?;
+                        push_all(&mut text, b" }")?;
+                        if let Some(import) = import {
+                            push_all(&mut text, b" from ")?;
+                            let range = parser.import_range(import);
+                            push_all(&mut text, &source[range.loc.start as usize..end])?;
+                        } else {
+                            push_all(&mut text, b";\n")?;
+                        }
+                    }
+                } else {
+                    push_all(&mut text, &source[start..end])?;
+                }
+                output.try_reserve(1)?;
+                output.push(TopLevelStatement {
+                    text,
+                    kind: if matches!(statement.data, Data::SImport(_)) {
+                        StmtKind::Import
+                    } else {
+                        StmtKind::Export
+                    },
+                    layout,
+                    layout_alias,
+                });
             }
-            if c == b'\\' {
-                state.string_escaped = true;
-                continue;
-            }
-            if c == quote {
-                state.string_quote = None;
-            }
-            continue;
-        }
-
-        match c {
-            b'\'' | b'"' | b'`' => state.string_quote = Some(c),
-            b'{' => state.brace_depth += 1,
-            b'}' => state.brace_depth = state.brace_depth.saturating_sub(1),
-            b'(' => state.paren_depth += 1,
-            b')' => state.paren_depth = state.paren_depth.saturating_sub(1),
-            b'[' => state.bracket_depth += 1,
-            b']' => state.bracket_depth = state.bracket_depth.saturating_sub(1),
-            _ => {}
-        }
-    }
-}
-
-/// Drops a trailing `//` comment, ignoring `//` inside string literals.
-fn trim_trailing_line_comment(line: &[u8]) -> &[u8] {
-    let mut quote: Option<u8> = None;
-    let mut escaped = false;
-    let mut i = 0usize;
-    while i < line.len() {
-        let c = line[i];
-        if let Some(q) = quote {
-            if escaped {
-                escaped = false;
-                i += 1;
-                continue;
-            }
-            if c == b'\\' {
-                escaped = true;
-                i += 1;
-                continue;
-            }
-            if c == q {
-                quote = None;
-            }
-            i += 1;
-            continue;
-        }
-
-        if c == b'\'' || c == b'"' || c == b'`' {
-            quote = Some(c);
-            i += 1;
-            continue;
-        }
-
-        if c == b'/' && i + 1 < line.len() && line[i + 1] == b'/' {
-            return &line[0..i];
-        }
-        i += 1;
-    }
-
-    line
-}
-
-/// Heuristic end-of-statement test: a statement ends when nothing is left open
-/// and the last meaningful character can legally terminate it.
-fn is_statement_complete(kind: StmtKind, line: &[u8], state: &StatementParseState) -> bool {
-    if state.string_quote.is_some()
-        || state.brace_depth != 0
-        || state.paren_depth != 0
-        || state.bracket_depth != 0
-    {
-        return false;
-    }
-
-    let trimmed = trim_trailing_line_comment(line).trim_ascii();
-    if trimmed.is_empty() {
-        return false;
-    }
-
-    let last = trimmed[trimmed.len() - 1];
-    if last == b';' {
-        return true;
-    }
-
-    if kind == StmtKind::Import {
-        if strings::index_of(trimmed, b" from ").is_some() {
-            return true;
-        }
-        if let Some(close_idx) = strings::last_index_of_char(trimmed, b'}') {
-            let after_close = trimmed[close_idx + 1..].trim_ascii();
-            if strings::has_prefix_comptime(after_close, b"from") {
-                return true;
-            }
-        }
-        return strings::has_prefix_comptime(trimmed, b"import \"")
-            || strings::has_prefix_comptime(trimmed, b"import '");
-    }
-
-    if last == b'}' || last == b')' || last == b']' {
-        return true;
-    }
-
-    !matches!(
-        last,
-        b',' | b'='
-            | b':'
-            | b'+'
-            | b'-'
-            | b'*'
-            | b'/'
-            | b'%'
-            | b'&'
-            | b'|'
-            | b'^'
-            | b'?'
-            | b'('
-            | b'['
-            | b'{'
-            | b'\\'
-            | b'.'
+            Ok(output)
+        },
     )
 }
 
-/// Lifts leading top-level `import`/`export` statements out of `source`,
-/// returning them alongside the remaining Markdown.
-pub fn extract_top_level_statements(
+/// ESM blocks can appear between Markdown blocks anywhere in the document.
+fn extract_top_level_statements(
     source: &[u8],
+    layout_name: &[u8],
+    names: &mut std::collections::HashSet<Vec<u8>>,
 ) -> Result<(Vec<TopLevelStatement>, Vec<u8>), MdxError> {
-    let mut stmts: Vec<TopLevelStatement> = Vec::new();
-    let mut remaining: Vec<u8> = Vec::new();
-    let mut stmt_buffer: Vec<u8> = Vec::new();
-
-    let mut lines = source.split(|&c| c == b'\n');
-    let mut seen_content = false;
-    let mut in_code_fence = false;
-
-    while let Some(line) = lines.next() {
+    let mut statements = Vec::new();
+    let mut remaining = Vec::new();
+    let mut cursor = 0;
+    let mut fence: Option<(u8, usize)> = None;
+    while cursor < source.len() {
+        let line_end = source[cursor..]
+            .iter()
+            .position(|&b| b == b'\n')
+            .map_or(source.len(), |n| cursor + n + 1);
+        let line = &source[cursor..line_end];
         let trimmed = line.trim_ascii();
-
-        if strings::has_prefix_comptime(trimmed, b"```") {
-            in_code_fence = !in_code_fence;
-        }
-
-        let maybe_stmt = !in_code_fence
-            && !seen_content
-            && !trimmed.is_empty()
-            && (strings::has_prefix_comptime(trimmed, b"import ")
-                || strings::has_prefix_comptime(trimmed, b"import{")
-                || (strings::has_prefix_comptime(trimmed, b"export ")
-                    && !strings::has_prefix_comptime(trimmed, b"export default")));
-
-        if maybe_stmt {
-            let kind = if strings::has_prefix_comptime(trimmed, b"import") {
-                StmtKind::Import
-            } else {
-                StmtKind::Export
-            };
-            let mut stmt_state = StatementParseState::default();
-            stmt_buffer.clear();
-
-            let mut stmt_line = line;
-            loop {
-                if !stmt_buffer.is_empty() {
-                    stmt_buffer.try_reserve(1)?;
-                    stmt_buffer.push(b'\n');
-                }
-                stmt_buffer.try_reserve(stmt_line.len())?;
-                stmt_buffer.extend_from_slice(stmt_line);
-                update_statement_parse_state(&mut stmt_state, stmt_line);
-
-                if is_statement_complete(kind, stmt_line, &stmt_state) {
-                    break;
-                }
-
-                match lines.next() {
-                    Some(next) => stmt_line = next,
-                    None => break,
+        if let Some(&delimiter @ (b'`' | b'~')) = trimmed.first() {
+            let length = trimmed.iter().take_while(|&&b| b == delimiter).count();
+            if length >= 3 {
+                if let Some((open, min)) = fence {
+                    if delimiter == open && length >= min && trimmed[length..].is_empty() {
+                        fence = None;
+                    }
+                } else {
+                    fence = Some((delimiter, length));
                 }
             }
-
-            let mut text = Vec::new();
-            text.try_reserve(stmt_buffer.len())?;
-            text.extend_from_slice(&stmt_buffer);
-            stmts.try_reserve(1)?;
-            stmts.push(TopLevelStatement { text, kind });
+        }
+        let is_module = fence.is_none()
+            && [b"import".as_slice(), b"export".as_slice()]
+                .iter()
+                .any(|keyword| {
+                    line.starts_with(keyword)
+                        && line.get(keyword.len()).is_some_and(|c| {
+                            c.is_ascii_whitespace() || matches!(c, b'{' | b'*' | b'\'' | b'"')
+                        })
+                });
+        if is_module {
+            let mut end = line_end;
+            loop {
+                while end < source.len() {
+                    let next = source[end..]
+                        .iter()
+                        .position(|&b| b == b'\n')
+                        .map_or(source.len(), |n| end + n + 1);
+                    if source[end..next].trim_ascii().is_empty() {
+                        break;
+                    }
+                    end = next;
+                }
+                match parse_module(&source[cursor..end], layout_name, names) {
+                    Ok(mut parsed) => {
+                        statements.try_reserve(parsed.len())?;
+                        statements.append(&mut parsed);
+                        push_all(&mut remaining, b"\n")?;
+                        cursor = end;
+                        break;
+                    }
+                    Err(MdxError::IncompleteJavaScript) if end < source.len() => {
+                        end += 1;
+                    }
+                    Err(err) => return Err(err),
+                }
+            }
             continue;
         }
-
-        if !trimmed.is_empty() {
-            seen_content = true;
-        }
-        remaining.try_reserve(line.len() + 1)?;
-        remaining.extend_from_slice(line);
-        remaining.push(b'\n');
+        push_all(&mut remaining, line)?;
+        cursor = line_end;
     }
-
-    Ok((stmts, remaining))
+    Ok((statements, remaining))
 }
 
 // ========================================
@@ -339,9 +369,11 @@ pub fn extract_top_level_statements(
 /// placeholder, returning the rewritten text and the captured expressions.
 ///
 /// Fenced and inline code spans are passed through untouched. Inside an
-/// expression the scanner tracks strings, template literals (including nested
-/// `${}`), and comments so braces in those contexts don't end it early.
-pub fn replace_expressions(source: &[u8]) -> Result<(Vec<u8>, Vec<ExpressionSlot>), MdxError> {
+/// expression Bun's JavaScript parser determines the closing brace.
+fn replace_expressions(
+    source: &[u8],
+    names: &mut std::collections::HashSet<Vec<u8>>,
+) -> Result<(Vec<u8>, Vec<ExpressionSlot>), MdxError> {
     let marker = b"\x01MDXE";
     let nonce = {
         let mut used = std::collections::HashSet::new();
@@ -376,254 +408,110 @@ pub fn replace_expressions(source: &[u8]) -> Result<(Vec<u8>, Vec<ExpressionSlot
     let mut slots: Vec<ExpressionSlot> = Vec::new();
     let mut output: Vec<u8> = Vec::new();
 
-    let mut i = 0usize;
-    let mut depth = 0usize;
-    let mut expr_start: Option<usize> = None;
-    let mut in_code_fence = false;
-    let mut inline_code_delimiter = 0;
-    let mut fence_delimiter = b'`';
-    let mut fence_length = 0;
-    let mut line_start = 0;
-    let mut expr_quote: Option<u8> = None;
-    let mut expr_escaped = false;
-    let mut expr_in_line_comment = false;
-    let mut expr_in_block_comment = false;
-    let mut template_expr_depths: Vec<usize> = Vec::new();
-
-    while i < source.len() {
-        let c = source[i];
-        if c == b'\n' {
-            line_start = i + 1;
-        }
-
-        // `break 'step` plays the role of Zig's `continue`: it skips the rest
-        // of the body but still runs the `i += 1` below.
-        'step: {
-            if expr_start.is_some() {
-                if expr_in_line_comment {
-                    if c == b'\n' {
-                        expr_in_line_comment = false;
-                    }
-                    break 'step;
+    let arena = bun_alloc::Arena::new();
+    let mut ast_allocator = bun_ast::ASTMemoryAllocator::borrowing(&arena);
+    let _ast_scope = ast_allocator.enter();
+    let mut log = bun_ast::Log::init();
+    let js_source = bun_ast::Source::init_path_string(b"document.mdx", source);
+    bun_js_parser::parse::parse_entry::with_fragment_parser(
+        &js_source,
+        &mut log,
+        &arena,
+        |parser| {
+            let mut i = 0;
+            let mut fence: Option<(u8, usize)> = None;
+            let mut line_start = 0;
+            while i < source.len() {
+                let c = source[i];
+                if c == b'\n' {
+                    line_start = i + 1;
                 }
-
-                if expr_in_block_comment {
-                    if c == b'*' && i + 1 < source.len() && source[i + 1] == b'/' {
-                        expr_in_block_comment = false;
-                        i += 1;
-                    }
-                    break 'step;
-                }
-
-                if let Some(quote) = expr_quote {
-                    if expr_escaped {
-                        expr_escaped = false;
-                        break 'step;
-                    }
-                    if c == b'\\' {
-                        expr_escaped = true;
-                        break 'step;
-                    }
-                    if c == quote {
-                        expr_quote = None;
-                    }
-                    break 'step;
-                }
-
-                if !template_expr_depths.is_empty() {
-                    let top_idx = template_expr_depths.len() - 1;
-                    let top_depth = template_expr_depths[top_idx];
-
-                    if expr_escaped {
-                        expr_escaped = false;
-                        break 'step;
-                    }
-
-                    if c == b'\\' {
-                        expr_escaped = true;
-                        break 'step;
-                    }
-
-                    // Depth 0 = in the literal's text; >0 = inside `${...}`.
-                    if top_depth == 0 {
-                        if c == b'`' {
-                            template_expr_depths.pop();
-                            break 'step;
+                if c == b'`' || c == b'~' {
+                    let run = source[i..].iter().take_while(|&&b| b == c).count();
+                    let block_start = i >= line_start
+                        && i - line_start <= 3
+                        && source[line_start..i].iter().all(|&b| b == b' ');
+                    if run >= 3 && block_start {
+                        if let Some((delimiter, length)) = fence {
+                            if c == delimiter
+                                && run >= length
+                                && source[i + run..]
+                                    .split(|&b| b == b'\n')
+                                    .next()
+                                    .unwrap()
+                                    .trim_ascii()
+                                    .is_empty()
+                            {
+                                fence = None;
+                            }
+                        } else {
+                            fence = Some((c, run));
                         }
-                        if c == b'$' && i + 1 < source.len() && source[i + 1] == b'{' {
-                            template_expr_depths[top_idx] = 1;
-                            i += 1;
+                    } else if fence.is_none() && c == b'`' {
+                        let mut end = i + run;
+                        while end < source.len() {
+                            if source[end] == b'`' {
+                                let closing =
+                                    source[end..].iter().take_while(|&&b| b == b'`').count();
+                                if closing == run {
+                                    end += closing;
+                                    if let Some(nl) =
+                                        source[i..end].iter().rposition(|&b| b == b'\n')
+                                    {
+                                        line_start = i + nl + 1;
+                                    }
+                                    push_all(&mut output, &source[i..end])?;
+                                    i = end;
+                                    break;
+                                }
+                                end += closing;
+                            } else {
+                                end += 1;
+                            }
                         }
-                        break 'step;
+                        if i == end {
+                            continue;
+                        }
                     }
-
-                    if c == b'/' && i + 1 < source.len() && source[i + 1] == b'/' {
-                        expr_in_line_comment = true;
-                        i += 1;
-                        break 'step;
+                    push_all(&mut output, &source[i..i + run])?;
+                    i += run;
+                    continue;
+                }
+                if fence.is_none() {
+                    if c == b'\\' && source.get(i + 1).is_some_and(u8::is_ascii_punctuation) {
+                        push_all(&mut output, &source[i..i + 2])?;
+                        i += 2;
+                        continue;
                     }
-
-                    if c == b'/' && i + 1 < source.len() && source[i + 1] == b'*' {
-                        expr_in_block_comment = true;
-                        i += 1;
-                        break 'step;
-                    }
-
-                    if c == b'\'' || c == b'"' {
-                        expr_quote = Some(c);
-                        expr_escaped = false;
-                        break 'step;
-                    }
-
-                    if c == b'`' {
-                        template_expr_depths.try_reserve(1)?;
-                        template_expr_depths.push(0);
-                        expr_escaped = false;
-                        break 'step;
-                    }
-
                     if c == b'{' {
-                        template_expr_depths[top_idx] += 1;
-                        break 'step;
-                    }
-
-                    if c == b'}' {
-                        template_expr_depths[top_idx] -= 1;
-                        break 'step;
-                    }
-
-                    break 'step;
-                }
-
-                if c == b'/' && i + 1 < source.len() && source[i + 1] == b'/' {
-                    expr_in_line_comment = true;
-                    i += 1;
-                    break 'step;
-                }
-
-                if c == b'/' && i + 1 < source.len() && source[i + 1] == b'*' {
-                    expr_in_block_comment = true;
-                    i += 1;
-                    break 'step;
-                }
-
-                if c == b'\'' || c == b'"' {
-                    expr_quote = Some(c);
-                    expr_escaped = false;
-                    break 'step;
-                }
-
-                if c == b'`' {
-                    template_expr_depths.try_reserve(1)?;
-                    template_expr_depths.push(0);
-                    expr_escaped = false;
-                    break 'step;
-                }
-
-                if c == b'{' {
-                    depth += 1;
-                }
-                if c == b'}' {
-                    depth -= 1;
-                    if depth == 0 {
-                        let start = expr_start.take().unwrap();
-                        let expr_text = &source[start + 1..i];
-
+                        let end = parser.expression_end(i)?;
                         let mut placeholder = Vec::new();
-                        placeholder.try_reserve(prefix.len() + 21)?;
-                        placeholder.extend_from_slice(&prefix);
+                        push_all(&mut placeholder, &prefix)?;
                         let mut num_buf = [0u8; 20];
-                        placeholder.extend_from_slice(format_usize(&mut num_buf, slots.len()));
-                        placeholder.push(1);
-
+                        push_all(&mut placeholder, format_usize(&mut num_buf, slots.len()))?;
+                        push_all(&mut placeholder, &[1])?;
                         let mut original = Vec::new();
-                        original.try_reserve(expr_text.len())?;
-                        original.extend_from_slice(expr_text);
-
-                        output.try_reserve(placeholder.len())?;
-                        output.extend_from_slice(&placeholder);
-
+                        push_all(&mut original, &source[i + 1..end - 1])?;
+                        push_all(&mut output, &placeholder)?;
                         slots.try_reserve(1)?;
                         slots.push(ExpressionSlot {
                             original: original.into_boxed_slice(),
                             placeholder: placeholder.into_boxed_slice(),
                         });
-
-                        expr_quote = None;
-                        expr_escaped = false;
-                        expr_in_line_comment = false;
-                        expr_in_block_comment = false;
-                        template_expr_depths.clear();
-                    }
-                }
-                break 'step;
-            }
-
-            if c == b'`' || c == b'~' {
-                let run_length = source[i..].iter().take_while(|&&b| b == c).count();
-                let at_block_start = i >= line_start
-                    && i - line_start <= 3
-                    && source[line_start..i].iter().all(|&b| b == b' ');
-                if inline_code_delimiter == 0 && run_length >= 3 && at_block_start {
-                    if !in_code_fence {
-                        in_code_fence = true;
-                        fence_delimiter = c;
-                        fence_length = run_length;
-                    } else if c == fence_delimiter && run_length >= fence_length {
-                        let rest = source[i + run_length..]
-                            .split(|&b| b == b'\n')
-                            .next()
-                            .unwrap();
-                        if rest.trim_ascii().is_empty() {
-                            in_code_fence = false;
+                        if let Some(nl) = source[i..end].iter().rposition(|&b| b == b'\n') {
+                            line_start = i + nl + 1;
                         }
-                    }
-                } else if !in_code_fence && c == b'`' {
-                    if inline_code_delimiter == 0 {
-                        inline_code_delimiter = run_length;
-                    } else if inline_code_delimiter == run_length {
-                        inline_code_delimiter = 0;
+                        i = end;
+                        continue;
                     }
                 }
-                push_all(&mut output, &source[i..i + run_length])?;
-                i += run_length - 1;
-                break 'step;
-            }
-            if in_code_fence || inline_code_delimiter != 0 {
-                output.try_reserve(1)?;
-                output.push(c);
-                break 'step;
-            }
-
-            if c == b'\\' && source.get(i + 1).is_some_and(u8::is_ascii_punctuation) {
-                push_all(&mut output, &source[i..i + 2])?;
+                push_all(&mut output, &source[i..i + 1])?;
                 i += 1;
-                break 'step;
             }
-
-            if c == b'{' {
-                expr_start = Some(i);
-                depth = 1;
-                expr_quote = None;
-                expr_escaped = false;
-                expr_in_line_comment = false;
-                expr_in_block_comment = false;
-                template_expr_depths.clear();
-                break 'step;
-            }
-
-            output.try_reserve(1)?;
-            output.push(c);
-        }
-
-        i += 1;
-    }
-
-    if expr_start.is_some() {
-        return Err(MdxError::UnclosedExpression);
-    }
-
-    Ok((output, slots))
+            collect_names(parser, names)?;
+            Ok((output, slots))
+        },
+    )
 }
 
 // ========================================
@@ -640,10 +528,19 @@ pub fn compile(src: &[u8], options: &MdxOptions<'_>) -> Result<Vec<u8>, MdxError
         .as_ref()
         .map_or(0usize, |f| f.content_start as usize);
 
-    let (stmts, remaining) = extract_top_level_statements(&source[content_start..])?;
-    let (preprocessed, slots) = replace_expressions(&remaining)?;
-
-    let mut renderer = JsxRenderer::init(&preprocessed, &slots);
+    let mut names = std::collections::HashSet::new();
+    let (mut stmts, remaining) =
+        extract_top_level_statements(&source[content_start..], b"_MdxLayout", &mut names)?;
+    let (preprocessed, slots) = replace_expressions(&remaining, &mut names)?;
+    let layout_name = unique_name(source, &names, b"_MdxLayout")?;
+    if layout_name != b"_MdxLayout" {
+        (stmts, _) =
+            extract_top_level_statements(&source[content_start..], &layout_name, &mut names)?;
+    }
+    let components_name = unique_name(source, &names, b"_components")?;
+    let content_name = unique_name(source, &names, b"_content")?;
+    let function_name = unique_name(source, &names, b"MDXContent")?;
+    let mut renderer = JsxRenderer::init(&preprocessed, &slots, &components_name);
     md::render_with_renderer(&preprocessed, options.md_options, renderer.renderer())?;
     if renderer.is_oom() {
         return Err(MdxError::OutOfMemory);
@@ -680,8 +577,12 @@ pub fn compile(src: &[u8], options: &MdxOptions<'_>) -> Result<Vec<u8>, MdxError
         push_all(&mut out, b";\n")?;
     }
 
-    push_all(&mut out, b"\nexport default function MDXContent(props) {\n")?;
-    push_all(&mut out, b"  const _components = Object.assign({")?;
+    push_all(&mut out, b"\nexport default function ")?;
+    push_all(&mut out, &function_name)?;
+    push_all(&mut out, b"(props = {}) {\n")?;
+    push_all(&mut out, b"  const ")?;
+    push_all(&mut out, &components_name)?;
+    push_all(&mut out, b" = Object.assign({")?;
     for (idx, name) in renderer.component_names.iter().enumerate() {
         if idx > 0 {
             push_all(&mut out, b", ")?;
@@ -693,9 +594,36 @@ pub fn compile(src: &[u8], options: &MdxOptions<'_>) -> Result<Vec<u8>, MdxError
         push_all(&mut out, b"\"")?;
     }
     push_all(&mut out, b"}, props.components);\n")?;
-    push_all(&mut out, b"  return <>")?;
+    let layouts = stmts.iter().filter(|s| s.layout).count();
+    if layouts > 1 {
+        return Err(MdxError::DuplicateLayout);
+    }
+    let layout_alias = stmts.iter().find_map(|s| s.layout_alias.as_deref());
+    if layouts == 0 || layout_alias.is_some() {
+        push_all(&mut out, b"  const ")?;
+        push_all(&mut out, &layout_name)?;
+        push_all(&mut out, b" = ")?;
+        push_all(
+            &mut out,
+            layout_alias.unwrap_or(b"props.components?.wrapper"),
+        )?;
+        push_all(&mut out, b";\n")?;
+    }
+    push_all(&mut out, b"  const ")?;
+    push_all(&mut out, &content_name)?;
+    push_all(&mut out, b" = <>")?;
     push_all(&mut out, renderer.output())?;
-    push_all(&mut out, b"</>;\n}\n")?;
+    push_all(&mut out, b"</>;\n  return ")?;
+    push_all(&mut out, &layout_name)?;
+    push_all(&mut out, b" ? <")?;
+    push_all(&mut out, &layout_name)?;
+    push_all(&mut out, b" {...props}>{")?;
+    push_all(&mut out, &content_name)?;
+    push_all(&mut out, b"}</")?;
+    push_all(&mut out, &layout_name)?;
+    push_all(&mut out, b"> : ")?;
+    push_all(&mut out, &content_name)?;
+    push_all(&mut out, b";\n}\n")?;
 
     Ok(out)
 }
@@ -840,6 +768,38 @@ fn append_json_string_escaped(out: &mut Vec<u8>, bytes: &[u8]) -> Result<(), Mdx
 // ========================================
 // Small helpers
 // ========================================
+
+fn collect_names(
+    parser: &bun_js_parser::parse::parse_entry::FragmentParser<'_, '_>,
+    names: &mut std::collections::HashSet<Vec<u8>>,
+) -> Result<(), MdxError> {
+    for name in parser.names() {
+        if !names.contains(name) {
+            names.try_reserve(1)?;
+            let mut owned = Vec::new();
+            push_all(&mut owned, name)?;
+            names.insert(owned);
+        }
+    }
+    Ok(())
+}
+
+fn unique_name(
+    source: &[u8],
+    names: &std::collections::HashSet<Vec<u8>>,
+    base: &[u8],
+) -> Result<Vec<u8>, MdxError> {
+    let mut name = Vec::new();
+    push_all(&mut name, base)?;
+    let mut index = 0;
+    while strings::contains(source, &name) || names.contains(&name) {
+        name.truncate(base.len());
+        let mut buffer = [0u8; 20];
+        push_all(&mut name, format_usize(&mut buffer, index))?;
+        index += 1;
+    }
+    Ok(name)
+}
 
 fn push_all(out: &mut Vec<u8>, bytes: &[u8]) -> Result<(), MdxError> {
     out.try_reserve(bytes.len())?;

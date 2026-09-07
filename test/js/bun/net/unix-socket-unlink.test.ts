@@ -229,8 +229,13 @@ describe.skipIf(isWindows)("unix domain socket unlink", () => {
     });
 
     // Node calls exit() directly for process.exit() without freeing the
-    // environment, so no handle is closed and the file stays.
-    test.concurrent("net.Server: process.exit() leaves the socket file, like node", async () => {
+    // environment, so no handle is closed and the file stays. Under
+    // BUN_DESTRUCT_VM_ON_EXIT (ASAN CI lanes set it) every exit tears the VM
+    // down like a worker's, which closes the listener, so the file goes too.
+    const destructsVmOnExit = !["", "0", "false", "no", "off"].includes(
+      (bunEnv.BUN_DESTRUCT_VM_ON_EXIT ?? "").toLowerCase(),
+    );
+    test.concurrent.skipIf(destructsVmOnExit)("net.Server: process.exit() leaves the socket file, like node", async () => {
       const left = await socketFileAfterExit(`
         import { existsSync } from "node:fs";
         import { createServer } from "node:net";

@@ -1038,9 +1038,6 @@ const MALFORMED: i32 = -1;
 /// monomorphizations keeps the hot transpile pages dense (see the facade above).
 /// `ENCODING` stays `const` — it changes the code-unit indexing structure of the
 /// loop, so a per-encoding copy is genuinely different code.
-///
-/// In the UTF-8 instance, malformed bytes (a stray continuation byte, an
-/// invalid lead, or a truncated sequence) become U+FFFD, one byte at a time.
 #[inline(never)]
 pub fn write_pre_quoted_string_inner<W, const ENCODING: Encoding>(
     text_in: &[u8],

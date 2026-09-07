@@ -141,12 +141,15 @@ describe.concurrent("bun pm version", () => {
       const { output: output2, code: code2 } = await runCommand([bunExe(), "pm", "version"], testDir2);
 
       expect(code2).toBe(0);
-      expect(output2).toContain("prepatch");
-      expect(output2).toContain("preminor");
-      expect(output2).toContain("premajor");
-      expect(output2).toContain("1.0.1-alpha.0");
-      expect(output2).toContain("1.1.0-alpha.0");
-      expect(output2).toContain("2.0.0-alpha.0");
+      // Same results as `npm version <increment>`: patch/minor/major release the
+      // prerelease, and pre* without --preid starts a bare numeric prerelease.
+      expect(output2).toContain("patch      1.0.0-alpha.0 → 1.0.0\n");
+      expect(output2).toContain("minor      1.0.0-alpha.0 → 1.0.0\n");
+      expect(output2).toContain("major      1.0.0-alpha.0 → 1.0.0\n");
+      expect(output2).toContain("prerelease 1.0.0-alpha.0 → 1.0.0-alpha.1\n");
+      expect(output2).toContain("prepatch   1.0.0-alpha.0 → 1.0.1-0\n");
+      expect(output2).toContain("preminor   1.0.0-alpha.0 → 1.1.0-0\n");
+      expect(output2).toContain("premajor   1.0.0-alpha.0 → 2.0.0-0\n");
 
       await using testDir3 = tempDir(`version-${i++}`, {
         "package.json": JSON.stringify({ name: "test", version: "1.0.0" }, null, 2),
@@ -229,6 +232,109 @@ describe.concurrent("bun pm version", () => {
 
       const packageJson = await Bun.file(`${testDir}/package.json`).json();
       expect(packageJson.version).toBe("0.0.1");
+    });
+  });
+
+  // Expected values are what `npm version` (node-semver `inc()` / `clean()`) produces.
+  describe("computes the same version as npm", () => {
+    async function bump(current: string | undefined, args: string[]) {
+      using testDir = tempDir(`version-${i++}`, {
+        "package.json": JSON.stringify(current === undefined ? { name: "test" } : { name: "test", version: current }),
+      });
+      const { output, error, code } = await runCommand(
+        [bunExe(), "pm", "version", "--no-git-tag-version", ...args],
+        String(testDir),
+      );
+      const written = (await Bun.file(join(String(testDir), "package.json")).json()).version;
+      return { output: output.trim(), error, code, written };
+    }
+
+    it.each([
+      // patch/minor/major of a prerelease release it when nothing below changed
+      ["1.2.3-beta.4", ["patch"], "1.2.3"],
+      ["1.2.0-beta.4", ["patch"], "1.2.0"],
+      ["1.2.3-beta.4", ["minor"], "1.3.0"],
+      ["1.2.0-beta.4", ["minor"], "1.2.0"],
+      ["2.0.0-beta.4", ["minor"], "2.0.0"],
+      ["1.2.3-beta.4", ["major"], "2.0.0"],
+      ["2.0.0-beta.4", ["major"], "2.0.0"],
+      // a different --preid restarts the counter
+      ["1.2.3-beta.4", ["prerelease", "--preid", "rc"], "1.2.3-rc.0"],
+      ["1.2.3-0", ["prerelease", "--preid", "beta"], "1.2.3-beta.0"],
+      ["1.2.3-beta.4", ["prerelease", "--preid", "beta"], "1.2.3-beta.5"],
+      ["1.2.3-beta.4", ["prerelease"], "1.2.3-beta.5"],
+      ["1.2.3-beta", ["prerelease"], "1.2.3-beta.0"],
+      ["1.2.3-beta", ["prerelease", "--preid", "beta"], "1.2.3-beta.0"],
+      ["1.2.3-beta.foo", ["prerelease", "--preid", "beta"], "1.2.3-beta.0"],
+      ["1.2.3-beta.1.5", ["prerelease", "--preid", "beta"], "1.2.3-beta.1.6"],
+      ["1.2.3-alpha.1.beta", ["prerelease"], "1.2.3-alpha.2.beta"],
+      ["1.2.3-5", ["prerelease"], "1.2.3-6"],
+      ["1.2.3", ["prerelease"], "1.2.4-0"],
+      ["1.2.3", ["prerelease", "--preid", "beta"], "1.2.4-beta.0"],
+      ["1.2.3", ["prerelease", "--preid", "alpha.beta"], "1.2.4-alpha.beta.0"],
+      // pre* without --preid does not carry the old identifier over
+      ["1.2.3-beta.4", ["prepatch"], "1.2.4-0"],
+      ["1.2.3-beta.4", ["preminor"], "1.3.0-0"],
+      ["1.2.3-beta.4", ["premajor"], "2.0.0-0"],
+      ["1.2.3-beta.4", ["prepatch", "--preid", "beta"], "1.2.4-beta.0"],
+      ["1.2.3", ["premajor", "--preid", "rc"], "2.0.0-rc.0"],
+      // build metadata is dropped, a v/= prefix and whitespace are cleaned
+      ["1.2.3+build.9", ["patch"], "1.2.4"],
+      ["1.2.3-beta.4+build.9", ["prerelease"], "1.2.3-beta.5"],
+      ["v1.2.3", ["patch"], "1.2.4"],
+      [" 1.2.3 ", ["minor"], "1.3.0"],
+      ["1.2.3", ["v2.0.0"], "2.0.0"],
+      ["1.2.3", ["=2.0.0"], "2.0.0"],
+      ["1.2.3", ["2.0.0+build.7"], "2.0.0"],
+      ["1.2.3", ["2.0.0-rc.1+build.7"], "2.0.0-rc.1"],
+      // an explicit version does not need a valid current version
+      ["1.2", ["2.0.0"], "2.0.0"],
+      ["not a version", ["3.0.0"], "3.0.0"],
+      // npm counts a missing or empty version as 0.0.0
+      [undefined, ["minor"], "0.1.0"],
+      ["", ["patch"], "0.0.1"],
+    ] as const)("%s + %j -> %s", async (current, args, expected) => {
+      expect(await bump(current, [...args])).toEqual({
+        output: `v${expected}`,
+        error: "",
+        code: 0,
+        written: expected,
+      });
+    });
+
+    it("keeps counting a dotted --preid", async () => {
+      // node-semver compares only the first identifier here and reports
+      // "Version not changed"; bun compares the whole --preid.
+      expect(await bump("1.2.3-alpha.beta.0", ["prerelease", "--preid", "alpha.beta"])).toEqual({
+        output: "v1.2.3-alpha.beta.1",
+        error: "",
+        code: 0,
+        written: "1.2.3-alpha.beta.1",
+      });
+    });
+
+    it.each([
+      ["1.2.3", ["2.0"], 'Invalid version argument: "2.0"'],
+      ["1.2.3", ["2.0.0.0"], 'Invalid version argument: "2.0.0.0"'],
+      ["1.2.3", ["2.0.0-beta..1"], 'Invalid version argument: "2.0.0-beta..1"'],
+      ["1.2.3", ["2.0.0-béta"], 'Invalid version argument: "2.0.0-béta"'],
+      ["1.2.3", ["1.2.3 4"], 'Invalid version argument: "1.2.3 4"'],
+      ["1.2", ["patch"], 'Current version "1.2" is not a valid semver'],
+      ["1.2.x", ["minor"], 'Current version "1.2.x" is not a valid semver'],
+      ["1.2.3.4", ["major"], 'Current version "1.2.3.4" is not a valid semver'],
+      ["1.2.3", ["prerelease", "--preid", "a b"], 'Invalid --preid "a b"'],
+      ["1.2.3", ["prepatch", "--preid", "beta."], 'Invalid --preid "beta."'],
+      ["1.2.3", ["1.2.3"], "Version not changed"],
+      ["v1.2.3", ["1.2.3"], "Version not changed"],
+      ["1.2.3+build", ["=1.2.3"], "Version not changed"],
+    ] as const)("%s + %j fails: %s", async (current, args, message) => {
+      const result = await bump(current, [...args]);
+      expect(result.error).toContain(`error: ${message}\n`);
+      expect({ output: result.output, code: result.code, written: result.written }).toEqual({
+        output: "",
+        code: 1,
+        written: current,
+      });
     });
   });
 
@@ -564,7 +670,7 @@ describe.concurrent("bun pm version", () => {
       );
 
       expect(code5).toBe(0);
-      expect(output5.trim()).toBe("v1.0.0-alpha.1");
+      expect(output5.trim()).toBe("v1.0.0-alpha.0");
 
       await using testDir6 = tempDir(`version-${i++}`, {
         "package.json": JSON.stringify({ name: "test", version: "1.0.0-3" }, null, 2),
@@ -579,16 +685,16 @@ describe.concurrent("bun pm version", () => {
       expect(output6.trim()).toBe("v1.0.0-4");
     });
 
-    it("should preserve prerelease identifiers correctly", async () => {
+    it("previews the same increments as npm version for prereleases", async () => {
       const scenarios = [
         {
           version: "1.0.3-alpha.1",
           preid: "beta",
           expected: {
-            patch: "1.0.3-alpha.1 → 1.0.4",
+            patch: "1.0.3-alpha.1 → 1.0.3",
             minor: "1.0.3-alpha.1 → 1.1.0",
             major: "1.0.3-alpha.1 → 2.0.0",
-            prerelease: "1.0.3-alpha.1 → 1.0.3-beta.2",
+            prerelease: "1.0.3-alpha.1 → 1.0.3-beta.0",
             prepatch: "1.0.3-alpha.1 → 1.0.4-beta.0",
             preminor: "1.0.3-alpha.1 → 1.1.0-beta.0",
             premajor: "1.0.3-alpha.1 → 2.0.0-beta.0",
@@ -598,10 +704,10 @@ describe.concurrent("bun pm version", () => {
           version: "1.0.3-1",
           preid: "abcd",
           expected: {
-            patch: "1.0.3-1 → 1.0.4",
+            patch: "1.0.3-1 → 1.0.3",
             minor: "1.0.3-1 → 1.1.0",
             major: "1.0.3-1 → 2.0.0",
-            prerelease: "1.0.3-1 → 1.0.3-abcd.2",
+            prerelease: "1.0.3-1 → 1.0.3-abcd.0",
             prepatch: "1.0.3-1 → 1.0.4-abcd.0",
             preminor: "1.0.3-1 → 1.1.0-abcd.0",
             premajor: "1.0.3-1 → 2.0.0-abcd.0",
@@ -611,10 +717,10 @@ describe.concurrent("bun pm version", () => {
           version: "2.5.0-rc.3",
           preid: "next",
           expected: {
-            patch: "2.5.0-rc.3 → 2.5.1",
-            minor: "2.5.0-rc.3 → 2.6.0",
+            patch: "2.5.0-rc.3 → 2.5.0",
+            minor: "2.5.0-rc.3 → 2.5.0",
             major: "2.5.0-rc.3 → 3.0.0",
-            prerelease: "2.5.0-rc.3 → 2.5.0-next.4",
+            prerelease: "2.5.0-rc.3 → 2.5.0-next.0",
             prepatch: "2.5.0-rc.3 → 2.5.1-next.0",
             preminor: "2.5.0-rc.3 → 2.6.0-next.0",
             premajor: "2.5.0-rc.3 → 3.0.0-next.0",
@@ -624,10 +730,10 @@ describe.concurrent("bun pm version", () => {
           version: "1.0.0-a",
           preid: "b",
           expected: {
-            patch: "1.0.0-a → 1.0.1",
-            minor: "1.0.0-a → 1.1.0",
-            major: "1.0.0-a → 2.0.0",
-            prerelease: "1.0.0-a → 1.0.0-b.1",
+            patch: "1.0.0-a → 1.0.0",
+            minor: "1.0.0-a → 1.0.0",
+            major: "1.0.0-a → 1.0.0",
+            prerelease: "1.0.0-a → 1.0.0-b.0",
             prepatch: "1.0.0-a → 1.0.1-b.0",
             preminor: "1.0.0-a → 1.1.0-b.0",
             premajor: "1.0.0-a → 2.0.0-b.0",
@@ -649,7 +755,7 @@ describe.concurrent("bun pm version", () => {
         expect(output).toContain(`Current package version: v${scenario.version}`);
 
         for (const [incrementType, expectedTransformation] of Object.entries(scenario.expected)) {
-          expect(output).toContain(`${incrementType.padEnd(10)} ${expectedTransformation}`);
+          expect(output).toContain(`${incrementType.padEnd(10)} ${expectedTransformation}\n`);
         }
       }
 

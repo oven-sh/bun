@@ -661,9 +661,10 @@ where
         self.derived_requests.with_mut(|list| {
             if list.len() == list.capacity() {
                 // Before growing, drop entries whose `Request` JS already
-                // finalized, so a handler that copies in a loop pins at most
-                // the live copies until the request ends.
-                list.retain_mut(|weak| weak.get().is_some());
+                // finalized (dropping the `WeakRef` frees them), so a handler
+                // that copies in a loop pins at most the live copies until the
+                // request ends.
+                list.retain(|weak| weak.is_alive());
             }
             list.push(copy);
         });

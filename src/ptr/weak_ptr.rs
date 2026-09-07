@@ -104,6 +104,18 @@ impl<T: HasWeakPtrData> WeakPtr<T> {
         }
     }
 
+    /// Whether the owner has not yet finalized the pointee. `false` for an
+    /// empty handle. Reads only the embedded `WeakPtrData`; no borrow of `T` is
+    /// formed and the weak ref is kept either way.
+    #[inline]
+    pub fn is_alive(&self) -> bool {
+        match self.raw_ptr {
+            // SAFETY: allocation is live while any WeakPtr holds it (see above).
+            Some(value) => unsafe { !(*T::weak_ptr_data(value.as_ptr())).finalized() },
+            None => false,
+        }
+    }
+
     /// Borrow the pointee, or `None` once the owner has finalized it (which
     /// also releases this handle's weak ref).
     ///
@@ -252,10 +264,15 @@ mod tests {
         // SAFETY: `raw` is a freshly leaked Box; live and not finalized.
         let mut weak = unsafe { WeakPtr::init_ref(raw) };
         assert_eq!(weak.get().map(|o| o.payload), Some(4));
+        assert!(weak.is_alive());
 
         // Owner finalizes its contents: not the last ref, so the allocation stays.
         // SAFETY: `raw` is live.
         assert!(!unsafe { (*Owner::weak_ptr_data(raw)).on_finalize() });
+        assert_eq!(drops(), before);
+
+        // `is_alive` observes the finalize but keeps the ref (nothing freed).
+        assert!(!weak.is_alive());
         assert_eq!(drops(), before);
 
         // `get` on a finalized owner releases the ref and reports `None`, which
@@ -264,6 +281,7 @@ mod tests {
         assert_eq!(drops(), before + 1);
         // The handle is now empty: a second `get` or the drop must be a no-op.
         assert!(weak.get().is_none());
+        assert!(!weak.is_alive());
         drop(weak);
     }
 

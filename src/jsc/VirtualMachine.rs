@@ -3687,21 +3687,17 @@ impl VirtualMachine {
             self.transpiler_store.enabled = false;
         }
 
-        // `NODE_CHANNEL_FD` names the IPC channel this process inherited.
-        // `Loader::load_process` strips it from the env map so no spawned child
-        // inherits the channel, so read it from the environment directly. The
-        // channel belongs to the process (its main thread). A worker sees the
-        // same inherited variable but must not open a second endpoint over the
-        // same fd (Node: no process.send() in workers).
+        // `Loader::load_process` keeps NODE_CHANNEL_FD out of the env map, so
+        // read the environment directly. Main thread only: a worker sees the
+        // same variable but must not open a second endpoint over the fd (Node:
+        // no process.send() in workers).
         if self.is_main_thread() {
             if let Some(fd_s) = bun_core::env_var::NODE_CHANNEL_FD.get() {
                 let advanced = bun_core::env_var::NODE_CHANNEL_SERIALIZATION_MODE
                     .get()
                     .is_some_and(|v| bun_core::strings::eql(v, b"advanced"));
-                // Accept only non-negative values that fit in i31 (i.e.
-                // `0..=i32::MAX`). Parsing as `u32` then `as i32` would silently
-                // wrap values in `2^31..2^32` to a negative fd instead of taking
-                // the warn branch.
+                // Parse as i32 and reject negatives: `u32 as i32` would wrap
+                // `2^31..2^32` to a negative fd instead of warning.
                 match bun_core::fmt::parse_int::<i32>(fd_s, 10)
                     .ok()
                     .filter(|&n| n >= 0)

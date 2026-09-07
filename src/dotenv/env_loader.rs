@@ -162,6 +162,19 @@ static NODE_PATH_TO_USE_SET_ONCE: bun_core::RwLock<Option<Box<[u8]>>> = bun_core
 // PORTING.md §Concurrency: OnceLock — set once from CLI flag, read many.
 pub static HAS_NO_CLEAR_SCREEN_CLI_FLAG: OnceLock<bool> = OnceLock::new();
 
+/// `NODE_CHANNEL_FD` / `NODE_CHANNEL_SERIALIZATION_MODE`, compared with the
+/// key semantics of [`HashTable`] (ASCII case-insensitive on Windows).
+fn is_ipc_channel_key(key: &[u8]) -> bool {
+    const KEYS: [&[u8]; 2] = [b"NODE_CHANNEL_FD", b"NODE_CHANNEL_SERIALIZATION_MODE"];
+    KEYS.iter().any(|&k| {
+        if cfg!(windows) {
+            strings::eql_case_insensitive_ascii(key, k, true)
+        } else {
+            strings::eql(key, k)
+        }
+    })
+}
+
 impl Loader {
     /// Shared "empty-ish" predicate for proxy env vars: an unset/empty value,
     /// or a literal empty-quote pair left over from shell `export FOO=""` /
@@ -622,16 +635,10 @@ impl Loader {
                 let key = &env[..i as usize];
                 let value = &env[i as usize + 1..];
                 if !key.is_empty() {
-                    // NODE_CHANNEL_FD and NODE_CHANNEL_SERIALIZATION_MODE name
-                    // the IPC channel this process inherited. Bun consumes them
-                    // for its own process.send(). A spawned script, tool, or
-                    // lifecycle step must not inherit the channel (Node marks
-                    // the fd close-on-exec and deletes the variables before it
-                    // spawns). Keeping them out of the loader is what stops
-                    // every CLI spawn path from forwarding the channel.
-                    if strings::eql(key, b"NODE_CHANNEL_FD")
-                        || strings::eql(key, b"NODE_CHANNEL_SERIALIZATION_MODE")
-                    {
+                    // The inherited IPC channel belongs to this process; a
+                    // child spawned from this env must not adopt it (Node drops
+                    // these before it spawns). `bun run <script>` re-adds them.
+                    if is_ipc_channel_key(key) {
                         continue;
                     }
                     self.map.put(key, value)?;

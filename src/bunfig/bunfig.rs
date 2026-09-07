@@ -782,7 +782,7 @@ impl<'a> Parser<'a> {
                     self.load_log_level(&expr)?;
                 }
 
-                self.parse_install(&install_obj)?;
+                self.parse_install(cmd, &install_obj)?;
             }
 
             if let Some(run_expr) = json.get(b"run") {
@@ -1274,20 +1274,21 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn parse_install(&mut self, install_obj: &Expr) -> crate::Result<()> {
+    fn parse_install(&mut self, cmd: CommandTag, install_obj: &Expr) -> crate::Result<()> {
         // The helper methods (`expect*`, `add_error`, `parse_registry`) take
         // `&mut self`, which under Stacked Borrows would invalidate any
         // long-lived `&mut` derived from `self.ctx.install`. Move the box
         // out so the install borrow is provably disjoint from `self`, then
         // restore it on every exit path.
         let mut install = self.ctx.install.take().expect("install slot primed");
-        let result = self.parse_install_inner(&mut install, install_obj);
+        let result = self.parse_install_inner(cmd, &mut install, install_obj);
         self.ctx.install = Some(install);
         result
     }
 
     fn parse_install_inner(
         &mut self,
+        cmd: CommandTag,
         install: &mut api::BunInstall,
         install_obj: &Expr,
     ) -> crate::Result<()> {
@@ -1448,12 +1449,14 @@ impl<'a> Parser<'a> {
         // destination. A project bunfig is part of the checkout, so it does
         // not get to pick those directories: a cloned repository would
         // otherwise make `bun link` plant its own `"bin"` entries anywhere on
-        // the machine.
+        // the machine. Only package manager commands read these keys, so
+        // `bun run` and `bun test` skip them without the warning.
+        let warn_ignored = cmd.is_npm_related();
         if let Some(v) = install_obj.get(b"globalDir") {
             if let Some(path) = v.as_string(self.bump) {
                 if self.scope == ConfigScope::User {
                     install.global_dir = Some(path.into());
-                } else {
+                } else if warn_ignored {
                     self.warn_project_scope_ignored(v.loc, "globalDir", "BUN_INSTALL_GLOBAL_DIR");
                 }
             }
@@ -1462,7 +1465,7 @@ impl<'a> Parser<'a> {
             if let Some(path) = v.as_string(self.bump) {
                 if self.scope == ConfigScope::User {
                     install.global_bin_dir = Some(path.into());
-                } else {
+                } else if warn_ignored {
                     self.warn_project_scope_ignored(v.loc, "globalBinDir", "BUN_INSTALL_BIN");
                 }
             }

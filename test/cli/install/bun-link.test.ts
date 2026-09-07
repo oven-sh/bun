@@ -485,6 +485,7 @@ it("ignores [install] globalDir and globalBinDir from a project bunfig.toml", as
       bin: { "victim-file": "entry.js", "new-name": "entry.js" },
     }),
     "lib/entry.js": "#!/bin/sh\necho linked\n",
+    "lib/hello.js": `console.log("hello from a script");`,
     "lib/bunfig.toml": ({ root }) =>
       `[install]\n` +
       `globalBinDir = '${join(root, "outside").replaceAll("\\", "/")}'\n` +
@@ -525,6 +526,20 @@ it("ignores [install] globalDir and globalBinDir from a project bunfig.toml", as
   expect(stderr).toContain('"globalBinDir" is ignored in a project bunfig.toml');
   expect(stderr).toContain('"globalDir" is ignored in a project bunfig.toml');
   expect(exitCode).toBe(0);
+
+  // Only package manager commands read these keys. Running a script in the
+  // project (what a `#!/usr/bin/env bun` bin does) stays quiet.
+  await using run = spawn({
+    cmd: [bunExe(), "hello.js"],
+    cwd: join(String(dir), "lib"),
+    stdout: "pipe",
+    stderr: "pipe",
+    env: linkEnv,
+  });
+  const [runStdout, runStderr, runExitCode] = await Promise.all([run.stdout.text(), run.stderr.text(), run.exited]);
+  expect(runStdout).toBe("hello from a script\n");
+  expect(runStderr).toBe("");
+  expect(runExitCode).toBe(0);
 });
 
 it("honors [install] globalDir and globalBinDir from the user bunfig", async () => {

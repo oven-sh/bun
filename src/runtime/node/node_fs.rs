@@ -4676,10 +4676,8 @@ impl NodeFS {
         Ok(())
     }
 
-    /// Closes a destination that `copyFile`/`cp` opened by path. It is opened
-    /// without O_TRUNC (a same-inode copy must not zero itself first), so on
-    /// success trim it to the bytes written. On failure remove it, as libuv's
-    /// `uv_fs_copyfile` does, unless it turns out to be the source inode.
+    /// Success: trim dest (opened without O_TRUNC) to the bytes written, then close.
+    /// Failure: close and unlink dest like libuv, unless dest is the source inode.
     #[cfg(not(windows))]
     fn close_copy_dest(dest: &ZStr, dest_fd: FD, src_stat: &sys::Stat, wrote: u64, ok: bool) {
         if ok {
@@ -4972,8 +4970,7 @@ impl NodeFS {
                         wrote = size as u64;
                         break 'copy Ok(());
                     }
-                    // If this fails for any reason, we say it's disabled
-                    // We don't want to add the system call overhead of running this function on a lot of files that don't support it
+                    // Any failure disables FICLONE process-wide to save the syscall where it can't work.
                     sys::copy_file::disable_ioctl_ficlone();
                 }
 
@@ -4983,9 +4980,8 @@ impl NodeFS {
                     );
                 }
 
-                let mut off_in_copy: i64 = 0;
-                let mut off_out_copy: i64 = 0;
-
+                // Null offsets: the kernel advances both fds' positions, so a sendfile or
+                // read/write fallback after partial progress continues where this stopped.
                 if size == 0 {
                     // copy until EOF
                     loop {
@@ -4995,9 +4991,9 @@ impl NodeFS {
                         let written = unsafe {
                             sys::linux::copy_file_range(
                                 src_fd.native(),
-                                &raw mut off_in_copy,
+                                core::ptr::null_mut(),
                                 dest_fd.native(),
-                                &raw mut off_out_copy,
+                                core::ptr::null_mut(),
                                 sys::page_size(),
                                 0,
                             )
@@ -5030,9 +5026,9 @@ impl NodeFS {
                         let written = unsafe {
                             sys::linux::copy_file_range(
                                 src_fd.native(),
-                                &raw mut off_in_copy,
+                                core::ptr::null_mut(),
                                 dest_fd.native(),
-                                &raw mut off_out_copy,
+                                core::ptr::null_mut(),
                                 size,
                                 0,
                             )
@@ -8409,9 +8405,8 @@ impl NodeFS {
                     );
                 }
 
-                let mut off_in_copy: i64 = 0;
-                let mut off_out_copy: i64 = 0;
-
+                // Null offsets: the kernel advances both fds' positions, so a sendfile or
+                // read/write fallback after partial progress continues where this stopped.
                 if size == 0 {
                     // copy until EOF
                     loop {
@@ -8421,9 +8416,9 @@ impl NodeFS {
                         let written = unsafe {
                             sys::linux::copy_file_range(
                                 src_fd.native(),
-                                &raw mut off_in_copy,
+                                core::ptr::null_mut(),
                                 dest_fd.native(),
-                                &raw mut off_out_copy,
+                                core::ptr::null_mut(),
                                 sys::page_size(),
                                 0,
                             )
@@ -8434,10 +8429,7 @@ impl NodeFS {
                             dest.as_bytes(),
                         ) {
                             match err.get_errno() {
-                                // EINVAL: eCryptfs and other filesystems may not support copy_file_range
-                                // XDEV: cross-device copy not supported
-                                // NOSYS: syscall not available
-                                // OPNOTSUPP: filesystem doesn't support this operation
+                                // Cross-device, no syscall, or a filesystem without it (eCryptfs: EINVAL).
                                 E::EXDEV | E::ENOSYS | E::EINVAL | E::EOPNOTSUPP => {
                                     if matches!(err.get_errno(), E::ENOSYS | E::EOPNOTSUPP) {
                                         sys::copy_file::disable_copy_file_range_syscall();
@@ -8461,9 +8453,9 @@ impl NodeFS {
                         let written = unsafe {
                             sys::linux::copy_file_range(
                                 src_fd.native(),
-                                &raw mut off_in_copy,
+                                core::ptr::null_mut(),
                                 dest_fd.native(),
-                                &raw mut off_out_copy,
+                                core::ptr::null_mut(),
                                 size,
                                 0,
                             )
@@ -8474,10 +8466,7 @@ impl NodeFS {
                             dest.as_bytes(),
                         ) {
                             match err.get_errno() {
-                                // EINVAL: eCryptfs and other filesystems may not support copy_file_range
-                                // XDEV: cross-device copy not supported
-                                // NOSYS: syscall not available
-                                // OPNOTSUPP: filesystem doesn't support this operation
+                                // Cross-device, no syscall, or a filesystem without it (eCryptfs: EINVAL).
                                 E::EXDEV | E::ENOSYS | E::EINVAL | E::EOPNOTSUPP => {
                                     if matches!(err.get_errno(), E::ENOSYS | E::EOPNOTSUPP) {
                                         sys::copy_file::disable_copy_file_range_syscall();
@@ -8569,9 +8558,8 @@ impl NodeFS {
             let mut wrote: u64 = 0;
 
             let result: Maybe<ret::CopyFile> = 'copy: {
-                // FreeBSD 13+ has copy_file_range(2).
-                let mut off_in: i64 = 0;
-                let mut off_out: i64 = 0;
+                // FreeBSD 13+ has copy_file_range(2). Null offsets so the kernel advances
+                // the fds' positions and the read/write fallback continues where this stopped.
                 loop {
                     let want = if size == 0 {
                         (i32::MAX - 1) as usize
@@ -8582,9 +8570,9 @@ impl NodeFS {
                     let rc: isize = unsafe {
                         sys::freebsd::copy_file_range(
                             src_fd.native(),
-                            &mut off_in,
+                            core::ptr::null_mut(),
                             dest_fd.native(),
-                            &mut off_out,
+                            core::ptr::null_mut(),
                             want,
                             0,
                         )

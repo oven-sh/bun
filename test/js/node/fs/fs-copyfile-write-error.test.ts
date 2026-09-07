@@ -54,6 +54,8 @@ describe.skipIf(isWindows)("copy that fails partway removes the destination", ()
             cwd: String(dir),
             env: {
               ...bunEnv,
+              // A reflink (btrfs, XFS) writes nothing, so RLIMIT_FSIZE would not stop it.
+              BUN_CONFIG_DISABLE_ioctl_ficlonerange: "1",
               BUN_CONFIG_DISABLE_COPY_FILE_RANGE: variant === "sendfile" ? "1" : undefined,
             },
             stdout: "pipe",

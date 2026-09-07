@@ -1325,7 +1325,11 @@ function detectMacosSdk(ci: boolean): { osxDeploymentTarget: string; osxSysroot:
   // what ends up in build.ninja — so swapping SDKs doesn't cause a
   // spurious full rebuild). But follow the link to PARSE the version
   // from the real basename (e.g. MacOSX14.2.sdk → "14").
-  const candidates = [`${devDir}/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk`, `${devDir}/SDKs/MacOSX.sdk`];
+  const candidates = [
+    process.env.SDKROOT,
+    `${devDir}/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk`,
+    `${devDir}/SDKs/MacOSX.sdk`,
+  ].filter((path): path is string => !!path);
 
   let osxSysroot: string | undefined;
   let sdkVersionFromPath: string | undefined;
@@ -1339,8 +1343,6 @@ function detectMacosSdk(ci: boolean): { osxDeploymentTarget: string; osxSysroot:
     }
   }
 
-  // Neither layout matched — fall back to xcrun. Rare (custom SDK
-  // locations via SDKROOT env or similar).
   if (osxSysroot === undefined) {
     try {
       osxSysroot = execSync("xcrun --sdk macosx --show-sdk-path", { encoding: "utf8" }).trim();

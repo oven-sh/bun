@@ -64,6 +64,27 @@ function resolveDarwin(partial: PartialConfig = {}, toolchain = mockToolchain())
   return resolveConfig({ os: "darwin", arch: "aarch64", buildType: "Release", ...partial }, toolchain);
 }
 
+test.skipIf(!isMacOS)("native macOS config honors SDKROOT", async () => {
+  using dir = tempDir("macos-sdk-override", { "MacOSX26.5.sdk/SDKSettings.json": "{}" });
+  const sdk = join(String(dir), "MacOSX26.5.sdk");
+  const configPath = new URL("../../scripts/build/config.ts", import.meta.url).href;
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `import { resolveConfig } from ${JSON.stringify(configPath)};
+       console.log(resolveConfig({ os: "darwin", arch: "aarch64", buildType: "Release" }, ${JSON.stringify(mockToolchain())}).osxSysroot);`,
+    ],
+    env: { ...bunEnv, SDKROOT: sdk },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stdout.trim()).toBe(sdk);
+  expect(stderr).toBe("");
+  expect(exitCode).toBe(0);
+});
+
 describe.skipIf(isMacOS)("macOS cross-compile config (non-darwin host)", () => {
   test("darwin target resolves to a cross-compile with ld64.lld and llvm-strip", () => {
     const cfg = resolveDarwin();

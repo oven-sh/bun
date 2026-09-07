@@ -289,6 +289,13 @@ function getImageName(platform, options) {
   // linux image tag that doesn't exist.
   const hostOs = os === "freebsd" || crossCompile ? "linux" : os;
 
+  // Trial branch: run on the images this branch baked in build #110938 (bootstrap v48 with the
+  // per-lane /opt/bun-toolchain/<variant> from bun-toolchain-…-6464ba2b) instead of the published
+  // v<N>, so follow-up commits need no rebake.
+  if (hostOs === "linux" && !buildImages) {
+    return `${name}-build-111903`;
+  }
+
   if (buildImages && !publishImages && (!imageFilter || hostOs === imageFilter || distro === imageFilter)) {
     return `${name}-build-${getBuildNumber()}`;
   }
@@ -537,6 +544,11 @@ function getBuildBunStep(platform, options) {
       // ASAN runtime settings — unrelated to build config, affects the
       // linked binary's startup during the smoke test.
       ASAN_OPTIONS: "allow_user_segv_handler=1:disable_coredump=0:detect_leaks=0",
+      // Trial: compile with the oven-sh/rust bun-toolchain built for this lane (PGO/BOLT-trained on
+      // this exact build), baked into the build-host image by scripts/bootstrap.sh
+      // install_bun_toolchain, instead of apt LLVM + rustup.
+      BUN_TOOLCHAIN_LLVM: `/opt/bun-toolchain/ci-${getTargetKey(platform)}`,
+      BUN_TOOLCHAIN_RUST: `/opt/bun-toolchain/ci-${getTargetKey(platform)}`,
     },
     command: [...nasmSetup, getBuildCommand(platform, options, "build")],
   };

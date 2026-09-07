@@ -4,6 +4,13 @@
 
 
 # ----------------------------------------------------------------------------
+# Bun's Highway NEON_BF16 target. Gate: hwy::SupportedTargets via getauxval(AT_HWCAP)
+# (ASIMDHP + ASIMDDP) and AT_HWCAP2 (BF16); compiled with +bf16+dotprod, so clang >= 22
+# emits sdot here.
+# ----------------------------------------------------------------------------
+_ZN3bun11N_NEON_BF1633VisibleLatin1WidthExcludeANSIImplEPKhm                  [DotProd]
+
+# ----------------------------------------------------------------------------
 # Bun's Highway SVE/SVE2 targets. Gate: hwy::SupportedTargets via getauxval(AT_HWCAP).
 # (168 symbols)
 # ----------------------------------------------------------------------------

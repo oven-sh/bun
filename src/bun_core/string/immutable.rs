@@ -2202,17 +2202,10 @@ pub fn percent_encode_write(
     Ok(())
 }
 
-/// Percent-encodes a file path so that it can be written where a URL is
-/// expected (an HTML `src`/`href`, for example) and name the same file once a
-/// browser has parsed it and a server has decoded it. `/` is kept as the
-/// segment separator.
-///
-/// The escaped bytes are the WHATWG URL "path percent-encode set" (C0
-/// controls, space, `"`, `#`, `<`, `>`, `?`, `^`, `` ` ``, `{`, `}`, DEL and
-/// every non-ASCII byte), plus `%` and `\`: the input is a path, so a `%` in
-/// it is a literal percent sign and a `\` is not a separator the browser may
-/// rewrite to `/`. Everything else a browser sends unchanged, so it is left
-/// unchanged here too. Returns the input when nothing needs escaping.
+/// Percent-encodes a file path for use as a URL path (an HTML `src`/`href`):
+/// the WHATWG path percent-encode set (C0, space, `"#<>?^`{}`, DEL,
+/// non-ASCII) plus `%` and `\`, which are literal in a file name. `/` and
+/// everything a browser sends unchanged are kept. Borrows when nothing changes.
 pub fn percent_encode_url_path(path: &[u8]) -> std::borrow::Cow<'_, [u8]> {
     #[inline(always)]
     fn needs_escape(byte: u8) -> bool {

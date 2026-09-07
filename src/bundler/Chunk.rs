@@ -771,8 +771,7 @@ impl IntermediateOutput {
                     || reference_path_style == ReferencePathStyle::OutdirRelative
                     || !import_prefix.is_empty();
 
-                // An HTML `src`/`href` is a URL, so a space, `#`, `?` or `%` in an
-                // output file's name must be percent-encoded to still name that file.
+                // HTML `src`/`href` values are URLs, JS and CSS strings stay raw.
                 let percent_encode_paths = matches!(chunk.content, Content::Html);
 
                 let urls_for_css: &[&[u8]] = if standalone_chunk_contents.is_some() {
@@ -857,8 +856,7 @@ impl IntermediateOutput {
                                 QueryKind::None | QueryKind::ChunkId => unreachable!(),
                             };
 
-                            // Same bytes as the write pass below: percent-encoding a
-                            // `\` is longer than the `/` it is normalized to there.
+                            // Normalized as in the write pass so both measure the same bytes.
                             let file_path: &[u8] = {
                                 let n = file_path.len();
                                 let dst = &mut file_path_buf[..n];

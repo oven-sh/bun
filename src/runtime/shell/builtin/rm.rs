@@ -625,11 +625,13 @@ pub struct ShellRmTask {
     /// First error hit by any worker thread. Mutex-wrapped so [`handle_err`]
     /// can take `&self` without an interior `&mut` cast.
     pub(crate) err: bun_threading::Guarded<Option<bun_sys::Error>>,
-    /// Number of [`DirTask::dir_fd`]s currently open across the walk. A
-    /// directory keeps its fd open while its queued children run, so this is
-    /// what bounds fd usage: once it reaches [`OPEN_DIR_BUDGET`],
-    /// subdirectories are removed inline (depth-first, one fd per level)
-    /// instead of being queued as new tasks. See [`enqueue_no_join`].
+    /// Approximate number of [`DirTask::dir_fd`]s open across the walk (it is
+    /// not decremented for directories abandoned after an error, which only
+    /// makes it read high). A directory keeps its fd open while its queued
+    /// children run, so this is what keeps fd usage in check: once it reaches
+    /// [`OPEN_DIR_BUDGET`], subdirectories are removed inline (depth-first,
+    /// one fd per level) instead of being queued as new tasks. Read only to
+    /// make that choice. See [`enqueue_no_join`].
     open_dirs: AtomicU32,
     pub(crate) join_style: JoinStyle,
     pub(crate) event_loop: EventLoopHandle,
@@ -639,12 +641,17 @@ pub struct ShellRmTask {
 /// How many directories may sit open waiting for queued children before new
 /// subdirectories are walked inline instead of queued. Queued children are
 /// what give the walk its parallelism; open-and-waiting parents only pin fds.
+/// Past the budget, usage is about this many waiting directories plus one fd
+/// per level of each worker's inline walk.
 const OPEN_DIR_BUDGET: u32 = 64;
 
 /// Inline (same-thread) subdirectory walks nest on the worker stack, one
 /// `remove_entry_dir` frame (with its 8 KiB readdir buffer) per level. Past
 /// this depth a subdirectory is queued again regardless of the fd budget, so
-/// a pathologically deep tree cannot overflow the worker stack.
+/// a pathologically deep tree cannot overflow the worker stack. The levels of
+/// such a chain then wait with their fds open until that queued task runs, so
+/// a tree both wide and deeper than this can exceed the budget; running out
+/// of fds there fails the `rm` with EMFILE, it does not misdirect it.
 const MAX_INLINE_DEPTH: u32 = 32;
 
 thread_local! {
@@ -857,10 +864,10 @@ impl ShellRmTask {
     /// The child is normally queued on the work pool. `parent` then keeps its
     /// directory fd open until the child has run. Once [`OPEN_DIR_BUDGET`]
     /// directories are open, the child is instead walked inline on this
-    /// thread before returning, so fd usage stays bounded no matter how the
-    /// pool orders the queue. The `subtask_count` protocol is the same either
-    /// way: an inline child that finishes releases its count before the
-    /// parent's own hand-off, exactly like a fast asynchronous one.
+    /// thread before returning, so fd usage no longer grows with how many
+    /// queued tasks the pool leaves waiting. The `subtask_count` protocol is
+    /// the same either way: an inline child that finishes releases its count
+    /// before the parent's own hand-off, exactly like a fast asynchronous one.
     fn enqueue_no_join(&self, parent: *mut DirTask, path: ZBox, kind_hint: EntryKindHint) {
         if self.error_signal().load(Ordering::SeqCst) {
             return;
@@ -1002,6 +1009,10 @@ impl ShellRmTask {
             if parent.is_null() {
                 self.cwd
             } else {
+                debug_assert!(
+                    (*parent).dir_fd.is_valid(),
+                    "parent directory fd closed under a live child"
+                );
                 (*parent).dir_fd
             }
         }
@@ -1165,6 +1176,13 @@ impl ShellRmTask {
             );
         }
 
+        // Another worker already failed: skip the open. Queued children of an
+        // aborted walk land here, so this keeps them from opening (and
+        // holding) directories that will never be walked.
+        if self.error_signal().load(Ordering::SeqCst) {
+            return Ok(());
+        }
+
         // The entry was classified as a directory before this open (readdir
         // type, or unlinkat returning EISDIR/EPERM). NOFOLLOW keeps a symlink
         // swapped in as the final component from redirecting the open into an
@@ -1210,10 +1228,6 @@ impl ShellRmTask {
             (*dir_task).dir_fd = fd;
         }
         self.open_dirs.fetch_add(1, Ordering::Relaxed);
-
-        if self.error_signal().load(Ordering::SeqCst) {
-            return Ok(());
-        }
 
         let mut iterator = dir_iterator::iterate(fd);
         let mut child_vtable = RemoveFileVTable {
@@ -1336,7 +1350,7 @@ impl ShellRmTask {
                     }
                     Err(self.error_with_path(&e, path.as_bytes()))
                 }
-                _ => Err(e),
+                _ => Err(self.error_with_path(&e, path.as_bytes())),
             },
         }
     }
@@ -1572,22 +1586,34 @@ impl DirTask {
     /// `this` is a live DirTask; called from a worker thread that just
     /// finished its body.
     unsafe fn post_run(this: *mut DirTask) {
-        // SAFETY: caller contract — `this` is a live DirTask owned by the
-        // calling worker thread. `me` is held only over atomic / read-only
-        // field access; `task_manager` is a separate allocation live until
-        // `pending_main_callbacks` hits 0; `parent_task` is live until its
-        // `subtask_count` drains. `delete_after_waiting_for_children` and
-        // `queue_for_write` re-derive from raw `*mut` (no overlap with `me`,
-        // which is a `&` over atomics + Copy fields). Non-root `deinit`
-        // reclaims `this`'s Box; `finish_concurrently` may free the root.
-        unsafe {
-            let me = &*this;
-            // This is true if the directory has subdirectories that need to be deleted.
-            if me.need_to_wait.load(Ordering::SeqCst) {
-                return;
-            }
-            // We have executed all the children of this task.
-            if me.subtask_count.fetch_sub(1, Ordering::SeqCst) == 1 {
+        // When the last child of a waiting parent finishes, that child's
+        // thread removes the parent and then finishes the parent the same
+        // way. A chain of waiting ancestors is climbed in this loop rather
+        // than by recursion, so its length (the tree depth, now bounded only
+        // by the fd limit) cannot overflow the worker stack.
+        let mut this = this;
+        loop {
+            // SAFETY: caller contract — `this` is a live DirTask owned by the
+            // calling worker thread (the original task, or an ancestor whose
+            // counter this thread just took to 0). `me` is held only over
+            // atomic / read-only field access; `task_manager` is a separate
+            // allocation live until `pending_main_callbacks` hits 0;
+            // `parent_task` is live until its `subtask_count` drains.
+            // `delete_after_waiting_for_children` and `queue_for_write`
+            // re-derive from raw `*mut` (no overlap with `me`, which is a `&`
+            // over atomics + Copy fields). Non-root `deinit` reclaims `this`'s
+            // Box; `finish_concurrently` may free the root.
+            unsafe {
+                let me = &*this;
+                // This is true if the directory has subdirectories that need to be deleted.
+                if me.need_to_wait.load(Ordering::SeqCst) {
+                    return;
+                }
+                // We have executed all the children of this task.
+                if me.subtask_count.fetch_sub(1, Ordering::SeqCst) != 1 {
+                    // Otherwise need to wait.
+                    return;
+                }
                 let tm = &*me.task_manager;
                 // If a verbose write will be queued, take a pending count on the
                 // ShellRmTask now — before decrementing the parent (children) or
@@ -1611,31 +1637,36 @@ impl DirTask {
                     Self::deinit(this);
                 }
 
-                // If we have a parent and we are the last child, now we can delete the parent.
-                if !parent_task.is_null() {
-                    let p = &*parent_task;
-                    // The parent releases its own slot on this counter in
-                    // `remove_entry_dir`; whoever takes it to 0 owns the
-                    // parent's rmdir. The parent's `fetch_sub` is sequenced
-                    // after its final `deleted_entries` write and its
-                    // `need_to_wait.store(true)`, and every decrement is a
-                    // SeqCst RMW, so reading 1 here synchronizes-with the
-                    // parent's release and makes those writes visible to
-                    // `delete_after_waiting_for_children`.
-                    if p.subtask_count.fetch_sub(1, Ordering::SeqCst) == 1 {
-                        Self::delete_after_waiting_for_children(parent_task);
-                    }
+                if parent_task.is_null() {
+                    // Root task: hand it back. It may be freed at any time after
+                    // this unless the verbose hop's pending count keeps it.
+                    ShellRmTask::finish_concurrently(task_manager);
                     return;
                 }
 
-                // Root task: hand it back. It may be freed at any time after
-                // this unless the verbose hop's pending count keeps it.
-                ShellRmTask::finish_concurrently(task_manager);
+                // If we have a parent and we are the last child, now we can delete the parent.
+                let p = &*parent_task;
+                // The parent releases its own slot on this counter in
+                // `remove_entry_dir`; whoever takes it to 0 owns the
+                // parent's rmdir. The parent's `fetch_sub` is sequenced
+                // after its final `deleted_entries` write and its
+                // `need_to_wait.store(true)`, and every decrement is a
+                // SeqCst RMW, so reading 1 here synchronizes-with the
+                // parent's release and makes those writes visible to
+                // `delete_after_waiting_for_children`.
+                if p.subtask_count.fetch_sub(1, Ordering::SeqCst) != 1 {
+                    return;
+                }
+                Self::delete_after_waiting_for_children(parent_task);
+                // The parent is removed; finish it on the next iteration.
+                this = parent_task;
             }
         }
-        // Otherwise need to wait.
     }
 
+    /// Remove a directory whose last child just finished. The caller took
+    /// its `subtask_count` to 0 and must run [`post_run`] on it next.
+    ///
     /// # Safety
     /// `this` is a live DirTask; called from a worker thread.
     unsafe fn delete_after_waiting_for_children(this: *mut DirTask) {
@@ -1661,7 +1692,6 @@ impl DirTask {
                     tm.handle_err(e);
                 }
             }
-            Self::post_run(this);
         }
     }
 

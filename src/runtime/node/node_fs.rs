@@ -4676,8 +4676,7 @@ impl NodeFS {
         Ok(())
     }
 
-    /// Success: trim dest (opened without O_TRUNC) to the bytes written, then close.
-    /// Failure: close and unlink dest like libuv, unless dest is the source inode.
+    /// Ok: trim dest (no O_TRUNC at open) to `wrote`, close. Err: close, unlink unless dest is src.
     #[cfg(not(windows))]
     fn close_copy_dest(dest: &ZStr, dest_fd: FD, src_stat: &sys::Stat, wrote: u64, ok: bool) {
         if ok {
@@ -4980,8 +4979,7 @@ impl NodeFS {
                     );
                 }
 
-                // Null offsets: the kernel advances both fds' positions, so a sendfile or
-                // read/write fallback after partial progress continues where this stopped.
+                // Null offsets advance the fd positions, so a fallback resumes where this stopped.
                 if size == 0 {
                     // copy until EOF
                     loop {
@@ -8405,8 +8403,7 @@ impl NodeFS {
                     );
                 }
 
-                // Null offsets: the kernel advances both fds' positions, so a sendfile or
-                // read/write fallback after partial progress continues where this stopped.
+                // Null offsets advance the fd positions, so a fallback resumes where this stopped.
                 if size == 0 {
                     // copy until EOF
                     loop {
@@ -8558,8 +8555,7 @@ impl NodeFS {
             let mut wrote: u64 = 0;
 
             let result: Maybe<ret::CopyFile> = 'copy: {
-                // FreeBSD 13+ has copy_file_range(2). Null offsets so the kernel advances
-                // the fds' positions and the read/write fallback continues where this stopped.
+                // FreeBSD 13+ copy_file_range(2). Null offsets so the fallback resumes where it stopped.
                 loop {
                     let want = if size == 0 {
                         (i32::MAX - 1) as usize

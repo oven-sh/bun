@@ -4713,7 +4713,7 @@ it("concurrent end() on two allowHalfOpen TLS peers closes both sockets", async 
 // Object.prototype cannot supply an option the caller did not pass.
 //
 // Each case runs in its own process: Object.prototype is global state.
-describe("Object.prototype pollution", () => {
+describe.concurrent("Object.prototype pollution", () => {
   it("does not take a socket handler from Object.prototype", async () => {
     await using proc = Bun.spawn({
       cmd: [
@@ -4804,12 +4804,12 @@ describe("Object.prototype pollution", () => {
         const client = await Bun.connect({
           hostname: "127.0.0.1",
           port: server.port,
-          // The certificate is self-signed, so the peer is not authorized. Only
-          // rejectUnauthorized: false makes the handshake report that it is.
+          // The certificate is self-signed, so verification fails and with it the
+          // handshake. Only rejectUnauthorized: false lets the handshake succeed.
           tls: { serverName: "localhost" },
           socket: {
             data() {}, close() {}, error() {}, connectError() {},
-            handshake: (socket, authorized) => got.resolve("authorized: " + authorized),
+            handshake: (socket, success) => got.resolve("success: " + success),
           },
         });
         delete Object.prototype.rejectUnauthorized;
@@ -4823,7 +4823,7 @@ describe("Object.prototype pollution", () => {
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect({ stdout: stdout.trim(), stderr }).toEqual({ stdout: "authorized: false", stderr: "" });
+    expect({ stdout: stdout.trim(), stderr }).toEqual({ stdout: "success: false", stderr: "" });
     expect(exitCode).toBe(0);
   });
 });

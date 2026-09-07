@@ -1153,12 +1153,8 @@ fn resolve(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JS
     let value = match do_resolve(global_object, callframe.arguments()) {
         Ok(v) => v,
         Err(e) => {
-            let err = global_object.take_error(e);
             return Ok(
-                JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
-                    global_object,
-                    err,
-                ),
+                JSPromise::rejected_promise_with_caught_exception(global_object, e)?.to_js(),
             );
         }
     };

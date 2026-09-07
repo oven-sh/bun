@@ -480,10 +480,8 @@ impl FileReader {
             #[cfg(unix)]
             {
                 use bun_io::pipe_reader::PosixFlags;
-                // A from_pipe() reader that arrives IS_PAUSED is lazy subprocess
-                // stdio: leave it paused so the first bytes come through the
-                // bounded on_pull path (one highWaterMark) instead of an eager
-                // read loop that drains whole kernel buffers ahead of the consumer.
+                // An IS_PAUSED arrival is lazy subprocess stdio: its first read is
+                // the bounded on_pull, not an eager loop that outruns the consumer.
                 if !was_lazy
                     && self.reader().flags.contains(PosixFlags::POLLABLE)
                     && !self.reader().flags.contains(PosixFlags::IS_PAUSED)

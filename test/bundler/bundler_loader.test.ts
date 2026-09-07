@@ -148,8 +148,41 @@ describe("bundler", async () => {
             '[{"hello":{"@to":"world","#text":"hi ","b":"there"}},{"greeting":{"@__proto__":"1","to":["world","you"]}},{"@__proto__":"1","to":["world","you"]}]',
         },
       });
+      // One file imported under two `with { type }` loaders is two modules
+      // with two values, as it is at runtime. The bundler used to key modules
+      // by path alone, so the first loader won for every import of the file.
+      itBundled("bun/loader-same-file-under-two-import-attributes", {
+        target,
+        outdir: "/out",
+        files: {
+          "/entry.ts": /* js */ `
+        import obj from './data.json';
+        import { text } from './as-text';
+        import * as shadow from './as-text';
+        const dynamicText = (await import('./data.json', { with: { type: 'text' } })).default;
+        const dynamicObj = (await import('./data.json')).default;
+        import pageText from './page.html' with { type: 'text' };
+        import pageFile from './page.html' with { type: 'file' };
+        console.write(JSON.stringify([
+          typeof obj, obj.j,
+          typeof text, text,
+          dynamicText === text, dynamicObj === obj, shadow.text === text,
+          pageText,
+          typeof pageFile, pageFile !== pageText && !pageFile.includes('<p>'),
+        ]));
+      `,
+          "/as-text.ts": /* js */ `
+        import text from './data.json' with { type: 'text' };
+        export { text };
+      `,
+          "/data.json": `{"j":1}`,
+          "/page.html": `<p>hi</p>`,
+        },
+        run: { stdout: '["object",1,"string","{\\"j\\":1}",true,true,true,"<p>hi</p>","string",true]' },
+      });
     });
   }
+
 
   itBundled("bun/loader-text-file", {
     target: "bun",

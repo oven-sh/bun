@@ -1469,6 +1469,7 @@ install_linux_glibc_sysroot() {
 
 	if ! [ -f "$(which skopeo)" ]; then install_packages skopeo; fi
 	if ! [ -f "$(which jq)" ]; then install_packages jq; fi
+	if ! [ -f "$(which dpkg-deb)" ]; then install_packages dpkg; fi
 	skopeo="$(require skopeo)"
 	jq_bin="$(require jq)"
 	if [ "$sudo" = "1" ] || [ -z "$can_sudo" ]; then _s=""; else _s="sudo -n"; fi

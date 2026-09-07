@@ -2557,13 +2557,14 @@ function fdSyncWrite(chunk, encoding, callback) {
       offset += fs.writeSync(this[kSyncWriteFd], buf, offset);
     }
   } catch (err) {
-    if (err?.code !== "EAGAIN") {
+    if (process.platform === "win32" || err?.code !== "EAGAIN") {
       callback(err);
       return;
     }
     // The fd is O_NONBLOCK and the kernel buffer is full. Node's pipe handle
     // polls for writability here, so hand the tail to a FileSink, which does
-    // the same. Every later write goes through the sink, behind this tail.
+    // the same on its own dup of the fd. Every later write goes through the
+    // sink, behind this tail.
     let sink;
     try {
       sink = this[kSyncWriteSink] = Bun.file(this[kSyncWriteFd]).writer();
@@ -2608,7 +2609,7 @@ function fdSinkWrite(self, sink, buf, callback) {
   }
   const { length } = buf;
   if ($isPromise(result)) {
-    result.then(() => {
+    result.$then(() => {
       self[kBytesWritten] = (self[kBytesWritten] || 0) + length;
       callback();
     }, callback);

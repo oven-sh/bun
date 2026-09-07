@@ -256,11 +256,8 @@ const BUN_CREATE_DIR: &[u8] = b".bun-create";
 // PORTING.md §Global mutable state: single-thread CLI scratch buffer → RacyCell.
 static HOME_DIR_BUF: bun_core::RacyCell<PathBuffer> = bun_core::RacyCell::new(PathBuffer::ZEROED);
 
-/// True when joining `name` onto a directory resolves to a path inside that
-/// directory. `bun create` joins the template name onto each template
-/// directory, so `.`, `..`, `""` and `../name` select a template directory
-/// itself or a directory above it instead of a template in it. The join is
-/// `platform::Loose`, which folds `\` as well as `/` on every platform.
+/// True when joining `name` onto a directory lands inside that directory. The
+/// template lookup joins with `platform::Loose`, which folds `/` and `\`.
 fn names_path_inside_dir(name: &[u8]) -> bool {
     let mut depth: usize = 0;
     for segment in strings::tokenize_any(name, b"/\\") {
@@ -279,8 +276,7 @@ fn names_path_inside_dir(name: &[u8]) -> bool {
     depth > 0
 }
 
-/// True when `inner` is `outer` or a path under it. Both are absolute and
-/// normalized.
+/// `inner` is `outer` or a path under it. Both are absolute and normalized.
 fn path_contains(outer: &[u8], inner: &[u8]) -> bool {
     let outer = strings::without_trailing_slash(outer);
     if outer.is_empty() || inner.len() < outer.len() || inner[..outer.len()] != *outer {
@@ -288,17 +284,13 @@ fn path_contains(outer: &[u8], inner: &[u8]) -> bool {
     }
     inner.len() == outer.len()
         || bun_core::path_sep::is_sep_native(inner[outer.len()])
-        // `outer` is a root (`/`, `C:\`) and keeps its separator.
+        // A root (`/`) keeps its separator.
         || bun_core::path_sep::is_sep_native(outer[outer.len() - 1])
 }
 
-/// True when the destination is the template directory, is inside it, or
-/// contains it. The local-folder copy deletes the destination and then walks
-/// the template, so each of the three deletes or recurses into the files it
-/// copies. After the check on the paths as given, both sides are compared by
-/// the path the OS reports for the open directory. That catches a symlinked
-/// prefix (`/tmp` on macOS, while the cwd is already resolved) and a different
-/// letter case on a case-insensitive volume.
+/// The destination is the template, is inside it, or contains it. Compares the
+/// paths as given, then the paths the OS reports for the open directories,
+/// which resolves a symlinked prefix and letter case.
 fn destination_overlaps_template(
     template_dir: &bun_sys::Dir,
     abs_template_path: &[u8],
@@ -316,8 +308,7 @@ fn destination_overlaps_template(
         Ok(real) => real,
         Err(_) => return false,
     };
-    // The destination may not exist yet. Open the deepest directory on its
-    // path that does.
+    // The destination may not exist yet. Open its deepest existing directory.
     let mut path = destination;
     let existing = loop {
         match bun_sys::Dir::open(path) {
@@ -335,9 +326,7 @@ fn destination_overlaps_template(
     if path.len() == destination.len() {
         path_contains(template_real, existing_real) || path_contains(existing_real, template_real)
     } else {
-        // Only an ancestor of the destination exists, so the destination cannot
-        // contain the template. It is inside the template when that ancestor is
-        // the template or inside it.
+        // Only an ancestor exists. A missing destination cannot contain the template.
         path_contains(template_real, existing_real)
     }
 }

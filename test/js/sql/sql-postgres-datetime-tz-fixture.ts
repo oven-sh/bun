@@ -86,11 +86,13 @@ function checkRows(protocol: string, rows: Array<Record<string, unknown>>, want:
   }
 }
 
-// `0.1::real` tells the two result formats apart in-band: the 4-byte binary
-// float4 decodes to Math.fround(0.1), the text rendering "0.1" to 0.1.
-function checkFormat(protocol: string, rows: Array<{ fmt: number }>, want: number) {
-  if (rows[0]?.fmt !== want) {
-    failures.push(`${protocol} query: format sentinel 0.1::real decoded to ${rows[0]?.fmt}, want ${want}`);
+// `array[1]::int4[]` tells the two result formats apart in-band: the binary
+// int4[] decodes to an Int32Array, the text rendering "{1}" to an Array.
+function checkFormat(protocol: string, rows: Array<{ fmt: unknown }>, want: "binary" | "text") {
+  const fmt = rows[0]?.fmt;
+  const got = fmt instanceof Int32Array ? "binary" : Array.isArray(fmt) ? "text" : String(fmt);
+  if (got !== want) {
+    failures.push(`${protocol} query: format sentinel array[1]::int4[] decoded as ${got}, want ${want}`);
   }
 }
 
@@ -99,10 +101,10 @@ function checkFormat(protocol: string, rows: Array<{ fmt: number }>, want: numbe
 // asks for text results. With a parameter, Bind is sent after Describe and
 // requests binary for timestamp/timestamptz; the sentinel proves which one
 // each query got.
-const binaryRows = await sql`SELECT ts, tstz, d, 0.1::real AS fmt FROM ${sql(t)} WHERE id >= ${0} ORDER BY id`;
-const textRows = await sql`SELECT ts, tstz, d, 0.1::real AS fmt FROM ${sql(t)} ORDER BY id`.simple();
-checkFormat("binary", binaryRows, Math.fround(0.1));
-checkFormat("text", textRows, 0.1);
+const binaryRows = await sql`SELECT ts, tstz, d, array[1]::int4[] AS fmt FROM ${sql(t)} WHERE id >= ${0} ORDER BY id`;
+const textRows = await sql`SELECT ts, tstz, d, array[1]::int4[] AS fmt FROM ${sql(t)} ORDER BY id`.simple();
+checkFormat("binary", binaryRows, "binary");
+checkFormat("text", textRows, "text");
 checkRows("binary", binaryRows, expected);
 checkRows("text", textRows, expected);
 
@@ -144,7 +146,7 @@ for (const type of ["timestamp", "timestamptz"] as const) {
         (_, i) =>
           `${value(i)}::${type} AS v${i}, floor(extract(epoch FROM ${value(i)}::${type}) * 1000)::text AS ms${i}`,
       )
-      .concat("0.1::real AS fmt")
+      .concat("array[1]::int4[] AS fmt")
       .join(", ");
   // With parameters this is an extended query whose results arrive binary;
   // without, unsafe() sends a simple query whose results arrive as text.
@@ -153,8 +155,8 @@ for (const type of ["timestamp", "timestamptz"] as const) {
     subMsLiterals.map(([literal]) => literal),
   );
   const textResult = await sql.unsafe(`SELECT ${columns(i => `'${subMsLiterals[i][0]}'`)}`);
-  checkFormat(`binary ${type} sweep`, binaryResult, Math.fround(0.1));
-  checkFormat(`text ${type} sweep`, textResult, 0.1);
+  checkFormat(`binary ${type} sweep`, binaryResult, "binary");
+  checkFormat(`text ${type} sweep`, textResult, "text");
   const [binary] = binaryResult;
   const [text] = textResult;
 
@@ -203,15 +205,15 @@ const historicalBinary = await sql`
            ${lmt}::timestamptz AS tstz,
            ARRAY[${lmt}::timestamptz, '2024-06-15 12:00:00+00'::timestamptz] AS tstz_arr,
            ARRAY['2024-06-15 12:00:00'::timestamp] AS ts_arr,
-           0.1::real AS fmt`;
+           array[1]::int4[] AS fmt`;
 const historicalText = await sql.unsafe(`
     SELECT '${lmt}'::timestamptz::text AS tstz_text,
            '${lmt}'::timestamptz AS tstz,
            ARRAY['${lmt}'::timestamptz, '2024-06-15 12:00:00+00'::timestamptz] AS tstz_arr,
            ARRAY['2024-06-15 12:00:00'::timestamp] AS ts_arr,
-           0.1::real AS fmt`);
-checkFormat("binary historical", historicalBinary, Math.fround(0.1));
-checkFormat("text historical", historicalText, 0.1);
+           array[1]::int4[] AS fmt`);
+checkFormat("binary historical", historicalBinary, "binary");
+checkFormat("text historical", historicalText, "text");
 checkRows("binary historical", historicalBinary, historicalExpected);
 checkRows("text historical", historicalText, historicalExpected);
 

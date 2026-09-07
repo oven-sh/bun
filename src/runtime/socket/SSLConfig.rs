@@ -277,18 +277,15 @@ pub fn tls_true_defaults(vm: &VirtualMachine) -> SSLConfig {
     cfg
 }
 
-/// `tls.DEFAULT_CIPHERS = ...` sets the cipher list of every context built
-/// without a `ciphers` option, servers included, like Node's
-/// configSecureContext. A list with no TLS 1.2 cipher left raises the
-/// protocol floor to TLS 1.3, because BoringSSL keeps its built-in TLS 1.2
-/// list when `SSL_CTX_set_cipher_list("")` matches nothing. With an explicit
-/// `maxVersion` below 1.3 that leaves no version to negotiate and every
-/// handshake fails, the outcome Node's emptied TLS 1.2 list gives.
+/// No `ciphers` option means `tls.DEFAULT_CIPHERS`, like Node's configSecureContext.
 fn apply_default_ciphers(vm: &VirtualMachine, cfg: &mut SSLConfig) {
     let Some(ciphers) = vm.tls_default_ciphers() else {
         return;
     };
     cfg.ssl_ciphers = dupe_z(ciphers);
+    // Only TLS 1.3 names were assigned: `SSL_CTX_set_cipher_list("")` keeps
+    // BoringSSL's built-in TLS 1.2 list, so raise the floor instead (Node
+    // does the same in configSecureContext).
     let tls1_3 = i32::from(bun_boringssl_sys::TLS1_3_VERSION);
     if ciphers.is_empty() && cfg.ssl_min_version < tls1_3 {
         cfg.ssl_min_version = tls1_3;

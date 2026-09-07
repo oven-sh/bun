@@ -3623,8 +3623,7 @@ impl VirtualMachine {
         self.transpiler.env_mut().get_tls_reject_unauthorized()
     }
 
-    /// The TLS 1.2 cipher list assigned through `tls.DEFAULT_CIPHERS = ...`
-    /// (TLS 1.3 suite names already stripped), or `None` when never assigned.
+    /// The TLS 1.2 list assigned through `tls.DEFAULT_CIPHERS`, `None` when never assigned.
     pub fn tls_default_ciphers(&self) -> Option<&[u8]> {
         self.rare_data
             .as_deref()

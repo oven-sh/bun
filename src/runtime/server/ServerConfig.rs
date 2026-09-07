@@ -15,7 +15,9 @@ pub use http_method::{Method, Optional as MethodOptional};
 use super::server_body::ServerInitContext;
 use super::web_socket_server_context::WebSocketServerContext;
 use super::{AnyRoute, AnyServer};
-use crate::server::jsc::{JSGlobalObject, JSPropertyIterator, JSValue, JsResult, Strong};
+use crate::server::jsc::{
+    JSGlobalObject, JSPropertyIterator, JSValue, JsResult, Strong, VirtualMachine,
+};
 use bun_core::fmt as bun_fmt;
 
 pub use crate::socket::ssl_config::SSLConfig;
@@ -552,6 +554,31 @@ fn validate_route_name(global: &JSGlobalObject, path: &[u8]) -> JsResult<()> {
     Ok(())
 }
 
+/// Whether `development` defaults to off for a `Bun.serve()` call made now.
+///
+/// `NODE_ENV` / `BUN_ENV` are read from the live `process.env`, not the
+/// startup snapshot in `vm.env_loader()`, so a runtime assignment or `delete`
+/// made before the call counts (the timing frameworks get when they read
+/// `process.env.NODE_ENV` at app creation). When neither is set, a process
+/// put in production mode by other means (`--define process.env.NODE_ENV`)
+/// still defaults to off.
+fn default_is_production(global: &JSGlobalObject, vm: &VirtualMachine) -> JsResult<bool> {
+    let process_env = global.process_env()?;
+    let is_production = |key: &str| -> JsResult<Option<bool>> {
+        Ok(match process_env.get(global, key)? {
+            Some(value) if value.is_string() => {
+                Some(value.to_js_string_view(global)?.eq_ascii(b"production"))
+            }
+            None | Some(_) => None,
+        })
+    };
+    let (node_env, bun_env) = (is_production("NODE_ENV")?, is_production("BUN_ENV")?);
+    if node_env.is_none() && bun_env.is_none() {
+        return Ok(vm.transpiler.options.production && vm.env_loader().get_node_env().is_none());
+    }
+    Ok(node_env == Some(true) || bun_env == Some(true))
+}
+
 fn get_routes_object(global: &JSGlobalObject, arg: JSValue) -> JsResult<Option<JSValue>> {
     for key in ["routes", "static"] {
         if let Some(routes) = arg.get(global, key)? {
@@ -636,11 +663,7 @@ impl ServerConfig {
         };
         let mut has_hostname = false;
 
-        if env.get(b"NODE_ENV").unwrap_or(b"") == b"production" {
-            args.development = DevelopmentOption::Production;
-        }
-
-        if arguments.vm.transpiler.options.production {
+        if default_is_production(global, vm)? {
             args.development = DevelopmentOption::Production;
         }
 

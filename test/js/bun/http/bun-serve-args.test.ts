@@ -1,6 +1,6 @@
 import { serve } from "bun";
 import { describe, expect, test } from "bun:test";
-import { isWindows, tmpdirSync } from "../../../harness";
+import { bunEnv, bunExe, isWindows, tmpdirSync } from "../../../harness";
 
 const defaultHostname = "localhost";
 
@@ -260,6 +260,103 @@ describe("Bun.serve development options", () => {
     expect(server.port).toBeGreaterThan(0);
     expect(server.development).toBe(false);
     server.stop();
+  });
+
+  // The default for `development` is decided from `process.env.NODE_ENV` as it
+  // is when `Bun.serve()` is called, so a runtime assignment or delete before
+  // the call counts (the same timing as frameworks that read it at app
+  // creation). An explicit `development` option still wins.
+  const nodeEnvFixture = /* js */ `
+    const results = {};
+    async function probe(label, options = {}) {
+      const server = Bun.serve({
+        port: 0,
+        fetch() {
+          throw new Error("secret-in-error-message");
+        },
+        ...options,
+      });
+      const res = await fetch(server.url);
+      const body = await res.text();
+      results[label] = {
+        development: server.development,
+        errorPage: (res.headers.get("content-type") ?? "").split(";")[0] + (body.includes("secret-in-error-message") ? " with message" : ""),
+      };
+      await server.stop(true);
+    }
+    await probe("at launch");
+    process.env.NODE_ENV = "production";
+    await probe("assigned production");
+    await probe("assigned production, development: true", { development: true });
+    process.env.NODE_ENV = "development";
+    await probe("assigned development");
+    await probe("assigned development, development: false", { development: false });
+    delete process.env.NODE_ENV;
+    await probe("deleted");
+    console.log(JSON.stringify(results));
+  `;
+
+  async function runNodeEnvFixture(NODE_ENV: string | undefined) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", nodeEnvFixture],
+      env: { ...bunEnv, NODE_ENV },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    // The exit code is 1 because the handler errors are unhandled; stderr
+    // carries them. Only the printed JSON matters here.
+    try {
+      return JSON.parse(stdout);
+    } catch {
+      throw new Error(`fixture did not print JSON.\nstdout:\n${stdout}\nstderr:\n${stderr}`);
+    }
+  }
+
+  const devPage = { development: true, errorPage: "text/html with message" };
+  const prodPage = { development: false, errorPage: "text/plain" };
+
+  test.concurrent("NODE_ENV is read from process.env when serve() is called (unset at launch)", async () => {
+    expect(await runNodeEnvFixture(undefined)).toEqual({
+      "at launch": devPage,
+      "assigned production": prodPage,
+      "assigned production, development: true": devPage,
+      "assigned development": devPage,
+      "assigned development, development: false": prodPage,
+      "deleted": devPage,
+    });
+  });
+
+  test.concurrent("NODE_ENV is read from process.env when serve() is called (production at launch)", async () => {
+    expect(await runNodeEnvFixture("production")).toEqual({
+      "at launch": prodPage,
+      "assigned production": prodPage,
+      "assigned production, development: true": devPage,
+      "assigned development": devPage,
+      "assigned development, development: false": prodPage,
+      "deleted": devPage,
+    });
+  });
+
+  test.concurrent("--define process.env.NODE_ENV still selects the production default", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "--define",
+        'process.env.NODE_ENV="production"',
+        "-e",
+        `const server = Bun.serve({ port: 0, fetch: () => new Response("ok") });
+         console.log(JSON.stringify({ inEnvObject: Object.hasOwn(process.env, "NODE_ENV"), development: server.development }));
+         await server.stop(true);`,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({ inEnvObject: false, development: false });
+    expect(exitCode).toBe(0);
   });
 });
 

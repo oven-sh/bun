@@ -1154,3 +1154,13 @@ JSValue createEnvironmentVariablesMap(Zig::GlobalObject* globalObject)
 #endif
 }
 }
+
+extern "C" JSC::EncodedJSValue Bun__Process__getEnvObject(JSC::JSGlobalObject* lexicalGlobalObject)
+{
+    auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSC::JSObject* env = globalObject->processEnvObject();
+    RETURN_IF_EXCEPTION(scope, {});
+    return JSValue::encode(env);
+}

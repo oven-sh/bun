@@ -916,14 +916,10 @@ impl Response {
             if arg_init.is_undefined_or_null() {
                 // no-op
             } else if arg_init.is_number() {
-                response.init.with_mut(|i| {
-                    i.status_code =
-                        u16::try_from(0.max(arg_init.to_int32()).min(i32::from(u16::MAX))).unwrap();
-                });
-            } else {
-                if let Some(init) = Init::init(global_this, arg_init)? {
-                    response.init.set(init);
-                }
+                let status = StatusRule::Response.check_value(global_this, arg_init)?;
+                response.init.with_mut(|i| i.status_code = status);
+            } else if let Some(init) = Init::init(global_this, arg_init)? {
+                response.init.set(init);
             }
         }
 
@@ -940,21 +936,6 @@ impl Response {
         let ptr = bun_core::heap::into_raw(Box::new(response));
         // SAFETY: `ptr` is freshly boxed and uniquely owned here.
         Ok(unsafe { (*ptr).to_js(global_this) })
-    }
-
-    fn validate_redirect_status_code(
-        global_this: &JSGlobalObject,
-        status_code: i32,
-    ) -> JsResult<u16> {
-        match status_code {
-            301 | 302 | 303 | 307 | 308 => Ok(u16::try_from(status_code).expect("int cast")),
-            _ => {
-                let err = global_this.create_range_error_instance(format_args!(
-                    "Failed to execute 'redirect' on 'Response': Invalid status code"
-                ));
-                Err(global_this.throw_value(err))
-            }
-        }
     }
 
     pub(crate) fn construct_redirect(
@@ -998,19 +979,15 @@ impl Response {
                 if arg_init.is_undefined_or_null() {
                     // no-op
                 } else if arg_init.is_number() {
-                    let status =
-                        Self::validate_redirect_status_code(global_this, arg_init.to_int32())?;
+                    let status = StatusRule::Redirect.check_value(global_this, arg_init)?;
                     response.init.with_mut(|i| i.status_code = status);
-                } else if let Some(init) = Init::init(global_this, arg_init)? {
-                    // cleanup is handled by Init's drop glue on `?` below
+                } else if let Some(init) =
+                    Init::init_with_rule(global_this, arg_init, StatusRule::Redirect)?
+                {
+                    // `init_with_rule` copies the status of a Response passed as `init`
+                    // without a check, so check the result, not only the `status` member.
+                    StatusRule::Redirect.check(global_this, i64::from(init.status_code))?;
                     response.init.set(init);
-
-                    let status = response.init.get().status_code;
-                    if status != 200 {
-                        let status =
-                            Self::validate_redirect_status_code(global_this, i32::from(status))?;
-                        response.init.with_mut(|i| i.status_code = status);
-                    }
                 }
             }
 
@@ -1231,8 +1208,18 @@ impl Init {
         global_this: &JSGlobalObject,
         response_init: JSValue,
     ) -> JsResult<Option<Init>> {
+        Self::init_with_rule(global_this, response_init, StatusRule::Response)
+    }
+
+    /// `rule` supplies the default status and checks a `status` member when one is
+    /// present. A `Response` passed as `response_init` lends its status without a check.
+    pub(crate) fn init_with_rule(
+        global_this: &JSGlobalObject,
+        response_init: JSValue,
+        rule: StatusRule,
+    ) -> JsResult<Option<Init>> {
         let mut result = Init {
-            status_code: 200,
+            status_code: rule.default_status(),
             ..Default::default()
         };
 
@@ -1292,16 +1279,7 @@ impl Init {
         }
 
         if let Some(status_value) = response_init.fast_get(global_this, BuiltinName::status)? {
-            let number = status_value.coerce_to_int64(global_this)?;
-            if (200 <= number && number < 600) || number == 101 {
-                result.status_code = (u32::try_from(number).expect("int cast")) as u16;
-            } else {
-                let err = global_this.create_range_error_instance(format_args!(
-                    "The status provided ({}) must be 101 or in the range of [200, 599]",
-                    number
-                ));
-                return Err(global_this.throw_value(err));
-            }
+            result.status_code = rule.check_value(global_this, status_value)?;
         }
 
         if let Some(status_text) =
@@ -1319,6 +1297,55 @@ impl Init {
         }
 
         Ok(Some(result))
+    }
+}
+
+/// The statuses one constructor accepts, whether the status arrives as the number
+/// shorthand (`Response.json(data, 404)`) or as `ResponseInit.status`.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum StatusRule {
+    /// https://fetch.spec.whatwg.org/#initialize-a-response step 1, plus 101 so a
+    /// handler can answer an upgrade.
+    Response,
+    /// https://fetch.spec.whatwg.org/#redirect-status
+    Redirect,
+}
+
+impl StatusRule {
+    pub(crate) const fn default_status(self) -> u16 {
+        match self {
+            StatusRule::Response => 200,
+            StatusRule::Redirect => 302,
+        }
+    }
+
+    pub(crate) fn check(self, global_this: &JSGlobalObject, status: i64) -> JsResult<u16> {
+        let accepted = match self {
+            StatusRule::Response => (200..=599).contains(&status) || status == 101,
+            StatusRule::Redirect => matches!(status, 301 | 302 | 303 | 307 | 308),
+        };
+        if accepted {
+            return Ok(u16::try_from(status).expect("checked range"));
+        }
+        let err = match self {
+            StatusRule::Response => global_this.create_range_error_instance(format_args!(
+                "The status provided ({status}) must be 101 or in the range of [200, 599]"
+            )),
+            StatusRule::Redirect => global_this.create_range_error_instance(format_args!(
+                "Failed to execute 'redirect' on 'Response': Invalid status code {status}"
+            )),
+        };
+        Err(global_this.throw_value(err))
+    }
+
+    /// ToNumber, truncate toward zero (non-finite is 0, as in WebIDL), then `check`.
+    pub(crate) fn check_value(self, global_this: &JSGlobalObject, value: JSValue) -> JsResult<u16> {
+        let status = match value.get_number() {
+            Some(number) if number.is_finite() => number as i64,
+            Some(_) => 0,
+            None => value.coerce_to_int64(global_this)?,
+        };
+        self.check(global_this, status)
     }
 }
 

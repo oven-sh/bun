@@ -47,9 +47,13 @@ describe("2-arg form", () => {
 });
 
 test("print size", () => {
-  expect(normalizeBunSnapshot(Bun.inspect(new Response(Bun.file(import.meta.filename)))), import.meta.dir)
-    .toMatchInlineSnapshot(`
-    "Response (8.0 KB) {
+  // this file's own size changes with every edit, so pin only the shape
+  const inspected = normalizeBunSnapshot(Bun.inspect(new Response(Bun.file(import.meta.filename)))).replace(
+    /^Response \(\d+(?:\.\d+)? KB\)/,
+    "Response (<size> KB)",
+  );
+  expect(inspected).toMatchInlineSnapshot(`
+    "Response (<size> KB) {
       ok: true,
       url: "",
       status: 200,
@@ -98,6 +102,43 @@ test("Response.redirect status code validation", () => {
   // Check that the correct status is set
   expect(Response.redirect("url", 301).status).toBe(301);
   expect(Response.redirect("url", { status: 308 }).status).toBe(308);
+});
+
+test("Response.redirect with a ResponseInit checks status the same way as the number form", () => {
+  // no `status` member: the redirect default, not the ResponseInit default of 200
+  expect(Response.redirect("url", {}).status).toBe(302);
+  expect(Response.redirect("url", { statusText: "Found It" }).status).toBe(302);
+  const withHeaders = Response.redirect("http://x/", { headers: { "X-A": "1" } });
+  expect(withHeaders.status).toBe(302);
+  expect(withHeaders.headers.get("X-A")).toBe("1");
+  expect(withHeaders.headers.get("Location")).toBe("http://x/");
+
+  // a `status` member goes through the same check as `Response.redirect(url, status)`
+  for (const status of [301, 302, 303, 307, 308]) {
+    expect(Response.redirect("url", { status }).status).toBe(status);
+    expect(Response.redirect("url", { status: String(status) }).status).toBe(status);
+  }
+  for (const status of [0, 101, 200, 204, 304, 399, 404, 600, NaN, "200"]) {
+    expect(() => Response.redirect("url", { status })).toThrow(RangeError);
+  }
+  // a Response used as the init lends its status, which must still be a redirect status
+  expect(() => Response.redirect("url", new Response())).toThrow(RangeError);
+  expect(Response.redirect("url", Response.redirect("other", 307)).status).toBe(307);
+});
+
+test("Response.json(data, status) checks status the same way as Response.json(data, { status })", () => {
+  for (const status of [101, 200, 201, 204, 301, 404, 418, 500, 599]) {
+    expect(Response.json({}, status).status).toBe(status);
+    expect(Response.json({}, { status }).status).toBe(status);
+  }
+  expect(Response.json({}, 404.9).status).toBe(404);
+  for (const status of [0, -1, 99, 100, 103, 199, 600, 999, 65536 + 200, NaN, Infinity, -Infinity]) {
+    expect(() => Response.json({}, status)).toThrow(RangeError);
+    expect(() => Response.json({}, { status })).toThrow(RangeError);
+  }
+  // null and undefined still mean "no init"
+  expect(Response.json({}, null).status).toBe(200);
+  expect(Response.json({}, undefined).status).toBe(200);
 });
 
 // https://fetch.spec.whatwg.org/#dom-response-redirect

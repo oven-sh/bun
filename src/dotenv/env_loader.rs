@@ -162,8 +162,7 @@ static NODE_PATH_TO_USE_SET_ONCE: bun_core::RwLock<Option<Box<[u8]>>> = bun_core
 // PORTING.md §Concurrency: OnceLock — set once from CLI flag, read many.
 pub static HAS_NO_CLEAR_SCREEN_CLI_FLAG: OnceLock<bool> = OnceLock::new();
 
-/// `NODE_CHANNEL_FD` / `NODE_CHANNEL_SERIALIZATION_MODE`, compared with the
-/// key semantics of [`HashTable`] (ASCII case-insensitive on Windows).
+/// Compares like [`HashTable`] keys: ASCII case-insensitive on Windows.
 fn is_ipc_channel_key(key: &[u8]) -> bool {
     const KEYS: [&[u8]; 2] = [b"NODE_CHANNEL_FD", b"NODE_CHANNEL_SERIALIZATION_MODE"];
     KEYS.iter().any(|&k| {
@@ -635,9 +634,8 @@ impl Loader {
                 let key = &env[..i as usize];
                 let value = &env[i as usize + 1..];
                 if !key.is_empty() {
-                    // The inherited IPC channel belongs to this process; a
-                    // child spawned from this env must not adopt it (Node drops
-                    // these before it spawns). `bun run <script>` re-adds them.
+                    // Our inherited IPC channel is not for children spawned from
+                    // this env (Node drops these too); `bun run` re-adds them.
                     if is_ipc_channel_key(key) {
                         continue;
                     }

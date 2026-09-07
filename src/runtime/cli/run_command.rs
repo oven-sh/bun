@@ -389,9 +389,8 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         #[cfg(windows)]
         let ipc_fd: Option<bun_sys::Fd> = None; // TODO: implement on Windows
 
-        // `Loader::load_process` drops these so children don't inherit the
-        // channel; a package script inherits it on purpose (#11132), so put
-        // them back for this spawn alongside `ipc_fd`.
+        // `Loader::load_process` drops these; a package script inherits the
+        // channel on purpose (#11132), so restore them alongside `ipc_fd`.
         #[cfg(not(windows))]
         if ipc_fd.is_some() {
             if let Some(fd_s) = bun_core::env_var::NODE_CHANNEL_FD.get() {

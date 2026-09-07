@@ -3687,17 +3687,14 @@ impl VirtualMachine {
             self.transpiler_store.enabled = false;
         }
 
-        // `Loader::load_process` keeps NODE_CHANNEL_FD out of the env map, so
-        // read the environment directly. Main thread only: a worker sees the
-        // same variable but must not open a second endpoint over the fd (Node:
-        // no process.send() in workers).
+        // Not in `map`: `Loader::load_process` drops it so children don't inherit
+        // the channel. Main thread only (Node: no process.send() in workers).
         if self.is_main_thread() {
             if let Some(fd_s) = bun_core::env_var::NODE_CHANNEL_FD.get() {
                 let advanced = bun_core::env_var::NODE_CHANNEL_SERIALIZATION_MODE
                     .get()
                     .is_some_and(|v| bun_core::strings::eql(v, b"advanced"));
-                // Parse as i32 and reject negatives: `u32 as i32` would wrap
-                // `2^31..2^32` to a negative fd instead of warning.
+                // i32, not u32-then-cast: `2^31..` must warn, not wrap negative.
                 match bun_core::fmt::parse_int::<i32>(fd_s, 10)
                     .ok()
                     .filter(|&n| n >= 0)

@@ -80,6 +80,41 @@ describe("jest.requireActual", () => {
     expect(second).toBe(third);
   });
 
+  test("works inside mock.module factory for the same cold CommonJS module", () => {
+    mock.module("./require-actual-cjs-partial-fixture.js", () => ({
+      ...jest.requireActual("./require-actual-cjs-partial-fixture.js"),
+      value: "mocked",
+    }));
+
+    const mocked = require("./require-actual-cjs-partial-fixture.js");
+    expect(mocked).toEqual({ untouched: "untouched", value: "mocked" });
+    expect(require("./require-actual-cjs-partial-fixture.js")).toBe(mocked);
+    expect(jest.requireActual("./require-actual-cjs-partial-fixture.js")).toEqual({
+      untouched: "untouched",
+      value: "real",
+    });
+  });
+
+  test("partially mocks an ESM module with more exports than the maximum inline capacity", async () => {
+    const before = await import("./require-actual-many-exports-fixture.js");
+    expect(Object.keys(before)).toHaveLength(128);
+
+    mock.module("./require-actual-many-exports-fixture.js", () => ({
+      ...jest.requireActual("./require-actual-many-exports-fixture.js"),
+      export000: "mocked",
+    }));
+
+    const mocked = await import("./require-actual-many-exports-fixture.js");
+    expect(mocked).toBe(before);
+    expect(mocked.export000).toBe("mocked");
+    expect(mocked.export127).toBe(127);
+
+    const actual = jest.requireActual("./require-actual-many-exports-fixture.js");
+    expect(Object.keys(actual)).toHaveLength(128);
+    expect(actual.export000).toBe(0);
+    expect(actual.export127).toBe(127);
+  });
+
   test("re-mocking preserves the cached actual module", () => {
     const before = jest.requireActual("./require-actual-fixture.js");
     Object.defineProperty(before, "__sentinel", { value: true });
@@ -90,6 +125,114 @@ describe("jest.requireActual", () => {
     const after = jest.requireActual("./require-actual-fixture.js");
     expect(after).toBe(before);
     expect(Reflect.get(after, "__sentinel")).toBe(true);
+  });
+
+  test("requireActual before ESM mocking keeps a detached actual result", async () => {
+    const before = jest.requireActual("./require-actual-before-mock-esm-fixture.js");
+    expect(before).toEqual({ untouched: "untouched", value: "real" });
+
+    mock.module("./require-actual-before-mock-esm-fixture.js", () => ({ value: "first mock" }));
+    expect((await import("./require-actual-before-mock-esm-fixture.js")).value).toBe("first mock");
+    expect(before).toEqual({ untouched: "untouched", value: "real" });
+    expect(jest.requireActual("./require-actual-before-mock-esm-fixture.js")).toBe(before);
+
+    mock.module("./require-actual-before-mock-esm-fixture.js", () => ({ value: "second mock" }));
+    expect((await import("./require-actual-before-mock-esm-fixture.js")).value).toBe("second mock");
+    expect(before).toEqual({ untouched: "untouched", value: "real" });
+  });
+
+  test("re-mocking a loaded CommonJS mock does not cache mocked exports as actual", () => {
+    mock.module("./require-actual-cjs-remock-fixture.js", () => ({ value: "first mock" }));
+    expect(require("./require-actual-cjs-remock-fixture.js")).toEqual({ value: "first mock" });
+
+    mock.module("./require-actual-cjs-remock-fixture.js", () => ({ value: "second mock" }));
+
+    expect(jest.requireActual("./require-actual-cjs-remock-fixture.js")).toEqual({
+      untouched: "untouched",
+      value: "real",
+    });
+    expect(require("./require-actual-cjs-remock-fixture.js")).toEqual({ value: "second mock" });
+  });
+
+  test("re-mocking a loaded ESM mock does not cache mocked exports as actual", async () => {
+    mock.module("./require-actual-esm-remock-fixture.js", () => ({ value: "first mock" }));
+    const first = await import("./require-actual-esm-remock-fixture.js");
+    expect(first.value).toBe("first mock");
+
+    mock.module("./require-actual-esm-remock-fixture.js", () => ({ value: "second mock" }));
+
+    expect(jest.requireActual("./require-actual-esm-remock-fixture.js")).toEqual({
+      untouched: "untouched",
+      value: "real",
+    });
+    expect((await import("./require-actual-esm-remock-fixture.js")).value).toBe("second mock");
+  });
+
+  test("requireActual preserves an already-loaded mocked ESM namespace", async () => {
+    mock.module("./require-actual-esm-identity-after-mock-fixture.js", () => ({
+      untouched: "mocked untouched",
+      value: "mocked",
+    }));
+    const before = await import("./require-actual-esm-identity-after-mock-fixture.js");
+    expect(before.value).toBe("mocked");
+
+    expect(jest.requireActual("./require-actual-esm-identity-after-mock-fixture.js")).toEqual({
+      untouched: "untouched",
+      value: "real",
+    });
+
+    const after = await import("./require-actual-esm-identity-after-mock-fixture.js");
+    expect(after).toBe(before);
+    expect(after.value).toBe("mocked");
+  });
+
+  test("requireActual preserves every loaded mocked ESM module-type variant", async () => {
+    mock.module("./require-actual-multi-type-fixture.js", () => ({
+      default: "mocked default",
+      value: "mocked",
+    }));
+
+    const javascriptBefore = await import("./require-actual-multi-type-fixture.js");
+    const textBefore = await import("./require-actual-multi-type-fixture.js", {
+      with: { type: "text" },
+    });
+    expect(javascriptBefore.value).toBe("mocked");
+    expect(textBefore.value).toBe("mocked");
+    expect(
+      await import("./require-actual-multi-type-fixture.js", {
+        with: { type: "text" },
+      }),
+    ).toBe(textBefore);
+
+    expect(jest.requireActual("./require-actual-multi-type-fixture.js")).toEqual({
+      default: "real default",
+      value: "real",
+    });
+
+    const textAfter = await import("./require-actual-multi-type-fixture.js", {
+      with: { type: "text" },
+    });
+    expect(textAfter).toBe(textBefore);
+    expect(textAfter.value).toBe("mocked");
+  });
+
+  test("mock.module does not read bindings from an ESM module that failed evaluation", async () => {
+    const specifier = `data:text/javascript,${encodeURIComponent(
+      'throw new Error("evaluation failed"); export const value = "real";',
+    )}`;
+
+    await expect(import(specifier)).rejects.toThrow("evaluation failed");
+    expect(() => mock.module(specifier, () => ({ value: "mocked" }))).not.toThrow();
+    expect((await import(specifier)).value).toBe("mocked");
+  });
+
+  test("mock.module does not read linked but unevaluated ESM bindings", async () => {
+    const result = await import("./require-actual-linked-entry-fixture.js");
+    expect(result.registered).toBe(true);
+    expect(result.value).toBe("real");
+
+    const direct = await import("./require-actual-linked-target-fixture.js");
+    expect(direct.value).toBe("mocked");
   });
 
   test("requireActual on unmocked module does not corrupt require cache", () => {
@@ -170,7 +313,7 @@ describe("jest.requireActual", () => {
     expect(after.value).toBe("mocked");
   });
 
-  test("builder.module registration invalidates a cached actual result", () => {
+  test("builder.module registration invalidates and detaches a cached actual result", async () => {
     const moduleId = require.resolve("./require-actual-unmocked-fixture.js");
     expect(jest.requireActual(moduleId)).toEqual({ value: "unmocked" });
 
@@ -185,7 +328,13 @@ describe("jest.requireActual", () => {
     });
 
     try {
-      expect(jest.requireActual(moduleId)).toEqual({ source: "plugin" });
+      const actual = jest.requireActual(moduleId);
+      expect(actual).toEqual({ source: "plugin" });
+
+      mock.module(moduleId, () => ({ source: "jest" }));
+      expect(await import(moduleId)).toMatchObject({ source: "jest" });
+      expect(actual).toEqual({ source: "plugin" });
+      expect(jest.requireActual(moduleId)).toBe(actual);
     } finally {
       Bun.plugin.clearAll();
     }

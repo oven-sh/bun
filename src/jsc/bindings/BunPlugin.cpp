@@ -597,6 +597,13 @@ extern "C" JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(JSMock__jsModuleMock, __attr
 
     JSModuleMock* mock = JSModuleMock::create(vm, globalObject->mockModule.mockModuleStructure.getInitializedOnMainThread(globalObject), callback);
 
+    bool hasActiveModuleMock = false;
+    if (globalObject->onLoadPlugins.hasVirtualModules()) {
+        auto* virtualModules = globalObject->onLoadPlugins.virtualModules;
+        auto iter = virtualModules->find(specifier);
+        hasActiveModuleMock = iter != virtualModules->end() && dynamicDowncast<JSModuleMock>(iter->value.get());
+    }
+
     auto getJSValue = [&]() -> JSValue {
         auto scope = DECLARE_THROW_SCOPE(vm);
         JSValue result = mock->executeOnce(globalObject);
@@ -637,7 +644,7 @@ extern "C" JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(JSMock__jsModuleMock, __attr
     JSValue entryValue = globalObject->requireMap()->get(globalObject, specifierString);
     RETURN_IF_EXCEPTION(scope, {});
     auto* commonJSModule = entryValue ? dynamicDowncast<Bun::JSCommonJSModule>(entryValue) : nullptr;
-    if (commonJSModule) {
+    if (commonJSModule && !hasActiveModuleMock) {
         JSValue actualExports = commonJSModule->exportsObject();
         RETURN_IF_EXCEPTION(scope, {});
         cacheActualIfAbsent(actualExports);
@@ -651,21 +658,20 @@ extern "C" JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(JSMock__jsModuleMock, __attr
     if (auto* entry = globalObject->moduleLoader()->registryEntry(specifierIdent)) {
         removeFromESM = true;
         if (auto* mod = entry->record()) {
-            // getModuleNamespace asserts the record has progressed past linking.
-            // A previous import that failed during link (e.g. unresolved binding)
-            // leaves the record at New/Unlinked; in that case there is no
-            // namespace to patch — drop the stale entry so the mock takes over
-            // on the next import.
-            bool linked = true;
+            // Reading namespace bindings before evaluation can throw for lexical
+            // exports that are still in the temporal dead zone. Drop an entry
+            // that has not finished evaluating so the mock takes over on the
+            // next import without observing those bindings.
+            bool canReadNamespace = true;
             if (auto* cyclic = dynamicDowncast<JSC::CyclicModuleRecord>(mod))
-                linked = cyclic->status() >= JSC::CyclicModuleRecord::Status::Linked;
-            if (linked) {
+                canReadNamespace = cyclic->status() == JSC::CyclicModuleRecord::Status::Evaluated && !cyclic->evaluationError();
+            if (canReadNamespace) {
                 {
                     JSC::JSModuleNamespaceObject* moduleNamespaceObject = mod->getModuleNamespace(globalObject);
                     RETURN_IF_EXCEPTION(scope, {});
                     if (moduleNamespaceObject) {
                         auto* cache = globalObject->onLoadPlugins.requireActualCache;
-                        if (!cache || !cache->contains(specifier)) {
+                        if (!hasActiveModuleMock && (!cache || !cache->contains(specifier))) {
                             JSC::PropertyNameArrayBuilder actualNames(vm, PropertyNameMode::Strings, PrivateSymbolMode::Exclude);
                             JSC::JSModuleNamespaceObject::getOwnPropertyNames(moduleNamespaceObject, globalObject, actualNames, DontEnumPropertiesMode::Include);
                             RETURN_IF_EXCEPTION(scope, {});
@@ -681,7 +687,10 @@ extern "C" JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(JSMock__jsModuleMock, __attr
                                 return {};
                             }
 
-                            auto* actualModule = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), actualNames.size());
+                            auto* actualModule = JSC::constructEmptyObject(
+                                globalObject,
+                                globalObject->objectPrototype(),
+                                static_cast<unsigned>(std::min(actualNames.size(), static_cast<size_t>(JSC::JSFinalObject::maxInlineCapacity))));
                             for (size_t i = 0; i < actualNames.size(); ++i)
                                 actualModule->putDirect(vm, actualNames[i], actualValues.at(i), 0);
                             cacheActualIfAbsent(actualModule);
@@ -849,6 +858,7 @@ BUN_DEFINE_HOST_FUNCTION(JSMock__jsRequireActual, (JSC::JSGlobalObject * lexical
     });
 
     JSC::Strong<JSC::Unknown> savedCJS;
+    WTF::Vector<JSC::Strong<JSC::ModuleRegistryEntry>> savedESMEntries;
     if (hadMock) {
         JSValue cachedCJSValue = globalObject->requireMap()->get(globalObject, specifierString);
         RETURN_IF_EXCEPTION(scope, {});
@@ -860,9 +870,14 @@ BUN_DEFINE_HOST_FUNCTION(JSMock__jsRequireActual, (JSC::JSGlobalObject * lexical
 
         auto specifierIdent = JSC::Identifier::fromString(vm, specifier);
         auto* moduleLoader = globalObject->moduleLoader();
-        if (moduleLoader->registryEntry(specifierIdent)) {
+        {
             WTF::Locker locker { moduleLoader->cellLock() };
-            moduleLoader->removeEntry(specifierIdent);
+            for (auto& [key, entry] : moduleLoader->moduleMap()) {
+                if (key.first == specifierIdent.impl())
+                    savedESMEntries.append(JSC::Strong<JSC::ModuleRegistryEntry>(vm, entry.get()));
+            }
+            if (!savedESMEntries.isEmpty())
+                moduleLoader->removeEntry(specifierIdent);
         }
     }
 
@@ -903,11 +918,48 @@ BUN_DEFINE_HOST_FUNCTION(JSMock__jsRequireActual, (JSC::JSGlobalObject * lexical
             WTF::Locker locker { moduleLoader->cellLock() };
             moduleLoader->removeEntry(specifierIdent);
         }
+        if (!savedESMEntries.isEmpty()) {
+            // Graph-loaded entries retain settled fetch/module promises. Reinsert each exact
+            // saved entry so every module-type variant keeps its original namespace and
+            // entry-local loader state.
+            WTF::Locker locker { moduleLoader->cellLock() };
+            auto& moduleMap = const_cast<JSC::ModuleMap<JSC::WriteBarrier<JSC::ModuleRegistryEntry>>&>(moduleLoader->moduleMap());
+            for (auto& savedESM : savedESMEntries) {
+                moduleMap.add(
+                    { savedESM->key().impl(), savedESM->moduleType() },
+                    JSC::WriteBarrier<JSC::ModuleRegistryEntry>(vm, moduleLoader, savedESM.get()));
+            }
+        }
     }
 
     if (hadRequireException) {
         scope.throwException(globalObject, requireExceptionValue.get());
         return {};
+    }
+
+    if (auto* moduleNamespaceObject = dynamicDowncast<JSC::JSModuleNamespaceObject>(rootedResult.get())) {
+        JSC::PropertyNameArrayBuilder actualNames(vm, PropertyNameMode::Strings, PrivateSymbolMode::Exclude);
+        JSC::JSModuleNamespaceObject::getOwnPropertyNames(moduleNamespaceObject, globalObject, actualNames, DontEnumPropertiesMode::Include);
+        RETURN_IF_EXCEPTION(scope, {});
+
+        MarkedArgumentBuffer actualValues;
+        actualValues.ensureCapacity(actualNames.size());
+        for (auto& name : actualNames) {
+            actualValues.append(moduleNamespaceObject->get(globalObject, name));
+            RETURN_IF_EXCEPTION(scope, {});
+        }
+        if (actualValues.hasOverflowed()) [[unlikely]] {
+            throwOutOfMemoryError(globalObject, scope);
+            return {};
+        }
+
+        auto* actualModule = JSC::constructEmptyObject(
+            globalObject,
+            globalObject->objectPrototype(),
+            static_cast<unsigned>(std::min(actualNames.size(), static_cast<size_t>(JSC::JSFinalObject::maxInlineCapacity))));
+        for (size_t i = 0; i < actualNames.size(); ++i)
+            actualModule->putDirect(vm, actualNames[i], actualValues.at(i), 0);
+        rootedResult = JSC::Strong<JSC::Unknown>(vm, actualModule);
     }
 
     if (!globalObject->onLoadPlugins.requireActualCache)

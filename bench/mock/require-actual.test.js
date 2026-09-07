@@ -4,12 +4,35 @@ import { mock, jest, test, expect } from "bun:test";
 import { writeFileSync, unlinkSync } from "fs";
 import { join } from "path";
 
+function parseRunCount(value) {
+  const count = Number(value ?? "10000");
+  if (!Number.isSafeInteger(count) || count <= 0) {
+    throw new TypeError("RUN_COUNT must be a positive safe integer");
+  }
+  return count;
+}
+
+const N = parseRunCount(process.env.RUN_COUNT);
+
 const fixturePath = join(import.meta.dir, "require-actual-fixture.cjs");
 writeFileSync(fixturePath, "module.exports = { hello: 'world', count: 42 };");
 
 mock.module(fixturePath, () => ({ hello: "mocked" }));
 
-const N = parseInt(process.env.RUN_COUNT || "10000", 10);
+test.each(["0", "-1", "abc", "1.5", "10foo", String(Number.MAX_SAFE_INTEGER + 1)])(
+  "rejects invalid RUN_COUNT %p",
+  value => {
+    expect(() => parseRunCount(value)).toThrow("RUN_COUNT must be a positive safe integer");
+  },
+);
+
+test.each([
+  [undefined, 10000],
+  ["1", 1],
+  ["250", 250],
+])("accepts valid RUN_COUNT %p", (value, expected) => {
+  expect(parseRunCount(value)).toBe(expected);
+});
 
 test(`jest.requireActual() cached x ${N}`, () => {
   jest.requireActual(fixturePath);
@@ -28,4 +51,6 @@ test(`require() mocked x ${N} (baseline)`, () => {
   console.timeEnd(`require (mocked) x ${N}`);
 });
 
-test("cleanup", () => { unlinkSync(fixturePath); });
+test("cleanup", () => {
+  unlinkSync(fixturePath);
+});

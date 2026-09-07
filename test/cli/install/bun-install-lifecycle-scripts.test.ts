@@ -259,6 +259,64 @@ test.concurrent(
   },
 );
 
+// `bun pm trust` must write the same name the installer checks. For an
+// `npm:`-aliased dependency that is the resolved package name, so the trust
+// survives a reinstall and `bun pm untrusted` agrees with the installer.
+for (const nameOnCli of ["esbuild", "uses-what-bin"] as const) {
+  test.concurrent(`bun pm trust ${nameOnCli} on an npm-aliased dependency persists the resolved package name`, async () => {
+    using ctx = await setupTest();
+    const { packageDir, packageJson, env } = ctx;
+
+    const dependencies = { "esbuild": "npm:uses-what-bin@1.0.0" };
+    await writeFile(packageJson, JSON.stringify({ name: "foo", version: "1.0.0", dependencies }));
+
+    const run = async (...cmd: string[]) => {
+      await using proc = spawn({
+        cmd: [bunExe(), ...cmd],
+        cwd: packageDir,
+        stdout: "pipe",
+        stdin: "ignore",
+        stderr: "pipe",
+        env,
+      });
+      const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { out, err, exitCode };
+    };
+    const marker = join(packageDir, "node_modules", "esbuild", "what-bin.txt");
+
+    let { out, err, exitCode } = await run("install");
+    expect(err).toContain("Saved lockfile");
+    expect(err).not.toContain("error:");
+    expect(out).toContain("Blocked 1 postinstall");
+    expect(await exists(marker)).toBeFalse();
+    expect(exitCode).toBe(0);
+
+    ({ out, err, exitCode } = await run("pm", "trust", nameOnCli));
+    expect(err).not.toContain("error:");
+    expect(out).toContain("1 script ran across 1 package");
+    expect(exitCode).toBe(0);
+    expect(await exists(marker)).toBeTrue();
+    expect(await file(packageJson).json()).toEqual({
+      name: "foo",
+      version: "1.0.0",
+      dependencies,
+      trustedDependencies: ["uses-what-bin"],
+    });
+
+    ({ out, err, exitCode } = await run("pm", "untrusted"));
+    expect(err).not.toContain("error:");
+    expect(out).toContain("Found 0 untrusted dependencies with scripts");
+    expect(exitCode).toBe(0);
+
+    // The written entry keeps working on a reinstall from the lockfile.
+    await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
+    ({ out, err, exitCode } = await run("install"));
+    expect(err).not.toContain("error:");
+    expect(await exists(marker)).toBeTrue();
+    expect(exitCode).toBe(0);
+  });
+}
+
 test.concurrent("node-gyp shim directory added to lifecycle script PATH gets a randomized name", async () => {
   using ctx = await setupTest();
   const { packageDir, packageJson, env } = ctx;

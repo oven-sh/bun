@@ -1592,8 +1592,6 @@ impl Task {
                     let string_buf = lockfile.buffers.string_bytes.as_slice();
 
                     let dep = &lockfile.buffers.dependencies[dep_id as usize];
-                    let truncated_dep_name_hash: TruncatedPackageNameHash =
-                        dep.name_hash as TruncatedPackageNameHash;
 
                     let (is_trusted, is_trusted_through_update_request) = 'brk: {
                         if installer
@@ -1677,15 +1675,14 @@ impl Task {
                             entry_scripts[self.entry_id.get() as usize].set(Some(clone));
 
                             if is_trusted_through_update_request {
-                                let (trusted_name, trusted_name_hash) =
-                                    if pkg_res.tag == ResolutionTag::Npm {
-                                        (
-                                            pkg_name.slice(string_buf),
-                                            pkg_name_hash as TruncatedPackageNameHash,
-                                        )
-                                    } else {
-                                        (dep.name.slice(string_buf), truncated_dep_name_hash)
-                                    };
+                                let trusted_name = Lockfile::trusted_dependency_name(
+                                    dep.name.slice(string_buf),
+                                    pkg_name.slice(string_buf),
+                                    &pkg_res,
+                                );
+                                let trusted_name_hash =
+                                    bun_semver::semver_string::Builder::string_hash(trusted_name)
+                                        as TruncatedPackageNameHash;
                                 let trusted_dep_to_add: Box<[u8]> = Box::from(trusted_name);
 
                                 let _unlock = installer.trusted_dependencies_mutex.lock_guard();

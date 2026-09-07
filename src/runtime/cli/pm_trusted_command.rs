@@ -392,18 +392,19 @@ impl TrustCommand {
                 };
 
                 if let Some(scripts_list) = maybe_scripts_list {
+                    let pkg_name = packages.items_name()[package_id as usize].slice(buf);
+                    // The name the installer looks up in `trustedDependencies`,
+                    // which for an `npm:` alias is the resolved package name.
+                    let trusted_name = Lockfile::trusted_dependency_name(alias, pkg_name, resolution);
                     let skip = 'brk: {
                         if trust_all {
                             break 'brk false;
                         }
 
                         for package_name_from_cli in &packages_to_trust {
-                            if strings::eql_long(package_name_from_cli, alias, true)
-                                && !lockfile.has_trusted_dependency(
-                                    alias,
-                                    packages.items_name()[package_id as usize].slice(buf),
-                                    resolution,
-                                )
+                            if (strings::eql_long(package_name_from_cli, alias, true)
+                                || strings::eql_long(package_name_from_cli, trusted_name, true))
+                                && !lockfile.has_trusted_dependency(alias, pkg_name, resolution)
                             {
                                 break 'brk false;
                             }
@@ -425,7 +426,7 @@ impl TrustCommand {
                     });
 
                     if !skip {
-                        package_names_to_add.put(alias, ())?;
+                        package_names_to_add.put(trusted_name, ())?;
                         scripts_count += total;
                     }
                 }

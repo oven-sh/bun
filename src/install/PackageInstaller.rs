@@ -2002,15 +2002,18 @@ impl<'a> PackageInstaller<'a> {
                                 resolution,
                             ) {
                                 if is_trusted_through_update_request {
-                                    let (trusted_name, trusted_name_hash) =
-                                        if resolution.tag == resolution::Tag::Npm {
-                                            (pkg_name, pkg_name_hash as TruncatedPackageNameHash)
-                                        } else {
-                                            (alias, truncated_dep_name_hash)
-                                        };
+                                    let trusted_name: Box<[u8]> =
+                                        Box::from(Lockfile::trusted_dependency_name(
+                                            alias.slice(string_buf!()),
+                                            pkg_name.slice(string_buf!()),
+                                            resolution,
+                                        ));
+                                    let trusted_name_hash =
+                                        bun_semver::string::Builder::string_hash(&trusted_name)
+                                            as TruncatedPackageNameHash;
                                     self.manager_mut()
                                         .trusted_deps_to_add_to_package_json
-                                        .push(Box::<[u8]>::from(trusted_name.slice(string_buf!())));
+                                        .push(trusted_name.clone());
 
                                     if self.lockfile().trusted_dependencies.is_none() {
                                         self.lockfile_mut().trusted_dependencies =
@@ -2020,10 +2023,7 @@ impl<'a> PackageInstaller<'a> {
                                         .trusted_dependencies
                                         .as_mut()
                                         .unwrap()
-                                        .put(
-                                            trusted_name_hash,
-                                            Box::<[u8]>::from(trusted_name.slice(string_buf!())),
-                                        )
+                                        .put(trusted_name_hash, trusted_name)
                                         .unwrap_or_oom();
                                 }
                             }
@@ -2234,8 +2234,13 @@ impl<'a> PackageInstaller<'a> {
 
             let dep = &self.lockfile().buffers.dependencies.as_slice()[dependency_id as usize];
             let dep_behavior = dep.behavior;
-            let truncated_dep_name_hash: TruncatedPackageNameHash =
-                dep.name_hash as TruncatedPackageNameHash;
+            let trusted_name = Lockfile::trusted_dependency_name(
+                alias.slice(string_buf!()),
+                pkg_name.slice(string_buf!()),
+                resolution,
+            );
+            let trusted_name_hash =
+                bun_semver::string::Builder::string_hash(trusted_name) as TruncatedPackageNameHash;
             let (is_trusted, is_trusted_through_update_request, add_to_lockfile) = 'brk: {
                 // trusted through a --trust dependency. need to enqueue scripts, write to package.json, and add to lockfile
                 if self
@@ -2249,10 +2254,10 @@ impl<'a> PackageInstaller<'a> {
                     .manager()
                     .summary
                     .added_trusted_dependencies
-                    .get(&truncated_dep_name_hash)
+                    .get(&trusted_name_hash)
                 {
                     // is a new trusted dependency. need to enqueue scripts and maybe add to lockfile
-                    if *added.name == *alias.slice(string_buf!())
+                    if *added.name == *trusted_name
                         && self.lockfile().has_trusted_dependency(
                             alias.slice(string_buf!()),
                             pkg_name.slice(string_buf!()),
@@ -2310,17 +2315,10 @@ impl<'a> PackageInstaller<'a> {
                         dep_behavior.contains(crate::dependency::Behavior::OPTIONAL),
                         resolution,
                     ) {
-                        let (trusted_name, trusted_name_hash) =
-                            if resolution.tag == resolution::Tag::Npm {
-                                (pkg_name, pkg_name_hash as TruncatedPackageNameHash)
-                            } else {
-                                (alias, truncated_dep_name_hash)
-                            };
-
                         if is_trusted_through_update_request {
                             self.manager_mut()
                                 .trusted_deps_to_add_to_package_json
-                                .push(Box::<[u8]>::from(trusted_name.slice(string_buf!())));
+                                .push(Box::<[u8]>::from(trusted_name));
                         }
 
                         if add_to_lockfile {
@@ -2331,10 +2329,7 @@ impl<'a> PackageInstaller<'a> {
                                 .trusted_dependencies
                                 .as_mut()
                                 .unwrap()
-                                .put(
-                                    trusted_name_hash,
-                                    Box::<[u8]>::from(trusted_name.slice(string_buf!())),
-                                )
+                                .put(trusted_name_hash, Box::<[u8]>::from(trusted_name))
                                 .unwrap_or_oom();
                         }
                     }

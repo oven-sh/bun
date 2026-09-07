@@ -3269,6 +3269,23 @@ impl Lockfile {
             .is_some_and(|trusted| trusted.contains(&hash))
     }
 
+    /// The `trustedDependencies` entry that grants lifecycle-script trust to
+    /// this dependency. Registry packages are keyed by the resolved package
+    /// name (an `npm:` alias never inherits trust from the alias); every other
+    /// resolution is keyed by the alias the root or a workspace declared.
+    /// Every reader and writer of `trustedDependencies` must use this name.
+    pub fn trusted_dependency_name<'a>(
+        alias: &'a [u8],
+        pkg_name: &'a [u8],
+        resolution: &Resolution,
+    ) -> &'a [u8] {
+        if resolution.tag == ResolutionTag::Npm {
+            pkg_name
+        } else {
+            alias
+        }
+    }
+
     pub fn has_trusted_dependency(
         &self,
         alias: &[u8],
@@ -3276,11 +3293,7 @@ impl Lockfile {
         resolution: &Resolution,
     ) -> bool {
         if let Some(trusted_dependencies) = &self.trusted_dependencies {
-            let trusted_name = if resolution.tag == ResolutionTag::Npm {
-                pkg_name
-            } else {
-                alias
-            };
+            let trusted_name = Self::trusted_dependency_name(alias, pkg_name, resolution);
             let hash = SemverStringBuilder::string_hash(trusted_name) as u32;
             let name_is_trusted = match trusted_dependencies.get(&hash) {
                 Some(name) => !name.is_empty() && **name == *trusted_name,

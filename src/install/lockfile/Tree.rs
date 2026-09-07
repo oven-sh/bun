@@ -823,9 +823,7 @@ impl Tree {
                         tree_id = tree.parent;
                     }
 
-                    // `next_id` is its own hoist root: the folder package is placed in this
-                    // node, unless the same name is already placed here (the same `file:`
-                    // folder in two dependency groups), which dedupes like any other package.
+                    // Its own hoist root: stays in this node, dedupes against a same-name sibling.
                     break 'hoisted Tree::hoist_dependency::<true, METHOD>(
                         next_id,
                         next_id,

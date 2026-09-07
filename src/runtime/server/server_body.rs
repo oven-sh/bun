@@ -1788,9 +1788,7 @@ where
                 global.throw_invalid_arguments(format_args!("upgrade requires a Request object"))
             );
         };
-        // SAFETY: from_js returns a live *mut Request (rooted by the caller's
-        // argument). Shared; may be the server's own `Request` or a copy of
-        // it (`req.clone()`, `new Request(req)`) holding a derived handle.
+        // SAFETY: live payload of the caller's argument: the server's `Request` or a copy of it.
         let request = unsafe { &*request_ptr };
 
         let Some(upgrader_ptr) = request
@@ -2011,9 +2009,7 @@ where
         let signal = upgrader.signal.take();
         upgrader.resp.set(None);
 
-        // Snapshot the original request's lazy url/headers before detaching
-        // (mirrors to_async_without_abort_handler). A copy passed as `object`
-        // already owns its url/headers.
+        // Snapshot the original's lazy url/headers (a copy owns its own), then detach all.
         if let Some(original) = upgrader.original_request() {
             if original.ensure_url().is_err() {
                 original.url.set(BunString::EMPTY);

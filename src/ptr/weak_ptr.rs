@@ -104,9 +104,7 @@ impl<T: HasWeakPtrData> WeakPtr<T> {
         }
     }
 
-    /// Whether the owner has not yet finalized the pointee. `false` for an
-    /// empty handle. Reads only the embedded `WeakPtrData`; no borrow of `T` is
-    /// formed and the weak ref is kept either way.
+    /// `true` until the owner finalizes the pointee (`false` when empty). Borrows no `T`, keeps the ref.
     #[inline]
     pub fn is_alive(&self) -> bool {
         match self.raw_ptr {

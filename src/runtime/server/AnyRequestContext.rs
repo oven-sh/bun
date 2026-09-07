@@ -45,12 +45,7 @@ pub enum CtxTag {
 #[derive(Copy, Clone)]
 pub struct AnyRequestContext {
     pub(crate) tag: CtxTag,
-    /// Set on the handle that a copy of the server's `Request` (`req.clone()`,
-    /// `new Request(req)`) inherits through [`derive`](Self::derive). It
-    /// reaches the connection (`server.requestIP/timeout/upgrade`) but not the
-    /// state that belongs to the original object: the borrowed uWS request
-    /// behind the lazy url/headers (a copy owns its own), and the cookie map
-    /// whose changes are written to the response.
+    /// Held by a copy of the server's `Request` (see [`derive`](Self::derive)): connection only.
     pub(crate) derived: bool,
     pub ptr: *mut (),
 }
@@ -183,9 +178,7 @@ impl AnyRequestContext {
         dispatch!(self, 0, |_T, ctx| ctx.memory_cost())
     }
 
-    /// Registers `copy`, a copy of this context's `Request`, with the context
-    /// and returns the handle the copy stores. The context clears that handle
-    /// when the request ends, exactly as it clears the original's.
+    /// Tracks `copy` on the context and returns the derived handle the copy stores.
     pub(crate) fn derive(self, copy: request::WeakRef) -> Self {
         dispatch!(self, Self::NULL, |_T, ctx| {
             ctx.attach_derived_request(copy);
@@ -210,8 +203,7 @@ impl AnyRequestContext {
 
     pub(crate) fn set_cookies(self, cookie_map: Option<*mut CookieMap>) {
         if self.derived {
-            // A copy's cookie map is a snapshot; only the original's is
-            // written to the response (test/regression/issue/18547.test.ts).
+            // Only the original's cookie map is written to the response (#18547).
             return;
         }
         dispatch!(self, (), |_T, ctx| ctx.set_cookies(cookie_map))
@@ -248,8 +240,7 @@ impl AnyRequestContext {
 
     pub(crate) fn get_request(self) -> Option<*mut uws::Request> {
         if self.derived {
-            // The uWS request's url/headers are the original's; a copy
-            // snapshotted (or replaced) its own when it was made.
+            // It backs the original's lazy url/headers; a copy owns its own.
             return None;
         }
         dispatch!(self, None, |T, ctx| {

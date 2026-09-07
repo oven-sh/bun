@@ -383,8 +383,7 @@ impl Request {
 
     /// `BunRequest.prototype.clone` (the `Bun.serve` `routes:` subclass) goes
     /// through `JSBunRequest::clone` -> here, not through [`Self::do_clone`],
-    /// so it needs the same fetch-spec step-1 usability check. Returns the
-    /// heap clone for the C++ wrapper to adopt, or null with an exception.
+    /// so it needs the same fetch-spec step-1 usability check.
     #[bun_uws::uws_callback(export = "Request__clone")]
     pub fn ffi_clone(&self, global_this: &JSGlobalObject) -> *mut Request {
         let Some(cloned) = self
@@ -400,20 +399,16 @@ impl Request {
         cloned
     }
 
-    /// Gives the copy of `self` at `copy` (made by [`Self::clone`] or the
-    /// constructor) a derived handle to `self`'s server `RequestContext`, if
-    /// `self` still has one, so `server.requestIP()`, `server.timeout()` and
-    /// `server.upgrade()` accept the copy like the original.
+    /// Hands `copy` (a copy of `self`) a derived handle to `self`'s server
+    /// `RequestContext`, if any (see [`AnyRequestContext::derive`]).
     ///
     /// # Safety
-    /// `copy` is the copy's final heap address, fresh from `heap::into_raw`
-    /// and not yet finalized: the context keeps a weak pointer to it until the
-    /// request ends (see [`WeakRef::init_ref`]).
+    /// `copy` is fresh from `heap::into_raw` and not finalized ([`WeakRef::init_ref`]).
     pub(crate) unsafe fn derive_request_context(&self, copy: *mut Request) {
         if self.request_context.is_null() {
             return;
         }
-        // SAFETY: caller contract; `copy` is live and not aliased by `self`.
+        // SAFETY: caller contract; `copy` is not aliased by `self`.
         unsafe {
             (*copy).request_context = self.request_context.derive(WeakRef::init_ref(copy));
         }
@@ -1002,10 +997,7 @@ impl Request {
         <Self as BodyMixin>::check_body_stream_ref(self, global_object)
     }
 
-    /// Also returns the `Request` the new one was copied from (`new
-    /// Request(req[, init])`, `new Request(url, req)`), if any, so the caller
-    /// can [`derive_request_context`](Self::derive_request_context) once the
-    /// result has its heap address.
+    /// Also returns the `Request` being copied, if any, for [`Self::derive_request_context`].
     pub(crate) fn construct_into(
         global_this: &JSGlobalObject,
         arguments: &[JSValue],
@@ -1110,10 +1102,7 @@ impl Request {
         let values_to_try = &values_to_try_[0..((!is_first_argument_a_url) as usize
             + (arguments.len() > 1 && arguments[1].is_object()) as usize)];
 
-        // The request being copied: `input`, or a Request given as `init`
-        // after a URL. `from_js` rather than `as_direct`, so a `BunRequest` or
-        // a Request with a modified shape (read through its getters below)
-        // counts too.
+        // `from_js`, not `as_direct`: a `BunRequest` or a Request with own properties counts too.
         let copied_from = values_to_try
             .last()
             .and_then(|&value| <Request as bun_jsc::JsClass>::from_js(value));
@@ -1482,9 +1471,7 @@ impl Request {
         let (request, copied_from) = Self::construct_into(global_this, arguments, this_value)?;
         let request = bun_core::heap::into_raw(Request::new(request));
         if let Some(copied_from) = copied_from {
-            // SAFETY: `copied_from` is the live payload of a constructor
-            // argument; `request` is fresh from `into_raw` and is adopted by
-            // the JS wrapper on return.
+            // SAFETY: `copied_from` is a live constructor argument; `request` is fresh from `into_raw`.
             unsafe { (*copied_from).derive_request_context(request) };
         }
         Ok(request)

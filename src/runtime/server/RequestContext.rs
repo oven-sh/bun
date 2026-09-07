@@ -114,9 +114,7 @@ pub struct RequestContext<
     pub(crate) resp: Cell<Option<uws::AnyResponse>>,
     pub(crate) req: Cell<Option<*mut Req<SSL_ENABLED, MUX>>>,
     pub(crate) request_weakref: JsCell<request::WeakRef>,
-    /// Copies of the `Request` (`req.clone()`, `new Request(req)`) that hold
-    /// a derived handle to this context. Detached together with the original
-    /// in [`detach_requests`](Self::detach_requests).
+    /// Copies of the `Request` holding a derived handle; cleared in [`Self::detach_requests`].
     derived_requests: JsCell<Vec<request::WeakRef>>,
     // NOTE: `Arc<AbortSignal>` was wrong —
     // `AbortSignal` is an opaque ZST FFI handle; an `Arc` of a ZST never owns
@@ -648,31 +646,24 @@ where
         ptr.map(|p| unsafe { &mut *p })
     }
 
-    /// The `Request` the server created for this context, if JS has not
-    /// finalized it yet. Copies made from it are not returned here.
+    /// The server-created `Request` (not a copy), unless JS already finalized it.
     #[inline]
     pub(crate) fn original_request<'r>(&self) -> Option<&'r mut Request> {
         self.request_mut()
     }
 
-    /// Tracks a copy of the `Request` that stores a derived handle to this
-    /// context (see [`AnyRequestContext::derive`]).
+    /// See [`AnyRequestContext::derive`].
     pub(crate) fn attach_derived_request(&self, copy: request::WeakRef) {
         self.derived_requests.with_mut(|list| {
             if list.len() == list.capacity() {
-                // Before growing, drop entries whose `Request` JS already
-                // finalized (dropping the `WeakRef` frees them), so a handler
-                // that copies in a loop pins at most the live copies until the
-                // request ends.
+                // Prune copies JS already finalized so a copy loop pins only live ones.
                 list.retain(|weak| weak.is_alive());
             }
             list.push(copy);
         });
     }
 
-    /// Clears the handle to this context on the original `Request` and on
-    /// every copy derived from it, and releases the weak references. Safe to
-    /// call more than once.
+    /// Clears the context handle on the original `Request` and on every copy. Idempotent.
     pub(crate) fn detach_requests(&self) {
         if let Some(request) = self.request_mut() {
             request.request_context = AnyRequestContext::NULL;

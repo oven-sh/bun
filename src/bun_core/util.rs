@@ -4254,8 +4254,7 @@ pub fn is_process_reload_in_progress_on_another_thread() -> bool {
 
 static RELOAD_CWD: Once<ZBox> = Once::new();
 
-/// The cwd a `--watch` restart starts from: where bun was started, recorded
-/// before `--cwd` or the script's `process.chdir()` moves the process.
+/// The directory bun was started in. A `--watch` restart runs from it again.
 pub fn set_reload_cwd(cwd: &ZStr) {
     let _ = RELOAD_CWD.set(ZBox::from_bytes(cwd.as_bytes()));
 }

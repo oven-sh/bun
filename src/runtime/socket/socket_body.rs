@@ -934,8 +934,6 @@ impl<const SSL: bool> NewSocket<SSL> {
             return Ok(());
         }
         let handlers = this.get_handlers();
-        // The flush below runs even without a `drain` handler: the tail of an
-        // `end(data)` waits in `buffered_data_for_node_net` for this event.
         let callback = handlers.on_writable();
 
         // Hold the socket alive for the rest of the dispatch: `internal_flush`
@@ -2812,15 +2810,22 @@ impl<const SSL: bool> NewSocket<SSL> {
         args: &mut [JSValue],
         buffer_unwritten_data: bool,
     ) -> WriteResult {
+        // Nothing is accepted after `end()`, whose tail may still be draining.
+        let ended = self.flags.get().contains(Flags::END_AFTER_FLUSH);
         if args[0].is_undefined() {
-            if !self.flags.get().contains(Flags::END_AFTER_FLUSH) && IS_END {
+            if ended {
+                return WriteResult::Success {
+                    wrote: -1,
+                    total: 0,
+                };
+            }
+            if IS_END {
                 self.update_flags(|f| f.insert(Flags::END_AFTER_FLUSH));
             }
             log!("writeOrEnd undefined");
             return WriteResult::Success { wrote: 0, total: 0 };
         }
 
-        let ended = self.flags.get().contains(Flags::END_AFTER_FLUSH);
         debug_assert!(ended || self.buffered_data_for_node_net.get().len() == 0);
         let mut encoding_value: JSValue = args[3];
         if args[2].is_string() {
@@ -2963,8 +2968,6 @@ impl<const SSL: bool> NewSocket<SSL> {
         }
 
         let socket = self.socket.get();
-        // `ended`: a prior `end(data)` is still draining its tail. Nothing
-        // more is accepted after `end()`.
         if ended || socket.is_shutdown() || socket.is_closed() {
             return WriteResult::Success {
                 wrote: -1,
@@ -2994,7 +2997,8 @@ impl<const SSL: bool> NewSocket<SSL> {
         log!("writeOrEnd {}", bytes.len());
         let wrote = self.write_maybe_corked(bytes);
         let uwrote: usize = usize::try_from(wrote.max(0)).expect("int cast");
-        if buffer_unwritten_data {
+        // A negative result is a fatal send error: nothing will drain a tail.
+        if buffer_unwritten_data && wrote >= 0 {
             let remaining = &bytes[uwrote..];
             if !remaining.is_empty() {
                 let _ = self
@@ -3237,9 +3241,6 @@ impl<const SSL: bool> NewSocket<SSL> {
 
         // `write_or_end` reaches `internal_flush`, which re-enters JS.
         let _guard = this.ref_guard();
-        // The final chunk is accepted whole: the part the kernel does not take
-        // in one send waits in `buffered_data_for_node_net`, `on_writable`
-        // retries it, and the FIN follows once it drains.
         let result = match this.write_or_end::<true>(global, args.mut_(), true) {
             WriteResult::Fail => JSValue::ZERO,
             WriteResult::Success { wrote, total } => {

@@ -15,6 +15,7 @@ import {
   tempDir,
   tls,
 } from "harness";
+import { randomFillSync } from "node:crypto";
 import net from "node:net";
 import { join } from "node:path";
 import { createSecureContext, connect as tlsConnect } from "node:tls";
@@ -4715,14 +4716,17 @@ describe.concurrent.each(["tcp", "tls"] as const)(
     const N = 16 * 1024 * 1024;
 
     async function run(withDrain: boolean) {
+      const payload = randomFillSync(Buffer.allocUnsafe(N));
       const received = Promise.withResolvers<number>();
       let got = 0;
+      let mismatchAt = -1;
       using server = Bun.listen({
         hostname: "127.0.0.1",
         port: 0,
         tls: transport === "tls" ? { key: tls.key, cert: tls.cert } : undefined,
         socket: {
           data(_, chunk) {
+            if (mismatchAt === -1 && !chunk.equals(payload.subarray(got, got + chunk.byteLength))) mismatchAt = got;
             got += chunk.byteLength;
           },
           close() {
@@ -4733,10 +4737,9 @@ describe.concurrent.each(["tcp", "tls"] as const)(
 
       const clientClosed = Promise.withResolvers<void>();
       let endReturned = -2;
-      let writeAfterEnd = -2;
       let drains = 0;
+      const afterEnd: number[] = [];
       const errors: Error[] = [];
-      const payload = Buffer.alloc(N, 97);
       await Bun.connect({
         hostname: "127.0.0.1",
         port: server.port,
@@ -4744,7 +4747,7 @@ describe.concurrent.each(["tcp", "tls"] as const)(
         socket: {
           open(s) {
             endReturned = s.end(payload);
-            writeAfterEnd = s.write("more");
+            afterEnd.push(s.write("more"), s.write(undefined as any), s.end("more"), s.end());
           },
           data() {},
           ...(withDrain ? { drain: () => void drains++ } : {}),
@@ -4754,10 +4757,11 @@ describe.concurrent.each(["tcp", "tls"] as const)(
       });
 
       const [serverGot] = await Promise.all([received.promise, clientClosed.promise]);
-      expect({ endReturned, writeAfterEnd, serverGot, errors, drains }).toEqual({
+      expect({ endReturned, afterEnd, serverGot, mismatchAt, errors, drains }).toEqual({
         endReturned: N,
-        writeAfterEnd: -1,
+        afterEnd: [-1, -1, -1, -1],
         serverGot: N,
+        mismatchAt: -1,
         errors: [],
         drains: 0,
       });

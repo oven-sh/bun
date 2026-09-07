@@ -486,12 +486,9 @@ impl TrustCommand {
             return Ok(());
         }
 
-        // The CLI flag only: `ignoreScripts` in bunfig.toml or .npmrc does not apply here.
-        let run_scripts = !strings::left_has_any_in_right(args, &[b"--ignore-scripts"]);
-
         let mut scripts_node: Progress::Node;
         // SAFETY: `pm_raw` singleton; `progress` is owned inline.
-        let show_progress = run_scripts && unsafe { (*pm_raw).options.log_level.show_progress() };
+        let show_progress = unsafe { (*pm_raw).options.log_level.show_progress() };
 
         if show_progress {
             // SAFETY: see above; `progress.start()` returns `&mut root` which is
@@ -512,9 +509,6 @@ impl TrustCommand {
         // `spawn_package_lifecycle_scripts` and still print it later, so clone
         // the `List` per spawn.
         for entry in scripts_at_depth.values().iter().rev() {
-            if !run_scripts {
-                break;
-            }
             for info in entry.iter() {
                 if info.skip {
                     continue;
@@ -629,7 +623,15 @@ impl TrustCommand {
         // now add the package names to lockfile.trustedDependencies and package.json `trustedDependencies`
         debug_assert!(!package_names_to_add.keys().is_empty());
 
-        let mut total_scripts: usize = 0;
+        // could be null if these are the first packages to be trusted
+        // SAFETY: `pm_raw` singleton; mutates `lockfile.trusted_dependencies`.
+        unsafe {
+            if (*pm_raw).lockfile.trusted_dependencies.is_none() {
+                (*pm_raw).lockfile.trusted_dependencies = Some(Default::default());
+            }
+        }
+
+        let mut total_scripts_ran: usize = 0;
         let mut total_packages_with_scripts: usize = 0;
         let mut total_skipped_packages: usize = 0;
 
@@ -647,16 +649,9 @@ impl TrustCommand {
                     total_skipped_packages += 1;
                 } else {
                     total_packages_with_scripts += 1;
-                    total_scripts += info.scripts_list.total as usize;
-                    info.scripts_list.print_scripts(
-                        resolution,
-                        buf,
-                        if run_scripts {
-                            PrintFormat::Completed
-                        } else {
-                            PrintFormat::Skipped
-                        },
-                    );
+                    total_scripts_ran += info.scripts_list.total as usize;
+                    info.scripts_list
+                        .print_scripts(resolution, buf, PrintFormat::Completed);
                 }
                 Output::print(format_args!("\n"));
             }
@@ -667,44 +662,32 @@ impl TrustCommand {
             package_names_to_add.keys_mut(),
         )?;
 
-        // Under `--ignore-scripts` the lockfile keeps the old list, so the next
-        // install sees the names as newly trusted and runs their scripts.
-        if run_scripts {
-            // could be null if these are the first packages to be trusted
-            // SAFETY: `pm_raw` singleton; mutates `lockfile.trusted_dependencies`.
+        for name in package_names_to_add.keys() {
+            // SAFETY: `pm_raw` singleton; `trusted_dependencies` set Some above.
             unsafe {
-                if (*pm_raw).lockfile.trusted_dependencies.is_none() {
-                    (*pm_raw).lockfile.trusted_dependencies = Some(Default::default());
-                }
+                (*pm_raw)
+                    .lockfile
+                    .trusted_dependencies
+                    .as_mut()
+                    .unwrap()
+                    .put(
+                        bun_semver::string::Builder::string_hash(name)
+                            as install::TruncatedPackageNameHash,
+                        Box::<[u8]>::from(&**name),
+                    )?;
             }
+        }
 
-            for name in package_names_to_add.keys() {
-                // SAFETY: `pm_raw` singleton; `trusted_dependencies` set Some above.
-                unsafe {
-                    (*pm_raw)
-                        .lockfile
-                        .trusted_dependencies
-                        .as_mut()
-                        .unwrap()
-                        .put(
-                            bun_semver::string::Builder::string_hash(name)
-                                as install::TruncatedPackageNameHash,
-                            Box::<[u8]>::from(&**name),
-                        )?;
-                }
-            }
-
-            // Reshaped for borrowck — `save_to_disk` needs `&mut Lockfile`
-            // and `&LoadResult` simultaneously, but `LoadResultOk.lockfile` already
-            // holds the only `&mut`. Same projection pattern as `migrate` in
-            // `package_manager_command.rs`.
-            // SAFETY: `load_lockfile` is `Ok` (errors exited in
-            // `handle_load_lockfile_errors`). `save_to_disk` reads `load_result`
-            // only for `save_format()` (scalar `format`/`migrated` fields).
-            unsafe {
-                let lf: *mut Lockfile = &raw mut *(*pm_raw).lockfile;
-                (*lf).save_to_disk(&load_lockfile, &(*pm_raw).options);
-            }
+        // Reshaped for borrowck — `save_to_disk` needs `&mut Lockfile`
+        // and `&LoadResult` simultaneously, but `LoadResultOk.lockfile` already
+        // holds the only `&mut`. Same projection pattern as `migrate` in
+        // `package_manager_command.rs`.
+        // SAFETY: `load_lockfile` is `Ok` (errors exited in
+        // `handle_load_lockfile_errors`). `save_to_disk` reads `load_result`
+        // only for `save_format()` (scalar `format`/`migrated` fields).
+        unsafe {
+            let lf: *mut Lockfile = &raw mut *(*pm_raw).lockfile;
+            (*lf).save_to_disk(&load_lockfile, &(*pm_raw).options);
         }
 
         let mut buffer_writer = bun_js_printer::BufferWriter::init();
@@ -739,35 +722,21 @@ impl TrustCommand {
         let _ = bun_sys::ftruncate(root_file.handle, new_package_json_contents.len() as i64);
         let _ = root_file.close();
 
-        debug_assert!(total_scripts > 0);
+        debug_assert!(total_scripts_ran > 0);
 
-        let scripts_plural = if total_scripts > 1 { "s" } else { "" };
-        let packages_plural = if total_packages_with_scripts > 1 {
-            "s"
-        } else {
-            ""
-        };
-        if run_scripts {
-            bun_core::pretty!(
-                " <green>{}<r> script{} ran across {} package{} ",
-                total_scripts,
-                scripts_plural,
-                total_packages_with_scripts,
-                packages_plural,
-            );
-            Output::print_start_end_stdout(
-                bun_core::start_time(),
-                bun_core::time::nano_timestamp(),
-            );
-        } else {
-            bun_core::pretty!(
-                " <yellow>{}<r> script{} skipped across {} package{} <d>(--ignore-scripts)<r>",
-                total_scripts,
-                scripts_plural,
-                total_packages_with_scripts,
-                packages_plural,
-            );
-        }
+        bun_core::pretty!(
+            " <green>{}<r> script{} ran across {} package{} ",
+            total_scripts_ran,
+            if total_scripts_ran > 1 { "s" } else { "" },
+            total_packages_with_scripts,
+            if total_packages_with_scripts > 1 {
+                "s"
+            } else {
+                ""
+            },
+        );
+
+        Output::print_start_end_stdout(bun_core::start_time(), bun_core::time::nano_timestamp());
         Output::print(format_args!("\n"));
 
         if total_skipped_packages > 0 {

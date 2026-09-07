@@ -221,8 +221,7 @@ impl PackageManagerCommand {
   <b><green>bun pm<r> <blue>untrusted<r>            print current untrusted dependencies with scripts\n\
   <b><green>bun pm<r> <blue>trust<r> <d>names ...<r>      run scripts for untrusted dependencies and add to `trustedDependencies`\n\
   <d>├<r>  <cyan>--all<r>                    trust all untrusted dependencies\n\
-  <d>├<r>  <cyan>--dry-run<r>                print the scripts that would run, without running them or saving\n\
-  <d>└<r>  <cyan>--ignore-scripts<r>         add to `trustedDependencies` without running the scripts\n\
+  <d>└<r>  <cyan>--dry-run<r>                print the scripts that would run, without running them or saving\n\
   <b><green>bun pm<r> <blue>default-trusted<r>      print the default trusted dependencies list\n\
 \n\
 Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";

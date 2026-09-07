@@ -2376,12 +2376,14 @@ pub(crate) fn install_isolated_packages(
                             // `apply_package_patch` re-derives from the fresh base.
                             if let Some(patch_hash) = patch_info.contents_hash() {
                                 let mut buf = bun_paths::path_buffer_pool::get();
-                                let patched = package_manager::directories::patched_cache_folder_name(
-                                    &mut buf.0,
-                                    cache_subpath_z.as_bytes(),
-                                    patch_hash,
-                                );
-                                let _ = bun_sys::Dir::borrow(&cache_dir).delete_tree(patched.as_bytes());
+                                let patched =
+                                    package_manager::directories::patched_cache_folder_name(
+                                        &mut buf.0,
+                                        cache_subpath_z.as_bytes(),
+                                        patch_hash,
+                                    );
+                                let _ = bun_sys::Dir::borrow(&cache_dir)
+                                    .delete_tree(patched.as_bytes());
                             }
                             true
                         }

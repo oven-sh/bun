@@ -102,8 +102,10 @@ test.skipIf(isWindows)("removing all signal listeners uninstalls the handler (de
 // Node's EventEmitter registers the same function again on every on()/once()
 // call. One removeListener() then drops one registration, so the signal stays
 // handled until the count really reaches zero.
-test.concurrent.skipIf(isWindows)("the same function registered twice keeps the handler after one removeListener", async () => {
-  const script = /*js*/ `
+test.concurrent.skipIf(isWindows)(
+  "the same function registered twice keeps the handler after one removeListener",
+  async () => {
+    const script = /*js*/ `
     const { promise, resolve } = Promise.withResolvers();
     let n = 0;
     function handler() {
@@ -124,26 +126,27 @@ test.concurrent.skipIf(isWindows)("the same function registered twice keeps the 
     console.log("done");
   `;
 
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "-e", script],
-    env: bunEnv,
-    stdout: "pipe",
-    stderr: "pipe",
-  });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
 
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-  expect(stderr).toBe("");
-  expect(normalizeBunSnapshot(stdout)).toMatchInlineSnapshot(`
+    expect(stderr).toBe("");
+    expect(normalizeBunSnapshot(stdout)).toMatchInlineSnapshot(`
 "lc=2
 lc=1
 handled 1 lc=1
 handled 2 lc=1
 done"
 `);
-  expect(proc.signalCode).toBeNull();
-  expect(exitCode).toBe(0);
-});
+    expect(proc.signalCode).toBeNull();
+    expect(exitCode).toBe(0);
+  },
+);
 
 // once() followed by on() with the same function: the once() registration goes
 // away when it fires, the on() registration stays and handles later signals.

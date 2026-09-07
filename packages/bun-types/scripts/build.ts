@@ -15,7 +15,7 @@ const outDir = process.argv[2] ? resolve(process.argv[2]) : join(import.meta.dir
 await Bun.write(join(outDir, "package.json"), JSON.stringify({ ...pkg, version: BUN_VERSION }, null, 2));
 
 // copy CLAUDE.md
-let claude = Bun.file(join(import.meta.dir, "../../../src/cli/init/rule.md"));
+let claude = Bun.file(join(import.meta.dir, "../../../src/runtime/cli/init/rule.md"));
 if (await claude.exists()) {
   let original = await claude.text();
   const endOfFrontMatter = original.lastIndexOf("---\n");

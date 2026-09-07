@@ -245,8 +245,7 @@ impl KnownGlobal {
                         // new Array(1, 2, 3) -> [1, 2, 3]
                         // But NOT new Array(3) which creates an array with 3 empty slots,
                         // and `new Array(5, ...rest)` is `new Array(5)` when `rest` is empty.
-                        if e
-                            .args
+                        if e.args
                             .slice()
                             .iter()
                             .any(|arg| matches!(arg.data, js_ast::ExprData::ESpread(_)))

@@ -276,9 +276,7 @@ impl JSPromise {
         JSC__JSPromise__resolvedPromiseValue(global, value)
     }
 
-    /// Create a new rejected promise rejecting to a given value. The rejection
-    /// is registered with the VM's rejection tracker, so it is reported as
-    /// unhandled unless a handler is attached before the microtask checkpoint.
+    /// Create a new rejected promise. The rejection tracker sees it, like `Promise.reject()`.
     ///
     /// Note: If you want the result as a `JSValue`, use `rejected_promise().to_js()` instead.
     pub fn rejected_promise(global: &JSGlobalObject, value: JSValue) -> &mut JSPromise {
@@ -286,9 +284,8 @@ impl JSPromise {
         JSPromise::opaque_mut(JSC__JSPromise__rejectedPromise(global, value))
     }
 
-    /// Create a new promise rejected with the exception `err` proves is pending,
-    /// taking it off the VM. The reason is converted the way [`reject`](Self::reject)
-    /// converts it; a termination propagates instead of becoming a reason.
+    /// Create a new promise rejected with the pending exception behind `err`, the
+    /// way [`reject`](Self::reject) takes it. A termination propagates instead.
     pub fn rejected_promise_with_caught_exception(
         global: &JSGlobalObject,
         err: JsError,

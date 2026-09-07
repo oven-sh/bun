@@ -6422,7 +6422,7 @@ impl<'a> Resolver<'a> {
                     }
                 }
                 if let Some(found) = tsconfig_path {
-                    if is_shared_scratch_dir(path) {
+                    if is_shared_scratch_dir(fd) {
                         let _ = self.log_mut().add_debug_fmt(
                             None,
                             bun_ast::Loc::EMPTY,
@@ -6738,31 +6738,26 @@ fn is_dot_slash(path: &[u8]) -> bool {
     }
 }
 
-/// True for a directory that is both world-writable and sticky (mode `1777`:
-/// `/tmp`, `/var/tmp`, `/dev/shm`).
+/// True for an open directory that is both world-writable and sticky (mode
+/// `1777`: `/tmp`, `/var/tmp`, `/dev/shm`), or whose mode cannot be read.
 ///
 /// Every user on the system can create a file in such a directory, so a file
 /// found there during the upward walk can belong to anyone. The sticky bit is
 /// the boundary that matters: a world-writable directory without it lets the
 /// same attacker rename the project itself, so nothing in the subtree is
 /// trustworthy either way.
-fn is_shared_scratch_dir(path: &[u8]) -> bool {
+fn is_shared_scratch_dir(dir: FD) -> bool {
     #[cfg(unix)]
     {
         const SHARED: libc::mode_t = libc::S_ISVTX | libc::S_IWOTH;
-        let mut buf = bun_paths::path_buffer_pool::get();
-        if path.is_empty() || path.len() >= buf.len() {
-            return false;
+        if !dir.is_valid() {
+            return true;
         }
-        buf[..path.len()].copy_from_slice(path);
-        buf[path.len()] = 0;
-        // SAFETY: `buf[path.len()] == 0` written above.
-        let span = bun_core::ZStr::from_buf(&buf[..], path.len());
-        bun_sys::stat(span).is_ok_and(|st| (st.st_mode & SHARED) == SHARED)
+        bun_sys::fstat(dir).map_or(true, |st| (st.st_mode & SHARED) == SHARED)
     }
     #[cfg(not(unix))]
     {
-        let _ = path;
+        let _ = dir;
         false
     }
 }

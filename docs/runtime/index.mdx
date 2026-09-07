@@ -58,6 +58,8 @@ bun run dev --watch # ❌ don't do this
 
 `bun` ignores flags at the end of the command and passes them through to the `"dev"` script itself.
 
+When `"dev"` is a `package.json` script that runs a single `bun` command, Bun forwards `--watch` to that command. See [Watch mode](/runtime/watch-mode).
+
 </Note>
 
 ## Run a `package.json` script

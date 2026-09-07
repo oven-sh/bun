@@ -1711,9 +1711,7 @@ fn stop_dns_for_vm_teardown() -> SweepResult {
     result
 }
 
-/// `RuntimeHooks::unlink_unix_socket_paths_for_exit`. The listeners stay
-/// registered and open: the process is about to exit and nothing is closed,
-/// so no close handler can run after the `exit` event.
+/// `RuntimeHooks::unlink_unix_socket_paths_for_exit`: unlink only, nothing is closed, so no close handler runs.
 fn unlink_unix_socket_paths_for_exit() {
     let Some(handles) = active_handles() else {
         return;

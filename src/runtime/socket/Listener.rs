@@ -934,8 +934,7 @@ impl Listener {
         Self::deinit(Box::into_raw(self));
     }
 
-    /// See `RuntimeHooks::unlink_unix_socket_paths_for_exit`. The listening fd
-    /// stays open until the process exits right after.
+    /// See `RuntimeHooks::unlink_unix_socket_paths_for_exit`; the fd stays open until the process exits.
     pub(crate) fn unlink_unix_socket_path_for_exit(&self) {
         if matches!(self.listener.get(), ListenerType::Uws(_)) {
             Self::unlink_unix_socket_path(self);

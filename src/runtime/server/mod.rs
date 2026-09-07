@@ -1612,8 +1612,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         self.listener.is_some() || (Self::HAS_H3 && self.h3_listener.is_some())
     }
 
-    /// Match Node.js/libuv: remove the socket file of a `unix:` server when it
-    /// stops listening. Abstract sockets (leading NUL) have no file.
+    /// libuv parity: remove a `unix:` server's socket file when it stops listening (abstract sockets have none).
     fn unlink_unix_socket_path(&self) {
         if let server_config::Address::Unix(path) = &self.config.address {
             let bytes = path.as_bytes();

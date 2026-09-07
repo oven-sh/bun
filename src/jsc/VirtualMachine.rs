@@ -2372,12 +2372,7 @@ pub struct RuntimeHooks {
     /// # Safety
     /// `vm` is the live per-thread VM on the JS thread; the JSC heap is alive.
     pub stop_active_handles_for_vm_teardown: unsafe fn(vm: *mut VirtualMachine) -> SweepResult,
-    /// Main-thread exit after the loop ran dry, when `teardown()` does not run:
-    /// unlink the file behind every unix-domain listener still registered
-    /// (node:net, `Bun.listen`, `Bun.serve({ unix })`). Node frees the
-    /// environment on that exit, which closes every libuv handle, and closing a
-    /// bound pipe handle unlinks its path. `process.exit()` and a fatal error
-    /// call `exit()` in Node and leave the file, so they skip this too.
+    /// Loop ran dry on the main thread (no `teardown()`): unlink open unix listeners' files, as Node's handle teardown does.
     pub unlink_unix_socket_paths_for_exit: fn(),
     /// Teardown only (never on a live VM): unlink every remaining EventLoopTimer.
     pub disarm_all_timers_for_vm_teardown: unsafe fn(vm: *mut VirtualMachine),

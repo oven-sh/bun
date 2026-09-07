@@ -4706,3 +4706,124 @@ it("concurrent end() on two allowHalfOpen TLS peers closes both sockets", async 
 
   await Promise.all([serverClosed.promise, clientClosed.promise]);
 });
+
+// The option bags of Bun.connect and Bun.listen are generated dictionaries: the top-level
+// bag (SocketOptions), the handler bag (SocketHandler) and the TLS bag (TLSOptions). Each
+// member is read with a lookup that stops at Object.prototype, so a polluted
+// Object.prototype cannot supply an option the caller did not pass.
+//
+// Each case runs in its own process: Object.prototype is global state.
+describe("Object.prototype pollution", () => {
+  it("does not take a socket handler from Object.prototype", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        const server = Bun.listen({
+          hostname: "127.0.0.1",
+          port: 0,
+          socket: { open: s => { s.write("server-bytes"); s.end(); }, data() {}, close() {} },
+        });
+        const got = Promise.withResolvers();
+        // The bag below has no data handler, so the bytes have nowhere to go.
+        Object.prototype.data = (socket, bytes) => got.resolve("polluted: " + bytes);
+        const client = await Bun.connect({
+          hostname: "127.0.0.1",
+          port: server.port,
+          socket: { open() {}, drain() {}, error() {}, close: () => got.resolve("clean") },
+        });
+        delete Object.prototype.data;
+        console.log(await got.promise);
+        client.terminate();
+        server.stop(true);
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), stderr }).toEqual({ stdout: "clean", stderr: "" });
+    expect(exitCode).toBe(0);
+  });
+
+  it("does not take the tls option from Object.prototype", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        const net = require("node:net");
+        const got = Promise.withResolvers();
+        // A plain TCP server reports the first bytes it receives. 0x16 is a TLS record.
+        const server = net.createServer(connection => {
+          connection.once("data", bytes => {
+            got.resolve(bytes[0] === 0x16 ? "TLS ClientHello" : String(bytes));
+            connection.destroy();
+          });
+        });
+        await new Promise(done => server.listen(0, "127.0.0.1", done));
+        Object.prototype.tls = true;
+        Bun.connect({
+          hostname: "127.0.0.1",
+          port: server.address().port,
+          socket: {
+            open: s => s.write("PLAINTEXT"),
+            data() {}, close() {}, error() {}, connectError() {}, handshake() {},
+          },
+        }).catch(() => {});
+        delete Object.prototype.tls;
+        console.log(await got.promise);
+        server.close();
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), stderr }).toEqual({ stdout: "PLAINTEXT", stderr: "" });
+    expect(exitCode).toBe(0);
+  });
+
+  it("does not take tls.rejectUnauthorized from Object.prototype", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        const server = Bun.listen({
+          hostname: "127.0.0.1",
+          port: 0,
+          tls: { cert: process.env.FIXTURE_CERT, key: process.env.FIXTURE_KEY },
+          socket: { open() {}, data() {}, close() {}, error() {} },
+        });
+        const got = Promise.withResolvers();
+        Object.prototype.rejectUnauthorized = false;
+        const client = await Bun.connect({
+          hostname: "127.0.0.1",
+          port: server.port,
+          // The certificate is self-signed, so the peer is not authorized. Only
+          // rejectUnauthorized: false makes the handshake report that it is.
+          tls: { serverName: "localhost" },
+          socket: {
+            data() {}, close() {}, error() {}, connectError() {},
+            handshake: (socket, authorized) => got.resolve("authorized: " + authorized),
+          },
+        });
+        delete Object.prototype.rejectUnauthorized;
+        console.log(await got.promise);
+        client.terminate();
+        server.stop(true);
+        `,
+      ],
+      env: { ...bunEnv, FIXTURE_CERT: tls.cert, FIXTURE_KEY: tls.key },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), stderr }).toEqual({ stdout: "authorized: false", stderr: "" });
+    expect(exitCode).toBe(0);
+  });
+});

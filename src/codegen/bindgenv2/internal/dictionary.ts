@@ -206,6 +206,7 @@ export function dictionary(
         #include "root.h"
         #include "Generated${name}.h"
         #include "Bindgen/IDLConvert.h"
+        #include "ObjectBindings.h"
         #include <JavaScriptCore/Identifier.h>
 
         template<> Bun::Bindgen::Generated::${name}
@@ -307,8 +308,10 @@ function memberConversion(
             result = `if (!value${i}.isUndefined()) break;\n`;
           }
           result += dedent(`
-            value${i} = object->get(
+            value${i} = ::Bun::getIfPropertyExistsPrototypePollutionMitigation(
+              vm,
               &globalObject,
+              object,
               ::JSC::Identifier::fromString(vm, ${toASCIILiteral(memberName)}));
             RETURN_IF_EXCEPTION(throwScope, {});
           `);

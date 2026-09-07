@@ -275,31 +275,31 @@ test.skipIf(isWindows)("TLS file options that are not regular files are rejected
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect(stderr).toBe("");
-  // One JSON line per door: { door, message }.
-  const messages = Object.fromEntries(
-    stdout
-      .trim()
-      .split("\n")
-      .map(line => JSON.parse(line))
-      .map(({ door, message }) => [door, message]),
-  );
-  const rejected = expect.stringMatching(/^TLSOptions\.\w+ must be a regular file/);
-  expect(messages).toEqual({
-    "Bun.serve": rejected,
-    "Bun.serve sni": rejected,
-    "Bun.serve keyFile": rejected,
-    "server.reload": rejected,
-    "Bun.listen": rejected,
-    "Bun.listen keyFile": rejected,
-    "Bun.connect": rejected,
-    fetch: rejected,
-    "tls.connect": rejected,
-    "tls.createServer": rejected,
-    "tls.createSecureContext": rejected,
-    "https.Agent": rejected,
-    WebSocket: rejected,
-    RedisClient: rejected,
-    "Bun.SQL": rejected,
+  // One JSON line per door ({ door, message }), then { stray } with any error
+  // that surfaced after its door had already reported.
+  const lines = stdout
+    .trim()
+    .split("\n")
+    .map(line => JSON.parse(line));
+  const last = lines.pop();
+  const rejected = (field: string) => `TLSOptions.${field} must be a regular file, got a FIFO`;
+  expect(Object.fromEntries(lines.map(({ door, message }) => [door, message]))).toEqual({
+    "Bun.serve": rejected("cert"),
+    "Bun.serve sni": rejected("cert"),
+    "Bun.serve keyFile": rejected("keyFile"),
+    "server.reload": rejected("cert"),
+    "Bun.listen": rejected("cert"),
+    "Bun.listen keyFile": rejected("keyFile"),
+    "Bun.connect": rejected("ca"),
+    fetch: rejected("ca"),
+    "tls.connect": rejected("ca"),
+    "tls.createServer": rejected("cert"),
+    "tls.createSecureContext": rejected("ca"),
+    "https.Agent": rejected("ca"),
+    WebSocket: rejected("ca"),
+    RedisClient: rejected("ca"),
+    "Bun.SQL": rejected("ca"),
   });
+  expect(last).toEqual({ stray: [] });
   expect(exitCode).toBe(0);
 });

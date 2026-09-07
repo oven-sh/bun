@@ -4638,7 +4638,8 @@ declare module "bun" {
     passphrase?: string;
 
     /**
-     * File path to a `.pem` file containing custom Diffie-Hellman parameters
+     * File path to a `.pem` file containing custom Diffie-Hellman parameters.
+     * Must be a regular file.
      */
     dhParamsFile?: string;
 
@@ -4673,8 +4674,7 @@ declare module "bun" {
      * replaced when CAs are explicitly specified using this option.
      *
      * A `BunFile` is read synchronously when the options are parsed, like
-     * `fs.readFileSync`, and must point to a regular file. The same applies
-     * to `cert` and `key`.
+     * `fs.readFileSync`, and must point to a regular file.
      */
     ca?: string | BufferSource | BunFile | Array<string | BufferSource | BunFile> | undefined;
     /**

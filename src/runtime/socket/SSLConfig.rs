@@ -38,7 +38,8 @@ pub(crate) enum ReadFromBlobError {
     Js(JsError),
     NullStore,
     NotAFile,
-    NotRegularFile,
+    /// Carries the kind of file it is instead, for the error message.
+    NotRegularFile(&'static str),
     EmptyFile,
 }
 
@@ -47,6 +48,23 @@ impl From<JsError> for ReadFromBlobError {
     fn from(e: JsError) -> Self {
         ReadFromBlobError::Js(e)
     }
+}
+
+/// TLS material is read synchronously on the JS thread (a `Bun.file()` option
+/// when the options are parsed, a `*File` path when the SSL_CTX is built).
+/// `open(2)` of a FIFO waits for a writer and a read of a pipe, socket or
+/// device waits for its peer, so only a regular file is accepted. Returns the
+/// kind to name in the error for anything else.
+fn non_regular_file_kind(stat: &bun_sys::Stat) -> Option<&'static str> {
+    Some(match bun_sys::kind_from_mode(stat.st_mode as _) {
+        bun_sys::FileKind::File => return None,
+        bun_sys::FileKind::Directory => "directory",
+        bun_sys::FileKind::NamedPipe => "FIFO",
+        bun_sys::FileKind::UnixDomainSocket => "socket",
+        bun_sys::FileKind::CharacterDevice => "character device",
+        bun_sys::FileKind::BlockDevice => "block device",
+        _ => "non-regular file",
+    })
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -87,10 +105,7 @@ fn read_from_blob(
         StoreData::File(f) => f,
         _ => return Err(ReadFromBlobError::NotAFile),
     };
-    // The read below is synchronous on the JS thread: the PEM bytes must exist
-    // before the SSL_CTX is built. `open(2)` of a FIFO waits for a writer and a
-    // read of a pipe, socket or device waits for its peer, so only a regular
-    // file is accepted. A stat error is left for the open to report.
+    // A stat error is left for the open below to report.
     let stat = match &file.pathlike {
         PathOrFileDescriptor::Path(path) => {
             let mut buf = bun_paths::path_buffer_pool::get();
@@ -98,10 +113,8 @@ fn read_from_blob(
         }
         PathOrFileDescriptor::Fd(fd) => bun_sys::fstat(*fd),
     };
-    if let Ok(stat) = stat {
-        if !bun_sys::S::ISREG(stat.st_mode as _) {
-            return Err(ReadFromBlobError::NotRegularFile);
-        }
+    if let Some(kind) = stat.ok().as_ref().and_then(non_regular_file_kind) {
+        return Err(ReadFromBlobError::NotRegularFile(kind));
     }
     let mut fs = node_fs::NodeFS::default();
     // `ReadFile` has a `Drop` impl (releases its `signal` ref), so functional
@@ -315,16 +328,25 @@ fn handle_path(
     string: &bun_core::String,
 ) -> JsResult<*const c_char> {
     let name = string.to_owned_slice_z();
-    // The file is opened later, synchronously, when the SSL_CTX is built, so
-    // reject anything whose open or read can block (FIFO, socket, device) here.
-    match bun_sys::stat(&name) {
-        Ok(stat) if bun_sys::S::ISREG(stat.st_mode as _) => Ok(zbox_into_raw(&name)),
-        Ok(_) => Err(global
-            .throw_invalid_arguments(format_args!("TLSOptions.{} must be a regular file", field))),
+    let stat = match bun_sys::stat(&name) {
+        Ok(stat) => stat,
         Err(_) => {
-            Err(global.throw_invalid_arguments(format_args!("Unable to access {} path", field)))
+            return Err(
+                global.throw_invalid_arguments(format_args!("Unable to access {} path", field))
+            );
         }
+    };
+    if let Some(kind) = non_regular_file_kind(&stat) {
+        return Err(throw_not_regular_file(global, field, kind));
     }
+    Ok(zbox_into_raw(&name))
+}
+
+fn throw_not_regular_file(global: &JSGlobalObject, field: &'static str, kind: &str) -> JsError {
+    global.throw_invalid_arguments(format_args!(
+        "TLSOptions.{} must be a regular file, got a {}",
+        field, kind
+    ))
 }
 
 fn handle_file_for_field(
@@ -339,10 +361,9 @@ fn handle_file_for_field(
             Err(global
                 .throw_invalid_arguments(format_args!("TLSOptions.{} is an empty file", field)))
         }
-        Err(ReadFromBlobError::NotRegularFile) => Err(global.throw_invalid_arguments(format_args!(
-            "TLSOptions.{} must be a regular file (for a FIFO, socket or device, pass its contents instead of a Bun.file())",
-            field
-        ))),
+        Err(ReadFromBlobError::NotRegularFile(kind)) => {
+            Err(throw_not_regular_file(global, field, kind))
+        }
         Err(ReadFromBlobError::NullStore) | Err(ReadFromBlobError::NotAFile) => Err(global
             .throw_invalid_arguments(format_args!(
                 "TLSOptions.{} is not a valid BunFile (non-BunFile `Blob`s are not supported)",

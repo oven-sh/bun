@@ -49,23 +49,32 @@ const doors: Record<string, () => unknown> = {
   },
 };
 
+const messageOf = (error: unknown) =>
+  error instanceof Error ? error.message : String((error as any)?.message ?? error);
+
 // An error thrown from a callback or a next tick belongs to the door that is
-// running at the time.
+// running at the time. One that arrives after its door already reported is a
+// stray, printed at the end so that the test fails on it.
 let settle: ((error: unknown) => void) | undefined;
-process.on("uncaughtException", error => settle?.(error));
-process.on("unhandledRejection", error => settle?.(error));
+const stray: string[] = [];
+const onLateError = (error: unknown) => (settle ? settle(error) : stray.push(messageOf(error)));
+process.on("uncaughtException", onLateError);
+process.on("unhandledRejection", onLateError);
 
 for (const [door, run] of Object.entries(doors)) {
   const { promise, resolve } = Promise.withResolvers<unknown>();
-  settle = resolve;
-  try {
-    Promise.resolve(run()).then(() => resolve("no error"), resolve);
-  } catch (error) {
+  settle = error => {
+    settle = undefined;
     resolve(error);
+  };
+  try {
+    Promise.resolve(run()).then(() => settle?.("no error"), error => onLateError(error));
+  } catch (error) {
+    settle?.(error);
   }
-  const error = await promise;
-  settle = undefined;
-  const message = error instanceof Error ? error.message : String((error as any)?.message ?? error);
-  console.log(JSON.stringify({ door, message }));
+  console.log(JSON.stringify({ door, message: messageOf(await promise) }));
 }
+// Let anything still queued from the last door surface before reporting strays.
+await new Promise(resolve => setImmediate(resolve));
+console.log(JSON.stringify({ stray }));
 process.exit(0);

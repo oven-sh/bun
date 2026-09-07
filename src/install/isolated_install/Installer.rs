@@ -1663,6 +1663,9 @@ impl Task {
                         };
 
                         if let Some(list) = scripts_list {
+                            // Before any script spawns, so that an install killed
+                            // from here on does not count the entry as installed.
+                            list.mark_scripts_pending();
                             // Snapshot before boxing so the post-publish
                             // `first_index` check needs no raw-pointer deref.
                             let first_index = list.first_index;

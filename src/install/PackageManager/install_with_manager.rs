@@ -2293,8 +2293,6 @@ fn run_root_lifecycle_scripts(
         // root lifecycle scripts can run now that all dependencies are installed, dependency scripts
         // have finished, and lockfiles have been saved
         let optional = false;
-        // cwd is the project root
-        let remove_on_failure = false;
         let output_in_foreground = true;
         // `spawn_package_lifecycle_scripts` consumes by-value; `.take()`
         // moves it out (`package_name` is owned by the List and drops with it).
@@ -2302,7 +2300,6 @@ fn run_root_lifecycle_scripts(
             ctx,
             scripts,
             optional,
-            remove_on_failure,
             output_in_foreground,
             None,
         )?;

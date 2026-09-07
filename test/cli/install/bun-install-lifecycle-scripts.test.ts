@@ -1499,14 +1499,16 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
       expect(out).toEqual(expect.stringContaining("bun install v1."));
     });
 
+    // `lifecycle-postinstall-needs-toolchain` has a postinstall script that exits with 7
+    // unless LIFECYCLE_TOOLCHAIN is set, and writes built.txt into the package when it
+    // succeeds. With LIFECYCLE_BLOCK_PID_FILE set it writes its pid there instead and
+    // waits to be killed.
     for (const linker of ["hoisted", "isolated"] as const) {
-      test(`a dependency whose lifecycle script failed is installed again by the next install (${linker} linker)`, async () => {
-        using ctx = await setupTest();
+      async function setupNeedsToolchainTest() {
+        const ctx = await setupTest();
         const { packageDir, packageJson, env } = ctx;
         const testEnv = forceWaiterThread ? { ...env, BUN_FEATURE_FLAG_FORCE_WAITER_THREAD: "1" } : env;
 
-        // The postinstall script of this package exits with 7 unless
-        // LIFECYCLE_TOOLCHAIN is set, and writes built.txt when it succeeds.
         await writeFile(
           packageJson,
           JSON.stringify({
@@ -1519,10 +1521,8 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
           }),
         );
 
-        const pkgDir = join(packageDir, "node_modules", "lifecycle-postinstall-needs-toolchain");
-
-        const install = async (extraEnv: Record<string, string> = {}) => {
-          const { stdout, stderr, exited } = spawn({
+        const spawnInstall = (extraEnv: Record<string, string> = {}) =>
+          spawn({
             cmd: [bunExe(), "install", "--linker", linker],
             cwd: packageDir,
             stdout: "pipe",
@@ -1530,19 +1530,36 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
             stderr: "pipe",
             env: { ...testEnv, ...extraEnv },
           });
+
+        const install = async (extraEnv: Record<string, string> = {}) => {
+          const { stdout, stderr, exited } = spawnInstall(extraEnv);
           return { out: await stdout.text(), err: await stderr.text(), exitCode: await exited };
         };
 
-        // The script fails: bun exits with the script's exit code, does not save a
-        // lockfile, and removes the package so that the next install does not mistake
-        // it for an installed one.
+        return {
+          ctx,
+          packageDir,
+          pkgDir: join(packageDir, "node_modules", "lifecycle-postinstall-needs-toolchain"),
+          spawnInstall,
+          install,
+        };
+      }
+
+      test(`a dependency whose lifecycle script failed is installed again by the next install (${linker} linker)`, async () => {
+        const { ctx, packageDir, pkgDir, install } = await setupNeedsToolchainTest();
+        using _ = ctx;
+
+        // The script fails: bun exits with the script's exit code and does not save a
+        // lockfile. The next install must run the script again instead of reporting
+        // "no changes".
         for (let attempt = 0; attempt < 2; attempt++) {
-          const { err, exitCode } = await install();
+          const { out, err, exitCode } = await install();
           expect(err).toContain("toolchain missing");
           expect(err).toContain('error: postinstall script from "lifecycle-postinstall-needs-toolchain" exited with 7');
           expect(err).not.toContain("Saved lockfile");
+          expect(out).not.toContain("(no changes)");
           expect(
-            await Promise.all([exists(join(pkgDir, "package.json")), exists(join(packageDir, "bun.lock"))]),
+            await Promise.all([exists(join(pkgDir, "built.txt")), exists(join(packageDir, "bun.lock"))]),
           ).toEqual([false, false]);
           expect(exitCode).toBe(7);
         }
@@ -1568,6 +1585,59 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
           expect(exitCode).toBe(0);
         }
       });
+
+      // Killing by pid and deleting the directory a killed process ran in behave
+      // differently on Windows; the marker this relies on is covered there by the
+      // test above.
+      test.skipIf(isWindows)(
+        `a dependency whose lifecycle script was cut off by a killed install is installed again by the next install (${linker} linker)`,
+        async () => {
+          const { ctx, packageDir, pkgDir, spawnInstall, install } = await setupNeedsToolchainTest();
+          using _ = ctx;
+
+          // Simulate CI cancelling the job, or the OOM killer, while the postinstall
+          // script runs: SIGKILL gives bun no chance to clean anything up.
+          {
+            const pidFile = join(packageDir, "postinstall.pid");
+            const proc = spawnInstall({ LIFECYCLE_BLOCK_PID_FILE: pidFile });
+            let scriptPid: number | undefined;
+            while (scriptPid === undefined) {
+              if (await exists(pidFile)) {
+                scriptPid = Number(await file(pidFile).text());
+              } else if (proc.exitCode !== null) {
+                throw new Error(`bun install exited before the postinstall script started:\n${await proc.stderr.text()}`);
+              } else {
+                await Bun.sleep(20);
+              }
+            }
+            proc.kill("SIGKILL");
+            await proc.exited;
+            process.kill(scriptPid, "SIGKILL");
+          }
+          expect(
+            await Promise.all([exists(join(pkgDir, "built.txt")), exists(join(packageDir, "bun.lock"))]),
+          ).toEqual([false, false]);
+
+          // The package is fully linked, but its script never finished, so this must
+          // not be a "no changes" install.
+          {
+            const { out, err, exitCode } = await install({ LIFECYCLE_TOOLCHAIN: "1" });
+            expect(err).not.toContain("error:");
+            expect(out).not.toContain("(no changes)");
+            expect(await file(join(pkgDir, "built.txt")).text()).toBe("ok");
+            expect(exitCode).toBe(0);
+          }
+
+          {
+            await rm(join(pkgDir, "built.txt"));
+            const { out, err, exitCode } = await install({ LIFECYCLE_TOOLCHAIN: "1" });
+            expect(err).not.toContain("error:");
+            expect(out).toContain("(no changes)");
+            expect(await exists(join(pkgDir, "built.txt"))).toBe(false);
+            expect(exitCode).toBe(0);
+          }
+        },
+      );
     }
 
     test("failing root lifecycle script should print output correctly", async () => {

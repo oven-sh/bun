@@ -5,7 +5,7 @@ use bun_core::fmt::PathSep;
 use bun_core::strings;
 use bun_install::lockfile::Lockfile;
 use bun_install::lockfile::Scripts as LockfileScripts;
-use bun_install::{Resolution, ResolutionTag, initialize_store};
+use bun_install::{Resolution, ResolutionTag, SCRIPTS_PENDING_FILE, initialize_store};
 use bun_paths::{self, SEP_STR};
 use bun_semver::String as SemverString;
 use bun_sys::{self, Fd};
@@ -242,6 +242,7 @@ impl Scripts {
                 // Owned NUL-terminated copy.
                 cwd: ZBox::from_bytes(cwd),
                 package_name: Box::<[u8]>::from(package_name),
+                cwd_is_from_cache: resolution_tag.can_enqueue_install_task(),
             });
         }
 
@@ -417,9 +418,47 @@ pub struct List {
     // Owned NUL-terminated heap string, not a borrow.
     pub(crate) cwd: ZBox,
     pub(crate) package_name: Box<[u8]>,
+    /// `cwd` is a package directory bun extracted from its cache (npm, git,
+    /// github, tarball), as opposed to the project root, a workspace, a
+    /// `bun link` target, or a folder dependency, which are the user's own
+    /// directories. Only a cache copy gets a [`SCRIPTS_PENDING_FILE`] and may
+    /// be deleted when an optional dependency's script fails.
+    pub(crate) cwd_is_from_cache: bool,
 }
 
 impl List {
+    fn scripts_pending_file_path(&self) -> Option<bun_paths::AutoAbsPath> {
+        if !self.cwd_is_from_cache {
+            return None;
+        }
+        let mut path = bun_paths::AutoAbsPath::from(self.cwd.as_bytes()).ok()?;
+        path.append(SCRIPTS_PENDING_FILE.as_bytes()).ok()?;
+        Some(path)
+    }
+
+    /// Create [`SCRIPTS_PENDING_FILE`] before the first script is spawned.
+    /// Best effort: without it a killed install is just not retried.
+    pub fn mark_scripts_pending(&self) {
+        let Some(path) = self.scripts_pending_file_path() else {
+            return;
+        };
+        // Dropping the `File` closes it.
+        let _ = bun_sys::File::openat(
+            Fd::cwd(),
+            path.slice(),
+            bun_sys::O::WRONLY | bun_sys::O::CREAT | bun_sys::O::TRUNC,
+            0o644,
+        );
+    }
+
+    /// Remove [`SCRIPTS_PENDING_FILE`] once every script exited 0.
+    pub fn clear_scripts_pending(&self) {
+        let Some(mut path) = self.scripts_pending_file_path() else {
+            return;
+        };
+        let _ = bun_sys::unlink(path.slice_z());
+    }
+
     pub fn print_scripts(
         &self,
         resolution: &Resolution,

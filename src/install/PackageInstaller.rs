@@ -46,8 +46,6 @@ pub struct PendingLifecycleScript {
     pub(crate) list: lockfile::package::scripts::List,
     pub(crate) tree_id: lockfile::tree::Id,
     pub(crate) optional: bool,
-    /// See `LifecycleScriptSubprocess::remove_on_failure`.
-    pub(crate) remove_on_failure: bool,
 }
 
 pub struct PackageInstaller<'a> {
@@ -156,6 +154,25 @@ impl NodeModulesFolder {
             Err(_) => return false,
         };
         bun_sys::directory_exists_at(&dir, file_path).unwrap_or(false)
+    }
+
+    /// Since the stack size of these functions are rather large, let's not let them be inlined.
+    #[inline(never)]
+    pub(crate) fn file_exists_at(&self, root_node_modules_dir: &Dir, file_path: &ZStr) -> bool {
+        if file_path.len() + self.path.len() * 2 < MAX_PATH_BYTES {
+            let mut path_buf = bun_paths::path_buffer_pool::get();
+            let parts: [&[u8]; 2] = [self.path.as_slice(), file_path.as_bytes()];
+            return bun_sys::exists_at(
+                root_node_modules_dir.fd(),
+                join_z_buf::<platform::Auto>(path_buf.as_mut_slice(), &parts),
+            );
+        }
+
+        let dir = match self.open_dir(root_node_modules_dir) {
+            Ok(d) => d,
+            Err(_) => return false,
+        };
+        bun_sys::exists_at(&dir, file_path)
     }
 
     /// Since the stack size of these functions are rather large, let's not let them be inlined.
@@ -800,7 +817,6 @@ impl<'a> PackageInstaller<'a> {
                     self.command_ctx,
                     entry.list,
                     optional,
-                    entry.remove_on_failure,
                     output_in_foreground,
                     None,
                 ) {
@@ -932,7 +948,6 @@ impl<'a> PackageInstaller<'a> {
                 self.command_ctx,
                 entry.list,
                 optional,
-                entry.remove_on_failure,
                 output_in_foreground,
                 None,
             ) {
@@ -1574,11 +1589,33 @@ impl<'a> PackageInstaller<'a> {
             }
         }
 
+        let (is_trusted, is_trusted_through_update_request) = 'brk: {
+            if self
+                .trusted_dependencies_from_update_requests
+                .contains(&package_id)
+            {
+                break 'brk (true, true);
+            }
+            if self.lockfile().has_trusted_dependency(
+                alias.slice(string_buf!()),
+                pkg_name.slice(string_buf!()),
+                resolution,
+            ) {
+                break 'brk (true, false);
+            }
+            break 'brk (false, false);
+        };
+
         let needs_install = self.force_install
             || self.skip_verify_installed_version_number
             || !needs_verify
             || remove_patch
-            || !installer.verify(resolution, &self.root_node_modules_folder);
+            || !installer.verify(resolution, &self.root_node_modules_folder)
+            // An earlier install stopped before this package's scripts finished.
+            // Only a trusted package can have had scripts enqueued.
+            || (is_trusted
+                && resolution.tag.can_enqueue_install_task()
+                && installer.has_pending_scripts(&self.root_node_modules_folder));
 
         if needs_install {
             if resolution.tag.can_enqueue_install_task()
@@ -1939,22 +1976,6 @@ impl<'a> PackageInstaller<'a> {
                     let dep_behavior = dep.behavior;
                     let truncated_dep_name_hash: TruncatedPackageNameHash =
                         dep.name_hash as TruncatedPackageNameHash;
-                    let (is_trusted, is_trusted_through_update_request) = 'brk: {
-                        if self
-                            .trusted_dependencies_from_update_requests
-                            .contains(&package_id)
-                        {
-                            break 'brk (true, true);
-                        }
-                        if self.lockfile().has_trusted_dependency(
-                            alias.slice(string_buf!()),
-                            pkg_name.slice(string_buf!()),
-                            resolution,
-                        ) {
-                            break 'brk (true, false);
-                        }
-                        break 'brk (false, false);
-                    };
 
                     if resolution.tag != resolution::Tag::Root
                         && (resolution.tag == resolution::Tag::Workspace || is_trusted)
@@ -2459,14 +2480,14 @@ impl<'a> PackageInstaller<'a> {
                         + scripts_list.total as usize,
                 );
             }
+            // The scripts may not run for a while (the tree's dependencies
+            // install first). Mark the package now so that an install killed
+            // before they finish does not count it as installed.
+            scripts_list.mark_scripts_pending();
             self.pending_lifecycle_scripts.push(PendingLifecycleScript {
                 list: scripts_list,
                 tree_id: self.current_tree_id,
                 optional,
-                // Only these tags name a directory bun extracted from its cache.
-                // Workspace and `bun link` packages are symlinks to the user's
-                // own directories.
-                remove_on_failure: resolution.tag.can_enqueue_install_task(),
             });
 
             return true;

@@ -2247,6 +2247,24 @@ pub(crate) fn install_isolated_packages(
                             }
                             let exists = sys::exists_z(store_path.slice_z());
 
+                            // An earlier install stopped before this entry's scripts
+                            // finished. Only a trusted package can have had scripts
+                            // enqueued, so untrusted entries skip the extra stat.
+                            if exists
+                                && (installer.trusted_dependencies_from_update_requests.contains(&pkg_id)
+                                    || lockfile_ro.has_trusted_dependency(
+                                        lockfile_ro.buffers.dependencies[dep_id as usize].name.slice(string_buf),
+                                        pkg_name.slice(string_buf),
+                                        &pkg_res,
+                                    ))
+                            {
+                                store_path.set_length(scope_for_patch_tag_path);
+                                store_path.append(install::SCRIPTS_PENDING_FILE.as_bytes()).assume_ok();
+                                if sys::exists_z(store_path.slice_z()) {
+                                    break 'needs_install true;
+                                }
+                            }
+
                             break 'needs_install match &patch_info {
                                 installer::PatchInfo::None => !exists,
                                 // checked above

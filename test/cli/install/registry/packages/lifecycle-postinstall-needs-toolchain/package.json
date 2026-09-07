@@ -13,8 +13,8 @@
       },
       "_id": "lifecycle-postinstall-needs-toolchain@1.0.0",
       "dist": {
-        "integrity": "sha512-+ARHwXS2Q2UEJWzJK+Q9+mTmqx2QZv96okdffmg/NBy8XTjp0cbYW7ulHBSpiQ13HRFMUtYc9836EmdBgsC2Kg==",
-        "shasum": "6d7c8bb22f8823357a8ba2de2950a0c35af2823a",
+        "integrity": "sha512-90znMYNm9nfPKQbVCt+69sV3fmge3foZ73/URIKQALXMmrBqHV2zAaMBbAYhH9vDtprOHyazIxkC9o0cMO++jw==",
+        "shasum": "8dcb454d811634a63e9b0bbd4f30cfe56de22085",
         "tarball": "http://localhost:4873/lifecycle-postinstall-needs-toolchain/-/lifecycle-postinstall-needs-toolchain-1.0.0.tgz"
       }
     }

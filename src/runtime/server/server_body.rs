@@ -1830,6 +1830,11 @@ where
         let mut sec_websocket_version = Utf8Bytes::EMPTY;
         let mut upgrade_header = Utf8Bytes::EMPTY;
 
+        // Once `request.headers` exists it is the whole handshake: it was built
+        // from every field of the uWS request, so a field missing from it now
+        // was deleted by the handler and must not be read back from the raw
+        // request (the detached, post-await path never could).
+        //
         // NOTE: `FetchHeaders::fast_get` takes `&mut self` (FFI signature
         // is `*mut`), so go through the `BodyMixin` accessor which yields a
         // `NonNull` instead of the inherent `&FetchHeaders` getter.
@@ -1854,11 +1859,7 @@ where
             if let Some(up) = head.fast_get(HTTPHeaderName::Upgrade) {
                 upgrade_header = up.to_utf8().into_owned();
             }
-        }
-
-        // SAFETY: upgrader_ptr is live (ref_() above)
-        let upgrader = unsafe { &*upgrader_ptr };
-        if let Some(req_ptr) = upgrader.req.get() {
+        } else if let Some(req_ptr) = upgrader.req.get() {
             // NOTE: `RequestContext.req` is type-erased to `*mut c_void`
             // (RequestContext.rs:82). `server.upgrade()` is HTTP/1-only — H3
             // contexts have a distinct generic param and `request_context.get`
@@ -1874,9 +1875,7 @@ where
                 (&mut sec_websocket_version, b"sec-websocket-version"),
                 (&mut upgrade_header, b"upgrade"),
             ] {
-                if value.is_empty() {
-                    *value = Utf8Bytes::Borrowed(r.header(name).unwrap_or(b""));
-                }
+                *value = Utf8Bytes::Borrowed(r.header(name).unwrap_or(b""));
             }
         }
 

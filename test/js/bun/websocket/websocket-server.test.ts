@@ -2296,6 +2296,54 @@ describe("server.upgrade() validates the opening handshake", () => {
     expect(v8.headers.toLowerCase()).toContain("sec-websocket-version: 13");
     expect(upgradeResult).toBe(false);
   });
+
+  // Once the handler has read req.headers, that Headers object is the handshake
+  // upgrade() validates and answers. A field the handler deleted from it must
+  // not come back from the raw request, whether or not fetch() awaited first.
+  it.each(["before any await", "after an await"])(
+    "a handshake header deleted from req.headers stays deleted (%s)",
+    async when => {
+      server = serve({
+        port: 0,
+        hostname: "127.0.0.1",
+        async fetch(req, srv) {
+          const del = req.headers.get("x-delete")!;
+          // setImmediate, not a microtask: leave the HTTP parser's stack so the
+          // request is detached from the raw uWS request before upgrade() runs.
+          if (when === "after an await") await new Promise(resolve => setImmediate(resolve));
+          req.headers.delete(del);
+          if (srv.upgrade(req)) return;
+          return new Response("no", { status: 400 });
+        },
+        websocket: { message() {} },
+      });
+      const shake = (del: string) =>
+        rawHandshake([
+          U,
+          C,
+          `Sec-WebSocket-Key: ${K}`,
+          V,
+          "Sec-WebSocket-Protocol: chat, superchat",
+          `X-Delete: ${del}`,
+        ]);
+
+      // Control: nothing relevant deleted, the first offered subprotocol is selected.
+      const control = await shake("x-unrelated");
+      expect(control.status).toBe(101);
+      expect(control.headers.toLowerCase()).toContain("sec-websocket-protocol: chat");
+
+      const noProtocol = await shake("sec-websocket-protocol");
+      expect(noProtocol.status).toBe(101);
+      expect(noProtocol.headers.toLowerCase()).not.toContain("sec-websocket-protocol");
+
+      expect((await shake("sec-websocket-key")).status).toBe(400);
+      expect((await shake("upgrade")).status).toBe(400);
+
+      const noVersion = await shake("sec-websocket-version");
+      expect(noVersion.status).toBe(426);
+      expect(noVersion.headers.toLowerCase()).toContain("sec-websocket-version: 13");
+    },
+  );
 });
 
 // The 101 switches protocols: the connection stops being HTTP, so the HTTP

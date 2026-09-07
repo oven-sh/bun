@@ -2421,6 +2421,7 @@ describe("bundler", () => {
         import { b as chainedB } from "./chained.cjs";
         import destructured from "./destructured.cjs";
         import forHeader from "./for-header.cjs";
+        import forOf from "./for-of.cjs";
         import moduleRequire from "./module-require.cjs";
         import { ok as ambientOk } from "./ambient.cts";
         console.log(
@@ -2434,6 +2435,7 @@ describe("bundler", () => {
             chainedB,
             destructured,
             forHeader,
+            forOf,
             moduleRequire,
             ambientOk,
           }),
@@ -2446,6 +2448,11 @@ describe("bundler", () => {
       "/for-header.cjs": /* js */ `
         for (var exports = { local: true }; false; ) {}
         module.exports.kind = typeof exports.local;
+      `,
+      "/for-of.cjs": /* js */ `
+        for (var exports of [{ local: true }]) {}
+        for (var [module] in { m: 1 }) {}
+        exports.kind = typeof exports.local + module;
       `,
       "/module-require.cjs": /* js */ `
         var exports = { local: true };
@@ -2506,6 +2513,7 @@ describe("bundler", () => {
         "/chained.cjs",
         "/destructured.cjs",
         "/for-header.cjs",
+        "/for-of.cjs",
         "/module-require.cjs",
         // dep.cjs is loaded through require(), which always keeps the wrapper.
         "/dep.cjs",
@@ -2513,7 +2521,7 @@ describe("bundler", () => {
     },
     run: {
       stdout:
-        '{"lib":{"answer":42,"kind":"boolean"},"fake":{"viaParam":"boolean","id":"user"},"reassigned":{"before":1,"after":"string"},"uninit":{"foo":123,"bar":124},"nested":{"viaParam":"boolean"},"aliasedA":"aliased","chainedB":"chained","destructured":{"kind":"boolean"},"forHeader":{"kind":"boolean"},"moduleRequire":{"dep":"dep","kind":"boolean"},"ambientOk":1}',
+        '{"lib":{"answer":42,"kind":"boolean"},"fake":{"viaParam":"boolean","id":"user"},"reassigned":{"before":1,"after":"string"},"uninit":{"foo":123,"bar":124},"nested":{"viaParam":"boolean"},"aliasedA":"aliased","chainedB":"chained","destructured":{"kind":"boolean"},"forHeader":{"kind":"boolean"},"forOf":{},"moduleRequire":{"dep":"dep","kind":"boolean"},"ambientOk":1}',
     },
   });
 });

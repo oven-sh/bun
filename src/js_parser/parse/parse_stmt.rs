@@ -151,7 +151,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let decls = p.parse_and_declare_decls(js_ast::symbol::Kind::Hoisted, opts)?;
         p.lexer.expect_or_insert_semicolon()?;
         if !opts.is_typescript_declare {
-            p.note_var_shadowing_module_or_exports(decls.slice());
+            p.note_var_shadowing_module_or_exports(decls.slice(), false);
         }
         Ok(p.s(
             S::Local {
@@ -164,20 +164,23 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         ))
     }
 
-    /// Sets `has_user_declared_module` / `has_user_declared_exports`. `var exports;` and
-    /// `var exports = module.exports;` keep the wrapper value and are not counted.
-    fn note_var_shadowing_module_or_exports(&mut self, decls: &[G::Decl]) {
+    /// `var exports;` and `var exports = module.exports;` keep the wrapper value and do not count.
+    fn note_var_shadowing_module_or_exports(&mut self, decls: &[G::Decl], is_loop_target: bool) {
         for decl in decls {
-            let Some(value) = decl.value else {
+            if decl.value.is_none() && !is_loop_target {
                 continue;
-            };
+            }
             match decl.binding.data {
                 js_ast::b::B::BIdentifier(id) => {
                     let name = self.load_name_from_ref(id.r#ref);
                     if name != b"module" && name != b"exports" {
                         continue;
                     }
-                    if name == b"exports" && self.is_module_dot_exports_at_parse(value) {
+                    if name == b"exports"
+                        && decl
+                            .value
+                            .is_some_and(|value| self.is_module_dot_exports_at_parse(value))
+                    {
                         continue;
                     }
                     if !self.var_hoists_to_module_scope() {
@@ -647,7 +650,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     let mut stmt_opts = ParseStatementOptions::default();
                     let decls =
                         p.parse_and_declare_decls(js_ast::symbol::Kind::Hoisted, &mut stmt_opts)?;
-                    p.note_var_shadowing_module_or_exports(decls.slice());
                     decls_ptr = bun_ast::StoreSlice::new(decls.slice());
                     init_ = Some(p.s(
                         S::Local {
@@ -746,6 +748,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 }
 
                 p.forbid_initializers(decls_ptr.slice(), "of", false)?;
+                if is_var {
+                    p.note_var_shadowing_module_or_exports(decls_ptr.slice(), true);
+                }
                 p.lexer.next()?;
                 let value = p.parse_expr(Level::Comma)?;
                 p.lexer.expect(T::TCloseParen)?;
@@ -765,6 +770,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             // Detect for-in loops
             if p.lexer.token == T::TIn {
                 p.forbid_initializers(decls_ptr.slice(), "in", is_var)?;
+                if is_var {
+                    p.note_var_shadowing_module_or_exports(decls_ptr.slice(), true);
+                }
                 p.lexer.next()?;
                 let value = p.parse_expr(Level::Lowest)?;
                 p.lexer.expect(T::TCloseParen)?;
@@ -778,6 +786,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     },
                     loc,
                 ));
+            }
+
+            if is_var {
+                p.note_var_shadowing_module_or_exports(decls_ptr.slice(), false);
             }
 
             // Only require "const" statement initializers when we know we're a normal for loop

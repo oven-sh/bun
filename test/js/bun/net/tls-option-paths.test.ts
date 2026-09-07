@@ -67,19 +67,21 @@ describe.skipIf(isWindows)("a TLS option path that is a FIFO", () => {
 
   for (const [name, door] of Object.entries(doors)) {
     test.concurrent(`${name} throws instead of blocking the event loop`, async () => {
-      const { stdout, exitCode } = await runDoor(door);
+      const { stdout, stderr, exitCode } = await runDoor(door);
       expect(stdout).toContain("must be a regular file");
       expect(stdout).toContain("is a FIFO");
+      expect(stderr).toBe("");
       expect(exitCode).toBe(0);
     });
   }
 
   test.concurrent("an array entry that is a FIFO names the option and the path", async () => {
-    const { stdout, exitCode } = await runDoor(
+    const { stdout, stderr, exitCode } = await runDoor(
       `({ F }) => require("node:tls").createSecureContext({ ca: [Bun.file(F)] })`,
     );
     expect(stdout).toContain("TLSOptions.ca must be a regular file");
     expect(stdout).toContain("fifo.pem");
+    expect(stderr).toBe("");
     expect(exitCode).toBe(0);
   });
 });

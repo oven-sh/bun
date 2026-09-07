@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isWindows, normalizeBunSnapshot } from "harness";
+import { bunEnv, bunExe, isASAN, isWindows, normalizeBunSnapshot } from "harness";
 import {
   compileFunction,
   constants,
@@ -1972,5 +1972,64 @@ describe("node:vm lineOffset/columnOffset at the edge of int32", () => {
     const position = Number(match![1]);
     expect(position).toBeGreaterThan(INT32_MAX - 100);
     expect(position).toBeLessThanOrEqual(INT32_MAX);
+  });
+});
+
+describe("createContext()", () => {
+  // A synchronous loop gets no event loop turn, so nothing bumps JSC's weak-ref
+  // version. A live WeakRef keeps its target alive until that version changes,
+  // so tracking each context with a WeakRef on the JS side held every context
+  // the loop created. The count of live NodeVMGlobalObject cells is the direct
+  // measure: with the contexts retained it equals the number created.
+  test("a synchronous loop does not accumulate contexts", async () => {
+    const created = 4000;
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const vm = require("node:vm");
+         const { heapStats } = require("bun:jsc");
+         const before = process.memoryUsage.rss();
+         for (let i = 0; i < ${created}; i++) vm.createContext({});
+         console.log(
+           JSON.stringify({
+             live: heapStats().objectTypeCounts.NodeVMGlobalObject ?? 0,
+             rssGrowthMB: Math.round((process.memoryUsage.rss() - before) / 1048576),
+           }),
+         );`,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    const { live, rssGrowthMB } = JSON.parse(stdout);
+    expect(live).toBeLessThan(created / 2);
+    // RSS rides along so a failure shows what the retained contexts cost.
+    expect(rssGrowthMB).toBeLessThan(isASAN ? 600 : 200);
+    expect(exitCode).toBe(0);
+  });
+
+  // measureMemory({ mode: "detailed" }) reports one entry per context, so the
+  // count it reads has to follow the contexts that are still alive.
+  test("measureMemory reports one entry per live context", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const vm = require("node:vm");
+         const contexts = [vm.createContext({}), vm.createContext({}), vm.createContext({})];
+         vm.measureMemory({ mode: "detailed", execution: "eager" }).then(result => {
+           console.log(JSON.stringify({ other: result.other.length, kept: contexts.length }));
+         });`,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    expect(JSON.parse(stdout)).toEqual({ other: 3, kept: 3 });
+    expect(exitCode).toBe(0);
   });
 });

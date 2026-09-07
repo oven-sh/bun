@@ -1610,6 +1610,16 @@ JSC_DEFINE_HOST_FUNCTION(vmModule_isContext, (JSGlobalObject * globalObject, Cal
     return JSValue::encode(jsBoolean(isContext(globalObject, contextArg)));
 }
 
+// The number of contexts that are still reachable. The context map is a
+// JSWeakMap keyed by the contextified object, so the collector drops the entry
+// for a context nothing holds any more. vm.measureMemory({ mode: "detailed" })
+// reports one entry per context and reads the count from here: a WeakRef per
+// context on the JS side would keep every context alive until the next turn.
+JSC_DEFINE_HOST_FUNCTION(vmModule_contextCount, (JSGlobalObject * globalObject, CallFrame*))
+{
+    return JSValue::encode(jsNumber(defaultGlobalObject(globalObject)->vmModuleContextMap()->size()));
+}
+
 const ClassInfo NodeVMGlobalObject::s_info = { "NodeVMGlobalObject"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(NodeVMGlobalObject) };
 
 bool NodeVMGlobalObject::deleteProperty(JSCell* cell, JSGlobalObject* globalObject, PropertyName propertyName, JSC::DeletePropertySlot& slot)
@@ -1714,6 +1724,9 @@ JSC::JSValue createNodeVMBinding(Zig::GlobalObject* globalObject)
     obj->putDirect(
         vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "isContext"_s)),
         JSC::JSFunction::create(vm, globalObject, 0, "isContext"_s, vmModule_isContext, ImplementationVisibility::Public), 0);
+    obj->putDirect(
+        vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "contextCount"_s)),
+        JSC::JSFunction::create(vm, globalObject, 0, "contextCount"_s, vmModule_contextCount, ImplementationVisibility::Public), 0);
     obj->putDirect(
         vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "compileFunction"_s)),
         JSC::JSFunction::create(vm, globalObject, 0, "compileFunction"_s, vmModuleCompileFunction, ImplementationVisibility::Public), 0);

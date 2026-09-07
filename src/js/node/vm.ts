@@ -43,6 +43,7 @@ const {
   Module: ModuleNative,
   createContext: createContextNative,
   isContext,
+  contextCount,
   compileFunction,
   isModuleNamespaceObject,
   kLinked,
@@ -52,39 +53,11 @@ const {
   USE_MAIN_CONTEXT_DEFAULT_LOADER,
 } = vm;
 
-// Live vm contexts, tracked so measureMemory({ mode: "detailed" }) can report
-// one entry per context like Node. WeakRefs so tracking doesn't keep contexts
-// alive; dead entries are pruned on each measurement and, amortized, on
-// creation (so a process that never measures doesn't accumulate dead refs).
-const trackedContexts: WeakRef<object>[] = [];
-let trackedContextsPruneAt = 64;
-
-function pruneTrackedContexts() {
-  let alive = 0;
-  for (let i = 0; i < trackedContexts.length; i++) {
-    const ref = trackedContexts[i];
-    if (ref.deref() !== undefined) {
-      trackedContexts[alive++] = ref;
-    }
-  }
-  trackedContexts.length = alive;
-  return alive;
-}
-
 function createContext(contextObject?, options?) {
   if (typeof options === "object" && options !== null) {
     validateOneOf(options.microtaskMode, "options.microtaskMode", ["afterEvaluate", undefined]);
   }
-  const alreadyContextified = $isObject(contextObject) && isContext(contextObject);
-  const context = createContextNative(contextObject, options);
-  if (!alreadyContextified) {
-    if (trackedContexts.length >= trackedContextsPruneAt) {
-      const alive = pruneTrackedContexts();
-      trackedContextsPruneAt = alive * 2 < 64 ? 64 : alive * 2;
-    }
-    trackedContexts.push(new WeakRef(context));
-  }
-  return context;
+  return createContextNative(contextObject, options);
 }
 
 // Node's runInContext()/runInNewContext() (lib/vm.js) spread `options` into a
@@ -151,16 +124,13 @@ function measureMemory(options = kEmptyObject) {
   const result: any = { total: measurement() };
   if (mode === "detailed") {
     result.current = measurement();
-    const other: object[] = [];
-    let aliveCount = 0;
-    for (let i = 0; i < trackedContexts.length; i++) {
-      const ref = trackedContexts[i];
-      if (ref.deref() !== undefined) {
-        trackedContexts[aliveCount++] = ref;
-        other.push(measurement());
-      }
+    // One entry per live context, like Node. The count comes from the native
+    // context map, which is weak, so measurement does not keep contexts alive.
+    const count = contextCount();
+    const other: object[] = $newArrayWithSize(count);
+    for (let i = 0; i < count; i++) {
+      other[i] = measurement();
     }
-    trackedContexts.length = aliveCount;
     result.other = other;
   }
 

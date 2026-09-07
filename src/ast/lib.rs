@@ -812,13 +812,14 @@ impl Location {
             // Window a long line to ~120 bytes around the error. Bounds are
             // BYTE offsets. `line_text_start_column` records how many columns
             // the window drops on the left so `write_format`'s caret aligns.
-            // An error in the last 80 bytes of a long line still gets the
-            // window: otherwise one diagnostic prints the whole line.
+            // Consumers that only know `column` (the bake overlay,
+            // `BuildMessage.position`) rely on the gate not left-trimming an
+            // error in the last 80 bytes of a line.
             let offset_in_line = clamp_error_offset(&source.contents, r.loc)
                 .saturating_sub(data.line_start)
                 .min(full_line.len());
             let mut line_text_start_column = 0;
-            if full_line.len() > 80 + offset_in_line || full_line.len() > 120 {
+            if full_line.len() > 80 + offset_in_line {
                 let mut lo = offset_in_line.saturating_sub(40);
                 let mut hi = (offset_in_line + 80).min(full_line.len());
                 while lo > 0 && !bun_core::strings::is_utf8_char_boundary(full_line[lo]) {
@@ -830,14 +831,11 @@ impl Location {
                     hi += 1;
                 }
                 if lo > 0 {
-                    let columns_in_window_before_error =
-                        bun_core::strings::element_length_utf8_into_utf16(
-                            &full_line[lo..offset_in_line],
-                        );
-                    line_text_start_column = data
-                        .column_count
-                        .saturating_sub(1)
-                        .saturating_sub(columns_in_window_before_error);
+                    // Count the <= 40 kept bytes with the scanner that produced
+                    // `column_count`, instead of rescanning the dropped prefix.
+                    let mut kept = ErrorPositionState::default();
+                    kept.advance(full_line, lo, offset_in_line);
+                    line_text_start_column = data.column_count.saturating_sub(kept.column_number);
                 }
                 full_line = &full_line[lo..hi];
             }
@@ -855,10 +853,9 @@ impl Location {
                 // `source_backing` in `Transpiler::parse_*` is RAII and
                 // drops on the parse-error path *before* `process_fetch_log`
                 // clones the `Msg` into a `BuildMessage`, so own the bytes here
-                // instead of borrowing `source.contents`. `full_line` is
-                // bounded (≤ ~120 bytes) and only materialized on diagnostic
-                // paths.
-                line_text: Some(Cow::Owned(bun_core::trim_left(full_line, b"\n\r").to_vec())),
+                // instead of borrowing `source.contents`. Only materialized on
+                // diagnostic paths.
+                line_text: Some(Cow::Owned(full_line.to_vec())),
                 offset: usize::try_from(r.loc.start.max(0)).expect("int cast"),
                 line_text_start_column,
             });
@@ -2483,11 +2480,7 @@ impl ErrorPositionState {
 
     fn to_error_position(self, line_end: usize) -> ErrorPosition {
         ErrorPosition {
-            line_start: if self.line_start > 0 {
-                self.line_start - 1
-            } else {
-                self.line_start
-            },
+            line_start: self.line_start,
             line_end,
             line_count: self.line_count,
             column_count: self.column_number,

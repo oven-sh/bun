@@ -1066,12 +1066,13 @@ it("prints an actionable error for a lockfile version newer than this build supp
 
 it("indents the caret under the printed excerpt when a one-line bun.lock has many warnings", async () => {
   const count = 300;
+  const lock =
+    `{\n  "lockfileVersion": 1,\n  "workspaces": { "": { "name": "one-line-lockfile" } },\n  "packages": { ` +
+    Array.from({ length: count }, (_, i) => `"p${i}": ["p${i}@1.0.0", "", {}, "sha512-x"]`).join(", ") +
+    ` }\n}\n`;
   using dir = tempDir("one-line-lockfile", {
     "package.json": JSON.stringify({ name: "one-line-lockfile", dependencies: {} }),
-    "bun.lock":
-      `{\n  "lockfileVersion": 1,\n  "workspaces": { "": { "name": "one-line-lockfile" } },\n  "packages": { ` +
-      Array.from({ length: count }, (_, i) => `"p${i}": ["p${i}@1.0.0", "", {}, "sha512-x"]`).join(", ") +
-      ` }\n}\n`,
+    "bun.lock": lock,
   });
 
   await using proc = spawn({
@@ -1081,7 +1082,7 @@ it("indents the caret under the printed excerpt when a one-line bun.lock has man
     stdout: "pipe",
     stderr: "pipe",
   });
-  const [err, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+  const [, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   const lines = err.split("\n");
   const carets = lines.filter(line => /^ *\^$/.test(line));
@@ -1098,7 +1099,9 @@ it("indents the caret under the printed excerpt when a one-line bun.lock has man
     expect(caretAt).toBeLessThan(excerpt.length);
     expect(excerpt.slice(caretAt, caretAt + 8)).toBe('"sha512-');
   }
-  expect(Math.max(...lines.map(line => line.length))).toBeLessThan(200);
+  // Linear in the entry count: each warning prints a ~120-byte excerpt, except
+  // the ones in the last 80 bytes of the line, which print the whole line.
+  expect(err.length).toBeLessThan(count * 500 + 4 * lock.length);
   expect(exitCode).toBe(0);
 });
 

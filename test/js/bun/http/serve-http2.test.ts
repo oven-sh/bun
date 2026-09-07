@@ -863,17 +863,17 @@ describe("Bun.serve http2 in-process", () => {
   // stays full, yet the peer keeps taking bytes and must not be aborted. The
   // client reads at a fixed low rate for longer than one idle period; the body
   // is larger than the window so it never completes here, surviving the window
-  // is the point. The client pins its SO_RCVBUF so the kernel does not autotune
-  // it large (then one read would not reopen the peer window and the server
-  // would see no acked bytes for a whole period on some hosts). Skipped on
-  // Windows (the buffered remainder gets no writable event there while the
-  // peer reads slowly, a separate Windows issue).
+  // is the point. Timing constraints (idleTimeout 10, pinned SO_RCVBUF, capped
+  // pauses) are the same as the HTTP/1.1 twin in serve.test.ts, which explains
+  // them. Skipped on Windows (the buffered remainder gets no writable event
+  // there while the peer reads slowly, a separate Windows issue).
   test.skipIf(isWindows)(
     "idleTimeout keeps a slow reader alive",
     async () => {
-      const TOTAL = 64 << 20;
-      const IDLE_S = 8;
-      const RATE = 64 * 1024; // bytes/sec, below the writable-event rate, above the 16 KB/s floor
+      const TOTAL = 16 << 20; // well above what the paced window plus kernel buffers can absorb
+      const IDLE_S = 10;
+      const RATE = 32 * 1024; // bytes/sec, below the Linux writable-event rate, above the 16 KB/s floor
+      const PAUSE_CAP_MS = 4_000;
       let aborted = false;
       await using server = Bun.serve({
         hostname: "127.0.0.1",
@@ -898,7 +898,7 @@ describe("Bun.serve http2 in-process", () => {
         });
         const SOL_SOCKET = process.platform === "darwin" ? 0xffff : 1;
         const SO_RCVBUF = process.platform === "darwin" ? 0x1002 : 8;
-        const value = new Int32Array([64 * 1024]); // one data event is then at most a ~2 s pause at RATE
+        const value = new Int32Array([64 * 1024]); // bounds the chunk size Linux hands the client
         const rc = libc.symbols.setsockopt((raw.socket as any)._handle.fd, SOL_SOCKET, SO_RCVBUF, ptr(value), 4);
         libc.close();
         if (rc !== 0) throw new Error("setsockopt(SO_RCVBUF) failed");
@@ -908,15 +908,15 @@ describe("Bun.serve http2 in-process", () => {
       raw.write(frame(T.WINDOW_UPDATE, 0, 0, inc));
       const RUN_MS = IDLE_S * 1000 + 8_000;
       // Pace against a schedule (bytes so far / RATE) so a late timer shortens
-      // the next pause instead of lowering the rate; one pause is still at
-      // most one chunk / RATE.
+      // the next pause instead of lowering the rate; a pause is capped so an
+      // oversized chunk cannot open a long gap.
       const start = performance.now();
       let received = 0;
       raw.socket.on("data", (d: Buffer) => {
         received += d.length;
         const elapsed = performance.now() - start;
         if (elapsed >= RUN_MS) return;
-        const lag = (received / RATE) * 1000 - elapsed;
+        const lag = Math.min((received / RATE) * 1000 - elapsed, PAUSE_CAP_MS);
         if (lag > 1) {
           raw.socket.pause();
           setTimeout(() => raw.socket.resume(), lag);

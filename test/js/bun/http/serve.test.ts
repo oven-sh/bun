@@ -3129,32 +3129,32 @@ it.concurrent(
 // A client that reads continuously but slower than the kernel send buffer
 // drains gets no writable event on the server for longer than idleTimeout, so
 // the server used to abort the request and close the socket mid-body. The
-// client here reads at a fixed low rate (a short pause after each chunk, sized
-// to the bytes read), well below the rate that would free a writable event but
-// well above the 16 KB/s the receive side already requires. With the fix the
-// request stays open and keeps receiving data; without it the server aborts
-// within idleTimeout.
+// client here reads at a fixed low rate, well below the rate that frees a
+// writable event on Linux but well above the 16 KB/s the receive side already
+// requires. With the fix the request stays open and keeps receiving data;
+// without it the server aborts within idleTimeout.
 //
-// The client pins its SO_RCVBUF. That turns off the kernel's receive buffer
-// autotuning, so a read always frees more than a sixteenth of the buffer and
-// the peer window reopens on every read. With autotuning the buffer can grow
-// past 8 MB on some kernels and then a single read opens nothing, which makes
-// the server's view of the peer (bytes acked per period) depend on the host.
+// What the server can observe is bursty. The kernel reports delivered bytes
+// only when the peer's window moves, and the client sees data in chunks (up to
+// 512 KB per event on macOS loopback, whose stack also serves a slow reader in
+// persist-timer bursts about 4 s apart). So the gap between observable steps
+// must stay well inside the shortest idle window: idleTimeout is 10 (the
+// default the bug was reported against), which uSockets' 4 s ticks
+// ((seconds + 3) >> 2 = 3 ticks) turn into 8 to 12 s; the client pins a small
+// SO_RCVBUF so Linux hands it chunks of at most ~128 KB; and no single pause
+// exceeds PAUSE_CAP_MS whatever the chunk size.
 //
 // Skipped on Windows: a remainder held in the uWS buffer gets no writable
 // event there while the peer reads slowly, and a peer that stops reading is
 // never timed out. Both are separate Windows issues.
 describe.concurrent.skipIf(isWindows)("idleTimeout and a slow reader", () => {
-  const TOTAL = 64 << 20;
-  // uSockets keeps timeouts in 4 s ticks ((seconds + 3) >> 2): 8 s is 2 ticks
-  // and fires after 4 to 8 s without a re-arm.
-  const IDLE_S = 8;
-  // Read this many bytes per second: below the rate that frees a writable
-  // event (so the old code times out), above the 16 KB/s receive floor.
-  const RATE = 64 * 1024;
-  // Small enough that one data event (Linux doubles SO_RCVBUF, so up to about
-  // 128 KB) is at most a 2 s pause at RATE, half the 4 s minimum idle window.
+  const TOTAL = 16 << 20; // well above what the paced window plus kernel buffers can absorb
+  const IDLE_S = 10;
+  // Bytes per second: below the rate that frees a writable event on Linux (so
+  // the old code times out), above the 16 KB/s floor.
+  const RATE = 32 * 1024;
   const RCVBUF = 64 * 1024;
+  const PAUSE_CAP_MS = 4_000;
 
   function pinRecvBuffer(sock: net.Socket) {
     const libc = dlopen(libcPathForDlopen(), {
@@ -3173,8 +3173,8 @@ describe.concurrent.skipIf(isWindows)("idleTimeout and a slow reader", () => {
 
   // Pace reads against a schedule (bytes so far / RATE) rather than a fixed
   // pause per chunk: a timer that fires late shortens the next pause instead
-  // of lowering the rate, so the acked bytes per idle period stay near RATE on
-  // a loaded host. One pause is still at most one chunk / RATE.
+  // of lowering the rate. A pause is capped, so an oversized chunk raises the
+  // rate for a moment rather than opening a long gap.
   function paceReads(sock: net.Socket, untilMs: number) {
     const start = performance.now();
     let received = 0;
@@ -3182,7 +3182,7 @@ describe.concurrent.skipIf(isWindows)("idleTimeout and a slow reader", () => {
       received += d.length;
       const elapsed = performance.now() - start;
       if (elapsed >= untilMs) return;
-      const lag = (received / RATE) * 1000 - elapsed;
+      const lag = Math.min((received / RATE) * 1000 - elapsed, PAUSE_CAP_MS);
       if (lag > 1) {
         sock.pause();
         setTimeout(() => sock.resume(), lag);

@@ -849,12 +849,14 @@ impl PublishCommand {
         let registry_url = registry.url.url();
 
         if !registry_url.has_http_like_protocol() {
-            return Err(PublishError::InvalidRegistryUrl(if registry_url.protocol.is_empty() {
-                // `href_without_auth()` would print a scheme-less URL as `http://...`.
-                Box::from(registry.url.href())
-            } else {
-                registry_url.href_without_auth()
-            }));
+            return Err(PublishError::InvalidRegistryUrl(
+                if registry_url.protocol.is_empty() {
+                    // `href_without_auth()` would print a scheme-less URL as `http://...`.
+                    Box::from(registry.url.href())
+                } else {
+                    registry_url.href_without_auth()
+                },
+            ));
         }
 
         if registry.token.is_empty()

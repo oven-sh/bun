@@ -39,9 +39,16 @@ describe.concurrent("new Worker(url) without options", () => {
     });
   });
 
-  test("inside a worker, copies the env that worker was given", async () => {
+  // A worker given `env: {...}` is an env sandbox. A bare nested worker must
+  // inherit that sandbox, not climb back out to the launch environment.
+  test("inside a worker, copies the env that worker was given and nothing else", async () => {
     using dir = tempDir("worker-default-env-nested", {
-      "inner.js": `postMessage(process.env.BUN_TEST_OUTER_ENV ?? null);`,
+      "inner.js": `
+        postMessage({
+          outer: process.env.BUN_TEST_OUTER_ENV ?? null,
+          launch: process.env.BUN_TEST_LAUNCH_ONLY ?? null,
+        });
+      `,
       "outer.js": `
         const inner = new Worker(new URL("./inner.js", import.meta.url).href);
         inner.onmessage = e => { postMessage(e.data); inner.terminate(); };
@@ -59,14 +66,14 @@ describe.concurrent("new Worker(url) without options", () => {
     });
     await using proc = Bun.spawn({
       cmd: [bunExe(), "main.js"],
-      env: bunEnv,
+      env: { ...bunEnv, BUN_TEST_LAUNCH_ONLY: "launch" },
       cwd: String(dir),
       stdout: "pipe",
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect({ result: JSON.parse(stdout), stderr, exitCode }).toEqual({
-      result: "from-outer-option",
+      result: { outer: "from-outer-option", launch: null },
       stderr: "",
       exitCode: 0,
     });

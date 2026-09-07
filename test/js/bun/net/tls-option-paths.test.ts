@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir, tls } from "harness";
 import { mkfifo } from "mkfifo";
 import path from "node:path";
+import { createSecureContext } from "node:tls";
 
 const certFiles = { "key.pem": tls.key, "cert.pem": tls.cert };
 
@@ -12,14 +13,10 @@ const certFiles = { "key.pem": tls.key, "cert.pem": tls.cert };
 // loop with no error and no timer. Each door rejects it now.
 //
 // The door runs in a child process, so a door that still blocks leaves the
-// test runner responsive. The child prints nothing then, the spawn deadline
-// kills it, and the stdout assertion is what fails.
+// test runner responsive: the test times out and the spawn deadline then
+// kills the child.
 describe.skipIf(isWindows)("a TLS option path that is a FIFO", () => {
-  // The child only has to start and throw, which takes about 2 s on a debug
-  // build. A blocked child is killed at this deadline, inside the per-test
-  // timeout below, so the failure is the assertion and not a test timeout.
   const DEADLINE_MS = 8_000;
-  const TEST_TIMEOUT_MS = 20_000;
 
   async function runDoor(door: string) {
     using dir = tempDir("tls-fifo", certFiles);
@@ -49,11 +46,7 @@ describe.skipIf(isWindows)("a TLS option path that is a FIFO", () => {
       timeout: DEADLINE_MS,
     });
 
-    const [stdout, stderr, exitCode] = await Promise.all([
-      proc.stdout.text(),
-      proc.stderr.text(),
-      proc.exited,
-    ]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     return { stdout: stdout.trim(), stderr, exitCode };
   }
 
@@ -73,45 +66,37 @@ describe.skipIf(isWindows)("a TLS option path that is a FIFO", () => {
   };
 
   for (const [name, door] of Object.entries(doors)) {
-    test.concurrent(
-      `${name} throws instead of blocking the event loop`,
-      async () => {
-        const { stdout, exitCode } = await runDoor(door);
-        expect(stdout).toContain("must be a regular file");
-        expect(stdout).toContain("is a FIFO");
-        expect(exitCode).toBe(0);
-      },
-      TEST_TIMEOUT_MS,
-    );
+    test.concurrent(`${name} throws instead of blocking the event loop`, async () => {
+      const { stdout, exitCode } = await runDoor(door);
+      expect(stdout).toContain("must be a regular file");
+      expect(stdout).toContain("is a FIFO");
+      expect(exitCode).toBe(0);
+    });
   }
 
-  test.concurrent(
-    "an array entry that is a FIFO names the option and the path",
-    async () => {
-      const { stdout, exitCode } = await runDoor(
-        `({ F }) => require("node:tls").createSecureContext({ ca: [Bun.file(F)] })`,
-      );
-      expect(stdout).toContain("TLSOptions.ca must be a regular file");
-      expect(stdout).toContain("fifo.pem");
-      expect(exitCode).toBe(0);
-    },
-    TEST_TIMEOUT_MS,
-  );
+  test.concurrent("an array entry that is a FIFO names the option and the path", async () => {
+    const { stdout, exitCode } = await runDoor(
+      `({ F }) => require("node:tls").createSecureContext({ ca: [Bun.file(F)] })`,
+    );
+    expect(stdout).toContain("TLSOptions.ca must be a regular file");
+    expect(stdout).toContain("fifo.pem");
+    expect(exitCode).toBe(0);
+  });
 });
 
 describe("a TLS option path of another kind", () => {
   test("keyFile that is a directory names the kind", () => {
     using dir = tempDir("tls-dir", { keep: "" });
-    expect(() => require("node:tls").createSecureContext({ keyFile: String(dir) })).toThrow(
+    expect(() => createSecureContext({ keyFile: String(dir) } as object)).toThrow(
       /TLSOptions\.keyFile must be a regular file.*is a directory/,
     );
   });
 
-  test("keyFile that does not exist still reports the old message", () => {
+  test("keyFile that does not exist keeps its message", () => {
     using dir = tempDir("tls-missing", {});
-    expect(() =>
-      require("node:tls").createSecureContext({ keyFile: path.join(String(dir), "nope.pem") }),
-    ).toThrow("Unable to access keyFile path");
+    expect(() => createSecureContext({ keyFile: path.join(String(dir), "nope.pem") } as object)).toThrow(
+      "Unable to access keyFile path",
+    );
   });
 });
 

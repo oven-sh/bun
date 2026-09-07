@@ -15,8 +15,7 @@ pub mod error;
 pub use arguments::{load_config, load_config_path, load_config_with_cmd_args};
 pub use error::{Error, Result};
 
-/// Which bunfig a value comes from. `[install] globalDir` and `globalBinDir`
-/// are accepted from [`ConfigScope::User`] only.
+/// Which bunfig file a value comes from.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum ConfigScope {
     /// `$XDG_CONFIG_HOME/.bunfig.toml`, `$HOME/.bunfig.toml`, or `--config`.

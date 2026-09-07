@@ -1,7 +1,36 @@
+import { dlopen, ptr } from "bun:ffi";
 import { describe, expect, test } from "bun:test";
-import { copyFileSync, linkSync, readdirSync, realpathSync, renameSync, statSync, symlinkSync, unlinkSync } from "fs";
-import { bunEnv, bunExe, isWindows, tempDir, toTOMLString } from "harness";
-import { dirname, join as pathJoin } from "node:path";
+import {
+  copyFileSync,
+  linkSync,
+  mkdirSync,
+  readdirSync,
+  realpathSync,
+  renameSync,
+  rmSync,
+  statSync,
+  symlinkSync,
+  unlinkSync,
+} from "fs";
+import { bunEnv, bunExe, isWindows, mergeWindowEnvs, tempDir, toTOMLString } from "harness";
+import { basename, dirname, join as pathJoin } from "node:path";
+
+const otherVolume = (() => {
+  if (!isWindows) return;
+  const kernel = dlopen("kernel32.dll", {
+    GetDriveTypeW: { args: ["ptr"], returns: "u32" },
+  });
+  using closeKernel = { [Symbol.dispose]: () => kernel.close() };
+  const source = statSync(bunExe(), { bigint: true });
+  for (const letter of "ABCDEFGHIJKLMNOPQRSTUVWXYZ") {
+    const root = `${letter}:\\`;
+    const wide = Buffer.from(root + "\0", "utf16le");
+    // Only fixed disks: disconnected network drives and removable media can block.
+    if (kernel.symbols.GetDriveTypeW(ptr(wide)) === 3 && statSync(root, { bigint: true }).dev !== source.dev) {
+      return root;
+    }
+  }
+})();
 
 // Windows uses hardlinks; POSIX aliases have different replacement semantics.
 describe.skipIf(!isWindows).each(["bunfig", "--bun"])("Windows node aliases (%s)", mode => {
@@ -110,8 +139,44 @@ describe.skipIf(!isWindows).each(["bunfig", "--bun"])("Windows node aliases (%s)
     await probe(cwd, install(cwd, "first.exe"), "child");
   });
 
+  // Hardlinks cannot span volumes; single-volume Windows hosts cannot exercise this fallback.
+  test.skipIf(!otherVolume).concurrent("preserves PATH when TEMP is on another volume", async () => {
+    using cwd = tempDir("bun-cross-volume", {
+      "package.json": JSON.stringify({ scripts: { probe: "which node; echo $PATH" } }),
+      "bunfig.toml": mode === "bunfig" ? "[run]\nbun = true\n" : "",
+    });
+    const cache = pathJoin(otherVolume!, basename(cwd));
+    mkdirSync(cache);
+    using cleanup = { [Symbol.dispose]: () => rmSync(cache, { recursive: true, force: true }) };
+    expect(statSync(cache, { bigint: true }).dev).not.toBe(statSync(bunExe(), { bigint: true }).dev);
+    const node = install(cwd, "node.exe");
+    expect(() => linkSync(node, pathJoin(cache, "cross-volume.exe"))).toThrow(
+      expect.objectContaining({ code: "EXDEV" }),
+    );
+    const path = String(cwd);
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "--silent", ...(mode === "--bun" ? ["--bun"] : []), "run", "probe"],
+      cwd,
+      env: mergeWindowEnvs([bunEnv, { PATH: path, TEMP: cache, TMP: cache }]),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const expectedPath = [pathJoin(cwd, "node_modules", ".bin")];
+    let remain = String(cwd);
+    while (remain.includes("\\")) {
+      expectedPath.push(pathJoin(remain, "node_modules", ".bin"));
+      remain = remain.slice(0, remain.lastIndexOf("\\"));
+    }
+    expectedPath.push(`${remain}\\node_modules\\.bin`, path);
+    expect({ stdout: stdout.trim().split(/\r?\n/), stderr, exitCode }).toEqual({
+      stdout: [node, expectedPath.join(";")],
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
   test.concurrent("runs from an installation path containing an unpaired surrogate", async () => {
-    const { dlopen, ptr } = await import("bun:ffi");
     const kernel = dlopen("kernel32.dll", {
       CreateHardLinkW: { args: ["ptr", "ptr", "ptr"], returns: "i32" },
       CreateProcessW: {

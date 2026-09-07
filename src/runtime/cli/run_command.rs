@@ -921,6 +921,44 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         crate::shell::Interpreter::init_and_run_from_file(ctx, mini, entry_path, &src)
     }
 
+    /// The working directory the runtime starts from. `Arguments::parse`
+    /// records it for `bun run`, `bun <file>` and node mode; contexts built
+    /// without it (bunx, compiled executables) ask `getcwd` here. If the
+    /// process started inside a deleted directory, the executable's directory
+    /// stands in (what Node's `Environment::GetCwd` does), so `bun -e`, the
+    /// REPLs, stdin, an absolute entry path and compiled executables still
+    /// boot while `process.cwd()` reports ENOENT. Only for callers with nothing
+    /// left to resolve against the real cwd; a relative entry path or a
+    /// package.json script must fail with `CurrentWorkingDirectoryUnlinked`
+    /// instead of acting on whatever lives next to the executable.
+    pub(crate) fn cwd_or_exe_dir(ctx: &mut ContextData) -> crate::Result<&[u8]> {
+        let cwd: &[u8] = match ctx.args.absolute_working_dir {
+            Some(ref cwd) => cwd,
+            None => {
+                let mut buf = bun_paths::path_buffer_pool::get();
+                let dir: Box<[u8]> = match bun_core::getcwd(&mut buf) {
+                    Ok(cwd) => Box::from(cwd.as_bytes()),
+                    Err(bun_core::Error::CurrentWorkingDirectoryUnlinked) => {
+                        Box::from(bun_core::self_exe_dir())
+                    }
+                    Err(err) => return Err(err.into()),
+                };
+                ctx.args.absolute_working_dir.insert(dir)
+            }
+        };
+        Ok(cwd)
+    }
+
+    /// `<cwd><trigger>` (e.g. `cwd/[eval]`): the key under which the module
+    /// loader serves `eval_source` instead of reading a file.
+    fn synthetic_entry_path(ctx: &mut ContextData, trigger: &[u8]) -> crate::Result<Box<[u8]>> {
+        let cwd = Self::cwd_or_exe_dir(ctx)?;
+        let mut path: Vec<u8> = Vec::with_capacity(cwd.len() + trigger.len());
+        path.extend_from_slice(cwd);
+        path.extend_from_slice(trigger);
+        Ok(path.into_boxed_slice())
+    }
+
     /// `VirtualMachine::init`,
     /// hand off CLI state, then enter `Run::start` under the JSC API lock.
     pub(crate) fn boot(
@@ -942,6 +980,10 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
             let exit_code = Self::boot_bun_shell(ctx, &entry_path)?;
             Global::exit(exit_code as u32);
         }
+
+        // `entry_path` is absolute or synthetic by now, so the VM may start
+        // from the stand-in directory if the real cwd was deleted.
+        Self::cwd_or_exe_dir(ctx)?;
 
         // `bun_jsc::initialize`
         // is real (calls `JSCInitialize` over `bun_sys::environ()`); the
@@ -1029,13 +1071,8 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
                 runner_arena().alloc_slice_copy(cron_script.as_bytes());
 
             // entry_path must end with /[eval] for the transpiler to use eval_source
-            let mut cwd_buf = bun_paths::path_buffer_pool::get();
-            let cwd = bun_core::getcwd_or_exe_dir(&mut cwd_buf);
-            let cwd_bytes = cwd.as_bytes();
-            let mut eval_path: Vec<u8> = Vec::with_capacity(cwd_bytes.len() + EVAL_TRIGGER.len());
-            eval_path.extend_from_slice(cwd_bytes);
-            eval_path.extend_from_slice(EVAL_TRIGGER);
-            let heap_entry: &'static [u8] = runner_arena().alloc_slice_copy(&eval_path);
+            let heap_entry: &'static [u8] =
+                runner_arena().alloc_slice_copy(&Self::synthetic_entry_path(ctx, EVAL_TRIGGER)?);
 
             vm.module_loader.eval_source = Some(Box::new(bun_ast::Source::init_path_string(
                 heap_entry,
@@ -1138,6 +1175,9 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
                 ctx,
             )?;
         }
+
+        // The entry point is embedded, so nothing needs the real cwd to boot.
+        Self::cwd_or_exe_dir(ctx)?;
 
         // layering — `Options::graph` is the resolver's trait object
         // (`&'static dyn bun_resolver::StandaloneModuleGraph`); the concrete
@@ -2332,6 +2372,17 @@ impl RunCommand {
             return Ok(true);
         }
 
+        // Everything below resolves `target_name` against the working
+        // directory (package.json scripts, the module resolver,
+        // node_modules/.bin). A process started inside a deleted directory has
+        // none (`Arguments::parse`), and only stdin can run without one.
+        if ctx.args.absolute_working_dir.is_none() {
+            if target_name == b"-" {
+                return Self::exec_stdin(ctx);
+            }
+            return Err(bun_core::Error::CurrentWorkingDirectoryUnlinked.into());
+        }
+
         // ── setup (unconditional) ────────────────────────────────────────────
         // out-param init — `Transpiler` is NOT all-zero-valid POD (holds
         // `&Arena`/`Box`/enum fields), so use `MaybeUninit` and let
@@ -2837,14 +2888,7 @@ impl RunCommand {
         #[cfg(not(windows))]
         const STDIN_TRIGGER: &[u8] = b"/[stdin]";
 
-        let mut entry_point_buf = [0u8; MAX_PATH_BYTES + STDIN_TRIGGER.len()];
-        let mut cwd_buf = bun_paths::path_buffer_pool::get();
-        let cwd = bun_core::getcwd_or_exe_dir(&mut cwd_buf);
-        let cwd_bytes = cwd.as_bytes();
-        let cwd_len = cwd_bytes.len();
-        entry_point_buf[..cwd_len].copy_from_slice(cwd_bytes);
-        entry_point_buf[cwd_len..cwd_len + STDIN_TRIGGER.len()].copy_from_slice(STDIN_TRIGGER);
-        let entry_path = &entry_point_buf[..cwd_len + STDIN_TRIGGER.len()];
+        let entry_path = Self::synthetic_entry_path(ctx, STDIN_TRIGGER)?;
 
         // Prepend "-" to `ctx.passthrough` so `process.argv[1]` matches
         // Node's `node -` semantics.
@@ -2858,8 +2902,7 @@ impl RunCommand {
         // `configure_allocator(long_running=true)` / `.md` checks and prints
         // `basename(target_name)` (= "-"), not `basename(entry_path)`
         // (= "[stdin]"), in the error message.
-        let owned: Box<[u8]> = entry_path.to_vec().into_boxed_slice();
-        if let Err(err) = Self::boot(ctx, owned, None) {
+        if let Err(err) = Self::boot(ctx, entry_path, None) {
             Self::boot_failed_exit(ctx, b"-", &err);
         }
         Ok(true)
@@ -2886,8 +2929,7 @@ impl RunCommand {
     /// Synthetic `cwd/[eval]`
     /// entry point + boot. `Arguments::parse` has already stashed the script
     /// in `ctx.runtime_options.eval.script`. Public so `Command::start` can
-    /// route the `-e`/`-p` AutoCommand path here without re-implementing the
-    /// path-buffer dance.
+    /// route the `-e`/`-p` AutoCommand path here.
     pub(crate) fn exec_eval(ctx: &mut ContextData) -> crate::Result<()> {
         // prepend positionals into the existing passthrough vec
         // (cold path, single allocation).
@@ -2899,16 +2941,7 @@ impl RunCommand {
             ctx.passthrough = merged;
         }
 
-        let mut entry_point_buf = [0u8; MAX_PATH_BYTES + EVAL_TRIGGER.len()];
-        let mut cwd_buf = bun_paths::path_buffer_pool::get();
-        let cwd = bun_core::getcwd_or_exe_dir(&mut cwd_buf);
-        let cwd_bytes = cwd.as_bytes();
-        let cwd_len = cwd_bytes.len();
-        entry_point_buf[..cwd_len].copy_from_slice(cwd_bytes);
-        entry_point_buf[cwd_len..cwd_len + EVAL_TRIGGER.len()].copy_from_slice(EVAL_TRIGGER);
-        let entry: Box<[u8]> = entry_point_buf[..cwd_len + EVAL_TRIGGER.len()]
-            .to_vec()
-            .into_boxed_slice();
+        let entry = Self::synthetic_entry_path(ctx, EVAL_TRIGGER)?;
         Self::boot(ctx, entry, None)
     }
 
@@ -2933,17 +2966,7 @@ impl RunCommand {
         }
 
         if !ctx.runtime_options.eval.script.is_empty() {
-            // synthetic `[eval]` path under cwd
-            let mut entry_point_buf = [0u8; MAX_PATH_BYTES + EVAL_TRIGGER.len()];
-            let mut cwd_buf = bun_paths::path_buffer_pool::get();
-            let cwd = bun_core::getcwd_or_exe_dir(&mut cwd_buf);
-            let cwd_bytes = cwd.as_bytes();
-            let cwd_len = cwd_bytes.len();
-            entry_point_buf[..cwd_len].copy_from_slice(cwd_bytes);
-            entry_point_buf[cwd_len..cwd_len + EVAL_TRIGGER.len()].copy_from_slice(EVAL_TRIGGER);
-            let entry: Box<[u8]> = entry_point_buf[..cwd_len + EVAL_TRIGGER.len()]
-                .to_vec()
-                .into_boxed_slice();
+            let entry = Self::synthetic_entry_path(ctx, EVAL_TRIGGER)?;
             return Self::boot(ctx, entry, None);
         }
 
@@ -2965,13 +2988,18 @@ impl RunCommand {
         let normalized: Box<[u8]> = if paths::is_absolute(&filename) {
             filename
         } else {
+            // A relative script needs the real cwd; Node fails here too when
+            // the directory was deleted (`path.resolve` → `process.cwd()`).
+            let Some(cwd) = ctx.args.absolute_working_dir.as_deref() else {
+                return Err(bun_core::Error::CurrentWorkingDirectoryUnlinked.into());
+            };
             // Note: write
             // `cwd_buf[cwd_len] = b'/'` (always `/`, NOT the
             // platform separator) and then run the result through
             // `join_abs_string_buf::<Loose>` to collapse `.`/`..`.
             let mut cwd_buf = bun_paths::path_buffer_pool::get();
-            let cwd = bun_core::getcwd_or_exe_dir(&mut cwd_buf);
-            let cwd_len = cwd.as_bytes().len();
+            let cwd_len = cwd.len();
+            cwd_buf[..cwd_len].copy_from_slice(cwd);
             cwd_buf[cwd_len] = b'/';
             let mut out_buf = bun_paths::path_buffer_pool::get();
             let joined = paths::resolve_path::join_abs_string_buf::<paths::platform::Loose>(

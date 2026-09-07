@@ -1,7 +1,7 @@
 import { crash_handler } from "bun:internal-for-testing";
-import { describe, expect, test } from "bun:test";
+import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isDebug, isLinux, isPosix, isWindows, mergeWindowEnvs, tempDir } from "harness";
-import { rmSync } from "node:fs";
+import { linkSync, rmSync, symlinkSync } from "node:fs";
 import { constants as osConstants } from "node:os";
 import path from "path";
 const { getMachOImageZeroOffset } = crash_handler;
@@ -188,6 +188,102 @@ describe.if(isPosix)("cwd deleted before startup", () => {
     expect(stdout).toBe("1\n");
     expect(stderr).toBe("");
     expect(exitCode).toBe(0);
+  });
+
+  // The executable's directory stands in for the missing cwd only inside the
+  // runtime. A relative entry path or a package.json script must not resolve
+  // against it: with bun placed at <planted>/bin/{bun,node}, next to x.cjs and
+  // below a package.json with a "canary" script, nothing planted may run.
+  describe("user paths do not resolve against the executable's directory", () => {
+    let planted: ReturnType<typeof tempDir>;
+    let bin: string;
+
+    // Hard link so the executable really lives in <planted>/bin; where that is
+    // not possible (tmp on another filesystem) a symlink still gives the same
+    // argv[0], and the error/exit-code expectations below hold either way.
+    const placeExe = (dest: string) => {
+      try {
+        linkSync(bunExe(), dest);
+      } catch {
+        symlinkSync(bunExe(), dest);
+      }
+    };
+
+    beforeAll(() => {
+      planted = tempDir("cwd-unlinked-planted", {
+        "bin/x.cjs": `console.log("ran " + __filename);`,
+        "package.json": JSON.stringify({ name: "above-the-executable", scripts: { canary: "echo canary script ran" } }),
+      });
+      bin = path.join(String(planted), "bin");
+      placeExe(path.join(bin, "bun"));
+      placeExe(path.join(bin, "node"));
+    });
+    afterAll(() => planted?.[Symbol.dispose]());
+
+    // `cmd` is "bun ..." or "node ..."; it runs <planted>/bin/<argv0> from a
+    // directory that is removed right before the exec.
+    async function runFromDeletedCwd(cmd: string, stdin?: string) {
+      const [argv0, ...args] = cmd.split(" ");
+      using dir = tempDir("cwd-unlinked-gone", {});
+      const gone = String(dir);
+      await using proc = Bun.spawn({
+        cmd: [
+          "/bin/sh",
+          "-c",
+          `cd "$1" && rmdir "$1" && shift && exec "$@"`,
+          "sh",
+          gone,
+          path.join(bin, argv0),
+          ...args,
+        ],
+        env: bunEnv,
+        stdin: stdin === undefined ? "ignore" : Buffer.from(stdin),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { stdout, stderr, exitCode };
+    }
+
+    test.concurrent.each([
+      "bun x.cjs",
+      "bun ./x.cjs",
+      "bun run x.cjs",
+      "bun run canary",
+      "bun canary",
+      "bun run",
+      "node x.cjs",
+    ])("%s refuses with the cwd-deleted hint", async cmd => {
+      expect(await runFromDeletedCwd(cmd)).toEqual({
+        stdout: "",
+        stderr: expect.stringContaining("The current working directory was deleted"),
+        exitCode: 1,
+      });
+    });
+
+    // What needs no working directory keeps booting, like Node.
+    test.concurrent.each(["bun", "bun run", "node"])("%s <absolute path> still runs", async cmd => {
+      const abs = path.join(bin, "x.cjs");
+      expect(await runFromDeletedCwd(`${cmd} ${abs}`)).toEqual({
+        stdout: `ran ${abs}\n`,
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+
+    test.concurrent("bun - (stdin) still runs", async () => {
+      expect(await runFromDeletedCwd("bun -", `console.log("stdin ran")`)).toEqual({
+        stdout: "stdin ran\n",
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+
+    test.concurrent("bun repl still starts", async () => {
+      const { stderr, exitCode } = await runFromDeletedCwd("bun repl", `process.exit(42)\n`);
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(42);
+    });
   });
 });
 

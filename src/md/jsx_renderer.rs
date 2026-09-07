@@ -31,6 +31,13 @@ enum ExprWriteMode {
     Raw,
 }
 
+struct Paragraph {
+    start: usize,
+    jsx_depth: u32,
+    has_text: bool,
+    has_mdx: bool,
+}
+
 pub(crate) struct JsxRenderer<'src> {
     pub out: OutputBuffer,
     src_text: &'src [u8],
@@ -42,6 +49,7 @@ pub(crate) struct JsxRenderer<'src> {
     pub component_names: Vec<&'static [u8]>,
     image_nesting_level: u32,
     in_code_block: bool,
+    paragraph: Option<Paragraph>,
     // Owned for the same reason as HtmlRenderer's: SpanDetail only borrows for
     // the duration of enter_span.
     saved_img_title: Box<[u8]>,
@@ -67,6 +75,7 @@ impl<'src> JsxRenderer<'src> {
             component_names: Vec::new(),
             image_nesting_level: 0,
             in_code_block: false,
+            paragraph: None,
             saved_img_title: Box::default(),
         }
     }
@@ -171,6 +180,10 @@ impl<'src> JsxRenderer<'src> {
     /// the original expression wrapped in JSX braces.
     fn write_restoring_expressions(&mut self, content: &[u8], mode: ExprWriteMode) -> JsResult<()> {
         let mut i = 0usize;
+        let track_text = matches!(mode, ExprWriteMode::JsxText)
+            && self.paragraph.as_ref().is_some_and(|p| p.jsx_depth == 0);
+        let mut has_text = false;
+        let mut has_mdx = false;
         while i < content.len() {
             if !self.expression_prefix.is_empty()
                 && content[i..].starts_with(self.expression_prefix)
@@ -185,6 +198,7 @@ impl<'src> JsxRenderer<'src> {
                     && let Some(slot) = index.and_then(|n| self.expression_slots.get(n))
                     && *slot.placeholder == content[i..=end]
                 {
+                    has_mdx = true;
                     self.write(b"{");
                     self.write(&slot.original);
                     self.write(b"}");
@@ -192,12 +206,19 @@ impl<'src> JsxRenderer<'src> {
                     continue;
                 }
             }
+            if track_text && !has_text && !content[i].is_ascii_whitespace() {
+                has_text = true;
+            }
             match mode {
                 ExprWriteMode::JsxText => self.write_jsx_escaped(&content[i..i + 1]),
                 ExprWriteMode::AttrText => self.write_attr_escaped(&content[i..i + 1]),
                 ExprWriteMode::Raw => self.write_byte(content[i]),
             }
             i += 1;
+        }
+        if track_text && let Some(paragraph) = self.paragraph.as_mut() {
+            paragraph.has_text |= has_text;
+            paragraph.has_mdx |= has_mdx;
         }
         Ok(())
     }
@@ -273,7 +294,15 @@ impl<'src> JsxRenderer<'src> {
                 self.write(b">");
             }
             BlockType::Html => {}
-            BlockType::P => self.write_component_tag_open(b"p"),
+            BlockType::P => {
+                self.paragraph = Some(Paragraph {
+                    start: self.out.list.len(),
+                    jsx_depth: 0,
+                    has_text: false,
+                    has_mdx: false,
+                });
+                self.write_component_tag_open(b"p");
+            }
             BlockType::Table => self.write_component_tag_open(b"table"),
             BlockType::Thead => self.write_component_tag_open(b"thead"),
             BlockType::Tbody => self.write_component_tag_open(b"tbody"),
@@ -315,7 +344,23 @@ impl<'src> JsxRenderer<'src> {
                 self.write(self.components_name);
                 self.write(b".pre>");
             }
-            BlockType::P => self.write_component_tag_close(b"p"),
+            BlockType::P => {
+                if let Some(paragraph) = self.paragraph.take()
+                    && paragraph.has_mdx
+                    && !paragraph.has_text
+                    && !self.out.oom
+                {
+                    // MDX-only paragraphs are flow content; remove the opening
+                    // tag already emitted by the Markdown paragraph callback.
+                    let tag_len = self.components_name.len() + b"<.p>".len();
+                    self.out
+                        .list
+                        .copy_within(paragraph.start + tag_len.., paragraph.start);
+                    self.out.list.truncate(self.out.list.len() - tag_len);
+                } else {
+                    self.write_component_tag_close(b"p");
+                }
+            }
             BlockType::Table => self.write_component_tag_close(b"table"),
             BlockType::Thead => self.write_component_tag_close(b"thead"),
             BlockType::Tbody => self.write_component_tag_close(b"tbody"),
@@ -330,6 +375,11 @@ impl<'src> JsxRenderer<'src> {
     // ========================================
 
     fn enter_span(&mut self, span_type: SpanType, detail: SpanDetail<'_>) {
+        if let Some(paragraph) = self.paragraph.as_mut()
+            && paragraph.jsx_depth == 0
+        {
+            paragraph.has_text = true;
+        }
         if self.image_nesting_level > 0 {
             if span_type == SpanType::Img {
                 self.image_nesting_level += 1;
@@ -351,6 +401,11 @@ impl<'src> JsxRenderer<'src> {
                 self.write(b"<");
                 self.write(self.components_name);
                 self.write(b".a href=\"");
+                if detail.autolink_email {
+                    self.write(b"mailto:");
+                } else if detail.autolink_www {
+                    self.write(b"http://");
+                }
                 self.write_attr_escaped(detail.href);
                 self.write(b"\"");
                 if !detail.title.is_empty() {
@@ -432,7 +487,14 @@ impl<'src> JsxRenderer<'src> {
                     ExprWriteMode::JsxText
                 },
             )?,
-            TextType::NullChar => self.write("\u{FFFD}".as_bytes()),
+            TextType::NullChar => {
+                if let Some(paragraph) = self.paragraph.as_mut()
+                    && paragraph.jsx_depth == 0
+                {
+                    paragraph.has_text = true;
+                }
+                self.write("\u{FFFD}".as_bytes());
+            }
             TextType::Br => {
                 if in_image {
                     self.write(b" ");
@@ -447,8 +509,25 @@ impl<'src> JsxRenderer<'src> {
                     self.write(b"\n");
                 }
             }
-            TextType::Html => self.write_restoring_expressions(content, ExprWriteMode::Raw)?,
-            TextType::Entity => self.write(content),
+            TextType::Html => {
+                if let Some(paragraph) = self.paragraph.as_mut() {
+                    paragraph.has_mdx = true;
+                    if content.starts_with(b"</") {
+                        paragraph.jsx_depth = paragraph.jsx_depth.saturating_sub(1);
+                    } else if content.starts_with(b"<") && !content.ends_with(b"/>") {
+                        paragraph.jsx_depth += 1;
+                    }
+                }
+                self.write_restoring_expressions(content, ExprWriteMode::Raw)?;
+            }
+            TextType::Entity => {
+                if let Some(paragraph) = self.paragraph.as_mut()
+                    && paragraph.jsx_depth == 0
+                {
+                    paragraph.has_text = true;
+                }
+                self.write(content);
+            }
             TextType::Code => {
                 if in_image {
                     self.write_attr_escaped(content);

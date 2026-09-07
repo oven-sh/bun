@@ -9,6 +9,19 @@ const Markdown = Bun.markdown;
 // ============================================================================
 
 describe("fuzzer-like edge cases", () => {
+  test("each table keeps its own column alignment", () => {
+    const source = [":---", ":---:", "---:"].map(align => `| Header |\n| ${align} |\n| Cell |`).join("\n\n");
+    const html = Markdown.html(source, { tables: true });
+    expect([...html.matchAll(/<t[hd] align="([^"]+)">/g)].map(match => match[1])).toEqual([
+      "left",
+      "left",
+      "center",
+      "center",
+      "right",
+      "right",
+    ]);
+  });
+
   // ---- Empty / whitespace-only inputs ----
 
   test("empty string produces empty output across all APIs", () => {

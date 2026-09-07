@@ -48,6 +48,42 @@ const ROUTE_ENTRY_REGEX = /[├└]──\s+(\/\S*)\s+→\s+(\S+)/g;
 const Mdx = Bun.mdx;
 
 describe("Bun.mdx.compile", () => {
+  test.each([
+    ["person@example.com", "mailto:person@example.com"],
+    ["<person@example.com>", "mailto:person@example.com"],
+    ["www.example.com", "http://www.example.com"],
+    ["https://example.com", "https://example.com"],
+  ])("autolink destinations retain their protocol: %s", (source, href) => {
+    expect(Mdx.compile(source, { permissiveAutolinks: true })).toContain(`href="${href}"`);
+  });
+
+  test.each([
+    "{props.children}",
+    "{/* a comment */}",
+    '<Header\n title="Agreement"\n value={props.value}\n/>',
+    "<span>hello</span>",
+    "<span><strong>hello</strong> world</span>",
+  ])("standalone MDX content has no paragraph wrapper: %s", source => {
+    const output = Mdx.compile(source);
+    expect(output).not.toContain("<_components.p>");
+    expect(() => new Bun.Transpiler({ loader: "tsx" }).transformSync(output)).not.toThrow();
+  });
+
+  test.each([
+    "Before {props.children} after",
+    "Before <span>hello</span> after",
+    "**{props.children}**",
+    "![alt](x.png)",
+  ])("Markdown content retains its paragraph: %s", source => {
+    expect(Mdx.compile(source)).toContain("<_components.p>");
+  });
+
+  test("MDX tables keep distinct alignments", () => {
+    const source = "| Left |\n| :--- |\n| A |\n\n| Right |\n| ---: |\n| B |";
+    const output = Mdx.compile(source);
+    expect([...output.matchAll(/align="([^"]+)"/g)].map(match => match[1])).toEqual(["left", "left", "right", "right"]);
+  });
+
   test("compiles markdown to JSX module", () => {
     const output = Mdx.compile("# Hello\n\nWorld");
     expect(output).toContain("export default function MDXContent");

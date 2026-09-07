@@ -77,6 +77,9 @@ impl Parser<'_> {
             return Ok(());
         }
 
+        // Block analysis reuses the alignment buffer for later tables.
+        self.is_table_underline(block_lines[1].beg);
+
         // First line is header, second is underline, rest are body
         self.enter_block(BlockType::Thead, 0, 0)?;
         self.enter_block(BlockType::Tr, 0, 0)?;

@@ -1120,14 +1120,14 @@ describe.concurrent("non-boolean `private` values", () => {
 
       let { err, exitCode } = await publish(env, packageDir);
       expect(err).toContain("error: attempted to publish a private package");
-      expect(exitCode).toBe(1);
       expect(await exists(join(registry.packagesPath, name, `${name}-1.0.0.tgz`))).toBeFalse();
+      expect(exitCode).toBe(1);
 
       await pack(packageDir, env);
       ({ err, exitCode } = await publish(env, packageDir, `./${name}-1.0.0.tgz`));
       expect(err).toContain("error: attempted to publish a private package");
-      expect(exitCode).toBe(1);
       expect(await exists(join(registry.packagesPath, name, `${name}-1.0.0.tgz`))).toBeFalse();
+      expect(exitCode).toBe(1);
     });
   }
 
@@ -1143,8 +1143,8 @@ describe.concurrent("non-boolean `private` values", () => {
 
       const { err, exitCode } = await publish(env, packageDir);
       expect(err).not.toContain("error:");
-      expect(exitCode).toBe(0);
       expect(await exists(join(registry.packagesPath, name, `${name}-1.0.0.tgz`))).toBeTrue();
+      expect(exitCode).toBe(0);
     });
   }
 });

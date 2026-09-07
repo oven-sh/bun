@@ -17,7 +17,7 @@ export const lshpack: Dependency = {
   versionMacro: "LSHPACK",
 
   source: () => ({
-    kind: "github",
+    kind: "github-archive",
     repo: "litespeedtech/ls-hpack",
     commit: LSHPACK_COMMIT,
   }),

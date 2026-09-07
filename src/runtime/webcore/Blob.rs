@@ -1592,7 +1592,14 @@ impl BlobExt for Blob {
             assignment_result.ensure_still_alive();
             // it returns a Promise when it goes through ReadableStreamDefaultReader
             if let Some(promise) = assignment_result.as_any_promise() {
-                match promise.status() {
+                let status = promise.status();
+                if status != jsc::js_promise::Status::Pending {
+                    // The pump is over and `file_sink`'s reference goes away
+                    // when this function returns, so the controller cell must
+                    // not keep pointing at the sink.
+                    file_sink.detach_js_controller(global_this);
+                }
+                match status {
                     jsc::js_promise::Status::Pending => {
                         let wrapper = bun_core::heap::into_raw(Box::new(FileStreamWrapper {
                             promise: jsc::JSPromiseStrong::init(global_this),
@@ -1632,10 +1639,12 @@ impl BlobExt for Blob {
                     }
                 }
             } else {
+                file_sink.detach_js_controller(global_this);
                 readable_stream.cancel(global_this)?;
                 return Ok(JSPromise::rejected_promise(global_this, assignment_result).to_js());
             }
         }
+        file_sink.detach_js_controller(global_this);
         let written = file_sink.stream_bytes.get().unwrap_or(0);
 
         Ok(JSPromise::resolved_promise_value(
@@ -5739,6 +5748,9 @@ pub(crate) fn on_file_stream_resolve_request_stream(
     let mut this: Box<FileStreamWrapper> = unsafe {
         bun_core::heap::take(args[args.len() - 1].as_number() as usize as *mut FileStreamWrapper)
     };
+    // This call owns the last reference the pump held; the controller cell must
+    // not outlive it still pointing at the sink.
+    this.sink.detach_js_controller(global_this);
     let strong = core::mem::take(&mut this.readable_stream_ref);
     if let Some(stream) = strong.get() {
         stream.done();
@@ -5762,6 +5774,10 @@ pub(crate) fn on_file_stream_reject_request_stream(
         bun_core::heap::take(args[args.len() - 1].as_number() as usize as *mut FileStreamWrapper)
     };
     let err = args[0];
+
+    // The pump failed without an `end()`/`close()` on the controller, so the
+    // cell still points at the sink whose last reference this call owns.
+    this.sink.detach_js_controller(global_this);
 
     let strong = core::mem::take(&mut this.readable_stream_ref);
 

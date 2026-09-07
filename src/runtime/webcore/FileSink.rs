@@ -1017,6 +1017,28 @@ impl FileSink {
         }
     }
 
+    /// Take the JS pump controller's pointer to this sink away from it.
+    ///
+    /// `JSSink::assign_to_stream` hands the `JSReadableFileSinkController` cell
+    /// a raw `*FileSink` and takes no refcount claim for it, while the cell's
+    /// destructor releases one (`FileSink__finalize`). Every pump that reaches
+    /// its end calls `controller.end()`/`.close()` first, which nulls the
+    /// cell's sink pointer, so the destructor releases nothing and a later
+    /// `controller.write()` is a no-op. A pump that fails after it returned (a
+    /// direct stream whose `pull()` promise rejects) calls neither. So the
+    /// owner of the sink detaches the cell here, on every path that gives up
+    /// its own reference.
+    pub(crate) fn detach_js_controller(&self, global_this: &JSGlobalObject) {
+        if !matches!(self.source.get(), streams::SourceHandle::JSController(_)) {
+            return;
+        }
+        // Take the handle out of the cell before the call: `detach_ptr` runs
+        // the controller's `onClose`, which reaches `js_controller_detached` on
+        // this sink and borrows `source` again.
+        let mut source = self.source.replace(streams::SourceHandle::default());
+        JSSink::detach(&mut source, global_this);
+    }
+
     /// Protect the JS wrapper object from GC collection while an async operation is pending.
     /// This should be called when endFromJS returns a pending Promise.
     /// The reference is released when runPending() completes.

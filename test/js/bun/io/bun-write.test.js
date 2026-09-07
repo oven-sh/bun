@@ -1141,6 +1141,69 @@ int posix_fadvise(int fd, off_t offset, off_t len, int advice) {
         Bun.write(join(String(dir), "missing", "c"), await fetch(server.url), { createPath: false }),
       ).rejects.toThrow(expect.objectContaining({ code: "ENOENT" }));
     });
+
+    // A direct stream whose pull() rejects after it returned calls neither controller.end()
+    // nor controller.close(), so the controller cell kept its pointer to the FileSink. The
+    // cell's destructor then released a reference it never took, which freed the sink while
+    // the flush task the sink had queued on the event loop still pointed at it.
+    describe.each([
+      ["an async generator that throws right after a yield", `yield "first"; throw new Error("boom");`],
+      ["an async generator that throws before the first yield", `throw new Error("boom");`],
+    ])("a body that fails: %s", (_label, generatorBody) => {
+      it("rejects, and the collected controller does not free the sink", async () => {
+        using dir = tempDir("bun-write-failed-generator", {});
+        await using proc = Bun.spawn({
+          cmd: [
+            bunExe(),
+            "-e",
+            `const dest = ${JSON.stringify(join(String(dir), "out.txt"))};
+             const body = async function* () { ${generatorBody} };
+             for (let i = 0; i < 5; i++) {
+               const reason = await Bun.write(dest, new Response(body())).then(() => "resolved", e => e.message);
+               if (reason !== "boom") { console.log("unexpected:", reason); process.exit(2); }
+               Bun.gc(true);
+             }
+             console.log("survived");`,
+          ],
+          env: bunEnv,
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect({ stdout, stderr }).toEqual({ stdout: "survived\n", stderr: "" });
+        expect(exitCode).toBe(0);
+      });
+    });
+
+    it("a body that fails: a direct stream whose pull rejects", async () => {
+      using dir = tempDir("bun-write-failed-direct-stream", {});
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `const dest = ${JSON.stringify(join(String(dir), "out.txt"))};
+           const body = () =>
+             new ReadableStream({
+               type: "direct",
+               async pull(controller) {
+                 controller.write("first");
+                 await Promise.resolve();
+                 throw new Error("boom");
+               },
+             });
+           for (let i = 0; i < 5; i++) {
+             const reason = await Bun.write(dest, new Response(body())).then(() => "resolved", e => e.message);
+             if (reason !== "boom") { console.log("unexpected:", reason); process.exit(2); }
+             Bun.gc(true);
+           }
+           console.log("survived");`,
+        ],
+        env: bunEnv,
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout, stderr }).toEqual({ stdout: "survived\n", stderr: "" });
+      expect(exitCode).toBe(0);
+    });
   });
 
   it("BunFile.name survives concurrent write() calls + GC", async () => {

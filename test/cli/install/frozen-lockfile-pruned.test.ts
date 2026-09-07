@@ -93,7 +93,7 @@ const patchedMonorepo: Tree = {
   files: { ...monorepo.files, "patches/a-dep@1.0.1.patch": aDepPatch },
 };
 const patchedLockLine = '"a-dep@1.0.1": "patches/a-dep@1.0.1.patch"';
-const changedSectionNote = (section: "overrides" | "the catalog") =>
+const changedSectionNote = (section: "overrides" | "the catalog" | "patchedDependencies") =>
   `note: ${section} in package.json changed since bun.lock was saved`;
 
 const survivorError = (dependent: string, ws = "other") =>
@@ -529,28 +529,29 @@ describe.each(["hoisted", "isolated"] as Linker[])("linker: %s", linker => {
     expect(await lockText(packageDir)).toBe(pruned);
   });
 
-  // Like trustedDependencies above, patchedDependencies is not part of the frozen comparison (docs/pm/cli/install.mdx).
-  test.concurrent("patchedDependencies added after bun.lock was written still passes --frozen-lockfile", async () => {
+  // Unlike a dropped trustedDependencies section, bun.lock records patchedDependencies and turbo prune keeps them, so a
+  // package.json that disagrees is a stale lockfile in a pruned checkout too.
+  test.concurrent("patchedDependencies added after bun.lock was written fail --frozen-lockfile", async () => {
     const { packageDir, full } = await verbatimScenario(linker, monorepo, survivors);
     expect(full).not.toContain('"patchedDependencies"');
     await writeTree(packageDir, patchedMonorepo, survivors);
 
-    const { stderr } = await frozen(packageDir, linker, 0);
+    const { stderr } = await frozen(packageDir, linker, 1);
 
-    expect(stderr).not.toContain("patchedDependencies");
+    expect(stderr).toContain(changedSectionNote("patchedDependencies"));
     expect(await lockText(packageDir)).toBe(full);
-    const aDep = installedPath(packageDir, linker, "a-dep", "1.0.1");
-    expect(await file(aDep).json()).toMatchObject({ name: "a-dep", version: "1.0.1" });
-    expect(await file(join(dirname(aDep), "patched.txt")).text()).toBe("hello world\n");
-    expect(await exists(join(packageDir, "node_modules", "other"))).toBeFalse();
+    expect(await exists(join(packageDir, "node_modules"))).toBeFalse();
 
     const { stderr: plain } = await install(packageDir, linker);
 
     expect(plain).toContain("Saved lockfile");
     expect(await lockText(packageDir)).toContain(patchedLockLine);
+    const aDep = installedPath(packageDir, linker, "a-dep", "1.0.1");
+    expect(await file(join(dirname(aDep), "patched.txt")).text()).toBe("hello world\n");
+    await frozen(packageDir, linker, 0);
   });
 
-  test.concurrent("patchedDependencies removed after bun.lock was written still passes --frozen-lockfile", async () => {
+  test.concurrent("patchedDependencies removed after bun.lock was written fail --frozen-lockfile", async () => {
     const { fullDir, full } = await fullInstall(linker, patchedMonorepo);
     expect(full).toContain(patchedLockLine);
     expect(await exists(join(dirname(installedPath(fullDir, linker, "a-dep", "1.0.1")), "patched.txt"))).toBeTrue();
@@ -558,13 +559,11 @@ describe.each(["hoisted", "isolated"] as Linker[])("linker: %s", linker => {
     await writeTree(packageDir, monorepo, survivors);
     await write(join(packageDir, "bun.lock"), full);
 
-    const { stderr } = await frozen(packageDir, linker, 0);
+    const { stderr } = await frozen(packageDir, linker, 1);
 
-    expect(stderr).not.toContain("patchedDependencies");
+    expect(stderr).toContain(changedSectionNote("patchedDependencies"));
     expect(await lockText(packageDir)).toBe(full);
-    const aDep = installedPath(packageDir, linker, "a-dep", "1.0.1");
-    expect(await file(aDep).json()).toMatchObject({ name: "a-dep", version: "1.0.1" });
-    expect(await exists(join(dirname(aDep), "patched.txt"))).toBeFalse();
+    expect(await exists(join(packageDir, "node_modules"))).toBeFalse();
   });
 
   test.concurrent("overrides added after bun.lock was written still fail --frozen-lockfile", async () => {

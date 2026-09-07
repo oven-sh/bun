@@ -2801,7 +2801,151 @@ impl<'a> EqlSorter<'a> {
     }
 }
 
+/// The sections of bun.lock that come from the manifests rather than from resolution, as
+/// `bun_lock::Stringifier::save_from_binary` writes them: each workspace's dependency lists, and
+/// the `trustedDependencies` names and `patchedDependencies` entries that apply to a package placed
+/// in the tree. Overrides and catalogs are left to the differ's flags, workspace versions out on
+/// purpose (release tooling bumps them without an install).
+#[derive(PartialEq, Eq)]
+pub(crate) struct ManifestSections {
+    /// Workspace path (`""` for the root) with its sorted (name, dependency group bits, literal).
+    workspaces: Vec<(Box<[u8]>, Vec<(Box<[u8]>, u8, Box<[u8]>)>)>,
+    /// `None` when the lockfile has no list, which is also what `turbo prune` wrote before
+    /// vercel/turborepo#13740 while copying the root package.json that declares one.
+    trusted_dependencies: Option<Vec<Box<[u8]>>>,
+    /// (`name@version`, patch path)
+    patched_dependencies: Vec<(Box<[u8]>, Box<[u8]>)>,
+}
+
+impl ManifestSections {
+    /// The section to name when `self`, taken before installing, no longer matches `loaded`.
+    pub(crate) fn changed_since(&self, loaded: &ManifestSections) -> Option<&'static str> {
+        if self.workspaces != loaded.workspaces {
+            return Some("dependencies");
+        }
+        if loaded.trusted_dependencies.is_some()
+            && self.trusted_dependencies != loaded.trusted_dependencies
+        {
+            return Some("trustedDependencies");
+        }
+        if self.patched_dependencies != loaded.patched_dependencies {
+            return Some("patchedDependencies");
+        }
+        None
+    }
+}
+
 impl Lockfile {
+    pub(crate) fn manifest_sections(&self) -> ManifestSections {
+        let buf = self.buffers.string_bytes.as_slice();
+        let deps_buf = self.buffers.dependencies.as_slice();
+        let hoisted_deps = self.buffers.hoisted_dependencies.as_slice();
+        let pkgs = self.packages.slice();
+        let pkg_names = pkgs.items_name();
+        let pkg_name_hashes = pkgs.items_name_hash();
+        let pkg_resolutions = pkgs.items_resolution();
+        let pkg_deps = pkgs.items_dependencies();
+
+        let groups = dependency::Behavior::PROD
+            | dependency::Behavior::DEV
+            | dependency::Behavior::OPTIONAL
+            | dependency::Behavior::PEER;
+        let mut workspaces = Vec::new();
+        for pkg_id in 0..pkgs.len() {
+            let res = &pkg_resolutions[pkg_id];
+            let path: &[u8] = match res.tag {
+                ResolutionTag::Root => b"",
+                ResolutionTag::Workspace => res.workspace().slice(buf),
+                _ => continue,
+            };
+            let mut deps: Vec<(Box<[u8]>, u8, Box<[u8]>)> = pkg_deps[pkg_id]
+                .get(deps_buf)
+                .iter()
+                .filter(|dep| dep.behavior.intersects(groups))
+                .map(|dep| {
+                    (
+                        Box::from(dep.name.slice(buf)),
+                        dep.behavior.intersection(groups).bits(),
+                        Box::from(dep.version.literal.slice(buf)),
+                    )
+                })
+                .collect();
+            deps.sort_unstable();
+            workspaces.push((Box::<[u8]>::from(path), deps));
+        }
+        workspaces.sort_unstable_by(|l, r| l.0.cmp(&r.0));
+
+        let mut trusted_dependencies: Option<Vec<Box<[u8]>>> =
+            self.trusted_dependencies.as_ref().map(|_| Vec::new());
+        let mut patched_dependencies: Vec<(Box<[u8]>, Box<[u8]>)> = Vec::new();
+        let mut name_and_version: Vec<u8> = Vec::new();
+        for tree in self.buffers.trees.iter() {
+            for &dep_id in tree.dependencies.get(hoisted_deps) {
+                if dep_id == invalid_dependency_id {
+                    continue;
+                }
+                let pkg_id = self.buffers.resolutions[dep_id as usize];
+                if pkg_id == invalid_package_id {
+                    continue;
+                }
+                let dep = &deps_buf[dep_id as usize];
+
+                if let (Some(trusted), Some(found)) =
+                    (&self.trusted_dependencies, &mut trusted_dependencies)
+                {
+                    let name = dep.name.slice(buf);
+                    if trusted
+                        .get(&(dep.name_hash as TruncatedPackageNameHash))
+                        .is_some_and(|trusted_name| **trusted_name == *name)
+                    {
+                        found.push(Box::from(name));
+                    }
+                }
+
+                if self.patched_dependencies.count() > 0 {
+                    let res = &pkg_resolutions[pkg_id as usize];
+                    name_and_version.clear();
+                    let _ = write!(
+                        &mut name_and_version,
+                        "{}@",
+                        bstr::BStr::new(pkg_names[pkg_id as usize].slice(buf))
+                    );
+                    if res.tag == ResolutionTag::Workspace {
+                        if let Some(version) = self
+                            .workspace_versions
+                            .get(&pkg_name_hashes[pkg_id as usize])
+                        {
+                            let _ = write!(&mut name_and_version, "{}", version.fmt(buf));
+                        }
+                    } else {
+                        let _ = write!(&mut name_and_version, "{}", res.fmt(buf, PathSep::Posix));
+                    }
+                    if let Some(patch) = self
+                        .patched_dependencies
+                        .get(&SemverStringBuilder::string_hash(&name_and_version))
+                    {
+                        patched_dependencies.push((
+                            Box::from(name_and_version.as_slice()),
+                            Box::from(patch.path.slice(buf)),
+                        ));
+                    }
+                }
+            }
+        }
+        if let Some(found) = &mut trusted_dependencies {
+            found.sort_unstable();
+            found.dedup();
+        }
+        patched_dependencies.sort_unstable();
+        patched_dependencies.dedup();
+
+        ManifestSections {
+            workspaces,
+            trusted_dependencies,
+            patched_dependencies,
+        }
+    }
+
     /// A placement of `r` bound past `r_loaded_package_count` was rebound after loading: a change.
     pub(crate) fn eql(
         &self,

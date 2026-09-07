@@ -134,6 +134,7 @@ pub fn install_with_manager(
     // this defaults to false
     // but we force allowing updates to the lockfile when you do bun add
     let mut had_any_diffs = false;
+    let mut loaded_manifest_sections: Option<lockfile::ManifestSections> = None;
     let mut direct_deps_before = DirectDependencies::default();
     manager.progress = Default::default();
 
@@ -235,6 +236,13 @@ pub fn install_with_manager(
                 };
 
                 had_any_diffs = manager.summary.has_diffs();
+                // Taken before package.json's sections are copied over the loaded ones below.
+                if had_any_diffs
+                    && manager.options.enable.frozen_lockfile()
+                    && ok.format == lockfile::Format::Text
+                {
+                    loaded_manifest_sections = Some(manager.lockfile.manifest_sections());
+                }
                 // The lockfile does not store the set. Every install takes it from the manifests.
                 manager
                     .lockfile
@@ -788,7 +796,7 @@ pub fn install_with_manager(
         && !matches!(load_result, lockfile::LoadResult::NotFound)
     {
         'frozen_lockfile: {
-            let changed_section = frozen_changed_section(manager, root_package_json_path);
+            let mut changed_section = frozen_changed_section(manager, root_package_json_path);
             if changed_section.is_none() {
                 if load_result.loaded_from_text_lockfile() {
                     if bun_core::handle_oom(Lockfile::eql(
@@ -796,7 +804,15 @@ pub fn install_with_manager(
                         &lockfile_before_clean,
                         lockfile_before_clean.loaded_package_count as usize,
                     )) {
-                        break 'frozen_lockfile;
+                        // Every package resolved as locked. A plain install would still rewrite
+                        // bun.lock for a retyped specifier, a dependency that changed group, or a
+                        // trustedDependencies / patchedDependencies edit, so those fail too.
+                        changed_section = loaded_manifest_sections.as_ref().and_then(|loaded| {
+                            manager.lockfile.manifest_sections().changed_since(loaded)
+                        });
+                        if changed_section.is_none() {
+                            break 'frozen_lockfile;
+                        }
                     }
                 } else if !(manager
                     .lockfile

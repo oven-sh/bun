@@ -1082,12 +1082,6 @@ test("attempting to publish a private package should fail", async () => {
 // npm checks `manifest.private` with JS truthiness, so every non-empty
 // string and non-zero number refuses the publish, including "false".
 describe.concurrent("non-boolean `private` values", () => {
-  // Verdaccio cannot create users concurrently, so share one token.
-  let bunfig: string;
-  beforeAll(async () => {
-    bunfig = await registry.authBunfig("privatetruthiness");
-  });
-
   const truthy: [string, unknown][] = [
     ["string-true", "true"],
     ["string-yes", "yes"],
@@ -1096,10 +1090,28 @@ describe.concurrent("non-boolean `private` values", () => {
     ["object", {}],
     ["array", []],
   ];
+  const falsy: [string, unknown][] = [
+    ["false", false],
+    ["null", null],
+    ["zero", 0],
+    ["empty-string", ""],
+  ];
+
+  // createTestDir() resets the registry's auth state and authBunfig() creates a
+  // user, so neither can run concurrently. Do both up front, then share one token.
+  const dirs = new Map<string, { packageDir: string; packageJson: string }>();
+  let bunfig: string;
+  beforeAll(async () => {
+    for (const [label] of [...truthy, ...falsy]) {
+      dirs.set(label, await registry.createTestDir());
+    }
+    bunfig = await registry.authBunfig("privatetruthiness");
+  });
+
   for (const [label, value] of truthy) {
     test(`private: ${JSON.stringify(value)} refuses publish`, async () => {
-      const { packageDir, packageJson } = await registry.createTestDir();
-      const name = `publish-private-truthy-${label}`;
+      const { packageDir, packageJson } = dirs.get(label)!;
+      const name = `publish-pkg-private-${label}`;
       await Promise.all([
         rm(join(registry.packagesPath, name), { recursive: true, force: true }),
         write(packageJson, JSON.stringify({ name, version: "1.0.0", private: value })),
@@ -1119,16 +1131,10 @@ describe.concurrent("non-boolean `private` values", () => {
     });
   }
 
-  const falsy: [string, unknown][] = [
-    ["false", false],
-    ["null", null],
-    ["zero", 0],
-    ["empty-string", ""],
-  ];
   for (const [label, value] of falsy) {
     test(`private: ${JSON.stringify(value)} allows publish`, async () => {
-      const { packageDir, packageJson } = await registry.createTestDir();
-      const name = `publish-private-falsy-${label}`;
+      const { packageDir, packageJson } = dirs.get(label)!;
+      const name = `publish-pkg-private-${label}`;
       await Promise.all([
         rm(join(registry.packagesPath, name), { recursive: true, force: true }),
         write(packageJson, JSON.stringify({ name, version: "1.0.0", private: value })),

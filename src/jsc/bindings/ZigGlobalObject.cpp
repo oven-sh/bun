@@ -831,7 +831,7 @@ JSC_DEFINE_HOST_FUNCTION(functionEsmLoadSync, (JSC::JSGlobalObject * lexicalGlob
             entry->ensureModulePromise(globalObject);
             JSPromise* fetchPromise = entry->ensureFetchPromise(globalObject);
             if (!scope.exception() && fetchPromise->status() == JSPromise::Status::Pending) {
-                JSPromise* fetched = loader->fetch(globalObject, JSC::jsString(vm, keyString), nullptr, nullptr);
+                JSPromise* fetched = loader->fetch(globalObject, JSC::jsString(vm, keyString), WTF::String(), nullptr, nullptr);
                 if (!scope.exception()) {
                     // pipeFrom() already claimed the resolving-function flag, so
                     // the guarded fulfill()/reject() would no-op; settle directly.

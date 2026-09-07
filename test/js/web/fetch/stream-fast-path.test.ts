@@ -21,6 +21,10 @@ describe("single-chunk stream consumers return a fresh buffer", () => {
     structuredClone(buf, { transfer: [buf] });
     return buf;
   };
+  const detachedChunkError = expect.objectContaining({
+    name: "TypeError",
+    message: "Cannot read a ReadableStream chunk whose ArrayBuffer has been detached",
+  });
 
   describe.each([
     ["Response.bytes()", (s: ReadableStream) => new Response(s).bytes()],
@@ -76,12 +80,9 @@ describe("single-chunk stream consumers return a fresh buffer", () => {
       expect(backing[100]).toBe(0x11);
     });
 
-    test("detached chunk yields a fresh empty result", async () => {
+    test("detached chunk rejects", async () => {
       const src = detached();
-      const out = await consume(one(src));
-      expect(out.buffer).not.toBe(src);
-      expect(out.byteLength).toBe(0);
-      expect(out.buffer.detached).toBe(false);
+      await expect(async () => consume(one(src))).toThrow(detachedChunkError);
     });
 
     test("transferring the result does not detach the producer", async () => {
@@ -148,13 +149,9 @@ describe("single-chunk stream consumers return a fresh buffer", () => {
       expect(backing[100]).toBe(0x11);
     });
 
-    test("detached chunk yields a fresh empty result", async () => {
+    test("detached chunk rejects", async () => {
       const src = detached();
-      const out = await consume(one(src));
-      expect(out).toBeInstanceOf(ArrayBuffer);
-      expect(out).not.toBe(src);
-      expect(out.byteLength).toBe(0);
-      expect((out as ArrayBuffer).detached).toBe(false);
+      await expect(async () => consume(one(src))).toThrow(detachedChunkError);
     });
 
     test("transferring the result does not detach the producer", async () => {

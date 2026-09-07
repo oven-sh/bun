@@ -1084,7 +1084,7 @@ it("indents the caret under the printed excerpt when a one-line bun.lock has man
   });
   const [, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-  const lines = err.split("\n");
+  const lines = err.split(/\r?\n/);
   const carets = lines.filter(line => /^ *\^$/.test(line));
   expect(carets.length).toBe(count);
 

@@ -1,6 +1,6 @@
 import { spawn, spawnSync } from "bun";
 import { beforeEach, describe, expect, it } from "bun:test";
-import { chmodSync, mkdirSync } from "fs";
+import { chmodSync, mkdirSync, symlinkSync } from "fs";
 import { exists, stat } from "fs/promises";
 import { bunExe, bunEnv as env, isPosix, tempDir, tls, tmpdirSync } from "harness";
 import { once } from "node:events";
@@ -383,30 +383,75 @@ it("should refuse to copy a template into itself", async () => {
   expect(exitCode).toBe(1);
 });
 
-for (const name of [".", ".."]) {
-  it(`should refuse ${JSON.stringify(name)} as a template name`, async () => {
-    const home = join(x_dir, "home");
-    mkdirSync(home, { recursive: true });
-    await Bun.write(join(x_dir, ".bun-create", "tmpl", "index.js"), "hi");
-    await Bun.write(join(x_dir, "keep.js"), "keep me");
+it("should refuse a destination that reaches the template through a link", async () => {
+  // `real/tmpl` is the template. `link` points at `real`, so `link/tmpl` is the
+  // same directory under a different path. This is the shape of `/tmp` on macOS,
+  // where the cwd is already resolved to `/private/tmp` and the argument is not.
+  const template = join(x_dir, "real", "tmpl");
+  await Bun.write(join(template, "index.js"), "hi");
+  symlinkSync(join(x_dir, "real"), join(x_dir, "link"), "junction");
 
-    await using proc = spawn({
-      cmd: [bunExe(), "create", name, "--no-git", "--no-install"],
-      cwd: x_dir,
-      stdout: "pipe",
-      stderr: "pipe",
-      env: { ...env, HOME: home },
-    });
-
-    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stderr).toContain("is not a template name");
-    // The template directory and the project keep every file.
-    expect(await Bun.file(join(x_dir, ".bun-create", "tmpl", "index.js")).text()).toBe("hi");
-    expect(await Bun.file(join(x_dir, "keep.js")).text()).toBe("keep me");
-    expect(await exists(join(x_dir, basename(x_dir)))).toBe(false);
-    expect(exitCode).toBe(1);
+  await using proc = spawn({
+    cmd: [bunExe(), "create", join(x_dir, "link", "tmpl"), template, "--no-git", "--no-install"],
+    cwd: x_dir,
+    stdout: "pipe",
+    stderr: "pipe",
+    env,
   });
-}
+
+  const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toContain("overlaps the template");
+  expect(await Bun.file(join(template, "index.js")).text()).toBe("hi");
+  expect(exitCode).toBe(1);
+});
+
+it("should refuse a destination that is the template in a different letter case", async () => {
+  const template = join(x_dir, "tmpl");
+  await Bun.write(join(template, "index.js"), "hi");
+  const dest = join(x_dir, "TMPL");
+  if (!(await exists(dest))) {
+    // A case-sensitive volume. The two paths are different directories here.
+    return;
+  }
+
+  await using proc = spawn({
+    cmd: [bunExe(), "create", template, dest, "--no-git", "--no-install"],
+    cwd: x_dir,
+    stdout: "pipe",
+    stderr: "pipe",
+    env,
+  });
+
+  const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toContain("overlaps the template");
+  expect(await Bun.file(join(template, "index.js")).text()).toBe("hi");
+  expect(exitCode).toBe(1);
+});
+
+// The lookup joins the name onto each template directory and folds `\` as well
+// as `/` on every platform, so `x\..` is `.bun-create` itself, like `.`.
+it.each([".", "..", "x\\.."])("should refuse %p as a template name", async name => {
+  const home = join(x_dir, "home");
+  mkdirSync(home, { recursive: true });
+  await Bun.write(join(x_dir, ".bun-create", "tmpl", "index.js"), "hi");
+  await Bun.write(join(x_dir, "keep.js"), "keep me");
+
+  await using proc = spawn({
+    cmd: [bunExe(), "create", name, "--no-git", "--no-install"],
+    cwd: x_dir,
+    stdout: "pipe",
+    stderr: "pipe",
+    env: { ...env, HOME: home },
+  });
+
+  const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toContain("is not a template name");
+  // The template directory and the project keep every file.
+  expect(await Bun.file(join(x_dir, ".bun-create", "tmpl", "index.js")).text()).toBe("hi");
+  expect(await Bun.file(join(x_dir, "keep.js")).text()).toBe("keep me");
+  expect(await exists(join(x_dir, basename(x_dir)))).toBe(false);
+  expect(exitCode).toBe(1);
+});
 
 it("should refuse an empty template name", async () => {
   await using proc = spawn({

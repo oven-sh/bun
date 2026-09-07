@@ -256,20 +256,14 @@ const BUN_CREATE_DIR: &[u8] = b".bun-create";
 // PORTING.md §Global mutable state: single-thread CLI scratch buffer → RacyCell.
 static HOME_DIR_BUF: bun_core::RacyCell<PathBuffer> = bun_core::RacyCell::new(PathBuffer::ZEROED);
 
-/// The separators that the template joins fold. `abs_buf` normalizes both on
-/// Windows and `/` alone on POSIX, where `\` is a name byte.
-#[cfg(windows)]
-const TEMPLATE_SEPARATORS: &[u8] = b"/\\";
-#[cfg(not(windows))]
-const TEMPLATE_SEPARATORS: &[u8] = b"/";
-
 /// True when joining `name` onto a directory resolves to a path inside that
 /// directory. `bun create` joins the template name onto each template
 /// directory, so `.`, `..`, `""` and `../name` select a template directory
-/// itself or a directory above it instead of a template in it.
+/// itself or a directory above it instead of a template in it. The join is
+/// `platform::Loose`, which folds `\` as well as `/` on every platform.
 fn names_path_inside_dir(name: &[u8]) -> bool {
     let mut depth: usize = 0;
-    for segment in strings::tokenize_any(name, TEMPLATE_SEPARATORS) {
+    for segment in strings::tokenize_any(name, b"/\\") {
         if segment == b"." {
             continue;
         }
@@ -285,20 +279,67 @@ fn names_path_inside_dir(name: &[u8]) -> bool {
     depth > 0
 }
 
-/// True when `a` and `b` name the same path, or one of them contains the
-/// other. Both must be absolute and normalized.
-fn paths_overlap(a: &[u8], b: &[u8]) -> bool {
-    let a = strings::without_trailing_slash(a);
-    let b = strings::without_trailing_slash(b);
-    let (shorter, longer) = if a.len() <= b.len() { (a, b) } else { (b, a) };
-    let same_prefix = if cfg!(windows) {
-        strings::eql_case_insensitive_ascii_check_length(shorter, &longer[..shorter.len()])
-    } else {
-        shorter == &longer[..shorter.len()]
+/// True when `inner` is `outer` or a path under it. Both are absolute and
+/// normalized.
+fn path_contains(outer: &[u8], inner: &[u8]) -> bool {
+    let outer = strings::without_trailing_slash(outer);
+    if outer.is_empty() || inner.len() < outer.len() || inner[..outer.len()] != *outer {
+        return false;
+    }
+    inner.len() == outer.len()
+        || bun_core::path_sep::is_sep_native(inner[outer.len()])
+        // `outer` is a root (`/`, `C:\`) and keeps its separator.
+        || bun_core::path_sep::is_sep_native(outer[outer.len() - 1])
+}
+
+/// True when the destination is the template directory, is inside it, or
+/// contains it. The local-folder copy deletes the destination and then walks
+/// the template, so each of the three deletes or recurses into the files it
+/// copies. After the check on the paths as given, both sides are compared by
+/// the path the OS reports for the open directory. That catches a symlinked
+/// prefix (`/tmp` on macOS, while the cwd is already resolved) and a different
+/// letter case on a case-insensitive volume.
+fn destination_overlaps_template(
+    template_dir: &bun_sys::Dir,
+    abs_template_path: &[u8],
+    destination: &[u8],
+) -> bool {
+    if path_contains(abs_template_path, destination)
+        || path_contains(destination, abs_template_path)
+    {
+        return true;
+    }
+
+    let mut template_buf = bun_paths::path_buffer_pool::get();
+    let mut existing_buf = bun_paths::path_buffer_pool::get();
+    let template_real: &[u8] = match template_dir.get_fd_path(&mut template_buf) {
+        Ok(real) => real,
+        Err(_) => return false,
     };
-    same_prefix
-        && (shorter.len() == longer.len()
-            || bun_core::path_sep::is_sep_native(longer[shorter.len()]))
+    // The destination may not exist yet. Open the deepest directory on its
+    // path that does.
+    let mut path = destination;
+    let existing = loop {
+        match bun_sys::Dir::open(path) {
+            Ok(dir) => break dir,
+            Err(_) => match bun_paths::dirname(path) {
+                Some(parent) if parent.len() < path.len() => path = parent,
+                _ => return false,
+            },
+        }
+    };
+    let existing_real: &[u8] = match existing.get_fd_path(&mut existing_buf) {
+        Ok(real) => real,
+        Err(_) => return false,
+    };
+    if path.len() == destination.len() {
+        path_contains(template_real, existing_real) || path_contains(existing_real, template_real)
+    } else {
+        // Only an ancestor of the destination exists, so the destination cannot
+        // contain the template. It is inside the template when that ancestor is
+        // the template or inside it.
+        path_contains(template_real, existing_real)
+    }
 }
 
 pub(crate) struct CreateCommand;
@@ -642,9 +683,7 @@ impl CreateCommand {
                     }
                 };
 
-                // The copy deletes the destination and then walks the template.
-                // An overlap would delete the files it copies.
-                if paths_overlap(abs_template_path, destination) {
+                if destination_overlaps_template(&template_dir, abs_template_path, destination) {
                     node.end();
                     progress.refresh();
 

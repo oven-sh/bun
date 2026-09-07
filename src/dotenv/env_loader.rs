@@ -597,9 +597,10 @@ impl Loader {
 
     /// A `Worker`'s loader. `snapshot` is the environment the worker starts
     /// with (its `env` option, or a copy of the parent's `process.env`); `None`
-    /// copies this loader's map. Everything this loader already read (`environ`,
-    /// `.env` files, `--env-file` pipes) counts as read, so the worker neither
-    /// merges the launch environment over the snapshot nor reads a file twice.
+    /// copies this loader's map. Either one already holds what this loader
+    /// read from `environ` and from env files, so the worker's loader counts
+    /// all of them as read: it neither merges the launch environment over the
+    /// snapshot nor reads a `.env` file (or an `--env-file` pipe) again.
     pub fn for_worker(&self, snapshot: Option<Map>) -> Result<Loader, AllocError> {
         let did_load_process = snapshot.is_some() || self.did_load_process;
         Ok(Loader {
@@ -607,7 +608,7 @@ impl Loader {
                 Some(map) => map,
                 None => self.map.clone_with_allocator()?,
             },
-            default_files_loaded: self.default_files_loaded,
+            default_files_loaded: EnumSet::all(),
             custom_files_loaded: self.custom_files_loaded.clone()?,
             quiet: false,
             did_load_process,

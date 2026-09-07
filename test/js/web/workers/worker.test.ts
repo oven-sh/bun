@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { once } from "events";
-import { bunEnv, bunExe, isDebug, tempDir } from "harness";
+import { bunEnv, bunExe, isDebug, isWindows, tempDir, tls as tlsCert } from "harness";
+import { chmodSync } from "node:fs";
 import path from "path";
 import wt from "worker_threads";
 
@@ -201,6 +202,181 @@ describe("web worker", () => {
       nodeEnv: "production",
     });
     expect(exitCode).toBe(0);
+  });
+
+  // The `env` option must confine the worker's native env readers too, not only
+  // its `process.env` object: `Bun.spawn` without `env`, `Bun.which`, `Bun.$`'s
+  // command lookup and the TLS default all read the worker VM's env map.
+  describe("worker-env: native readers see the worker's env, not the launch environment", () => {
+    // A directory on the launching process's PATH with a tool that exists nowhere else.
+    function launchFiles() {
+      return isWindows
+        ? { "launch-bin/launch-only-tool.cmd": "@echo launch\r\n" }
+        : { "launch-bin/launch-only-tool": "#!/bin/sh\necho launch\n" };
+    }
+    async function run(files: Record<string, string>, env: Record<string, string | undefined> = {}) {
+      using dir = tempDir("worker-env-native", { ...launchFiles(), ...files });
+      if (!isWindows) chmodSync(path.join(String(dir), "launch-bin/launch-only-tool"), 0o755);
+      const launchEnv: Record<string, string | undefined> = {
+        ...bunEnv,
+        LAUNCH_SECRET: "s3cr3t",
+        PATH: path.join(String(dir), "launch-bin") + path.delimiter + bunEnv.PATH,
+        ...env,
+      };
+      for (const key in launchEnv) if (launchEnv[key] === undefined) delete launchEnv[key];
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "main.mjs"],
+        env: launchEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      let result: any;
+      try {
+        result = JSON.parse(stdout);
+      } catch {
+        throw new Error(`fixture printed no JSON (exit code ${exitCode})\nstdout: ${stdout}\nstderr: ${stderr}`);
+      }
+      expect(exitCode).toBe(0);
+      return { result, dir: String(dir) };
+    }
+    const report = `
+      worker.on("error", e => { console.error(e); process.exit(1); });
+      worker.once("message", m => { console.log(JSON.stringify(m)); worker.terminate(); });
+    `;
+
+    test.concurrent("Bun.spawn, Bun.spawnSync, Bun.which and Bun.$ (worker_threads, env without PATH)", async () => {
+      // The worker's whole environment. A Windows child needs SystemRoot to start.
+      const only: Record<string, string> = { ONLY: "1", BUN_DEBUG_QUIET_LOGS: "1" };
+      if (isWindows) only.SystemRoot = process.env.SystemRoot!;
+      const { result } = await run({
+        "main.mjs": `
+          import { Worker } from "node:worker_threads";
+          const worker = new Worker("./worker.cjs", { env: ${JSON.stringify(only)} });
+          ${report}
+        `,
+        "worker.cjs": `
+          const { parentPort } = require("node:worker_threads");
+          const { $ } = require("bun");
+          const cmd = [process.execPath, "-e", "process.stdout.write(JSON.stringify(process.env))"];
+          (async () => {
+            const sync = Bun.spawnSync({ cmd, stdout: "pipe", stderr: "inherit" });
+            const proc = Bun.spawn({ cmd, stdout: "pipe", stderr: "inherit" });
+            const [asyncOut] = await Promise.all([proc.stdout.text(), proc.exited]);
+            parentPort.postMessage({
+              processEnv: { ...process.env },
+              spawnSyncChildEnv: JSON.parse(sync.stdout.toString()),
+              spawnChildEnv: JSON.parse(asyncOut),
+              whichLaunchTool: Bun.which("launch-only-tool"),
+              // No PATH in this worker's env: the shell must not fall back to the launch PATH.
+              shellRanLaunchTool: ${isWindows} ? false : (await $\`launch-only-tool\`.quiet().nothrow()).exitCode === 0,
+            });
+          })();
+        `,
+      });
+      expect(result).toEqual({
+        processEnv: only,
+        spawnSyncChildEnv: only,
+        spawnChildEnv: only,
+        whichLaunchTool: null,
+        shellRanLaunchTool: false,
+      });
+    });
+
+    test.concurrent("Bun.which and Bun.spawnSync resolve argv[0] on the worker's PATH (Web Worker)", async () => {
+      const { result, dir } = await run({
+        ...(isWindows
+          ? { "worker-bin/worker-only-tool.cmd": "@echo worker\r\n" }
+          : { "worker-bin/worker-only-tool": "#!/bin/sh\necho worker\n" }),
+        "main.mjs": `
+          import { chmodSync } from "node:fs";
+          import { join } from "node:path";
+          if (process.platform !== "win32") chmodSync("worker-bin/worker-only-tool", 0o755);
+          const worker = new Worker("./worker.mjs", {
+            env: { PATH: join(process.cwd(), "worker-bin"), BUN_DEBUG_QUIET_LOGS: "1" },
+          });
+          worker.onerror = e => { console.error(e.message); process.exit(1); };
+          worker.onmessage = e => { console.log(JSON.stringify(e.data)); worker.terminate(); };
+        `,
+        "worker.mjs": `
+          // stdout of the tool, or the error code when it cannot be spawned.
+          function trySpawn(tool) {
+            try {
+              return Bun.spawnSync({ cmd: [tool], stdout: "pipe" }).stdout.toString().trim();
+            } catch (e) {
+              return e.code ?? String(e);
+            }
+          }
+          postMessage({
+            whichWorkerTool: Bun.which("worker-only-tool"),
+            whichLaunchTool: Bun.which("launch-only-tool"),
+            // .cmd files do not spawn without a shell, so only the lookup is checked on Windows.
+            spawnWorkerTool: process.platform === "win32" ? "worker" : trySpawn("worker-only-tool"),
+            spawnLaunchTool: process.platform === "win32" ? "ENOENT" : trySpawn("launch-only-tool"),
+          });
+        `,
+      });
+      expect(result).toEqual({
+        whichWorkerTool: path.join(dir, "worker-bin", isWindows ? "worker-only-tool.cmd" : "worker-only-tool"),
+        whichLaunchTool: null,
+        spawnWorkerTool: "worker",
+        spawnLaunchTool: "ENOENT",
+      });
+    });
+
+    const tlsMain = (workerOptions: string) => `
+      import { Worker } from "node:worker_threads";
+      const server = Bun.serve({
+        port: 0,
+        tls: ${JSON.stringify({ cert: tlsCert.cert, key: tlsCert.key })},
+        fetch: () => new Response("hello over tls"),
+      });
+      const url = "https://127.0.0.1:" + server.port + "/";
+      function probe(options) {
+        return new Promise((resolve, reject) => {
+          const worker = new Worker("./probe.cjs", { ...options, workerData: url });
+          worker.on("error", reject);
+          worker.once("message", m => { worker.terminate(); resolve(m); });
+        });
+      }
+      const results = {};
+      results.fromOption = await probe(${workerOptions});
+      // A runtime assignment in the parent is part of the env a default worker copies.
+      process.env.NODE_TLS_REJECT_UNAUTHORIZED = "0";
+      results.fromParentRuntime = await probe({});
+      console.log(JSON.stringify(results));
+      server.stop(true);
+    `;
+    const probeWorker = `
+      const { parentPort, workerData } = require("node:worker_threads");
+      fetch(workerData).then(r => r.text()).then(
+        body => parentPort.postMessage({ env: process.env.NODE_TLS_REJECT_UNAUTHORIZED ?? null, body }),
+        err => parentPort.postMessage({ env: process.env.NODE_TLS_REJECT_UNAUTHORIZED ?? null, error: err.code }),
+      );
+    `;
+
+    test.concurrent("NODE_TLS_REJECT_UNAUTHORIZED=0 in the worker's env disables verification in that worker", async () => {
+      const { result } = await run(
+        { "main.mjs": tlsMain(`{ env: { NODE_TLS_REJECT_UNAUTHORIZED: "0" } }`), "probe.cjs": probeWorker },
+        { NODE_TLS_REJECT_UNAUTHORIZED: undefined },
+      );
+      expect(result).toEqual({
+        fromOption: { env: "0", body: "hello over tls" },
+        fromParentRuntime: { env: "0", body: "hello over tls" },
+      });
+    });
+
+    test.concurrent("NODE_TLS_REJECT_UNAUTHORIZED=0 at launch does not reach a worker whose env omits it", async () => {
+      const { result } = await run(
+        { "main.mjs": tlsMain(`{ env: { PATH: process.env.PATH } }`), "probe.cjs": probeWorker },
+        { NODE_TLS_REJECT_UNAUTHORIZED: "0" },
+      );
+      expect(result).toEqual({
+        fromOption: { env: null, error: "DEPTH_ZERO_SELF_SIGNED_CERT" },
+        fromParentRuntime: { env: "0", body: "hello over tls" },
+      });
+    });
   });
 
   test("worker-env with a lot of properties", done => {

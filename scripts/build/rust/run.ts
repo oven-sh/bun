@@ -42,7 +42,7 @@ import {
 } from "node:fs";
 import { constants as osConstants } from "node:os";
 import { delimiter, dirname, isAbsolute, join, resolve } from "node:path";
-import { acquireJobserverToken, type JobserverToken } from "../jobserver.ts";
+import { acquireJobserverToken } from "../jobserver.ts";
 import type { UnitManifest } from "./units.ts";
 
 const [mode, manifestPath] = process.argv.slice(2);

@@ -1577,14 +1577,27 @@ impl<'a> PackageInstaller<'a> {
             || !installer.verify(resolution, &self.root_node_modules_folder);
 
         if needs_install {
+            // `--force` re-fetches on the first pass only; the post-download
+            // re-entry has needs_verify=false and links the fresh entry.
+            let force_cache_refetch = needs_verify
+                && self.force_install
+                && self.manager().get_preinstall_state(package_id) != crate::PreinstallState::Done;
             if resolution.tag.can_enqueue_install_task()
-                && installer.package_missing_from_cache(
-                    self.manager_mut(),
-                    package_id,
-                    resolution.tag,
-                )
+                && (force_cache_refetch
+                    || installer.package_missing_from_cache(
+                        self.manager_mut(),
+                        package_id,
+                        resolution.tag,
+                    ))
             {
                 debug_assert!(resolution.can_enqueue_install_task());
+
+                // Drop the derived `_patch_hash=` entry so the re-entry
+                // enqueues `ApplyPatch` against the fresh base.
+                if force_cache_refetch && installer.patch.is_some() {
+                    let _ = bun_sys::Dir::borrow(&installer.cache_dir)
+                        .delete_tree(installer.cache_dir_subpath.as_bytes());
+                }
 
                 // Re-enqueueing would dedupe against the finished download and never call back.
                 if !needs_verify {

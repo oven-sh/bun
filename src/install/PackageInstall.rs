@@ -2288,8 +2288,10 @@ impl<'a> PackageInstall<'a> {
         manager: &mut PackageManager,
         package_id: PackageID,
     ) -> bool {
-        let exists =
-            sys::directory_exists_at(self.cache_dir, self.cache_dir_subpath).unwrap_or(false);
+        let exists = crate::package_manager::directories::cache_entry_is_dir(
+            self.cache_dir,
+            self.cache_dir_subpath,
+        );
         if exists {
             manager.set_preinstall_state(package_id, crate::PreinstallState::Done);
         }

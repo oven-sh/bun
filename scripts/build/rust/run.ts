@@ -245,7 +245,7 @@ if (mode === "meta") {
   // node given inline: append rustc's stderr to the log, then publish the exit code atomically.
   const monitor = `
     const { spawn } = require("node:child_process"); const fs = require("node:fs");
-    const [logPath, exitPath, pidPath, rmetaPath, cwd, ninjaPid, rustc, ...argv] = process.argv.slice(1);
+    const [logPath, exitPath, pidPath, rmetaPath, cwd, buildPid, rustc, ...argv] = process.argv.slice(1);
     const log = fs.openSync(logPath, "a");
     const child = spawn(rustc, argv, { cwd, stdio: ["ignore", "inherit", "pipe"], env: process.env });
     fs.writeFileSync(pidPath, String(child.pid));
@@ -259,13 +259,16 @@ if (mode === "meta") {
     child.on("exit", (code, signal) => done(code ?? 128 + 15));
     child.on("error", e => { fs.writeSync(log, String(e) + "\\n"); done(127); });
     for (const s of ["SIGTERM", "SIGINT", "SIGHUP"]) process.on(s, () => child.kill("SIGTERM"));
-    // An interrupted or failed build (ninja gone) takes its compilations down with it, as cargo does; the next
-    // build's codegen step sees the signal status and recompiles.
-    setInterval(() => { try { process.kill(Number(ninjaPid), 0); } catch { child.kill("SIGTERM"); } }, 500).unref();
+    // An interrupted or failed build takes its compilations down with it, as cargo does: watch the build driver
+    // (scripts/build.ts exports its pid; it outlives ninja by moments either way) and stop rustc when it is gone.
+    // Not ninja's pid via our ppid: ninja runs commands through \`sh -c\`, and whether that shell execs the command
+    // or stays as an intermediate parent that exits with the meta step differs between shells. With no driver
+    // (ninja run by hand) nothing is watched; a leftover rustc finishes or is stopped by the next meta step.
+    if (buildPid !== "") setInterval(() => { try { process.kill(Number(buildPid), 0); } catch { child.kill("SIGTERM"); } }, 500).unref();
   `;
   const child = spawn(
     process.execPath,
-    ["-e", monitor, logPath, exitPath, pidPath, unit.rmeta, unit.cwd, String(process.ppid), rustc, ...argv],
+    ["-e", monitor, logPath, exitPath, pidPath, unit.rmeta, unit.cwd, process.env.BUN_BUILD_DRIVER_PID ?? "", rustc, ...argv],
     { detached: true, stdio: "ignore", env },
   );
   child.unref();

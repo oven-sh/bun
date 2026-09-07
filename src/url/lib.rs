@@ -120,9 +120,7 @@ pub mod whatwg {
         pub fn href(&self) -> String {
             URL__href(self)
         }
-        /// Percent-encoded (ASCII), like JS `url.username`. Use
-        /// [`PercentEncoding::decode_whatwg`](super::PercentEncoding::decode_whatwg)
-        /// for the raw bytes.
+        /// Percent-encoded (ASCII), like JS `url.username`.
         pub fn username(&self) -> String {
             URL__username(self)
         }
@@ -1435,10 +1433,7 @@ impl PercentEncoding {
         Self::decode(&mut w, input)
     }
 
-    /// WHATWG "percent-decode" (<https://url.spec.whatwg.org/#percent-decode>):
-    /// `%XX` becomes the byte `0xXX`, and a `%` that is not followed by two hex
-    /// digits is kept as-is, so this cannot fail. The result is raw bytes and
-    /// is not checked to be UTF-8.
+    /// <https://url.spec.whatwg.org/#percent-decode>: raw bytes out, a `%` without two hex digits is kept.
     pub fn decode_whatwg(input: &[u8]) -> Vec<u8> {
         let mut out: Vec<u8> = Vec::with_capacity(input.len());
         let mut rest = input;

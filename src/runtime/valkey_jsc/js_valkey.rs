@@ -573,8 +573,7 @@ impl JSValkeyClient {
             valkey::Protocol::Standalone
         };
 
-        // AUTH arguments are binary-safe bulk strings, so the userinfo is
-        // percent-decoded to raw bytes and sent as-is, UTF-8 or not.
+        // Raw bytes, UTF-8 or not: AUTH arguments are binary-safe bulk strings.
         let username: Box<[u8]> =
             PercentEncoding::decode_whatwg(&parsed_url.username().to_utf8()).into();
         let password: Box<[u8]> =

@@ -352,6 +352,13 @@ impl JSValue {
         }
         JSC__JSValue__isAnyError(self)
     }
+    /// An object whose realm `bun test --isolate` has retired: the file that
+    /// created it finished and the swap fenced its global (JSC discards its
+    /// microtasks). Native code does not call into such a function.
+    #[inline]
+    pub fn is_from_retired_test_isolation_realm(self) -> bool {
+        self.is_cell() && Bun__JSValue__isFromRetiredTestIsolationRealm(self)
+    }
     /// `JSValue.isError()` — true iff this is an
     /// `ErrorInstance` cell (does NOT match `Exception`).
     #[inline]
@@ -2136,6 +2143,7 @@ unsafe extern "C" {
     ) -> JSValue;
     safe fn Bun__JSValue__protect(this: JSValue);
     safe fn Bun__JSValue__unprotect(this: JSValue);
+    safe fn Bun__JSValue__isFromRetiredTestIsolationRealm(this: JSValue) -> bool;
 }
 
 // ──────────────────────────────────────────────────────────────────────────

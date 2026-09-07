@@ -1077,6 +1077,96 @@ test.concurrent("--isolate: leaked AbortSignal.timeout does not fire in next fil
   expect(exitCode).toBe(0);
 });
 
+// The swap sweeps what exists AT the file boundary. Work a finished file left
+// in flight lands later, while the next file runs: a thread-pool job settles a
+// promise of the retired realm, a child the swap killed reports its exit. The
+// finished file's continuation must not run then. Before the fence it did, and
+// whatever it created (a setInterval, a Bun.serve, a child process, a chdir)
+// was adopted by the running file.
+describe.concurrent("--isolate: a finished file's late completions do not run in the next file", () => {
+  const lateFixtures = {
+    "a-late.test.ts": `
+      import { test, expect } from "bun:test";
+      import { existsSync, writeFileSync } from "node:fs";
+      import { tmpdir } from "node:os";
+      import { join } from "node:path";
+
+      const dir = import.meta.dir;
+
+      test("leaks a thread-pool chain and a child with onExit", () => {
+        // Each turn hops through the thread pool, so the chain is always mid-flight
+        // at the swap. It only acts once b-late.test.ts says it is running.
+        (async () => {
+          while (!existsSync(join(dir, "b-running"))) {
+            await Bun.password.hash("pw", { algorithm: "bcrypt", cost: 4 });
+          }
+          process.chdir(tmpdir());
+          const server = Bun.serve({ port: 0, fetch: () => new Response("served by dead A") });
+          writeFileSync(join(dir, "a-acted"), String(server.port));
+        })();
+
+        // Killed by the swap; its exit lands while B runs.
+        Bun.spawn({
+          cmd: [process.execPath, "-e", "setInterval(() => {}, 1000)"],
+          stdio: ["ignore", "ignore", "ignore"],
+          onExit() {
+            writeFileSync(join(dir, "a-onexit"), "");
+          },
+        });
+
+        expect(existsSync(join(dir, "b-running"))).toBe(false);
+      });
+    `,
+    "b-late.test.ts": `
+      import { test, expect } from "bun:test";
+      import { existsSync, realpathSync, writeFileSync } from "node:fs";
+      import { join } from "node:path";
+
+      const dir = import.meta.dir;
+
+      test("sees nothing from A", async () => {
+        writeFileSync(join(dir, "b-running"), "");
+        // Turn the event loop through the thread pool so A's pending job (and
+        // its killed child's exit) get every chance to land here.
+        for (let i = 0; i < 40 && !existsSync(join(dir, "a-acted")); i++) {
+          await Bun.password.hash("pw", { algorithm: "bcrypt", cost: 4 });
+        }
+        expect({
+          acted: existsSync(join(dir, "a-acted")),
+          onExit: existsSync(join(dir, "a-onexit")),
+          cwd: realpathSync("."),
+        }).toEqual({
+          acted: false,
+          onExit: false,
+          cwd: realpathSync(dir),
+        });
+      });
+    `,
+  };
+  const files = ["./a-late.test.ts", "./b-late.test.ts"];
+
+  test("--isolate", async () => {
+    using dir = tempDir("isolate-late", lateFixtures);
+    const { stderr, exitCode } = await runTests(String(dir), ["--isolate"], files);
+    expect(normalizeBunSnapshot(stderr, dir)).toContain("2 pass");
+    expect(normalizeBunSnapshot(stderr, dir)).toContain("0 fail");
+    expect(exitCode).toBe(0);
+  });
+
+  // One worker takes both files (scale-up gated), so the same fence applies
+  // between files inside a --parallel worker.
+  test("--parallel", async () => {
+    using dir = tempDir("isolate-late-parallel", lateFixtures);
+    const { stderr, exitCode } = await runTests(String(dir), ["--parallel=2"], files, {
+      ...bunEnv,
+      BUN_TEST_PARALLEL_SCALE_MS: "60000",
+    });
+    expect(normalizeBunSnapshot(stderr, dir)).toContain("2 pass");
+    expect(normalizeBunSnapshot(stderr, dir)).toContain("0 fail");
+    expect(exitCode).toBe(0);
+  });
+});
+
 // Each of these leaked handles used to pin its test file's ENTIRE global
 // object (and therefore the file's module graph) for the rest of a
 // `bun test --isolate` run, growing memory by one full global per file:

@@ -460,6 +460,23 @@ impl EventLoop {
         Ok(())
     }
 
+    /// The gate for native code entering user JS from outside the task queue
+    /// (all 50+ `run_callback*` callers funnel through here): not once teardown
+    /// has forbidden script (Node's `can_call_into_js`), not with an exception
+    /// already pending — a prior callback's microtasks can request termination
+    /// (worker.terminate()), and entering JS then would trip executeCallImpl's
+    /// `assertNoException` — and not into a realm `bun test --isolate` has
+    /// retired: an event a finished file's object outlived it to deliver (a
+    /// killed child's exit, a socket's close) belongs to no live file, and its
+    /// handler would otherwise run, and create handles, under the next file's
+    /// global.
+    #[inline]
+    fn may_enter_js(callback: JSValue, global_object: &JSGlobalObject) -> bool {
+        !global_object.has_exception()
+            && !(global_object.bun_vm().test_isolation_enabled
+                && callback.is_from_retired_test_isolation_realm())
+    }
+
     /// When you call a JavaScript function from outside the event loop task
     /// queue, it has to be wrapped in `runCallback` to ensure that microtasks
     /// are drained and errors are handled.
@@ -470,13 +487,7 @@ impl EventLoop {
         this_value: JSValue,
         arguments: &[JSValue],
     ) {
-        // The gate for native code entering user JS from outside the task
-        // queue (all 50+ callers funnel through here): not once teardown has
-        // forbidden script (Node's `can_call_into_js`), and not with an
-        // exception already pending — a prior callback's microtasks can request
-        // termination (worker.terminate()), and entering JS then would trip
-        // executeCallImpl's `assertNoException`.
-        if global_object.has_exception() {
+        if !Self::may_enter_js(callback, global_object) {
             return;
         }
         // R-2 noalias mitigation (see PORT_NOTES_PLAN R-2; precedent
@@ -513,8 +524,7 @@ impl EventLoop {
         this_value: JSValue,
         arguments: &[JSValue],
     ) -> JSValue {
-        // Same gate as `run_callback`.
-        if global_object.has_exception() {
+        if !Self::may_enter_js(callback, global_object) {
             return JSValue::ZERO;
         }
         // R-2 noalias mitigation — see `run_callback` above.
@@ -1215,8 +1225,7 @@ impl EventLoop {
         this_value: JSValue,
         arguments: &[JSValue],
     ) -> JsResult<JSValue> {
-        // Same gate as `run_callback`.
-        if global_object.has_exception() {
+        if !Self::may_enter_js(callback, global_object) {
             return Ok(JSValue::UNDEFINED);
         }
         let result = callback.call(global_object, this_value, arguments)?;

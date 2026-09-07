@@ -223,6 +223,9 @@ pub struct JobHeader {
     cancel: unsafe fn(*mut JobHeader),
     prev: *mut JobHeader,
     next: *mut JobHeader,
+    /// The `bun test --isolate` file (`VirtualMachine::test_isolation_generation`)
+    /// that scheduled the job: its completion is for that file's realm only.
+    generation: u32,
 }
 
 /// A VM's live [cancellable](JobContext::CANCELLABLE) jobs (JS thread only;
@@ -316,6 +319,7 @@ impl<C: JobContext> Job<C> {
                 cancel: |p| unsafe { C::cancel(&raw mut (*p.cast::<Self>()).off) },
                 prev: core::ptr::null_mut(),
                 next: core::ptr::null_mut(),
+                generation: cx.vm().test_isolation_generation,
             },
             ticket: Some(cx.vm().ticket()),
             task: WorkPoolTask {
@@ -433,7 +437,15 @@ pub unsafe fn complete_erased(ptr: *mut (), cx: &JsThread<'_>) -> JsResult<()> {
     // build script-facing values under a pending termination. Release it as
     // teardown would — Node's threadpool `after` callbacks bail the same way
     // on `!can_call_into_js()`.
-    if !cx.vm().script_allowed() {
+    //
+    // Likewise one that lands after `bun test --isolate` retired the file that
+    // scheduled it: the swap is that file's exit. Its realm's microtasks are
+    // already discarded, and a `then` that calls back directly (node:crypto's
+    // callback forms) must not run the finished file's script under the next
+    // file's global.
+    // SAFETY: `ptr` is a live posted `Job<C>`, header first (fn contract).
+    let stale = unsafe { (*header).generation } != cx.vm().test_isolation_generation;
+    if !cx.vm().script_allowed() || stale {
         // SAFETY: as below; released exactly once, here.
         unsafe { ((*header).release_unrun)(header) };
         return Ok(());

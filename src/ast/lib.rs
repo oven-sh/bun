@@ -651,8 +651,7 @@ pub struct Location {
     pub length: usize,
     // TODO: document or remove
     pub offset: usize,
-    /// 0-based column (UTF-16 units) of the source line at which `line_text`
-    /// starts. Non-zero when `line_text` is a window of a longer line.
+    /// 0-based column (UTF-16 units) at which a windowed `line_text` starts.
     pub line_text_start_column: usize,
 
     /// 1-based line number.
@@ -807,9 +806,7 @@ impl Location {
                 None => source.init_error_position(r.loc),
             };
             let mut full_line = &source.contents[data.line_start..data.line_end];
-            // Window a long line to ~120 bytes around the error (byte bounds).
-            // An error in the last 80 bytes keeps the whole line: the bake
-            // overlay and `BuildMessage.position` index `line_text` by `column`.
+            // An error in the last 80 bytes keeps the whole line: bake's overlay pads by `column`.
             let offset_in_line = clamp_error_offset(&source.contents, r.loc)
                 .saturating_sub(data.line_start)
                 .min(full_line.len());
@@ -844,8 +841,7 @@ impl Location {
                 } else {
                     1
                 },
-                // Owned: `source.contents` can drop before this `Msg` is
-                // cloned into a `BuildMessage` (`Transpiler::parse_*`).
+                // Owned: `source.contents` can be freed before this `Msg` is cloned.
                 line_text: Some(Cow::Owned(full_line.to_vec())),
                 offset: usize::try_from(r.loc.start.max(0)).expect("int cast"),
                 line_text_start_column,

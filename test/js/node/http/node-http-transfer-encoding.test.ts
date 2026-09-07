@@ -893,3 +893,215 @@ describe("tearing down a response with its headers on the wire adds no bytes", (
     expect(exitCode).toBe(0);
   });
 });
+
+// `res.useChunkedEncodingByDefault = false` is Node's switch for serving an
+// HTTP/1.1 body with neither Content-Length nor chunked framing: _storeHeader
+// takes its `!useChunkedEncodingByDefault` branch before it would write either
+// framing header, the body runs until the connection closes, and the response
+// advertises `Connection: close`. The expected heads and bodies below are what
+// node v26.3.0 puts on the wire for the same handlers.
+describe("res.useChunkedEncodingByDefault = false makes the response close-delimited", () => {
+  type Exchange = {
+    head: string;
+    body: string;
+    framing: "content-length" | "chunked" | "close-delimited";
+    connection: "closed" | "reused";
+  };
+
+  // Sends `request` and reads the response the way a client frames it. A
+  // body-less, Content-Length or chunked message is complete on its own, so
+  // once it is in, a second request probes whether the server kept the
+  // connection: either a second response arrives ("reused") or the server's
+  // FIN does ("closed"). With neither framing header the body is everything up
+  // to the FIN.
+  async function exchange(handler: (req: any, res: any) => void, request: string): Promise<Exchange> {
+    await using server = createServer(handler);
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    const { port } = server.address() as AddressInfo;
+
+    const done = Promise.withResolvers<Exchange>();
+    const socket = connect(port, "127.0.0.1", () => socket.write(request));
+    let raw = "";
+    let head: string | undefined;
+    let framing: Exchange["framing"] = "close-delimited";
+    let firstMessageEnd = -1;
+    socket.on("data", (chunk: Buffer) => {
+      raw += chunk.toString("latin1");
+      const headerEnd = raw.indexOf("\r\n\r\n");
+      if (headerEnd === -1) return;
+      const bodyStart = headerEnd + 4;
+      if (head === undefined) {
+        head = raw.slice(0, headerEnd).replace(/^Date: .*$/m, "Date: <D>");
+        if (/^content-length:/im.test(head)) framing = "content-length";
+        else if (/^transfer-encoding: .*chunked/im.test(head)) framing = "chunked";
+      }
+      if (firstMessageEnd === -1) {
+        if (request.startsWith("HEAD ") || /^HTTP\/1\.1 (?:1\d\d|204|304) /.test(head)) {
+          // RFC 9112 6.3: ends at the blank line whatever the header fields say.
+          firstMessageEnd = bodyStart;
+        } else if (framing === "content-length") {
+          const end = bodyStart + Number(/^content-length: *(\d+)/im.exec(head)![1]);
+          if (raw.length >= end) firstMessageEnd = end;
+        } else if (framing === "chunked") {
+          const terminator = raw.indexOf("0\r\n\r\n", bodyStart);
+          if (terminator !== -1) firstMessageEnd = terminator + 5;
+        }
+        if (firstMessageEnd !== -1) socket.write("GET /probe HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n");
+      } else if (raw.indexOf("HTTP/1.1 ", firstMessageEnd) === firstMessageEnd) {
+        done.resolve({ head: head!, body: raw.slice(bodyStart, firstMessageEnd), framing, connection: "reused" });
+        socket.destroy();
+      }
+    });
+    const onClosed = () => {
+      const bodyStart = raw.indexOf("\r\n\r\n") + 4;
+      done.resolve({
+        head: head ?? raw,
+        body: raw.slice(bodyStart, firstMessageEnd === -1 ? raw.length : firstMessageEnd),
+        framing,
+        connection: "closed",
+      });
+    };
+    // The probe written after the server's close may be answered with an RST.
+    socket.on("error", onClosed);
+    socket.on("close", onClosed);
+    return done.promise;
+  }
+
+  const GET11 = "GET / HTTP/1.1\r\nHost: x\r\n\r\n";
+
+  test.concurrent.each([
+    [
+      "write() + end()",
+      (res: any) => {
+        res.write("hel");
+        res.end("lo");
+      },
+    ],
+    ["end(data) with a known length", (res: any) => res.end("hello")],
+    [
+      "flushHeaders() first",
+      (res: any) => {
+        res.flushHeaders();
+        res.write("hel");
+        res.end("lo");
+      },
+    ],
+    [
+      "writeHead() first",
+      (res: any) => {
+        res.writeHead(200);
+        res.end("hello");
+      },
+    ],
+  ])("%s", async (_, respond) => {
+    const result = await exchange((req, res) => {
+      res.useChunkedEncodingByDefault = false;
+      respond(res);
+    }, GET11);
+    expect(result).toEqual({
+      head: "HTTP/1.1 200 OK\r\nDate: <D>\r\nConnection: close",
+      body: "hello",
+      framing: "close-delimited",
+      connection: "closed",
+    });
+  });
+
+  test.concurrent("a user Connection: keep-alive header still gets a close-delimited body", async () => {
+    const result = await exchange((req, res) => {
+      res.useChunkedEncodingByDefault = false;
+      res.setHeader("connection", "keep-alive");
+      res.write("hel");
+      res.end("lo");
+    }, GET11);
+    expect(result).toEqual({
+      head: "HTTP/1.1 200 OK\r\nconnection: keep-alive\r\nDate: <D>",
+      body: "hello",
+      framing: "close-delimited",
+      connection: "closed",
+    });
+  });
+
+  test.concurrent("a removed Connection header still gets a close-delimited body", async () => {
+    const result = await exchange((req, res) => {
+      res.useChunkedEncodingByDefault = false;
+      res.setHeader("connection", "keep-alive");
+      res.removeHeader("connection");
+      res.end("hello");
+    }, GET11);
+    expect(result).toEqual({
+      head: "HTTP/1.1 200 OK\r\nDate: <D>",
+      body: "hello",
+      framing: "close-delimited",
+      connection: "closed",
+    });
+  });
+
+  // Node's shouldSendKeepAlive is `shouldKeepAlive && (contLen || useChunkedEncodingByDefault)`:
+  // an explicit Transfer-Encoding keeps its chunked framing but the connection
+  // is not reused, a body-less response closes too, and only an explicit
+  // Content-Length keeps the connection alive.
+  test.concurrent("an explicit Transfer-Encoding: chunked stays chunked but closes the connection", async () => {
+    const result = await exchange((req, res) => {
+      res.useChunkedEncodingByDefault = false;
+      res.setHeader("transfer-encoding", "chunked");
+      res.write("hel");
+      res.end("lo");
+    }, GET11);
+    expect(result).toEqual({
+      head: "HTTP/1.1 200 OK\r\ntransfer-encoding: chunked\r\nDate: <D>\r\nConnection: close",
+      body: "3\r\nhel\r\n2\r\nlo\r\n0\r\n\r\n",
+      framing: "chunked",
+      connection: "closed",
+    });
+  });
+
+  test.concurrent.each([
+    ["HEAD", "HEAD / HTTP/1.1\r\nHost: x\r\n\r\n", (res: any) => res.end("hello"), "HTTP/1.1 200 OK"],
+    [
+      "204",
+      GET11,
+      (res: any) => {
+        res.statusCode = 204;
+        res.end();
+      },
+      "HTTP/1.1 204 No Content",
+    ],
+  ])("a body-less %s response advertises and performs the close", async (_, request, respond, statusLine) => {
+    const result = await exchange((req, res) => {
+      res.useChunkedEncodingByDefault = false;
+      respond(res);
+    }, request);
+    expect(result).toEqual({
+      head: `${statusLine}\r\nDate: <D>\r\nConnection: close`,
+      body: "",
+      framing: "close-delimited",
+      connection: "closed",
+    });
+  });
+
+  test.concurrent("an explicit Content-Length keeps the connection reusable", async () => {
+    const result = await exchange((req, res) => {
+      res.useChunkedEncodingByDefault = false;
+      res.setHeader("content-length", "5");
+      res.end("hello");
+    }, GET11);
+    expect(result).toEqual({
+      head: "HTTP/1.1 200 OK\r\ncontent-length: 5\r\nDate: <D>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5",
+      body: "hello",
+      framing: "content-length",
+      connection: "reused",
+    });
+  });
+
+  // HTTP/1.0 clears the flag in the ServerResponse constructor, so the same
+  // branch applies: node writes no Content-Length even for a one-shot end().
+  test.concurrent("HTTP/1.0 one-shot end(data) carries no Content-Length, like node", async () => {
+    const result = await exchange((req, res) => res.end("hello"), "GET / HTTP/1.0\r\nHost: x\r\n\r\n");
+    expect(result).toEqual({
+      head: "HTTP/1.1 200 OK\r\nDate: <D>\r\nConnection: close",
+      body: "hello",
+      framing: "close-delimited",
+      connection: "closed",
+    });
+  });
+});

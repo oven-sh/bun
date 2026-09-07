@@ -267,10 +267,6 @@ check_features() {
 			gcc_version="13"
 			print "GCC 13: enabled"
 			;;
-		*--linux-glibc-sysroot*)
-			linux_glibc_sysroot=1
-			print "Linux glibc sysroot: enabled"
-			;;
 		esac
 	done
 }
@@ -1165,6 +1161,9 @@ install_build_essentials() {
 	install_llvm
 	install_gcc
 	install_rust
+	# A linux-gnu bun links libstdc++/libgcc statically and may not require more than glibc 2.31,
+	# so it links against a pinned sysroot rather than the machine's own toolchain libraries.
+	install_linux_glibc_sysroot
 	# Cross-compile sysroots + runtimes are only needed on the single build
 	# host (buildHostPlatform in .buildkite/ci.mjs); test images never
 	# cross-compile, so skip the ~3GB of NDK/SDK/sysroot downloads there.
@@ -1172,15 +1171,9 @@ install_build_essentials() {
 		install_cross_compiler_rt
 		install_android_ndk
 		install_freebsd_sysroot
-		install_linux_glibc_sysroot
 		install_linux_musl_sysroot
 		install_windows_sysroot
 		install_macos_sdk
-	elif [ "$linux_glibc_sysroot" = "1" ]; then
-		# --linux-glibc-sysroot: a machine that is not the CI build host but wants its linux-gnu
-		# builds to link the same pinned glibc/libstdc++/libgcc as CI's (the development docker
-		# image), so the binary and its post-link checks come out the same as CI's.
-		install_linux_glibc_sysroot
 	fi
 	install_ccache
 	install_docker
@@ -1462,30 +1455,37 @@ install_freebsd_sysroot() {
 
 install_linux_glibc_sysroot() {
 	# ubuntu:20.04 (glibc 2.31) + gcc-13 libstdc++, matching the environment
-	# the prebuilt WebKit is compiled in (see oven-sh/WebKit Dockerfile). All
-	# linux-gnu lanes pass --sysroot pointing here so symbol versions never
-	# exceed 2.31; the --wrap list in flags.ts covers the 2.31 -> 2.17 tail.
-	case "$os-$ci-$linux_glibc_sysroot" in
-	linux-1-* | linux-*-1) ;;
-	*) return ;;
-	esac
-	if [ "$abi" = "musl" ]; then
+	# the prebuilt WebKit is compiled in (see oven-sh/WebKit Dockerfile). Every
+	# linux-gnu build passes --sysroot pointing here so symbol versions never
+	# exceed 2.31 and the statically linked libstdc++/libgcc are the same ones
+	# whatever the machine; the --wrap list in flags.ts covers the 2.31 -> 2.17 tail.
+	if [ "$os" != "linux" ] || [ "$abi" = "musl" ]; then
+		return
+	fi
+	# CI test agents never build bun.
+	if [ "$ci" = "1" ] && ! is_ci_build_host; then
 		return
 	fi
 
 	if ! [ -f "$(which skopeo)" ]; then install_packages skopeo; fi
 	if ! [ -f "$(which jq)" ]; then install_packages jq; fi
-	# Cross-arch GNU strip for -R .eh_frame (host strip rejects foreign-arch ELF).
-	case "$arch" in
-	aarch64) install_packages binutils-x86-64-linux-gnu ;;
-	x64) install_packages binutils-aarch64-linux-gnu ;;
-	esac
 	skopeo="$(require skopeo)"
 	jq_bin="$(require jq)"
 	if [ "$sudo" = "1" ] || [ -z "$can_sudo" ]; then _s=""; else _s="sudo -n"; fi
 
-	# The CI build host cross-compiles both Linux architectures; anywhere else only the host's.
-	if is_ci_build_host; then sr_archs="x86_64 aarch64"; elif [ "$arch" = "aarch64" ]; then sr_archs="aarch64"; else sr_archs="x86_64"; fi
+	# This machine's architecture; the CI build host cross-compiles the other one too, and needs
+	# the cross-arch GNU strip for -R .eh_frame (host strip rejects foreign-arch ELF).
+	if is_ci_build_host; then
+		sr_archs="x86_64 aarch64"
+		case "$arch" in
+		aarch64) install_packages binutils-x86-64-linux-gnu ;;
+		x64) install_packages binutils-aarch64-linux-gnu ;;
+		esac
+	elif [ "$arch" = "aarch64" ]; then
+		sr_archs="aarch64"
+	else
+		sr_archs="x86_64"
+	fi
 	for sr_arch in $sr_archs; do
 		case "$sr_arch" in
 		x86_64)

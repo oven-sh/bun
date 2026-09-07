@@ -1274,11 +1274,11 @@ console.log(typeof x, x); // "bigint" 9223372036854777n
 
 What `bigint: true` changes depends on the adapter:
 
-| Adapter    | Without `bigint`                                                     | With `bigint: true`                                                  |
-| ---------- | -------------------------------------------------------------------- | -------------------------------------------------------------------- |
-| PostgreSQL | `int8` is a string                                                   | every `int8` is a `BigInt`, even `5n`                                |
-| MySQL      | `BIGINT` outside the 32-bit range is a string                        | `BIGINT` outside the 32-bit range is a `BigInt`, smaller values stay numbers |
-| SQLite     | integers are numbers, and lose precision above 2<sup>53</sup>        | every integer is a `BigInt` (the same as bun:sqlite's `safeIntegers: true`)  |
+| Adapter    | Without `bigint`                                              | With `bigint: true`                                                          |
+| ---------- | ------------------------------------------------------------- | ---------------------------------------------------------------------------- |
+| PostgreSQL | `int8` is a string                                            | every `int8` is a `BigInt`, even `5n`                                        |
+| MySQL      | `BIGINT` outside the 32-bit range is a string                 | `BIGINT` outside the 32-bit range is a `BigInt`, smaller values stay numbers |
+| SQLite     | integers are numbers, and lose precision above 2<sup>53</sup> | every integer is a `BigInt` (the same as bun:sqlite's `safeIntegers: true`)  |
 
 ---
 

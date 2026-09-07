@@ -2588,7 +2588,7 @@ function fdSyncWritev(data, callback) {
     fdSyncWrite.$call(this, data[0].chunk, data[0].encoding, callback);
     return;
   }
-  const bufs = new Array(n);
+  const bufs = $newArrayWithSize(n);
   for (let i = 0; i < n; i++) {
     const { chunk, encoding } = data[i];
     bufs[i] = typeof chunk === "string" ? Buffer.from(chunk, encoding) : chunk;

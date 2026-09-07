@@ -1258,31 +1258,41 @@ describe.skipIf(isWindows)("Response(Bun.file(<character device>))", () => {
   });
 });
 
-// A FIFO whose writer closes without a byte ends the reader at EOF before the
-// first write. The response must still frame its empty body. Linux only: the
+// A writer that leaves without a byte ends the reader at EOF before the first
+// body write. The response must still frame its empty body. Linux only: the
 // server does not see a FIFO hangup on macOS yet.
-test.skipIf(!isLinux)("Response(Bun.file(FIFO)) with no data frames an empty body", async () => {
+test.skipIf(!isLinux)("Response(Bun.file(FIFO)) whose writer leaves without data frames an empty body", async () => {
   using dir = tempDir("serve-fifo-empty", {});
   const fifoPath = join(String(dir), "body.fifo");
   mkfifo(fifoPath);
 
-  await using server = Bun.serve({
-    port: 0,
-    hostname: "127.0.0.1",
-    fetch() {
-      return new Response(Bun.file(fifoPath));
-    },
-  });
-  // The writer's open(O_WRONLY) waits for the server's read end. The server
-  // opens it with O_NONBLOCK and sees no hangup until a writer has connected,
-  // so its read waits for this writer, which then closes without a byte.
-  await using writer = Bun.spawn({ cmd: ["sh", "-c", `: > "${fifoPath}"`], env: bunEnv });
-  const res = await fetch(`http://127.0.0.1:${server.port}/`);
-  expect({
-    status: res.status,
-    body: (await res.arrayBuffer()).byteLength,
-    writerExit: await writer.exited,
-  }).toEqual({ status: 200, body: 0, writerExit: 0 });
+  // Held read+write, so the server's open finds a writer and its first read
+  // waits on the poll instead of ending at once.
+  let writerFd: number | undefined = openSync(fifoPath, "r+");
+  const closeWriter = () => {
+    if (writerFd !== undefined) closeSync(writerFd);
+    writerFd = undefined;
+  };
+  try {
+    await using server = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      fetch() {
+        // The server opens and polls the FIFO when this handler returns, in
+        // the same event-loop turn. The writer leaves on the next turn.
+        setImmediate(closeWriter);
+        return new Response(Bun.file(fifoPath));
+      },
+    });
+    const res = await fetch(`http://127.0.0.1:${server.port}/`);
+    expect({
+      status: res.status,
+      contentLength: res.headers.get("content-length"),
+      body: (await res.arrayBuffer()).byteLength,
+    }).toEqual({ status: 200, contentLength: "0", body: 0 });
+  } finally {
+    closeWriter();
+  }
 });
 
 // A file route serves the window of the Bun.file() slice it was built from,

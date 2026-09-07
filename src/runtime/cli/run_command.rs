@@ -784,6 +784,32 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
             .copied()
     }
 
+    /// The loader an extension resolves to once configuration is taken into
+    /// account: a `--loader` flag or bunfig `[loader]` entry wins over the
+    /// built-in default, so an override can make an extension unrunnable as
+    /// well as runnable. `None` when neither map knows the extension.
+    fn configured_loader(loaders: &bun_ast::LoaderHashTable, ext: &[u8]) -> Option<Loader> {
+        loaders
+            .get(ext)
+            .copied()
+            .or_else(|| bun_bundler::options::DEFAULT_LOADERS.get(ext).copied())
+    }
+
+    /// The same question as [`RunCommand::configured_loader`], answered before a
+    /// `Transpiler` exists: the `--loader` / bunfig entries are still the parsed
+    /// parallel arrays on the context rather than a built map.
+    fn context_loader_for(ctx: &ContextData, target: &[u8]) -> Option<Loader> {
+        let ext = paths::extension(target);
+        if let Some(map) = ctx.args.loaders.as_ref() {
+            if let Some(i) = map.extensions.iter().position(|e| &**e == ext) {
+                return Some(<Loader as bun_options_types::LoaderExt>::from_api(
+                    map.loaders[i],
+                ));
+            }
+        }
+        Self::default_loader_for(target)
+    }
+
     /// Shared ctx→transpiler/resolver option projection used by [`boot`] and
     /// [`boot_standalone`].
     fn wire_transpiler_from_ctx(b: &mut Transpiler<'_>, ctx: &mut ContextData) {
@@ -1684,8 +1710,12 @@ impl RunCommand {
     /// Duplicate `path` to a process-lifetime buffer, boot the VM, and on
     /// failure print the formatted error + `exit(1)`.
     fn boot_and_handle_error(ctx: &mut ContextData, path: &[u8], loader: Option<Loader>) -> bool {
+        // An explicit path reaches here with no loader, so the extension decides —
+        // and it has to decide the way the rest of the run path does, or a bunfig
+        // `[loader]` entry mapping `.md` elsewhere would still render as Markdown,
+        // and an extension mapped *to* `md` would not render at all.
         if matches!(
-            loader.or_else(|| Self::default_loader_for(path)),
+            loader.or_else(|| Self::context_loader_for(ctx, path)),
             Some(Loader::Md)
         ) {
             Self::render_markdown_file_and_exit(path);
@@ -2310,7 +2340,7 @@ impl RunCommand {
             skip_script_check = true;
         } else if cfg.allow_fast_run_for_extensions {
             if let Some(l) = Self::default_loader_for(target_name) {
-                if l.can_be_run_by_bun() || l == Loader::Md {
+                if l.can_be_run_by_bun() {
                     try_fast_run = true;
                 }
             }
@@ -2539,14 +2569,9 @@ impl RunCommand {
             Ok(mut resolved) => {
                 let path = resolved.path().expect("resolved primary path");
                 let ext = path.name().ext;
-                let loader: Loader = this_transpiler
-                    .options
-                    .loaders
-                    .get(ext)
-                    .copied()
-                    .or_else(|| bun_bundler::options::DEFAULT_LOADERS.get(ext).copied())
+                let loader: Loader = Self::configured_loader(&this_transpiler.options.loaders, ext)
                     .unwrap_or(Loader::Tsx);
-                if loader.can_be_run_by_bun() || loader == Loader::Html || loader == Loader::Md {
+                if loader.can_be_run_by_bun() {
                     bun_core::scoped_log!(RUN_LOG, "Resolved to: `{}`", bstr::BStr::new(path.text));
                     // borrowck — `boot_and_handle_error` takes
                     // `&mut ctx`; copy `path.text` out of the resolver borrow.
@@ -3065,6 +3090,7 @@ pub enum Filter {
     AllPlusBunJs,
     ScriptExclude,
     ScriptAndDescriptions,
+    RunnableExtensions,
 }
 
 type DoneChannel =
@@ -3629,6 +3655,36 @@ impl RunCommand {
             }
         }
 
+        if FILTER == Filter::RunnableExtensions {
+            // Candidates are every extension either map names; `configured_loader`
+            // then resolves each one the way the run path would, so a configured
+            // loader can add an extension or take a default one away.
+            let mut candidates: Vec<&[u8]> = this_transpiler
+                .options
+                .loaders
+                .keys()
+                .iter()
+                .map(|ext| &**ext)
+                .collect();
+            candidates.extend(
+                bun_bundler::options::DEFAULT_LOADERS
+                    .entries()
+                    .map(|(ext, _)| *ext),
+            );
+            let extensions: Vec<Box<[u8]>> = candidates
+                .iter()
+                .filter(|ext| {
+                    Self::configured_loader(&this_transpiler.options.loaders, ext)
+                        .is_some_and(Loader::can_be_run_by_bun)
+                })
+                .map(|ext| Box::from(*ext))
+                .collect();
+            results.ensure_unused_capacity(extensions.len())?;
+            for ext in extensions {
+                let _ = results.get_or_put(ext)?;
+            }
+        }
+
         if FILTER == Filter::AllPlusBunJs || FILTER == Filter::BunJs {
             if let Some(dir_info) = this_transpiler
                 .resolver
@@ -3651,10 +3707,11 @@ impl RunCommand {
                         let value = unsafe { &**entry.1 };
                         let name = value.base();
                         if name[0] != b'.'
-                            && this_transpiler
-                                .options
-                                .loader(paths::extension(name))
-                                .can_be_run_by_bun()
+                            && Self::configured_loader(
+                                &this_transpiler.options.loaders,
+                                paths::extension(name),
+                            )
+                            .is_some_and(Loader::can_be_run_by_bun)
                             && !strings::contains(name, b".config")
                             && !strings::contains(name, b".d.ts")
                             && !strings::contains(name, b".d.mts")

@@ -28,8 +28,12 @@ function __history_completions
 	history --prefix (commandline) | string replace -r \^$tokens[1]\\s\* "" | string replace -r \^$tokens[2]\\s\* "" | string split ' '
 end
 
-function __fish__get_bun_bun_js_files
-	string split ' ' (bun getcompletes j)
+function __fish__get_bun_runnable_files
+	# `bun getcompletes e` reports the extensions bun can run, dot included, which
+	# is the form __fish_complete_suffix takes its non-switch arguments in. It
+	# completes real paths, ordering suffix matches ahead of directories and the
+	# rest rather than hiding either.
+	__fish_complete_suffix --description "Bun.js" (string split ' ' (bun getcompletes e))
 end
 
 set -l bun_install_boolean_flags yarn production optional development no-save dry-run force no-cache silent verbose global
@@ -65,8 +69,8 @@ function __bun_complete_bins_scripts --inherit-variable bun_builtin_cmds_without
         for bin in $bins
             echo "$bin"\t"package bin"
         end
-        for file in (__fish__get_bun_bun_js_files)
-            echo "$file"\t"Bun.js"
+        for file in (__fish__get_bun_runnable_files)
+            echo $file
         end
     end
 end

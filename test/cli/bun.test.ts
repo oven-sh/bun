@@ -241,6 +241,69 @@ describe("bun", () => {
         expect(exitCode).toBe(0);
       }
     });
+
+    const getcompletes = (filter: string, dir: string) => {
+      const { stdout, stderr, exitCode } = spawnSync({
+        cmd: [bunExe(), "getcompletes", filter],
+        env: bunEnv,
+        cwd: dir,
+      });
+      // stderr holds the reason when the subprocess fails, so assert it first: the
+      // failure then reads as the message instead of as a bare exit code.
+      if (exitCode !== 0) expect(stderr.toString()).toBe("");
+      expect(exitCode).toBe(0);
+      return stdout.toString().split("\n").filter(Boolean);
+    };
+
+    test("getcompletes e reports the extensions bun can run", () => {
+      using dir = tempDir("getcompletes-extensions", {});
+      const extensions = getcompletes("e", String(dir));
+
+      expect(extensions).toContain(".js");
+      expect(extensions).toContain(".mjs");
+      expect(extensions).toContain(".ts");
+      expect(extensions).toContain(".tsx");
+      expect(extensions).toContain(".wasm");
+      // `bun x.md` renders the file, `bun x.html` boots an HTML entry point
+      expect(extensions).toContain(".md");
+      expect(extensions).toContain(".html");
+
+      // loaders bun has, but not for entry points
+      expect(extensions).not.toContain(".json");
+      expect(extensions).not.toContain(".css");
+      expect(extensions).not.toContain(".txt");
+      expect(extensions).not.toContain(".toml");
+    });
+
+    test("getcompletes e follows a configured loader in both directions", () => {
+      using dir = tempDir("getcompletes-extensions-bunfig", {
+        "bunfig.toml": '[loader]\n".bagel" = "tsx"\n".ts" = "text"\n',
+      });
+      const extensions = getcompletes("e", String(dir));
+
+      expect(extensions).toContain(".bagel");
+      expect(extensions).not.toContain(".ts");
+      // untouched by the config
+      expect(extensions).toContain(".js");
+    });
+
+    test("getcompletes j lists every runnable file, not only JavaScript and TypeScript", () => {
+      using dir = tempDir("getcompletes-runnable-files", {
+        "app.ts": "",
+        "readme.md": "# hi",
+        "index.html": "<!doctype html>",
+        "data.json": "{}",
+        "style.css": "",
+      });
+      const files = getcompletes("j", String(dir));
+
+      expect(files).toContain("app.ts");
+      expect(files).toContain("readme.md");
+      expect(files).toContain("index.html");
+
+      expect(files).not.toContain("data.json");
+      expect(files).not.toContain("style.css");
+    });
   });
   // On Windows `bun completions` installs bunx as a hardlink (or a .cmd shim) instead of a symlink.
   describe.skipIf(isWindows)("completions", () => {

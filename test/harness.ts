@@ -486,9 +486,31 @@ export function tempDirWithFiles(
   basename: string,
   filesOrAbsolutePathToCopyFolderFrom: DirectoryTree | string,
 ): string {
-  const base = fs.mkdtempSync(join(fs.realpathSync.native(os.tmpdir()), basename + "_"));
+  const base = tmpdirSync(basename + "_");
   makeTreeSync(base, filesOrAbsolutePathToCopyFolderFrom);
   return base;
+}
+
+let removeAtExitManifest: string | undefined;
+
+/**
+ * Remove `path` once this process has exited, however it exits.
+ *
+ * `bun test` does not run `process.on("exit")` listeners, so a detached child
+ * (remove-at-exit-reaper.ts) waits for this process to go away and then deletes
+ * every path appended to the manifest.
+ */
+export function removeAtExit(path: string): void {
+  if (!removeAtExitManifest) {
+    removeAtExitManifest = join(fs.realpathSync.native(os.tmpdir()), `bun-test-cleanup-${crypto.randomUUID()}.txt`);
+    Bun.spawn({
+      cmd: [process.execPath, join(import.meta.dir, "remove-at-exit-reaper.ts"), removeAtExitManifest],
+      env: bunEnv,
+      stdio: ["pipe", "ignore", "ignore"],
+      detached: true,
+    }).unref();
+  }
+  fs.appendFileSync(removeAtExitManifest, path + "\n");
 }
 
 class DisposableString extends String {
@@ -1485,7 +1507,9 @@ export function mergeWindowEnvs(envs: Record<string, string | undefined>[]) {
 }
 
 export function tmpdirSync(pattern: string = "bun.test."): string {
-  return fs.mkdtempSync(join(fs.realpathSync.native(os.tmpdir()), pattern));
+  const dir = fs.mkdtempSync(join(fs.realpathSync.native(os.tmpdir()), pattern));
+  removeAtExit(dir);
+  return dir;
 }
 
 export async function runBunInstall(

@@ -7,7 +7,7 @@ import type { Matchers } from "bun:test";
 import * as esbuild from "esbuild";
 import filenamify from "filenamify";
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "fs";
-import { bunEnv, bunExe, isCI, isDebug, isWindows } from "harness";
+import { bunEnv, bunExe, isCI, isDebug, isWindows, removeAtExit } from "harness";
 import { tmpdir } from "os";
 import path from "path";
 import { SourceMapConsumer } from "source-map";
@@ -142,6 +142,7 @@ const tempDirectoryTemplate = path.join(realpathSync(tmpdir()), "bun-build-tests
 if (!existsSync(path.dirname(tempDirectoryTemplate)))
   mkdirSync(path.dirname(tempDirectoryTemplate), { recursive: true });
 const tempDirectory = mkdtempSync(tempDirectoryTemplate);
+if (!DEBUG) removeAtExit(tempDirectory);
 const testsRan = new Set();
 
 const originalCwd = process.cwd();

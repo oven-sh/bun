@@ -256,8 +256,7 @@ const BUN_CREATE_DIR: &[u8] = b".bun-create";
 // PORTING.md §Global mutable state: single-thread CLI scratch buffer → RacyCell.
 static HOME_DIR_BUF: bun_core::RacyCell<PathBuffer> = bun_core::RacyCell::new(PathBuffer::ZEROED);
 
-/// True when joining `name` onto a directory lands inside that directory. The
-/// template lookup joins with `platform::Loose`, which folds `/` and `\`.
+/// `name`, joined onto a template dir by the `Loose` join (`/` and `\` fold), stays inside it.
 fn names_path_inside_dir(name: &[u8]) -> bool {
     let mut depth: usize = 0;
     for segment in strings::tokenize_any(name, b"/\\") {
@@ -288,9 +287,7 @@ fn path_contains(outer: &[u8], inner: &[u8]) -> bool {
         || bun_core::path_sep::is_sep_native(outer[outer.len() - 1])
 }
 
-/// The destination is the template, is inside it, or contains it. Compares the
-/// paths as given, then the paths the OS reports for the open directories,
-/// which resolves a symlinked prefix and letter case.
+/// The destination equals, is inside, or contains the template: as given, then as the OS reports.
 fn destination_overlaps_template(
     template_dir: &bun_sys::Dir,
     abs_template_path: &[u8],

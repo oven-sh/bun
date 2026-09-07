@@ -280,11 +280,24 @@ extern "C" long Bun__crashHandlerFromJSCFrame(void*, void*, void*, void*);
 // bun_icu_default_locale.cpp
 extern "C" void Bun__ensureICUDefaultLocale();
 
-extern "C" void JSCInitialize(const char* envp[], size_t envc, void (*onCrash)(const char* ptr, size_t length), bool evalMode, bool oneShotStartup, bool shortLivedGlobals)
+// JSC::Options::assertOptionsAreCoherent() CRASH()es when WebAssembly is on and
+// no tier that can run it is. Its other rules cannot fire: notifyOptionsChanged()
+// repairs those combinations. In Bun this one can only come from BUN_JSC_*
+// environment variables, so it is a configuration error, not a crash. Written
+// against the state after notifyOptionsChanged(): useJIT=0 turns useBBQJIT off.
+static ASCIILiteral incoherentJSCOptions()
+{
+    using JSC::Options;
+    if (Options::useWasm() && !Options::useWasmIPInt() && !(Options::useBBQJIT() && Options::useJIT()))
+        return "useWasmIPInt and useBBQJIT are both off, so nothing can run WebAssembly (useJIT=0 also turns useBBQJIT off). Enable one of them, or set BUN_JSC_useWasm=0"_s;
+    return {};
+}
+
+extern "C" void JSCInitialize(const char* envp[], size_t envc, void (*onInvalidOption)(const char* ptr, size_t length), void (*onIncoherentOptions)(const char* reason, size_t length), bool evalMode, bool oneShotStartup, bool shortLivedGlobals)
 {
     static std::once_flag jsc_init_flag;
     // NOLINTBEGIN
-    std::call_once(jsc_init_flag, [evalMode, oneShotStartup, shortLivedGlobals, envp, envc, onCrash]() {
+    std::call_once(jsc_init_flag, [evalMode, oneShotStartup, shortLivedGlobals, envp, envc, onInvalidOption, onIncoherentOptions]() {
         Bun__ensureICUDefaultLocale();
         JSC::Config::enableRestrictedOptions();
         // JSC options come from BUN_JSC_* (applied in the callback below), not JSC_*.
@@ -371,9 +384,12 @@ extern "C" void JSCInitialize(const char* envp[], size_t envc, void (*onCrash)(c
                     }
 
                     if (!JSC::Options::setOption(env + 8)) [[unlikely]] {
-                        onCrash(env, strlen(env));
+                        onInvalidOption(env, strlen(env));
                     }
                 }
+            }
+            if (auto reason = incoherentJSCOptions(); !reason.isNull()) [[unlikely]] {
+                onIncoherentOptions(reason.characters(), reason.length());
             }
             JSC::Options::assertOptionsAreCoherent();
         }); // end JSC::initialize lambda

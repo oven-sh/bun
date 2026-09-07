@@ -505,6 +505,7 @@ pub fn initialize(options: InitializeOptions) {
             env.as_ptr(),
             env.len(),
             on_jsc_invalid_env_var,
+            on_jsc_incoherent_options,
             options.eval_mode,
             options.one_shot,
             options.short_lived_globals,
@@ -538,18 +539,47 @@ pub fn is_one_shot_eval_invocation() -> bool {
     false
 }
 
+/// Shared tail of the `BUN_JSC_*` startup errors below.
+fn exit_with_jsc_env_var_help() -> ! {
+    bun_core::pretty_errorln!(
+        "\nFor a list of options, see this file:\n\n    \
+https://github.com/oven-sh/webkit/blob/main/Source/JavaScriptCore/runtime/OptionsList.h\n\n\
+Environment variables must be prefixed with \"BUN_JSC_\". This code runs before .env files are loaded, so those won't work here.\n\n\
+Warning: options change between releases of Bun and WebKit without notice. This is not a stable API, you should not rely on it beyond debugging something, and it may be removed entirely in a future version of Bun."
+    );
+    bun_core::exit(1);
+}
+
 extern "C" fn on_jsc_invalid_env_var(name: *const u8, len: usize) {
     // SAFETY: C++ guarantees `name[..len]` is valid for the call.
     let name = unsafe { bun_core::ffi::slice(name, len) };
     bun_core::err_generic!(
-        "invalid JSC environment variable\n\n    <b>{}<r>\n\n\
-For a list of options, see this file:\n\n    \
-https://github.com/oven-sh/webkit/blob/main/Source/JavaScriptCore/runtime/OptionsList.h\n\n\
-Environment variables must be prefixed with \"BUN_JSC_\". This code runs before .env files are loaded, so those won't work here.\n\n\
-Warning: options change between releases of Bun and WebKit without notice. This is not a stable API, you should not rely on it beyond debugging something, and it may be removed entirely in a future version of Bun.",
-        bstr::BStr::new(name),
+        "invalid JSC environment variable\n\n    <b>{}<r>",
+        bstr::BStr::new(name)
     );
-    bun_core::exit(1);
+    exit_with_jsc_env_var_help();
+}
+
+/// JSC aborts on a combination of options it cannot run with. When that combination comes from
+/// `BUN_JSC_*` environment variables it is a configuration error, so say which ones and exit(1).
+extern "C" fn on_jsc_incoherent_options(reason: *const u8, len: usize) {
+    // SAFETY: C++ guarantees `reason[..len]` is valid for the call.
+    let reason = unsafe { bun_core::ffi::slice(reason, len) };
+    let mut vars = Vec::<u8>::new();
+    for &entry in bun_sys::environ() {
+        // SAFETY: `environ` entries are NUL-terminated C strings that live for the process.
+        let entry = unsafe { bun_core::ffi::cstr(entry) }.to_bytes();
+        if entry.starts_with(b"BUN_JSC_") {
+            vars.extend_from_slice(b"\n    ");
+            vars.extend_from_slice(entry);
+        }
+    }
+    bun_core::err_generic!(
+        "incoherent JSC options: {}\n<b>{}<r>",
+        bstr::BStr::new(reason),
+        bstr::BStr::new(&vars),
+    );
+    exit_with_jsc_env_var_help();
 }
 
 /// `bun.JSError` — the canonical Bun JS error union (`error{Thrown, OutOfMemory, Terminated}`),
@@ -1560,7 +1590,8 @@ unsafe extern "C" {
     fn JSCInitialize(
         env: *const *const c_char,
         count: usize,
-        cb: extern "C" fn(name: *const u8, len: usize),
+        on_invalid_option: extern "C" fn(name: *const u8, len: usize),
+        on_incoherent_options: extern "C" fn(reason: *const u8, len: usize),
         eval_mode: bool,
         one_shot_startup: bool,
         short_lived_globals: bool,

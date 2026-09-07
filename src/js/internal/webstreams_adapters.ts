@@ -45,6 +45,7 @@ class ReadableFromWeb extends Readable {
   #reader;
   #closed;
   #stream;
+  #reading;
 
   constructor(options, stream) {
     const { objectMode, highWaterMark, encoding, signal } = options;
@@ -57,12 +58,14 @@ class ReadableFromWeb extends Readable {
     this.#reader = undefined;
     this.#stream = stream;
     this.#closed = false;
+    this.#reading = false;
   }
 
   #handleDone(reader) {
     reader.releaseLock();
     this.#reader = undefined;
     this.#closed = true;
+    this.#reading = false;
     this.push(null);
   }
 
@@ -74,6 +77,7 @@ class ReadableFromWeb extends Readable {
       } catch {}
     }
     this.#closed = true;
+    this.#reading = false;
     this.destroy(error);
   }
 
@@ -82,7 +86,8 @@ class ReadableFromWeb extends Readable {
   // stream is a spec no-op, so the source's cancel hook would never run.
   _read() {
     $debug("ReadableFromWeb _read()", this.__id);
-    if (this.#closed) return;
+    if (this.#closed || this.#reading) return;
+    this.#reading = true;
     var reader = this.#reader;
     var stream = this.#stream;
     if (stream) {
@@ -92,6 +97,7 @@ class ReadableFromWeb extends Readable {
     PromisePrototypeThen.$call(
       reader.read(),
       chunk => {
+        this.#reading = false;
         if (this.#closed) return;
         if (chunk.done) {
           this.#handleDone(reader);
@@ -99,13 +105,18 @@ class ReadableFromWeb extends Readable {
           this.push(chunk.value);
         }
       },
-      error => this.#handleError(reader, error),
+      error => {
+        this.#reading = false;
+        if (this.#closed) return;
+        this.#handleError(reader, error);
+      },
     );
   }
 
   _destroy(error, callback) {
     if (!this.#closed) {
       this.#closed = true;
+      this.#reading = false;
       var reader = this.#reader;
       if (reader) {
         this.#reader = undefined;
@@ -469,6 +480,22 @@ function newReadableStreamFromStreamReadable(streamReadable, options = kEmptyObj
   let wasCanceled = false;
   let strategy;
 
+  const readable = isReadable(streamReadable);
+  let onData = noop;
+  if (readable) {
+    onData = function onData(chunk) {
+      if (wasCanceled) return;
+      // Copy the Buffer to detach it from the pool.
+      if (Buffer.isBuffer(chunk) && !objectMode) chunk = new Uint8Array(chunk);
+      try {
+        controller.enqueue(chunk);
+      } catch {
+        return;
+      }
+      if (controller.desiredSize <= 0) streamReadable.pause();
+    };
+  }
+
   const underlyingSource = {
     __proto__: null,
     type: isBYOB ? "bytes" : undefined,
@@ -477,11 +504,11 @@ function newReadableStreamFromStreamReadable(streamReadable, options = kEmptyObj
     },
     cancel(reason) {
       wasCanceled = true;
+      streamReadable.off("data", onData);
       destroyer(streamReadable, reason);
     },
   };
 
-  const readable = isReadable(streamReadable);
   const objectMode = streamReadable.readableObjectMode;
   if (readable) {
     underlyingSource.pull = function pull() {
@@ -510,6 +537,7 @@ function newReadableStreamFromStreamReadable(streamReadable, options = kEmptyObj
 
       // If eos calls the callback synchronously, cleanup is still a no-op here.
       cleanup();
+      streamReadable.off("data", onData);
 
       if (!(kErrorSentinelAttached in streamReadable)) {
         // This is a protection against non-standard, legacy streams
@@ -530,15 +558,10 @@ function newReadableStreamFromStreamReadable(streamReadable, options = kEmptyObj
   if (wasCanceled) {
     // `eos` called the callback synchronously
     cleanup();
+    streamReadable.off("data", onData);
   } else if (readable) {
     streamReadable.pause();
-
-    streamReadable.on("data", function onData(chunk) {
-      // Copy the Buffer to detach it from the pool.
-      if (Buffer.isBuffer(chunk) && !objectMode) chunk = new Uint8Array(chunk);
-      controller.enqueue(chunk);
-      if (controller.desiredSize <= 0) streamReadable.pause();
-    });
+    streamReadable.on("data", onData);
   }
 
   return readableStream;

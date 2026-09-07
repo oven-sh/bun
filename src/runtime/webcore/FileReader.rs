@@ -656,7 +656,6 @@ impl FileReader {
             let keep_going = !self.started.get()
                 || (self.flowing.get() && self.buffered.get().len() < self.highwater_mark);
             // A completion-driven reader keeps issuing reads unless stopped; `on_pull` restarts it.
-            #[cfg(windows)]
             if !keep_going {
                 self.reader().pause();
             }
@@ -809,6 +808,8 @@ impl FileReader {
         }
 
         if !self.reader().has_pending_read() && self.flowing.get() {
+            // A paused POSIX reader ignores read(); re-arm it before reading.
+            self.reader().unpause();
             // SAFETY: the reader cell is live for `self`'s lifetime; `read_into` is the raw re-entrancy-safe entry (EOF/error dispatch runs user JS).
             let (amount_read, state) = unsafe { IOReader::read_into(self.reader.get(), buffer) };
             bun_core::scoped_log!(FileReader, "onPull({}) = {}", buffer.len(), amount_read);

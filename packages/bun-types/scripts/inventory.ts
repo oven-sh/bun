@@ -4,19 +4,27 @@
 // Usage:
 //   bun scripts/inventory.ts [--out <dir>] [--preset <name>]... [--check] [--keep]
 //
-// Each preset writes one file, <out>/<preset>.txt, with one line per global, per
-// module export, and per member. Interface merging, `UseLibDomIfAvailable`, and
-// every other conditional alias are resolved, so the file shows what a user sees,
-// not what the .d.ts source says. The files are plain text sorted by name, so
-// `git diff` on them is the review surface for a change to packages/bun-types.
+// Each preset writes one file, <out>/<preset>.txt. A symbol is listed when at
+// least one of its declarations is in bun-types: the globals, the exports of the
+// modules bun-types declares (`bun`, `bun:test`, `*.html`, ...) and of the node
+// modules and namespaces it augments (`node:tls`, `NodeJS`). The members of a
+// listed symbol are printed in full, wherever they come from. Interface merging,
+// `UseLibDomIfAvailable`, and every other conditional alias are resolved, so the
+// file shows what a user sees, not what the .d.ts source says. The files are
+// plain text sorted by name, so `git diff` on them is the review surface for a
+// change to packages/bun-types.
 //
 // With --check the tool writes nothing. It exits 1 and prints a diff when a
 // preset's output differs from the file in <out>.
 //
 // The default output directory is test/integration/bun-types/inventory.
+//
+// Not covered: ts7.1/, which only TypeScript 7.1 can parse. This script runs the
+// compiler API of the repository's own `typescript` dependency.
 import { $ } from "bun";
 import { existsSync, readFileSync, realpathSync } from "node:fs";
 import { cp, mkdir, mkdtemp, rm } from "node:fs/promises";
+import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { basename, dirname, join, relative, resolve } from "node:path";
 import ts from "typescript";
@@ -57,19 +65,38 @@ function parseArgs(argv: string[]) {
   return out;
 }
 
+/** TypeScript reports file names with forward slashes on every platform. */
+const toPosix = (path: string) => path.replaceAll("\\", "/");
+
 function readVersion(packageJson: string): string | undefined {
   return existsSync(packageJson) ? JSON.parse(readFileSync(packageJson, "utf8")).version : undefined;
 }
 
 /**
- * Builds and packs bun-types into a scratch project, the same way
- * test/integration/bun-types/bun-types.test.ts does, so module resolution
- * matches what a user gets from `bun add -d @types/bun`. @types/node is pinned
- * to the version in this repository's lockfile, so the output only changes when
- * bun-types or that lockfile changes.
+ * The versions of @types/node and undici-types that this repository's lockfile
+ * installed for packages/bun-types. The scratch project pins both, so the
+ * output only changes when bun-types or that lockfile changes.
  */
-async function createProject(): Promise<{ dir: string; versions: Record<string, string> }> {
-  const tempDir = await mkdtemp(join(tmpdir(), "bun-types-inventory-"));
+function pinnedDependencies(): string[] {
+  const nodeTypesDir = join(PACKAGE_ROOT, "node_modules", "@types", "node");
+  const nodeTypesVersion = readVersion(join(nodeTypesDir, "package.json"));
+  if (!nodeTypesVersion) {
+    throw new Error(`@types/node is not installed in ${nodeTypesDir}. Run \`bun install\` in the repository first.`);
+  }
+  const pins = [`@types/node@${nodeTypesVersion}`];
+  // undici-types is a dependency of @types/node, so resolve it from there.
+  const requireFromNodeTypes = createRequire(join(realpathSync(nodeTypesDir), "index.d.ts"));
+  const undiciVersion = readVersion(requireFromNodeTypes.resolve("undici-types/package.json"));
+  if (undiciVersion) pins.push(`undici-types@${undiciVersion}`);
+  return pins;
+}
+
+/**
+ * Builds and packs bun-types into a scratch project under `tempDir`, the same
+ * way test/integration/bun-types/bun-types.test.ts does, so module resolution
+ * matches what a user gets from `bun add -d @types/bun`.
+ */
+async function createProject(tempDir: string): Promise<{ projectDir: string; versions: Record<string, string> }> {
   const buildDir = join(tempDir, "bun-types");
   const projectDir = join(tempDir, "project");
   await mkdir(projectDir);
@@ -80,11 +107,9 @@ async function createProject(): Promise<{ dir: string; versions: Record<string, 
   await $`cd ${PACKAGE_ROOT} && BUN_VERSION=${version} bun run build ${buildDir}`.quiet();
   await $`cd ${buildDir} && bun pm pack --destination ${projectDir}`.quiet();
   await Bun.write(join(projectDir, "package.json"), JSON.stringify({ name: "inventory", private: true }));
-  const nodeTypesVersion = readVersion(join(PACKAGE_ROOT, "node_modules/@types/node/package.json"));
-  const nodeTypes = nodeTypesVersion ? [`@types/node@${nodeTypesVersion}`] : [];
-  await $`cd ${projectDir} && bun add bun-types@${tarball} ${nodeTypes} && rm ${tarball}`.quiet();
+  await $`cd ${projectDir} && bun add bun-types@${tarball} ${pinnedDependencies()} && rm ${tarball}`.quiet();
 
-  const atTypesBun = join(projectDir, "node_modules/@types/bun");
+  const atTypesBun = join(projectDir, "node_modules", "@types", "bun");
   await mkdir(atTypesBun, { recursive: true });
   await Bun.write(join(atTypesBun, "index.d.ts"), '/// <reference types="bun-types" />\n');
   await Bun.write(join(atTypesBun, "package.json"), JSON.stringify({ name: "@types/bun", version }));
@@ -94,11 +119,13 @@ async function createProject(): Promise<{ dir: string; versions: Record<string, 
     const found = readVersion(join(projectDir, "node_modules", name, "package.json"));
     if (found) versions[name] = found;
   }
-  return { dir: tempDir, versions };
+  return { projectDir, versions };
 }
 
+const ENTRY_SOURCE = "export {};\n";
+
 function createProgram(projectDir: string, lib: string[]) {
-  const entry = join(projectDir, "entry.ts");
+  const entry = toPosix(join(projectDir, "entry.ts"));
   const options: ts.CompilerOptions = {
     lib,
     target: ts.ScriptTarget.ESNext,
@@ -113,44 +140,71 @@ function createProgram(projectDir: string, lib: string[]) {
   };
   const host = ts.createCompilerHost(options, true);
   const readFile = host.readFile;
-  host.readFile = file => (file === entry ? "export {};\n" : readFile(file));
+  host.readFile = file => (toPosix(file) === entry ? ENTRY_SOURCE : readFile(file));
   const fileExists = host.fileExists;
-  host.fileExists = file => file === entry || fileExists(file);
+  host.fileExists = file => toPosix(file) === entry || fileExists(file);
   host.getCurrentDirectory = () => projectDir;
-  return ts.createProgram({ rootNames: [entry], options, host });
+  const program = ts.createProgram({ rootNames: [entry], options, host });
+  return { program, entry: program.getSourceFile(entry)! };
 }
 
 const byName = (a: { name: string }, b: { name: string }) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0);
 
-function inventory(program: ts.Program, projectDir: string): string[] {
+function inventory(program: ts.Program, entry: ts.SourceFile, projectDir: string): string[] {
   const checker = program.getTypeChecker();
-  const entry = program.getSourceFile(join(projectDir, "entry.ts"))!;
-  const packageDir = realpathSync(join(projectDir, "node_modules/bun-types"));
-  const nodeModules = join(projectDir, "node_modules");
-  const tsLibDir = dirname(ts.getDefaultLibFilePath(program.getCompilerOptions()));
+  const nodeModules = toPosix(join(projectDir, "node_modules"));
+  const packageDir = toPosix(realpathSync(join(projectDir, "node_modules", "bun-types")));
+  const tsLibDir = toPosix(dirname(ts.getDefaultLibFilePath(program.getCompilerOptions())));
 
-  function displayFile(fileName: string): string {
-    const real = realpathSync(fileName);
-    if (real.startsWith(packageDir + "/")) return "bun-types/" + relative(packageDir, real);
-    if (real.startsWith(tsLibDir + "/")) return relative(tsLibDir, real);
-    if (real.startsWith(nodeModules + "/")) return relative(nodeModules, real);
-    const store = real.lastIndexOf("/node_modules/");
-    if (store >= 0) return real.slice(store + "/node_modules/".length);
-    return relative(projectDir, real);
+  const realPaths = new Map<string, string>();
+  function realPath(fileName: string): string {
+    let real = realPaths.get(fileName);
+    if (real === undefined) {
+      try {
+        real = toPosix(realpathSync(fileName));
+      } catch {
+        // A module path inside `import("...")` type text has no extension.
+        real = toPosix(fileName);
+      }
+      realPaths.set(fileName, real);
+    }
+    return real;
   }
 
+  function displayFile(fileName: string): string {
+    const real = realPath(fileName);
+    if (real.startsWith(packageDir + "/")) return "bun-types/" + real.slice(packageDir.length + 1);
+    if (real.startsWith(tsLibDir + "/")) return real.slice(tsLibDir.length + 1);
+    if (real.startsWith(nodeModules + "/")) return real.slice(nodeModules.length + 1);
+    // bun's isolated installs link node_modules/<name> into node_modules/.bun/<name>@<version>/node_modules/<name>.
+    const store = real.lastIndexOf("/node_modules/");
+    if (store >= 0) return real.slice(store + "/node_modules/".length);
+    return toPosix(relative(projectDir, fileName));
+  }
+
+  const isPackageFile = (sourceFile: ts.SourceFile) => realPath(sourceFile.fileName).startsWith(packageDir + "/");
+
+  /**
+   * True when bun-types declares or augments the symbol. Declarations that merge
+   * into a symbol from another package (lib.dom, @types/node) live on the merged
+   * symbol, so always test that one.
+   */
   const isFromPackage = (sym: ts.Symbol) =>
-    (sym.declarations ?? []).some(decl => realpathSync(decl.getSourceFile().fileName).startsWith(packageDir + "/"));
+    (checker.getMergedSymbol(sym).declarations ?? []).some(decl => isPackageFile(decl.getSourceFile()));
 
   const typeFormat =
     ts.TypeFormatFlags.NoTruncation |
+    ts.TypeFormatFlags.UseFullyQualifiedType |
     ts.TypeFormatFlags.UseAliasDefinedOutsideCurrentScope |
     ts.TypeFormatFlags.WriteArrayAsGenericType;
 
   // Paths inside `import("...")` type references would leak the temp directory,
   // and TypeScript names a well-known symbol property `__@iterator@123` with an
   // id that changes between programs.
-  const pathPattern = new RegExp(projectDir.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "/node_modules/[^\"']+", "g");
+  const pathPattern = new RegExp(
+    toPosix(projectDir).replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "/node_modules/[^\"']+",
+    "g",
+  );
   const clean = (text: string) =>
     text
       .replace(pathPattern, match => displayFile(match))
@@ -159,6 +213,34 @@ function inventory(program: ts.Program, projectDir: string): string[] {
 
   const rawTypeText = (type: ts.Type) => clean(checker.typeToString(type, undefined, typeFormat));
 
+  /** The type arguments TypeScript prints after the name of an alias, class, or interface instantiation. */
+  function referenceTypeArguments(type: ts.Type): readonly ts.Type[] | undefined {
+    if (type.aliasSymbol) return type.aliasTypeArguments;
+    if (!(type.flags & ts.TypeFlags.Object) || !((type as ts.ObjectType).objectFlags & ts.ObjectFlags.Reference)) {
+      return undefined;
+    }
+    const reference = type as ts.TypeReference;
+    // The full list is the outer type parameters, then the declared ones, then
+    // the implicit `this` type. Only the declared ones are printed.
+    const outer = reference.target.outerTypeParameters?.length ?? 0;
+    const declared = reference.target.typeParameters?.length ?? 0;
+    return checker.getTypeArguments(reference).slice(outer, declared);
+  }
+
+  /**
+   * A member of a union or an intersection, in parentheses where TypeScript
+   * would put them: function types, conditional types, and (`wrap`) an
+   * intersection inside a union or a union inside an intersection.
+   */
+  function memberText(member: ts.Type, wrap: boolean): string {
+    const text = typeText(member);
+    // An aliased member prints as its name, `Bun.X` or `Bun.X<T>`.
+    if (member.aliasSymbol) return text;
+    const isFunction = /^(new )?[(<]/.test(text) && text.includes("=> ");
+    const isConditional = !!(member.flags & ts.TypeFlags.Conditional);
+    return wrap || isFunction || isConditional ? `(${text})` : text;
+  }
+
   /**
    * TypeScript orders union members by internal type id, which shifts whenever a
    * declaration moves. Sort them so that a refactor with no type change is a
@@ -166,25 +248,49 @@ function inventory(program: ts.Program, projectDir: string): string[] {
    * for the same reason: `signatureToString` is stable, the anonymous object
    * type around it is not.
    */
-  function typeText(type: ts.Type): string {
-    if (type.isUnion() && !type.aliasSymbol) {
+  function typeText(type: ts.Type, expandAlias?: ts.Symbol): string {
+    if (type.isUnion() && (!type.aliasSymbol || type.aliasSymbol === expandAlias)) {
       // A union built from an aliased union plus extra members (`FormDataEntryValue | null`)
       // keeps the alias in `origin`. Print through it so the alias name survives.
       // A `keyof X` origin is not a union: TypeScript prints it as `keyof X`, keep that.
       const origin = (type as ts.Type & { origin?: ts.Type }).origin;
       if (origin && !origin.isUnion()) return rawTypeText(type);
       const parts = origin?.isUnion() ? origin.types : type.types;
-      const hasTrue = parts.some(t => t.flags & ts.TypeFlags.BooleanLiteral && (t as any).intrinsicName === "true");
-      const hasFalse = parts.some(t => t.flags & ts.TypeFlags.BooleanLiteral && (t as any).intrinsicName === "false");
+      const isBooleanLiteral = (t: ts.Type, name: string) =>
+        !!(t.flags & ts.TypeFlags.BooleanLiteral) && (t as ts.Type & { intrinsicName?: string }).intrinsicName === name;
+      const hasTrue = parts.some(t => isBooleanLiteral(t, "true"));
+      const hasFalse = parts.some(t => isBooleanLiteral(t, "false"));
       const texts = parts
         .filter(t => !(hasTrue && hasFalse && t.flags & ts.TypeFlags.BooleanLiteral))
-        .map(t => typeText(t));
+        .map(t => memberText(t, t.isIntersection()));
       if (hasTrue && hasFalse) texts.push("boolean");
-      // A function type inside a union needs parentheses: `((x: T) => void) | null`.
-      return texts
-        .map(t => (/^[(<]/.test(t) && t.includes(" => ") ? `(${t})` : t))
-        .sort()
-        .join(" | ");
+      return texts.sort().join(" | ");
+    }
+    if (type.isIntersection() && !type.aliasSymbol) {
+      // TypeScript keeps intersection members in source order, so only recurse.
+      return type.types.map(t => memberText(t, t.isUnion())).join(" & ");
+    }
+    // `Name<Arg, Arg>`: a class, interface, or alias instantiation. Print the
+    // arguments through typeText so unions inside them are sorted too. The
+    // positional mapping is only trusted when re-rendering the arguments the way
+    // TypeScript does reproduces its own text.
+    const typeArguments = referenceTypeArguments(type);
+    if (typeArguments && typeArguments.length > 0) {
+      const raw = rawTypeText(type);
+      const open = raw.indexOf("<");
+      const name = open > 0 ? raw.slice(0, open) : "";
+      if (/^[\w$.]+$/.test(name)) {
+        // TypeScript drops trailing arguments that equal their defaults, so try each prefix.
+        const rawArguments = typeArguments.map(rawTypeText);
+        for (let count = rawArguments.length; count > 0; count--) {
+          if (raw === `${name}<${rawArguments.slice(0, count).join(", ")}>`) {
+            return `${name}<${typeArguments
+              .slice(0, count)
+              .map(t => typeText(t))
+              .join(", ")}>`;
+          }
+        }
+      }
     }
     const callSignatures = checker.getSignaturesOfType(type, ts.SignatureKind.Call);
     if (
@@ -201,6 +307,20 @@ function inventory(program: ts.Program, projectDir: string): string[] {
     return rawTypeText(type);
   }
 
+  function typeParamsText(params: readonly ts.TypeParameter[] | undefined): string {
+    if (!params || params.length === 0) return "";
+    return `<${params
+      .map(tp => {
+        let text = rawTypeText(tp);
+        const constraint = tp.getConstraint();
+        if (constraint) text += ` extends ${typeText(constraint)}`;
+        const fallback = tp.getDefault();
+        if (fallback) text += ` = ${typeText(fallback)}`;
+        return text;
+      })
+      .join(", ")}>`;
+  }
+
   function signatureText(sig: ts.Signature, kind: ts.SignatureKind, arrow: string): string {
     const params = sig.parameters.map(param => {
       const decl = param.valueDeclaration as ts.ParameterDeclaration | undefined;
@@ -211,19 +331,11 @@ function inventory(program: ts.Program, projectDir: string): string[] {
     if (sig.thisParameter) {
       params.unshift(`this: ${typeText(checker.getTypeOfSymbol(sig.thisParameter))}`);
     }
-    const typeParams = sig.typeParameters?.map(tp => {
-      let text = rawTypeText(tp);
-      const constraint = tp.getConstraint();
-      if (constraint) text += ` extends ${typeText(constraint)}`;
-      const fallback = tp.getDefault();
-      if (fallback) text += ` = ${typeText(fallback)}`;
-      return text;
-    });
     const predicate = checker.getTypePredicateOfSignature(sig);
     const returns = predicate
       ? clean(checker.typePredicateToString(predicate))
       : typeText(checker.getReturnTypeOfSignature(sig));
-    const head = `${typeParams?.length ? `<${typeParams.join(", ")}>` : ""}(${params.join(", ")})`;
+    const head = `${typeParamsText(sig.typeParameters)}(${params.join(", ")})`;
     return `${kind === ts.SignatureKind.Construct ? "new " : ""}${head}${arrow}${returns}`;
   }
 
@@ -265,22 +377,21 @@ function inventory(program: ts.Program, projectDir: string): string[] {
     return [...files].sort().join(", ");
   }
 
-  function typeParamsText(params: readonly ts.TypeParameter[] | undefined): string {
-    if (!params || params.length === 0) return "";
-    return `<${params
-      .map(tp => {
-        let text = rawTypeText(tp);
-        const constraint = tp.getConstraint();
-        if (constraint) text += ` extends ${typeText(constraint)}`;
-        const fallback = tp.getDefault();
-        if (fallback) text += ` = ${typeText(fallback)}`;
-        return text;
-      })
-      .join(", ")}>`;
-  }
+  /** Follows an alias (`export import Bun = BunModule`, `export = contents`) to the merged symbol it names. */
+  const resolveSymbol = (sym: ts.Symbol) =>
+    checker.getMergedSymbol(sym.flags & ts.SymbolFlags.Alias ? checker.getAliasedSymbol(sym) : sym);
+
+  /** The exports of a module or namespace that bun-types declares, augments, or re-exports. */
+  const packageExportsOf = (container: ts.Symbol) =>
+    checker
+      .getExportsOfModule(container)
+      .map(member => checker.getMergedSymbol(member))
+      .filter(member => member.name !== "prototype" && !member.name.startsWith("export="))
+      .filter(isFromPackage)
+      .sort(byName);
 
   function emitSymbol(sym: ts.Symbol, path: string, indent: string) {
-    const target = sym.flags & ts.SymbolFlags.Alias ? checker.getAliasedSymbol(sym) : sym;
+    const target = resolveSymbol(sym);
     const earlier = seen.get(target);
     if (earlier !== undefined) {
       lines.push(`${indent}${path} -> ${earlier}`);
@@ -307,7 +418,10 @@ function inventory(program: ts.Program, projectDir: string): string[] {
         const params = decl?.typeParameters?.map(
           p => checker.getDeclaredTypeOfSymbol(checker.getSymbolAtLocation(p.name)!) as ts.TypeParameter,
         );
-        const aliasText = clean(checker.typeToString(declared, undefined, typeFormat | ts.TypeFormatFlags.InTypeAlias));
+        // A union on the right-hand side goes through typeText for a stable member order.
+        const aliasText = declared.isUnion()
+          ? typeText(declared, target)
+          : clean(checker.typeToString(declared, undefined, typeFormat | ts.TypeFormatFlags.InTypeAlias));
         lines.push(`${indent}type ${path}${typeParamsText(params)} (${where}) = ${aliasText}`);
       } else if (target.flags & ts.SymbolFlags.Enum) {
         lines.push(`${indent}enum ${path} (${where})`);
@@ -336,22 +450,31 @@ function inventory(program: ts.Program, projectDir: string): string[] {
       if (!(target.flags & ts.SymbolFlags.Class)) {
         lines.push(`${indent}namespace ${path} (${where})`);
       }
-      const exports = [...checker.getExportsOfModule(target)].sort(byName);
-      for (const member of exports) {
-        if (member.name === "prototype" || member.name === "default") continue;
+      for (const member of packageExportsOf(target)) {
+        if (member.name === "default") continue;
         emitSymbol(member, `${path}.${member.name}`, inner);
       }
     }
   }
 
-  // Ambient modules: `declare module "bun"`, `declare module "bun:test"`, the
-  // `declare module "*.html"` wildcards, and the augmentations of node modules.
-  const modules = checker.getAmbientModules().filter(isFromPackage).sort(byName);
+  // Modules: the ones bun-types declares (`declare module "bun"`, `declare module
+  // "bun:test"`, the `declare module "*.html"` wildcards) and the ones it augments
+  // from a module file (`declare module "node:tls"` in overrides.d.ts). An
+  // augmentation merges into a copy of the target module's symbol, so
+  // getMergedSymbol is what carries the bun-types declarations.
+  const modules = checker
+    .getAmbientModules()
+    .map(mod => checker.getMergedSymbol(mod))
+    .filter(isFromPackage)
+    .sort(byName);
   for (const mod of modules) {
     lines.push(`# module ${mod.name}`);
     seen.set(mod, `module ${mod.name}`);
-    const exports = [...checker.getExportsOfModule(mod)].sort(byName);
-    for (const member of exports) emitSymbol(member, member.name, "");
+    const exportEquals = mod.exports?.get(ts.InternalSymbolName.ExportEquals as ts.__String);
+    if (exportEquals) {
+      lines.push(`export = ${typeText(checker.getTypeOfSymbol(resolveSymbol(exportEquals)))}`);
+    }
+    for (const member of packageExportsOf(mod)) emitSymbol(member, member.name, "");
     lines.push("");
   }
 
@@ -361,6 +484,7 @@ function inventory(program: ts.Program, projectDir: string): string[] {
       entry,
       ts.SymbolFlags.Value | ts.SymbolFlags.Type | ts.SymbolFlags.Namespace | ts.SymbolFlags.Alias,
     )
+    .map(sym => checker.getMergedSymbol(sym))
     .filter(sym => !sym.name.startsWith('"'))
     .filter(sym => !sym.declarations?.some(d => d.getSourceFile() === entry))
     .filter(isFromPackage)
@@ -374,31 +498,32 @@ function inventory(program: ts.Program, projectDir: string): string[] {
 
 async function main() {
   const args = parseArgs(process.argv.slice(2));
-  const project = await createProject();
-  const projectDir = join(project.dir, "project");
+  const tempDir = await mkdtemp(join(tmpdir(), "bun-types-inventory-"));
   try {
+    const { projectDir, versions } = await createProject(tempDir);
     let failed = false;
     for (const preset of args.presets) {
       const { lib } = PRESETS[preset]!;
-      const lines = inventory(createProgram(projectDir, lib), projectDir);
+      const { program, entry } = createProgram(projectDir, lib);
+      const lines = inventory(program, entry, projectDir);
       const header = [
         `# bun-types inventory: preset ${preset}`,
         `# lib: ${lib.join(", ") || "(none)"}`,
-        ...Object.entries(project.versions).map(([name, version]) => `# ${name}: ${version}`),
+        ...Object.entries(versions).map(([name, version]) => `# ${name}: ${version}`),
         "",
       ];
       const text = header.concat(lines).join("\n") + "\n";
       const outFile = join(args.out, `${preset}.txt`);
       if (args.check) {
-        const expected = existsSync(outFile) ? readFileSync(outFile, "utf8") : "";
+        const expected = existsSync(outFile) ? readFileSync(outFile, "utf8").replaceAll("\r\n", "\n") : "";
         if (expected === text) {
           console.log(`${preset}: ok`);
         } else {
           failed = true;
-          const actualFile = join(project.dir, `${preset}.actual.txt`);
+          const actualFile = join(tempDir, `${preset}.actual.txt`);
           await Bun.write(actualFile, text);
           console.log(`${preset}: differs from ${outFile}`);
-          console.log(await $`diff -u ${outFile} ${actualFile}`.nothrow().text());
+          console.log(await $`git diff --no-index --no-color -- ${outFile} ${actualFile}`.nothrow().text());
         }
       } else {
         await mkdir(args.out, { recursive: true });
@@ -406,10 +531,13 @@ async function main() {
         console.log(`${preset}: wrote ${lines.length} lines to ${outFile}`);
       }
     }
-    if (failed) process.exitCode = 1;
+    if (failed) {
+      console.log("Regenerate with `bun packages/bun-types/scripts/inventory.ts` when the change is intended.");
+      process.exitCode = 1;
+    }
   } finally {
-    if (args.keep) console.log(`kept ${project.dir}`);
-    else await rm(project.dir, { recursive: true, force: true });
+    if (args.keep) console.log(`kept ${tempDir}`);
+    else await rm(tempDir, { recursive: true, force: true });
   }
 }
 

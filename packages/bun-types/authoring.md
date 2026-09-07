@@ -110,7 +110,7 @@ For example, if you're adding types for a new API, you should just add code to `
 
 ## The type inventory
 
-`test/integration/bun-types/inventory/<preset>.txt` lists every global and every module export that bun-types contributes, with the shape the TypeScript checker resolves it to. Interface merging with `lib.dom.d.ts` and `@types/node`, `UseLibDomIfAvailable`, and every other conditional alias are resolved, so a file shows what a user sees, not what the `.d.ts` source says. There is one file per `lib` preset: `esnext`, `esnext-dom`, `es2022`, `es2022-dom`, and `no-lib`.
+`test/integration/bun-types/inventory/<preset>.txt` lists every symbol that has a declaration in bun-types, with the shape the TypeScript checker resolves it to: the globals, the exports of the modules bun-types declares (`bun`, `bun:test`, `*.html`), and the exports it adds to node modules and namespaces (`node:tls`, `NodeJS`). The members of a listed symbol are printed in full, wherever they come from. Interface merging with `lib.dom.d.ts` and `@types/node`, `UseLibDomIfAvailable`, and every other conditional alias are resolved, so a file shows what a user sees, not what the `.d.ts` source says. There is one file per `lib` preset: `esnext`, `esnext-dom`, `es2022`, `es2022-dom`, and `no-lib`. `ts7.1/` is not covered.
 
 `test/integration/bun-types/inventory.test.ts` fails when the files no longer match the package. After a change to `packages/bun-types`, regenerate them and commit the result:
 

@@ -31,7 +31,7 @@ export const brotli: Dependency = {
   name: "brotli",
 
   source: () => ({
-    kind: "github",
+    kind: "github-archive",
     repo: "google/brotli",
     commit: BROTLI_COMMIT,
   }),

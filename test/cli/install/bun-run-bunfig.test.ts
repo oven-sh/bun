@@ -26,8 +26,11 @@ const otherVolume = (() => {
     const root = `${letter}:\\`;
     const wide = Buffer.from(root + "\0", "utf16le");
     // Only fixed disks: disconnected network drives and removable media can block.
-    if (kernel.symbols.GetDriveTypeW(ptr(wide)) === 3 && statSync(root, { bigint: true }).dev !== source.dev) {
-      return root;
+    if (kernel.symbols.GetDriveTypeW(ptr(wide)) !== 3) continue;
+    try {
+      if (statSync(root, { bigint: true }).dev !== source.dev) return root;
+    } catch {
+      // Locked or unreadable volumes cannot host this optional fixture.
     }
   }
 })();
@@ -63,7 +66,7 @@ describe.skipIf(!isWindows).each(["bunfig", "--bun"])("Windows node aliases (%s)
     await using proc = Bun.spawn({
       cmd: [executable, "--silent", ...(mode === "--bun" ? ["--bun"] : []), "run", script],
       cwd,
-      env: { ...bunEnv, TEMP: pathJoin(cwd, "cache"), TMP: pathJoin(cwd, "cache") },
+      env: mergeWindowEnvs([bunEnv, { TEMP: pathJoin(cwd, "cache"), TMP: pathJoin(cwd, "cache") }]),
       stdout: "pipe",
       stderr: "pipe",
     });
@@ -162,6 +165,7 @@ describe.skipIf(!isWindows).each(["bunfig", "--bun"])("Windows node aliases (%s)
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    // The resolver's trailing separator makes the CLI ancestor walk emit cwd's .bin twice.
     const expectedPath = [pathJoin(cwd, "node_modules", ".bin")];
     let remain = String(cwd);
     while (remain.includes("\\")) {
@@ -202,7 +206,7 @@ describe.skipIf(!isWindows).each(["bunfig", "--bun"])("Windows node aliases (%s)
     const command = wide(`"${pathJoin(cwd, "bun-\uD800.exe")}" --silent ${mode === "--bun" ? "--bun " : ""}run probe`);
     const directory = wide(String(cwd));
     const environment = wide(
-      Object.entries({ ...bunEnv, TEMP: pathJoin(cwd, "cache"), TMP: pathJoin(cwd, "cache") })
+      Object.entries(mergeWindowEnvs([bunEnv, { TEMP: pathJoin(cwd, "cache"), TMP: pathJoin(cwd, "cache") }]))
         .filter(([, value]) => value !== undefined)
         .map(([key, value]) => `${key}=${value}\0`)
         .join(""),

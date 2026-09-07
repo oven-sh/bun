@@ -1667,37 +1667,37 @@ async function connect(server: Server, clientList: Subprocess[] = clients): Prom
 // RFC 6455 caps the close reason at 123 bytes. A cut inside a multi-byte
 // character puts invalid UTF-8 on the wire and the peer fails with 1007.
 describe.concurrent("close() cuts a long reason on a character boundary", () => {
-  for (const [label, reason, expected] of [
-    ["emoji (4-byte)", "😀".repeat(40), "😀".repeat(30)],
-    ["cjk (3-byte) off by one", "x" + "中".repeat(41), "x" + "中".repeat(40)],
+  it.each([
+    // 40 emoji (160 bytes) -> 30 emoji (120 bytes): byte 123 is inside the 31st.
+    ["emoji (4-byte)", Buffer.alloc(160, "😀").toString(), Buffer.alloc(120, "😀").toString()],
+    // "x" + 41 CJK (124 bytes) -> "x" + 40 CJK (121 bytes): byte 123 is inside the 41st.
+    ["cjk (3-byte) off by one", "x" + Buffer.alloc(123, "中").toString(), "x" + Buffer.alloc(120, "中").toString()],
     ["ascii", Buffer.alloc(200, "a").toString(), Buffer.alloc(123, "a").toString()],
-  ] as const) {
-    it(label, async () => {
-      const { promise: serverClose, resolve: resolveServerClose } = Promise.withResolvers<[number, string]>();
-      using server = serve({
-        port: 0,
-        fetch(req, server) {
-          if (server.upgrade(req)) return;
-          return new Response();
+  ])("%s", async (_label, reason, expected) => {
+    const { promise: serverClose, resolve: resolveServerClose } = Promise.withResolvers<[number, string]>();
+    using server = serve({
+      port: 0,
+      fetch(req, server) {
+        if (server.upgrade(req)) return;
+        return new Response();
+      },
+      websocket: {
+        open(ws) {
+          ws.close(1000, reason);
         },
-        websocket: {
-          open(ws) {
-            ws.close(1000, reason);
-          },
-          message() {},
-          close(_, code, reason) {
-            resolveServerClose([code, reason]);
-          },
+        message() {},
+        close(_, code, reason) {
+          resolveServerClose([code, reason]);
         },
-      });
-      const { promise: clientClose, resolve: resolveClientClose } = Promise.withResolvers<CloseEvent>();
-      const ws = new WebSocket(server.url.href.replace(/^http/, "ws"));
-      ws.onclose = resolveClientClose;
-      const [event, [serverCode, serverReason]] = await Promise.all([clientClose, serverClose]);
-      expect([event.code, event.wasClean, event.reason]).toEqual([1000, true, expected]);
-      expect([serverCode, serverReason]).toEqual([1000, expected]);
+      },
     });
-  }
+    const { promise: clientClose, resolve: resolveClientClose } = Promise.withResolvers<CloseEvent>();
+    const ws = new WebSocket(server.url.href.replace(/^http/, "ws"));
+    ws.onclose = resolveClientClose;
+    const [event, [serverCode, serverReason]] = await Promise.all([clientClose, serverClose]);
+    expect([event.code, event.wasClean, event.reason]).toEqual([1000, true, expected]);
+    expect([serverCode, serverReason]).toEqual([1000, expected]);
+  });
 });
 
 it("you can call server.subscriberCount() when its not a websocket server", async () => {

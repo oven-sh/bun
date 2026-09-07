@@ -153,6 +153,40 @@ await writer.end();
 await Bun.write(s3file, "Hello World!");
 ```
 
+### Object tags
+
+Pass `tags` when writing an object to set its complete tag set in the same upload:
+
+```ts
+await s3file.write(JSON.stringify({ ready: true }), {
+  type: "application/json",
+  tags: { state: "ready", category: "document" },
+});
+
+const tags = await s3file.getTags();
+// { state: "ready", category: "document" }
+
+await s3file.write("replacement", { tags: { state: "updated" } });
+// The replacement has only the "state" tag.
+
+await s3file.write("untagged replacement");
+// The replacement has no tags.
+```
+
+Tags are per-write options. They are supported by `S3File.write()`, `S3File.writer()`, instance and static `S3Client.write()`, `Bun.s3.write()`, `Bun.write()` to S3, and `fetch()` with an S3 URL and `method: "PUT"` (or `"POST"`) through `s3.tags`. They cannot be configured as client or file defaults or used when presigning URLs. Omitting `tags`, passing `undefined`, or passing `{}` writes an object without tags. Tag sets are never merged.
+
+Bun captures the object's own enumerable string keys and string values before starting the upload, percent-encodes them, and signs the `x-amz-tagging` header. For multipart uploads, this header is sent with `CreateMultipartUpload`. Bun does not perform a separate tagging operation after uploading. Mutating the options after the call does not change the upload's tags.
+
+`getTags()` issues a single `GetObjectTagging` request and returns `Promise<Record<string, string>>`. It does not download the object's contents or perform a HEAD request. An untagged object returns `{}`. Missing objects, access failures, and malformed responses reject the promise using Bun's S3 error conventions.
+
+```ts
+const tags = await client.getTags("object.json");
+const sameTags = await Bun.S3Client.getTags("object.json", credentials);
+const fileTags = await client.file("object.json").getTags();
+```
+
+Limits and permissions depend on the service. AWS S3 allows up to 10 tags per object, with keys up to 128 characters and values up to 256 characters, counted in UTF-16 code units. Writing tags requires `s3:PutObjectTagging` in addition to the upload permission. Reading requires `s3:GetObjectTagging`. Bun validates string values and Unicode encoding locally and leaves service-specific limits to the server. These operations require an endpoint that supports S3 object tagging. See the [AWS object tagging guide](https://docs.aws.amazon.com/AmazonS3/latest/userguide/object-tagging.html).
+
 ### Working with large files (streams)
 
 Bun automatically handles multipart uploads for large files and supports streaming. The same API that works for local files also works for S3 files.

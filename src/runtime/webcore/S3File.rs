@@ -211,6 +211,10 @@ pub fn write(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue
 
 #[bun_jsc::host_fn]
 pub(crate) fn size(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+    crate::webcore::s3::credentials_jsc::reject_write_tags(
+        callframe.arguments().get(1).copied(),
+        global,
+    )?;
     // SAFETY: bun_vm() returns the live VM raw ptr.
     let mut args =
         bun_jsc::call_frame::ArgumentsSlice::init(global.bun_vm(), callframe.arguments());
@@ -225,6 +229,10 @@ pub(crate) fn size(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<J
 
 #[bun_jsc::host_fn]
 pub(crate) fn exists(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+    crate::webcore::s3::credentials_jsc::reject_write_tags(
+        callframe.arguments().get(1).copied(),
+        global,
+    )?;
     // SAFETY: bun_vm() returns the live VM raw ptr.
     let mut args =
         bun_jsc::call_frame::ArgumentsSlice::init(global.bun_vm(), callframe.arguments());
@@ -358,6 +366,106 @@ pub(crate) struct S3BlobStatTask {
     // can outlive the constructing frame while reads stay safe.
     global: bun_ptr::BackRef<JSGlobalObject>,
     store: RefPtr<Store>,
+}
+
+pub(crate) fn get_tags(
+    blob: &Blob,
+    global: &JSGlobalObject,
+    options: Option<JSValue>,
+) -> JsResult<JSValue> {
+    use crate::webcore::s3::{credentials_jsc, simple_request, xml_response};
+    credentials_jsc::reject_write_tags(options, global)?;
+    let store = blob
+        .store
+        .get()
+        .as_ref()
+        .filter(|store| matches!(store.data, blob::store::Data::S3(_)))
+        .ok_or_else(|| global.throw_invalid_arguments(format_args!("getTags requires an S3 file")))?
+        .clone();
+    let s3 = store.data.as_s3();
+    let credentials = s3.get_credentials_with_options(options, global)?;
+    struct Task {
+        promise: bun_jsc::JSPromiseStrong,
+        global: bun_ptr::BackRef<JSGlobalObject>,
+        store: RefPtr<Store>,
+    }
+    fn complete(
+        result: simple_request::S3DownloadResult,
+        context: *mut core::ffi::c_void,
+    ) -> JsResult<()> {
+        // SAFETY: context is the boxed Task passed to execute_simple_s3_request.
+        let mut task = unsafe { bun_core::heap::take(context.cast::<Task>()) };
+        let global_ref = task.global;
+        let global = global_ref.get();
+        let error = match result {
+            simple_request::S3DownloadResult::Success(mut result) => {
+                if let Some(tags) = xml_response::parse_tags(result.body.slice()) {
+                    let value = (|| {
+                        let object = JSValue::create_empty_object(global, tags.len());
+                        for (key, value) in tags {
+                            let key = bun_string_jsc::create_utf8_for_js(global, &key)?
+                                .to_bun_string(global)?;
+                            object.put(
+                                global,
+                                &key,
+                                bun_string_jsc::create_utf8_for_js(global, &value)?,
+                            );
+                        }
+                        Ok(object)
+                    })();
+                    return match value {
+                        Ok(value) => task.promise.resolve(global, value),
+                        Err(error) => task.promise.reject(global, Err(error)),
+                    };
+                }
+                bun_s3_signing::error::S3Error {
+                    code: b"InvalidResponse",
+                    message: b"Invalid S3 object tagging response",
+                }
+            }
+            simple_request::S3DownloadResult::NotFound(error)
+            | simple_request::S3DownloadResult::Failure(error) => error,
+        };
+        let value = s3_error_to_js_with_async_stack(
+            &error,
+            global,
+            Some(task.store.data.as_s3().path()),
+            task.promise.get(),
+        );
+        task.promise.reject(global, Ok(value))
+    }
+    let promise = bun_jsc::JSPromiseStrong::init(global);
+    let value = promise.value();
+    // SAFETY: the transpiler owns its environment loader for the VM's lifetime.
+    let proxy =
+        unsafe { (*global.bun_vm().as_mut().transpiler.env).get_http_proxy(true, None, None) };
+    simple_request::execute_simple_s3_request(
+        &credentials.credentials,
+        simple_request::Options {
+            path: s3.path(),
+            search_params: Some(b"?tagging="),
+            request_payer: credentials.request_payer,
+            proxy_url: proxy.as_ref().map(|url| url.href),
+            ..Default::default()
+        },
+        simple_request::Callback::Download(complete),
+        bun_core::heap::into_raw(Box::new(Task {
+            promise,
+            global: bun_ptr::BackRef::new(global),
+            store: store.clone(),
+        }))
+        .cast(),
+    )?;
+    Ok(value)
+}
+
+pub(crate) fn static_get_tags(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+    let mut args =
+        bun_jsc::call_frame::ArgumentsSlice::init(global.bun_vm(), callframe.arguments());
+    let message = "Expected an S3 file or path to read tags";
+    let path = parse_s3_path_or_blob(global, &mut args, message)?;
+    let (blob, options) = resolve_s3_blob(global, &mut args, path, message)?;
+    get_tags(&blob, global, options)
 }
 
 impl S3BlobStatTask {
@@ -555,6 +663,7 @@ pub(crate) fn get_presign_url_from(
     global: &JSGlobalObject,
     extra_options: Option<JSValue>,
 ) -> JsResult<JSValue> {
+    crate::webcore::s3::credentials_jsc::reject_write_tags(extra_options, global)?;
     if !this.is_s3() {
         return Err(global
             .err(
@@ -604,6 +713,7 @@ pub(crate) fn get_presign_url_from(
 
     let result = match credentials_with_options.credentials.sign_request::<false>(
         &bun_s3_signing::SignOptions {
+            tagging: None,
             path,
             method,
             acl: credentials_with_options.acl,
@@ -674,13 +784,21 @@ fn get_presign_url(
 pub(crate) fn get_stat(
     this: &Blob,
     global: &JSGlobalObject,
-    _callframe: &CallFrame,
+    callframe: &CallFrame,
 ) -> JsResult<JSValue> {
+    crate::webcore::s3::credentials_jsc::reject_write_tags(
+        callframe.arguments().first().copied(),
+        global,
+    )?;
     S3BlobStatTask::stat(global, this)
 }
 
 #[bun_jsc::host_fn]
 pub(crate) fn stat(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+    crate::webcore::s3::credentials_jsc::reject_write_tags(
+        callframe.arguments().get(1).copied(),
+        global,
+    )?;
     // SAFETY: bun_vm() returns the live VM raw ptr.
     let mut args =
         bun_jsc::call_frame::ArgumentsSlice::init(global.bun_vm(), callframe.arguments());
@@ -696,6 +814,7 @@ pub(crate) fn construct_internal_js(
     path: PathLike<'static>,
     options: Option<JSValue>,
 ) -> JsResult<JSValue> {
+    crate::webcore::s3::credentials_jsc::reject_write_tags(options, global)?;
     let blob = construct_s3_file_internal(global, path, options)?;
     // SAFETY: `blob` is a freshly heap-allocated `*mut Blob` from `Blob::new`.
     // Call the `BlobExt::to_js` `&mut self` method (not the by-value
@@ -751,6 +870,20 @@ pub(crate) mod exports {
         // SAFETY: JSC method shim passes live `m_ctx`/global/callframe.
         let (this, global, callframe) = unsafe { (&mut *this, &*global, &*callframe) };
         bun_jsc::to_js_host_call(global, || super::get_stat(this, global, callframe))
+    }
+
+    #[unsafe(no_mangle)]
+    #[bun_jsc::host_call]
+    fn JSS3File__getTags(
+        this: *mut Blob,
+        global: *mut JSGlobalObject,
+        callframe: *mut CallFrame,
+    ) -> JSValue {
+        // SAFETY: JSC method shim passes live `m_ctx`/global/callframe.
+        let (this, global, callframe) = unsafe { (&mut *this, &*global, &*callframe) };
+        bun_jsc::to_js_host_call(global, || {
+            super::get_tags(this, global, callframe.arguments().first().copied())
+        })
     }
 }
 

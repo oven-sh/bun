@@ -410,9 +410,17 @@ declare module "bun" {
     highWaterMark?: number;
   }
 
-  /**
-   * Options for generating presigned URLs
-   */
+  /** Options for an individual object write. Tags are never inherited from a client or file. */
+  interface S3WriteOptions extends S3Options {
+    /**
+     * The complete set of object tags, sent atomically with the upload.
+     * Keys and values are percent-encoded before signing. Omit or pass an empty
+     * object to write without tags. Provider-specific limits apply.
+     */
+    tags?: Record<string, string> | undefined;
+  }
+
+  /** Options for generating presigned URLs. */
   interface S3FilePresignOptions extends S3Options {
     /**
      * Number of seconds until the presigned URL expires.
@@ -581,7 +589,10 @@ declare module "bun" {
      * }
      * ```
      */
-    writer(options?: S3Options): NetworkSink;
+    writer(options?: S3WriteOptions): NetworkSink;
+
+    /** Read the current object's tags with a single GetObjectTagging request. */
+    getTags(options?: S3Options): Promise<Record<string, string>>;
 
     /**
      * Gets a readable stream of the file's content.
@@ -725,7 +736,7 @@ declare module "bun" {
         | S3File
         | Blob
         | Archive,
-      options?: S3Options,
+      options?: S3WriteOptions,
     ): Promise<number>;
 
     /**
@@ -1013,6 +1024,11 @@ declare module "bun" {
      */
     static file(path: string, options?: S3Options): S3File;
 
+    /** Read the current object's tags. An untagged object returns an empty object. */
+    getTags(path: string, options?: S3Options): Promise<Record<string, string>>;
+    /** Read object tags using explicit options or environment credentials. */
+    static getTags(path: string, options?: S3Options): Promise<Record<string, string>>;
+
     /**
      * Writes data directly to a path in the bucket.
      * Supports strings, buffers, streams, and web API types.
@@ -1059,7 +1075,7 @@ declare module "bun" {
         | Blob
         | File
         | Archive,
-      options?: S3Options,
+      options?: S3WriteOptions,
     ): Promise<number>;
 
     /**
@@ -1112,7 +1128,7 @@ declare module "bun" {
         | Blob
         | File
         | Archive,
-      options?: S3Options,
+      options?: S3WriteOptions,
     ): Promise<number>;
 
     /**

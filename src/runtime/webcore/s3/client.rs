@@ -253,6 +253,7 @@ pub(crate) fn list_objects(
 
     let result = match this.sign_request::<true>(
         &bun_s3_signing::SignOptions {
+            tagging: None,
             path: b"",
             method: bun_http::Method::GET,
             search_params: Some(search_params.slice()),
@@ -385,6 +386,7 @@ pub(crate) fn upload(
     proxy_url: Option<&[u8]>,
     storage_class: Option<StorageClass>,
     request_payer: bool,
+    tagging: Option<&[u8]>,
     callback: fn(S3UploadResult, *mut c_void) -> JsResult<()>,
     callback_context: *mut c_void,
 ) -> JsResult<()> {
@@ -401,6 +403,7 @@ pub(crate) fn upload(
             acl,
             storage_class,
             request_payer,
+            tagging,
             ..Default::default()
         },
         s3_simple_request::Callback::Upload(callback),
@@ -422,6 +425,7 @@ pub(crate) fn writable_stream(
     proxy: Option<&[u8]>,
     storage_class: Option<StorageClass>,
     request_payer: bool,
+    tagging: Option<&[u8]>,
 ) -> JsResult<JSValue> {
     // Local callback wrapper. `uploaded` is read off the upload (see `MultiPartUpload::callback`).
     fn wrapper_callback(
@@ -524,6 +528,7 @@ pub(crate) fn writable_stream(
         content_type: content_type.map(Box::<[u8]>::from),
         content_disposition: content_disposition.map(Box::<[u8]>::from),
         content_encoding: content_encoding.map(Box::<[u8]>::from),
+        tagging: tagging.map(Box::<[u8]>::from),
         upload_id: JsCell::new(Box::default()),
         multipart_etags: JsCell::new(Vec::new()),
         multipart_upload_list: JsCell::new(Vec::new()),
@@ -808,6 +813,7 @@ pub(crate) fn upload_stream(
     content_encoding: Option<&[u8]>,
     proxy: Option<&[u8]>,
     request_payer: bool,
+    tagging: Option<&[u8]>,
     callback: Option<fn(S3UploadResult, *mut c_void)>,
     callback_context: *mut c_void,
 ) -> JsResult<JSValue> {
@@ -933,6 +939,7 @@ pub(crate) fn upload_stream(
         content_type: content_type.map(Box::<[u8]>::from),
         content_disposition: content_disposition.map(Box::<[u8]>::from),
         content_encoding: content_encoding.map(Box::<[u8]>::from),
+        tagging: tagging.map(Box::<[u8]>::from),
         upload_id: JsCell::new(Box::default()),
         multipart_etags: JsCell::new(Vec::new()),
         multipart_upload_list: JsCell::new(Vec::new()),
@@ -1140,6 +1147,7 @@ fn download_stream(
 
     let result = match this.sign_request::<false>(
         &bun_s3_signing::SignOptions {
+            tagging: None,
             path,
             method: bun_http::Method::GET,
             request_payer,

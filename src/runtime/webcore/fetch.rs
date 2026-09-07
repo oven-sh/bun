@@ -1643,6 +1643,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
     }
 
     if url.is_s3() {
+        let mut tagging = None;
         // get ENV config — `Transpiler::env_mut` is the safe accessor for the
         // process-singleton dotenv loader (set during init).
         let env_creds = s3_credentials_from_env(
@@ -1667,6 +1668,17 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                 let s3_options: JSValue = s3_options;
                 if s3_options.is_object() {
                     s3_options.ensure_still_alive();
+                    if method == Method::PUT || method == Method::POST {
+                        tagging = crate::webcore::s3::credentials_jsc::get_write_tags(
+                            Some(s3_options),
+                            global_this,
+                        )?;
+                    } else {
+                        crate::webcore::s3::credentials_jsc::reject_write_tags(
+                            Some(s3_options),
+                            global_this,
+                        )?;
+                    }
                     use crate::webcore::s3_client::S3CredentialsExt as _;
                     credentials_with_options = <s3::S3Credentials>::get_credentials_with_options(
                         &credentials_with_options.credentials,
@@ -1747,6 +1759,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                 headers.as_ref().and_then(|h| h.get_content_encoding()),
                 proxy_url,
                 credentials_with_options.request_payer,
+                tagging.as_deref(),
                 Some(s3_stream_wrapper_resolve),
                 bun_core::heap::into_raw(s3_stream).cast::<libc::c_void>(),
             )?;
@@ -1761,6 +1774,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
             &SignOptions {
                 path: url.s3_path(),
                 method,
+                tagging: tagging.as_deref(),
                 ..Default::default()
             },
             None,

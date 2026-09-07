@@ -30,6 +30,18 @@ impl<'a> Node<'a> {
         self.children(name).next()
     }
 
+    fn only_elements(self, names: &[&[u8]]) -> bool {
+        self.children.iter().all(|child| {
+            if let Some(node) = Node::of(child) {
+                names.contains(&node.name)
+            } else {
+                child
+                    .as_str()
+                    .is_some_and(|text| text.trim_ascii().is_empty())
+            }
+        })
+    }
+
     /// Every child element called `name`, in document order.
     pub(crate) fn children<'n>(
         self,
@@ -130,6 +142,39 @@ pub(crate) fn parse_error(body: &[u8]) -> Option<ErrorBody> {
             code: root.child_nonempty_text(b"Code"),
             message: root.child_nonempty_text(b"Message"),
         })
+    })
+    .flatten()
+}
+
+/// Copies a complete GetObjectTagging response out of the parser arena.
+pub(crate) fn parse_tags(body: &[u8]) -> Option<Vec<(Box<[u8]>, Box<[u8]>)>> {
+    parse(body, |root| {
+        if root.name != b"Tagging"
+            || !root.only_elements(&[b"TagSet"])
+            || root.children(b"TagSet").count() != 1
+        {
+            return None;
+        }
+        let set = root.child(b"TagSet")?;
+        if !set.only_elements(&[b"Tag"]) {
+            return None;
+        }
+        let mut tags: Vec<(Box<[u8]>, Box<[u8]>)> = Vec::new();
+        for tag in set.children(b"Tag") {
+            if !tag.only_elements(&[b"Key", b"Value"])
+                || tag.children(b"Key").count() != 1
+                || tag.children(b"Value").count() != 1
+            {
+                return None;
+            }
+            let key = tag.child_nonempty_text(b"Key")?;
+            let value = tag.child_text(b"Value")?;
+            if tags.iter().any(|(existing, _)| existing == &key) {
+                return None;
+            }
+            tags.push((key, value));
+        }
+        Some(tags)
     })
     .flatten()
 }

@@ -2133,6 +2133,511 @@ describe("s3 upload stream body error", () => {
   });
 });
 
+describe("object tags", () => {
+  function streamingBody(data: Uint8Array) {
+    return new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(data);
+        controller.close();
+      },
+    });
+  }
+
+  function mockTagStore() {
+    type StoredObject = { body: Uint8Array<ArrayBuffer>; tags: Record<string, string>; type: string };
+    const objects = new Map<string, StoredObject>();
+    const uploads = new Map<string, Omit<StoredObject, "body"> & { key: string; parts: Map<number, Uint8Array> }>();
+    const requests: { method: string; query: string; tagging: string | null; key: string }[] = [];
+    const signatures: { actual: string; expected: string }[] = [];
+    let failPart = 0;
+    let remainingFailures = Infinity;
+    const aborted = Promise.withResolvers<void>();
+    const partReceived = Promise.withResolvers<void>();
+    const releasePart = Promise.withResolvers<void>();
+    let holdPart = false;
+    const escape = (value: string) => value.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
+    const credentials = {
+      bucket: "bucket",
+      region: "us-east-1",
+      accessKeyId: "test-access-key",
+      secretAccessKey: "test-secret-key",
+      sessionToken: "test-session-token",
+      virtualHostedStyle: false,
+    };
+    const server = Bun.serve({
+      port: 0,
+      async fetch(request) {
+        const url = new URL(request.url);
+        const key = decodeURIComponent(url.pathname.slice("/bucket/".length));
+        const tagging = request.headers.get("x-amz-tagging");
+        requests.push({ method: request.method, query: url.search, tagging, key });
+        const authorization = request.headers.get("authorization")!;
+        const signedHeaders = /SignedHeaders=([^,]+)/.exec(authorization)![1];
+        const scope = /Credential=[^/]+\/([^,]+)/.exec(authorization)![1];
+        const date = request.headers.get("x-amz-date")!;
+        const canonical = [
+          request.method,
+          url.pathname,
+          url.search.slice(1),
+          signedHeaders
+            .split(";")
+            .map(name => `${name}:${request.headers.get(name)!.trim().replace(/\s+/g, " ")}\n`)
+            .join(""),
+          signedHeaders,
+          request.headers.get("x-amz-content-sha256")!,
+        ].join("\n");
+        const hmac = (key: string | Uint8Array, value: string) =>
+          new Uint8Array(createHmac("sha256", key).update(value).digest());
+        const signingKey = hmac(
+          hmac(hmac(hmac(`AWS4${credentials.secretAccessKey}`, date.slice(0, 8)), credentials.region), "s3"),
+          "aws4_request",
+        );
+        signatures.push({
+          actual: /Signature=(.+)/.exec(authorization)![1],
+          expected: createHmac("sha256", signingKey)
+            .update(["AWS4-HMAC-SHA256", date, scope, createHash("sha256").update(canonical).digest("hex")].join("\n"))
+            .digest("hex"),
+        });
+        const error = (code: string, status: number) =>
+          new Response(`<Error><Code>${code}</Code><Message>Test error</Message></Error>`, { status });
+        if (url.searchParams.has("tagging")) {
+          if (request.method !== "GET") return error("UnexpectedTagMutation", 400);
+          const object = objects.get(key);
+          if (!object) return error("NoSuchKey", 404);
+          return new Response(
+            `<Tagging xmlns="http://s3.amazonaws.com/doc/2006-03-01/"><TagSet>${Object.entries(object.tags)
+              .map(([key, value]) => `<Tag><Key>${escape(key)}</Key><Value>${escape(value)}</Value></Tag>`)
+              .join("")}</TagSet></Tagging>`,
+          );
+        }
+        if (request.method === "POST" && url.searchParams.has("uploads")) {
+          const id = randomUUID();
+          uploads.set(id, {
+            key,
+            tags: Object.fromEntries(new URLSearchParams(tagging ?? "")),
+            type: request.headers.get("content-type") ?? "",
+            parts: new Map(),
+          });
+          return new Response(
+            `<InitiateMultipartUploadResult><UploadId>${id}</UploadId></InitiateMultipartUploadResult>`,
+          );
+        }
+        const uploadId = url.searchParams.get("uploadId");
+        if (uploadId) {
+          const upload = uploads.get(uploadId)!;
+          if (request.method === "DELETE") {
+            uploads.delete(uploadId);
+            aborted.resolve();
+            return new Response(null, { status: 204 });
+          }
+          if (request.method === "PUT") {
+            const number = Number(url.searchParams.get("partNumber"));
+            const body = new Uint8Array(await request.arrayBuffer());
+            partReceived.resolve();
+            if (holdPart) await releasePart.promise;
+            if (number === failPart && remainingFailures-- > 0) return error("InternalError", 500);
+            upload.parts.set(number, body);
+            return new Response(null, { headers: { ETag: `"part-${number}"` } });
+          }
+          if (request.method === "POST") {
+            await request.text();
+            const body = new Uint8Array(
+              Buffer.concat([...upload.parts].sort(([a], [b]) => a - b).map(([, body]) => body)),
+            );
+            objects.set(upload.key, { body, tags: upload.tags, type: upload.type });
+            uploads.delete(uploadId);
+            return new Response(
+              '<CompleteMultipartUploadResult><ETag>"complete"</ETag></CompleteMultipartUploadResult>',
+            );
+          }
+        }
+        if (request.method === "PUT") {
+          objects.set(key, {
+            body: new Uint8Array(await request.arrayBuffer()),
+            tags: Object.fromEntries(new URLSearchParams(tagging ?? "")),
+            type: request.headers.get("content-type") ?? "",
+          });
+          return new Response(null, { headers: { ETag: '"object"' } });
+        }
+        if (request.method === "GET") {
+          const object = objects.get(key);
+          return object
+            ? new Response(object.body, { headers: { "Content-Type": object.type, ETag: '"object"' } })
+            : error("NoSuchKey", 404);
+        }
+        return error("UnexpectedOperation", 400);
+      },
+    });
+    const options = { ...credentials, endpoint: server.url.href };
+    return {
+      server,
+      options,
+      client: new S3Client(options),
+      objects,
+      uploads,
+      requests,
+      signatures,
+      aborted: aborted.promise,
+      partReceived: partReceived.promise,
+      failPart(number: number, count = Infinity) {
+        failPart = number;
+        remainingFailures = count;
+      },
+      holdPart() {
+        holdPart = true;
+      },
+      releasePart() {
+        releasePart.resolve();
+      },
+      [Symbol.dispose]() {
+        releasePart.resolve();
+        server.stop(true);
+      },
+    };
+  }
+
+  it("supports every write entry point and reads tags without fetching the object", async () => {
+    using store = mockTagStore();
+    const tags = { "a b": "+&=%", unicode: "é😀", empty: "" };
+    const data = new Uint8Array([0, 255, 1, 128]);
+    const options = { ...store.options, tags, type: "application/octet-stream" };
+    const key = "literal?tagging";
+    const target = store.client.file(key);
+    const writes = [
+      () => store.client.write(key, data, options),
+      () => S3Client.write(key, data, options),
+      () => defaultS3.write(key, data, options),
+      () => target.write(data, options),
+      () => Bun.write(target, data, options),
+      () => Bun.write(`s3://${key}`, data, options),
+      async () => {
+        const writer = target.writer(options);
+        writer.write(data);
+        await writer.end();
+      },
+      ...["PUT", "POST"].flatMap(method => [
+        async () => {
+          const response = await fetch(`s3://${key}`, {
+            method,
+            body: data,
+            s3: options,
+            headers: { "Content-Type": options.type },
+          });
+          expect(response.ok).toBe(true);
+        },
+        async () => {
+          const response = await fetch(`s3://${key}`, {
+            method,
+            body: streamingBody(data),
+            s3: options,
+            headers: { "Content-Type": options.type },
+          });
+          expect(response.ok).toBe(true);
+        },
+      ]),
+      () => target.write(new Response(streamingBody(data)), options),
+    ];
+    for (const write of writes) {
+      await write();
+      expect(store.objects.get(key)).toEqual({ body: data, tags, type: options.type });
+      const before = store.requests.length;
+      expect(await target.getTags()).toEqual(tags);
+      expect(await store.client.getTags(key)).toEqual(tags);
+      expect(await S3Client.getTags(key, store.options)).toEqual(tags);
+      expect(store.requests.slice(before).map(request => request.method)).toEqual(["GET", "GET", "GET"]);
+      expect(store.requests.slice(before).every(request => request.query === "?tagging=")).toBe(true);
+    }
+    for (const { actual, expected } of store.signatures) expect(actual).toBe(expected);
+  });
+
+  it("replaces the complete tag set and writes empty objects without inherited tags", async () => {
+    using store = mockTagStore();
+    const target = store.client.file("object");
+    await target.write("old", { tags: { old: "yes", retained: "no" } });
+    await target.write("new", { tags: { new: "yes" } });
+    expect(await target.getTags()).toEqual({ new: "yes" });
+    for (const tags of [undefined, {}]) {
+      await target.write("old", { tags: { old: "yes" } });
+      await target.write("", { tags, type: "application/json" });
+      expect(await target.getTags()).toEqual({});
+      expect(store.objects.get("object")).toEqual({
+        body: new Uint8Array(0),
+        tags: {},
+        type: "application/json;charset=utf-8",
+      });
+    }
+  });
+
+  it("signs tags together with other metadata without imposing provider tag limits", async () => {
+    using store = mockTagStore();
+    const tags = Object.fromEntries(Array.from({ length: 12 }, (_, index) => [`key${index}`, "x".repeat(400)]));
+    await store.client.write("metadata", "data", {
+      tags,
+      acl: "private",
+      storageClass: "STANDARD",
+      requestPayer: true,
+      contentDisposition: "attachment",
+      contentEncoding: "identity",
+    });
+    expect(await store.client.getTags("metadata")).toEqual(tags);
+    for (const { actual, expected } of store.signatures) expect(actual).toBe(expected);
+  });
+
+  it("retries a multipart part without resending object tags", async () => {
+    using store = mockTagStore();
+    store.failPart(2, 1);
+    const target = store.client.file("retry");
+    const data = new Uint8Array(11 * 1024 * 1024).fill(0x7f);
+    const writer = target.writer({ tags: { state: "ready" }, retry: 1, queueSize: 1, partSize: 5 * 1024 * 1024 });
+    writer.write(data);
+    await writer.end();
+    expect(store.objects.get("retry")!.body).toEqual(data);
+    expect(await target.getTags()).toEqual({ state: "ready" });
+    const parts = store.requests.filter(request => request.method === "PUT");
+    expect(parts).toHaveLength(4);
+    expect(parts.every(request => request.tagging === null)).toBe(true);
+    expect(store.uploads.size).toBe(0);
+    for (const { actual, expected } of store.signatures) expect(actual).toBe(expected);
+  });
+
+  it("commits multipart data and tags together and signs tags only at initiation", async () => {
+    using store = mockTagStore();
+    const target = store.client.file("multipart");
+    await target.write("old", { tags: { old: "yes" } });
+    store.holdPart();
+    const data = new Uint8Array(11 * 1024 * 1024).fill(0xa5);
+    const write = target.write(new Response(streamingBody(data)), {
+      tags: { state: "new" },
+      partSize: 5 * 1024 * 1024,
+      queueSize: 1,
+      type: "application/octet-stream",
+    });
+    try {
+      await store.partReceived;
+      expect(new TextDecoder().decode(store.objects.get("multipart")!.body)).toBe("old");
+      expect(await target.getTags()).toEqual({ old: "yes" });
+    } finally {
+      store.releasePart();
+    }
+    await write;
+    expect(store.objects.get("multipart")).toEqual({
+      body: data,
+      tags: { state: "new" },
+      type: "application/octet-stream",
+    });
+    expect(await target.getTags()).toEqual({ state: "new" });
+    const multipart = store.requests.filter(request => request.query && request.query !== "?tagging=");
+    expect(multipart.filter(request => request.method === "PUT")).toHaveLength(3);
+    expect(multipart.filter(request => new URLSearchParams(request.query).has("uploads"))).toHaveLength(1);
+    for (const request of multipart)
+      expect(request.tagging).toBe(new URLSearchParams(request.query).has("uploads") ? "state=new" : null);
+    expect(store.uploads.size).toBe(0);
+    for (const { actual, expected } of store.signatures) expect(actual).toBe(expected);
+  });
+
+  it("aborts a failed multipart upload without replacing the old object or tags", async () => {
+    using store = mockTagStore();
+    const target = store.client.file("multipart");
+    await target.write("old", { tags: { old: "yes" } });
+    store.failPart(2);
+    await expect(
+      target.write(new Response(streamingBody(new Uint8Array(11 * 1024 * 1024))), {
+        tags: { state: "new" },
+        partSize: 5 * 1024 * 1024,
+        queueSize: 1,
+        retry: 0,
+      }),
+    ).rejects.toBeDefined();
+    await store.aborted;
+    expect(new TextDecoder().decode(store.objects.get("multipart")!.body)).toBe("old");
+    expect(await target.getTags()).toEqual({ old: "yes" });
+    expect(store.uploads.size).toBe(0);
+    expect(
+      store.requests.some(request => request.method === "POST" && new URLSearchParams(request.query).has("uploadId")),
+    ).toBe(false);
+    expect(store.requests.find(request => request.method === "DELETE")!.tagging).toBeNull();
+  });
+
+  it("sends encoded tags with the object PUT", async () => {
+    const requests: { method: string; tags: string | null; authorization: string | null; body: string }[] = [];
+    using server = Bun.serve({
+      port: 0,
+      async fetch(request) {
+        requests.push({
+          method: request.method,
+          tags: request.headers.get("x-amz-tagging"),
+          authorization: request.headers.get("authorization"),
+          body: await request.text(),
+        });
+        return new Response(null, { headers: { ETag: '"test-etag"' } });
+      },
+    });
+    const client = new S3Client({
+      endpoint: server.url.href,
+      bucket: "bucket",
+      region: "us-east-1",
+      accessKeyId: "test-access-key",
+      secretAccessKey: "test-secret-key",
+    });
+    await client.write("object.json", JSON.stringify({ value: 42 }), {
+      tags: { "a b": "+&=%", unicode: "é", empty: "" },
+      type: "application/json",
+    });
+    expect(requests).toHaveLength(1);
+    expect(requests[0].method).toBe("PUT");
+    expect(requests[0].body).toBe('{"value":42}');
+    expect(requests[0].tags).toBe("a%20b=%2B%26%3D%25&unicode=%C3%A9&empty=");
+    expect(requests[0].authorization).toContain("x-amz-tagging");
+  });
+
+  it("captures own enumerable string tags once before asynchronous work", async () => {
+    using store = mockTagStore();
+    let reads = 0;
+    const tags = Object.create({ inherited: "ignored" });
+    Object.defineProperty(tags, "hidden", { value: "ignored" });
+    Object.defineProperty(tags, "state", {
+      enumerable: true,
+      get() {
+        reads++;
+        return "original";
+      },
+    });
+    tags.mutable = "original";
+    tags[Symbol("ignored")] = "ignored";
+    const write = store.client.write("snapshot", new Response(streamingBody(new TextEncoder().encode("data"))), {
+      tags,
+    });
+    tags.mutable = "changed";
+    Bun.gc(true);
+    await write;
+    expect(reads).toBe(1);
+    expect(await store.client.getTags("snapshot")).toEqual({ state: "original", mutable: "original" });
+  });
+
+  it("rejects invalid tags and propagates getters before sending a request", async () => {
+    using store = mockTagStore();
+    for (const tags of [
+      null,
+      "a=b",
+      [],
+      42,
+      { value: 1 },
+      { value: new String("boxed") },
+      { value: "\ud800" },
+      { "\udfff": "value" },
+    ]) {
+      await expect((async () => store.client.write("invalid", "data", { tags } as any))()).rejects.toThrow();
+    }
+    const error = new Error("tag getter failed");
+    const tags = {
+      get value(): string {
+        throw error;
+      },
+    };
+    await expect((async () => store.client.write("invalid", "data", { tags }))()).rejects.toBe(error);
+    expect(store.requests).toHaveLength(0);
+  });
+
+  it("rejects tags on operations that cannot write them", async () => {
+    using store = mockTagStore();
+    const options = { ...store.options, tags: { state: "new" } };
+    const target = store.client.file("object");
+    for (const operation of [
+      () => new S3Client(options),
+      () => store.client.file("object", options),
+      () => S3Client.file("object", options),
+      () => store.client.presign("object", options),
+      () => target.presign(options),
+      () => store.client.stat("object", options),
+      () => (target.stat as Function)(options),
+      () => store.client.exists("object", options),
+      () => (target.exists as Function)(options),
+      () => store.client.delete("object", options),
+      () => (target.delete as Function)(options),
+      () => store.client.getTags("object", options),
+      () => fetch("s3://object", { s3: options }),
+    ]) {
+      await expect((async () => operation())()).rejects.toThrow("tags are only supported");
+    }
+    expect(store.requests).toHaveLength(0);
+  });
+
+  it("decodes XML tags, preserves special property names, and rejects invalid responses", async () => {
+    let xml = "";
+    let status = 200;
+    using server = Bun.serve({
+      port: 0,
+      fetch() {
+        return new Response(xml, { status });
+      },
+    });
+    const client = new S3Client({
+      endpoint: server.url.href,
+      bucket: "bucket",
+      accessKeyId: "key",
+      secretAccessKey: "secret",
+    });
+    for (const namespace of ["", ' xmlns="http://s3.amazonaws.com/doc/2006-03-01/"']) {
+      xml = `<Tagging${namespace}><TagSet/></Tagging>`;
+      expect(await client.getTags("object")).toEqual({});
+      xml = `<Tagging${namespace}><TagSet><Tag><Key>__proto__</Key><Value>value</Value></Tag><Tag><Key>é</Key><Value>a&amp;b&lt;c</Value></Tag><Tag><Key>empty</Key><Value/></Tag></TagSet></Tagging>`;
+      const tags = await client.getTags("object");
+      expect(Object.hasOwn(tags, "__proto__")).toBe(true);
+      expect(tags.__proto__).toBe("value");
+      expect(Object.getPrototypeOf(tags)).toBe(Object.prototype);
+      expect(tags.é).toBe("a&b<c");
+      expect(tags.empty).toBe("");
+    }
+    for (const invalid of [
+      "",
+      "<Tagging>",
+      "<Tagging/>",
+      "<TagSet/>",
+      "<Tagging><TagSet/><TagSet/></Tagging>",
+      "<Tagging><TagSet>text</TagSet></Tagging>",
+      "<Tagging><TagSet><Tag><Key>key</Key></Tag></TagSet></Tagging>",
+      "<Tagging><TagSet><Tag><Key/><Value>value</Value></Tag></TagSet></Tagging>",
+      "<Tagging><TagSet><Tag><Key>key</Key><Value>one</Value></Tag><Tag><Key>key</Key><Value>two</Value></Tag></TagSet></Tagging>",
+    ]) {
+      xml = invalid;
+      await expect(client.getTags("object")).rejects.toMatchObject({ code: "InvalidResponse" });
+    }
+    for (const [httpStatus, body, code] of [
+      [404, "<Error><Code>NoSuchKey</Code></Error>", "NoSuchKey"],
+      [403, "<Error><Code>AccessDenied</Code></Error>", "AccessDenied"],
+      [403, "", "UnknownError"],
+      [403, "<html>Forbidden</html>", "UnknownError"],
+    ] as const) {
+      status = httpStatus;
+      xml = body;
+      await expect(client.getTags("object")).rejects.toMatchObject({ code });
+    }
+  });
+
+  it("reads tags using the tagging subresource", async () => {
+    const requests: string[] = [];
+    using server = Bun.serve({
+      port: 0,
+      fetch(request) {
+        requests.push(`${request.method} ${new URL(request.url).pathname}${new URL(request.url).search}`);
+        return new Response(
+          '<Tagging xmlns="http://s3.amazonaws.com/doc/2006-03-01/"><TagSet><Tag><Key>state</Key><Value>ready</Value></Tag></TagSet></Tagging>',
+          { headers: { "Content-Type": "application/xml" } },
+        );
+      },
+    });
+    const client = new S3Client({
+      endpoint: server.url.href,
+      bucket: "bucket",
+      region: "us-east-1",
+      accessKeyId: "test-access-key",
+      secretAccessKey: "test-secret-key",
+    });
+    expect(await client.getTags("object")).toEqual({ state: "ready" });
+    expect(requests).toEqual(["GET /bucket/object?tagging="]);
+  });
+});
+
 describe("presigned url signature", () => {
   function verifyPresignedUrl(presigned: string, credentials: { secretAccessKey: string; region: string }) {
     const url = new URL(presigned);

@@ -461,6 +461,7 @@ impl S3Credentials {
             request_payer,
             session_token: session_token.is_some(),
             storage_class: storage_class.is_some(),
+            tagging: sign_options.tagging.is_some(),
         };
         let mut signed_headers_buf = [0u8; 256];
         let signed_headers: &[u8] = if sign_query {
@@ -734,8 +735,16 @@ impl S3Credentials {
                 )
                 .into_boxed_slice();
             } else {
+                // Tags can exceed the stack buffer after percent encoding.
+                let mut tagging_buffer = Vec::new();
+                let canonical_buffer = if let Some(tagging) = sign_options.tagging {
+                    tagging_buffer.resize(tmp_buffer.len() + tagging.len() + 32, 0);
+                    tagging_buffer.as_mut_slice()
+                } else {
+                    &mut tmp_buffer
+                };
                 let canonical = CanonicalRequest::format(
-                    &mut tmp_buffer,
+                    canonical_buffer,
                     header_key,
                     method_name.as_bytes(),
                     normalized_path,
@@ -749,6 +758,7 @@ impl S3Credentials {
                     &amz_date,
                     session_token,
                     storage_class,
+                    sign_options.tagging,
                     signed_headers,
                 )
                 .map_err(|_| SignError::NoSpaceLeft)?;
@@ -807,6 +817,7 @@ impl S3Credentials {
             || search_params.is_some_and(contains_newline_or_cr)
             || acl.is_some_and(contains_newline_or_cr)
             || storage_class.is_some_and(contains_newline_or_cr)
+            || sign_options.tagging.is_some_and(contains_newline_or_cr)
             || content_md5.as_deref().is_some_and(contains_newline_or_cr)
             || content_disposition.is_some_and(contains_newline_or_cr)
             || content_encoding.is_some_and(contains_newline_or_cr)
@@ -895,6 +906,13 @@ impl S3Credentials {
             result._headers_len += 1;
         }
 
+        if let Some(tagging) = sign_options.tagging {
+            result.tagging = Box::from(tagging);
+            result._headers[result._headers_len as usize] =
+                pico_header_new(b"x-amz-tagging", &result.tagging);
+            result._headers_len += 1;
+        }
+
         Ok(result)
     }
 }
@@ -967,6 +985,7 @@ const DIGESTED_HMAC_256_LEN: usize = 32;
 // ──────────────────────────────────────────────────────────────────────────
 
 pub struct SignResult {
+    pub(crate) tagging: Box<[u8]>,
     pub(crate) amz_date: Box<[u8]>,
     pub(crate) host: Box<[u8]>,
     pub(crate) authorization: Box<[u8]>,
@@ -986,7 +1005,7 @@ pub struct SignResult {
 }
 
 impl SignResult {
-    pub const MAX_HEADERS: usize = 11;
+    pub const MAX_HEADERS: usize = 12;
 
     pub fn headers(&self) -> &[PicoHeader] {
         &self._headers[0..self._headers_len as usize]
@@ -1010,6 +1029,7 @@ impl SignResult {
 impl Default for SignResult {
     fn default() -> Self {
         Self {
+            tagging: Box::default(),
             amz_date: Box::default(),
             host: Box::default(),
             authorization: Box::default(),
@@ -1037,6 +1057,7 @@ impl Drop for SignResult {
         zero_sensitive(&mut self.host);
         zero_sensitive(&mut self.authorization);
         zero_sensitive(&mut self.url);
+        zero_sensitive(&mut self.tagging);
         // content_md5 is not sensitive; Box drop handles it.
     }
 }
@@ -1060,6 +1081,7 @@ pub struct SignQueryOptions {
 // borrow. PORTING.md discourages struct lifetimes, but raw pointers here would be strictly worse.
 #[derive(Clone, Copy)]
 pub struct SignOptions<'a> {
+    pub tagging: Option<&'a [u8]>,
     pub path: &'a [u8],
     pub method: Method,
     pub content_hash: Option<&'a [u8]>,
@@ -1217,6 +1239,7 @@ pub enum SignError {
 impl<'a> Default for SignOptions<'a> {
     fn default() -> Self {
         Self {
+            tagging: None,
             path: b"",
             method: Method::GET,
             content_hash: None,
@@ -1260,6 +1283,7 @@ pub struct S3CredentialsWithOptions {
 /// Headers must be in alphabetical order per AWS Signature V4 spec.
 #[derive(Clone, Copy, Default)]
 pub(crate) struct SignedHeadersKey {
+    pub tagging: bool,
     pub content_disposition: bool,
     pub content_encoding: bool,
     pub content_md5: bool,
@@ -1306,6 +1330,9 @@ impl SignedHeaders {
         if key.storage_class {
             push!(b";x-amz-storage-class");
         }
+        if key.tagging {
+            push!(b";x-amz-tagging");
+        }
         // SAFETY: n <= 256 by construction.
         unsafe { core::slice::from_raw_parts(buf.as_ptr(), n) }
     }
@@ -1334,6 +1361,7 @@ impl CanonicalRequest {
         date: &[u8],
         session_token: Option<&[u8]>,
         storage_class: Option<&[u8]>,
+        tagging: Option<&[u8]>,
         signed_headers: &[u8],
     ) -> Result<&'b [u8], core::fmt::Error> {
         let mut c = bun_core::fmt::SliceCursor::new(buf);
@@ -1385,6 +1413,9 @@ impl CanonicalRequest {
                 "x-amz-storage-class:{}\n",
                 BStr::new(storage_class.unwrap())
             );
+        }
+        if let Some(tagging) = tagging {
+            w!("x-amz-tagging:{}\n", BStr::new(tagging));
         }
         // signed_headers, hash
         w!("\n{}\n{}", BStr::new(signed_headers), BStr::new(hash));

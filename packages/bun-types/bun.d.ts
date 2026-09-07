@@ -2133,6 +2133,21 @@ declare module "bun" {
    * @returns A promise that resolves with the number of bytes written.
    */
   function write(
+    destination: S3File | `s3://${string}`,
+    input:
+      | Blob
+      | NodeJS.TypedArray
+      | ArrayBufferLike
+      | string
+      | BlobPart[]
+      | Archive
+      | ReadableStream
+      | Response
+      | Request,
+    options?: S3WriteOptions,
+  ): Promise<number>;
+
+  function write(
     destination: BunFile | S3File | PathLike,
     input: Blob | NodeJS.TypedArray | ArrayBufferLike | string | BlobPart[] | Archive | ReadableStream,
     options?: {

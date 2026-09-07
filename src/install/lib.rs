@@ -396,10 +396,80 @@ pub struct RunCommand;
 pub static PRETEND_TO_BE_NODE: core::sync::atomic::AtomicBool =
     core::sync::atomic::AtomicBool::new(false);
 
-#[cfg(not(windows))]
 use bun_core::ZStr;
 
 impl RunCommand {
+    #[cfg(windows)]
+    pub fn windows_bun_node_dir(buf: &mut bun_paths::PathBuffer) -> Result<&ZStr, crate::Error> {
+        use bun_core::{fmt, strings};
+        use bun_sys::windows as win;
+
+        let mut temp_w = bun_paths::w_path_buffer_pool::get();
+        // SAFETY: temp_w is writable for the capacity passed to GetTempPathW.
+        let len = unsafe { win::GetTempPathW(temp_w.len() as u32, temp_w.as_mut_ptr()) } as usize;
+        if len == 0 {
+            return Err(
+                bun_sys::Error::from_win32(win::Win32Error::get(), bun_sys::Tag::open).into(),
+            );
+        }
+        if len >= temp_w.len() {
+            return Err(crate::Error::NameTooLong);
+        }
+        let mut temp_utf8 = bun_paths::path_buffer_pool::get();
+        let len = strings::convert_utf16_to_utf8_in_buffer(&mut temp_utf8, &temp_w[..len]).len();
+        temp_utf8[len] = 0;
+        let mut root_buf = bun_paths::path_buffer_pool::get();
+        // Scripts using system Node need not have an accessible temporary directory.
+        let root = bun_sys::Dir::open(&temp_utf8[..len])
+            .and_then(|dir| bun_sys::get_fd_path(dir.fd(), &mut root_buf).map(|p| &*p))
+            .unwrap_or(&temp_utf8[..len]);
+        let root = strings::without_trailing_slash(root);
+        let executable = bun_core::self_exe_path()?;
+        let parent = bun_paths::dirname(executable.as_bytes()).ok_or(crate::Error::NotDir)?;
+        let name = bun_paths::basename(executable.as_bytes());
+
+        // A Windows hardlink has no canonical original name; nested --bun must retain its alias directory.
+        if (name.eq_ignore_ascii_case(b"bun.exe") || name.eq_ignore_ascii_case(b"node.exe"))
+            && parent
+                .strip_prefix(root)
+                .and_then(|p| p.strip_prefix(b"\\"))
+                .is_some_and(|p| {
+                    p == b"bun-node"
+                        || p == b"bun-node-debug"
+                        || p.strip_prefix(b"bun-node-").is_some_and(|hash| {
+                            !hash.is_empty()
+                                && hash.len() <= 16
+                                && hash.iter().all(u8::is_ascii_hexdigit)
+                        })
+                })
+        {
+            let source = bun_sys::stat(executable)?;
+            for name in ["node.exe", "bun.exe"] {
+                let alias =
+                    fmt::buf_print_z(buf, format_args!("{}\\{}", bstr::BStr::new(parent), name))
+                        .map_err(|_| crate::Error::NameTooLong)?;
+                let alias = bun_sys::lstat(alias)?;
+                if bun_sys::kind_from_mode(alias.st_mode as bun_sys::Mode)
+                    != bun_sys::FileKind::File
+                    || alias.st_dev != source.st_dev
+                    || alias.st_ino != source.st_ino
+                {
+                    return Err(crate::Error::AccessDenied);
+                }
+            }
+            return fmt::buf_print_z(buf, format_args!("{}", bstr::BStr::new(parent)))
+                .map_err(|_| crate::Error::NameTooLong);
+        }
+
+        // Replacing an installation in place must not change its child runtime paths.
+        let hash = bun_wyhash::Wyhash11::hash(0, executable.as_bytes());
+        fmt::buf_print_z(
+            buf,
+            format_args!("{}\\bun-node-{:016x}", bstr::BStr::new(root), hash),
+        )
+        .map_err(|_| crate::Error::NameTooLong)
+    }
+
     #[cfg(not(windows))]
     const SHELLS_TO_SEARCH: &'static [&'static [u8]] = &[b"bash", b"sh", b"zsh"];
 
@@ -644,100 +714,88 @@ impl RunCommand {
 
         #[cfg(windows)]
         {
-            use bun_core::strings;
+            use bun_core::fmt;
             use bun_sys::windows as win;
 
-            let mut target_path_buffer = bun_paths::w_path_buffer_pool::get();
-            let prefix: &[u16] = strings::w!("\\??\\");
-
-            // SAFETY: GetTempPathW writes at most `nBufferLength` WCHARs (incl.
-            // trailing NUL) into the offset slice; we reserve `prefix.len()` at
-            // the front for the NT object prefix.
-            let len = unsafe {
-                win::GetTempPathW(
-                    (target_path_buffer.len() - prefix.len()) as u32,
-                    target_path_buffer.as_mut_ptr().add(prefix.len()),
-                )
-            } as usize;
-            if len == 0 {
-                // Non-fatal; fall through and leave
-                // PATH unmodified. (No `RUN` scope is declared in this crate.)
-                return Ok(());
+            let mut dir_buf = bun_paths::path_buffer_pool::get();
+            let dir = Self::windows_bun_node_dir(&mut dir_buf)?;
+            match bun_sys::mkdir(dir, 0o700) {
+                Ok(()) => {}
+                Err(e) if e.get_errno() == bun_sys::E::EEXIST => {}
+                Err(e) => return Err(e.into()),
             }
-
-            target_path_buffer[..prefix.len()].copy_from_slice(prefix);
-
-            // The dir name is ASCII-only, so widen the const `&str` byte-by-
-            // byte into a small stack buffer at runtime (Rust macros require a
-            // single string *literal* token, which `concatcp!` doesn't yield).
-            let dir_name_str: &str = if bun_core::env::IS_DEBUG {
-                "bun-node-debug"
-            } else if bun_core::env::GIT_SHA_SHORT.is_empty() {
-                "bun-node"
-            } else {
-                const_format::concatcp!("bun-node-", bun_core::env::GIT_SHA_SHORT)
-            };
-            let mut dir_name_buf = [0u16; 64];
-            for (i, b) in dir_name_str.bytes().enumerate() {
-                debug_assert!(b < 0x80, "dir_name is ASCII-only");
-                dir_name_buf[i] = b as u16;
-            }
-            let dir_name: &[u16] = &dir_name_buf[..dir_name_str.len()];
-            target_path_buffer[prefix.len() + len..][..dir_name.len()].copy_from_slice(dir_name);
-            let dir_slice_len = prefix.len() + len + dir_name.len();
-
-            #[cfg(bun_debug)]
+            if bun_sys::kind_from_mode(bun_sys::lstat(dir)?.st_mode as bun_sys::Mode)
+                != bun_sys::FileKind::Directory
             {
-                // Debug builds wipe and recreate the bun-node temp dir so the
-                // ALREADY_EXISTS short-circuit below never reuses a stale
-                // hardlink at a previous debug binary.
-                //
-                // The wipe does not always leave the path absent:
-                // `bun-run.test.ts` uses
-                // `describe.concurrent`, so multiple debug processes race on
-                // this shared dir and `make_dir` can legitimately observe
-                // `PathAlreadyExists` after a sibling re-created it. Swallow
-                // the error — the `CreateHardLinkW` retry below already
-                // re-mkdirs on failure, so a lost race here is harmless.
-                let dir_slice_u8 = bun_core::strings::to_utf8_alloc_with_type(
-                    &target_path_buffer[..dir_slice_len],
-                );
-                let _ = bun_sys::delete_tree_absolute(&dir_slice_u8);
-                let _ = bun_sys::Dir::cwd().make_dir(&dir_slice_u8);
+                return Err(crate::Error::NotDir);
             }
 
-            let image_path = win::exe_path_w();
-            for name in [strings::w!("\\node.exe\0"), strings::w!("\\bun.exe\0")] {
-                target_path_buffer[dir_slice_len..][..name.len()].copy_from_slice(name);
-                // `target_path_buffer` is mutated in place between FFI calls
-                // (the dir-NUL/backslash toggle below).
-                // Under Stacked Borrows a `*const` derived via `Deref::deref`
-                // is invalidated by the intervening `&mut` from `IndexMut`, so
-                // re-derive `as_ptr()` at each FFI call site instead of caching.
-                if win::CreateHardLinkW(target_path_buffer.as_ptr(), image_path.as_ptr(), None) == 0
-                {
-                    match win::Win32Error::get() {
-                        win::Win32Error::ALREADY_EXISTS => {}
-                        _ => {
-                            target_path_buffer[dir_slice_len] = 0;
-                            // SAFETY: `dir_slice_len` is in-bounds; the byte at
-                            // `dir_slice_len` was just set to NUL.
-                            let dir_w =
-                                bun_core::WStr::from_buf(&target_path_buffer[..], dir_slice_len);
-                            let _ = bun_sys::mkdir_w(dir_w);
-                            target_path_buffer[dir_slice_len] = b'\\' as u16;
-
-                            if win::CreateHardLinkW(
-                                target_path_buffer.as_ptr(),
-                                image_path.as_ptr(),
-                                None,
-                            ) == 0
-                            {
-                                return Ok(());
-                            }
-                        }
+            let executable = bun_core::self_exe_path()?;
+            let source = bun_sys::stat(executable)?;
+            let mut image_w = bun_paths::w_path_buffer_pool::get();
+            let image_w = bun_paths::string_paths::to_w_path_normalize_auto_extend(
+                &mut image_w,
+                executable.as_bytes(),
+            );
+            let mut alias_buf = bun_paths::path_buffer_pool::get();
+            let mut pending_buf = bun_paths::path_buffer_pool::get();
+            let mut pending_w = bun_paths::w_path_buffer_pool::get();
+            for name in ["node.exe", "bun.exe"] {
+                let alias = fmt::buf_print_z(
+                    &mut alias_buf[..],
+                    format_args!("{}\\{}", bstr::BStr::new(dir.as_bytes()), name),
+                )
+                .map_err(|_| crate::Error::NameTooLong)?;
+                match bun_sys::lstat(alias) {
+                    Ok(st)
+                        if bun_sys::kind_from_mode(st.st_mode as bun_sys::Mode)
+                            == bun_sys::FileKind::File
+                            && st.st_dev == source.st_dev
+                            && st.st_ino == source.st_ino =>
+                    {
+                        continue;
                     }
+                    Ok(_) => {}
+                    Err(e) if e.get_errno() == bun_sys::E::ENOENT => {}
+                    Err(e) => return Err(e.into()),
                 }
+                let pending = fmt::buf_print_z(
+                    &mut pending_buf[..],
+                    format_args!(
+                        "{}.{:016x}.tmp",
+                        bstr::BStr::new(alias.as_bytes()),
+                        bun_core::fast_random()
+                    ),
+                )
+                .map_err(|_| crate::Error::NameTooLong)?;
+                let wide = bun_paths::string_paths::to_w_path_normalize_auto_extend(
+                    &mut pending_w,
+                    pending.as_bytes(),
+                );
+                if win::CreateHardLinkW(wide.as_ptr(), image_w.as_ptr(), None) == 0 {
+                    return Err(bun_sys::Error::from_win32(
+                        win::Win32Error::get(),
+                        bun_sys::Tag::link,
+                    )
+                    .into());
+                }
+                let _cleanup = scopeguard::guard(pending, |path| {
+                    let _ = bun_sys::unlink(path);
+                });
+                // Renaming a mapped executable needs DELETE access, not GENERIC_WRITE.
+                let fd = bun_sys::open_file_at_windows(
+                    bun_sys::Fd::cwd(),
+                    wide,
+                    bun_sys::NtCreateFileOptions {
+                        access_mask: win::SYNCHRONIZE | win::DELETE,
+                        disposition: win::FILE_OPEN,
+                        options: win::FILE_SYNCHRONOUS_IO_NONALERT | win::FILE_OPEN_REPARSE_POINT,
+                        ..Default::default()
+                    },
+                )?;
+                let _close = bun_sys::CloseOnDrop::new(fd);
+                let target = bun_paths::string_paths::to_nt_path(&mut pending_w, alias.as_bytes());
+                win::move_opened_file_at(fd, bun_sys::Fd::cwd(), target, true)?;
             }
 
             if !path.is_empty() && *path.last().unwrap() != bun_paths::DELIMITER {
@@ -747,9 +805,9 @@ impl RunCommand {
             // The reason for the extra delim is because we are going to append the system PATH
             // later on. this is done by the caller, and explains why we are adding bun_node_dir
             // to the end of the path slice rather than the start.
-            strings::to_utf8_append_to_list(path, &target_path_buffer[prefix.len()..dir_slice_len]);
+            path.extend_from_slice(dir.as_bytes());
             path.push(bun_paths::DELIMITER);
-            let _ = optional_bun_path;
+            *optional_bun_path = executable.as_bytes();
             Ok(())
         }
     }

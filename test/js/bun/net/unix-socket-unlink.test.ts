@@ -150,8 +150,10 @@ describe.skipIf(isWindows)("unix domain socket unlink", () => {
   });
 
   describe("a listener left open at exit", () => {
-    test.concurrent("net.Server: unref'd server's socket file is removed on natural exit", async () => {
-      const left = await socketFileAfterExit(`
+    const unrefFixtures: [string, string][] = [
+      [
+        "net.Server",
+        `
         import { existsSync } from "node:fs";
         import { createServer } from "node:net";
         const path = process.argv[2];
@@ -159,9 +161,34 @@ describe.skipIf(isWindows)("unix domain socket unlink", () => {
           console.log("listening", existsSync(path));
           server.unref();
         });
-      `);
-      expect(left).toBe(false);
-    });
+      `,
+      ],
+      [
+        "Bun.listen",
+        `
+        import { existsSync } from "node:fs";
+        const path = process.argv[2];
+        const listener = Bun.listen({ unix: path, socket: { data() {}, open() {} } });
+        console.log("listening", existsSync(path));
+        listener.unref();
+      `,
+      ],
+      [
+        "Bun.serve",
+        `
+        import { existsSync } from "node:fs";
+        const path = process.argv[2];
+        const server = Bun.serve({ unix: path, fetch: () => new Response("ok") });
+        console.log("listening", existsSync(path));
+        server.unref();
+      `,
+      ],
+    ];
+    for (const [kind, script] of unrefFixtures) {
+      test.concurrent(`${kind}: unref'd listener's socket file is removed on natural exit`, async () => {
+        expect(await socketFileAfterExit(script)).toBe(false);
+      });
+    }
 
     test.concurrent("net.Server: the same path can be listened on again by the next process", async () => {
       using dir = tempDir("uds-unlink-relisten", {
@@ -203,28 +230,6 @@ describe.skipIf(isWindows)("unix domain socket unlink", () => {
       `,
         3,
       );
-      expect(left).toBe(false);
-    });
-
-    test.concurrent("Bun.listen: unref'd listener's socket file is removed on natural exit", async () => {
-      const left = await socketFileAfterExit(`
-        import { existsSync } from "node:fs";
-        const path = process.argv[2];
-        const listener = Bun.listen({ unix: path, socket: { data() {}, open() {} } });
-        console.log("listening", existsSync(path));
-        listener.unref();
-      `);
-      expect(left).toBe(false);
-    });
-
-    test.concurrent("Bun.serve: unref'd server's socket file is removed on natural exit", async () => {
-      const left = await socketFileAfterExit(`
-        import { existsSync } from "node:fs";
-        const path = process.argv[2];
-        const server = Bun.serve({ unix: path, fetch: () => new Response("ok") });
-        console.log("listening", existsSync(path));
-        server.unref();
-      `);
       expect(left).toBe(false);
     });
 

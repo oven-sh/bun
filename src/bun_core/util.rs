@@ -2742,22 +2742,26 @@ pub fn self_exe_path() -> crate::CrateResult<&'static ZStr> {
         }
         #[cfg(windows)]
         {
-            // Store the WTF-8 form. `into_string()` rejects unpaired
-            // surrogates; fall back to the lossy form (Windows exe paths are valid
-            // Unicode in practice).
-            let mut s = path
-                .into_os_string()
-                .into_string()
-                .unwrap_or_else(|os| os.to_string_lossy().into_owned());
-            // `canonicalize()` on Windows returns a verbatim `\\?\` path; strip
-            // that back to a plain DOS path before WTF-8 encoding (Node's
-            // `process.execPath` is never verbatim-prefixed).
-            if let Some(rest) = s.strip_prefix(r"\\?\UNC\") {
-                s = format!(r"\\{}", rest);
-            } else if let Some(rest) = s.strip_prefix(r"\\?\") {
-                s = rest.to_owned();
+            use std::os::windows::ffi::OsStrExt;
+
+            // Preserve Windows paths containing unpaired UTF-16 surrogates.
+            let mut s = Vec::with_capacity(path.as_os_str().len());
+            for rune in char::decode_utf16(path.as_os_str().encode_wide()) {
+                let cp = rune.map_or_else(|e| e.unpaired_surrogate() as u32, |c| c as u32);
+                let mut bytes = [0; 4];
+                let len = crate::strings::encode_wtf8_rune(&mut bytes, cp);
+                s.extend_from_slice(&bytes[..len]);
             }
-            Ok(ZBox::from_vec_with_nul(s.into_bytes()))
+            // `canonicalize()` on Windows returns a verbatim `\\?\` path; strip
+            // that back to a plain DOS path (Node's
+            // `process.execPath` is never verbatim-prefixed).
+            if s.starts_with(br"\\?\UNC\") {
+                s.drain(..6);
+                s[0] = b'\\';
+            } else if s.starts_with(br"\\?\") {
+                s.drain(..4);
+            }
+            Ok(ZBox::from_vec_with_nul(s))
         }
     });
     match r {

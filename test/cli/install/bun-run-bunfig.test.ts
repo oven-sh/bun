@@ -110,6 +110,78 @@ describe.skipIf(!isWindows).each(["bunfig", "--bun"])("Windows node aliases (%s)
     await probe(cwd, install(cwd, "first.exe"), "child");
   });
 
+  test.concurrent("runs from an installation path containing an unpaired surrogate", async () => {
+    const { dlopen, ptr } = await import("bun:ffi");
+    const kernel = dlopen("kernel32.dll", {
+      CreateHardLinkW: { args: ["ptr", "ptr", "ptr"], returns: "i32" },
+      CreateProcessW: {
+        args: ["ptr", "ptr", "ptr", "ptr", "i32", "u32", "ptr", "ptr", "ptr", "ptr"],
+        returns: "i32",
+      },
+      WaitForSingleObject: { args: ["u64", "u32"], returns: "u32" },
+      GetExitCodeProcess: { args: ["u64", "ptr"], returns: "i32" },
+      TerminateProcess: { args: ["u64", "u32"], returns: "i32" },
+      CloseHandle: { args: ["u64"], returns: "i32" },
+      DeleteFileW: { args: ["ptr"], returns: "i32" },
+    });
+    using closeKernel = { [Symbol.dispose]: () => kernel.close() };
+    using cwd = tempDir("bun-surrogate-path", {
+      "package.json": JSON.stringify({ scripts: { probe: "node probe.js" } }),
+      "bunfig.toml": mode === "bunfig" ? "[run]\nbun = true\n" : "",
+      "probe.js": 'require("fs").writeFileSync("result.txt", "OK");',
+      "cache/.keep": "",
+    });
+    const wide = (value: string) => Buffer.from(value + "\0", "utf16le");
+    const executable = wide(pathJoin(cwd, "bun-\uD800.exe"));
+    const source = wide(bunExe());
+    const command = wide(`"${pathJoin(cwd, "bun-\uD800.exe")}" --silent ${mode === "--bun" ? "--bun " : ""}run probe`);
+    const directory = wide(String(cwd));
+    const environment = wide(
+      Object.entries({ ...bunEnv, TEMP: pathJoin(cwd, "cache"), TMP: pathJoin(cwd, "cache") })
+        .filter(([, value]) => value !== undefined)
+        .map(([key, value]) => `${key}=${value}\0`)
+        .join(""),
+    );
+    const startup = Buffer.alloc(104);
+    startup.writeUInt32LE(startup.length);
+    const info = Buffer.alloc(24);
+    const k = kernel.symbols;
+    expect(k.CreateHardLinkW(ptr(executable), ptr(source), null)).toBe(1);
+    let processHandle = 0n;
+    let threadHandle = 0n;
+    try {
+      expect(
+        k.CreateProcessW(
+          null,
+          ptr(command),
+          null,
+          null,
+          0,
+          0x400,
+          ptr(environment),
+          ptr(directory),
+          ptr(startup),
+          ptr(info),
+        ),
+      ).toBe(1);
+      processHandle = info.readBigUInt64LE(0);
+      threadHandle = info.readBigUInt64LE(8);
+      expect(k.WaitForSingleObject(processHandle, 30000)).toBe(0);
+      const exitCode = Buffer.alloc(4);
+      expect(k.GetExitCodeProcess(processHandle, ptr(exitCode))).toBe(1);
+      expect(await Bun.file(pathJoin(cwd, "result.txt")).text()).toBe("OK");
+      expect(exitCode.readUInt32LE()).toBe(0);
+    } finally {
+      if (processHandle) {
+        k.TerminateProcess(processHandle, 1);
+        k.WaitForSingleObject(processHandle, 30000);
+        k.CloseHandle(processHandle);
+        k.CloseHandle(threadHandle);
+      }
+      expect(k.DeleteFileW(ptr(executable))).toBe(1);
+    }
+  });
+
   test.concurrent("rejects an alias directory replaced with a junction", async () => {
     using cwd = fixture();
     const first = install(cwd, "first.exe");

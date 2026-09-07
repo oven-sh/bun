@@ -377,7 +377,7 @@ describe.skipIf(isWindows)("tty.ReadStream is a net.Socket over a native TTY han
             s.unref();
             const child = spawn(
               process.execPath,
-              ["-e", "process.stdin.on('data', d => process.stdout.write('CHILD:' + d)); process.stdin.on('end', () => process.exit(0))"],
+              ["-e", "process.stdin.on('data', d => process.stdout.write('CHILD:' + d)); process.stdin.on('end', () => process.exit(0)); console.log('CHILDREADY')"],
               { stdio: "inherit" },
             );
             child.on("exit", exitCode => {
@@ -396,15 +396,15 @@ describe.skipIf(isWindows)("tty.ReadStream is a net.Socket over a native TTY han
           // Cooked mode now: a whole line.
           terminal.write("b\n");
         },
-        async terminal => {
-          // Give the child time to start reading the shared terminal.
-          await new Promise(r => setTimeout(r, 500));
+        () => {},
+        terminal => {
           terminal.write("hello child\n");
-          await new Promise(r => setTimeout(r, 200));
+        },
+        terminal => {
           terminal.write("\x04");
         },
       ],
-      { markers: ["P1", "P2", "P3"] },
+      { markers: ["P1", "P2", "P3", "CHILDREADY", "CHILD:hello child"] },
     );
     expect(code).toBe(0);
     const text = Bun.stripANSI(output());
@@ -480,6 +480,7 @@ describe.skipIf(isWindows)("tty.ReadStream is a net.Socket over a native TTY han
         const events = [];
         handle.onread = function (nread, buf) {
           events.push([nread, buf === undefined ? null : buf.toString(), this === handle]);
+          process.stdout.write("READ " + events.length + "\\n");
           if (nread === -4095) {
             process.stdout.write("RESULT " + JSON.stringify({ events, bytesRead: handle.bytesRead, fd: handle.fd }) + "\\n");
             handle.close();
@@ -489,14 +490,15 @@ describe.skipIf(isWindows)("tty.ReadStream is a net.Socket over a native TTY han
         process.stdout.write("started=" + handle.readStart() + "\\n");
       `,
       [
-        async terminal => {
+        terminal => {
           // Cooked mode: a line per read, and ^D at the start of a line is EOF.
           terminal.write("abc\n");
-          await new Promise(r => setTimeout(r, 100));
+        },
+        terminal => {
           terminal.write("\x04");
         },
       ],
-      { markers: ["started=0"] },
+      { markers: ["started=0", "READ 1"] },
     );
     expect(code).toBe(0);
     const match = Bun.stripANSI(output()).match(/RESULT (\{.*\})/);

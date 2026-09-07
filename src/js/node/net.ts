@@ -2294,12 +2294,12 @@ Socket.prototype._destroy = function _destroy(err, callback) {
   if (this._handle) {
     $debug("close handle");
     const isException = err ? true : false;
+    const currentHandle = this._handle;
     // `bytesRead` and `kBytesWritten` should be accessible after `.destroy()`
     // this[kBytesRead] = this._handle.bytesRead;
     // A stream-wrap handle does not write: streamWrapSyncWrite keeps the count here.
-    if (!isStreamWrapHandle(this._handle)) this[kBytesWritten] = this._handle.bytesWritten;
+    if (!isStreamWrapHandle(currentHandle)) this[kBytesWritten] = currentHandle.bytesWritten;
 
-    const currentHandle = this._handle;
     if (this.resetAndClosing) {
       this.resetAndClosing = false;
       // resetAndDestroy() must send an RST (not a graceful FIN) so the peer sees

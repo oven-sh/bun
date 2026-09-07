@@ -44,7 +44,7 @@ unsafe extern "C" {
 
 bitflags::bitflags! {
     #[derive(Clone, Copy, Default)]
-    pub struct Flags: u8 {
+    pub struct Flags: u16 {
         /// Between `readStart()` and `readStop()`.
         const READING        = 1 << 0;
         const CLOSED         = 1 << 1;
@@ -60,6 +60,8 @@ bitflags::bitflags! {
         const UNPOLLABLE     = 1 << 6;
         /// `close()` closes `fd` too: libuv owns a non-stdio fd it could not reopen.
         const OWNS_FD        = 1 << 7;
+        /// Inside `with_reader`: a done/error the reader reports is parked.
+        const IN_READER      = 1 << 8;
     }
 }
 
@@ -81,6 +83,8 @@ pub struct TTY {
     this_value: JsCell<JsRef>,
     bytes_read: Cell<u64>,
     flags: Cell<Flags>,
+    /// The `nread` of a done/error reported while the reader was borrowed.
+    parked_finish: Cell<Option<i32>>,
 
     /// Per-handle raw-mode state (libuv keeps it on each `uv_tty_t`), so one
     /// handle leaving raw mode never disturbs another on the same terminal.
@@ -159,6 +163,21 @@ impl TTY {
         unsafe { bun_ptr::RefCount::<TTY>::deref(self.as_ctx_ptr()) };
     }
 
+    /// Every reader access goes through here. The reader can report done or
+    /// an error synchronously (a refused poll registration), and `onread` may
+    /// re-enter this handle (`readStop()`, `close()`), so that report is
+    /// parked and delivered once the `&mut BufferedReader` is gone.
+    fn with_reader<R>(&self, f: impl FnOnce(&mut BufferedReader) -> R) -> R {
+        debug_assert!(!self.flags.get().contains(Flags::IN_READER));
+        self.update_flags(|fl| fl.insert(Flags::IN_READER));
+        let result = self.reader.with_mut(f);
+        self.update_flags(|fl| fl.remove(Flags::IN_READER));
+        if let Some(nread) = self.parked_finish.take() {
+            self.finish(nread);
+        }
+        result
+    }
+
     /// `new TTY(fd, ctx)`. An fd `uv_tty_init` rejects reports through `ctx`
     /// and yields a closed handle, as in Node.
     pub(crate) fn constructor(
@@ -189,6 +208,7 @@ impl TTY {
             this_value: JsCell::new(JsRef::init_weak(this_value)),
             bytes_read: Cell::new(0),
             flags: Cell::new(Flags::empty()),
+            parked_finish: Cell::new(None),
             #[cfg(unix)]
             tty_state: Cell::new(bun_core::tty::State::new()),
         }));
@@ -258,7 +278,7 @@ impl TTY {
 
         self.read_fd.set(read_fd);
 
-        let started = self.reader.with_mut(|r| {
+        let started = self.with_reader(|r| {
             #[cfg(unix)]
             {
                 r.flags.set(PosixFlags::NONBLOCKING, nonblocking);
@@ -274,7 +294,7 @@ impl TTY {
         }
         // The loop refused the poll (`on_reader_error` ran): close the reader's fd.
         if self.flags.get().contains(Flags::READER_DONE) {
-            self.reader.with_mut(|r| r.close());
+            self.with_reader(|r| r.close());
             self.read_fd.set(Fd::INVALID);
             return Err(StartError::Unpollable);
         }
@@ -284,7 +304,7 @@ impl TTY {
             f.set(Flags::OWNS_FD, owns_fd);
         });
 
-        self.reader.with_mut(|r| {
+        self.with_reader(|r| {
             #[cfg(unix)]
             if let Some(poll) = r.handle.get_poll() {
                 if nonblocking {
@@ -312,7 +332,7 @@ impl TTY {
         self.update_flags(|f| f.insert(Flags::READING));
         let global = self.global();
         self.this_value.with_mut(|v| v.upgrade(global));
-        self.reader.with_mut(|r| {
+        self.with_reader(|r| {
             r.unpause();
             #[cfg(unix)]
             if !r.has_pending_read() {
@@ -320,7 +340,7 @@ impl TTY {
             }
         });
         if !self.flags.get().contains(Flags::UNREFFED) {
-            self.reader.with_mut(|r| r.update_ref(true));
+            self.with_reader(|r| r.update_ref(true));
         }
         Ok(JSValue::js_number_from_int32(0))
     }
@@ -329,7 +349,7 @@ impl TTY {
         bun_output::scoped_log!(TTYWrap, "readStop");
         self.update_flags(|f| f.remove(Flags::READING));
         if self.flags.get().contains(Flags::READER_STARTED) {
-            self.reader.with_mut(|r| r.pause());
+            self.with_reader(|r| r.pause());
         }
         self.this_value.with_mut(|v| v.downgrade());
         Ok(JSValue::js_number_from_int32(0))
@@ -339,14 +359,14 @@ impl TTY {
         self.update_flags(|f| f.remove(Flags::UNREFFED));
         // Only an active handle holds the loop; `readStart()` adds the hold.
         if self.flags.get().contains(Flags::READING) {
-            self.reader.with_mut(|r| r.update_ref(true));
+            self.with_reader(|r| r.update_ref(true));
         }
         Ok(JSValue::UNDEFINED)
     }
 
     pub(crate) fn do_unref(&self, _g: &JSGlobalObject, _f: &CallFrame) -> JsResult<JSValue> {
         self.update_flags(|f| f.insert(Flags::UNREFFED));
-        self.reader.with_mut(|r| r.update_ref(false));
+        self.with_reader(|r| r.update_ref(false));
         Ok(JSValue::UNDEFINED)
     }
 
@@ -385,7 +405,7 @@ impl TTY {
                 let rc = if rc == 0 { 0 } else { uv_errno(rc as u16) };
                 return Ok(JSValue::js_number_from_int32(rc));
             }
-            let rc = match self.reader.with_mut(|r| r.set_raw_mode(raw)) {
+            let rc = match self.with_reader(|r| r.set_raw_mode(raw)) {
                 Ok(()) => 0,
                 Err(err) => uv_errno(err.errno),
             };
@@ -459,7 +479,7 @@ impl TTY {
         });
         if self.flags.get().contains(Flags::READER_STARTED) {
             // `on_reader_done` releases the reader's ref once the poll and fd close.
-            self.reader.with_mut(|r| r.close());
+            self.with_reader(|r| r.close());
         }
         self.read_fd.set(Fd::INVALID);
         #[cfg(unix)]
@@ -538,16 +558,24 @@ impl TTY {
         if self.flags.get().contains(Flags::READER_DONE) {
             return;
         }
-        let was_closed = self.flags.get().contains(Flags::CLOSED);
         self.update_flags(|f| {
             f.insert(Flags::READER_DONE);
             f.remove(Flags::READING);
         });
-        if !was_closed {
+        if self.flags.get().contains(Flags::IN_READER) {
+            self.parked_finish.set(Some(nread));
+            return;
+        }
+        self.finish(nread);
+    }
+
+    /// Reports the end to JS and drops the reader's ref. No reader borrow is
+    /// live here. May free `self`.
+    fn finish(&self, nread: i32) {
+        if !self.flags.get().contains(Flags::CLOSED) {
             self.call_onread(nread, JSValue::UNDEFINED);
         }
         self.this_value.with_mut(|v| v.downgrade());
-        // The ref the reader took in `start_reader`. May free `self`.
         if self.flags.get().contains(Flags::READER_STARTED) {
             self.deref_();
         }

@@ -3155,6 +3155,95 @@ describe("writeFile/appendFile data argument", () => {
   });
 });
 
+describe("fs options argument", () => {
+  // Node's getOptions(): the `options` slot is a string (encoding shorthand), an
+  // object, null/undefined, or a function (a callback). Anything else throws.
+  // A positional mode like `writeFileSync(p, data, 0o600)` must not silently
+  // write a 0o644 file.
+  const message = (received: string) =>
+    `The "options" argument must be one of type string or object. Received ${received}`;
+  const bad: [unknown, string][] = [
+    [0o600, "type number (384)"],
+    [0, "type number (0)"],
+    [true, "type boolean (true)"],
+    [false, "type boolean (false)"],
+    [Symbol("s"), "type symbol (Symbol(s))"],
+    [5n, "type bigint (5n)"],
+  ];
+
+  it("sync and callback forms throw ERR_INVALID_ARG_TYPE for a non-string, non-object options value", () => {
+    using dir = tempDir("fs-options-type", { "existing.txt": "x" });
+    const file = (name: string) => join(String(dir), name);
+    const existing = file("existing.txt");
+    const cb = () => {};
+
+    for (const [value, received] of bad) {
+      const opts = value as any;
+      const expected = expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE", message: message(received) });
+      expect(() => writeFileSync(file("write-sync.txt"), "KEY", opts)).toThrow(expected);
+      expect(() => fs.appendFileSync(file("append-sync.txt"), "KEY", opts)).toThrow(expected);
+      expect(() => fs.writeFile(file("write-cb.txt"), "KEY", opts, cb)).toThrow(expected);
+      expect(() => fs.appendFile(file("append-cb.txt"), "KEY", opts, cb)).toThrow(expected);
+      expect(() => readFileSync(existing, opts)).toThrow(expected);
+      expect(() => fs.readFile(existing, opts, cb)).toThrow(expected);
+      expect(() => readdirSync(String(dir), opts)).toThrow(expected);
+      expect(() => fs.readdir(String(dir), opts, cb)).toThrow(expected);
+      expect(() => readlinkSync(existing, opts)).toThrow(expected);
+      expect(() => fs.readlink(existing, opts, cb)).toThrow(expected);
+      expect(() => realpathSync(existing, opts)).toThrow(expected);
+      expect(() => fs.realpath(existing, opts, cb)).toThrow(expected);
+      expect(() => realpathSync.native(existing, opts)).toThrow(expected);
+      expect(() => fs.realpath.native(existing, opts, cb)).toThrow(expected);
+      expect(() => mkdtempSync(file("mkdtemp-"), opts)).toThrow(expected);
+      expect(() => fs.mkdtemp(file("mkdtemp-"), opts, cb)).toThrow(expected);
+      expect(() => fs.watch(String(dir), opts)).toThrow(expected);
+    }
+
+    // Nothing got written, and the valid forms still work.
+    expect(readdirSync(String(dir)).sort()).toEqual(["existing.txt"]);
+    writeFileSync(file("null.txt"), "a", null);
+    writeFileSync(file("undefined.txt"), "b", undefined);
+    writeFileSync(file("string.txt"), "c", "utf8");
+    writeFileSync(file("object.txt"), "d", { mode: 0o600 });
+    expect(readFileSync(file("null.txt"), null)).toEqual(Buffer.from("a"));
+    expect(readFileSync(file("string.txt"), "utf8")).toBe("c");
+    expect(readFileSync(file("object.txt"), { encoding: "utf8" })).toBe("d");
+    if (!isWindows) {
+      expect(statSync(file("object.txt")).mode & 0o777).toBe(0o600);
+    }
+  });
+
+  it("fs.promises and FileHandle forms reject with ERR_INVALID_ARG_TYPE", async () => {
+    using dir = tempDir("fs-options-type-promises", { "existing.txt": "x" });
+    const file = (name: string) => join(String(dir), name);
+    const existing = file("existing.txt");
+
+    const fh = await _promises.open(existing, "r+");
+    try {
+      for (const [value, received] of bad) {
+        const opts = value as any;
+        const expected = expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE", message: message(received) });
+        // These are async functions, so the error is a rejection, like node.
+        await expect(_promises.writeFile(file("write.txt"), "KEY", opts)).rejects.toThrow(expected);
+        await expect(_promises.writeFile(file("write-iter.txt"), ["KEY"], opts)).rejects.toThrow(expected);
+        await expect(_promises.appendFile(file("append.txt"), "KEY", opts)).rejects.toThrow(expected);
+        await expect(_promises.readFile(existing, opts)).rejects.toThrow(expected);
+        await expect(_promises.readdir(String(dir), opts)).rejects.toThrow(expected);
+        await expect(_promises.readlink(existing, opts)).rejects.toThrow(expected);
+        await expect(_promises.realpath(existing, opts)).rejects.toThrow(expected);
+        await expect(_promises.mkdtemp(file("mkdtemp-"), opts)).rejects.toThrow(expected);
+        await expect(fh.readFile(opts)).rejects.toThrow(expected);
+        await expect(fh.writeFile("KEY", opts)).rejects.toThrow(expected);
+        await expect(fh.appendFile("KEY", opts)).rejects.toThrow(expected);
+      }
+    } finally {
+      await fh.close();
+    }
+    expect(readdirSync(String(dir)).sort()).toEqual(["existing.txt"]);
+    expect(readFileSync(existing, "utf8")).toBe("x");
+  });
+});
+
 function triggerDOMJIT(target: fs.Stats, fn: (..._: any[]) => any, result: any) {
   for (let i = 0; i < 9999; i++) {
     if (fn.apply(target) !== result) {

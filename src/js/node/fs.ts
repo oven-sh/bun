@@ -690,20 +690,23 @@ function encodeRealpathResult(result, encoding) {
 }
 
 let assertEncodingForWindows: any = undefined;
+/** `getOptions(options).encoding` for the win32 JS ports of realpath below. */
+function realpathEncodingOption(options): string | undefined {
+  let encoding;
+  if (options == null || typeof options === "function") return undefined;
+  if (typeof options === "string") encoding = options;
+  else if (typeof options === "object") encoding = options.encoding;
+  else throw $ERR_INVALID_ARG_TYPE("options", ["string", "Object"], options);
+  if (encoding) {
+    (assertEncodingForWindows ??= $newRustFunction("runtime/node/types.rs", "jsAssertEncodingValid", 1))(encoding);
+  }
+  return encoding;
+}
 const realpathSync: typeof import("node:fs").realpathSync =
   process.platform !== "win32"
     ? (fs.realpathSync.bind(fs) as any)
     : function realpathSync(p, options) {
-        let encoding;
-        if (options) {
-          if (typeof options === "string") encoding = options;
-          else encoding = options?.encoding;
-          if (encoding) {
-            (assertEncodingForWindows ?? $newRustFunction("runtime/node/types.rs", "jsAssertEncodingValid", 1))(
-              encoding,
-            );
-          }
-        }
+        const encoding = realpathEncodingOption(options);
         // This function is ported 1:1 from node.js, to emulate how it is unable to
         // resolve subst drives to their underlying location. The native call is
         // able to see through that.
@@ -817,16 +820,7 @@ const realpath: typeof import("node:fs").realpath =
           options = undefined;
         }
         callback = ensureCallback(callback);
-        let encoding;
-        if (options) {
-          if (typeof options === "string") encoding = options;
-          else encoding = options?.encoding;
-          if (encoding) {
-            (assertEncodingForWindows ?? $newRustFunction("runtime/node/types.rs", "jsAssertEncodingValid", 1))(
-              encoding,
-            );
-          }
-        }
+        const encoding = realpathEncodingOption(options);
         if (p instanceof URL) {
           const pathname = p.pathname;
           if (pathname.indexOf("%00") != -1) {

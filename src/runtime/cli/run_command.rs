@@ -1758,48 +1758,16 @@ impl RunCommand {
         }
         #[cfg(windows)]
         {
-            let mut temp_path_buffer = bun_paths::w_path_buffer_pool::get();
+            let mut dir_buffer = bun_paths::path_buffer_pool::get();
+            let dir = bun_install::RunCommand::windows_bun_node_dir(&mut dir_buffer)?;
             let mut target_path_buffer = bun_paths::path_buffer_pool::get();
-            // SAFETY: FFI Win32 `GetTempPathW`. `temp_path_buffer` is a valid
-            // writable WCHAR[MAX_PATH+] buffer and `nBufferLength` is its
-            // capacity in WCHARs; the call writes at most that many wide chars.
-            let len = unsafe {
-                sys::windows::GetTempPathW(
-                    u32::try_from(temp_path_buffer.len()).expect("int cast"),
-                    temp_path_buffer.as_mut_ptr(),
-                )
-            };
-            if len == 0 {
-                return Err(crate::Error::FailedToGetTempPath);
-            }
-
-            let converted = strings::convert_utf16_to_utf8_in_buffer(
-                &mut target_path_buffer,
-                &temp_path_buffer[..len as usize],
-            );
-
-            const FILE_NAME: &str = const_format::concatcp!(
-                "bun-node",
-                if Environment::GIT_SHA_SHORT.len() > 0 {
-                    const_format::concatcp!("-", Environment::GIT_SHA_SHORT)
-                } else {
-                    ""
-                },
-                "\\node.exe"
-            );
-            let conv_len = converted.len();
-            let total = conv_len + FILE_NAME.len();
-            target_path_buffer[conv_len..total].copy_from_slice(FILE_NAME.as_bytes());
-            target_path_buffer[total] = 0;
-
-            // Park the
-            // bytes in the per-process `runner_arena()` instead of leaking
-            // (PORTING.md §Forbidden bars per-call leaks).
-            let stored: &'static [u8] =
-                runner_arena().alloc_slice_copy(&target_path_buffer[..=total]);
-            // SAFETY: `stored[total] == 0` (written above before the copy);
-            // arena-backed slice lives for process lifetime.
-            Ok(ZStr::from_buf(&stored[..], total))
+            let file = bun_core::fmt::buf_print_z(
+                &mut target_path_buffer[..],
+                format_args!("{}\\node.exe", bstr::BStr::new(dir.as_bytes())),
+            )
+            .map_err(|_| crate::Error::NameTooLong)?;
+            let stored = runner_arena().alloc_slice_copy(file.as_bytes_with_nul());
+            Ok(ZStr::from_buf(stored, file.len()))
         }
     }
 
@@ -1931,10 +1899,7 @@ impl RunCommand {
             ) {
                 Ok(()) => {}
                 Err(crate::Error::Alloc(bun_alloc::AllocError)) => bun_core::out_of_memory(),
-                Err(other) => panic!(
-                    "unexpected error from createFakeTemporaryNodeExecutable: {}",
-                    other.name()
-                ),
+                Err(other) => return Err(other),
             }
 
             if !force_using_bun {

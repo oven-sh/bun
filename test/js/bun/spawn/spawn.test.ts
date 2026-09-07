@@ -1345,7 +1345,8 @@ it("names the stdio slot when the value is not a supported kind", () => {
     "stdin must be one of 'pipe', 'inherit', 'ignore', null, a file descriptor, Bun.file(), a Blob, Request, Response, ReadableStream, or a TypedArray";
   const stdout = "stdout must be one of 'pipe', 'inherit', 'ignore', null, a file descriptor, or Bun.file()";
   const stderr = "stderr must be one of 'pipe', 'inherit', 'ignore', null, a file descriptor, or Bun.file()";
-  const extra = "stdio[3] must be one of 'pipe', 'inherit', 'ignore', 'socket-fd', null, a file descriptor, or Bun.file()";
+  const extra =
+    "stdio[3] must be one of 'pipe', 'inherit', 'ignore', 'socket-fd', null, a file descriptor, or Bun.file()";
   const cmd = [bunExe(), "-e", ""];
   for (const value of ["bogus", true, {}, new URL("file:///tmp/x"), new Proxy(Bun.file(import.meta.path), {})]) {
     // @ts-expect-error intentionally invalid

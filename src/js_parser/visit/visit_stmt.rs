@@ -2142,6 +2142,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             let old_is_inside_switch = p.fn_or_arrow_data_visit.is_inside_switch;
             p.fn_or_arrow_data_visit.is_inside_switch = true;
             let cases = data.cases.slice_mut();
+            let mut bodies: BumpVec<'_, StmtList<'a>> =
+                BumpVec::with_capacity_in(cases.len(), p.arena);
             for i in 0..cases.len() {
                 if let Some(val) = cases[i].value.as_mut() {
                     p.visit_expr(val);
@@ -2152,7 +2154,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 let mut _stmts = stmts_to_list(p.arena, cases[i].body);
                 p.visit_stmts(&mut _stmts, StmtsKind::SwitchStmt)
                     .expect("unreachable");
-                cases[i].body = list_to_stmts(_stmts);
+                bodies.push(_stmts);
+            }
+            // Every case body is visited before any of them is minified: they
+            // share one scope, so use counts aren't final until then.
+            for (case, mut body) in cases.iter_mut().zip(bodies) {
+                p.minify_visited_stmts(&mut body);
+                case.body = list_to_stmts(body);
             }
             p.fn_or_arrow_data_visit.is_inside_switch = old_is_inside_switch;
 

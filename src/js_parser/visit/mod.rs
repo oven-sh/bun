@@ -1788,8 +1788,19 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
         }
 
-        if !p.options.features.minify_syntax || !p.options.features.dead_code_elimination {
+        // `s_switch` runs this once every case body has been visited.
+        if kind == StmtsKind::SwitchStmt {
             return Ok(());
+        }
+        p.minify_visited_stmts(stmts);
+        Ok(())
+    }
+
+    /// `stmts` must already be visited, with `current_scope` still the list's scope.
+    pub(crate) fn minify_visited_stmts(&mut self, stmts: &mut ListManaged<'a, Stmt>) {
+        let p = self;
+        if !p.options.features.minify_syntax || !p.options.features.dead_code_elimination {
+            return;
         }
 
         // SAFETY: current_scope is a valid arena ptr for the parse.
@@ -2160,7 +2171,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         // stmts.deinit(); — Drop handles freeing the old buffer (BumpVec is arena-backed).
         *stmts = output;
-        Ok(())
     }
 }
 

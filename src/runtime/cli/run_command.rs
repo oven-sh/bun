@@ -250,7 +250,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
             if !ctx.debug.silent {
                 bun_core::warn!(
                     "{} was not applied to script \"{}\". It is forwarded only when the script is a single bun command; add the flag inside the script instead.",
-                    if ctx.debug.hot_reload == cli::command::HotReload::Hot { "--hot" } else { "--watch" },
+                    Self::hot_reload_flag_name(ctx),
                     bstr::BStr::new(script_name),
                 );
                 Output::flush();
@@ -258,6 +258,13 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
             return;
         };
         script.splice(at..at, flags);
+    }
+
+    fn hot_reload_flag_name(ctx: &ContextData) -> &'static str {
+        match ctx.debug.hot_reload {
+            cli::command::HotReload::Hot => "--hot",
+            _ => "--watch",
+        }
     }
 
     /// The `--watch` / `--hot` flags this process was started with, spelled
@@ -331,10 +338,18 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         }
         let base = paths::basename(word);
         #[cfg(windows)]
-        let base = if base.len() > 4 && strings::eql_case_insensitive_ascii_check_length(&base[base.len() - 4..], b".exe") {
-            &base[..base.len() - 4]
-        } else {
-            base
+        let base = {
+            const EXE: &[u8] = b".exe";
+            if base.len() > EXE.len()
+                && strings::eql_case_insensitive_ascii_check_length(
+                    &base[base.len() - EXE.len()..],
+                    EXE,
+                )
+            {
+                &base[..base.len() - EXE.len()]
+            } else {
+                base
+            }
         };
         base == b"bun" || (bun_core::env::IS_DEBUG && base == b"bun-debug")
     }
@@ -370,7 +385,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
     /// Like [`Self::run_package_script_foreground`], but resolves the shell
     /// interpreter from `shell_path` instead of the loader's `PATH`.
     /// `forward_hot_reload` hands this process's `--watch` / `--hot` to the
-    /// script (see [`Self::forward_hot_reload_to_script`]).
+    /// script (see [`Self::forward_hot_reload_to_script_or_warn`]).
     pub(crate) fn run_package_script_foreground_with_shell_path(
         ctx: &mut ContextData,
         original_script: &[u8],
@@ -2199,7 +2214,7 @@ impl RunCommand {
         if ctx.debug.hot_reload != cli::command::HotReload::None && !silent {
             bun_core::warn!(
                 "{} was not applied: \"{}\" is an executable. It applies to a module that bun runs, or to a package.json script that is a single bun command.",
-                if ctx.debug.hot_reload == cli::command::HotReload::Hot { "--hot" } else { "--watch" },
+                Self::hot_reload_flag_name(ctx),
                 bstr::BStr::new(Self::basename_or_bun(executable)),
             );
             Output::flush();

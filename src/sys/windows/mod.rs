@@ -1514,7 +1514,8 @@ const WATCHER_CHILD_ENV_Z: &[u16] = bun_core::w!("_BUN_WATCHER_CHILD\0");
 // this was randomly generated - we need to avoid using a common exit code that might be used by the script itself
 pub(crate) const WATCHER_RELOAD_EXIT: DWORD = 3224497970;
 
-static WAS_WATCHER_CHILD: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
+static WAS_WATCHER_CHILD: core::sync::atomic::AtomicBool =
+    core::sync::atomic::AtomicBool::new(false);
 
 /// Startup hook, before the environment is snapshotted: reads and removes the
 /// marker that [`become_watcher_manager`] sets on its child. The marker is a

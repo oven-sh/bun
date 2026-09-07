@@ -1,7 +1,7 @@
 import type { Subprocess } from "bun";
 import { spawn } from "bun";
 import { afterEach, describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, isBroken, isLinux, isWindows, tempDir, tmpdirSync } from "harness";
+import { bunEnv, bunExe, type DirectoryTree, isBroken, isLinux, isWindows, tempDir, tmpdirSync } from "harness";
 import { chmodSync, readdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
 
@@ -540,7 +540,7 @@ setInterval(() => {}, 1e6);`,
         expect(await stderr.waitForLine("server.mjs")).toBe(expected.echo);
       }
       // The pre-script ran once, to completion, without the flag.
-      expect(stdout.output().match(/^PRE .*$/gm)).toEqual(["PRE []"]);
+      expect(stdout.output().match(/PRE \S+/g)).toEqual(["PRE []"]);
 
       await Bun.write(join(cwd, serverDir, "dep.mjs"), `export const V = "v1";`);
       const second = parseRunning(await stdout.waitForLine("RUNNING v1 "));
@@ -577,7 +577,7 @@ setInterval(() => {}, 1e6);`,
     await runCase(
       {
         "package.json": JSON.stringify({ name: "root", workspaces: ["pkgs/*"] }),
-        pkgs: { a: { ...serverFiles, "package.json": JSON.stringify({ name: "a", scripts }) } } as any,
+        pkgs: { a: { ...serverFiles, "package.json": JSON.stringify({ name: "a", scripts }) } },
       },
       "pkgs/a",
       ["--watch", "run", "--filter", "a", "dev"],

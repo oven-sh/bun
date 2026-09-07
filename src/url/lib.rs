@@ -189,6 +189,12 @@ pub use whatwg::{
     file_url_from_string, href_from_string, join, origin_from_slice, path_from_file_url,
 };
 
+/// `s3://bucket/key` holds raw key bytes: never URL-serialize it. Case-insensitive like [`URL::is_s3`].
+#[inline]
+pub fn is_s3_url(input: &BunString) -> bool {
+    input.starts_with_ascii(b"s3://") || input.starts_with_ascii(b"S3://")
+}
+
 // URL is a pure view struct — every field is a slice into `href` (or a
 // literal default).
 #[derive(Clone)]

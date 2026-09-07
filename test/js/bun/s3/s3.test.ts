@@ -1786,7 +1786,8 @@ describe("s3 multipart upload id validation", () => {
 
     await using proc = Bun.spawn({
       cmd: [bunExe(), "-e", fixture],
-      env: bunEnv,
+      // The S3 client honors the proxy environment; the stub is on loopback.
+      env: { ...bunEnv, HTTP_PROXY: undefined, HTTPS_PROXY: undefined, http_proxy: undefined, https_proxy: undefined },
       stdout: "pipe",
       stderr: "pipe",
     });
@@ -1844,7 +1845,8 @@ describe("s3 upload stream body error", () => {
     `;
     await using proc = Bun.spawn({
       cmd: [bunExe(), "-e", fixture],
-      env: bunEnv,
+      // The S3 client honors the proxy environment; the stub is on loopback.
+      env: { ...bunEnv, HTTP_PROXY: undefined, HTTPS_PROXY: undefined, http_proxy: undefined, https_proxy: undefined },
       stdout: "pipe",
       stderr: "pipe",
     });
@@ -2040,7 +2042,8 @@ describe("s3 upload stream body error", () => {
     `;
     await using proc = Bun.spawn({
       cmd: [bunExe(), "-e", fixture],
-      env: bunEnv,
+      // The S3 client honors the proxy environment; the stub is on loopback.
+      env: { ...bunEnv, HTTP_PROXY: undefined, HTTPS_PROXY: undefined, http_proxy: undefined, https_proxy: undefined },
       stdout: "pipe",
       stderr: "pipe",
     });
@@ -2121,7 +2124,8 @@ describe("s3 upload stream body error", () => {
     `;
     await using proc = Bun.spawn({
       cmd: [bunExe(), "-e", fixture],
-      env: bunEnv,
+      // The S3 client honors the proxy environment; the stub is on loopback.
+      env: { ...bunEnv, HTTP_PROXY: undefined, HTTPS_PROXY: undefined, http_proxy: undefined, https_proxy: undefined },
       stdout: "pipe",
       stderr: "pipe",
     });
@@ -2178,5 +2182,65 @@ describe("presigned url signature", () => {
       const { signature, expected } = verifyPresignedUrl(presigned, credentials);
       expect(signature).toBe(expected);
     }
+  });
+});
+
+describe.concurrent("s3:// url key encoding", () => {
+  // fetch("s3://..."), fetch(new Request("s3://...")), Bun.file("s3://...")
+  // and S3Client.file(key) must address the same object: the key bytes after
+  // "s3://bucket/" are taken as written and percent-encoded once on the wire.
+  // fetch signs an "S3://" URL too, so the scheme check is case-insensitive
+  // there. Bun.file("S3://...") is a local path, so that row skips it.
+  it.each([
+    ["s3://", "my file.txt", "/bkt/my%20file.txt"],
+    ["s3://", "\u00fc.txt", "/bkt/%C3%BC.txt"],
+    ["s3://", "my%20file.txt", "/bkt/my%2520file.txt"],
+    ["s3://", "dir/../x.txt", "/bkt/dir/../x.txt"],
+    ["s3://", "a\tb", "/bkt/a%09b"],
+    ["S3://", "my file.txt", "/bkt/my%20file.txt"],
+  ])("fetch, Request, Bun.file and S3Client.file send the same path for %s%j", async (scheme, key, expectedPath) => {
+    const viaFile = scheme === "s3://";
+    const fixture = `
+      const http = require("node:http");
+      const seen = [];
+      // node:http exposes the raw request target; Bun.serve normalizes it.
+      const server = http.createServer((req, res) => {
+        seen.push(req.url.split("?")[0]);
+        req.resume();
+        req.on("end", () => {
+          res.setHeader("ETag", '"x"');
+          res.end("body");
+        });
+      });
+      await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
+      const options = {
+        accessKeyId: "test",
+        secretAccessKey: "test",
+        region: "eu-west-3",
+        endpoint: "http://127.0.0.1:" + server.address().port,
+        virtualHostedStyle: false,
+      };
+      const key = ${JSON.stringify(key)};
+      const url = ${JSON.stringify(scheme)} + "bkt/" + key;
+      await (await fetch(url, { s3: options })).text();
+      await (await fetch(new Request(url), { s3: options })).text();
+      if (${viaFile}) {
+        await Bun.file(url, options).text();
+        await new Bun.S3Client({ ...options, bucket: "bkt" }).file(key).text();
+      }
+      server.close();
+      console.log(JSON.stringify(seen));
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture],
+      // The S3 client honors the proxy environment; the stub is on loopback.
+      env: { ...bunEnv, HTTP_PROXY: undefined, HTTPS_PROXY: undefined, http_proxy: undefined, https_proxy: undefined },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout.trim())).toEqual(Array(viaFile ? 4 : 2).fill(expectedPath));
+    expect(exitCode).toBe(0);
   });
 });

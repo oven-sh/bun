@@ -528,23 +528,27 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
 
     // `ZigURL::from_string` returns `OwnedURL` (owns href buffer); we
     // immediately move that buffer into `url_proxy_buffer` and re-parse `url` to
-    // borrow it.
-    let owned_url = match ZigURL::from_string(&url_str) {
-        Ok(u) => u,
-        Err(_) => {
-            let err = ctx.to_type_error(
-                jsc::ErrorCode::INVALID_URL,
-                format_args!("fetch() URL is invalid"),
-            );
-            return Ok(
-                JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
-                    global_this,
-                    err,
-                ),
-            );
-        }
+    // borrow it. An `s3://` URL is kept as written, see `bun_url::is_s3_url`.
+    let mut url_proxy_buffer = if bun_url::is_s3_url(&url_str) {
+        url_str.to_utf8().to_vec()
+    } else {
+        let owned_url = match ZigURL::from_string(&url_str) {
+            Ok(u) => u,
+            Err(_) => {
+                let err = ctx.to_type_error(
+                    jsc::ErrorCode::INVALID_URL,
+                    format_args!("fetch() URL is invalid"),
+                );
+                return Ok(
+                    JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
+                        global_this,
+                        err,
+                    ),
+                );
+            }
+        };
+        owned_url.into_href().into_vec()
     };
-    let mut url_proxy_buffer = owned_url.into_href().into_vec();
     let mut url = parse_url_detached!(&url_proxy_buffer[..]);
     if url.is_file() {
         url_type = URLType::File;

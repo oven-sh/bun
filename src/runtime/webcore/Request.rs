@@ -1379,24 +1379,19 @@ impl Request {
             ))));
         }
 
-        let href = bun_url::href_from_string(req.url.get());
-        if href.is_empty() {
-            // globalThis.throw can cause GC, which could cause the above string to be freed.
-            // so we must increment the reference count before calling it.
-            let err = global_this.err_invalid_url(format_args!(
-                "Failed to construct 'Request': Invalid URL \"{}\"",
-                req.url.get()
-            ));
-            bail!(Err(global_this.throw_value(err)));
+        // An `s3://` URL keeps its key bytes as written, see `bun_url::is_s3_url`.
+        if !bun_url::is_s3_url(req.url.get()) {
+            let href = bun_url::href_from_string(req.url.get());
+            if href.is_empty() {
+                let err = global_this.err_invalid_url(format_args!(
+                    "Failed to construct 'Request': Invalid URL \"{}\"",
+                    req.url.get()
+                ));
+                bail!(Err(global_this.throw_value(err)));
+            }
+
+            req.url.set(href);
         }
-
-        // hrefFromString increments the reference count if they end up being
-        // the same
-        //
-        // we increment the reference count on usage above, so we must
-        // decrement it to be perfectly balanced.
-
-        req.url.set(href);
 
         if matches!(req.body_value(), BodyValue::Blob(_)) && req.headers.get().is_some() {
             if let BodyValue::Blob(blob) = req.body_value() {

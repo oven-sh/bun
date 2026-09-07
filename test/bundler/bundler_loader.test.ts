@@ -183,7 +183,6 @@ describe("bundler", async () => {
     });
   }
 
-
   itBundled("bun/loader-text-file", {
     target: "bun",
     outfile: "",

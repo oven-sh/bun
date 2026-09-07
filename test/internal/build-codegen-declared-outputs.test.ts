@@ -21,7 +21,7 @@
 import { describe, expect, test } from "bun:test";
 import { bunExe, bunRun, tempDir } from "harness";
 import { readdirSync, writeFileSync } from "node:fs";
-import { isAbsolute, resolve } from "node:path";
+import { resolve } from "node:path";
 
 import { emitBindgen, emitBindgenV2, registerCodegenRules, type CodegenOutputs } from "../../scripts/build/codegen.ts";
 import { registerDirStamps } from "../../scripts/build/compile.ts";
@@ -40,6 +40,7 @@ function mockToolchain(): Toolchain {
     clangVersion: "21.1.8",
     clangResourceDir: "/fake/llvm/lib/clang/21",
     ar: "/fake/llvm/bin/llvm-ar",
+    ranlib: "/fake/llvm/bin/llvm-ranlib",
     ld: "/fake/llvm/bin/ld.lld",
     ld64Lld: "/fake/llvm/bin/ld64.lld",
     rustLld: undefined,
@@ -47,14 +48,10 @@ function mockToolchain(): Toolchain {
     strip: "/fake/bin/strip",
     llvmStrip: "/fake/llvm/bin/llvm-strip",
     nm: "/fake/llvm/bin/llvm-nm",
-    readobj: "/fake/llvm/bin/llvm-readobj",
-    objdump: "/fake/llvm/bin/llvm-objdump",
-    cxxfilt: "/fake/llvm/bin/llvm-cxxfilt",
     dsymutil: "/fake/llvm/bin/dsymutil",
     bun: bunExe(),
     // A shell command prefix, quoted like the one configure makes.
     jsRuntime: quote(bunExe(), process.platform === "win32"),
-    jsRuntimeArgv: [bunExe()],
     esbuild: "/fake/bin/esbuild",
     ccache: undefined,
     cmake: "/fake/bin/cmake",
@@ -63,6 +60,7 @@ function mockToolchain(): Toolchain {
     rustupHome: undefined,
     msvcLinker: undefined,
     rc: undefined,
+    mt: undefined,
     nasm: undefined,
   };
 }
@@ -108,12 +106,7 @@ function sourceLists(lists: Partial<Sources>): Sources {
   return lists as Sources;
 }
 
-/**
- * The outputs of the `build` line in `n` that produces `output`, spelled as in
- * build.ninja (buildDir-relative), sorted. Ninja.build() also declares every
- * build-dir output under its absolute path (so depfile entries resolve to the
- * edge); those aliases are checked to be exactly the relative set and dropped.
- */
+/** The outputs of the `build` line in `n` that produces `output`, spelled as in build.ninja, sorted. */
 function edgeOutputs(n: Ninja, output: string): string[] {
   const lines = n
     .toString()
@@ -125,12 +118,7 @@ function edgeOutputs(n: Ninja, output: string): string[] {
       .slice("build ".length, line.search(/(?<!\$): /))
       .split(/(?<!\$) /)
       .filter(token => token !== "|");
-    if (!outputs.includes(n.rel(output))) continue;
-    const unescaped = outputs.map(o => o.replaceAll("$:", ":"));
-    const relative = unescaped.filter(o => !isAbsolute(o)).sort();
-    const aliases = unescaped.filter(o => isAbsolute(o)).sort();
-    expect(aliases).toEqual(relative.map(o => resolve(n.buildDir, o)).sort());
-    return relative;
+    if (outputs.includes(n.rel(output))) return outputs.sort();
   }
   throw new Error(`no build edge produces ${output}`);
 }

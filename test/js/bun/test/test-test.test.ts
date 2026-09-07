@@ -538,6 +538,31 @@ it("test.todo doesnt cause exit code 1", () => {
   expect(exitCode).toBe(0);
 });
 
+it("test.todo --todo does not count an unhandled error during the test as the expected failure", () => {
+  const { stderr, exitCode } = spawnSync({
+    cmd: [bunExe(), "test", "./todo-test-fixture-3.js", "--todo"],
+    stdout: "pipe",
+    stderr: "pipe",
+    env: bunEnv,
+    cwd: import.meta.dir,
+  });
+
+  const err = stderr!.toString();
+  const statusLines = err
+    .split("\n")
+    .map(line => line.trim().replace(/ \[\d+(\.\d+)?ms\]$/, ""))
+    .filter(line => /^(\((pass|fail|todo)\) |error: )/.test(line));
+  expect(statusLines).toEqual([
+    "error: expected failure",
+    "(todo) todo whose body throws",
+    "error: stray timer error",
+    "(fail) todo whose body passes while a stray timer throws",
+  ]);
+  expect(err).toContain("\n 1 todo\n");
+  expect(err).toContain("\n 1 fail\n");
+  expect(exitCode).toBe(1);
+});
+
 it("test timeouts when expected", () => {
   const path = join(tmp, "test-timeout.test.js");
   copyFileSync(join(import.meta.dir, "timeout-test-fixture.js"), path);

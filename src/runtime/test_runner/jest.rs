@@ -620,7 +620,7 @@ pub(crate) mod on_unhandled_rejection {
             buntest.on_uncaught_exception(
                 global_object,
                 Some(rejection),
-                true,
+                bun_test::ErrorSource::Unhandled,
                 &current_state_data,
             );
             buntest.add_result(current_state_data);
@@ -635,7 +635,7 @@ pub(crate) mod on_unhandled_rejection {
                     buntest.on_uncaught_exception(
                         global_object,
                         Some(global_object.take_exception(e)),
-                        false,
+                        bun_test::ErrorSource::Unhandled,
                         &phase,
                     );
                 }

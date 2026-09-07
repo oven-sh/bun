@@ -252,6 +252,8 @@ test.failing("fixed bug", () => {
 
 Use it to track known bugs you plan to fix later, or for test-driven development.
 
+Only the test function's own failure is inverted: a thrown error, a failed `expect()`, a rejected promise, or `done(err)`. A timeout still fails the test, and so does an uncaught error or unhandled promise rejection that happens while the test runs (for example from a timer callback). That error is printed and the test fails, as it would without `.failing()`.
+
 ## Conditional Tests for Describe Blocks
 
 The conditional modifiers `.if()`, `.skipIf()`, and `.todoIf()` also work on `describe` blocks, affecting all tests in the suite:

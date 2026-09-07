@@ -765,7 +765,7 @@ impl BunTest {
         let this = this_strong.get();
 
         if is_catch {
-            this.on_uncaught_exception(global_this, Some(result), true, &refdata.phase);
+            this.on_uncaught_exception(global_this, Some(result), ErrorSource::Callback, &refdata.phase);
         }
         if !has_one_ref && !is_catch {
             bun_core::scoped_log!(bun_test_group, "bunTestThenOrCatch -> refdata has multiple refs; don't add result until the last ref");
@@ -808,22 +808,26 @@ impl BunTest {
         let was_error = !value.is_empty_or_undefined_or_null();
         // SAFETY: `this` is the live `*mut DoneCallback` returned by `from_js`;
         // single-threaded JS VM, GC keeps the wrapper alive for the call frame.
-        if unsafe { (*this).called } {
-            // in Bun 1.2.20, this is a no-op
-            // in Jest, this is "Expected done to be called once, but it was called multiple times."
-            // Vitest does not support done callbacks
-        } else {
-            // error is only reported for the first done() call
-            if was_error {
-                let _ = global_this.bun_vm().as_mut().uncaught_exception(global_this, value, false);
+        let first_call = !unsafe { core::mem::replace(&mut (*this).called, true) };
+        // Only the first done() reports its error. A repeated call is a no-op (Jest
+        // reports "Expected done to be called once"; Vitest has no done callbacks).
+        if first_call && was_error {
+            // Keyed by the entry this `done` was created for, like a throw or a rejection
+            // from the same callback, rather than by whatever happens to be running now.
+            // SAFETY: see above; both fields are read before any JS can run.
+            let (buntest, owner) = unsafe { ((*this).buntest_weak.upgrade(), (*this).owner) };
+            match buntest {
+                Some(strong) => {
+                    strong.get().on_uncaught_exception(global_this, Some(value), ErrorSource::Callback, &owner)
+                }
+                // Its file is already torn down; report it like any stray error.
+                None => {
+                    let _ = global_this.bun_vm().as_mut().uncaught_exception(global_this, value, false);
+                }
             }
         }
         // SAFETY: see above — `this` is a live `*mut DoneCallback`.
-        let ref_in = unsafe {
-            (*this).called = true;
-            (*this).r#ref.take()
-        };
-        let Some(ref_in) = ref_in else {
+        let Some(ref_in) = (unsafe { (*this).r#ref.take() }) else {
             return Ok(JSValue::UNDEFINED);
         };
 
@@ -869,7 +873,7 @@ impl BunTest {
                 Phase::Collection => {}
                 Phase::Execution => {
                     if let Err(e) = (*this).execution.handle_timeout(global) {
-                        (*this).on_uncaught_exception(global, Some(global.take_exception(e)), false, &RefDataValue::Done);
+                        (*this).on_uncaught_exception(global, Some(global.take_exception(e)), ErrorSource::Unhandled, &RefDataValue::Done);
                     }
                 }
                 Phase::Done => {}
@@ -877,7 +881,7 @@ impl BunTest {
         }
         if let Err(e) = Self::run(this_strong, global) {
             // SAFETY: re-derive after `run` returned; no `&mut` was held across it.
-            unsafe { (*this).on_uncaught_exception(global, Some(global.take_exception(e)), false, &RefDataValue::Done) };
+            unsafe { (*this).on_uncaught_exception(global, Some(global.take_exception(e)), ErrorSource::Unhandled, &RefDataValue::Done) };
         }
     }
 
@@ -1123,12 +1127,12 @@ impl BunTest {
 
         if cfg_done_parameter {
             bun_core::scoped_log!(bun_test_group, "callTestCallback -> appending done callback param: data {}", cfg_data);
-            done_callback = DoneCallback::create_unbound(global_this);
+            done_callback = DoneCallback::create_unbound(global_this, Rc::downgrade(this_strong), cfg_data);
             done_arg = match DoneCallback::bind(done_callback, global_this) {
                 Ok(v) => v,
                 Err(e) => {
                     // SAFETY: `UnsafeCell`-derived; sole `&mut` at this point.
-                    unsafe { (*this).on_uncaught_exception(global_this, Some(global_this.take_exception(e)), false, &cfg_data) };
+                    unsafe { (*this).on_uncaught_exception(global_this, Some(global_this.take_exception(e)), ErrorSource::Unhandled, &cfg_data) };
                     JSValue::ZERO // failed to bind done callback
                 }
             };
@@ -1147,7 +1151,7 @@ impl BunTest {
             Err(_) => {
                 global_this.clear_termination_exception();
                 // SAFETY: re-derive after JS callback returned; no outer `&mut` was held across it.
-                unsafe { (*this).on_uncaught_exception(global_this, global_this.try_take_exception(), false, &cfg_data) };
+                unsafe { (*this).on_uncaught_exception(global_this, global_this.try_take_exception(), ErrorSource::Callback, &cfg_data) };
                 bun_core::scoped_log!(bun_test_group, "callTestCallback -> error");
                 JSValue::ZERO
             }
@@ -1247,7 +1251,7 @@ impl BunTest {
                         let value = bun_jsc::JSPromise::opaque_mut(promise).result(global_this.vm());
                         // SAFETY: re-derive via `UnsafeCell` after the JS/microtask
                         // drain above; sole `&mut` at this point.
-                        unsafe { (*this).on_uncaught_exception(global_this, Some(value), true, &cfg_data) };
+                        unsafe { (*this).on_uncaught_exception(global_this, Some(value), ErrorSource::Callback, &cfg_data) };
 
                         // We previously marked it as handled above.
 
@@ -1272,17 +1276,15 @@ impl BunTest {
         &mut self,
         global_this: &JSGlobalObject,
         exception: Option<JSValue>,
-        is_rejection: bool,
+        source: ErrorSource,
         user_data: &RefDataValue,
     ) {
         let _g = group_begin!();
 
-        let _ = is_rejection;
-
         let handle_status: HandleUncaughtExceptionResult = match self.phase {
             Phase::Collection => self.collection.handle_uncaught_exception(user_data),
             Phase::Done => HandleUncaughtExceptionResult::ShowUnhandledErrorBetweenTests,
-            Phase::Execution => self.execution.handle_uncaught_exception(user_data),
+            Phase::Execution => self.execution.handle_uncaught_exception(user_data, source),
         };
 
         bun_core::scoped_log!(bun_test_group, "onUncaughtException -> {}", <&'static str>::from(handle_status));
@@ -1541,12 +1543,24 @@ impl RunTestsTask {
             bt.on_uncaught_exception(
                 &this.global_this,
                 Some(this.global_this.take_exception(e)),
-                false,
+                ErrorSource::Unhandled,
                 &this.phase,
             );
         }
         Ok(())
     }
+}
+
+/// `test.failing` / `test.todo` only invert a `Callback` error.
+#[derive(Copy, Clone, PartialEq, Eq)]
+pub enum ErrorSource {
+    /// The outcome of the entry's own callback: it threw, the promise it
+    /// returned rejected, or it called `done(err)`.
+    Callback,
+    /// An uncaught exception or unhandled rejection that landed while the
+    /// entry was active (a timer, a floating promise, something an earlier
+    /// test leaked), or an error from the runner itself.
+    Unhandled,
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, strum::IntoStaticStr)]

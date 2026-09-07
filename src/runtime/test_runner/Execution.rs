@@ -45,7 +45,7 @@ use bun_core::scoped_log;
 
 use super::debug::group as group_log; // bun_test.debug.group
 use super::bun_test::{
-    group_begin, AddedInPhase, BunTest, BunTestPtr, EntryData, ExecutionEntry,
+    group_begin, AddedInPhase, BunTest, BunTestPtr, EntryData, ErrorSource, ExecutionEntry,
     HandleUncaughtExceptionResult, Order, RefDataValue, ScopeMode, StepResult,
 };
 use crate::cli::test_command;
@@ -767,6 +767,7 @@ impl Execution {
     pub(crate) fn handle_uncaught_exception(
         &mut self,
         user_data: &RefDataValue,
+        source: ErrorSource,
     ) -> HandleUncaughtExceptionResult {
         let _g = group_begin!();
 
@@ -788,20 +789,28 @@ impl Execution {
             return HandleUncaughtExceptionResult::ShowHandledError;
         }
 
-        match sequence.entry_mode() {
-            ScopeMode::Failing => {
+        match (sequence.entry_mode(), source) {
+            (ScopeMode::Failing, ErrorSource::Callback) => {
                 if sequence.result == Result::Pending {
                     sequence.result = Result::Pass; // executing test() callback
                 }
                 HandleUncaughtExceptionResult::HideError // failing tests prevent the error from being displayed
             }
-            ScopeMode::Todo => {
+            (ScopeMode::Todo, ErrorSource::Callback) => {
                 if sequence.result == Result::Pending {
                     sequence.result = Result::Todo; // executing test() callback
                 }
                 HandleUncaughtExceptionResult::ShowHandledError // todo tests with --todo will still display the error
             }
-            _ => {
+            (ScopeMode::Failing | ScopeMode::Todo, ErrorSource::Unhandled) => {
+                // Not the callback's outcome, so not inverted, and it overrides a
+                // verdict the inversion already produced.
+                if matches!(sequence.result, Result::Pending | Result::Pass | Result::Todo) {
+                    sequence.result = Result::Fail;
+                }
+                HandleUncaughtExceptionResult::ShowHandledError
+            }
+            (_, ErrorSource::Callback | ErrorSource::Unhandled) => {
                 if sequence.result == Result::Pending {
                     sequence.result = Result::Fail;
                 }

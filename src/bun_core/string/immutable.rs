@@ -2802,7 +2802,10 @@ mod tests {
             cat(&[b"\xC3\xA9\xE2\x82\xAC\xF0\x9F\x98\x80\xEF\xBF\xBD"])
         );
         // Latin-1 bytes: one U+FFFD each, neighbours kept
-        assert_eq!(fixed(b"Jos\xE9 P\xE9rez"), cat(&[b"Jos", R, b" P", R, b"rez"]));
+        assert_eq!(
+            fixed(b"Jos\xE9 P\xE9rez"),
+            cat(&[b"Jos", R, b" P", R, b"rez"])
+        );
         // bad lead byte, then ASCII
         assert_eq!(fixed(b"\xE2AB"), cat(&[R, b"AB"]));
         assert_eq!(fixed(b"\xF5A\xFFB"), cat(&[R, b"A", R, b"B"]));

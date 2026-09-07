@@ -792,21 +792,24 @@ pub mod fs {
             }
         }
 
-        /// POSIX path opens at cwd; Windows opens under the
-        /// process temp dir.
-        pub fn create(&mut self, name: &ZStr) -> crate::CrateResult<()> {
+        /// POSIX path opens at cwd with `mode` (the process umask applies);
+        /// Windows opens under the process temp dir and ignores `mode`.
+        pub fn create(&mut self, name: &ZStr, mode: bun_sys::Mode) -> crate::CrateResult<()> {
             #[cfg(not(windows))]
             {
                 // We originally used a temporary directory, but it caused EXDEV.
                 let dir_fd = bun_sys::Fd::cwd();
                 self.dir_fd = dir_fd;
-                let flags = bun_sys::O::CREAT | bun_sys::O::RDWR | bun_sys::O::CLOEXEC;
-                // S_IRWXU == 0o700
-                self.fd = bun_sys::openat(dir_fd, name, flags, 0o700)?;
+                let flags = bun_sys::O::CREAT
+                    | bun_sys::O::EXCL
+                    | bun_sys::O::RDWR
+                    | bun_sys::O::CLOEXEC;
+                self.fd = bun_sys::openat(dir_fd, name, flags, mode)?;
                 Ok(())
             }
             #[cfg(windows)]
             {
+                let _ = mode;
                 // Open the temp dir iterable + read-only, with delete/rename
                 // sharing denied. The temp dir path honours BUN_TMPDIR only
                 // when it is non-empty (an empty env var falls through to the

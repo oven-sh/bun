@@ -1249,8 +1249,16 @@ pub fn write_yarn_lock(this: &mut PackageManager) -> Result<(), Error> {
     };
     tmpname_buf[tmpname_len + 8] = 0;
     let tmpname = ZStr::from_buf(&tmpname_buf, tmpname_len + 8);
+    let yarn_lock = z_static(b"yarn.lock\0");
 
-    if let Err(err) = tmpfile.create(tmpname) {
+    // The new file replaces the old one through a rename, so carry the old
+    // file's permission bits over instead of resetting them.
+    #[cfg(unix)]
+    let existing_mode: Option<sys::Mode> = sys::stat(yarn_lock)
+        .ok()
+        .map(|st| (st.st_mode & 0o777) as sys::Mode);
+
+    if let Err(err) = tmpfile.create(tmpname, 0o666) {
         bun_core::pretty_errorln!("<r><red>error:<r> failed to create tmpfile: {}", err.name());
         Global::crash();
     }
@@ -1273,15 +1281,11 @@ pub fn write_yarn_lock(this: &mut PackageManager) -> Result<(), Error> {
     }
 
     #[cfg(unix)]
-    {
-        let _ = sys::fchmod(
-            tmpfile.fd,
-            // chmod 666,
-            0o0000040 | 0o0000004 | 0o0000002 | 0o0000400 | 0o0000200 | 0o0000020,
-        );
+    if let Some(existing_mode) = existing_mode {
+        sys::fchmod(tmpfile.fd, existing_mode).map_err(Error::from)?;
     }
 
-    tmpfile.promote_to_cwd(tmpname, z_static(b"yarn.lock\0"))?;
+    tmpfile.promote_to_cwd(tmpname, yarn_lock)?;
     Ok(())
 }
 

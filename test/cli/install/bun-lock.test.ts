@@ -1,6 +1,6 @@
 import { file, spawn, write } from "bun";
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
-import { readlinkSync } from "fs";
+import { chmodSync, readlinkSync, statSync } from "fs";
 import { access, copyFile, cp, exists, open, rm, writeFile } from "fs/promises";
 import {
   bunExe,
@@ -70,6 +70,75 @@ it("should write plaintext lockfiles", async () => {
   expect(stat.mode).toBe(mode);
 
   expect(await file.readFile({ encoding: "utf8" })).toMatchSnapshot();
+});
+
+// Windows has no umask and synthesizes file modes, so these only apply to posix.
+describe.skipIf(isWindows)("lockfile permissions", () => {
+  async function installWithUmask(cwd: string, umask: number, args: string[]) {
+    await using proc = spawn({
+      cmd: ["/bin/sh", "-c", `umask ${umask.toString(8)} && exec "$0" "$@"`, bunExe(), ...args],
+      cwd,
+      env,
+      stdout: "ignore",
+      stderr: "pipe",
+    });
+    const [err, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    expect(err).toContain("Saved lockfile");
+    expect(err).toContain("Saved yarn.lock");
+    expect(exitCode).toBe(0);
+  }
+
+  function modes(dir: string, names: string[]) {
+    return Object.fromEntries(
+      names.map(name => [name, "0" + (statSync(join(dir, name)).mode & 0o777).toString(8)]),
+    );
+  }
+  const octal = (mode: number) => "0" + mode.toString(8);
+
+  it.each([
+    ["bun.lock", 0o666],
+    // bun.lockb starts with `#!/usr/bin/env bun`, so it is created executable
+    ["bun.lockb", 0o777],
+  ])("new %s and yarn.lock honour the process umask", async (lockfile, createMode) => {
+    const actual: Record<string, Record<string, string>> = {};
+    const expected: typeof actual = {};
+    for (const umask of [0o022, 0o077]) {
+      const { packageDir, packageJson } = await registry.createTestDir({
+        bunfigOpts: { saveTextLockfile: lockfile === "bun.lock" },
+      });
+      await write(packageJson, JSON.stringify({ name: "pkg", version: "1.0.0", dependencies: { "no-deps": "1.0.0" } }));
+
+      await installWithUmask(packageDir, umask, ["install", "--yarn"]);
+
+      actual[`umask ${octal(umask)}`] = modes(packageDir, [lockfile, "yarn.lock"]);
+      expected[`umask ${octal(umask)}`] = {
+        [lockfile]: octal(createMode & ~umask),
+        "yarn.lock": octal(0o666 & ~umask),
+      };
+    }
+    expect(actual).toEqual(expected);
+  });
+
+  it("rewriting bun.lock and yarn.lock keeps the mode of the existing file", async () => {
+    const { packageDir, packageJson } = await registry.createTestDir();
+    await write(packageJson, JSON.stringify({ name: "pkg", version: "1.0.0", dependencies: { "no-deps": "1.0.0" } }));
+
+    await installWithUmask(packageDir, 0o022, ["install", "--yarn"]);
+
+    const before = {
+      "bun.lock": await file(join(packageDir, "bun.lock")).text(),
+      "yarn.lock": await file(join(packageDir, "yarn.lock")).text(),
+    };
+    chmodSync(join(packageDir, "bun.lock"), 0o600);
+    chmodSync(join(packageDir, "yarn.lock"), 0o640);
+
+    // adding a dependency rewrites both files
+    await installWithUmask(packageDir, 0o022, ["add", "a-dep@1.0.1", "--yarn"]);
+
+    expect(await file(join(packageDir, "bun.lock")).text()).not.toBe(before["bun.lock"]);
+    expect(await file(join(packageDir, "yarn.lock")).text()).not.toBe(before["yarn.lock"]);
+    expect(modes(packageDir, ["bun.lock", "yarn.lock"])).toEqual({ "bun.lock": "0600", "yarn.lock": "0640" });
+  });
 });
 
 // won't work on windows, " is not a valid character in a filename

@@ -1891,16 +1891,23 @@ impl Lockfile {
             }
             break 'bytes bytes;
         };
-        if File::openat(
+        // The new file replaces the old one through a rename, so carry the old
+        // file's permission bits over instead of resetting them.
+        #[cfg(unix)]
+        let mut existing_mode: Option<sys::Mode> = None;
+        if let Ok(existing) = File::openat(
             Fd::cwd(),
             save_format.filename().as_bytes(),
             sys::O::RDONLY,
             0,
-        )
-        .and_then(|existing| existing.read_to_end())
-        .is_ok_and(|existing| existing == bytes)
-        {
-            return false;
+        ) {
+            #[cfg(unix)]
+            if let Ok(st) = existing.stat() {
+                existing_mode = Some((st.st_mode & 0o777) as sys::Mode);
+            }
+            if existing.read_to_end().is_ok_and(|existing| existing == bytes) {
+                return false;
+            }
         }
 
         let mut tmpname_buf = [0u8; 512];
@@ -1928,7 +1935,19 @@ impl Lockfile {
             ZStr::from_buf(&tmpname_buf, written - 1)
         };
 
-        let file = match File::openat(Fd::cwd(), tmpname, sys::O::CREAT | sys::O::WRONLY, 0o777) {
+        // The binary lockfile starts with a `#!/usr/bin/env bun` line, so it is
+        // created executable. The process umask applies to both.
+        let create_mode: sys::Mode = if save_format == LockfileFormat::Text {
+            0o666
+        } else {
+            0o777
+        };
+        let file = match File::openat(
+            Fd::cwd(),
+            tmpname,
+            sys::O::CREAT | sys::O::EXCL | sys::O::CLOEXEC | sys::O::WRONLY,
+            create_mode,
+        ) {
             sys::Result::Err(e) => {
                 Output::err(
                     e,
@@ -1951,13 +1970,8 @@ impl Lockfile {
         }
 
         #[cfg(unix)]
-        {
-            // chmod 755 for binary, 644 for plaintext
-            let mut filemode: sys::Mode = 0o755;
-            if save_format == LockfileFormat::Text {
-                filemode = 0o644;
-            }
-            match sys::fchmod(file.handle, filemode) {
+        if let Some(existing_mode) = existing_mode {
+            match sys::fchmod(file.handle, existing_mode) {
                 sys::Result::Err(e) => {
                     let _ = file.close(); // close error is non-actionable
                     let _ = sys::unlink(tmpname);

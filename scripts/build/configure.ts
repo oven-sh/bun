@@ -222,13 +222,13 @@ function emitGeneratorRule(n: Ninja, cfg: Config, input: ConfigureInput): void {
     // rust/plan.json: the per-crate Rust edges are generated from it (rust.ts), so a changed plan — new
     // lockfile, manifest, toolchain — must reconfigure. It is a build output; when it is dirty ninja builds
     // it first, reruns this edge, and restarts with the new manifest.
-    implicitInputs: [...configureInputs(cfg.cwd), ...(existsRustPlanEdge(n) ? [planPath(cfg.buildDir)] : [])],
+    implicitInputs: [...configureInputs(cfg.cwd), ...(buildsRust(cfg) ? [planPath(cfg.buildDir)] : [])],
   });
 }
 
-/** True when this graph builds bun's Rust (emitRust ran and registered the plan edge); cpp-only/link-only graphs don't. */
-function existsRustPlanEdge(n: Ninja): boolean {
-  return n.hasOutput(planPath(n.buildDir));
+/** Whether this graph compiles bun's Rust crates (and therefore has the `rust/plan.json` edge emitRust registers). */
+function buildsRust(cfg: Config): boolean {
+  return cfg.mode !== "cpp-only" && cfg.mode !== "link-only";
 }
 
 /**

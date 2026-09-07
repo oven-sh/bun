@@ -247,11 +247,6 @@ export class Ninja {
     this.lines.push("");
   }
 
-  /** Whether some build statement already declares `path` as an output. */
-  hasOutput(path: string): boolean {
-    return this.outputSet.has(resolve(path));
-  }
-
   /** Shorthand for a phony target (groups other targets). */
   phony(name: string, deps: string[]): void {
     this.build({

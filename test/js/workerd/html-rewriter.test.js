@@ -3207,3 +3207,45 @@ describe("GC pressure mid-rewrite", () => {
     });
   });
 });
+
+describe("selector AST complexity", () => {
+  // Building the selector AST used to scan every sibling node for an equal
+  // predicate, so N distinct selectors cost N^2/2 predicate compares on every
+  // transform(): 8k handlers took about 11 s per transform on a debug build
+  // and 10k about 1 s on a release build. It is now linear (the whole fixture
+  // takes about 4 s on a debug build). The spawn timeout is the assertion.
+  it(
+    "transform() with many distinct selectors stays linear in the selector count",
+    async () => {
+      const count = 8_000;
+      const transforms = 4;
+      const fixture = /* js */ `
+        const count = ${count};
+        const rewriter = new HTMLRewriter();
+        let matched = 0;
+        for (let i = 0; i < count; i++) rewriter.on("div.c" + i, { element() { matched++; } });
+        const input = '<p>x</p><div class="c' + (count - 1) + '"></div>';
+        let same = 0;
+        for (let i = 0; i < ${transforms}; i++) {
+          same += (await rewriter.transform(new Response(input)).text()) === input;
+        }
+        console.log(JSON.stringify({ matched, same }));
+      `;
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", fixture],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+        timeout: 25_000,
+        killSignal: "SIGKILL",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+        stdout: JSON.stringify({ matched: transforms, same: transforms }),
+        stderr: "",
+        exitCode: 0,
+      });
+    },
+    40_000,
+  );
+});

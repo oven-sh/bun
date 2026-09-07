@@ -199,6 +199,12 @@ declare var Worker: Bun.__internal.UseLibDomIfAvailable<
   "Worker",
   {
     prototype: Worker;
+    /**
+     * @param scriptURL The worker's entry point. A `URL`, an absolute path, or a `file:`, `blob:` or
+     * `data:` URL string names it directly. Any other string resolves the way `import()` would from
+     * the file that calls `new Worker()`, and, if that finds no module, relative to the current
+     * working directory.
+     */
     new (scriptURL: string | URL, options?: Bun.WorkerOptions | undefined): Worker;
     /**
      * The cloned value of the `data` property passed to `new Worker()`.

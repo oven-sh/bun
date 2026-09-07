@@ -82,7 +82,10 @@ pub struct WebWorker {
     exec_argv_ptr: *const WTFStringImpl,
     exec_argv_len: usize,
     inherit_exec_argv: bool,
-    unresolved_specifier: Box<[u8]>,
+    /// What `new Worker(specifier)` received, or the module it names relative to
+    /// the calling file when `create()` could resolve it there. `spin()` resolves
+    /// it as an entry point either way.
+    specifier: Box<[u8]>,
     preloads: Vec<Box<[u8]>>,
     name: bun_core::ZBox,
 
@@ -285,6 +288,7 @@ impl WebWorker {
         parent: *mut VirtualMachine,
         name_str: &BunString,
         specifier_str: &BunString,
+        referrer_str: &BunString,
         error_message: &mut BunString,
         _parent_context_id: u32,
         this_context_id: u32,
@@ -304,6 +308,7 @@ impl WebWorker {
         log!("[{}] create", this_context_id);
 
         let spec_slice = specifier_str.to_utf8();
+        let referrer = referrer_str.to_utf8();
         let mut temp_log = bun_ast::Log::default();
         // SAFETY: `parent` is the calling thread's live VM (BACKREF); borrows
         // are scoped to each statement.
@@ -333,6 +338,13 @@ impl WebWorker {
                 preloads.push(utf8_slice.slice().to_vec().into_boxed_slice());
                 continue;
             }
+            // SAFETY: `parent` is the live VM on the calling (parent) thread.
+            if let Some(preload) =
+                unsafe { resolve_from_referrer(parent, utf8_slice.slice(), referrer.slice()) }
+            {
+                preloads.push(preload.into());
+                continue;
+            }
             // SAFETY: `parent` is the live VM on the calling (parent) thread;
             // `resolve_entry_point_specifier` takes the raw pointer.
             if let Some(preload) = unsafe {
@@ -346,6 +358,15 @@ impl WebWorker {
                 return core::ptr::null_mut();
             }
         }
+
+        // What does not resolve from the calling module stays a raw specifier for
+        // `spin()` to resolve against the project root (`bun ./x` semantics).
+        // SAFETY: `parent` is the live VM on the calling (parent) thread.
+        let specifier: Box<[u8]> =
+            match unsafe { resolve_from_referrer(parent, spec_slice.slice(), referrer.slice()) } {
+                Some(path) => path.into(),
+                None => spec_slice.slice().into(),
+            };
 
         // Everything the worker thread needs from this VM is copied here, on
         // its own thread; the worker never dereferences `parent`.
@@ -412,7 +433,7 @@ impl WebWorker {
             exec_argv_ptr,
             exec_argv_len,
             inherit_exec_argv,
-            unresolved_specifier: spec_slice.slice().to_vec().into_boxed_slice(),
+            specifier,
             preloads,
             name: if name_str.is_empty() {
                 bun_core::ZBox::default()
@@ -812,7 +833,7 @@ impl WebWorker {
         let path = match unsafe {
             resolve_entry_point_specifier(
                 vm_ptr,
-                &self.unresolved_specifier,
+                &self.specifier,
                 &mut resolve_error,
                 vm_log,
             )
@@ -857,7 +878,7 @@ impl WebWorker {
         }
 
         // `path` borrows the resolver's process-lifetime string store, the
-        // standalone module graph, or `self.unresolved_specifier` — all of
+        // standalone module graph, or `self.specifier` — all of
         // which outlive the worker VM. `vm.main` stores it as a raw BACKREF
         // (see `VirtualMachine::set_main`); no lifetime extension needed.
         let promise = match vm.as_mut().load_entry_point_for_web_worker(path) {
@@ -1260,6 +1281,38 @@ fn on_unhandled_rejection(
     //
     // Instead, request the stop as `exit()` does and unwind to `spin()`'s `shutdown()`.
     vm.handle_ref().request_termination();
+}
+
+/// Resolve `specifier` the way `import(specifier)` from the module at
+/// `referrer` would. `None` is not an error: the specifier then goes through
+/// entry-point resolution against the project root, which is all there was
+/// before specifiers were referrer-relative, so nothing that resolved then stops
+/// resolving. The returned path borrows the resolver's process-lifetime stores.
+///
+/// # Safety
+/// `parent` must point at this thread's live `VirtualMachine`.
+unsafe fn resolve_from_referrer(
+    parent: *mut VirtualMachine,
+    specifier: &[u8],
+    referrer: &[u8],
+) -> Option<&'static [u8]> {
+    // No calling file (a builtin, `node:worker_threads` whose paths are
+    // cwd-relative), or a specifier whose meaning does not depend on one.
+    if referrer.is_empty()
+        || bun_paths::is_absolute(specifier)
+        || specifier.starts_with(b"data:")
+        || specifier.starts_with(b"blob:")
+    {
+        return None;
+    }
+    let mut ret = virtual_machine::ResolveFunctionResult::default();
+    // SAFETY: per fn contract; `_resolve` only touches the resolver on this thread.
+    unsafe { (*parent)._resolve(&mut ret, specifier, referrer, true, true) }.ok()?;
+    // Only a module the worker can load as-is counts. A builtin (no `result`, or an
+    // "imports" alias of one, which is external) and a `?query` keep their entry-point
+    // handling and its error messages.
+    let names_a_module = ret.result.is_some_and(|r| !r.flags.is_external());
+    (names_a_module && ret.query_string.is_empty()).then_some(ret.path)
 }
 
 /// Resolve a worker entry-point specifier to a path the module loader can

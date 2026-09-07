@@ -28,6 +28,11 @@ struct WorkerOptions {
     // Blob URL.
     bool evalMode { false };
     Kind kind { Kind::Web };
+    // Path of the file that called `new Worker()`. The script specifier and `preload`
+    // entries resolve against it first, as `import()` from that file would. Empty for
+    // Kind::Node (worker_threads paths are cwd-relative, as in Node.js) and for callers
+    // with no file behind them.
+    String referrerPath;
     // Serialized array containing [workerData, environmentData]
     // (environmentData is always a Map)
     RefPtr<SerializedScriptValue> workerDataAndEnvironmentData;

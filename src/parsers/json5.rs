@@ -674,30 +674,19 @@ impl<'a> JSON5Parser<'a> {
             }
 
             // Line terminators are not allowed unescaped in strings
+            // (U+2028 and U+2029 are, and take the path below).
             if c == b'\n' || c == b'\r' {
                 return Err(ParseError::UnterminatedString);
             }
 
-            // Check for U+2028/U+2029 (allowed unescaped in JSON5 strings)
-            if c == 0xE2
-                && self.pos + 2 < self.source.len()
-                && self.source[self.pos + 1] == 0x80
-                && (self.source[self.pos + 2] == 0xA8 || self.source[self.pos + 2] == 0xA9)
-            {
-                buf.extend_from_slice(&self.source[self.pos..][..3]);
-                self.pos += 3;
-                continue;
-            }
-
-            // Regular character - handle multi-byte UTF-8
-            let cp_len = strings::wtf8_byte_sequence_length(c);
-            if self.pos + usize::from(cp_len) > self.source.len() {
-                buf.push(c);
-                self.pos += 1;
-            } else {
-                buf.extend_from_slice(&self.source[self.pos..][..usize::from(cp_len)]);
-                self.pos += usize::from(cp_len);
-            }
+            // Everything else is copied through as is: a well-formed UTF-8
+            // sequence whole, any other byte on its own. The width comes from
+            // the decoded sequence, not from the lead byte alone, so a lead
+            // byte without its continuation bytes cannot take the closing
+            // quote with it.
+            let width = usize::from(self.codepoint_at(self.pos).len);
+            buf.extend_from_slice(&self.source[self.pos..][..width]);
+            self.pos += width;
         }
 
         Err(ParseError::UnterminatedString)
@@ -1059,34 +1048,40 @@ impl<'a> JSON5Parser<'a> {
         if self.pos >= self.source.len() {
             return None;
         }
-        let first = self.source[self.pos];
+        Some(self.codepoint_at(self.pos))
+    }
+
+    /// Decodes the WTF-8 sequence that starts at `pos` (must be in bounds).
+    /// A byte that does not start a well-formed sequence (a stray
+    /// continuation byte, an invalid lead byte, or a lead byte that is not
+    /// followed by its continuation bytes) decodes as U+FFFD with `len == 1`,
+    /// so it is never merged with the bytes after it.
+    fn codepoint_at(&self, pos: usize) -> Codepoint {
+        let rest = &self.source[pos..];
+        let first = rest[0];
         if first < 0x80 {
-            return Some(Codepoint {
+            return Codepoint {
                 cp: i32::from(first),
                 len: 1,
-            });
+            };
         }
         let seq_len = strings::wtf8_byte_sequence_length(first);
-        if self.pos + usize::from(seq_len) > self.source.len() {
-            return Some(Codepoint {
-                cp: i32::from(first),
-                len: 1,
-            });
-        }
         let seq_len_usize = usize::from(seq_len);
-        let mut bytes = [0u8; 4];
-        bytes[..seq_len_usize].copy_from_slice(&self.source[self.pos..self.pos + seq_len_usize]);
-        let decoded = strings::decode_wtf8_rune_t(bytes, seq_len, -1i32);
-        if decoded < 0 {
-            return Some(Codepoint {
-                cp: i32::from(first),
-                len: 1,
-            });
+        if seq_len > 1 && rest.len() >= seq_len_usize {
+            let mut bytes = [0u8; 4];
+            bytes[..seq_len_usize].copy_from_slice(&rest[..seq_len_usize]);
+            let decoded = strings::decode_wtf8_rune_t_multibyte(bytes, seq_len, -1i32);
+            if decoded >= 0 {
+                return Codepoint {
+                    cp: decoded,
+                    len: seq_len,
+                };
+            }
         }
-        Some(Codepoint {
-            cp: decoded,
-            len: seq_len,
-        })
+        Codepoint {
+            cp: strings::UNICODE_REPLACEMENT as i32,
+            len: 1,
+        }
     }
 }
 

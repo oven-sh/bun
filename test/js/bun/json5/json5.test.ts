@@ -1365,6 +1365,55 @@ describe("input types", () => {
   });
 });
 
+// Only byte input (Buffer, typed array, Blob, an imported file) can carry
+// ill-formed UTF-8. A string argument is re-encoded as UTF-8 before parsing.
+describe("ill-formed UTF-8 in byte input", () => {
+  const bytes = (...parts: (string | number[])[]) =>
+    Buffer.concat(parts.map(p => (typeof p === "string" ? Buffer.from(p, "utf8") : Buffer.from(p))));
+
+  test("a lead byte without its continuation bytes does not consume the closing quote", () => {
+    // E9 announces a 3-byte sequence, but "'," follows (Latin-1 "café").
+    expect(JSON5.parse(bytes("{a: 'caf", [0xe9], "', b: 1}"))).toEqual({ a: "caf\uFFFD", b: 1 });
+    expect(JSON5.parse(bytes('{a: "caf', [0xe9], '"}'))).toEqual({ a: "caf\uFFFD" });
+    expect(JSON5.parse(bytes("['", [0xe9], "']"))).toEqual(["\uFFFD"]);
+    // Truncated 3- and 4-byte sequences right before the quote.
+    expect(JSON5.parse(bytes("{a: '", [0xe2, 0x80], "', b: '", [0xf0, 0x9f, 0x98], "'}"))).toEqual({
+      a: "\uFFFD\uFFFD",
+      b: "\uFFFD\uFFFD\uFFFD",
+    });
+    // A lead byte followed by a byte that is not a continuation byte keeps that byte.
+    expect(JSON5.parse(bytes("['", [0xc3], "(']"))).toEqual(["\uFFFD("]);
+    // Bytes that can never start a sequence, and well-formed sequences around ill-formed ones.
+    expect(JSON5.parse(bytes("['x", [0xff], "y', 'x", [0x80], "y']"))).toEqual(["x\uFFFDy", "x\uFFFDy"]);
+    expect(JSON5.parse(bytes("['é", [0xe9], "日本語", [0xe9], "😀']"))).toEqual(["é\uFFFD日本語\uFFFD😀"]);
+  });
+
+  test("an ill-formed byte in an unquoted key is an error, not a Latin-1 letter", () => {
+    expect(() => JSON5.parse(bytes("{caf", [0xe9], ": 1}"))).toThrow("Unexpected character");
+    expect(() => JSON5.parse(bytes("{", [0xb5], ": 1}"))).toThrow("Unexpected character");
+  });
+
+  test("importing a .json5 file with a Latin-1 byte in a string", async () => {
+    using dir = tempDir("json5-invalid-utf8", {
+      "data.json5": bytes("{a: 'caf", [0xe9], "', b: 1}\n"),
+      "index.js": `import data from "./data.json5"; console.log(JSON.stringify(data));`,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "index.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({ a: "caf\uFFFD", b: 1 });
+    expect(exitCode).toBe(0);
+  });
+});
+
 // Helper for comparing values that may contain NaN
 function deepEqual(a: any, b: any): boolean {
   if (typeof a === "number" && typeof b === "number") {

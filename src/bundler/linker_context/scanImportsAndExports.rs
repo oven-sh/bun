@@ -318,17 +318,23 @@ pub(crate) fn scan_imports_and_exports(
                         }
 
                         // A default import of a lifted CommonJS module binds to its
-                        // namespace (`advance_import_tracker`) unless `__esModule`
-                        // has to be checked at run time.
-                        if record
+                        // `module.exports` object (`advance_import_tracker`), and so does
+                        // `default` of its `import *` namespace, unless `__esModule` has
+                        // to be checked at run time.
+                        let is_lifted = other_flags.contains(AstFlags::COMMONJS_LIFTED_TO_ESM);
+                        let has_default_alias = record
                             .flags
-                            .contains(ImportRecordFlags::CONTAINS_DEFAULT_ALIAS)
-                            && other_flags.contains(AstFlags::FORCE_CJS_TO_ESM)
-                            && (!other_flags.contains(AstFlags::COMMONJS_LIFTED_TO_ESM)
-                                || LinkerContext::lifted_default_import_needs_wrapper(
-                                    col_ref!(module_types)[id],
-                                    &col_ref!(named_exports)[other_file],
-                                ))
+                            .contains(ImportRecordFlags::CONTAINS_DEFAULT_ALIAS);
+                        let has_import_star =
+                            record.flags.contains(ImportRecordFlags::CONTAINS_IMPORT_STAR);
+                        if other_flags.contains(AstFlags::FORCE_CJS_TO_ESM)
+                            && ((has_default_alias && !is_lifted)
+                                || ((has_default_alias || has_import_star)
+                                    && is_lifted
+                                    && LinkerContext::lifted_default_import_needs_wrapper(
+                                        col_ref!(module_types)[id],
+                                        &col_ref!(named_exports)[other_file],
+                                    )))
                         {
                             col!(exports_kind)[other_file] = ExportsKind::Cjs;
                             col!(flags)[other_file].wrap = WrapKind::Cjs;
@@ -518,10 +524,24 @@ pub(crate) fn scan_imports_and_exports(
                 // Also add a special export so import stars can bind to it. This must be
                 // done in this step because it must come after CommonJS module discovery
                 // but before matching imports with exports.
+                //
+                // `exports_foo` of a lifted CommonJS module stands in for `module.exports`,
+                // which default imports bind to. Import stars bind to a second object whose
+                // `default` is `exports_foo`, like the namespace Node gives such a module.
+                let mut namespace_ref = col_ref!(exports_refs)[id];
+                if id < col_ref!(import_records_list).len()
+                    && col_ref!(css_asts)[id].is_none()
+                    && col_ref!(ast_flags_list)[id].contains(AstFlags::COMMONJS_LIFTED_TO_ESM)
+                    && col_ref!(exports_kind)[id] != ExportsKind::Cjs
+                    && output_format != Format::InternalBakeDev
+                {
+                    this.create_lifted_namespace_part(source_index)?;
+                    namespace_ref = this.lifted_namespace_ref(source_index);
+                }
                 col!(resolved_export_stars)[id] = ExportData {
                     data: ImportTracker {
                         source_index: Index::source(source_index),
-                        import_ref: col_ref!(exports_refs)[id],
+                        import_ref: namespace_ref,
                         ..Default::default()
                     },
                     ..Default::default()

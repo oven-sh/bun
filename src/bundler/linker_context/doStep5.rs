@@ -213,7 +213,7 @@ impl LinkerContext<'_> {
         // and only store a count instead of an array
         //
         // A module namespace object lists its exports in code unit order. The
-        // namespace of a CommonJS module whose `exports.foo = ...` assignments
+        // exports object of a CommonJS module whose `exports.foo = ...` assignments
         // were lifted to ES module exports stands in for `module.exports`, so
         // it keeps the assignment order (the order of `resolved_exports`).
         if !is_lifted_commonjs {
@@ -458,7 +458,7 @@ impl LinkerContext<'_> {
         // 1 property per export
         let mut properties =
             bun_alloc::ArenaVec::<G::Property>::with_capacity_in(export_aliases.len(), arena);
-        // A lifted CommonJS module's namespace stands in for `module.exports`:
+        // A lifted CommonJS module's exports object stands in for `module.exports`:
         // writes through it assign the lifted bindings, so every local export
         // also gets a setter.
         let mut setter_properties = bun_alloc::ArenaVec::<G::Property>::with_capacity_in(

@@ -3661,8 +3661,9 @@ impl<'a> LinkerContext<'a> {
         let ast_flags = self.graph.ast.items_flags();
         let is_import_stmt = first_hop.is_none();
 
-        let (other_source_index, alias, alias_is_star, is_exported) = match first_hop {
-            Some((source, alias)) => (source, Some(alias), false, false),
+        let (other_source_index, alias, alias_is_star, is_exported, namespace_ref) = match first_hop
+        {
+            Some((source, alias)) => (source, Some(alias), false, false, Ref::NONE),
             None => {
                 let named_import: &NamedImport = match self.graph.ast.items_named_imports()
                     [id as usize]
@@ -3704,6 +3705,7 @@ impl<'a> LinkerContext<'a> {
                     named_import.alias,
                     named_import.alias_is_star,
                     named_import.is_exported,
+                    named_import.namespace_ref,
                 )
             }
         };
@@ -3764,36 +3766,32 @@ impl<'a> LinkerContext<'a> {
             };
         }
 
-        // The default import of a lifted CommonJS module is `module.exports`,
-        // which is its namespace: bind it like `import * as X`. `ns.default` on
-        // `import * as ns` (a generated item) reads the namespace object's own
-        // `default` key when the module exports one.
+        // The default import of a lifted CommonJS module is `module.exports`, which
+        // `exports_foo` stands in for. So are `ns.default` on `import * as ns` (a
+        // generated item) and a `require()` that `unwrap_commonjs_to_esm` turned
+        // into an import star: bind them to that object. A `.default` read off
+        // such a `require()` is `exports.default`, an ordinary export.
         if is_import_stmt
-            && !alias_is_star
             && flags.contains(AstFlags::COMMONJS_LIFTED_TO_ESM)
-            && alias.is_some_and(|a| a.slice() == b"default")
-            && !Self::lifted_default_import_needs_wrapper(
-                self.graph.ast.items_module_type()[id as usize],
-                &self.graph.ast.items_named_exports()[other_id as usize],
-            )
-            && !(self
-                .graph
-                .symbols
-                .get_const(tracker.import_ref)
-                .is_some_and(|s| s.import_item_status == ImportItemStatus::Generated)
-                && self.graph.meta.items_resolved_exports()[other_id as usize]
-                    .get(b"default")
-                    .is_some())
+            && if alias_is_star {
+                self.import_star_was_require_call(id, tracker.import_ref)
+            } else {
+                alias.is_some_and(|a| a.slice() == b"default")
+                    && !Self::lifted_default_import_needs_wrapper(
+                        self.graph.ast.items_module_type()[id as usize],
+                        &self.graph.ast.items_named_exports()[other_id as usize],
+                    )
+                    && !(namespace_ref.is_valid()
+                        && self.import_star_was_require_call(id, namespace_ref))
+            }
         {
-            let matching_export = &self.graph.meta.items_resolved_export_star()[other_id as usize];
             return ImportTrackerIterator {
-                value: matching_export.data,
+                value: ImportTracker {
+                    source_index: crate::Index::init(other_source_index),
+                    import_ref: self.graph.ast.items_exports_ref()[other_id as usize],
+                    ..Default::default()
+                },
                 status: ImportTrackerStatus::Found,
-                import_data: bun_ptr::BackRef::new(
-                    matching_export
-                        .potentially_ambiguous_export_star_refs
-                        .slice(),
-                ),
                 ..Default::default()
             };
         }
@@ -4381,15 +4379,30 @@ impl<'a> LinkerContext<'a> {
 
     fn is_esm_namespace_ref(&self, source_index: crate::IndexInt, ref_: Ref) -> bool {
         let id = source_index as usize;
-        id < self.graph.ast.len()
-            && ref_ == self.graph.ast.items_exports_ref()[id]
-            && matches!(
+        if id >= self.graph.ast.len() {
+            return false;
+        }
+        if ref_ == self.graph.ast.items_exports_ref()[id] {
+            return matches!(
                 self.graph.ast.items_exports_kind()[id],
                 ExportsKind::Esm
                     | ExportsKind::EsmWithDynamicFallback
                     | ExportsKind::EsmWithDynamicFallbackFromCjs
-            )
-            && self.graph.meta.items_flags()[id].wrap != WrapKind::Cjs
+            ) && self.graph.meta.items_flags()[id].wrap != WrapKind::Cjs;
+        }
+        // The `import *` namespace of a lifted CommonJS module.
+        ref_.is_valid() && ref_ == self.lifted_namespace_ref(source_index)
+    }
+
+    /// Is `namespace_ref` of file `source_index` the `import * as ns` that the
+    /// parser made out of a `require()` call (`unwrap_commonjs_to_esm`)? Such a
+    /// call returns `module.exports`, not the namespace.
+    fn import_star_was_require_call(&self, source_index: crate::IndexInt, namespace_ref: Ref) -> bool {
+        let parts = self.graph.ast.items_parts()[source_index as usize].as_slice();
+        self.graph
+            .top_level_symbol_to_parts(source_index, namespace_ref)
+            .iter()
+            .any(|&part| parts[part as usize].tag == bun_ast::PartTag::ImportToConvertFromRequire)
     }
 
     /// The default import of a lifted module that sets `__esModule` and exports
@@ -4719,6 +4732,9 @@ impl<'a> LinkerContext<'a> {
             name: bun_ast::StoreStr,
             count: u32,
             is_call_target: bool,
+            /// `X.default` where `X` is the `import *` namespace of a lifted CommonJS
+            /// module: `module.exports`, which `exports_foo` stands in for.
+            is_module_exports: bool,
         }
 
         let id = source_index as usize;
@@ -4738,34 +4754,19 @@ impl<'a> LinkerContext<'a> {
                 if !self.is_esm_namespace_ref(target_source, target.import_ref) {
                     continue;
                 }
+                let lifted_namespace = self.lifted_namespace_ref(target_source);
+                let base_is_lifted_namespace =
+                    lifted_namespace.is_valid() && target.import_ref == lifted_namespace;
                 let resolved_exports =
                     &self.graph.meta.items_resolved_exports()[target_source as usize];
                 for (name, prop_use) in properties.iter() {
+                    let is_module_exports = base_is_lifted_namespace && &**name == b"default";
                     // Not a static export of the target (missing, or only reachable
                     // through `export *` from CommonJS): keep the property access.
-                    let name = if let Some(index) = resolved_exports.get_index(name) {
+                    let name = if is_module_exports {
+                        bun_ast::StoreStr::new(b"default")
+                    } else if let Some(index) = resolved_exports.get_index(name) {
                         bun_ast::StoreStr::new(&resolved_exports.keys()[index])
-                    } else if &**name == b"default"
-                        && self.graph.ast.items_flags()[target_source as usize]
-                            .contains(AstFlags::COMMONJS_LIFTED_TO_ESM)
-                        && !Self::lifted_default_import_needs_wrapper(
-                            self.graph.ast.items_module_type()[id],
-                            &self.graph.ast.items_named_exports()[target_source as usize],
-                        )
-                    {
-                        // `default` of a lifted CommonJS module is `module.exports`, the
-                        // namespace itself, the same as `ns.default` on `import * as ns`.
-                        let name = bun_ast::StoreStr::new(b"default");
-                        member_resolutions
-                            .entry((target_source, name))
-                            .or_insert_with(|| {
-                                Some(ImportMemberResolution {
-                                    source_index: target_source,
-                                    r#ref: target.import_ref,
-                                    re_exports: Vec::new(),
-                                })
-                            });
-                        name
                     } else {
                         continue;
                     };
@@ -4776,14 +4777,20 @@ impl<'a> LinkerContext<'a> {
                         name,
                         count: prop_use.count_estimate,
                         is_call_target: prop_use.is_call_target,
+                        is_module_exports,
                     });
                 }
             }
         }
+        let module_exports_of = |this: &Self, access: &PropertyAccess| ImportMemberResolution {
+            source_index: access.target_source,
+            r#ref: this.graph.ast.items_exports_ref()[access.target_source as usize],
+            re_exports: Vec::new(),
+        };
 
         for access in &accesses {
             let key = (access.target_source, access.name);
-            if member_resolutions.contains_key(&key) {
+            if access.is_module_exports || member_resolutions.contains_key(&key) {
                 continue;
             }
             self.cycle_detector.clear();
@@ -4813,12 +4820,22 @@ impl<'a> LinkerContext<'a> {
         // call that needs `X` as `this` keeps every `X.name` of the file.
         let mut keeps_this: Vec<(Ref, bun_ast::StoreStr)> = Vec::new();
         for access in &accesses {
-            if access.is_call_target
-                && let Some(resolved) = member_resolutions
-                    .get(&(access.target_source, access.name))
-                    .unwrap()
-                && self.method_call_needs_this(resolved.source_index, resolved.r#ref)
+            if !access.is_call_target {
+                continue;
+            }
+            let module_exports;
+            let resolved = if access.is_module_exports {
+                module_exports = module_exports_of(self, access);
+                &module_exports
+            } else if let Some(resolved) = member_resolutions
+                .get(&(access.target_source, access.name))
+                .unwrap()
             {
+                resolved
+            } else {
+                continue;
+            };
+            if self.method_call_needs_this(resolved.source_index, resolved.r#ref) {
                 keeps_this.push((access.base, access.name));
             }
         }
@@ -4834,10 +4851,16 @@ impl<'a> LinkerContext<'a> {
                 if keeps_this.contains(&(base, name)) {
                     continue;
                 }
-                let Some(resolved) = member_resolutions
+                let module_exports;
+                let resolved = if access.is_module_exports {
+                    module_exports = module_exports_of(self, access);
+                    &module_exports
+                } else if let Some(resolved) = member_resolutions
                     .get(&(access.target_source, name))
                     .unwrap()
-                else {
+                {
+                    resolved
+                } else {
                     continue;
                 };
 
@@ -5014,6 +5037,109 @@ impl<'a> LinkerContext<'a> {
             },
         )?;
         Ok((r#ref, part_index))
+    }
+
+    /// The `import *` namespace of a lifted CommonJS module (see `LiftedNamespace`).
+    pub(crate) fn lifted_namespace_ref(&self, source_index: crate::IndexInt) -> Ref {
+        let id = source_index as usize;
+        if id < self.graph.meta.len() {
+            self.graph.meta.items_lifted_namespace()[id].ref_
+        } else {
+            Ref::NONE
+        }
+    }
+
+    /// Declares that namespace, `var import_foo = __toESM(exports_foo, 1)`, in a
+    /// part of its own, so it is dropped unless an importer uses the namespace
+    /// as a value. Mode `1` makes `default` the `module.exports` object: an
+    /// importer that is not an ES module by type got a CommonJS wrapper instead
+    /// when `__esModule` would change that (`lifted_default_import_needs_wrapper`).
+    pub(crate) fn create_lifted_namespace_part(
+        &mut self,
+        source_index: crate::IndexInt,
+    ) -> Result<(), AllocError> {
+        let id = source_index as usize;
+        let exports_ref = self.graph.ast.items_exports_ref()[id];
+        let loc = Loc::EMPTY;
+
+        let mut name: Vec<u8> = Vec::new();
+        core::fmt::Write::write_fmt(
+            &mut bun_core::fmt::VecWriter(&mut name),
+            format_args!(
+                "import_{}",
+                self.parse_graph().input_files.items_source()[id].fmt_identifier()
+            ),
+        )
+        .expect("infallible: VecWriter never errors");
+        // SAFETY: `LinkerContext::arena()` returns a stable `&Arena` valid for the
+        // link pass; detach so it does not borrow `self` across the `&mut self` calls.
+        let arena: &Bump = unsafe { bun_ptr::detach_lifetime_ref::<Bump>(self.arena()) };
+        let namespace_ref = self.graph.generate_new_symbol(
+            source_index,
+            bun_ast::symbol::Kind::Other,
+            arena.alloc_slice_copy(&name),
+        );
+
+        let to_esm_ref = self.runtime_function(b"__toESM");
+        let value = Expr::init(
+            E::Call {
+                target: Expr::init_identifier(to_esm_ref, loc),
+                args: bun_ast::ExprNodeList::from_slice(&[
+                    Expr::init_identifier(exports_ref, loc),
+                    Expr::init(E::Number::new(1.0), loc),
+                ]),
+                ..Default::default()
+            },
+            loc,
+        );
+        let stmts: &mut [Stmt] = arena.alloc_slice_fill_iter(core::iter::once(Stmt::alloc(
+            S::Local {
+                decls: G::DeclList::from_slice(&[G::Decl {
+                    binding: Binding::alloc(
+                        arena,
+                        bun_ast::b::Identifier {
+                            r#ref: namespace_ref,
+                        },
+                        loc,
+                    ),
+                    value: Some(value),
+                }]),
+                ..Default::default()
+            },
+            loc,
+        )));
+        let part_index = self.graph.add_part_to_file(
+            source_index,
+            Part {
+                stmts: bun_ast::StoreSlice::new_mut(stmts),
+                declared_symbols: DeclaredSymbolList::from_slice(&[DeclaredSymbol {
+                    ref_: namespace_ref,
+                    is_top_level: true,
+                }])?,
+                can_be_removed_if_unused: true,
+                force_tree_shaking: true,
+                ..Default::default()
+            },
+        )?;
+        self.graph.generate_symbol_import_and_use(
+            source_index,
+            part_index,
+            exports_ref,
+            1,
+            crate::Index::init(source_index),
+        )?;
+        self.graph.generate_symbol_import_and_use(
+            source_index,
+            part_index,
+            to_esm_ref,
+            1,
+            crate::Index::RUNTIME,
+        )?;
+        self.graph.meta.items_lifted_namespace_mut()[id] = crate::js_meta::LiftedNamespace {
+            ref_: namespace_ref,
+            part_index,
+        };
+        Ok(())
     }
 
     pub(crate) fn break_output_into_pieces(

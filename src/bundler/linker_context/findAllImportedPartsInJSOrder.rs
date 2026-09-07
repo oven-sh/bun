@@ -306,8 +306,13 @@ impl<'a, 'ctx> FindImportedPartsVisitor<'a, 'ctx> {
                     can_be_split,
                 } => {
                     let part = &self.parts[source_index as usize].as_slice()[part_index as usize];
+                    // The namespace export part was added on `Enter`, and the lifted
+                    // namespace part prints with it.
                     if can_be_split
                         && part_index != bun_ast::NAMESPACE_EXPORT_PART_INDEX
+                        && part_index
+                            != self.c.graph.meta.items_lifted_namespace()[source_index as usize]
+                                .part_index
                         && self.c.should_include_part(source_index, part)
                     {
                         self.append_or_extend_range(

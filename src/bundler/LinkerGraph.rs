@@ -154,6 +154,25 @@ pub mod js_meta {
     }
     pub use crate::WrapKind as Wrap;
 
+    /// The `import *` namespace of a CommonJS module whose exports were lifted
+    /// to ESM. `exports_foo` stands in for `module.exports`, so the namespace is
+    /// a second object, `var import_foo = __toESM(exports_foo, 1)`, whose
+    /// `default` is `exports_foo`. Unset (`ref_` is `Ref::NONE`) for other files.
+    #[derive(Clone, Copy)]
+    pub struct LiftedNamespace {
+        pub ref_: Ref,
+        /// The part that declares `ref_`. It prints with the namespace export part.
+        pub part_index: u32,
+    }
+    impl Default for LiftedNamespace {
+        fn default() -> Self {
+            Self {
+                ref_: Ref::NONE,
+                part_index: u32::MAX,
+            }
+        }
+    }
+
     pub struct JSMeta {
         pub probably_typescript_type: ProbablyTypescriptType,
         pub imports_to_bind: RefImportData,
@@ -164,9 +183,10 @@ pub mod js_meta {
         pub cjs_export_copies: CjsExportCopies,
         pub wrapper_part_index: Index,
         pub dynamic_import_referenced_aliases: DynamicImportReferencedAliases,
-        /// The parameter of the setters on a lifted CommonJS module's namespace
+        /// The parameter of the setters on a lifted CommonJS module's exports
         /// object (`set: (value) => $foo = value`). `Ref::NONE` for other files.
         pub lifted_setter_param: Ref,
+        pub lifted_namespace: LiftedNamespace,
         pub flags: Flags,
     }
 
@@ -183,6 +203,7 @@ pub mod js_meta {
                 wrapper_part_index: Index::default(),
                 dynamic_import_referenced_aliases: DynamicImportReferencedAliases::default(),
                 lifted_setter_param: Ref::NONE,
+                lifted_namespace: LiftedNamespace::default(),
                 flags: Flags::default(),
             }
         }
@@ -200,6 +221,7 @@ pub mod js_meta {
             wrapper_part_index: Index,
             dynamic_import_referenced_aliases: DynamicImportReferencedAliases,
             lifted_setter_param: Ref,
+            lifted_namespace: LiftedNamespace,
             flags: Flags,
         }
     }

@@ -56,6 +56,9 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
     } else {
         Index::INVALID
     };
+    // Printed with the namespace export part (see `LiftedNamespace`).
+    let lifted_namespace_part_index: u32 =
+        c.graph.meta.items_lifted_namespace()[source_index].part_index;
 
     // referencing everything by array makes the code a lot more annoying :(
     //
@@ -310,6 +313,30 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
             return PrintResult::Err(err.into());
         }
 
+        // `var import_foo = __toESM(exports_foo, 1)` of a lifted CommonJS module goes
+        // right after `__exportCjs(exports_foo, ...)`: outside the wrapper, and ahead
+        // of the module's dependencies, which may read it back in a cycle.
+        if lifted_namespace_part_index != u32::MAX
+            && parts_live.is_set(lifted_namespace_part_index as usize)
+        {
+            let lifted_namespace_stmts: &[Stmt] = c.graph.ast.items_parts()[source_index]
+                .as_slice()[lifted_namespace_part_index as usize]
+                .stmts
+                .slice();
+            if let Err(err) = convert_stmts_for_chunk(
+                c,
+                source_index as u32,
+                stmts,
+                lifted_namespace_stmts,
+                chunk,
+                temp_arena,
+                flags.wrap,
+                &ast,
+            ) {
+                return PrintResult::Err(err.into());
+            }
+        }
+
         match flags.wrap {
             WrapKind::Esm => {
                 // Borrowck: `append_slice` borrows `stmts` mutably while
@@ -351,6 +378,11 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
         if index == wrapper_part_index.get() {
             // Skip the wrapper part because we already handled it above
             needs_wrapper = true;
+            continue;
+        }
+
+        if index == lifted_namespace_part_index {
+            // Printed with the namespace export part above
             continue;
         }
 

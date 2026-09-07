@@ -386,7 +386,7 @@ impl<'a> LifecycleScriptSubprocess<'a> {
             bstr::BStr::new(self.script_name()),
             bstr::BStr::new(&self.package_name),
             err.errno,
-            <&'static str>::from(err.get_errno()),
+            bstr::BStr::new(err.name()),
         );
         Output::flush();
         self.maybe_finished();

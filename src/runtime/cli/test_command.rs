@@ -13,9 +13,9 @@ use bun_dotenv as DotEnv;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{self as jsc};
 use bun_options_types::code_coverage_options::CodeCoverageOptions;
+use bun_paths as bun_path;
 use bun_paths::resolve_path;
 use bun_paths::string_paths::without_leading_path_separator;
-use bun_paths::{self as bun_path, PathBuffer};
 use bun_ptr::Interned;
 use bun_resolver::fs::FileSystem;
 use bun_sys::{self, Fd, File};
@@ -895,7 +895,7 @@ impl JunitReporter {
             self.contents.extend_from_slice(b"</testsuites>\n");
         }
 
-        let mut junit_path_buf = PathBuffer::uninit();
+        let mut junit_path_buf = bun_paths::path_buffer_pool::get();
 
         junit_path_buf[..path.len()].copy_from_slice(path);
         junit_path_buf[path.len()] = 0;
@@ -1668,7 +1668,7 @@ fn write_lcov_report(
         ".lcov.info.{}.tmp",
         bun_core::fmt::hex_lower(&rand)
     );
-    let mut buf = PathBuffer::uninit();
+    let mut buf = bun_paths::path_buffer_pool::get();
     let tmp_path = resolve_path::join_abs_string_buf_z::<bun_path::platform::Auto>(
         relative_dir,
         &mut buf,
@@ -1921,15 +1921,21 @@ impl TestCommand {
             reporter.reporters.only_failures = true; // only-failures defaults to true for ai agents
         }
 
+        // The worker's environment already holds the coordinator's env file values, and `BUN_OPTIONS` in it can carry `--env-file`.
+        if ctx.test_options.test_worker {
+            ctx.args.env_files.clear();
+            ctx.args.disable_default_env_files = true;
+        }
+
         bun_ast::initialize_store();
         // SAFETY: `init` returns the heap-allocated process-lifetime VM; deref once.
         let vm: &mut VirtualMachine = unsafe {
             &mut *VirtualMachine::init(jsc::virtual_machine::InitOptions {
                 // Clone (not take): ParallelRunner::run_as_coordinator → build_worker_argv
                 // reads ctx.args.{conditions,define,loaders,tsconfig_override,drop,
-                // main_fields,extension_order,env_files,feature_flags,preserve_symlinks,
-                // allow_addons,allow_ffi_cc,disable_default_env_files,jsx} after this point to forward
-                // them to workers.
+                // main_fields,extension_order,feature_flags,preserve_symlinks,
+                // allow_addons,allow_ffi_cc,jsx} after this point to forward them
+                // to workers.
                 transform_options: ctx.args.clone(),
                 debugger: core::mem::take(&mut ctx.runtime_options.debugger),
                 log: core::ptr::NonNull::new(ctx.log),
@@ -1998,6 +2004,14 @@ impl TestCommand {
             _ = vm
                 .global()
                 .set_time_zone(&EncodedSlice::from_bytes(tz_name));
+        }
+        if vm.test_isolation_enabled {
+            vm.test_isolation_state.time_zone = Some(Box::from(tz_name));
+            vm.test_isolation_state.proxy_env = Some(
+                bun_jsc::rare_data::ProxyEnvSnapshot::capture(&vm.env_loader().map),
+            );
+            vm.test_isolation_state.synthetic_allocation_limit =
+                Some(bun_jsc::virtual_machine::synthetic_allocation_limit());
         }
 
         if ctx.test_options.test_worker {

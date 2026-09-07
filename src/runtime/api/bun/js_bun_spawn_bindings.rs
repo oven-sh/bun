@@ -105,15 +105,16 @@ fn get_argv0(
             )
             .throw());
     }
-    // Heap allocate it to ensure we don't run out of stack space.
-    let mut path_buf: Box<bun_core::PathBuffer> = Box::default();
-    // drops at scope exit (was `defer bun.default_allocator.destroy(path_buf)`).
+    let mut path_buf = bun_paths::path_buffer_pool::get();
 
     let argv0_to_use: &[u8] = arg0.slice();
 
     // This mimicks libuv's behavior, which mimicks execvpe
-    // Only resolve from $PATH when the command is not an absolute path
-    let path_to_use: &[u8] = if strings::index_of_char(argv0_to_use, b'/').is_some() {
+    // Only resolve from $PATH when the command is not an absolute path.
+    // libuv never appends .cmd/.bat, so a `\` path without one is still completed here.
+    let names_a_file = strings::index_of_char(argv0_to_use, b'/').is_some()
+        || (cfg!(windows) && bun_which::is_windows_path_with_executable_extension(argv0_to_use));
+    let path_to_use: &[u8] = if names_a_file {
         b""
         // If no $PATH is provided, we fallback to the one from environ
         // This is already the behavior of the PATH passed in here.
@@ -1721,11 +1722,16 @@ fn spawn_maybe_sync(
         }
     }
 
-    if let Writable::Buffer(buffer) = subprocess.stdin.get() {
-        if let Err(err) = Writable::buffer_writer_mut(buffer).start() {
-            let _ = subprocess.try_kill(subprocess.kill_signal);
-            return Err(global_this.throw_value(err.to_js(global_this)));
-        }
+    let stdin_start_err = match subprocess.stdin.get() {
+        Writable::Buffer(buffer) => Writable::buffer_writer_mut(buffer).start().err(),
+        _ => None,
+    };
+    if let Some(err) = stdin_start_err {
+        // An unstarted writer never reports on_close; a Buffer left here pins the wrapper.
+        #[cfg(not(windows))] // Windows adopts the pipe at create and start() cannot fail there.
+        subprocess.on_close_io(Subprocess::StdioKind::Stdin);
+        let _ = subprocess.try_kill(subprocess.kill_signal);
+        return Err(global_this.throw_value(err.to_js(global_this)));
     }
 
     **should_close_memfd = false;

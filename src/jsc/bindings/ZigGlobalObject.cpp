@@ -327,6 +327,13 @@ extern "C" void JSCInitialize(const char* envp[], size_t envc, void (*onCrash)(c
             // it off in Bun while upstream stabilises it.
             // BUN_JSC_useWasmMemory64=1 re-enables it for opt-in testing.
             JSC::Options::useWasmMemory64() = false;
+#if OS(WINDOWS)
+            // oven-sh/WebKit#553 starts the MarkedBlock warm-up helper thread from
+            // the allocation slow path once the heap has ramped; on Windows that
+            // hangs the sampling profiler (@datadog/pprof, test/integration/datadog-pprof).
+            // BUN_JSC_useWarmUpMarkedBlocks=1 re-enables it.
+            JSC::Options::useWarmUpMarkedBlocks() = false;
+#endif
             JSC::dangerouslyOverrideJSCBytecodeCacheVersion(getWebKitBytecodeCacheVersion());
 
 #ifdef BUN_DEBUG
@@ -402,19 +409,6 @@ static void checkIfNextTickWasCalledDuringMicrotask(JSC::VM& vm)
     }
 }
 
-static void cleanupAsyncHooksData(JSC::VM& vm)
-{
-    auto* globalObject = defaultGlobalObject();
-    globalObject->m_asyncContextData.get()->putInternalField(vm, 0, jsUndefined());
-    globalObject->asyncHooksNeedsCleanup = false;
-    if (!globalObject->m_nextTickQueue) {
-        vm.setOnEachMicrotaskTick(&checkIfNextTickWasCalledDuringMicrotask);
-        checkIfNextTickWasCalledDuringMicrotask(vm);
-    } else {
-        vm.setOnEachMicrotaskTick(nullptr);
-    }
-}
-
 GlobalObject* GlobalObject::create(JSC::VM& vm, JSC::Structure* structure)
 {
     GlobalObject* ptr = new (NotNull, JSC::allocateCell<GlobalObject>(vm)) GlobalObject(vm, structure, &globalObjectMethodTable());
@@ -453,14 +447,10 @@ JSC::Structure* GlobalObject::createStructure(JSC::VM& vm)
 void Zig::GlobalObject::resetOnEachMicrotaskTick()
 {
     auto& vm = this->vm();
-    if (this->asyncHooksNeedsCleanup) {
-        vm.setOnEachMicrotaskTick(&cleanupAsyncHooksData);
+    if (this->m_nextTickQueue) {
+        vm.setOnEachMicrotaskTick(nullptr);
     } else {
-        if (this->m_nextTickQueue) {
-            vm.setOnEachMicrotaskTick(nullptr);
-        } else {
-            vm.setOnEachMicrotaskTick(&checkIfNextTickWasCalledDuringMicrotask);
-        }
+        vm.setOnEachMicrotaskTick(&checkIfNextTickWasCalledDuringMicrotask);
     }
 }
 
@@ -595,7 +585,9 @@ extern "C" JSC::JSGlobalObject* Zig__GlobalObject__create(void* console_client, 
                 }
 
 #if OS(WINDOWS)
-                JSC::JSObject* env = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), size >= JSFinalObject::maxInlineCapacity ? JSFinalObject::maxInlineCapacity : size);
+                JSC::JSObject* env = size
+                    ? JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), size >= JSFinalObject::maxInlineCapacity ? JSFinalObject::maxInlineCapacity : size)
+                    : JSC::constructEmptyObject(globalObject);
 #else
                 // Same exotic object as the main thread so writes inside the
                 // worker coerce to string, reject symbol keys, and validate
@@ -2042,7 +2034,6 @@ void GlobalObject::finishCreation(VM& vm)
     Base::finishCreation(vm);
     ASSERT(inherits(info()));
 
-    m_commonStrings.initialize();
     m_bakeAdditions.initialize();
     m_markdownTagStrings.initialize();
 
@@ -3040,6 +3031,12 @@ uint8_t GlobalObject::drainMicrotasks()
     }
     scope.assertNoExceptionExceptTermination();
 
+    // A checkpoint with no script on the stack ends an event loop callback: an
+    // AsyncLocalStorage frame it installed with enterWith() must not leak into
+    // the next one (everything queued runs under the frame it captured).
+    if (!vm.entryScope)
+        m_asyncContextData.get()->putInternalField(vm, 0, jsUndefined());
+
     if (auto nextTickQueue = this->m_nextTickQueue.get()) {
         nextTickQueue->drain(vm, this);
         if (auto* exception = scope.exception()) {
@@ -3647,7 +3644,7 @@ static JSC::JSPromise* resolvedInternalPromise(JSC::JSGlobalObject* globalObject
 }
 
 JSC::JSPromise* GlobalObject::moduleLoaderFetch(JSGlobalObject* globalObject,
-    JSModuleLoader* loader, JSValue key,
+    JSModuleLoader* loader, JSValue key, const WTF::String&,
     RefPtr<JSC::ScriptFetchParameters> parameters, RefPtr<JSC::ScriptFetcher>)
 {
     auto& vm = JSC::getVM(globalObject);
@@ -3883,7 +3880,7 @@ static void registerStandaloneClosure(Zig::GlobalObject* globalObject, JSModuleL
         loader->registryEntry(m.key)->markLoaded();
 }
 
-JSC::JSPromise* StandaloneGlobalObject::moduleLoaderFetch(JSGlobalObject* jsGlobalObject, JSModuleLoader* loader, JSValue key, RefPtr<JSC::ScriptFetchParameters> parameters, RefPtr<JSC::ScriptFetcher> fetcher)
+JSC::JSPromise* StandaloneGlobalObject::moduleLoaderFetch(JSGlobalObject* jsGlobalObject, JSModuleLoader* loader, JSValue key, const WTF::String& referrer, RefPtr<JSC::ScriptFetchParameters> parameters, RefPtr<JSC::ScriptFetcher> fetcher)
 {
     auto* globalObject = static_cast<Zig::GlobalObject*>(jsGlobalObject);
     auto& vm = globalObject->vm();
@@ -3891,20 +3888,20 @@ JSC::JSPromise* StandaloneGlobalObject::moduleLoaderFetch(JSGlobalObject* jsGlob
 
     bool plainJS = !parameters || parameters->type() == ScriptFetchParameters::Type::JavaScript;
     if (!plainJS || globalObject->onLoadPlugins.hasVirtualModules() || Bun__hasPluginRunner(globalObject->bunVM()))
-        RELEASE_AND_RETURN(scope, GlobalObject::moduleLoaderFetch(jsGlobalObject, loader, key, WTF::move(parameters), WTF::move(fetcher)));
+        RELEASE_AND_RETURN(scope, GlobalObject::moduleLoaderFetch(jsGlobalObject, loader, key, referrer, WTF::move(parameters), WTF::move(fetcher)));
 
     JSString* keyJS = key.toString(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
     String keyString = keyJS->value(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
     if (!keyString.is8Bit() || keyString.endsWith(".node"_s) || !Bun__standaloneModuleHasModuleInfo(keyString.span8().data(), keyString.length()))
-        RELEASE_AND_RETURN(scope, GlobalObject::moduleLoaderFetch(jsGlobalObject, loader, key, WTF::move(parameters), WTF::move(fetcher)));
+        RELEASE_AND_RETURN(scope, GlobalObject::moduleLoaderFetch(jsGlobalObject, loader, key, referrer, WTF::move(parameters), WTF::move(fetcher)));
 
     Identifier rootKey = Identifier::fromString(vm, keyString);
     JSSourceCode* rootSource = fetchSourceSync(globalObject, rootKey);
     RETURN_IF_EXCEPTION(scope, rejectedInternalPromise(globalObject, scope.exception()->value()));
     if (!rootSource)
-        RELEASE_AND_RETURN(scope, GlobalObject::moduleLoaderFetch(jsGlobalObject, loader, key, WTF::move(parameters), WTF::move(fetcher)));
+        RELEASE_AND_RETURN(scope, GlobalObject::moduleLoaderFetch(jsGlobalObject, loader, key, referrer, WTF::move(parameters), WTF::move(fetcher)));
 
     auto* provider = transpiledModuleProvider(rootSource);
     if (!provider)

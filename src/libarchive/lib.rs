@@ -13,7 +13,7 @@ use bun_core::{MutableString, slice_to_nul, strings};
 use bun_core::{Output, ZStr, slice_as_bytes};
 #[cfg(unix)]
 use bun_paths::PathBuffer;
-use bun_paths::{OSPathBuffer, OSPathChar, SEP, SEP_STR};
+use bun_paths::{OSPathChar, SEP, SEP_STR};
 use bun_sys::{self, Fd, FdExt};
 use bun_wyhash::hash;
 
@@ -769,21 +769,34 @@ pub mod lib {
         ) -> core::result::Result<IteratorResult<Box<[u8]>>, bun_core::OOM> {
             // SAFETY: self.entry is the libarchive-owned entry from read_next_header.
             let size = unsafe { (*self.entry).size() };
-            if size < 0 || size > 64 * 1024 * 1024 {
+            let Ok(size) = usize::try_from(size) else {
                 return Ok(IteratorResult::init_err(
                     archive.as_mut_ptr(),
                     b"invalid archive entry size",
                 ));
+            };
+            // Read data incrementally so untrusted entry sizes don't drive allocation.
+            let mut buf: Vec<u8> = Vec::new();
+            while buf.len() < size {
+                let to_read = (size - buf.len()).min(64 * 1024);
+                buf.try_reserve(to_read).map_err(|_| bun_core::AllocError)?;
+                // SAFETY: `archive_read_data` only writes into the slice; the written prefix is committed below.
+                let dest = unsafe { &mut bun_core::vec::spare_bytes_mut(&mut buf)[..to_read] };
+                let read = archive.read_data(dest);
+                if read < 0 {
+                    return Ok(IteratorResult::init_err(
+                        archive.as_mut_ptr(),
+                        b"failed to read archive data",
+                    ));
+                }
+                if read == 0 {
+                    break;
+                }
+                // SAFETY: `archive_read_data` returns exactly the byte count it wrote (`<= to_read`).
+                unsafe {
+                    bun_core::vec::commit_spare(&mut buf, usize::try_from(read).expect("int cast"))
+                };
             }
-            let mut buf = vec![0u8; usize::try_from(size).expect("int cast")];
-            let read = archive.read_data(&mut buf);
-            if read < 0 {
-                return Ok(IteratorResult::init_err(
-                    archive.as_mut_ptr(),
-                    b"failed to read archive data",
-                ));
-            }
-            buf.truncate(usize::try_from(read).expect("int cast"));
             Ok(IteratorResult::init_res(buf.into_boxed_slice()))
         }
     }
@@ -1250,7 +1263,7 @@ impl Archiver {
         // a directory HANDLE on Windows. Mirrors the guard pattern in extract_to_disk.
         let _close_dir_guard = scopeguard::guard(dir, |d| d.close());
 
-        let mut normalized_buf = bun_paths::PathBuffer::uninit();
+        let mut normalized_buf = bun_paths::path_buffer_pool::get();
 
         'loop_: loop {
             // SAFETY: archive valid for stream lifetime
@@ -1393,7 +1406,7 @@ impl Archiver {
         #[cfg(unix)]
         let mut deferred_symlinks: Vec<DeferredSymlink> = Vec::new();
 
-        let mut normalized_buf = OSPathBuffer::uninit();
+        let mut normalized_buf = bun_paths::os_path_buffer_pool::get();
         let mut use_pwrite = cfg!(unix);
         let mut use_lseek = true;
 

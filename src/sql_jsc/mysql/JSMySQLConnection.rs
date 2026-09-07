@@ -914,6 +914,11 @@ impl<const SSL: bool> SocketHandler<SSL> {
         // Takes over the socket ref taken in on_open.
         // SAFETY: `this` is live and that ref is outstanding.
         let _guard = unsafe { RefPtr::from_raw(this.as_ctx_ptr()) };
+        // usockets frees this socket at end-of-tick; drop the stored pointer
+        // now so nothing (timer callbacks, do_close) dereferences it after
+        // the free.
+        this.connection_mut()
+            .set_socket(AnySocket::SocketTcp(SocketTCP::detached()));
         // A close before the handshake finished means the server (or an
         // intermediary like a container port proxy) accepted the TCP
         // connection but went away before completing startup — e.g. the
@@ -943,6 +948,10 @@ impl<const SSL: bool> SocketHandler<SSL> {
     }
 
     pub fn on_connect_error(this: &JSMySQLConnection, _: NewSocketHandler<SSL>, _: i32) {
+        // The dispatch trampoline already closed the connecting socket; it is
+        // freed at end-of-tick, so detach before any user-visible callback.
+        this.connection_mut()
+            .set_socket(AnySocket::SocketTcp(SocketTCP::detached()));
         this.fail(b"Failed to connect", AnyMySQLErrorT::ConnectionRefused);
     }
 

@@ -42,37 +42,30 @@ fn to_js_module_record(
     let body = *res.body();
     let identifier_count = res.strings_count();
 
-    // Identifier slots the ids index. Shared: the VM-wide slots for the
-    // executable's string table, filled on first use below. Otherwise a
-    // throwaway array covering this record's own table, filled up front.
+    // Identifier slots the ids index, filled on first use: the VM-wide slots
+    // for an executable's shared table, else a throwaway array for this record.
     let mut owned_identifiers: Option<OwnedIdentifierArray> = None;
     let identifiers: *mut IdentifierArray = if res.shared() {
         IdentifierArray::shared(vm, identifier_count)
     } else {
-        let identifiers = owned_identifiers
+        owned_identifiers
             .insert(OwnedIdentifierArray::new(identifier_count))
-            .ptr;
-        for index in 0..identifier_count {
-            let sub = res
-                .string(index as u32)
-                .ok_or(analyze::ModuleInfoError::BadModuleInfo)?;
-            // SAFETY: `identifiers` has `identifier_count` slots.
-            unsafe { IdentifierArray::set_from_utf8(identifiers, index, vm, sub) };
-        }
-        identifiers
+            .ptr
     };
     // Every id handed to JSC goes through here: in range (or a sentinel, which
-    // `IdCursor` already vetted) and, for the shared slots, materialized.
-    let shared = res.shared();
+    // `IdCursor` already vetted) and materialized.
     let ready = |id: StringID| -> Result<StringID, analyze::ModuleInfoError> {
-        if shared && (id.0 as usize) < identifier_count {
+        if (id.0 as usize) < identifier_count {
             // SAFETY: `identifiers` has at least `identifier_count` slots.
             if unsafe { IdentifierArray::is_null(identifiers, id.0 as usize) } {
-                let sub = res
+                let string = res
                     .string(id.0)
                     .ok_or(analyze::ModuleInfoError::BadModuleInfo)?;
                 // SAFETY: as above.
-                unsafe { IdentifierArray::set_from_utf8(identifiers, id.0 as usize, vm, sub) };
+                let ok = unsafe { IdentifierArray::set(identifiers, id.0 as usize, vm, string) };
+                if !ok {
+                    return Err(analyze::ModuleInfoError::BadModuleInfo);
+                }
             }
         }
         Ok(id)
@@ -251,13 +244,20 @@ unsafe extern "C" {
     fn JSC__IdentifierArray__create(count: usize) -> *mut IdentifierArray;
     fn JSC__IdentifierArray__destroy(identifiers: *mut IdentifierArray, count: usize);
     fn JSC__IdentifierArray__isNull(identifier_array: *mut IdentifierArray, n: usize) -> bool;
-    fn JSC__IdentifierArray__setFromUtf8(
+    fn JSC__IdentifierArray__setFromChars(
         identifier_array: *mut IdentifierArray,
         n: usize,
         vm: *const VM,
-        str_: *const u8,
+        chars: *const u8,
         len: usize,
+        is_8bit: bool,
     );
+    fn JSC__IdentifierArray__setFromSlot(
+        identifier_array: *mut IdentifierArray,
+        n: usize,
+        vm: *const VM,
+        slot: u32,
+    ) -> bool;
 }
 impl IdentifierArray {
     /// The VM's slots for the executable's shared module-info string table,
@@ -299,9 +299,31 @@ impl IdentifierArray {
     /// # Safety
     /// `this` must be live; `n` must be in-bounds for the array's length.
     #[inline]
-    pub(crate) unsafe fn set_from_utf8(this: *mut IdentifierArray, n: usize, vm: &VM, str_: &[u8]) {
-        // SAFETY: caller contract — `this` is live, `n` is in bounds; `str_` is a valid slice for the call.
-        unsafe { JSC__IdentifierArray__setFromUtf8(this, n, vm, str_.as_ptr(), str_.len()) }
+    pub(crate) unsafe fn set(
+        this: *mut IdentifierArray,
+        n: usize,
+        vm: &VM,
+        string: analyze::ModuleInfoString<'_>,
+    ) -> bool {
+        // SAFETY: caller contract — `this` is live, `n` is in bounds; `chars` is a valid slice for the call.
+        unsafe {
+            match string {
+                analyze::ModuleInfoString::Chars { chars, is_8bit } => {
+                    JSC__IdentifierArray__setFromChars(
+                        this,
+                        n,
+                        vm,
+                        chars.as_ptr(),
+                        chars.len(),
+                        is_8bit,
+                    );
+                    true
+                }
+                analyze::ModuleInfoString::Slot(slot) => {
+                    JSC__IdentifierArray__setFromSlot(this, n, vm, slot)
+                }
+            }
+        }
     }
 }
 

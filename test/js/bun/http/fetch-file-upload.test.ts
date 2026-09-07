@@ -222,6 +222,44 @@ describe("Bun.file().slice() upload sends the slice's Content-Length", () => {
   });
 });
 
+// The streaming file body path (sendfile(2) on Linux, a pread + send loop on
+// macOS) resumes from its own offset after every partial write. A reader that
+// keeps falling behind forces many of those resumes; a position-dependent byte
+// pattern and an unaligned slice start make any misplaced or repeated chunk
+// change the hash.
+test("large Bun.file().slice() upload arrives intact when the server reads slower than the client writes", async () => {
+  const size = 16 * 1024 * 1024;
+  const bytes = Buffer.allocUnsafe(size);
+  for (let i = 0; i < size; i += 4) bytes.writeUInt32LE(i >>> 2, i);
+  using dir = tempDir("fetch-file-slice-backpressure", { "big.bin": bytes });
+  const start = 123_457;
+  const expected = Bun.CryptoHasher.hash("sha256", bytes.subarray(start), "hex");
+
+  await using server = Bun.serve({
+    port: 0,
+    development: false,
+    maxRequestBodySize: size,
+    async fetch(req) {
+      const hasher = new Bun.CryptoHasher("sha256");
+      let received = 0;
+      for await (const chunk of req.body!) {
+        hasher.update(chunk);
+        received += chunk.length;
+        await new Promise<void>(resolve => setImmediate(resolve));
+      }
+      return Response.json({
+        contentLength: req.headers.get("content-length"),
+        received,
+        hash: hasher.digest("hex"),
+      });
+    },
+  });
+
+  const res = await fetch(server.url, { method: "PUT", body: Bun.file(join(String(dir), "big.bin")).slice(start) });
+  expect(res.status).toBe(200);
+  expect(await res.json()).toEqual({ contentLength: String(size - start), received: size - start, hash: expected });
+});
+
 test("missing file throws the expected error", async () => {
   Bun.gc(true);
   // Run this 1000 times to check for GC bugs

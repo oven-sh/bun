@@ -1,10 +1,16 @@
-#[cfg(all(unix, not(any(target_os = "linux", target_os = "android"))))]
+#[cfg(target_os = "freebsd")]
 use core::ptr;
 
 use bun_core::feature_flags;
 use bun_sys::{self, Fd};
 use bun_url::URL;
 
+/// Streams a file request body from the HTTP thread. Linux and FreeBSD hand
+/// the copy to `sendfile(2)`. macOS copies through a userspace buffer instead:
+/// XNU's `sendfile` allocates its mbuf chain with an uninterruptible wait
+/// before it checks for socket space, so under mbuf pressure the HTTP thread
+/// sleeps in the kernel and the process cannot be killed (the server side
+/// avoids it for the same reason, see `can_sendfile` in FileResponseStream.rs).
 #[derive(Copy, Clone)]
 pub struct SendFile {
     pub fd: Fd,
@@ -99,29 +105,35 @@ impl SendFile {
             not(target_os = "freebsd")
         ))]
         {
-            let mut sbytes: i64 = i64::try_from(adjusted_count).expect("int cast"); // C off_t
-            // Same-width signedness flip; `as` is a bit-reinterpret here.
-            let signed_offset: i64 = self.offset as u64 as i64;
-            // SAFETY: fds valid; sbytes is a live stack local; hdtr is null (no headers).
-            let errcode = bun_sys::get_errno(unsafe {
-                bun_sys::c::sendfile(
-                    self.fd.native(),
-                    socket_fd.native(),
-                    signed_offset,
-                    &raw mut sbytes,
-                    ptr::null_mut(),
-                    0,
-                )
-            });
-            let wrote: u64 = u64::try_from(sbytes).expect("int cast");
-            self.offset = (self.offset as u64).saturating_add(wrote) as usize;
-            self.remain = (self.remain as u64).saturating_sub(wrote) as usize;
-            if errcode != bun_sys::E::EAGAIN || self.remain == 0 || sbytes == 0 {
-                if errcode == bun_sys::E::SUCCESS {
+            let _ = adjusted_count;
+            let buf = crate::scratch::file_body_copy_buffer();
+            loop {
+                let want = buf.len().min(self.remain);
+                if want == 0 {
                     return Status::Done;
                 }
-
-                return Status::Err(bun_errno::from_errno(errcode as i32).into());
+                let read = match bun_sys::pread(self.fd, &mut buf[..want], self.offset as i64) {
+                    // The file shrank after it was measured; nothing more to send.
+                    Ok(0) => return Status::Done,
+                    Ok(n) => n,
+                    Err(err) => return Status::Err(bun_errno::SystemErrno::from(err).into()),
+                };
+                let wrote = match bun_sys::send_non_block(socket_fd, &buf[..read]) {
+                    Ok(n) => n,
+                    // ENOBUFS is the mbuf pool running dry: transient, like the
+                    // other usockets write paths treat it. Wait for writable.
+                    Err(err)
+                        if matches!(err.get_errno(), bun_sys::E::EAGAIN | bun_sys::E::ENOBUFS) =>
+                    {
+                        break;
+                    }
+                    Err(err) => return Status::Err(bun_errno::SystemErrno::from(err).into()),
+                };
+                self.offset += wrote;
+                self.remain -= wrote;
+                if wrote < read {
+                    break;
+                }
             }
         }
 

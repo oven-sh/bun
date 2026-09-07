@@ -1048,7 +1048,7 @@ bun_core::comptime_string_map! {
 }
 
 // ── shared per-thread buffers ───────────────────────────────────────────
-// All four are HTTP-thread-only scratch (single uws loop thread); `RacyCell`
+// All of these are HTTP-thread-only scratch (single uws loop thread); `RacyCell`
 // is the alias-safe static cell per docs/PORTING.md §Global mutable state.
 
 // we always rewrite the entire HTTP request when write() returns EAGAIN
@@ -1066,6 +1066,21 @@ static SHARED_RESPONSE_HEADERS_BUF: bun_core::RacyCell<[picohttp::Header; 256]> 
 // so we can avoid allocating a temporary buffer to copy the data in
 static SINGLE_PACKET_SMALL_BUFFER: bun_core::RacyCell<[u8; 16 * 1024]> =
     bun_core::RacyCell::new([0; 16 * 1024]);
+
+// macOS copies file request bodies through userspace instead of sendfile(2)
+// (see `SendFile`); each chunk is pread into this and written out before the
+// next pread, so one buffer serves every in-flight upload.
+#[cfg(all(
+    unix,
+    not(any(target_os = "linux", target_os = "android", target_os = "freebsd"))
+))]
+const FILE_BODY_COPY_BUFFER_SIZE: usize = 256 * 1024;
+#[cfg(all(
+    unix,
+    not(any(target_os = "linux", target_os = "android", target_os = "freebsd"))
+))]
+static FILE_BODY_COPY_BUFFER: bun_core::RacyCell<[u8; FILE_BODY_COPY_BUFFER_SIZE]> =
+    bun_core::RacyCell::new([0; FILE_BODY_COPY_BUFFER_SIZE]);
 
 /// Accessors for the HTTP-thread-only `RacyCell` scratch buffers.
 ///
@@ -1095,6 +1110,15 @@ mod scratch {
     pub(crate) fn temp_hostname() -> &'static mut [u8; 8192] {
         // SAFETY: see module-level INVARIANT.
         unsafe { &mut *TEMP_HOSTNAME.get() }
+    }
+    #[cfg(all(
+        unix,
+        not(any(target_os = "linux", target_os = "android", target_os = "freebsd"))
+    ))]
+    #[inline]
+    pub(crate) fn file_body_copy_buffer() -> &'static mut [u8; FILE_BODY_COPY_BUFFER_SIZE] {
+        // SAFETY: see module-level INVARIANT.
+        unsafe { &mut *FILE_BODY_COPY_BUFFER.get() }
     }
 }
 pub(crate) use scratch::temp_hostname;

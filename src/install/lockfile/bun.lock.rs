@@ -540,17 +540,23 @@ impl Stringifier {
 
             index_sort::sort_slice_by(&mut tree_sort_buf, tree_sort_is_less_than);
 
-            if found_trusted_dependencies.len() > 0 {
+            // A list with no name in the tree is still written: its presence is what turns the
+            // default list off (bun.lockb has `HAS_EMPTY_TRUSTED_DEPENDENCIES_TAG` for this).
+            if lockfile.trusted_dependencies.is_some() {
                 Self::write_indent(writer, *indent)?;
-                writer.write_all(b"\"trustedDependencies\": [\n")?;
-                *indent += 1;
-                for dep_name in found_trusted_dependencies.values() {
-                    Self::write_indent(writer, *indent)?;
-                    writeln!(writer, "\"{}\",", bstr::BStr::new(dep_name.slice(buf)))?;
-                }
+                if found_trusted_dependencies.len() == 0 {
+                    writer.write_all(b"\"trustedDependencies\": [],\n")?;
+                } else {
+                    writer.write_all(b"\"trustedDependencies\": [\n")?;
+                    *indent += 1;
+                    for dep_name in found_trusted_dependencies.values() {
+                        Self::write_indent(writer, *indent)?;
+                        writeln!(writer, "\"{}\",", bstr::BStr::new(dep_name.slice(buf)))?;
+                    }
 
-                Self::dec_indent(writer, indent)?;
-                writer.write_all(b"],\n")?;
+                    Self::dec_indent(writer, indent)?;
+                    writer.write_all(b"],\n")?;
+                }
             }
 
             if found_patched_dependencies.len() > 0 {

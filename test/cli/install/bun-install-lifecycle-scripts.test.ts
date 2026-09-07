@@ -2670,6 +2670,97 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
 
       expect(await exists(join(packageDir, "node_modules", "uses-what-bin", "what-bin.txt"))).toBeFalse();
       expect(await exists(join(packageDir, "node_modules", "electron", "preinstall.txt"))).toBeFalse();
+
+      // Installs that start from the existing bun.lock keep the opt-out.
+      for (const frozenLockfile of [false, true]) {
+        await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
+        const { err } = await runBunInstall(testEnv, packageDir, { savesLockfile: false, frozenLockfile });
+        expect(await exists(join(packageDir, "node_modules", "electron", "package.json"))).toBeTrue();
+        expect(await exists(join(packageDir, "node_modules", "uses-what-bin", "what-bin.txt"))).toBeFalse();
+        expect(await exists(join(packageDir, "node_modules", "electron", "preinstall.txt"))).toBeFalse();
+        expect(err).not.toContain("Saved lockfile");
+      }
+
+      // bun.lock records the empty list, so `bun pm untrusted` (which only reads the
+      // lockfile) knows the default list (electron) is off.
+      expect(await file(join(packageDir, "bun.lock")).text()).toContain(`"trustedDependencies": [],`);
+      ({ stdout, stderr, exited } = spawn({
+        cmd: [bunExe(), "pm", "untrusted"],
+        cwd: packageDir,
+        stdout: "pipe",
+        stdin: "ignore",
+        stderr: "pipe",
+        env: testEnv,
+      }));
+      expect(await stderr.text()).not.toContain("error:");
+      const untrusted = await stdout.text();
+      expect(untrusted).toContain("electron");
+      expect(untrusted).toContain("uses-what-bin");
+      expect(await exited).toBe(0);
+    });
+
+    test("an empty trustedDependencies list added after the lockfile exists turns the default list off", async () => {
+      using ctx = await setupTest();
+      const { packageDir, packageJson, env } = ctx;
+      const testEnv = forceWaiterThread ? { ...env, BUN_FEATURE_FLAG_FORCE_WAITER_THREAD: "1" } : env;
+
+      const electronPreinstall = join(packageDir, "node_modules", "electron", "preinstall.txt");
+
+      await writeFile(packageJson, JSON.stringify({ name: "foo", dependencies: { electron: "1.0.0" } }));
+      await runBunInstall(testEnv, packageDir);
+      // electron is on the default list
+      expect(await exists(electronPreinstall)).toBeTrue();
+      expect(await file(join(packageDir, "bun.lock")).text()).not.toContain("trustedDependencies");
+
+      await writeFile(
+        packageJson,
+        JSON.stringify({ name: "foo", dependencies: { electron: "1.0.0" }, trustedDependencies: [] }),
+      );
+      await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
+      let { err } = await runBunInstall(testEnv, packageDir, { savesLockfile: false });
+      expect(await exists(join(packageDir, "node_modules", "electron", "package.json"))).toBeTrue();
+      expect(await exists(electronPreinstall)).toBeFalse();
+      // The lockfile has no list and package.json now has one: that is a change, so the
+      // lockfile is saved again, now with the empty list.
+      expect(err).toContain("Saved lockfile");
+      expect(await file(join(packageDir, "bun.lock")).text()).toContain(`"trustedDependencies": [],`);
+
+      await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
+      ({ err } = await runBunInstall(testEnv, packageDir, { savesLockfile: false }));
+      expect(await exists(electronPreinstall)).toBeFalse();
+      expect(err).not.toContain("Saved lockfile");
+    });
+
+    test("an empty trustedDependencies list in a workspace package turns the default list off on every install", async () => {
+      using ctx = await setupTest();
+      const { packageDir, packageJson, env } = ctx;
+      const testEnv = forceWaiterThread ? { ...env, BUN_FEATURE_FLAG_FORCE_WAITER_THREAD: "1" } : env;
+
+      const electronPreinstall = join(packageDir, "node_modules", "electron", "preinstall.txt");
+      const memberPackageJson = join(packageDir, "pkgs", "a", "package.json");
+
+      await writeFile(packageJson, JSON.stringify({ name: "root", workspaces: ["pkgs/*"] }));
+      await mkdir(join(packageDir, "pkgs", "a"), { recursive: true });
+      await writeFile(memberPackageJson, JSON.stringify({ name: "a", dependencies: { electron: "1.0.0" } }));
+
+      await runBunInstall(testEnv, packageDir);
+      expect(await exists(electronPreinstall)).toBeTrue();
+
+      await writeFile(
+        memberPackageJson,
+        JSON.stringify({ name: "a", dependencies: { electron: "1.0.0" }, trustedDependencies: [] }),
+      );
+      await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
+      let { err } = await runBunInstall(testEnv, packageDir, { savesLockfile: false });
+      expect(await exists(join(packageDir, "node_modules", "electron", "package.json"))).toBeTrue();
+      expect(await exists(electronPreinstall)).toBeFalse();
+      expect(err).toContain("Saved lockfile");
+      expect(await file(join(packageDir, "bun.lock")).text()).toContain(`"trustedDependencies": [],`);
+
+      await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
+      ({ err } = await runBunInstall(testEnv, packageDir, { savesLockfile: false }));
+      expect(await exists(electronPreinstall)).toBeFalse();
+      expect(err).not.toContain("Saved lockfile");
     });
 
     test("default trusted dependencies should only apply to npm packages, not file: dependencies", async () => {

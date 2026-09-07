@@ -28,133 +28,56 @@
 
 #include "NodeURLHelpers.h"
 #include "URLSearchParams.h"
+#include <wtf/text/StringCommon.h>
 
 namespace WebCore {
 
 // The WHATWG parser (WebKit) fast-paths all-ASCII hosts without validating
 // xn-- labels; Node's ada rejects invalid punycode in special-scheme hosts.
-static bool hasValidParsedHost(const URL& url)
+// `input` is the string the host was parsed from (a base URL's host was checked when the base was parsed).
+template<typename CharacterType>
+static bool containsXNDashDash(std::span<const CharacterType> host)
 {
-    // Cheap accept first: hosts without an invalid xn-- label are always fine.
-    if (Bun::hasValidPunycodeHost(url.host()))
-        return true;
-    // Non-special schemes have opaque hosts and skip IDNA entirely.
-    return !url.hasSpecialScheme();
+    // "--" is rare in hosts; look for it and check the two characters before it. Special-scheme hosts are lowercase here.
+    for (size_t i = WTF::find(host, '-'); i != notFound && i + 1 < host.size(); i = WTF::find(host, '-', i + 1)) {
+        if (host[i + 1] == '-' && i >= 2 && host[i - 2] == 'x' && host[i - 1] == 'n')
+            return true;
+    }
+    return false;
 }
 
-// Platform ICU may predate Unicode 15.1/16.0 (node v26 uses ada::idna): apply the Unicode 16
-// IDNA delta to the host span only when it contains a delta source code point. Returns a null
-// String when no rewrite is needed (the common path). See NodeURL.cpp for the delta table.
-static String applyIDNADeltaToURLAuthority(const String& urlString, StringView specialBaseScheme = {})
+static bool hasValidParsedHost(const URL& url, const String& input)
 {
-    // Percent-encoded delta sources are all-ASCII and intentionally excluded; the durable fix
-    // is bundling Unicode-16 ICU data so the parser's own domain-to-ASCII handles it uniformly.
-    if (urlString.is8Bit() || !urlString.length())
-        return {};
-
-    StringView view { urlString };
-
-    // Mirror https://url.spec.whatwg.org/#concept-basic-url-parser steps 1/3 (strip C0/tab/CR/LF)
-    // so an embedded tab in the scheme or `//` run does not defeat the special-scheme match below.
-    auto isTabOrNewline = [](char16_t ch) { return ch == '\t' || ch == '\n' || ch == '\r'; };
-    String stripped;
-    if (view.find(isTabOrNewline) != notFound) {
-        stripped = urlString.removeCharacters(isTabOrNewline);
-        view = stripped;
+    auto host = url.host();
+    if (host.length() < 4 || !(host.is8Bit() ? containsXNDashDash(host.span8()) : containsXNDashDash(host.span16())))
+        return true;
+    // Non-special schemes have opaque hosts and skip IDNA entirely.
+    if (!url.hasSpecialScheme())
+        return true;
+    // An xn-- label that ICU produced from a Unicode host is valid by construction; only one that was literally in the
+    // input needs checking. If this input supplied the host, it did so from its authority: after the scheme and any
+    // slashes, up to the next slash, '?' or '#'. Tabs and newlines are removed anywhere and percent-encoding is decoded
+    // in hosts, so either could hide a literal label.
+    StringView view(input);
+    if (view.find([](char16_t character) { return character == '\t' || character == '\n' || character == '\r'; }) != notFound)
+        return Bun::hasValidPunycodeHost(host);
+    unsigned start = 0;
+    while (start < view.length() && view[start] <= ' ')
+        ++start;
+    if (start < view.length() && isASCIIAlpha(view[start])) {
+        unsigned schemeEnd = start + 1;
+        while (schemeEnd < view.length() && (isASCIIAlphanumeric(view[schemeEnd]) || view[schemeEnd] == '+' || view[schemeEnd] == '-' || view[schemeEnd] == '.'))
+            ++schemeEnd;
+        if (schemeEnd < view.length() && view[schemeEnd] == ':')
+            start = schemeEnd + 1;
     }
-    size_t scan = 0;
-    while (scan < view.length() && (view[scan] <= 0x20))
-        scan++;
-
-    // Only the six special schemes run IDNA (https://url.spec.whatwg.org/#special-scheme). The
-    // special-authority-ignore-slashes state consumes any '/'|'\\' run after ':'; same-scheme-as-base
-    // without "//" enters the relative state (path, not host). Scheme-relative "//" inherits base.
-    auto isSlash = [](char16_t ch) { return ch == '/' || ch == '\\'; };
-    // file: routes through file state/file slash state/file host state: only
-    // exactly two slashes then a non-slash introduce a host; file:///x and
-    // file:/x have an empty host and `x` is a path segment.
-    auto locateAuthority = [&](size_t afterColon, bool isFile) -> size_t {
-        const bool hasDoubleSlash = afterColon + 1 < view.length()
-            && isSlash(view[afterColon]) && isSlash(view[afterColon + 1]);
-        if (isFile) {
-            if (!hasDoubleSlash)
-                return notFound;
-            size_t start = afterColon + 2;
-            if (start < view.length() && isSlash(view[start]))
-                return notFound;
-            return start;
-        }
-        size_t start = afterColon;
-        while (start < view.length() && isSlash(view[start]))
-            start++;
-        return start;
-    };
-    size_t authorityStart = notFound;
-    if (!specialBaseScheme.isEmpty() && scan + 1 < view.length() && isSlash(view[scan]) && isSlash(view[scan + 1])) {
-        authorityStart = locateAuthority(scan, equalLettersIgnoringASCIICase(specialBaseScheme, "file"_s));
-    } else {
-        size_t colon = view.find(':', scan);
-        if (colon != notFound) {
-            auto scheme = view.substring(scan, colon - scan);
-            const bool isFile = equalLettersIgnoringASCIICase(scheme, "file"_s);
-            if (equalLettersIgnoringASCIICase(scheme, "http"_s) || equalLettersIgnoringASCIICase(scheme, "https"_s)
-                || equalLettersIgnoringASCIICase(scheme, "ws"_s) || equalLettersIgnoringASCIICase(scheme, "wss"_s)
-                || equalLettersIgnoringASCIICase(scheme, "ftp"_s) || isFile) {
-                size_t afterColon = colon + 1;
-                const bool hasDoubleSlash = afterColon + 1 < view.length()
-                    && isSlash(view[afterColon]) && isSlash(view[afterColon + 1]);
-                // Same scheme as the base and no "//" → relative-state path,
-                // not an authority; the delta must not touch it.
-                if (!hasDoubleSlash && equalIgnoringASCIICase(scheme, specialBaseScheme))
-                    return {};
-                authorityStart = locateAuthority(afterColon, isFile);
-            }
-        }
-    }
-    if (authorityStart == notFound)
-        return {};
-
-    // The authority ends at the first path/query/fragment terminator;
-    // backslash terminates it for special schemes and never appears in a
-    // valid host, so treating it as a terminator is safe for both kinds.
-    size_t authorityEnd = view.length();
-    for (size_t i = authorityStart; i < view.length(); i++) {
-        char16_t ch = view[i];
-        if (ch == '/' || ch == '?' || ch == '#' || ch == '\\') {
-            authorityEnd = i;
-            break;
-        }
-    }
-
-    // Userinfo is percent-encoded, not IDNA-mapped, in node too: only the
-    // host span after the last '@' gets the delta.
-    size_t hostStart = authorityStart;
-    auto authority = view.substring(authorityStart, authorityEnd - authorityStart);
-    size_t at = authority.reverseFind('@');
-    if (at != notFound)
-        hostStart = authorityStart + at + 1;
-
-    // A '['-prefixed host goes straight to the IPv6 parser and never runs
-    // domain-to-ASCII; leave it untouched so the parser sees the original.
-    if (hostStart < view.length() && view[hostStart] == '[')
-        return {};
-
-    // Port span must stay verbatim: the delta strips ignored-class code points, which would turn
-    // an invalid non-digit port char into a valid port. Last ':' is the port separator here.
-    auto hostAndPort = view.substring(hostStart, authorityEnd - hostStart);
-    size_t portColon = hostAndPort.reverseFind(':');
-    size_t hostEnd = portColon == notFound ? authorityEnd : hostStart + portColon;
-
-    auto hostView = view.substring(hostStart, hostEnd - hostStart);
-    if (!Bun::containsUnicode16IDNADeltaSource(hostView))
-        return {};
-
-    auto mappedHost = Bun::applyUnicode16IDNADelta(hostView.toString());
-    StringBuilder builder;
-    builder.append(view.left(hostStart));
-    builder.append(mappedHost);
-    builder.append(view.substring(hostEnd));
-    return builder.toString();
+    while (start < view.length() && (view[start] == '/' || view[start] == '\\'))
+        ++start;
+    auto authority = view.substring(start);
+    authority = authority.left(std::min<size_t>(authority.find([](char16_t character) { return character == '/' || character == '\\' || character == '?' || character == '#'; }), authority.length()));
+    if (authority.find('%') == notFound && !authority.containsIgnoringASCIICase("xn--"_s))
+        return true;
+    return Bun::hasValidPunycodeHost(host);
 }
 
 inline DOMURL::DOMURL(URL&& completeURL)
@@ -170,9 +93,8 @@ inline DOMURL::DOMURL(URL&& completeURL)
 // (see createDOMException).
 ExceptionOr<Ref<DOMURL>> DOMURL::create(const String& url)
 {
-    auto mapped = applyIDNADeltaToURLAuthority(url);
-    URL completeURL { mapped.isNull() ? url : mapped };
-    if (!completeURL.isValid() || !hasValidParsedHost(completeURL))
+    URL completeURL { url };
+    if (!completeURL.isValid() || !hasValidParsedHost(completeURL, url))
         return Exception { InvalidURLError, url };
     return adoptRef(*new DOMURL(WTF::move(completeURL)));
 }
@@ -180,58 +102,66 @@ ExceptionOr<Ref<DOMURL>> DOMURL::create(const String& url)
 ExceptionOr<Ref<DOMURL>> DOMURL::create(const String& url, const URL& base, const String& baseInput)
 {
     ASSERT(base.isValid() || base.isNull());
-    auto mapped = applyIDNADeltaToURLAuthority(url, base.hasSpecialScheme() ? base.protocol() : StringView {});
-    URL completeURL { base, mapped.isNull() ? url : mapped };
-    if (!completeURL.isValid() || !hasValidParsedHost(completeURL))
+    URL completeURL { base, url };
+    if (!completeURL.isValid() || !hasValidParsedHost(completeURL, url))
         return Exception { InvalidURLError, url, baseInput };
     return adoptRef(*new DOMURL(WTF::move(completeURL)));
 }
 
-ExceptionOr<Ref<DOMURL>> DOMURL::create(const String& url, const String& base)
+// A null URL means the base did not parse or has an invalid host.
+static URL parseBase(const String& base, DOMURL::BaseURLCache* cache)
 {
-    auto mappedBase = applyIDNADeltaToURLAuthority(base);
-    URL baseURL { mappedBase.isNull() ? base : mappedBase };
-    if (!base.isNull() && (!baseURL.isValid() || !hasValidParsedHost(baseURL)))
+    if (cache && cache->input == base) [[likely]]
+        return cache->url;
+    URL baseURL { base };
+    if (!baseURL.isValid() || !hasValidParsedHost(baseURL, base))
+        return {};
+    if (cache) {
+        cache->input = base;
+        cache->url = baseURL;
+    }
+    return baseURL;
+}
+
+ExceptionOr<Ref<DOMURL>> DOMURL::create(const String& url, const String& base, BaseURLCache* cache)
+{
+    URL baseURL = base.isNull() ? URL {} : parseBase(base, cache);
+    if (!base.isNull() && !baseURL.isValid())
         return Exception { InvalidURLError, url, base };
     return create(url, baseURL, base);
 }
 
 DOMURL::~DOMURL() = default;
 
-static URL parseInternal(const String& url, const String& base)
+static URL parseInternal(const String& url, const String& base, DOMURL::BaseURLCache* cache)
 {
-    auto mappedBase = applyIDNADeltaToURLAuthority(base);
-    URL baseURL { mappedBase.isNull() ? base : mappedBase };
-    if (!base.isNull() && (!baseURL.isValid() || !hasValidParsedHost(baseURL)))
+    URL baseURL = base.isNull() ? URL {} : parseBase(base, cache);
+    if (!base.isNull() && !baseURL.isValid())
         return {};
-    auto mapped = applyIDNADeltaToURLAuthority(url, baseURL.hasSpecialScheme() ? baseURL.protocol() : StringView {});
-    URL result { baseURL, mapped.isNull() ? url : mapped };
-    if (result.isValid() && !hasValidParsedHost(result))
+    URL result { baseURL, url };
+    if (result.isValid() && !hasValidParsedHost(result, url))
         return {};
     return result;
 }
 
-RefPtr<DOMURL> DOMURL::parse(const String& url, const String& base)
+RefPtr<DOMURL> DOMURL::parse(const String& url, const String& base, BaseURLCache* cache)
 {
-    auto completeURL = parseInternal(url, base);
+    auto completeURL = parseInternal(url, base, cache);
     if (!completeURL.isValid())
         return {};
     return adoptRef(*new DOMURL(WTF::move(completeURL)));
 }
 
-bool DOMURL::canParse(const String& url, const String& base)
+bool DOMURL::canParse(const String& url, const String& base, BaseURLCache* cache)
 {
-    return parseInternal(url, base).isValid();
+    return parseInternal(url, base, cache).isValid();
 }
 
 ExceptionOr<void> DOMURL::setHref(const String& url)
 {
-    auto mapped = applyIDNADeltaToURLAuthority(url);
-    URL completeURL { URL {}, mapped.isNull() ? url : mapped };
-    if (!completeURL.isValid() || !hasValidParsedHost(completeURL)) {
-
+    URL completeURL { URL {}, url };
+    if (!completeURL.isValid() || !hasValidParsedHost(completeURL, url))
         return Exception { InvalidURLError, url };
-    }
     m_url = WTF::move(completeURL);
     m_searchParamsDirty = false;
     if (m_searchParams)
@@ -242,7 +172,7 @@ ExceptionOr<void> DOMURL::setHref(const String& url)
 // The update steps invoked on URLSearchParams::{append,set,delete,sort} set
 // m_searchParamsDirty instead of eagerly re-serializing m_url on every call so
 // that N appends through url.searchParams stay O(N) instead of O(N^2). All
-// reads of m_url (href/toJSON/fullURL) call this first to reconcile.
+// reads of m_url (href/fullURL) call this first to reconcile.
 void DOMURL::flushPendingSearchParamsUpdate() const
 {
     if (!m_searchParamsDirty) [[likely]]

@@ -2,10 +2,7 @@ use core::ffi::c_void;
 use core::ptr::NonNull;
 use core::sync::atomic::Ordering;
 
-use crate::{
-    CommonAbortReason, CommonAbortReasonExt as _, JSGlobalObject, JSValue,
-    VirtualMachineRef as VirtualMachine,
-};
+use crate::{CommonAbortReason, JSGlobalObject, JSValue, VirtualMachineRef as VirtualMachine};
 use bun_event_loop::EventLoopTimer::{
     EventLoopTimer, InHeap, IntrusiveField, State as TimerState, Tag as TimerTag, TimerFlags,
     Timespec as ElTimespec,
@@ -53,6 +50,7 @@ unsafe extern "C" {
     // the non-`repr(C)` interior of `EventLoopTimer` is irrelevant to FFI.
     #[allow(improper_ctypes)]
     safe fn WebCore__AbortSignal__getTimeout(arg0: &AbortSignal) -> *mut Timeout;
+    safe fn WebCore__AbortSignal__cancelTimer(arg0: &AbortSignal);
     safe fn WebCore__AbortSignal__signal(
         arg0: &AbortSignal,
         arg1: &JSGlobalObject,
@@ -159,8 +157,11 @@ impl AbortSignal {
         ))
     }
 
-    pub fn ref_(&self) -> *mut AbortSignal {
-        WebCore__AbortSignal__ref(self)
+    /// Take a ref on the signal.
+    pub fn ref_(&self) -> AbortSignalRef {
+        // SAFETY: `WebCore__AbortSignal__ref` bumps the intrusive refcount and
+        // returns `self` with that +1.
+        unsafe { AbortSignalRef::adopt(WebCore__AbortSignal__ref(self)) }
     }
 
     pub fn unref(&self) {
@@ -200,8 +201,8 @@ impl AbortSignal {
     /// Thread-safety: not thread-safe; call only on the owning thread/loop.
     ///
     /// Usage: if you need to operate on the Timeout (run/cancel/deinit), hold a ref
-    /// to `this` for the duration (e.g., `this.ref_(); defer this.unref();`) and avoid
-    /// caching the pointer across turns.
+    /// to `this` for the duration (`let _ref = this.ref_();`) and avoid caching the
+    /// pointer across turns.
     pub fn get_timeout(&self) -> Option<&Timeout> {
         let ptr = WebCore__AbortSignal__getTimeout(self);
         // SAFETY: returned Timeout is owned by `self` and valid while `self` is held
@@ -247,27 +248,14 @@ impl AbortSignal {
     /// moved here because inherent impls cannot be added to a type alias.)
     #[inline]
     pub fn ref_from_js(value: JSValue) -> Option<AbortSignalRef> {
-        AbortSignal::from_js(value).map(|p| {
-            // SAFETY: `from_js` returned a live borrow of the JS wrapper's
-            // payload; `ref_()` bumps the intrusive refcount and returns the
-            // same non-null pointer with +1 ownership.
-            unsafe { AbortSignalRef::adopt((*p).ref_()) }
-        })
+        // S008: `AbortSignal` is an `opaque_ffi!` ZST — safe deref.
+        AbortSignal::from_js(value).map(|p| bun_opaque::opaque_deref(p).ref_())
     }
 }
 
 pub enum AbortReason {
     Common(CommonAbortReason),
     Js(JSValue),
-}
-
-impl AbortReason {
-    pub fn to_js(self, global: &JSGlobalObject) -> JSValue {
-        match self {
-            AbortReason::Common(reason) => reason.to_js(global),
-            AbortReason::Js(value) => value,
-        }
-    }
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -355,6 +343,35 @@ impl Timeout {
         }
     }
 
+    /// The timer heap is dropping this timeout without firing it
+    /// (`useRealTimers()` / `clearAllTimers()` draining the fake heap, the
+    /// `--isolate` file swap, VM teardown).
+    ///
+    /// Routed through the owning signal's `cancelTimer()`, the same path firing
+    /// takes via `markAborted()`: it clears `m_timeout` and frees `this` through
+    /// [`AbortSignal__Timeout__deinit`] (which unlinks the node if it is still in
+    /// a heap). Unlinking the node alone is not enough: while `m_timeout` is set,
+    /// `JSAbortSignalOwner::isReachableFromOpaqueRoots` keeps an observed signal's
+    /// wrapper, and everything its abort listeners close over, alive for a timer
+    /// that can no longer fire.
+    ///
+    /// # Safety
+    /// `this` is a live boxed `Timeout` still owned by its signal; JS thread;
+    /// no borrow of the timer heap may be live (the deinit re-enters
+    /// `timer_remove`). `this` is freed when this returns.
+    pub unsafe fn discard(this: *mut Timeout) {
+        // SAFETY: `this` is live per the fn contract, and a live box implies a
+        // live owning signal (see the `signal` field doc).
+        let signal = AbortSignal::opaque_ref(unsafe { (*this).signal });
+        debug_assert!(
+            signal
+                .get_timeout()
+                .is_some_and(|owned| core::ptr::eq(owned, this)),
+            "AbortSignal.timeout timer is not the one its signal owns"
+        );
+        WebCore__AbortSignal__cancelTimer(signal);
+    }
+
     /// Fire the timeout. May free `this` (re-entrantly via `signal` →
     /// `~AbortSignal` → `AbortSignal__Timeout__deinit`).
     ///
@@ -369,17 +386,17 @@ impl Timeout {
 
             // The signal and its handlers belong to a previous isolated test
             // file's global; firing now would run them against the new global.
-            // The `Timeout` box is still owned by the signal and will be freed
-            // via `~AbortSignal` → `cancelTimer` when the wrapper is collected.
+            // (The file swap's `cancel_all_timeout_objects` normally discards
+            // such timers before they can come due.)
             if (*this).generation != (*vm).test_isolation_generation {
+                Self::discard(this);
                 return;
             }
 
             // `signal` is a raw back-pointer with no refcount of its own;
             // see the field doc for why it is valid here. `dispatch` may free
             // `this` re-entrantly (markAborted → cancelTimer → deinit), so
-            // capture the pointer first. Nulled at VM teardown; that path does
-            // not re-enter `run`.
+            // capture the pointer first.
             let signal_ptr: *mut AbortSignal = (*this).signal;
             debug_assert!(!signal_ptr.is_null());
             Self::dispatch(vm, signal_ptr);

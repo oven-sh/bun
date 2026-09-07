@@ -1,0 +1,8 @@
+{
+  "name": "v9-peer-range-dedupe",
+  "version": "1.0.0",
+  "dependencies": {
+    "one-dep": "1.0.0",
+    "provides-peer-deps-1-0-0": "1.0.0"
+  }
+}

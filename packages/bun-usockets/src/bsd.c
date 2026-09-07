@@ -64,6 +64,15 @@ static void init_debug_logging() {
 extern int Bun__doesMacOSVersionSupportSendRecvMsgX();
 #endif
 
+#if defined(_WIN32)
+/* libuv initializes Winsock on first use; every entry point below that creates
+ * a socket or resolves an address makes sure that has happened first. */
+extern void uv__winsock_ensure(void);
+#define bsd_winsock_ensure() uv__winsock_ensure()
+#else
+#define bsd_winsock_ensure() ((void)0)
+#endif
+
 
 /* We need to emulate sendmmsg, recvmmsg on platform who don't have it */
 int bsd_sendmmsg(LIBUS_SOCKET_DESCRIPTOR fd, struct udp_sendbuf* sendbuf, int flags) {
@@ -135,7 +144,8 @@ int bsd_sendmmsg(LIBUS_SOCKET_DESCRIPTOR fd, struct udp_sendbuf* sendbuf, int fl
 #endif
 }
 
-int bsd_recvmmsg(LIBUS_SOCKET_DESCRIPTOR fd, struct udp_recvbuf *recvbuf, int flags) {
+int bsd_recvmmsg(LIBUS_SOCKET_DESCRIPTOR fd, struct udp_recvbuf *recvbuf, int flags, int max_packets) {
+    if (max_packets > LIBUS_UDP_RECV_COUNT) max_packets = LIBUS_UDP_RECV_COUNT;
 #if defined(_WIN32)
     for (int i = 0; i < LIBUS_UDP_RECV_COUNT; i++) {
         while (1) {
@@ -162,12 +172,12 @@ int bsd_recvmmsg(LIBUS_SOCKET_DESCRIPTOR fd, struct udp_recvbuf *recvbuf, int fl
 #elif defined(__APPLE__)
     if (Bun__doesMacOSVersionSupportSendRecvMsgX()) {
         while (1) {
-            int ret = recvmsg_x(fd, recvbuf->msgvec, LIBUS_UDP_RECV_COUNT, flags);
+            int ret = recvmsg_x(fd, recvbuf->msgvec, max_packets, flags);
             if (ret >= 0 || errno != EINTR) return ret;
         }
     }
 
-    for (int i = 0; i < LIBUS_UDP_RECV_COUNT; ++i) {
+    for (int i = 0; i < max_packets; ++i) {
         while (1) {
             ssize_t ret = recvmsg(fd, &recvbuf->msgvec[i].msg_hdr, flags);
             if (ret < 0) {
@@ -179,10 +189,10 @@ int bsd_recvmmsg(LIBUS_SOCKET_DESCRIPTOR fd, struct udp_recvbuf *recvbuf, int fl
             break;
         }
     }
-    return LIBUS_UDP_RECV_COUNT;
+    return max_packets;
 #else
     while (1) {
-        int ret = recvmmsg(fd, (struct mmsghdr *)&recvbuf->msgvec, LIBUS_UDP_RECV_COUNT, flags, 0);
+        int ret = recvmmsg(fd, (struct mmsghdr *)&recvbuf->msgvec, max_packets, flags, 0);
         if (ret >= 0 || errno != EINTR) return ret;
     }
 #endif
@@ -262,44 +272,6 @@ int bsd_udp_setup_sendbuf(struct udp_sendbuf *buf, size_t bufsize, void** payloa
     }
     buf->num = count;
     return count;
-#endif
-}
-
-// this one is needed for knowing the destination addr of udp packet
-// an udp socket can only bind to one port, and that port never changes
-// this function returns ONLY the IP address, not any port
-int bsd_udp_packet_buffer_local_ip(struct udp_recvbuf *msgvec, int index, char *ip) {
-#if defined(_WIN32) || defined(__APPLE__)
-    return 0; // not supported
-#else
-    struct msghdr *mh = &((struct mmsghdr *) msgvec)[index].msg_hdr;
-    for (struct cmsghdr *cmsg = CMSG_FIRSTHDR(mh); cmsg != NULL; cmsg = CMSG_NXTHDR(mh, cmsg)) {
-        // ipv6 or ipv4
-        if (cmsg->cmsg_level == IPPROTO_IP) {
-#if defined(IP_PKTINFO)
-            if (cmsg->cmsg_type == IP_PKTINFO) {
-                struct in_pktinfo *pi = (struct in_pktinfo *) CMSG_DATA(cmsg);
-                memcpy(ip, &pi->ipi_addr, 4);
-                return 4;
-            }
-#endif
-#if defined(IP_RECVDSTADDR)
-            if (cmsg->cmsg_type == IP_RECVDSTADDR) {
-                memcpy(ip, (struct in_addr *) CMSG_DATA(cmsg), 4);
-                return 4;
-            }
-#endif
-        }
-
-        if (cmsg->cmsg_level == IPPROTO_IPV6 && cmsg->cmsg_type == IPV6_PKTINFO) {
-            struct in6_pktinfo *pi6 = (struct in6_pktinfo *) CMSG_DATA(cmsg);
-            memcpy(ip, &pi6->ipi6_addr, 16);
-            return 16;
-        }
-    }
-
-    return 0; // no length
-
 #endif
 }
 
@@ -717,6 +689,7 @@ void bsd_socket_flush(LIBUS_SOCKET_DESCRIPTOR fd) {
 }
 
 LIBUS_SOCKET_DESCRIPTOR bsd_create_socket(int domain, int type, int protocol, int *err) {
+    bsd_winsock_ensure();
     if (err != NULL) {
         *err = 0;
     }
@@ -1216,7 +1189,144 @@ int bsd_set_defer_accept(LIBUS_SOCKET_DESCRIPTOR listenFd) {
 
 // return LIBUS_SOCKET_ERROR or the fd that represents listen socket
 // listen both on ipv6 and ipv4
+int bsd_socket_export_size(void) {
+#ifdef _WIN32
+    return (int) sizeof(WSAPROTOCOL_INFOW);
+#else
+    return 0;
+#endif
+}
+
+int bsd_socket_export(LIBUS_SOCKET_DESCRIPTOR fd, unsigned int target_pid, void *info_out) {
+#ifdef _WIN32
+    if (WSADuplicateSocketW(fd, (DWORD) target_pid, (WSAPROTOCOL_INFOW *) info_out) != 0) {
+        return WSAGetLastError();
+    }
+    return 0;
+#else
+    (void) fd; (void) target_pid; (void) info_out;
+    return ENOTSUP;
+#endif
+}
+
+LIBUS_SOCKET_DESCRIPTOR bsd_socket_import(void *info, int *err) {
+    bsd_winsock_ensure();
+#ifdef _WIN32
+    SOCKET s = WSASocketW(FROM_PROTOCOL_INFO, FROM_PROTOCOL_INFO, FROM_PROTOCOL_INFO,
+                          (WSAPROTOCOL_INFOW *) info, 0, WSA_FLAG_OVERLAPPED);
+    if (s == INVALID_SOCKET) {
+        *err = WSAGetLastError();
+        return LIBUS_SOCKET_ERROR;
+    }
+    return s;
+#else
+    (void) info;
+    *err = ENOTSUP;
+    return LIBUS_SOCKET_ERROR;
+#endif
+}
+
+/* Windows rejects listen() on a duplicate of an already-listening socket, where POSIX
+ * no-ops it; cluster workers each listen on their own dup of one shared fd. libuv
+ * sidesteps this by listening before the xfer (UV_HANDLE_SHARED_TCP_SOCKET, win/tcp.c). */
+int bsd_socket_listen_error_is_benign(LIBUS_SOCKET_DESCRIPTOR fd) {
+#ifdef _WIN32
+    int listening = 0;
+    int optlen = (int) sizeof(listening);
+    if (getsockopt(fd, SOL_SOCKET, SO_ACCEPTCONN, (char *) &listening, &optlen) != 0) {
+        return 0;
+    }
+    return listening != 0;
+#else
+    (void) fd;
+    return 0;
+#endif
+}
+
+LIBUS_SOCKET_DESCRIPTOR bsd_create_bound_socket(const char *host, int port, int options, int *out_port, int *error) {
+    bsd_winsock_ensure();
+    struct addrinfo hints, *result;
+    memset(&hints, 0, sizeof(struct addrinfo));
+    hints.ai_flags = AI_PASSIVE;
+    hints.ai_family = AF_UNSPEC;
+    hints.ai_socktype = SOCK_STREAM;
+
+    char port_string[16];
+    snprintf(port_string, 16, "%d", port);
+
+    int gai = getaddrinfo(host, port_string, &hints, &result);
+    if (gai != 0) {
+#ifdef _WIN32
+        *error = gai;
+#else
+        *error = EINVAL;
+#endif
+        return LIBUS_SOCKET_ERROR;
+    }
+
+    LIBUS_SOCKET_DESCRIPTOR fd = LIBUS_SOCKET_ERROR;
+    for (int family = AF_INET6; fd == LIBUS_SOCKET_ERROR && family >= AF_INET; family -= (AF_INET6 - AF_INET)) {
+        for (struct addrinfo *a = result; a != NULL; a = a->ai_next) {
+            if (a->ai_family != family) {
+                continue;
+            }
+            fd = bsd_create_socket(a->ai_family, a->ai_socktype, a->ai_protocol, NULL);
+            if (fd == LIBUS_SOCKET_ERROR) {
+                *error = LIBUS_ERR;
+                continue;
+            }
+#if defined(SO_REUSEADDR) && !defined(_WIN32)
+            int one = 1;
+            setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &one, sizeof(one));
+#endif
+#ifdef IPV6_V6ONLY
+            if (a->ai_family == AF_INET6) {
+                int enabled = (options & LIBUS_SOCKET_IPV6_ONLY) != 0;
+                setsockopt(fd, IPPROTO_IPV6, IPV6_V6ONLY, (void *) &enabled, sizeof(enabled));
+            }
+#endif
+            int rc;
+            do
+                rc = bind(fd, a->ai_addr, (socklen_t) a->ai_addrlen);
+            while (IS_EINTR(rc));
+            if (rc != 0) {
+                *error = LIBUS_ERR;
+                bsd_close_socket(fd);
+                fd = LIBUS_SOCKET_ERROR;
+                continue;
+            }
+            break;
+        }
+    }
+    freeaddrinfo(result);
+    if (fd == LIBUS_SOCKET_ERROR) {
+        return LIBUS_SOCKET_ERROR;
+    }
+#ifdef _WIN32
+    /* Windows rejects listen() on a duplicate of an already-listening socket
+     * only after another duplicate has listened, so two workers racing on the
+     * same shared fd can observe listen() -> WSAEINVAL while SO_ACCEPTCONN
+     * still reads 0 (the benign check in us_socket_group_listen_fd then
+     * fails). libuv's approach (UV_HANDLE_SHARED_TCP_SOCKET, win/tcp.c) is to
+     * listen in the primary before WSADuplicateSocket; every worker's
+     * duplicate is then already listening and SO_ACCEPTCONN is reliably set. */
+    if (listen(fd, 511) != 0) {
+        *error = LIBUS_ERR;
+        bsd_close_socket(fd);
+        return LIBUS_SOCKET_ERROR;
+    }
+#endif
+    struct bsd_addr_t tmp;
+    if (bsd_local_addr(fd, &tmp) == 0) {
+        *out_port = bsd_addr_get_port(&tmp);
+    } else {
+        *out_port = port;
+    }
+    return fd;
+}
+
 LIBUS_SOCKET_DESCRIPTOR bsd_create_listen_socket(const char *host, int port, int options, int* error) {
+    bsd_winsock_ensure();
     struct addrinfo hints, *result;
     memset(&hints, 0, sizeof(struct addrinfo));
 
@@ -1605,6 +1715,7 @@ int bsd_bind_udp_fd(LIBUS_SOCKET_DESCRIPTOR fd, const struct sockaddr *addr, int
 }
 
 LIBUS_SOCKET_DESCRIPTOR bsd_create_udp_socket(const char *host, int port, int options, int *err) {
+    bsd_winsock_ensure();
     if (err != NULL) {
         *err = 0;
     }
@@ -1694,6 +1805,7 @@ LIBUS_SOCKET_DESCRIPTOR bsd_create_udp_socket(const char *host, int port, int op
 }
 
 int bsd_connect_udp_socket(LIBUS_SOCKET_DESCRIPTOR fd, const char *host, int port) {
+    bsd_winsock_ensure();
     struct addrinfo hints, *result;
     memset(&hints, 0, sizeof(struct addrinfo));
 

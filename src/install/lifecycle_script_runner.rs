@@ -7,7 +7,6 @@ use crate::isolated_install::store::{EntryColumns, entry};
 use crate::lockfile_real::Scripts as LockfileScripts;
 use crate::lockfile_real::package::scripts::List as ScriptsList;
 use crate::package_manager_real::ProgressStrings;
-use crate::package_manager_real::package_manager_lifecycle::LifecycleScriptTimeLogEntry;
 use bun_core::{Global, Output};
 use bun_io::BufferedReader;
 use bun_io::heap as io_heap;
@@ -17,7 +16,9 @@ use bun_io::{FilePollFlag, PosixFlags};
 use bun_core::ZStr;
 #[cfg(unix)]
 use bun_spawn::SpawnResultExt as _;
-use bun_spawn::{Process, ProcessExit, ProcessExitKind, Rusage, SpawnOptions, Status};
+use bun_spawn::{
+    Process, ProcessExit, ProcessExitKind, ProcessHandle, Rusage, SpawnOptions, Status,
+};
 #[cfg(unix)]
 use bun_sys::Fd;
 // `BufferedReaderParent::loop_` is typed `*mut bun_uws::Loop` (the
@@ -255,10 +256,8 @@ pub struct LifecycleScriptSubprocess<'a> {
     pub(crate) current_script_index: u8,
 
     pub(crate) remaining_fds: i8,
-    /// `Process` is intrusively ref-counted (`bun_ptr::ThreadSafeRefCount`),
-    /// so it lives behind a raw pointer and is dropped via `process.close(); process.deref()`
-    /// in `reset_polls`. Null = none.
-    pub(crate) process: *mut Process,
+    /// `None` between scripts (`reset_polls`).
+    pub(crate) process: Option<ProcessHandle>,
     pub(crate) stdout: OutputReader,
     pub(crate) stderr: OutputReader,
     pub(crate) has_called_process_exit: bool,
@@ -272,8 +271,6 @@ pub struct LifecycleScriptSubprocess<'a> {
     /// `spawn_next_script` for the script chain; freed by `Drop`/`destroy`.
     pub(crate) envp: bun_dotenv::NullDelimitedEnvMap,
     pub(crate) shell_bin: Option<&'a ZStr>,
-
-    pub(crate) timer: Option<Timer>,
 
     pub(crate) has_incremented_alive_count: bool,
 
@@ -337,8 +334,6 @@ impl<'a> io_heap::HeapContext<LifecycleScriptSubprocess<'a>> for StartedAtCtx {
     }
 }
 
-const MIN_MILLISECONDS_TO_LOG: u64 = 500;
-
 static ALIVE_COUNT: AtomicUsize = AtomicUsize::new(0);
 
 impl<'a> LifecycleScriptSubprocess<'a> {
@@ -356,8 +351,6 @@ use bun_sys::windows::libuv as uv;
 
 pub type OutputReader = BufferedReader;
 
-pub(crate) type Timer = bun_core::time::Timer;
-
 impl<'a> LifecycleScriptSubprocess<'a> {
     /// Heap-allocate and return a raw pointer; this type is intrusive (heap field,
     /// OutputReader parent backrefs), so it lives behind `*mut Self`.
@@ -370,16 +363,6 @@ impl<'a> LifecycleScriptSubprocess<'a> {
         // `manager` is non-null and outlives every subprocess (the
         // `PackageManager` is the singleton install-loop owner).
         self.manager.get()
-    }
-
-    /// # Safety
-    /// See [`Self::manager`]. Mutable access is sound because callers run on
-    /// the single install thread and no `&PackageManager`
-    /// outlives the brief field accesses below.
-    #[inline]
-    unsafe fn manager_mut(&mut self) -> &mut PackageManager {
-        // SAFETY: see fn doc.
-        unsafe { self.manager.get_mut() }
     }
 
     pub(crate) fn script_name(&self) -> &'static [u8] {
@@ -403,7 +386,7 @@ impl<'a> LifecycleScriptSubprocess<'a> {
             bstr::BStr::new(self.script_name()),
             bstr::BStr::new(&self.package_name),
             err.errno,
-            <&'static str>::from(err.get_errno()),
+            bstr::BStr::new(err.name()),
         );
         Output::flush();
         self.maybe_finished();
@@ -414,13 +397,10 @@ impl<'a> LifecycleScriptSubprocess<'a> {
             return;
         }
 
-        let process = self.process;
-        if process.is_null() {
+        let Some(process) = &self.process else {
             return;
-        }
-        // SAFETY: `process` is the live intrusive-refcounted `*mut Process` set in
-        // `spawn_next_script`; we hold a strong ref until `reset_polls`.
-        let status = unsafe { (*process).status.clone() };
+        };
+        let status = process.status.clone();
         self.handle_exit(status);
     }
 
@@ -758,13 +738,13 @@ impl<'a> LifecycleScriptSubprocess<'a> {
                 // while libuv still has the handle queued (UAF) and the later
                 // `close_impl`→`on_pipe_close`→`heap::take` double-frees.
                 if let bun_spawn::SpawnedStdio::Buffer(pipe) = spawned.stdout.take() {
-                    (*this).stdout.source = Some(bun_io::Source::Pipe(pipe));
+                    (*this).stdout.set_source(bun_io::Source::Pipe(pipe));
                     (*this).stdout.set_parent(this.cast::<c_void>());
                     (*this).remaining_fds += 1;
                     (*this).stdout.start_with_current_pipe()?;
                 }
                 if let bun_spawn::SpawnedStdio::Buffer(pipe) = spawned.stderr.take() {
-                    (*this).stderr.source = Some(bun_io::Source::Pipe(pipe));
+                    (*this).stderr.set_source(bun_io::Source::Pipe(pipe));
                     (*this).stderr.set_parent(this.cast::<c_void>());
                     (*this).remaining_fds += 1;
                     (*this).stderr.start_with_current_pipe()?;
@@ -772,13 +752,11 @@ impl<'a> LifecycleScriptSubprocess<'a> {
             }
 
             let event_loop = bun_event_loop::EventLoopHandle::from_any(&mut (*manager).event_loop);
-            // `to_process` returns an intrusively-refcounted `*mut Process` (heap::alloc,
-            // refcount = 1); the strong ref transfers to `(*this).process` and is released
-            // in `reset_polls` via `process.deref()`.
-            let process: *mut Process = spawned.to_process(event_loop);
-
-            debug_assert!((*this).process.is_null(), "forgot to call `resetPolls`");
-            (*this).process = process;
+            debug_assert!((*this).process.is_none(), "forgot to call `reset_polls`");
+            let process: *mut Process = (*this)
+                .process
+                .insert(spawned.to_process_handle(event_loop))
+                .as_ptr();
             // SAFETY: `this` is the allocation-rooted `LifecycleScriptSubprocess`;
             // we hold no live `&mut Self` here, so the synchronous `on_exit`
             // dispatch below may reenter `on_process_exit` through it without
@@ -866,8 +844,6 @@ impl<'a> LifecycleScriptSubprocess<'a> {
 
         match status {
             Status::Exited(exit) => {
-                let maybe_duration = self.timer.as_mut().map(|t| t.read());
-
                 if exit.code > 0 {
                     if self.optional {
                         if let Some(ctx) = &self.ctx {
@@ -906,16 +882,6 @@ impl<'a> LifecycleScriptSubprocess<'a> {
                         scripts_node
                             .unprotected_completed_items
                             .fetch_add(1, Ordering::Relaxed);
-                    }
-                }
-
-                if let Some(nanos) = maybe_duration {
-                    if nanos > MIN_MILLISECONDS_TO_LOG * bun_core::time::NS_PER_MS {
-                        let entry = LifecycleScriptTimeLogEntry {};
-                        // SAFETY: see [`Self::manager_mut`].
-                        unsafe { self.manager_mut() }
-                            .lifecycle_script_time_log
-                            .append_concurrent(entry);
                     }
                 }
 
@@ -1050,7 +1016,7 @@ impl<'a> LifecycleScriptSubprocess<'a> {
 
     /// This function may free the *LifecycleScriptSubprocess
     pub(crate) fn on_process_exit(&mut self, proc: *mut Process, _: Status, _: &Rusage) {
-        if self.process != proc {
+        if self.process.as_ref().map(ProcessHandle::as_ptr) != Some(proc) {
             bun_core::debug_warn!(
                 "<d>[LifecycleScriptSubprocess]<r> onProcessExit called with wrong process"
             );
@@ -1063,15 +1029,7 @@ impl<'a> LifecycleScriptSubprocess<'a> {
     pub(crate) fn reset_polls(&mut self) {
         debug_assert!(self.remaining_fds == 0);
 
-        let process = core::mem::replace(&mut self.process, core::ptr::null_mut());
-        if !process.is_null() {
-            // SAFETY: `process` is the live intrusive-refcounted pointer set in
-            // `spawn_next_script`; we held the only strong ref. `deref()` may free.
-            unsafe {
-                (*process).close();
-                Process::deref(process);
-            }
-        }
+        self.process = None;
 
         self.stdout.deinit();
         self.stderr.deinit();
@@ -1141,11 +1099,10 @@ impl<'a> LifecycleScriptSubprocess<'a> {
             // defaults:
             current_script_index: 0,
             remaining_fds: 0,
-            process: core::ptr::null_mut(),
+            process: None,
             stdout: OutputReader::init::<Self>(),
             stderr: OutputReader::init::<Self>(),
             has_called_process_exit: false,
-            timer: None,
             has_incremented_alive_count: false,
             started_at: 0,
             heap: io_heap::IntrusiveField::default(),

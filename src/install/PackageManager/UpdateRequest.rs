@@ -56,6 +56,16 @@ impl Default for UpdateRequest {
 
 pub type Array = Vec<UpdateRequest>;
 
+/// name_hash -> first position in PackageManager::update_requests; rebuilt by set_update_requests, read once per lockfile row during resolution.
+#[derive(Default)]
+pub struct UpdateRequestIndex(
+    bun_collections::HashMap<
+        PackageNameHash,
+        u32,
+        bun_collections::IdentityContext<PackageNameHash>,
+    >,
+);
+
 /// Park CLI-lifetime bytes in a process-lifetime static so LSan sees them as
 /// reachable. `UpdateRequest::name`/`version_buf` store raw `&'static`/
 /// `RawSlice` views because they may later be repointed at lockfile buffers.
@@ -294,6 +304,43 @@ impl UpdateRequest {
         }
 
         Ok(update_requests.as_mut_slice())
+    }
+}
+
+impl PackageManager {
+    pub(crate) fn set_update_requests(&mut self, updates: Vec<UpdateRequest>) {
+        let mut index = UpdateRequestIndex::default();
+        for (i, r) in updates.iter().enumerate().rev() {
+            index.0.insert(r.name_hash, i as u32);
+        }
+        self.update_request_index = index;
+        self.update_requests = updates.into_boxed_slice();
+    }
+
+    pub(crate) fn index_of_update_request(
+        &self,
+        name_hash: PackageNameHash,
+        name: &[u8],
+    ) -> Option<usize> {
+        let first = *self.update_request_index.0.get(&name_hash)? as usize;
+        let same_name = |r: &UpdateRequest| r.name.is_empty() || r.name == name;
+        if same_name(&self.update_requests[first]) {
+            return Some(first);
+        }
+        self.update_requests[first + 1..]
+            .iter()
+            .position(|r| r.name_hash == name_hash && same_name(r))
+            .map(|offset| first + 1 + offset)
+    }
+
+    /// For callers that only have the name; lockfile-driven callers pass the hash they already hold.
+    pub(crate) fn index_of_update_request_named(&self, name: &[u8]) -> Option<usize> {
+        self.index_of_update_request(bun_semver::string::Builder::string_hash(name), name)
+    }
+
+    #[inline]
+    pub(crate) fn is_update_request(&self, name_hash: PackageNameHash, name: &[u8]) -> bool {
+        self.index_of_update_request(name_hash, name).is_some()
     }
 }
 

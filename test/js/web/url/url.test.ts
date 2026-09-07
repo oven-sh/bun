@@ -115,50 +115,139 @@ describe("url", () => {
     expect(url.origin).toBe("file://");
   });
   it("leaves opaque (non-special-scheme) hosts unchanged", () => {
-    // Non-special schemes never run IDNA; the host is UTF-8 percent-encoded
-    // verbatim per WHATWG and node/ada. U+1E9E is an IDNA delta source for
-    // special schemes only.
     expect(new URL("foo://\u1E9E.com/").href).toBe("foo://%E1%BA%9E.com/");
     expect(new URL("foo://a\u180Eb/").href).toBe("foo://a%E1%A0%8Eb/");
-    // special scheme: delta applies, host is IDNA-processed.
-    expect(new URL("http://\u1E9E.com/").href).toBe("http://xn--zca.com/");
-    // Non-canonical special-scheme authority forms reach IDNA too.
-    expect(new URL("http:/\u1E9E.com/").href).toBe("http://xn--zca.com/");
-    expect(new URL("http:\\\\\u1E9E.com/").href).toBe("http://xn--zca.com/");
-    expect(new URL("\t//\u1E9E.com", "http://x/").href).toBe("http://xn--zca.com/");
-    // Same scheme as the base without "//" is relative-state (path, not host):
-    // the delta source stays percent-encoded verbatim.
-    expect(new URL("http:foo\u1E9E", "http://host/").pathname).toBe("/foo%E1%BA%9E");
-    // Cross-scheme reaches the authority state and IDNA runs.
-    expect(new URL("http:\u1E9E.com", "ftp://host/").href).toBe("http://xn--zca.com/");
-    // file: only has a host with exactly two slashes; ///x and /x are path.
-    expect(new URL("file:///\u1E9E.txt").pathname).toBe("/%E1%BA%9E.txt");
-    expect(new URL("file:/\u1E9E.txt").pathname).toBe("/%E1%BA%9E.txt");
-    expect(new URL("file://\u1E9E/x").host).toBe("xn--zca");
-    // Bracketed hosts go to the IPv6 parser, never IDNA.
-    expect(() => new URL("http://[::\u180E1]/")).toThrow();
-    // tab/LF/CR are stripped from anywhere in the input before parsing, so an
-    // embedded tab in the scheme or between : and // must not defeat the delta.
-    expect(new URL("ht\ttp://\u1E9E.com/").href).toBe("http://xn--zca.com/");
-    expect(new URL("http:\n//\u1E9E.com/").href).toBe("http://xn--zca.com/");
-    // The port span is left verbatim: an ignored-class delta source
-    // (U+180E) in the port must still fail the WHATWG port state, not be
-    // stripped into a valid digit run. The same char in the host is fine.
-    expect(() => new URL("http://foo:8\u180E0/")).toThrow();
-    expect(new URL("http://foo\u180E:80/").href).toBe("http://foo/");
-    // setter on a non-special scheme: opaque host stays verbatim.
     const u = new URL("foo://x/");
     u.hostname = "\u1E9E";
     expect(u.hostname).toBe("%E1%BA%9E");
-    // url.host setter: delta applies to the host span only, port stays
-    // verbatim so an ignored-class code point there is not stripped into a
-    // valid digit run.
+    expect(() => new URL("http://[::\u180E1]/")).toThrow();
+    expect(() => new URL("http://foo:8\u180E0/")).toThrow();
     const h1 = new URL("http://x/");
     h1.host = "foo:8\u206A0";
     expect(h1.port).toBe("8");
-    const h2 = new URL("http://x/");
-    h2.host = "foo\u1E9E:81";
-    expect(h2.host).toBe("xn--foo-7ka:81");
+  });
+
+  // Unicode 16 changed these code points' UTS #46 status; ICU 76 is the first release with that table.
+  it.skipIf(parseInt(process.versions.icu) < 76)("special-scheme hosts use the Unicode 16 IDNA table", () => {
+    expect(new URL("http://\u1E9E.com/").href).toBe("http://xn--zca.com/");
+    expect(new URL("file://\u1E9E/x").host).toBe("xn--zca");
+    expect(new URL("http://foo\u180E:80/").href).toBe("http://foo/");
+    const h = new URL("http://x/");
+    h.host = "foo\u1E9E:81";
+    expect(h.host).toBe("xn--foo-7ka:81");
+    const hn = new URL("http://x/");
+    hn.hostname = "\u04C0.com";
+    expect(hn.hostname).toBe("xn--s5a.com");
+  });
+
+  it("rejects invalid punycode labels however they are spelled in the input (like Node)", () => {
+    for (const input of [
+      "https://xn--a.com/",
+      "https://XN--a.com/",
+      "https://x%6E--a.com/",
+      "https://x\tn--a.com/",
+      "https://xn-\n-a/",
+      "https://xn-\r-a/",
+      "  https://xn--a/",
+      "https:xn--a/",
+      "https:\\\\u:p@xn--a\\p",
+    ]) {
+      expect(() => new URL(input)).toThrow(TypeError);
+      expect(URL.canParse(input)).toBe(false);
+      expect(URL.parse(input)).toBe(null);
+    }
+    for (const [input, base] of [
+      ["/p", "https://x%6E--a.com/"],
+      ["//xn--a/p", "https://example.com/"],
+      ["xn--a", "https://example.com/"],
+    ]) {
+      if (input === "xn--a") {
+        // A relative path never supplies a host.
+        expect(new URL(input, base).href).toBe("https://example.com/xn--a");
+        continue;
+      }
+      expect(() => new URL(input, base)).toThrow(TypeError);
+      expect(URL.canParse(input, base)).toBe(false);
+      expect(URL.parse(input, base)).toBe(null);
+    }
+    expect(new URL("https://xn--ls8h.com/?q=%E3%81#xn--a").href).toBe("https://xn--ls8h.com/?q=%E3%81#xn--a");
+    expect(new URL("https://\u{1F4A9}.com/p%20q?xn--a").hostname).toBe("xn--ls8h.com");
+    expect(new URL("https://\u{1F4A9}.com/xn--a/%41").pathname).toBe("/xn--a/%41");
+  });
+
+  it("judges literal punycode labels like Node (fast path and ICU path)", () => {
+    // [input, canParse] — expectations match Node 26 / ICU UTS #46 (CheckBidi, CheckJoiners, non-transitional).
+    const cases: [string, boolean][] = [
+      ["https://xn--ls8h.com/", true], // valid emoji label
+      ["https://XN--LS8H.com/", true], // case-insensitive prefix and digits
+      ["https://foo.xn--nxasmq6b/", true], // Greek
+      ["https://xn--mgbh0fb.xn--kgbechtv/", true], // RTL labels (BiDi rule, ICU path)
+      ["https://ab--cd.com/", true], // hyphens at 3-4 in a non-ACE label are allowed
+      ["https://xn--53h.example/", true], // single non-ASCII code point
+      ["https://xn--a.com/", false], // decodes to U+0080 (disallowed)
+      ["https://xn--/", false], // empty ACE label
+      ["https://xn---.com/", false], // fails Punycode decoding
+      ["https://xn--ascii-.com/", false], // alternate encoding of an ASCII label
+      ["https://xn--1ug.com/", false], // ZWJ alone (CONTEXTJ)
+      ["https://xn--u-ccb.com/", false], // leading combining mark
+      ["https://xn--0.com/", false], // truncated delta
+      ["https://xn--9999999999999999999999999b/", false], // overflow
+      ["https://xn--a-b.com/", false], // "a" + U+0080-ish: disallowed after decoding
+    ];
+    for (const [input, ok] of cases) {
+      expect([input, URL.canParse(input)]).toEqual([input, ok]);
+      expect([input, URL.parse(input)?.href ?? null]).toEqual([input, ok ? input.toLowerCase() : null]);
+      if (ok) expect(new URL(input).href).toBe(input.toLowerCase());
+      else expect(() => new URL(input)).toThrow(TypeError);
+    }
+  });
+
+  it("resolves against repeated, alternating and invalid string bases consistently", () => {
+    // The last successfully parsed base string is cached; make sure hits, misses and failures all behave.
+    const a = "https://a.example/dir/page";
+    const b = "http://b.example:8080/x/y/";
+    for (let i = 0; i < 3; i++) {
+      expect(new URL("rel", a).href).toBe("https://a.example/dir/rel");
+      expect(new URL("rel", a).href).toBe("https://a.example/dir/rel");
+      expect(new URL("../up", b).href).toBe("http://b.example:8080/x/up");
+      expect(URL.canParse("?q", a)).toBe(true);
+      expect(URL.parse("#f", b)!.href).toBe("http://b.example:8080/x/y/#f");
+      expect(() => new URL("rel", "not a url")).toThrow(TypeError);
+      expect(() => new URL("rel", "not a url")).toThrow(TypeError);
+      expect(URL.canParse("rel", "https://xn--a.example/")).toBe(false);
+      expect(URL.parse("rel", "")).toBe(null);
+      expect(new URL("rel", a + "\u00e9/").href).toBe("https://a.example/dir/page%C3%A9/rel");
+      expect(new URL("rel", "HTTPS://A.example/dir/page").href).toBe("https://a.example/dir/rel");
+    }
+    try {
+      new URL("http://[bad", a);
+      expect.unreachable();
+    } catch (e: any) {
+      expect(e.code).toBe("ERR_INVALID_URL");
+      expect(e.input).toBe("http://[bad");
+      expect(e.base).toBe(a);
+    }
+  });
+
+  it("href, toString and toJSON agree before and after mutation", () => {
+    const s = "https://example.com/a?b#c";
+    const u = new URL(s);
+    expect(u.href).toBe(s);
+    Bun.gc(true);
+    expect(u.toString()).toBe(s);
+    expect(u.toJSON()).toBe(s);
+    Bun.gc(true);
+    expect(`${u}`).toBe(s);
+    u.pathname = "/z";
+    Bun.gc(true);
+    expect(u.href).toBe("https://example.com/z?b#c");
+    expect(u.toString()).toBe(u.href);
+    u.searchParams.append("d", "1");
+    expect(u.toJSON()).toBe("https://example.com/z?b=&d=1#c");
+    u.href = "http://other/";
+    expect([u.href, String(u), JSON.stringify(u)]).toEqual(["http://other/", "http://other/", '"http://other/"']);
+    const v = new URL("HTTP://Example.COM");
+    expect(v.href).toBe("http://example.com/");
   });
 
   it("prints", () => {

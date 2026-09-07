@@ -23,6 +23,7 @@ pkgs.mkShell rec {
     libtool
     ruby
     perl
+    zstd
 
     # Libraries
     openssl

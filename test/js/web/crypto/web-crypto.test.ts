@@ -338,6 +338,70 @@ describe("oversized inputs", () => {
   });
 });
 
+describe("RSA-PSS saltLength", () => {
+  // saltLength is an unsigned long, but the OpenSSL setter takes an int whose
+  // negative values select a salt length: -1 is the digest length and -2 means
+  // "whatever fits" on sign and "accept any salt length" on verify. 2**32 - 1
+  // and 2**32 - 2 used to turn into exactly those two values.
+  it("rejects values that do not fit in an int instead of treating them as the -1/-2 selectors", async () => {
+    const { privateKey, publicKey } = await crypto.subtle.generateKey(
+      { name: "RSA-PSS", modulusLength: 1024, publicExponent: new Uint8Array([1, 0, 1]), hash: "SHA-256" },
+      false,
+      ["sign", "verify"],
+    );
+    const data = new TextEncoder().encode("hello");
+    const signedWithSalt20 = await crypto.subtle.sign({ name: "RSA-PSS", saltLength: 20 }, privateKey, data);
+
+    const sign = (saltLength: number) =>
+      crypto.subtle.sign({ name: "RSA-PSS", saltLength }, privateKey, data).then(
+        () => "signed",
+        e => `rejected ${e.name}`,
+      );
+    const verifySalt20Signature = (saltLength: number) =>
+      crypto.subtle.verify({ name: "RSA-PSS", saltLength }, publicKey, signedWithSalt20, data).then(
+        ok => String(ok),
+        e => `rejected ${e.name}`,
+      );
+
+    expect({
+      sign: {
+        "2**32 - 1": await sign(2 ** 32 - 1),
+        "2**32 - 2": await sign(2 ** 32 - 2),
+        "2**31": await sign(2 ** 31),
+        // Fits in an int; BoringSSL rejects it because it does not fit the key.
+        "2**31 - 1": await sign(2 ** 31 - 1),
+        // 1024-bit key, SHA-256: 128 - 32 - 2 = 94 is the largest salt that fits.
+        "95": await sign(95),
+        "94": await sign(94),
+      },
+      verify: {
+        "2**32 - 1": await verifySalt20Signature(2 ** 32 - 1),
+        "2**32 - 2": await verifySalt20Signature(2 ** 32 - 2),
+        "2**31": await verifySalt20Signature(2 ** 31),
+        "32": await verifySalt20Signature(32),
+        "20": await verifySalt20Signature(20),
+      },
+    }).toEqual({
+      sign: {
+        "2**32 - 1": "rejected OperationError",
+        "2**32 - 2": "rejected OperationError",
+        "2**31": "rejected OperationError",
+        "2**31 - 1": "rejected OperationError",
+        "95": "rejected OperationError",
+        "94": "signed",
+      },
+      verify: {
+        "2**32 - 1": "rejected OperationError",
+        "2**32 - 2": "rejected OperationError",
+        "2**31": "rejected OperationError",
+        // A salt length that does not match the signature is a failed verification, not an error.
+        "32": "false",
+        "20": "true",
+      },
+    });
+  });
+});
+
 describe("Ed25519", () => {
   describe("generateKey", () => {
     it("should return CryptoKeys without namedCurve in algorithm field", async () => {
@@ -351,6 +415,60 @@ describe("Ed25519", () => {
       expect(privateKey.algorithm!.name).toBe("Ed25519");
       // @ts-ignore
       expect(privateKey.algorithm!.namedCurve).toBe(undefined);
+    });
+  });
+
+  describe("importKey", () => {
+    it("rejects a 64-byte JWK d whose trailing half is not the public key derived from the seed", async () => {
+      const { publicKey, privateKey } = (await crypto.subtle.generateKey("Ed25519", true, [
+        "sign",
+        "verify",
+      ])) as CryptoKeyPair;
+      const jwk = await crypto.subtle.exportKey("jwk", privateKey);
+      const seed = Buffer.from(jwk.d!, "base64url");
+      const pub = Buffer.from(jwk.x!, "base64url");
+      expect(seed.byteLength).toBe(32);
+      expect(pub.byteLength).toBe(32);
+
+      const outcome = (d: Buffer) =>
+        crypto.subtle.importKey("jwk", { ...jwk, d: d.toString("base64url") }, "Ed25519", true, ["sign"]).then(
+          key => (key instanceof CryptoKey ? "imported" : "other"),
+          e => `${e.name}: ${e.message}`,
+        );
+
+      expect({
+        mismatchedTrailingHalf: await outcome(Buffer.concat([seed, Buffer.alloc(32, 0)])),
+        oneBitOffTrailingHalf: await outcome(
+          Buffer.concat([seed, Buffer.from(pub.map((b, i) => (i === 0 ? b ^ 1 : b)))]),
+        ),
+        seedOnly: await outcome(seed),
+        seedWithDerivedPublicKey: await outcome(Buffer.concat([seed, pub])),
+      }).toEqual({
+        mismatchedTrailingHalf: "DataError: Invalid keyData",
+        oneBitOffTrailingHalf: "DataError: Invalid keyData",
+        seedOnly: "imported",
+        seedWithDerivedPublicKey: "imported",
+      });
+
+      const data = new TextEncoder().encode("hello ed25519");
+      const consistent = await crypto.subtle.importKey(
+        "jwk",
+        { ...jwk, d: Buffer.concat([seed, pub]).toString("base64url") },
+        "Ed25519",
+        true,
+        ["sign"],
+      );
+      const reexported = await crypto.subtle.exportKey("jwk", consistent);
+      expect({ d: reexported.d, x: reexported.x }).toEqual({ d: jwk.d, x: jwk.x });
+      expect(
+        await crypto.subtle.verify("Ed25519", publicKey, await crypto.subtle.sign("Ed25519", consistent, data), data),
+      ).toBe(true);
+
+      for (const cloned of [structuredClone(privateKey), structuredClone(consistent)]) {
+        expect(
+          await crypto.subtle.verify("Ed25519", publicKey, await crypto.subtle.sign("Ed25519", cloned, data), data),
+        ).toBe(true);
+      }
     });
   });
 });

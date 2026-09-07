@@ -32,15 +32,6 @@ EventEmitter* JSEventEmitter::toWrapped(VM& vm, JSValue value)
     return nullptr;
 }
 
-std::unique_ptr<JSEventEmitterWrapper> jsEventEmitterCast(VM& vm, JSC::JSGlobalObject* lexicalGlobalObject, JSValue thisValue)
-{
-    if (auto* emitter = jsEventEmitterCastFast(vm, lexicalGlobalObject, thisValue)) {
-        return std::make_unique<JSEventEmitterWrapper>(emitter->wrapped(), asObject(thisValue));
-    }
-
-    return nullptr;
-}
-
 JSEventEmitter* jsEventEmitterCastFast(VM& vm, JSC::JSGlobalObject* lexicalGlobalObject, JSValue thisValue)
 {
     if (!thisValue.isCell()) [[unlikely]] {
@@ -57,31 +48,23 @@ JSEventEmitter* jsEventEmitterCastFast(VM& vm, JSC::JSGlobalObject* lexicalGloba
     if (thisObject->inherits<JSEventEmitter>())
         return uncheckedDowncast<JSEventEmitter>(thisObject);
 
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
     auto clientData = WebCore::clientData(vm);
     auto name = clientData->builtinNames()._eventsPublicName();
-    if (JSValue _events = thisObject->getIfPropertyExists(lexicalGlobalObject, name)) {
-        if (_events.isCell() && _events.inherits<JSEventEmitter>()) {
-            return uncheckedDowncast<JSEventEmitter>(asObject(_events));
-        }
+    JSValue _events = thisObject->get(lexicalGlobalObject, name);
+    RETURN_IF_EXCEPTION(throwScope, nullptr);
+    if (_events.inherits<JSEventEmitter>()) {
+        return uncheckedDowncast<JSEventEmitter>(asObject(_events));
     }
-    // TODO: properly propagate exception upwards (^ getIfPropertyExists)
 
-    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     auto* globalObject = static_cast<Zig::GlobalObject*>(lexicalGlobalObject);
     auto impl = EventEmitter::create(*globalObject->scriptExecutionContext());
     impl->setThisObject(thisObject);
 
-    auto throwScope = DECLARE_THROW_SCOPE(vm);
     auto result = toJSNewlyCreated<IDLInterface<EventEmitter>>(*lexicalGlobalObject, *globalObject, throwScope, WTF::move(impl));
+    RETURN_IF_EXCEPTION(throwScope, nullptr);
 
     thisObject->putDirect(vm, name, result, 0);
-
-    if (scope.exception()) [[unlikely]] {
-        (void)scope.tryClearException();
-        return nullptr;
-    }
-
-    RETURN_IF_EXCEPTION(throwScope, nullptr);
 
     return uncheckedDowncast<JSEventEmitter>(asObject(result));
 }

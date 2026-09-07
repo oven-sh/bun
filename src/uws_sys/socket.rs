@@ -197,9 +197,6 @@ pub struct NewSocketHandler<const IS_SSL: bool> {
 
 pub type SocketTCP = NewSocketHandler<false>;
 pub type SocketTLS = NewSocketHandler<true>;
-/// snake-case aliases (match `AnySocket` variant names).
-pub type SocketTcp = NewSocketHandler<false>;
-pub type SocketTls = NewSocketHandler<true>;
 /// Alias used by `http`, `ipc`, `websocket_client` — same type, less ceremony.
 pub type SocketHandler<const SSL: bool> = NewSocketHandler<SSL>;
 
@@ -343,6 +340,18 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
             detached => {},
             duplex d => d.close(),
             pipe p => p.close(),
+        )
+    }
+
+    /// The JS wrapper that owns this socket is being finalized: whatever the
+    /// close below unwinds must not reach back into JS objects.
+    pub fn prepare_for_finalize(&self) {
+        on_socket!(self.socket;
+            connected _s => {},
+            connecting _c => {},
+            detached => {},
+            duplex d => d.abandon_js_side(),
+            pipe _p => {},
         )
     }
 
@@ -495,9 +504,12 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
 
     // ── flow control / sockopts ─────────────────────────────────────────────
 
+    /// A connect that has not completed yet is left alone (like the
+    /// `connecting` arm): the open re-arms reads, so latching a pause here
+    /// would only make the next real `pause()` a no-op.
     pub fn pause_stream(&self) -> bool {
         on_socket!(self.socket;
-            connected s => { s.pause(); true },
+            connected s => if s.is_established() { s.pause(); true } else { false },
             connecting _c => false,
             detached => true,
             duplex _d => false, // TODO: pause/resume upgraded duplex
@@ -507,7 +519,7 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
 
     pub fn resume_stream(&self) -> bool {
         on_socket!(self.socket;
-            connected s => { s.resume(); true },
+            connected s => if s.is_established() { s.resume(); true } else { false },
             connecting _c => false,
             detached => true,
             duplex _d => false, // TODO: pause/resume upgraded duplex
@@ -571,10 +583,21 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
     /// `SSL*` if this is a TLS socket, else `None`.
     #[inline]
     pub fn ssl(&self) -> Option<*mut bun_boringssl_sys::SSL> {
-        if !IS_SSL {
+        // A connecting socket has no `SSL` yet (its native handle is a
+        // sentinel, not a pointer).
+        if !IS_SSL || matches!(self.socket, InternalSocket::Connecting(_)) {
             return None;
         }
         self.get_native_handle().map(|h| h.cast())
+    }
+
+    /// The socket's `SSL` handle as a borrow (`SSL` is a zero-sized opaque,
+    /// so this is the safe spelling of [`ssl`](Self::ssl)).
+    #[inline]
+    pub fn ssl_mut(&self) -> Option<&mut bun_boringssl_sys::SSL> {
+        self.ssl()
+            .filter(|p| !p.is_null())
+            .map(bun_opaque::opaque_deref_mut)
     }
 
     /// `*SSL` when `IS_SSL`, raw fd-as-ptr otherwise. Type-erased to
@@ -600,7 +623,23 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
         }
     }
 
-    // ── ext / group / fd ────────────────────────────────────────────────────
+    // ── ext / fd ────────────────────────────────────────────────────────────
+
+    /// Clear the `Option<NonNull<Owner>>` ext slot written by
+    /// [`connect_group`](Self::connect_group), returning whether it still held
+    /// the owner. Used when the owner tears the socket down itself and must
+    /// reclaim the ref the slot represented.
+    pub fn take_ext_owner<Owner>(&self) -> bool {
+        match self.socket {
+            InternalSocket::Connected(s) => {
+                sock(s).ext::<Option<NonNull<Owner>>>().take().is_some()
+            }
+            InternalSocket::Connecting(s) => {
+                conn(s).ext::<Option<NonNull<Owner>>>().take().is_some()
+            }
+            _ => false,
+        }
+    }
 
     /// Typed ext storage. `None` for non-uSockets transports.
     pub fn ext<T>(&self) -> Option<*mut T> {
@@ -611,17 +650,6 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
             InternalSocket::Connecting(s) => {
                 Some(crate::connecting_socket::us_connecting_socket_ext(conn(s)).cast::<T>())
             }
-            _ => None,
-        }
-    }
-
-    /// Group this socket is linked into. `None` for non-uSockets transports.
-    pub fn group(&self) -> Option<*mut SocketGroup> {
-        match self.socket {
-            InternalSocket::Connected(s) => {
-                Some(std::ptr::from_mut::<SocketGroup>(sock(s).group()))
-            }
-            InternalSocket::Connecting(s) => Some(conn(s).group()),
             _ => None,
         }
     }
@@ -696,13 +724,6 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
             socket: InternalSocket::UpgradedDuplex(d),
         }
     }
-    #[cfg(windows)]
-    #[inline]
-    pub fn from_named_pipe(p: *mut WindowsNamedPipe) -> Self {
-        Self {
-            socket: InternalSocket::Pipe(p),
-        }
-    }
 
     /// Wrap an already-open fd. Ext stores `*mut This`; the socket is linked
     /// into `g` with kind `k`. Port of `NewSocketHandler.fromFd`.
@@ -722,6 +743,7 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
             None,
             ext_size,
             handle.native() as LIBUS_SOCKET_DESCRIPTOR,
+            0,
             is_ipc,
         );
         if raw.is_null() {
@@ -926,14 +948,6 @@ impl AnySocket {
             AnySocket::SocketTcp(s) => &s.socket,
             AnySocket::SocketTls(s) => &s.socket,
         }
-    }
-    #[inline]
-    pub fn group(&self) -> *mut SocketGroup {
-        match self {
-            AnySocket::SocketTcp(s) => s.group(),
-            AnySocket::SocketTls(s) => s.group(),
-        }
-        .unwrap()
     }
 
     any_socket_forward! {

@@ -22,8 +22,6 @@ pub use bun_sql_jsc::postgres::create_binding as sql_jsc_postgres_create_binding
 // The real body already lives in this crate.
 pub(crate) use crate::api::crash_handler_jsc::js_bindings::generate as crash_handler_crash_handler_js_bindings_generate;
 
-pub use bun_install_jsc::dependency_jsc::dependency_from_js as install_dependency_from_js;
-pub use bun_install_jsc::dependency_jsc::tag_infer_from_js as install_dependency_version_tag_infer_from_js;
 pub use bun_install_jsc::hosted_git_info_jsc::js_from_url as install_hosted_git_info_testing_ap_is_js_from_url;
 pub use bun_install_jsc::hosted_git_info_jsc::js_parse_url as install_hosted_git_info_testing_ap_is_js_parse_url;
 pub use bun_install_jsc::install_binding::bun_install_js_bindings::generate as install_jsc_install_binding_bun_install_js_bindings_generate;
@@ -54,7 +52,6 @@ pub use bun_sourcemap_jsc::internal_jsc::testing_from_vlq as sourcemap_internal_
 pub use bun_sourcemap_jsc::internal_jsc::testing_to_vlq as sourcemap_internal_source_map_testing_ap_is_to_vlq;
 
 pub use bun_sys_jsc::error_jsc::TestingAPIs::sigaction_layout as sys_sys_testing_ap_is_sigaction_layout;
-pub use bun_sys_jsc::error_jsc::TestingAPIs::sys_error_name_from_libuv as sys_error_testing_ap_is_sys_error_name_from_libuv;
 pub use bun_sys_jsc::error_jsc::TestingAPIs::translate_nt_status_to_e as sys_sys_testing_ap_is_translate_nt_status_to_e;
 pub use bun_sys_jsc::error_jsc::TestingAPIs::translate_uv_error_to_e as sys_sys_testing_ap_is_translate_uv_error_to_e;
 

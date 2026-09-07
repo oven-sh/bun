@@ -125,9 +125,12 @@ pub mod api {
         pub serve_public_path: Option<Box<[u8]>>,
         pub serve_hmr: Option<bool>,
         pub serve_define: Option<StringMap>,
+        pub serve_sourcemap: Option<SourceMapMode>,
 
         /// from `--no-addons`. `None` == `true`.
         pub allow_addons: Option<bool>,
+        /// from `--no-ffi-cc`. `None` == `true`.
+        pub allow_ffi_cc: Option<bool>,
         /// from `--unhandled-rejections`; default is `Bun`.
         pub unhandled_rejections: Option<UnhandledRejections>,
 
@@ -149,6 +152,31 @@ pub mod api {
         pub token: Box<[u8]>,
         /// email
         pub email: Box<[u8]>,
+    }
+
+    impl NpmRegistry {
+        pub fn from_url(str: &[u8]) -> NpmRegistry {
+            let url = bun_url::URL::parse(str);
+            let mut registry = NpmRegistry::default();
+
+            if url.username.is_empty() && !url.password.is_empty() {
+                registry.token = Box::from(url.password);
+                registry.url = url.href_without_auth();
+            } else if !url.username.is_empty() && !url.password.is_empty() {
+                registry.username = Box::from(url.username);
+                registry.password = Box::from(url.password);
+                registry.url = url.href_without_auth();
+            } else {
+                // Do not include a trailing slash. There might be parameters at the end.
+                registry.url = Box::from(url.href);
+            }
+
+            registry
+        }
+
+        pub fn has_credentials(&self) -> bool {
+            !self.token.is_empty() || !self.username.is_empty() || !self.password.is_empty()
+        }
     }
 
     /// Per-scope npm registry overrides, keyed by scope name.
@@ -232,6 +260,8 @@ pub mod api {
         pub public_hoist_pattern: Option<PnpmMatcher>,
         pub hoist_pattern: Option<PnpmMatcher>,
         pub hoist: Option<bool>,
+        /// `offline = true`: `bun install` never touches the network.
+        pub offline: Option<bool>,
     }
 
     #[repr(u8)]

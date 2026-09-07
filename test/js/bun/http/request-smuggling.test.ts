@@ -152,6 +152,108 @@ test("rejects Transfer-Encoding + Content-Length", async () => {
   });
 });
 
+test.each([
+  ["default close", ""],
+  ["Connection: keep-alive", "Connection: keep-alive\r\n"],
+])("rejects Transfer-Encoding on an HTTP/1.0 request (%s)", async (_label, connectionHeader) => {
+  // RFC 9112 6.1: a server that receives an HTTP/1.0 message containing a
+  // Transfer-Encoding header field MUST treat the message as if the framing is
+  // faulty and close the connection after processing the message. Bun.serve
+  // rejects such a request outright (400) so a proxy/backend split on whether
+  // HTTP/1.0 honours Transfer-Encoding cannot desync on the body boundary.
+  let handlerCalled = false;
+  await using server = Bun.serve({
+    port: 0,
+    fetch() {
+      handlerCalled = true;
+      return new Response("OK");
+    },
+  });
+
+  const client = net.connect(server.port, "127.0.0.1");
+
+  const maliciousRequest =
+    "POST / HTTP/1.0\r\n" +
+    "Host: localhost\r\n" +
+    connectionHeader +
+    "Transfer-Encoding: chunked\r\n" +
+    "\r\n" +
+    "5\r\nhello\r\n0\r\n\r\n";
+
+  const response = await new Promise<string>((resolve, reject) => {
+    let buf = "";
+    client.on("error", reject);
+    client.on("data", data => (buf += data.toString("latin1")));
+    client.on("close", () => resolve(buf));
+    client.write(maliciousRequest);
+  });
+
+  expect(response).toStartWith("HTTP/1.1 400 Bad Request\r\n");
+  expect(handlerCalled).toBe(false);
+});
+
+test("accepts Transfer-Encoding: chunked on an HTTP/1.1 request", async () => {
+  // Control for the HTTP/1.0 rejection above: the same chunked body is valid on HTTP/1.1.
+  let received = "";
+  await using server = Bun.serve({
+    port: 0,
+    async fetch(req) {
+      received = await req.text();
+      return new Response("OK");
+    },
+  });
+
+  const client = net.connect(server.port, "127.0.0.1");
+  const request =
+    "POST / HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\nTransfer-Encoding: chunked\r\n\r\n5\r\nhello\r\n0\r\n\r\n";
+
+  const response = await new Promise<string>((resolve, reject) => {
+    let buf = "";
+    client.on("error", reject);
+    client.on("data", data => (buf += data.toString("latin1")));
+    client.on("close", () => resolve(buf));
+    client.write(request);
+  });
+
+  expect(response).toStartWith("HTTP/1.1 200 OK\r\n");
+  expect(received).toBe("hello");
+});
+
+test("node:http dispatches Transfer-Encoding on an HTTP/1.0 request (llhttp parity)", async () => {
+  // node:http follows llhttp here: the HTTP/1.0 + Transfer-Encoding: chunked request
+  // is dispatched with the chunked body decoded, and the connection closes after (an
+  // HTTP/1.0 request already marks the connection for close).
+  const hits: { url: string; body: string; httpVersion: string }[] = [];
+  const server = createServer((req, res) => {
+    let body = "";
+    req.on("data", d => (body += d));
+    req.on("end", () => {
+      hits.push({ url: req.url!, body, httpVersion: req.httpVersion });
+      res.end("ok");
+    });
+  });
+  await new Promise<void>(r => server.listen(0, r));
+  try {
+    const port = (server.address() as net.AddressInfo).port;
+
+    const client = net.connect(port, "127.0.0.1");
+    const request = "POST /a HTTP/1.0\r\nHost: x\r\nTransfer-Encoding: chunked\r\n\r\n5\r\nhello\r\n0\r\n\r\n";
+
+    const response = await new Promise<string>((resolve, reject) => {
+      let buf = "";
+      client.on("error", reject);
+      client.on("data", d => (buf += d.toString("latin1")));
+      client.on("close", () => resolve(buf));
+      client.write(request);
+    });
+
+    expect(response).toStartWith("HTTP/1.1 200 OK\r\n");
+    expect(hits).toEqual([{ url: "/a", body: "hello", httpVersion: "1.0" }]);
+  } finally {
+    server.close();
+  }
+});
+
 test("rejects conflicting duplicate Content-Length headers", async () => {
   // RFC 9112 6.3: multiple Content-Length headers with differing values must be rejected
   // to prevent request smuggling.
@@ -1524,6 +1626,48 @@ test("rejects Transfer-Encoding header with empty value", async () => {
 
   // The trailing bytes must never be interpreted as a second request.
   expect(seen).not.toContain("GET /admin");
+});
+
+// RFC 9110 5.6.1: empty list members are ignored, so these two fields combine
+// to just "chunked". The parser frames the body as chunked, and the handler
+// must receive that body: a has-body decision that reads only the first
+// Transfer-Encoding field sees an empty value and drops the chunk data.
+test.each([
+  ["empty", ""],
+  ["whitespace-only", "   "],
+])("delivers the chunked body when a %s Transfer-Encoding field precedes chunked", async (name, te) => {
+  const seen: string[] = [];
+  await using server = Bun.serve({
+    port: 0,
+    async fetch(req) {
+      seen.push(`${req.method} ${new URL(req.url).pathname} body=${JSON.stringify(await req.text())}`);
+      return new Response("OK");
+    },
+  });
+
+  const { promise, resolve, reject } = Promise.withResolvers<string>();
+  const client = net.connect(server.port, "127.0.0.1", () => {
+    client.write(
+      "POST /a HTTP/1.1\r\n" +
+        "Host: localhost\r\n" +
+        `Transfer-Encoding:${te}\r\n` +
+        "Transfer-Encoding: chunked\r\n" +
+        "\r\n" +
+        "5\r\nhello\r\n0\r\n\r\n" +
+        "GET /after HTTP/1.1\r\n" +
+        "Host: localhost\r\n" +
+        "Connection: close\r\n" +
+        "\r\n",
+    );
+  });
+  let raw = "";
+  client.on("data", chunk => (raw += chunk.toString()));
+  client.on("error", reject);
+  client.on("close", () => resolve(raw));
+  const response = await promise;
+
+  expect(seen).toEqual(['POST /a body="hello"', 'GET /after body=""']);
+  expect(response.match(/HTTP\/1\.1 200/g)).toHaveLength(2);
 });
 
 describe("Host header field values in request.url", () => {

@@ -36,7 +36,7 @@ import {
  * @typedef {"aarch64" | "x64"} Arch
  * @typedef {"musl" | "android"} Abi
  * @typedef {"debian" | "ubuntu" | "alpine" | "amazonlinux"} Distro
- * @typedef {"latest" | "previous" | "oldest" | "eol"} Tier
+ * @typedef {"latest" | "previous" | "oldest" | "eol" | "beta"} Tier
  * @typedef {"release" | "assert" | "debug" | "asan"} Profile
  */
 
@@ -168,7 +168,8 @@ const buildPlatforms = [
   // only runs tests, signing, and baseline verification, against these
   // artifacts (see testPlatforms), and these are the Windows artifacts the
   // release ships. x64 uses ThinLTO + cross-language LTO by default; arm64
-  // stays non-LTO (no windows-arm64-lto WebKit prebuilt, see config.ts).
+  // stays non-LTO (LLVM's CodeView emitter aborts on ARM64 NEON tuple
+  // registers under LTO, see config.ts).
   { os: "windows", arch: "x64", crossCompile: true, distro: "debian", release: "13" },
   { os: "windows", arch: "aarch64", crossCompile: true, distro: "debian", release: "13" },
 ];
@@ -186,6 +187,10 @@ const testPlatforms = [
   // The darwin test suite runs on real macOS agents against the Linux-built
   // artifacts from the `darwin-<arch>-build-bun` steps (the only darwin build
   // lanes — see buildPlatforms).
+  // These three version-specific lanes run on main and on opt-in (see
+  // darwinTestsEnabled). PR builds instead get one aarch64 lane that any mac
+  // agent of that arch can take (prDarwinTestPlatforms), so the whole arm64
+  // pool serves one PR lane and the whole x64 pool the other.
   { os: "darwin", arch: "aarch64", release: "26", tier: "latest" },
   { os: "darwin", arch: "aarch64", release: "14", tier: "previous" },
   { os: "darwin", arch: "x64", release: "14", tier: "latest" },
@@ -375,26 +380,17 @@ function getEc2Agent(platform, options, ec2Options) {
  * @param {PipelineOptions} options
  * @returns {string}
  */
-function getCppAgent(platform, options) {
+function getBuildAgent(platform, options) {
   // Every build lane runs on the single debian-13 aarch64 host image
   // (buildHostPlatform) and cross-compiles to its target; the target's
   // os/arch only affect build args, not agent tags or image-name.
+  const { os, arch, abi, profile } = platform;
+  // Lanes without LTO (see ltoDefault in scripts/build/config.ts): rustc does its own fat LTO + codegen inside cargo, so the C++ compile overlapping it costs ~20s on 16 vCPUs; give them 32.
+  const nonLto =
+    profile === "asan" || abi === "android" || os === "freebsd" || (os === "windows" && arch === "aarch64");
   return getEc2Agent(buildHostPlatform, options, {
-    instanceType: "c8g.4xlarge",
-  });
-}
-
-/**
- * @param {Platform} platform
- * @param {PipelineOptions} options
- * @returns {string}
- */
-function getLinkBunAgent(platform, options) {
-  return getEc2Agent(buildHostPlatform, options, {
-    // rust-and-link runs cargo (~200 crates) then ThinLTO-links the full graph
-    // on one box; r8g.xlarge is too tight. ASAN's -Zbuild-std cargo pass
-    // doubles the IR, so size that lane for cores.
-    instanceType: platform.profile === "asan" ? "r8g.4xlarge" : "r8g.2xlarge",
+    // Replaces the c8g.4xlarge (C++) + r8g.2xlarge (cargo + ThinLTO link; r8g.4xlarge for asan) pair.
+    instanceType: nonLto ? "r8g.8xlarge" : "r8g.4xlarge",
   });
 }
 
@@ -413,10 +409,10 @@ function getTestAgent(platform, options) {
     // box — because the tier split bottlenecked the smaller pool and Intel
     // can't run latest anyway.
     return {
-      queue: `test-${os}`,
+      queue: tier === "beta" ? darwinBetaQueue : `test-${os}`,
       os,
       arch,
-      ...(arch === "aarch64" ? { "release-tier": tier } : {}),
+      ...(arch === "aarch64" && tier ? { "release-tier": tier } : {}),
     };
   }
 
@@ -469,7 +465,7 @@ function getTestAgent(platform, options) {
  *
  * @param {Target} target
  * @param {PipelineOptions} options
- * @param {"cpp-only" | "rust-only" | "link-only" | "rust-and-link"} mode
+ * @param {"build" | "cpp-only" | "rust-only" | "link-only" | "rust-and-link"} mode
  * @returns {string}
  */
 function getBuildArgs(target, options, mode) {
@@ -498,7 +494,7 @@ function getBuildArgs(target, options, mode) {
 /**
  * @param {Target} target
  * @param {PipelineOptions} options
- * @param {"cpp-only" | "rust-only" | "link-only" | "rust-and-link"} mode
+ * @param {"build" | "cpp-only" | "rust-only" | "link-only" | "rust-and-link"} mode
  * @returns {string}
  */
 function getBuildCommand(target, options, mode) {
@@ -515,51 +511,25 @@ function getBuildCommand(target, options, mode) {
 }
 
 /**
- * @param {Platform} platform
- * @param {PipelineOptions} options
- * @returns {Step}
- */
-function getBuildCppStep(platform, options) {
-  const { os, arch } = platform;
-  // BoringSSL's win-x64 assembly is NASM syntax. The agent images bake nasm
-  // (.buildkite/Dockerfile); best-effort install covers older images, and
-  // `|| true` keeps a missing package manager from failing the step — the
-  // build's own "nasm not found" error is clearer.
-  const nasmSetup =
-    os === "windows" && arch === "x64"
-      ? [
-          "which nasm || (apt-get update -qq && apt-get install -y -qq nasm) || dnf install -y -q nasm || yum install -y -q nasm || true",
-        ]
-      : [];
-  return {
-    key: `${getTargetKey(platform)}-build-cpp`,
-    label: `${getTargetLabel(platform)} - build-cpp`,
-    agents: getCppAgent(platform, options),
-    retry: getRetry(),
-    cancel_on_build_failing: isMergeQueue(),
-    // cpp-only builds deps + bun's C++ in one ninja graph (ninja pulls
-    // everything the archive transitively needs). The old two-command
-    // split (--target bun, --target dependencies) was a cmake artifact.
-    command: [...nasmSetup, getBuildCommand(platform, options, "cpp-only")],
-  };
-}
-
-/**
- * cargo build + link on one agent. Runs in parallel with build-cpp (no
- * depends_on); the build script runs `ninja bun-rust` first, then polls
- * `buildkite-agent step get outcome` for `<target>-build-cpp`, downloads
- * its archive, and links. Key is `-build-bun` (it produces the final zip)
- * so test/release/verify-baseline/binary-size depends_on stay unchanged.
+ * deps + C++ + cargo + link on one agent, then package + upload the zips.
  *
  * @param {Platform} platform
  * @param {PipelineOptions} options
  * @returns {Step}
  */
 function getBuildBunStep(platform, options) {
+  const { arch } = platform;
+  // Best-effort nasm for x64 (BoringSSL win-x64, libjpeg-turbo SIMD); images bake it, and the build's own error is clearer.
+  const nasmSetup =
+    arch === "x64"
+      ? [
+          "which nasm || (apt-get update -qq && apt-get install -y -qq nasm) || dnf install -y -q nasm || yum install -y -q nasm || brew install nasm || true",
+        ]
+      : [];
   return {
     key: `${getTargetKey(platform)}-build-bun`,
     label: `${getTargetLabel(platform)} - build-bun`,
-    agents: getLinkBunAgent(platform, options),
+    agents: getBuildAgent(platform, options),
     retry: getRetry(),
     cancel_on_build_failing: isMergeQueue(),
     timeout_in_minutes: 60,
@@ -568,7 +538,7 @@ function getBuildBunStep(platform, options) {
       // linked binary's startup during the smoke test.
       ASAN_OPTIONS: "allow_user_segv_handler=1:disable_coredump=0:detect_leaks=0",
     },
-    command: getBuildCommand(platform, options, "rust-and-link"),
+    command: [...nasmSetup, getBuildCommand(platform, options, "build")],
   };
 }
 
@@ -754,10 +724,17 @@ function getVerifyBaselineStep(platform, options) {
  *
  * linux-aarch64 is absent because its build lane runs on the aarch64 host and
  * traces itself; `packageAndUpload()` is its sole publisher.
+ *
+ * The `on` platforms are entries of `testPlatforms`, so the step runs on an
+ * image that exists. The windows tracer is built on the test VM for whichever
+ * architecture it is running on (scripts/orderfile/functrace-windows.c), so each
+ * windows target traces on its own arch's fleet.
  */
 const traceOrderTargets = [
   { os: "darwin", arch: "aarch64", on: { os: "darwin", arch: "aarch64", release: "26", tier: "latest" } },
   { os: "linux", arch: "x64", on: { os: "linux", arch: "x64", distro: "debian", release: "13" } },
+  { os: "windows", arch: "x64", on: { os: "windows", arch: "x64", release: "2019", tier: "oldest" } },
+  { os: "windows", arch: "aarch64", on: { os: "windows", arch: "aarch64", release: "11", tier: "latest" } },
 ];
 
 /**
@@ -773,15 +750,24 @@ const traceOrderTargets = [
  * Non-PR only — `orderFileEligible()` ignores PR builds, so a trace there has
  * no consumer. Soft-fail: the order file is an optimization, and a broken
  * tracer must not fail a build.
+ *
+ * Windows agents run commands under cmd.exe (see getVerifyBaselineStep for the
+ * `|| exit /b 1` convention). The generator compiles the tracer there, which
+ * takes clang-cl or a Visual Studio environment; the image has both, and
+ * vs-shell.ps1 provides the latter the same way it does for the test runner.
+ * The profile zip carries the two maps the generator resolves addresses with
+ * (packageAndUpload in scripts/build/ci.ts; scripts/orderfile/windows-symbols.ts).
  * @param {Target} target
  * @param {Platform} tracePlatform
  * @param {PipelineOptions} options
  * @returns {CommandStep}
  */
 function getTraceOrderStep(target, tracePlatform, options) {
+  const { os } = target;
   const targetKey = getTargetKey(target);
   const triplet = getTargetTriplet(target);
   const profileDir = `${triplet}-profile`;
+  const generate = `scripts/orderfile/generate.ts --build-dir=${profileDir} --out=${triplet}.order`;
   return {
     key: `${targetKey}-trace-order`,
     label: `${getTargetLabel(target)} - trace-order`,
@@ -791,13 +777,21 @@ function getTraceOrderStep(target, tracePlatform, options) {
     cancel_on_build_failing: isMergeQueue(),
     soft_fail: true,
     timeout_in_minutes: 15,
-    command: [
-      `buildkite-agent artifact download '${profileDir}.zip' . --step ${targetKey}-build-bun`,
-      `unzip -o '${profileDir}.zip'`,
-      `chmod +x ${profileDir}/bun-profile`,
-      `./${profileDir}/bun-profile scripts/orderfile/generate.ts --build-dir=${profileDir} --out=${triplet}.order`,
-      `buildkite-agent artifact upload '${triplet}.order'`,
-    ],
+    command:
+      os === "windows"
+        ? [
+            `buildkite-agent artifact download ${profileDir}.zip . --step ${targetKey}-build-bun || exit /b 1`,
+            `tar -xf ${profileDir}.zip || exit /b 1`,
+            `pwsh -NoProfile -File .\\scripts\\vs-shell.ps1 .\\${profileDir}\\bun-profile.exe ${generate} || exit /b 1`,
+            `buildkite-agent artifact upload ${triplet}.order`,
+          ]
+        : [
+            `buildkite-agent artifact download '${profileDir}.zip' . --step ${targetKey}-build-bun`,
+            `unzip -o '${profileDir}.zip'`,
+            `chmod +x ${profileDir}/bun-profile`,
+            `./${profileDir}/bun-profile ${generate}`,
+            `buildkite-agent artifact upload '${triplet}.order'`,
+          ],
   };
 }
 
@@ -843,10 +837,23 @@ function getTestBunStep(platform, options, testOptions = {}) {
     label: `${getPlatformLabel(platform)} - test-bun`,
     depends_on: depends,
     agents: getTestAgent(platform, options),
-    retry: getRetry(),
+
+    // No automatic retry on the beta tier: agent loss would re-queue the
+    // job onto a single-box queue with nobody to take it, and a job that
+    // never starts is not something soft_fail can convert.
+    retry: platform.tier === "beta" ? { manual: { permit_on_passed: true }, automatic: false } : getRetry(),
     cancel_on_build_failing: isMergeQueue(),
-    parallelism: os === "darwin" ? 2 : os === "windows" ? 8 : 20,
-    timeout_in_minutes: profile === "asan" || os === "windows" || os === "darwin" ? 45 : 30,
+    // One beta box: one shard. soft_fail keeps a failing run from
+    // failing the build, and the lane is never added on the merge queue
+    // (see betaDarwinTestPlatforms). One window stays open: the box was
+    // connected at upload but drops off during the build wait, so the
+    // step sits `scheduled` with nobody to take it. That holds only this
+    // PR's own build, and a cancel clears it.
+    parallelism: platform.tier === "beta" ? 1 : os === "darwin" ? 2 : os === "windows" ? 8 : 20,
+    ...(platform.tier === "beta" ? { soft_fail: true } : {}),
+    // The beta lane runs the whole suite as one shard on one box (~35 min).
+    timeout_in_minutes:
+      platform.tier === "beta" ? 60 : profile === "asan" || os === "windows" || os === "darwin" ? 45 : 30,
     env: {
       ASAN_OPTIONS: "allow_user_segv_handler=1:disable_coredump=0:detect_leaks=0",
       // Platform smoke check: runner.node.mjs asserts the agent matches what
@@ -899,30 +906,25 @@ function getTestBunStep(platform, options, testOptions = {}) {
  *
  * @param {Platform} platform
  * @param {PipelineOptions} options
+ * @returns {Step[]} steps for the `build-images` group; the last one's key is
+ *   `${getImageKey(platform)}-build-image`, which is what dependents wait on.
+ */
+function getBuildImageSteps(platform, options) {
+  return platform.os === "windows"
+    ? [getWindowsBuildImageStep(platform, options)]
+    : getLinuxBuildImageSteps(platform, options);
+}
+
+/**
+ * Windows images bake on Azure through Packer (WinRM) from the hosted queue.
+ * @param {Platform} platform
+ * @param {PipelineOptions} options
  * @returns {Step}
  */
-function getBuildImageStep(platform, options) {
-  const { os, arch, distro, release, features } = platform;
+function getWindowsBuildImageStep(platform, options) {
+  const { os, arch, release } = platform;
   const { publishImages } = options;
   const action = publishImages ? "publish-image" : "create-image";
-
-  const cloud = os === "windows" ? "azure" : "aws";
-  const command = [
-    "node",
-    "./scripts/machine.mjs",
-    action,
-    `--os=${os}`,
-    `--arch=${arch}`,
-    distro && `--distro=${distro}`,
-    `--release=${release}`,
-    `--cloud=${cloud}`,
-    "--ci",
-    "--authorized-org=oven-sh",
-  ];
-  for (const feature of features || []) {
-    command.push(`--feature=${feature}`);
-  }
-
   return {
     key: `${getImageKey(platform)}-build-image`,
     label: `${getImageLabel(platform)} - build-image`,
@@ -939,9 +941,71 @@ function getBuildImageStep(platform, options) {
     },
     retry: getRetry(),
     cancel_on_build_failing: isMergeQueue(),
-    command: command.filter(Boolean).join(" "),
+    command: `node ./scripts/machine.mjs ${action} --os=${os} --arch=${arch} --release=${release} --cloud=azure --ci --authorized-org=oven-sh`,
     timeout_in_minutes: 3 * 60,
   };
+}
+
+/**
+ * Linux images bake in two steps:
+ *
+ *  1. `…-bake-image` runs ON a fresh machine of the target distro (requested
+ *     with the `bake` agent tag): bootstrap.sh provisions it — so this step's
+ *     log is the bootstrap log — and agent.mjs installs the agent service.
+ *     The machine is imaged as `image-name` once the step passes.
+ *  2. `…-build-image` (labelled wait-for-image) waits for that image to be
+ *     available. It keeps the key the rest of the pipeline depends on.
+ *
+ * @param {Platform} platform
+ * @param {PipelineOptions} options
+ * @returns {Step[]}
+ */
+function getLinuxBuildImageSteps(platform, options) {
+  const { arch, features } = platform;
+  const imageKey = getImageKey(platform);
+  const imageName = getImageName(platform, options);
+  const bootstrapArgs = ["--ci", ...(features || []).map(feature => `--${feature}`)];
+  // prefetch_build_deps shallow-clones the repo at this ref for the dep pins
+  // in scripts/build/deps/; bake from the branch that changed them.
+  const branch = getEnv("BUILDKITE_BRANCH", false);
+  const repoRef = branch && /^[\w./-]+$/.test(branch) ? branch : "main";
+
+  const bakeStep = {
+    key: `${imageKey}-bake-image`,
+    label: `${getImageLabel(platform)} - bake-image`,
+    agents: {
+      ...getEc2Agent(platform, options, { instanceType: arch === "aarch64" ? "t4g.large" : "t3.large" }),
+      bake: true,
+    },
+    env: {
+      BUN_BOOTSTRAP_REPO_REF: repoRef,
+    },
+    retry: getRetry(),
+    cancel_on_build_failing: isMergeQueue(),
+    // Install the service from the machine's own copy of agent.mjs rather
+    // than this checkout's, so the unit outlives the build directory.
+    // ($$ is a literal $ after pipeline-upload interpolation.)
+    command: [
+      `sh ./scripts/bootstrap.sh ${bootstrapArgs.join(" ")}`,
+      `$$([ "$$(id -u)" = 0 ] || echo sudo -n) node /var/lib/buildkite-agent/agent.mjs install`,
+    ],
+    timeout_in_minutes: 3 * 60,
+  };
+
+  const waitStep = {
+    key: `${imageKey}-build-image`,
+    label: `${getImageLabel(platform)} - wait-for-image`,
+    depends_on: [bakeStep.key],
+    agents: {
+      queue: "build-image",
+    },
+    retry: getRetry(),
+    cancel_on_build_failing: isMergeQueue(),
+    command: `node ./scripts/machine.mjs wait-image --name=${imageName} --build=${getBuildNumber()}`,
+    timeout_in_minutes: 120,
+  };
+
+  return [bakeStep, waitStep];
 }
 
 /**
@@ -1452,6 +1516,95 @@ async function getPipelineOptions() {
 }
 
 /**
+ * True when the darwin beta queue can take one more job right now: an
+ * agent is connected to it, and no live build has a job targeting it in
+ * any non-terminal state (`waiting` counts: the beta test step waits on
+ * the darwin build for tens of minutes before it is ever `scheduled`).
+ * Reads the cluster secret `CI_QUEUE_PROBE_TOKEN` (a REST token with
+ * read_builds and read_agents only); without it, or on any error, the
+ * answer is false and the lane is simply not added. Two uploads a few
+ * seconds apart can both see "idle"; a queue of two is the worst case.
+ * @returns {Promise<boolean>}
+ */
+async function darwinBetaQueueIdle() {
+  if (!isBuildkite) {
+    return false;
+  }
+  try {
+    // getSecret throws on Buildkite when the secret is absent; the probe
+    // must never take the pipeline down with it.
+    const token = getSecret("CI_QUEUE_PROBE_TOKEN", { required: false });
+    if (!token) {
+      return false;
+    }
+    const api = async path => {
+      const res = await fetch(`https://api.buildkite.com/v2/organizations/bun/${path}`, {
+        headers: { Authorization: `Bearer ${token}` },
+        signal: AbortSignal.timeout(10_000),
+      });
+      return res.ok ? res : undefined;
+    };
+
+    // No connected agent: a step added now would sit `scheduled` until
+    // the box comes back, and soft_fail does nothing for a job that
+    // never starts. The org has a few hundred agents and the list pages
+    // at 100, so follow `Link: rel="next"`; `stopping` does not count.
+    let connected = false;
+    let next = "agents?per_page=100";
+    for (let page = 0; next && page < 10 && !connected; page++) {
+      const res = await api(next);
+      if (!res) {
+        return false;
+      }
+      const agents = await res.json();
+      connected = agents.some(
+        ({ connection_state, meta_data = [] }) =>
+          connection_state === "connected" && meta_data.includes(`queue=${darwinBetaQueue}`),
+      );
+      const link = res.headers.get("link") ?? "";
+      const match = link.match(/<https:\/\/api\.buildkite\.com\/v2\/organizations\/bun\/([^>]+)>;\s*rel="next"/);
+      next = match?.[1];
+    }
+    if (!connected) {
+      return false;
+    }
+
+    // Builds in `failing` and `canceling` still carry live jobs.
+    const res = await api(
+      "pipelines/bun/builds?state%5B%5D=running&state%5B%5D=scheduled&state%5B%5D=failing&state%5B%5D=canceling&per_page=100",
+    );
+    if (!res) {
+      return false;
+    }
+    const builds = await res.json();
+    const terminal = new Set([
+      "passed",
+      "failed",
+      "canceled",
+      "skipped",
+      "timed_out",
+      "expired",
+      "broken",
+      "finished",
+      "waiting_failed",
+      "blocked_failed",
+      "unblocked_failed",
+    ]);
+    const busy = builds.some(({ jobs = [] }) =>
+      jobs.some(
+        ({ state, agent_query_rules = [] }) =>
+          !terminal.has(state) && agent_query_rules.includes(`queue=${darwinBetaQueue}`),
+      ),
+    );
+    return !busy;
+  } catch {
+    return false;
+  }
+}
+
+const darwinBetaQueue = "test-darwin-beta";
+
+/**
  * @param {PipelineOptions} [options]
  * @returns {Promise<Pipeline | undefined>}
  */
@@ -1471,7 +1624,7 @@ async function getPipeline(options = {}) {
   }
 
   const { buildPlatforms = [], testPlatforms = [], buildImages, publishImages, imageFilter } = options;
-  // Every build lane runs on buildHostPlatform (see getCppAgent/getLinkBunAgent),
+  // Every build lane runs on buildHostPlatform (see getBuildAgent),
   // so the build-image set is exactly {buildHostPlatform} ∪ testPlatforms' native
   // images — buildPlatforms entries encode TARGET os/arch/abi, not a host image.
   const imagePlatforms = new Map(
@@ -1491,7 +1644,7 @@ async function getPipeline(options = {}) {
     steps.push({
       key: "build-images",
       group: getBuildkiteEmoji("aws"),
-      steps: [...imagePlatforms.values()].map(platform => getBuildImageStep(platform, options)),
+      steps: [...imagePlatforms.values()].flatMap(platform => getBuildImageSteps(platform, options)),
     });
   }
 
@@ -1512,33 +1665,85 @@ async function getPipeline(options = {}) {
 
   const includeASAN = !isMainBranch();
 
+  // verify-baseline / trace-order: checks that run on a built binary on a
+  // test-fleet host. They are drawn in that host's test group (or a
+  // lane-style group of their own when the target has no test lane, e.g.
+  // android) rather than in
+  // the build group — Buildkite's canvas draws every edge into a group as
+  // leaving after the whole group, so nesting them with build-bun made
+  // test-bun look like it waited on them — and rather than top-level, where
+  // a step still waiting on its depends_on renders greyed out like a skipped
+  // one. Emitted after the test groups so the same-label merge below folds
+  // them into the test group and that group keeps its own depends_on.
+  // Scheduling is by step key either way: each depends on <target>-build-bun.
+  /** @type {Step[]} */
+  const binaryCheckSteps = [];
+  /**
+   * The group a binary check is drawn in: the host's test group when the
+   * target has a test lane there (returned via binaryCheckSteps, emitted after
+   * the test groups), else a lane-style group of its own for that target on
+   * that host — `<host distro> <release> <arch>-<abi>` — returned for the
+   * caller to emit next to the build group.
+   * @param {Target} target
+   * @param {Platform} host
+   * @param {Step} step
+   * @returns {Step[]}
+   */
+  const placeBinaryCheck = (target, host, step) => {
+    const inTestLane = testPlatforms.some(
+      p => getPlatformKey(p) === getPlatformKey(host) && (p.abi ?? null) === (target.abi ?? null),
+    );
+    if (inTestLane) {
+      binaryCheckSteps.push({ key: getPlatformKey(host), group: getPlatformLabel(host), steps: [step] });
+      return [];
+    }
+    const lane = { ...host, abi: target.abi, baseline: target.baseline, profile: target.profile };
+    return [
+      {
+        key: getPlatformKey(lane),
+        group: getPlatformLabel({ ...lane, arch: `${lane.arch}-${target.abi}` }),
+        steps: [step],
+      },
+    ];
+  };
+
   if (!buildId) {
     let relevantBuildPlatforms = includeASAN
       ? buildPlatforms
       : buildPlatforms.filter(({ profile }) => profile !== "asan");
 
     steps.push(
-      ...relevantBuildPlatforms.map(target => {
-        // build-cpp/build-bun always run on buildHostPlatform regardless of
+      ...relevantBuildPlatforms.flatMap(target => {
+        // build-bun always runs on buildHostPlatform regardless of
         // target, so the only build-image dependency is the host's.
         const imageKey = getImageKey(buildHostPlatform);
-        const dependsOn = [];
-        if (imagePlatforms.has(imageKey)) {
-          dependsOn.push(`${imageKey}-build-image`);
-        }
+        const dependsOn = imagePlatforms.has(imageKey) ? [`${imageKey}-build-image`] : [];
 
-        const steps = [];
-        steps.push(getBuildCppStep(target, options));
-        steps.push(getBuildBunStep(target, options));
+        /** @type {Step[]} */
+        const steps = [
+          getStepWithDependsOn(
+            {
+              key: getTargetKey(target),
+              group: getTargetLabel(target),
+              steps: [getBuildBunStep(target, options)],
+            },
+            ...dependsOn,
+          ),
+        ];
 
         if (needsBaselineVerification(target)) {
           // verify-baseline runs on a per-target-arch native host (see
-          // getVerifyBaselineHost), not buildHostPlatform; its image dep goes
-          // on the step itself so build-cpp/build-bun don't wait for it.
-          const verifyImageKey = getImageKey(getVerifyBaselineHost(target));
-          const verifyDeps =
-            verifyImageKey !== imageKey && imagePlatforms.has(verifyImageKey) ? [`${verifyImageKey}-build-image`] : [];
-          steps.push(getStepWithDependsOn(getVerifyBaselineStep(target, options), ...verifyDeps));
+          // getVerifyBaselineHost), not buildHostPlatform.
+          const verifyHost = getVerifyBaselineHost(target);
+          const verifyImageKey = getImageKey(verifyHost);
+          const verifyDeps = imagePlatforms.has(verifyImageKey) ? [`${verifyImageKey}-build-image`] : [];
+          steps.push(
+            ...placeBinaryCheck(
+              target,
+              verifyHost,
+              getStepWithDependsOn(getVerifyBaselineStep(target, options), ...verifyDeps),
+            ),
+          );
         }
 
         // Seed the symbol order file for a cross-compiled target on its native
@@ -1552,22 +1757,19 @@ async function getPipeline(options = {}) {
             t.os === target.os && t.arch === target.arch && !target.abi && (target.profile ?? "release") === "release",
         );
         if (traceOn && (isMainBranch() || /\[generate symbol order\]/i.test(getCommitMessage()))) {
-          // The trace host's image, same as verify-baseline: on the step, so
-          // build-cpp/build-bun don't wait for it. Darwin has no cloud image.
+          // Darwin has no cloud image.
           const traceImageKey = getImageKey(traceOn.on);
-          const traceDeps =
-            traceImageKey !== imageKey && imagePlatforms.has(traceImageKey) ? [`${traceImageKey}-build-image`] : [];
-          steps.push(getStepWithDependsOn(getTraceOrderStep(target, traceOn.on, options), ...traceDeps));
+          const traceDeps = imagePlatforms.has(traceImageKey) ? [`${traceImageKey}-build-image`] : [];
+          steps.push(
+            ...placeBinaryCheck(
+              target,
+              traceOn.on,
+              getStepWithDependsOn(getTraceOrderStep(target, traceOn.on, options), ...traceDeps),
+            ),
+          );
         }
 
-        return getStepWithDependsOn(
-          {
-            key: getTargetKey(target),
-            group: getTargetLabel(target),
-            steps,
-          },
-          ...dependsOn,
-        );
+        return steps;
       }),
     );
   }
@@ -1575,7 +1777,29 @@ async function getPipeline(options = {}) {
   // Tests run on main too so the canary release step below can gate on them.
   // ASAN is PR-only (see includeASAN above), so the asan test lane is dropped
   // on main along with its build.
-  const relevantTestPlatforms = includeASAN ? testPlatforms : testPlatforms.filter(({ profile }) => profile !== "asan");
+  // Untiered: any arm64 mac agent, whatever macOS it runs, can take it.
+  /** @type {Platform[]} */
+  const prDarwinTestPlatforms = [
+    { os: "darwin", arch: "aarch64", release: "any" },
+    { os: "darwin", arch: "x64", release: "any" },
+  ];
+  const darwinTestsEnabled = isMainBranch() || isBuildManual() || /\[(macos|darwin) tests?\]/i.test(getCommitMessage());
+  // The macOS beta lane: a single home-hosted mini on the next macOS,
+  // its own queue, soft-fail. PR builds get it only when that queue is
+  // idle at upload time, so it is always busy while PRs flow and never
+  // has a backlog: a PR that misses it loses nothing.
+  // Never on the merge queue: a step that cannot start (box offline) would
+  // hold the required check open and stall the queue.
+  const betaDarwinTestPlatforms =
+    !darwinTestsEnabled && !isMergeQueue() && (await darwinBetaQueueIdle())
+      ? [{ os: "darwin", arch: "aarch64", release: "27", tier: "beta" }]
+      : [];
+  const relevantTestPlatforms = (
+    includeASAN ? testPlatforms : testPlatforms.filter(({ profile }) => profile !== "asan")
+  )
+    .filter(({ os }) => os !== "darwin" || darwinTestsEnabled)
+    .concat(darwinTestsEnabled ? [] : prDarwinTestPlatforms)
+    .concat(darwinTestsEnabled ? [] : betaDarwinTestPlatforms);
   /** @type {string[]} */
   const testStepKeys = [];
   {
@@ -1601,6 +1825,8 @@ async function getPipeline(options = {}) {
       );
     }
   }
+
+  steps.push(...binaryCheckSteps);
 
   // Binary-size tracking: main records the baseline, PRs enforce the threshold.
   const strippedPlatforms = buildPlatforms.filter(p => (p.profile ?? "release") === "release");
@@ -1630,29 +1856,27 @@ async function getPipeline(options = {}) {
     steps.push(getReleaseStep(buildPlatforms, options, { signed: shouldSignWindows, testStepKeys }));
   }
 
+  // Merge same-label groups into their first occurrence, keeping every
+  // step's position so the sidebar reads in pipeline order.
   /** @type {Map<string, GroupStep>} */
   const stepsByGroup = new Map();
-
-  for (let i = 0; i < steps.length; i++) {
-    const step = steps[i];
+  /** @type {Step[]} */
+  const mergedSteps = [];
+  for (const step of steps) {
     if (!("group" in step)) {
+      mergedSteps.push(step);
       continue;
     }
-
-    const { group, steps: groupSteps } = step;
-    if (stepsByGroup.has(group)) {
-      stepsByGroup.get(group).steps.push(...groupSteps);
+    const existing = stepsByGroup.get(step.group);
+    if (existing) {
+      existing.steps.push(...step.steps);
     } else {
-      stepsByGroup.set(group, step);
+      stepsByGroup.set(step.group, step);
+      mergedSteps.push(step);
     }
-
-    steps[i] = undefined;
   }
 
-  return {
-    priority,
-    steps: [...steps.filter(step => typeof step !== "undefined"), ...Array.from(stepsByGroup.values())],
-  };
+  return { priority, steps: mergedSteps };
 }
 
 async function main() {

@@ -77,8 +77,10 @@ for (const abs of rustSources) {
   if (tracked !== null && !tracked.has(source)) continue;
   scanned++;
   const content = await file(abs).text();
-  // Strip full-line comments so prose mentions (including this file) don't count.
-  const stripped = content.replace(/^\s*\/\/.*$/gm, "");
+  // Strip full-line comments so prose mentions (including this file) don't
+  // count. `[ \t]*`, not `\s*`: `\s` crosses newlines, so a comment preceded
+  // by blank lines would swallow them and shift every reported line number.
+  const stripped = content.replace(/^[ \t]*\/\/.*$/gm, "");
   for (const m of stripped.matchAll(BANNED)) {
     const line = stripped.slice(0, m.index).split("\n").length;
     counts[source] = (counts[source] ?? 0) + 1;

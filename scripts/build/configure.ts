@@ -25,11 +25,11 @@ import {
 import { BuildError } from "./error.ts";
 import { orderFilePath, usesOrderFile } from "./flags.ts";
 import { mkdirAll, writeIfChanged } from "./fs.ts";
-import { planPath } from "./rust/plan.ts";
 import { ensureMacosSdk } from "./macos-sdk.ts";
 import { Ninja } from "./ninja.ts";
 import { getProfile } from "./profiles.ts";
 import { registerAllRules } from "./rules.ts";
+import { planPath } from "./rust/plan.ts";
 import { quote, quoteArgs } from "./shell.ts";
 import { findBun, findCargo, findMsvcLinker, findNpm, findSystemTool, resolveLlvmToolchain } from "./tools.ts";
 import { ensureWindowsSysroot } from "./winsysroot.ts";

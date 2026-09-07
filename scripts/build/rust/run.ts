@@ -38,7 +38,7 @@ import {
   utimesSync,
   writeFileSync,
 } from "node:fs";
-import { dirname, isAbsolute, join, relative, resolve } from "node:path";
+import { dirname, isAbsolute, join, resolve } from "node:path";
 import type { UnitManifest } from "./units.ts";
 
 const [mode, manifestPath] = process.argv.slice(2);

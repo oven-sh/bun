@@ -51,9 +51,10 @@ if (existsSync(join(directory, "corpus-timing-raw.json"))) {
   };
 }
 writeFileSync(join(directory, "comparison-summary.json"), JSON.stringify(summary, null, 2) + "\n");
+const csvField = value => `"${String(value).replaceAll('"', '""')}"`;
 const csv = [
   "id,stage,before_ms,after_ms,speedup",
-  ...rows.map(row => [row.id, row.stage, row.before.medianMs, row.after.medianMs, row.speedup].join(",")),
+  ...rows.map(row => [row.id, row.stage, row.before.medianMs, row.after.medianMs, row.speedup].map(csvField).join(",")),
 ];
 writeFileSync(join(directory, "comparison-summary.csv"), csv.join("\n") + "\n");
 console.log(JSON.stringify(summary, null, 2));

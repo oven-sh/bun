@@ -306,6 +306,9 @@ fn extract_top_level_statements<'a>(
     names: &mut std::collections::HashSet<Vec<u8>>,
     tables: bool,
 ) -> Result<(Vec<TopLevelStatement>, Cow<'a, [u8]>), MdxError> {
+    if !strings::contains(source, b"import") && !strings::contains(source, b"export") {
+        return Ok((Vec::new(), Cow::Borrowed(source)));
+    }
     let mut statements = Vec::new();
     let mut remaining = Vec::new();
     let mut copied_until = 0;

@@ -90,7 +90,10 @@ function firstDifference(a, b, path = "$root") {
 function inspect(code, native, hasFrontmatter) {
   const ast = parser.parse(code, { ecmaVersion: "latest", sourceType: "module" });
   const content = native
-    ? walk(ast, node => node.type === "VariableDeclarator" && node.id.name === "_content")?.init
+    ? walk(
+        ast.body.find(node => node.type === "ExportDefaultDeclaration"),
+        node => node.type === "VariableDeclarator" && node.init?.type === "JSXFragment",
+      )?.init
     : walk(
         walk(ast, node => node.type === "FunctionDeclaration" && node.id.name === "_createMdxContent"),
         node => node.type === "ReturnStatement",

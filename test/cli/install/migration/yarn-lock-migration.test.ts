@@ -51,6 +51,87 @@ is-number@^7.0.0:
     expect(bunLockContent).toMatchSnapshot("simple-yarn-migration");
   });
 
+  test("registry entries resolved without a #sha1 fragment migrate as npm packages, not tarball URLs", async () => {
+    // yarn only appends `#<sha1>` to `resolved` when the registry manifest has `dist.shasum`, so
+    // mirrors and lockfile generators that omit it must still produce `name@version` packages.
+    // Otherwise `patchedDependencies`/`overrides` keyed on `name@version` silently stop applying.
+    const sha512 = "sha512-41Cifkg6e8TylSpdtTpeLVMqvSBEVzTttHvERD741+pnZ8ANv0004MRL43QKPDlK9cGvNp6NZWZUBlbGXYxxng==";
+    await using tmpDir = tempDir("yarn-migration-no-fragment", {
+      // Port 1 refuses connections, so the post-migration manifest fetch fails fast and offline.
+      "bunfig.toml": `[install]\nregistry = "http://localhost:1/"\n`,
+      "package.json": JSON.stringify({
+        name: "no-fragment",
+        version: "1.0.0",
+        dependencies: {
+          "default-registry": "^1.0.0",
+          "custom-registry": "^1.0.0",
+          "custom-registry-fragment": "^1.0.0",
+          "@scope/pkg": "^2.0.0",
+          "remote": "https://example.com/files/remote-1.0.0.tgz",
+        },
+      }),
+      "yarn.lock": `# yarn lockfile v1
+
+"@scope/pkg@^2.0.0":
+  version "2.0.0"
+  resolved "http://localhost:1/@scope/pkg/-/pkg-2.0.0.tgz"
+  integrity ${sha512}
+
+custom-registry-fragment@^1.0.0:
+  version "1.0.0"
+  resolved "http://localhost:1/custom-registry-fragment/-/custom-registry-fragment-1.0.0.tgz#7535345b896734d5f80c4d06c50955527a14f12b"
+  integrity ${sha512}
+
+custom-registry@^1.0.0:
+  version "1.0.0"
+  resolved "http://localhost:1/custom-registry/-/custom-registry-1.0.0.tgz"
+  integrity ${sha512}
+
+default-registry@^1.0.0:
+  version "1.0.0"
+  resolved "https://registry.yarnpkg.com/default-registry/-/default-registry-1.0.0.tgz"
+  integrity ${sha512}
+
+"remote@https://example.com/files/remote-1.0.0.tgz":
+  version "1.0.0"
+  resolved "https://example.com/files/remote-1.0.0.tgz#7535345b896734d5f80c4d06c50955527a14f12b"
+`,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "pm", "migrate", "-f"],
+      cwd: String(tmpDir),
+      env: bunEnv,
+      stdout: "ignore",
+      stderr: "pipe",
+      stdin: "ignore",
+    });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    expect(stderr).toContain("migrated lockfile from yarn.lock");
+
+    const lock = Bun.JSONC.parse(await Bun.file(join(String(tmpDir), "bun.lock")).text()) as any;
+    expect(lock.packages).toEqual({
+      "@scope/pkg": ["@scope/pkg@2.0.0", "http://localhost:1/@scope/pkg/-/pkg-2.0.0.tgz", {}, sha512],
+      "custom-registry": [
+        "custom-registry@1.0.0",
+        "http://localhost:1/custom-registry/-/custom-registry-1.0.0.tgz",
+        {},
+        sha512,
+      ],
+      // The fragment is yarn's own tarball checksum; bun keys on `integrity` and stores the bare URL.
+      "custom-registry-fragment": [
+        "custom-registry-fragment@1.0.0",
+        "http://localhost:1/custom-registry-fragment/-/custom-registry-fragment-1.0.0.tgz",
+        {},
+        sha512,
+      ],
+      "default-registry": ["default-registry@1.0.0", "", {}, sha512],
+      // A dependency whose spec is a URL is still a tarball dependency.
+      "remote": ["remote@https://example.com/files/remote-1.0.0.tgz", {}],
+    });
+    expect(exitCode).toBe(0);
+  });
+
   test("yarn.lock with packages containing long build tags", async () => {
     await using tmpDir = tempDir("yarn-migration-build-tags", {
       "package.json": JSON.stringify(

@@ -142,6 +142,28 @@ impl<'a> Entry<'a> {
         version.starts_with(b"https://") && version.ends_with(b".tgz")
     }
 
+    /// yarn appends `#<sha1>` to `resolved` when the registry manifest has a `shasum`.
+    pub(crate) fn without_hash_fragment(url: &[u8]) -> &[u8] {
+        match strings::index_of_char_usize(url, b'#') {
+            Some(hash) => &url[..hash],
+            None => url,
+        }
+    }
+
+    /// yarn writes the tarball URL into `resolved` for registry packages too, so the URL alone
+    /// cannot tell a tarball dependency from a registry one. The spec (`name@https://...`) can,
+    /// and an entry whose `version` is not semver can only install from its URL.
+    pub(crate) fn is_tarball_dependency(&self, has_url_spec: bool) -> bool {
+        let Some(resolved) = self.resolved.as_deref() else {
+            return false;
+        };
+        if has_url_spec {
+            return true;
+        }
+        resolved.ends_with(b".tgz")
+            && !Semver::Version::parse(SlicedString::init(self.version, self.version)).valid
+    }
+
     pub(crate) fn is_workspace_dependency(version: &[u8]) -> bool {
         version.starts_with(b"workspace:") || version == b"*"
     }
@@ -402,7 +424,7 @@ impl<'a> YarnLock<'a> {
                             entry.resolved = Some(Cow::Borrowed(value));
                         }
                     } else if key == b"resolved" {
-                        entry.resolved = Some(Cow::Borrowed(value));
+                        entry.resolved = Some(Cow::Borrowed(Entry::without_hash_fragment(value)));
                         if Entry::is_git_dependency(value) {
                             let git_info = Entry::parse_git_url(self, value)?;
                             entry.commit = git_info.commit;
@@ -938,14 +960,13 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
 
         package_id_to_yarn_idx[package_id as usize] = yarn_idx;
 
+        let is_tarball_dep = entry.is_tarball_dependency(is_direct_url_dep);
+
         let name_to_use: &[u8] = 'blk: {
             if entry.commit.is_some() && entry.git_repo_name.is_some() {
                 break 'blk entry.git_repo_name.as_deref().unwrap();
             } else if let Some(resolved) = entry.resolved.as_deref() {
-                if is_direct_url_dep
-                    || Entry::is_remote_tarball(resolved)
-                    || resolved.ends_with(b".tgz")
-                {
+                if is_tarball_dep {
                     // https://registry.npmjs.org/package/-/package-version.tgz
                     if strings::index_of(resolved, b"registry.npmjs.org/").is_some()
                         || strings::index_of(resolved, b"registry.yarnpkg.com/").is_some()
@@ -1033,16 +1054,10 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
                 }
                 break 'blk Resolution::default();
             } else if let Some(resolved) = entry.resolved.as_deref() {
-                if is_direct_url_dep {
-                    break 'blk Resolution::init(ResolutionValue::RemoteTarball(
-                        sbuf!().append(resolved)?,
-                    ));
-                }
-
                 // Yarn v1 lockfiles legitimately contain entries without an integrity field
                 // (workspace deps, file:, codeload tarballs), so migration intentionally
                 // accepts off-registry tarball URLs without integrity instead of failing.
-                if Entry::is_remote_tarball(resolved) || resolved.ends_with(b".tgz") {
+                if is_tarball_dep {
                     break 'blk Resolution::init(ResolutionValue::RemoteTarball(
                         sbuf!().append(resolved)?,
                     ));
@@ -1675,6 +1690,7 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
     );
 
     parse_root_overrides(this, manager, log, &package_json_source, package_json)?;
+    crate::migration::copy_trusted_and_patched_dependencies(this, log, dir)?;
 
     for (yarn_idx, entry) in yarn_lock.entries.iter().enumerate() {
         let package_id = yarn_entry_to_package_id[yarn_idx];

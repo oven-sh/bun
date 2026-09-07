@@ -439,7 +439,7 @@ impl<'a> LoadResult<'a> {
     }
 
     /// configVersion and boolean for if the configVersion previously existed/needs to be saved to lockfile
-    pub(crate) fn choose_config_version(&self) -> (ConfigVersion, bool) {
+    pub fn choose_config_version(&self) -> (ConfigVersion, bool) {
         match self {
             LoadResult::NotFound | LoadResult::Err(_) => (ConfigVersion::CURRENT, true),
             LoadResult::Ok(ok) => match ok.migrated {

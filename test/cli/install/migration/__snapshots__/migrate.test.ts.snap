@@ -7,7 +7,7 @@ bun install --frozen-lockfile exit code: 0
 
 {
   "lockfileVersion": 2,
-  "configVersion": 1,
+  "configVersion": 0,
   "workspaces": {
     "": {
       "dependencies": {
@@ -1170,7 +1170,7 @@ bun install --frozen-lockfile exit code: 0
 
 {
   "lockfileVersion": 2,
-  "configVersion": 1,
+  "configVersion": 0,
   "workspaces": {
     "": {
       "name": "audit-linked-package",
@@ -1193,7 +1193,7 @@ bun install --frozen-lockfile exit code: 0
 
 {
   "lockfileVersion": 2,
-  "configVersion": 1,
+  "configVersion": 0,
   "workspaces": {
     "": {
       "devDependencies": {
@@ -2704,7 +2704,7 @@ bun install --frozen-lockfile exit code: 1
 
 {
   "lockfileVersion": 2,
-  "configVersion": 1,
+  "configVersion": 0,
   "workspaces": {
     "": {
       "name": "@isaacs/bundle-metadep-duplication-x",
@@ -2731,7 +2731,7 @@ bun install --frozen-lockfile exit code: 0
 
 {
   "lockfileVersion": 2,
-  "configVersion": 1,
+  "configVersion": 0,
   "workspaces": {
     "": {
       "devDependencies": {
@@ -2999,7 +2999,7 @@ bun install --frozen-lockfile exit code: 0
 
 {
   "lockfileVersion": 2,
-  "configVersion": 1,
+  "configVersion": 0,
   "workspaces": {
     "": {
       "name": "monorepo",
@@ -3024,7 +3024,7 @@ bun install --frozen-lockfile exit code: 0
 
 {
   "lockfileVersion": 2,
-  "configVersion": 1,
+  "configVersion": 0,
   "workspaces": {
     "": {
       "name": "dedupe-lockfile",
@@ -3052,7 +3052,7 @@ bun install --frozen-lockfile exit code: 0
 
 {
   "lockfileVersion": 2,
-  "configVersion": 1,
+  "configVersion": 0,
   "workspaces": {
     "": {
       "name": "@isaacs/dep-installed-without-bin-link",
@@ -3079,7 +3079,7 @@ bun install --frozen-lockfile exit code: 0
 
 {
   "lockfileVersion": 2,
-  "configVersion": 1,
+  "configVersion": 0,
   "workspaces": {
     "": {
       "dependencies": {
@@ -3575,7 +3575,7 @@ bun install --frozen-lockfile exit code: 0
 
 {
   "lockfileVersion": 2,
-  "configVersion": 1,
+  "configVersion": 0,
   "workspaces": {
     "": {
       "dependencies": {
@@ -3622,7 +3622,7 @@ bun install --frozen-lockfile exit code: 0
 
 {
   "lockfileVersion": 2,
-  "configVersion": 1,
+  "configVersion": 0,
   "workspaces": {
     "": {
       "dependencies": {
@@ -3670,7 +3670,7 @@ bun install --frozen-lockfile exit code: 1
 
 {
   "lockfileVersion": 2,
-  "configVersion": 1,
+  "configVersion": 0,
   "workspaces": {
     "": {
       "dependencies": {
@@ -3711,7 +3711,7 @@ bun install --frozen-lockfile exit code: 1
 
 {
   "lockfileVersion": 2,
-  "configVersion": 1,
+  "configVersion": 0,
   "workspaces": {
     "": {
       "name": "workspace-simple",
@@ -3744,7 +3744,7 @@ bun install --frozen-lockfile exit code: 1
 
 {
   "lockfileVersion": 2,
-  "configVersion": 1,
+  "configVersion": 0,
   "workspaces": {
     "": {
       "dependencies": {
@@ -3769,7 +3769,7 @@ bun install --frozen-lockfile exit code: 0
 
 {
   "lockfileVersion": 2,
-  "configVersion": 1,
+  "configVersion": 0,
   "workspaces": {
     "": {
       "dependencies": {
@@ -3803,7 +3803,7 @@ bun install --frozen-lockfile exit code: 0
 
 {
   "lockfileVersion": 1,
-  "configVersion": 1,
+  "configVersion": 0,
   "workspaces": {
     "": {
       "dependencies": {
@@ -3836,7 +3836,7 @@ bun install --frozen-lockfile exit code: 0
 
 {
   "lockfileVersion": 2,
-  "configVersion": 1,
+  "configVersion": 0,
   "workspaces": {
     "": {
       "name": "flow-outdated",
@@ -3868,7 +3868,7 @@ bun install --frozen-lockfile exit code: 0
 
 {
   "lockfileVersion": 2,
-  "configVersion": 1,
+  "configVersion": 0,
   "workspaces": {
     "": {
       "dependencies": {
@@ -3890,7 +3890,7 @@ bun install --frozen-lockfile exit code: 0
 
 {
   "lockfileVersion": 2,
-  "configVersion": 1,
+  "configVersion": 0,
   "workspaces": {
     "": {
       "name": "@isaacs/minimist-git-dep",
@@ -3914,7 +3914,7 @@ bun install --frozen-lockfile exit code: 0
 
 {
   "lockfileVersion": 2,
-  "configVersion": 1,
+  "configVersion": 0,
   "workspaces": {
     "": {
       "name": "@isaacs/minimist-git-metadep",
@@ -3945,7 +3945,7 @@ bun install --frozen-lockfile exit code: 1
 
 {
   "lockfileVersion": 2,
-  "configVersion": 1,
+  "configVersion": 0,
   "workspaces": {
     "": {
       "name": "optional-dep-postinstall-fail",
@@ -3968,7 +3968,7 @@ bun install --frozen-lockfile exit code: 1
 
 {
   "lockfileVersion": 2,
-  "configVersion": 1,
+  "configVersion": 0,
   "workspaces": {
     "": {
       "name": "optional-dep-postinstall-fail",
@@ -3991,7 +3991,7 @@ bun install --frozen-lockfile exit code: 0
 
 {
   "lockfileVersion": 2,
-  "configVersion": 1,
+  "configVersion": 0,
   "workspaces": {
     "": {
       "name": "optional-dep-postinstall-fail",
@@ -4014,7 +4014,7 @@ bun install --frozen-lockfile exit code: 1
 
 {
   "lockfileVersion": 2,
-  "configVersion": 1,
+  "configVersion": 0,
   "workspaces": {
     "": {
       "name": "optional-dep-postinstall-fail",
@@ -4037,7 +4037,7 @@ bun install --frozen-lockfile exit code: 1
 
 {
   "lockfileVersion": 2,
-  "configVersion": 1,
+  "configVersion": 0,
   "workspaces": {
     "": {
       "dependencies": {
@@ -4062,7 +4062,7 @@ bun install --frozen-lockfile exit code: 0
 
 {
   "lockfileVersion": 2,
-  "configVersion": 1,
+  "configVersion": 0,
   "workspaces": {
     "": {
       "name": "@isaacs/peer-dep-nested",
@@ -4091,7 +4091,7 @@ bun install --frozen-lockfile exit code: 0
 
 {
   "lockfileVersion": 2,
-  "configVersion": 1,
+  "configVersion": 0,
   "workspaces": {
     "": {
       "name": "@isaacs/peer-dep-cycle",
@@ -4119,7 +4119,7 @@ bun install --frozen-lockfile exit code: 0
 
 {
   "lockfileVersion": 2,
-  "configVersion": 1,
+  "configVersion": 0,
   "workspaces": {
     "": {
       "name": "pnpm-root",
@@ -4171,7 +4171,7 @@ bun install --frozen-lockfile exit code: 0
 
 {
   "lockfileVersion": 1,
-  "configVersion": 1,
+  "configVersion": 0,
   "workspaces": {
     "": {
       "name": "prune-actual",
@@ -4194,7 +4194,7 @@ bun install --frozen-lockfile exit code: 0
 
 {
   "lockfileVersion": 1,
-  "configVersion": 1,
+  "configVersion": 0,
   "workspaces": {
     "": {
       "name": "prune-lockfile-optional-peer",
@@ -4219,7 +4219,7 @@ bun install --frozen-lockfile exit code: 1
 
 {
   "lockfileVersion": 2,
-  "configVersion": 1,
+  "configVersion": 0,
   "workspaces": {
     "": {},
   },
@@ -4235,7 +4235,7 @@ bun install --frozen-lockfile exit code: 0
 
 {
   "lockfileVersion": 1,
-  "configVersion": 1,
+  "configVersion": 0,
   "workspaces": {
     "": {
       "dependencies": {
@@ -4260,7 +4260,7 @@ bun install --frozen-lockfile exit code: 0
 
 {
   "lockfileVersion": 2,
-  "configVersion": 1,
+  "configVersion": 0,
   "workspaces": {
     "": {
       "name": "@isaacs/test-package-with-shrinkwrap",
@@ -4283,7 +4283,7 @@ bun install --frozen-lockfile exit code: 0
 
 {
   "lockfileVersion": 2,
-  "configVersion": 1,
+  "configVersion": 0,
   "workspaces": {
     "": {
       "name": "testing-bundledeps",
@@ -4314,7 +4314,7 @@ bun install --frozen-lockfile exit code: 0
 
 {
   "lockfileVersion": 2,
-  "configVersion": 1,
+  "configVersion": 0,
   "workspaces": {
     "": {
       "dependencies": {
@@ -4346,7 +4346,7 @@ bun install --frozen-lockfile exit code: 0
 
 {
   "lockfileVersion": 2,
-  "configVersion": 1,
+  "configVersion": 0,
   "workspaces": {
     "": {
       "name": "testing-peer-deps-nested",
@@ -4383,7 +4383,7 @@ bun install --frozen-lockfile exit code: 0
 
 {
   "lockfileVersion": 1,
-  "configVersion": 1,
+  "configVersion": 0,
   "workspaces": {
     "": {
       "name": "@isaacs/testing-rebuild-bundle-reified",
@@ -4410,7 +4410,7 @@ bun install --frozen-lockfile exit code: 0
 
 {
   "lockfileVersion": 2,
-  "configVersion": 1,
+  "configVersion": 0,
   "workspaces": {
     "": {
       "name": "@isaacs/testing-rebuild-bundle-a",
@@ -4433,7 +4433,7 @@ bun install --frozen-lockfile exit code: 0
 
 {
   "lockfileVersion": 1,
-  "configVersion": 1,
+  "configVersion": 0,
   "workspaces": {
     "": {
       "name": "@isaacs/testing-rebuild-bundle",
@@ -4460,7 +4460,7 @@ bun install --frozen-lockfile exit code: 0
 
 {
   "lockfileVersion": 1,
-  "configVersion": 1,
+  "configVersion": 0,
   "workspaces": {
     "": {
       "name": "@isaacs/testing-rebuild-bundle-parent",
@@ -4485,7 +4485,7 @@ bun install --frozen-lockfile exit code: 0
 
 {
   "lockfileVersion": 1,
-  "configVersion": 1,
+  "configVersion": 0,
   "workspaces": {
     "": {
       "devDependencies": {
@@ -4517,7 +4517,7 @@ bun install --frozen-lockfile exit code: 1
 
 {
   "lockfileVersion": 1,
-  "configVersion": 1,
+  "configVersion": 0,
   "workspaces": {
     "": {
       "name": "two-bundled-deps",
@@ -4553,7 +4553,7 @@ bun install --frozen-lockfile exit code: 0
 
 {
   "lockfileVersion": 2,
-  "configVersion": 1,
+  "configVersion": 0,
   "workspaces": {
     "": {
       "dependencies": {
@@ -4575,7 +4575,7 @@ bun install --frozen-lockfile exit code: 1
 
 {
   "lockfileVersion": 2,
-  "configVersion": 1,
+  "configVersion": 0,
   "workspaces": {
     "": {},
     "a": {
@@ -4597,7 +4597,7 @@ bun install --frozen-lockfile exit code: 0
 
 {
   "lockfileVersion": 2,
-  "configVersion": 1,
+  "configVersion": 0,
   "workspaces": {
     "": {
       "name": "workspaces-conflicting-deps",
@@ -4642,7 +4642,7 @@ bun install --frozen-lockfile exit code: 0
 
 {
   "lockfileVersion": 2,
-  "configVersion": 1,
+  "configVersion": 0,
   "workspaces": {
     "": {
       "name": "workspace-ignore-nm",
@@ -4671,7 +4671,7 @@ bun install --frozen-lockfile exit code: 0
 
 {
   "lockfileVersion": 2,
-  "configVersion": 1,
+  "configVersion": 0,
   "workspaces": {
     "": {
       "devDependencies": {
@@ -4705,7 +4705,7 @@ bun install --frozen-lockfile exit code: 0
 
 {
   "lockfileVersion": 2,
-  "configVersion": 1,
+  "configVersion": 0,
   "workspaces": {
     "": {
       "dependencies": {
@@ -4754,7 +4754,7 @@ bun install --frozen-lockfile exit code: 0
 
 {
   "lockfileVersion": 2,
-  "configVersion": 1,
+  "configVersion": 0,
   "workspaces": {
     "": {
       "name": "workspaces-prefer-linking",
@@ -4787,7 +4787,7 @@ bun install --frozen-lockfile exit code: 0
 
 {
   "lockfileVersion": 2,
-  "configVersion": 1,
+  "configVersion": 0,
   "workspaces": {
     "": {
       "name": "workspaces-shared-deps",
@@ -4843,7 +4843,7 @@ bun install --frozen-lockfile exit code: 0
 
 {
   "lockfileVersion": 2,
-  "configVersion": 1,
+  "configVersion": 0,
   "workspaces": {
     "": {
       "name": "workspace-simple",
@@ -4876,7 +4876,7 @@ bun install --frozen-lockfile exit code: 0
 
 {
   "lockfileVersion": 2,
-  "configVersion": 1,
+  "configVersion": 0,
   "workspaces": {
     "": {
       "name": "workspaces-top-level-link",
@@ -4903,7 +4903,7 @@ bun install --frozen-lockfile exit code: 0
 
 {
   "lockfileVersion": 2,
-  "configVersion": 1,
+  "configVersion": 0,
   "workspaces": {
     "": {
       "name": "workspaces-transitive-deps",
@@ -4934,7 +4934,7 @@ bun install --frozen-lockfile exit code: 0
 
 {
   "lockfileVersion": 2,
-  "configVersion": 1,
+  "configVersion": 0,
   "workspaces": {
     "": {
       "name": "workspaces-version-unsatisfied",
@@ -4969,7 +4969,7 @@ bun install --frozen-lockfile exit code: 0
 
 {
   "lockfileVersion": 2,
-  "configVersion": 1,
+  "configVersion": 0,
   "workspaces": {
     "": {
       "name": "workspace-with-overrides",

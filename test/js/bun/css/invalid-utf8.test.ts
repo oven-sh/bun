@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
-import { readdirSync } from "node:fs";
+import { existsSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 
 // CSS source files whose bytes are not well-formed UTF-8. css-syntax-3 §3.3
@@ -37,12 +37,14 @@ async function build(files: Record<string, string | Buffer>, args: string[]) {
     stderr: "pipe",
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.bytes(), proc.stderr.text(), proc.exited]);
+  // Whatever `--outdir=out` produced, keyed by name with the content hash dropped
+  // (`index-abc123.css` -> `index.css`). Empty when the build wrote nothing;
+  // callers assert on `stderr` first so a failed build shows its diagnostic.
   const out: Record<string, Uint8Array> = {};
-  try {
-    for (const name of readdirSync(join(String(dir), "out"))) {
-      out[name.replace(/-[a-z0-9]+\./, ".")] = await Bun.file(join(String(dir), "out", name)).bytes();
-    }
-  } catch {}
+  const outDir = join(String(dir), "out");
+  for (const name of existsSync(outDir) ? readdirSync(outDir) : []) {
+    out[name.replace(/-[a-z0-9]+\./, ".")] = await Bun.file(join(outDir, name)).bytes();
+  }
   return { stdout, stderr, exitCode, out };
 }
 

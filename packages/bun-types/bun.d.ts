@@ -654,9 +654,9 @@ declare module "bun" {
 
     /**
      * When `true`, the worker keeps the parent thread alive until the worker is terminated or `unref`'d.
-     * When `false`, it does not.
+     * When `false`, it does not. Passing `false` is equivalent to calling `worker.unref()`.
      *
-     * @default false
+     * @default true
      */
     ref?: boolean;
 

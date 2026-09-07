@@ -200,12 +200,6 @@ declare var Worker: Bun.__internal.UseLibDomIfAvailable<
   {
     prototype: Worker;
     new (scriptURL: string | URL, options?: Bun.WorkerOptions | undefined): Worker;
-    /**
-     * The cloned value of the `data` property passed to `new Worker()`.
-     *
-     * Bun's equivalent of `workerData` in Node.js.
-     */
-    data: any;
   }
 >;
 
@@ -1416,7 +1410,8 @@ declare function structuredClone<T>(value: T, options?: Bun.StructuredSerializeO
  *
  * Only useful in a worker thread; calling this from the main thread does nothing.
  */
-declare function postMessage(message: any, transfer?: Bun.Transferable[]): void;
+declare function postMessage(message: any, transfer: Bun.Transferable[]): void;
+declare function postMessage(message: any, options?: Bun.StructuredSerializeOptions): void;
 
 interface EventSourceInit {
   withCredentials?: boolean;

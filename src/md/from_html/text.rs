@@ -68,19 +68,19 @@ pub(crate) fn leading_newlines(s: &str) -> usize {
     s.bytes().take_while(|&b| b == b'\n').count()
 }
 
-/// Appends the concatenated text of every text node under `node` (DOM
+/// Appends the concatenated text of every text node under `root` (DOM
 /// `textContent`), leaving out dropped (`is_skipped`) subtrees.
-pub(crate) fn push_text_content(node: Ref<'_>, out: &mut String) {
-    if let Some(t) = node.as_text() {
+pub(crate) fn push_text_content(root: Ref<'_>, out: &mut String) {
+    if let Some(t) = root.as_text() {
         out.push_str(&t.borrow());
         return;
     }
-    let mut cur = node.first_child.get();
-    while let Some(n) = cur {
-        if let Some(t) = n.as_text() {
+    let mut cur = root.first_child.get();
+    while let Some(node) = cur {
+        if let Some(t) = node.as_text() {
             out.push_str(&t.borrow());
         }
-        cur = next_in_preorder(n, node, !n.tag().is_skipped());
+        cur = next_in_preorder(node, root, !node.tag().is_skipped());
     }
 }
 

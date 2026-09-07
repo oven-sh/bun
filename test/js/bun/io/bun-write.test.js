@@ -1161,3 +1161,85 @@ int posix_fadvise(int fd, off_t offset, off_t len, int advice) {
     expect(f.name).toBe(filePath);
   });
 });
+
+// Once fd 1 is O_NONBLOCK (process.stdout.write's FileSink sets it on the shared open file
+// description via a dup), a Bun.write that overflowed the pipe buffer used to wedge a
+// thread-pool worker at 100% CPU: the async WriteFile path's could_block stayed false for
+// stdio and its EAGAIN handler re-matched a cached write() result without re-issuing the
+// syscall. Runs outside describe.concurrent so an unfixed build's spin doesn't starve
+// neighbours into their default timeout.
+it.skipIf(isWindows)("Bun.write(Bun.stdout, ...) to a full nonblocking pipe completes", async () => {
+  // Below 256 KiB exercises the sync fast path's EAGAIN -> needs_async fallback; at/above
+  // 256 KiB goes straight to the thread-pool WriteFile path.
+  const script = `
+    import { fstatSync, readdirSync } from "node:fs";
+    process.stdout.write("x"); // constructs the fd 1 FileSink, which flips the pipe O_NONBLOCK
+    const fdDir = process.platform === "darwin" ? "/dev/fd" : "/proc/self/fd";
+    const stdoutIno = fstatSync(1).ino;
+    // Every fd that refers to stdout's pipe. WriteFile dups fd 1 and must close the dup.
+    // A plain fd count would also see the IO thread's kqueue/epoll fd, which is created
+    // the first time a write has to wait.
+    const stdoutDups = () =>
+      readdirSync(fdDir).filter(name => {
+        try {
+          return fstatSync(Number(name)).ino === stdoutIno;
+        } catch {
+          return false;
+        }
+      }).length;
+    const small = Buffer.alloc(64 * 1024, 65).toString();
+    const large = Buffer.alloc(256 * 1024, 66).toString();
+    let wrote = 0, dupsBefore, dupsAfter;
+    for (let round = 0; round < 2; round++) {
+      dupsBefore = stdoutDups();
+      const ps = [];
+      for (let i = 0; i < 16; i++) ps.push(Bun.write(Bun.stdout, small));
+      for (let i = 0; i < 4; i++) ps.push(Bun.write(Bun.stdout, large));
+      for (const n of await Promise.all(ps)) wrote += n;
+      dupsAfter = stdoutDups();
+    }
+    process.stderr.write(JSON.stringify({ wrote, dupDelta: dupsAfter - dupsBefore }));
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", script],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+    timeout: 20_000,
+    killSignal: "SIGKILL",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.bytes(), proc.stderr.text(), proc.exited]);
+  const expected = 1 + 2 * (16 * 64 * 1024 + 4 * 256 * 1024);
+  expect({ length: stdout.length, stderr, exitCode, signalCode: proc.signalCode }).toEqual({
+    length: expected,
+    stderr: JSON.stringify({ wrote: expected - 1, dupDelta: 0 }),
+    exitCode: 0,
+    signalCode: null,
+  });
+});
+
+// The sync fast path used to re-enter the async path with the whole payload after a partial
+// write, so the bytes already in the pipe were sent twice. It must also not block the thread
+// while the pipe is full: here the only reader runs on the same event loop.
+// 200 KiB takes the sync fast path first and resumes async. 300 KiB goes async directly.
+describe.skipIf(isWindows)("Bun.write to a full pipe", () => {
+  it.each([200 * 1024, 300 * 1024])("completes a %d byte write that only this process drains", async size => {
+    using dir = tempDir("bun-write-fifo", {});
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), join(import.meta.dir, "bun-write-fifo-fixture.js"), join(String(dir), "fifo"), String(size)],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+      timeout: 20_000,
+      killSignal: "SIGKILL",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    // stderr carries the fixture's progress markers. It is only shown on failure.
+    expect({ stdout, exitCode, signalCode: proc.signalCode, stderr: exitCode === 0 ? "" : stderr }).toEqual({
+      stdout: JSON.stringify({ n: size, got: size, firstBadByte: -1 }) + "\n",
+      stderr: "",
+      exitCode: 0,
+      signalCode: null,
+    });
+  });
+});

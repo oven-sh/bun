@@ -293,7 +293,7 @@ export interface UnitManifest {
          * Configure runs before every build, so a changed value changes this manifest and reruns the script — cargo's
          * behaviour, minus builds that bypass configure and invoke ninja directly.
          */
-        trackedEnv: Record<string, string | null>;
+        trackedEnv: Record<string, string>;
       }
     | undefined;
 }
@@ -558,11 +558,15 @@ function buildScriptRunManifest(ctx: ManifestContext, unit: RustUnit, dylibPath:
   env.CARGO_CFG_FEATURE = unit.features.join(",");
   delete env.RUSTFLAGS;
 
-  const trackedEnv: Record<string, string | null> = {};
+  const trackedEnv: Record<string, string> = {};
   if (existsSync(unit.output)) {
     try {
       const last = JSON.parse(readFileSync(unit.output, "utf8")) as { rerunIfEnvChanged?: string[] };
-      for (const name of last.rerunIfEnvChanged ?? []) trackedEnv[name] = env[name] ?? process.env[name] ?? null;
+      // Variables the unit's own env sets are already part of this manifest; unset ones are recorded by their absence.
+      for (const name of last.rerunIfEnvChanged ?? []) {
+        const value = process.env[name];
+        if (!(name in env) && value !== undefined) trackedEnv[name] = value;
+      }
     } catch {
       // unreadable output.json: the script reruns anyway (its output is this edge's restat'd product)
     }

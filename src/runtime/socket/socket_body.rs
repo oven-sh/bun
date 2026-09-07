@@ -984,10 +984,12 @@ impl<const SSL: bool> NewSocket<SSL> {
             "onWritable buffered_data_for_node_net {}",
             this.buffered_data_for_node_net.get().len()
         );
-        // is not writable if we have buffered data or if we are already detached
+        // Not writable with buffered data, once detached, or when the flush
+        // closed the socket and its close handler reconnected it elsewhere.
         if callback.is_empty()
             || this.buffered_data_for_node_net.get().len() > 0
             || this.socket.get().is_detached()
+            || !this.handlers_are(&handlers)
         {
             return Ok(());
         }

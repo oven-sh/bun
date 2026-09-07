@@ -76,7 +76,7 @@ impl Identifier {
             return None;
         }
         if bytes.iter().all(u8::is_ascii_digit) {
-            // node-semver keeps digit runs it cannot hold as an integer as strings too.
+            // Like node-semver, a number too large to count with stays a string.
             return Some(match bun_core::fmt::parse_unsigned::<u64>(bytes, 10) {
                 Ok(n) if n <= MAX_SAFE_INTEGER => Identifier::Numeric(n),
                 _ => Identifier::Alphanumeric(bytes.into()),
@@ -527,7 +527,7 @@ impl PmVersionCommand {
         let Some(identifiers) = Identifier::parse_dot_separated(preid) else {
             Output::err_generic("Invalid prerelease identifier: \"{}\"", (BStr::new(preid),));
             bun_core::note!(
-                "--preid takes dot-separated identifiers made of letters, digits and hyphens, for example \"beta\" or \"rc.1\""
+                "--preid takes dot-separated identifiers of letters, digits and hyphens, for example \"beta\""
             );
             Global::exit(1);
         };
@@ -579,11 +579,7 @@ impl PmVersionCommand {
         None
     }
 
-    fn show_help(
-        ctx: &command::ContextData,
-        pm: &PackageManager,
-        cwd: &[u8],
-    ) {
+    fn show_help(ctx: &command::ContextData, pm: &PackageManager, cwd: &[u8]) {
         let _current_version = Self::get_current_version(ctx, cwd);
         let current_version: &[u8] = _current_version.as_deref().unwrap_or(b"1.0.0");
 

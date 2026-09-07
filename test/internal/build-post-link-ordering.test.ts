@@ -18,6 +18,7 @@ import { join, resolve } from "node:path";
 import { emitPostLink } from "../../scripts/build/bun.ts";
 import { resolveConfig, type Config, type PartialConfig, type Toolchain } from "../../scripts/build/config.ts";
 import { Ninja } from "../../scripts/build/ninja.ts";
+import { quote } from "../../scripts/build/shell.ts";
 
 /** A fully-populated fake toolchain; resolveConfig never spawns any of these. */
 function mockToolchain(overrides: Partial<Toolchain> = {}): Toolchain {
@@ -83,6 +84,29 @@ function buildEdge(ninja: string, rule: string): string {
 }
 
 describe("emitPostLink ninja ordering", () => {
+  test.each([
+    ["21.1.8", "22.1.8", true],
+    ["22.1.8", "22.1.8", false],
+    ["23.1.0", "22.1.8", false],
+  ] as const)("symbol inspection with clang %s and Rust LLVM %s", (clangVersion, rustLlvmVersion, useRustTools) => {
+    using dir = tempDir("build-symbol-tools", {
+      "rust/bin/llvm-nm": "",
+      "rust/bin/llvm-nm.exe": "",
+    });
+    const buildDir = String(dir);
+    const cfg = hostConfig({ buildType: "Release" }, buildDir);
+    cfg.clangVersion = clangVersion;
+    cfg.rustLlvmVersion = rustLlvmVersion;
+    cfg.rustLld = join(buildDir, "rust", "bin", "gcc-ld", "ld.lld");
+    cfg.ld = join(buildDir, "apple", "ld");
+    const n = new Ninja({ buildDir });
+    const exe = resolve(buildDir, `bun-profile${cfg.exeSuffix}`);
+    emitPostLink(n, cfg, exe, "bun-profile", [], [exe + ".o"]);
+
+    const nm = useRustTools ? join(buildDir, "rust", "bin", `llvm-nm${cfg.host.exeSuffix}`) : cfg.nm!;
+    expect(n.toString()).toContain(`duplicates ${quote(nm, cfg.windows)} `);
+  });
+
   test("release smoke_test is ordered after strip", () => {
     using dir = tempDir("build-post-link", {});
     const buildDir = String(dir);

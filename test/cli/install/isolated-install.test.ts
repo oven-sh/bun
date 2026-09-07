@@ -2010,10 +2010,21 @@ test("same resolution, different dependency name", async () => {
 test("reinstalls a store entry whose package.json does not match the lockfile", async () => {
   const { packageJson, packageDir } = await registry.createTestDir({ bunfigOpts: { linker: "isolated" } });
 
-  await write(packageJson, JSON.stringify({ name: "test-pkg-stale-store-entry", dependencies: { "no-deps": "1.0.0" } }));
+  await write(
+    packageJson,
+    JSON.stringify({ name: "test-pkg-stale-store-entry", dependencies: { "no-deps": "1.0.0" } }),
+  );
   await runBunInstall(bunEnv, packageDir);
 
-  const storePackageJson = join(packageDir, "node_modules", ".bun", "no-deps@1.0.0", "node_modules", "no-deps", "package.json");
+  const storePackageJson = join(
+    packageDir,
+    "node_modules",
+    ".bun",
+    "no-deps@1.0.0",
+    "node_modules",
+    "no-deps",
+    "package.json",
+  );
   expect(await file(storePackageJson).json()).toEqual({ name: "no-deps", version: "1.0.0" });
 
   // Another version's contents under this entry's path (an interrupted or

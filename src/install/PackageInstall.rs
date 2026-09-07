@@ -774,8 +774,7 @@ pub(crate) fn installed_package_json_matches(
     // https://github.com/oven-sh/bun/issues/13563
     let found_version_end =
         strings::last_index_of_char(found_version, b'+').unwrap_or(found_version.len());
-    let expected_version_end =
-        strings::last_index_of_char(version, b'+').unwrap_or(version.len());
+    let expected_version_end = strings::last_index_of_char(version, b'+').unwrap_or(version.len());
     // Check if the version matches
     if found_version[..found_version_end] != version[..expected_version_end] {
         let offset = 'brk: {

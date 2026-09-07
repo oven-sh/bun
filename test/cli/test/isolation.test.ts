@@ -1150,6 +1150,7 @@ describe.concurrent("--isolate: a finished file's late completions do not run in
     const { stderr, exitCode } = await runTests(String(dir), ["--isolate"], files);
     expect(normalizeBunSnapshot(stderr, dir)).toContain("2 pass");
     expect(normalizeBunSnapshot(stderr, dir)).toContain("0 fail");
+    if (exitCode !== 0) expect(stderr).toBe("");
     expect(exitCode).toBe(0);
   });
 
@@ -1163,6 +1164,7 @@ describe.concurrent("--isolate: a finished file's late completions do not run in
     });
     expect(normalizeBunSnapshot(stderr, dir)).toContain("2 pass");
     expect(normalizeBunSnapshot(stderr, dir)).toContain("0 fail");
+    if (exitCode !== 0) expect(stderr).toBe("");
     expect(exitCode).toBe(0);
   });
 });

@@ -525,12 +525,17 @@ impl Stringifier {
 
                     // intentionally not checking default trusted dependencies
                     if let Some(trusted_dependencies) = &lockfile.trusted_dependencies {
-                        if let Some(trusted_name) =
-                            trusted_dependencies.get(&(dep.name_hash as TruncatedPackageNameHash))
+                        let (trusted_name, trusted_name_hash) =
+                            BinaryLockfile::trusted_dependency_name(
+                                (dep.name, dep.name_hash),
+                                (pkg_name, pkg_name_hash),
+                                res,
+                            );
+                        if trusted_dependencies
+                            .get(&(trusted_name_hash as TruncatedPackageNameHash))
+                            .is_some_and(|name| **name == *trusted_name.slice(buf))
                         {
-                            if **trusted_name == *dep.name.slice(buf) {
-                                found_trusted_dependencies.insert(dep.name_hash, dep.name);
-                            }
+                            found_trusted_dependencies.insert(trusted_name_hash, trusted_name);
                         }
                     }
                 }

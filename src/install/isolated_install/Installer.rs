@@ -1675,14 +1675,13 @@ impl Task {
                             entry_scripts[self.entry_id.get() as usize].set(Some(clone));
 
                             if is_trusted_through_update_request {
-                                let trusted_name = Lockfile::trusted_dependency_name(
-                                    dep.name.slice(string_buf),
-                                    pkg_name.slice(string_buf),
-                                    &pkg_res,
-                                );
-                                let trusted_name_hash =
-                                    bun_semver::semver_string::Builder::string_hash(trusted_name)
-                                        as TruncatedPackageNameHash;
+                                let (trusted_name, trusted_name_hash) =
+                                    Lockfile::trusted_dependency_name(
+                                        (dep.name, dep.name_hash as TruncatedPackageNameHash),
+                                        (pkg_name, pkg_name_hash as TruncatedPackageNameHash),
+                                        &pkg_res,
+                                    );
+                                let trusted_name = trusted_name.slice(string_buf);
                                 let trusted_dep_to_add: Box<[u8]> = Box::from(trusted_name);
 
                                 let _unlock = installer.trusted_dependencies_mutex.lock_guard();

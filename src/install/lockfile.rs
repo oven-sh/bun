@@ -3274,11 +3274,9 @@ impl Lockfile {
     /// name (an `npm:` alias never inherits trust from the alias); every other
     /// resolution is keyed by the alias the root or a workspace declared.
     /// Every reader and writer of `trustedDependencies` must use this name.
-    pub fn trusted_dependency_name<'a>(
-        alias: &'a [u8],
-        pkg_name: &'a [u8],
-        resolution: &Resolution,
-    ) -> &'a [u8] {
+    /// Generic so callers can pass a `(name, hash)` pair and keep the
+    /// precomputed hash of whichever side is picked.
+    pub fn trusted_dependency_name<T>(alias: T, pkg_name: T, resolution: &Resolution) -> T {
         if resolution.tag == ResolutionTag::Npm {
             pkg_name
         } else {

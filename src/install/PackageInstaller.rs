@@ -2002,15 +2002,14 @@ impl<'a> PackageInstaller<'a> {
                                 resolution,
                             ) {
                                 if is_trusted_through_update_request {
-                                    let trusted_name: Box<[u8]> =
-                                        Box::from(Lockfile::trusted_dependency_name(
-                                            alias.slice(string_buf!()),
-                                            pkg_name.slice(string_buf!()),
+                                    let (trusted_name, trusted_name_hash) =
+                                        Lockfile::trusted_dependency_name(
+                                            (alias, truncated_dep_name_hash),
+                                            (pkg_name, pkg_name_hash as TruncatedPackageNameHash),
                                             resolution,
-                                        ));
-                                    let trusted_name_hash =
-                                        bun_semver::string::Builder::string_hash(&trusted_name)
-                                            as TruncatedPackageNameHash;
+                                        );
+                                    let trusted_name: Box<[u8]> =
+                                        Box::from(trusted_name.slice(string_buf!()));
                                     self.manager_mut()
                                         .trusted_deps_to_add_to_package_json
                                         .push(trusted_name.clone());
@@ -2234,13 +2233,12 @@ impl<'a> PackageInstaller<'a> {
 
             let dep = &self.lockfile().buffers.dependencies.as_slice()[dependency_id as usize];
             let dep_behavior = dep.behavior;
-            let trusted_name = Lockfile::trusted_dependency_name(
-                alias.slice(string_buf!()),
-                pkg_name.slice(string_buf!()),
+            let (trusted_name, trusted_name_hash) = Lockfile::trusted_dependency_name(
+                (alias, dep.name_hash as TruncatedPackageNameHash),
+                (pkg_name, pkg_name_hash as TruncatedPackageNameHash),
                 resolution,
             );
-            let trusted_name_hash =
-                bun_semver::string::Builder::string_hash(trusted_name) as TruncatedPackageNameHash;
+            let trusted_name = trusted_name.slice(string_buf!());
             let (is_trusted, is_trusted_through_update_request, add_to_lockfile) = 'brk: {
                 // trusted through a --trust dependency. need to enqueue scripts, write to package.json, and add to lockfile
                 if self

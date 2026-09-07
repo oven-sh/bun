@@ -259,6 +259,52 @@ test.concurrent(
   },
 );
 
+test.concurrent(
+  "trustedDependencies entry for the resolved package name added on a later install runs the aliased dependency's scripts",
+  async () => {
+    using ctx = await setupTest();
+    const { packageDir, packageJson, env } = ctx;
+
+    const dependencies = { "esbuild": "npm:uses-what-bin@1.0.0" };
+    await writeFile(packageJson, JSON.stringify({ name: "foo", version: "1.0.0", dependencies }));
+
+    const install = async () => {
+      await using proc = spawn({
+        cmd: [bunExe(), "install"],
+        cwd: packageDir,
+        stdout: "pipe",
+        stdin: "ignore",
+        stderr: "pipe",
+        env,
+      });
+      return await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    };
+    const marker = join(packageDir, "node_modules", "esbuild", "what-bin.txt");
+
+    let [out, err, exitCode] = await install();
+    expect(err).toContain("Saved lockfile");
+    expect(err).not.toContain("error:");
+    expect(out).toContain("Blocked 1 postinstall");
+    expect(await exists(marker)).toBeFalse();
+    expect(exitCode).toBe(0);
+
+    // The package is already in node_modules, so this install does not
+    // extract it again. The new entry must still be noticed and its scripts
+    // run, and the lockfile must record it.
+    await writeFile(
+      packageJson,
+      JSON.stringify({ name: "foo", version: "1.0.0", dependencies, trustedDependencies: ["uses-what-bin"] }),
+    );
+    [out, err, exitCode] = await install();
+    expect(err).not.toContain("error:");
+    expect(await exists(marker)).toBeTrue();
+    expect(await file(join(packageDir, "bun.lock")).text()).toMatch(
+      /"trustedDependencies":\s*\[\s*"uses-what-bin",?\s*\]/,
+    );
+    expect(exitCode).toBe(0);
+  },
+);
+
 // `bun pm trust` must write the same name the installer checks. For an
 // `npm:`-aliased dependency that is the resolved package name, so the trust
 // survives a reinstall and `bun pm untrusted` agrees with the installer.

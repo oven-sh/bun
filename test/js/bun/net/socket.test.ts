@@ -4707,60 +4707,63 @@ it("concurrent end() on two allowHalfOpen TLS peers closes both sockets", async 
   await Promise.all([serverClosed.promise, clientClosed.promise]);
 });
 
-describe.concurrent.each(["tcp", "tls"] as const)("%s end(data) with a chunk larger than the send buffer", transport => {
-  // end(data) used to do one non-blocking send, drop the rest, and FIN. The
-  // tail must stay queued and the FIN must follow it.
-  const N = 16 * 1024 * 1024;
+describe.concurrent.each(["tcp", "tls"] as const)(
+  "%s end(data) with a chunk larger than the send buffer",
+  transport => {
+    // end(data) used to do one non-blocking send, drop the rest, and FIN. The
+    // tail must stay queued and the FIN must follow it.
+    const N = 16 * 1024 * 1024;
 
-  async function run(withDrain: boolean) {
-    const received = Promise.withResolvers<number>();
-    let got = 0;
-    using server = Bun.listen({
-      hostname: "127.0.0.1",
-      port: 0,
-      tls: transport === "tls" ? { key: tls.key, cert: tls.cert } : undefined,
-      socket: {
-        data(_, chunk) {
-          got += chunk.byteLength;
+    async function run(withDrain: boolean) {
+      const received = Promise.withResolvers<number>();
+      let got = 0;
+      using server = Bun.listen({
+        hostname: "127.0.0.1",
+        port: 0,
+        tls: transport === "tls" ? { key: tls.key, cert: tls.cert } : undefined,
+        socket: {
+          data(_, chunk) {
+            got += chunk.byteLength;
+          },
+          close() {
+            received.resolve(got);
+          },
         },
-        close() {
-          received.resolve(got);
+      });
+
+      const clientClosed = Promise.withResolvers<void>();
+      let endReturned = -2;
+      let writeAfterEnd = -2;
+      let drains = 0;
+      const errors: Error[] = [];
+      const payload = Buffer.alloc(N, 97);
+      await Bun.connect({
+        hostname: "127.0.0.1",
+        port: server.port,
+        tls: transport === "tls" ? { ca: tls.cert } : undefined,
+        socket: {
+          open(s) {
+            endReturned = s.end(payload);
+            writeAfterEnd = s.write("more");
+          },
+          data() {},
+          ...(withDrain ? { drain: () => void drains++ } : {}),
+          close: () => clientClosed.resolve(),
+          error: (_, e) => errors.push(e),
         },
-      },
-    });
+      });
 
-    const clientClosed = Promise.withResolvers<void>();
-    let endReturned = -2;
-    let writeAfterEnd = -2;
-    let drains = 0;
-    const errors: Error[] = [];
-    const payload = Buffer.alloc(N, 97);
-    await Bun.connect({
-      hostname: "127.0.0.1",
-      port: server.port,
-      tls: transport === "tls" ? { ca: tls.cert } : undefined,
-      socket: {
-        open(s) {
-          endReturned = s.end(payload);
-          writeAfterEnd = s.write("more");
-        },
-        data() {},
-        ...(withDrain ? { drain: () => void drains++ } : {}),
-        close: () => clientClosed.resolve(),
-        error: (_, e) => errors.push(e),
-      },
-    });
+      const [serverGot] = await Promise.all([received.promise, clientClosed.promise]);
+      expect({ endReturned, writeAfterEnd, serverGot, errors, drains }).toEqual({
+        endReturned: N,
+        writeAfterEnd: -1,
+        serverGot: N,
+        errors: [],
+        drains: 0,
+      });
+    }
 
-    const [serverGot] = await Promise.all([received.promise, clientClosed.promise]);
-    expect({ endReturned, writeAfterEnd, serverGot, errors, drains }).toEqual({
-      endReturned: N,
-      writeAfterEnd: -1,
-      serverGot: N,
-      errors: [],
-      drains: 0,
-    });
-  }
-
-  it("delivers the whole chunk before the FIN", () => run(true));
-  it("delivers the whole chunk without a drain handler", () => run(false));
-});
+    it("delivers the whole chunk before the FIN", () => run(true));
+    it("delivers the whole chunk without a drain handler", () => run(false));
+  },
+);

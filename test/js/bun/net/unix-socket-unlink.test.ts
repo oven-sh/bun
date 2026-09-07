@@ -235,8 +235,10 @@ describe.skipIf(isWindows)("unix domain socket unlink", () => {
     const destructsVmOnExit = !["", "0", "false", "no", "off"].includes(
       (bunEnv.BUN_DESTRUCT_VM_ON_EXIT ?? "").toLowerCase(),
     );
-    test.concurrent.skipIf(destructsVmOnExit)("net.Server: process.exit() leaves the socket file, like node", async () => {
-      const left = await socketFileAfterExit(`
+    test.concurrent.skipIf(destructsVmOnExit)(
+      "net.Server: process.exit() leaves the socket file, like node",
+      async () => {
+        const left = await socketFileAfterExit(`
         import { existsSync } from "node:fs";
         import { createServer } from "node:net";
         const path = process.argv[2];
@@ -245,8 +247,9 @@ describe.skipIf(isWindows)("unix domain socket unlink", () => {
           process.exit(0);
         });
       `);
-      expect(left).toBe(true);
-    });
+        expect(left).toBe(true);
+      },
+    );
   });
 
   test.skipIf(!isLinux)("abstract sockets are not unlinked", () => {

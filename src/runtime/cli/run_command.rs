@@ -1758,16 +1758,7 @@ impl RunCommand {
         }
         #[cfg(windows)]
         {
-            let mut dir_buffer = bun_paths::path_buffer_pool::get();
-            let dir = bun_install::RunCommand::windows_bun_node_dir(&mut dir_buffer)?;
-            let mut target_path_buffer = bun_paths::path_buffer_pool::get();
-            let file = bun_core::fmt::buf_print_z(
-                &mut target_path_buffer[..],
-                format_args!("{}\\node.exe", bstr::BStr::new(dir.as_bytes())),
-            )
-            .map_err(|_| crate::Error::NameTooLong)?;
-            let stored = runner_arena().alloc_slice_copy(file.as_bytes_with_nul());
-            Ok(ZStr::from_buf(stored, file.len()))
+            bun_install::RunCommand::windows_bun_node_file().map_err(Into::into)
         }
     }
 

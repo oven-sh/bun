@@ -400,7 +400,22 @@ use bun_core::ZStr;
 
 impl RunCommand {
     #[cfg(windows)]
-    pub fn windows_bun_node_dir(buf: &mut bun_paths::PathBuffer) -> Result<&ZStr, crate::Error> {
+    pub fn windows_bun_node_file() -> Result<&'static ZStr, crate::Error> {
+        static CELL: bun_core::Once<Result<bun_core::ZBox, crate::Error>> = bun_core::Once::new();
+        match CELL.get_or_init(|| {
+            let mut dir_buf = bun_paths::path_buffer_pool::get();
+            let dir = Self::windows_bun_node_dir(&mut dir_buf)?;
+            let mut path = dir.as_bytes().to_vec();
+            path.extend_from_slice(b"\\node.exe");
+            Ok(bun_core::ZBox::from_vec_with_nul(path))
+        }) {
+            Ok(path) => Ok(path.as_zstr()),
+            Err(err) => Err(*err),
+        }
+    }
+
+    #[cfg(windows)]
+    fn windows_bun_node_dir(buf: &mut bun_paths::PathBuffer) -> Result<&ZStr, crate::Error> {
         use bun_core::{fmt, strings};
         use bun_sys::windows as win;
 
@@ -718,7 +733,13 @@ impl RunCommand {
             use bun_sys::windows as win;
 
             let mut dir_buf = bun_paths::path_buffer_pool::get();
-            let dir = Self::windows_bun_node_dir(&mut dir_buf)?;
+            let file = Self::windows_bun_node_file()?;
+            let parent = bun_paths::dirname(file.as_bytes()).ok_or(crate::Error::NotDir)?;
+            let dir = fmt::buf_print_z(
+                &mut dir_buf[..],
+                format_args!("{}", bstr::BStr::new(parent)),
+            )
+            .map_err(|_| crate::Error::NameTooLong)?;
             match bun_sys::mkdir(dir, 0o700) {
                 Ok(()) => {}
                 Err(e) if e.get_errno() == bun_sys::E::EEXIST => {}
@@ -773,11 +794,11 @@ impl RunCommand {
                     pending.as_bytes(),
                 );
                 if win::CreateHardLinkW(wide.as_ptr(), image_w.as_ptr(), None) == 0 {
-                    return Err(bun_sys::Error::from_win32(
-                        win::Win32Error::get(),
-                        bun_sys::Tag::link,
-                    )
-                    .into());
+                    let err = win::Win32Error::get();
+                    if err == win::Win32Error::NOT_SAME_DEVICE {
+                        return Ok(());
+                    }
+                    return Err(bun_sys::Error::from_win32(err, bun_sys::Tag::link).into());
                 }
                 let _cleanup = scopeguard::guard(pending, |path| {
                     let _ = bun_sys::unlink(path);

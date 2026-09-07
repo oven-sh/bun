@@ -841,7 +841,7 @@ To start a new transaction, use `sql.begin`. This method works on every adapter.
 
 Bun sends the `BEGIN` command automatically (`START TRANSACTION` on MySQL), including any optional configurations you specify. If an error occurs during the transaction, Bun issues a `ROLLBACK`.
 
-On MySQL, a DDL statement such as `CREATE TABLE`, `ALTER TABLE` or `DROP TABLE` [commits the open transaction implicitly](https://dev.mysql.com/doc/refman/en/implicit-commit.html) and ends it. Everything the callback ran before the DDL stays committed, every statement after it commits on its own, and the `ROLLBACK` that Bun sends when the callback throws undoes nothing. Keep DDL out of `sql.begin` on MySQL. PostgreSQL and SQLite roll DDL back with the rest of the transaction.
+On MySQL, a DDL statement such as `CREATE TABLE`, `ALTER TABLE` or `DROP TABLE` [commits the open transaction implicitly](https://dev.mysql.com/doc/refman/8.4/en/implicit-commit.html) and ends it. Everything the callback ran before the DDL stays committed, every statement after it commits on its own, and the `ROLLBACK` that Bun sends when the callback throws undoes nothing. Keep DDL out of `sql.begin` on MySQL. PostgreSQL and SQLite roll DDL back with the rest of the transaction.
 
 ### Basic Transactions
 

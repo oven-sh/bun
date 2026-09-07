@@ -821,8 +821,7 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
         }
     }
 
-    // A `--watch` restart re-runs this argv, so it must start from the
-    // directory this run started in. Record it before `--cwd` moves us.
+    // Before `--cwd` below: a `--watch` restart re-runs this argv from here.
     if args.flag(b"--watch") {
         let mut buf = bun_paths::path_buffer_pool::get();
         if let Ok(cwd) = bun_core::getcwd(&mut buf) {

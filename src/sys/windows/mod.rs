@@ -1525,8 +1525,7 @@ pub fn is_watcher_child() -> bool {
 pub fn become_watcher_manager() -> ! {
     // this process will be the parent of the child process that actually runs the script
     let mut procinfo: PROCESS_INFORMATION = bun_core::ffi::zeroed();
-    // Every child inherits this process's cwd and re-applies `--cwd` from the
-    // inherited command line itself, so spawn it from where bun was started.
+    // Children inherit this cwd and apply `--cwd` from the command line again.
     if let Some(cwd) = bun_core::reload_cwd() {
         let _ = crate::chdir(cwd);
     }

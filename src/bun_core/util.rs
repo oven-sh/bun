@@ -4254,11 +4254,8 @@ pub fn is_process_reload_in_progress_on_another_thread() -> bool {
 
 static RELOAD_CWD: Once<ZBox> = Once::new();
 
-/// Records the directory a `--watch` restart starts in: the one the process was
-/// started in, captured before `--cwd` or the script's `process.chdir()` moves
-/// it. The restarted process re-resolves the same argv (entry point, `--cwd`,
-/// `--preload`, test discovery), so it has to do that from the same place.
-/// node's `--watch` supervisor likewise spawns every restart from its own cwd.
+/// The cwd a `--watch` restart starts from: where bun was started, recorded
+/// before `--cwd` or the script's `process.chdir()` moves the process.
 pub fn set_reload_cwd(cwd: &ZStr) {
     let _ = RELOAD_CWD.set(ZBox::from_bytes(cwd.as_bytes()));
 }

@@ -4731,6 +4731,22 @@ pub(crate) mod __gated_printer {
                     && (self.options.minify_syntax || !self.options.has_run_symbol_renamer))
         }
 
+        /// Whether a non-computed property key must be printed as a computed property
+        /// instead, because printing it bare is not a valid property name or names a
+        /// different property. YAML and JSON5 keys can be any value (`true: t`,
+        /// `[a, b]: seq`, `{x: 1}: map`); JavaScript coerces a computed key with
+        /// `ToPropertyKey`, which is what the runtime loaders do with such keys.
+        /// A bare `["a", "b"]` or `{ x: 1 }` key is a syntax error, and a bare
+        /// boolean prints as `!0` under `minify_syntax`.
+        pub(crate) fn property_key_must_be_computed(&self, key: &Expr) -> bool {
+            match &key.data {
+                ExprData::ENumber(e) => self.number_property_key_must_be_computed(e.value()),
+                ExprData::EBoolean(_) | ExprData::EBranchBoolean(_) => self.options.minify_syntax,
+                ExprData::EArray(_) | ExprData::EObject(_) => true,
+                _ => false,
+            }
+        }
+
         /// `E::ObjectJSON` (JSON-only): always printed in JSON shape.
         pub(crate) fn print_object_json(&mut self, e: &E::ObjectJSON) {
             if !self.stack_check.is_safe_to_recurse() {
@@ -4946,13 +4962,15 @@ pub(crate) mod __gated_printer {
 
             let key = item.key.expect("infallible: prop has key");
 
-            // Automatically print numbers that would cause a syntax error as computed properties
+            // Automatically print keys that would cause a syntax error, or name a
+            // different property, as computed properties
             if !IS_JSON
                 && !item.flags.contains(js_ast::flags::Property::IsComputed)
-                && matches!(&key.data, ExprData::ENumber(e) if self.number_property_key_must_be_computed(e.value()))
+                && self.property_key_must_be_computed(&key)
             {
                 // "{ -1: 0 }" must be printed as "{ [-1]: 0 }"
                 // "{ 1/0: 0 }" must be printed as "{ [1/0]: 0 }"
+                // "{ {x: 1}: 0 }" must be printed as "{ [{x: 1}]: 0 }"
                 set_flag(&mut item.flags, js_ast::flags::Property::IsComputed, true);
             }
 

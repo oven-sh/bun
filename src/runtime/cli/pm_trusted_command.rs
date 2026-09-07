@@ -486,8 +486,7 @@ impl TrustCommand {
             return Ok(());
         }
 
-        // Only the flag: `ignoreScripts` from bunfig or .npmrc must not stop
-        // `bun pm trust`, which is the explicit request to run these scripts.
+        // The CLI flag only: `ignoreScripts` in bunfig.toml or .npmrc does not apply here.
         let run_scripts = !strings::left_has_any_in_right(args, &[b"--ignore-scripts"]);
 
         let mut scripts_node: Progress::Node;
@@ -668,9 +667,8 @@ impl TrustCommand {
             package_names_to_add.keys_mut(),
         )?;
 
-        // With `--ignore-scripts` the lockfile is left alone: the next install
-        // finds the names in package.json but not in the lockfile
-        // (`added_trusted_dependencies`) and runs the scripts then.
+        // Under `--ignore-scripts` the lockfile keeps the old list, so the next
+        // install sees the names as newly trusted and runs their scripts.
         if run_scripts {
             // could be null if these are the first packages to be trusted
             // SAFETY: `pm_raw` singleton; mutates `lockfile.trusted_dependencies`.

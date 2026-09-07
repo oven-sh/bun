@@ -392,6 +392,18 @@ describe.concurrent("bun pm pkg", () => {
       expect(code).toBe(0);
       expect(await readPkg(dir)).toEqual(before);
     });
+
+    it("fix prints the result without writing package.json", async () => {
+      using dir = tempDir("pm-pkg-fix-dry-run", {
+        "package.json": JSON.stringify({ name: "TEST-PACKAGE", version: "1.0.0" }, null, 2),
+      });
+      const before = await readPkg(String(dir));
+      const { output, error, code } = await runPmPkg(["fix", "--dry-run"], String(dir));
+      expect(error).toBe("");
+      expect(JSON.parse(output)).toEqual({ name: "test-package", version: "1.0.0" });
+      expect(code).toBe(0);
+      expect(await readPkg(String(dir))).toEqual(before);
+    });
   });
 
   describe("delete command", () => {

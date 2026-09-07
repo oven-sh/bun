@@ -1240,9 +1240,10 @@ describe("empty usages on a private or secret key", () => {
 // already settled when it was returned, and the event loop was frozen for the
 // whole keygen (seconds for 4096-bit RSA, about 250 ms for 200 P-521 pairs).
 describe("RSA and EC generateKey run off the JS thread", () => {
-  const rsa = (name: string): RsaHashedKeyGenParams => ({
+  // 1024 bits keeps the debug+ASAN lane fast; only the timer test below needs a slow keygen.
+  const rsa = (name: string, modulusLength = 1024): RsaHashedKeyGenParams => ({
     name,
-    modulusLength: 2048,
+    modulusLength,
     publicExponent: new Uint8Array([1, 0, 1]),
     hash: "SHA-256",
   });
@@ -1267,10 +1268,10 @@ describe("RSA and EC generateKey run off the JS thread", () => {
     });
   });
 
-  // One RSA-2048 keygen is tens of milliseconds at the fastest, so a 1 ms
-  // interval gets a turn while the promise is pending.
+  // One RSA-2048 keygen takes milliseconds at the fastest, so a 1 ms interval
+  // gets a turn while the promise is pending.
   it("a timer fires while RSA keygen is pending", async () => {
-    const promise = crypto.subtle.generateKey(rsa("RSA-OAEP"), true, ["encrypt", "decrypt"]);
+    const promise = crypto.subtle.generateKey(rsa("RSA-OAEP", 2048), true, ["encrypt", "decrypt"]);
     const { promise: ticked, resolve } = Promise.withResolvers<string>();
     const interval = setInterval(() => resolve(Bun.peek.status(promise)), 1);
     try {
@@ -1374,7 +1375,7 @@ describe("RSA and EC generateKey run off the JS thread", () => {
         `
         const w = new Worker(URL.createObjectURL(new Blob([\`
           const ec = await crypto.subtle.generateKey({ name: "ECDSA", namedCurve: "P-521" }, true, ["sign", "verify"]);
-          const rsa = await crypto.subtle.generateKey({ name: "RSA-PSS", modulusLength: 2048, publicExponent: new Uint8Array([1, 0, 1]), hash: "SHA-256" }, true, ["sign", "verify"]);
+          const rsa = await crypto.subtle.generateKey({ name: "RSA-PSS", modulusLength: 1024, publicExponent: new Uint8Array([1, 0, 1]), hash: "SHA-256" }, true, ["sign", "verify"]);
           postMessage([ec.privateKey.algorithm.namedCurve, rsa.privateKey.algorithm.modulusLength]);
         \`], { type: "application/javascript" })));
         w.onmessage = e => { console.log(e.data.join(" ")); w.terminate(); };
@@ -1384,7 +1385,7 @@ describe("RSA and EC generateKey run off the JS thread", () => {
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stdout).toBe("P-521 2048\n");
+    expect(stdout).toBe("P-521 1024\n");
     expect(stderr).toBe("");
     expect(exitCode).toBe(0);
   });

@@ -267,6 +267,10 @@ check_features() {
 			gcc_version="13"
 			print "GCC 13: enabled"
 			;;
+		*--linux-glibc-sysroot*)
+			linux_glibc_sysroot=1
+			print "Linux glibc sysroot: enabled"
+			;;
 		esac
 	done
 }
@@ -1172,6 +1176,11 @@ install_build_essentials() {
 		install_linux_musl_sysroot
 		install_windows_sysroot
 		install_macos_sdk
+	elif [ "$linux_glibc_sysroot" = "1" ]; then
+		# --linux-glibc-sysroot: a machine that is not the CI build host but wants its linux-gnu
+		# builds to link the same pinned glibc/libstdc++/libgcc as CI's (the development docker
+		# image), so the binary and its post-link checks come out the same as CI's.
+		install_linux_glibc_sysroot
 	fi
 	install_ccache
 	install_docker
@@ -1456,8 +1465,8 @@ install_linux_glibc_sysroot() {
 	# the prebuilt WebKit is compiled in (see oven-sh/WebKit Dockerfile). All
 	# linux-gnu lanes pass --sysroot pointing here so symbol versions never
 	# exceed 2.31; the --wrap list in flags.ts covers the 2.31 -> 2.17 tail.
-	case "$os-$ci" in
-	linux-1) ;;
+	case "$os-$ci-$linux_glibc_sysroot" in
+	linux-1-* | linux-*-1) ;;
 	*) return ;;
 	esac
 	if [ "$abi" = "musl" ]; then
@@ -1475,7 +1484,9 @@ install_linux_glibc_sysroot() {
 	jq_bin="$(require jq)"
 	if [ "$sudo" = "1" ] || [ -z "$can_sudo" ]; then _s=""; else _s="sudo -n"; fi
 
-	for sr_arch in x86_64 aarch64; do
+	# The CI build host cross-compiles both Linux architectures; anywhere else only the host's.
+	if is_ci_build_host; then sr_archs="x86_64 aarch64"; elif [ "$arch" = "aarch64" ]; then sr_archs="aarch64"; else sr_archs="x86_64"; fi
+	for sr_arch in $sr_archs; do
 		case "$sr_arch" in
 		x86_64)
 			sysroot="/opt/linux-sysroot-glibc"

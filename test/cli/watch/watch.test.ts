@@ -11,8 +11,8 @@ function stdoutWaiter(proc: Subprocess<"ignore", "pipe", any>) {
   const reader = proc.stdout.getReader();
   const decoder = new TextDecoder();
   let output = "";
-  const waitUntil = async (done: (output: string) => boolean) => {
-    while (!done(output)) {
+  const waitUntil = async (satisfied: (output: string) => boolean) => {
+    while (!satisfied(output)) {
       const { value, done } = await reader.read();
       if (done) throw new Error(`stream closed, output so far: ${JSON.stringify(output)}`);
       output += decoder.decode(value, { stream: true });

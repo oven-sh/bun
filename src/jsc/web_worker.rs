@@ -299,6 +299,10 @@ impl WebWorker {
         exec_argv_len: usize,
         preload_modules_ptr: *const BunString,
         preload_modules_len: usize,
+        has_env_snapshot: bool,
+        env_keys_ptr: *const BunString,
+        env_values_ptr: *const BunString,
+        env_len: usize,
     ) -> *mut WebWorker {
         jsc::mark_binding();
         log!("[{}] create", this_context_id);
@@ -370,23 +374,39 @@ impl WebWorker {
                 transform_options.allow_ffi_cc = Some(parent_allows_ffi_cc && flags.allow_ffi_cc);
             }
         }
-        // The worker's `process.env` starts as a copy of the parent's now (as in
-        // Node). Proxy-env values may be RefCountedEnvValue bytes owned by the
-        // parent's proxy_env_storage: snapshot slots + map under its lock so
-        // every slice copied is backed by a ref the snapshot holds.
+        // The worker VM's env map must hold what the worker's `process.env`
+        // starts with, because native readers (`Bun.spawn` without `env`,
+        // `Bun.which`, the TLS and proxy defaults) read the map, not the JS
+        // object. With an `env` option (or once the parent's `process.env`
+        // exists) that is the snapshot C++ took for the JS object; otherwise
+        // the parent's map, which its untouched `process.env` would mirror.
         let mut proxy_env_slots = jsc::rare_data::ProxyEnvSlots::default();
-        let mut env_loader = {
+        let env_loader = if has_env_snapshot {
+            // SAFETY: caller passed valid (ptr,len) pairs (or `(null,0)`)
+            // borrowed from the C++ WorkerOptions for the duration of this call.
+            let (keys, values) = unsafe {
+                (
+                    bun_core::ffi::slice(env_keys_ptr, env_len),
+                    bun_core::ffi::slice(env_values_ptr, env_len),
+                )
+            };
+            env_map_from_snapshot(keys, values)
+                .and_then(|map| parent_ref.env_loader().for_worker(Some(map)))
+        } else {
+            // Proxy-env values may be RefCountedEnvValue bytes owned by the
+            // parent's proxy_env_storage: copy slots + map under its lock so
+            // every slice copied is backed by a ref the copy holds.
             let parent_slots = parent_ref.proxy_env_storage.lock();
             proxy_env_slots.clone_from(&parent_slots);
-            match parent_ref.env_loader().clone_for_worker() {
-                Ok(loader) => loader,
-                Err(_) => {
-                    *error_message = BunString::static_("Out of memory");
-                    return core::ptr::null_mut();
-                }
-            }
+            parent_ref.env_loader().for_worker(None).map(|mut loader| {
+                proxy_env_slots.sync_into(&mut loader.map);
+                loader
+            })
         };
-        proxy_env_slots.sync_into(&mut env_loader.map);
+        let Ok(env_loader) = env_loader else {
+            *error_message = BunString::static_("Out of memory");
+            return core::ptr::null_mut();
+        };
         let init = WorkerVmInit {
             transform_options,
             env_loader,
@@ -1260,6 +1280,30 @@ fn on_unhandled_rejection(
     //
     // Instead, request the stop as `exit()` does and unwind to `spin()`'s `shutdown()`.
     vm.handle_ref().request_termination();
+}
+
+/// Builds the worker's env map from the `process.env` snapshot C++ took for
+/// it (`WorkerOptions::env`). An entry with a NUL byte could not reach a child
+/// process intact (`Bun.spawn` rejects one in an explicit `env`), so it is
+/// left out of the map as well.
+fn env_map_from_snapshot(
+    keys: &[BunString],
+    values: &[BunString],
+) -> Result<bun_dotenv::Map, bun_alloc::AllocError> {
+    let mut map = bun_dotenv::Map::init();
+    map.ensure_unused_capacity(keys.len())?;
+    for (key, value) in keys.iter().zip(values) {
+        let key = key.to_utf8();
+        let value = value.to_utf8();
+        if key.is_empty()
+            || bun_core::strings::contains_char(&key, 0)
+            || bun_core::strings::contains_char(&value, 0)
+        {
+            continue;
+        }
+        map.put(&key, &value)?;
+    }
+    Ok(map)
 }
 
 /// Resolve a worker entry-point specifier to a path the module loader can

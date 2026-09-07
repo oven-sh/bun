@@ -68,7 +68,13 @@ void* WebWorker__create(
     StringImpl** execArgvPtr,
     size_t execArgvLen,
     BunString* preloadModulesPtr,
-    size_t preloadModulesLen);
+    size_t preloadModulesLen,
+    // The env snapshot (WorkerOptions::env) the worker's process.env is built from, so the worker
+    // VM's native env map starts from the same entries. hasEnvSnapshot=false: copy the parent's map.
+    bool hasEnvSnapshot,
+    const BunString* envKeysPtr,
+    const BunString* envValuesPtr,
+    size_t envLen);
 // Raise a TerminationException in the worker VM at its next safepoint and wake its loop. Any thread.
 void WebWorker__requestTermination(void*);
 // Toggle the keep-alive this worker holds on the parent event loop. Parent thread.
@@ -140,6 +146,19 @@ ExceptionOr<void> WorkerMessagingProxy::startWorkerGlobalScope(const String& scr
                                                })
                                                .value_or(std::span<WTF::StringImpl*> {});
 
+    // Borrowed views; m_options.env keeps the strings alive until the worker thread consumes it.
+    Vector<BunString> envKeys;
+    Vector<BunString> envValues;
+    const bool hasEnvSnapshot = m_options.env.has_value();
+    if (hasEnvSnapshot) {
+        envKeys.reserveInitialCapacity(m_options.env->size());
+        envValues.reserveInitialCapacity(m_options.env->size());
+        for (const auto& entry : *m_options.env) {
+            envKeys.append(Bun::toString(entry.key));
+            envValues.append(Bun::toString(entry.value));
+        }
+    }
+
     // The thread holds a ref on the proxy until releaseWorkerThread().
     ref();
     BunString errorMessage = BunStringEmpty;
@@ -163,7 +182,11 @@ ExceptionOr<void> WorkerMessagingProxy::startWorkerGlobalScope(const String& scr
         execArgv.data(),
         execArgv.size(),
         preloadModules.begin(),
-        preloadModules.size());
+        preloadModules.size(),
+        hasEnvSnapshot,
+        envKeys.begin(),
+        envValues.begin(),
+        envKeys.size());
     m_options.preloadModules.clear();
 
     if (!m_workerThread) {

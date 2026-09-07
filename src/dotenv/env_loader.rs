@@ -595,14 +595,22 @@ impl Loader {
         }
     }
 
-    /// A `Worker`'s loader: the map, with the explicit entries marked loaded so a pipe is not read twice.
-    pub fn clone_for_worker(&self) -> Result<Loader, AllocError> {
+    /// A `Worker`'s loader. `snapshot` is the environment the worker starts
+    /// with (its `env` option, or a copy of the parent's `process.env`); `None`
+    /// copies this loader's map. Everything this loader already read (`environ`,
+    /// `.env` files, `--env-file` pipes) counts as read, so the worker neither
+    /// merges the launch environment over the snapshot nor reads a file twice.
+    pub fn for_worker(&self, snapshot: Option<Map>) -> Result<Loader, AllocError> {
+        let did_load_process = snapshot.is_some() || self.did_load_process;
         Ok(Loader {
-            map: self.map.clone_with_allocator()?,
-            default_files_loaded: EnumSet::empty(),
+            map: match snapshot {
+                Some(map) => map,
+                None => self.map.clone_with_allocator()?,
+            },
+            default_files_loaded: self.default_files_loaded,
             custom_files_loaded: self.custom_files_loaded.clone()?,
             quiet: false,
-            did_load_process: false,
+            did_load_process,
             reject_unauthorized: Cell::new(None),
             aws_credentials: None,
         })

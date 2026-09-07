@@ -361,7 +361,7 @@ it("should create template from local folder given by absolute path", async () =
     env: { ...env, BUN_CONFIG_REGISTRY: deadEnd.url.href, https_proxy: deadEnd.url.href },
   });
 
-  const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const [_out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect(err).not.toContain("error");
   expect(await Bun.file(join(x_dir, "abs-template", "index.js")).text()).toBe("hi");
   expect(await Bun.file(join(x_dir, "abs-template", "foo", "bar.js")).text()).toBe("hi");
@@ -387,7 +387,7 @@ it("treats a bare <file>.tsx / <file>.jsx that exists in the cwd as a component,
       env: { ...env, BUN_CONFIG_REGISTRY: deadEnd.url.href },
     });
 
-    const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const [_out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(err).toContain(`No component export found in "${join(x_dir, file)}"`);
     expect(err).not.toContain("create-");
     expect(exitCode).toBe(1);

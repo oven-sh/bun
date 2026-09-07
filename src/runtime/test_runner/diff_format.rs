@@ -5,7 +5,7 @@ use bun_core::Output;
 use bun_jsc::{JSGlobalObject, JSValue, JsResult};
 
 use super::diff::print_diff::{print_diff_main, DiffConfig};
-use super::pretty_format::{FormatOptions, JestPrettyFormat, MessageLevel};
+use super::pretty_format::{FormatOptions, JestPrettyFormat};
 
 /// Renders a Jest-style diff of two already-formatted values. Formatting a JS value runs user code
 /// (getters, Proxy traps) and can throw, so it happens up front in [`DiffFormatter::new`], never
@@ -31,7 +31,6 @@ impl<'a> DiffFormatter<'a> {
         };
         let mut received_buf: Vec<u8> = Vec::new();
         JestPrettyFormat::format(
-            MessageLevel::Debug,
             global_this,
             core::slice::from_ref(&received),
             1,
@@ -40,7 +39,6 @@ impl<'a> DiffFormatter<'a> {
         )?;
         let mut expected_buf: Vec<u8> = Vec::new();
         JestPrettyFormat::format(
-            MessageLevel::Debug,
             global_this,
             core::slice::from_ref(&expected),
             1,

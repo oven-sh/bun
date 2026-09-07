@@ -105,18 +105,12 @@ Vector<RefPtr<PerformanceEntry>> Performance::getEntries() const
 {
     Vector<RefPtr<PerformanceEntry>> entries;
 
-    // if (m_navigationTiming)
-    //     entries.append(m_navigationTiming);
-
     // entries.appendVector(m_resourceTimingBuffer);
 
     if (m_userTiming) {
         entries.appendVector(m_userTiming->getMarks());
         entries.appendVector(m_userTiming->getMeasures());
     }
-
-    // if (m_firstContentfulPaint)
-    //     entries.append(m_firstContentfulPaint);
 
     std::sort(entries.begin(), entries.end(), PerformanceEntry::startTimeCompareLessThan);
     return entries;
@@ -126,14 +120,8 @@ Vector<RefPtr<PerformanceEntry>> Performance::getEntriesByType(const String& ent
 {
     Vector<RefPtr<PerformanceEntry>> entries;
 
-    // if (m_navigationTiming && entryType == "navigation"_s)
-    //     entries.append(m_navigationTiming);
-
     if (entryType == "resource"_s)
         entries.appendVector(m_resourceTimingBuffer);
-
-    // if (m_firstContentfulPaint && entryType == "paint"_s)
-    //     entries.append(m_firstContentfulPaint);
 
     if (m_userTiming) {
         if (entryType == "mark"_s)
@@ -160,18 +148,12 @@ Vector<RefPtr<PerformanceEntry>> Performance::getEntriesByName(const String& nam
 {
     Vector<RefPtr<PerformanceEntry>> entries;
 
-    // if (m_navigationTiming && (entryType.isNull() || entryType == "navigation"_s) && name == m_navigationTiming->name())
-    //     entries.append(m_navigationTiming);
-
     if (entryType.isNull() || entryType == "resource"_s) {
         for (auto& resource : m_resourceTimingBuffer) {
             if (resource->name() == name)
                 entries.append(resource);
         }
     }
-
-    // if (m_firstContentfulPaint && (entryType.isNull() || entryType == "paint"_s) && name == "first-contentful-paint"_s)
-    //     entries.append(m_firstContentfulPaint);
 
     if (m_userTiming) {
         if (entryType.isNull() || entryType == "mark"_s)

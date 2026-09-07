@@ -51,7 +51,6 @@ inline bool exceedsStringLimit(size_t length)
 }
 
 // Reduce noise: every class name below is a WebCore JS cell (StreamsForward.h).
-using WebCore::JSCrossRealmTransformState;
 using WebCore::JSDirectSinkCloseState;
 using WebCore::JSDirectStreamController;
 using WebCore::JSNativeStreamSourceAdapter;
@@ -337,7 +336,7 @@ void textDecodeReadRequestChunkSteps(JSC::JSGlobalObject*, JSReadableStreamDefau
 void textDecodeReadRequestCloseSteps(JSC::JSGlobalObject*, JSReadableStreamDefaultController*); // userJS: yes — ReadableStreamOperations.cpp
 // (The Transform arm's cross-file targets are transformStreamDefaultSource{Pull,Cancel}Algorithm
 // below; the Native arm's are nativeSource{Start,Pull,Cancel} in the BunStreamSource.cpp
-// section; the CrossRealm arms are with the rest of CrossRealmTransform.cpp.)
+// section.)
 // `signal` is the JSAbortSignal WRAPPER cell (nullptr = no signal); the pipe op roots it.
 // Byte sources are supported: per spec, the pipe always acquires a DEFAULT reader.
 JSC::JSPromise* readableStreamPipeTo(JSC::JSGlobalObject*, JSReadableStream* source, JSWritableStream* destination, bool preventClose, bool preventAbort, bool preventCancel, JSC::JSObject* signal = nullptr); // userJS: yes — ReadableStreamOperations.cpp (allocates + populates the op cell, then hands it to startPipeToOperation; the state machine lives in JSStreamPipeToOperation.cpp)

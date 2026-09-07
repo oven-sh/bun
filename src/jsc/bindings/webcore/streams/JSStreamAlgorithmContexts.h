@@ -42,8 +42,6 @@ public:
     // Iterator Record.[[NextMethod]] — captured ONCE by GetIterator; later mutation of
     // `iterator.next` is never observed.
     JSC::WriteBarrier<JSC::Unknown> m_nextMethod;
-    // Iterator Record.[[Done]]
-    bool m_done { false };
 
 private:
     JSStreamFromIterableContext(JSC::VM&, JSC::Structure*);

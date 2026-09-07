@@ -220,7 +220,7 @@ pub mod expect {
     impl JSValueTestExt for JSValue {
         #[inline]
         fn jest_snapshot_pretty_format<W: bun_io::Write>(self, out: &mut W, global: &JSGlobalObject) -> JsResult<()> {
-            use super::pretty_format::{JestPrettyFormat, FormatOptions, MessageLevel};
+            use super::pretty_format::{JestPrettyFormat, FormatOptions};
             let fmt_options = FormatOptions {
                 enable_colors: false,
                 add_newline: false,
@@ -228,7 +228,6 @@ pub mod expect {
                 quote_strings: true,
             };
             JestPrettyFormat::format(
-                MessageLevel::Debug,
                 global,
                 core::slice::from_ref(&self),
                 1,

@@ -39,8 +39,6 @@ void JSMessageChannel::visitAdditionalChildrenInGCThread(Visitor& visitor)
 {
     visitor.addOpaqueRoot(WTF::getPtr(wrapped().port1()));
     visitor.addOpaqueRoot(WTF::getPtr(wrapped().port2()));
-    // addWebCoreOpaqueRoot(visitor, wrapped().port1());
-    // addWebCoreOpaqueRoot(visitor, wrapped().port2());
 }
 
 DEFINE_VISIT_ADDITIONAL_CHILDREN_IN_GC_THREAD(JSMessageChannel);

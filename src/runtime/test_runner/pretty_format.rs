@@ -88,13 +88,6 @@ impl EventType {
 #[derive(Default)]
 pub struct JestPrettyFormat {}
 
-#[repr(u32)]
-#[derive(Copy, Clone, PartialEq, Eq)]
-pub enum MessageLevel {
-    Error = 2,
-    Debug = 3,
-}
-
 #[derive(Copy, Clone, Default)]
 pub struct FormatOptions {
     pub(crate) enable_colors: bool,
@@ -105,7 +98,6 @@ pub struct FormatOptions {
 
 impl JestPrettyFormat {
     pub(crate) fn format<W: bun_io::Write>(
-        level: MessageLevel,
         global: &JSGlobalObject,
         vals: &[JSValue],
         len: usize,
@@ -119,7 +111,7 @@ impl JestPrettyFormat {
         let result = {
             let mut bridge = AsFmt::new(&mut *writer);
             let mut adapted = bun_io::write::FmtAdapter::new(&mut bridge);
-            Self::format_adapted(level, global, vals, len, &mut adapted, options)
+            Self::format_adapted(global, vals, len, &mut adapted, options)
         };
         // `FmtAdapter::flush` can't reach `writer`; do the requested flush here.
         if flush {
@@ -129,7 +121,6 @@ impl JestPrettyFormat {
     }
 
     fn format_adapted(
-        level: MessageLevel,
         global: &JSGlobalObject,
         vals: &[JSValue],
         len: usize,
@@ -150,13 +141,7 @@ impl JestPrettyFormat {
 
             if tag.tag == Tag::String {
                 if options.enable_colors {
-                    if level == MessageLevel::Error {
-                        let _ = writer.write_all(pretty_fmt_const!(true, "<r><red>").as_bytes());
-                    }
                     fmt.format::<W, true>(tag, writer, vals[0], global)?;
-                    if level == MessageLevel::Error {
-                        let _ = writer.write_all(pretty_fmt_const!(true, "<r>").as_bytes());
-                    }
                 } else {
                     fmt.format::<W, false>(tag, writer, vals[0], global)?;
                 }
@@ -198,9 +183,6 @@ impl JestPrettyFormat {
             let mut tag: TagResult;
             let mut any = false;
             if options.enable_colors {
-                if level == MessageLevel::Error {
-                    let _ = writer.write_all(pretty_fmt_const!(true, "<r><red>").as_bytes());
-                }
                 loop {
                     if any {
                         let _ = writer.write_all(b" ");
@@ -219,9 +201,6 @@ impl JestPrettyFormat {
 
                     this_value = fmt.remaining_values[0];
                     fmt.remaining_values = &fmt.remaining_values[1..];
-                }
-                if level == MessageLevel::Error {
-                    let _ = writer.write_all(pretty_fmt_const!(true, "<r>").as_bytes());
                 }
             } else {
                 loop {

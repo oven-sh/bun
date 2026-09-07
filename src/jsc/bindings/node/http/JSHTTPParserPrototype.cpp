@@ -79,10 +79,6 @@ JSC_DEFINE_HOST_FUNCTION(jsHTTPParser_free, (JSGlobalObject * globalObject, Call
         return JSValue::encode(jsUndefined());
     }
 
-    // TODO: TODO!
-    // parser->emitTraceEventDestroy();
-    // parser->emitDestroy();
-
     return JSValue::encode(jsUndefined());
 }
 

@@ -444,4 +444,25 @@ describe.concurrent("--cpu-prof", () => {
     const mdContent = readFileSync(join(String(dir), mdFiles[0]), "utf-8");
     expect(mdContent).toContain("# CPU Profile");
   });
+
+  // A profile that cannot be written (full disk) is reported with the errno
+  // and the output path, and no empty file is left behind. bun ignores
+  // SIGXFSZ, so `ulimit -f 0` makes the write fail with EFBIG on the same path
+  // as ENOSPC.
+  test.skipIf(isWindows)("reports errno and path when the profile cannot be written", async () => {
+    using dir = tempDir("cpu-prof-write-fails", {});
+    await using proc = Bun.spawn({
+      cmd: ["sh", "-c", `ulimit -f 0 && exec "$@"`, "sh", bunExe(), "--cpu-prof", "--cpu-prof-dir=profiles", "-e", "1"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    expect(stderr).toContain("EFBIG");
+    expect(stderr).toContain("Failed to write CPU profile to " + join(String(dir), "profiles", "CPU."));
+    expect(readdirSync(join(String(dir), "profiles"))).toEqual([]);
+    // Like node, the process still exits with the script's own exit code.
+    expect(exitCode).toBe(0);
+  });
 });

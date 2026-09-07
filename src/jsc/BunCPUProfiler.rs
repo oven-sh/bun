@@ -3,15 +3,61 @@ use std::io::Write as _;
 
 use crate::VM;
 use bun_core::String as BunString;
-use bun_paths::{AutoAbsPathChecked, PathBuffer};
+use bun_core::{Output, ZStr};
+use bun_paths::{AutoAbsPathChecked, PathBuffer, resolve_path};
 use bun_sys::{self, Errno, Fd, FdDirExt as _};
 
-#[derive(thiserror::Error, Debug, strum::IntoStaticStr)]
+#[derive(thiserror::Error, Debug)]
 pub(crate) enum ProfilerError {
-    #[error("WriteFailed")]
-    WriteFailed,
+    /// Carries the output path.
+    #[error("{}", bstr::BStr::new(.0.name()))]
+    WriteFailed(bun_sys::Error),
     #[error("FilenameTooLong")]
     FilenameTooLong,
+}
+
+impl ProfilerError {
+    /// `ENOSPC: No space left on device: Failed to write CPU profile to <path> (write)`
+    pub(crate) fn report(&self, what: &str) {
+        match self {
+            Self::WriteFailed(err) => Output::err(
+                err,
+                "Failed to write {} to {}",
+                (what, bstr::BStr::new(&err.path)),
+            ),
+            Self::FilenameTooLong => Output::err("FilenameTooLong", "Failed to write {}", (what,)),
+        }
+    }
+}
+
+/// Creates the parent directory when the open fails for a missing or inaccessible one.
+/// Removes the file again when the write fails, so a full disk leaves no truncated profile.
+pub(crate) fn write_profile_file(path: &ZStr, data: &[u8]) -> Result<(), ProfilerError> {
+    const FLAGS: i32 = bun_sys::O::WRONLY | bun_sys::O::CREAT | bun_sys::O::TRUNC;
+    let failed = |err: bun_sys::Error| ProfilerError::WriteFailed(err.with_path(path.as_bytes()));
+    let file = match bun_sys::File::openat(Fd::cwd(), path.as_bytes(), FLAGS, 0o664) {
+        Ok(file) => file,
+        Err(err)
+            if matches!(
+                err.get_errno(),
+                Errno::ENOENT | Errno::EPERM | Errno::EACCES
+            ) =>
+        {
+            let dir = resolve_path::dirname::<bun_paths::platform::Auto>(path.as_bytes());
+            if dir.is_empty() {
+                return Err(failed(err));
+            }
+            let _ = Fd::cwd().make_path(dir);
+            bun_sys::File::openat(Fd::cwd(), path.as_bytes(), FLAGS, 0o664).map_err(failed)?
+        }
+        Err(err) => return Err(failed(err)),
+    };
+    if let Err(err) = file.write_all(data) {
+        drop(file);
+        let _ = bun_sys::unlink(path);
+        return Err(failed(err));
+    }
+    Ok(())
 }
 
 pub struct CPUProfilerConfig {
@@ -91,42 +137,7 @@ fn write_profile_to_file(
 
     build_output_path(&mut path_buf, config, is_md_format)?;
 
-    // Convert to OS-specific path (UTF-16 on Windows, UTF-8 elsewhere)
-    #[cfg(windows)]
-    let mut path_buf_os = bun_paths::os_path_buffer_pool::get();
-    #[cfg(windows)]
-    let output_path_os =
-        bun_core::strings::convert_utf8_to_utf16_in_buffer_z(&mut path_buf_os, path_buf.slice_z());
-    #[cfg(not(windows))]
-    let output_path_os = path_buf.slice_z();
-
-    // Write the profile to disk using bun.sys.File.writeFile
-    let result =
-        bun_sys::File::write_file_os_path(Fd::cwd(), output_path_os, profile_slice.slice());
-    if let Err(err) = result {
-        // If we got ENOENT, PERM, or ACCES, try creating the directory and retry
-        let errno = err.get_errno();
-        if errno == Errno::ENOENT || errno == Errno::EPERM || errno == Errno::EACCES {
-            if !config.dir.is_empty() {
-                let _ = Fd::cwd().make_path(config.dir);
-                // Retry write
-                let retry_result = bun_sys::File::write_file_os_path(
-                    Fd::cwd(),
-                    output_path_os,
-                    profile_slice.slice(),
-                );
-                if retry_result.is_err() {
-                    return Err(ProfilerError::WriteFailed);
-                }
-            } else {
-                return Err(ProfilerError::WriteFailed);
-            }
-        } else {
-            return Err(ProfilerError::WriteFailed);
-        }
-    }
-
-    Ok(())
+    write_profile_file(path_buf.slice_z(), profile_slice.slice())
 }
 
 fn build_output_path(

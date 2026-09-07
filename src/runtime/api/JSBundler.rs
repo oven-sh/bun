@@ -1261,26 +1261,20 @@ pub mod js_bundler {
                     }
 
                     if compile.outfile.is_empty() {
-                        let entry_point: &[u8] = &this.entry_points.keys()[0];
-                        let mut outfile = bun_paths::basename(entry_point);
-                        let ext = bun_paths::extension(outfile);
-                        if !ext.is_empty() {
-                            outfile = &outfile[0..outfile.len() - ext.len()];
-                        }
-
-                        if outfile == b"index" {
-                            let d = bun_paths::resolve_path::dirname::<bun_paths::platform::Auto>(
-                                entry_point,
-                            );
-                            outfile = bun_paths::basename(if d.is_empty() { b"index" } else { d });
-                        }
-
-                        if outfile == b"bun" {
-                            let d = bun_paths::resolve_path::dirname::<bun_paths::platform::Auto>(
-                                entry_point,
-                            );
-                            outfile = bun_paths::basename(if d.is_empty() { b"bun" } else { d });
-                        }
+                        // The directory `executable_path` resolves the name against.
+                        let mut dest_dir_buf = bun_paths::path_buffer_pool::get();
+                        let dest_dir = bun_paths::resolve_path::join_abs_string_buf::<
+                            bun_paths::platform::Auto,
+                        >(
+                            bun_resolver::fs::FileSystem::get().top_level_dir,
+                            &mut dest_dir_buf[..],
+                            &[&this.outdir.list],
+                        );
+                        let outfile = crate::cli::build_command::default_compile_outfile(
+                            &this.entry_points.keys()[0],
+                            dest_dir,
+                            compile.compile_target.os,
+                        );
 
                         // If argv[0] is "bun" or "bunx", we don't check if the binary is standalone
                         if outfile == b"bun" || outfile == b"bunx" {

@@ -644,8 +644,8 @@ describe("bundler", () => {
     });
 
     // Without `--outfile`, `src/index.ts` gives the name `src`. A directory has that name, so the executable is
-    // written as `index` (not on Windows, where it is `src.exe`). The entry point stays embedded as `src`, and the
-    // other chunks name that path.
+    // written as `index` (not on Windows, where it is `src.exe`). The entry point is embedded under the same name,
+    // and the other chunks name that path.
     test.concurrent("bun build without --outfile: an entry point at src/index.ts", async () => {
       using dir = tempDir("compile-splitting-nested-index", {
         "src/index.ts": entryPointImportedBack["main.ts"],

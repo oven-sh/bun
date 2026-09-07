@@ -1244,7 +1244,7 @@ compile: {
 }
 ```
 
-Without `outfile`, the executable is named after the entrypoint and written to `outdir`, or to the current working directory when there is no `outdir`. This matches `bun build --compile`.
+Without `outfile`, the executable is named after the entrypoint and written to `outdir`, or to the current working directory when there is no `outdir`. This matches `bun build --compile`. An `index.*` entrypoint is named after its directory (`./packages/cli/index.ts` produces `cli`). When there is no directory name to use, or a directory with that name already exists at the destination (`./src/index.ts` built from the project root), the executable is named `index`.
 
 ### Supported targets
 

@@ -964,7 +964,8 @@ describe("res.useChunkedEncodingByDefault = false makes the response close-delim
     // The probe written after the server's close may be answered with an RST.
     socket.on("error", onClosed);
     socket.on("close", onClosed);
-    return done.promise;
+    // Settle before `server` is disposed: server.close() ends the open connection.
+    return await done.promise;
   }
 
   const GET11 = "GET / HTTP/1.1\r\nHost: x\r\n\r\n";

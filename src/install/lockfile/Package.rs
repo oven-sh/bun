@@ -978,6 +978,70 @@ impl Diff {
         )
     }
 
+    /// The package.json of a `file:` directory dependency declared by the root package or a
+    /// workspace package is read when the dependency is first resolved. Read it again and diff it
+    /// against the lockfile entry, like a workspace, so that edits to it are picked up. Returns
+    /// `None` for every other dependency.
+    fn generate_folder_dependency(
+        pm: &mut PackageManager,
+        log: &mut bun_ast::Log,
+        from_lockfile: &mut Lockfile,
+        to_lockfile: &mut Lockfile,
+        from: &Package,
+        from_package_id: PackageID,
+        folder_path: &[u8],
+        update_requests: Option<&[UpdateRequest]>,
+        removed_names: &mut Vec<PackageNameHash>,
+    ) -> crate::Result<Option<DiffSummary>> {
+        if !matches!(
+            from.resolution.tag,
+            ResolutionTag::Root | ResolutionTag::Workspace
+        ) || from_package_id as usize >= from_lockfile.packages.len()
+            || from_lockfile.packages.items_resolution()[from_package_id as usize].tag
+                != ResolutionTag::Folder
+        {
+            return Ok(None);
+        }
+
+        let Ok(folder_pkg) = crate::_folder_resolver::parse_folder_dependency_package_json(
+            to_lockfile,
+            pm,
+            log,
+            folder_path,
+        ) else {
+            // Resolving the dependency again reports the unreadable package.json.
+            return Ok(Some(DiffSummary {
+                update: 1,
+                ..Default::default()
+            }));
+        };
+
+        let from_pkg = from_lockfile.packages.get(from_package_id as usize);
+        let diff = Self::generate_inner(
+            pm,
+            log,
+            from_lockfile,
+            to_lockfile,
+            &from_pkg,
+            &folder_pkg,
+            update_requests,
+            None,
+            removed_names,
+        )?;
+
+        if pm.options.log_level.is_verbose() && (diff.add + diff.remove + diff.update) > 0 {
+            bun_core::pretty_errorln!(
+                "Local package \"{}\" has added <green>{}<r> dependencies, removed <red>{}<r> dependencies, and updated <cyan>{}<r> dependencies",
+                bstr::BStr::new(folder_path),
+                diff.add,
+                diff.remove,
+                diff.update,
+            );
+        }
+
+        Ok(Some(diff))
+    }
+
     // The root summary's `remove` is the count of distinct names removed across root + workspaces.
     fn generate_inner(
         pm: &mut PackageManager,
@@ -1461,9 +1525,43 @@ impl Diff {
                     }
                 }
 
+                let folder_diff = if from_dep.version.tag == dependency::version::Tag::Folder {
+                    // `parse` may grow `to_lockfile.buffers.string_bytes`; copy the path out first.
+                    let folder_path: Box<[u8]> = Box::from(
+                        to_deps!()[cur_to_i]
+                            .version
+                            .folder()
+                            .slice(to_lockfile.buffers.string_bytes.as_slice()),
+                    );
+                    let diff = Self::generate_folder_dependency(
+                        pm,
+                        log,
+                        from_lockfile,
+                        to_lockfile,
+                        from,
+                        from_resolutions[i],
+                        &folder_path,
+                        update_requests,
+                        removed_names,
+                    )?;
+                    // re-derive the slice, `to_lockfile.buffers.dependencies` may have grown.
+                    to_deps = to
+                        .dependencies
+                        .get(to_lockfile.buffers.dependencies.as_slice())
+                        .into();
+                    diff
+                } else {
+                    None
+                };
+
                 if let Some(mapping) = id_mapping.as_deref_mut() {
                     let mut workspace_hooks_only = false;
                     let update_mapping = 'update_mapping: {
+                        if let Some(diff) = &folder_diff {
+                            workspace_hooks_only = !diff.changes_dependencies();
+                            break 'update_mapping !diff.changes_resolutions();
+                        }
+
                         if !is_root || !from_dep.behavior.is_workspace() {
                             break 'update_mapping true;
                         }
@@ -1570,7 +1668,14 @@ impl Diff {
                         summary.script_only_updates += 1;
                     }
                 } else {
-                    continue;
+                    match &folder_diff {
+                        Some(diff) if diff.changes_resolutions() => {
+                            if !diff.changes_dependencies() {
+                                summary.script_only_updates += 1;
+                            }
+                        }
+                        _ => continue,
+                    }
                 }
             }
 
@@ -1674,6 +1779,18 @@ impl Diff {
                     summary.update += 1;
                     summary.script_only_updates += 1;
                 }
+            }
+
+            // The lockfile records the `bin` of workspace and `file:` packages.
+            if !Bin::eql(
+                &to.bin,
+                &from.bin,
+                to_lockfile.buffers.string_bytes.as_slice(),
+                to_lockfile.buffers.extern_strings.as_slice(),
+                from_lockfile.buffers.string_bytes.as_slice(),
+                from_lockfile.buffers.extern_strings.as_slice(),
+            ) {
+                summary.update += 1;
             }
         }
 

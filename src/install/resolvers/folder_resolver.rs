@@ -257,6 +257,99 @@ fn normalize_package_json_path<'a>(
     }
 }
 
+/// `normalize_package_json_path`, with both paths using posix separators on
+/// Windows. `abs` is returned out of `joined` and `rel` out of `rel_buf`.
+fn package_json_paths<'a>(
+    global_or_relative: GlobalOrRelative<'_>,
+    joined: &'a mut PathBuffer,
+    rel_buf: &'a mut PathBuffer,
+    non_normalized_path: &[u8],
+) -> (&'a ZStr, &'a [u8]) {
+    let paths = normalize_package_json_path(global_or_relative, joined, non_normalized_path);
+    // Writing in place through `(&ZStr).as_ptr().cast_mut()` /
+    // `(&[u8]).as_ptr().cast_mut()` would be UB under Stacked/Tree Borrows:
+    // those pointers carry read-only provenance. Capture lengths, let the
+    // shared borrows of `joined` die, then take a fresh `&mut joined[..abs_len]`.
+    // `rel` points into FileSystem's thread-local relative buffer which we only
+    // ever see as `&[u8]`, so copy it into a buffer we own — same pattern as
+    // WorkspacePackageJSONCache::get_with_path.
+    let abs_len = paths.abs.len();
+    let rel_len = paths.rel.len();
+    rel_buf[..rel_len].copy_from_slice(paths.rel);
+    #[cfg(windows)]
+    {
+        bun_paths::dangerously_convert_path_to_posix_in_place::<u8>(&mut joined[..abs_len]);
+        bun_paths::dangerously_convert_path_to_posix_in_place::<u8>(&mut rel_buf[..rel_len]);
+    }
+    (
+        // `normalize_package_json_path` wrote `joined[abs_len] = 0`; the
+        // separator rewrite above never touches the NUL.
+        ZStr::from_buf(&joined[..], abs_len),
+        &rel_buf[..rel_len],
+    )
+}
+
+/// Reads and parses the package.json at `abs` into `lockfile`, without adding
+/// the package to `lockfile.packages`.
+fn parse_package_json_file<R: ResolverContext>(
+    lockfile: &mut Lockfile,
+    manager: &mut PackageManager,
+    log: &mut bun_ast::Log,
+    abs: &ZStr,
+    resolver: &mut R,
+    features: Features,
+) -> crate::Result<LockfilePackage> {
+    let mut body = npm::Registry::BodyPool::get();
+    let source = {
+        let file = File::openat(Fd::cwd(), abs.as_bytes(), O::RDONLY, 0)?;
+        body.reset();
+        let read_result = file
+            .read_to_end_with_array_list(&mut body.list, bun_sys::SizeHint::ProbablySmall)
+            .map(|_| ());
+        let _ = file.close();
+        read_result?;
+
+        bun_ast::Source::init_path_string(abs.as_bytes(), body.list.as_slice())
+    };
+
+    let mut package = LockfilePackage::default();
+    package.parse::<R>(lockfile, manager, log, &source, resolver, features)?;
+    Ok(package)
+}
+
+/// Parses the package.json of a `file:` directory dependency declared by the
+/// root package or a workspace package into `lockfile`, the way `get_or_put`
+/// parses it into the manager's lockfile. Nothing is cached and nothing is
+/// added to `lockfile.packages`. `folder_path` is the dependency's folder:
+/// absolute, or relative to the top level directory.
+pub(crate) fn parse_folder_dependency_package_json(
+    lockfile: &mut Lockfile,
+    manager: &mut PackageManager,
+    log: &mut bun_ast::Log,
+    folder_path: &[u8],
+) -> crate::Result<LockfilePackage> {
+    let mut abs_buf = bun_paths::path_buffer_pool::get();
+    let non_normalized_path: &[u8] = if bun_paths::is_absolute(folder_path) {
+        folder_path
+    } else {
+        bun_paths::resolve_path::join_abs_string_buf::<bun_paths::platform::Auto>(
+            FileSystem::instance().top_level_dir(),
+            &mut abs_buf,
+            &[folder_path],
+        )
+    };
+    let mut joined = bun_paths::path_buffer_pool::get();
+    let mut rel_buf = bun_paths::path_buffer_pool::get();
+    let (abs, rel) = package_json_paths(
+        GlobalOrRelative::Relative(dependency::version::Tag::Folder),
+        &mut joined,
+        &mut rel_buf,
+        non_normalized_path,
+    );
+    let mut resolver: Resolver = NewResolver { folder_path: rel };
+    parse_package_json_file(lockfile, manager, log, abs, &mut resolver, Features::FOLDER)
+}
+
 fn read_package_json_from_disk<R: FolderResolverImpl>(
     manager: &mut PackageManager,
     abs: &ZStr,
@@ -264,10 +357,6 @@ fn read_package_json_from_disk<R: FolderResolverImpl>(
     features: Features,
     resolver: &mut R,
 ) -> crate::Result<LockfilePackage> {
-    let mut body = npm::Registry::BodyPool::get();
-
-    let mut package: LockfilePackage = Default::default();
-
     // Borrow splitting: `manager.lockfile`, `manager`, and `manager.log` are
     // needed simultaneously; borrowck rejects the overlap on `&mut self`,
     // so split via raw pointer once here. `lockfile` and `log` are disjoint
@@ -283,7 +372,7 @@ fn read_package_json_from_disk<R: FolderResolverImpl>(
     let log: &mut bun_ast::Log = manager.log_mut();
     let manager_ptr: *mut PackageManager = manager;
 
-    if R::IS_WORKSPACE {
+    let mut package: LockfilePackage = if R::IS_WORKSPACE {
         let _tracer =
             bun_perf::trace(bun_perf::PerfEvent::FolderResolverReadPackageJSONFromDiskWorkspace);
 
@@ -301,6 +390,7 @@ fn read_package_json_from_disk<R: FolderResolverImpl>(
         let root: Expr = json.root;
         let source: *const bun_ast::Source = &raw const json.source;
 
+        let mut package = LockfilePackage::default();
         // SAFETY: see the borrow-splitting comment above.
         unsafe {
             let lockfile: *mut Lockfile = &raw mut *(*manager_ptr).lockfile;
@@ -314,35 +404,24 @@ fn read_package_json_from_disk<R: FolderResolverImpl>(
                 features,
             )?;
         }
+        package
     } else {
         let _tracer =
             bun_perf::trace(bun_perf::PerfEvent::FolderResolverReadPackageJSONFromDiskFolder);
 
-        let source = {
-            let file = File::openat(Fd::cwd(), abs.as_bytes(), O::RDONLY, 0)?;
-            body.reset();
-            let read_result = file
-                .read_to_end_with_array_list(&mut body.list, bun_sys::SizeHint::ProbablySmall)
-                .map(|_| ());
-            let _ = file.close();
-            read_result?;
-
-            bun_ast::Source::init_path_string(abs.as_bytes(), body.list.as_slice())
-        };
-
         // SAFETY: see the borrow-splitting comment above.
         unsafe {
             let lockfile: *mut Lockfile = &raw mut *(*manager_ptr).lockfile;
-            package.parse::<R>(
+            parse_package_json_file::<R>(
                 &mut *lockfile,
                 &mut *manager_ptr,
                 log,
-                &source,
+                abs,
                 resolver,
                 features,
-            )?;
+            )?
         }
-    }
+    };
 
     let has_scripts = package.scripts.has_any()
         || 'brk: {
@@ -382,43 +461,14 @@ pub(crate) fn get_or_put(
     manager: &mut PackageManager,
 ) -> FolderResolution {
     let mut joined = bun_paths::path_buffer_pool::get();
-    #[cfg(windows)]
     let mut rel_buf = bun_paths::path_buffer_pool::get();
-    let paths = normalize_package_json_path(global_or_relative, &mut joined, non_normalized_path);
-
-    #[cfg(not(windows))]
-    let abs = paths.abs;
-    #[cfg(not(windows))]
-    let rel = paths.rel;
-
-    // replace before getting hash. rel may or may not be contained in abs
-    #[cfg(windows)]
-    let (abs, rel): (&ZStr, &[u8]) = {
-        // Writing in place through `(&ZStr).as_ptr().cast_mut()` /
-        // `(&[u8]).as_ptr().cast_mut()` would be UB under Stacked/Tree
-        // Borrows: those pointers carry read-only provenance, and the
-        // optimizer may assume `abs`'s bytes are unchanged when computing
-        // `hash(abs.as_bytes())` below.
-        //
-        // Instead: capture lengths, let the shared borrows of `joined` die,
-        // then take a fresh `&mut joined[..abs_len]` (write provenance) and
-        // mutate that. `rel` points into FileSystem's thread-local relative
-        // buffer which we only ever see as `&[u8]`, so copy it into a local
-        // we own and convert the copy — same pattern as
-        // WorkspacePackageJSONCache::get_with_path.
-        let abs_len = paths.abs.len();
-        let rel_len = paths.rel.len();
-        rel_buf[..rel_len].copy_from_slice(paths.rel);
-        // `paths` is dead past this point → `joined` is no longer borrowed.
-        bun_paths::dangerously_convert_path_to_posix_in_place::<u8>(&mut joined[..abs_len]);
-        bun_paths::dangerously_convert_path_to_posix_in_place::<u8>(&mut rel_buf[..rel_len]);
-        (
-            // `normalize_package_json_path` wrote `joined[abs_len] = 0`; the
-            // separator rewrite above never touches the NUL.
-            ZStr::from_buf(&joined[..], abs_len),
-            &rel_buf[..rel_len],
-        )
-    };
+    // Separators are replaced before hashing. rel may or may not be contained in abs
+    let (abs, rel) = package_json_paths(
+        global_or_relative,
+        &mut joined,
+        &mut rel_buf,
+        non_normalized_path,
+    );
     let abs_hash = hash(abs.as_bytes());
 
     // Check first, compute, then insert, because read_package_json_from_disk

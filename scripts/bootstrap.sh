@@ -1471,47 +1471,7 @@ install_linux_glibc_sysroot() {
 	if ! [ -f "$(which jq)" ]; then install_packages jq; fi
 	skopeo="$(require skopeo)"
 	jq_bin="$(require jq)"
-	gpg_bin="$(require gpg)"
-	ar_bin="$(require ar)"
 	if [ "$sudo" = "1" ] || [ -z "$can_sudo" ]; then _s=""; else _s="sudo -n"; fi
-
-	# The Ubuntu mirrors are plain http, as they are for apt: what is fetched from them is checked
-	# the way apt checks it — InRelease signed by the Ubuntu archive key (2018), Packages.gz by its
-	# SHA256 in InRelease, each .deb by its SHA256 in Packages.
-	ubuntu_archive_key="F6ECB3762474EDA9D21B7022871920D1991BC93C"
-	keydir="$(create_tmp_directory)"
-	key=$(download_file "https://keyserver.ubuntu.com/pks/lookup?op=get&search=0x$ubuntu_archive_key")
-	execute sh -c "'$gpg_bin' --dearmor < '$key' > '$keydir/ubuntu-archive.gpg'"
-	# fetch_packages_index SUITE: leaves $apt_base/dists/SUITE/main/binary-$deb_arch/Packages at
-	# $keydir/Packages-SUITE-$deb_arch, its hash checked against the suite's InRelease and that
-	# checked for a valid signature by the pinned key (InRelease carries a second, older key's
-	# signature too, which is not consulted).
-	fetch_packages_index() {
-		inrelease=$(download_file "$apt_base/dists/$1/InRelease")
-		"$gpg_bin" --no-default-keyring --keyring "$keydir/ubuntu-archive.gpg" --status-fd 3 \
-			--output "$keydir/Release-$1" --decrypt "$inrelease" 3> "$keydir/status-$1" >/dev/null 2>&1 || true
-		if ! grep -q "^\[GNUPG:\] VALIDSIG $ubuntu_archive_key " "$keydir/status-$1"; then
-			error "$apt_base/dists/$1/InRelease: no valid signature by the Ubuntu archive key $ubuntu_archive_key"
-		fi
-		sha=$(awk -v f="main/binary-$deb_arch/Packages.gz" '/^SHA256:/ { s = 1; next } /^[^ ]/ { s = 0 } s && $3 == f { print $1; exit }' "$keydir/Release-$1")
-		if [ -z "$sha" ]; then
-			error "no SHA256 for main/binary-$deb_arch/Packages.gz in $1's InRelease"
-		fi
-		pkgz=$(download_and_verify_file "$apt_base/dists/$1/main/binary-$deb_arch/Packages.gz" "$sha")
-		execute sh -c "gzip -dc '$pkgz' > '$keydir/Packages-$1-$deb_arch'"
-	}
-	# extract_deb DEB DIR: a .deb's payload into DIR — ar + tar rather than dpkg-deb, which only
-	# Debian-family hosts have.
-	extract_deb() {
-		member=$("$ar_bin" t "$1" | grep '^data\.tar')
-		case "$member" in
-		*.xz) decompress="xz -dc" ;;
-		*.zst) decompress="zstd -dc" ;;
-		*.gz) decompress="gzip -dc" ;;
-		*) decompress="cat" ;;
-		esac
-		"$ar_bin" p "$1" "$member" | $decompress | $_s tar -x -C "$2" || error "extracting $1 failed"
-	}
 
 	# This machine's architecture; the CI build host cross-compiles the other one too, and needs
 	# the cross-arch GNU strip for -R .eh_frame (host strip rejects foreign-arch ELF).
@@ -1558,17 +1518,16 @@ install_linux_glibc_sysroot() {
 
 		# 2. focal runtime + dev headers (the minimal base image has runtime
 		#    libc but tar may not preserve all symlinks; dev headers are absent).
-		# focal-updates first so awk's first match picks the patched version.
-		fetch_packages_index focal-updates
-		fetch_packages_index focal
-		execute sh -c "cat '$keydir/Packages-focal-updates-$deb_arch' '$keydir/Packages-focal-$deb_arch' > '$tmp/Packages'"
+		pkgz1=$(download_file "$apt_base/dists/focal-updates/main/binary-${deb_arch}/Packages.gz")
+		pkgz2=$(download_file "$apt_base/dists/focal/main/binary-${deb_arch}/Packages.gz")
+		# focal-updates first so awk's first-match picks the patched version.
+		execute sh -c "gzip -dc '$pkgz1' '$pkgz2' > '$tmp/Packages'"
 		for pkg in libc6 libc6-dev linux-libc-dev libcrypt1 libcrypt-dev; do
-			entry=$(awk -v p="$pkg" '$1 == "Package:" { f = ($2 == p); fn = ""; h = "" } f && $1 == "Filename:" { fn = $2 } f && $1 == "SHA256:" { h = $2 } f && fn && h { print fn, h; exit }' "$tmp/Packages")
-			if [ -z "$entry" ]; then
-				error "$pkg not found in focal's Packages ($deb_arch)"
+			path=$(awk -v p="$pkg" '$1=="Package:"&&$2==p{f=1} f&&$1=="Filename:"{print $2; exit}' "$tmp/Packages")
+			if [ -n "$path" ]; then
+				deb=$(download_file "$apt_base/$path")
+				execute_sudo dpkg-deb -x "$deb" "$sysroot"
 			fi
-			deb=$(download_and_verify_file "$apt_base/${entry% *}" "${entry#* }")
-			extract_deb "$deb" "$sysroot"
 		done
 		# Absolute symlinks from the .debs point at host paths; rewrite them
 		# to stay inside the sysroot so -lpthread/-ldl resolve to target libs.
@@ -1593,7 +1552,7 @@ install_linux_glibc_sysroot() {
 		mkdir -p "$tmp/gcc13"
 		execute tar -xzf "$gcc13" -C "$tmp/gcc13"
 		for deb in "$tmp/gcc13"/*.deb; do
-			extract_deb "$deb" "$sysroot"
+			execute_sudo dpkg-deb -x "$deb" "$sysroot"
 		done
 
 		execute_sudo rm -rf "$tmp"

@@ -82,6 +82,17 @@ impl<'a> DepthLimiter<'a> {
 }
 
 impl<'a> DepthLimiter<'a> {
+    /// Whether a start tag must reach the tree builder even at the cap. The
+    /// [`always_forward`] reasoning only holds in HTML content: inside
+    /// `<svg>`/`<math>` those same names are ordinary foreign elements that
+    /// nest and switch nothing, so there nothing is exempt.
+    fn exempt(&self, name: &LocalName) -> bool {
+        always_forward(name)
+            && !self
+                .inner
+                .adjusted_current_node_present_but_not_in_html_namespace()
+    }
+
     /// In place of a dropped tag: a space if the tag was block-level, so the
     /// words on either side of what would have been a block boundary do not
     /// run together in the flattened text. (Whitespace is insertable in every
@@ -166,7 +177,7 @@ impl<'a> TokenSink for DepthLimiter<'a> {
                 TagKind::StartTag => {
                     let tree_deep = self.inner.sink.depth_hint() >= MAX_TREE_DEPTH;
                     if (tree_deep || self.handles_at_most.get() >= MAX_HANDLES / 2)
-                        && !always_forward(&tag.name)
+                        && !self.exempt(&tag.name)
                     {
                         let handles = self.open_handle_count();
                         self.handles_at_most.set(handles);

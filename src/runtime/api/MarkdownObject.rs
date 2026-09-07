@@ -187,28 +187,22 @@ fn from_html(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JS
             .throw_invalid_arguments(format_args!("Expected a string or buffer to convert")));
     };
     // Nothing from here on re-enters JS, so a buffer input needs no pinning.
+    // The bytes may still be shared memory (a view over a SharedArrayBuffer)
+    // that another thread is writing; `convert_utf8_bytes` snapshots them
+    // before validating, so that cannot break the UTF-8 invariant.
     let bytes: &[u8] = buffer.slice();
-    if bytes.len() > h::MAX_INPUT_LEN {
-        return Err(global_this.throw_range_error(
+    let too_long = || {
+        global_this.throw_range_error(
             bytes.len() as i64,
             RangeErrorOptions {
                 max: h::MAX_INPUT_LEN as i64,
                 field_name: b"input.byteLength",
                 ..Default::default()
             },
-        ));
-    }
-
-    // html5ever consumes `&str`. JS strings arrive as valid UTF-8; a raw
-    // buffer may not be, in which case invalid sequences become U+FFFD —
-    // what a browser does when it decodes the same bytes as UTF-8.
-    let markdown = if bun_core::strings::is_valid_utf8(bytes) {
-        // SAFETY: validated on the line above.
-        h::convert(unsafe { core::str::from_utf8_unchecked(bytes) }, &options)
-    } else {
-        #[allow(clippy::disallowed_methods)]
-        let lossy = String::from_utf8_lossy(bytes);
-        h::convert(&lossy, &options)
+        )
+    };
+    let Ok(markdown) = h::convert_utf8_bytes(bytes, &options) else {
+        return Err(too_long());
     };
 
     bun_string_jsc::owned_utf8_into_js(global_this, markdown.into_bytes())

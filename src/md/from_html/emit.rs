@@ -357,7 +357,9 @@ impl<'o> Converter<'o> {
                 .and_then(|p| p.attr(&local_name!("start")))
                 .and_then(|s| js_trim(s).parse::<i64>().ok())
                 .unwrap_or(1);
-            let _ = write!(rep, "{}. ", start.saturating_add(element_index as i64));
+            // A negative `start` is valid HTML but has no list-marker spelling.
+            let n = start.saturating_add(element_index as i64).max(0);
+            let _ = write!(rep, "{n}. ");
         } else {
             rep.push_str(self.opts.bullet());
             rep.push(' ');

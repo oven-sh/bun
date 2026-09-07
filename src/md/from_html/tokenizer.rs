@@ -25,7 +25,6 @@
 //! a corpus of real pages and windows into them, and random markup.
 
 use bun_core::strings;
-use html5ever::data::C1_REPLACEMENTS;
 use html5ever::tendril::StrTendril;
 use html5ever::tokenizer::states::RawKind;
 use html5ever::tokenizer::{Doctype, Tag, TagKind, Token, TokenSink, TokenSinkResult};
@@ -1484,14 +1483,25 @@ mod entities {
 
 /// The numeric character reference end state's mapping.
 fn numeric_char_ref(num: u32, too_big: bool) -> char {
-    match num {
-        n if n > 0x10FFFF || too_big => '\u{FFFD}',
-        0x00 | 0xD800..=0xDFFF => '\u{FFFD}',
-        0x80..=0x9F => {
-            C1_REPLACEMENTS[(num - 0x80) as usize].unwrap_or_else(|| char::from_u32(num).unwrap())
-        }
-        n => char::from_u32(n).expect("range checked above"),
-    }
+    /// §13.2.5.80: references to C1 controls are read as windows-1252.
+    /// Zero marks the code points that map to themselves.
+    #[rustfmt::skip]
+    static C1: [u16; 32] = [
+        0x20AC, 0, 0x201A, 0x0192, 0x201E, 0x2026, 0x2020, 0x2021,
+        0x02C6, 0x2030, 0x0160, 0x2039, 0x0152, 0, 0x017D, 0,
+        0, 0x2018, 0x2019, 0x201C, 0x201D, 0x2022, 0x2013, 0x2014,
+        0x02DC, 0x2122, 0x0161, 0x203A, 0x0153, 0, 0x017E, 0x0178,
+    ];
+    let n = match num {
+        n if n > 0x10FFFF || too_big => 0xFFFD,
+        0x00 | 0xD800..=0xDFFF => 0xFFFD,
+        0x80..=0x9F => match C1[(num - 0x80) as usize] {
+            0 => num,
+            mapped => u32::from(mapped),
+        },
+        n => n,
+    };
+    char::from_u32(n).unwrap_or('\u{FFFD}')
 }
 
 /// Token-stream equivalence with html5ever's own tokenizer: both are run in

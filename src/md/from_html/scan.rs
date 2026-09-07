@@ -149,6 +149,20 @@ mod tests {
     }
 
     #[test]
+    fn space_pair_across_the_probe_boundary() {
+        // The inline probe ends at 64; a pair at 63–64 is the kernel's find.
+        let mut t = vec![b'a'; 96];
+        t[63] = b' ';
+        t[64] = b' ';
+        assert_eq!(first_uncollapsed(&t), Some(64));
+        t[64] = b'a';
+        t[70] = b'\n';
+        assert_eq!(first_uncollapsed(&t), Some(70));
+        assert_eq!(find_any(&t, b"\n\t"), Some(70));
+        assert_eq!(find_byte(&t[..70], b'\n'), None);
+    }
+
+    #[test]
     fn matches_scalar_definitions() {
         let alphabet = b" \t\n\rab<&\0\x01\x7f\x80\x81\xfe\xff\"'";
         let mut seed: u64 = 0x243F_6A88_85A3_08D3;

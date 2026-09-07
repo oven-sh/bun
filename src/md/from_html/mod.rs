@@ -27,6 +27,7 @@ mod text;
 mod tokenizer;
 mod whitespace;
 
+use bun_core::strings;
 use html5ever::tendril::StrTendril;
 use html5ever::tree_builder::{TreeBuilder, TreeBuilderOpts, TreeSink};
 
@@ -185,12 +186,48 @@ impl Options {
     }
 }
 
+/// The input, after U+FFFD substitution, exceeds [`MAX_INPUT_LEN`].
+#[derive(Debug)]
+pub struct InputTooLong;
+
 /// Converts an HTML document (or fragment) to Markdown. Never fails: any
 /// input the HTML parser accepts produces some Markdown, and the parser
 /// accepts everything. Callers bound `html.len()` by [`MAX_INPUT_LEN`].
 pub fn convert(html: &str, options: &Options) -> String {
-    debug_assert!(html.len() <= MAX_INPUT_LEN);
-    let arena = dom::Arenas::with_capacity(html.len() / 32);
+    convert_tendril(&StrTendril::from(html), options)
+}
+
+/// [`convert`] for bytes that are supposed to be UTF-8 and may be backed
+/// by memory another thread can write (a `SharedArrayBuffer`). The bytes
+/// are copied first — the parser needs its own buffer regardless — and
+/// only that private copy is validated and parsed, so nothing another
+/// thread does afterwards can invalidate the check. Invalid sequences become
+/// U+FFFD, as a browser decoding the same bytes would have it.
+pub fn convert_utf8_bytes(bytes: &[u8], options: &Options) -> Result<String, InputTooLong> {
+    use html5ever::tendril::ByteTendril;
+    if bytes.len() > MAX_INPUT_LEN {
+        return Err(InputTooLong);
+    }
+    let copy = ByteTendril::from_slice(bytes);
+    let input = if strings::is_valid_utf8(&copy) {
+        // SAFETY: validated on the line above, on this private copy.
+        unsafe { copy.reinterpret_without_validating() }
+    } else {
+        #[allow(clippy::disallowed_methods)] // U+FFFD substitution is the point here
+        let lossy = String::from_utf8_lossy(&copy).into_owned();
+        drop(copy);
+        // Each replaced byte grew to three.
+        if lossy.len() > MAX_INPUT_LEN {
+            return Err(InputTooLong);
+        }
+        StrTendril::from(lossy)
+    };
+    Ok(convert_tendril(&input, options))
+}
+
+fn convert_tendril(input: &StrTendril, options: &Options) -> String {
+    debug_assert!(input.len() <= MAX_INPUT_LEN);
+    let arena = dom::Arenas::with_capacity(input.len() / 32);
 
     let tree_builder = TreeBuilder::new(
         dom::Sink::new(&arena),
@@ -204,8 +241,7 @@ pub fn convert(html: &str, options: &Options) -> String {
     );
     // Tokens flow tokenizer → depth limiter → html5ever tree builder → sink.
     let limiter = depth::DepthLimiter::new(tree_builder);
-    let input = StrTendril::from(html);
-    tokenizer::FastTokenizer::new(&input, &limiter).run();
+    tokenizer::FastTokenizer::new(input, &limiter).run();
     let document = limiter.inner.sink.get_document();
 
     // Convert `<body>` when the parser produced one (it always does for
@@ -218,7 +254,7 @@ pub fn convert(html: &str, options: &Options) -> String {
 
     whitespace::collapse_whitespace(root);
 
-    let mut out = String::with_capacity(html.len() / 2);
+    let mut out = String::with_capacity(input.len() / 2);
     emit::Converter::new(options).convert(root, &mut out);
     out
 }

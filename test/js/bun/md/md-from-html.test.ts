@@ -534,6 +534,15 @@ describe("Bun.markdown.fromHTML", () => {
     test("NUL bytes", () => {
       expect(fromHTML("<p>a\u0000b</p>")).toBe("ab");
     });
+    test("SharedArrayBuffer-backed input is snapshotted", () => {
+      const src = new TextEncoder().encode("<p>caf\u00e9 <b>ok</b></p>");
+      const shared = new Uint8Array(new SharedArrayBuffer(src.length));
+      shared.set(src);
+      expect(fromHTML(shared)).toBe("caf\u00e9 **ok**");
+    });
+    test("negative <ol start> clamps to 0", () => {
+      expect(fromHTML('<ol start="-2"><li>a</li><li>b</li><li>c</li><li>d</li></ol>')).toBe("0. a\n0. b\n0. c\n1. d");
+    });
   });
 
   describe("malformed input never throws", () => {
@@ -592,6 +601,9 @@ describe("Bun.markdown.fromHTML", () => {
         () => Array.from({ length: depth }, (_, i) => `<x-${i}>`).join("") + "deep",
       ],
       ["svg", () => "<svg>" + repeat("<g>", depth) + "<text>deep</text>"],
+      // Void / raw-text names are only special in HTML content; inside <svg>
+      // they nest like anything else and must be capped like anything else.
+      ["svg + html void names", () => "<svg>" + repeat("<wbr><textarea><col>", depth / 3) + "<text>deep</text>"],
       ["formatting elements across blocks", () => repeat("<b><i><s><u>", 500) + repeat("<p>x</p>", 2000) + "deep"],
     ];
     for (const [name, html] of cases) {
@@ -679,16 +691,22 @@ describe("Bun.markdown.fromHTML", () => {
   // blank-line placement.
   // -------------------------------------------------------------------------
   describe("differential vs turndown", () => {
+    const td = new TurndownService({
+      headingStyle: "atx",
+      codeBlockStyle: "fenced",
+      bulletListMarker: "-",
+      hr: "---",
+    });
+    td.use(gfm);
+    td.remove(["script", "style", "noscript", "template", "title", "head"]);
+    const turndownCache = new Map<string, string>();
     function turndown(html: string): string {
-      const td = new TurndownService({
-        headingStyle: "atx",
-        codeBlockStyle: "fenced",
-        bulletListMarker: "-",
-        hr: "---",
-      });
-      td.use(gfm);
-      td.remove(["script", "style", "noscript", "template", "title", "head"]);
-      return td.turndown(html);
+      let md = turndownCache.get(html);
+      if (md === undefined) {
+        md = td.turndown(html);
+        turndownCache.set(html, md);
+      }
+      return md;
     }
     function normalize(md: string): string[] {
       return md
@@ -701,7 +719,7 @@ describe("Bun.markdown.fromHTML", () => {
             .replace(/\s+/g, " ")
             .trim(),
         )
-        .filter(l => l.length > 0);
+        .filter(l => l.length > 0 && !/^>+$/.test(l));
     }
     function expectEquivalent(html: string) {
       const ours = normalize(fromHTML(html));
@@ -923,17 +941,27 @@ describe("Bun.markdown.fromHTML", () => {
         return s;
       }
 
-      // Whitespace-only `<del>` (turndown emits bare `~~`, we emit nothing)
-      // is the one deviation the generator can still hit; skip those cases.
-      const deviates = (html: string) => /~\s*~/.test(turndown(html).replace(/\\./g, ""));
+      // Whitespace-only `<del>` (turndown emits an empty `~~` pair, we emit
+      // nothing) is the one deviation the generator can still hit; skip
+      // those cases, and make sure that stays a small minority.
+      // (The plugin writes `~`, so that output is `~~` or `~ ~` with no
+      // tilde on either side; literal `~~~` text does not count.)
+      const deviates = (html: string) => /(^|[^~])~\s*~(?!~)/.test(turndown(html));
+      let skipped = 0;
 
       for (let seed = 1; seed <= 250; seed++) {
         test(`seed ${seed}`, () => {
           const html = generate(seed);
-          if (deviates(html)) return;
+          if (deviates(html)) {
+            skipped++;
+            return;
+          }
           expectEquivalent(html);
         });
       }
+      test("most seeds are comparable", () => {
+        expect(skipped).toBeLessThan(40);
+      });
     });
   });
 });

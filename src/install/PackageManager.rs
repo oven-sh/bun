@@ -1481,12 +1481,12 @@ fn overlay_bunfig_install(install: &mut Api::BunInstall, bunfig: Api::BunInstall
 /// a directory other local users can write to, `/tmp` for example, any of them
 /// can plant one above a project that is not theirs.
 ///
-/// Two things have to hold. `directory` is not a shared drop point: other write
-/// plus the sticky bit, what `/tmp` and `/dev/shm` carry, where anyone may add
-/// a name, including a hard link to a file this user owns. And a trusted user
-/// owns both the file bun opened and the directory entry that named it, so that
-/// a symlink another user planted cannot stand in for it (`fstat` reports the
-/// owner of a link's target).
+/// Two things have to hold. `directory` is not a shared drop point: the sticky
+/// bit plus group or other write, what `/tmp` and `/dev/shm` carry, where
+/// another user may add a name, including a hard link to a file this user owns.
+/// And a trusted user owns both the file bun opened and the directory entry
+/// that named it, so that a symlink another user planted cannot stand in for it
+/// (`fstat` reports the owner of a link's target).
 ///
 /// Trusted: this user, and the owner of the directory the command ran in
 /// (`cwd_uid`, `None` when it cannot be read). The second keeps `sudo bun
@@ -1498,7 +1498,8 @@ fn ancestor_package_json_trust(
     directory: &[u8],
     cwd_uid: Option<u32>,
 ) -> Option<Untrusted> {
-    const SHARED: bun_sys::Mode = bun_sys::S::IWOTH | bun_sys::S::ISVTX;
+    const SHARED_WRITE: bun_sys::Mode = bun_sys::S::IWGRP | bun_sys::S::IWOTH;
+    let is_shared = |mode: bun_sys::Mode| mode & bun_sys::S::ISVTX != 0 && mode & SHARED_WRITE != 0;
     let is_trusted = |uid: u32| uid == bun_sys::c::geteuid() || Some(uid) == cwd_uid;
 
     let mut directory_buf = bun_paths::path_buffer_pool::get();
@@ -1507,7 +1508,7 @@ fn ancestor_package_json_trust(
     // SAFETY: NUL written above
     let directory = ZStr::from_buf(&directory_buf[..], directory.len());
 
-    if !bun_sys::stat(directory).is_ok_and(|st| st.st_mode as bun_sys::Mode & SHARED != SHARED) {
+    if !bun_sys::stat(directory).is_ok_and(|st| !is_shared(st.st_mode as bun_sys::Mode)) {
         return Some(Untrusted::SharedDirectory);
     }
     if !bun_sys::lstat(path).is_ok_and(|st| is_trusted(st.st_uid))
@@ -1526,7 +1527,7 @@ enum Untrusted {
 }
 
 #[cfg(unix)]
-fn warn_untrusted_ancestor(reason: Untrusted, directory: &[u8]) {
+fn warn_untrusted_ancestor(reason: &Untrusted, directory: &[u8]) {
     match reason {
         Untrusted::SharedDirectory => bun_core::warn!(
             "other local users can add files to <b>{}<r>, so bun ignored the package.json in it",
@@ -1692,7 +1693,7 @@ pub fn init(
                                 this_cwd,
                                 cwd_uid,
                             ) {
-                                warn_untrusted_ancestor(reason, this_cwd);
+                                warn_untrusted_ancestor(&reason, this_cwd);
                                 let _ = f.close();
                                 if let Some(parent) = bun_core::dirname(this_cwd) {
                                     this_cwd = strings::without_trailing_slash(parent);
@@ -1801,21 +1802,27 @@ pub fn init(
                             continue;
                         }
                     };
-                    // Decided here, where `parent_path_buf` still holds this path.
+                    // Before the read and the parse: bun does not look at what it will
+                    // not use, and a manifest it cannot parse is then not an error either.
                     #[cfg(unix)]
-                    let parent_trust = {
+                    {
                         // SAFETY: NUL written above
                         let path = ZStr::from_buf(
                             &parent_path_buf[..],
                             parent_without_trailing_slash.len() + b"/package.json".len(),
                         );
-                        ancestor_package_json_trust(
+                        if let Some(reason) = ancestor_package_json_trust(
                             &json_file,
                             path,
                             parent_without_trailing_slash,
                             cwd_uid,
-                        )
-                    };
+                        ) {
+                            warn_untrusted_ancestor(&reason, parent_without_trailing_slash);
+                            let _ = json_file.close();
+                            this_cwd = parent;
+                            continue;
+                        }
+                    }
                     let json_stat_size = json_file.get_end_pos()?;
                     let mut json_buf = vec![0u8; (json_stat_size + 64) as usize];
                     let json_len = json_file.pread_all(&mut json_buf, 0)?;
@@ -1927,15 +1934,6 @@ pub fn init(
                             let maybe_workspace_path = child_path;
 
                             if strings::eql_long(maybe_workspace_path, path_, true) {
-                                #[cfg(unix)]
-                                if let Some(reason) = parent_trust {
-                                    warn_untrusted_ancestor(reason, parent_without_trailing_slash);
-                                    bun_core::note!(
-                                        "bun installs <b>{}<r> as a standalone project",
-                                        bstr::BStr::new(child_cwd),
-                                    );
-                                    break;
-                                }
                                 // Intern via the resolver's DirnameStore so the slice is
                                 // process-lifetime (`set_top_level_dir` requires `'static`).
                                 fs.set_top_level_dir(fs.dirname_store().append(parent)?);

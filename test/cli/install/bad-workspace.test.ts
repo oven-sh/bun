@@ -425,13 +425,16 @@ describe("untrusted ancestor package.json", () => {
     expect(exitCode).toBe(1);
   });
 
-  // Owning the manifest is not enough in a directory with the mode `/tmp` has: any user
-  // may add a name there, including a hard link to a file this user owns. No second uid is
-  // needed for this one.
-  test.skipIf(isWindows)("in a directory every user may write to is not the workspace root", async () => {
+  // Owning the manifest is not enough in a directory with the mode `/tmp` has: another
+  // user may add a name there, including a hard link to a file this user owns. No second
+  // uid is needed for these, so they run on every platform.
+  test.skipIf(isWindows).each([
+    ["every user", 0o1777],
+    ["the group", 0o1770],
+  ])("in a sticky directory %s may write to is not the workspace root", async (_, mode) => {
     using dir = tempDir("bad-workspace-root-shared-dir", workspaceFiles);
     const root = String(dir);
-    chmodSync(root, 0o1777);
+    chmodSync(root, mode);
 
     const { stdout, stderr, exitCode } = await installIn(root, "proj");
 
@@ -440,6 +443,25 @@ describe("untrusted ancestor package.json", () => {
     expect(existsSync(marker(root))).toBe(false);
     expect(existsSync(join(root, "proj", "bun.lock"))).toBe(true);
     expect(existsSync(join(root, "bun.lock"))).toBe(false);
+    expect(exitCode).toBe(0);
+  });
+
+  // An untrusted manifest is refused before it is read, so one that cannot be parsed is
+  // ignored like any other instead of failing the install.
+  test.skipIf(isWindows)("is not read at all, so invalid JSON in it installs the project", async () => {
+    using dir = tempDir("bad-workspace-root-shared-dir-invalid", {
+      ...workspaceFiles,
+      "package.json": "{{{",
+    });
+    const root = String(dir);
+    chmodSync(root, 0o1777);
+
+    const { stderr, exitCode } = await installIn(root, "proj");
+
+    expect(stderr).toContain(`other local users can add files to ${root}`);
+    expect(stderr).not.toContain("ParserError");
+    expect(stderr).not.toContain("Expected string");
+    expect(existsSync(join(root, "proj", "bun.lock"))).toBe(true);
     expect(exitCode).toBe(0);
   });
 

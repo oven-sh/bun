@@ -8,9 +8,9 @@
 // SIGXFSZ, so the syscall fails instead of killing the process. The source
 // stays under 128 KB so that macOS takes the read/write path, not clonefile().
 import { describe, expect, it } from "bun:test";
+import { bunEnv, bunExe, isLinux, isWindows, tempDir } from "harness";
 import { constants, copyFileSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { bunEnv, bunExe, isLinux, isWindows, tempDir } from "harness";
 
 const fixture = /* js */ `
 const fs = require("node:fs");

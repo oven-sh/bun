@@ -10,7 +10,9 @@ use crate::Error;
 use crate::webcore::Lifetime;
 #[cfg(not(windows))]
 use crate::webcore::blob::ClosingState;
-use crate::webcore::blob::store::{Bytes as ByteStore, Data, File as FileStore};
+#[cfg(windows)]
+use crate::webcore::blob::store::Bytes as ByteStore;
+use crate::webcore::blob::store::{Data, File as FileStore};
 use crate::webcore::blob::{Blob, FileCloser, FileOpener, MAX_SIZE, SizeType, Store};
 use crate::webcore::node_types::PathOrFileDescriptor;
 #[cfg(windows)]
@@ -268,8 +270,6 @@ impl ReadFile {
 
 pub struct ReadFile {
     pub(crate) file_store: FileStore,
-    #[cfg(not(windows))]
-    pub(crate) byte_store: ByteStore,
     pub(crate) store: Option<RefPtr<Store>>,
     pub offset: SizeType,
     #[cfg(not(windows))]
@@ -365,7 +365,6 @@ impl ReadFile {
         let file_store = store.data.as_file().clone();
         let read_file = ReadFile {
             file_store,
-            byte_store: ByteStore::default(),
             store: Some(store),
             offset: off,
             max_length: max_len,
@@ -748,9 +747,6 @@ impl ReadFile {
         // so we should check specifically that its a regular file before trusting the size.
         if self.size == 0 && bun_sys::is_regular_file(self.file_store.mode) {
             self.buffer = Vec::new();
-            // `Bytes` owns its allocation, so leave `byte_store`
-            // default — `then()` reads `self.buffer` directly.
-            self.byte_store = ByteStore::default();
 
             self.on_finish();
             return;
@@ -917,8 +913,6 @@ impl ReadFile {
             if self.buffer.len() + 16_000 < self.buffer.capacity() {
                 self.buffer.shrink_to_fit();
             }
-            // `Bytes` is owning, and `then()` delivers `self.buffer` directly,
-            // so do not also stash it in `byte_store` — that would double-free.
             self.on_finish();
         }
     }
@@ -1174,7 +1168,7 @@ impl<'a> ReadFileUV<'a> {
                 Some(Self::on_file_initial_stat),
             )
         };
-        if let Some(errno) = rc.err_enum_e() {
+        if let Some(errno) = rc.errno() {
             self.errno = Some(bun_errno::from_errno(errno as i32).into());
             self.system_error = Some(
                 bun_sys::Error::from_code(errno, bun_sys::Tag::fstat)
@@ -1195,7 +1189,7 @@ impl<'a> ReadFileUV<'a> {
 
         // `req` aliases `this.req`; once `&mut ReadFileUV` exists, going through the
         // raw `req` pointer would violate Stacked Borrows. Read via `this.req` instead.
-        if let Some(errno) = this.req.result.err_enum_e() {
+        if let Some(errno) = this.req.result.errno() {
             this.errno = Some(bun_errno::from_errno(errno as i32).into());
             this.system_error = Some(
                 bun_sys::Error::from_code(errno, bun_sys::Tag::fstat)
@@ -1364,7 +1358,7 @@ impl<'a> ReadFileUV<'a> {
                 )
             };
             self.req.data = core::ptr::from_mut(self).cast::<c_void>();
-            if let Some(errno) = res.err_enum_e() {
+            if let Some(errno) = res.errno() {
                 self.errno = Some(bun_errno::from_errno(errno as i32).into());
                 self.system_error = Some(
                     bun_sys::Error::from_code(errno, bun_sys::Tag::read)
@@ -1391,7 +1385,7 @@ impl<'a> ReadFileUV<'a> {
         // raw `req` pointer would violate Stacked Borrows. Read via `this.req` instead.
         let result = this.req.result;
 
-        if let Some(errno) = result.err_enum_e() {
+        if let Some(errno) = result.errno() {
             this.errno = Some(bun_errno::from_errno(errno as i32).into());
             this.system_error = Some(
                 bun_sys::Error::from_code(errno, bun_sys::Tag::read)

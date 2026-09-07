@@ -139,7 +139,7 @@ static bool evaluateCommonJSModuleOnce(JSC::VM& vm, Zig::GlobalObject* globalObj
             globalObject,
             globalObject->requireResolveFunctionUnbound(),
             moduleObject,
-            ArgList(), 1, globalObject->commonStrings().resolveString(globalObject), resolveSourceCode);
+            ArgList(), 1, Bun::commonStrings(vm).resolveString(), resolveSourceCode);
         RETURN_IF_EXCEPTION(scope, );
 
         SourceCode requireSourceCode = makeSource("require"_s, SourceOrigin(), SourceTaintedOrigin::Untainted);
@@ -147,7 +147,7 @@ static bool evaluateCommonJSModuleOnce(JSC::VM& vm, Zig::GlobalObject* globalObj
             globalObject,
             globalObject->requireFunctionUnbound(),
             moduleObject,
-            ArgList(), 1, globalObject->commonStrings().requireString(globalObject), requireSourceCode);
+            ArgList(), 1, Bun::commonStrings(vm).requireString(), requireSourceCode);
         RETURN_IF_EXCEPTION(scope, );
         requireFunction->putDirect(vm, vm.propertyNames->resolve, resolveFunction, 0);
         RETURN_IF_EXCEPTION(scope, );
@@ -1685,7 +1685,7 @@ JSObject* JSCommonJSModule::createBoundRequireFunction(VM& vm, JSGlobalObject* l
         globalObject,
         globalObject->requireFunctionUnbound(),
         moduleObject,
-        ArgList(), 1, globalObject->commonStrings().requireString(globalObject), requireSourceCode);
+        ArgList(), 1, Bun::commonStrings(vm).requireString(), requireSourceCode);
     RETURN_IF_EXCEPTION(scope, nullptr);
 
     SourceCode resolveSourceCode = makeSource("resolve"_s, SourceOrigin(), SourceTaintedOrigin::Untainted);
@@ -1694,7 +1694,7 @@ JSObject* JSCommonJSModule::createBoundRequireFunction(VM& vm, JSGlobalObject* l
         globalObject,
         globalObject->requireResolveFunctionUnbound(),
         moduleObject,
-        ArgList(), 1, globalObject->commonStrings().resolveString(globalObject), resolveSourceCode);
+        ArgList(), 1, Bun::commonStrings(vm).resolveString(), resolveSourceCode);
     RETURN_IF_EXCEPTION(scope, nullptr);
 
     requireFunction->putDirect(vm, vm.propertyNames->resolve, resolveFunction, 0);

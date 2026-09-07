@@ -1,4 +1,3 @@
-use core::cell::Cell;
 use core::ffi::c_void;
 
 use crate::socket::{SSLConfig, SSLConfigFromJs};
@@ -300,6 +299,7 @@ impl JSValkeyClient {
 // `*mut JSValkeyClient` and `*mut ValkeyClient` alias (the socket ext slot did
 // — see `connect()` below).
 #[repr(C)]
+#[derive(bun_ptr::RefCounted)]
 pub struct JSValkeyClient {
     pub(crate) client: JsCell<valkey::ValkeyClient>,
     pub(crate) global_object: GlobalRef,
@@ -307,9 +307,9 @@ pub struct JSValkeyClient {
     pub poll_ref: JsCell<KeepAlive>,
 
     pub(crate) _subscription_ctx: JsCell<SubscriptionCtx>,
-    /// `us_ssl_ctx_t` for `tls: { …custom CA… }`. `tls: true` borrows
+    /// `SSL_CTX` for `tls: { …custom CA… }`. `tls: true` borrows
     /// `RareData.defaultClientSslCtx()` instead; `tls: false` leaves this null.
-    pub(crate) _secure: Cell<Option<*mut uws::SslCtx>>,
+    pub(crate) _secure: JsCell<Option<boringssl::c::OwnedSslCtx>>,
 
     pub(crate) timer: RefCountedTimer,
     pub(crate) reconnect_timer: RefCountedTimer,
@@ -317,12 +317,11 @@ pub struct JSValkeyClient {
 }
 
 /// Intrusive [`EventLoopTimer`] slot that owns one strong ref on
-/// [`JSValkeyClient`] while armed. `ref_held` mirrors the `ref_()` taken in
-/// [`arm`] so [`disarm`] and [`take_fire_ref`] release it exactly once even
-/// when the fire/close/reconnect paths re-enter each other.
+/// [`JSValkeyClient`] (`held_ref`) while armed, so [`disarm`] and
+/// [`take_fire_ref`] release it exactly once even when the
+/// fire/close/reconnect paths re-enter each other.
 ///
 /// [`EventLoopTimer`]: Timer::EventLoopTimer
-/// [`arm`]: Self::arm
 /// [`disarm`]: Self::disarm
 /// [`take_fire_ref`]: Self::take_fire_ref
 #[repr(C)]
@@ -330,7 +329,7 @@ pub struct RefCountedTimer {
     // Must be first (offset 0): `dispatch.rs` recovers `*mut JSValkeyClient`
     // from the fired `*const EventLoopTimer` via `offset_of!(.., timer)`.
     event_loop_timer: JsCell<Timer::EventLoopTimer>,
-    ref_held: Cell<bool>,
+    held_ref: JsCell<Option<RefPtr<JSValkeyClient>>>,
 }
 
 const _: () = assert!(core::mem::offset_of!(RefCountedTimer, event_loop_timer) == 0);
@@ -339,7 +338,7 @@ impl RefCountedTimer {
     fn new(tag: Timer::Tag) -> Self {
         Self {
             event_loop_timer: JsCell::new(Timer::EventLoopTimer::init_paused(tag)),
-            ref_held: Cell::new(false),
+            held_ref: JsCell::new(None),
         }
     }
 
@@ -379,8 +378,8 @@ impl RefCountedTimer {
                     .cast_mut(),
             )
         };
-        if !self.ref_held.replace(true) {
-            owner.ref_();
+        if self.held_ref.get().is_none() {
+            self.held_ref.set(Some(owner.ref_guard()));
         }
     }
 
@@ -392,22 +391,16 @@ impl RefCountedTimer {
             // linked into the heap (state == ACTIVE checked above).
             unsafe { VirtualMachine::timer_remove(vm, self.event_loop_timer.as_ptr()) };
         }
-        if self.ref_held.replace(false) {
-            // SAFETY: balanced with `arm`'s `ref_()`; `_guard`/caller's ref
-            // keeps `owner` live past this call.
-            unsafe { JSValkeyClient::deref(std::ptr::from_ref(owner).cast_mut()) };
-        }
+        // The caller's ref keeps `owner` live past this call.
+        self.held_ref.set(None);
     }
 
     /// Mark fired and hand the keep-alive ref (if held) to the callback scope.
     /// Returns `None` when no ref was held, so a stray fire cannot over-release.
-    fn take_fire_ref(&self, owner: &JSValkeyClient) -> Option<RefPtr<JSValkeyClient>> {
+    fn take_fire_ref(&self) -> Option<RefPtr<JSValkeyClient>> {
         self.event_loop_timer
             .with_mut(|t| t.state = Timer::State::FIRED);
-        self.ref_held.replace(false).then(|| {
-            // SAFETY: `arm`'s `ref_()` set `ref_held`; this scope consumes it.
-            unsafe { RefPtr::from_raw(owner.as_ctx_ptr()) }
-        })
+        self.held_ref.take()
     }
 }
 
@@ -419,41 +412,19 @@ bun_event_loop::impl_timer_owner!(JSValkeyClient;
 // `Js` (= `jsc.Codegen.JSRedisClient`) is re-exported above; `to_js`/`from_js`
 // live in that generated module.
 
-// `bun.ptr.RefCount(@This(), "ref_count", deinit, .{})` → intrusive refcount.
-impl bun_ptr::RefCounted for JSValkeyClient {
-    unsafe fn get_ref_count(this: *mut Self) -> *mut bun_ptr::RefCount<Self> {
-        // SAFETY: caller contract — `this` is live.
-        unsafe { &raw mut (*this).ref_count }
-    }
-    unsafe fn destructor(this: *mut Self) {
-        // SAFETY: last ref dropped; sole owner.
-        unsafe { JSValkeyClient::deinit(this) };
+impl Drop for JSValkeyClient {
+    fn drop(&mut self) {
+        debug_assert!(self.client.get().socket.is_closed());
+        debug_assert!(self.timer.held_ref.get().is_none());
+        debug_assert!(self.reconnect_timer.held_ref.get().is_none());
+        self.client_mut().shutdown(None);
+        self.poll_ref.with_mut(|r| r.disable());
+        self.stop_timers();
+        self.ref_count.assert_no_refs();
     }
 }
 
 impl JSValkeyClient {
-    #[inline]
-    pub fn ref_(&self) {
-        // SAFETY: `self` is live; intrusive count is interior-mutable.
-        unsafe { bun_ptr::RefCount::ref_(std::ptr::from_ref::<Self>(self).cast_mut()) };
-    }
-    /// Decrement the intrusive refcount; on zero runs [`deinit`](Self::deinit)
-    /// which frees the heap allocation. After this returns `this` may dangle.
-    ///
-    /// Takes a raw pointer (not `&self`) because a `&self` argument would carry
-    /// a Stacked Borrows protector for the whole call frame, making the
-    /// in-frame deallocation in `deinit` UB ("deallocating while item is
-    /// protected"). Callers that hold a live `&Self` and can prove the count
-    /// stays > 0 may pass `std::ptr::from_ref(self).cast_mut()`.
-    ///
-    /// # Safety
-    /// `this` must point to a live, `heap`-allocated `JSValkeyClient` and the
-    /// caller must own one ref.
-    #[inline]
-    pub unsafe fn deref(this: *mut Self) {
-        // SAFETY: caller contract.
-        unsafe { bun_ptr::RefCount::deref(this) };
-    }
     /// Hold a ref on `self` for the guard's lifetime (across re-entrant calls).
     #[inline]
     pub(crate) fn ref_guard(&self) -> RefPtr<Self> {
@@ -766,7 +737,7 @@ impl JSValkeyClient {
             global_object,
             this_value: JsCell::new(JsRef::empty()),
             poll_ref: JsCell::new(KeepAlive::default()),
-            _secure: Cell::new(None),
+            _secure: JsCell::new(None),
             timer: RefCountedTimer::new(Timer::Tag::ValkeyConnectionTimeout),
             reconnect_timer: RefCountedTimer::new(Timer::Tag::ValkeyConnectionReconnect),
         }))
@@ -878,7 +849,7 @@ impl JSValkeyClient {
             global_object,
             this_value: JsCell::new(JsRef::empty()),
             poll_ref: JsCell::new(KeepAlive::default()),
-            _secure: Cell::new(None),
+            _secure: JsCell::new(None),
             timer: RefCountedTimer::new(Timer::Tag::ValkeyConnectionTimeout),
             reconnect_timer: RefCountedTimer::new(Timer::Tag::ValkeyConnectionReconnect),
         }))
@@ -1077,7 +1048,7 @@ impl JSValkeyClient {
         debug!("onConnectionTimeout");
 
         let _guard = self.ref_guard();
-        let _timer_ref = self.timer.take_fire_ref(self);
+        let _timer_ref = self.timer.take_fire_ref();
         if self.client.get().flags.failed {
             return Ok(());
         }
@@ -1142,10 +1113,8 @@ impl JSValkeyClient {
     }
 
     fn enqueue_deferred_close(&self, what: DeferredClose) {
-        // Released by the task, whether it runs or the VM tears down first.
-        self.ref_();
         let task = jsc::Task::from_boxed(Box::new(ValkeyDeferredClose {
-            ctx: self.as_ctx_ptr(),
+            ctx: self.ref_guard(),
             what,
         }));
         // SAFETY: VM-owned event loop pointer; uniquely accessed on the JS thread.
@@ -1158,7 +1127,7 @@ impl JSValkeyClient {
         debug!("Reconnect timer fired, attempting to reconnect");
 
         let _guard = self.ref_guard();
-        let _timer_ref = self.reconnect_timer.take_fire_ref(self);
+        let _timer_ref = self.reconnect_timer.take_fire_ref();
 
         // Execute reconnection logic
         self.reconnect()
@@ -1438,18 +1407,11 @@ impl JSValkeyClient {
         self.enqueue_deferred_close(DeferredClose::Socket);
     }
 
-    pub fn finalize(self: Box<Self>) {
-        // Refcounted: adopt the JS wrapper's +1 and release it at scope end;
-        // allocation may outlive this call if other refs remain, so hand
-        // ownership back to the raw refcount.
-        let this: &Self = bun_core::heap::release(self);
-        // SAFETY: the JS wrapper owned one ref; this scope consumes it.
-        let _guard = unsafe { RefPtr::from_raw(this.as_ctx_ptr()) };
-
-        this.stop_timers();
-        this.this_value.with_mut(|t| t.finalize());
-        this.client_mut().flags.finalized = true;
-        this.close_socket_next_tick();
+    pub fn finalize(&self) {
+        self.stop_timers();
+        self.this_value.with_mut(|t| t.finalize());
+        self.client_mut().flags.finalized = true;
+        self.close_socket_next_tick();
         // `_subscription_ctx` is three inline bools (no allocation, no GC
         // ref); `is_subscriber` can legitimately still be set here if the
         // server never confirmed UNSUBSCRIBE before disconnect, since
@@ -1514,7 +1476,7 @@ impl JSValkeyClient {
         let ssl_ctx: Option<*mut uws::SslCtx> = match &self.client.get().tls {
             valkey::TLS::None => None,
             valkey::TLS::Enabled => Some(crate::jsc_hooks::default_client_ssl_ctx(vm)),
-            valkey::TLS::Custom(_) => Some(self._secure.get().unwrap()),
+            valkey::TLS::Custom(_) => Some(self._secure.get().as_ref().unwrap().as_ptr()),
         };
 
         self.client_mut().status = valkey::Status::Connecting;
@@ -1614,37 +1576,6 @@ impl JSValkeyClient {
         }
         memory_cost += client.queue.len() * core::mem::size_of::<super::valkey_command::Entry>();
         memory_cost
-    }
-
-    // Called by RefCounted::destructor when ref_count hits 0.
-    unsafe fn deinit(this: *mut JSValkeyClient) {
-        // SAFETY: last ref dropped; exclusive access. The shared borrow is
-        // scoped so it ends before we reclaim the Box below — the final
-        // `heap::take` must consume the original `*mut` (which carries the
-        // allocation's Unique provenance from `Box::into_raw`), not a
-        // pointer re-derived from `&Self` (SharedReadOnly under Stacked
-        // Borrows, which would make the dealloc-write UB).
-        {
-            // SAFETY: last ref dropped — sole owner of `*this` (see above).
-            let this_ref = unsafe { &*this };
-            debug_assert!(this_ref.client.get().socket.is_closed());
-            debug_assert!(!this_ref.timer.ref_held.get());
-            debug_assert!(!this_ref.reconnect_timer.ref_held.get());
-            if let Some(s) = this_ref._secure.get() {
-                // SAFETY: SSL_CTX is C-refcounted; this releases our ref.
-                unsafe { boringssl::c::SSL_CTX_free(s) };
-            }
-            this_ref.client_mut().shutdown(None);
-            this_ref.poll_ref.with_mut(|r| r.disable());
-            this_ref.stop_timers();
-            this_ref.ref_count.assert_no_refs();
-        }
-
-        // bun.destroy(this) → reclaim the Box allocated in `new()`.
-        // SAFETY: `this` was created via `heap::alloc` in `new()`; the shared
-        // borrow above has ended, and `this` is the original raw pointer with
-        // its Box-derived write provenance intact.
-        drop(unsafe { bun_core::heap::take(this) });
     }
 
     /// Keep the event loop alive, or don't keep it alive. Also valid once the JS wrapper is dead.
@@ -2030,18 +1961,15 @@ enum DeferredClose {
 }
 
 pub(crate) struct ValkeyDeferredClose {
-    ctx: *mut JSValkeyClient,
+    /// Keeps the client alive until the task runs or is released.
+    ctx: RefPtr<JSValkeyClient>,
     what: DeferredClose,
 }
 
 impl ValkeyDeferredClose {
     #[allow(clippy::boxed_local, reason = "reclaim point for the boxed task")]
     pub(crate) fn run(self: Box<Self>) {
-        // SAFETY: adopts the ref `enqueue_deferred_close` took, which kept the
-        // client alive until now; released when this scope ends.
-        let _enqueue_ref = unsafe { RefPtr::from_raw(self.ctx) };
-        // SAFETY: live per the ref above; tasks run on the JS thread.
-        let this = unsafe { &*self.ctx };
+        let this: &JSValkeyClient = &self.ctx;
         match self.what {
             DeferredClose::Socket => {
                 crate::dispatch::fold(this.client_mut().close(uws::CloseCode::FastShutdown))
@@ -2072,10 +2000,7 @@ impl bun_event_loop::Taskable for ValkeyDeferredClose {
             // The VM is going away: `on_close()` would run `onclose`, so only
             // give back what `close_without_socket_next_tick` took.
             DeferredClose::WithoutSocket => {
-                // SAFETY: as in `run`.
-                let _enqueue_ref = unsafe { RefPtr::from_raw(task.ctx) };
-                // SAFETY: live per the ref above.
-                unsafe { &*task.ctx }.poll_ref.with_mut(|r| r.disable());
+                task.ctx.poll_ref.with_mut(|r| r.disable());
             }
         }
     }

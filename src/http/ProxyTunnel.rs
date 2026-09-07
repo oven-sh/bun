@@ -148,15 +148,6 @@ impl ProxyTunnel {
         unsafe { (*addr_of!((*this).wrapper)).as_ref() }
     }
 
-    /// Read-only access to `ref_count` (a `Cell<u32>`; disjoint from `wrapper`).
-    /// Used to bump the intrusive refcount from within a callback whose caller
-    /// holds `&SSLWrapper` on `(*this).wrapper`.
-    #[inline]
-    fn ref_count_of<'a>(this: NonNull<Self>) -> &'a core::cell::Cell<u32> {
-        // SAFETY: see [`Self::socket_of`].
-        unsafe { &*addr_of!((*this.as_ptr()).ref_count) }
-    }
-
     /// Bump the intrusive refcount and return a guard that releases it on Drop.
     ///
     /// INVARIANT (module): `this` is the `HTTPClient.proxy_tunnel` handle's
@@ -500,14 +491,9 @@ fn on_close(ctx: *mut HTTPClient) {
     let Some(proxy_nn) = this.proxy_tunnel_ptr() else {
         return;
     };
-    let proxy_ptr = proxy_nn.as_ptr();
-    // bump refcount via the disjoint Cell projection. No guard here — the
-    // matching deref is deferred via `schedule_proxy_deref` to avoid freeing
-    // within the callback.
-    {
-        let rc = ProxyTunnel::ref_count_of(proxy_nn);
-        rc.set(rc.get() + 1);
-    }
+    // Keeps the tunnel alive across this callback; released on the next
+    // loop tick via `schedule_proxy_deref` to avoid freeing within the callback.
+    let keepalive = ProxyTunnel::ref_guard(proxy_nn);
 
     // If a response is in progress, mirror HTTPClient.onClose semantics:
     // treat connection close as end-of-body for identity transfer when no content-length.
@@ -520,7 +506,7 @@ fn on_close(ctx: *mut HTTPClient) {
             Ok(()) => {
                 // `this` dead (NLL); reborrow via `client_from_ctx` inside.
                 progress_update_for_proxy_socket(ctx, proxy_nn);
-                crate::http_thread().schedule_proxy_deref(proxy_ptr);
+                crate::http_thread().schedule_proxy_deref(keepalive);
                 return;
             }
             Err(e) => fail_err = Some(e),
@@ -545,8 +531,7 @@ fn on_close(ctx: *mut HTTPClient) {
         }
     }
     ProxyTunnel::set_socket(proxy_nn, Socket::None);
-    // Deref after returning to the event loop to avoid lifetime hazards.
-    crate::http_thread().schedule_proxy_deref(proxy_ptr);
+    crate::http_thread().schedule_proxy_deref(keepalive);
 }
 
 /// `ctx` and `proxy` must be live. Caller must not hold `&mut HTTPClient` or

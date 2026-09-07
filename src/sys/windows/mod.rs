@@ -409,18 +409,11 @@ pub use bun_windows_sys::Win32Error;
 /// newtype).
 pub use bun_errno::Win32ErrorExt;
 
-/// `Win32Error::unwrap()` — extension trait because
-/// `Win32Error` is a foreign type (orphan rule).
-pub trait Win32ErrorUnwrap: Copy {
-    fn unwrap(self) -> Result<(), SystemErrno>;
-}
-impl Win32ErrorUnwrap for Win32Error {
-    fn unwrap(self) -> Result<(), SystemErrno> {
-        if self == Win32Error::SUCCESS {
-            return Ok(());
-        }
-        Err(self.to_system_errno().unwrap_or(SystemErrno::EUNKNOWN))
-    }
+/// The errno for the Win32 call that just failed; build a `bun_sys::Error`
+/// with `Error::from_win32(Win32Error::get(), tag)` instead.
+#[inline]
+pub fn last_system_errno() -> SystemErrno {
+    Win32Error::get().to_system_errno()
 }
 
 pub use bun_libuv_sys as libuv;
@@ -513,24 +506,6 @@ pub fn CreateHardLinkW(
 }
 
 pub use bun_windows_sys::externs::CopyFileW;
-
-pub fn get_last_errno() -> E {
-    SystemErrno::init(kernel32::GetLastError())
-        .unwrap_or(SystemErrno::EUNKNOWN)
-        .to_e()
-}
-
-pub fn get_last_error() -> SystemErrno {
-    SystemErrno::init(kernel32::GetLastError()).unwrap_or(SystemErrno::EUNKNOWN)
-}
-
-/// `kernel32.GetLastError()` as `Win32Error` — raw
-/// `DWORD` error truncated to the documented 16-bit code space. Callers that
-/// want the POSIX-style `SystemErrno` should use [`get_last_error`].
-#[inline]
-pub(crate) fn get_last_win32_error() -> Win32Error {
-    Win32Error(kernel32::GetLastError() as u16)
-}
 
 /// `bun.windows.Error` — alias for `Win32Error`.
 pub type Error = Win32Error;
@@ -650,14 +625,6 @@ pub fn user_unique_id() -> u32 {
         bun_core::fmt::utf16(name)
     );
     bun_wyhash::hash32(bytemuck::cast_slice::<u16, u8>(name))
-}
-
-pub fn WSAGetLastError() -> Option<E> {
-    // Returns `Option<E>` because all callers consume `E`.
-    // `WSAGetLastError()` is documented to return non-negative values, so the
-    // `as u32` cast is fine; a checked `try_from().expect()` would only add a
-    // panic path.
-    SystemErrno::init(win32::ws2_32::WSAGetLastError() as u32).map(SystemErrno::to_e)
 }
 
 // BOOL CreateDirectoryExW(
@@ -1398,7 +1365,7 @@ pub mod rescle {
         // Allocate UTF-16 strings (global mimalloc; allocator param dropped)
 
         // Icon is a path, so use toWPathNormalized with proper buffer handling
-        let mut icon_buf = bun_paths::WPathBuffer::uninit();
+        let mut icon_buf = bun_paths::w_path_buffer_pool::get();
         let icon_w: Option<&bun_core::WStr> = if let Some(i) = icon {
             let path_w = bun_paths::string_paths::to_w_path_normalized(&mut icon_buf, i);
             // toWPathNormalized returns a slice into icon_buf, need to null-terminate it
@@ -1521,12 +1488,10 @@ pub fn update_stdio_mode_flags(
 ) -> Result<DWORD, SystemErrno> {
     let fd = i.fd();
     let mut original_mode: DWORD = 0;
-    if kernel32_2::GetConsoleMode(fd.native(), &mut original_mode) != 0 {
-        if kernel32_2::SetConsoleMode(fd.native(), (original_mode | opts.set) & !opts.unset) == 0 {
-            return Err(get_last_error());
-        }
-    } else {
-        return Err(get_last_error());
+    if kernel32_2::GetConsoleMode(fd.native(), &mut original_mode) == 0
+        || kernel32_2::SetConsoleMode(fd.native(), (original_mode | opts.set) & !opts.unset) == 0
+    {
+        return Err(last_system_errno());
     }
     Ok(original_mode)
 }
@@ -1588,7 +1553,7 @@ pub fn become_watcher_manager() -> ! {
     let job = unsafe { externs::CreateJobObjectA(ptr::null_mut(), ptr::null()) };
     if job.is_null() {
         // Print the Win32 error name, not the raw DWORD.
-        let err = Win32Error(kernel32::GetLastError() as u16);
+        let err = Win32Error::get();
         bun_core::Output::panic(format_args!(
             "Could not create watcher Job Object: {:?}",
             err
@@ -1609,7 +1574,7 @@ pub fn become_watcher_manager() -> ! {
         )
     } == 0
     {
-        let err = Win32Error(kernel32::GetLastError() as u16);
+        let err = Win32Error::get();
         bun_core::Output::panic(format_args!(
             "Could not configure watcher Job Object: {:?}",
             err
@@ -1626,7 +1591,7 @@ pub fn become_watcher_manager() -> ! {
                 // before we get here. A proper fix would thread the captured
                 // Win32 code through the error payload, which requires
                 // changing `spawn_watcher_child`'s return type.
-                let last = Win32Error(GetLastError() as u16);
+                let last = Win32Error::get();
                 bun_core::Output::panic(format_args!("Failed to spawn process: {:?}\n", last));
             }
             bun_core::Output::panic(format_args!("Failed to spawn process: {}\n", err));
@@ -1645,7 +1610,7 @@ pub fn become_watcher_manager() -> ! {
         if kernel32_2::GetExitCodeProcess(procinfo.hProcess, &mut exit_code) == 0 {
             // Capture before NtClose — closing the handle may overwrite the
             // thread's last-error.
-            let err = Win32Error(GetLastError() as u16);
+            let err = Win32Error::get();
             let _ = kernel32_2::NtClose(procinfo.hProcess);
             bun_core::Output::panic(format_args!(
                 "Failed to get exit code of child process: {:?}\n",
@@ -1702,7 +1667,7 @@ pub(crate) fn spawn_watcher_child(
     let flags: DWORD = CREATE_UNICODE_ENVIRONMENT | EXTENDED_STARTUPINFO_PRESENT;
 
     let image_path = exe_path_w();
-    let mut wbuf = bun_paths::WPathBuffer::uninit();
+    let mut wbuf = bun_paths::w_path_buffer_pool::get();
     wbuf.as_mut_slice()[0..image_path.len()].copy_from_slice(image_path.as_slice());
     wbuf.as_mut_slice()[image_path.len()] = 0;
 
@@ -1811,7 +1776,7 @@ pub(crate) extern "C" fn Bun__LoadLibraryBunString(str_: &bun_core::String) -> *
         compile_error!("unreachable");
     }
 
-    let mut buf = bun_paths::WPathBuffer::uninit();
+    let mut buf = bun_paths::w_path_buffer_pool::get();
     // The path is JS-supplied; over-length input must surface as the same
     // `null + GetLastError()` shape `LoadLibraryExW` itself would yield, not
     // a Rust panic unwinding across the `extern "C"` boundary.
@@ -2077,14 +2042,6 @@ pub mod env;
 // Additional surface unblocked for dependents.
 // ──────────────────────────────────────────────────────────────────────────
 
-/// `bun.windows.translateNtStatusToErrno` — alias of
-/// [`translate_nt_status_to_errno`] kept for external callers; the previous
-/// duplicate body returned different values and has been removed.
-#[inline]
-pub fn translate_ntstatus_to_errno(status: NTSTATUS) -> E {
-    translate_nt_status_to_errno(status)
-}
-
 /// `bun.windows.getenvW` — read a UTF-16 env var into an owned `Vec<u16>`.
 ///
 /// SAFETY CONTRACT: `name` MUST be NUL-terminated (last element == `0`).
@@ -2123,36 +2080,32 @@ bun_core::declare_scope!(windowsUserUniqueId, visible);
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        E, SystemErrno, Win32Error, Win32ErrorExt as _, Win32ErrorUnwrap as _, system_volume_device,
-    };
+    use super::{E, Win32Error, Win32ErrorExt as _, system_volume_device};
+    use crate::{Error, Tag};
 
     /// A Win32 code with no entry in `SystemErrno::init_win32_error`.
     const UNMAPPED: Win32Error = Win32Error(0xFFFE);
 
+    /// A failed Win32 call can leave a code with no row in the table (e.g.
+    /// `ERROR_BAD_NET_NAME` from `CopyFileW` to a missing share) or 0; neither
+    /// may read as success.
     #[test]
-    fn unwrap_success_is_ok() {
-        assert!(Win32Error::SUCCESS.unwrap().is_ok());
-    }
-
-    #[test]
-    fn unwrap_mapped_is_err() {
-        assert!(Win32Error::FILE_NOT_FOUND.unwrap().is_err());
-    }
-
-    /// `GetLastError()` after a failed Win32 call can return codes not present
-    /// in the errno mapping table (filter drivers, network redirectors, AV
-    /// hooks). Reporting success for those would swallow the failure.
-    #[test]
-    fn unwrap_unmapped_is_err() {
-        assert!(UNMAPPED.to_system_errno().is_none());
-        assert!(UNMAPPED.unwrap().is_err());
-    }
-
-    #[test]
-    fn to_e_unmapped_is_unknown() {
+    fn to_e_never_success() {
+        assert_eq!(Win32Error::FILE_NOT_FOUND.to_e(), E::NOENT);
         assert_eq!(UNMAPPED.to_e(), E::UNKNOWN);
-        assert_eq!(SystemErrno::EUNKNOWN.to_e(), E::UNKNOWN);
+        assert_eq!(Win32Error::SUCCESS.to_e(), E::UNKNOWN);
+        // `HRESULT_FROM_WIN32(ERROR_ACCESS_DENIED)` unwraps; other HRESULTs do not.
+        assert_eq!(Win32Error::from_u32(0x8007_0005).to_e(), E::PERM);
+        assert_eq!(Win32Error::from_u32(0x8000_4005).to_e(), E::UNKNOWN);
+        assert_eq!(Win32Error::from_u32(5), Win32Error::ACCESS_DENIED);
+        assert_eq!(
+            Error::from_win32(UNMAPPED, Tag::open).get_errno(),
+            E::UNKNOWN
+        );
+        assert_eq!(
+            Error::from_win32(Win32Error::ACCESS_DENIED, Tag::open).get_errno(),
+            E::PERM
+        );
     }
 
     /// Outside an AppContainer this exercises the same open + NT/NONE split

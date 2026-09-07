@@ -5286,11 +5286,15 @@ impl Token {
                 writer.write_all(b"@")?;
                 serializer::serialize_identifier(v, writer)
             }
-            Token::UnrestrictedHash(v) | Token::IdHash(v) => {
+            Token::UnrestrictedHash(v) => {
                 writer.write_all(b"#")?;
                 serializer::serialize_name(v, writer)
             }
-            Token::QuotedString(x) => serializer::serialize_name(x, writer),
+            Token::IdHash(v) => {
+                writer.write_all(b"#")?;
+                serializer::serialize_identifier(v, writer)
+            }
+            Token::QuotedString(x) => serializer::serialize_string(x, writer),
             Token::UnquotedUrl(x) => {
                 writer.write_all(b"url(")?;
                 serializer::serialize_unquoted_url(x, writer)?;
@@ -5365,101 +5369,24 @@ impl Token {
 
     pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
         match self {
-            Token::Ident(value) => dest.serialize_identifier(value),
-            Token::AtKeyword(value) => {
-                dest.write_str("@")?;
-                dest.serialize_identifier(value)
-            }
-            Token::UnrestrictedHash(value) => {
-                dest.write_str("#")?;
-                dest.serialize_name(value)
-            }
-            Token::IdHash(value) => {
-                dest.write_str("#")?;
-                dest.serialize_identifier(value)
-            }
-            Token::QuotedString(value) => dest.serialize_string(value),
-            Token::UnquotedUrl(value) => {
-                dest.write_str("url(")?;
-                serializer::serialize_unquoted_url(value, dest)
-                    .map_err(|_| dest.add_fmt_error())?;
-                dest.write_str(")")
-            }
-            Token::Delim(value) => {
-                debug_assert!(*value <= 0x7F);
-                dest.write_char(*value as u8)
-            }
-            Token::Number(num) => {
-                serializer::write_numeric(num.value, num.int_value, num.has_sign, dest)
-                    .map_err(|_| dest.add_fmt_error())
-            }
-            Token::Percentage {
-                unit_value,
-                int_value,
-                has_sign,
-            } => {
-                serializer::write_numeric(*unit_value * 100.0, *int_value, *has_sign, dest)
-                    .map_err(|_| dest.add_fmt_error())?;
-                dest.write_str("%")
-            }
-            Token::Dimension(dim) => {
-                serializer::write_numeric(dim.num.value, dim.num.int_value, dim.num.has_sign, dest)
-                    .map_err(|_| dest.add_fmt_error())?;
-                let unit = dim.unit;
-                if unit == b"e"
-                    || unit == b"E"
-                    || unit.starts_with(b"e-")
-                    || unit.starts_with(b"E-")
-                {
-                    dest.write_str("\\65 ")?;
-                    dest.serialize_name(&unit[1..])
-                } else {
-                    dest.serialize_identifier(unit)
-                }
-            }
+            // Raw payloads can hold newlines, which only `write_bytes` counts.
             Token::Whitespace(content) => dest.write_bytes(content),
             Token::Comment(content) => {
                 dest.write_str("/*")?;
                 dest.write_bytes(content)?;
                 dest.write_str("*/")
             }
-            Token::Colon => dest.write_str(":"),
-            Token::Semicolon => dest.write_str(";"),
-            Token::Comma => dest.write_str(","),
-            Token::IncludeMatch => dest.write_str("~="),
-            Token::DashMatch => dest.write_str("|="),
-            Token::PrefixMatch => dest.write_str("^="),
-            Token::SuffixMatch => dest.write_str("$="),
-            Token::SubstringMatch => dest.write_str("*="),
-            Token::Cdo => dest.write_str("<!--"),
-            Token::Cdc => dest.write_str("-->"),
-            Token::Function(name) => {
-                dest.serialize_identifier(name)?;
-                dest.write_str("(")
-            }
-            Token::OpenParen => dest.write_str("("),
-            Token::OpenSquare => dest.write_str("["),
-            Token::OpenCurly => dest.write_str("{"),
             Token::BadUrl(contents) => {
                 dest.write_str("url(")?;
                 dest.write_bytes(contents)?;
                 dest.write_char(b')')
             }
-            Token::BadString(value) => {
-                dest.write_char(b'"')?;
-                let mut sw = serializer::CssStringWriter::new(dest);
-                sw.write_str(value).map_err(|_| dest.add_fmt_error())
-            }
-            Token::CloseParen => dest.write_str(")"),
-            Token::CloseSquare => dest.write_str("]"),
-            Token::CloseCurly => dest.write_str("}"),
+            _ => self
+                .to_css_generic(dest)
+                .map_err(|_| PrintErr::CSSPrintError),
         }
     }
 }
-
-// `impl Display for Token` lives at crate root (lib.rs) — minimal rendering
-// for error messages only. The CSS-serialization-correct form is
-// `Token::to_css_generic` above.
 
 /// Byte-writer trait for `serializer` and `to_css_generic`.
 /// Aliased to the canonical `bun_io::Write`; the associated

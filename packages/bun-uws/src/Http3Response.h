@@ -4,6 +4,7 @@
 #include "quic.h"
 #include "Http3ResponseData.h"
 #include "HttpResponseData.h"
+#include "Utilities.h"
 
 #include <charconv>
 #include <optional>
@@ -31,13 +32,14 @@ struct Http3Response {
     }
 
     Http3Response *writeHeader(std::string_view key, std::string_view value) {
+        if (isConnectionSpecificResponseField(key, value)) return this;
         writeStatus("200 OK");
         appendHeader(getHttpResponseData(), key, value);
         return this;
     }
 
     Http3Response *writeHeader(std::string_view key, uint64_t value) {
-        char buf[24];
+        char buf[utils::U64_MAX_DIGITS];
         auto r = std::to_chars(buf, buf + sizeof(buf), value);
         return writeHeader(key, std::string_view{buf, (size_t)(r.ptr - buf)});
     }

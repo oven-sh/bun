@@ -6,10 +6,10 @@ use bun_alloc::Arena;
 use bun_ast as js_ast;
 use bun_ast::lexer_tables as tables;
 use bun_ast::{LexerLog, Loc, Log, Range, Source};
+use bun_core::Environment;
 use bun_core::fmt::hex_digit_value_u32;
 use bun_core::strings;
 use bun_core::strings::CodepointIterator;
-use bun_core::{Environment, feature_flags as FeatureFlags};
 use identifier as js_identifier;
 
 // Unicode ID-Start/ID-Continue tables moved DOWN to `bun_core` (pure data;
@@ -73,51 +73,12 @@ impl JSXPragma {
     }
 }
 
-/// The lexer is generic over the eight const bools of the option set.
-///
-/// `Lexer` (below) is the default instantiation.
-///
-/// The option set is modeled as a *type* parameter
-/// implementing [`JsonOptionsT`], whose associated consts are accepted in
-/// const-argument position under `generic_const_exprs`. Callers define a ZST
-/// per option set and `impl JsonOptionsT for It { const IS_JSON: bool = true; … }`.
-pub trait JsonOptionsT {
-    const IS_JSON: bool = false;
-    const ALLOW_COMMENTS: bool = false;
-    const ALLOW_TRAILING_COMMAS: bool = false;
-    const IGNORE_LEADING_ESCAPE_SEQUENCES: bool = false;
-    const IGNORE_TRAILING_ESCAPE_SEQUENCES: bool = false;
-    const JSON_WARN_DUPLICATE_KEYS: bool = true;
-    const WAS_ORIGINALLY_MACRO: bool = false;
-}
-
-/// The default (non-JSON, JS-mode) option set.
-pub struct DefaultJsonOptions;
-impl JsonOptionsT for DefaultJsonOptions {}
-
-// The `J: JsonOptionsT` bound on a type alias triggers the `type_alias_bounds`
-// lint (bounds on aliases aren't enforced at use sites), but the bound is
-// load-bearing here: the const expressions below need it in scope to resolve
-// `<J as JsonOptionsT>::*`. Silence the lint locally.
-#[allow(type_alias_bounds)]
-pub type NewLexer<'a, J: JsonOptionsT = DefaultJsonOptions> = LexerType<
-    'a,
-    { <J as JsonOptionsT>::IS_JSON },
-    { <J as JsonOptionsT>::ALLOW_COMMENTS },
-    { <J as JsonOptionsT>::ALLOW_TRAILING_COMMAS },
-    { <J as JsonOptionsT>::IGNORE_LEADING_ESCAPE_SEQUENCES },
-    { <J as JsonOptionsT>::IGNORE_TRAILING_ESCAPE_SEQUENCES },
-    { <J as JsonOptionsT>::JSON_WARN_DUPLICATE_KEYS },
-    { <J as JsonOptionsT>::WAS_ORIGINALLY_MACRO },
->;
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq, strum::IntoStaticStr)]
 pub enum Error {
     UTF8Fail,
     OutOfMemory,
     SyntaxError,
     UnexpectedSyntax,
-    JSONStringsMustUseDoubleQuotes,
     ParserError,
     Backtrack,
 }
@@ -166,7 +127,7 @@ pub struct ScanResult<'a> {
 /// POD snapshot of all backtrack-relevant lexer state.
 ///
 /// Backtracking can't snapshot the lexer with a full struct copy because
-/// `LexerType` owns heap-backed buffers and a `Log` pointer. Instead, callers do:
+/// `Lexer` owns heap-backed buffers and a `Log` pointer. Instead, callers do:
 ///
 /// ```ignore
 /// let snap = p.lexer.snapshot();
@@ -205,7 +166,6 @@ pub struct LexerSnapshot<'a> {
     pub(crate) string_literal_raw_content: &'a [u8],
     pub(crate) string_literal_start: usize,
     pub(crate) string_literal_raw_format: StringLiteralRawFormat,
-    pub(crate) is_ascii_only: bool,
     pub(crate) track_comments: bool,
     pub(crate) track_react_suppressions: bool,
     // Vec buffer lengths — restore() truncates back to these.
@@ -213,22 +173,10 @@ pub struct LexerSnapshot<'a> {
     pub(crate) comments_to_preserve_before_len: usize,
 }
 
-/// The lexer struct produced by `NewLexer_`.
-///
 /// `'a` is the lifetime of the source contents (arena/source-owned slices like
 /// `identifier` and `string_literal_raw_content` borrow from the source or from
 /// the parser arena). The `Log` is *not* tied to `'a`; see the `log` field doc.
-pub struct LexerType<
-    'a,
-    const IS_JSON: bool,
-    const ALLOW_COMMENTS: bool,
-    const ALLOW_TRAILING_COMMAS: bool,
-    const IGNORE_LEADING_ESCAPE_SEQUENCES: bool,
-    const IGNORE_TRAILING_ESCAPE_SEQUENCES: bool,
-    const JSON_WARN_DUPLICATE_KEYS: bool,
-    const WAS_ORIGINALLY_MACRO: bool,
-> {
-    // err: ?LexerType.Error,
+pub struct Lexer<'a> {
     /// Raw pointer to the caller-owned `Log`. The parser holds a second
     /// aliasing pointer to the same `Log`; Rust cannot store two `&mut Log`
     /// to the same allocation (Stacked-Borrows UB), so both the lexer and the
@@ -290,63 +238,12 @@ pub struct LexerType<
     pub(crate) string_literal_start: usize,
     pub(crate) string_literal_raw_format: StringLiteralRawFormat,
     pub(crate) temp_buffer_u16: Vec<u16>,
-
-    /// Only used for JSON stringification when bundling.
-    pub(crate) is_ascii_only: bool,
     pub(crate) track_comments: bool,
     pub(crate) track_react_suppressions: bool,
     pub(crate) all_comments: Vec<Range>,
 }
 
-// Note: Rust macros must emit complete items; the macro now wraps the
-// entire `impl { ... }` block instead of just the header.
-macro_rules! lexer_impl_header {
-    ($($body:tt)*) => {
-        impl<
-            'a,
-            const IS_JSON: bool,
-            const ALLOW_COMMENTS: bool,
-            const ALLOW_TRAILING_COMMAS: bool,
-            const IGNORE_LEADING_ESCAPE_SEQUENCES: bool,
-            const IGNORE_TRAILING_ESCAPE_SEQUENCES: bool,
-            const JSON_WARN_DUPLICATE_KEYS: bool,
-            const WAS_ORIGINALLY_MACRO: bool,
-        >
-            LexerType<
-                'a,
-                IS_JSON,
-                ALLOW_COMMENTS,
-                ALLOW_TRAILING_COMMAS,
-                IGNORE_LEADING_ESCAPE_SEQUENCES,
-                IGNORE_TRAILING_ESCAPE_SEQUENCES,
-                JSON_WARN_DUPLICATE_KEYS,
-                WAS_ORIGINALLY_MACRO,
-            >
-        { $($body)* }
-    };
-}
-
-impl<
-    'a,
-    const IS_JSON: bool,
-    const ALLOW_COMMENTS: bool,
-    const ALLOW_TRAILING_COMMAS: bool,
-    const IGNORE_LEADING_ESCAPE_SEQUENCES: bool,
-    const IGNORE_TRAILING_ESCAPE_SEQUENCES: bool,
-    const JSON_WARN_DUPLICATE_KEYS: bool,
-    const WAS_ORIGINALLY_MACRO: bool,
-> LexerLog<'a>
-    for LexerType<
-        'a,
-        IS_JSON,
-        ALLOW_COMMENTS,
-        ALLOW_TRAILING_COMMAS,
-        IGNORE_LEADING_ESCAPE_SEQUENCES,
-        IGNORE_TRAILING_ESCAPE_SEQUENCES,
-        JSON_WARN_DUPLICATE_KEYS,
-        WAS_ORIGINALLY_MACRO,
-    >
-{
+impl<'a> LexerLog<'a> for Lexer<'a> {
     type Err = Error;
     #[inline]
     fn log_mut(&mut self) -> &mut Log {
@@ -379,7 +276,7 @@ impl<
     }
 }
 
-lexer_impl_header! {
+impl<'a> Lexer<'a> {
     /// Reborrow the shared `Log`. The `&self` receiver lets call sites pass
     /// other `self.*` fields as arguments without a borrow-checker conflict;
     /// callers must not hold two results of `log()` (or a result alongside the
@@ -421,9 +318,6 @@ lexer_impl_header! {
             .add_range_error_fmt_with_notes(Some(self.source), r, notes_owned, args);
         self.prev_error_loc = r.loc;
 
-        // if (panic) {
-        //     return Error.ParserError;
-        // }
         Ok(())
     }
 
@@ -457,7 +351,6 @@ lexer_impl_header! {
             string_literal_raw_content: self.string_literal_raw_content,
             string_literal_start: self.string_literal_start,
             string_literal_raw_format: self.string_literal_raw_format,
-            is_ascii_only: self.is_ascii_only,
             track_comments: self.track_comments,
             track_react_suppressions: self.track_react_suppressions,
             all_comments_len: self.all_comments.len(),
@@ -488,8 +381,7 @@ lexer_impl_header! {
         self.jsx_pragma = original.jsx_pragma;
         self.source_mapping_url = original.source_mapping_url;
         self.number = original.number;
-        self.rescan_close_brace_as_template_token =
-            original.rescan_close_brace_as_template_token;
+        self.rescan_close_brace_as_template_token = original.rescan_close_brace_as_template_token;
         self.prev_error_loc = original.prev_error_loc;
         self.prev_token_was_await_keyword = original.prev_token_was_await_keyword;
         self.fn_or_arrow_start_loc = original.fn_or_arrow_start_loc;
@@ -497,14 +389,12 @@ lexer_impl_header! {
         self.string_literal_raw_content = original.string_literal_raw_content;
         self.string_literal_start = original.string_literal_start;
         self.string_literal_raw_format = original.string_literal_raw_format;
-        self.is_ascii_only = original.is_ascii_only;
         self.track_comments = original.track_comments;
         self.track_react_suppressions = original.track_react_suppressions;
 
         debug_assert!(self.all_comments.len() >= original.all_comments_len);
         debug_assert!(
-            self.comments_to_preserve_before.len()
-                >= original.comments_to_preserve_before_len
+            self.comments_to_preserve_before.len() >= original.comments_to_preserve_before_len
         );
         debug_assert!(self.temp_buffer_u16.is_empty());
 
@@ -533,10 +423,6 @@ lexer_impl_header! {
         text: &[u8],
         buf: &mut Vec<u16>,
     ) -> Result<(), Error> {
-        if IS_JSON {
-            self.is_ascii_only = false;
-        }
-
         let iterator = CodepointIterator::init(text);
         let mut iter = strings::Cursor::default();
         while iterator.next(&mut iter) {
@@ -599,13 +485,7 @@ lexer_impl_header! {
 
                         // legacy octal literals
                         0x30..=0x37 => {
-                            let octal_start =
-                                (iter.i as usize + width2 as usize).saturating_sub(2);
-                            if IS_JSON {
-                                self.end = (start + iter.i as usize)
-                                    .saturating_sub(width2 as usize);
-                                self.syntax_error()?;
-                            }
+                            let octal_start = (iter.i as usize + width2 as usize).saturating_sub(2);
 
                             // 1-3 digit octal
                             let mut is_bad = false;
@@ -634,8 +514,7 @@ lexer_impl_header! {
                                     let c4 = iter.c;
                                     match c4 {
                                         0x30..=0x37 => {
-                                            let temp =
-                                                value * 8 + (c4 - 0x30) as i64;
+                                            let temp = value * 8 + (c4 - 0x30) as i64;
                                             if temp < 256 {
                                                 value = temp;
                                             } else {
@@ -667,12 +546,10 @@ lexer_impl_header! {
                                 self.add_range_error(
                                     Range {
                                         loc: Loc {
-                                            start: i32::try_from(start + octal_start).expect("int cast"),
+                                            start: i32::try_from(start + octal_start)
+                                                .expect("int cast"),
                                         },
-                                        len: i32::try_from(
-                                            iter.i as usize - octal_start,
-                                        )
-                                        .unwrap(),
+                                        len: i32::try_from(iter.i as usize - octal_start).unwrap(),
                                     },
                                     format_args!("Invalid legacy octal literal"),
                                 )
@@ -696,8 +573,8 @@ lexer_impl_header! {
                             match hex_digit_value_u32(c3 as u32) {
                                 Some(d) => value = (value * 16) | d as CodePoint,
                                 None => {
-                                    self.end = (start + iter.i as usize)
-                                        .saturating_sub(width3 as usize);
+                                    self.end =
+                                        (start + iter.i as usize).saturating_sub(width3 as usize);
                                     return self.syntax_error();
                                 }
                             }
@@ -710,8 +587,8 @@ lexer_impl_header! {
                             match hex_digit_value_u32(c3 as u32) {
                                 Some(d) => value = (value * 16) | d as CodePoint,
                                 None => {
-                                    self.end = (start + iter.i as usize)
-                                        .saturating_sub(width3 as usize);
+                                    self.end =
+                                        (start + iter.i as usize).saturating_sub(width3 as usize);
                                     return self.syntax_error();
                                 }
                             }
@@ -731,12 +608,6 @@ lexer_impl_header! {
 
                             // variable-length
                             if c3 == 0x7B {
-                                if IS_JSON {
-                                    self.end = (start + iter.i as usize)
-                                        .saturating_sub(width2 as usize);
-                                    self.syntax_error()?;
-                                }
-
                                 // `iter.i` is the byte offset of `{` inside `text`;
                                 // back up past `\` and `u` only. `width3` is the
                                 // width of `{` itself, which `iter.i` already points
@@ -784,17 +655,14 @@ lexer_impl_header! {
                                     self.add_range_error(
                                         Range {
                                             loc: Loc {
-                                                start: i32::try_from(start + hex_start)
-                                                    .unwrap(),
+                                                start: i32::try_from(start + hex_start).unwrap(),
                                             },
                                             len: i32::try_from(
                                                 (iter.i as usize).saturating_sub(hex_start),
                                             )
                                             .unwrap(),
                                         },
-                                        format_args!(
-                                            "Unicode escape sequence is out of range"
-                                        ),
+                                        format_args!("Unicode escape sequence is out of range"),
                                     )?;
 
                                     return Ok(());
@@ -829,41 +697,18 @@ lexer_impl_header! {
                             iter.c = value as CodePoint; // @truncate
                         }
                         0x0D => {
-                            if IS_JSON {
-                                self.end = (start + iter.i as usize)
-                                    .saturating_sub(width2 as usize);
-                                self.syntax_error()?;
-                            }
-
                             // Make sure Windows CRLF counts as a single newline
                             let next_i: usize = iter.i as usize + 1;
-                            iter.i +=
-                                (next_i < text.len() && text[next_i] == b'\n') as u32;
+                            iter.i += (next_i < text.len() && text[next_i] == b'\n') as u32;
 
                             // Ignore line continuations. A line continuation is not an escaped newline.
                             continue;
                         }
                         0x0A | 0x2028 | 0x2029 => {
-                            if IS_JSON {
-                                self.end = (start + iter.i as usize)
-                                    .saturating_sub(width2 as usize);
-                                self.syntax_error()?;
-                            }
-
                             // Ignore line continuations. A line continuation is not an escaped newline.
                             continue;
                         }
                         _ => {
-                            if IS_JSON {
-                                match c2 {
-                                    0x22 | 0x5C | 0x2F => {}
-                                    _ => {
-                                        self.end = (start + iter.i as usize)
-                                            .saturating_sub(width2 as usize);
-                                        self.syntax_error()?;
-                                    }
-                                }
-                            }
                             iter.c = c2;
                         }
                     }
@@ -899,7 +744,7 @@ lexer_impl_header! {
                     self.step_with(contents);
 
                     // Handle Windows CRLF
-                    if self.code_point == 0x0D && !IS_JSON {
+                    if self.code_point == 0x0D {
                         self.step_with(contents);
                         if self.code_point == 0x0A {
                             self.step_with(contents);
@@ -907,19 +752,9 @@ lexer_impl_header! {
                         continue 'string_literal;
                     }
 
-                    if IS_JSON && IGNORE_TRAILING_ESCAPE_SEQUENCES {
-                        if self.code_point == QUOTE
-                            && self.current >= contents.len()
-                        {
-                            self.step_with(contents);
-                            break;
-                        }
-                    }
-
                     match self.code_point {
                         // 0 cannot be in this list because it may be a legacy octal literal
-                        0x60 | 0x27 | 0x22 | 0x5C =>
-                        {
+                        0x60 | 0x27 | 0x22 | 0x5C => {
                             self.step_with(contents);
                             continue 'string_literal;
                         }
@@ -984,11 +819,7 @@ lexer_impl_header! {
                     // Non-ASCII strings need the slow path
                     if self.code_point >= 0x80 {
                         needs_decode = true;
-                    } else if IS_JSON && self.code_point < 0x20 {
-                        self.syntax_error()?;
-                    } else if (QUOTE == 0x22 || QUOTE == 0x27)
-                        && Environment::IS_NATIVE
-                    {
+                    } else if (QUOTE == 0x22 || QUOTE == 0x27) && Environment::IS_NATIVE {
                         let remainder = &contents[self.current..];
                         if remainder.len() >= 4096 {
                             match index_of_interesting_character_in_string_literal(
@@ -1038,7 +869,11 @@ lexer_impl_header! {
         let string_literal_details = self.parse_string_literal_inner::<QUOTE>(contents)?;
 
         // Reset string literal
-        let base = if QUOTE == 0 { self.start } else { self.start + 1 };
+        let base = if QUOTE == 0 {
+            self.start
+        } else {
+            self.start + 1
+        };
         let suffix_len = string_literal_details.suffix_len() as usize;
         let end_pos = if self.end >= suffix_len {
             self.end - suffix_len
@@ -1053,19 +888,6 @@ lexer_impl_header! {
             StringLiteralRawFormat::Ascii
         };
         self.string_literal_start = self.start;
-        if IS_JSON {
-            self.is_ascii_only =
-                self.is_ascii_only && !string_literal_details.needs_decode();
-        }
-
-        if !FeatureFlags::ALLOW_JSON_SINGLE_QUOTES {
-            if QUOTE == 0x27 && IS_JSON {
-                self.add_range_error(
-                    self.range(),
-                    format_args!("JSON strings must use double quotes"),
-                )?;
-            }
-        }
         Ok(())
     }
 
@@ -1199,8 +1021,7 @@ lexer_impl_header! {
                     self.step();
                     while self.code_point != 0x7D {
                         match self.code_point {
-                            0x30..=0x39 | 0x61..=0x66 | 0x41..=0x46 =>
-                            {
+                            0x30..=0x39 | 0x61..=0x66 | 0x41..=0x46 => {
                                 self.step();
                             }
                             _ => self.syntax_error()?,
@@ -1212,8 +1033,7 @@ lexer_impl_header! {
                     // Fixed-length
                     for _ in 0..4 {
                         match self.code_point {
-                            0x30..=0x39 | 0x61..=0x66 | 0x41..=0x46 =>
-                            {
+                            0x30..=0x39 | 0x61..=0x66 | 0x41..=0x46 => {
                                 self.step();
                             }
                             _ => self.syntax_error()?,
@@ -1237,8 +1057,7 @@ lexer_impl_header! {
         // clear and put it back (mirrors `defer clearRetainingCapacity()`).
         let mut tmp = core::mem::take(&mut self.temp_buffer_u16);
         tmp.reserve(original_text.len());
-        let decode_res =
-            self.decode_escape_sequences(self.start, original_text, &mut tmp);
+        let decode_res = self.decode_escape_sequences(self.start, original_text, &mut tmp);
         if let Err(e) = decode_res {
             tmp.clear();
             self.temp_buffer_u16 = tmp;
@@ -1290,7 +1109,10 @@ lexer_impl_header! {
         Ok(result)
     }
 
-    pub(crate) fn expect_contextual_keyword(&mut self, keyword: &'static [u8]) -> Result<(), Error> {
+    pub(crate) fn expect_contextual_keyword(
+        &mut self,
+        keyword: &'static [u8],
+    ) -> Result<(), Error> {
         if !self.is_contextual_keyword(keyword) {
             if cfg!(debug_assertions) {
                 self.add_error(
@@ -1455,22 +1277,13 @@ lexer_impl_header! {
                 }
 
                 0x23 => {
-                    if IS_JSON {
-                        return self.add_unsupported_syntax_error(
-                            b"Private identifiers are not allowed in JSON",
-                        );
-                    }
-                    if self.start == 0
-                        && contents.len() > 1
-                        && contents[1] == b'!'
-                    {
+                    if self.start == 0 && contents.len() > 1 && contents[1] == b'!' {
                         // "#!/usr/bin/env node"
                         self.token = T::THashbang;
                         'hashbang: loop {
                             self.step_with(contents);
                             match self.code_point {
-                                0x0D | 0x0A | 0x2028 | 0x2029 =>
-                                {
+                                0x0D | 0x0A | 0x2028 | 0x2029 => {
                                     break 'hashbang;
                                 }
                                 -1 => {
@@ -1508,8 +1321,7 @@ lexer_impl_header! {
                         break;
                     }
                 }
-                0x0D | 0x0A | 0x2028 | 0x2029 =>
-                {
+                0x0D | 0x0A | 0x2028 | 0x2029 => {
                     self.has_newline_before = true;
 
                     self.step_with(contents);
@@ -1552,28 +1364,14 @@ lexer_impl_header! {
                     self.token = T::TColon;
                 }
                 0x3B => {
-                    if IS_JSON {
-                        return self.add_unsupported_syntax_error(
-                            b"Semicolons are not allowed in JSON",
-                        );
-                    }
                     self.step_with(contents);
                     self.token = T::TSemicolon;
                 }
                 0x40 => {
-                    if IS_JSON {
-                        return self.add_unsupported_syntax_error(
-                            b"Decorators are not allowed in JSON",
-                        );
-                    }
                     self.step_with(contents);
                     self.token = T::TAt;
                 }
                 0x7E => {
-                    if IS_JSON {
-                        return self
-                            .add_unsupported_syntax_error(b"~ is not allowed in JSON");
-                    }
                     self.step_with(contents);
                     self.token = T::TTilde;
                 }
@@ -1613,12 +1411,6 @@ lexer_impl_header! {
                     }
                 }
                 0x25 => {
-                    if IS_JSON {
-                        return self.add_unsupported_syntax_error(
-                            b"Operators are not allowed in JSON",
-                        );
-                    }
-
                     // '%' or '%='
                     self.step_with(contents);
                     match self.code_point {
@@ -1633,12 +1425,6 @@ lexer_impl_header! {
                 }
 
                 0x26 => {
-                    if IS_JSON {
-                        return self.add_unsupported_syntax_error(
-                            b"Operators are not allowed in JSON",
-                        );
-                    }
-
                     // '&' or '&=' or '&&' or '&&='
                     self.step_with(contents);
                     match self.code_point {
@@ -1665,12 +1451,6 @@ lexer_impl_header! {
                 }
 
                 0x7C => {
-                    if IS_JSON {
-                        return self.add_unsupported_syntax_error(
-                            b"Operators are not allowed in JSON",
-                        );
-                    }
-
                     // '|' or '|=' or '||' or '||='
                     self.step_with(contents);
                     match self.code_point {
@@ -1697,12 +1477,6 @@ lexer_impl_header! {
                 }
 
                 0x5E => {
-                    if IS_JSON {
-                        return self.add_unsupported_syntax_error(
-                            b"Operators are not allowed in JSON",
-                        );
-                    }
-
                     // '^' or '^='
                     self.step_with(contents);
                     match self.code_point {
@@ -1717,12 +1491,6 @@ lexer_impl_header! {
                 }
 
                 0x2B => {
-                    if IS_JSON {
-                        return self.add_unsupported_syntax_error(
-                            b"Operators are not allowed in JSON",
-                        );
-                    }
-
                     // '+' or '+=' or '++'
                     self.step_with(contents);
                     match self.code_point {
@@ -1745,20 +1513,10 @@ lexer_impl_header! {
                     self.step_with(contents);
                     match self.code_point {
                         0x3D => {
-                            if IS_JSON {
-                                return self.add_unsupported_syntax_error(
-                                    b"Operators are not allowed in JSON",
-                                );
-                            }
                             self.step_with(contents);
                             self.token = T::TMinusEquals;
                         }
                         0x2D => {
-                            if IS_JSON {
-                                return self.add_unsupported_syntax_error(
-                                    b"Operators are not allowed in JSON",
-                                );
-                            }
                             self.step_with(contents);
 
                             if self.code_point == 0x3E && self.has_newline_before {
@@ -1812,15 +1570,6 @@ lexer_impl_header! {
                         }
                         0x2F => {
                             self.scan_single_line_comment();
-                            if IS_JSON {
-                                if !ALLOW_COMMENTS {
-                                    self.add_range_error(
-                                        self.range(),
-                                        format_args!("JSON does not support comments"),
-                                    )?;
-                                    return Ok(());
-                                }
-                            }
                             self.scan_comment_text(false);
                             continue;
                         }
@@ -1829,18 +1578,8 @@ lexer_impl_header! {
                             // out of line so it doesn't bloat the hot ASCII
                             // identifier / whitespace / punctuator arms of
                             // `next()` (`scan_single_line_comment` is outlined the
-                            // same way). The JSON-comments error path stays here
-                            // because it must `return` from `next()`.
+                            // same way).
                             self.scan_multi_line_comment_body()?;
-                            if IS_JSON {
-                                if !ALLOW_COMMENTS {
-                                    self.add_range_error(
-                                        self.range(),
-                                        format_args!("JSON does not support comments"),
-                                    )?;
-                                    return Ok(());
-                                }
-                            }
                             self.scan_comment_text(true);
                             continue;
                         }
@@ -1851,12 +1590,6 @@ lexer_impl_header! {
                 }
 
                 0x3D => {
-                    if IS_JSON {
-                        return self.add_unsupported_syntax_error(
-                            b"Operators are not allowed in JSON",
-                        );
-                    }
-
                     // '=' or '=>' or '==' or '==='
                     self.step_with(contents);
                     match self.code_point {
@@ -1883,12 +1616,6 @@ lexer_impl_header! {
                 }
 
                 0x3C => {
-                    if IS_JSON {
-                        return self.add_unsupported_syntax_error(
-                            b"Operators are not allowed in JSON",
-                        );
-                    }
-
                     // '<' or '<<' or '<=' or '<<=' or '<!--'
                     self.step_with(contents);
                     match self.code_point {
@@ -1926,12 +1653,6 @@ lexer_impl_header! {
                 }
 
                 0x3E => {
-                    if IS_JSON {
-                        return self.add_unsupported_syntax_error(
-                            b"Operators are not allowed in JSON",
-                        );
-                    }
-
                     // '>' or '>>' or '>>>' or '>=' or '>>=' or '>>>='
                     self.step_with(contents);
 
@@ -1952,7 +1673,8 @@ lexer_impl_header! {
                                     match self.code_point {
                                         0x3D => {
                                             self.step_with(contents);
-                                            self.token = T::TGreaterThanGreaterThanGreaterThanEquals;
+                                            self.token =
+                                                T::TGreaterThanGreaterThanGreaterThanEquals;
                                         }
                                         _ => {
                                             self.token = T::TGreaterThanGreaterThanGreaterThan;
@@ -1971,12 +1693,6 @@ lexer_impl_header! {
                 }
 
                 0x21 => {
-                    if IS_JSON {
-                        return self.add_unsupported_syntax_error(
-                            b"Operators are not allowed in JSON",
-                        );
-                    }
-
                     // '!' or '!=' or '!=='
                     self.step_with(contents);
                     match self.code_point {
@@ -2008,11 +1724,8 @@ lexer_impl_header! {
                     self.parse_string_literal::<0x60>()?;
                 }
 
-                0x5F | 0x24 | 0x61..=0x7A | 0x41..=0x5A =>
-                {
-                    let advance = latin1_identifier_continue_length(
-                        &contents[self.current..],
-                    );
+                0x5F | 0x24 | 0x61..=0x7A | 0x41..=0x5A => {
+                    let advance = latin1_identifier_continue_length(&contents[self.current..]);
 
                     self.end = self.current + advance;
                     self.current = self.end;
@@ -2029,28 +1742,17 @@ lexer_impl_header! {
                         // this code is so hot that if you save lexer.raw() into a temporary variable
                         // it shows up in profiling
                         self.identifier = self.raw();
-                        self.token =
-                            tables::keyword(self.identifier).unwrap_or(T::TIdentifier);
+                        self.token = tables::keyword(self.identifier).unwrap_or(T::TIdentifier);
                     } else {
-                        let scan_result = self
-                            .scan_identifier_with_escapes(IdentifierKind::Normal)?;
+                        let scan_result =
+                            self.scan_identifier_with_escapes(IdentifierKind::Normal)?;
                         self.identifier = scan_result.contents;
                         self.token = scan_result.token;
                     }
                 }
 
                 0x5C => {
-                    if IS_JSON && IGNORE_LEADING_ESCAPE_SEQUENCES {
-                        if self.start == 0
-                            || self.current == contents.len() - 1
-                        {
-                            self.step_with(contents);
-                            continue;
-                        }
-                    }
-
-                    let scan_result = self
-                        .scan_identifier_with_escapes(IdentifierKind::Normal)?;
+                    let scan_result = self.scan_identifier_with_escapes(IdentifierKind::Normal)?;
                     self.identifier = scan_result.contents;
                     self.token = scan_result.token;
                 }
@@ -2072,8 +1774,8 @@ lexer_impl_header! {
                             self.step_with(contents);
                         }
                         if self.code_point == 0x5C {
-                            let scan_result = self
-                                .scan_identifier_with_escapes(IdentifierKind::Normal)?;
+                            let scan_result =
+                                self.scan_identifier_with_escapes(IdentifierKind::Normal)?;
                             self.identifier = scan_result.contents;
                             self.token = scan_result.token;
                         } else {
@@ -2166,9 +1868,7 @@ lexer_impl_header! {
 
             self.add_range_error_with_notes(
                 self.range(),
-                format_args!(
-                    "\"await\" can only be used inside an \"async\" function"
-                ),
+                format_args!("\"await\" can only be used inside an \"async\" function"),
                 notes_ptr,
             )?;
             return Ok(());
@@ -2185,10 +1885,7 @@ lexer_impl_header! {
         } else {
             self.add_range_error(
                 self.range(),
-                format_args!(
-                    "Expected {} but found end of file",
-                    bstr::BStr::new(text)
-                ),
+                format_args!("Expected {} but found end of file", bstr::BStr::new(text)),
             )
         }
     }
@@ -2218,8 +1915,7 @@ lexer_impl_header! {
             if let Some(i) = strings::index_of(body, b"eslint-disable") {
                 let after = &body[i + b"eslint-disable".len()..];
                 // Only `eslint-disable[-next-line] <rule>` with a word boundary; not `-line`.
-                let at_word_boundary =
-                    |s: &[u8]| s.first().is_none_or(|b| b.is_ascii_whitespace());
+                let at_word_boundary = |s: &[u8]| s.first().is_none_or(|b| b.is_ascii_whitespace());
                 let matched = if strings::has_prefix_comptime(after, b"-next-line") {
                     let rest = &after[b"-next-line".len()..];
                     at_word_boundary(rest).then_some((false, rest))
@@ -2252,11 +1948,6 @@ lexer_impl_header! {
             });
         }
 
-        // tsconfig.json doesn't care about annotations
-        if IS_JSON {
-            return;
-        }
-
         if !for_pragma {
             return;
         }
@@ -2272,7 +1963,8 @@ lexer_impl_header! {
                     let offset = self.scan_pragma(
                         self.start + i + (text.len() - rest.len()),
                         chunk,
-                        false,
+                        CommentKind::MultiLine,
+                        PureAnnotation::Allow,
                     );
 
                     rest = &rest[
@@ -2376,6 +2068,8 @@ lexer_impl_header! {
     fn scan_single_line_comment(&mut self) {
         // PERF: keep the source slice register-resident — see `next_codepoint_with`.
         let contents: &[u8] = self.contents;
+        // Only the first `#` / `@` of a `//` comment can start a `__PURE__` annotation.
+        let mut first_marker = true;
         loop {
             // Find index of newline (ASCII/Unicode), non-ASCII, '#', or '@'.
             if let Some(relative_index) =
@@ -2387,8 +2081,7 @@ lexer_impl_header! {
                 self.step_with(contents); // Consume the interesting char, sets code_point, advances current
 
                 match self.code_point {
-                    0x0D | 0x0A | 0x2028 | 0x2029 =>
-                    {
+                    0x0D | 0x0A | 0x2028 | 0x2029 => {
                         // Is it a line terminator?
                         // Found the end of the comment line.
                         return; // Stop scanning. Lexer state is ready for the next token.
@@ -2398,31 +2091,23 @@ lexer_impl_header! {
                     } // EOF? Stop.
 
                     0x23 | 0x40 => {
-                        if !IS_JSON {
-                            let pragma_trigger_pos = self.end; // Position OF #/@
-                            // Use remaining() which starts *after* the consumed #/@
-                            // Note: reshaped for borrowck — `remaining()` borrows
-                            // `self.contents`; `scan_pragma` needs `&mut self`.
-                            // Detach via `StoreStr` (arena-owned, lives for parse).
-                            let chunk = js_ast::StoreStr::new(self.remaining());
-                            let offset =
-                                self.scan_pragma(pragma_trigger_pos, chunk.slice(), true);
-
-                            if offset > 0 {
-                                // Pragma found (e.g., __PURE__).
-                                // Advance current past the pragma's argument text.
-                                // 'current' is already after the #/@ trigger.
-                                self.current += offset;
-                                // Do NOT consume the character immediately after the pragma.
-                                // Let the main loop find the actual line terminator.
-
-                                // Continue the outer loop from the position AFTER the pragma arg.
-                                continue;
-                            }
-                            // If offset == 0, it wasn't a valid pragma start.
-                        }
-                        // Not a pragma or is_json. Treat #/@ as a normal comment character.
-                        // The character was consumed by step(). Let the outer loop continue.
+                        let pragma_trigger_pos = self.end;
+                        let pure = if first_marker
+                            && strings::is_all_whitespace(
+                                &contents[self.start + 2..pragma_trigger_pos],
+                            ) {
+                            PureAnnotation::Allow
+                        } else {
+                            PureAnnotation::Ignore
+                        };
+                        first_marker = false;
+                        let chunk = js_ast::StoreStr::new(self.remaining());
+                        self.current += self.scan_pragma(
+                            pragma_trigger_pos,
+                            chunk.slice(),
+                            CommentKind::SingleLine,
+                            pure,
+                        );
                         continue;
                     }
                     _ => {
@@ -2450,9 +2135,12 @@ lexer_impl_header! {
         &mut self,
         offset_for_errors: usize,
         chunk: &[u8],
-        allow_newline: bool,
+        comment: CommentKind,
+        pure: PureAnnotation,
     ) -> usize {
-        if !self.has_pure_comment_before {
+        // A `//` comment ends at the line break, so a pragma argument stops there.
+        let allow_newline = comment == CommentKind::SingleLine;
+        if pure == PureAnnotation::Allow && !self.has_pure_comment_before {
             if strings::has_prefix_with_word_boundary(chunk, b"__PURE__") {
                 self.has_pure_comment_before = true;
                 return "__PURE__".len();
@@ -2460,12 +2148,9 @@ lexer_impl_header! {
         }
 
         if strings::has_prefix_with_word_boundary(chunk, b"jsx") {
-            if let Some(span) = PragmaArg::scan(
-                self.start + offset_for_errors,
-                b"jsx",
-                chunk,
-                allow_newline,
-            ) {
+            if let Some(span) =
+                PragmaArg::scan(self.start + offset_for_errors, b"jsx", chunk, allow_newline)
+            {
                 self.jsx_pragma._jsx = span;
                 return "jsx".len()
                     + if span.range.len > 0 {
@@ -2546,11 +2231,7 @@ lexer_impl_header! {
     /// the `log` field doc) and the caller must keep the pointee alive for the
     /// lexer's lifetime. The looser bound lets `'a` (which `Ast<'a>` borrows
     /// through `arena`) outlive a stack-local scratch log.
-    pub fn init_without_reading(
-        log: &mut Log,
-        source: &'a Source,
-        arena: &'a Arena,
-    ) -> Self {
+    pub fn init_without_reading(log: &mut Log, source: &'a Source, arena: &'a Arena) -> Self {
         // Deref `Cow<'static,[u8]>` once; the resulting `&[u8]` borrows
         // `*source` (lifetime `'a`) regardless of Cow arm, so it is sound to
         // cache for the lexer's lifetime.
@@ -2588,7 +2269,6 @@ lexer_impl_header! {
             string_literal_start: 0,
             string_literal_raw_format: StringLiteralRawFormat::Ascii,
             temp_buffer_u16: Vec::new(),
-            is_ascii_only: IS_JSON,
             track_comments: false,
             track_react_suppressions: false,
             all_comments: Vec::new(),
@@ -2606,7 +2286,8 @@ lexer_impl_header! {
                 // It was created via `cast_slice::<u16, u8>` from an arena `[u16]` dupe,
                 // so the pointer is u16-aligned and `cast_slice` back is sound (panics
                 // if that invariant is ever broken — strictly safer than the raw cast).
-                let utf16: &[u16] = bytemuck::cast_slice::<u8, u16>(self.string_literal_raw_content);
+                let utf16: &[u16] =
+                    bytemuck::cast_slice::<u8, u16>(self.string_literal_raw_content);
                 Ok(js_ast::E::String::init_utf16(utf16))
             }
             StringLiteralRawFormat::NeedsDecode => {
@@ -2635,8 +2316,7 @@ lexer_impl_header! {
                     let dup = self.arena.alloc_slice_copy(&tmp);
                     js_ast::E::String::init_utf16(dup)
                 } else {
-                    let result =
-                        self.arena.alloc_slice_fill_default::<u8>(tmp.len());
+                    let result = self.arena.alloc_slice_fill_default::<u8>(tmp.len());
                     strings::copy_utf16_into_utf8(result, &tmp);
                     js_ast::E::String::init(result)
                 };
@@ -2653,17 +2333,7 @@ lexer_impl_header! {
         Ok(res)
     }
 
-    #[inline]
-    fn assert_not_json(&self) {
-        if IS_JSON {
-            // Stable Rust can't fail the build on a const-generic branch,
-            // so this is a runtime check on a dead path.
-            unreachable!("JSON should not reach this point");
-        }
-    }
-
     pub(crate) fn scan_reg_exp(&mut self) -> Result<(), Error> {
-        self.assert_not_json();
         self.regex_flags_start = None;
         loop {
             match self.code_point {
@@ -2680,11 +2350,9 @@ lexer_impl_header! {
                     let _ = FLAG_CHARACTERS;
                     while is_identifier_continue(self.code_point) {
                         match self.code_point {
-                            0x64 | 0x67 | 0x69 | 0x6D | 0x73 | 0x75 | 0x79 | 0x76 =>
-                            {
+                            0x64 | 0x67 | 0x69 | 0x6D | 0x73 | 0x75 | 0x79 | 0x76 => {
                                 if !has_set_flags_start {
-                                    self.regex_flags_start =
-                                        Some((self.end - self.start) as u16);
+                                    self.regex_flags_start = Some((self.end - self.start) as u16);
                                     has_set_flags_start = true;
                                 }
                                 let flag = usize::from(
@@ -2741,8 +2409,6 @@ lexer_impl_header! {
     }
 
     pub(crate) fn next_inside_jsx_element(&mut self) -> Result<(), Error> {
-        self.assert_not_json();
-
         self.has_newline_before = false;
 
         loop {
@@ -2753,8 +2419,7 @@ lexer_impl_header! {
                 -1 => {
                     self.token = T::TEndOfFile;
                 }
-                0x0D | 0x0A | 0x2028 | 0x2029 =>
-                {
+                0x0D | 0x0A | 0x2028 | 0x2029 => {
                     self.step();
                     self.has_newline_before = true;
                     continue;
@@ -2795,8 +2460,7 @@ lexer_impl_header! {
                             'single_line_comment: loop {
                                 self.step();
                                 match self.code_point {
-                                    0x0D | 0x0A | 0x2028 | 0x2029 =>
-                                    {
+                                    0x0D | 0x0A | 0x2028 | 0x2029 => {
                                         break 'single_line_comment;
                                     }
                                     -1 => {
@@ -2818,8 +2482,7 @@ lexer_impl_header! {
                                             break 'multi_line_comment;
                                         }
                                     }
-                                    0x0D | 0x0A | 0x2028 | 0x2029 =>
-                                    {
+                                    0x0D | 0x0A | 0x2028 | 0x2029 => {
                                         self.step();
                                         self.has_newline_before = true;
                                     }
@@ -2860,9 +2523,7 @@ lexer_impl_header! {
 
                     if is_identifier_start(self.code_point) {
                         self.step();
-                        while is_identifier_continue(self.code_point)
-                            || self.code_point == 0x2D
-                        {
+                        while is_identifier_continue(self.code_point) || self.code_point == 0x2D {
                             self.step();
                         }
 
@@ -2920,8 +2581,6 @@ lexer_impl_header! {
     }
 
     pub(crate) fn parse_jsx_string_literal<const QUOTE: u8>(&mut self) -> Result<(), Error> {
-        self.assert_not_json();
-
         let mut backslash = Range::NONE;
         let mut needs_decode = false;
 
@@ -2974,8 +2633,6 @@ lexer_impl_header! {
                     // Non-ASCII strings need the slow path
                     if self.code_point >= 0x80 {
                         needs_decode = true;
-                    } else if IS_JSON && self.code_point < 0x20 {
-                        self.syntax_error()?;
                     }
                     self.step();
                 }
@@ -2985,14 +2642,12 @@ lexer_impl_header! {
 
         self.token = T::TStringLiteral;
 
-        let raw_content_slice =
-            &self.contents[self.start + 1..self.end - 1];
+        let raw_content_slice = &self.contents[self.start + 1..self.end - 1];
         if needs_decode {
             debug_assert!(self.temp_buffer_u16.is_empty());
             let mut tmp = core::mem::take(&mut self.temp_buffer_u16);
             tmp.reserve(raw_content_slice.len());
-            let res = self
-                .fix_whitespace_and_decode_jsx_entities(raw_content_slice, &mut tmp);
+            let res = self.fix_whitespace_and_decode_jsx_entities(raw_content_slice, &mut tmp);
             if let Err(e) = res {
                 tmp.clear();
                 self.temp_buffer_u16 = tmp;
@@ -3013,8 +2668,6 @@ lexer_impl_header! {
     }
 
     pub(crate) fn expect_jsx_element_child(&mut self, token: T) -> Result<(), Error> {
-        self.assert_not_json();
-
         if self.token != token {
             self.expected(token)?;
         }
@@ -3023,8 +2676,6 @@ lexer_impl_header! {
     }
 
     pub(crate) fn next_jsx_element_child(&mut self) -> Result<(), Error> {
-        self.assert_not_json();
-
         self.has_newline_before = false;
         let original_start = self.end;
 
@@ -3052,8 +2703,7 @@ lexer_impl_header! {
                             -1 => {
                                 self.syntax_error()?;
                             }
-                            0x26 | 0x0D | 0x0A | 0x2028 | 0x2029 =>
-                            {
+                            0x26 | 0x0D | 0x0A | 0x2028 | 0x2029 => {
                                 needs_fixing = true;
                                 self.step();
                             }
@@ -3069,17 +2719,14 @@ lexer_impl_header! {
                     }
 
                     self.token = T::TStringLiteral;
-                    let raw_content_slice =
-                        &self.contents[original_start..self.end];
+                    let raw_content_slice = &self.contents[original_start..self.end];
 
                     if needs_fixing {
                         debug_assert!(self.temp_buffer_u16.is_empty());
                         let mut tmp = core::mem::take(&mut self.temp_buffer_u16);
                         tmp.reserve(raw_content_slice.len());
-                        let res = self.fix_whitespace_and_decode_jsx_entities(
-                            raw_content_slice,
-                            &mut tmp,
-                        );
+                        let res = self
+                            .fix_whitespace_and_decode_jsx_entities(raw_content_slice, &mut tmp);
                         if let Err(e) = res {
                             tmp.clear();
                             self.temp_buffer_u16 = tmp;
@@ -3115,8 +2762,6 @@ lexer_impl_header! {
         text: &[u8],
         decoded: &mut Vec<u16>,
     ) -> Result<(), Error> {
-        self.assert_not_json();
-
         let mut after_last_non_whitespace: Option<u32> = None;
 
         // Trim whitespace off the end of the first line
@@ -3127,8 +2772,7 @@ lexer_impl_header! {
 
         while iterator.next(&mut cursor) {
             match cursor.c {
-                0x0D | 0x0A | 0x2028 | 0x2029 =>
-                {
+                0x0D | 0x0A | 0x2028 | 0x2029 => {
                     if let (Some(start), Some(end)) =
                         (first_non_whitespace, after_last_non_whitespace)
                     {
@@ -3138,10 +2782,7 @@ lexer_impl_header! {
                         }
 
                         // Trim whitespace off the start and end of lines in the middle
-                        self.decode_jsx_entities(
-                            &text[start as usize..end as usize],
-                            decoded,
-                        )?;
+                        self.decode_jsx_entities(&text[start as usize..end as usize], decoded)?;
                     }
 
                     // Reset for the next line
@@ -3151,8 +2792,7 @@ lexer_impl_header! {
                 _ => {
                     // Check for unusual whitespace characters
                     if !is_whitespace(cursor.c) {
-                        after_last_non_whitespace =
-                            Some(cursor.i + cursor.width as u32);
+                        after_last_non_whitespace = Some(cursor.i + cursor.width as u32);
                         if first_non_whitespace.is_none() {
                             first_non_whitespace = Some(cursor.i);
                         }
@@ -3171,17 +2811,10 @@ lexer_impl_header! {
         Ok(())
     }
 
-    fn maybe_decode_jsx_entity(
-        &mut self,
-        text: &[u8],
-        cursor: &mut strings::Cursor,
-    ) {
-        self.assert_not_json();
-
-        if let Some(length) = strings::index_of_char(
-            &text[cursor.width as usize + cursor.i as usize..],
-            b';',
-        ) {
+    fn maybe_decode_jsx_entity(&mut self, text: &[u8], cursor: &mut strings::Cursor) {
+        if let Some(length) =
+            strings::index_of_char(&text[cursor.width as usize + cursor.i as usize..], b';')
+        {
             let length = length as usize;
             let end = cursor.width as usize + cursor.i as usize;
             let entity = &text[end..end + length];
@@ -3253,8 +2886,6 @@ lexer_impl_header! {
         text: &[u8],
         out: &mut Vec<u16>,
     ) -> Result<(), Error> {
-        self.assert_not_json();
-
         let iterator = CodepointIterator::init(text);
         let mut cursor = strings::Cursor::default();
 
@@ -3269,8 +2900,6 @@ lexer_impl_header! {
     }
 
     pub(crate) fn expect_inside_jsx_element(&mut self, token: T) -> Result<(), Error> {
-        self.assert_not_json();
-
         if self.token != token {
             self.expected(token)?;
             return Err(Error::SyntaxError);
@@ -3284,8 +2913,6 @@ lexer_impl_header! {
         token: T,
         name: &[u8],
     ) -> Result<(), Error> {
-        self.assert_not_json();
-
         if self.token != token {
             self.expected_string(name)?;
             return Err(Error::SyntaxError);
@@ -3295,15 +2922,12 @@ lexer_impl_header! {
     }
 
     fn scan_reg_exp_validate_and_step(&mut self) -> Result<(), Error> {
-        self.assert_not_json();
-
         if self.code_point == 0x5C {
             self.step();
         }
 
         match self.code_point {
-            0x0D | 0x0A | 0x2028 | 0x2029 =>
-            {
+            0x0D | 0x0A | 0x2028 | 0x2029 => {
                 // Newlines aren't allowed in regular expressions
                 self.syntax_error()?;
             }
@@ -3319,8 +2943,6 @@ lexer_impl_header! {
     }
 
     pub(crate) fn rescan_close_brace_as_template_token(&mut self) -> Result<(), Error> {
-        self.assert_not_json();
-
         if self.token != T::TCloseBrace {
             self.expected(T::TCloseBrace)?;
         }
@@ -3335,8 +2957,6 @@ lexer_impl_header! {
     }
 
     pub(crate) fn raw_template_contents(&mut self) -> &'a [u8] {
-        self.assert_not_json();
-
         let mut text: &[u8] = b"";
 
         match self.token {
@@ -3400,12 +3020,9 @@ lexer_impl_header! {
         self.step_with(contents);
 
         // Dot without a digit after it;
-        if first == 0x2E
-            && (self.code_point < 0x30 || self.code_point > 0x39)
-        {
+        if first == 0x2E && (self.code_point < 0x30 || self.code_point > 0x39) {
             // "..."
-            if (self.code_point == 0x2E
-                && self.current < contents.len())
+            if (self.code_point == 0x2E && self.current < contents.len())
                 && contents[self.current] == b'.'
             {
                 self.step_with(contents);
@@ -3461,8 +3078,7 @@ lexer_impl_header! {
                 match self.code_point {
                     0x5F => {
                         // Cannot have multiple underscores in a row;
-                        if last_underscore_end > 0 && self.end == last_underscore_end + 1
-                        {
+                        if last_underscore_end > 0 && self.end == last_underscore_end + 1 {
                             self.syntax_error()?;
                         }
 
@@ -3476,16 +3092,14 @@ lexer_impl_header! {
                     }
 
                     0x30 | 0x31 => {
-                        self.number = self.number * base as f64
-                            + float64(self.code_point - 0x30);
+                        self.number = self.number * base as f64 + float64(self.code_point - 0x30);
                     }
 
                     0x32..=0x37 => {
                         if base == 2.0 {
                             self.syntax_error()?;
                         }
-                        self.number = self.number * base as f64
-                            + float64(self.code_point - 0x30);
+                        self.number = self.number * base as f64 + float64(self.code_point - 0x30);
                     }
                     0x38 | 0x39 => {
                         if self.is_legacy_octal_literal {
@@ -3493,22 +3107,21 @@ lexer_impl_header! {
                         } else if base < 10.0 {
                             self.syntax_error()?;
                         }
-                        self.number = self.number * base as f64
-                            + float64(self.code_point - 0x30);
+                        self.number = self.number * base as f64 + float64(self.code_point - 0x30);
                     }
                     0x41..=0x46 => {
                         if base != 16.0 {
                             self.syntax_error()?;
                         }
-                        self.number = self.number * base as f64
-                            + float64(self.code_point + 10 - 0x41);
+                        self.number =
+                            self.number * base as f64 + float64(self.code_point + 10 - 0x41);
                     }
                     0x61..=0x66 => {
                         if base != 16.0 {
                             self.syntax_error()?;
                         }
-                        self.number = self.number * base as f64
-                            + float64(self.code_point + 10 - 0x61);
+                        self.number =
+                            self.number * base as f64 + float64(self.code_point + 10 - 0x61);
                     }
                     _ => {
                         // The first digit must exist;
@@ -3524,8 +3137,7 @@ lexer_impl_header! {
                 is_first = false;
             }
 
-            let is_big_integer_literal =
-                self.code_point == 0x6E && !has_dot_or_exponent;
+            let is_big_integer_literal = self.code_point == 0x6E && !has_dot_or_exponent;
 
             // Slow path: do we need to re-scan the input as text?
             if is_big_integer_literal || is_invalid_legacy_octal_literal {
@@ -3562,10 +3174,7 @@ lexer_impl_header! {
                         Err(_) => {
                             self.add_syntax_error(
                                 self.start,
-                                format_args!(
-                                    "Invalid number {}",
-                                    bstr::BStr::new(text)
-                                ),
+                                format_args!("Invalid number {}", bstr::BStr::new(text)),
                             )?;
                         }
                     }
@@ -3573,8 +3182,8 @@ lexer_impl_header! {
             }
         } else {
             // Floating-point literal;
-            let is_invalid_legacy_octal_literal = first == 0x30
-                && (self.code_point == 0x38 || self.code_point == 0x39);
+            let is_invalid_legacy_octal_literal =
+                first == 0x30 && (self.code_point == 0x38 || self.code_point == 0x39);
 
             // Initial digits;
             loop {
@@ -3619,9 +3228,7 @@ lexer_impl_header! {
                         }
 
                         // Cannot have multiple underscores in a row;
-                        if last_underscore_end > 0
-                            && self.end == last_underscore_end + 1
-                        {
+                        if last_underscore_end > 0 && self.end == last_underscore_end + 1 {
                             self.syntax_error()?;
                         }
 
@@ -3655,9 +3262,7 @@ lexer_impl_header! {
                         }
 
                         // Cannot have multiple underscores in a row;
-                        if last_underscore_end > 0
-                            && self.end == last_underscore_end + 1
-                        {
+                        if last_underscore_end > 0 && self.end == last_underscore_end + 1 {
                             self.syntax_error()?;
                         }
 
@@ -3708,10 +3313,7 @@ lexer_impl_header! {
                         self.number = num;
                     }
                     Err(_) => {
-                        self.add_syntax_error(
-                            self.start,
-                            format_args!("Invalid number"),
-                        )?;
+                        self.add_syntax_error(self.start, format_args!("Invalid number"))?;
                     }
                 }
             }
@@ -3735,13 +3337,7 @@ lexer_impl_header! {
         }
         Ok(())
     }
-} // end impl LexerType
-
-// `deinit` → `Drop`: only frees the three growable buffers, which `Vec` drops automatically.
-// No explicit `impl Drop` needed.
-
-/// `pub const Lexer = NewLexer(.{});`
-pub type Lexer<'a> = NewLexer<'a, DefaultJsonOptions>;
+}
 
 #[inline]
 pub fn is_identifier_start(codepoint: i32) -> bool {
@@ -3843,6 +3439,19 @@ pub(crate) fn latin1_identifier_continue_length_scalar(name: &[u8]) -> usize {
     }
 
     name.len()
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum CommentKind {
+    SingleLine,
+    MultiLine,
+}
+
+/// Whether a `__PURE__` match at this position marks the next call.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum PureAnnotation {
+    Allow,
+    Ignore,
 }
 
 pub struct PragmaArg;

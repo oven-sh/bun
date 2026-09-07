@@ -88,14 +88,7 @@ pub(crate) fn to_have_been_called_with(
     // If there's only one call, provide a nice diff.
     if calls_count == 1 {
         let received_call_args = calls.get_index(global, 0)?;
-        let diff_format = DiffFormatter {
-            received_string: None,
-            expected_string: None,
-            expected: Some(expected_args_js_array),
-            received: Some(received_call_args),
-            global_this: Some(global),
-            not: false,
-        };
+        let diff_format = DiffFormatter::new(global, received_call_args, expected_args_js_array, false)?;
         return throw!(this, global, signature, "\n\n{}\n", diff_format);
     }
 

@@ -1,11 +1,11 @@
-import { define } from "../../codegen/class-definitions";
+import { define } from "../../codegen/class-definitions.ts";
 
 function generate(name: string) {
   return define({
     name,
     construct: true,
     noConstructor: false,
-    finalize: true,
+    refCounted: true,
     configurable: false,
     estimatedSize: true,
     klass: {},

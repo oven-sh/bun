@@ -1633,10 +1633,6 @@ const EVP_MD* getDigestByName(const WTF::StringView name)
         }
     }
 
-    // if (name == "ripemd160WithRSA"_s || name == "RSA-RIPEMD160"_s) {
-    //     return EVP_ripemd160();
-    // }
-
     auto nameUtf8 = name.utf8();
     return EVP_get_digestbyname(nameUtf8.data());
 }

@@ -128,7 +128,7 @@ extern "C" void* BakeGlobalObject__getPerThreadData(JSC::JSGlobalObject* global)
 }
 
 JSC::JSPromise* bakeModuleLoaderFetch(JSC::JSGlobalObject* globalObject,
-    JSC::JSModuleLoader* loader, JSC::JSValue key,
+    JSC::JSModuleLoader* loader, JSC::JSValue key, const WTF::String& referrer,
     RefPtr<JSC::ScriptFetchParameters> parameters, RefPtr<JSC::ScriptFetcher> script)
 {
     Bake::GlobalObject* global = uncheckedDowncast<Bake::GlobalObject>(globalObject);
@@ -142,7 +142,7 @@ JSC::JSPromise* bakeModuleLoaderFetch(JSC::JSGlobalObject* globalObject,
         if (global->m_perThreadData) [[likely]] {
             BunString moduleKeyBunString = Bun::toString(moduleKey);
             BunString source = BakeProdLoad(global->m_perThreadData, &moduleKeyBunString);
-            if (source.tag != BunStringTag::Dead) {
+            if (!source.isDead()) {
                 JSC::SourceOrigin origin = JSC::SourceOrigin(WTF::URL(moduleKey));
                 JSC::SourceCode sourceCode = JSC::SourceCode(Bake::SourceProvider::create(
                     globalObject,
@@ -172,12 +172,12 @@ JSC::JSPromise* bakeModuleLoaderFetch(JSC::JSGlobalObject* globalObject,
 #endif
             JSString* bakePrefixRemovedString = jsNontrivialString(vm, bakePrefixRemoved);
             JSValue bakePrefixRemovedJsvalue = bakePrefixRemovedString;
-            return Zig::GlobalObject::moduleLoaderFetch(globalObject, loader, bakePrefixRemovedJsvalue, WTF::move(parameters), WTF::move(script));
+            return Zig::GlobalObject::moduleLoaderFetch(globalObject, loader, bakePrefixRemovedJsvalue, referrer, WTF::move(parameters), WTF::move(script));
         }
         return rejectedInternalPromise(globalObject, createTypeError(globalObject, "BakeGlobalObject does not have per-thread data configured"_s));
     }
 
-    auto result = Zig::GlobalObject::moduleLoaderFetch(globalObject, loader, key, WTF::move(parameters), WTF::move(script));
+    auto result = Zig::GlobalObject::moduleLoaderFetch(globalObject, loader, key, referrer, WTF::move(parameters), WTF::move(script));
     RETURN_IF_EXCEPTION(scope, rejectedInternalPromise(globalObject, scope.exception()->value()));
     return result;
 }

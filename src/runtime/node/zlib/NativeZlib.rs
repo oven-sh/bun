@@ -31,10 +31,8 @@ mod _impl {
     // `mod js { write_callback_*, error_callback_*, ... }` is emitted by
     // `__impl_compression_stream!` below (wraps `bun_jsc::codegen_cached_accessors!`).
 
-    /// Intrusive refcount; [`NativeZlib::deinit`] runs when it hits zero.
     #[bun_jsc::JsClass]
     #[derive(bun_ptr::CellRefCounted)]
-    #[ref_count(destroy = Self::deinit)]
     pub struct NativeZlib {
         pub(crate) ref_count: Cell<u32>,
         // JSC_BORROW backref; global outlives this m_ctx payload. `BackRef`
@@ -257,19 +255,12 @@ mod _impl {
             }
             Ok(JSValue::UNDEFINED)
         }
+    }
 
-        /// RefCount destroy callback. Invoked when `ref_count` reaches zero.
-        /// Not `Drop` because this is an intrusive-refcounted `m_ctx` payload whose
-        /// box is freed here.
-        fn deinit(this: *mut Self) {
-            // SAFETY: called exactly once when the refcount hits 0; `this`
-            // is the heap::alloc pointer produced at construction. `this_value`
-            // (Strong) and `poll_ref` (CountedKeepAlive) are Drop types — freed by
-            // heap::take below.
-            unsafe {
-                (*this).stream.with_mut(|s| s.close());
-                drop(bun_core::heap::take(this));
-            }
+    // `poll_ref` and `this_value` (Strong) clean up via their own Drop impls.
+    impl Drop for NativeZlib {
+        fn drop(&mut self) {
+            self.stream.with_mut(|s| s.close());
         }
     }
 

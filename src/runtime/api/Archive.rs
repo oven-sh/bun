@@ -1338,7 +1338,7 @@ fn extract_to_disk_filtered(
         let raw_pathname_z = raw_pathname_zbox.as_zstr();
         let raw_pathname = raw_pathname_z.as_bytes();
 
-        let mut normalized_buf = bun_paths::PathBuffer::uninit();
+        let mut normalized_buf = bun_paths::path_buffer_pool::get();
         if raw_pathname.len() >= normalized_buf.len() {
             continue;
         }

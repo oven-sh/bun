@@ -9,13 +9,13 @@
 #include "wtf/Scope.h"
 
 #include "JavaScriptCore/BuiltinNames.h"
-#include "JavaScriptCore/JIT.h"
+#include "JavaScriptCore/CodeCache.h"
 #include "JavaScriptCore/JSModuleEnvironment.h"
 #include "JavaScriptCore/JSModuleRecord.h"
 #include "JavaScriptCore/JSPromise.h"
 #include "JavaScriptCore/JSSourceCode.h"
 #include "JavaScriptCore/ModuleAnalyzer.h"
-#include "JavaScriptCore/ModuleProgramCodeBlock.h"
+#include "JavaScriptCore/ModuleProgramExecutable.h"
 #include "JavaScriptCore/Parser.h"
 #include "JavaScriptCore/SourceCodeKey.h"
 
@@ -116,6 +116,7 @@ NodeVMSourceTextModule* NodeVMSourceTextModule::create(VM& vm, JSGlobalObject* g
         return ptr;
     }
 
+    // A syntax error wins over rejected cachedData, as in Node.
     ModuleProgramExecutable* executable = ModuleProgramExecutable::tryCreate(globalObject, ptr->sourceCode());
     RETURN_IF_EXCEPTION(scope, {});
     if (!executable) {
@@ -123,30 +124,13 @@ NodeVMSourceTextModule* NodeVMSourceTextModule::create(VM& vm, JSGlobalObject* g
         return nullptr;
     }
 
-    ptr->m_cachedExecutable.set(vm, ptr, executable);
-    LexicallyScopedFeatures lexicallyScopedFeatures = globalObject->globalScopeExtension() ? TaintedByWithScopeLexicallyScopedFeature : NoLexicallyScopedFeatures;
-    SourceCodeKey key(ptr->sourceCode(), {}, SourceCodeType::ProgramType, lexicallyScopedFeatures, JSParserScriptMode::Classic, DerivedContextType::None, EvalContextType::None, false, {}, std::nullopt);
+    // Decoding checks the format, the checksum and the source key. Linking would need
+    // the module's JSModuleEnvironment, which does not exist yet.
+    LexicallyScopedFeatures lexicallyScopedFeatures = StrictModeLexicallyScopedFeature;
+    SourceCodeKey key(ptr->sourceCode(), {}, SourceCodeType::ModuleType, lexicallyScopedFeatures, JSParserScriptMode::Module, DerivedContextType::None, EvalContextType::None, false, {}, std::nullopt);
     Ref<CachedBytecode> cachedBytecode = CachedBytecode::create(std::span(cachedData), nullptr, {});
-    UnlinkedModuleProgramCodeBlock* unlinkedBlock = decodeCodeBlock<UnlinkedModuleProgramCodeBlock>(vm, key, WTF::move(cachedBytecode));
-
-    if (unlinkedBlock) {
-        JSScope* jsScope = globalObject->globalScope();
-        CodeBlock* codeBlock = nullptr;
-        {
-            // JSC::ProgramCodeBlock::create() requires GC to be deferred.
-            DeferGC deferGC(vm);
-            codeBlock = ModuleProgramCodeBlock::create(vm, executable, unlinkedBlock, jsScope);
-            RETURN_IF_EXCEPTION(scope, nullptr);
-        }
-        if (codeBlock) {
-            CompilationResult compilationResult = JIT::compileSync(vm, codeBlock, JITCompilationEffort::JITCompilationCanFail);
-            RETURN_IF_EXCEPTION(scope, nullptr);
-            if (compilationResult != CompilationResult::CompilationFailed) {
-                executable->installCode(codeBlock);
-                return ptr;
-            }
-        }
-    }
+    if (decodeCodeBlock<UnlinkedModuleProgramCodeBlock>(vm, key, WTF::move(cachedBytecode)))
+        return ptr;
 
     throwError(globalObject, scope, ErrorCode::ERR_VM_MODULE_CACHED_DATA_REJECTED, "cachedData buffer was rejected"_s);
     return nullptr;
@@ -491,17 +475,11 @@ RefPtr<CachedBytecode> NodeVMSourceTextModule::bytecode(JSGlobalObject* globalOb
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     if (!m_bytecode) {
-        if (!m_cachedExecutable) {
-            ModuleProgramExecutable* executable = ModuleProgramExecutable::tryCreate(globalObject, m_sourceCode);
-            RETURN_IF_EXCEPTION(scope, nullptr);
-            if (!executable) {
-                throwSyntaxError(globalObject, scope, "Failed to create cached executable"_s);
-                return nullptr;
-            }
-            m_cachedExecutable.set(vm, this, executable);
+        m_bytecode = getBytecode(globalObject, SourceCodeType::ModuleType, m_sourceCode);
+        if (!m_bytecode) {
+            throwSyntaxError(globalObject, scope, "Failed to create cached data"_s);
+            return nullptr;
         }
-        m_bytecode = getBytecode(globalObject, m_cachedExecutable.get(), m_sourceCode);
-        RETURN_IF_EXCEPTION(scope, nullptr);
     }
 
     return m_bytecode;
@@ -566,7 +544,6 @@ void NodeVMSourceTextModule::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 
     visitor.append(vmModule->m_moduleRecord);
     visitor.append(vmModule->m_moduleRequestsArray);
-    visitor.append(vmModule->m_cachedExecutable);
     visitor.append(vmModule->m_cachedBytecodeBuffer);
     visitor.append(vmModule->m_initializeImportMeta);
 }

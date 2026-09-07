@@ -185,7 +185,7 @@ const sameTags = await Bun.S3Client.getTags("object.json", credentials);
 const fileTags = await client.file("object.json").getTags();
 ```
 
-Limits and permissions depend on the service. AWS S3 allows up to 10 tags per object, with keys up to 128 characters and values up to 256 characters, counted in UTF-16 code units. Writing tags requires `s3:PutObjectTagging` in addition to the upload permission. Reading requires `s3:GetObjectTagging`. Bun validates string values and Unicode encoding locally and leaves service-specific limits to the server. These operations require an endpoint that supports S3 object tagging. See the [AWS object tagging guide](https://docs.aws.amazon.com/AmazonS3/latest/userguide/object-tagging.html).
+Limits and permissions depend on the service. AWS S3 allows up to 10 tags per object, with non-empty keys up to 128 characters and values up to 256 characters, counted in UTF-16 code units. Writing tags requires `s3:PutObjectTagging` in addition to the upload permission. Reading requires `s3:GetObjectTagging`. Bun validates string values and Unicode encoding locally and leaves service-specific tag restrictions to the server. These operations require an endpoint that supports S3 object tagging. See the [AWS object tagging guide](https://docs.aws.amazon.com/AmazonS3/latest/userguide/object-tagging.html).
 
 ### Working with large files (streams)
 
@@ -603,7 +603,7 @@ interface S3File extends Blob {
   stream(options: S3Options): ReadableStream;
   write(
     data: string | Uint8Array | ArrayBuffer | Blob | ReadableStream | Response | Request,
-    options?: BlobPropertyBag,
+    options?: S3WriteOptions,
   ): Promise<number>;
 
   exists(options?: S3Options): Promise<boolean>;
@@ -612,6 +612,7 @@ interface S3File extends Blob {
   presign(options?: S3Options): string;
 
   stat(options?: S3Options): Promise<S3Stat>;
+  getTags(options?: S3Options): Promise<Record<string, string>>;
   /**
    * Size is not synchronously available because it requires a network request.
    *

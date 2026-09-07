@@ -436,9 +436,12 @@ pub(crate) fn get_tags(
     }
     let promise = bun_jsc::JSPromiseStrong::init(global);
     let value = promise.value();
-    // SAFETY: the transpiler owns its environment loader for the VM's lifetime.
-    let proxy =
-        unsafe { (*global.bun_vm().as_mut().transpiler.env).get_http_proxy(true, None, None) };
+    let proxy = global
+        .bun_vm()
+        .as_mut()
+        .transpiler
+        .env_mut()
+        .get_http_proxy(true, None, None);
     simple_request::execute_simple_s3_request(
         &credentials.credentials,
         simple_request::Options {

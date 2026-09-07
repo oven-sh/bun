@@ -4801,7 +4801,8 @@ pub(crate) fn write_file_internal(
     #[cfg(not(windows))]
     {
         let mut needs_async = false;
-        let fast_path_ok = matches!(*path_or_blob, PathOrBlob::Path(_))
+        let fast_path_ok = matches!(*path_or_blob, PathOrBlob::Path(ref path)
+            if !matches!(path, PathOrFileDescriptor::Path(path) if path.slice().starts_with(b"s3://")))
             || (matches!(*path_or_blob, PathOrBlob::Blob(ref b)
                 if b.offset.get() == 0 && !b.is_s3()
                     && !(b.store.get().is_some()

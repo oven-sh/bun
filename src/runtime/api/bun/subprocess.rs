@@ -484,14 +484,24 @@ impl Subprocess<'_> {
                         unreachable!()
                     };
                     let pipe_state = &mut Readable::pipe_reader_mut(&pipe).state;
-                    if let PipeReader::State::Done(done) = pipe_state {
-                        let taken = core::mem::take(done);
-                        out.set(Readable::Buffer(readable::CowString::init_owned(
-                            taken.into_boxed_slice(),
-                        )));
-                        // pipe.state was emptied via take()
+                    match pipe_state {
+                        PipeReader::State::Done(done) => {
+                            let taken = core::mem::take(done);
+                            out.set(Readable::Buffer(readable::CowString::init_owned(
+                                taken.into_boxed_slice(),
+                            )));
+                            // pipe.state was emptied via take()
+                        }
+                        PipeReader::State::Err(bytes, err) => {
+                            let taken = core::mem::take(bytes);
+                            out.set(Readable::Errored(
+                                readable::CowString::init_owned(taken.into_boxed_slice()),
+                                err.clone(),
+                            ));
+                        }
+                        // *out stays Readable::Ignore (set by replace above).
+                        PipeReader::State::Pending => {}
                     }
-                    // else: *out stays Readable::Ignore (set by replace above).
                 }
             }
         }

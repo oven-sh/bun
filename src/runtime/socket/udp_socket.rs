@@ -638,6 +638,22 @@ impl UDPSocket {
 
         let config = this.config.get();
         let hostname_z = config.hostname.to_owned_slice_z();
+        if config.fd.is_none() && !bun_dns::is_valid_hostname(hostname_z.as_bytes()) {
+            return Err(
+                global_this.throw_value(crate::dns_jsc::cares_jsc::not_a_hostname_error(
+                    global_this,
+                    hostname_z.as_bytes(),
+                )),
+            );
+        }
+        if let Some(connect) = &config.connect {
+            let address = connect.address.to_utf8();
+            if !bun_dns::is_valid_hostname(&address) {
+                return Err(global_this.throw_value(
+                    crate::dns_jsc::cares_jsc::not_a_hostname_error(global_this, &address),
+                ));
+            }
+        }
 
         // Reserve an adopted descriptor before creating the socket so a
         // concurrent adoption of the same number fails with EEXIST (like
@@ -1896,6 +1912,14 @@ impl UDPSocket {
 
         let str = args[0].to_bun_string(global_this)?;
         let connect_host = str.to_owned_slice_z();
+        if !bun_dns::is_valid_hostname(connect_host.as_bytes()) {
+            return Err(
+                global_this.throw_value(crate::dns_jsc::cares_jsc::not_a_hostname_error(
+                    global_this,
+                    connect_host.as_bytes(),
+                )),
+            );
+        }
 
         let connect_port_js = args[1];
 
@@ -2538,16 +2562,10 @@ fn get_us_error<const USE_WSA: bool>(res: c_int, tag: bun_sys::Tag) -> Option<bu
         }
 
         if USE_WSA {
-            // The wrapper (src/sys/windows/mod.rs) already maps `SystemErrno`
-            // → `E` for us, so `e` is `bun_sys::E` here.
-            if let Some(e) = bun_sys::windows::WSAGetLastError() {
-                if e != bun_sys::E::SUCCESS {
-                    // `WSASetLastError` is declared `safe fn` in
-                    // `bun_windows_sys::ws2_32` (thread-local Winsock error
-                    // slot write — no preconditions).
-                    bun_sys::windows::ws2_32::WSASetLastError(0);
-                    return Some(bun_sys::Error::from_code(e, tag));
-                }
+            let err = bun_sys::windows::Win32Error::get();
+            if err != bun_sys::windows::Win32Error::SUCCESS {
+                bun_sys::windows::kernel32::SetLastError(0);
+                return Some(bun_sys::Error::from_win32(err, tag));
             }
         }
 

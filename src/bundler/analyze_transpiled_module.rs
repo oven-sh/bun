@@ -121,17 +121,47 @@ pub enum ModuleInfoError {
 /// in place; nothing is widened or copied.
 ///
 /// `body` / `table` are lifetime-erased: they point either into the
-/// executable's mapped section (`'static`) or into `owned`, which lives as long
-/// as `self`.
+/// executable's mapped section (`'static`) or into the `Owned` variant's bytes,
+/// which live as long as `self`.
 pub struct ModuleInfoDeserialized {
     body: Body<'static>,
-    table: ModuleInfoStringTable<'static>,
+    table: ModuleInfoStrings<'static>,
     pub flags: Flags,
-    /// Backing storage for `body`/`table`: `None` when they live in the
-    /// executable's mapped section — the ids then index the shared string
-    /// table and identifiers come from the VM-wide slots
-    /// (`Bun__VM__sharedModuleInfoIdentifiers`) rather than a per-record array.
-    owned: Option<Box<[u8]>>,
+}
+
+/// Where a record's names come from: a self-contained record carries its own
+/// strings (`WTF::StringImpl` bodies the runtime atomizes) and the bytes they
+/// live in; a record inside an executable indexes the slot table every module
+/// of the executable shares, resolved by JSC as the bytecode's own string slots are.
+pub enum ModuleInfoStrings<'a> {
+    Owned {
+        table: ModuleInfoStringTable<'a>,
+        _bytes: Box<[u8]>,
+    },
+    Shared(ModuleInfoSlotTable<'a>),
+}
+/// One name of a record, as the runtime resolves it.
+#[derive(Clone, Copy)]
+pub enum ModuleInfoString<'a> {
+    /// `is_8bit` Latin-1 bytes, else 2-byte-aligned little-endian UTF-16.
+    Chars { chars: &'a [u8], is_8bit: bool },
+    /// `EncoderStringTable::slotFor`.
+    Slot(u32),
+}
+impl<'a> ModuleInfoStrings<'a> {
+    pub fn count(&self) -> u32 {
+        match self {
+            Self::Owned { table, .. } => table.count,
+            Self::Shared(t) => t.count(),
+        }
+    }
+    /// String `id`, or `None` if out of bounds (corrupt input).
+    pub fn get(&self, id: u32) -> Option<ModuleInfoString<'a>> {
+        match self {
+            Self::Owned { table, .. } => table.get(id),
+            Self::Shared(t) => t.get(id).map(ModuleInfoString::Slot),
+        }
+    }
 }
 
 /// The body split into its regions; every count has been bounds-checked
@@ -222,31 +252,26 @@ impl ModuleInfoDeserialized {
         &self.body
     }
     #[inline]
-    pub fn table(&self) -> &ModuleInfoStringTable<'_> {
-        &self.table
-    }
-    #[inline]
     pub fn ids(&self) -> IdCursor<'_> {
         IdCursor {
             rem: self.body.ids,
             width: self.body.id_width as usize,
-            count: self.table.count,
+            count: self.table.count(),
         }
     }
-    /// Whether the ids index the executable's shared string table (and so
-    /// the VM-wide identifier slots).
+    /// Whether the ids index the executable's shared slot table (and so the
+    /// VM-wide identifier slots).
     #[inline]
     pub fn shared(&self) -> bool {
-        self.owned.is_none()
+        matches!(self.table, ModuleInfoStrings::Shared(_))
     }
     /// Ids below this are strings; the rest are sentinels.
     #[inline]
     pub fn strings_count(&self) -> usize {
-        self.table.count as usize
+        self.table.count() as usize
     }
-    /// The WTF-8 bytes of string `id`, or `None` if out of bounds (corrupt input).
     #[inline]
-    pub fn string(&self, id: u32) -> Option<&[u8]> {
+    pub fn string(&self, id: u32) -> Option<ModuleInfoString<'_>> {
         self.table.get(id)
     }
 
@@ -272,9 +297,11 @@ impl ModuleInfoDeserialized {
         let (flags, body) = Body::parse(&bytes[table.byte_len..])?;
         Ok(Box::new(ModuleInfoDeserialized {
             body,
-            table,
+            table: ModuleInfoStrings::Owned {
+                table,
+                _bytes: owned,
+            },
             flags,
-            owned: Some(owned),
         }))
     }
 
@@ -284,19 +311,18 @@ impl ModuleInfoDeserialized {
         Self::create(source).ok()
     }
 
-    /// A body inside the executable whose ids index the string table the
+    /// A body inside the executable whose ids index the slot table the
     /// executable shares between all its modules (`StandaloneModuleGraph`).
     /// Nothing is copied.
     pub fn create_with_table(
-        table: &ModuleInfoStringTable<'static>,
+        table: &ModuleInfoSlotTable<'static>,
         body: &'static [u8],
     ) -> Option<Box<ModuleInfoDeserialized>> {
         let (flags, body) = Body::parse(body).ok()?;
         Some(Box::new(ModuleInfoDeserialized {
             body,
-            table: *table,
+            table: ModuleInfoStrings::Shared(*table),
             flags,
-            owned: None,
         }))
     }
 }
@@ -332,9 +358,8 @@ fn width(b: u8) -> Result<usize, ModuleInfoError> {
     }
 }
 
-/// Borrowed view over a serialized
-/// `bun_js_printer::analyze_transpiled_module::ModuleInfoStringTable`
-/// (layout documented there).
+/// Borrowed view over a self-contained record's string table
+/// (`bun_js_printer::serialize_string_table`).
 #[derive(Clone, Copy)]
 pub struct ModuleInfoStringTable<'a> {
     count: u32,
@@ -367,6 +392,9 @@ impl<'a> ModuleInfoStringTable<'a> {
             .and_then(|n| n.checked_mul(offset_width))
             .ok_or(ModuleInfoError::BadModuleInfo)?;
         let offsets = r.bytes(offsets_len)?;
+        if !offsets_len.is_multiple_of(2) {
+            r.bytes(1)?;
+        }
         let total = read_uint(&offsets[offsets_len - offset_width..], offset_width) as usize;
         let buf = r.bytes(total)?;
         Ok(Self {
@@ -392,9 +420,99 @@ impl<'a> ModuleInfoStringTable<'a> {
         Some([start, end - start])
     }
     #[inline]
-    pub fn get(&self, id: u32) -> Option<&'a [u8]> {
+    pub fn get(&self, id: u32) -> Option<ModuleInfoString<'a>> {
         let [offset, len] = self.range(id)?;
-        Some(&self.buf[offset as usize..(offset + len) as usize])
+        let (offset, end) = (offset as usize, (offset + len) as usize);
+        let (&tag, rest) = self.buf[offset..end].split_first()?;
+        match tag {
+            1 => Some(ModuleInfoString::Chars {
+                chars: rest,
+                is_8bit: true,
+            }),
+            0 => {
+                let chars = self.buf.get((offset + 2) & !1..end)?;
+                chars
+                    .len()
+                    .is_multiple_of(2)
+                    .then_some(ModuleInfoString::Chars {
+                        chars,
+                        is_8bit: false,
+                    })
+            }
+            _ => None,
+        }
+    }
+}
+
+/// The executable's module-info string table: `u32 count` then one `u32`
+/// slot per string, each resolved by `JSC__IdentifierArray__setFromSlot`
+/// exactly as the bytecode cache resolves its own string slots — up to three
+/// Latin-1 characters inline (tag 1), an ordinal into the executable's
+/// bytecode string table (tag 2), or the empty string (tag 3). Built by
+/// `ModuleInfoSlotTableBuilder`.
+#[derive(Clone, Copy)]
+pub struct ModuleInfoSlotTable<'a> {
+    slots: &'a [u8],
+}
+impl<'a> ModuleInfoSlotTable<'a> {
+    pub fn parse(bytes: &'a [u8]) -> Result<Self, ModuleInfoError> {
+        if bytes.is_empty() {
+            return Ok(Self { slots: &[] });
+        }
+        let mut r = Reader { rem: bytes };
+        let count = r.u32()? as usize;
+        let slots = r.bytes(count.checked_mul(4).ok_or(ModuleInfoError::BadModuleInfo)?)?;
+        Ok(Self { slots })
+    }
+    #[inline]
+    pub fn count(&self) -> u32 {
+        (self.slots.len() / 4) as u32
+    }
+    #[inline]
+    pub fn get(&self, id: u32) -> Option<u32> {
+        let at = (id as usize).checked_mul(4)?;
+        let bytes = self.slots.get(at..at + 4)?;
+        Some(u32::from_le_bytes(bytes.try_into().unwrap()))
+    }
+}
+
+/// Interns every module's strings during a `--compile` link and serializes
+/// the `ModuleInfoSlotTable` their bodies index.
+#[derive(Default)]
+pub struct ModuleInfoSlotTableBuilder {
+    ids: bun_collections::HashMap<Box<[u8]>, u32>,
+    slots: Vec<u32>,
+}
+impl ModuleInfoSlotTableBuilder {
+    /// Interns every string of `mi`; the result maps its local ids to table ids.
+    pub fn intern_all(&mut self, mi: &ModuleInfo, slot_for: impl Fn(&[u8]) -> u32) -> Vec<u32> {
+        let (strings_buf, strings_lens) = mi.strings();
+        let mut ids = Vec::with_capacity(strings_lens.len());
+        let mut offset = 0usize;
+        for &len in strings_lens {
+            let s = &strings_buf[offset..offset + len as usize];
+            offset += len as usize;
+            if let Some(&id) = self.ids.get(s) {
+                ids.push(id);
+                continue;
+            }
+            let id = u32::try_from(self.slots.len()).expect("int cast");
+            self.slots.push(slot_for(s));
+            self.ids.insert(s.into(), id);
+            ids.push(id);
+        }
+        ids
+    }
+    pub fn count(&self) -> u32 {
+        self.slots.len() as u32
+    }
+    pub fn serialize(&self) -> Vec<u8> {
+        let mut out = Vec::with_capacity(4 + self.slots.len() * 4);
+        out.extend_from_slice(&self.count().to_le_bytes());
+        for slot in &self.slots {
+            out.extend_from_slice(&slot.to_le_bytes());
+        }
+        out
     }
 }
 

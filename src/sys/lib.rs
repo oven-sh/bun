@@ -25,7 +25,7 @@ pub use error::ReturnCodeExt;
 impl From<Error> for bun_errno::SystemErrno {
     #[inline]
     fn from(e: Error) -> Self {
-        bun_errno::SystemErrno::init(i64::from(e.errno)).unwrap_or(bun_errno::SystemErrno::EIO)
+        e.to_zig_err()
     }
 }
 /// The JS-facing rich error
@@ -104,8 +104,51 @@ pub use bun_core::FileKind as EntryKind;
 // The high-tier `bun_runtime::node::dir_iterator` shares this surface; the
 // readdir loop lives here so `walker_skippable` / `bun_glob` / resolver can
 // iterate without pulling `bun_runtime` up-tier.
+
+/// `__getdirentries64` (private libsystem symbol): fills `buf` with
+/// variable-length dirent records and advances `*basep`. Returns the byte
+/// count written (0 means EOF). Retries EINTR (#41085). There is no
+/// `$NOCANCEL` variant to call: getdirentries64 is not a pthread
+/// cancellation point (xnu syscalls.master has no `_nocancel` entry for it).
+///
+/// On a buffer of at least 1024 bytes the kernel reports EOF in the last 4
+/// bytes; this wrapper zeroes them before each attempt so the caller can
+/// trust the flag even after a retry.
+///
+/// SAFETY precondition: `buf` must be writable for `len` bytes and `basep`
+/// must point to a valid `i64`.
+#[cfg(target_os = "macos")]
+pub unsafe fn getdirentries64(fd: Fd, buf: *mut u8, len: usize, basep: *mut i64) -> Maybe<usize> {
+    unsafe extern "C" {
+        fn __getdirentries64(
+            fd: libc::c_int,
+            buf: *mut u8,
+            nbytes: usize,
+            basep: *mut i64,
+        ) -> isize;
+    }
+    loop {
+        if len >= 4 {
+            // SAFETY: caller contract — `buf` is writable for `len` bytes.
+            unsafe { buf.add(len - 4).cast::<[u8; 4]>().write([0, 0, 0, 0]) };
+        }
+        // SAFETY: caller contract.
+        let rc = unsafe { __getdirentries64(fd.native(), buf, len, basep) };
+        if rc < 0 {
+            let e = last_errno();
+            if e == libc::EINTR {
+                continue;
+            }
+            return Err(Error::from_code_int(e, Tag::getdirentries64));
+        }
+        return Ok(rc as usize);
+    }
+}
+
 pub mod dir_iterator {
-    use super::{EntryKind, Error, Fd, Result, Tag};
+    use super::{EntryKind, Fd, Result};
+    #[cfg(not(target_os = "macos"))]
+    use super::{Error, Tag};
     use bun_paths::OSPathChar;
 
     const BUF_SIZE: usize = 8192;
@@ -364,15 +407,6 @@ pub mod dir_iterator {
             }
         }
         fn next(&mut self, dir: Fd) -> Result<Option<IteratorResult>> {
-            unsafe extern "C" {
-                // Private libsystem symbol.
-                fn __getdirentries64(
-                    fd: libc::c_int,
-                    buf: *mut u8,
-                    nbytes: usize,
-                    basep: *mut i64,
-                ) -> isize;
-            }
             loop {
                 if self.index >= self.end_index {
                     if self.received_eof {
@@ -382,43 +416,28 @@ pub mod dir_iterator {
                     // getdirentries64() writes to the last 4 bytes of the
                     // buffer to indicate EOF. If that value is not zero, we
                     // have reached the end of the directory and can skip the
-                    // extra syscall.
+                    // extra syscall. The wrapper zeroes those bytes before
+                    // each attempt.
                     // https://github.com/apple-oss-distributions/xnu/blob/94d3b452840153a99b38a3a9659680b2a006908e/bsd/vfs/vfs_syscalls.c#L10444-L10470
                     const GETDIRENTRIES64_EXTENDED_BUFSIZE: usize = 1024;
                     const _: () = assert!(BUF_SIZE >= GETDIRENTRIES64_EXTENDED_BUFSIZE);
                     self.received_eof = false;
-                    // Always zero the bytes where the flag will be written so
-                    // we don't confuse garbage with EOF.
-                    // SAFETY: writing into our own MaybeUninit buffer.
-                    unsafe {
-                        self.buf
-                            .as_mut_ptr()
-                            .add(BUF_SIZE - 4)
-                            .cast::<[u8; 4]>()
-                            .write([0, 0, 0, 0]);
-                    }
 
                     // SAFETY: buf is valid for BUF_SIZE bytes; seek is a valid *mut i64.
-                    let rc = unsafe {
-                        __getdirentries64(
-                            dir.native(),
+                    let n = unsafe {
+                        super::getdirentries64(
+                            dir,
                             self.buf.as_mut_ptr(),
                             BUF_SIZE,
                             &raw mut self.seek,
                         )
-                    };
-                    if rc < 1 {
-                        if rc == 0 {
-                            self.received_eof = true;
-                            return Ok(None);
-                        }
-                        return Err(Error::from_code_int(
-                            super::last_errno(),
-                            Tag::getdirentries64,
-                        ));
+                    }?;
+                    if n == 0 {
+                        self.received_eof = true;
+                        return Ok(None);
                     }
                     self.index = 0;
-                    self.end_index = rc as usize;
+                    self.end_index = n;
                     // SAFETY: we explicitly zeroed `[BUF_SIZE-4..BUF_SIZE)` above
                     // and the kernel may have overwritten it with the EOF flag —
                     // either way the 4 bytes are initialized.
@@ -568,8 +587,6 @@ pub mod dir_iterator {
             }
         }
         fn next(&mut self, dir: Fd) -> Result<Option<IteratorResult>> {
-            use crate::windows::Win32Error;
-            use bun_errno::Win32ErrorExt as _;
             use bun_windows_sys::externs as w;
             // `offset_of!(FILE_DIRECTORY_INFORMATION, FileName)` — fixed by the
             // Win32 layout (4+4 + 6×8 + 4+4 = 64).
@@ -636,8 +653,7 @@ pub mod dir_iterator {
                         return Ok(None);
                     }
                     if rc != w::NTSTATUS::SUCCESS {
-                        let errno = Win32Error::from_nt_status(rc).to_e();
-                        return Err(Error::from_code(errno, Tag::NtQueryDirectoryFile));
+                        return Err(Error::new(rc, Tag::NtQueryDirectoryFile));
                     }
                     if io.Information == 0 {
                         return Ok(None);
@@ -787,7 +803,7 @@ pub mod dir_iterator {
 pub fn open_dir_for_iteration_os_path(dir: Fd, path: &bun_paths::OSPathSlice) -> Result<Fd> {
     #[cfg(not(windows))]
     {
-        let mut buf = bun_paths::PathBuffer::default();
+        let mut buf = bun_paths::path_buffer_pool::get();
         // ENAMETOOLONG on
         // overflow, never silently truncate (would open the wrong directory).
         if path.len() >= buf.len() {
@@ -950,7 +966,9 @@ pub fn is_regular_file(mode: Mode) -> bool {
 }
 #[cfg(windows)]
 pub use bun_errno::Win32ErrorExt;
-pub use bun_errno::{E, GetErrno, S, SystemErrno, e_from_negated, get_errno};
+pub use bun_errno::{E, S, SystemErrno, e_from_negated, last_error};
+#[cfg(not(windows))]
+pub use bun_errno::{GetErrno, get_errno};
 
 /// Exported for `headers-handwritten.h` `Bun__errnoName`. Returns a
 /// NUL-terminated upper-case errno name (e.g. `"ENOENT"`) or null for an
@@ -1040,8 +1058,7 @@ impl<T> MaybeExt for Result<T> {
         if rc == bun_windows_sys::NTSTATUS::SUCCESS {
             return None;
         }
-        let e = windows::translate_nt_status_to_errno(rc);
-        Some(Err(Error::from_code(e, tag)))
+        Some(Err(Error::new(rc, tag)))
     }
 }
 #[cfg(windows)]
@@ -1241,9 +1258,9 @@ pub type Stat = bun_libuv_sys::uv_stat_t;
 use bun_core::ZStr;
 
 /// Read thread-local libc errno (set by the failing syscall).
-/// On Windows this reads the CRT's
-/// thread-local `_errno()`; libuv-backed paths that need Win32
-/// `GetLastError()` go through `bun_sys::windows::get_last_errno` instead.
+/// On Windows this reads the CRT's thread-local `_errno()`, which Win32 and
+/// Winsock calls do not set — use `Win32Error::get()` / `Error::from_win32`
+/// for those.
 #[inline]
 pub fn last_errno() -> i32 {
     bun_core::ffi::errno()
@@ -1315,7 +1332,7 @@ impl Tag {
     pub const readlink: Tag = Tag(39);
     pub const rename: Tag = Tag(40);
     pub(crate) const stat: Tag = Tag(41);
-    pub(crate) const statfs: Tag = Tag(42);
+    pub const statfs: Tag = Tag(42);
     pub const symlink: Tag = Tag(43);
     #[cfg(not(windows))]
     pub(crate) const symlinkat: Tag = Tag(44);
@@ -1389,6 +1406,7 @@ impl Tag {
     #[cfg(not(windows))]
     pub(crate) const setrlimit: Tag = Tag(106);
     pub const clone3: Tag = Tag(107);
+    pub const uv_os_setpriority: Tag = Tag(108);
     // `inotify_init1`/`inotify_add_watch` fold under the generic `.watch`
     // tag; `INotifyWatcher.rs` spells it `.inotify`. Alias to `.watch`
     // so the JS-facing `err.syscall == "watch"` string stays node-compatible.
@@ -1396,7 +1414,7 @@ impl Tag {
     /// The tag name — spelling is frozen (JS-facing
     /// `err.syscall` string; node-compat code matches on it).
     pub fn name(self) -> &'static str {
-        const NAMES: [&str; 108] = [
+        const NAMES: [&str; 109] = [
             "TODO",
             "dup",
             "access",
@@ -1506,6 +1524,7 @@ impl Tag {
             "getrlimit",
             "setrlimit",
             "clone3",
+            "uv_os_setpriority",
         ];
         NAMES.get(self.0 as usize).copied().unwrap_or("unknown")
     }
@@ -1819,11 +1838,9 @@ mod posix_impl {
             unsafe { libc::send(fd, buf, n, flags) }
         }
     }
-    // EINTR-retry: most wrappers loop on EINTR. NOT all — the macOS
-    // `$NOCANCEL` arms for open/openat/read/write/recv/send issue exactly one
-    // call and surface EINTR to the caller without looping. `check!` keeps the
-    // retry for the common path; `check_once!` is the single-shot variant for
-    // the Darwin arms.
+    // EINTR-retry: every wrapper loops on EINTR (matching libuv) except
+    // `close` (see `close`). `$NOCANCEL` only opts out of pthread
+    // cancellation points; it does not affect EINTR.
     macro_rules! check {
         ($rc:expr, $tag:expr) => {{
             loop {
@@ -1872,27 +1889,6 @@ mod posix_impl {
             }
         }};
     }
-    // Single-shot: no EINTR retry (Darwin `$NOCANCEL` arms).
-    #[cfg(target_os = "macos")]
-    macro_rules! check_once {
-        ($rc:expr, $tag:expr) => {{
-            let rc = $rc;
-            if rc < 0 {
-                return Err(Error::from_code_int(last_errno(), $tag));
-            }
-            rc
-        }};
-    }
-    #[cfg(target_os = "macos")]
-    macro_rules! check_once_p {
-        ($rc:expr, $tag:expr, $path:expr) => {{
-            let rc = $rc;
-            if rc < 0 {
-                return Err(Error::from_code_int(last_errno(), $tag).with_path($path.as_bytes()));
-            }
-            rc
-        }};
-    }
 
     #[inline]
     pub fn open(path: &ZStr, flags: i32, mode: Mode) -> Maybe<Fd> {
@@ -1903,10 +1899,10 @@ mod posix_impl {
     }
     pub fn openat(dir: impl AsFd, path: &ZStr, flags: i32, mode: Mode) -> Maybe<Fd> {
         let dir = dir.as_fd();
-        // macOS: single `openat$NOCANCEL`, no EINTR retry.
+        // macOS: `openat$NOCANCEL`, retried on EINTR.
         #[cfg(target_os = "macos")]
         {
-            let rc = check_once_p!(
+            let rc = check_p!(
                 // SAFETY: `dir` is a live fd (or AT_FDCWD); `ZStr::as_ptr()` is
                 // a valid NUL-terminated C string.
                 unsafe { sys_openat(dir.native(), path.as_ptr(), flags, mode as libc::c_uint) },
@@ -2003,10 +1999,10 @@ mod posix_impl {
     }
     pub fn read(fd: Fd, buf: &mut [u8]) -> Maybe<usize> {
         let len = buf.len().min(MAX_COUNT);
-        // macOS: single `read$NOCANCEL`, no EINTR retry.
+        // macOS: `read$NOCANCEL`, retried on EINTR.
         #[cfg(target_os = "macos")]
         {
-            let n = check_once!(
+            let n = check!(
                 // SAFETY: `fd` is a live descriptor; `buf` is valid for `len` writes.
                 unsafe { sys_read(fd.native(), buf.as_mut_ptr().cast(), len) },
                 Tag::read
@@ -2029,10 +2025,10 @@ mod posix_impl {
     }
     pub fn write(fd: Fd, buf: &[u8]) -> Maybe<usize> {
         let len = buf.len().min(MAX_COUNT);
-        // macOS: single `write$NOCANCEL`, no EINTR retry.
+        // macOS: `write$NOCANCEL`, retried on EINTR.
         #[cfg(target_os = "macos")]
         {
-            let n = check_once!(
+            let n = check!(
                 // SAFETY: `fd` is a live descriptor; `buf` is valid for `len` reads.
                 unsafe { sys_write(fd.native(), buf.as_ptr().cast(), len) },
                 Tag::write
@@ -2612,20 +2608,11 @@ mod posix_impl {
     /// `fcntl(F_DUPFD_CLOEXEC, 0)` so the dup'd fd doesn't leak
     /// to children. NOT `dup(2)` (which lacks CLOEXEC).
     pub fn dup(fd: Fd) -> Maybe<Fd> {
-        // Attach the fd on error.
-        loop {
-            // SAFETY: `fd` is a live descriptor; `F_DUPFD_CLOEXEC` with arg `0`
-            // takes no pointer arguments.
-            let rc = unsafe { libc::fcntl(fd.native(), libc::F_DUPFD_CLOEXEC, 0) };
-            if rc < 0 {
-                let e = last_errno();
-                if e == libc::EINTR {
-                    continue;
-                }
-                return Err(Error::from_code_int(e, Tag::fcntl).with_fd(fd));
-            }
-            return Ok(Fd::from_native(rc));
-        }
+        dup_at_least(fd, 0)
+    }
+    /// `fcntl(F_DUPFD_CLOEXEC, min)`: the new descriptor is the lowest free one >= `min`.
+    pub fn dup_at_least(fd: Fd, min: i32) -> Maybe<Fd> {
+        fcntl(fd, libc::F_DUPFD_CLOEXEC, min as isize).map(|rc| Fd::from_native(rc as i32))
     }
     pub fn fchmod(fd: Fd, mode: Mode) -> Maybe<()> {
         check!(
@@ -3047,9 +3034,9 @@ mod posix_impl {
     // exposed for shell/pipe IPC.
     pub(crate) fn recv(fd: Fd, buf: &mut [u8], flags: i32) -> Maybe<usize> {
         let len = buf.len().min(MAX_COUNT);
-        // macOS: single `recvfrom$NOCANCEL`, no EINTR retry.
+        // macOS: `recvfrom$NOCANCEL`, retried on EINTR.
         #[cfg(target_os = "macos")]
-        let n = check_once!(
+        let n = check!(
             // SAFETY: `fd` is a live socket; `buf` is valid for `len` writes.
             unsafe { sys_recv(fd.native(), buf.as_mut_ptr().cast(), len, flags) },
             Tag::recv
@@ -3066,9 +3053,9 @@ mod posix_impl {
     pub(crate) fn send(fd: Fd, buf: &[u8], flags: i32) -> Maybe<usize> {
         // `buf.len` is passed un-clamped (only `recv` clamps);
         // forward the full length and let the kernel decide.
-        // macOS: single `sendto$NOCANCEL`, no EINTR retry.
+        // macOS: `sendto$NOCANCEL`, retried on EINTR.
         #[cfg(target_os = "macos")]
-        let n = check_once!(
+        let n = check!(
             // SAFETY: `fd` is a live socket; `buf` is valid for `buf.len()` reads.
             unsafe { sys_send(fd.native(), buf.as_ptr().cast(), buf.len(), flags) },
             Tag::send
@@ -3546,7 +3533,6 @@ mod windows_impl {
     use super::windows as w;
     use super::windows::libuv as uv;
     use super::*;
-    use bun_paths::WPathBuffer;
 
     // ── libuv-backed ─────────────────────────────────────────────────────
     pub fn open(path: &ZStr, flags: i32, mode: Mode) -> Maybe<Fd> {
@@ -3587,7 +3573,7 @@ mod windows_impl {
                 match er {
                     w::Win32Error::BROKEN_PIPE | w::Win32Error::HANDLE_EOF => return Ok(0),
                     w::Win32Error::OPERATION_ABORTED => continue,
-                    _ => return Err(Error::new(er.to_e(), Tag::read).with_fd(fd)),
+                    _ => return Err(Error::from_win32(er, Tag::read).with_fd(fd)),
                 }
             }
             return Ok(amount_read as usize);
@@ -3614,12 +3600,12 @@ mod windows_impl {
         };
         if rc == 0 {
             let er = w::Win32Error::get();
-            let errno = if er == w::Win32Error::ACCESS_DENIED {
-                E::EBADF
+            let err = if er == w::Win32Error::ACCESS_DENIED {
+                Error::from_code(E::EBADF, Tag::write)
             } else {
-                er.to_e()
+                Error::from_win32(er, Tag::write)
             };
-            return Err(Error::new(errno, Tag::write).with_fd(fd));
+            return Err(err.with_fd(fd));
         }
         Ok(bytes_written as usize)
     }
@@ -3659,7 +3645,7 @@ mod windows_impl {
                     // BROKEN_PIPE/HANDLE_EOF map to EOF (0 bytes read).
                     w::Win32Error::BROKEN_PIPE | w::Win32Error::HANDLE_EOF => return Ok(0),
                     w::Win32Error::OPERATION_ABORTED => continue,
-                    _ => return Err(Error::new(er.to_e(), Tag::pread).with_fd(fd)),
+                    _ => return Err(Error::from_win32(er, Tag::pread).with_fd(fd)),
                 }
             }
             return Ok(amount_read as usize);
@@ -3695,14 +3681,12 @@ mod windows_impl {
         };
         if rc == 0 {
             let er = w::Win32Error::get();
-            // Keep parity with `write()` above and surface the raw errno
-            // (no INVALID_HANDLE → NotOpenForWriting remapping).
-            let errno = if er == w::Win32Error::ACCESS_DENIED {
-                E::EBADF
+            let err = if er == w::Win32Error::ACCESS_DENIED {
+                Error::from_code(E::EBADF, Tag::pwrite)
             } else {
-                er.to_e()
+                Error::from_win32(er, Tag::pwrite)
             };
-            return Err(Error::new(errno, Tag::pwrite).with_fd(fd));
+            return Err(err.with_fd(fd));
         }
         Ok(bytes_written as usize)
     }
@@ -3725,9 +3709,7 @@ mod windows_impl {
     fn fstat_handle(fd: Fd) -> Maybe<Stat> {
         use bun_core::S;
         let handle = fd.native();
-        let nt_err = |rc: w::NTSTATUS| {
-            Error::new(w::translate_nt_status_to_errno(rc), Tag::fstat).with_fd(fd)
-        };
+        let nt_err = |rc: w::NTSTATUS| Error::new(rc, Tag::fstat).with_fd(fd);
         let mut st: Stat = bun_core::ffi::zeroed();
 
         // Dispatch on handle type; pipes and consoles get a synthetic stat.
@@ -3882,11 +3864,7 @@ mod windows_impl {
             )
         };
         if rc != bun_windows_sys::NTSTATUS::SUCCESS {
-            // `errnoSys` for `NTSTATUS` routes through the curated
-            // `translateNTStatusToErrno` table first, then falls back to
-            // `RtlNtStatusToDosError` for unmapped codes.
-            let errno = w::translate_nt_status_to_errno(rc);
-            return Err(Error::new(errno, Tag::ftruncate).with_fd(fd));
+            return Err(Error::new(rc, Tag::ftruncate).with_fd(fd));
         }
         Ok(())
     }
@@ -3922,7 +3900,7 @@ mod windows_impl {
             )
         };
         if out == 0 {
-            return Err(Error::new(w::get_last_errno(), Tag::dup).with_fd(fd));
+            return Err(Error::from_win32(w::Win32Error::get(), Tag::dup).with_fd(fd));
         }
         Ok(Fd::from_native(target as _))
     }
@@ -3934,11 +3912,11 @@ mod windows_impl {
     }
     pub fn getcwd(buf: &mut [u8]) -> Maybe<usize> {
         // GetCurrentDirectoryW + WTF16→UTF8.
-        let mut wbuf = WPathBuffer::default();
+        let mut wbuf = bun_paths::w_path_buffer_pool::get();
         let len =
             unsafe { w::kernel32::GetCurrentDirectoryW(wbuf.len() as u32, wbuf.as_mut_ptr()) };
         if len == 0 {
-            return Err(Error::new(w::get_last_errno(), Tag::getcwd));
+            return Err(Error::from_win32(w::Win32Error::get(), Tag::getcwd));
         }
         // MSDN: when `nBufferLength` is too small `GetCurrentDirectoryW`
         // returns the *required* size (incl. NUL), which can exceed
@@ -3954,7 +3932,7 @@ mod windows_impl {
         let dir = dir.as_fd();
         // Open with `op = OnlyCreate`, then close the resulting handle on
         // success.
-        let mut wbuf = WPathBuffer::default();
+        let mut wbuf = bun_paths::w_path_buffer_pool::get();
         let wpath = bun_paths::string_paths::to_nt_path(&mut wbuf, path.as_bytes());
         let made = super::open_dir_at_windows_nt_path(
             dir,
@@ -3972,8 +3950,8 @@ mod windows_impl {
     pub fn renameat(from_dir: impl AsFd, from: &ZStr, to_dir: impl AsFd, to: &ZStr) -> Maybe<()> {
         let from_dir = from_dir.as_fd();
         let to_dir = to_dir.as_fd();
-        let mut wf = WPathBuffer::default();
-        let mut wt = WPathBuffer::default();
+        let mut wf = bun_paths::w_path_buffer_pool::get();
+        let mut wt = bun_paths::w_path_buffer_pool::get();
         let from_w = bun_paths::string_paths::to_nt_path(&mut wf, from.as_bytes());
         let to_w = bun_paths::string_paths::to_nt_path(&mut wt, to.as_bytes());
         super::windows::rename_at_w(from_dir, from_w, to_dir, to_w, true)
@@ -3995,7 +3973,7 @@ mod windows_impl {
         // `remove_dir = flags & AT_REMOVEDIR != 0`.
         // AT_REMOVEDIR on Windows = 0x200.
         const AT_REMOVEDIR: i32 = 0x200;
-        let mut wbuf = WPathBuffer::default();
+        let mut wbuf = bun_paths::w_path_buffer_pool::get();
         let wpath = bun_paths::string_paths::to_nt_path(&mut wbuf, path.as_bytes());
         super::windows::DeleteFileBun(
             wpath,
@@ -4052,7 +4030,7 @@ mod windows_impl {
         if sub.is_empty() || sub == b"." {
             return Ok(());
         }
-        let mut buf = bun_core::PathBuffer::default();
+        let mut buf = bun_paths::path_buffer_pool::get();
         if sub.len() >= buf.0.len() {
             return Err(Error::new(E::ENAMETOOLONG, Tag::mkdir));
         }
@@ -4127,7 +4105,7 @@ mod windows_impl {
         // makePath (NtCreateFile rejects them anyway).
         let it = ComponentIterator::init(&buf.0[..w], PathFormat::Windows)
             .map_err(|_| Error::new(E::EINVAL, Tag::mkdir))?;
-        let mut z = bun_core::PathBuffer::default();
+        let mut z = bun_paths::path_buffer_pool::get();
         bun_paths::make_path_with(it, |p| {
             z.0[..p.len()].copy_from_slice(p);
             z.0[p.len()] = 0;
@@ -4142,9 +4120,9 @@ mod windows_impl {
     pub fn symlinkat(target: &ZStr, dirfd: impl AsFd, dest: &ZStr) -> Maybe<()> {
         let dirfd = dirfd.as_fd();
         // Resolve `dest` against `dirfd`, then symlink via libuv.
-        let mut db = bun_core::PathBuffer::default();
+        let mut db = bun_paths::path_buffer_pool::get();
         let d = super::get_fd_path(dirfd, &mut db)?;
-        let mut dj = bun_core::PathBuffer::default();
+        let mut dj = bun_paths::path_buffer_pool::get();
         let d_abs = bun_paths::resolve_path::join_string_buf_z::<bun_paths::platform::Windows>(
             &mut dj.0,
             &[d, dest.as_bytes()],
@@ -4154,9 +4132,9 @@ mod windows_impl {
     pub fn readlinkat(fd: impl AsFd, path: &ZStr, buf: &mut [u8]) -> Maybe<usize> {
         let fd = fd.as_fd();
         // No `readlinkat` on Windows — resolve and call `readlink`.
-        let mut db = bun_core::PathBuffer::default();
+        let mut db = bun_paths::path_buffer_pool::get();
         let d = super::get_fd_path(fd, &mut db)?;
-        let mut dj = bun_core::PathBuffer::default();
+        let mut dj = bun_paths::path_buffer_pool::get();
         let abs = bun_paths::resolve_path::join_string_buf_z::<bun_paths::platform::Windows>(
             &mut dj.0,
             &[d, path.as_bytes()],
@@ -4191,11 +4169,13 @@ mod windows_impl {
         ) {
             return Err(Error::new(E::ENAMETOOLONG, Tag::access).with_path(path.as_bytes()));
         }
-        let mut wbuf = WPathBuffer::default();
+        let mut wbuf = bun_paths::w_path_buffer_pool::get();
         let wpath = bun_paths::string_paths::to_kernel32_path(&mut wbuf, path.as_bytes());
         let attrs = unsafe { w::kernel32::GetFileAttributesW(wpath.as_ptr()) };
         if attrs == w::INVALID_FILE_ATTRIBUTES {
-            return Err(Error::new(w::get_last_errno(), Tag::access).with_path(path.as_bytes()));
+            return Err(
+                Error::from_win32(w::Win32Error::get(), Tag::access).with_path(path.as_bytes())
+            );
         }
         let is_readonly = (attrs & w::FILE_ATTRIBUTE_READONLY) != 0;
         let is_directory = (attrs & w::FILE_ATTRIBUTE_DIRECTORY) != 0;
@@ -4235,7 +4215,7 @@ mod windows_impl {
         // calls; only uv_fs_req_cleanup frees it. fs_t has no Drop impl, so
         // call it explicitly before any return.
         req.deinit();
-        if let Some(err) = Error::from_uv_rc(rc, Tag::utime) {
+        if let Some(err) = rc.to_error(Tag::utime) {
             return Err(err.with_path(path.as_bytes()));
         }
         Ok(())
@@ -4260,7 +4240,7 @@ mod windows_impl {
         // system security policy and recognizes `.js/.lnk/.pif/.pl/.shs/.url/
         // .vbs/...` in addition to `.exe/.cmd/.bat/.com` . Do NOT hand-roll an extension whitelist —
         // PORTING.md §Forbidden bars re-implementing linked OS API surface.
-        let mut wbuf = WPathBuffer::default();
+        let mut wbuf = bun_paths::w_path_buffer_pool::get();
         let wpath = bun_paths::string_paths::to_w_path(&mut wbuf, path.as_bytes());
         // `bFromShellExecute = FALSE` so `.exe` files are included
         // (https://learn.microsoft.com/en-us/windows/win32/api/winsafer/nf-winsafer-saferiisexecutablefiletype).
@@ -4272,7 +4252,7 @@ mod windows_impl {
         let mut size: i64 = 0;
         let ok = unsafe { w::kernel32::GetFileSizeEx(fd.native() as w::HANDLE, &mut size) };
         if ok == 0 {
-            return Err(Error::new(w::get_last_errno(), Tag::fstat).with_fd(fd));
+            return Err(Error::from_win32(w::Win32Error::get(), Tag::fstat).with_fd(fd));
         }
         // Clamp defensively so a
         // negative LARGE_INTEGER never becomes ~18 EB after the i64→u64 cast.
@@ -4290,7 +4270,7 @@ mod windows_impl {
         // uv_pipe(fds, 0, 0).
         let mut fds: [uv::uv_file; 2] = [-1, -1];
         let rc = unsafe { uv::uv_pipe(&mut fds, 0, 0) };
-        if let Some(err) = Error::from_uv_rc(rc, Tag::pipe) {
+        if let Some(err) = rc.to_error(Tag::pipe) {
             return Err(err);
         }
         Ok([Fd::from_uv(fds[0]), Fd::from_uv(fds[1])])
@@ -4313,7 +4293,7 @@ mod windows_impl {
             w::SetFilePointerEx(fd.native() as w::HANDLE, offset, &mut new, whence as u32)
         };
         if ok == 0 {
-            return Err(Error::new(w::get_last_errno(), Tag::lseek).with_fd(fd));
+            return Err(Error::from_win32(w::Win32Error::get(), Tag::lseek).with_fd(fd));
         }
         Ok(new)
     }
@@ -4324,7 +4304,7 @@ mod windows_impl {
         // SAFETY: `fd` is a valid kernel handle (caller invariant).
         let ok = unsafe { w::SetFilePointerEx(fd.native() as w::HANDLE, 0, &mut new, w::FILE_END) };
         if ok == w::FALSE {
-            return Err(Error::new(w::get_last_errno(), Tag::lseek).with_fd(fd));
+            return Err(Error::from_win32(w::Win32Error::get(), Tag::lseek).with_fd(fd));
         }
         Ok(usize::try_from(new).expect("int cast"))
     }
@@ -4332,17 +4312,19 @@ mod windows_impl {
         // `SetCurrentDirectoryW(toWDirPath(..))`.
         // `toWDirPath` appends a trailing backslash so e.g. `"C:"` is treated
         // as the drive root, not the drive's saved cwd.
-        let mut wbuf = WPathBuffer::default();
+        let mut wbuf = bun_paths::w_path_buffer_pool::get();
         let wpath = bun_paths::string_paths::to_w_dir_path(&mut wbuf, path.as_bytes());
         if unsafe { w::SetCurrentDirectoryW(wpath.as_ptr()) } == 0 {
-            return Err(Error::new(w::get_last_errno(), Tag::chdir).with_path(path.as_bytes()));
+            return Err(
+                Error::from_win32(w::Win32Error::get(), Tag::chdir).with_path(path.as_bytes())
+            );
         }
         Ok(())
     }
     pub fn fchdir(fd: Fd) -> Maybe<()> {
-        let mut buf = bun_core::PathBuffer::default();
+        let mut buf = bun_paths::path_buffer_pool::get();
         let p = super::get_fd_path(fd, &mut buf)?;
-        let mut zb = bun_core::PathBuffer::default();
+        let mut zb = bun_paths::path_buffer_pool::get();
         zb.0[..p.len()].copy_from_slice(p);
         zb.0[p.len()] = 0;
         // SAFETY: NUL-terminated above.
@@ -4363,9 +4345,7 @@ mod windows_impl {
         let rc =
             unsafe { w::ws2_32::recv(fd.native() as _, buf.as_mut_ptr().cast::<_>(), len, flags) };
         if rc < 0 {
-            return Err(
-                Error::new(w::WSAGetLastError().unwrap_or(E::EUNKNOWN), Tag::recv).with_fd(fd),
-            );
+            return Err(Error::from_win32(w::Win32Error::get(), Tag::recv).with_fd(fd));
         }
         Ok(rc as usize)
     }
@@ -4375,9 +4355,7 @@ mod windows_impl {
         let len = buf.len().min(i32::MAX as usize) as i32;
         let rc = unsafe { w::ws2_32::send(fd.native() as _, buf.as_ptr().cast::<_>(), len, flags) };
         if rc < 0 {
-            return Err(
-                Error::new(w::WSAGetLastError().unwrap_or(E::EUNKNOWN), Tag::send).with_fd(fd),
-            );
+            return Err(Error::from_win32(w::Win32Error::get(), Tag::send).with_fd(fd));
         }
         Ok(rc as usize)
     }
@@ -4478,9 +4456,8 @@ pub fn pwritev(fd: Fd, vecs: &[PlatformIoVecConst], offset: i64) -> Maybe<usize>
         // (asserted above); `pwritev(2)` only reads through `iov_base`.
         // Darwin uses `pwritev$NOCANCEL` (avoid cancellation point).
         #[cfg(target_os = "macos")]
-        {
-            // macOS: single `pwritev$NOCANCEL`, no
-            // EINTR retry (surfaces EINTR to caller).
+        loop {
+            // macOS: `pwritev$NOCANCEL`, retried on EINTR.
             // SAFETY: `fd` is a live descriptor; `vecs` gives an exact
             // (ptr, len) pair of layout-compatible iovecs (asserted above).
             let rc = unsafe {
@@ -4492,7 +4469,11 @@ pub fn pwritev(fd: Fd, vecs: &[PlatformIoVecConst], offset: i64) -> Maybe<usize>
                 )
             };
             if rc < 0 {
-                return Err(Error::from_code_int(last_errno(), Tag::pwritev));
+                let e = last_errno();
+                if e == libc::EINTR {
+                    continue;
+                }
+                return Err(Error::from_code_int(e, Tag::pwritev));
             }
             return Ok(rc as usize);
         }
@@ -4606,20 +4587,24 @@ pub fn platform_iovec_const_create(buf: &[u8]) -> PlatformIoVecConst {
     }
 }
 
-/// `bun.sys.writev` — gather-write. macOS uses `writev$NOCANCEL` with no
-/// EINTR retry; other POSIX retries on EINTR.
+/// `bun.sys.writev` — gather-write. Retries on EINTR
+/// (macOS uses `writev$NOCANCEL`).
 pub fn writev(fd: Fd, vecs: &[PlatformIoVec]) -> Maybe<usize> {
     #[cfg(unix)]
     {
         #[cfg(target_os = "macos")]
-        {
+        loop {
             // SAFETY: `PlatformIoVec` is `libc::iovec`; writev(2) only reads
-            // the descriptor table. Single shot, surfaces EINTR.
+            // the descriptor table. `writev$NOCANCEL`, retried on EINTR.
             let rc = unsafe {
                 nocancel::writev(fd.native(), vecs.as_ptr(), vecs.len() as core::ffi::c_int)
             };
             if rc < 0 {
-                return Err(Error::from_code_int(last_errno(), Tag::writev).with_fd(fd));
+                let e = last_errno();
+                if e == libc::EINTR {
+                    continue;
+                }
+                return Err(Error::from_code_int(e, Tag::writev).with_fd(fd));
             }
             return Ok(rc as usize);
         }
@@ -4652,8 +4637,8 @@ pub fn writev(fd: Fd, vecs: &[PlatformIoVec]) -> Maybe<usize> {
     }
 }
 
-/// `bun.sys.readv` — scatter-read. macOS uses `readv$NOCANCEL` with no
-/// EINTR retry; other POSIX retries on EINTR.
+/// `bun.sys.readv` — scatter-read. Retries on EINTR
+/// (macOS uses `readv$NOCANCEL`).
 pub fn readv(fd: Fd, vecs: &[PlatformIoVec]) -> Maybe<usize> {
     #[cfg(debug_assertions)]
     if vecs.is_empty() {
@@ -4662,14 +4647,19 @@ pub fn readv(fd: Fd, vecs: &[PlatformIoVec]) -> Maybe<usize> {
     #[cfg(unix)]
     {
         #[cfg(target_os = "macos")]
-        {
+        loop {
             // SAFETY: vecs.ptr is `*const iovec`; the kernel writes through
-            // each `iov_base`, never the array itself. Single shot.
+            // each `iov_base`, never the array itself. `readv$NOCANCEL`,
+            // retried on EINTR.
             let rc = unsafe {
                 nocancel::readv(fd.native(), vecs.as_ptr(), vecs.len() as core::ffi::c_int)
             };
             if rc < 0 {
-                return Err(Error::from_code_int(last_errno(), Tag::readv).with_fd(fd));
+                let e = last_errno();
+                if e == libc::EINTR {
+                    continue;
+                }
+                return Err(Error::from_code_int(e, Tag::readv).with_fd(fd));
             }
             return Ok(rc as usize);
         }
@@ -4701,8 +4691,8 @@ pub fn readv(fd: Fd, vecs: &[PlatformIoVec]) -> Maybe<usize> {
     }
 }
 
-/// `bun.sys.preadv` — scatter-read at `position`. macOS uses
-/// `preadv$NOCANCEL` with no EINTR retry.
+/// `bun.sys.preadv` — scatter-read at `position`. Retries on EINTR
+/// (macOS uses `preadv$NOCANCEL`).
 pub fn preadv(fd: Fd, vecs: &[PlatformIoVec], position: i64) -> Maybe<usize> {
     #[cfg(debug_assertions)]
     if vecs.is_empty() {
@@ -4711,8 +4701,8 @@ pub fn preadv(fd: Fd, vecs: &[PlatformIoVec], position: i64) -> Maybe<usize> {
     #[cfg(unix)]
     {
         #[cfg(target_os = "macos")]
-        {
-            // SAFETY: see `readv`. Single shot.
+        loop {
+            // SAFETY: see `readv`. `preadv$NOCANCEL`, retried on EINTR.
             let rc = unsafe {
                 nocancel::preadv(
                     fd.native(),
@@ -4722,7 +4712,11 @@ pub fn preadv(fd: Fd, vecs: &[PlatformIoVec], position: i64) -> Maybe<usize> {
                 )
             };
             if rc < 0 {
-                return Err(Error::from_code_int(last_errno(), Tag::preadv).with_fd(fd));
+                let e = last_errno();
+                if e == libc::EINTR {
+                    continue;
+                }
+                return Err(Error::from_code_int(e, Tag::preadv).with_fd(fd));
             }
             return Ok(rc as usize);
         }
@@ -4879,10 +4873,6 @@ pub enum SizeHint {
     /// `fstat()` the fd to pre-size the buffer.
     UnknownSize,
 }
-
-/// Owned `KEY → VALUE` map of environment variables.
-/// Minimal real def (no hash-map semantics needed; callers iterate).
-pub type EnvMap = std::collections::HashMap<String, String>;
 
 /// `bun.sys.syslog` — debug-scoped log under `SYS`.
 /// `bun_core::scoped_log!` only accepts a bare `$scope:ident`, so we
@@ -5961,7 +5951,7 @@ unsafe impl Sync for DynLib {}
 impl DynLib {
     /// `dlopen(path, RTLD_LAZY)` / `LoadLibraryW(path)`.
     pub fn open(path: &[u8]) -> core::result::Result<Self, bun_errno::SystemErrno> {
-        let mut buf = bun_paths::PathBuffer::default();
+        let mut buf = bun_paths::path_buffer_pool::get();
         // `std.DynLib.open` returns `error.NameTooLong`; never truncate (could
         // dlopen a different library whose path is a prefix of the requested one).
         if path.len() >= buf.0.len() {
@@ -6115,7 +6105,7 @@ pub fn open_a(path: &[u8], flags: i32, perm: Mode) -> Maybe<Fd> {
 /// `openatA` — like `openat` but takes a non-NUL-terminated slice.
 pub fn openat_a(dir: impl AsFd, path: &[u8], flags: i32, perm: Mode) -> Maybe<Fd> {
     let dir = dir.as_fd();
-    let mut buf = bun_paths::PathBuffer::default();
+    let mut buf = bun_paths::path_buffer_pool::get();
     if path.len() >= buf.0.len() {
         return Err(Error::from_code_int(libc::ENAMETOOLONG, Tag::open).with_path(path));
     }
@@ -6642,8 +6632,7 @@ fn open_windows_device_path(
         )
     };
     if rc == bun_windows_sys::INVALID_HANDLE_VALUE {
-        let errno = windows::Win32Error::get().to_e();
-        return Err(Error::from_code(errno, Tag::open));
+        return Err(Error::from_win32(windows::Win32Error::get(), Tag::open));
     }
     Ok(Fd::from_system(rc))
 }
@@ -6760,9 +6749,12 @@ pub(crate) fn open_dir_at_windows_nt_path(
             0,
         )
     };
+    // Not `Error::new(rc)`: the curated NTSTATUS table maps
+    // `OBJECT_NAME_INVALID` to EINVAL, and `open` of a bad name is ENOENT
+    // (libuv/Node), which `RtlNtStatusToDosError` gives.
     match windows::Win32Error::from_nt_status(rc) {
         windows::Win32Error::SUCCESS => Ok(Fd::from_system(fd)),
-        code => Err(Error::from_code(code.to_e(), Tag::open)),
+        code => Err(Error::from_win32(code, Tag::open)),
     }
 }
 
@@ -6863,7 +6855,8 @@ pub(crate) fn open_file_at_windows_nt_path(
                 }
                 Ok(Fd::from_system(result))
             }
-            code => Err(Error::from_code(code.to_e(), Tag::open)),
+            // See `open_dir_at_windows_nt_path`: Rtl mapping, not the curated table.
+            code => Err(Error::from_win32(code, Tag::open)),
         };
     }
 }
@@ -7158,15 +7151,10 @@ fn exists_at_type_nt(dir: Fd, mut path: &[u16]) -> Maybe<ExistsAtType> {
     // SAFETY: FFI; attr/basic_info valid for the call duration.
     let rc = unsafe { w::ntdll::NtQueryAttributesFile(&attr, &mut basic_info) };
     if rc != w::NTSTATUS::SUCCESS {
-        // `errnoSys` for `NTSTATUS` routes through the curated
-        // `translateNTStatusToErrno` table first (so `OBJECT_PATH_NOT_FOUND`
-        // deterministically maps to `ENOENT`, which `directory_exists_at()`
-        // branches on), then falls back to `RtlNtStatusToDosError` for
-        // unmapped codes.
-        return Err(Error::from_code(
-            windows::translate_nt_status_to_errno(rc),
-            Tag::access,
-        ));
+        // `Error::new(NTSTATUS)` maps through the curated table first, so
+        // `OBJECT_PATH_NOT_FOUND` is deterministically `ENOENT`, which
+        // `directory_exists_at()` branches on.
+        return Err(Error::new(rc, Tag::access));
     }
     // `FILE_ATTRIBUTE_READONLY` on a directory is a folder-customization
     // marker (OneDrive sets it) and does not affect directory-ness; only
@@ -7758,7 +7746,7 @@ pub fn mkdir_recursive(sub_path: &[u8]) -> Maybe<()> {
 /// to UTF-8 and delegates to `mkdir_recursive_at`.
 pub(crate) fn make_path_w(dir: Fd, sub_path: &[u16]) -> Maybe<()> {
     // Transcode UTF-16 → UTF-8, then call `makePath` (`mkdir_recursive_at`).
-    let mut buf = bun_paths::PathBuffer::default();
+    let mut buf = bun_paths::path_buffer_pool::get();
     let utf8 = bun_paths::strings::from_w_path(&mut buf.0[..], sub_path);
     mkdir_recursive_at(dir, utf8.as_bytes())
 }
@@ -8653,9 +8641,7 @@ impl WindowsSymlinkOptions {
 // ──────────────────────────────────────────────────────────────────────────
 #[cfg(windows)]
 mod win_symlink_impl {
-    use super::{
-        E, Error, Maybe, Tag, Win32ErrorExt as _, WindowsSymlinkOptions, ZStr, sys_uv, windows,
-    };
+    use super::{E, Error, Maybe, Tag, WindowsSymlinkOptions, ZStr, sys_uv, windows};
     use bun_core::WStr;
     use core::sync::atomic::{AtomicU32, Ordering};
 
@@ -8708,21 +8694,14 @@ mod win_symlink_impl {
                     WindowsSymlinkOptions::denied();
                     continue;
                 }
-                // `to_e()` falls back to `E::UNKNOWN` for Win32 codes not in
-                // the errno table. Filter drivers, network redirectors, and
-                // security software hooking `CreateSymbolicLinkW` can return
-                // codes outside the mapped set; treating those as success
-                // would leave the caller believing a symlink exists when it
-                // does not. Returning an error lets `symlink_or_junction`
-                // fall through to a junction.
-                let e: E = win_err.to_e();
+                let err = Error::from_win32(win_err, Tag::symlink);
                 // Only ENOENT/EEXIST keep `has_failed_to_create_symlink`
                 // unset; every other failure flips the sticky bit so
                 // `symlinkOrJunction` falls through to junctions next time.
-                if !matches!(e, E::NOENT | E::EXIST) {
+                if !matches!(err.get_errno(), E::NOENT | E::EXIST) {
                     WindowsSymlinkOptions::set_has_failed_to_create_symlink(true);
                 }
-                return Err(Error::from_code(e, Tag::symlink));
+                return Err(err);
             }
             return Ok(());
         }
@@ -8775,7 +8754,7 @@ mod win_symlink_impl {
         // SAFETY: `from` is NUL-terminated.
         let rc = unsafe { windows::DeleteFileW(from.as_ptr()) };
         if rc == 0 {
-            return Err(Error::from_code(windows::get_last_errno(), Tag::unlink));
+            return Err(Error::from_win32(windows::Win32Error::get(), Tag::unlink));
         }
         Ok(())
     }
@@ -8786,7 +8765,7 @@ mod win_symlink_impl {
         // SAFETY: `path` is NUL-terminated; null security attributes.
         let rc = unsafe { windows::CreateDirectoryW(path.as_ptr(), core::ptr::null_mut()) };
         if rc == 0 {
-            return Err(Error::from_code(windows::get_last_errno(), Tag::mkdir));
+            return Err(Error::from_win32(windows::Win32Error::get(), Tag::mkdir));
         }
         Ok(())
     }
@@ -8798,7 +8777,7 @@ pub use win_symlink_impl::{mkdir_w, symlink_or_junction, symlink_w, unlink_w};
 #[cfg(windows)]
 pub fn link_w(src: &bun_core::WStr, dest: &bun_core::WStr) -> Maybe<()> {
     if windows::CreateHardLinkW(dest.as_ptr(), src.as_ptr(), None) == 0 {
-        return Err(Error::from_code(windows::get_last_errno(), Tag::link));
+        return Err(Error::from_win32(windows::Win32Error::get(), Tag::link));
     }
     Ok(())
 }
@@ -8866,14 +8845,14 @@ pub fn renameat_concurrently_a(
     opts: RenameatConcurrentlyOptions,
 ) -> Maybe<()> {
     // Z-terminate both paths into stack buffers.
-    let mut from_buf = bun_paths::PathBuffer::default();
+    let mut from_buf = bun_paths::path_buffer_pool::get();
     let from_len = from.len().min(from_buf.0.len() - 1);
     from_buf.0[..from_len].copy_from_slice(&from[..from_len]);
     from_buf.0[from_len] = 0;
     // SAFETY: NUL-terminated above.
     let from_z = ZStr::from_buf(&from_buf.0[..], from_len);
 
-    let mut to_buf = bun_paths::PathBuffer::default();
+    let mut to_buf = bun_paths::path_buffer_pool::get();
     let to_len = to.len().min(to_buf.0.len() - 1);
     to_buf.0[..to_len].copy_from_slice(&to[..to_len]);
     to_buf.0[to_len] = 0;
@@ -8891,7 +8870,7 @@ pub fn iterate_dir(dir: Fd) -> dir_iterator::WrappedIterator {
 /// [`exists_z`]: copies into a stack `PathBuffer`, NUL-terminates, then
 /// `access(path, F_OK)` (POSIX) / `GetFileAttributesW` (Windows).
 pub fn exists(path: &[u8]) -> bool {
-    let mut buf = bun_paths::PathBuffer::default();
+    let mut buf = bun_paths::path_buffer_pool::get();
     if path.len() >= buf.0.len() {
         return false;
     }
@@ -9396,8 +9375,6 @@ bun_core::link_impl_OutputSink! {
             core::ptr::write((&raw mut out).cast::<SysQuietWriterAdapter>(), concrete);
             out
         },
-        // QuietWriter itself is unbuffered (buffering lives in the Adapter).
-        quiet_writer_flush(_qw) => (),
         quiet_writer_write_all(qw, bytes) => fd_write_all_quiet(qw_fd(qw), bytes),
         quiet_writer_fd(qw) => qw_fd(qw),
         tty_winsize(fd) => sink_tty_winsize(fd),

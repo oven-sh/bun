@@ -21,15 +21,16 @@
 import { describe, expect, test } from "bun:test";
 import { bunExe, bunRun, tempDir } from "harness";
 import { readdirSync, writeFileSync } from "node:fs";
-import { resolve } from "node:path";
+import { isAbsolute, resolve } from "node:path";
 
 import { emitBindgen, emitBindgenV2, registerCodegenRules, type CodegenOutputs } from "../../scripts/build/codegen.ts";
 import { registerDirStamps } from "../../scripts/build/compile.ts";
 import { resolveConfig, type Config, type Toolchain } from "../../scripts/build/config.ts";
 import { Ninja } from "../../scripts/build/ninja.ts";
+import { quote } from "../../scripts/build/shell.ts";
 import type { Sources } from "../../scripts/glob-sources.ts";
 
-/** A fully-populated fake toolchain; `bun` is the one entry that gets spawned (bindgenv2 list-outputs). */
+/** A fully-populated fake toolchain; `jsRuntime` is the one entry that gets spawned (bindgenv2 list-outputs). */
 function mockToolchain(): Toolchain {
   return {
     cc: "/fake/llvm/bin/clang",
@@ -39,19 +40,21 @@ function mockToolchain(): Toolchain {
     clangVersion: "21.1.8",
     clangResourceDir: "/fake/llvm/lib/clang/21",
     ar: "/fake/llvm/bin/llvm-ar",
-    ranlib: "/fake/llvm/bin/llvm-ranlib",
     ld: "/fake/llvm/bin/ld.lld",
     ld64Lld: "/fake/llvm/bin/ld64.lld",
     rustLld: undefined,
     rustLlvmVersion: "22.1.4",
-    rustSysroot: undefined,
-    rustHostTriple: undefined,
     strip: "/fake/bin/strip",
     llvmStrip: "/fake/llvm/bin/llvm-strip",
     nm: "/fake/llvm/bin/llvm-nm",
+    readobj: "/fake/llvm/bin/llvm-readobj",
+    objdump: "/fake/llvm/bin/llvm-objdump",
+    cxxfilt: "/fake/llvm/bin/llvm-cxxfilt",
     dsymutil: "/fake/llvm/bin/dsymutil",
     bun: bunExe(),
-    jsRuntime: bunExe(),
+    // A shell command prefix, quoted like the one configure makes.
+    jsRuntime: quote(bunExe(), process.platform === "win32"),
+    jsRuntimeArgv: [bunExe()],
     esbuild: "/fake/bin/esbuild",
     ccache: undefined,
     cmake: "/fake/bin/cmake",
@@ -60,7 +63,6 @@ function mockToolchain(): Toolchain {
     rustupHome: undefined,
     msvcLinker: undefined,
     rc: undefined,
-    mt: undefined,
     nasm: undefined,
   };
 }
@@ -106,7 +108,12 @@ function sourceLists(lists: Partial<Sources>): Sources {
   return lists as Sources;
 }
 
-/** The outputs of the `build` line in `n` that produces `output`, spelled as in build.ninja, sorted. */
+/**
+ * The outputs of the `build` line in `n` that produces `output`, spelled as in
+ * build.ninja (buildDir-relative), sorted. Ninja.build() also declares every
+ * build-dir output under its absolute path (so depfile entries resolve to the
+ * edge); those aliases are checked to be exactly the relative set and dropped.
+ */
 function edgeOutputs(n: Ninja, output: string): string[] {
   const lines = n
     .toString()
@@ -118,7 +125,12 @@ function edgeOutputs(n: Ninja, output: string): string[] {
       .slice("build ".length, line.search(/(?<!\$): /))
       .split(/(?<!\$) /)
       .filter(token => token !== "|");
-    if (outputs.includes(n.rel(output))) return outputs.sort();
+    if (!outputs.includes(n.rel(output))) continue;
+    const unescaped = outputs.map(o => o.replaceAll("$:", ":"));
+    const relative = unescaped.filter(o => !isAbsolute(o)).sort();
+    const aliases = unescaped.filter(o => isAbsolute(o)).sort();
+    expect(aliases).toEqual(relative.map(o => resolve(n.buildDir, o)).sort());
+    return relative;
   }
   throw new Error(`no build edge produces ${output}`);
 }
@@ -144,8 +156,7 @@ function repoBindFiles(cfg: Config): string[] {
 
 /** Writes the probe .bindv2.ts into `dir` and returns its path. */
 function writeProbe(dir: string, cfg: Config): string {
-  // The "bindgenv2" specifier the real files import is a path mapping in
-  // src/tsconfig.json, which a file outside src/ does not get.
+  // The probe is outside src/, so it imports lib.ts by its absolute path.
   const lib = resolve(cfg.cwd, "src", "codegen", "bindgenv2", "lib.ts");
   const probe = resolve(dir, "probe.bindv2.ts");
   writeFileSync(

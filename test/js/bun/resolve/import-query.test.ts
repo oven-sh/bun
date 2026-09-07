@@ -1,5 +1,6 @@
 import { beforeEach, expect, test } from "bun:test";
 import { bunEnv, bunExe, normalizeBunSnapshot, tempDir } from "harness";
+import { basename } from "node:path";
 globalThis.importQueryFixtureOrder = [];
 const resolvedPath = require.resolve("./import-query-fixture.ts");
 const resolvedURL = Bun.pathToFileURL(resolvedPath).href;
@@ -233,4 +234,79 @@ test("Bun.resolveSync with non-ASCII specifier and query string", async () => {
   const resolved = JSON.parse(stdout.trim());
   expect(resolved).toEndWith("target.js?v=caf\u00e9-\u65e5\u672c\u8a9e");
   expect(exitCode).toBe(0);
+});
+
+// The module key of a module imported with a `?query` is `<abs path>?query`, and
+// that key is the referrer for the module's own imports. A `/` inside the query
+// must not be taken as the last path separator of the referrer.
+test.concurrent("static imports inside a module imported with a ?query containing / resolve", async () => {
+  using dir = tempDir("import-query-slash-referrer-esm", {
+    "sub/b.mjs": `export const b = 42;`,
+    "a.mjs": `import { b } from "./sub/b.mjs"; export const a = b; export const url = import.meta.url;`,
+    "entry.mjs": `
+      import { a as viaStatic, url as staticUrl } from "./a.mjs?path=/x/y";
+      const dyn = await import("./a.mjs?dir=/x/y/&flag");
+      console.log(JSON.stringify({
+        viaStatic,
+        staticUrl: staticUrl.slice(staticUrl.lastIndexOf("/a.mjs") + 1),
+        viaDynamic: dyn.a,
+        dynamicUrl: dyn.url.slice(dyn.url.lastIndexOf("/a.mjs") + 1),
+      }));
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "entry.mjs"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(JSON.parse(stdout.trim())).toEqual({
+    viaStatic: 42,
+    staticUrl: "a.mjs?path=/x/y",
+    viaDynamic: 42,
+    dynamicUrl: "a.mjs?dir=/x/y/&flag",
+  });
+  expect(exitCode).toBe(0);
+});
+
+// Same for a CommonJS module: its key is the referrer for `require()`, and
+// `__dirname` / `module.paths` derive from it.
+test.concurrent("require() inside a CommonJS module loaded with a ?query containing / resolves", async () => {
+  using dir = tempDir("import-query-slash-referrer-cjs", {
+    "sub/b.cjs": `module.exports = { b: 42 };`,
+    "a.cjs": `
+      const path = require("node:path");
+      module.exports = {
+        b: require("./sub/b.cjs").b,
+        resolved: path.relative(__dirname, require.resolve("./sub/b.cjs")).replaceAll(path.sep, "/"),
+        dirname: path.basename(__dirname),
+        paths0: path.relative(__dirname, module.paths[0]),
+      };
+    `,
+    "entry.mjs": `
+      const viaImport = (await import("./a.cjs?path=/x/y")).default;
+      console.log(JSON.stringify({ viaImport }));
+    `,
+    "entry.cjs": `
+      const viaRequire = require("./a.cjs?path=/x/y");
+      console.log(JSON.stringify({ viaRequire }));
+    `,
+  });
+  const expected = { b: 42, resolved: "sub/b.cjs", dirname: basename(String(dir)), paths0: "node_modules" };
+  for (const entry of ["entry.mjs", "entry.cjs"]) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), entry],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout.trim())).toEqual({ [entry === "entry.mjs" ? "viaImport" : "viaRequire"]: expected });
+    expect(exitCode).toBe(0);
+  }
 });

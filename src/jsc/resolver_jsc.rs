@@ -40,7 +40,12 @@ extern "C" fn node_module_paths_js_value(
 
     let utf8 = in_str.to_utf8();
     let base_path: &[u8] = if use_dirname {
-        resolve_path::dirname::<bun_paths::platform::Auto>(utf8.slice())
+        // `in_str` is a module key, which may be `<path>?query`.
+        let path = match strings::index_of_char_usize(utf8.slice(), b'?') {
+            Some(query_start) => &utf8.slice()[..query_start],
+            None => utf8.slice(),
+        };
+        resolve_path::dirname::<bun_paths::platform::Auto>(path)
     } else {
         utf8.slice()
     };

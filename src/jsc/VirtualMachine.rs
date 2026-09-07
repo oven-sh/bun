@@ -4517,13 +4517,18 @@ impl VirtualMachine {
         let top_level_dir = self.top_level_dir();
         let source_to_use: &[u8] = if !is_special_source {
             if is_a_file_path {
+                // `source` is the referrer's module key, `<path>?query` when the
+                // referrer was imported with a query. The directory is that of
+                // `<path>`: a `/` inside the query is not a path separator.
+                let mut source_query: &[u8] = b"";
+                let source_path = normalize_specifier_for_resolution(source, &mut source_query);
                 // SAFETY: PORT — `dir_with_trailing_slash()` returns a
                 // re-slice of `source`, which the caller guarantees outlives
                 // the resolve call (and the resolver only borrows it for the
                 // synchronous `resolve_and_auto_install`).
                 unsafe {
                     bun_ptr::detach_lifetime(
-                        bun_resolver::fs::PathName::init(source).dir_with_trailing_slash(),
+                        bun_resolver::fs::PathName::init(source_path).dir_with_trailing_slash(),
                     )
                 }
             } else {

@@ -26,7 +26,7 @@
  */
 
 import { existsSync, lstatSync, readdirSync, readFileSync, realpathSync } from "node:fs";
-import { basename, dirname, join, relative, resolve, sep } from "node:path";
+import { dirname, join, relative, resolve, sep } from "node:path";
 import type { Sources } from "../glob-sources.ts";
 import { binaryExpectations } from "./binary-expectations.ts";
 import { emitCodegen, type CodegenOutputs } from "./codegen.ts";
@@ -893,16 +893,20 @@ function emitDuplicateSymbolCheck(
   if (stamp === undefined) return [];
   const report = resolve(cfg.buildDir, `${exeName}.duplicate-symbols.txt`);
   const q = (p: string) => quote(p, cfg.windows);
-  // While rustc's LLVM is ahead of clang's (the rust-lld swap in config.ts),
-  // libbun_runtime's bitcode is unreadable by clang's llvm-nm/objdump; use the
-  // ones rustup ships beside rust-lld (component llvm-tools). If they are
-  // missing the scan reports every unreadable input and fails, with a hint.
-  const rustLldInUse = cfg.rustLld !== undefined && dirname(cfg.ld) === dirname(cfg.rustLld);
-  const rustBin = rustLldInUse
-    ? basename(dirname(cfg.rustLld!)) === "gcc-ld"
-      ? dirname(dirname(cfg.rustLld!))
-      : dirname(cfg.rustLld!)
-    : undefined;
+  // While rustc's LLVM is ahead of clang's, libbun_runtime carries bitcode clang's llvm-nm/objdump can't
+  // read — whole bitcode objects under cross-language LTO, and even without it the `__LLVM,__bitcode`
+  // section rustc embeds in compiler_builtins on Mach-O. Use the tools rustup ships for rustc's LLVM
+  // (component llvm-tools, `<sysroot>/lib/rustlib/<host>/bin`); they read clang's older output too. If
+  // they are missing the scan reports every unreadable input and fails, with a hint.
+  const llvmMajor = (v: string | undefined) => (v === undefined ? undefined : Number(v.split(".")[0]));
+  const rustLlvmNewer =
+    llvmMajor(cfg.rustLlvmVersion) !== undefined &&
+    llvmMajor(cfg.clangVersion) !== undefined &&
+    llvmMajor(cfg.rustLlvmVersion)! > llvmMajor(cfg.clangVersion)!;
+  const rustBin =
+    rustLlvmNewer && cfg.rustSysroot !== undefined && cfg.rustHostTriple !== undefined
+      ? join(cfg.rustSysroot, "lib", "rustlib", cfg.rustHostTriple, "bin")
+      : undefined;
   const rustTool = (name: string, fallback: string): string => {
     const p = rustBin !== undefined ? join(rustBin, name + cfg.host.exeSuffix) : undefined;
     return p !== undefined && existsSync(p) ? p : fallback;

@@ -1424,6 +1424,8 @@ fn frozen_changed_section(
         Some(overrides_field_name(manager, root_package_json_path))
     } else if manager.summary.catalogs_changed {
         Some("the catalog")
+    } else if manager.summary.bins_changed {
+        Some("the \"bin\" field of a workspace or file: dependency")
     } else {
         None
     }

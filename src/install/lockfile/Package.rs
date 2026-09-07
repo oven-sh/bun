@@ -916,6 +916,10 @@ pub struct DiffSummary {
     /// A workspace's `version` changed. No edge changed with it (those count as updates), but the
     /// lockfile records the version, so it is rewritten.
     pub(crate) workspace_versions_changed: bool,
+    /// The `bin` of a workspace or `file:` directory package changed (also counted in `update`).
+    /// Resolving the package again overwrites its lockfile entry in place, which hides the change
+    /// from `Lockfile::eql`, so `--frozen-lockfile` checks this flag.
+    pub(crate) bins_changed: bool,
 
     pub(crate) pruned_workspaces: Vec<PackageNameHash>,
 }
@@ -1549,6 +1553,9 @@ impl Diff {
                         .dependencies
                         .get(to_lockfile.buffers.dependencies.as_slice())
                         .into();
+                    if let Some(diff) = &diff {
+                        summary.bins_changed |= diff.bins_changed;
+                    }
                     diff
                 } else {
                     None
@@ -1656,6 +1663,7 @@ impl Diff {
                             );
                         }
 
+                        summary.bins_changed |= diff.bins_changed;
                         workspace_hooks_only = !diff.changes_dependencies();
                         !diff.changes_resolutions()
                     };
@@ -1781,7 +1789,6 @@ impl Diff {
                 }
             }
 
-            // The lockfile records the `bin` of workspace and `file:` packages.
             if !Bin::eql(
                 &to.bin,
                 &from.bin,
@@ -1791,6 +1798,7 @@ impl Diff {
                 from_lockfile.buffers.extern_strings.as_slice(),
             ) {
                 summary.update += 1;
+                summary.bins_changed = true;
             }
         }
 

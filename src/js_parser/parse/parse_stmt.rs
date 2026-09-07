@@ -209,10 +209,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 let name = self.load_name_from_ref(id.r#ref);
                 (name == b"module", name == b"exports")
             }
-            js_ast::b::B::BArray(array) => array.items().iter().fold((false, false), |acc, item| {
-                let (m, e) = self.binding_names_module_or_exports(&item.binding);
-                (acc.0 || m, acc.1 || e)
-            }),
+            js_ast::b::B::BArray(array) => {
+                array.items().iter().fold((false, false), |acc, item| {
+                    let (m, e) = self.binding_names_module_or_exports(&item.binding);
+                    (acc.0 || m, acc.1 || e)
+                })
+            }
             js_ast::b::B::BObject(object) => {
                 object
                     .properties()

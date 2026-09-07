@@ -146,18 +146,11 @@ export function registerShimRules(n: Ninja, cfg: Config): void {
 
   if (cfg.darwin && cfg.asan) {
     // -install_name @rpath/<name> so dyld resolves it next to the
-    // executable: clang's Darwin driver adds `-rpath @executable_path` to
-    // every -fsanitize=address link (for the ASan runtime), which is every
-    // link this shim goes into. __DATA,__interpose only works from dylibs
-    // (not object files linked into the main binary), hence -dynamiclib.
-    // Same deployment target as everything else, or ld warns the dylib was
-    // "built for newer version" than the executable loading it.
-    const minos =
-      cfg.osxDeploymentTarget !== undefined && cfg.osxSysroot !== undefined
-        ? ` -mmacosx-version-min=${cfg.osxDeploymentTarget} -isysroot ${q(cfg.osxSysroot)}`
-        : "";
+    // executable via the -rpath @executable_path we add at link time.
+    // __DATA,__interpose only works from dylibs (not object files linked
+    // into the main binary), hence -dynamiclib.
     n.rule("shim_dylib", {
-      command: `${q(cfg.cc)}${minos} -dynamiclib -O2 -install_name @rpath/$name -o $out $in`,
+      command: `${q(cfg.cc)} -dynamiclib -O2 -install_name @rpath/$name -o $out $in`,
       description: "shim $name",
     });
   }
@@ -184,20 +177,13 @@ export function registerShimRules(n: Ninja, cfg: Config): void {
   }
 }
 
-const emittedShims = new WeakMap<Ninja, ShimLinkOpts>();
-
 /**
- * The link environment every *target* executable in the graph needs (bun,
- * testFFI, a dep's `exe` steps such as JSC's LLInt extractors): emits the
- * shim edges once per graph and returns the flags / implicit inputs each of
- * those links appends. A link that skipped them would, e.g., hand rust-lld
- * Alpine's compressed CRT objects on musl, or miss the macho-postlink tool.
+ * Emit shim build edges and return link flags. Call once per link site
+ * (emitBun, emitLinkOnly) before the link() call.
  *
  * See scripts/build/workarounds.ts for the self-obsoleting check on each.
  */
 export function emitShims(n: Ninja, cfg: Config): ShimLinkOpts {
-  const done = emittedShims.get(n);
-  if (done !== undefined) return done;
   const ldflags: string[] = [];
   const implicitInputs: string[] = [];
 
@@ -224,9 +210,7 @@ export function emitShims(n: Ninja, cfg: Config): ShimLinkOpts {
       inputs: [src],
       vars: { name: ASAN_DYLD_SHIM },
     });
-    // No -rpath of our own: the driver's ASan one (see shim_dylib) covers
-    // @rpath/<name>, and a second identical -rpath is an ld warning.
-    ldflags.push(out);
+    ldflags.push(out, "-Wl,-rpath,@executable_path");
     implicitInputs.push(out);
   }
 
@@ -260,7 +244,5 @@ export function emitShims(n: Ninja, cfg: Config): ShimLinkOpts {
     ldflags.push(`-B${crtDir}`);
   }
 
-  const result = { ldflags, implicitInputs };
-  emittedShims.set(n, result);
-  return result;
+  return { ldflags, implicitInputs };
 }

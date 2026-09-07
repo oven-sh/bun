@@ -5,8 +5,6 @@
 
 #pragma once
 
-#include "root.h"
-#include "BunClientData.h"
 #include <JavaScriptCore/JSObject.h>
 
 using namespace JSC;

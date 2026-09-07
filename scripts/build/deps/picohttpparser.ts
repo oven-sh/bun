@@ -17,7 +17,7 @@ export const picohttpparser: Dependency = {
   versionMacro: "PICOHTTPPARSER",
 
   source: () => ({
-    kind: "github-archive",
+    kind: "github",
     repo: "h2o/picohttpparser",
     commit: PICOHTTPPARSER_COMMIT,
   }),

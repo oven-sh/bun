@@ -151,7 +151,7 @@ JSC_DEFINE_HOST_FUNCTION(jsErrname, (JSGlobalObject * globalObject, JSC::CallFra
         return JSValue::encode(jsString(vm, String("Unknown system error"_s)));
     }
 
-    auto err = arg0.toInt32(globalObject);
+    auto err = arg0.asInt32AsAnyInt();
     for (auto& entry : uvErrnoEntries) {
         if (err == entry.value)
             return JSValue::encode(JSC::jsString(vm, String(entry.name)));
@@ -164,14 +164,18 @@ JSC_DEFINE_HOST_FUNCTION(jsErrname, (JSGlobalObject * globalObject, JSC::CallFra
 JSC_DEFINE_HOST_FUNCTION(jsGetErrorMap, (JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     auto map = JSC::JSMap::create(vm, globalObject->mapStructure());
 
     for (auto& entry : uvErrnoEntries) {
         auto arr = JSC::constructEmptyArray(globalObject, static_cast<JSC::ArrayAllocationProfile*>(nullptr), 2);
-        // RETURN_IF_EXCEPTION
+        RETURN_IF_EXCEPTION(scope, {});
         arr->putDirectIndex(globalObject, 0, JSC::jsString(vm, String(entry.name)));
+        RETURN_IF_EXCEPTION(scope, {});
         arr->putDirectIndex(globalObject, 1, JSC::jsString(vm, String(entry.description)));
+        RETURN_IF_EXCEPTION(scope, {});
         map->set(globalObject, JSC::jsNumber(entry.value), arr);
+        RETURN_IF_EXCEPTION(scope, {});
     }
 
     return JSValue::encode(map);

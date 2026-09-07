@@ -28,8 +28,8 @@ bun run <file or script>
 
 ### Workspace Management
 
-<ParamField path="--elide-lines" type="number" default="10">
-  Number of lines of script output shown when using --filter (default: 10). Set to 0 to show all lines
+<ParamField path="--elide-lines" type="number" default="0">
+  Truncate each script's output to its last N lines when using --filter. Default 0 shows all lines
 </ParamField>
 
 <ParamField path="--filter" type="string">
@@ -94,7 +94,12 @@ bun run <file or script>
 </ParamField>
 
 <ParamField path="--no-addons" type="boolean">
-  Throw an error if <code>process.dlopen</code> is called, and disable export condition <code>node-addons</code>
+  Throw an error if <code>process.dlopen</code> or <code>bun:ffi</code> <code>cc()</code> is called, and disable export
+  condition <code>node-addons</code>
+</ParamField>
+
+<ParamField path="--no-ffi-cc" type="boolean">
+  Throw an error if <code>bun:ffi</code> <code>cc()</code> is called (disables the C compiler)
 </ParamField>
 
 <ParamField path="--unhandled-rejections" type="string">

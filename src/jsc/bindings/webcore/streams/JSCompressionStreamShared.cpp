@@ -311,7 +311,7 @@ void nativeCodecContinue(JSGlobalObject* globalObject, JSTransformStream* stream
         CodecOutcome outcome = stepChunkHere(globalObject, stream, coder, nullptr, 0, false);
         stream->m_nativeStateInUse = false;
         RETURN_IF_EXCEPTION(scope, );
-        settlePendingChunk(globalObject, stream, outcome); }, [&](JSValue thrown) {
+        RELEASE_AND_RETURN(scope, settlePendingChunk(globalObject, stream, outcome)); }, [&](JSValue thrown) {
         if (stream->m_codecPromise)
             settleCodecChunk(globalObject, stream, thrown); });
     RETURN_IF_EXCEPTION(scope, );

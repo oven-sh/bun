@@ -52,6 +52,10 @@ pub fn read_origin_timer(vm: &VirtualMachine) -> u64 {
 
 // HOST_EXPORT(Bun__readOriginTimerStart, c)
 pub fn read_origin_timer_start(vm: &VirtualMachine) -> f64 {
+    // Fake timers reset performance.now() to 0, so the origin moves with them.
+    if let Some(overridden) = vm.overridden_time_origin {
+        return overridden;
+    }
     // timespce to milliseconds
     ((vm.origin_timestamp as f64) + crate::virtual_machine::ORIGIN_RELATIVE_EPOCH as f64)
         / 1_000_000.0

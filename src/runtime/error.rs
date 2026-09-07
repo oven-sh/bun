@@ -14,8 +14,6 @@ pub enum Error {
     ParseError,
     #[error("FailedToWriteSnapshotFile")]
     FailedToWriteSnapshotFile,
-    #[error("Panic")]
-    Panic,
     #[error("NoTest")]
     NoTest,
     #[error("TestNotActive")]
@@ -30,152 +28,10 @@ pub enum Error {
     JSError,
     #[error("ERR_TLS_CERT_ALTNAME_INVALID")]
     ERR_TLS_CERT_ALTNAME_INVALID,
-    #[error("RequestBodyNotReusable")]
-    RequestBodyNotReusable,
-    #[error("DNSResolveFailed")]
-    DNSResolveFailed,
     #[error("ConnectionClosed")]
     ConnectionClosed,
     #[error("FailedToOpenSocket")]
     FailedToOpenSocket,
-    #[error("TooManyRedirects")]
-    TooManyRedirects,
-    #[error("ConnectionRefused")]
-    ConnectionRefused,
-    #[error("RedirectURLInvalid")]
-    RedirectURLInvalid,
-    #[error("UNABLE_TO_GET_ISSUER_CERT")]
-    UNABLE_TO_GET_ISSUER_CERT,
-    #[error("UNABLE_TO_GET_CRL")]
-    UNABLE_TO_GET_CRL,
-    #[error("UNABLE_TO_DECRYPT_CERT_SIGNATURE")]
-    UNABLE_TO_DECRYPT_CERT_SIGNATURE,
-    #[error("UNABLE_TO_DECRYPT_CRL_SIGNATURE")]
-    UNABLE_TO_DECRYPT_CRL_SIGNATURE,
-    #[error("UNABLE_TO_DECODE_ISSUER_PUBLIC_KEY")]
-    UNABLE_TO_DECODE_ISSUER_PUBLIC_KEY,
-    #[error("CERT_SIGNATURE_FAILURE")]
-    CERT_SIGNATURE_FAILURE,
-    #[error("CRL_SIGNATURE_FAILURE")]
-    CRL_SIGNATURE_FAILURE,
-    #[error("CERT_NOT_YET_VALID")]
-    CERT_NOT_YET_VALID,
-    #[error("CRL_NOT_YET_VALID")]
-    CRL_NOT_YET_VALID,
-    #[error("CERT_HAS_EXPIRED")]
-    CERT_HAS_EXPIRED,
-    #[error("CRL_HAS_EXPIRED")]
-    CRL_HAS_EXPIRED,
-    #[error("ERROR_IN_CERT_NOT_BEFORE_FIELD")]
-    ERROR_IN_CERT_NOT_BEFORE_FIELD,
-    #[error("ERROR_IN_CERT_NOT_AFTER_FIELD")]
-    ERROR_IN_CERT_NOT_AFTER_FIELD,
-    #[error("ERROR_IN_CRL_LAST_UPDATE_FIELD")]
-    ERROR_IN_CRL_LAST_UPDATE_FIELD,
-    #[error("ERROR_IN_CRL_NEXT_UPDATE_FIELD")]
-    ERROR_IN_CRL_NEXT_UPDATE_FIELD,
-    #[error("OUT_OF_MEM")]
-    OUT_OF_MEM,
-    #[error("DEPTH_ZERO_SELF_SIGNED_CERT")]
-    DEPTH_ZERO_SELF_SIGNED_CERT,
-    #[error("SELF_SIGNED_CERT_IN_CHAIN")]
-    SELF_SIGNED_CERT_IN_CHAIN,
-    #[error("UNABLE_TO_GET_ISSUER_CERT_LOCALLY")]
-    UNABLE_TO_GET_ISSUER_CERT_LOCALLY,
-    #[error("UNABLE_TO_VERIFY_LEAF_SIGNATURE")]
-    UNABLE_TO_VERIFY_LEAF_SIGNATURE,
-    #[error("CERT_CHAIN_TOO_LONG")]
-    CERT_CHAIN_TOO_LONG,
-    #[error("CERT_REVOKED")]
-    CERT_REVOKED,
-    #[error("INVALID_CA")]
-    INVALID_CA,
-    #[error("INVALID_NON_CA")]
-    INVALID_NON_CA,
-    #[error("PATH_LENGTH_EXCEEDED")]
-    PATH_LENGTH_EXCEEDED,
-    #[error("PROXY_PATH_LENGTH_EXCEEDED")]
-    PROXY_PATH_LENGTH_EXCEEDED,
-    #[error("PROXY_CERTIFICATES_NOT_ALLOWED")]
-    PROXY_CERTIFICATES_NOT_ALLOWED,
-    #[error("INVALID_PURPOSE")]
-    INVALID_PURPOSE,
-    #[error("CERT_UNTRUSTED")]
-    CERT_UNTRUSTED,
-    #[error("CERT_REJECTED")]
-    CERT_REJECTED,
-    #[error("APPLICATION_VERIFICATION")]
-    APPLICATION_VERIFICATION,
-    #[error("SUBJECT_ISSUER_MISMATCH")]
-    SUBJECT_ISSUER_MISMATCH,
-    #[error("AKID_SKID_MISMATCH")]
-    AKID_SKID_MISMATCH,
-    #[error("AKID_ISSUER_SERIAL_MISMATCH")]
-    AKID_ISSUER_SERIAL_MISMATCH,
-    #[error("KEYUSAGE_NO_CERTSIGN")]
-    KEYUSAGE_NO_CERTSIGN,
-    #[error("UNABLE_TO_GET_CRL_ISSUER")]
-    UNABLE_TO_GET_CRL_ISSUER,
-    #[error("UNHANDLED_CRITICAL_EXTENSION")]
-    UNHANDLED_CRITICAL_EXTENSION,
-    #[error("KEYUSAGE_NO_CRL_SIGN")]
-    KEYUSAGE_NO_CRL_SIGN,
-    #[error("KEYUSAGE_NO_DIGITAL_SIGNATURE")]
-    KEYUSAGE_NO_DIGITAL_SIGNATURE,
-    #[error("UNHANDLED_CRITICAL_CRL_EXTENSION")]
-    UNHANDLED_CRITICAL_CRL_EXTENSION,
-    #[error("INVALID_EXTENSION")]
-    INVALID_EXTENSION,
-    #[error("INVALID_POLICY_EXTENSION")]
-    INVALID_POLICY_EXTENSION,
-    #[error("NO_EXPLICIT_POLICY")]
-    NO_EXPLICIT_POLICY,
-    #[error("DIFFERENT_CRL_SCOPE")]
-    DIFFERENT_CRL_SCOPE,
-    #[error("UNSUPPORTED_EXTENSION_FEATURE")]
-    UNSUPPORTED_EXTENSION_FEATURE,
-    #[error("UNNESTED_RESOURCE")]
-    UNNESTED_RESOURCE,
-    #[error("PERMITTED_VIOLATION")]
-    PERMITTED_VIOLATION,
-    #[error("EXCLUDED_VIOLATION")]
-    EXCLUDED_VIOLATION,
-    #[error("SUBTREE_MINMAX")]
-    SUBTREE_MINMAX,
-    #[error("UNSUPPORTED_CONSTRAINT_TYPE")]
-    UNSUPPORTED_CONSTRAINT_TYPE,
-    #[error("UNSUPPORTED_CONSTRAINT_SYNTAX")]
-    UNSUPPORTED_CONSTRAINT_SYNTAX,
-    #[error("UNSUPPORTED_NAME_SYNTAX")]
-    UNSUPPORTED_NAME_SYNTAX,
-    #[error("CRL_PATH_VALIDATION_ERROR")]
-    CRL_PATH_VALIDATION_ERROR,
-    #[error("SUITE_B_INVALID_VERSION")]
-    SUITE_B_INVALID_VERSION,
-    #[error("SUITE_B_INVALID_ALGORITHM")]
-    SUITE_B_INVALID_ALGORITHM,
-    #[error("SUITE_B_INVALID_CURVE")]
-    SUITE_B_INVALID_CURVE,
-    #[error("SUITE_B_INVALID_SIGNATURE_ALGORITHM")]
-    SUITE_B_INVALID_SIGNATURE_ALGORITHM,
-    #[error("SUITE_B_LOS_NOT_ALLOWED")]
-    SUITE_B_LOS_NOT_ALLOWED,
-    #[error("SUITE_B_CANNOT_SIGN_P_384_WITH_P_256")]
-    SUITE_B_CANNOT_SIGN_P_384_WITH_P_256,
-    #[error("HOSTNAME_MISMATCH")]
-    HOSTNAME_MISMATCH,
-    #[error("EMAIL_MISMATCH")]
-    EMAIL_MISMATCH,
-    #[error("IP_ADDRESS_MISMATCH")]
-    IP_ADDRESS_MISMATCH,
-    #[error("INVALID_CALL")]
-    INVALID_CALL,
-    #[error("STORE_LOOKUP")]
-    STORE_LOOKUP,
-    #[error("NAME_CONSTRAINTS_WITHOUT_SANS")]
-    NAME_CONSTRAINTS_WITHOUT_SANS,
-    #[error("UNKNOWN_CERTIFICATE_VERIFICATION_ERROR")]
-    UNKNOWN_CERTIFICATE_VERIFICATION_ERROR,
     #[error("MissingCredentials")]
     MissingCredentials,
     #[error("InvalidMethod")]
@@ -200,8 +56,6 @@ pub enum Error {
     IsMissingHeaderLineEnd,
     #[error("is missing header colon separator")]
     IsMissingHeaderColonSeparator,
-    #[error("EndOfStream")]
-    EndOfStream,
     #[error("TooSmall")]
     TooSmall,
     #[error("InvalidValue")]
@@ -216,10 +70,6 @@ pub enum Error {
     FailedToBindPipe,
     #[error("MissingPackageJSON")]
     MissingPackageJSON,
-    #[error("InstallFailed")]
-    InstallFailed,
-    #[error("InvalidPackageJSON")]
-    InvalidPackageJSON,
     #[error("HTTPForbidden")]
     HTTPForbidden,
     #[error("ExampleNotFound")]
@@ -232,10 +82,6 @@ pub enum Error {
     NPMIsDown,
     #[error("HTTPError")]
     HTTPError,
-    #[error("PathAlreadyExists")]
-    PathAlreadyExists,
-    #[error("InvalidTarget")]
-    InvalidTarget,
     #[error("MissingEntryPoint")]
     MissingEntryPoint,
     #[error("UnrecognizedCommand")]
@@ -282,8 +128,6 @@ pub enum Error {
     PathTooLong,
     #[error("AssertionError")]
     AssertionError,
-    #[error("OpenFailed")]
-    OpenFailed,
     #[error("ModuleNotFound")]
     ModuleNotFound,
     #[error("InvalidLoader")]
@@ -298,18 +142,10 @@ pub enum Error {
     FailedToGetTempPath,
     #[error("UnexpectedCreatingStdin")]
     UnexpectedCreatingStdin,
-    #[error("UnableToDecode")]
-    UnableToDecode,
     #[error("UnableToEncode")]
     UnableToEncode,
-    #[error("SocketClosed")]
-    SocketClosed,
     #[error("InvalidHeaderName")]
     InvalidHeaderName,
-    #[error("StackOverflow")]
-    StackOverflow,
-    #[error("Test")]
-    Test,
     #[error("FormatError")]
     FormatError,
     #[error("ReadError")]
@@ -318,20 +154,14 @@ pub enum Error {
     OpenError,
     #[error("CompilationFailed")]
     CompilationFailed,
-    #[error("MissingTranspileExtra")]
-    MissingTranspileExtra,
     #[error("UnexpectedPendingResolution")]
     UnexpectedPendingResolution,
     #[error("AsyncModule")]
     AsyncModule,
-    #[error("NotSupported")]
-    NotSupported,
     #[error("BlobNotFound")]
     BlobNotFound,
     #[error("JSErrorObject")]
     JSErrorObject,
-    #[error("PluginError")]
-    PluginError,
     #[error("InvalidRoutePattern")]
     InvalidRoutePattern,
     #[error("InvalidRequest")]
@@ -344,8 +174,6 @@ pub enum Error {
     fmt,
     #[error("InvalidCharacter")]
     InvalidCharacter,
-    #[error("Name")]
-    Name,
     #[error("FailedToSpawnFSEventsThread")]
     FailedToSpawnFSEventsThread,
     #[error("CompilationError")]
@@ -360,8 +188,6 @@ pub enum Error {
     WatchFailed,
     #[error("Unsupported")]
     Unsupported,
-    #[error("EscapeCalledTwice")]
-    EscapeCalledTwice,
     #[error("UnsupportedAlgorithm")]
     UnsupportedAlgorithm,
     #[error("PasswordVerificationFailed")]
@@ -573,7 +399,6 @@ impl Error {
             Self::WriteError => "WriteError",
             Self::ParseError => "ParseError",
             Self::FailedToWriteSnapshotFile => "FailedToWriteSnapshotFile",
-            Self::Panic => "Panic",
             Self::NoTest => "NoTest",
             Self::TestNotActive => "TestNotActive",
             Self::SnapshotInConcurrentGroup => "SnapshotInConcurrentGroup",
@@ -581,81 +406,8 @@ impl Error {
             Self::FmtError => "FmtError",
             Self::JSError => "JSError",
             Self::ERR_TLS_CERT_ALTNAME_INVALID => "ERR_TLS_CERT_ALTNAME_INVALID",
-            Self::RequestBodyNotReusable => "RequestBodyNotReusable",
-            Self::DNSResolveFailed => "DNSResolveFailed",
             Self::ConnectionClosed => "ConnectionClosed",
             Self::FailedToOpenSocket => "FailedToOpenSocket",
-            Self::TooManyRedirects => "TooManyRedirects",
-            Self::ConnectionRefused => "ConnectionRefused",
-            Self::RedirectURLInvalid => "RedirectURLInvalid",
-            Self::UNABLE_TO_GET_ISSUER_CERT => "UNABLE_TO_GET_ISSUER_CERT",
-            Self::UNABLE_TO_GET_CRL => "UNABLE_TO_GET_CRL",
-            Self::UNABLE_TO_DECRYPT_CERT_SIGNATURE => "UNABLE_TO_DECRYPT_CERT_SIGNATURE",
-            Self::UNABLE_TO_DECRYPT_CRL_SIGNATURE => "UNABLE_TO_DECRYPT_CRL_SIGNATURE",
-            Self::UNABLE_TO_DECODE_ISSUER_PUBLIC_KEY => "UNABLE_TO_DECODE_ISSUER_PUBLIC_KEY",
-            Self::CERT_SIGNATURE_FAILURE => "CERT_SIGNATURE_FAILURE",
-            Self::CRL_SIGNATURE_FAILURE => "CRL_SIGNATURE_FAILURE",
-            Self::CERT_NOT_YET_VALID => "CERT_NOT_YET_VALID",
-            Self::CRL_NOT_YET_VALID => "CRL_NOT_YET_VALID",
-            Self::CERT_HAS_EXPIRED => "CERT_HAS_EXPIRED",
-            Self::CRL_HAS_EXPIRED => "CRL_HAS_EXPIRED",
-            Self::ERROR_IN_CERT_NOT_BEFORE_FIELD => "ERROR_IN_CERT_NOT_BEFORE_FIELD",
-            Self::ERROR_IN_CERT_NOT_AFTER_FIELD => "ERROR_IN_CERT_NOT_AFTER_FIELD",
-            Self::ERROR_IN_CRL_LAST_UPDATE_FIELD => "ERROR_IN_CRL_LAST_UPDATE_FIELD",
-            Self::ERROR_IN_CRL_NEXT_UPDATE_FIELD => "ERROR_IN_CRL_NEXT_UPDATE_FIELD",
-            Self::OUT_OF_MEM => "OUT_OF_MEM",
-            Self::DEPTH_ZERO_SELF_SIGNED_CERT => "DEPTH_ZERO_SELF_SIGNED_CERT",
-            Self::SELF_SIGNED_CERT_IN_CHAIN => "SELF_SIGNED_CERT_IN_CHAIN",
-            Self::UNABLE_TO_GET_ISSUER_CERT_LOCALLY => "UNABLE_TO_GET_ISSUER_CERT_LOCALLY",
-            Self::UNABLE_TO_VERIFY_LEAF_SIGNATURE => "UNABLE_TO_VERIFY_LEAF_SIGNATURE",
-            Self::CERT_CHAIN_TOO_LONG => "CERT_CHAIN_TOO_LONG",
-            Self::CERT_REVOKED => "CERT_REVOKED",
-            Self::INVALID_CA => "INVALID_CA",
-            Self::INVALID_NON_CA => "INVALID_NON_CA",
-            Self::PATH_LENGTH_EXCEEDED => "PATH_LENGTH_EXCEEDED",
-            Self::PROXY_PATH_LENGTH_EXCEEDED => "PROXY_PATH_LENGTH_EXCEEDED",
-            Self::PROXY_CERTIFICATES_NOT_ALLOWED => "PROXY_CERTIFICATES_NOT_ALLOWED",
-            Self::INVALID_PURPOSE => "INVALID_PURPOSE",
-            Self::CERT_UNTRUSTED => "CERT_UNTRUSTED",
-            Self::CERT_REJECTED => "CERT_REJECTED",
-            Self::APPLICATION_VERIFICATION => "APPLICATION_VERIFICATION",
-            Self::SUBJECT_ISSUER_MISMATCH => "SUBJECT_ISSUER_MISMATCH",
-            Self::AKID_SKID_MISMATCH => "AKID_SKID_MISMATCH",
-            Self::AKID_ISSUER_SERIAL_MISMATCH => "AKID_ISSUER_SERIAL_MISMATCH",
-            Self::KEYUSAGE_NO_CERTSIGN => "KEYUSAGE_NO_CERTSIGN",
-            Self::UNABLE_TO_GET_CRL_ISSUER => "UNABLE_TO_GET_CRL_ISSUER",
-            Self::UNHANDLED_CRITICAL_EXTENSION => "UNHANDLED_CRITICAL_EXTENSION",
-            Self::KEYUSAGE_NO_CRL_SIGN => "KEYUSAGE_NO_CRL_SIGN",
-            Self::KEYUSAGE_NO_DIGITAL_SIGNATURE => "KEYUSAGE_NO_DIGITAL_SIGNATURE",
-            Self::UNHANDLED_CRITICAL_CRL_EXTENSION => "UNHANDLED_CRITICAL_CRL_EXTENSION",
-            Self::INVALID_EXTENSION => "INVALID_EXTENSION",
-            Self::INVALID_POLICY_EXTENSION => "INVALID_POLICY_EXTENSION",
-            Self::NO_EXPLICIT_POLICY => "NO_EXPLICIT_POLICY",
-            Self::DIFFERENT_CRL_SCOPE => "DIFFERENT_CRL_SCOPE",
-            Self::UNSUPPORTED_EXTENSION_FEATURE => "UNSUPPORTED_EXTENSION_FEATURE",
-            Self::UNNESTED_RESOURCE => "UNNESTED_RESOURCE",
-            Self::PERMITTED_VIOLATION => "PERMITTED_VIOLATION",
-            Self::EXCLUDED_VIOLATION => "EXCLUDED_VIOLATION",
-            Self::SUBTREE_MINMAX => "SUBTREE_MINMAX",
-            Self::UNSUPPORTED_CONSTRAINT_TYPE => "UNSUPPORTED_CONSTRAINT_TYPE",
-            Self::UNSUPPORTED_CONSTRAINT_SYNTAX => "UNSUPPORTED_CONSTRAINT_SYNTAX",
-            Self::UNSUPPORTED_NAME_SYNTAX => "UNSUPPORTED_NAME_SYNTAX",
-            Self::CRL_PATH_VALIDATION_ERROR => "CRL_PATH_VALIDATION_ERROR",
-            Self::SUITE_B_INVALID_VERSION => "SUITE_B_INVALID_VERSION",
-            Self::SUITE_B_INVALID_ALGORITHM => "SUITE_B_INVALID_ALGORITHM",
-            Self::SUITE_B_INVALID_CURVE => "SUITE_B_INVALID_CURVE",
-            Self::SUITE_B_INVALID_SIGNATURE_ALGORITHM => "SUITE_B_INVALID_SIGNATURE_ALGORITHM",
-            Self::SUITE_B_LOS_NOT_ALLOWED => "SUITE_B_LOS_NOT_ALLOWED",
-            Self::SUITE_B_CANNOT_SIGN_P_384_WITH_P_256 => "SUITE_B_CANNOT_SIGN_P_384_WITH_P_256",
-            Self::HOSTNAME_MISMATCH => "HOSTNAME_MISMATCH",
-            Self::EMAIL_MISMATCH => "EMAIL_MISMATCH",
-            Self::IP_ADDRESS_MISMATCH => "IP_ADDRESS_MISMATCH",
-            Self::INVALID_CALL => "INVALID_CALL",
-            Self::STORE_LOOKUP => "STORE_LOOKUP",
-            Self::NAME_CONSTRAINTS_WITHOUT_SANS => "NAME_CONSTRAINTS_WITHOUT_SANS",
-            Self::UNKNOWN_CERTIFICATE_VERIFICATION_ERROR => {
-                "UNKNOWN_CERTIFICATE_VERIFICATION_ERROR"
-            }
             Self::MissingCredentials => "MissingCredentials",
             Self::InvalidMethod => "InvalidMethod",
             Self::InvalidPath => "InvalidPath",
@@ -668,7 +420,6 @@ impl Error {
             Self::IsMissingHeaderEnd => "is missing header end",
             Self::IsMissingHeaderLineEnd => "is missing header line end",
             Self::IsMissingHeaderColonSeparator => "is missing header colon separator",
-            Self::EndOfStream => "EndOfStream",
             Self::TooSmall => "TooSmall",
             Self::InvalidValue => "InvalidValue",
             Self::ConnectionFailed => "ConnectionFailed",
@@ -676,16 +427,12 @@ impl Error {
             Self::FailedToInitPipe => "FailedToInitPipe",
             Self::FailedToBindPipe => "FailedToBindPipe",
             Self::MissingPackageJSON => "MissingPackageJSON",
-            Self::InstallFailed => "InstallFailed",
-            Self::InvalidPackageJSON => "InvalidPackageJSON",
             Self::HTTPForbidden => "HTTPForbidden",
             Self::ExampleNotFound => "ExampleNotFound",
             Self::GitHubRepositoryNotFound => "GitHubRepositoryNotFound",
             Self::HTTPTooManyRequests => "HTTPTooManyRequests",
             Self::NPMIsDown => "NPMIsDown",
             Self::HTTPError => "HTTPError",
-            Self::PathAlreadyExists => "PathAlreadyExists",
-            Self::InvalidTarget => "InvalidTarget",
             Self::MissingEntryPoint => "MissingEntryPoint",
             Self::UnrecognizedCommand => "UnrecognizedCommand",
             Self::MissingShell => "MissingShell",
@@ -711,7 +458,6 @@ impl Error {
             Self::NeedToInstall => "NeedToInstall",
             Self::PathTooLong => "PathTooLong",
             Self::AssertionError => "AssertionError",
-            Self::OpenFailed => "OpenFailed",
             Self::ModuleNotFound => "ModuleNotFound",
             Self::InvalidLoader => "InvalidLoader",
             Self::InvalidJSXRuntime => "InvalidJSXRuntime",
@@ -719,30 +465,22 @@ impl Error {
             Self::CouldntReadCurrentDirectory => "CouldntReadCurrentDirectory",
             Self::FailedToGetTempPath => "FailedToGetTempPath",
             Self::UnexpectedCreatingStdin => "UnexpectedCreatingStdin",
-            Self::UnableToDecode => "UnableToDecode",
             Self::UnableToEncode => "UnableToEncode",
-            Self::SocketClosed => "SocketClosed",
             Self::InvalidHeaderName => "InvalidHeaderName",
-            Self::StackOverflow => "StackOverflow",
-            Self::Test => "Test",
             Self::FormatError => "FormatError",
             Self::ReadError => "ReadError",
             Self::OpenError => "OpenError",
             Self::CompilationFailed => "CompilationFailed",
-            Self::MissingTranspileExtra => "MissingTranspileExtra",
             Self::UnexpectedPendingResolution => "UnexpectedPendingResolution",
             Self::AsyncModule => "AsyncModule",
-            Self::NotSupported => "NotSupported",
             Self::BlobNotFound => "BlobNotFound",
             Self::JSErrorObject => "JSErrorObject",
-            Self::PluginError => "PluginError",
             Self::InvalidRoutePattern => "InvalidRoutePattern",
             Self::InvalidRequest => "InvalidRequest",
             Self::FailedToCreateCoreFoudationSourceLoop => "FailedToCreateCoreFoudationSourceLoop",
             Self::eol => "eol",
             Self::fmt => "fmt",
             Self::InvalidCharacter => "InvalidCharacter",
-            Self::Name => "Name",
             Self::FailedToSpawnFSEventsThread => "FailedToSpawnFSEventsThread",
             Self::CompilationError => "CompilationError",
             Self::DeferredErrors => "DeferredErrors",
@@ -750,7 +488,6 @@ impl Error {
             Self::ChromeNotFound => "ChromeNotFound",
             Self::WatchFailed => "WatchFailed",
             Self::Unsupported => "Unsupported",
-            Self::EscapeCalledTwice => "EscapeCalledTwice",
             Self::UnsupportedAlgorithm => "UnsupportedAlgorithm",
             Self::PasswordVerificationFailed => "PasswordVerificationFailed",
             Self::InvalidEncoding => "InvalidEncoding",

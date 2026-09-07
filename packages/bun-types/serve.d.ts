@@ -851,8 +851,18 @@ declare module "bun" {
       http3?: boolean;
 
       /**
-       * Listen for HTTP/1.1 over TCP. Set to `false` together with
-       * `http3: true` to serve HTTP/3 only.
+       * Also serve HTTP/2 on the same port. With {@link tls}, clients that
+       * offer "h2" via ALPN get HTTP/2 and everyone else gets HTTP/1.1;
+       * without it, connections that open with the HTTP/2 preface
+       * ("prior knowledge") get HTTP/2.
+       * @default false
+       * @experimental
+       */
+      http2?: boolean;
+
+      /**
+       * Serve HTTP/1.1. Set to `false` together with `http2: true` and/or
+       * `http3: true` to refuse HTTP/1.x clients.
        * @default true
        * @experimental
        */

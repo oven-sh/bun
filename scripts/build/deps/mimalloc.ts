@@ -12,14 +12,14 @@
 
 import type { Dependency, DirectBuild } from "../source.ts";
 
-const MIMALLOC_COMMIT = "6a14aee24315e503fa295a1fa90fe8b24ad91774";
+const MIMALLOC_COMMIT = "6a64e1ba7f5b2130d4efccb67ec87fd0003f0f6a";
 
 export const mimalloc: Dependency = {
   name: "mimalloc",
   versionMacro: "MIMALLOC",
 
   source: () => ({
-    kind: "github-archive",
+    kind: "github",
     repo: "oven-sh/mimalloc",
     commit: MIMALLOC_COMMIT,
   }),

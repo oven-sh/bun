@@ -14,7 +14,7 @@ import tls from "node:tls";
 import { Duplex, duplexPair } from "stream";
 import http2utils from "./helpers";
 import { nodeEchoServer, TLS_CERT, TLS_OPTIONS } from "./http2-helpers";
-const { describe, expect, it, beforeAll, afterAll, createCallCheckCtx } = createTest(import.meta.path);
+const { describe, expect, it, beforeAll, afterAll, createCallCheckCtx, mock } = createTest(import.meta.path);
 // bun-debug ships with ASAN but isn't named bun-asan, so isASAN is false
 // there; the 10k-request maxSessionMemory stress test takes ~105s under
 // debug+ASAN vs ~2s release, so scale for either.
@@ -2292,6 +2292,77 @@ describe.concurrent("http2 session goawayCode / goawayLastStreamID", () => {
   });
 });
 
+// node declares Http2Session#destroy(error = NGHTTP2_NO_ERROR, code). An undefined error takes
+// the numeric default, which then replaces code, so destroy(undefined, code) puts NGHTTP2_NO_ERROR
+// on the wire exactly like destroy(); the code argument is only sent next to an Error (or null).
+// The table is what the peer's 'goaway' event reports under node v26.3.0 for client and server
+// sessions alike.
+describe.concurrent("http2 session.destroy(error, code) sends the GOAWAY code node sends", () => {
+  const { NGHTTP2_NO_ERROR, NGHTTP2_REFUSED_STREAM } = http2.constants;
+  const shapes = {
+    "destroy()": [],
+    "destroy(undefined, REFUSED_STREAM)": [undefined, NGHTTP2_REFUSED_STREAM],
+    "destroy(undefined, -1)": [undefined, -1],
+    "destroy(null, REFUSED_STREAM)": [null, NGHTTP2_REFUSED_STREAM],
+    "destroy(REFUSED_STREAM)": [NGHTTP2_REFUSED_STREAM],
+    "destroy(new Error('boom'), REFUSED_STREAM)": [new Error("boom"), NGHTTP2_REFUSED_STREAM],
+  };
+  const expected = {
+    "destroy()": { goaway: NGHTTP2_NO_ERROR, error: undefined },
+    "destroy(undefined, REFUSED_STREAM)": { goaway: NGHTTP2_NO_ERROR, error: undefined },
+    "destroy(undefined, -1)": { goaway: NGHTTP2_NO_ERROR, error: undefined },
+    "destroy(null, REFUSED_STREAM)": { goaway: NGHTTP2_REFUSED_STREAM, error: undefined },
+    "destroy(REFUSED_STREAM)": { goaway: NGHTTP2_REFUSED_STREAM, error: "ERR_HTTP2_SESSION_ERROR" },
+    "destroy(new Error('boom'), REFUSED_STREAM)": { goaway: NGHTTP2_REFUSED_STREAM, error: "boom" },
+  };
+
+  // Destroys a fresh session with `args` and reports the GOAWAY code its peer received plus the
+  // 'error' (code, or message for a plain Error) the destroyed session itself emitted, if any.
+  async function destroySession(side, args) {
+    const server = http2.createServer();
+    const { promise: serverSessionPromise, resolve: onServerSession } = Promise.withResolvers();
+    server.once("session", onServerSession);
+    await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
+    const { promise: connected, resolve: onConnect } = Promise.withResolvers();
+    const client = http2.connect(`http://127.0.0.1:${server.address().port}`, onConnect);
+    client.on("error", () => {});
+    const serverSession = await serverSessionPromise;
+    serverSession.on("error", () => {});
+    await connected;
+    try {
+      const [session, peer] = side === "client" ? [client, serverSession] : [serverSession, client];
+      let error;
+      session.on("error", e => (error = e.code ?? e.message));
+      const { promise: goawayReceived, resolve: onGoaway } = Promise.withResolvers();
+      peer.once("goaway", onGoaway);
+      const { promise: closed, resolve: onClose } = Promise.withResolvers();
+      session.once("close", onClose);
+      session.destroy(...args);
+      const goaway = await goawayReceived;
+      await closed;
+      return { goaway, error };
+    } finally {
+      client.destroy();
+      serverSession.destroy();
+      server.close();
+    }
+  }
+
+  async function destroyEveryShape(side) {
+    const names = Object.keys(shapes);
+    const results = await Promise.all(names.map(name => destroySession(side, shapes[name])));
+    return Object.fromEntries(names.map((name, i) => [name, results[i]]));
+  }
+
+  it("from a client session", async () => {
+    expect(await destroyEveryShape("client")).toEqual(expected);
+  });
+
+  it("from a server session", async () => {
+    expect(await destroyEveryShape("server")).toEqual(expected);
+  });
+});
+
 it(
   "http2 server with minimal maxSessionMemory handles multiple requests",
   async () => {
@@ -2929,6 +3000,76 @@ it("http2 session.origin() with several origins rejects one longer than 65535 by
   expect(exitCode).toBe(0);
 });
 
+it("http2 session.altsvc() sends an object origin unchanged, like Node", async () => {
+  // Node does not parse the origin property of a plain object. It rejects only
+  // "" and "null" and writes the string as is. A string or URL argument still
+  // goes through URL parsing, so "https://a.example/path" becomes its origin.
+  const { promise, resolve, reject } = Promise.withResolvers();
+  const received = [];
+  const outcomes = [];
+
+  const server = http2.createServer();
+  server.on("session", session => {
+    for (const originOrStream of [
+      { origin: "" },
+      { origin: "null" },
+      { origin: "https://example.org:8111/path" },
+      { origin: "not a url" },
+      { origin: "https://m\u00fcnich.example/path" },
+      "https://a.example/path",
+      new URL("https://b.example/path"),
+    ]) {
+      try {
+        session.altsvc('h2=":8000"', originOrStream);
+        outcomes.push("SENT");
+      } catch (err) {
+        outcomes.push(err.code);
+      }
+    }
+  });
+  server.on("stream", stream => {
+    stream.respond({ ":status": 200 });
+    stream.end("ok");
+  });
+  server.on("error", reject);
+  server.listen(0, "127.0.0.1", () => {
+    const client = http2.connect(`http://127.0.0.1:${server.address().port}`);
+    client.on("error", reject);
+    // The ALTSVC frames are sent from the "session" handler, so they arrive
+    // before the response. Tear down only after the request closes, so the
+    // GOAWAY from client.close() does not reject the request stream.
+    client.on("altsvc", (alt, origin, stream) => {
+      received.push({ alt, origin, stream });
+    });
+    const req = client.request({ ":path": "/" });
+    req.resume();
+    req.on("close", () => {
+      client.close();
+      server.close();
+      resolve();
+    });
+    req.end();
+  });
+
+  await promise;
+  expect(outcomes).toEqual([
+    "ERR_HTTP2_ALTSVC_INVALID_ORIGIN",
+    "ERR_HTTP2_ALTSVC_INVALID_ORIGIN",
+    "SENT",
+    "SENT",
+    "SENT",
+    "SENT",
+    "SENT",
+  ]);
+  expect(received).toEqual([
+    { alt: 'h2=":8000"', origin: "https://example.org:8111/path", stream: 0 },
+    { alt: 'h2=":8000"', origin: "not a url", stream: 0 },
+    { alt: 'h2=":8000"', origin: "https://m\u00fcnich.example/path", stream: 0 },
+    { alt: 'h2=":8000"', origin: "https://a.example", stream: 0 },
+    { alt: 'h2=":8000"', origin: "https://b.example", stream: 0 },
+  ]);
+});
+
 it("http2 client.request() propagates a throwing header-value toString() instead of masking it", async () => {
   // Node calls `${value}` and lets the user's exception escape; it must not be
   // replaced with ERR_HTTP2_INVALID_HEADER_VALUE.
@@ -3079,6 +3220,292 @@ it("http2 server resets streams whose request headers contain CR, LF, or NUL oct
     client?.close();
     server.close();
   }
+});
+
+// node:http2 hands header values to JS as one-byte strings (node_http2.cc):
+// each wire byte is one latin-1 code unit. Bytes 0x80-0xFF are legal obs-text
+// in a field value and are not UTF-8 decoded, so a peer that sends UTF-8 is
+// read as mojibake and a peer that sends latin-1 is read as is. Decoding as
+// UTF-8 instead would turn the latin-1 bytes into U+FFFD and lose them.
+describe("http2 header values are latin-1 byte strings", () => {
+  const codeUnits = str => [...str].map(c => c.charCodeAt(0));
+  // HPACK string literal: 7-bit length prefix, no Huffman coding.
+  const literal = bytes => Buffer.concat([Buffer.from([bytes.length]), Buffer.from(bytes)]);
+  // Literal header field without indexing, new name.
+  const field = (name, valueBytes) => Buffer.concat([Buffer.from([0x00]), literal(name), literal(valueBytes)]);
+  const obsText = [0x63, 0x61, 0x66, 0xe9, 0x2d, 0x80, 0xff]; // "caf\xe9-\x80\xff"
+  const utf8Bytes = [0x63, 0x61, 0x66, 0xc3, 0xa9]; // "caf\xc3\xa9", stays two code units
+
+  it("client reads response headers and trailers as latin-1", async () => {
+    const responseBlock = Buffer.concat([
+      Buffer.from([0x88]), // :status: 200 (static table index 8)
+      field("x-latin1", obsText),
+      field("x-utf8", utf8Bytes),
+    ]);
+    const trailerBlock = field("x-trailer", obsText);
+
+    // Raw-socket h2 server: preface handshake, then answer the first HEADERS
+    // with a response header block and a trailer block.
+    const server = net.createServer(socket => {
+      let buf = Buffer.alloc(0);
+      let sawPreface = false;
+      socket.on("error", () => {});
+      socket.on("data", chunk => {
+        buf = Buffer.concat([buf, chunk]);
+        if (!sawPreface) {
+          if (buf.length < http2utils.kClientMagic.length) return;
+          buf = buf.subarray(http2utils.kClientMagic.length);
+          sawPreface = true;
+          socket.write(new http2utils.SettingsFrame(false).data);
+        }
+        while (buf.length >= 9) {
+          const length = buf.readUIntBE(0, 3);
+          if (buf.length < 9 + length) break;
+          const type = buf[3];
+          const flags = buf[4];
+          const streamId = buf.readUInt32BE(5) & 0x7fffffff;
+          buf = buf.subarray(9 + length);
+          if (type === 4 && (flags & 1) === 0) {
+            socket.write(new http2utils.SettingsFrame(true).data);
+          } else if (type === 1) {
+            socket.write(new http2utils.HeadersFrame(streamId, responseBlock, 0, true, false).data);
+            socket.write(new http2utils.HeadersFrame(streamId, trailerBlock, 0, true, true).data);
+          }
+        }
+      });
+    });
+    await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
+    const client = http2.connect(`http://127.0.0.1:${server.address().port}`);
+    try {
+      const response = Promise.withResolvers();
+      const trailers = Promise.withResolvers();
+      const fail = err => {
+        response.reject(err);
+        trailers.reject(err);
+      };
+      client.on("error", fail);
+      const req = client.request({ ":path": "/" }, { endStream: true });
+      req.on("error", fail);
+      req.on("response", (headers, _flags, rawHeaders) => response.resolve({ headers, rawHeaders }));
+      req.on("trailers", headers => trailers.resolve(headers));
+      // A settled promise ignores this, so it only fires when trailers never arrived.
+      req.on("close", () => fail(new Error(`stream closed without trailers (rstCode ${req.rstCode})`)));
+      req.resume();
+
+      const { headers, rawHeaders } = await response.promise;
+      expect(headers[":status"]).toBe(200);
+      expect(codeUnits(headers["x-latin1"])).toEqual(obsText);
+      expect(codeUnits(headers["x-utf8"])).toEqual(utf8Bytes);
+      expect(rawHeaders.map(codeUnits)).toEqual([
+        codeUnits(":status"),
+        codeUnits("200"),
+        codeUnits("x-latin1"),
+        obsText,
+        codeUnits("x-utf8"),
+        utf8Bytes,
+      ]);
+      expect(codeUnits((await trailers.promise)["x-trailer"])).toEqual(obsText);
+    } finally {
+      client.close();
+      server.close();
+    }
+  });
+
+  it("server reads request headers as latin-1", async () => {
+    const requestBlock = Buffer.concat([
+      Buffer.from([0x82]), // :method: GET   (static table index 2)
+      Buffer.from([0x86]), // :scheme: http  (static table index 6)
+      Buffer.from([0x84]), // :path: /       (static table index 4)
+      Buffer.from([0x01]), // :authority     (literal without indexing, name index 1)
+      literal(Buffer.from("localhost")),
+      field("x-latin1", obsText),
+      field("x-utf8", utf8Bytes),
+    ]);
+
+    const delivered = Promise.withResolvers();
+    const server = http2.createServer();
+    server.on("error", delivered.reject);
+    server.on("stream", (stream, headers, _flags, rawHeaders) => {
+      delivered.resolve({ headers, rawHeaders });
+      stream.respond({ ":status": 200 });
+      stream.end();
+    });
+    await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
+
+    const socket = net.connect(server.address().port, "127.0.0.1", () => {
+      socket.write(http2utils.kClientMagic);
+      socket.write(new http2utils.SettingsFrame(false).data);
+      socket.write(new http2utils.HeadersFrame(1, requestBlock, 0, true, true).data);
+    });
+    socket.on("error", delivered.reject);
+    try {
+      const { headers, rawHeaders } = await delivered.promise;
+      expect(codeUnits(headers["x-latin1"])).toEqual(obsText);
+      expect(codeUnits(headers["x-utf8"])).toEqual(utf8Bytes);
+      expect(rawHeaders.slice(-4).map(codeUnits)).toEqual([
+        codeUnits("x-latin1"),
+        obsText,
+        codeUnits("x-utf8"),
+        utf8Bytes,
+      ]);
+    } finally {
+      socket.destroy();
+      server.close();
+    }
+  });
+
+  // The outbound side writes one byte per code unit too. Node's NgHeaders
+  // writes the header string with StringBytes::Write(..., LATIN1), so obs-text
+  // round-trips between two peers. UTF-8 makes the peer read two code units
+  // per byte above 0x7F. JSC stores a string as 8-bit or 16-bit, so each
+  // encode path gets both forms.
+  const latin1 = "caf\xe9-\x80\xff";
+  const latin1In16Bit = new TextDecoder("utf-16le").decode(Buffer.from(latin1, "utf16le"));
+
+  it.each(["object", "raw array"])(
+    "client and server write header values and trailers as latin-1 (%s form)",
+    async form => {
+      expect(jscDescribe(latin1In16Bit)).toContain("8Bit:(0)");
+      const withFields = pseudo =>
+        form === "object"
+          ? { ...pseudo, "x-latin1": latin1, "x-latin1-16bit": latin1In16Bit, "x-list": [latin1, latin1In16Bit] }
+          : [
+              ...Object.entries(pseudo).flat(),
+              ...["x-latin1", latin1, "x-latin1-16bit", latin1In16Bit, "x-list", latin1, "x-list", latin1In16Bit],
+            ];
+      const trailerFields = {
+        "x-trailer": latin1,
+        "x-trailer-16bit": latin1In16Bit,
+        "x-trailer-list": [latin1, latin1In16Bit],
+      };
+      const expected = {
+        headers: { "x-latin1": latin1, "x-latin1-16bit": latin1, "x-list": `${latin1}, ${latin1}` },
+        trailers: { "x-trailer": latin1, "x-trailer-16bit": latin1, "x-trailer-list": `${latin1}, ${latin1}` },
+      };
+      const received = (headers, names) => Object.fromEntries(names.map(name => [name, headers[name]]));
+
+      const request = Promise.withResolvers();
+      const requestTrailers = Promise.withResolvers();
+      const server = http2.createServer();
+      server.on("error", request.reject);
+      server.on("stream", (stream, headers) => {
+        request.resolve(headers);
+        stream.on("trailers", requestTrailers.resolve);
+        stream.on("wantTrailers", () => stream.sendTrailers(trailerFields));
+        stream.respond(withFields({ ":status": "200" }), { waitForTrailers: true });
+        stream.end();
+      });
+      await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
+
+      const client = http2.connect(`http://127.0.0.1:${server.address().port}`);
+      try {
+        const response = Promise.withResolvers();
+        const responseTrailers = Promise.withResolvers();
+        const fail = err => {
+          request.reject(err);
+          requestTrailers.reject(err);
+          response.reject(err);
+          responseTrailers.reject(err);
+        };
+        client.on("error", fail);
+        const req = client.request(withFields({ ":method": "POST", ":path": "/" }), { waitForTrailers: true });
+        req.on("error", fail);
+        req.on("wantTrailers", () => req.sendTrailers(trailerFields));
+        req.on("response", response.resolve);
+        req.on("trailers", responseTrailers.resolve);
+        req.on("close", () => fail(new Error(`stream closed without trailers (rstCode ${req.rstCode})`)));
+        req.resume();
+        req.end("body");
+
+        const headerNames = Object.keys(expected.headers);
+        const trailerNames = Object.keys(expected.trailers);
+        expect({
+          request: received(await request.promise, headerNames),
+          requestTrailers: received(await requestTrailers.promise, trailerNames),
+          response: received(await response.promise, headerNames),
+          responseTrailers: received(await responseTrailers.promise, trailerNames),
+        }).toEqual({
+          request: expected.headers,
+          requestTrailers: expected.trailers,
+          response: expected.headers,
+          responseTrailers: expected.trailers,
+        });
+      } finally {
+        client.close();
+        server.close();
+      }
+    },
+  );
+
+  it("server writes push promise header values as latin-1", async () => {
+    const blocks = await pushedHeaderBlocks(stream => {
+      stream.pushStream({ ":path": "/pushed", "x-latin1": latin1, "x-latin1-16bit": latin1In16Bit }, (err, push) => {
+        if (err) {
+          stream.destroy(err);
+          return;
+        }
+        push.respond({ ":status": 200 });
+        push.end();
+      });
+      stream.respond({ ":status": 200 });
+      stream.end();
+    });
+    expect(blocks.map(block => block.fields)).toEqual([["x-latin1", latin1, "x-latin1-16bit", latin1]]);
+  });
+
+  // Bun has no single rule for a code unit above 0xFF. Node truncates it to its
+  // low byte, and object-form respond() drops the value (headerValueIsUnsendable).
+  // request() and sendTrailers() send the UTF-8 bytes, and this test pins them.
+  // Truncation turns U+4E0D into a CR byte, which request() rejects.
+  it("request() and sendTrailers() send the UTF-8 bytes of a value with a code unit above 0xFF", async () => {
+    const wide = "\u4e0d\u4e2d";
+    const mixed = "caf\xe9 \u4e2d";
+    const utf8AsLatin1 = value => Buffer.from(value, "utf8").toString("latin1");
+
+    const delivered = Promise.withResolvers();
+    const server = http2.createServer();
+    server.on("error", delivered.reject);
+    server.on("stream", (stream, headers) => {
+      stream.on("trailers", trailers => {
+        delivered.resolve({
+          headers: { "x-wide": headers["x-wide"], "x-mixed": headers["x-mixed"] },
+          trailers: { "x-wide-trailer": trailers["x-wide-trailer"] },
+        });
+        stream.respond({ ":status": 200 });
+        stream.end();
+      });
+      stream.resume();
+    });
+    await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
+
+    const client = http2.connect(`http://127.0.0.1:${server.address().port}`);
+    try {
+      const response = Promise.withResolvers();
+      const fail = err => {
+        delivered.reject(err);
+        response.reject(err);
+      };
+      client.on("error", fail);
+      const req = client.request(
+        { ":method": "POST", ":path": "/", "x-wide": wide, "x-mixed": mixed },
+        { waitForTrailers: true },
+      );
+      req.on("error", fail);
+      req.on("wantTrailers", () => req.sendTrailers({ "x-wide-trailer": wide }));
+      req.on("response", headers => response.resolve(headers[":status"]));
+      req.resume();
+      req.end("body");
+
+      expect(await delivered.promise).toEqual({
+        headers: { "x-wide": utf8AsLatin1(wide), "x-mixed": utf8AsLatin1(mixed) },
+        trailers: { "x-wide-trailer": utf8AsLatin1(wide) },
+      });
+      expect(await response.promise).toBe(200);
+    } finally {
+      client.close();
+      server.close();
+    }
+  });
 });
 
 it("http2 server rejects requests carrying connection-specific or repeated pseudo-headers", async () => {
@@ -4603,6 +5030,183 @@ it("http2 allowHTTP1 fallback omits the Connection header on a close-delimited r
   }
 });
 
+function connectOverHttp1(port) {
+  const { promise, resolve, reject } = Promise.withResolvers();
+  const socket = tls.connect({ host: "localhost", port, ca: TLS_CERT.cert, ALPNProtocols: ["http/1.1"] }, () =>
+    resolve(socket),
+  );
+  socket.on("error", reject);
+  return promise;
+}
+
+// Reads one Content-Length framed response off a raw HTTP/1 connection. Rejects if the
+// connection goes away first, so a wrongly destroyed connection fails instead of hanging.
+function readHttp1Response(socket) {
+  const { promise, resolve, reject } = Promise.withResolvers();
+  let raw = "";
+  function onData(chunk) {
+    raw += chunk.toString("latin1");
+    const headersEnd = raw.indexOf("\r\n\r\n");
+    if (headersEnd === -1) return;
+    const head = raw.slice(0, headersEnd);
+    const contentLength = /\r\ncontent-length: (\d+)/i.exec(head);
+    if (!contentLength) {
+      done();
+      reject(new Error(`expected a Content-Length framed response, got:\n${head}`));
+      return;
+    }
+    const body = raw.slice(headersEnd + 4);
+    if (body.length < Number(contentLength[1])) return;
+    done();
+    resolve({ statusLine: head.slice(0, head.indexOf("\r\n")), body });
+  }
+  function onClose() {
+    done();
+    reject(new Error("connection closed before the response completed"));
+  }
+  function done() {
+    socket.off("data", onData);
+    socket.off("close", onClose);
+  }
+  socket.on("data", onData);
+  socket.on("close", onClose);
+  return promise;
+}
+
+function requestOverSession(session, path) {
+  const { promise, resolve, reject } = Promise.withResolvers();
+  const req = session.request({ ":path": path });
+  let body = "";
+  req.setEncoding("utf8");
+  req.on("data", chunk => (body += chunk));
+  req.on("end", () => resolve(body));
+  req.on("error", reject);
+  req.end();
+  return promise;
+}
+
+it("Http2SecureServer has closeIdleConnections() on its prototype like node, Http2Server does not", () => {
+  const secure = http2.createSecureServer(TLS_CERT);
+  const plain = http2.createServer();
+  expect({
+    secure: typeof secure.closeIdleConnections,
+    ownPrototypeMethod: Object.hasOwn(Object.getPrototypeOf(secure), "closeIdleConnections"),
+    length: secure.closeIdleConnections.length,
+    closeAllConnections: typeof secure.closeAllConnections,
+    plain: typeof plain.closeIdleConnections,
+  }).toEqual({
+    secure: "function",
+    ownPrototypeMethod: true,
+    length: 0,
+    closeAllConnections: "undefined",
+    plain: "undefined",
+  });
+});
+
+it("Http2SecureServer#closeIdleConnections() destroys idle allowHTTP1 connections only", async () => {
+  const holdRequestReceived = Promise.withResolvers();
+  const releaseHeldResponse = Promise.withResolvers();
+  const serverSockets = {};
+  const server = http2.createSecureServer({ ...TLS_CERT, allowHTTP1: true }, (req, res) => {
+    serverSockets[req.url] = req.socket;
+    if (req.url === "/hold") {
+      holdRequestReceived.resolve();
+      releaseHeldResponse.promise.then(() => res.end("held"));
+      return;
+    }
+    res.end("ok");
+  });
+  const serverSessionPromise = new Promise(resolve => server.once("session", resolve));
+  await new Promise(resolve => server.listen(0, resolve));
+  const port = server.address().port;
+  const idle = await connectOverHttp1(port);
+  const busy = await connectOverHttp1(port);
+  const h2 = http2.connect(`https://localhost:${port}`, TLS_OPTIONS);
+  try {
+    // `idle` completes one keep-alive exchange and then sits there.
+    const idleResponse = readHttp1Response(idle);
+    idle.write("GET / HTTP/1.1\r\nHost: localhost\r\n\r\n");
+    expect(await idleResponse).toEqual({ statusLine: "HTTP/1.1 200 OK", body: "ok" });
+    // `busy` has a request in flight whose response the handler is holding back.
+    busy.write("GET /hold HTTP/1.1\r\nHost: localhost\r\n\r\n");
+    await holdRequestReceived.promise;
+    const serverSession = await serverSessionPromise;
+
+    const idleClosed = new Promise(resolve => idle.once("close", resolve));
+    expect(server.closeIdleConnections()).toBeUndefined();
+    expect({
+      idleDestroyed: serverSockets["/"].destroyed,
+      busyDestroyed: serverSockets["/hold"].destroyed,
+      sessionClosed: serverSession.closed,
+      sessionDestroyed: serverSession.destroyed,
+      listening: server.listening,
+    }).toEqual({
+      idleDestroyed: true,
+      busyDestroyed: false,
+      sessionClosed: false,
+      sessionDestroyed: false,
+      listening: true,
+    });
+    await idleClosed;
+
+    // The held request still completes on its connection and the h2 session is still usable.
+    const heldResponse = readHttp1Response(busy);
+    releaseHeldResponse.resolve();
+    expect(await heldResponse).toEqual({ statusLine: "HTTP/1.1 200 OK", body: "held" });
+    expect(await requestOverSession(h2, "/over-h2")).toBe("ok");
+
+    // With its response finished, the formerly busy connection is idle and goes on the next call.
+    const busyClosed = new Promise(resolve => busy.once("close", resolve));
+    server.closeIdleConnections();
+    expect(serverSockets["/hold"].destroyed).toBe(true);
+    await busyClosed;
+    expect({ sessionClosed: serverSession.closed, sessionDestroyed: serverSession.destroyed }).toEqual({
+      sessionClosed: false,
+      sessionDestroyed: false,
+    });
+  } finally {
+    releaseHeldResponse.resolve();
+    h2.close();
+    idle.destroy();
+    busy.destroy();
+    server.close();
+  }
+});
+
+it("Http2SecureServer#closeIdleConnections() without allowHTTP1 is a no-op that leaves sessions alone", async () => {
+  const server = http2.createSecureServer(TLS_CERT, (req, res) => res.end("ok"));
+  const serverSessionPromise = new Promise(resolve => server.once("session", resolve));
+  await new Promise(resolve => server.listen(0, resolve));
+  const client = http2.connect(`https://localhost:${server.address().port}`, TLS_OPTIONS);
+  try {
+    const serverSession = await serverSessionPromise;
+    expect(server.closeIdleConnections()).toBeUndefined();
+    expect({ closed: serverSession.closed, destroyed: serverSession.destroyed, listening: server.listening }).toEqual({
+      closed: false,
+      destroyed: false,
+      listening: true,
+    });
+    expect(await requestOverSession(client, "/")).toBe("ok");
+  } finally {
+    client.close();
+    server.close();
+  }
+});
+
+// Node's Http2SecureServer#close() runs httpServerPreClose, which calls the server's own
+// closeIdleConnections(), and only does so for an allowHTTP1 server.
+it("Http2SecureServer#close() calls closeIdleConnections() exactly when allowHTTP1 is enabled", async () => {
+  const calls = {};
+  for (const allowHTTP1 of [true, false]) {
+    const server = http2.createSecureServer({ ...TLS_CERT, allowHTTP1 });
+    await new Promise(resolve => server.listen(0, resolve));
+    server.closeIdleConnections = mock(() => {});
+    await new Promise(resolve => server.close(resolve));
+    calls[`allowHTTP1: ${allowHTTP1}`] = server.closeIdleConnections.mock.calls;
+  }
+  expect(calls).toEqual({ "allowHTTP1: true": [[]], "allowHTTP1: false": [] });
+});
+
 // close() must not depend on the peer sending a SETTINGS ACK — Node's kMaybeDestroy
 // waits on nghttp2_session_want_write()/want_read(), which does not track outstanding
 // ACKs. A server that never ACKs a client-sent SETTINGS must not stall close().
@@ -5135,6 +5739,68 @@ it("remoteSettings/localSettings are never null before the peer's SETTINGS arriv
     client?.destroy();
     server.close();
   }
+});
+
+// node's ServerHttp2Session exposes the Http2Server/Http2SecureServer that accepted the connection
+// as a `server` getter on its prototype (still set after the session is destroyed);
+// performServerHandshake() sessions have no owning server and ClientHttp2Session has no such
+// property at all. Bun had no getter, so `session.server` was undefined everywhere.
+describe.concurrent("ServerHttp2Session.server", () => {
+  async function acceptOneSession(server, scheme, connectOptions) {
+    const accepted = Promise.withResolvers();
+    server.on("session", accepted.resolve);
+    server.on("error", accepted.reject);
+    await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
+    const client = http2.connect(`${scheme}://127.0.0.1:${server.address().port}`, connectOptions);
+    client.on("error", accepted.reject);
+    try {
+      const session = await accepted.promise;
+      expect(session.server).toBe(server);
+      // node's shape: an accessor on the prototype, not an own property written by the constructor.
+      expect(Object.hasOwn(session, "server")).toBe(false);
+      const { get, set, enumerable, configurable } = Object.getOwnPropertyDescriptor(
+        Object.getPrototypeOf(session),
+        "server",
+      );
+      expect({ get: typeof get, set, enumerable, configurable }).toEqual({
+        get: "function",
+        set: undefined,
+        enumerable: false,
+        configurable: true,
+      });
+      // The client side never gets one.
+      expect("server" in client).toBe(false);
+
+      const closed = new Promise(resolve => session.once("close", resolve));
+      session.destroy();
+      await closed;
+      expect(session.destroyed).toBe(true);
+      expect(session.server).toBe(server);
+    } finally {
+      client.destroy();
+      await new Promise(resolve => server.close(resolve));
+    }
+  }
+
+  it("is the Http2Server that accepted the connection", async () => {
+    await acceptOneSession(http2.createServer(), "http");
+  });
+
+  it("is the Http2SecureServer that accepted the connection", async () => {
+    await acceptOneSession(http2.createSecureServer(TLS_CERT), "https", TLS_OPTIONS);
+  });
+
+  it("is undefined for a performServerHandshake() session", () => {
+    const [clientSide, serverSide] = duplexPair();
+    const session = http2.performServerHandshake(serverSide);
+    try {
+      expect("server" in session).toBe(true);
+      expect(session.server).toBeUndefined();
+    } finally {
+      session.destroy();
+      clientSide.destroy();
+    }
+  });
 });
 
 describe("frames issued from inside a user-supplied Duplex transport's _write", () => {

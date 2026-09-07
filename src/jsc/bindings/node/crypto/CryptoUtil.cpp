@@ -488,6 +488,7 @@ JSValue createCryptoError(JSC::JSGlobalObject* globalObject, ThrowScope& scope, 
         for (int32_t i = 0; i < errorStack.size(); i++) {
             WTF::String error = errorStack.pop_back().value();
             arr->putDirectIndex(globalObject, i, jsString(vm, error));
+            RETURN_IF_EXCEPTION(scope, {});
         }
         errorObject->put(errorObject, globalObject, Identifier::fromString(vm, "opensslErrorStack"_s), arr, stackSlot);
         RETURN_IF_EXCEPTION(scope, {});

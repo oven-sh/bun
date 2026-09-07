@@ -446,13 +446,11 @@ impl Source {
             },
             uv::HandleType::File => bun_sys::Result::Ok(Source::File(Self::open_file(fd))),
             _ => {
-                let errno = bun_sys::windows::get_last_errno();
-
-                if errno == bun_sys::E::SUCCESS {
+                let err = bun_sys::windows::Win32Error::get();
+                if err == bun_sys::windows::Win32Error::SUCCESS {
                     return bun_sys::Result::Ok(Source::File(Self::open_file(fd)));
                 }
-
-                bun_sys::Result::Err(bun_sys::Error::from_code(errno, bun_sys::Tag::open))
+                bun_sys::Result::Err(bun_sys::Error::from_win32(err, bun_sys::Tag::open))
             }
         }
     }

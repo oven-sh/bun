@@ -201,9 +201,12 @@ class BunBuiltinNames {
     WTF_MAKE_NONCOPYABLE(BunBuiltinNames);
     friend class JSVMClientData;
     explicit BunBuiltinNames(JSC::VM&);
-    ~BunBuiltinNames();
 
 public:
+    ~BunBuiltinNames();
+    // For a VM without JSVMClientData that still needs to parse builtins (ahead-of-time bytecode generation).
+    static std::unique_ptr<BunBuiltinNames> createStandalone(JSC::VM& vm) { return std::unique_ptr<BunBuiltinNames>(new BunBuiltinNames(vm)); }
+
     enum class Name : uint16_t {
 #define BUN_BUILTIN_NAME_ENUM(name) k_##name,
         BUN_COMMON_PRIVATE_IDENTIFIERS_EACH_PROPERTY_NAME(BUN_BUILTIN_NAME_ENUM)

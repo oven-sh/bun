@@ -187,10 +187,12 @@ JSValue NodeVMModule::evaluate(JSGlobalObject* globalObject, uint32_t timeout, b
             switch (innerPromise->status()) {
             case JSPromise::Status::Fulfilled:
                 result = JSPromise::resolvedPromise(callerGlobalObject, innerPromise->settlementValue());
+                RETURN_IF_EXCEPTION(scope, );
                 break;
             case JSPromise::Status::Rejected:
                 innerPromise->markAsHandled();
                 result = JSPromise::rejectedPromise(callerGlobalObject, innerPromise->settlementValue());
+                RETURN_IF_EXCEPTION(scope, );
                 break;
             case JSPromise::Status::Pending:
                 break;
@@ -616,7 +618,9 @@ JSC_DEFINE_HOST_FUNCTION(jsNodeVmModuleSetExport, (JSC::JSGlobalObject * globalO
             return {};
         }
         JSValue exportValue = callFrame->argument(1);
-        thisObject->setExport(globalObject, nameValue.toWTFString(globalObject), exportValue);
+        WTF::String exportName = nameValue.toWTFString(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+        thisObject->setExport(globalObject, exportName, exportValue);
         RETURN_IF_EXCEPTION(scope, {});
     } else {
         throwTypeError(globalObject, scope, "This function must be called on a SyntheticModule"_s);

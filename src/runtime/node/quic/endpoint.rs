@@ -1065,7 +1065,7 @@ fn apply_transport_params(
         ..lsquic::NqTransportParams::default()
     };
     if let Some(cc) = options.get(global, "cc")?.filter(|v| v.is_string()) {
-        let name = bun_core::String::from_js(cc, global)?.to_utf8_bytes();
+        let name = bun_core::String::from_js(cc, global)?.to_owned_slice();
         // lsquic.h es_cc_algo: 0=default(→3 Adaptive), 1=Cubic, 2=BBRv1,
         // 3=Adaptive. lsquic ships no Reno (NGTCP2_CC_ALGO_RENO in node's
         // backend), so map 'reno' to Cubic, the closest loss-based option,
@@ -1263,7 +1263,7 @@ impl QuicEndpoint {
                 .get(global, "blockListPolicy")?
                 .filter(|v| v.is_string())
             {
-                let policy = bun_core::String::from_js(policy, global)?.to_utf8_bytes();
+                let policy = bun_core::String::from_js(policy, global)?.to_owned_slice();
                 // SAFETY: as above.
                 unsafe { (**raw).block_list_allow.set(policy == b"allow") };
             }
@@ -2225,7 +2225,7 @@ impl QuicEndpoint {
                         if !v.is_string() {
                             continue;
                         }
-                        let bytes = bun_core::String::from_js(v, global)?.to_utf8_bytes();
+                        let bytes = bun_core::String::from_js(v, global)?.to_owned_slice();
                         if bytes.is_empty() || bytes.len() > u16::MAX as usize {
                             continue;
                         }
@@ -2579,7 +2579,7 @@ impl QuicEndpoint {
         let mut out = Vec::with_capacity(len as usize);
         for i in 0..len {
             let key = keys.get_index(global, i)?;
-            let host = bun_core::String::from_js(key, global)?.to_utf8_bytes();
+            let host = bun_core::String::from_js(key, global)?.to_owned_slice();
             let value = entries
                 .get(global, host.as_slice())?
                 .unwrap_or(JSValue::UNDEFINED);

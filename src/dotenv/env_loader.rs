@@ -1424,7 +1424,7 @@ impl Map {
     }
 
     #[inline]
-    pub(crate) fn init() -> Map {
+    pub fn init() -> Map {
         Map {
             map: HashTable::default(),
         }

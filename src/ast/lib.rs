@@ -651,10 +651,8 @@ pub struct Location {
     pub length: usize,
     // TODO: document or remove
     pub offset: usize,
-    /// 0-based column (UTF-16 units, like `column`) at which `line_text`
-    /// starts in the source line. Non-zero when `line_text` is a window of a
-    /// longer line; `write_format` subtracts it from `column` to place the
-    /// caret under the excerpt.
+    /// 0-based column (UTF-16 units) of the source line at which `line_text`
+    /// starts. Non-zero when `line_text` is a window of a longer line.
     pub line_text_start_column: usize,
 
     /// 1-based line number.
@@ -809,12 +807,9 @@ impl Location {
                 None => source.init_error_position(r.loc),
             };
             let mut full_line = &source.contents[data.line_start..data.line_end];
-            // Window a long line to ~120 bytes around the error. Bounds are
-            // BYTE offsets. `line_text_start_column` records how many columns
-            // the window drops on the left so `write_format`'s caret aligns.
-            // Consumers that only know `column` (the bake overlay,
-            // `BuildMessage.position`) rely on the gate not left-trimming an
-            // error in the last 80 bytes of a line.
+            // Window a long line to ~120 bytes around the error (byte bounds).
+            // An error in the last 80 bytes keeps the whole line: the bake
+            // overlay and `BuildMessage.position` index `line_text` by `column`.
             let offset_in_line = clamp_error_offset(&source.contents, r.loc)
                 .saturating_sub(data.line_start)
                 .min(full_line.len());
@@ -831,8 +826,7 @@ impl Location {
                     hi += 1;
                 }
                 if lo > 0 {
-                    // Count the <= 40 kept bytes with the scanner that produced
-                    // `column_count`, instead of rescanning the dropped prefix.
+                    // Same counter as `column_count`, over the kept bytes only.
                     let mut kept = ErrorPositionState::default();
                     kept.advance(full_line, lo, offset_in_line);
                     line_text_start_column = data.column_count.saturating_sub(kept.column_number);
@@ -850,11 +844,8 @@ impl Location {
                 } else {
                     1
                 },
-                // `source_backing` in `Transpiler::parse_*` is RAII and
-                // drops on the parse-error path *before* `process_fetch_log`
-                // clones the `Msg` into a `BuildMessage`, so own the bytes here
-                // instead of borrowing `source.contents`. Only materialized on
-                // diagnostic paths.
+                // Owned: `source.contents` can drop before this `Msg` is
+                // cloned into a `BuildMessage` (`Transpiler::parse_*`).
                 line_text: Some(Cow::Owned(full_line.to_vec())),
                 offset: usize::try_from(r.loc.start.max(0)).expect("int cast"),
                 line_text_start_column,
@@ -1002,8 +993,6 @@ impl Data {
                 let line_text_right_trimmed = bun_core::trim_right(line_text_, b" \r\n\t");
                 let line_text = bun_core::trim_left(line_text_right_trimmed, b"\n\r");
                 if location.column > 0 && !line_text.is_empty() {
-                    // The caret sits under the printed excerpt, so its indent
-                    // is bounded by the excerpt, never by the full column.
                     let mut line_offset_for_second_line: usize =
                         usize::try_from(location.column - 1)
                             .expect("int cast")

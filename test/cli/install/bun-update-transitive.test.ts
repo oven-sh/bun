@@ -2330,7 +2330,7 @@ test.concurrent(
 );
 
 // pkg1 has a stale direct entry (a-dep) and a transitive row (no-deps under one-range-dep) parked one release behind; pkg2 has a stale direct entry only.
-async function staleMemberTransitive() {
+async function staleMemberDirectAndTransitive() {
   const pkg1 = (aDep: string, extra: Json = {}) =>
     member("pkg1", { "one-range-dep": "1.0.0", "a-dep": aDep, ...extra });
   const dir = await setup({
@@ -2347,7 +2347,7 @@ async function staleMemberTransitive() {
 }
 
 test.concurrent("`bun update --depth 0 -r` moves every workspace's direct entries and nothing else", async () => {
-  const { dir, pkg1 } = await staleMemberTransitive();
+  const { dir, pkg1 } = await staleMemberDirectAndTransitive();
   const rootBefore = await packageJsonText(dir);
   const { stdout, stderr, exitCode } = await run(dir, "update", "--depth", "0", "-r");
   expect(movedRows(stdout).sort()).toStrictEqual([A_DEP_ROW, movedRow("dep-with-tags", "1.0.0", "1.0.1")]);
@@ -2364,7 +2364,7 @@ test.concurrent("`bun update --depth 0 -r` moves every workspace's direct entrie
 
 // The contrast: a bare `bun update -r` on the same fixture moves the transitive row too.
 test.concurrent("`bun update -r` on the same fixture also moves the transitive row", async () => {
-  const { dir } = await staleMemberTransitive();
+  const { dir } = await staleMemberDirectAndTransitive();
   const { stdout, stderr, exitCode } = await run(dir, "update", "-r");
   expect(movedRows(stdout).sort()).toStrictEqual([A_DEP_ROW, movedRow("dep-with-tags", "1.0.0", "1.0.1"), NO_DEPS_ROW]);
   expectCleanStderr(stderr);

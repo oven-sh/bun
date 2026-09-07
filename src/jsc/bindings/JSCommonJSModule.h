@@ -21,6 +21,10 @@ namespace Bun {
 
 using namespace JSC;
 
+// What `require("module").wrapper` reports and every CommonJS module body is wrapped in unless that is overridden.
+static constexpr ASCIILiteral commonJSDefaultWrapperStart = "(function(exports,require,module,__filename,__dirname){"_s;
+static constexpr ASCIILiteral commonJSDefaultWrapperEnd = "})"_s;
+
 JSC_DECLARE_HOST_FUNCTION(jsFunctionCreateCommonJSModule);
 JSC_DECLARE_HOST_FUNCTION(jsFunctionEvaluateCommonJSModule);
 JSC_DECLARE_HOST_FUNCTION(functionJSCommonJSModule_compile);
@@ -106,11 +110,6 @@ public:
         JSC::JSString* key,
         JSValue exportsObject, bool hasEvaluated, JSValue parent);
 
-    static JSCommonJSModule* create(
-        Zig::GlobalObject* globalObject,
-        const WTF::String& key,
-        ResolvedSource resolvedSource);
-
     static JSObject* createBoundRequireFunction(VM& vm, JSGlobalObject* lexicalGlobalObject, const WTF::String& pathString);
 
     void toSyntheticSource(JSC::JSGlobalObject* globalObject,
@@ -137,12 +136,7 @@ public:
     {
         if constexpr (mode == JSC::SubspaceAccess::Concurrently)
             return nullptr;
-        return WebCore::subspaceForImpl<JSCommonJSModule, WebCore::UseCustomHeapCellType::No>(
-            vm,
-            [](auto& spaces) { return spaces.m_clientSubspaceForJSCommonJSModule.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForJSCommonJSModule = std::forward<decltype(space)>(space); },
-            [](auto& spaces) { return spaces.m_subspaceForJSCommonJSModule.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_subspaceForJSCommonJSModule = std::forward<decltype(space)>(space); });
+        return WebCore::subspaceForImpl<JSCommonJSModule, WebCore::UseCustomHeapCellType::No>(vm, BUN_SUBSPACE_SLOTS(m_clientSubspaceForJSCommonJSModule, m_subspaceForJSCommonJSModule));
     }
 
     bool hasEvaluated = false;

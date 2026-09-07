@@ -151,8 +151,6 @@ pub struct Imports {
     pub(crate) __reExport: Ref,
     pub(crate) __exportValue: Ref,
     pub(crate) __exportDefault: Ref,
-    // __refreshRuntime: ?GeneratedSymbol = null,
-    // __refreshSig: ?GeneratedSymbol = null, // $RefreshSig$
     pub(crate) __merge: Ref,
     pub(crate) __legacyDecorateClassTS: Ref,
     pub(crate) __legacyDecorateParamTS: Ref,
@@ -399,7 +397,6 @@ pub struct ImportsIterator<'a> {
 #[derive(Clone, Copy)]
 pub struct ImportsIteratorEntry {
     pub key: u16,
-    pub value: Ref,
 }
 
 impl ImportsIterator<'_> {
@@ -407,10 +404,9 @@ impl ImportsIterator<'_> {
         while self.i < Imports::ALL.len() {
             let t = self.i;
             self.i += 1;
-            if let Some(val) = self.runtime_imports.field(t) {
+            if self.runtime_imports.field(t).is_some() {
                 return Some(ImportsIteratorEntry {
                     key: u16::try_from(t).expect("int cast"),
-                    value: val,
                 });
             }
         }

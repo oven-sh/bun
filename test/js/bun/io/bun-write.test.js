@@ -11,6 +11,8 @@ import {
   tempDir,
   withoutAggressiveGC,
 } from "harness";
+import { once } from "node:events";
+import http from "node:http";
 import path, { join } from "path";
 
 let i = 0;
@@ -900,9 +902,8 @@ int posix_fadvise(int fd, off_t offset, off_t len, int advice) {
     expect(await Bun.file(dest).text()).toBe("<html><body><p>hi</p></body></html>");
   });
 
-  // Bun.write owns the Locked body (on_receive_value + retargeted task);
-  // clone()'s tee must see that and yield a used body instead of dispatching
-  // the producer callbacks with Bun.write's task as ctx.
+  // Bun.write is reading the body, so it is used: clone() throws (as it does after .text()), and
+  // the write is unaffected.
   it("Bun.write(path, HTMLRewriter.transform(resp)) survives clone() while a handler is suspended", async () => {
     using dir = tempDir("bun-write-htmlrewriter-clone", {});
     const dest = join(String(dir), "out.html");
@@ -919,11 +920,227 @@ int posix_fadvise(int fd, off_t offset, off_t len, int advice) {
       .transform(new Response("<p>y</p>"));
     const write = Bun.write(dest, out);
     await suspended;
-    const clone = out.clone();
-    expect(clone).toBeInstanceOf(Response);
+    expect(out.bodyUsed).toBe(true);
+    expect(() => out.clone()).toThrow(expect.objectContaining({ code: "ERR_BODY_ALREADY_USED" }));
     openGate();
-    await write;
+    expect(await write).toBe(8);
     expect(await Bun.file(dest).text()).toBe("<p>x</p>");
+  });
+
+  describe("Bun.write(path, response) streams the body to the file", () => {
+    const CHUNK = 64 * 1024;
+    const COUNT = 64; // 4 MiB
+    // Serves COUNT chunks; with `gate`, the second half only once it opens.
+    // node:http rather than Bun.serve: no server-side Response objects to muddy a Response count.
+    async function origin(gate) {
+      const payload = Buffer.alloc(CHUNK, "a");
+      const server = http.createServer(async (req, res) => {
+        // The client may go away mid-body (a failed write cancels the source, or the test ends).
+        res.on("error", () => {});
+        if (req.url.endsWith("/small")) return res.end(payload.subarray(0, 1000));
+        res.writeHead(200, { "content-length": String(CHUNK * COUNT) });
+        for (let i = 0; i < COUNT && !res.destroyed; i++) {
+          if (gate && i === COUNT / 2) await gate;
+          if (!res.write(payload)) await once(res, "drain").catch(() => {});
+        }
+        if (!res.destroyed) res.end();
+      });
+      server.listen(0, "127.0.0.1");
+      await once(server, "listening");
+      return {
+        url: new URL(`http://127.0.0.1:${server.address().port}/`),
+        [Symbol.asyncDispose]: () => new Promise(resolve => server.closeAllConnections() || server.close(resolve)),
+      };
+    }
+
+    it("resolves with the byte count and replaces a longer existing file", async () => {
+      using dir = tempDir("bun-write-response-stream", { "out.bin": Buffer.alloc(CHUNK * COUNT + 12345, "z") });
+      await using server = await origin();
+      const dest = join(String(dir), "out.bin");
+      expect(await Bun.write(dest, await fetch(server.url))).toBe(CHUNK * COUNT);
+      expect(fs.statSync(dest).size).toBe(CHUNK * COUNT);
+    });
+
+    it("writes as the body arrives, and a collected Response does not stop it", async () => {
+      using dir = tempDir("bun-write-response-collected", {});
+      const dest = join(String(dir), "deep", "er", "out.bin");
+      const { promise: gate, resolve: openGate } = Promise.withResolvers();
+      await using server = await origin(gate);
+      fs.mkdirSync(path.dirname(dest), { recursive: true });
+      const onDisk = new Promise(resolve => {
+        const watcher = fs.watch(path.dirname(dest), () => {
+          if (fs.existsSync(dest) && fs.statSync(dest).size > 0) {
+            watcher.close();
+            resolve();
+          }
+        });
+      });
+      // Its own frame: after it returns only Bun.write refers to the body.
+      let response;
+      async function start() {
+        const res = await fetch(server.url);
+        response = new WeakRef(res);
+        return Bun.write(dest, res);
+      }
+      const written = start();
+      // The first half is on disk before the second half is sent. Before, nothing was written
+      // until the whole body had been collected in memory.
+      await onDisk;
+      // One full collection per event-loop turn (an fs round trip) until the Response is gone.
+      do {
+        await fs.promises.stat(dest);
+        Bun.gc(true);
+      } while (response.deref());
+      openGate();
+      // Before #40278 was fixed this never settled once the Response had been collected.
+      expect(await written).toBe(CHUNK * COUNT);
+      expect(fs.statSync(dest).size).toBe(CHUNK * COUNT);
+    });
+
+    it("a body whose stream was already touched", async () => {
+      using dir = tempDir("bun-write-response-touched", {});
+      await using server = await origin();
+      const res = await fetch(server.url);
+      expect(res.body).toBeInstanceOf(ReadableStream);
+      expect(await Bun.write(join(String(dir), "out.bin"), res)).toBe(CHUNK * COUNT);
+      expect(res.bodyUsed).toBe(true);
+    });
+
+    // https://github.com/oven-sh/bun/issues/13237: this never settled.
+    it("a Response around a JS ReadableStream, counting string chunks by their UTF-8 length", async () => {
+      using dir = tempDir("bun-write-response-js-stream", {});
+      const dest = join(String(dir), "out.txt");
+      const stream = new ReadableStream({
+        start(ctrl) {
+          ctrl.enqueue("héllo ");
+          ctrl.enqueue(new TextEncoder().encode("stream "));
+          ctrl.enqueue("\u{1f600}");
+          ctrl.close();
+        },
+      });
+      const expected = Buffer.from("héllo stream \u{1f600}");
+      expect(await Bun.write(dest, new Response(stream))).toBe(expected.length);
+      expect(Buffer.from(await Bun.file(dest).arrayBuffer())).toEqual(expected);
+    });
+
+    // /dev/full: every write fails with ENOSPC.
+    it.skipIf(process.platform !== "linux")("rejects with the write error, for each kind of body", async () => {
+      await using server = await origin();
+      const streamed = await fetch(server.url);
+      // A body that is all here behind an untouched `.body` stream is written as a blob.
+      const arrived = new Response(await (await fetch(server.url + "small")).blob());
+      expect(arrived.body).toBeInstanceOf(ReadableStream);
+      const js = new Response(
+        new ReadableStream({
+          start(ctrl) {
+            ctrl.enqueue(new Uint8Array(1000));
+            ctrl.close();
+          },
+        }),
+      );
+      for (const res of [streamed, arrived, js]) {
+        await expect(Bun.write("/dev/full", res)).rejects.toThrow(expect.objectContaining({ code: "ENOSPC" }));
+      }
+    });
+
+    // https://github.com/oven-sh/bun/issues/31681: these wrote "[object ReadableStream]".
+    it("a bare ReadableStream: res.body, a JS stream, file.write(stream)", async () => {
+      using dir = tempDir("bun-write-readable-stream", {});
+      await using server = await origin();
+      const viaBody = join(String(dir), "body.bin");
+      expect(await Bun.write(viaBody, (await fetch(server.url)).body)).toBe(CHUNK * COUNT);
+      expect(fs.statSync(viaBody).size).toBe(CHUNK * COUNT);
+
+      const viaJs = join(String(dir), "js.txt");
+      const js = () =>
+        new ReadableStream({
+          start(ctrl) {
+            ctrl.enqueue("one ");
+            ctrl.enqueue(new TextEncoder().encode("two"));
+            ctrl.close();
+          },
+        });
+      expect(await Bun.write(viaJs, js())).toBe(7);
+      expect(await Bun.file(viaJs).text()).toBe("one two");
+      expect(await Bun.file(join(String(dir), "file-write.txt")).write(js())).toBe(7);
+      expect(await Bun.file(join(String(dir), "file-write.txt")).text()).toBe("one two");
+
+      const locked = js();
+      locked.getReader();
+      await expect(Bun.write(viaJs, locked)).rejects.toThrow(
+        expect.objectContaining({ code: "ERR_BODY_ALREADY_USED" }),
+      );
+      expect(await Bun.file(viaJs).text()).toBe("one two");
+    });
+
+    it("a Request body inside Bun.serve", async () => {
+      using dir = tempDir("bun-write-request-stream", {});
+      const dest = join(String(dir), "upload.bin");
+      await using server = Bun.serve({
+        port: 0,
+        async fetch(req) {
+          return new Response(String(await Bun.write(dest, req)));
+        },
+      });
+      const body = Buffer.alloc(3 * CHUNK * COUNT, "b");
+      const res = await fetch(server.url, { method: "POST", body });
+      expect({ written: Number(await res.text()), size: fs.statSync(dest).size }).toEqual({
+        written: body.length,
+        size: body.length,
+      });
+    });
+
+    it("rejects with the network error when the body is cut short", async () => {
+      using dir = tempDir("bun-write-response-truncated", {});
+      using listener = Bun.listen({
+        port: 0,
+        hostname: "127.0.0.1",
+        socket: {
+          data(socket) {
+            socket.write("HTTP/1.1 200 OK\r\nContent-Length: 1000000\r\n\r\n" + Buffer.alloc(1000, "a").toString());
+            socket.flush();
+            socket.end();
+          },
+        },
+      });
+      const res = await fetch(`http://127.0.0.1:${listener.port}/`);
+      await expect(Bun.write(join(String(dir), "out.bin"), res)).rejects.toThrow(
+        expect.objectContaining({ code: "ECONNRESET" }),
+      );
+    });
+
+    it("rejects a body that was already used, and createPath: false into a missing directory", async () => {
+      using dir = tempDir("bun-write-response-rejects", {});
+      await using server = await origin();
+      const used = await fetch(server.url);
+      await used.arrayBuffer();
+      await expect(Bun.write(join(String(dir), "a"), used)).rejects.toThrow(
+        expect.objectContaining({ code: "ERR_BODY_ALREADY_USED" }),
+      );
+      const reading = await fetch(server.url);
+      const reader = reading.body.getReader();
+      await expect(Bun.write(join(String(dir), "b"), reading)).rejects.toThrow(
+        expect.objectContaining({ code: "ERR_BODY_ALREADY_USED" }),
+      );
+      reader.releaseLock();
+      // Also when the whole body is already here.
+      const small = new Response("hello");
+      const smallReader = small.body.getReader();
+      await expect(Bun.write(join(String(dir), "s"), small)).rejects.toThrow(
+        expect.objectContaining({ code: "ERR_BODY_ALREADY_USED" }),
+      );
+      expect(await smallReader.read().then(r => r.value.byteLength)).toBe(5);
+      // A destination that cannot be opened (the directory itself) leaves the body usable.
+      const retry = await fetch(server.url);
+      await expect(Bun.write(String(dir), retry)).rejects.toThrow(
+        expect.objectContaining({ code: "EISDIR", syscall: "open" }),
+      );
+      expect(retry.bodyUsed).toBe(false);
+      expect((await retry.arrayBuffer()).byteLength).toBe(CHUNK * COUNT);
+      await expect(
+        Bun.write(join(String(dir), "missing", "c"), await fetch(server.url), { createPath: false }),
+      ).rejects.toThrow(expect.objectContaining({ code: "ENOENT" }));
+    });
   });
 
   it("BunFile.name survives concurrent write() calls + GC", async () => {
@@ -942,5 +1159,97 @@ int posix_fadvise(int fd, off_t offset, off_t len, int advice) {
     Bun.gc(true);
 
     expect(f.name).toBe(filePath);
+  });
+});
+
+// These writes fail before any I/O is scheduled, so the write returns a promise
+// that is already rejected. Those rejections must carry the error itself and be
+// reported the same way as the ones produced later by the async path.
+(isWindows ? describe : describe.concurrent)("Bun.write early rejections are tracked", () => {
+  // The endpoint is never contacted: the options are validated first.
+  const s3Options = {
+    accessKeyId: "test",
+    secretAccessKey: "test",
+    bucket: "my_bucket",
+    endpoint: "http://127.0.0.1:1",
+  };
+  const invalidS3Options = { storageClass: "INVALID_VALUE" };
+  const invalidS3Message = "storageClass must be one of";
+
+  async function runChild(body) {
+    using dir = tempDir("bun-write-early-reject", { "file.txt": "x" });
+    const prelude = `
+      const fs = require("fs");
+      const dir = ${JSON.stringify(String(dir))};
+      const file = ${JSON.stringify(join(String(dir), "file.txt"))};
+      const s3file = new Bun.S3Client(${JSON.stringify(s3Options)}).file("key");
+      const invalidS3Options = ${JSON.stringify(invalidS3Options)};
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", prelude + body],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+
+  it.each([
+    ["a string written to a directory", `Bun.write(dir, "x")`, "EISDIR"],
+    ["a TypedArray written to a directory", `Bun.write(dir, new Uint8Array(4))`, "EISDIR"],
+    // Truncating a directory fails with EINVAL on Windows and EISDIR elsewhere.
+    ["an empty Blob written to a directory", `Bun.write(dir, new Blob([]))`, isWindows ? "EINVAL" : "EISDIR"],
+    // Windows reports these two as "UV_EBADF" (errno -4083), which the substring check also accepts.
+    ["a string written to a read-only file descriptor", `Bun.write(Bun.file(fs.openSync(file, "r")), "x")`, "EBADF"],
+    [
+      "a TypedArray written to a read-only file descriptor",
+      `Bun.write(Bun.file(fs.openSync(file, "r")), new Uint8Array(4))`,
+      "EBADF",
+    ],
+    ["BunFile.write() on a directory", `Bun.file(dir).write("x")`, "EISDIR"],
+    ["an S3 write with invalid options", `s3file.write("x", invalidS3Options)`, invalidS3Message],
+    [
+      "an S3 write of an empty Blob with invalid options",
+      `s3file.write(new Blob([]), invalidS3Options)`,
+      invalidS3Message,
+    ],
+  ])("%s is reported as an unhandled rejection", async (_, expression, expected) => {
+    const { stderr, exitCode } = await runChild(`${expression};`);
+    expect(stderr).toContain(expected);
+    expect(exitCode).toBe(1);
+  });
+
+  it.each([
+    ["a string", () => "x"],
+    ["an empty Blob", () => new Blob([])],
+  ])("an S3 write of %s with invalid options rejects with the validation error itself", async (_, data) => {
+    const promise = new Bun.S3Client(s3Options).file("key").write(data(), invalidS3Options);
+    await expect(promise).rejects.toBeInstanceOf(TypeError);
+    await expect(promise).rejects.toMatchObject({
+      code: "ERR_INVALID_ARG_TYPE",
+      message: expect.stringContaining(invalidS3Message),
+    });
+  });
+
+  it("the returned promise is the one passed to 'unhandledRejection'", async () => {
+    const { stdout, stderr, exitCode } = await runChild(`
+      process.on("unhandledRejection", (reason, promise) => {
+        console.log(reason.code, promise === p);
+      });
+      const p = Bun.write(dir, "x");
+    `);
+    expect(stdout).toBe("EISDIR true\n");
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+  });
+
+  it("a handled rejection is not reported", async () => {
+    const { stdout, stderr, exitCode } = await runChild(`
+      Bun.write(dir, "x").catch(e => console.log("caught", e.code));
+    `);
+    expect(stdout).toBe("caught EISDIR\n");
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
   });
 });

@@ -7,6 +7,7 @@
 #include "JSDOMGlobalObject.h"
 #include "JSDOMWrapperCache.h"
 #include "JSStreamsRuntime.h"
+#include "JSTransformStream.h"
 #include "JSWritableStream.h"
 #include "JSWritableStreamDefaultController.h"
 #include "JSWritableStreamDefaultWriter.h"
@@ -308,6 +309,13 @@ void writableStreamStartErroring(JSGlobalObject* globalObject, JSWritableStream*
     stream->m_storedError.set(vm, stream, reason);
     if (auto* writer = stream->m_writer.get()) {
         writableStreamDefaultWriterEnsureReadyPromiseRejected(globalObject, writer, reason);
+        RETURN_IF_EXCEPTION(scope, );
+    }
+    // The in-flight write may be a native codec chunk still being drained into the readable,
+    // which nothing on this side would ever finish; give it up so the erroring can complete.
+    // An in-flight close (a flush) is left to finish: a close in progress wins over the abort.
+    if (controller->m_algorithms.kind == SinkKind::Transform && stream->m_inFlightWriteRequest) {
+        nativeCodecAbandon(globalObject, uncheckedDowncast<JSTransformStream>(controller->m_algorithms.algorithmContext.get()));
         RETURN_IF_EXCEPTION(scope, );
     }
     if (!writableStreamHasOperationMarkedInFlight(stream) && controller->m_started)

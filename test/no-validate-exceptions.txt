@@ -2,117 +2,38 @@
 
 # List of tests that potentially throw inside of reifyStaticProperties
 test/bake/dev/production.test.ts
-test/cli/install/bun-install-lifecycle-scripts.test.ts
 test/integration/vite-build/vite-build.test.ts
-test/js/bun/resolve/import-meta.test.js
-test/js/bun/resolve/resolve.test.ts
 test/js/bun/test/parallel/test-integration-rspack.ts
 test/js/bun/util/BunObject.test.ts
 test/js/bun/util/fuzzy-wuzzy.test.ts
-test/js/node/module/module-resolve-filename-paths.test.js
 test/js/node/module/node-module-module.test.js
 test/js/node/test/parallel/test-vm-module-referrer-realm.mjs
 test/js/third_party/astro/astro-post.test.js
-test/js/web/websocket/websocket.test.js
-test/regression/issue/ctrl-c.test.ts
 
 # hit a debug assert
 test/bundler/bundler_compile.test.ts
 
 # 3rd party napi
-test/integration/sharp/sharp.test.ts
-test/js/third_party/@napi-rs/canvas/napi-rs-canvas.test.ts
 test/js/third_party/prisma/prisma.test.ts
 test/js/third_party/remix/remix.test.ts
-test/js/third_party/resvg/bbox.test.js
-test/js/third_party/rollup-v4/rollup-v4.test.ts
-test/napi/napi-finalizer-delete-ref.test.ts
-test/napi/uv.test.ts
-test/napi/uv_stub.test.ts
-test/napi/node-napi-tests/test/js-native-api/2_function_arguments/do.test.ts
-test/napi/node-napi-tests/test/js-native-api/3_callbacks/do.test.ts
-test/napi/node-napi-tests/test/js-native-api/4_object_factory/do.test.ts
-test/napi/node-napi-tests/test/js-native-api/5_function_factory/do.test.ts
-test/napi/node-napi-tests/test/js-native-api/6_object_wrap/do.test.ts
-test/napi/node-napi-tests/test/js-native-api/7_factory_wrap/do.test.ts
-test/napi/node-napi-tests/test/js-native-api/8_passing_wrapped/do.test.ts
-test/napi/node-napi-tests/test/js-native-api/test_array/do.test.ts
+
+# napi entry points that declare a plain ThrowScope and return a status to the
+# addon with the exception pending (napi_run_script, napi_create_bigint_words,
+# napi_create_dataview, napi_create_buffer, NapiEnv::throwPendingException) and
+# napi_get_all_property_names' unchecked get/toPropertyKey.
+test/napi/napi.test.ts
 test/napi/node-napi-tests/test/js-native-api/test_bigint/do.test.ts
-test/napi/node-napi-tests/test/js-native-api/test_cannot_run_js/do.test.ts
-test/napi/node-napi-tests/test/js-native-api/test_constructor/do.test.ts
-test/napi/node-napi-tests/test/js-native-api/test_conversions/do.test.ts
 test/napi/node-napi-tests/test/js-native-api/test_dataview/do.test.ts
-test/napi/node-napi-tests/test/js-native-api/test_date/do.test.ts
-test/napi/node-napi-tests/test/js-native-api/test_error/do.test.ts
-test/napi/node-napi-tests/test/js-native-api/test_exception/do.test.ts
-test/napi/node-napi-tests/test/js-native-api/test_finalizer/do.test.ts
-test/napi/node-napi-tests/test/js-native-api/test_function/do.test.ts
 test/napi/node-napi-tests/test/js-native-api/test_general/do.test.ts
-test/napi/node-napi-tests/test/js-native-api/test_handle_scope/do.test.ts
-test/napi/node-napi-tests/test/js-native-api/test_instance_data/do.test.ts
-test/napi/node-napi-tests/test/js-native-api/test_new_target/do.test.ts
-test/napi/node-napi-tests/test/js-native-api/test_number/do.test.ts
 test/napi/node-napi-tests/test/js-native-api/test_object/do.test.ts
-test/napi/node-napi-tests/test/js-native-api/test_promise/do.test.ts
-test/napi/node-napi-tests/test/js-native-api/test_properties/do.test.ts
-test/napi/node-napi-tests/test/js-native-api/test_reference/do.test.ts
-test/napi/node-napi-tests/test/js-native-api/test_reference_double_free/do.test.ts
-test/napi/node-napi-tests/test/js-native-api/test_string/do.test.ts
-test/napi/node-napi-tests/test/js-native-api/test_symbol/do.test.ts
-test/napi/node-napi-tests/test/js-native-api/test_typedarray/do.test.ts
-test/napi/node-napi-tests/test/node-api/1_hello_world/do.test.ts
-test/napi/node-napi-tests/test/node-api/test_async/do.test.ts
-test/napi/node-napi-tests/test/node-api/test_buffer/do.test.ts
-test/napi/node-napi-tests/test/node-api/test_callback_scope/do.test.ts
-test/napi/node-napi-tests/test/node-api/test_cleanup_hook/do.test.ts
-test/napi/node-napi-tests/test/node-api/test_exception/do.test.ts
-test/napi/node-napi-tests/test/node-api/test_fatal/do.test.ts
-test/napi/node-napi-tests/test/node-api/test_fatal_exception/do.test.ts
-test/napi/node-napi-tests/test/node-api/test_general/do.test.ts
-test/napi/node-napi-tests/test/node-api/test_make_callback/do.test.ts
-test/napi/node-napi-tests/test/node-api/test_threadsafe_function/do.test.ts
-test/napi/node-napi-tests/test/node-api/test_worker_terminate_finalization/do.test.ts
-test/napi/node-napi-tests/test/node-api/test_worker_terminate/do.test.ts
-test/napi/node-napi-tests/test/node-api/test_worker_buffer_callback/do.test.ts
-test/napi/node-napi-tests/test/node-api/test_reference_by_node_api_version/do.test.ts
-test/napi/node-napi-tests/test/node-api/test_env_teardown_gc/do.test.ts
-test/napi/node-napi-tests/test/node-api/test_general/do.test.ts
-
-# normalizeCryptoAlgorithmParameters
-test/js/bun/crypto/wpt-webcrypto.generateKey.test.ts
-test/js/deno/crypto/webcrypto.test.ts
-test/js/node/crypto/node-crypto.test.js
-test/js/node/test/parallel/test-crypto-webcrypto-aes-decrypt-tag-too-small.js
-test/js/node/test/parallel/test-webcrypto-encrypt-decrypt-aes.js
-test/js/third_party/pg/pg.test.ts
-test/js/web/crypto/web-crypto.test.ts
-vendor/elysia/test/aot/response.test.ts
-vendor/elysia/test/cookie/response.test.ts
-vendor/elysia/test/cookie/signature.test.ts
-vendor/elysia/test/core/dynamic.test.ts
-vendor/elysia/test/lifecycle/error.test.ts
-vendor/elysia/test/validator/body.test.ts
-vendor/elysia/test/ws/message.test.ts
-
-
-# TODO: WebCore fixes
-test/js/web/urlpattern/urlpattern.test.ts
 
 # TODO: jsc
 test/js/bun/jsonl/jsonl-parse.test.ts
-test/regression/issue/isArray-proxy-crash.test.ts
 
-# Third-party SDK with unchecked exception path in JSArray pushInline
+# X509Certificate toLegacyObject → computeInfoAccess pushes onto a JSArray in a
+# loop without checking (JSX509Certificate.cpp); reached from a TLS peer
+# certificate. The tests only run with service-bus credentials, so CI-only.
 test/js/third_party/@azure/service-bus/azure-service-bus.test.ts
-
-# The napi addon fixture's Init() calls napi_create_function then
-# napi_set_named_property without checking the status in between, like most
-# real addons. Under validateExceptionChecks every scope simulates a throw, so
-# the second call trips the assertion at the napi boundary.
-test/bundler/native-plugin.test.ts
-# `bun run build` in the react templates loads bun-plugin-tailwind's napi
-# addon, same Init() pattern.
-test/cli/init/init.test.ts
 
 # JSC JSONP fast path (Interpreter::executeProgram doGet lambda) does an
 # unchecked getPropertySlot/getValue pair; only throwable through
@@ -127,14 +48,3 @@ test/integration/next-pages/test/dev-server-ssr-100.test.ts
 test/integration/next-pages/test/dev-server.test.ts
 test/integration/next-pages/test/next-build.test.ts
 test/js/third_party/next-auth/next-auth.test.ts
-
-# Process_functionDlopen (BunProcess.cpp:397) leaves putInlineSlow's exception
-# unchecked at recursionDepth 12/13; every napi .node load trips it. Moved here
-# from expectations.txt so the 170+ tests in this file run on ASAN.
-test/napi/napi.test.ts
-
-# "does not include unevaluated modules" loads msgpackr-extract's napi .node,
-# whose NapiClass::finishCreation (NapiClass.cpp:120) leaves an exception
-# unchecked at defineOwnNonIndexProperty. Moved here from expectations.txt.
-test/cli/run/require-cache.test.ts
-

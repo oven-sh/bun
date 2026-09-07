@@ -317,6 +317,15 @@ development:
         });
       });
 
+      test("stringifies any other input instead of throwing, undefined and null included", () => {
+        // Unlike TOML/JSONC/JSON5/XML, YAML.parse(undefined) parses the text "undefined".
+        expect(YAML.parse(undefined as any)).toBe("undefined");
+        expect((YAML.parse as any)()).toBe("undefined");
+        expect(YAML.parse(null as any)).toBe(null);
+        expect(YAML.parse(42 as any)).toBe(42);
+        expect(YAML.parse({ toString: () => "a: 1" } as any)).toEqual({ a: 1 });
+      });
+
       test("complex nested structure from various input types", () => {
         const complexYaml = `
 version: "1.0"
@@ -3646,7 +3655,51 @@ config:
           str: new String("world"),
           bool: new Boolean(false),
         };
-        expect(YAML.stringify(obj, null, 2)).toBe("num: \n  3.14\nstr: world\nbool: \n  false");
+        expect(YAML.stringify(obj, null, 2)).toBe("num: 3.14\nstr: world\nbool: false");
+      });
+
+      test("boxed Number and Boolean property values stay on the key line in block style", () => {
+        expect(YAML.stringify({ a: new Number(1), b: new Boolean(true), c: new String("s"), d: 1 }, null, 2)).toBe(
+          "a: 1\nb: true\nc: s\nd: 1",
+        );
+        expect(YAML.stringify({ a: new Number(1), b: new Boolean(true), c: new String("s"), d: 1 })).toBe(
+          "{a: 1,b: true,c: s,d: 1}",
+        );
+      });
+
+      test("a boxed property value is written exactly like the primitive it wraps", () => {
+        class Port extends Number {}
+        class Flag extends Boolean {}
+        const boxed = {
+          numbers: { int: new Number(1), float: Object(2.5), nan: new Number(NaN), negativeZero: new Number(-0) },
+          flags: { enabled: new Boolean(true), disabled: Object(false), port: new Port(8080), flag: new Flag(false) },
+          list: [new Number(1), new Boolean(false), { count: new Number(2) }],
+        };
+        const plain = {
+          numbers: { int: 1, float: 2.5, nan: NaN, negativeZero: -0 },
+          flags: { enabled: true, disabled: false, port: 8080, flag: false },
+          list: [1, false, { count: 2 }],
+        };
+        for (const space of [2, 4, "\t", undefined]) {
+          expect(YAML.stringify(boxed, null, space)).toBe(YAML.stringify(plain, null, space));
+        }
+        expect(YAML.parse(YAML.stringify(boxed, null, 2))).toEqual(plain);
+      });
+
+      test("block style unwraps a boxed property value as many times as flow style", () => {
+        let calls = 0;
+        const port = new Number(7);
+        port.valueOf = () => {
+          calls++;
+          return 7;
+        };
+
+        expect(YAML.stringify({ port }, null, 2)).toBe("port: 7");
+        const blockStyleCalls = calls;
+
+        calls = 0;
+        expect(YAML.stringify({ port })).toBe("{port: 7}");
+        expect(blockStyleCalls).toBe(calls);
       });
 
       test("handles Date objects", () => {
@@ -3818,6 +3871,28 @@ config:
 
         // Should throw stack overflow for deeply nested structures
         expect(() => YAML.stringify(deep)).toThrow("Maximum call stack size exceeded");
+      });
+
+      test("stack overflow protection in the write pass", () => {
+        let deep = {};
+        let current = deep;
+        for (let i = 0; i < 1000000; i++) {
+          current.next = {};
+          current = current.next;
+        }
+
+        // stringify reads every property twice: once to find anchors and once
+        // to write. Hand the first read a shallow value so that only the write
+        // pass walks the deep structure.
+        let reads = 0;
+        const root = {
+          get value() {
+            return reads++ === 0 ? {} : deep;
+          },
+        };
+
+        expect(() => YAML.stringify(root)).toThrow("Maximum call stack size exceeded");
+        expect(reads).toBe(2);
       });
 
       test("handles arrays as root with references", () => {

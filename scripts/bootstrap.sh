@@ -1476,14 +1476,16 @@ install_linux_glibc_sysroot() {
 	# extract_deb DEB DIR: unpack a .deb's payload into DIR with ar + tar (dpkg-deb exists on
 	# Debian-family hosts only).
 	extract_deb() {
-		member=$("$ar_bin" t "$1" | grep '^data\.tar')
+		deb_tmp="$(create_tmp_directory)"
+		member=$("$ar_bin" t "$1" | grep '^data\.tar') || error "$1: no data.tar member"
+		"$ar_bin" p "$1" "$member" > "$deb_tmp/$member" || error "$1: reading $member failed"
 		case "$member" in
-		*.xz) decompress="xz -dc" ;;
-		*.zst) decompress="zstd -dc" ;;
-		*.gz) decompress="gzip -dc" ;;
-		*) decompress="cat" ;;
+		*.xz) execute xz -d "$deb_tmp/$member" ;;
+		*.zst) execute zstd -dq --rm "$deb_tmp/$member" ;;
+		*.gz) execute gzip -d "$deb_tmp/$member" ;;
 		esac
-		"$ar_bin" p "$1" "$member" | $decompress | $_s tar -x -C "$2" || error "extracting $1 failed"
+		$_s tar -xf "$deb_tmp/data.tar" -C "$2" || error "$1: extracting failed"
+		rm -rf "$deb_tmp"
 	}
 
 	# This machine's architecture; the CI build host cross-compiles the other one too, and needs

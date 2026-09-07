@@ -1151,35 +1151,56 @@ describe("https.createServer forwards every TLS server option", () => {
     });
   });
 
+  const ecdhHandshake = async (port: number, ecdhCurve: string) => {
+    const outcome = Promise.withResolvers<string>();
+    const client = connect({ port, host: "127.0.0.1", rejectUnauthorized: false, ecdhCurve });
+    client.once("secureConnect", () => {
+      client.destroy();
+      outcome.resolve("ok");
+    });
+    client.once("error", err => {
+      client.destroy();
+      const code = (err as Error & { code?: string }).code ?? "error";
+      outcome.resolve(code.includes("HANDSHAKE_FAILURE") ? "handshake_failure" : code);
+    });
+    client.once("close", () => outcome.resolve("closed"));
+    return outcome.promise;
+  };
+
   it("restricts the key-share groups to ecdhCurve", async () => {
     await using server = https.createServer({ ...COMMON_CERT, ecdhCurve: "P-384" }, (_req, res) => res.end("ok"));
     server.on("tlsClientError", () => {});
     await once(server.listen(0, "127.0.0.1"), "listening");
     const { port } = server.address() as AddressInfo;
 
-    const handshake = async (ecdhCurve: string) => {
-      const outcome = Promise.withResolvers<string>();
-      const client = connect({ port, host: "127.0.0.1", rejectUnauthorized: false, ecdhCurve });
-      client.once("secureConnect", () => {
-        client.destroy();
-        outcome.resolve("ok");
-      });
-      client.once("error", err => {
-        client.destroy();
-        const code = (err as Error & { code?: string }).code ?? "error";
-        outcome.resolve(code.includes("HANDSHAKE_FAILURE") ? "handshake_failure" : code);
-      });
-      client.once("close", () => outcome.resolve("closed"));
-      return outcome.promise;
-    };
-
     expect({
-      x25519Only: await handshake("X25519"),
-      p384Only: await handshake("P-384"),
+      x25519Only: await ecdhHandshake(port, "X25519"),
+      p384Only: await ecdhHandshake(port, "P-384"),
     }).toEqual({
       x25519Only: "handshake_failure",
       p384Only: "ok",
     });
+  });
+
+  it("falls back to tls.DEFAULT_ECDH_CURVE when ecdhCurve is omitted", async () => {
+    const saved = tls.DEFAULT_ECDH_CURVE;
+    tls.DEFAULT_ECDH_CURVE = "P-384";
+    try {
+      await using server = https.createServer({ ...COMMON_CERT }, (_req, res) => res.end("ok"));
+      server.on("tlsClientError", () => {});
+      await once(server.listen(0, "127.0.0.1"), "listening");
+      const { port } = server.address() as AddressInfo;
+
+      expect({
+        x25519Only: await ecdhHandshake(port, "X25519"),
+        p384Only: await ecdhHandshake(port, "P-384"),
+      }).toEqual({
+        x25519Only: "handshake_failure",
+        p384Only: "ok",
+      });
+    } finally {
+      tls.DEFAULT_ECDH_CURVE = saved;
+    }
   });
 
   it("honors the server cipher order unless honorCipherOrder is false", async () => {

@@ -380,7 +380,7 @@ function Server(options, callback): void {
         requestCert: options.requestCert,
         rejectUnauthorized: options.rejectUnauthorized,
         sessionTimeout: options.sessionTimeout ?? undefined,
-        ecdhCurve: options.ecdhCurve,
+        ecdhCurve: options.ecdhCurve ?? require("node:tls").DEFAULT_ECDH_CURVE,
         sigalgs: options.sigalgs,
         allowPartialTrustChain: !!options.allowPartialTrustChain,
       });

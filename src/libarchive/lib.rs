@@ -366,8 +366,9 @@ pub mod lib {
             unsafe { ZStr::from_c_ptr(p) }.as_bytes()
         }
 
-        /// The platform `errno` recorded with the last error, or 0 (none) /
-        /// -1 (`ARCHIVE_ERRNO_MISC`) when the failure did not come from the OS.
+        /// The error number that the last failed call recorded: usually the OS
+        /// `errno`, -1 (`ARCHIVE_ERRNO_MISC`) for libarchive-internal failures,
+        /// 0 when nothing was recorded.
         pub fn errno(&self) -> c_int {
             // SAFETY: `self` is a live archive handle.
             unsafe { archive_errno(self.as_mut_ptr()) }

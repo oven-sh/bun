@@ -3145,8 +3145,8 @@ impl<'a> fmt::Display for TarballNameFormatter<'a> {
     }
 }
 
-/// Reports the error that libarchive recorded for a failed write to the
-/// tarball at `tarball_path`, then exits.
+/// Reports a `Fatal` result from the libarchive write side (a failed `write(2)`
+/// to the tarball at `tarball_path`, or OOM inside libarchive), then exits.
 #[cold]
 fn tarball_write_failed(archive: &Archive, tarball_path: &ZStr) -> ! {
     let errno = archive.errno();
@@ -3209,7 +3209,8 @@ fn archive_package_json(
     entry.set_mtime(499162500, 0);
 
     match archive.write_header(entry) {
-        ArchiveStatus::Failed | ArchiveStatus::Fatal | ArchiveStatus::Warn => {
+        ArchiveStatus::Fatal => tarball_write_failed(archive, tarball_path),
+        ArchiveStatus::Failed | ArchiveStatus::Warn => {
             Output::err_generic(
                 "failed to write tarball header: {}",
                 format_args!(
@@ -3275,7 +3276,8 @@ fn add_archive_entry(
     entry.set_mtime(499162500, 0);
 
     match archive.write_header(entry) {
-        ArchiveStatus::Failed | ArchiveStatus::Fatal => {
+        ArchiveStatus::Fatal => tarball_write_failed(archive, tarball_path),
+        ArchiveStatus::Failed => {
             Output::err_generic(
                 "failed to write tarball header: {}",
                 format_args!(

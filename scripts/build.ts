@@ -106,8 +106,10 @@ async function main(): Promise<void> {
   // every other target keep the environment as provisioned.
   // One thread-token pool for every rustc ninja runs (what cargo's jobserver used to be); see jobserver.ts.
   let jobserver: ReturnType<typeof createJobserver>;
+  let jobserverCreated = false;
   const ninjaEnv = (cfg: { windows: boolean; buildDir: string; host: { os: string } }, env: Record<string, string>) => {
-    if (jobserver === undefined) {
+    if (!jobserverCreated) {
+      jobserverCreated = true; // one pool (or one decision that there is none) for every ninja pass of this run
       jobserver = createJobserver(cfg.buildDir, cfg.host.os);
       process.on("exit", () => jobserver?.close());
     }

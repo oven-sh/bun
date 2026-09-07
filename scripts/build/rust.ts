@@ -844,10 +844,15 @@ export function emitRust(n: Ninja, cfg: Config, inputs: RustBuildInputs): string
       cfg,
       graph,
       targetRustflags: rustflags,
-      // What cargo's children used to inherit from the cargo edge: toolchain forwarding, CC/CXX/AR for cc-rs
-      // build scripts, BUN_CODEGEN_DIR for the crates that include generated code. The CARGO_* planning
-      // variables (profile overrides, rustflags, target linker) meant something to cargo only.
-      baseEnv: Object.fromEntries(Object.entries(env).filter(([k]) => !k.startsWith("CARGO_"))),
+      // What cargo's children used to inherit from the cargo edge: toolchain forwarding (CARGO_HOME, RUSTUP_*),
+      // CC/CXX/AR for cc-rs build scripts, BUN_CODEGEN_DIR for the crates that include generated code. The
+      // variables that configured cargo itself (profile overrides, encoded rustflags, target linker, terminal
+      // colour) are cargo's inputs, not its children's environment.
+      baseEnv: Object.fromEntries(
+        Object.entries(env).filter(
+          ([k]) => !/^CARGO_(PROFILE_|ENCODED_RUSTFLAGS$|TARGET_.*_LINKER$|TERM_COLOR$)/.test(k),
+        ),
+      ),
       linker: { host: hostLinker(cfg, triple, targetLinker), target: targetLinker },
       // cargo exports CARGO as the toolchain's own binary, not the rustup proxy that found it.
       cargo: existsSync(join(cfg.rustSysroot, "bin", `cargo${cfg.host.exeSuffix}`))

@@ -22,9 +22,8 @@
  */
 
 import { spawnSync } from "node:child_process";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
-import { writeIfChanged } from "../fs.ts";
 import { parseToml, type TomlTable, type TomlValue } from "./toml.ts";
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -168,7 +167,15 @@ export function planPath(buildDir: string): string {
 export function readPlan(buildDir: string, plannedWith: RustPlan["plannedWith"]): RustPlan | undefined {
   const path = planPath(buildDir);
   if (!existsSync(path)) return undefined;
-  const plan = JSON.parse(readFileSync(path, "utf8")) as RustPlan;
+  let plan: RustPlan;
+  try {
+    plan = JSON.parse(readFileSync(path, "utf8")) as RustPlan;
+  } catch {
+    // Truncated or otherwise unreadable (the planner was killed mid-write before it wrote atomically, disk
+    // full, …): ninja considers the file up to date, so remove it to make the plan edge run again.
+    rmSync(path, { force: true });
+    return undefined;
+  }
   if (plan.version !== PLAN_VERSION) return undefined;
   if (JSON.stringify(plan.plannedWith) !== JSON.stringify(plannedWith)) return undefined;
   return plan;
@@ -410,7 +417,14 @@ if (process.argv[1] === import.meta.filename) {
     target: targetInfo(rustc, triple, rustflags, env),
   };
   // writeIfChanged: an identical re-plan (touched Cargo.toml, same graph) leaves plan.json's mtime alone, so restat prunes the reconfigure.
-  writeIfChanged(out, JSON.stringify(plan, null, 1) + "\n");
+  // Only if changed (an identical re-plan must not bump the mtime and reconfigure), and atomically (configure
+  // reads this file; a partial write must never look like a plan).
+  const json = JSON.stringify(plan, null, 1) + "\n";
+  if (!existsSync(out) || readFileSync(out, "utf8") !== json) {
+    mkdirSync(dirname(out), { recursive: true });
+    writeFileSync(`${out}.tmp`, json);
+    renameSync(`${out}.tmp`, out);
+  }
   const by: Record<string, number> = {};
   for (const u of unitGraph.units)
     by[`${u.mode === "run-custom-build" ? "run " : ""}${u.target.kind[0]}${u.platform ? "" : " (host)"}`] =

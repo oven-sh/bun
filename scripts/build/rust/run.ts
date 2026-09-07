@@ -69,6 +69,8 @@ interface BuildScriptOutput {
   rerunIfChanged: string[];
   rerunIfEnvChanged: string[];
   warnings: string[];
+  /** `cargo::error=` — the script reports failure this way even when it exits 0. */
+  errors: string[];
   /**
    * `OUT_DIR` after the run: relative path → content hash. Part of this file so that a script generating
    * *different* code changes output.json (defeating restat) and the package recompiles in the same build; files
@@ -426,11 +428,13 @@ function runBuildScript(): void {
   });
   if (r.error) throw r.error;
   const out = parseBuildScriptOutput(r.stdout, script.rustVersion);
-  for (const w of out.warnings) process.stderr.write(`warning: ${unit.crateName} build script: ${w}\n`);
-  if (r.status !== 0) {
+  for (const w of out.warnings) process.stderr.write(`warning: ${unit.env.CARGO_PKG_NAME} build script: ${w}\n`);
+  for (const e of out.errors) process.stderr.write(`error: ${unit.env.CARGO_PKG_NAME} build script: ${e}\n`);
+  if (r.status !== 0 || out.errors.length > 0) {
     process.stderr.write(r.stdout);
     process.stderr.write(r.stderr);
-    process.stderr.write(`error: build script for ${unit.env.CARGO_PKG_NAME} exited with ${r.status ?? r.signal}\n`);
+    if (r.status !== 0)
+      process.stderr.write(`error: build script for ${unit.env.CARGO_PKG_NAME} exited with ${r.status ?? r.signal}\n`);
     process.exit(1);
   }
   // Files the script regenerated with the same bytes keep their old mtime (crates `include!` them; a fresh mtime on
@@ -498,6 +502,7 @@ function parseBuildScriptOutput(stdout: string, rustVersion: string | null): Bui
     rerunIfChanged: [],
     rerunIfEnvChanged: [],
     warnings: [],
+    errors: [],
     outDirFiles: [],
   };
   for (const rawLine of stdout.split("\n")) {
@@ -597,7 +602,7 @@ function parseBuildScriptOutput(stdout: string, rustVersion: string | null): Bui
         out.warnings.push(value);
         break;
       case "error":
-        out.warnings.push(`error: ${value}`);
+        out.errors.push(value);
         break;
       case "rerun-if-changed":
         out.rerunIfChanged.push(value);

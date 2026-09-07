@@ -124,6 +124,17 @@ test("Response.redirect with a ResponseInit checks status the same way as the nu
   // a Response used as the init lends its status, which must still be a redirect status
   expect(() => Response.redirect("url", new Response())).toThrow(RangeError);
   expect(Response.redirect("url", Response.redirect("other", 307)).status).toBe(307);
+
+  // `status` is read once
+  let reads = 0;
+  const init = {
+    get status() {
+      reads++;
+      return 307;
+    },
+  };
+  expect(Response.redirect("url", init).status).toBe(307);
+  expect(reads).toBe(1);
 });
 
 test("Response.json(data, status) checks status the same way as Response.json(data, { status })", () => {

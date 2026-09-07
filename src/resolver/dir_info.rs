@@ -109,7 +109,8 @@ pub struct DirInfo {
     // Borrows). Read sites use the `.package_json()` / `.tsconfig_json()` /
     // `.package_json_for_dependencies()` accessors.
     pub(crate) package_json_for_browser_field: Option<&'static PackageJSON>,
-    pub(crate) enclosing_tsconfig_json: Option<&'static TSConfigJSON>,
+    /// Nearest tsconfig.json at or above this directory; `tsconfig_json` is this directory's own.
+    pub enclosing_tsconfig_json: Option<&'static TSConfigJSON>,
 
     /// package.json used for bundling
     /// it's the deepest one in the hierarchy with a "name" field

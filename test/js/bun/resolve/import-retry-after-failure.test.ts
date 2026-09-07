@@ -73,15 +73,19 @@ test("import() of a module that failed to load retries after the file changes", 
       }
 
       // A plugin onLoad hook that returned unparseable code runs again. The
-      // first load of each .virt file fails, every later one succeeds.
+      // first load of each .virt file fails, every later one succeeds. k.virt
+      // is good on its first load, bad on loads 2 to 8, then good again: a
+      // file caught mid-save by some of the callers.
       const loads = new Map();
       Bun.plugin({
         name: "retry",
         setup(build) {
           build.onLoad({ filter: /\\.virt$/ }, ({ path }) => {
-            const n = (loads.get(basename(path)) ?? 0) + 1;
-            loads.set(basename(path), n);
-            return { contents: n === 1 ? "export const v == 1;" : "export const v = 42;", loader: "js" };
+            const name = basename(path);
+            const n = (loads.get(name) ?? 0) + 1;
+            loads.set(name, n);
+            const bad = name === "k.virt" ? n > 1 && n <= 8 : n === 1;
+            return { contents: bad ? "export const v == 1;" : "export const v = 42;", loader: "js" };
           });
         },
       });
@@ -107,6 +111,14 @@ test("import() of a module that failed to load retries after the file changes", 
       fs.writeFileSync("j.mjs", "export const v = 42;");
       const j = await Promise.all([import("./j.mjs"), import("./j.mjs")]);
       console.log("J", j[0].v, j[1].v, j[0] === j[1]);
+      // K callers of one key share one fetch: one outcome for all of them and
+      // one transpile, not K. Without the join, a sibling fetch that failed
+      // after another one evaluated (a file caught mid-save) poisoned the key.
+      fs.writeFileSync("k.virt", "");
+      const k = await Promise.allSettled(Array.from({ length: 8 }, () => import("./k.virt")));
+      console.log("K", k.map(r => (r.status === "fulfilled" ? "OK" : "ERR")).join(" "), k.every(r => r.value === k[0].value));
+      await t("Kb", "./k.virt");
+      console.log("K loads", loads.get("k.virt"));
       // An import() issued from a microtask queued right after the failing one.
       fs.writeFileSync("h2.virt", "");
       const h2 = await Promise.allSettled([import("./h2.virt"), Promise.resolve().then(() => import("./h2.virt"))]);
@@ -169,6 +181,9 @@ test("import() of a module that failed to load retries after the file changes", 
     H1b OK 42
     H1 loads 2
     J 42 42 true
+    K OK OK OK OK OK OK OK OK true
+    Kb OK 42
+    K loads 1
     H2 ERR ERR
     H2b OK 42
     H2 loads 2

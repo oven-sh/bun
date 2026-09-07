@@ -3,7 +3,7 @@
  *
  * This is where all the phases come together:
  *   - emit codegen → generated .cpp/.h/.rs
- *   - emit cargo build → libbun_runtime.a
+ *   - emit the Rust crate graph → libbun_runtime.a
  *   - resolve all deps → lib paths + include dirs
  *   - build PCH from root-pch.h (implicit deps: WebKit libs + all codegen)
  *   - compile all C/C++ with the PCH
@@ -15,13 +15,13 @@
  * `cfg.mode` controls what we actually produce:
  *   - "full": everything (default, local dev)
  *   - "cpp-only": compile to libbun.a, skip rust/link (CI upstream)
- *   - "rust-only": codegen + cargo → libbun_runtime.a (CI upstream)
+ *   - "rust-only": codegen + Rust crates → libbun_runtime.a (CI upstream)
  *   - "link-only": link pre-built artifacts (CI downstream)
- *   - "rust-and-link": cargo + link; downloads cpp-only's archive (CI)
+ *   - "rust-and-link": Rust crates + link; downloads cpp-only's archive (CI)
  *
  * The split modes are for CI where C++ and Rust build in parallel on
  * separate machines. rust-and-link folds the rust + link steps onto one
- * agent (cargo runs while cpp-only is still compiling elsewhere; the
+ * agent (the Rust crates compile while cpp-only is still compiling elsewhere; the
  * cpp archive is polled for and downloaded before ninja links).
  */
 
@@ -126,15 +126,15 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
   n.blank();
 
   // ─── Step 1: codegen + rust ───
-  // Emitted before the deps: ninja breaks scheduling ties by emission order, and cargo is the critical path (see the compile pool in compile.ts).
+  // Emitted before the deps: ninja breaks scheduling ties by emission order, and the Rust crate chain is the critical path (see the compile pool in compile.ts).
   const codegen = emitCodegen(n, cfg, sources);
   const depsByName = new Map<string, ResolvedDep>();
 
-  // One cargo invocation produces a single staticlib that occupies the
+  // The Rust crates produce a single staticlib that occupies the
   // same slot in the link as the C++ archive. Rust `include!`s codegen
   // `.rs` outputs (written as side effects of the generate-classes /
   // bundle-modules / generate-jssink edges), so the codegen output set
-  // is forwarded as implicit inputs to order it first.
+  // is forwarded as implicit inputs of the workspace crates to order it first.
   //
   // cpp-only: skip rust entirely (runs on a separate CI machine).
   let rustObjects: string[] = [];
@@ -142,8 +142,8 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
     // lol-html is a direct path dep of `bun_runtime`/`bun_bundler`
     // (`lol_html = { path = "vendor/lolhtml" }` in the workspace Cargo.toml),
     // not built into a separate archive — cargo needs `vendor/lolhtml/` on
-    // disk before it resolves the manifest. The `.ref` stamp's content is
-    // the pinned commit, so a bump re-invokes cargo.
+    // disk before it can plan the crate graph. The `.ref` stamp's content is
+    // the pinned commit, so a bump re-plans.
     const lolhtmlDep = resolveDep(n, cfg, lolhtml, depsByName);
     assert(lolhtmlDep !== null, "lolhtml resolveDep returned null — should never be skipped");
     depsByName.set(lolhtml.name, lolhtmlDep);
@@ -535,7 +535,7 @@ function emitBkUpload(n: Ninja, cfg: Config, stamp: string, files: string[]): st
  * Needs:
  *   - lolhtml FETCHED (path dep of `bun_runtime`/`bun_bundler`) — not built separately
  *   - codegen (Rust `include!`s/`include_bytes!`s the same generated set)
- *   - cargo build → libbun_runtime.a
+ *   - Rust crates → libbun_runtime.a
  *
  * Does NOT need: any C dep built, any cxx, PCH, link. ninja only pulls
  * what's depended on — lolhtml's configure/build rules are emitted but

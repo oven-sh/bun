@@ -66,7 +66,7 @@ const presets: Record<string, () => string[]> = {
   "release-local": profile("release-local"),
 
   rust: () => [
-    ...buildProfiles().map(p => resolve(p, "rust-target")),
+    ...buildProfiles().flatMap(p => [resolve(p, "rust"), resolve(p, "rust-target")]),
     resolve(sharedCacheDir, "cargo"),
     // `cargo check`/`cargo clippy` run from the repo root with no
     // --target-dir, so they write to the workspace-default `target/`.

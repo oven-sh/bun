@@ -425,6 +425,8 @@ export function resolveLlvmToolchain(
   | "ld64Lld"
   | "rustLld"
   | "rustLlvmVersion"
+  | "rustSysroot"
+  | "rustHostTriple"
   | "strip"
   | "llvmStrip"
   | "nm"
@@ -572,7 +574,7 @@ export function resolveLlvmToolchain(
 
   // rust-lld: optional alternative linker for cross-language LTO when
   // rustc's bundled LLVM is newer than clang's. See findRustLld().
-  const { rustLld, rustLlvmVersion } = findRustLld(os);
+  const { rustLld, rustLlvmVersion, rustSysroot, rustHostTriple } = findRustLld(os);
 
   // ccache: optional. If found, used as compiler launcher.
   const ccache = findTool({ names: ["ccache"], required: false })?.path;
@@ -598,6 +600,8 @@ export function resolveLlvmToolchain(
     ld64Lld,
     rustLld,
     rustLlvmVersion,
+    rustSysroot,
+    rustHostTriple,
     strip,
     llvmStrip,
     nm,
@@ -657,8 +661,11 @@ export interface CargoToolchain {
 export function findRustLld(os: OS): {
   rustLld: string | undefined;
   rustLlvmVersion: string | undefined;
+  /** `rustc --print sysroot` of the pinned toolchain; its `bin/rustc` is the real compiler behind the rustup proxy. */
+  rustSysroot: string | undefined;
+  rustHostTriple: string | undefined;
 } {
-  const none = { rustLld: undefined, rustLlvmVersion: undefined };
+  const none = { rustLld: undefined, rustLlvmVersion: undefined, rustSysroot: undefined, rustHostTriple: undefined };
   // Look up rustc the same way findCargo does cargo: $CARGO_HOME/bin first.
   const cargoHome = process.env.CARGO_HOME ?? join(homedir(), ".cargo");
   const rustc =
@@ -744,7 +751,7 @@ export function findRustLld(os: OS): {
 
   const rustHostTriple = vv.match(/^host:\s*(\S+)/m)?.[1];
   const rustLlvmVersion = vv.match(/^LLVM version:\s*(\d+\.\d+\.\d+)/m)?.[1];
-  if (rustHostTriple === undefined) return { ...none, rustLlvmVersion };
+  if (rustHostTriple === undefined) return { ...none, rustLlvmVersion, rustSysroot: sysroot };
 
   const bin = join(sysroot, "lib", "rustlib", rustHostTriple, "bin");
   const candidate =
@@ -754,7 +761,7 @@ export function findRustLld(os: OS): {
         ? join(bin, "gcc-ld", "ld64.lld")
         : join(bin, "gcc-ld", "ld.lld");
   const rustLld = isExecutable(candidate) ? candidate : undefined;
-  return { rustLld, rustLlvmVersion };
+  return { rustLld, rustLlvmVersion, rustSysroot: sysroot, rustHostTriple };
 }
 
 /**

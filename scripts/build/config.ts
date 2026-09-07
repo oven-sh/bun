@@ -279,8 +279,17 @@ export interface Config {
    * would otherwise pick up that worktree's pin).
    */
   rustToolchain: string | undefined;
-  /** Explicit rustc for cargo to drive (BUN_TOOLCHAIN_RUST); undefined = cargo's own resolution (rustup proxy). */
+  /**
+   * The rustc every Rust unit is compiled with: `<override>/bin/rustc` under BUN_TOOLCHAIN_RUST, else
+   * the pinned toolchain's real binary (`<sysroot>/bin/rustc`, not the rustup proxy — a couple hundred
+   * invocations each paying the proxy's manifest lookup add up). Also handed to cargo (planning, the
+   * Windows shim) as RUSTC so both agree. undefined when no Rust toolchain was found.
+   */
   rustc: string | undefined;
+  /** `rustc --print sysroot`; rustdoc and the std sources (`-Zbuild-std`) live under it. */
+  rustSysroot: string | undefined;
+  /** The host triple rustc reports (`x86_64-unknown-linux-gnu`, …): the platform of build scripts and proc-macros. */
+  rustHostTriple: string | undefined;
   /** Windows: MSVC link.exe path (to avoid Git's /usr/bin/link shadowing). */
   msvcLinker: string | undefined;
   /** Windows: llvm-rc, compiles windows-app-info.rc. */
@@ -445,6 +454,10 @@ export interface Toolchain {
   rustLld: string | undefined;
   /** Parsed `LLVM version:` from `rustc -vV` (X.Y.Z). */
   rustLlvmVersion: string | undefined;
+  /** `rustc --print sysroot` for the pinned toolchain. */
+  rustSysroot: string | undefined;
+  /** `host:` from `rustc -vV`. */
+  rustHostTriple: string | undefined;
   strip: string;
   /**
    * llvm-strip. On Linux hosts GNU strip is the default (`strip` above) but
@@ -1257,7 +1270,13 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
     rustupHome: toolchain.rustupHome,
     rustToolchain: toolchainOverride.rust !== undefined ? undefined : readRustToolchainChannel(cwd),
     rustc:
-      toolchainOverride.rust !== undefined ? join(toolchainOverride.rust, "bin", `rustc${host.exeSuffix}`) : undefined,
+      toolchainOverride.rust !== undefined
+        ? join(toolchainOverride.rust, "bin", `rustc${host.exeSuffix}`)
+        : toolchain.rustSysroot !== undefined
+          ? join(toolchain.rustSysroot, "bin", `rustc${host.exeSuffix}`)
+          : undefined,
+    rustSysroot: toolchain.rustSysroot,
+    rustHostTriple: toolchain.rustHostTriple,
     // Cargo-driven links (the bun_shim_impl.exe edge, any future target
     // cdylib) must keep using a real lld-link/link.exe, not the gcc-ld/
     // lld-link wrapper `ld` may have been swapped to above: rustc treats a

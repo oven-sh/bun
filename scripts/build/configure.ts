@@ -25,6 +25,7 @@ import {
 import { BuildError } from "./error.ts";
 import { orderFilePath, usesOrderFile } from "./flags.ts";
 import { mkdirAll, writeIfChanged } from "./fs.ts";
+import { planPath } from "./rust/plan.ts";
 import { ensureMacosSdk } from "./macos-sdk.ts";
 import { Ninja } from "./ninja.ts";
 import { getProfile } from "./profiles.ts";
@@ -212,8 +213,16 @@ function emitGeneratorRule(n: Ninja, cfg: Config, input: ConfigureInput): void {
     outputs: [resolve(cfg.buildDir, "build.ninja")],
     rule: "regen",
     inputs: [configFile],
-    implicitInputs: configureInputs(cfg.cwd),
+    // rust/plan.json: the per-crate Rust edges are generated from it (rust.ts), so a changed plan — new
+    // lockfile, manifest, toolchain — must reconfigure. It is a build output; when it is dirty ninja builds
+    // it first, reruns this edge, and restarts with the new manifest.
+    implicitInputs: [...configureInputs(cfg.cwd), ...(existsRustPlanEdge(n) ? [planPath(cfg.buildDir)] : [])],
   });
+}
+
+/** True when this graph builds bun's Rust (emitRust ran and registered the plan edge); cpp-only/link-only graphs don't. */
+function existsRustPlanEdge(n: Ninja): boolean {
+  return n.hasOutput(planPath(n.buildDir));
 }
 
 /**

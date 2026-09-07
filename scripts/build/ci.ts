@@ -244,7 +244,7 @@ export function uploadArtifacts(cfg: Config, output: BunOutput): void {
 
   if (cfg.mode === "rust-only") {
     // Relative to buildDir so link-only's `artifact download '*' .` recreates
-    // the rust-target/<triple>/<profile>/ layout that `rustLibPath(cfg)`
+    // the rust/<triple>/ layout that `rustLibPath(cfg)`
     // expects. gzip on posix (release staticlib is ~200MB of mostly bitcode
     // when LTO is on); .lib on Windows is uploaded raw — same convention as
     // the cpp archive below.
@@ -576,15 +576,15 @@ export async function downloadArtifacts(cfg: Config): Promise<void> {
     await Promise.all([dl(cppStep), dl(`${targetKey}-build-rust`)]);
   }
 
-  // Recursive: rust artifact lands under rust-target/<triple>/<profile>/.
+  // Recursive: rust artifact lands under rust/<triple>/.
   const gzFiles: string[] = [];
   const walk = (dir: string) => {
     if (!existsSync(dir)) return;
     for (const e of readdirSync(dir, { withFileTypes: true })) {
       const p = resolve(dir, e.name);
       if (e.isDirectory()) {
-        // rust-and-link built rust locally; skip cargo's huge output tree.
-        if (cfg.mode === "rust-and-link" && e.name === "rust-target") continue;
+        // rust-and-link built rust locally; skip the per-crate artifact tree.
+        if (cfg.mode === "rust-and-link" && (e.name === "rust" || e.name === "rust-target")) continue;
         walk(p);
       } else if (e.isFile() && e.name.endsWith(".gz")) gzFiles.push(relative(cfg.buildDir, p));
     }

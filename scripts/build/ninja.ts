@@ -275,6 +275,11 @@ export class Ninja {
   }
 
   /** Shorthand for a phony target (groups other targets). */
+  /** Whether some build statement already declares `path` as an output. */
+  hasOutput(path: string): boolean {
+    return this.outputSet.has(resolve(path));
+  }
+
   phony(name: string, deps: string[]): void {
     this.build({
       outputs: [name],

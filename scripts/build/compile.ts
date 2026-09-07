@@ -41,7 +41,7 @@ export function registerCompileRules(n: Ninja, cfg: Config): void {
     ? { deps: "msvc" }
     : { depfile: "$out.d", deps: "gcc" };
 
-  // Compiles are capped at the core count, below ninja's default -j of cores+2, so cargo / dep builds start the moment they are ready: without a .ninja_log ninja weighs every edge as 1, and the cc → ar → link chain outranks cargo → link.
+  // Compiles are capped at the core count, below ninja's default -j of cores+2, so rustc edges / dep builds start the moment they are ready even when every C++ compile could run: the Rust crate chain is the critical path and must never wait for a slot behind a wall of interchangeable `.o` compiles.
   n.pool("compile", availableParallelism());
 
   // ─── C++ compile ───

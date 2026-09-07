@@ -177,6 +177,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         continue;
                     }
                     if name == b"exports"
+                        && !is_loop_target
                         && decl
                             .value
                             .is_some_and(|value| self.is_module_dot_exports_at_parse(value))

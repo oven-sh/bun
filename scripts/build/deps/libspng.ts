@@ -18,7 +18,7 @@ export const libspng: Dependency = {
   name: "libspng",
 
   source: () => ({
-    kind: "github-archive",
+    kind: "github",
     repo: "randy408/libspng",
     commit: LIBSPNG_COMMIT,
   }),

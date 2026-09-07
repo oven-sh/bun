@@ -284,7 +284,7 @@ impl Parser<'_> {
                     if emit_end > text_start {
                         self.emit_text(TextType::Normal, &content[text_start..emit_end])?;
                     }
-                    if is_hard {
+                    if is_hard || self.flags.hard_soft_breaks {
                         self.emit_text(TextType::Br, b"")?;
                     } else {
                         self.emit_text(TextType::Softbr, b"")?;
@@ -686,7 +686,8 @@ impl Parser<'_> {
     ) {
         self.emph_delims.clear();
         let mut i: usize = 0;
-        while i < content.len() {
+        while let Some(offset) = bun_core::strings::index_of_any(&content[i..], b"\\`<[!*_~") {
+            i += offset;
             let c = content[i];
             // Skip backslash escapes
             if c == b'\\' && i + 1 < content.len() && helpers::is_ascii_punctuation(content[i + 1])

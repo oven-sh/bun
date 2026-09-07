@@ -32,7 +32,7 @@ fn js_to_parser_err(e: bun_jsc::JsError) -> ParserError {
 /// `input_len` is the byte length of the rendered input, reported back by the
 /// `InputTooLarge` range error.
 #[cold]
-fn parser_err_to_js(
+pub(crate) fn parser_err_to_js(
     global_this: &JSGlobalObject,
     err: ParserError,
     input_len: usize,
@@ -65,7 +65,10 @@ fn parser_err_to_js(
 }
 
 /// Pins a buffer input for the render, which can re-enter JS; `None` for a string.
-fn pin(global: &JSGlobalObject, input: &StringOrBuffer) -> JsResult<Option<PinnedArrayBuffer>> {
+pub(crate) fn pin(
+    global: &JSGlobalObject,
+    input: &StringOrBuffer,
+) -> JsResult<Option<PinnedArrayBuffer>> {
     let StringOrBuffer::Buffer(buffer) = input else {
         return Ok(None);
     };

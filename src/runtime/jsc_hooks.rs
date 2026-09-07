@@ -2239,7 +2239,7 @@ fn transpile_source_code_inner(
 
     match loader {
         // ────────────────────────────────────────────────────────────────────
-        // JS-like + JSON/TOML/YAML/text/md — the parse→print path.
+        // JS-like + JSON/TOML/YAML/text/md/mdx — the parse→print path.
         // ────────────────────────────────────────────────────────────────────
         L::Js
         | L::Jsx
@@ -2252,7 +2252,8 @@ fn transpile_source_code_inner(
         | L::Json5
         | L::Xml
         | L::Text
-        | L::Md => {
+        | L::Md
+        | L::Mdx => {
             // `bun_ast::ASTMemoryAllocator::Scope`.
             let mut _ast_scope = bun_ast::ast_memory_allocator::Scope::default();
             _ast_scope.enter();
@@ -3860,6 +3861,7 @@ fn force_loader_from_api_u8(api_loader: u8) -> Option<Loader> {
         20 => Some(L::Json5),
         21 => Some(L::Md),
         22 => Some(L::Xml),
+        23 => Some(L::Mdx),
         // 254 = `_none`; everything else is open-tail.
         _ => None,
     }

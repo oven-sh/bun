@@ -14,6 +14,7 @@
     macro(JSONC) \
     macro(MD4) \
     macro(markdown) \
+    macro(mdx) \
     macro(MD5) \
     macro(S3Client) \
     macro(SHA1) \

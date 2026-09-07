@@ -357,7 +357,9 @@ impl LoaderExt for Loader {
     fn to_mime_type(self, paths: &[&[u8]]) -> bun_http_types::MimeType::MimeType {
         use bun_http_types::MimeType;
         match self {
-            Loader::Jsx | Loader::Js | Loader::Ts | Loader::Tsx => MimeType::JAVASCRIPT,
+            Loader::Jsx | Loader::Js | Loader::Ts | Loader::Tsx | Loader::Mdx => {
+                MimeType::JAVASCRIPT
+            }
             Loader::Css => MimeType::CSS,
             Loader::Toml
             | Loader::Yaml
@@ -606,6 +608,7 @@ const DEFAULT_LOADERS_POSIX: &[(&[u8], Loader)] = &[
     (b".xml", Loader::Xml),
     (b".md", Loader::Md),
     (b".markdown", Loader::Md),
+    (b".mdx", Loader::Mdx),
 ];
 
 #[cfg(all(windows, test))]
@@ -657,6 +660,7 @@ impl DefaultLoaders {
                 b".yml" => Some(&Loader::Yaml),
                 b".xml" => Some(&Loader::Xml),
                 b".txt" => Some(&Loader::Text),
+                b".mdx" => Some(&Loader::Mdx),
                 _ => None,
             },
             5 => match ext {
@@ -973,7 +977,7 @@ pub(crate) fn defines_from_transform_options(
     Ok(define)
 }
 
-const DEFAULT_LOADER_EXT_BUN: &[&[u8]] = &[b".node", b".html"];
+const DEFAULT_LOADER_EXT_BUN: &[&[u8]] = &[b".node", b".html", b".mdx"];
 const DEFAULT_LOADER_EXT: &[&[u8]] = &[
     b".jsx", b".json", b".js", b".mjs", b".cjs", b".css",
     // https://devblogs.microsoft.com/typescript/announcing-typescript-4-5-beta/#new-file-extensions

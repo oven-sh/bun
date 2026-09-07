@@ -1550,7 +1550,8 @@ impl<'a> Transpiler<'a> {
             options::Loader::Js
             | options::Loader::Jsx
             | options::Loader::Ts
-            | options::Loader::Tsx => {
+            | options::Loader::Tsx
+            | options::Loader::Mdx => {
                 // wasm magic number
                 if source.is_web_assembly() {
                     return Some(ParseResult::empty_with(
@@ -1561,10 +1562,43 @@ impl<'a> Transpiler<'a> {
                     ));
                 }
 
+                let is_mdx = loader == options::Loader::Mdx;
+                // MDX compiles to a JSX module first. The parser sees the
+                // generated source; the returned `ParseResult` keeps the
+                // original `.mdx` source so diagnostics point at the real file.
+                let parse_source: &bun_ast::Source = if is_mdx {
+                    let compiled = match bun_md::mdx::compile(
+                        &source.contents,
+                        &bun_md::mdx::MdxOptions::default(),
+                    ) {
+                        Ok(jsx) => jsx,
+                        Err(err) => {
+                            let _ = log.add_error_fmt(
+                                None,
+                                bun_ast::Loc::EMPTY,
+                                format_args!("Failed to compile MDX: {err}"),
+                            );
+                            return None;
+                        }
+                    };
+                    // SAFETY: ARENA — `arena` is the per-parse arena and
+                    // outlives the returned `ParseResult.ast`, which borrows
+                    // the generated JSX text.
+                    let jsx_text: &'static [u8] =
+                        unsafe { bun_ptr::detach_lifetime(arena.alloc_slice_copy(&compiled)) };
+                    arena.alloc(bun_ast::Source {
+                        contents: jsx_text.into(),
+                        contents_is_recycled: false,
+                        ..source.clone()
+                    })
+                } else {
+                    source
+                };
+
                 let target = self.options.target;
 
                 let mut jsx = this_parse.jsx;
-                jsx.parse = loader.is_jsx();
+                jsx.parse = loader.is_jsx() || is_mdx;
                 let _ = &this_parse.macro_remappings;
 
                 // `ParserOptions::init` is hard-typed
@@ -1578,7 +1612,7 @@ impl<'a> Transpiler<'a> {
                 // below instead of pinned to `'static`.
                 use js_ast::parser::options as p_opts;
                 let mut opts = js_ast::ParserOptions::<'_> {
-                    ts: loader.is_typescript(),
+                    ts: loader.is_typescript() || is_mdx,
                     jsx: to_parser_jsx_pragma(jsx),
                     keep_names: true,
                     ignore_dce_annotations: self.options.ignore_dce_annotations,
@@ -1608,7 +1642,7 @@ impl<'a> Transpiler<'a> {
                 // emitDecoratorMetadata implies legacy/experimental decorators, as it only
                 // makes sense with TypeScript's legacy decorator system (reflect-metadata).
                 // TC39 standard decorators have their own metadata mechanism.
-                opts.features.standard_decorators = !loader.is_typescript()
+                opts.features.standard_decorators = !(loader.is_typescript() || is_mdx)
                     || !(this_parse.experimental_decorators || this_parse.emit_decorator_metadata);
                 opts.features.allow_runtime = self.options.allow_runtime;
                 opts.features.set_breakpoint_on_first_line =
@@ -1616,7 +1650,7 @@ impl<'a> Transpiler<'a> {
                 opts.features.trim_unused_imports = self
                     .options
                     .trim_unused_imports
-                    .unwrap_or_else(|| loader.is_typescript());
+                    .unwrap_or_else(|| loader.is_typescript() || is_mdx);
                 opts.features.no_macros = self.options.no_macros;
                 // `bun_ast::RuntimeTranspilerCache` is the single nominal
                 // type on both sides; thread the pointer directly.
@@ -1711,9 +1745,13 @@ impl<'a> Transpiler<'a> {
                 // the real `parse` lives on `crate::cache::JavaScript`. Both
                 // are stateless unit structs, so calling the bundler-crate one
                 // directly is equivalent.
-                let parsed = match crate::cache::JavaScript::init()
-                    .parse(arena, opts, define, log, source)
-                {
+                let parsed = match crate::cache::JavaScript::init().parse(
+                    arena,
+                    opts,
+                    define,
+                    log,
+                    parse_source,
+                ) {
                     Ok(Some(r)) => r,
                     Ok(None) | Err(_) => return None,
                 };
@@ -2935,7 +2973,8 @@ impl<'a> Transpiler<'a> {
             | options::Loader::Json5
             | options::Loader::Xml
             | options::Loader::Text
-            | options::Loader::Md => {
+            | options::Loader::Md
+            | options::Loader::Mdx => {
                 // borrowck — `parse` consumes `&mut self`, so capture
                 // the option fields needed for `ParseOptions` first.
                 let jsx = jsx_pragma_from_resolver(&resolve_result.jsx);

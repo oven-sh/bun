@@ -1632,7 +1632,7 @@ impl JSTranspiler {
             args.eat();
         }
 
-        if !loader.is_java_script_like() {
+        if !loader.is_java_script_like() && loader != Loader::Mdx {
             return Err(global.throw_invalid_arguments(format_args!(
                 "Only JavaScript-like files support this fast path",
             )));
@@ -1662,6 +1662,14 @@ impl JSTranspiler {
         let mut ast_memory_allocator = bun_ast::ASTMemoryAllocator::borrowing(&arena);
         let _ast_scope = ast_memory_allocator.enter();
 
+        let compiled;
+        let code = if loader == Loader::Mdx {
+            compiled = bun_md::mdx::compile(code, &bun_md::mdx::MdxOptions::default())
+                .map_err(|err| global.throw(format_args!("Failed to compile MDX: {err}")))?;
+            compiled.as_slice()
+        } else {
+            code
+        };
         let source = bun_ast::Source::init_path_string(loader.stdin_name(), code);
         let jsx = match self.config.get().tsconfig.as_deref() {
             Some(ts) => ts.merge_jsx(self.transpiler.get().options.jsx.clone()),
@@ -1669,6 +1677,10 @@ impl JSTranspiler {
         };
 
         let mut opts = bun_js_parser::ParserOptions::init(jsx, loader);
+        if loader == Loader::Mdx {
+            opts.ts = true;
+            opts.jsx.parse = true;
+        }
         // SAFETY: see `transpiler_mut`. The `&mut Transpiler` is reborrowed
         // disjointly for `macro_context` (stored in `opts`) and `options.define`
         // (raw-addr read) below; both end when `opts` is consumed by `scan()`.

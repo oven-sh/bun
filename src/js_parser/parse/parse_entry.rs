@@ -51,6 +51,117 @@ macro_rules! init_p {
     }};
 }
 
+/// Parses JavaScript islands in a document without lexing the surrounding text.
+pub fn with_fragment_parser<T, E: From<Error>>(
+    source: &bun_ast::Source,
+    log: &mut bun_ast::Log,
+    arena: &Arena,
+    run: impl FnOnce(&mut FragmentParser<'_, '_>) -> Result<T, E>,
+) -> Result<T, E> {
+    source
+        .check_parseable_len(log, "File")
+        .map_err(Error::from)?;
+    let define = Define::default();
+    let lexer = js_lexer::Lexer::init_without_reading(log, source, arena);
+    let mut options = Options {
+        ts: true,
+        ..Options::default()
+    };
+    options.jsx.parse = true;
+    let mut storage = init_p!(TSXParser<'_>; arena, lexer.log, source, &define, lexer, options);
+    // SAFETY: `init_p!` only yields after initialization and owns the drop guard.
+    let parser = unsafe { storage.assume_init_mut() };
+    run(&mut FragmentParser { parser })
+}
+
+pub struct FragmentParser<'p, 'a> {
+    parser: &'p mut TSXParser<'a>,
+}
+
+impl FragmentParser<'_, '_> {
+    pub fn names(&self) -> impl Iterator<Item = &[u8]> {
+        self.parser.allocated_names.iter().copied().chain(
+            self.parser
+                .symbols
+                .iter()
+                .map(|symbol| symbol.original_name.slice()),
+        )
+    }
+
+    pub fn is_at_end(&self) -> bool {
+        self.parser.lexer.end == self.parser.source.contents.len()
+    }
+
+    fn seek(&mut self, offset: usize) -> Result<(), Error> {
+        let p = &mut self.parser;
+        let source = p.source;
+        let arena = p.arena;
+        p.lexer = js_lexer::Lexer::init_without_reading(p.log(), source, arena);
+        p.lexer.current = offset;
+        p.lexer.step();
+        p.lexer.next()?;
+        Ok(())
+    }
+
+    pub fn expression_end(&mut self, start: usize) -> Result<usize, Error> {
+        use js_lexer::T;
+        self.seek(start + 1)?;
+        let p = &mut self.parser;
+        if p.lexer.token == T::TDotDotDot {
+            p.lexer.next()?;
+        }
+        if p.lexer.token != T::TCloseBrace {
+            p.parse_expr(js_ast::op::Level::Lowest)?;
+        }
+        if p.lexer.token != T::TCloseBrace {
+            p.lexer.expected(T::TCloseBrace)?;
+            return Err(Error::SyntaxError);
+        }
+        if p.log().errors > 0 {
+            return Err(Error::SyntaxError);
+        }
+        Ok(p.lexer.end)
+    }
+
+    pub fn import_range(&self, index: u32) -> bun_ast::Range {
+        self.parser.import_records.items()[index as usize].range
+    }
+
+    pub fn default_value_start(&mut self, start: usize) -> Result<usize, Error> {
+        self.seek(start)?;
+        self.parser.lexer.expect(js_lexer::T::TExport)?;
+        self.parser.lexer.expect(js_lexer::T::TDefault)?;
+        Ok(self.parser.lexer.start)
+    }
+
+    pub fn module_statements(&mut self) -> Result<Vec<(usize, Stmt, usize)>, Error> {
+        use js_lexer::T;
+        self.seek(0)?;
+        let p = &mut self.parser;
+        let mut statements = Vec::new();
+        while p.lexer.token != T::TEndOfFile {
+            if !matches!(p.lexer.token, T::TImport | T::TExport | T::TSemicolon) {
+                return Err(Error::SyntaxError);
+            }
+            let start = p.lexer.start;
+            let mut options = ParseStatementOptions {
+                scope: StatementScope::Module,
+                lexical_decl: crate::parser::LexicalDecl::AllowAll,
+                ..Default::default()
+            };
+            let statement = p.parse_stmt(&mut options)?;
+            if p.log().errors > 0 {
+                return Err(Error::SyntaxError);
+            }
+            statements
+                .try_reserve(1)
+                .map_err(|_| Error::Alloc(bun_alloc::AllocError))?;
+            statements.push((start, statement, p.lexer.start));
+        }
+        Ok(statements)
+    }
+}
+
 pub struct Parser<'a> {
     pub(crate) options: Options<'a>,
     pub(crate) lexer: js_lexer::Lexer<'a>,

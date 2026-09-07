@@ -167,6 +167,7 @@ codegen-for-zig-team.tar.gz
 /src/deps/zstd
 
 # Generated files
+mdx-benchmark-results/
 
 # Written at configure time from the discovered toolchain by
 # scripts/build/cargo-config.ts — see scripts/build/CLAUDE.md.

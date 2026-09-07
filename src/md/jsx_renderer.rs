@@ -1,0 +1,622 @@
+//! Renders parsed Markdown as JSX for the `.mdx` loader. Every HTML element is
+//! emitted as `<_components.tag>` so MDX callers can override tags via the
+//! `components` prop; `mdx::compile` builds the `_components` object from
+//! [`JsxRenderer::component_names`].
+//!
+//! MDX `{...}` expressions are replaced with `\x01MDXE<nonce>:<index>\x01` placeholders
+//! before parsing (see [`crate::mdx::replace_expressions`]) so the Markdown
+//! parser treats them as opaque text. This renderer restores them.
+
+use bun_core::strings;
+
+use crate::helpers;
+use crate::output::OutputBuffer;
+use crate::types::{
+    self, BLOCK_FENCED_CODE, BlockType, JsResult, Renderer, RendererImpl, SpanDetail, SpanType,
+    TextType,
+};
+
+/// One `{...}` expression lifted out of the source before parsing.
+pub struct ExpressionSlot {
+    pub original: Box<[u8]>,
+    pub placeholder: Box<[u8]>,
+}
+
+/// How text should be escaped when writing it back out.
+#[derive(Copy, Clone, Eq, PartialEq)]
+enum ExprWriteMode {
+    /// JSX child text: `{`/`}`/`<`/`>` must be escaped as JSX expressions.
+    JsxText,
+    /// Inside a JSX attribute string.
+    AttrText,
+    /// Passed through untouched.
+    Raw,
+}
+
+struct Paragraph {
+    start: usize,
+    jsx_depth: u32,
+    has_text: bool,
+    has_mdx: bool,
+}
+
+pub(crate) struct JsxRenderer<'src> {
+    pub out: OutputBuffer,
+    src_text: &'src [u8],
+    components_name: &'src [u8],
+    expression_slots: &'src [ExpressionSlot],
+    expression_prefix: &'src [u8],
+    /// Insertion-ordered so generated `_components` objects are stable.
+    /// Every tracked name is a literal below, so no ownership is needed.
+    pub component_names: Vec<&'static [u8]>,
+    image_nesting_level: u32,
+    in_code_block: bool,
+    paragraph: Option<Paragraph>,
+    // Owned for the same reason as HtmlRenderer's: SpanDetail only borrows for
+    // the duration of enter_span.
+    saved_img_title: Box<[u8]>,
+}
+
+impl<'src> JsxRenderer<'src> {
+    pub(crate) fn init(
+        src_text: &'src [u8],
+        expression_slots: &'src [ExpressionSlot],
+        components_name: &'src [u8],
+    ) -> JsxRenderer<'src> {
+        JsxRenderer {
+            out: OutputBuffer {
+                list: Vec::new(),
+                oom: false,
+            },
+            src_text,
+            components_name,
+            expression_slots,
+            expression_prefix: expression_slots
+                .first()
+                .map_or(b"", |slot| &slot.placeholder[..slot.placeholder.len() - 2]),
+            component_names: Vec::new(),
+            image_nesting_level: 0,
+            in_code_block: false,
+            paragraph: None,
+            saved_img_title: Box::default(),
+        }
+    }
+
+    pub(crate) fn renderer(&mut self) -> Renderer<'_> {
+        Renderer { ptr: self }
+    }
+
+    pub(crate) fn output(&self) -> &[u8] {
+        &self.out.list
+    }
+
+    pub(crate) fn is_oom(&self) -> bool {
+        self.out.oom
+    }
+
+    fn write(&mut self, bytes: &[u8]) {
+        self.out.write(bytes);
+    }
+
+    fn track_component(&mut self, name: &'static [u8]) {
+        if !self.component_names.contains(&name) {
+            if self.component_names.try_reserve(1).is_err() {
+                self.out.oom = true;
+                return;
+            }
+            self.component_names.push(name);
+        }
+    }
+
+    fn write_component_tag_open(&mut self, name: &'static [u8]) {
+        self.track_component(name);
+        self.write(b"<");
+        self.write(self.components_name);
+        self.write(b".");
+        self.write(name);
+        self.write(b">");
+    }
+
+    fn write_component_tag_close(&mut self, name: &'static [u8]) {
+        self.track_component(name);
+        self.write(b"</");
+        self.write(self.components_name);
+        self.write(b".");
+        self.write(name);
+        self.write(b">");
+    }
+
+    fn write_component_tag_self_close(&mut self, name: &'static [u8]) {
+        self.track_component(name);
+        self.write(b"<");
+        self.write(self.components_name);
+        self.write(b".");
+        self.write(name);
+        self.write(b" />");
+    }
+
+    fn write_escaped(
+        &mut self,
+        mut value: &[u8],
+        chars: &[u8],
+        escape: impl Fn(u8) -> &'static [u8],
+    ) {
+        while let Some(index) = strings::index_of_any(value, chars) {
+            self.write(&value[..index]);
+            self.write(escape(value[index]));
+            value = &value[index + 1..];
+        }
+        self.write(value);
+    }
+
+    fn write_attr_escaped(&mut self, value: &[u8]) {
+        self.write_escaped(value, b"&<>\"", |c| match c {
+            b'&' => b"&amp;",
+            b'<' => b"&lt;",
+            b'>' => b"&gt;",
+            b'"' => b"&quot;",
+            _ => unreachable!(),
+        });
+    }
+
+    fn write_link_destination(&mut self, mut value: &[u8]) {
+        while let Some(index) = value.iter().position(|&c| !helpers::is_url_safe_byte(c)) {
+            self.write(&value[..index]);
+            let c = value[index];
+            if c == b'&' || c == b'\'' {
+                self.write(strings::html_escape_entity(c).unwrap());
+            } else {
+                let [hi, lo] = bun_core::fmt::hex_byte_upper(c);
+                self.write(&[b'%', hi, lo]);
+            }
+            value = &value[index + 1..];
+        }
+        self.write(value);
+    }
+
+    /// JSX treats `{`/`}` as expression delimiters and `<`/`>` as tag
+    /// delimiters, so literal ones become single-character string expressions.
+    fn write_jsx_escaped(&mut self, value: &[u8]) {
+        self.write_escaped(value, b"{}<>", |c| match c {
+            b'{' => b"{'{'}",
+            b'}' => b"{'}'}",
+            b'<' => b"{'<'}",
+            b'>' => b"{'>'}",
+            _ => unreachable!(),
+        });
+    }
+
+    fn write_js_string_escaped(&mut self, value: &[u8]) {
+        self.write_escaped(value, b"\\\"\n\r\t", |c| match c {
+            b'\\' => b"\\\\",
+            b'"' => b"\\\"",
+            b'\n' => b"\\n",
+            b'\r' => b"\\r",
+            b'\t' => b"\\t",
+            _ => unreachable!(),
+        });
+    }
+
+    fn write_literal(&mut self, content: &[u8], mode: ExprWriteMode) {
+        if mode == ExprWriteMode::JsxText
+            && let Some(paragraph) = self.paragraph.as_mut()
+            && paragraph.jsx_depth == 0
+            && !paragraph.has_text
+        {
+            paragraph.has_text = content.iter().any(|c| !c.is_ascii_whitespace());
+        }
+        match mode {
+            ExprWriteMode::JsxText => self.write_jsx_escaped(content),
+            ExprWriteMode::AttrText => self.write_attr_escaped(content),
+            ExprWriteMode::Raw => self.write(content),
+        }
+    }
+
+    /// Writes `content`, swapping each `\x01MDXE<nonce>:<index>\x01` placeholder back for
+    /// the original expression wrapped in JSX braces.
+    fn write_restoring_expressions(&mut self, content: &[u8], mode: ExprWriteMode) -> JsResult<()> {
+        let mut i = 0;
+        let mut copied_until = 0;
+        if !self.expression_prefix.is_empty() {
+            while let Some(offset) = strings::index_of(&content[i..], self.expression_prefix) {
+                i += offset;
+                let mut end = i + self.expression_prefix.len();
+                let mut index = Some(0usize);
+                while let Some(c @ b'0'..=b'9') = content.get(end) {
+                    index = index.and_then(|n| n.checked_mul(10)?.checked_add((c - b'0') as usize));
+                    end += 1;
+                }
+                if content.get(end) == Some(&1)
+                    && let Some(slot) = index.and_then(|n| self.expression_slots.get(n))
+                    && *slot.placeholder == content[i..=end]
+                {
+                    self.write_literal(&content[copied_until..i], mode);
+                    if mode == ExprWriteMode::JsxText
+                        && let Some(paragraph) = self.paragraph.as_mut()
+                        && paragraph.jsx_depth == 0
+                    {
+                        paragraph.has_mdx = true;
+                    }
+                    self.write(b"{");
+                    self.write(&slot.original);
+                    self.write(b"}");
+                    i = end + 1;
+                    copied_until = i;
+                } else {
+                    i += 1;
+                }
+            }
+        }
+        self.write_literal(&content[copied_until..], mode);
+        Ok(())
+    }
+
+    // ========================================
+    // Block rendering
+    // ========================================
+
+    fn enter_block(&mut self, block_type: BlockType, data: u32, flags: u32) {
+        match block_type {
+            BlockType::Doc => {}
+            BlockType::Quote => self.write_component_tag_open(b"blockquote"),
+            BlockType::Ul => self.write_component_tag_open(b"ul"),
+            BlockType::Ol => {
+                self.track_component(b"ol");
+                self.write(b"<");
+                self.write(self.components_name);
+                self.write(b".ol");
+                if data > 1 {
+                    let mut buf = [0u8; 10];
+                    let digits = format_u32(&mut buf, data);
+                    self.write(b" start={");
+                    self.write(digits);
+                    self.write(b"}");
+                }
+                self.write(b">");
+            }
+            BlockType::Li => {
+                self.write_component_tag_open(b"li");
+                let task_mark = types::task_mark_from_data(data);
+                if task_mark != 0 {
+                    self.track_component(b"input");
+                    self.write(b"<");
+                    self.write(self.components_name);
+                    self.write(b".input type=\"checkbox\" disabled checked={");
+                    self.write(if types::is_task_checked(task_mark) {
+                        b"true"
+                    } else {
+                        b"false"
+                    });
+                    self.write(b"} />");
+                }
+            }
+            BlockType::Hr => self.write_component_tag_self_close(b"hr"),
+            BlockType::H => self.write_component_tag_open(heading_tag(data)),
+            BlockType::Code => {
+                self.in_code_block = true;
+                self.track_component(b"pre");
+                self.track_component(b"code");
+                self.write(b"<");
+                self.write(self.components_name);
+                self.write(b".pre><");
+                self.write(self.components_name);
+                self.write(b".code");
+                // Copy the slice reference out of `self` so the language borrow
+                // is tied to 'src rather than to `self`.
+                let src_text: &'src [u8] = self.src_text;
+                if flags & BLOCK_FENCED_CODE != 0 && (data as usize) < src_text.len() {
+                    let info_beg = data as usize;
+                    let mut lang_end = info_beg;
+                    while lang_end < src_text.len()
+                        && !helpers::is_blank(src_text[lang_end])
+                        && !helpers::is_newline(src_text[lang_end])
+                    {
+                        lang_end += 1;
+                    }
+                    if lang_end > info_beg {
+                        self.write(b" className=\"language-");
+                        self.write_attr_escaped(&src_text[info_beg..lang_end]);
+                        self.write(b"\"");
+                    }
+                }
+                self.write(b">");
+            }
+            BlockType::Html => {}
+            BlockType::P => {
+                self.paragraph = Some(Paragraph {
+                    start: self.out.list.len(),
+                    jsx_depth: 0,
+                    has_text: false,
+                    has_mdx: false,
+                });
+                self.write_component_tag_open(b"p");
+            }
+            BlockType::Table => self.write_component_tag_open(b"table"),
+            BlockType::Thead => self.write_component_tag_open(b"thead"),
+            BlockType::Tbody => self.write_component_tag_open(b"tbody"),
+            BlockType::Tr => self.write_component_tag_open(b"tr"),
+            BlockType::Th | BlockType::Td => {
+                let name: &[u8] = if block_type == BlockType::Th {
+                    b"th"
+                } else {
+                    b"td"
+                };
+                self.track_component(name);
+                self.write(b"<");
+                self.write(self.components_name);
+                self.write(b".");
+                self.write(name);
+                if let Some(alignment) = types::alignment_name(types::alignment_from_data(data)) {
+                    self.write(b" align=\"");
+                    self.write(alignment);
+                    self.write(b"\"");
+                }
+                self.write(b">");
+            }
+        }
+    }
+
+    fn leave_block(&mut self, block_type: BlockType, data: u32) {
+        match block_type {
+            BlockType::Doc | BlockType::Hr | BlockType::Html => {}
+            BlockType::Quote => self.write_component_tag_close(b"blockquote"),
+            BlockType::Ul => self.write_component_tag_close(b"ul"),
+            BlockType::Ol => self.write_component_tag_close(b"ol"),
+            BlockType::Li => self.write_component_tag_close(b"li"),
+            BlockType::H => self.write_component_tag_close(heading_tag(data)),
+            BlockType::Code => {
+                self.in_code_block = false;
+                self.write(b"</");
+                self.write(self.components_name);
+                self.write(b".code></");
+                self.write(self.components_name);
+                self.write(b".pre>");
+            }
+            BlockType::P => {
+                if let Some(paragraph) = self.paragraph.take()
+                    && paragraph.has_mdx
+                    && !paragraph.has_text
+                    && !self.out.oom
+                {
+                    // MDX-only paragraphs are flow content; remove the opening
+                    // tag already emitted by the Markdown paragraph callback.
+                    let tag_len = self.components_name.len() + b"<.p>".len();
+                    self.out
+                        .list
+                        .copy_within(paragraph.start + tag_len.., paragraph.start);
+                    self.out.list.truncate(self.out.list.len() - tag_len);
+                } else {
+                    self.write_component_tag_close(b"p");
+                }
+            }
+            BlockType::Table => self.write_component_tag_close(b"table"),
+            BlockType::Thead => self.write_component_tag_close(b"thead"),
+            BlockType::Tbody => self.write_component_tag_close(b"tbody"),
+            BlockType::Tr => self.write_component_tag_close(b"tr"),
+            BlockType::Th => self.write_component_tag_close(b"th"),
+            BlockType::Td => self.write_component_tag_close(b"td"),
+        }
+    }
+
+    // ========================================
+    // Span rendering
+    // ========================================
+
+    fn enter_span(&mut self, span_type: SpanType, detail: SpanDetail<'_>) {
+        if let Some(paragraph) = self.paragraph.as_mut()
+            && paragraph.jsx_depth == 0
+        {
+            paragraph.has_text = true;
+        }
+        if self.image_nesting_level > 0 {
+            if span_type == SpanType::Img {
+                self.image_nesting_level += 1;
+            }
+            return;
+        }
+        match span_type {
+            SpanType::Em => self.write_component_tag_open(b"em"),
+            SpanType::Strong => self.write_component_tag_open(b"strong"),
+            SpanType::U => self.write_component_tag_open(b"u"),
+            SpanType::Code => self.write_component_tag_open(b"code"),
+            SpanType::Del => self.write_component_tag_open(b"del"),
+            SpanType::Latexmath | SpanType::LatexmathDisplay => {
+                self.write_component_tag_open(b"span")
+            }
+            SpanType::Wikilink => self.write_component_tag_open(b"a"),
+            SpanType::A => {
+                self.track_component(b"a");
+                self.write(b"<");
+                self.write(self.components_name);
+                self.write(b".a href=\"");
+                if detail.autolink_email {
+                    self.write(b"mailto:");
+                } else if detail.autolink_www {
+                    self.write(b"http://");
+                }
+                self.write_link_destination(detail.href);
+                self.write(b"\"");
+                if !detail.title.is_empty() {
+                    self.write(b" title=\"");
+                    self.write_attr_escaped(detail.title);
+                    self.write(b"\"");
+                }
+                self.write(b">");
+            }
+            SpanType::Img => {
+                self.track_component(b"img");
+                self.saved_img_title = Box::from(detail.title);
+                self.image_nesting_level += 1;
+                self.write(b"<");
+                self.write(self.components_name);
+                self.write(b".img src=\"");
+                self.write_link_destination(detail.href);
+                self.write(b"\" alt=\"");
+            }
+        }
+    }
+
+    fn leave_span(&mut self, span_type: SpanType) {
+        // Inside an image, everything collapses into the alt attribute.
+        if self.image_nesting_level > 0 {
+            if span_type == SpanType::Img {
+                self.image_nesting_level -= 1;
+                if self.image_nesting_level == 0 {
+                    self.write(b"\"");
+                    if !self.saved_img_title.is_empty() {
+                        // Take the field before the &mut self call.
+                        let title = core::mem::take(&mut self.saved_img_title);
+                        self.write(b" title=\"");
+                        self.write_attr_escaped(&title);
+                        self.write(b"\"");
+                    }
+                    self.write(b" />");
+                    self.saved_img_title = Box::default();
+                }
+            }
+            return;
+        }
+
+        match span_type {
+            SpanType::Em => self.write_component_tag_close(b"em"),
+            SpanType::Strong => self.write_component_tag_close(b"strong"),
+            SpanType::U => self.write_component_tag_close(b"u"),
+            SpanType::A => self.write_component_tag_close(b"a"),
+            SpanType::Code => self.write_component_tag_close(b"code"),
+            SpanType::Del => self.write_component_tag_close(b"del"),
+            SpanType::Latexmath | SpanType::LatexmathDisplay => {
+                self.write_component_tag_close(b"span")
+            }
+            SpanType::Wikilink => self.write_component_tag_close(b"a"),
+            SpanType::Img => {}
+        }
+    }
+
+    // ========================================
+    // Text rendering
+    // ========================================
+
+    fn text(&mut self, text_type: TextType, content: &[u8]) -> JsResult<()> {
+        let in_image = self.image_nesting_level > 0;
+
+        if self.in_code_block && text_type != TextType::NullChar {
+            self.write(b"{\"");
+            self.write_js_string_escaped(content);
+            self.write(b"\"}");
+            return Ok(());
+        }
+
+        match text_type {
+            TextType::Normal => self.write_restoring_expressions(
+                content,
+                if in_image {
+                    ExprWriteMode::AttrText
+                } else {
+                    ExprWriteMode::JsxText
+                },
+            )?,
+            TextType::NullChar => {
+                if let Some(paragraph) = self.paragraph.as_mut()
+                    && paragraph.jsx_depth == 0
+                {
+                    paragraph.has_text = true;
+                }
+                self.write("\u{FFFD}".as_bytes());
+            }
+            TextType::Br => {
+                if in_image {
+                    self.write(b" ");
+                } else {
+                    self.write_component_tag_self_close(b"br");
+                }
+            }
+            TextType::Softbr => {
+                if in_image {
+                    self.write(b" ");
+                } else {
+                    self.write(b"\n");
+                }
+            }
+            TextType::Html => {
+                if let Some(paragraph) = self.paragraph.as_mut() {
+                    paragraph.has_mdx = true;
+                    if content.starts_with(b"</") {
+                        paragraph.jsx_depth = paragraph.jsx_depth.saturating_sub(1);
+                    } else if content.starts_with(b"<") && !content.ends_with(b"/>") {
+                        paragraph.jsx_depth += 1;
+                    }
+                }
+                self.write_restoring_expressions(content, ExprWriteMode::Raw)?;
+            }
+            TextType::Entity => {
+                if let Some(paragraph) = self.paragraph.as_mut()
+                    && paragraph.jsx_depth == 0
+                {
+                    paragraph.has_text = true;
+                }
+                self.write(content);
+            }
+            TextType::Code => {
+                if in_image {
+                    self.write_attr_escaped(content);
+                    return Ok(());
+                }
+                // Code spans become string expressions so JSX never reinterprets
+                // their contents.
+                self.write(b"{\"");
+                self.write_js_string_escaped(content);
+                self.write(b"\"}");
+            }
+            TextType::Latexmath => self.write_jsx_escaped(content),
+        }
+        Ok(())
+    }
+}
+
+impl RendererImpl for JsxRenderer<'_> {
+    fn enter_block(&mut self, block_type: BlockType, data: u32, flags: u32) -> JsResult<()> {
+        JsxRenderer::enter_block(self, block_type, data, flags);
+        Ok(())
+    }
+    fn leave_block(&mut self, block_type: BlockType, data: u32) -> JsResult<()> {
+        JsxRenderer::leave_block(self, block_type, data);
+        Ok(())
+    }
+    fn enter_span(&mut self, span_type: SpanType, detail: SpanDetail<'_>) -> JsResult<()> {
+        JsxRenderer::enter_span(self, span_type, detail);
+        Ok(())
+    }
+    fn leave_span(&mut self, span_type: SpanType) -> JsResult<()> {
+        JsxRenderer::leave_span(self, span_type);
+        Ok(())
+    }
+    fn text(&mut self, text_type: TextType, content: &[u8]) -> JsResult<()> {
+        JsxRenderer::text(self, text_type, content)
+    }
+}
+
+fn heading_tag(level: u32) -> &'static [u8] {
+    match level {
+        1 => b"h1",
+        2 => b"h2",
+        3 => b"h3",
+        4 => b"h4",
+        5 => b"h5",
+        _ => b"h6",
+    }
+}
+
+/// Writes `value`'s decimal digits into `buf`, returning the written range.
+fn format_u32(buf: &mut [u8; 10], value: u32) -> &[u8] {
+    let mut i = buf.len();
+    let mut v = value;
+    loop {
+        i -= 1;
+        buf[i] = b'0' + (v % 10) as u8;
+        v /= 10;
+        if v == 0 {
+            break;
+        }
+    }
+    &buf[i..]
+}

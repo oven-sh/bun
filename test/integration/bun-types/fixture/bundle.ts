@@ -5,6 +5,11 @@
 import { feature } from "bun:bundle";
 import { expectType } from "./utilities";
 
+expectType(Bun.mdx.compile("# Hello", { jsxImportSource: undefined })).is<string>();
+expectType(Bun.mdx.compile(new DataView(new SharedArrayBuffer(8)))).is<string>();
+expectType(new Bun.Transpiler({ loader: "mdx" }).transformSync("# Hello", "mdx")).is<string>();
+Bun.build({ entrypoints: ["./index.post"], loader: { ".post": "mdx" } });
+
 // feature() returns boolean
 expectType(feature("DEBUG")).is<boolean>();
 

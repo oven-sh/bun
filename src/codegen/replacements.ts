@@ -113,6 +113,7 @@ export const enums = {
     "json5",
     "md",
     "xml",
+    "mdx",
   ],
   ImportKind: [
     "entry-point-run",

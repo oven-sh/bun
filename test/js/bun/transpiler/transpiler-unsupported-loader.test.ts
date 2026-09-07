@@ -30,7 +30,7 @@ describe("Bun.Transpiler rejects non-transpilable loaders", () => {
   test("unknown-loader message lists only transpilable loaders", () => {
     expect(() => t.transformSync("let x = 1", "bogus" as any)).toThrow(TypeError);
     expect(() => t.transformSync("let x = 1", "bogus" as any)).toThrow(
-      "invalid loader - must be js, jsx, tsx, ts, css, json, jsonc, json5, toml, yaml, xml, text, wasm, or md",
+      "invalid loader - must be js, jsx, tsx, ts, css, json, jsonc, json5, toml, yaml, xml, text, wasm, md, or mdx",
     );
   });
 });

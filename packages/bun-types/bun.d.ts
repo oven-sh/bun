@@ -2041,6 +2041,31 @@ declare module "bun" {
   }
 
   /**
+   * MDX related APIs.
+   */
+  namespace mdx {
+    interface Options extends Omit<markdown.Options, "headings" | "autolinks"> {
+      /**
+       * Sets the `@jsxImportSource` pragma in the generated JSX.
+       * Default: `"react"`.
+       */
+      jsxImportSource?: string | undefined;
+    }
+
+    /**
+     * Compile MDX source into a JSX module source string.
+     *
+     * @param input MDX source text
+     * @param options MDX and markdown parser options
+     * @returns Generated JSX source code
+     */
+    export function compile(
+      input: string | NodeJS.TypedArray | DataView<ArrayBufferLike> | ArrayBufferLike,
+      options?: Options,
+    ): string;
+  }
+
+  /**
    * JSON5 related APIs
    */
   namespace JSON5 {
@@ -2942,7 +2967,7 @@ declare module "bun" {
     define?: Record<string, string>;
 
     /** What is the default loader used for this transpiler?  */
-    loader?: JavaScriptLoader;
+    loader?: JavaScriptLoader | "mdx";
 
     /**  What platform are we targeting? This may affect how import and/or require is used */
     /**  @example "browser" */
@@ -3078,13 +3103,13 @@ declare module "bun" {
      * This function does not resolve imports.
      * @param code The code to transpile
      */
-    transform(code: Bun.StringOrBuffer, loader?: JavaScriptLoader): Promise<string>;
+    transform(code: Bun.StringOrBuffer, loader?: JavaScriptLoader | "mdx"): Promise<string>;
     /**
      * Transpile code from TypeScript or JSX into valid JavaScript.
      * This function does not resolve imports.
      * @param code The code to transpile
      */
-    transformSync(code: Bun.StringOrBuffer, loader: JavaScriptLoader, ctx: object): string;
+    transformSync(code: Bun.StringOrBuffer, loader: JavaScriptLoader | "mdx", ctx: object): string;
     /**
      * Transpile code from TypeScript or JSX into valid JavaScript.
      * This function does not resolve imports.
@@ -3098,7 +3123,7 @@ declare module "bun" {
      * This function does not resolve imports.
      * @param code The code to transpile
      */
-    transformSync(code: Bun.StringOrBuffer, loader?: JavaScriptLoader): string;
+    transformSync(code: Bun.StringOrBuffer, loader?: JavaScriptLoader | "mdx"): string;
 
     /**
      * Get a list of import paths and paths from a TypeScript, JSX, TSX, or JavaScript file.
@@ -6033,6 +6058,7 @@ declare module "bun" {
     | "toml"
     | "yaml"
     | "xml"
+    | "mdx"
     | "file"
     | "napi"
     | "wasm"

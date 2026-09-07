@@ -893,12 +893,13 @@ function emitDuplicateSymbolCheck(
   if (stamp === undefined) return [];
   const report = resolve(cfg.buildDir, `${exeName}.duplicate-symbols.txt`);
   const q = (p: string) => quote(p, cfg.windows);
-  // While rustc's LLVM is ahead of clang's (the rust-lld swap in config.ts),
-  // libbun_runtime's bitcode is unreadable by clang's llvm-nm/objdump; use the
-  // ones rustup ships beside rust-lld (component llvm-tools). If they are
-  // missing the scan reports every unreadable input and fails, with a hint.
-  const rustLldInUse = cfg.rustLld !== undefined && dirname(cfg.ld) === dirname(cfg.rustLld);
-  const rustBin = rustLldInUse
+  // Rust archives can contain newer LLVM bitcode even when native macOS uses
+  // Apple's linker. Inspect them with rustup's matching llvm-tools.
+  const useRustTools =
+    cfg.rustLld !== undefined &&
+    (dirname(cfg.ld) === dirname(cfg.rustLld) ||
+      Number(cfg.rustLlvmVersion?.split(".")[0]) > Number(cfg.clangVersion?.split(".")[0]));
+  const rustBin = useRustTools
     ? basename(dirname(cfg.rustLld!)) === "gcc-ld"
       ? dirname(dirname(cfg.rustLld!))
       : dirname(cfg.rustLld!)

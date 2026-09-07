@@ -1,0 +1,17 @@
+---
+layout: default
+---
+
+import { Box, Button } from "./ui";
+
+# Components and Expressions
+
+Inline math: {2 + 3} equals 5.
+
+Block expression:
+
+{`Array.from({ length: 3 }, (_, i) => i + 1).join(", ")`}
+
+<Box variant="highlight">
+  <Button onClick={() => alert("Hi")}>Click me</Button>
+</Box>

@@ -997,13 +997,17 @@ name = "bun_md"
 version = "0.0.0"
 dependencies = [
  "bun_alloc",
+ "bun_ast",
  "bun_collections",
  "bun_core",
+ "bun_js_parser",
+ "bun_parsers",
  "bun_paths",
  "bun_sys",
  "bun_url",
  "scopeguard",
  "strum",
+ "thiserror",
 ]
 
 [[package]]

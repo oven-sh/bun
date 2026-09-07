@@ -61,6 +61,8 @@ pub mod json5_object;
 pub mod jsonc_object;
 #[path = "api/MarkdownObject.rs"]
 pub mod markdown_object;
+#[path = "api/MdxObject.rs"]
+pub mod mdx_object;
 #[path = "api/NativePromiseContext.rs"]
 pub mod native_promise_context;
 #[path = "api/output_file_jsc.rs"]

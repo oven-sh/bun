@@ -474,28 +474,7 @@ impl<'src> HtmlRenderer<'src> {
     fn write_url_byte(&mut self, byte: u8) {
         match byte {
             b'&' | b'\'' => self.write(strings::html_escape_entity(byte).unwrap()),
-            b'A'..=b'Z'
-            | b'a'..=b'z'
-            | b'0'..=b'9'
-            | b'-'
-            | b'.'
-            | b'_'
-            | b'~'
-            | b':'
-            | b'/'
-            | b'?'
-            | b'#'
-            | b'@'
-            | b'!'
-            | b'$'
-            | b'('
-            | b')'
-            | b'*'
-            | b'+'
-            | b','
-            | b';'
-            | b'='
-            | b'%' => self.write_byte(byte),
+            byte if helpers::is_url_safe_byte(byte) => self.write_byte(byte),
             _ => {
                 let [hi, lo] = bun_core::fmt::hex_byte_upper(byte);
                 self.write(&[b'%', hi, lo]);

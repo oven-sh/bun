@@ -591,142 +591,14 @@ impl Parser<'_> {
     }
 
     pub(crate) fn is_table_underline(&mut self, off: OFF) -> TableUnderlineResult {
-        let mut pos = off;
-        let mut col_count: u32 = 0;
-        let mut had_pipe = false;
-
-        // Skip leading pipe
-        if pos < self.size && ch(self.text, pos) == b'|' {
-            had_pipe = true;
-            pos += 1;
-            while pos < self.size && helpers::is_blank(ch(self.text, pos)) {
-                pos += 1;
-            }
-        }
-
-        while pos < self.size && !helpers::is_newline(ch(self.text, pos)) {
-            // Expect optional ':' then dashes then optional ':'
-            let has_left_colon = pos < self.size && ch(self.text, pos) == b':';
-            if has_left_colon {
-                pos += 1;
-            }
-
-            let mut dash_count: u32 = 0;
-            while pos < self.size && ch(self.text, pos) == b'-' {
-                dash_count += 1;
-                pos += 1;
-            }
-
-            if dash_count == 0 {
-                return TableUnderlineResult {
-                    is_underline: false,
-                    col_count: 0,
-                };
-            }
-
-            let has_right_colon = pos < self.size && ch(self.text, pos) == b':';
-            if has_right_colon {
-                pos += 1;
-            }
-
-            // Determine alignment
-            if col_count < types::TABLE_MAXCOLCOUNT {
-                self.table_alignments[col_count as usize] = if has_left_colon && has_right_colon {
-                    Align::Center
-                } else if has_left_colon {
-                    Align::Left
-                } else if has_right_colon {
-                    Align::Right
-                } else {
-                    Align::Default
-                };
-            }
-
-            col_count += 1;
-            if col_count > types::TABLE_MAXCOLCOUNT {
-                return TableUnderlineResult {
-                    is_underline: false,
-                    col_count: 0,
-                };
-            }
-
-            // Skip whitespace
-            while pos < self.size && helpers::is_blank(ch(self.text, pos)) {
-                pos += 1;
-            }
-
-            // Pipe separator or end
-            if pos < self.size && ch(self.text, pos) == b'|' {
-                had_pipe = true;
-                pos += 1;
-                while pos < self.size && helpers::is_blank(ch(self.text, pos)) {
-                    pos += 1;
-                }
-                if pos >= self.size || helpers::is_newline(ch(self.text, pos)) {
-                    break;
-                }
-            } else if pos >= self.size || helpers::is_newline(ch(self.text, pos)) {
-                break;
-            } else {
-                return TableUnderlineResult {
-                    is_underline: false,
-                    col_count: 0,
-                };
-            }
-        }
-
-        if col_count == 0 || (!had_pipe && col_count < 2) {
-            return TableUnderlineResult {
-                is_underline: false,
-                col_count: 0,
-            };
-        }
-
-        TableUnderlineResult {
-            is_underline: true,
-            col_count,
-        }
+        parse_table_underline(
+            self.text.get(off as usize..).unwrap_or_default(),
+            &mut self.table_alignments,
+        )
     }
 
-    /// Count the number of pipe-delimited columns in a table row.
-    /// Used to validate that header and delimiter row column counts match (GFM requirement).
     pub(crate) fn count_table_row_columns(&self, beg: OFF, end: OFF) -> u32 {
-        let row = &self.text[beg as usize..end as usize];
-        let mut col_count: u32 = 0;
-        let mut pos: usize = 0;
-
-        // Skip leading whitespace
-        while pos < row.len() && helpers::is_blank(row[pos]) {
-            pos += 1;
-        }
-
-        // Skip leading pipe
-        if pos < row.len() && row[pos] == b'|' {
-            pos += 1;
-        }
-
-        // Count cells between pipes
-        let mut in_cell = false;
-        while pos < row.len() {
-            if row[pos] == b'|' {
-                col_count += 1;
-                in_cell = false;
-                pos += 1;
-            } else if row[pos] == b'\\' && pos + 1 < row.len() {
-                in_cell = true;
-                pos += 2;
-            } else if helpers::is_newline(row[pos]) {
-                break;
-            } else {
-                in_cell = true;
-                pos += 1;
-            }
-        }
-        // If there's content after the last pipe (no trailing pipe), count it as a column
-        if in_cell {
-            col_count += 1;
-        }
-        col_count
+        count_table_columns(&self.text[beg as usize..end as usize])
     }
 
     pub(crate) fn is_container_mark(&self, indent: u32, off: OFF) -> ContainerMarkResult {
@@ -850,4 +722,141 @@ impl Parser<'_> {
             off,
         }
     }
+}
+
+pub(crate) fn parse_table_underline(text: &[u8], alignments: &mut [Align]) -> TableUnderlineResult {
+    let mut pos = 0;
+    let size = text.len();
+    let mut col_count: u32 = 0;
+    let mut had_pipe = false;
+
+    // Skip leading pipe
+    if pos < size && text[pos] == b'|' {
+        had_pipe = true;
+        pos += 1;
+        while pos < size && helpers::is_blank(text[pos]) {
+            pos += 1;
+        }
+    }
+
+    while pos < size && !helpers::is_newline(text[pos]) {
+        // Expect optional ':' then dashes then optional ':'
+        let has_left_colon = pos < size && text[pos] == b':';
+        if has_left_colon {
+            pos += 1;
+        }
+
+        let mut dash_count: u32 = 0;
+        while pos < size && text[pos] == b'-' {
+            dash_count += 1;
+            pos += 1;
+        }
+
+        if dash_count == 0 {
+            return TableUnderlineResult {
+                is_underline: false,
+                col_count: 0,
+            };
+        }
+
+        let has_right_colon = pos < size && text[pos] == b':';
+        if has_right_colon {
+            pos += 1;
+        }
+
+        // Determine alignment
+        if (col_count as usize) < alignments.len() {
+            alignments[col_count as usize] = if has_left_colon && has_right_colon {
+                Align::Center
+            } else if has_left_colon {
+                Align::Left
+            } else if has_right_colon {
+                Align::Right
+            } else {
+                Align::Default
+            };
+        }
+
+        col_count += 1;
+        if col_count > types::TABLE_MAXCOLCOUNT {
+            return TableUnderlineResult {
+                is_underline: false,
+                col_count: 0,
+            };
+        }
+
+        // Skip whitespace
+        while pos < size && helpers::is_blank(text[pos]) {
+            pos += 1;
+        }
+
+        // Pipe separator or end
+        if pos < size && text[pos] == b'|' {
+            had_pipe = true;
+            pos += 1;
+            while pos < size && helpers::is_blank(text[pos]) {
+                pos += 1;
+            }
+            if pos >= size || helpers::is_newline(text[pos]) {
+                break;
+            }
+        } else if pos >= size || helpers::is_newline(text[pos]) {
+            break;
+        } else {
+            return TableUnderlineResult {
+                is_underline: false,
+                col_count: 0,
+            };
+        }
+    }
+
+    if col_count == 0 || (!had_pipe && col_count < 2) {
+        return TableUnderlineResult {
+            is_underline: false,
+            col_count: 0,
+        };
+    }
+
+    TableUnderlineResult {
+        is_underline: true,
+        col_count,
+    }
+}
+
+pub(crate) fn count_table_columns(row: &[u8]) -> u32 {
+    let mut col_count: u32 = 0;
+    let mut pos: usize = 0;
+
+    // Skip leading whitespace
+    while pos < row.len() && helpers::is_blank(row[pos]) {
+        pos += 1;
+    }
+
+    // Skip leading pipe
+    if pos < row.len() && row[pos] == b'|' {
+        pos += 1;
+    }
+
+    // Count cells between pipes
+    let mut in_cell = false;
+    while pos < row.len() {
+        if row[pos] == b'|' {
+            col_count += 1;
+            in_cell = false;
+            pos += 1;
+        } else if row[pos] == b'\\' && pos + 1 < row.len() {
+            in_cell = true;
+            pos += 2;
+        } else if helpers::is_newline(row[pos]) {
+            break;
+        } else {
+            in_cell = true;
+            pos += 1;
+        }
+    }
+    // If there's content after the last pipe (no trailing pipe), count it as a column
+    if in_cell {
+        col_count += 1;
+    }
+    col_count
 }

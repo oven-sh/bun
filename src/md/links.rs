@@ -15,6 +15,153 @@ type SpanAttrs<'a> = SpanDetail<'a>;
 /// link, which is quadratic on inputs like `"[a](b"` repeated.
 const MAX_LINK_DEST_PAREN_DEPTH: u32 = 32;
 
+pub(crate) struct InlineLink<'a> {
+    pub(crate) dest: &'a [u8],
+    pub(crate) title: &'a [u8],
+    pub(crate) end: usize,
+}
+
+pub(crate) struct InvalidAngleDestination;
+
+/// Parses the destination and title following a link's closing bracket.
+pub(crate) fn parse_inline_link(
+    content: &[u8],
+    mut pos: usize,
+) -> Result<Option<InlineLink<'_>>, InvalidAngleDestination> {
+    if content.get(pos) != Some(&b'(') {
+        return Ok(None);
+    }
+    pos += 1;
+    // Skip whitespace (including newlines from merged paragraph lines)
+    while pos < content.len()
+        && (helpers::is_blank(content[pos]) || content[pos] == b'\n' || content[pos] == b'\r')
+    {
+        pos += 1;
+    }
+
+    // Parse destination
+    let mut dest_start = pos;
+    let dest_end;
+    let mut dest_valid = true;
+
+    if pos < content.len() && content[pos] == b'<' {
+        // Angle-bracket destination (no newlines or unescaped '<' allowed)
+        dest_start = pos + 1;
+        pos += 1;
+        let mut angle_valid = true;
+        while pos < content.len() && content[pos] != b'>' {
+            if content[pos] == b'\n' || content[pos] == b'\r' || content[pos] == b'<' {
+                angle_valid = false;
+                break;
+            }
+            if content[pos] == b'\\' && pos + 1 < content.len() {
+                pos += 2;
+            } else {
+                pos += 1;
+            }
+        }
+        if !angle_valid {
+            return Err(InvalidAngleDestination);
+        }
+        dest_end = pos;
+        if pos < content.len() {
+            pos += 1; // skip >
+        }
+    } else {
+        // Bare destination — balance parentheses (nesting depth is capped)
+        let mut paren_depth: u32 = 0;
+        while pos < content.len() && !helpers::is_whitespace(content[pos]) {
+            if content[pos] == b'(' {
+                paren_depth += 1;
+                if paren_depth > MAX_LINK_DEST_PAREN_DEPTH {
+                    dest_valid = false;
+                    break;
+                }
+            } else if content[pos] == b')' {
+                if paren_depth == 0 {
+                    break;
+                }
+                paren_depth -= 1;
+            }
+            if content[pos] == b'\\' && pos + 1 < content.len() {
+                pos += 2;
+            } else {
+                pos += 1;
+            }
+        }
+        dest_end = pos;
+    }
+
+    if !dest_valid {
+        // Destination exceeded the paren-nesting cap: not an inline
+        // link (cmark rejects it too). Skip the title and ')' checks —
+        // the offending '(' must not be reparsed as a title opener —
+        // but keep the reference/shortcut fallback below reachable.
+        pos = content.len();
+    }
+
+    // Skip whitespace (including newlines)
+    while pos < content.len()
+        && (helpers::is_blank(content[pos]) || content[pos] == b'\n' || content[pos] == b'\r')
+    {
+        pos += 1;
+    }
+
+    // Optional title
+    let mut title: &[u8] = b"";
+    if pos < content.len()
+        && (content[pos] == b'"' || content[pos] == b'\'' || content[pos] == b'(')
+    {
+        let close_char: u8 = if content[pos] == b'(' {
+            b')'
+        } else {
+            content[pos]
+        };
+        let title_open = pos;
+        pos += 1;
+        let title_start = pos;
+        let mut title_valid = true;
+        while pos < content.len() && content[pos] != close_char {
+            if content[pos] == b'\\' && pos + 1 < content.len() {
+                pos += 2;
+                continue;
+            }
+            // A ()-delimited title may not contain an unescaped '('
+            if close_char == b')' && content[pos] == b'(' {
+                title_valid = false;
+                break;
+            }
+            pos += 1;
+        }
+        if title_valid {
+            title = &content[title_start..pos];
+            if pos < content.len() {
+                pos += 1; // skip closing quote
+            }
+        } else {
+            pos = title_open;
+        }
+    }
+
+    // Skip whitespace (including newlines)
+    while pos < content.len()
+        && (helpers::is_blank(content[pos]) || content[pos] == b'\n' || content[pos] == b'\r')
+    {
+        pos += 1;
+    }
+
+    // Must end with ')'
+    if pos < content.len() && content[pos] == b')' {
+        pos += 1;
+        return Ok(Some(InlineLink {
+            dest: &content[dest_start..dest_end],
+            title,
+            end: pos,
+        }));
+    }
+    Ok(None)
+}
+
 /// Maximum `[`/`]` nesting depth inside a wiki link. Bounds the forward scan
 /// for the closing `]]`, which is otherwise rescanned to the end of the line
 /// for every `[[` candidate (quadratic on inputs like `"[".repeat(n)` when
@@ -357,154 +504,24 @@ impl Parser<'_> {
         let label = &content[start + 1..label_end];
         let mut pos = label_end + 1; // skip ']'
 
-        // Inline link: [text](url "title")
-        if pos < content.len() && content[pos] == b'(' {
-            pos += 1;
-            // Skip whitespace (including newlines from merged paragraph lines)
-            while pos < content.len()
-                && (helpers::is_blank(content[pos])
-                    || content[pos] == b'\n'
-                    || content[pos] == b'\r')
+        let link = match parse_inline_link(content, pos) {
+            Ok(link) => link,
+            Err(_) => return Ok(None),
+        };
+        if let Some(link) = link {
+            if !is_image
+                && has_inner_bracket
+                && self.label_contains_link(label, brackets, base + start + 1)
             {
-                pos += 1;
+                return Ok(None);
             }
-
-            // Parse destination
-            let mut dest_start = pos;
-            let dest_end;
-            let mut dest_valid = true;
-
-            if pos < content.len() && content[pos] == b'<' {
-                // Angle-bracket destination (no newlines or unescaped '<' allowed)
-                dest_start = pos + 1;
-                pos += 1;
-                let mut angle_valid = true;
-                while pos < content.len() && content[pos] != b'>' {
-                    if content[pos] == b'\n' || content[pos] == b'\r' || content[pos] == b'<' {
-                        angle_valid = false;
-                        break;
-                    }
-                    if content[pos] == b'\\' && pos + 1 < content.len() {
-                        pos += 2;
-                    } else {
-                        pos += 1;
-                    }
-                }
-                if !angle_valid {
-                    return Ok(None);
-                }
-                dest_end = pos;
-                if pos < content.len() {
-                    pos += 1; // skip >
-                }
-            } else {
-                // Bare destination — balance parentheses (nesting depth is capped)
-                let mut paren_depth: u32 = 0;
-                while pos < content.len() && !helpers::is_whitespace(content[pos]) {
-                    if content[pos] == b'(' {
-                        paren_depth += 1;
-                        if paren_depth > MAX_LINK_DEST_PAREN_DEPTH {
-                            dest_valid = false;
-                            break;
-                        }
-                    } else if content[pos] == b')' {
-                        if paren_depth == 0 {
-                            break;
-                        }
-                        paren_depth -= 1;
-                    }
-                    if content[pos] == b'\\' && pos + 1 < content.len() {
-                        pos += 2;
-                    } else {
-                        pos += 1;
-                    }
-                }
-                dest_end = pos;
-            }
-
-            if !dest_valid {
-                // Destination exceeded the paren-nesting cap: not an inline
-                // link (cmark rejects it too). Skip the title and ')' checks —
-                // the offending '(' must not be reparsed as a title opener —
-                // but keep the reference/shortcut fallback below reachable.
-                pos = content.len();
-            }
-
-            // Skip whitespace (including newlines)
-            while pos < content.len()
-                && (helpers::is_blank(content[pos])
-                    || content[pos] == b'\n'
-                    || content[pos] == b'\r')
-            {
-                pos += 1;
-            }
-
-            // Optional title
-            let mut title: &[u8] = b"";
-            if pos < content.len()
-                && (content[pos] == b'"' || content[pos] == b'\'' || content[pos] == b'(')
-            {
-                let close_char: u8 = if content[pos] == b'(' {
-                    b')'
-                } else {
-                    content[pos]
-                };
-                let title_open = pos;
-                pos += 1;
-                let title_start = pos;
-                let mut title_valid = true;
-                while pos < content.len() && content[pos] != close_char {
-                    if content[pos] == b'\\' && pos + 1 < content.len() {
-                        pos += 2;
-                        continue;
-                    }
-                    // A ()-delimited title may not contain an unescaped '('
-                    if close_char == b')' && content[pos] == b'(' {
-                        title_valid = false;
-                        break;
-                    }
-                    pos += 1;
-                }
-                if title_valid {
-                    title = &content[title_start..pos];
-                    if pos < content.len() {
-                        pos += 1; // skip closing quote
-                    }
-                } else {
-                    pos = title_open;
-                }
-            }
-
-            // Skip whitespace (including newlines)
-            while pos < content.len()
-                && (helpers::is_blank(content[pos])
-                    || content[pos] == b'\n'
-                    || content[pos] == b'\r')
-            {
-                pos += 1;
-            }
-
-            // Must end with ')'
-            if pos < content.len() && content[pos] == b')' {
-                pos += 1;
-                let dest = &content[dest_start..dest_end];
-
-                // Link nesting prohibition: links cannot contain other links (CommonMark §6.7)
-                if !is_image
-                    && has_inner_bracket
-                    && self.label_contains_link(label, brackets, base + start + 1)
-                {
-                    return Ok(None);
-                }
-
-                let leave = self.enter_label_span(dest, title, is_image)?;
-                return Ok(Some(LabelParse {
-                    label_start: start + 1,
-                    label_end,
-                    link_end: pos,
-                    leave,
-                }));
-            }
+            let leave = self.enter_label_span(link.dest, link.title, is_image)?;
+            return Ok(Some(LabelParse {
+                label_start: start + 1,
+                label_end,
+                link_end: link.end,
+                leave,
+            }));
         }
 
         // Reference link: [text][ref] or [text][] or shortcut [text].
@@ -628,113 +645,22 @@ impl Parser<'_> {
             };
         }
 
-        // Inline link: ](...)
-        if content[pos] == b'(' {
-            let mut p = pos + 1;
-            // Skip whitespace
-            while p < content.len()
-                && (helpers::is_blank(content[p]) || content[p] == b'\n' || content[p] == b'\r')
-            {
-                p += 1;
-            }
-            // Parse dest (no line endings or unescaped '<' allowed, matching
-            // process_link: the lookahead and the parser must agree on what
-            // is a link or emphasis collection desyncs from rendering)
-            if p < content.len() && content[p] == b'<' {
-                p += 1;
-                while p < content.len()
-                    && content[p] != b'>'
-                    && content[p] != b'\n'
-                    && content[p] != b'\r'
-                    && content[p] != b'<'
-                {
-                    if content[p] == b'\\' && p + 1 < content.len() {
-                        p += 2;
-                    } else {
-                        p += 1;
-                    }
-                }
-                if p < content.len() && content[p] == b'>' {
-                    p += 1;
-                } else {
-                    return BracketLinkMatch {
-                        is_link: false,
-                        label_end,
-                        link_end: label_end + 1,
-                    };
-                }
-            } else {
-                let mut paren_depth: u32 = 0;
-                while p < content.len() && !helpers::is_whitespace(content[p]) {
-                    if content[p] == b'(' {
-                        paren_depth += 1;
-                        if paren_depth > MAX_LINK_DEST_PAREN_DEPTH {
-                            // Not an inline link; skip the title/')' checks but
-                            // keep the reference/shortcut fallback reachable
-                            // (mirrors process_link).
-                            p = content.len();
-                            break;
-                        }
-                    } else if content[p] == b')' {
-                        if paren_depth == 0 {
-                            break;
-                        }
-                        paren_depth -= 1;
-                    }
-                    if content[p] == b'\\' && p + 1 < content.len() {
-                        p += 2;
-                    } else {
-                        p += 1;
-                    }
-                }
-            }
-            // Skip whitespace
-            while p < content.len()
-                && (helpers::is_blank(content[p]) || content[p] == b'\n' || content[p] == b'\r')
-            {
-                p += 1;
-            }
-            // Optional title
-            if p < content.len()
-                && (content[p] == b'"' || content[p] == b'\'' || content[p] == b'(')
-            {
-                let close_ch: u8 = if content[p] == b'(' { b')' } else { content[p] };
-                let title_open = p;
-                p += 1;
-                let mut title_valid = true;
-                while p < content.len() && content[p] != close_ch {
-                    if content[p] == b'\\' && p + 1 < content.len() {
-                        p += 2;
-                        continue;
-                    }
-                    // A ()-delimited title may not contain an unescaped '('
-                    if close_ch == b')' && content[p] == b'(' {
-                        title_valid = false;
-                        break;
-                    }
-                    p += 1;
-                }
-                if title_valid {
-                    if p < content.len() {
-                        p += 1;
-                    }
-                } else {
-                    p = title_open;
-                }
-            }
-            // Skip whitespace
-            while p < content.len()
-                && (helpers::is_blank(content[p]) || content[p] == b'\n' || content[p] == b'\r')
-            {
-                p += 1;
-            }
-            if p < content.len() && content[p] == b')' {
+        let link = match parse_inline_link(content, pos) {
+            Ok(link) => link,
+            Err(_) => {
                 return BracketLinkMatch {
-                    is_link: true,
+                    is_link: false,
                     label_end,
-                    link_end: p + 1,
+                    link_end: label_end + 1,
                 };
             }
+        };
+        if let Some(link) = link {
+            return BracketLinkMatch {
+                is_link: true,
+                label_end,
+                link_end: link.end,
+            };
         }
 
         // Reference link: ][...]

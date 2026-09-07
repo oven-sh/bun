@@ -7,7 +7,7 @@ The Bun bundler has a set of built-in loaders.
 
 > As a rule of thumb: **the bundler and the runtime both support the same set of file types by default.**
 
-`.js` `.cjs` `.mjs` `.mts` `.cts` `.ts` `.tsx` `.jsx` `.css` `.json` `.jsonc` `.json5` `.toml` `.yaml` `.yml` `.xml` `.txt` `.text` `.md` `.markdown` `.wasm` `.node` `.html` `.sh`
+`.js` `.cjs` `.mjs` `.mts` `.cts` `.ts` `.tsx` `.jsx` `.css` `.json` `.jsonc` `.json5` `.toml` `.yaml` `.yml` `.xml` `.txt` `.text` `.md` `.markdown` `.mdx` `.wasm` `.node` `.html` `.sh`
 
 Bun uses the file extension to choose which built-in loader parses the file. Every loader has a name, such as `js`, `tsx`, or `json`. Plugins that extend Bun with custom loaders refer to these names.
 
@@ -56,6 +56,45 @@ Strips out all TypeScript syntax, then behaves identically to the `js` loader. B
 **TypeScript + JSX loader.** Default for `.tsx`.
 
 Transpiles both TypeScript and JSX to vanilla JavaScript.
+
+---
+
+### `mdx`
+
+**Markdown with JSX.** Default for `.mdx`.
+
+Compiles Markdown, JSX, and embedded JavaScript expressions into a module whose default export is a component. `import`
+and named `export` declarations can appear between Markdown blocks. A leading YAML frontmatter block becomes a named
+`frontmatter` export. Tables, strikethrough, and task lists are enabled by default.
+
+```tsx
+import Page, { frontmatter } from "./page.mdx";
+
+const page = <Page components={{ h1: MyHeading }} />;
+```
+
+A default export in the MDX source defines a layout that receives the rendered content as `children`, along with the
+page's props. Layouts can also be re-exported from another module. Without a default-export layout, pass a wrapper through
+`components.wrapper`.
+
+```mdx
+export { default } from "./Layout";
+
+# Welcome
+
+Count: {props.count}
+```
+
+Use `Bun.mdx.compile(source, options?)` to obtain the generated JSX as a string. Its `jsxImportSource` option defaults to
+`"react"`. The `mdx` loader is also available in `Bun.build` loader maps, plugin results, and `Bun.Transpiler`.
+
+Running `bun page.mdx` starts a development server. Install `react` and `react-dom` in the project for this mode. Multiple
+MDX entry points are served relative to their common directory; `index.mdx` maps to its directory's route.
+
+<Note>
+  The native compiler does not run remark or rehype plugins. Source locations in generated JavaScript currently refer to
+  the intermediate JSX module. Use an external MDX compiler through a build plugin when you need those integrations.
+</Note>
 
 ---
 

@@ -308,6 +308,7 @@ pub mod bun_object {
         BunObject_lazyPropCb_SHA512_256 => Crypto::SHA512_256::getter,
         BunObject_lazyPropCb_JSONC => super::get_jsonc_object,
         BunObject_lazyPropCb_markdown => super::get_markdown_object,
+        BunObject_lazyPropCb_mdx => super::get_mdx_object,
         BunObject_lazyPropCb_TOML => super::get_toml_object,
         BunObject_lazyPropCb_JSON5 => super::get_json5_object,
         BunObject_lazyPropCb_XML => super::get_xml_object,
@@ -1699,6 +1700,9 @@ fn get_jsonc_object(global_this: &JSGlobalObject, _: &JSObject) -> JSValue {
 }
 fn get_markdown_object(global_this: &JSGlobalObject, _: &JSObject) -> JSValue {
     crate::api::markdown_object::create(global_this)
+}
+fn get_mdx_object(global_this: &JSGlobalObject, _: &JSObject) -> JSValue {
+    crate::api::mdx_object::create(global_this)
 }
 fn get_toml_object(global_this: &JSGlobalObject, _: &JSObject) -> JSValue {
     TOMLObject::create(global_this)

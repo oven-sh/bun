@@ -1104,9 +1104,12 @@ describe.concurrent("a bare entry point", () => {
     expect(stderr).toBe("");
     // Resolving through node_modules used to escape the outdir, giving a path
     // such as "o/_.._/_.._/node_modules/src/index.js".
-    expect(stdout.trim().split("\n").map(p => path.relative(cwd, p).replaceAll(path.sep, "/"))).toEqual([
-      "o/index.js",
-    ]);
+    expect(
+      stdout
+        .trim()
+        .split("\n")
+        .map(p => path.relative(cwd, p).replaceAll(path.sep, "/")),
+    ).toEqual(["o/index.js"]);
     expect(exitCode).toBe(0);
   });
 

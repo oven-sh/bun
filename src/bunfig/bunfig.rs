@@ -952,14 +952,15 @@ impl<'a> Parser<'a> {
 
         if let Some(expr) = json.get(b"jsx") {
             if let Some(value) = expr.as_string(self.bump) {
-                if value == b"react" {
+                // Case-insensitive, like the same key in tsconfig.json.
+                if value.eq_ignore_ascii_case(b"react") {
                     jsx_runtime = api::JsxRuntime::Classic;
-                } else if value == b"solid" {
+                } else if value.eq_ignore_ascii_case(b"solid") {
                     jsx_runtime = api::JsxRuntime::Solid;
-                } else if value == b"react-jsx" {
+                } else if value.eq_ignore_ascii_case(b"react-jsx") {
                     jsx_runtime = api::JsxRuntime::Automatic;
                     jsx_dev = false;
-                } else if value == b"react-jsxDEV" {
+                } else if value.eq_ignore_ascii_case(b"react-jsxdev") {
                     jsx_runtime = api::JsxRuntime::Automatic;
                     jsx_dev = true;
                 } else {

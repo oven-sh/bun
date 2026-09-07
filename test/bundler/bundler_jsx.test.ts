@@ -1363,3 +1363,37 @@ describe("bundler", () => {
     });
   });
 });
+
+// The bunfig `jsx` key takes the tsconfig `compilerOptions.jsx` values, and
+// tsconfig matches them case-insensitively.
+describe.concurrent("jsx/bunfigRuntimeSpelling", () => {
+  const stubs = {
+    "node_modules/react/package.json": `{ "name": "react", "main": "index.js" }`,
+    "node_modules/react/index.js": `export default { createElement() { return "createElement"; } };`,
+    "node_modules/react/jsx-dev-runtime.js": `export function jsxDEV() { return "jsxDEV"; }`,
+    "node_modules/react/jsx-runtime.js": `export function jsx() { return "jsx"; }`,
+    "index.tsx": `import React from "react";\nconsole.log(<a />);`,
+  };
+  test.each([
+    ["react", "createElement"],
+    ["React", "createElement"],
+    ["react-jsxdev", "jsxDEV"],
+    ["react-jsxDEV", "jsxDEV"],
+    ["REACT-JSXDEV", "jsxDEV"],
+    ["react-jsx", "jsx"],
+    ["React-JSX", "jsx"],
+  ])('jsx = "%s"', async (spelling, expected) => {
+    using dir = tempDir("bunfig-jsx-spelling", { ...stubs, "bunfig.toml": `jsx = "${spelling}"\n` });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "index.tsx"],
+      env: { ...bunEnv, NODE_ENV: "development" },
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe(`${expected}\n`);
+    expect(exitCode).toBe(0);
+  });
+});

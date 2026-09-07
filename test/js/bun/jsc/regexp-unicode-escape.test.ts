@@ -7,23 +7,20 @@ import { describe, expect, test } from "bun:test";
 describe("RegExp.escape with supplementary code points", () => {
   // Each low 16-bit value below is a character RegExp.escape has to escape
   // when it stands alone. The full code point is not that character.
-  const passThrough = [
-    ["\u{2002A}", "'*'"],
-    ["\u{20009}", "tab"],
-    ["\u{2002C}", "','"],
-    ["\u{20020}", "space"],
-    ["\u{12000}", "U+2000"],
-    ["\u{1FEFF}", "U+FEFF"],
-  ] as const;
-
-  for (const [s, lowBits] of passThrough) {
-    test(`U+${s.codePointAt(0)!.toString(16).toUpperCase()} (low 16 bits: ${lowBits}) passes through unchanged`, () => {
-      expect(RegExp.escape(s)).toBe(s);
-      for (const flags of ["", "u", "v"]) {
-        expect(new RegExp(RegExp.escape(s), flags).test(s)).toBe(true);
-      }
-    });
-  }
+  test.each([
+    { codePoint: "2002A", lowBits: "'*'" },
+    { codePoint: "20009", lowBits: "tab" },
+    { codePoint: "2002C", lowBits: "','" },
+    { codePoint: "20020", lowBits: "space" },
+    { codePoint: "12000", lowBits: "U+2000" },
+    { codePoint: "1FEFF", lowBits: "U+FEFF" },
+  ])("U+$codePoint (low 16 bits: $lowBits) passes through unchanged", ({ codePoint }) => {
+    const s = String.fromCodePoint(parseInt(codePoint, 16));
+    expect(RegExp.escape(s)).toBe(s);
+    for (const flags of ["", "u", "v"]) {
+      expect(new RegExp(RegExp.escape(s), flags).test(s)).toBe(true);
+    }
+  });
 
   test("escaped CJK Extension B text matches itself under u and v", () => {
     const name = "陳\u{2002A}文";
@@ -74,11 +71,12 @@ describe("RegExp.escape with supplementary code points", () => {
 });
 
 describe("identity escapes in Unicode mode", () => {
-  const rejected = ["\u00e9", "\u4e2d", "\u{1F600}", "\ud83d", "\ude00", "\u2028", "\ufeff"];
-
-  for (const ch of rejected) {
-    const label = [...ch].map(c => "U+" + c.codePointAt(0)!.toString(16).toUpperCase().padStart(4, "0")).join(" ");
-    test(`"\\\\" + ${label} is a SyntaxError with the u and v flags`, () => {
+  // BMP letters, a supplementary character, each lone surrogate half, a
+  // LineTerminator and U+FEFF: none of these is a SyntaxCharacter or '/'.
+  test.each(["00E9", "4E2D", "1F600", "D83D", "DE00", "2028", "FEFF"])(
+    '"\\\\" + U+%s is a SyntaxError with the u and v flags',
+    codePoint => {
+      const ch = String.fromCodePoint(parseInt(codePoint, 16));
       for (const flags of ["u", "v"]) {
         expect(() => new RegExp("\\" + ch, flags)).toThrow(SyntaxError);
         expect(() => new RegExp("[\\" + ch + "]", flags)).toThrow(SyntaxError);
@@ -86,8 +84,8 @@ describe("identity escapes in Unicode mode", () => {
       }
       expect(() => new RegExp("[\\q{\\" + ch + "}]", "v")).toThrow(SyntaxError);
       expect(() => new RegExp("[[a]--[\\" + ch + "]]", "v")).toThrow(SyntaxError);
-    });
-  }
+    },
+  );
 
   test("SyntaxCharacter and '/' are still identity escapes", () => {
     for (const ch of "^$\\.*+?()[]{}|/") {

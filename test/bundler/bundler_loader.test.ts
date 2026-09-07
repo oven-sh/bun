@@ -463,6 +463,7 @@ describe("bundler", async () => {
         onAfterBundle(api) {
           const output = fs.readFileSync(api.outfile);
           expect(() => new TextDecoder("utf-8", { fatal: true }).decode(output)).not.toThrow();
+          expect(output.includes(target === "bun" ? "\\uFFFD" : "\uFFFD")).toBe(true);
         },
         run: { stdout: `${expected} fffd\n${expected}` },
       });

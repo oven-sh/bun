@@ -808,8 +808,9 @@ export function emitRust(n: Ninja, cfg: Config, inputs: RustBuildInputs): string
   }
 
   // ─── Plan ───
-  // cargo resolves the unit graph for exactly `args`/`env`; rerun when the lockfile, any manifest or the toolchain
-  // pin changes (manifests come from the source glob), once the vendored path dependencies exist.
+  // cargo resolves the unit graph for exactly `args`/`env`; rerun when the lockfile, any workspace manifest (from
+  // the source glob), the toolchain pin, or a vendored path dependency's pinned commit (its fetch stamp — those
+  // manifests live under vendor/, outside the glob) changes.
   assert(cfg.rustc !== undefined && cfg.rustSysroot !== undefined, "no rustc found for the pinned toolchain");
   const manifests = inputs.rustSources.filter(p => p.endsWith("Cargo.toml") || p.endsWith("Cargo.lock"));
   const planFile = emitRustPlan(n, cfg, {
@@ -819,8 +820,8 @@ export function emitRust(n: Ninja, cfg: Config, inputs: RustBuildInputs): string
     rustflags,
     args,
     env,
-    inputs: [cfg.cargo, cfg.rustc, ...manifests, resolve(cfg.cwd, "rust-toolchain.toml")],
-    orderOnly: inputs.vendorStamps,
+    inputs: [cfg.cargo, cfg.rustc, ...manifests, resolve(cfg.cwd, "rust-toolchain.toml"), ...inputs.vendorStamps],
+    orderOnly: [],
   });
   n.phony("rust-plan", [planFile]);
 

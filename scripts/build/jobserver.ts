@@ -17,7 +17,7 @@
  */
 
 import { spawnSync } from "node:child_process";
-import { closeSync, constants, existsSync, mkdirSync, openSync, rmSync, writeSync } from "node:fs";
+import { closeSync, constants, existsSync, mkdirSync, openSync, readSync, rmSync, writeSync } from "node:fs";
 import { availableParallelism } from "node:os";
 import { join } from "node:path";
 
@@ -75,4 +75,81 @@ function createSemaphoreJobserver(tokens: number): Jobserver | undefined {
       k32.symbols.CloseHandle(handle);
     },
   };
+}
+
+// ───────────────────────────────────────────────────────────────────────────
+// Client side (rust/run.ts): one token per running rustc.
+//
+// ninja's -j bounds running *edges*, but a pipelined rustc outlives its metadata edge (rust/run.ts),
+// so ninja alone cannot bound how many rustc processes are alive. cargo held one jobserver token per
+// running rustc; run.ts does the same against this pool — acquired before rustc starts, returned when
+// it exits — so live rustc processes plus their extra worker threads stay within the token count.
+// ───────────────────────────────────────────────────────────────────────────
+
+/** A held token; `release` returns it to the pool (idempotent). */
+export interface JobserverToken {
+  release(): void;
+}
+
+/**
+ * Block until a token is available in the pool `CARGO_MAKEFLAGS` names, and take it. Returns undefined
+ * (immediately) when there is no pool — ninja run without the build driver, or a Windows host where the
+ * driver runs under Node — in which case nothing beyond ninja's -j bounds rustc, as before.
+ */
+export function acquireJobserverToken(): JobserverToken | undefined {
+  const auth = /--jobserver-auth=(\S+)/.exec(process.env.CARGO_MAKEFLAGS ?? "")?.[1];
+  if (auth === undefined) return undefined;
+  if (auth.startsWith("fifo:")) {
+    const path = auth.slice("fifo:".length);
+    let fd: number;
+    try {
+      fd = openSync(path, "r+"); // O_RDWR without O_NONBLOCK: the read below blocks until a token arrives
+    } catch {
+      return undefined;
+    }
+    const byte = Buffer.alloc(1);
+    if (readSync(fd, byte, 0, 1, null) !== 1) {
+      closeSync(fd);
+      return undefined;
+    }
+    let held = true;
+    return {
+      release() {
+        if (!held) return;
+        held = false;
+        try {
+          writeSync(fd, byte);
+        } finally {
+          closeSync(fd);
+        }
+      },
+    };
+  }
+  if (process.platform === "win32" && process.versions.bun !== undefined) {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const { dlopen, FFIType, ptr } = require("bun:ffi") as typeof import("bun:ffi");
+    const k32 = dlopen("kernel32.dll", {
+      OpenSemaphoreW: { args: [FFIType.u32, FFIType.i32, FFIType.ptr], returns: FFIType.ptr },
+      WaitForSingleObject: { args: [FFIType.ptr, FFIType.u32], returns: FFIType.u32 },
+      ReleaseSemaphore: { args: [FFIType.ptr, FFIType.i32, FFIType.ptr], returns: FFIType.i32 },
+      CloseHandle: { args: [FFIType.ptr], returns: FFIType.i32 },
+    });
+    const SYNCHRONIZE_MODIFY = 0x00100000 | 0x0002;
+    const handle = k32.symbols.OpenSemaphoreW(SYNCHRONIZE_MODIFY, 0, ptr(Buffer.from(auth + "\0", "utf16le")));
+    if (handle === null || handle === 0) return undefined;
+    if (k32.symbols.WaitForSingleObject(handle, 0xffffffff) !== 0) {
+      k32.symbols.CloseHandle(handle);
+      return undefined;
+    }
+    let held = true;
+    return {
+      release() {
+        if (!held) return;
+        held = false;
+        k32.symbols.ReleaseSemaphore(handle, 1, null);
+        k32.symbols.CloseHandle(handle);
+      },
+    };
+  }
+  return undefined;
 }

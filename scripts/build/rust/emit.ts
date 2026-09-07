@@ -83,7 +83,7 @@ export interface RustPlanEdgeInputs {
   /** `cargo build` args (after `build`) */
   args: string[];
   env: Record<string, string>;
-  /** Cargo.lock, manifests, rust-toolchain.toml, vendored-crate fetch stamps */
+  /** Cargo.lock, workspace manifests, rust-toolchain.toml, vendored-crate fetch stamps */
   inputs: string[];
   orderOnly: string[];
 }

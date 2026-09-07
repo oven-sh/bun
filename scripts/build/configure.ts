@@ -153,8 +153,17 @@ function configureInputs(cwd: string): string[] {
     .filter(f => !excluded.has(f))
     .map(f => resolve(buildDir, f));
   const deps = globSync("deps/*.ts", { cwd: buildDir }).map(f => resolve(buildDir, f));
+  // rust/: units.ts/emit.ts/plan.ts shape the per-crate edges and manifests at configure time (run.ts is build-time
+  // only, but one glob keeps the rule simple).
+  const rust = globSync("rust/*.ts", { cwd: buildDir }).map(f => resolve(buildDir, f));
 
-  return [...scripts, ...deps, resolve(cwd, "scripts", "glob-sources.ts"), resolve(cwd, "package.json")].sort();
+  return [
+    ...scripts,
+    ...deps,
+    ...rust,
+    resolve(cwd, "scripts", "glob-sources.ts"),
+    resolve(cwd, "package.json"),
+  ].sort();
 }
 
 /**

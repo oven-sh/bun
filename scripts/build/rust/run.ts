@@ -5,6 +5,7 @@
  *   run.ts meta         <unit.json>   pipelined lib, first edge: start rustc, return once the .rmeta exists
  *   run.ts codegen      <unit.json>   pipelined lib, second edge: wait for that rustc, return its status (.rlib)
  *   run.ts build-script <unit.json>   run a compiled build script, record its `cargo:` directives
+ *   run.ts monitor      <unit.json>   (internal, detached; started by `meta`) own the rustc process, log its stderr, record its exit
  *
  * `<unit.json>` is the `UnitManifest` configure wrote (units.ts): argv, env, cwd, outputs.
  *
@@ -37,13 +38,16 @@ import {
   statSync,
   utimesSync,
   writeFileSync,
+  writeSync,
 } from "node:fs";
-import { dirname, isAbsolute, join, resolve } from "node:path";
+import { constants as osConstants } from "node:os";
+import { delimiter, dirname, isAbsolute, join, resolve } from "node:path";
+import { acquireJobserverToken, type JobserverToken } from "../jobserver.ts";
 import type { UnitManifest } from "./units.ts";
 
 const [mode, manifestPath] = process.argv.slice(2);
 if (!mode || !manifestPath) {
-  process.stderr.write("usage: run.ts rustc|meta|codegen|build-script <unit.json>\n");
+  process.stderr.write("usage: run.ts rustc|meta|codegen|build-script|monitor <unit.json>\n");
   process.exit(2);
 }
 const unit = JSON.parse(readFileSync(manifestPath, "utf8")) as UnitManifest;
@@ -80,17 +84,21 @@ interface BuildScriptOutput {
 }
 
 function scriptFlags(): { args: string[]; env: Record<string, string> } {
-  if (unit.buildScriptOutput === undefined) return { args: [], env: {} };
-  const out = JSON.parse(readFileSync(unit.buildScriptOutput, "utf8")) as BuildScriptOutput;
   const args: string[] = [];
-  // cargo add_native_deps / add_custom_flags order: -L, -l (lib targets only), -C link-arg, --cfg, --check-cfg.
-  for (const s of out.linkSearch) args.push("-L", s);
+  const readOutput = (path: string) => JSON.parse(readFileSync(path, "utf8")) as BuildScriptOutput;
+  // cargo add_native_deps: `-L` from the package's own build script and from every dependency's, transitively
+  // (search paths are not recorded in rlibs, so whoever links needs them all); then, from the own script only
+  // (add_custom_flags): `-l` (lib targets), `-C link-arg`, `--cfg`, `--check-cfg`, env.
+  const own = unit.buildScriptOutput !== undefined ? readOutput(unit.buildScriptOutput) : undefined;
+  for (const s of own?.linkSearch ?? []) args.push("-L", s);
+  for (const dep of unit.depBuildScriptOutputs) for (const s of readOutput(dep).linkSearch) args.push("-L", s);
+  if (own === undefined) return { args, env: {} };
   if (unit.kind === "lib" || unit.kind === "staticlib" || unit.kind === "proc-macro")
-    for (const l of out.linkLibs) args.push("-l", l);
-  for (const [sel, arg] of out.linkArgs) if (sel === "all") args.push("-C", `link-arg=${arg}`);
-  for (const c of out.cfgs) args.push("--cfg", c);
-  for (const c of out.checkCfgs) args.push("--check-cfg", c);
-  return { args, env: Object.fromEntries(out.env) };
+    for (const l of own.linkLibs) args.push("-l", l);
+  for (const [sel, arg] of own.linkArgs) if (sel === "all") args.push("-C", `link-arg=${arg}`);
+  for (const c of own.cfgs) args.push("--cfg", c);
+  for (const c of own.checkCfgs) args.push("--check-cfg", c);
+  return { args, env: Object.fromEntries(own.env) };
 }
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -152,14 +160,26 @@ function render(line: string): boolean {
 /** The inherited environment with the manifest's variables applied (case-insensitively on Windows, where `Path` and `PATH` are one variable). */
 function mergedEnv(...layers: Record<string, string>[]): Record<string, string> {
   const env = { ...process.env } as Record<string, string>;
-  for (const layer of layers) {
-    for (const [k, v] of Object.entries(layer)) {
-      if (process.platform === "win32")
-        for (const existing of Object.keys(env))
-          if (existing !== k && existing.toUpperCase() === k.toUpperCase()) delete env[existing];
-      env[k] = v;
-    }
-  }
+  const set = (k: string, v: string) => {
+    if (process.platform === "win32")
+      for (const existing of Object.keys(env))
+        if (existing !== k && existing.toUpperCase() === k.toUpperCase()) delete env[existing];
+    env[k] = v;
+  };
+  for (const layer of layers) for (const [k, v] of Object.entries(layer)) set(k, v);
+  // The dynamic-library search path (cargo: host deps dir first, then the inherited value) is composed here, at
+  // build time, rather than stored in the manifest: the inherited part is the user's environment, and a manifest
+  // that captured it would rebuild every crate whenever PATH changed.
+  const { variable, prepend } = unit.libraryPath;
+  const existing =
+    Object.entries(env).find(([k]) =>
+      process.platform === "win32" ? k.toUpperCase() === variable.toUpperCase() : k === variable,
+    )?.[1] ?? "";
+  const inherited = existing.split(delimiter).filter(p => p.length > 0);
+  // macOS: an unset DYLD_FALLBACK_LIBRARY_PATH means $HOME/lib:/usr/local/lib:/usr/lib; keep that meaning when prepending.
+  if (inherited.length === 0 && variable === "DYLD_FALLBACK_LIBRARY_PATH")
+    inherited.push(join(process.env.HOME ?? "", "lib"), "/usr/local/lib", "/usr/lib");
+  set(variable, [...prepend, ...inherited].join(delimiter));
   return env;
 }
 
@@ -172,10 +192,20 @@ function rustcArgv(): { argv: string[]; env: Record<string, string> } {
  * Give finished outputs the current time. Under `-C incremental` rustc hard-links an unchanged artifact (the
  * `.rmeta` in particular) out of the incremental cache, so it carries the mtime of the build that first produced
  * it and ninja would see every dependent as newer than it forever. cargo fingerprints contents and never notices.
+ *
+ * "Current time" is the filesystem's, read back from a file written now — not the process clock: the kernel stamps
+ * files from a coarser clock that trails `Date.now()` by up to a few milliseconds, and a stamp taken from the
+ * process clock can land *after* the mtime of an output a dependent writes moments later, making that dependent
+ * look out of date on the next run.
  */
 function stampOutputs(paths: string[]): void {
-  const now = new Date();
-  for (const p of paths) if (existsSync(p)) utimesSync(p, now, now);
+  const existing = paths.filter(p => existsSync(p));
+  if (existing.length === 0) return;
+  const probe = `${existing[0]}.stamp`;
+  writeFileSync(probe, "");
+  const now = statSync(probe).mtime;
+  rmSync(probe, { force: true });
+  for (const p of existing) utimesSync(p, now, now);
 }
 
 function prepareOutputs(): void {
@@ -187,16 +217,27 @@ function prepareOutputs(): void {
   }
 }
 
+/** Run rustc to completion in this process's slot, holding a jobserver token for its lifetime (see jobserver.ts). */
+function rustcSync(args: string[], env: Record<string, string>): number {
+  const token = acquireJobserverToken();
+  try {
+    const r = spawnSync(rustc, args, { cwd: unit.cwd, env, stdio: "inherit" });
+    if (r.error) throw r.error;
+    return r.status ?? 128 + (osConstants.signals[r.signal as keyof typeof osConstants.signals] ?? 0);
+  } finally {
+    token?.release();
+  }
+}
+
 if (mode === "rustc") {
   prepareOutputs();
   const { argv, env } = rustcArgv();
-  const r = spawnSync(rustc, argv, { cwd: unit.cwd, env, stdio: "inherit" });
-  if (r.error) throw r.error;
-  if (r.status === 0) {
+  const status = rustcSync(argv, env);
+  if (status === 0) {
     stampOutputs(unit.outputs);
     writeDepfile(unit.outputs);
   }
-  process.exit(r.status ?? 1);
+  process.exit(status);
 }
 
 /** Per-unit scratch for the meta/codegen handshake, next to the outputs. */
@@ -224,14 +265,42 @@ function follow(offset: { at: number; buf: string }, onLine: (line: string) => v
   }
 }
 
+function recordedRustcPid(): number | undefined {
+  if (!existsSync(pidPath)) return undefined;
+  const pid = Number(readFileSync(pidPath, "utf8").split(" ")[0]);
+  return pid > 0 ? pid : undefined;
+}
+
+/**
+ * Stop the rustc a previous `meta` left running for this unit — after checking the pid still is that rustc: with
+ * no exit status recorded (monitor killed outright, machine reset) the number may belong to something else by now.
+ */
 function killRecorded(): void {
-  if (!existsSync(pidPath)) return;
-  const pid = Number(readFileSync(pidPath, "utf8"));
-  if (pid > 0) {
-    try {
-      process.kill(pid, "SIGTERM");
-    } catch {}
+  const pid = recordedRustcPid();
+  if (pid === undefined || !isOurRustc(pid)) return;
+  try {
+    process.kill(pid, "SIGTERM");
+  } catch {}
+}
+
+/** Does `pid` name a live rustc compiling this unit? (its command line mentions this crate's metadata hash) */
+function isOurRustc(pid: number): boolean {
+  const needle = unit.args.find(a => a.startsWith("metadata="));
+  let cmdline = "";
+  try {
+    if (process.platform === "linux") cmdline = readFileSync(`/proc/${pid}/cmdline`, "utf8").replace(/\0/g, " ");
+    else if (process.platform === "win32")
+      cmdline =
+        spawnSync(
+          "powershell",
+          ["-NoProfile", "-Command", `(Get-CimInstance Win32_Process -Filter "ProcessId=${pid}").CommandLine`],
+          { encoding: "utf8" },
+        ).stdout ?? "";
+    else cmdline = spawnSync("ps", ["-o", "args=", "-p", String(pid)], { encoding: "utf8" }).stdout ?? "";
+  } catch {
+    return false;
   }
+  return needle !== undefined && cmdline.includes(needle);
 }
 
 if (mode === "meta") {
@@ -241,49 +310,20 @@ if (mode === "meta") {
   rmSync(stateDir, { recursive: true, force: true });
   mkdirSync(stateDir, { recursive: true });
   prepareOutputs();
-  const { argv, env } = rustcArgv();
   writeFileSync(logPath, "");
-  // The monitor owns rustc so its exit status is observed even after this edge has returned. It is a few lines of
-  // node given inline: append rustc's stderr to the log, then publish the exit code atomically.
-  const monitor = `
-    const { spawn } = require("node:child_process"); const fs = require("node:fs");
-    const [logPath, exitPath, pidPath, rmetaPath, cwd, buildPid, rustc, ...argv] = process.argv.slice(1);
-    const log = fs.openSync(logPath, "a");
-    const child = spawn(rustc, argv, { cwd, stdio: ["ignore", "inherit", "pipe"], env: process.env });
-    fs.writeFileSync(pidPath, String(child.pid));
-    child.stderr.on("data", d => fs.writeSync(log, d));
-    const done = code => {
-      // A compilation that dies after handing off its .rmeta must not leave it looking finished: the next build
-      // has to rerun the metadata step (dependents wait on it) rather than recompile underneath its readers.
-      if (code !== 0) fs.rmSync(rmetaPath, { force: true });
-      fs.writeFileSync(exitPath + ".tmp", String(code)); fs.renameSync(exitPath + ".tmp", exitPath); process.exit(0);
-    };
-    child.on("exit", (code, signal) => done(code ?? 128 + 15));
-    child.on("error", e => { fs.writeSync(log, String(e) + "\\n"); done(127); });
-    for (const s of ["SIGTERM", "SIGINT", "SIGHUP"]) process.on(s, () => child.kill("SIGTERM"));
-    // An interrupted or failed build takes its compilations down with it, as cargo does: watch the build driver
-    // (scripts/build.ts exports its pid; it outlives ninja by moments either way) and stop rustc when it is gone.
-    // Not ninja's pid via our ppid: ninja runs commands through \`sh -c\`, and whether that shell execs the command
-    // or stays as an intermediate parent that exits with the meta step differs between shells. With no driver
-    // (ninja run by hand) nothing is watched; a leftover rustc finishes or is stopped by the next meta step.
-    if (buildPid !== "") setInterval(() => { try { process.kill(Number(buildPid), 0); } catch { child.kill("SIGTERM"); } }, 500).unref();
-  `;
-  const child = spawn(
-    process.execPath,
-    [
-      "-e",
-      monitor,
-      logPath,
-      exitPath,
-      pidPath,
-      unit.rmeta,
-      unit.cwd,
-      process.env.BUN_BUILD_DRIVER_PID ?? "",
-      rustc,
-      ...argv,
-    ],
-    { detached: true, stdio: "ignore", env },
-  );
+  // One jobserver token per live rustc (jobserver.ts): taken here, before rustc exists, and handed to the monitor,
+  // which returns it when rustc exits — this edge returning at metadata must not return the token.
+  const token = acquireJobserverToken();
+  // The monitor (`run.ts monitor`, detached) owns rustc so that its exit status is observed after this edge has
+  // returned: it appends rustc's stderr to the log and publishes the exit code atomically.
+  const child = spawn(process.execPath, [...process.execArgv, process.argv[1]!, "monitor", manifestPath], {
+    detached: true,
+    stdio: "ignore",
+    env: { ...process.env, BUN_RUST_MONITOR_HOLDS_TOKEN: token !== undefined ? "1" : "" },
+  });
+  // The token's descriptor/handle is this process's; the monitor re-acquires nothing and instead returns one unit to
+  // the pool on our behalf when rustc ends. Dropping our handle without releasing keeps the count right.
+  void token;
   child.unref();
   const offset = { at: 0, buf: "" };
   let sawMetadata = false;
@@ -339,11 +379,12 @@ if (mode === "meta") {
     // Human diagnostics for the inline run (the manifest asks for JSON, which only `meta` needs).
     const args = argv.filter(a => !a.startsWith("--error-format=") && !a.startsWith("--json="));
     for (const o of [...unit.outputs, unit.rmeta!]) rmSync(o, { force: true });
-    const r = spawnSync(rustc, args, { cwd: unit.cwd, env, stdio: "inherit" });
-    if (r.status === 0) stampOutputs([unit.rmeta!, ...unit.outputs]);
-    process.exit(r.status ?? 1);
+    const status = rustcSync(args, env);
+    if (status === 0) stampOutputs([unit.rmeta!, ...unit.outputs]);
+    process.exit(status);
   };
-  if (!existsSync(stateDir) || !existsSync(pidPath)) compileHere("no code generation in progress");
+  if (!existsSync(stateDir) || (!existsSync(pidPath) && !existsSync(exitPath)))
+    compileHere("no code generation in progress");
   const offset = { at: existsSync(handoffPath) ? Number(readFileSync(handoffPath, "utf8")) : 0, buf: "" };
   const finish = (): never => {
     follow(offset, line => void render(line));
@@ -363,7 +404,7 @@ if (mode === "meta") {
   const tick = () => {
     follow(offset, line => void render(line));
     if (existsSync(exitPath)) finish();
-    const pid = Number(readFileSync(pidPath, "utf8"));
+    const pid = recordedRustcPid() ?? -1;
     let alive = true;
     try {
       process.kill(pid, 0);
@@ -381,11 +422,89 @@ if (mode === "meta") {
     setTimeout(tick, 25);
   };
   tick();
+} else if (mode === "monitor") {
+  runMonitor();
 } else if (mode === "build-script") {
   runBuildScript();
 } else {
   process.stderr.write(`run.ts: unknown mode ${mode}\n`);
   process.exit(2);
+}
+
+// ───────────────────────────────────────────────────────────────────────────
+// monitor: the detached owner of a pipelined rustc (spawned by `meta`)
+// ───────────────────────────────────────────────────────────────────────────
+
+function runMonitor(): void {
+  const holdsToken = process.env.BUN_RUST_MONITOR_HOLDS_TOKEN === "1";
+  delete process.env.BUN_RUST_MONITOR_HOLDS_TOKEN;
+  const { argv, env } = rustcArgv();
+  const log = openSync(logPath, "a");
+  const child = spawn(rustc, argv, { cwd: unit.cwd, stdio: ["ignore", "inherit", "pipe"], env });
+  writeFileSync(pidPath, `${child.pid} ${process.pid}`);
+  child.stderr!.on("data", d => writeSync(log, d));
+  let finished = false;
+  const done = (code: number) => {
+    if (finished) return;
+    finished = true;
+    // A compilation that dies after handing off its .rmeta must not leave it looking finished: the next build has to
+    // rerun the metadata step (dependents wait on it) rather than recompile underneath its readers.
+    if (code !== 0) rmSync(unit.rmeta!, { force: true });
+    writeFileSync(exitPath + ".tmp", String(code));
+    renameSync(exitPath + ".tmp", exitPath);
+    if (holdsToken) returnJobserverToken();
+    process.exit(0);
+  };
+  child.on("exit", (code, signal) =>
+    done(code ?? 128 + (osConstants.signals[signal as keyof typeof osConstants.signals] ?? 0)),
+  );
+  child.on("error", e => {
+    writeSync(log, String(e) + "\n");
+    done(127);
+  });
+  for (const sig of ["SIGTERM", "SIGINT", "SIGHUP"] as const) process.on(sig, () => child.kill("SIGTERM"));
+  // An interrupted or failed build takes its compilations down with it, as cargo does: watch the build driver
+  // (scripts/build.ts exports its pid; it outlives ninja by moments either way) and stop rustc when it is gone. Not
+  // ninja's pid via the meta step's ppid: ninja runs commands through `sh -c`, and whether that shell execs the
+  // command or lingers as an intermediate parent differs between shells. With no driver (ninja run by hand) nothing
+  // is watched; a leftover rustc finishes, or the next `meta` for the unit stops it.
+  const driver = Number(process.env.BUN_BUILD_DRIVER_PID ?? "");
+  if (driver > 0)
+    setInterval(() => {
+      try {
+        process.kill(driver, 0);
+      } catch {
+        child.kill("SIGTERM");
+      }
+    }, 500).unref();
+}
+
+/** Put one token back into the pool the `meta` step took it from (the monitor never held a descriptor of its own). */
+function returnJobserverToken(): void {
+  const auth = /--jobserver-auth=(\S+)/.exec(process.env.CARGO_MAKEFLAGS ?? "")?.[1];
+  if (auth === undefined) return;
+  try {
+    if (auth.startsWith("fifo:")) {
+      const fd = openSync(auth.slice("fifo:".length), "r+");
+      writeSync(fd, "|");
+      closeSync(fd);
+    } else if (process.platform === "win32" && process.versions.bun !== undefined) {
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      const { dlopen, FFIType, ptr } = require("bun:ffi") as typeof import("bun:ffi");
+      const k32 = dlopen("kernel32.dll", {
+        OpenSemaphoreW: { args: [FFIType.u32, FFIType.i32, FFIType.ptr], returns: FFIType.ptr },
+        ReleaseSemaphore: { args: [FFIType.ptr, FFIType.i32, FFIType.ptr], returns: FFIType.i32 },
+        CloseHandle: { args: [FFIType.ptr], returns: FFIType.i32 },
+      });
+      const h = k32.symbols.OpenSemaphoreW(0x00100000 | 0x0002, 0, ptr(Buffer.from(auth + "\0", "utf16le")));
+      if (h) {
+        k32.symbols.ReleaseSemaphore(h, 1, null);
+        k32.symbols.CloseHandle(h);
+      }
+    }
+  } catch {
+    // pool gone (build over): nothing to return it to
+  }
 }
 
 // ───────────────────────────────────────────────────────────────────────────

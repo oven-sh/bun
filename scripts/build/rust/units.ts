@@ -276,6 +276,14 @@ export interface UnitManifest {
   depfile: string | undefined;
   /** The package's build-script `output.json`, when its directives apply to this unit. */
   buildScriptOutput: string | undefined;
+  /** `output.json` of every (transitive) dependency with a build script: their `rustc-link-search` paths apply here too (cargo add_native_deps). */
+  depBuildScriptOutputs: string[];
+  /**
+   * The dynamic-library search path for the process (proc-macro dylibs, anything a build script loads): the variable
+   * for this host and what to put in front of its inherited value — composed by run.ts at build time so that the
+   * user's PATH/LD_LIBRARY_PATH is not frozen into every manifest.
+   */
+  libraryPath: { variable: string; prepend: string[] };
   /** build-script-run only. */
   script:
     | {
@@ -353,17 +361,10 @@ export function unitManifest(ctx: ManifestContext, unit: RustUnit): UnitManifest
   const plan = graph.plan;
   const hostOs = cfg.host.os;
   const isHost = unit.platform === "host";
-  const pathVar = dylibPathVar(hostOs);
-  const sep = hostOs === "windows" ? ";" : ":";
-  // cargo: host deps dir first (proc-macro dylibs a build script or rustc may load), then the inherited value —
-  // on macOS, where an empty DYLD_FALLBACK_LIBRARY_PATH means "$HOME/lib:/usr/local/lib:/usr/lib", that default
-  // is spelled out so prepending does not turn it off.
-  const inherited = (ctx.baseEnv[pathVar] ?? process.env[pathVar] ?? "").split(sep).filter(s => s.length > 0);
-  if (inherited.length === 0 && hostOs === "darwin")
-    inherited.push(join(process.env.HOME ?? "", "lib"), "/usr/local/lib", "/usr/lib");
-  const dylibPath = [graph.hostDeps, ...inherited].join(sep);
+  // cargo: the host deps dir (proc-macro dylibs a build script or rustc may load) goes in front of the inherited search path.
+  const libraryPath = { variable: dylibPathVar(hostOs), prepend: [graph.hostDeps] };
 
-  if (unit.kind === "build-script-run") return buildScriptRunManifest(ctx, unit, dylibPath);
+  if (unit.kind === "build-script-run") return buildScriptRunManifest(ctx, unit, libraryPath);
 
   const args: string[] = [];
   const local = unit.isLocal;
@@ -475,7 +476,6 @@ export function unitManifest(ctx: ManifestContext, unit: RustUnit): UnitManifest
 
   const env: Record<string, string> = {
     ...ctx.baseEnv,
-    [pathVar]: dylibPath,
     ...packageEnv(unit.pkg, ctx.cargo),
     CARGO_CRATE_NAME: unit.crateName,
   };
@@ -497,6 +497,10 @@ export function unitManifest(ctx: ManifestContext, unit: RustUnit): UnitManifest
     depInfo: unit.depInfo,
     depfile: depfilePath(unit),
     buildScriptOutput: unit.buildScript?.output,
+    depBuildScriptOutputs: transitiveLinkInputs(unit)
+      .map(d => d.buildScript?.output)
+      .filter((o): o is string => o !== undefined),
+    libraryPath,
     script: undefined,
   };
 }
@@ -506,7 +510,11 @@ export function depfilePath(unit: RustUnit): string | undefined {
   return unit.depInfo === undefined ? undefined : `${unit.depInfo}.ninja`;
 }
 
-function buildScriptRunManifest(ctx: ManifestContext, unit: RustUnit, dylibPath: string): UnitManifest {
+function buildScriptRunManifest(
+  ctx: ManifestContext,
+  unit: RustUnit,
+  libraryPath: UnitManifest["libraryPath"],
+): UnitManifest {
   const { cfg, graph } = ctx;
   const plan = graph.plan;
   const hostOs = cfg.host.os;
@@ -522,7 +530,6 @@ function buildScriptRunManifest(ctx: ManifestContext, unit: RustUnit, dylibPath:
   const p = unit.profile;
   const env: Record<string, string> = {
     ...ctx.baseEnv,
-    [dylibPathVar(hostOs)]: dylibPath,
     ...packageEnv(unit.pkg, ctx.cargo),
     OUT_DIR: unit.scriptOutDir!,
     NUM_JOBS: String(ctx.jobs),
@@ -592,6 +599,8 @@ function buildScriptRunManifest(ctx: ManifestContext, unit: RustUnit, dylibPath:
     depInfo: undefined,
     depfile: join(unit.outDir, "output.d"),
     buildScriptOutput: undefined,
+    depBuildScriptOutputs: [],
+    libraryPath,
     script: {
       program: compiled.unit.output,
       outDir: unit.scriptOutDir!,

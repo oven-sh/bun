@@ -141,7 +141,8 @@ export function emitRustUnits(n: Ninja, cfg: Config, ctx: ManifestContext, input
     const vars = {
       manifest: quote(unit.manifestPath, hostWin),
       crate: unit.crateName,
-      depfile: quote(manifest.depfile ?? "", hostWin),
+      // a ninja `depfile =` binding, read as a path (never part of a command): no shell quoting
+      depfile: manifest.depfile ?? "",
       what: "",
     };
     // What rebuilds this unit: the artifacts it names with --extern (rmeta for pipelined lib deps, rlib/dylib

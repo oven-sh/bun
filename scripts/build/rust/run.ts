@@ -357,6 +357,24 @@ if (mode === "meta") {
       }
       process.exit(code);
     }
+    // The monitor publishes `exit` for every way rustc can end; if the monitor itself is gone (killed outright, out
+    // of disk while logging) nothing ever will, so fail instead of waiting forever.
+    let monitorAlive = true;
+    try {
+      process.kill(child.pid!, 0);
+    } catch {
+      monitorAlive = false;
+    }
+    if (!monitorAlive) {
+      setTimeout(() => {
+        if (existsSync(exitPath)) return tick();
+        follow(offset, line => void render(line));
+        killRecorded();
+        process.stderr.write(`error: ${unit.crateName}: the rustc monitor process died before reporting a result\n`);
+        process.exit(1);
+      }, 300);
+      return;
+    }
     setTimeout(tick, 15);
   };
   tick();

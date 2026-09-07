@@ -131,6 +131,13 @@ fn text_nodes<'a>(root: Ref<'a>, backwards: bool) -> impl Iterator<Item = Ref<'a
     })
 }
 
+/// Edge whitespace longer than this is not hoisted past this length: every
+/// enclosing inline element re-derives and re-emits its edge runs, so an
+/// unbounded run inside deep nesting would cost depth × run in time and
+/// output. Real edge whitespace is a handful of characters; the excess is
+/// dropped, as the content trim would drop it anyway.
+const MAX_EDGE_WHITESPACE: usize = 128;
+
 /// The leading whitespace run of `node.textContent`, split the way
 /// turndown's `edgeWhitespace` regex does: `ascii` is the initial
 /// `[ \t\r\n]*` run and `rest` is whatever `\s*` follows it (nbsp and
@@ -142,7 +149,7 @@ pub(crate) fn leading_whitespace(node: Ref<'_>, ascii: &mut String, rest: &mut S
     for t in text_nodes(node, false) {
         let t = t.as_text().unwrap().get();
         for c in t.chars() {
-            if !is_js_whitespace(c) {
+            if !is_js_whitespace(c) || ascii.len() + rest.len() >= MAX_EDGE_WHITESPACE {
                 return;
             }
             if rest.is_empty() && is_ascii_ws(c) {
@@ -166,7 +173,7 @@ pub(crate) fn trailing_whitespace(node: Ref<'_>, rest: &mut String, ascii: &mut 
     'outer: for t in text_nodes(node, true) {
         let t = t.as_text().unwrap().get();
         for c in t.chars().rev() {
-            if !is_js_whitespace(c) {
+            if !is_js_whitespace(c) || ascii.len() + rest.len() >= MAX_EDGE_WHITESPACE {
                 saw_non_ws = true;
                 break 'outer;
             }

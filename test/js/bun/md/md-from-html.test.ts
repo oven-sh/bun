@@ -614,6 +614,11 @@ describe("Bun.markdown.fromHTML", () => {
         "<b><b><b><b>x</b></b></b></b><p>y",
         "********x********\n\ny",
       ],
+      [
+        "<a> inside <a> inside <object> leaves the outer link alone",
+        "<a href=/x>o<object><a href=/y>y<a href=/z>z</object>after</a>",
+        "[o[y](/y)[z](/z)after](/x)",
+      ],
       ["<image> is <img>", "<image src=a.png alt=i>", "![i](a.png)"],
       ["first newline after <pre> is dropped, even as a reference", "<pre>&#10;x\n</pre>", "```\nx\n```"],
       ["<textarea> is RCDATA", "<textarea>\n&lt;b&gt;<i></textarea>", "\\<b>\\<i>"],
@@ -722,6 +727,28 @@ describe("Bun.markdown.fromHTML", () => {
       // they nest like anything else and must be capped like anything else.
       ["svg + html void names", () => "<svg>" + repeat("<wbr><textarea><col>", depth / 3) + "<text>deep</text>"],
       ["formatting elements across blocks", () => repeat("<b><i><s><u>", 500) + repeat("<p>x</p>", 2000) + "deep"],
+      // Every implied </li> closes ~500 formatting elements that the next item
+      // would reopen; the reopen budget keeps the node count linear.
+      [
+        "formatting reopened by every list item",
+        () =>
+          "<ul><li>" +
+          Array.from({ length: 500 }, (_, i) => `<b x=${i}>`).join("") +
+          repeat("<li>x", depth) +
+          "<li>deep",
+      ],
+      // Noah's Ark compares attribute lists of same-named formatting elements.
+      [
+        "formatting elements with thousands of attributes",
+        () => repeat("<b " + Array.from({ length: 3000 }, (_, i) => `a${i}=1`).join(" ") + ">", 8) + "deep",
+      ],
+      // Each nested inline element re-derives its edge whitespace.
+      [
+        "long non-ASCII whitespace run inside nested inlines",
+        () => repeat("<span>", 500) + repeat("\u00a0", 200_000) + "deep",
+      ],
+      ["long list with omitted </li> and inline content", () => repeat("<li><a href=x>x</a>", depth) + "<li>deep"],
+      ["stray end tags against many unclosed <p>", () => repeat("<p>x</q>", depth) + "<p>deep"],
     ];
     for (const [name, html] of cases) {
       test(name, () => {

@@ -90,10 +90,17 @@ struct Builder<'a> {
     /// Formatting elements whose end tags can no longer arrive; see
     /// [`Builder::end_tag_unreachable`].
     unreachable: Vec<Ref<'a>>,
+    /// How many more elements reconstruction and the adoption agency may
+    /// clone. Both re-create formatting elements a token did not itself
+    /// carry (`<li><b>…<li>x` reopens every listed `<b>` for each item), so
+    /// without a budget proportional to the input a few kilobytes of setup
+    /// turn each later token into hundreds of nodes. Once spent, formatting
+    /// is simply no longer reopened.
+    clone_budget: usize,
 }
 
 impl<'a> Builder<'a> {
-    fn new(arena: Arena<'a>) -> Self {
+    fn new(arena: Arena<'a>, input_len: usize) -> Self {
         let document = arena.new_document();
         let html = arena.new_element("html", true, &[]);
         document.append(html);
@@ -110,6 +117,7 @@ impl<'a> Builder<'a> {
             in_body: false,
             attr_buf: Vec::new(),
             unreachable: Vec::new(),
+            clone_budget: input_len / 8 + 1024,
         }
     }
 
@@ -284,14 +292,18 @@ impl<'a> Builder<'a> {
         false
     }
 
-    /// Truncates the stack to `index`. Closing a cell or caption this way
-    /// also drops the formatting elements opened inside it.
+    /// Truncates the stack to `index`. Every element popped this way that
+    /// put a marker on the formatting list (cells, captions, `<object>` and
+    /// friends) takes its marker, and the formatting elements opened inside
+    /// it, off again — however it came to be closed, so markers cannot
+    /// accumulate.
     fn pop_to(&mut self, index: usize) {
-        let closes_cell = self.stack[index..]
+        let markers = self.stack[index..]
             .iter()
-            .any(|o| o.is(Tag::Td) || o.is(Tag::Th) || o.is(Tag::Caption));
+            .filter(|o| o.html && has_marker(o.tag))
+            .count();
         self.stack.truncate(index);
-        if closes_cell {
+        for _ in 0..markers {
             self.clear_formatting_to_marker();
         }
     }
@@ -416,9 +428,10 @@ impl<'a> Builder<'a> {
             let Afe::Element(node, tag) = self.afe[j] else {
                 continue;
             };
-            if self.stack.len() >= MAX_TREE_DEPTH {
+            if self.stack.len() >= MAX_TREE_DEPTH || self.clone_budget == 0 {
                 break;
             }
+            self.clone_budget -= 1;
             let clone = self.push_clone(node);
             self.afe[j] = Afe::Element(clone, tag);
         }
@@ -436,6 +449,9 @@ impl<'a> Builder<'a> {
             return true;
         }
         for _ in 0..8 {
+            if self.clone_budget < 4 {
+                return false;
+            }
             // Formatting element: the last one with this name after the
             // last marker.
             let mut fe_afe = None;
@@ -507,6 +523,7 @@ impl<'a> Builder<'a> {
                 let Afe::Element(_, node_tag) = self.afe[node_afe] else {
                     unreachable!()
                 };
+                self.clone_budget = self.clone_budget.saturating_sub(1);
                 let clone = self.arena.clone_element(node);
                 self.afe[node_afe] = Afe::Element(clone, node_tag);
                 self.stack[node_stack].node = clone;
@@ -527,6 +544,7 @@ impl<'a> Builder<'a> {
             }
             // A new element for the formatting element takes over the
             // furthest block's children and goes inside it.
+            self.clone_budget = self.clone_budget.saturating_sub(1);
             let clone = self.arena.clone_element(fe);
             furthest.reparent_children(clone);
             furthest.append(clone);
@@ -782,24 +800,25 @@ impl<'a> Builder<'a> {
                 }
             }
             Tag::A => {
+                // An <a> still listed since the last marker: run the adoption
+                // agency for it, then make sure that element is gone from
+                // both lists.
                 let open_a = self
                     .afe
                     .iter()
                     .rev()
                     .take_while(|e| !matches!(e, Afe::Marker))
-                    .any(|e| matches!(e, Afe::Element(_, Tag::A)));
-                if open_a && self.adoption_agency(Tag::A) {
-                    // Whatever the algorithm left of the old <a> goes too.
-                    if let Some(i) = self
-                        .afe
-                        .iter()
-                        .rposition(|e| matches!(e, Afe::Element(_, Tag::A)))
-                    {
-                        if let Afe::Element(node, _) = self.afe[i]
-                            && let Some(k) = self.stack_position(node)
-                        {
-                            self.stack.remove(k);
-                        }
+                    .find_map(|e| match e {
+                        Afe::Element(n, Tag::A) => Some(*n),
+                        _ => None,
+                    });
+                if let Some(old) = open_a
+                    && self.adoption_agency(Tag::A)
+                {
+                    if let Some(k) = self.stack_position(old) {
+                        self.stack.remove(k);
+                    }
+                    if let Some(i) = self.afe_position(old) {
                         self.afe.remove(i);
                     }
                 }
@@ -943,9 +962,7 @@ impl<'a> Builder<'a> {
                 self.close_in_scope(&[tag], &[]);
             }
             Tag::Applet | Tag::Marquee | Tag::Object => {
-                if self.close_in_scope(&[tag], &[]) {
-                    self.clear_formatting_to_marker();
-                }
+                self.close_in_scope(&[tag], &[]);
             }
             _ if is_formatting(tag) => {
                 if !self.adoption_agency(tag) {
@@ -984,7 +1001,11 @@ impl<'a> Builder<'a> {
             return out;
         }
         let all = wanted[0] == "*";
-        for a in el.attributes() {
+        for a in el
+            .attributes()
+            .iter()
+            .take(if all { MAX_KEPT_ATTRS } else { usize::MAX })
+        {
             let name = a.name();
             let name: &'a str = if all {
                 self.arena.alloc_str(&name)
@@ -1002,10 +1023,17 @@ impl<'a> Builder<'a> {
     }
 }
 
+/// Formatting elements keep at most this many attributes (all of them, in
+/// practice); the Noah's Ark comparison below is then bounded too.
+const MAX_KEPT_ATTRS: usize = 32;
+
+/// Attribute lists written the same way (same order): what the Noah's Ark
+/// clause exists to catch, at linear cost.
 fn same_attrs(a: &[Attr<'_>], b: &[Attr<'_>]) -> bool {
     a.len() == b.len()
         && a.iter()
-            .all(|x| b.iter().any(|y| x.name == y.name && x.value == y.value))
+            .zip(b)
+            .all(|(x, y)| x.name == y.name && x.value == y.value)
 }
 
 #[inline]
@@ -1035,6 +1063,14 @@ fn is_table_part(tag: Tag) -> bool {
             | Tag::Script
             | Tag::Style
             | Tag::Template
+    )
+}
+
+/// Elements whose start tag pushes a marker onto the formatting list.
+fn has_marker(tag: Tag) -> bool {
+    matches!(
+        tag,
+        Tag::Td | Tag::Th | Tag::Caption | Tag::Applet | Tag::Marquee | Tag::Object
     )
 }
 
@@ -1229,7 +1265,7 @@ pub(crate) fn parse<'a>(html: &[u8], arena: Arena<'a>) -> Ref<'a> {
     // Input-stream preprocessing: a leading BOM is not content.
     let html = html.strip_prefix(b"\xEF\xBB\xBF").unwrap_or(html);
 
-    let builder = RefCell::new(Builder::new(arena));
+    let builder = RefCell::new(Builder::new(arena, html.len()));
     let b = &builder;
 
     let on_element = |el: &mut Element<'_, '_>| -> lol_html::HandlerResult {

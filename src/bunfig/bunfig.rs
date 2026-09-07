@@ -969,8 +969,6 @@ impl<'a> Parser<'a> {
             if let Some(value) = expr.as_string(self.bump) {
                 if value == b"react" {
                     jsx_runtime = api::JsxRuntime::Classic;
-                } else if value == b"solid" {
-                    jsx_runtime = api::JsxRuntime::Solid;
                 } else if value == b"react-jsx" {
                     jsx_runtime = api::JsxRuntime::Automatic;
                     jsx_dev = false;
@@ -980,7 +978,7 @@ impl<'a> Parser<'a> {
                 } else {
                     self.add_error(
                         expr.loc,
-                        b"Invalid jsx runtime, only 'react', 'solid', 'react-jsx', and 'react-jsxDEV' are supported",
+                        b"Invalid jsx runtime, only 'react', 'react-jsx', and 'react-jsxDEV' are supported",
                     )?;
                 }
             }

@@ -234,6 +234,12 @@ pub struct PendingValue {
     /// replacing the `Value` this `PendingValue` lives in — so callers install
     /// their `promise`/`on_receive_value` first and touch nothing afterwards.
     pub(crate) on_start_buffering: Option<fn(ctx: NonNull<c_void>)>,
+    /// A consumer that must have the whole body synchronously (a static
+    /// route). A producer that can finish without the event loop (HTMLRewriter
+    /// over input it already holds) settles the body from inside the call,
+    /// replacing the `Value` this lives in, with the same caution as
+    /// `on_start_buffering`; otherwise the body stays `Locked`.
+    pub(crate) on_sync_consumer: Option<fn(ctx: NonNull<c_void>)>,
     pub(crate) on_start_streaming: Option<fn(ctx: NonNull<c_void>) -> DrainResult>,
     pub(crate) on_readable_stream_available:
         Option<fn(ctx: NonNull<c_void>, global_this: &JSGlobalObject, readable: ReadableStream)>,
@@ -266,6 +272,7 @@ impl Default for PendingValue {
             task: None,
             on_receive_value: None,
             on_start_buffering: None,
+            on_sync_consumer: None,
             on_start_streaming: None,
             on_readable_stream_available: None,
             producer: streams::SourceHandle::None,
@@ -281,6 +288,7 @@ impl PendingValue {
     /// hooks go stale when the producer (e.g. `FetchTasklet`) is freed.
     fn detach_producer(&mut self) {
         self.on_start_buffering = None;
+        self.on_sync_consumer = None;
         self.on_start_streaming = None;
         self.on_readable_stream_available = None;
         if self.on_receive_value.is_none() {
@@ -710,6 +718,21 @@ impl Value {
         if let Some(blob) = locked.to_any_blob() {
             *self = Value::from(blob);
         }
+    }
+
+    /// See [`PendingValue::on_sync_consumer`]: lets a `Locked` body's producer
+    /// settle it now if it can do so without the event loop. `self` may have
+    /// been replaced on return, or may still be `Locked`.
+    pub(crate) fn buffer_sync_if_possible(&mut self) {
+        let Value::Locked(locked) = self else {
+            return;
+        };
+        let Some((on_sync_consumer, task)) = locked.on_sync_consumer.take().zip(locked.task)
+        else {
+            return;
+        };
+        // Last use of `locked`: the producer may replace `*self` in here.
+        on_sync_consumer(task);
     }
 
     pub(crate) fn size(&mut self) -> blob::SizeType {

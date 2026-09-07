@@ -700,6 +700,9 @@ pub struct RewriterPipe {
     /// Input bytes fed to lol-html since the pipe last yielded to the event
     /// loop ([`Self::run_background_pull`] resets it).
     fed_since_yield: Cell<usize>,
+    /// A consumer needed the whole output synchronously
+    /// ([`Self::on_sync_consumer`]): no per-turn budget from there on.
+    unpaced: Cell<bool>,
     /// A [`Self::run_background_pull`] task is in the event-loop queue.
     background_pull_queued: Cell<bool>,
     /// That task should pull the input when it runs; cleared when a reader
@@ -974,10 +977,18 @@ impl RewriterPipe {
         self.output_observed() && self.unread_output() > Self::HIGH_WATER_MARK
     }
 
+    /// How much more input this turn may feed lol-html.
+    fn budget_left(&self) -> usize {
+        if self.unpaced.get() {
+            return usize::MAX;
+        }
+        Self::INPUT_CHUNK.saturating_sub(self.fed_since_yield.get())
+    }
+
     /// This turn has fed its [`Self::INPUT_CHUNK`]; more input waits for the
     /// next one ([`Self::schedule_background_pull`]).
     fn budget_spent(&self) -> bool {
-        self.fed_since_yield.get() >= Self::INPUT_CHUNK
+        self.budget_left() == 0
     }
 
     fn init(
@@ -999,6 +1010,7 @@ impl RewriterPipe {
             held_body: JsCell::new(None),
             held_body_offset: Cell::new(0),
             fed_since_yield: Cell::new(0),
+            unpaced: Cell::new(false),
             background_pull_queued: Cell::new(false),
             background_pull_armed: Cell::new(false),
             output: Cell::new(None),
@@ -1058,6 +1070,7 @@ impl RewriterPipe {
                 let mut pv = webcore::body::PendingValue::new(global);
                 pv.task = Some(pipe.cast::<c_void>());
                 pv.on_start_buffering = Some(RewriterPipe::on_start_buffering);
+                pv.on_sync_consumer = Some(RewriterPipe::on_sync_consumer);
                 pv.on_start_streaming = Some(RewriterPipe::on_start_streaming);
                 pv.on_readable_stream_available = Some(RewriterPipe::on_readable_stream_available);
                 pv.producer = SourceHandle::HTMLRewriter(this);
@@ -1275,6 +1288,29 @@ impl RewriterPipe {
         this.resume();
     }
 
+    /// `PendingValue::on_sync_consumer` — a static route needs the whole
+    /// output now. With all of the input already held (an in-memory body, or
+    /// a stream that has already ended), run the rest of the rewrite unpaced,
+    /// as `transform()` does for a small body. A still-streaming input, an
+    /// output stream that already exists, or a suspended handler leaves the
+    /// body pending, and the caller reports that as it always has.
+    fn on_sync_consumer(ctx: NonNull<c_void>) {
+        // Same liveness argument as `on_start_streaming`.
+        let this = bun_ptr::BackRef::from(ctx.cast::<RewriterPipe>());
+        if this.done.get()
+            || this.phase.get() == RewritePhase::Done
+            || this.driving.get()
+            || this.is_suspended()
+            || !this.input_ended.get()
+            || this.output.get().is_some()
+        {
+            return;
+        }
+        let _pin = this.pin();
+        this.unpaced.set(true);
+        this.drain_pending_input();
+    }
+
     /// Hold a ref on the pipe across an externally-entered call whose work
     /// (user handlers, body resolution) can drop the last GC path to the
     /// Transform cell and sweep it, releasing the cell's ref mid-call. If the
@@ -1441,12 +1477,12 @@ impl RewriterPipe {
         }
         // Feed what is left of this turn's budget; the rest waits for the next
         // turn.
-        if self.budget_spent() {
+        let budget = self.budget_left();
+        if budget == 0 {
             self.hold_input(bytes);
             self.schedule_background_pull();
             return held(len);
         }
-        let budget = Self::INPUT_CHUNK - self.fed_since_yield.get();
         let (now, later) = bytes.split_at(budget.min(bytes.len()));
         let fed = self.feed(now);
         // `feed` ran user JS; a handler may have cancelled the output reader
@@ -1510,8 +1546,8 @@ impl RewriterPipe {
     /// split at the slice end, the tail after a suspension), so the slice is
     /// spent either way.
     fn feed_held_input(&self) -> bool {
-        debug_assert!(!self.budget_spent());
-        let budget = Self::INPUT_CHUNK - self.fed_since_yield.get();
+        let budget = self.budget_left();
+        debug_assert!(budget > 0);
         let terminal = |this: &Self| this.done.get() || this.phase.get() == RewritePhase::Done;
         if let Some(body) = self.held_body.take() {
             let bytes = body.0.slice();

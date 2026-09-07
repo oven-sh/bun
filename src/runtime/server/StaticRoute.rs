@@ -156,6 +156,11 @@ impl StaticRoute {
                 )));
             }
 
+            // A pending body whose producer can finish without the event loop
+            // (an HTMLRewriter transform over an in-memory body) is buffered
+            // now; this may replace the body value, so fetch it again after.
+            response.get_body_value().buffer_sync_if_possible();
+
             // The user may want to pass in the same Response object multiple endpoints
             // Let's let them do that.
             let body_value = response.get_body_value();

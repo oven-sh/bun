@@ -2251,6 +2251,22 @@ describe("streamed input pacing", () => {
     expect(seen()).toBe(count);
   });
 
+  // A static route needs its bytes when it is registered. A transform that
+  // already holds all of its input finishes there and then, however large;
+  // one still reading a streamed input is rejected as not buffered, as before.
+  it("a large in-memory transform can be registered as a static route", async () => {
+    const { res, seen } = transformInput(input);
+    expect(seen()).toBeLessThan(count);
+    await using server = Bun.serve({ port: 0, routes: { "/": res }, fetch: () => new Response("no route") });
+    expect(seen()).toBe(count);
+    const served = await fetch(server.url);
+    expect(served.headers.get("content-length")).toBe(String(rewritten.length));
+    expect(await served.text()).toBe(rewritten);
+    expect(() => Bun.serve({ port: 0, routes: { "/": transformInput().res }, fetch: () => new Response() })).toThrow(
+      "Body must be fully buffered before it can be used in a static route",
+    );
+  });
+
   // The chunk boundary falls inside a start tag (`<p` | ` class...`) and, with
   // an async handler, the rewrite also suspends inside the first chunk.
   it.each(["sync", "async"])("a tag split across two chunks is rewritten whole (%s handler)", async mode => {

@@ -217,12 +217,6 @@ function runtimeInitializers(cfg: Config): string[] {
     // Rust std's aarch64 outline-atomics (LSE) probe.
     initializers.push("_R*3std3sys18configure_builtins13RUST_LSE_INIT*");
   }
-  if (cfg.arm64 && gnu) {
-    // libgcc >= 14 (-static-libgcc): the unwinder saves/disables SME state (__arm_za_disable),
-    // whose __aarch64_have_sme flag is set by this constructor. The CI sysroot's gcc-13 libgcc
-    // predates it; a host toolchain build on a newer distro has it.
-    initializers.push("init_have_sme");
-  }
   if (cfg.arm64 && android) {
     // compiler-rt's outline-atomics probe and bionic's cpu-feature init.
     initializers.push("init_have_lse_atomics", "__init_cpu_features");

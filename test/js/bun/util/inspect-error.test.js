@@ -456,3 +456,51 @@ describe.concurrent("AggregateError whose errors cannot be walked", () => {
     expect(exitCode).toBe(1);
   });
 });
+
+describe.concurrent("an error a bun builtin created with no user frame below it", () => {
+  // `node:worker_threads` builds the value it gives `worker.on("error")` inside
+  // the builtin, from a native event dispatch, so every frame of that error is
+  // in `node:worker_threads`. The printer hides such frames from the code
+  // frame, so there is no source to excerpt and none may be printed.
+  const codeFrameLines = text => text.split("\n").filter(line => /^\s*\d+ \|/.test(line));
+
+  test("prints no code frame when the worker entry point does not resolve", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const { Worker } = require("node:worker_threads");
+         const w = new Worker("/does-not-resolve-xyz.mjs");
+         w.on("error", e => console.log(Bun.inspect(e)));`,
+      ],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(codeFrameLines(stdout)).toEqual([]);
+    expect(stdout).toContain("Cannot find module '/does-not-resolve-xyz.mjs'");
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+  });
+
+  test("prints no code frame when the worker throws a value that cannot be cloned", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const { Worker } = require("node:worker_threads");
+         const w = new Worker("throw Symbol('uncloneable')", { eval: true });
+         w.on("error", e => console.log(Bun.inspect(e)));`,
+      ],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(codeFrameLines(stdout)).toEqual([]);
+    expect(stdout).toContain("Symbol(uncloneable)");
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+  });
+});

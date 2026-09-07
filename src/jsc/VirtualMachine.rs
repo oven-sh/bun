@@ -5832,6 +5832,14 @@ impl VirtualMachine {
             enable_source_code_preview.set(false);
         }
 
+        // Every frame is one of bun's own modules, so `top` is still frame 0 and
+        // names a builtin. `collect_source_lines` reads that frame's JSC source
+        // provider, which holds the bundled builtin text, so the fallback below
+        // has to skip it the way the `code` fetch already does.
+        let top_frame_is_bun_module = self.hide_bun_stackframes
+            && (frames[top].source_url.starts_with_ascii(b"bun:")
+                || frames[top].source_url.starts_with_ascii(b"node:"));
+
         let already_remapped = frames[top].remapped;
         let resolved = {
             let top_source_url = frames[top].source_url.to_utf8();
@@ -5916,7 +5924,10 @@ impl VirtualMachine {
                 original_source.source_code.into_utf8()
             };
 
-            if enable_source_code_preview.get() && code.slice().is_empty() {
+            if enable_source_code_preview.get()
+                && !top_frame_is_bun_module
+                && code.slice().is_empty()
+            {
                 exception.collect_source_lines(error_instance, global);
             }
 
@@ -5960,7 +5971,7 @@ impl VirtualMachine {
             if !code.slice().is_empty() {
                 *source_code_slice = Some(code);
             }
-        } else if enable_source_code_preview.get() {
+        } else if enable_source_code_preview.get() && !top_frame_is_bun_module {
             exception.collect_source_lines(error_instance, global);
         }
 

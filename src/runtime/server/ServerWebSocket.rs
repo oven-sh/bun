@@ -156,14 +156,10 @@ pub mod js {
 /// RFC 6455 §5.5: control frame payloads are at most 125 bytes.
 const MAX_CONTROL_FRAME_PAYLOAD: usize = 125;
 
-/// RFC 6455 §5.5.1: a close frame carries a 2-byte status code, so the
-/// reason is at most 123 bytes.
+/// RFC 6455 §5.5.1: the close payload is a 2-byte code plus the reason.
 const MAX_CLOSE_REASON_BYTES: usize = MAX_CONTROL_FRAME_PAYLOAD - 2;
 
-/// Cuts a close reason to `MAX_CLOSE_REASON_BYTES` on a UTF-8 character
-/// boundary. A cut inside a multi-byte sequence puts invalid UTF-8 on the
-/// wire, and the peer fails the connection with 1007 instead of seeing the
-/// code the server sent.
+/// Truncates to `MAX_CLOSE_REASON_BYTES` on a UTF-8 character boundary.
 fn clamp_close_reason(reason: &[u8]) -> &[u8] {
     if reason.len() <= MAX_CLOSE_REASON_BYTES {
         return reason;

@@ -75,6 +75,7 @@ impl UntrustedCommand {
         // only path to the singleton for the rest of this fn (same as the
         // original `pm`).
         let pm: &mut PackageManager = unsafe { &mut *pm_raw };
+        pm.load_trusted_dependencies_from_package_json()?;
         let log: &mut bun_ast::Log = pm.log_mut();
         let lockfile: &Lockfile = &pm.lockfile;
 
@@ -272,6 +273,9 @@ impl TrustCommand {
                 meta.set_has_install_script(false);
             }
         }
+        // SAFETY: `pm_raw` singleton; `load_lockfile` is not dereferenced
+        // while this runs.
+        unsafe { (*pm_raw).load_trusted_dependencies_from_package_json()? };
 
         let mut packages_to_trust: Vec<&[u8]> = Vec::with_capacity(args[2..].len());
         for arg in &args[2..] {

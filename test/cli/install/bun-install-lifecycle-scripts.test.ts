@@ -732,6 +732,147 @@ test.concurrent(
   },
 );
 
+describe.concurrent("bun pm reads trustedDependencies from package.json, not a stale bun.lock", () => {
+  async function run(ctx: TestCtx, cmd: string[]) {
+    await using proc = spawn({
+      cmd: [bunExe(), ...cmd],
+      cwd: ctx.packageDir,
+      stdout: "pipe",
+      stderr: "pipe",
+      stdin: "ignore",
+      env: ctx.env,
+    });
+    const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { out, err, exitCode };
+  }
+
+  for (const linker of ["hoisted", "isolated"] as const) {
+    // A `--frozen-lockfile` install after removing a name from package.json
+    // `trustedDependencies` blocks the scripts but leaves the name in bun.lock.
+    test(`trust removed from package.json, frozen install (${linker})`, async () => {
+      using ctx = await setupTest();
+      const { packageDir, packageJson } = ctx;
+      await verdaccio.writeBunfig(packageDir, { linker });
+      const marker = join(packageDir, "node_modules", "all-lifecycle-scripts", "postinstall.txt");
+      const dependencies = { "all-lifecycle-scripts": "1.0.0" };
+
+      await writeFile(
+        packageJson,
+        JSON.stringify({ name: "foo", dependencies, trustedDependencies: ["all-lifecycle-scripts"] }),
+      );
+      let { out, err, exitCode } = await run(ctx, ["install"]);
+      expect(err).toContain("Saved lockfile");
+      expect(err).not.toContain("error:");
+      expect(await exists(marker)).toBeTrue();
+      expect(exitCode).toBe(0);
+
+      await writeFile(packageJson, JSON.stringify({ name: "foo", dependencies }));
+      await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
+      ({ out, err, exitCode } = await run(ctx, ["install", "--frozen-lockfile"]));
+      expect(err).not.toContain("error:");
+      expect(await exists(marker)).toBeFalse();
+      expect(await file(join(packageDir, "bun.lock")).text()).toContain('"trustedDependencies"');
+      expect(exitCode).toBe(0);
+
+      ({ out, err, exitCode } = await run(ctx, ["pm", "untrusted"]));
+      expect(err).not.toContain("error:");
+      expect(out).toContain("./node_modules/all-lifecycle-scripts @1.0.0".replaceAll("/", sep));
+      expect(exitCode).toBe(0);
+
+      ({ out, err, exitCode } = await run(ctx, ["pm", "ls", "--trusted"]));
+      expect(err).not.toContain("error:");
+      expect(out).not.toContain("all-lifecycle-scripts");
+      expect(exitCode).toBe(0);
+
+      ({ out, err, exitCode } = await run(ctx, ["pm", "ls", "--all", "--trusted"]));
+      expect(err).not.toContain("error:");
+      expect(out).not.toContain("all-lifecycle-scripts");
+      expect(exitCode).toBe(0);
+
+      ({ out, err, exitCode } = await run(ctx, ["pm", "trust", "all-lifecycle-scripts"]));
+      expect(err).not.toContain("error:");
+      expect(out).toContain("3 scripts ran across 1 package");
+      expect(exitCode).toBe(0);
+      expect(await exists(marker)).toBeTrue();
+      expect(await file(packageJson).json()).toEqual({
+        name: "foo",
+        dependencies,
+        trustedDependencies: ["all-lifecycle-scripts"],
+      });
+
+      ({ out, err, exitCode } = await run(ctx, ["pm", "ls", "--trusted"]));
+      expect(err).not.toContain("error:");
+      expect(out).toContain("all-lifecycle-scripts@1.0.0");
+      expect(exitCode).toBe(0);
+    });
+  }
+
+  // The reverse: package.json trusts a name that bun.lock does not list.
+  test("trust added to package.json after install", async () => {
+    using ctx = await setupTest();
+    const { packageDir, packageJson } = ctx;
+    const dependencies = { "uses-what-bin": "1.0.0" };
+
+    await writeFile(packageJson, JSON.stringify({ name: "foo", dependencies }));
+    let { out, err, exitCode } = await run(ctx, ["install"]);
+    expect(err).toContain("Saved lockfile");
+    expect(err).not.toContain("error:");
+    expect(out).toContain("Blocked 1 postinstall");
+    expect(exitCode).toBe(0);
+
+    await writeFile(packageJson, JSON.stringify({ name: "foo", dependencies, trustedDependencies: ["uses-what-bin"] }));
+    expect(await file(join(packageDir, "bun.lock")).text()).not.toContain('"trustedDependencies"');
+
+    ({ out, err, exitCode } = await run(ctx, ["pm", "untrusted"]));
+    expect(err).not.toContain("error:");
+    expect(out).toContain("Found 0 untrusted dependencies with scripts");
+    expect(exitCode).toBe(0);
+
+    ({ out, err, exitCode } = await run(ctx, ["pm", "ls", "--trusted"]));
+    expect(err).not.toContain("error:");
+    expect(out).toContain("uses-what-bin@1.0.0");
+    expect(exitCode).toBe(0);
+  });
+
+  // Workspace package.json files count too, like they do for `bun install`.
+  test("trust declared by a workspace package.json", async () => {
+    using ctx = await setupTest();
+    const { packageDir, packageJson } = ctx;
+    const marker = join(packageDir, "node_modules", "uses-what-bin", "what-bin.txt");
+    const workspaceJson = join(packageDir, "packages", "a", "package.json");
+    await mkdir(join(packageDir, "packages", "a"), { recursive: true });
+
+    await writeFile(packageJson, JSON.stringify({ name: "foo", workspaces: ["packages/*"] }));
+    await writeFile(
+      workspaceJson,
+      JSON.stringify({ name: "a", dependencies: { "uses-what-bin": "1.0.0" }, trustedDependencies: ["uses-what-bin"] }),
+    );
+    let { out, err, exitCode } = await run(ctx, ["install"]);
+    expect(err).toContain("Saved lockfile");
+    expect(err).not.toContain("error:");
+    expect(await exists(marker)).toBeTrue();
+    expect(await file(join(packageDir, "bun.lock")).text()).toContain('"trustedDependencies"');
+    expect(exitCode).toBe(0);
+
+    ({ out, err, exitCode } = await run(ctx, ["pm", "ls", "--all", "--trusted"]));
+    expect(err).not.toContain("error:");
+    expect(out).toContain("uses-what-bin@1.0.0");
+    expect(exitCode).toBe(0);
+
+    await writeFile(workspaceJson, JSON.stringify({ name: "a", dependencies: { "uses-what-bin": "1.0.0" } }));
+
+    ({ out, err, exitCode } = await run(ctx, ["pm", "untrusted"]));
+    expect(err).not.toContain("error:");
+    expect(out).toContain("./node_modules/uses-what-bin @1.0.0".replaceAll("/", sep));
+    expect(exitCode).toBe(0);
+
+    ({ out, err, exitCode } = await run(ctx, ["pm", "ls", "--all", "--trusted"]));
+    expect(err).not.toContain("error:");
+    expect(out).not.toContain("uses-what-bin");
+    expect(exitCode).toBe(0);
+  });
+});
+
 // waiter thread is only a thing on Linux.
 for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
   describe.concurrent("lifecycle scripts" + (forceWaiterThread ? " (waiter thread)" : ""), async () => {

@@ -844,6 +844,67 @@ impl PackageManager {
         }
     }
 
+    /// `bun install` decides trust from the `trustedDependencies` in package.json
+    /// (the root and every workspace). `bun.lock` only records the set from its
+    /// last save, and `--frozen-lockfile` never rewrites it. Call this after
+    /// `load_lockfile_from_cwd` so `bun pm` sees the set the installer used.
+    pub fn load_trusted_dependencies_from_package_json(&mut self) -> Result<(), Error> {
+        use self::workspace_package_json_cache::{GetJSONOptions, GetResult};
+
+        let mut paths: Vec<Box<[u8]>> =
+            Vec::with_capacity(1 + self.lockfile.workspace_paths.count());
+        // SAFETY: `ROOT_PACKAGE_JSON_PATH` is written once in `init` on this
+        // thread and only read after.
+        paths.push(Box::from(
+            unsafe { ROOT_PACKAGE_JSON_PATH.read() }.as_bytes(),
+        ));
+        let string_bytes = self.lockfile.buffers.string_bytes.as_slice();
+        for workspace_path in self.lockfile.workspace_paths.values() {
+            let mut path = bun_paths::AutoAbsPath::init_top_level_dir();
+            path.append(workspace_path.slice(string_bytes))?;
+            path.append(b"package.json")?;
+            paths.push(Box::from(path.slice()));
+        }
+
+        let log = self.log_mut();
+        let bump = bun_alloc::Arena::new();
+        let mut trusted: Option<crate::lockfile_real::TrustedDependenciesSet> = None;
+        for (i, path) in paths.iter().enumerate() {
+            let failed = match self.workspace_package_json_cache.get_with_path(
+                log,
+                path,
+                GetJSONOptions::default(),
+            ) {
+                GetResult::Entry(entry) => match Package::append_trusted_dependencies(
+                    &mut trusted,
+                    &bump,
+                    log,
+                    &entry.source,
+                    &entry.root,
+                ) {
+                    Ok(()) => continue,
+                    // `log` carries the message.
+                    Err(_) => None,
+                },
+                // A workspace that bun.lock lists can be gone from disk. The
+                // installer skips those too.
+                GetResult::ReadErr(Error::Sys(
+                    bun_errno::SystemErrno::ENOENT | bun_errno::SystemErrno::ENOTDIR,
+                )) if i > 0 => continue,
+                GetResult::ReadErr(err) => Some(("read", err)),
+                GetResult::ParseErr(err) => Some(("parse", err)),
+            };
+            let _ = log.print(std::ptr::from_mut(Output::error_writer()));
+            if let Some((verb, err)) = failed {
+                Output::err(err, "failed to {} '{}'", (verb, bstr::BStr::new(&**path)));
+            }
+            Global::exit(1);
+        }
+
+        self.lockfile.trusted_dependencies = trusted;
+        Ok(())
+    }
+
     pub(crate) fn crash(&mut self) -> ! {
         if self.options.log_level != package_manager_options::LogLevel::Silent {
             // SAFETY: `self.log` points to a separate `bun_ast::Log` allocation (borrowed from

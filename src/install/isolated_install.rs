@@ -2104,9 +2104,17 @@ pub(crate) fn install_isolated_packages(
         installer
             .manager_mut()
             .increment_pending_tasks(u32::try_from(store.entries.len()).expect("int cast"));
-        // Scratch for reading each existing entry's package.json, reused across entries.
-        let mut package_json_buf: Vec<u8> = Vec::new();
-        let mut expected_version_buf: Vec<u8> = Vec::new();
+
+        // npm entries whose existing store directory holds the package the
+        // lockfile expects. Left empty when every project-local entry is
+        // about to be (re)installed regardless.
+        let verified_npm_entries =
+            if installer.manager().options.enable.force_install() || is_new_bun_modules {
+                DynamicBitSet::init_empty(store.entries.len())?
+            } else {
+                installer.verify_npm_store_entries()?
+            };
+
         for _entry_id in 0..store.entries.len() {
             let entry_id = store::entry::Id::from(u32::try_from(_entry_id).expect("int cast"));
 
@@ -2239,45 +2247,31 @@ pub(crate) fn install_isolated_packages(
                                     .ok()
                                     .unwrap_or(false);
                             }
+                            // An npm package always has a package.json, and
+                            // `verify_npm_store_entries` read its name and version
+                            // back above, as the hoisted linker does for
+                            // `node_modules/<pkg>`. An entry that holds some other
+                            // package's files (an interrupted or foreign write) is
+                            // rebuilt instead of trusted because it exists.
+                            if pkg_res_tag == ResolutionTag::Npm
+                                && !verified_npm_entries.is_set(entry_id.get() as usize)
+                            {
+                                break 'needs_install true;
+                            }
                             installer.append_real_store_path(&mut store_path, entry_id, installer::Which::Final);
-                            // Capture the length instead of a `ResetScope` so
-                            // `store_path` stays unborrowed.
-                            let scope_for_patch_tag_path = store_path.len();
-                            let exists = if pkg_res_tag == ResolutionTag::Npm {
-                                // An npm package always has a package.json. Read the
-                                // name and version back out of it, as the hoisted
-                                // linker does for `node_modules/<pkg>`, so an entry
-                                // holding some other package's files (an interrupted
-                                // or foreign write) is rebuilt instead of trusted
-                                // because the file exists.
-                                store_path.append(b"package.json").assume_ok();
-                                expected_version_buf.clear();
-                                write!(
-                                    &mut expected_version_buf,
-                                    "{}",
-                                    pkg_res.npm().version.fmt(string_buf)
-                                )
-                                .expect("formatting into a Vec is infallible");
-                                crate::package_install::installed_package_json_at_path_matches(
-                                    store_path.slice_z(),
-                                    &mut package_json_buf,
-                                    pkg_name.slice(string_buf),
-                                    &expected_version_buf,
-                                )
-                            } else {
-                                // in other cases there is probably a package.json
-                                // too, but the directory is the safer signal.
-                                sys::exists_z(store_path.slice_z())
-                            };
 
                             break 'needs_install match &patch_info {
-                                installer::PatchInfo::None => !exists,
+                                // in other cases there is probably a package.json
+                                // too, but the directory is the safer signal.
+                                installer::PatchInfo::None => {
+                                    pkg_res_tag != ResolutionTag::Npm
+                                        && !sys::exists_z(store_path.slice_z())
+                                }
                                 // checked above
                                 installer::PatchInfo::Remove(_) => unreachable!(),
                                 installer::PatchInfo::Patch(patch) => {
                                     let mut hash_buf: install::BuntagHashBuf = Default::default();
                                     let hash = install::buntaghashbuf_make(&mut hash_buf, patch.contents_hash);
-                                    store_path.set_length(scope_for_patch_tag_path);
                                     store_path.append(&*hash).assume_ok();
                                     !sys::exists_z(store_path.slice_z())
                                 }

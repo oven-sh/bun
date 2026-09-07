@@ -1,4 +1,4 @@
-use core::sync::atomic::{AtomicU8, Ordering};
+use core::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 use std::io::Write as _;
 
 use bun_ast::Log;
@@ -2426,6 +2426,101 @@ impl<'a> Installer<'a> {
         }
 
         Ok(())
+    }
+
+    /// For every project-local npm entry, whether the `package.json` in its
+    /// store directory names the package and version the lockfile expects: the
+    /// check `PackageInstall::verify` applies to `node_modules/<pkg>` under the
+    /// hoisted linker. A set bit means the entry's files can be reused. The
+    /// reads run on the thread pool because this is an open, a read and a parse
+    /// per entry, which is most of the work of an install with nothing to do.
+    pub(crate) fn verify_npm_store_entries(
+        &self,
+    ) -> core::result::Result<Bitset, bun_alloc::AllocError> {
+        #[derive(Clone, Copy)]
+        struct Job {
+            entry_id: StoreEntryId,
+            path_offset: usize,
+            path_len: usize,
+            name: SemverString,
+            version: bun_semver::Version,
+        }
+        struct Shared<'b> {
+            /// Every job's NUL-terminated `package.json` path, back to back.
+            paths: &'b [u8],
+            string_buf: &'b [u8],
+            matches: &'b [AtomicBool],
+        }
+
+        let lockfile = self.lockfile();
+        let string_buf = lockfile.buffers.string_bytes.as_slice();
+        let pkgs = lockfile.packages.slice();
+        let pkg_names = pkgs.items_name();
+        let pkg_resolutions = pkgs.items_resolution();
+        let entry_node_ids = self.store.entries.items_node_id();
+        let node_pkg_ids = self.store.nodes.items_pkg_id();
+
+        let mut verified = Bitset::init_empty(self.store.entries.len())?;
+
+        let mut jobs: Vec<Job> = Vec::new();
+        let mut paths: Vec<u8> = Vec::new();
+        let mut path = AutoAbsPath::init_top_level_dir();
+        let top_level_dir_len = path.len();
+        for entry_index in 0..self.store.entries.len() {
+            let entry_id = StoreEntryId::from(u32::try_from(entry_index).expect("int cast"));
+            let pkg_id = node_pkg_ids[entry_node_ids[entry_index].get() as usize];
+            let pkg_res = &pkg_resolutions[pkg_id as usize];
+            if pkg_res.tag != ResolutionTag::Npm || self.entry_uses_global_store(entry_id) {
+                continue;
+            }
+            path.set_length(top_level_dir_len);
+            self.append_real_store_path(&mut path, entry_id, Which::Final);
+            path.append(b"package.json").assume_ok();
+            jobs.push(Job {
+                entry_id,
+                path_offset: paths.len(),
+                path_len: path.len(),
+                name: pkg_names[pkg_id as usize],
+                version: pkg_res.npm().version,
+            });
+            paths.extend_from_slice(path.slice());
+            paths.push(0);
+        }
+        if jobs.is_empty() {
+            return Ok(verified);
+        }
+
+        let matches: Vec<AtomicBool> = jobs.iter().map(|_| AtomicBool::new(false)).collect();
+        self.manager().thread_pool.each(
+            Shared {
+                paths: &paths,
+                string_buf,
+                matches: &matches,
+            },
+            |shared: &Shared<'_>, job: Job, i: usize| {
+                let path = ZStr::from_buf(&shared.paths[job.path_offset..], job.path_len);
+                let mut version: Vec<u8> = Vec::new();
+                write!(&mut version, "{}", job.version.fmt(shared.string_buf))
+                    .expect("formatting into a Vec is infallible");
+                let mut contents: Vec<u8> = Vec::new();
+                shared.matches[i].store(
+                    crate::package_install::installed_package_json_at_path_matches(
+                        path,
+                        &mut contents,
+                        job.name.slice(shared.string_buf),
+                        &version,
+                    ),
+                    Ordering::Relaxed,
+                );
+            },
+            &mut jobs,
+        );
+        for (job, matches) in jobs.iter().zip(&matches) {
+            if matches.load(Ordering::Relaxed) {
+                verified.set(job.entry_id.get() as usize);
+            }
+        }
+        Ok(verified)
     }
 
     /// True when this entry should live in the shared global virtual store

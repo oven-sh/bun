@@ -805,9 +805,9 @@ pub(crate) fn installed_package_json_matches(
     package_json_checker.found_name() == name
 }
 
-/// Reads the `package.json` at `path` into `buf` (scratch, reused across
-/// calls) and checks it with [`installed_package_json_matches`]. A missing or
-/// unreadable file is a mismatch.
+/// Reads the `package.json` at `path` into `buf` and checks it with
+/// [`installed_package_json_matches`]. A missing or unreadable file is a
+/// mismatch. Safe to call from any thread.
 pub(crate) fn installed_package_json_at_path_matches(
     path: &ZStr,
     buf: &mut Vec<u8>,

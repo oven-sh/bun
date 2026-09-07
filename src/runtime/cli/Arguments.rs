@@ -599,10 +599,10 @@ pub(crate) const TEST_ONLY_PARAMS: &[ParamType] = &[
         "-t, --test-name-pattern/--grep <STR>    Run only tests with a name that matches the given regex."
     ),
     parse_param!(
-        "--reporter <STR>                 Test output reporter format. Available: 'junit' (requires --reporter-outfile), 'dots'. Default: console output."
+        "--reporter <STR>...              Add a test reporter. Available: 'junit' (requires --reporter-outfile), 'dots'. Default: console output."
     ),
     parse_param!(
-        "--reporter-outfile <STR>         Output file path for the reporter format (required with --reporter)."
+        "--reporter-outfile <STR>         File that --reporter=junit writes the XML report to."
     ),
     parse_param!(
         "--dots                           Enable dots reporter. Shorthand for --reporter=dots."
@@ -1778,7 +1778,7 @@ fn parse_test_command_options(args: &clap::Args<clap::Help>, ctx: Context<'_>) {
         ctx.test_options.reporter_outfile = Some(reporter_outfile.into());
     }
 
-    if let Some(reporter) = args.option(b"--reporter") {
+    for &reporter in args.options(b"--reporter") {
         if reporter == b"junit" {
             // A `--parallel` worker only collects for the coordinator's file.
             if ctx.test_options.reporter_outfile.is_none() && !args.flag(b"--test-worker") {
@@ -1798,6 +1798,13 @@ fn parse_test_command_options(args: &clap::Args<clap::Help>, ctx: Context<'_>) {
             );
             Global::crash();
         }
+    }
+    if ctx.test_options.reporter_outfile.is_some() && !ctx.test_options.reporters.junit {
+        Output::err_generic(
+            "--reporter-outfile is the path of the JUnit report and requires --reporter=junit",
+            (),
+        );
+        Global::crash();
     }
 
     // Handle --dots flag as shorthand for --reporter=dots

@@ -608,6 +608,65 @@ describe("junit reporter", () => {
     expect(longPathCase.failure[0]._).toContain(`at fromLongPath (${longPath}:1:`);
     expect(pathCase.failure[0]._).toContain("at fromPath (generated.js:1:");
   });
+
+  it("applies every --reporter flag, so junit and dots can be combined in either order", async () => {
+    await using tmpDir = tempDir("junit-two-reporters", {
+      "package.json": "{}",
+      "a.test.js": `
+        import { test, expect } from "bun:test";
+        test("one", () => expect(1).toBe(1));
+        test("two", () => expect(2).toBe(2));
+      `,
+    });
+
+    for (const order of [
+      ["--reporter=junit", "--reporter=dots"],
+      ["--reporter=dots", "--reporter=junit"],
+    ]) {
+      const junitPath = join(tmpDir, `junit-${order[0].slice("--reporter=".length)}-first.xml`);
+      await using proc = spawn([bunExe(), "test", ...order, "--reporter-outfile", junitPath], {
+        cwd: tmpDir,
+        env: { ...bunEnv, BUN_DEBUG_QUIET_LOGS: "1" },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+      // dots: no per-test "(pass)" lines
+      expect(stderr).not.toContain("(pass)");
+      expect(stderr).toContain("2 pass");
+      // junit: the report exists and lists both tests
+      const xmlContent = await file(junitPath).text();
+      expect(xmlContent).toContain('name="one"');
+      expect(xmlContent).toContain('name="two"');
+      expect(exitCode).toBe(0);
+    }
+  });
+
+  it("rejects --reporter-outfile when no junit reporter is enabled", async () => {
+    await using tmpDir = tempDir("junit-outfile-alone", {
+      "package.json": "{}",
+      "a.test.js": `
+        import { test, expect } from "bun:test";
+        test("one", () => expect(1).toBe(1));
+      `,
+    });
+
+    for (const args of [["--reporter-outfile=report.xml"], ["--reporter=dots", "--reporter-outfile=report.xml"]]) {
+      await using proc = spawn([bunExe(), "test", ...args], {
+        cwd: tmpDir,
+        env: { ...bunEnv, BUN_DEBUG_QUIET_LOGS: "1" },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+      expect(stderr).toContain(
+        "error: --reporter-outfile is the path of the JUnit report and requires --reporter=junit",
+      );
+      expect(stderr).not.toContain("1 pass");
+      expect(exitCode).toBe(1);
+    }
+    expect(await file(join(tmpDir, "report.xml")).exists()).toBe(false);
+  });
 });
 
 function filterJunitXmlOutput(xmlContent) {

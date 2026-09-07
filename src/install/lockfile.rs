@@ -1928,7 +1928,19 @@ impl Lockfile {
             ZStr::from_buf(&tmpname_buf, written - 1)
         };
 
-        let file = match File::openat(Fd::cwd(), tmpname, sys::O::CREAT | sys::O::WRONLY, 0o777) {
+        // The binary lockfile starts with a `#!/usr/bin/env bun` line, so it is
+        // executable. The process umask applies to both.
+        let mode: sys::Mode = if save_format == LockfileFormat::Text {
+            0o666
+        } else {
+            0o777
+        };
+        let file = match File::openat(
+            Fd::cwd(),
+            tmpname,
+            sys::O::CREAT | sys::O::EXCL | sys::O::WRONLY,
+            mode,
+        ) {
             sys::Result::Err(e) => {
                 Output::err(
                     e,
@@ -1948,24 +1960,6 @@ impl Lockfile {
                 Global::crash();
             }
             sys::Result::Ok(()) => {}
-        }
-
-        #[cfg(unix)]
-        {
-            // chmod 755 for binary, 644 for plaintext
-            let mut filemode: sys::Mode = 0o755;
-            if save_format == LockfileFormat::Text {
-                filemode = 0o644;
-            }
-            match sys::fchmod(file.handle, filemode) {
-                sys::Result::Err(e) => {
-                    let _ = file.close(); // close error is non-actionable
-                    let _ = sys::unlink(tmpname);
-                    Output::err(e, "failed to change lockfile permissions", format_args!(""));
-                    Global::crash();
-                }
-                sys::Result::Ok(()) => {}
-            }
         }
 
         if let Err(e) = file.close_and_move_to(tmpname, save_format.filename()) {

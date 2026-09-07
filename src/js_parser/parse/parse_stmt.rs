@@ -164,9 +164,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         ))
     }
 
-    /// `var exports = {...}` / `var module = {...}` hoisted to the module scope gives
-    /// the wrapper name a value of its own. `var exports;` and
-    /// `var exports = module.exports;` keep the wrapper value, so they are not counted.
+    /// Sets `has_user_declared_module` / `has_user_declared_exports`. `var exports;` and
+    /// `var exports = module.exports;` keep the wrapper value and are not counted.
     fn note_var_shadowing_module_or_exports(&mut self, decls: &[G::Decl]) {
         for decl in decls {
             let Some(value) = decl.value else {

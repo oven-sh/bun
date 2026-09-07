@@ -325,8 +325,9 @@ pub(crate) fn scan_imports_and_exports(
                         let has_default_alias = record
                             .flags
                             .contains(ImportRecordFlags::CONTAINS_DEFAULT_ALIAS);
-                        let has_import_star =
-                            record.flags.contains(ImportRecordFlags::CONTAINS_IMPORT_STAR);
+                        let has_import_star = record
+                            .flags
+                            .contains(ImportRecordFlags::CONTAINS_IMPORT_STAR);
                         if other_flags.contains(AstFlags::FORCE_CJS_TO_ESM)
                             && ((has_default_alias && !is_lifted)
                                 || ((has_default_alias || has_import_star)

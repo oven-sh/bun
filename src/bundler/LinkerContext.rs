@@ -4397,7 +4397,11 @@ impl<'a> LinkerContext<'a> {
     /// Is `namespace_ref` of file `source_index` the `import * as ns` that the
     /// parser made out of a `require()` call (`unwrap_commonjs_to_esm`)? Such a
     /// call returns `module.exports`, not the namespace.
-    fn import_star_was_require_call(&self, source_index: crate::IndexInt, namespace_ref: Ref) -> bool {
+    fn import_star_was_require_call(
+        &self,
+        source_index: crate::IndexInt,
+        namespace_ref: Ref,
+    ) -> bool {
         let parts = self.graph.ast.items_parts()[source_index as usize].as_slice();
         self.graph
             .top_level_symbol_to_parts(source_index, namespace_ref)

@@ -540,3 +540,8 @@ impl HeadingIdTracker {
         self.text_buf.clear();
     }
 }
+
+#[inline]
+pub(crate) fn is_url_safe_byte(byte: u8) -> bool {
+    matches!(byte, b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'.' | b'_' | b'~' | b':' | b'/' | b'?' | b'#' | b'@' | b'!' | b'$' | b'(' | b')' | b'*' | b'+' | b',' | b';' | b'=' | b'%')
+}

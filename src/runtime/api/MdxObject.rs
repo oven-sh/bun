@@ -51,7 +51,7 @@ fn compile(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSVa
         Err(err) => return Err(mdx_err_to_js(global_this, err, input.len())),
     };
 
-    bun_jsc::bun_string_jsc::create_utf8_for_js(global_this, &result)
+    bun_jsc::bun_string_jsc::owned_utf8_into_js(global_this, result)
 }
 
 /// Reads the boolean parser options (camelCase preferred, snake_case accepted)

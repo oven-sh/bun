@@ -12,6 +12,8 @@
 //!
 //! The result is a JSX module exporting a default `MDXContent` component.
 
+use std::borrow::Cow;
+
 use bun_core::strings;
 
 use crate::jsx_renderer::{ExpressionSlot, JsxRenderer};
@@ -288,15 +290,29 @@ fn parse_module(
     )
 }
 
+fn is_table_start(previous_line: &[u8], line: &[u8]) -> bool {
+    if !previous_line.contains(&b'|') || !line.contains(&b'-') {
+        return false;
+    }
+    let underline = crate::line_analysis::parse_table_underline(line, &mut []);
+    underline.is_underline
+        && underline.col_count == crate::line_analysis::count_table_columns(previous_line)
+}
+
 /// ESM blocks can appear between Markdown blocks anywhere in the document.
-fn extract_top_level_statements(
-    source: &[u8],
+fn extract_top_level_statements<'a>(
+    source: &'a [u8],
     layout_name: &[u8],
     names: &mut std::collections::HashSet<Vec<u8>>,
-) -> Result<(Vec<TopLevelStatement>, Vec<u8>), MdxError> {
+    tables: bool,
+) -> Result<(Vec<TopLevelStatement>, Cow<'a, [u8]>), MdxError> {
     let mut statements = Vec::new();
     let mut remaining = Vec::new();
+    let mut copied_until = 0;
     let mut cursor = 0;
+    let mut in_paragraph = false;
+    let mut in_table = false;
+    let mut previous_line: &[u8] = b"";
     let mut fence: Option<(u8, usize)> = None;
     while cursor < source.len() {
         let line_end = source[cursor..]
@@ -305,6 +321,7 @@ fn extract_top_level_statements(
             .map_or(source.len(), |n| cursor + n + 1);
         let line = &source[cursor..line_end];
         let trimmed = line.trim_ascii();
+        let was_fenced = fence.is_some();
         if let Some(&delimiter @ (b'`' | b'~')) = trimmed.first() {
             let length = trimmed.iter().take_while(|&&b| b == delimiter).count();
             if length >= 3 {
@@ -317,7 +334,8 @@ fn extract_top_level_statements(
                 }
             }
         }
-        let is_module = fence.is_none()
+        let is_module = !in_paragraph
+            && fence.is_none()
             && [b"import".as_slice(), b"export".as_slice()]
                 .iter()
                 .any(|keyword| {
@@ -343,8 +361,11 @@ fn extract_top_level_statements(
                     Ok(mut parsed) => {
                         statements.try_reserve(parsed.len())?;
                         statements.append(&mut parsed);
+                        push_all(&mut remaining, &source[copied_until..cursor])?;
                         push_all(&mut remaining, b"\n")?;
+                        copied_until = end;
                         cursor = end;
+                        in_paragraph = false;
                         break;
                     }
                     Err(MdxError::IncompleteJavaScript) if end < source.len() => {
@@ -355,9 +376,49 @@ fn extract_top_level_statements(
             }
             continue;
         }
-        push_all(&mut remaining, line)?;
+        let heading = trimmed.iter().take_while(|&&c| c == b'#').count();
+        let is_heading =
+            (1..=6).contains(&heading) && trimmed.get(heading).is_none_or(u8::is_ascii_whitespace);
+        let is_setext = in_paragraph
+            && trimmed.first().is_some_and(|&c| matches!(c, b'-' | b'='))
+            && trimmed.iter().all(|&c| c == trimmed[0]);
+        let is_thematic = trimmed
+            .first()
+            .is_some_and(|&c| matches!(c, b'-' | b'*' | b'_'))
+            && trimmed.iter().filter(|&&c| c == trimmed[0]).count() >= 3
+            && trimmed
+                .iter()
+                .all(|&c| c == trimmed[0] || c == b' ' || c == b'\t');
+        in_table = tables
+            && !was_fenced
+            && fence.is_none()
+            && trimmed.contains(&b'|')
+            && (in_table || is_table_start(previous_line, trimmed));
+        previous_line = trimmed;
+        let is_empty_list = !in_paragraph
+            && !trimmed.is_empty()
+            && trimmed
+                .split(|&c| c == b' ' || c == b'\t')
+                .filter(|part| !part.is_empty())
+                .all(|part| matches!(part, b"-" | b"*" | b"+"));
+        let is_jsx = trimmed.starts_with(b"<") && trimmed.ends_with(b">");
+        in_paragraph = !trimmed.is_empty()
+            && !was_fenced
+            && fence.is_none()
+            && !is_heading
+            && !is_setext
+            && !is_thematic
+            && !in_table
+            && !is_empty_list
+            && !is_jsx;
         cursor = line_end;
     }
+    let remaining = if copied_until == 0 {
+        Cow::Borrowed(source)
+    } else {
+        push_all(&mut remaining, &source[copied_until..])?;
+        Cow::Owned(remaining)
+    };
     Ok((statements, remaining))
 }
 
@@ -370,10 +431,14 @@ fn extract_top_level_statements(
 ///
 /// Fenced and inline code spans are passed through untouched. Inside an
 /// expression Bun's JavaScript parser determines the closing brace.
-fn replace_expressions(
-    source: &[u8],
+fn replace_expressions<'a>(
+    source: &'a [u8],
     names: &mut std::collections::HashSet<Vec<u8>>,
-) -> Result<(Vec<u8>, Vec<ExpressionSlot>), MdxError> {
+    tables: bool,
+) -> Result<(Cow<'a, [u8]>, Vec<ExpressionSlot>), MdxError> {
+    if !source.contains(&b'{') {
+        return Ok((Cow::Borrowed(source), Vec::new()));
+    }
     let marker = b"\x01MDXE";
     let nonce = {
         let mut used = std::collections::HashSet::new();
@@ -419,11 +484,29 @@ fn replace_expressions(
         &arena,
         |parser| {
             let mut i = 0;
+            let mut copied_until = 0;
+            let mut brackets: Vec<(bool, bool)> = Vec::new();
+            let mut last_bang = None;
+            let mut previous_line: &[u8] = b"";
+            let mut in_table = false;
             let mut fence: Option<(u8, usize)> = None;
             let mut line_start = 0;
-            while i < source.len() {
+            while let Some(offset) = strings::index_of_any(&source[i..], b"\n`~\\{[]!") {
+                i += offset;
                 let c = source[i];
                 if c == b'\n' {
+                    let line = source[line_start..i].trim_ascii();
+                    if line.is_empty() {
+                        brackets.clear();
+                        in_table = false;
+                    } else if tables && fence.is_none() {
+                        if in_table {
+                            in_table = line.contains(&b'|');
+                        } else if previous_line.contains(&b'|') && line.contains(&b'-') {
+                            in_table = is_table_start(previous_line, line);
+                        }
+                    }
+                    previous_line = line;
                     line_start = i + 1;
                 }
                 if c == b'`' || c == b'~' {
@@ -450,6 +533,26 @@ fn replace_expressions(
                     } else if fence.is_none() && c == b'`' {
                         let mut end = i + run;
                         while end < source.len() {
+                            if in_table && matches!(source[end], b'|' | b'\n') {
+                                break;
+                            }
+                            if in_table
+                                && source[end] == b'\\'
+                                && source.get(end + 1) == Some(&b'|')
+                            {
+                                end += 2;
+                                continue;
+                            }
+                            if source[end] == b'\n'
+                                && source[end + 1..]
+                                    .split(|&c| c == b'\n')
+                                    .next()
+                                    .unwrap()
+                                    .trim_ascii()
+                                    .is_empty()
+                            {
+                                break;
+                            }
                             if source[end] == b'`' {
                                 let closing =
                                     source[end..].iter().take_while(|&&b| b == b'`').count();
@@ -460,7 +563,6 @@ fn replace_expressions(
                                     {
                                         line_start = i + nl + 1;
                                     }
-                                    push_all(&mut output, &source[i..end])?;
                                     i = end;
                                     break;
                                 }
@@ -473,15 +575,38 @@ fn replace_expressions(
                             continue;
                         }
                     }
-                    push_all(&mut output, &source[i..i + run])?;
                     i += run;
                     continue;
                 }
                 if fence.is_none() {
                     if c == b'\\' && source.get(i + 1).is_some_and(u8::is_ascii_punctuation) {
-                        push_all(&mut output, &source[i..i + 2])?;
                         i += 2;
                         continue;
+                    }
+                    if c == b'!' {
+                        last_bang = Some(i);
+                    } else if c == b'[' {
+                        brackets.try_reserve(1)?;
+                        brackets.push((last_bang.is_some_and(|pos| pos + 1 == i), false));
+                    } else if c == b']'
+                        && let Some((image, has_link)) = brackets.pop()
+                    {
+                        if (image || !has_link)
+                            && let Ok(Some(link)) = crate::links::parse_inline_link(source, i + 1)
+                        {
+                            if !image && let Some(parent) = brackets.last_mut() {
+                                parent.1 = true;
+                            }
+                            if let Some(nl) = source[i..link.end].iter().rposition(|&b| b == b'\n')
+                            {
+                                line_start = i + nl + 1;
+                            }
+                            i = link.end;
+                            continue;
+                        }
+                        if has_link && let Some(parent) = brackets.last_mut() {
+                            parent.1 = true;
+                        }
                     }
                     if c == b'{' {
                         let end = parser.expression_end(i)?;
@@ -492,7 +617,9 @@ fn replace_expressions(
                         push_all(&mut placeholder, &[1])?;
                         let mut original = Vec::new();
                         push_all(&mut original, &source[i + 1..end - 1])?;
+                        push_all(&mut output, &source[copied_until..i])?;
                         push_all(&mut output, &placeholder)?;
+                        copied_until = end;
                         slots.try_reserve(1)?;
                         slots.push(ExpressionSlot {
                             original: original.into_boxed_slice(),
@@ -505,10 +632,15 @@ fn replace_expressions(
                         continue;
                     }
                 }
-                push_all(&mut output, &source[i..i + 1])?;
                 i += 1;
             }
             collect_names(parser, names)?;
+            let output = if slots.is_empty() {
+                Cow::Borrowed(source)
+            } else {
+                push_all(&mut output, &source[copied_until..])?;
+                Cow::Owned(output)
+            };
             Ok((output, slots))
         },
     )
@@ -529,13 +661,22 @@ pub fn compile(src: &[u8], options: &MdxOptions<'_>) -> Result<Vec<u8>, MdxError
         .map_or(0usize, |f| f.content_start as usize);
 
     let mut names = std::collections::HashSet::new();
-    let (mut stmts, remaining) =
-        extract_top_level_statements(&source[content_start..], b"_MdxLayout", &mut names)?;
-    let (preprocessed, slots) = replace_expressions(&remaining, &mut names)?;
+    let (mut stmts, remaining) = extract_top_level_statements(
+        &source[content_start..],
+        b"_MdxLayout",
+        &mut names,
+        options.md_options.tables,
+    )?;
+    let (preprocessed, slots) =
+        replace_expressions(&remaining, &mut names, options.md_options.tables)?;
     let layout_name = unique_name(source, &names, b"_MdxLayout")?;
     if layout_name != b"_MdxLayout" {
-        (stmts, _) =
-            extract_top_level_statements(&source[content_start..], &layout_name, &mut names)?;
+        (stmts, _) = extract_top_level_statements(
+            &source[content_start..],
+            &layout_name,
+            &mut names,
+            options.md_options.tables,
+        )?;
     }
     let components_name = unique_name(source, &names, b"_components")?;
     let content_name = unique_name(source, &names, b"_content")?;

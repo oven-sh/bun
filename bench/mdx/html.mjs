@@ -1,3 +1,4 @@
+import { tryRenderStaticMdx } from "./static-html.mjs";
 import { createRequire } from "node:module";
 import { readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
@@ -34,7 +35,7 @@ function compileReference(source) {
   return String(reference.processSync(source));
 }
 async function component(source, engine) {
-  const jsx = (engine === "native" ? native : compileReference)(source);
+  const jsx = (engine === "reference" ? compileReference : native)(source);
   const result = await Bun.build({
     entrypoints: ["benchmark:document"],
     target: "node",
@@ -64,6 +65,13 @@ async function component(source, engine) {
   return module.exports.default;
 }
 const render = Component => renderToStaticMarkup(React.createElement(Component));
+async function renderHtml(source, engine) {
+  if (engine === "native-fast") {
+    const html = tryRenderStaticMdx(source);
+    if (html !== null) return html;
+  }
+  return render(await component(source, engine));
+}
 function canonical(node, preserve = false) {
   if (node.nodeName === "#text") {
     if (preserve) return node.value;
@@ -93,9 +101,8 @@ if (process.env.MDX_HTML_WORKER) {
   const results = [];
   let checksum = 0;
   for (const fixture of shuffle(fixtures, 7171 + round)) {
-    const Component = await component(fixture.source, engine);
-    const run =
-      mode === "html" ? async () => render(await component(fixture.source, engine)) : async () => render(Component);
+    const Component = mode === "render-only" ? await component(fixture.source, engine) : undefined;
+    const run = mode === "html" ? () => renderHtml(fixture.source, engine) : async () => render(Component);
     const expected = await run();
     let count = 0;
     const warmStart = performance.now();
@@ -133,14 +140,16 @@ if (process.env.MDX_HTML_WORKER) {
   const preflight = [];
   for (const fixture of fixtures) {
     const html = {};
-    for (const engine of ["native", "reference"]) html[engine] = render(await component(fixture.source, engine));
+    for (const engine of ["native", "native-fast", "reference"])
+      html[engine] = await renderHtml(fixture.source, engine);
     const trees = Object.fromEntries(
       Object.entries(html).map(([engine, output]) => [engine, canonical(parseFragment(output))]),
     );
-    const equal = JSON.stringify(trees.native) === JSON.stringify(trees.reference);
+    const equal = Object.values(trees).every(tree => JSON.stringify(tree) === JSON.stringify(trees.reference));
     preflight.push({
       id: fixture.id,
       equal,
+      staticFastPath: tryRenderStaticMdx(fixture.source) !== null,
       inputBytes: Buffer.byteLength(fixture.source),
       inputSha256: createHash("sha256").update(fixture.source).digest("hex"),
       outputBytes: Object.fromEntries(
@@ -150,6 +159,10 @@ if (process.env.MDX_HTML_WORKER) {
     if (!equal) throw new Error(`HTML output differs for ${fixture.id}`);
   }
   writeFileSync(join(outDir, "html-preflight.json"), JSON.stringify(preflight, null, 2) + "\n");
+  if (process.env.MDX_HTML_PREFLIGHT_ONLY === "1") {
+    console.log(JSON.stringify(preflight));
+    process.exit(0);
+  }
   const startedAt = new Date().toISOString();
   writeFileSync(
     join(outDir, "html-protocol.json"),
@@ -170,9 +183,14 @@ if (process.env.MDX_HTML_WORKER) {
           "module evaluation",
           "React renderToStaticMarkup",
         ],
+        nativeFast:
+          "Fresh native Markdown parse and HTML render for a checked static MDX subset; otherwise the full native MDX/JSX/React pipeline. No output or component cache.",
         renderOnly: "Precompiled and evaluated component, same React renderer",
         sourceHash: createHash("sha256")
           .update(readFileSync(import.meta.filename))
+          .digest("hex"),
+        staticPathSourceHash: createHash("sha256")
+          .update(readFileSync(join(import.meta.dirname, "static-html.mjs")))
           .digest("hex"),
       },
       null,
@@ -182,7 +200,10 @@ if (process.env.MDX_HTML_WORKER) {
   const results = [];
   for (let round = 0; round < 3; round++) {
     for (const [engine, mode] of shuffle(
-      ["native", "reference"].flatMap(engine => ["html", "render-only"].map(mode => [engine, mode])),
+      [
+        ...["native", "reference"].flatMap(engine => ["html", "render-only"].map(mode => [engine, mode])),
+        ["native-fast", "html"],
+      ],
       1317 + round,
     )) {
       console.error(`HTML round ${round + 1}/3: ${engine}, ${mode}`);

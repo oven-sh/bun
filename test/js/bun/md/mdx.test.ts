@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import fs from "node:fs";
 import path from "node:path";
+import { tryRenderStaticMdx } from "../../../../bench/mdx/static-html.mjs";
 
 const fixtureDir = path.join(import.meta.dir, "fixtures", "mdx");
 const repoRoot = path.resolve(import.meta.dir, "../../../..");
@@ -46,6 +47,32 @@ const LAST_ROUTE_ENTRY = "\u2514\u2500\u2500";
 const ROUTE_ENTRY_REGEX = /[├└]──\s+(\/\S*)\s+→\s+(\S+)/g;
 
 const Mdx = Bun.mdx;
+
+describe("MDX static HTML pipeline", () => {
+  test.each([
+    ["# Hello 世界", "<h1>Hello 世界</h1>\n"],
+    ["Before<br />after", "<p>Before<br />after</p>\n"],
+    ["<br />", "<br />\n"],
+    ["`<br />`", "<p><code>&lt;br /&gt;</code></p>\n"],
+  ])("renders static MDX without evaluating a module: %s", (source, expected) => {
+    expect(tryRenderStaticMdx(source)).toBe(expected);
+  });
+
+  test.each([
+    "{props.value}",
+    "<Card />",
+    "<br title='value' />",
+    "<br>",
+    "![Image](image.png)",
+    "[Link](javascript:alert(1))",
+    "[Link](jav&#97;script:alert(1))",
+    "import './module.js';\n\n# Heading",
+    "export const value = 1;\n\n# Heading",
+    "---\ntitle: Post\n---\n# Heading",
+  ])("requires full compilation for executable or unsupported MDX: %s", source => {
+    expect(tryRenderStaticMdx(source)).toBeNull();
+  });
+});
 
 describe("Bun.mdx.compile", () => {
   test.each([
@@ -102,6 +129,26 @@ describe("Bun.mdx.compile", () => {
     expect(new TextDecoder().decode(transferred)).toBe(`!!${source}??`);
   });
 
+  test.each([
+    [0xff],
+    [0xc0, 0xaf],
+    [0xe2, 0x82],
+    [0xed, 0xa0, 0x80],
+    [0xf4, 0x90, 0x80, 0x80],
+    [0xf0, 0x9f, 0x8c, 0x8d],
+  ])("replaces invalid UTF-8 consistently in compiled strings: %j", (...bytes) => {
+    const input = Buffer.concat([Buffer.from("# Text "), Buffer.from(bytes)]);
+    expect(Mdx.compile(input)).toBe(Mdx.compile(new TextDecoder().decode(input)));
+  });
+
+  test("compiled strings survive input mutation and garbage collection", () => {
+    const input = Buffer.from("# Hello 世界 🌍");
+    const output = Mdx.compile(input);
+    input.fill(0);
+    Bun.gc(true);
+    expect(output).toBe(Mdx.compile("# Hello 世界 🌍"));
+  });
+
   test("supports frontmatter and top-level statements", () => {
     const output = Mdx.compile(
       ["---", "title: Demo", "---", 'import { X } from "./x"', "export const year = 2026", "", "# Heading"].join("\n"),
@@ -114,6 +161,70 @@ describe("Bun.mdx.compile", () => {
   test("frontmatter accepts CRLF line endings", () => {
     const source = "---\ntitle: Demo\n---\n# Heading";
     expect(Mdx.compile(source.replaceAll("\n", "\r\n"))).toBe(Mdx.compile(source));
+  });
+
+  test.each(["import", "export"])("keeps %s at the start of a paragraph continuation as prose", keyword => {
+    const source = `A paragraph about the\n${keyword} map and its entries.`;
+    const output = Mdx.compile(source);
+    expect(output).toContain(`<_components.p>${source}</_components.p>`);
+  });
+
+  test.each([
+    "# Heading",
+    "Heading\n=======",
+    "---",
+    "*",
+    "- -",
+    "```js\ncode\n```",
+    "| A | B |\n| - | - |\n| a | b |",
+  ])("extracts a module immediately after a completed block: %s", block => {
+    const output = Mdx.compile(`${block}\nexport const answer = 42;\n\n{answer}`);
+    expect(output).toContain("export const answer = 42;");
+    expect(output).toContain("{answer}");
+    expect(new Bun.Transpiler({ loader: "tsx" }).scan(output).exports).toContain("answer");
+  });
+
+  test.each(["**", "_", "__", "=", "===", "Text\n- -", "Text\n_"])(
+    "keeps module-like text in an unfinished paragraph: %s",
+    prefix => {
+      const output = Mdx.compile(`${prefix}\nexport const answer = 42;`);
+      expect(new Bun.Transpiler({ loader: "tsx" }).scan(output).exports).not.toContain("answer");
+      expect(output).toContain("export const answer = 42;");
+    },
+  );
+
+  test.each([
+    ["[Archive](/archive/{{year}})", 'href="/archive/%7B%7Byear%7D%7D"'],
+    ["[Archive](/archive/{unfinished)", 'href="/archive/%7Bunfinished"'],
+    ['![Image](/image/{id}.png "A {literal} title")', 'src="/image/%7Bid%7D.png"'],
+  ])("preserves literal braces in Markdown link destinations: %s", (source, expected) => {
+    const output = Mdx.compile(source);
+    expect(output).toContain(expected);
+    expect(new Bun.Transpiler({ loader: "tsx" }).transformSync(output)).toContain("%7B");
+  });
+
+  test("does not match inline code delimiters across a blank line", () => {
+    const source = ["`call(\\`${first}:${second}\\`)`", "", "`` `SELECT ${value}` ``"].join("\n");
+    const output = Mdx.compile(source);
+    expect(output).toContain("SELECT ${value}");
+    expect(new Bun.Transpiler({ loader: "tsx" }).transformSync(output)).toContain("SELECT ${value}");
+  });
+
+  test("does not match inline code delimiters across table cells", () => {
+    const source = [
+      "| Path | Notes |",
+      "| --- | --- |",
+      "| `first.ts` | `call(\\`${kind}:${id}\\`)` |",
+      "| `second.ts` | `` `SELECT ${value}` `` |",
+    ].join("\n");
+    const output = Mdx.compile(source);
+    expect(output).toContain("SELECT ${value}");
+    expect(new Bun.Transpiler({ loader: "tsx" }).transformSync(output)).toContain("SELECT ${value}");
+  });
+
+  test.each([true, false])("keeps multiline code spans in prose with tables=%s", tables => {
+    const output = Mdx.compile("`alpha|\nbeta {unfinished`", { tables });
+    expect(new Bun.Transpiler({ loader: "tsx" }).transformSync(output)).toContain("{unfinished");
   });
 
   test("reads buffer bytes after option getters resize the input", () => {

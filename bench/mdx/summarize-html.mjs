@@ -47,3 +47,40 @@ writeFileSync(
   ].join("\n") + "\n",
 );
 console.log(JSON.stringify(aggregates, null, 2));
+
+if (raw.some(run => run.engine === "native-fast")) {
+  const mean = values => values.reduce((sum, value) => sum + value, 0) / values.length;
+  const documents = rows
+    .filter(row => row.mode === "html")
+    .map(row => {
+      const runs = raw.filter(run => run.engine === "native-fast" && run.mode === "html");
+      if (runs.length !== 3) throw new Error("Incomplete static fast path rounds");
+      const roundMeanUs = runs.map(run => {
+        const item = run.results.find(item => item.id === row.id);
+        if (!item || item.batchMs.length !== 40) throw new Error(`Incomplete fast path samples for ${row.id}`);
+        return (mean(item.batchMs) * 1000) / item.batch;
+      });
+      const roundMedianUs = runs.map(run => {
+        const item = run.results.find(item => item.id === row.id);
+        return (median(item.batchMs) * 1000) / item.batch;
+      });
+      return {
+        id: row.id,
+        meanUs: mean(roundMeanUs),
+        medianUs: median(roundMedianUs),
+        roundMeanUs,
+        roundMedianUs,
+        nativeFullPipelineMedianUs: row.timings.native.medianMs * 1000,
+        referenceFullPipelineMedianUs: row.timings.reference.medianMs * 1000,
+      };
+    });
+  const summary = {
+    measurement:
+      "Fresh input parse and HTML rendering on every iteration; no output or component cache. Arithmetic mean of round means, with equal weight per document.",
+    corpusMeanUs: mean(documents.map(row => row.meanUs)),
+    targetUs: 200,
+    documents,
+  };
+  writeFileSync(join(root, "html-fast-summary.json"), JSON.stringify(summary, null, 2) + "\n");
+  console.log(JSON.stringify(summary, null, 2));
+}

@@ -7,6 +7,8 @@
 //! before parsing (see [`crate::mdx::replace_expressions`]) so the Markdown
 //! parser treats them as opaque text. This renderer restores them.
 
+use bun_core::strings;
+
 use crate::helpers;
 use crate::output::OutputBuffer;
 use crate::types::{
@@ -96,10 +98,6 @@ impl<'src> JsxRenderer<'src> {
         self.out.write(bytes);
     }
 
-    fn write_byte(&mut self, b: u8) {
-        self.out.write_byte(b);
-    }
-
     fn track_component(&mut self, name: &'static [u8]) {
         if !self.component_names.contains(&name) {
             if self.component_names.try_reserve(1).is_err() {
@@ -137,57 +135,91 @@ impl<'src> JsxRenderer<'src> {
         self.write(b" />");
     }
 
-    fn write_attr_escaped(&mut self, value: &[u8]) {
-        for &c in value {
-            match c {
-                b'&' => self.write(b"&amp;"),
-                b'<' => self.write(b"&lt;"),
-                b'>' => self.write(b"&gt;"),
-                b'"' => self.write(b"&quot;"),
-                _ => self.write_byte(c),
-            }
+    fn write_escaped(
+        &mut self,
+        mut value: &[u8],
+        chars: &[u8],
+        escape: impl Fn(u8) -> &'static [u8],
+    ) {
+        while let Some(index) = strings::index_of_any(value, chars) {
+            self.write(&value[..index]);
+            self.write(escape(value[index]));
+            value = &value[index + 1..];
         }
+        self.write(value);
+    }
+
+    fn write_attr_escaped(&mut self, value: &[u8]) {
+        self.write_escaped(value, b"&<>\"", |c| match c {
+            b'&' => b"&amp;",
+            b'<' => b"&lt;",
+            b'>' => b"&gt;",
+            b'"' => b"&quot;",
+            _ => unreachable!(),
+        });
+    }
+
+    fn write_link_destination(&mut self, mut value: &[u8]) {
+        while let Some(index) = value.iter().position(|&c| !helpers::is_url_safe_byte(c)) {
+            self.write(&value[..index]);
+            let c = value[index];
+            if c == b'&' || c == b'\'' {
+                self.write(strings::html_escape_entity(c).unwrap());
+            } else {
+                let [hi, lo] = bun_core::fmt::hex_byte_upper(c);
+                self.write(&[b'%', hi, lo]);
+            }
+            value = &value[index + 1..];
+        }
+        self.write(value);
     }
 
     /// JSX treats `{`/`}` as expression delimiters and `<`/`>` as tag
     /// delimiters, so literal ones become single-character string expressions.
     fn write_jsx_escaped(&mut self, value: &[u8]) {
-        for &c in value {
-            match c {
-                b'{' => self.write(b"{'{'}"),
-                b'}' => self.write(b"{'}'}"),
-                b'<' => self.write(b"{'<'}"),
-                b'>' => self.write(b"{'>'}"),
-                _ => self.write_byte(c),
-            }
-        }
+        self.write_escaped(value, b"{}<>", |c| match c {
+            b'{' => b"{'{'}",
+            b'}' => b"{'}'}",
+            b'<' => b"{'<'}",
+            b'>' => b"{'>'}",
+            _ => unreachable!(),
+        });
     }
 
     fn write_js_string_escaped(&mut self, value: &[u8]) {
-        for &c in value {
-            match c {
-                b'\\' => self.write(b"\\\\"),
-                b'"' => self.write(b"\\\""),
-                b'\n' => self.write(b"\\n"),
-                b'\r' => self.write(b"\\r"),
-                b'\t' => self.write(b"\\t"),
-                _ => self.write_byte(c),
-            }
+        self.write_escaped(value, b"\\\"\n\r\t", |c| match c {
+            b'\\' => b"\\\\",
+            b'"' => b"\\\"",
+            b'\n' => b"\\n",
+            b'\r' => b"\\r",
+            b'\t' => b"\\t",
+            _ => unreachable!(),
+        });
+    }
+
+    fn write_literal(&mut self, content: &[u8], mode: ExprWriteMode) {
+        if mode == ExprWriteMode::JsxText
+            && let Some(paragraph) = self.paragraph.as_mut()
+            && paragraph.jsx_depth == 0
+            && !paragraph.has_text
+        {
+            paragraph.has_text = content.iter().any(|c| !c.is_ascii_whitespace());
+        }
+        match mode {
+            ExprWriteMode::JsxText => self.write_jsx_escaped(content),
+            ExprWriteMode::AttrText => self.write_attr_escaped(content),
+            ExprWriteMode::Raw => self.write(content),
         }
     }
 
     /// Writes `content`, swapping each `\x01MDXE<nonce>:<index>\x01` placeholder back for
     /// the original expression wrapped in JSX braces.
     fn write_restoring_expressions(&mut self, content: &[u8], mode: ExprWriteMode) -> JsResult<()> {
-        let mut i = 0usize;
-        let track_text = matches!(mode, ExprWriteMode::JsxText)
-            && self.paragraph.as_ref().is_some_and(|p| p.jsx_depth == 0);
-        let mut has_text = false;
-        let mut has_mdx = false;
-        while i < content.len() {
-            if !self.expression_prefix.is_empty()
-                && content[i..].starts_with(self.expression_prefix)
-            {
+        let mut i = 0;
+        let mut copied_until = 0;
+        if !self.expression_prefix.is_empty() {
+            while let Some(offset) = strings::index_of(&content[i..], self.expression_prefix) {
+                i += offset;
                 let mut end = i + self.expression_prefix.len();
                 let mut index = Some(0usize);
                 while let Some(c @ b'0'..=b'9') = content.get(end) {
@@ -198,28 +230,24 @@ impl<'src> JsxRenderer<'src> {
                     && let Some(slot) = index.and_then(|n| self.expression_slots.get(n))
                     && *slot.placeholder == content[i..=end]
                 {
-                    has_mdx = true;
+                    self.write_literal(&content[copied_until..i], mode);
+                    if mode == ExprWriteMode::JsxText
+                        && let Some(paragraph) = self.paragraph.as_mut()
+                        && paragraph.jsx_depth == 0
+                    {
+                        paragraph.has_mdx = true;
+                    }
                     self.write(b"{");
                     self.write(&slot.original);
                     self.write(b"}");
                     i = end + 1;
-                    continue;
+                    copied_until = i;
+                } else {
+                    i += 1;
                 }
             }
-            if track_text && !has_text && !content[i].is_ascii_whitespace() {
-                has_text = true;
-            }
-            match mode {
-                ExprWriteMode::JsxText => self.write_jsx_escaped(&content[i..i + 1]),
-                ExprWriteMode::AttrText => self.write_attr_escaped(&content[i..i + 1]),
-                ExprWriteMode::Raw => self.write_byte(content[i]),
-            }
-            i += 1;
         }
-        if track_text && let Some(paragraph) = self.paragraph.as_mut() {
-            paragraph.has_text |= has_text;
-            paragraph.has_mdx |= has_mdx;
-        }
+        self.write_literal(&content[copied_until..], mode);
         Ok(())
     }
 
@@ -406,7 +434,7 @@ impl<'src> JsxRenderer<'src> {
                 } else if detail.autolink_www {
                     self.write(b"http://");
                 }
-                self.write_attr_escaped(detail.href);
+                self.write_link_destination(detail.href);
                 self.write(b"\"");
                 if !detail.title.is_empty() {
                     self.write(b" title=\"");
@@ -422,7 +450,7 @@ impl<'src> JsxRenderer<'src> {
                 self.write(b"<");
                 self.write(self.components_name);
                 self.write(b".img src=\"");
-                self.write_attr_escaped(detail.href);
+                self.write_link_destination(detail.href);
                 self.write(b"\" alt=\"");
             }
         }

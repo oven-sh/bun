@@ -100,22 +100,27 @@ describe.skipIf(isWindows)("lockfile permissions", () => {
     // bun.lockb starts with `#!/usr/bin/env bun`, so it is created executable
     ["bun.lockb", 0o777],
   ])("new %s and yarn.lock honour the process umask", async (lockfile, createMode) => {
+    const umasks = [0o022, 0o077];
+    const dirs = await Promise.all(
+      umasks.map(async () => {
+        const { packageDir, packageJson } = await registry.createTestDir({
+          bunfigOpts: { saveTextLockfile: lockfile === "bun.lock" },
+        });
+        await write(packageJson, JSON.stringify({ name: "pkg", version: "1.0.0", dependencies: { "no-deps": "1.0.0" } }));
+        return packageDir;
+      }),
+    );
+    await Promise.all(umasks.map((umask, i) => installWithUmask(dirs[i], umask, ["install", "--yarn"])));
+
     const actual: Record<string, Record<string, string>> = {};
     const expected: typeof actual = {};
-    for (const umask of [0o022, 0o077]) {
-      const { packageDir, packageJson } = await registry.createTestDir({
-        bunfigOpts: { saveTextLockfile: lockfile === "bun.lock" },
-      });
-      await write(packageJson, JSON.stringify({ name: "pkg", version: "1.0.0", dependencies: { "no-deps": "1.0.0" } }));
-
-      await installWithUmask(packageDir, umask, ["install", "--yarn"]);
-
-      actual[`umask ${octal(umask)}`] = modes(packageDir, [lockfile, "yarn.lock"]);
+    umasks.forEach((umask, i) => {
+      actual[`umask ${octal(umask)}`] = modes(dirs[i], [lockfile, "yarn.lock"]);
       expected[`umask ${octal(umask)}`] = {
         [lockfile]: octal(createMode & ~umask),
         "yarn.lock": octal(0o666 & ~umask),
       };
-    }
+    });
     expect(actual).toEqual(expected);
   });
 

@@ -99,10 +99,7 @@ type Tests = Record<
 const default_tests = Object.fromEntries(
   loaders.map(loader => [loader, { loader, filename: "no_extension" }]),
 ) as Tests;
-async function compileAndTest(
-  code: string | Buffer,
-  tests: Tests = default_tests,
-): Promise<Record<string, unknown>> {
+async function compileAndTest(code: string | Buffer, tests: Tests = default_tests): Promise<Record<string, unknown>> {
   const [v1, v2, v3] = await Promise.all([
     compileAndTest_inner(code, tests, testBunRun),
     compileAndTest_inner(code, tests, testBunRunAwaitImport),

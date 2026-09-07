@@ -454,6 +454,52 @@ describe("unix domain socket without websocket", () => {
       const path = randomSocketPath();
       await runTest(path, [], { ...bunEnv, BUN_INSPECT: "unix:" + path });
     });
+
+    test("an explicit --inspect flag replaces BUN_INSPECT instead of opening both", async () => {
+      // An editor's debug terminal exports BUN_INSPECT (often with ?wait=1) to
+      // every child. A stale value must not add a second, unannounced listener
+      // next to the one the flag asked for, nor make the flag run block.
+      const envSocket = randomSocketPath();
+      await using inspectee = spawn({
+        cwd: import.meta.dir,
+        cmd: [bunExe(), "--inspect=ws://127.0.0.1:0/" + Math.random().toString(36).slice(2), "inspectee.js"],
+        env: { ...bunEnv, BUN_INSPECT: "ws+unix://" + join(process.cwd(), envSocket) + "?wait=1" },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+
+      let url: URL | undefined;
+      let stderr = "";
+      const decoder = new TextDecoder();
+      for await (const chunk of inspectee.stderr as ReadableStream) {
+        stderr += decoder.decode(chunk);
+        for (const line of stderr.split("\n")) {
+          try {
+            url = new URL(line.trim());
+          } catch {}
+          if (url?.protocol === "ws:") break;
+        }
+        if (url?.protocol === "ws:") break;
+      }
+      if (!url) {
+        process.stderr.write(stderr);
+        throw new Error("Unable to find listening URL");
+      }
+      expect(url.hostname).toBe("127.0.0.1");
+
+      // The env listener is started before the flag listener on the debugger
+      // thread, so by the time the flag's banner is printed it would exist.
+      expect(fs.existsSync(envSocket)).toBe(false);
+
+      // BUN_INSPECT's ?wait=1 must not leak into the flag run: the script
+      // starts without a debugger attached.
+      let stdout = "";
+      for await (const chunk of inspectee.stdout as ReadableStream) {
+        stdout += decoder.decode(chunk);
+        if (stdout.includes("\n")) break;
+      }
+      expect(stdout.split("\n")[0]).toBe("Hello");
+    });
   }
 });
 

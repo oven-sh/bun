@@ -591,25 +591,24 @@ unsafe fn configure_debugger(
         return;
     }
 
-    let unix: &'static [u8] = env_var::BUN_INSPECT.get().unwrap_or(b"");
-    let connect_to: &'static [u8] = env_var::BUN_INSPECT_CONNECT_TO.get().unwrap_or(b"");
-
-    let set_breakpoint_on_first_line = !unix.is_empty() && unix.ends_with(b"?break=1");
-    let wait_for_debugger = !unix.is_empty() && unix.ends_with(b"?wait=1");
-
-    let wait_for_connection = if set_breakpoint_on_first_line || wait_for_debugger {
-        Wait::Forever
-    } else {
-        Wait::Off
-    };
-
     let debugger = match cli_flag {
+        // `BUN_INSPECT*` is ambient (an editor's debug terminal exports it to
+        // every child); an explicit `--inspect*` flag replaces it rather than
+        // opening a second, unannounced listener next to the requested one.
         CliDebugger::Unspecified => {
+            let unix: &'static [u8] = env_var::BUN_INSPECT.get().unwrap_or(b"");
+            let connect_to: &'static [u8] = env_var::BUN_INSPECT_CONNECT_TO.get().unwrap_or(b"");
             if !unix.is_empty() {
+                let set_breakpoint_on_first_line = unix.ends_with(b"?break=1");
+                let wait_for_debugger = unix.ends_with(b"?wait=1");
                 Some(Debugger {
                     path_or_port: None,
                     from_environment_variable: unix,
-                    wait_for_connection,
+                    wait_for_connection: if set_breakpoint_on_first_line || wait_for_debugger {
+                        Wait::Forever
+                    } else {
+                        Wait::Off
+                    },
                     set_breakpoint_on_first_line,
                     ..Default::default()
                 })
@@ -632,14 +631,12 @@ unsafe fn configure_debugger(
             let path_or_port: &'static [u8] = crate::cli::cli_dupe(&enable.path_or_port);
             Some(Debugger {
                 path_or_port: Some(path_or_port),
-                from_environment_variable: unix,
                 wait_for_connection: if enable.wait_for_connection {
                     Wait::Forever
                 } else {
-                    wait_for_connection
+                    Wait::Off
                 },
-                set_breakpoint_on_first_line: set_breakpoint_on_first_line
-                    || enable.set_breakpoint_on_first_line,
+                set_breakpoint_on_first_line: enable.set_breakpoint_on_first_line,
                 ..Default::default()
             })
         }

@@ -15,6 +15,18 @@ pub struct StatType<const BIG: bool> {
 
 type StatTimespec = Timespec;
 
+/// Matches Node's `static_cast<unsigned long>` of stat times: 32-bit wrap on win32, signed-preserving elsewhere.
+#[inline]
+pub(crate) fn timespec_parts(ts: Timespec) -> (i64, i64) {
+    #[cfg(windows)]
+    return (
+        ((ts.sec as i32) as u32) as i64,
+        ((ts.nsec as i32) as u32) as i64,
+    );
+    #[cfg(not(windows))]
+    (ts.sec, ts.nsec)
+}
+
 impl<const BIG: bool> StatType<BIG> {
     // The default `Box::new` / `Drop` give the needed semantics (mimalloc-backed
     // via the global allocator), so no explicit `new`/`deinit` methods are needed.
@@ -24,20 +36,8 @@ impl<const BIG: bool> StatType<BIG> {
         Self { value: *stat_ }
     }
 
-    /// Matches Node's `static_cast<unsigned long>` of stat times: 32-bit wrap on win32, signed-preserving elsewhere.
-    #[inline]
-    fn timespec_parts(ts: StatTimespec) -> (i64, i64) {
-        #[cfg(windows)]
-        return (
-            ((ts.sec as i32) as u32) as i64,
-            ((ts.nsec as i32) as u32) as i64,
-        );
-        #[cfg(not(windows))]
-        (ts.sec, ts.nsec)
-    }
-
     fn to_time_ms_f64(ts: StatTimespec) -> f64 {
-        let (sec, nsec) = Self::timespec_parts(ts);
+        let (sec, nsec) = timespec_parts(ts);
         // Floating-point to preserve sub-millisecond precision (e.g. 1773248895434.0544).
         (sec as f64) * 1000.0 + (nsec as f64) / 1_000_000.0
     }
@@ -65,10 +65,10 @@ impl<const BIG: bool> StatType<BIG> {
         let b_time = Self::get_birthtime(stat_);
 
         if BIG {
-            let (a_sec, a_nsec) = Self::timespec_parts(a_time);
-            let (m_sec, m_nsec) = Self::timespec_parts(m_time);
-            let (c_sec, c_nsec) = Self::timespec_parts(c_time);
-            let (b_sec, b_nsec) = Self::timespec_parts(b_time);
+            let (a_sec, a_nsec) = timespec_parts(a_time);
+            let (m_sec, m_nsec) = timespec_parts(m_time);
+            let (c_sec, c_nsec) = timespec_parts(c_time);
+            let (b_sec, b_nsec) = timespec_parts(b_time);
 
             return bun_jsc::from_js_host_call(global, || {
                 Bun__createJSBigIntStatsObject(

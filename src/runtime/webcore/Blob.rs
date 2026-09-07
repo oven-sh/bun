@@ -5976,17 +5976,10 @@ pub(crate) unsafe extern "C" fn Blob__fromMmapWithType(
     }
 }
 
-/// `stat` mtime → JS epoch ms. Windows carries `uv_timespec_t.sec` in a
-/// 32-bit `long`; read it back as unsigned, as node:fs does (`Stat.rs`
-/// `timespec_parts`), so 2038..2106 survive and `lastModified` agrees with
-/// `fs.statSync().mtimeMs` there too.
+/// `stat` mtime → JS epoch ms, widened the same way as `fs.Stats.mtimeMs`.
 pub(crate) fn stat_to_js_mtime(stat: &bun_sys::Stat) -> jsc::JSTimeType {
-    let mtime = bun_sys::stat_mtime(stat);
-    #[cfg(windows)]
-    let sec = mtime.sec as i32 as u32 as i64;
-    #[cfg(not(windows))]
-    let sec = mtime.sec;
-    jsc::to_js_time(sec as isize, mtime.nsec as isize)
+    let (sec, nsec) = crate::node::stat::timespec_parts(bun_sys::stat_mtime(stat));
+    jsc::to_js_time(sec as isize, nsec as isize)
 }
 
 /// Window clamp shared by the `resolve_size`/`resolved_size` arms: only an

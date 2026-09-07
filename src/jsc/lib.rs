@@ -1539,8 +1539,7 @@ pub type OpaqueCallback = unsafe extern "C" fn(current: *mut c_void);
 /// under both names.
 pub type Error = ErrorCode;
 
-/// Milliseconds since the Unix epoch, signed like `fs.Stats.mtimeMs` (a file
-/// can be dated before 1970).
+/// Milliseconds since the Unix epoch, signed like `fs.Stats.mtimeMs`.
 pub type JSTimeType = i64;
 /// "stat has not run yet" marker for `webcore::File::last_modified`.
 pub const INIT_TIMESTAMP: JSTimeType = (1 << 52) - 1;

@@ -938,6 +938,114 @@ describe("FileSink flush() from a 'beforeExit' listener", () => {
   });
 });
 
+// A write that `write(2)` would not take yet is buffered and reported as
+// written; the writer drains it later from a poll callback. When that drain
+// fails, the failure has nowhere to go if no write()/flush() Promise is pending
+// at that moment. It must reach the next call instead of being dropped with the
+// bytes: flush() and end() throw it, write() rejects with it.
+describe.skipIf(!isPosix)("FileSink reports a write error that arrived while nothing was pending", () => {
+  async function setup() {
+    const [readFd, writeFd] = createSocketPair();
+    // createSocketPair() hands out non-blocking fds: fill the socket so the
+    // next write has to be buffered.
+    const filler = Buffer.alloc(64 * 1024, 0x61);
+    try {
+      while (true) fs.writeSync(writeFd, filler);
+    } catch (e: any) {
+      if (e.code !== "EAGAIN") throw e;
+    }
+    const sink = Bun.file(writeFd).writer();
+    expect(sink.write("marker")).toBe(6);
+    // Let the sink's own end-of-tick flush try the fd and leave the bytes
+    // pending on the poll.
+    await new Promise(resolve => setImmediate(resolve));
+    // The peer goes away: the poll reports the fd, the drain fails with
+    // EPIPE, and the writer drops the buffered bytes.
+    fs.closeSync(readFd);
+    return { sink, writeFd };
+  }
+
+  // The poll callback runs on a later loop turn. Keep yielding until the
+  // sink has seen the error (it reports it) or the deadline passes.
+  async function until<T>(attempt: () => T | undefined): Promise<T | undefined> {
+    const deadline = Date.now() + 2_000;
+    while (Date.now() < deadline) {
+      await new Promise(resolve => setImmediate(resolve));
+      const result = attempt();
+      if (result !== undefined) return result;
+    }
+    return undefined;
+  }
+
+  it.concurrent("flush() throws it", async () => {
+    const { sink, writeFd } = await setup();
+    try {
+      const code = await until(() => {
+        try {
+          sink.flush();
+        } catch (e: any) {
+          return e.code;
+        }
+      });
+      expect(code).toBe("EPIPE");
+    } finally {
+      fs.closeSync(writeFd);
+    }
+  });
+
+  it.concurrent("end() throws it", async () => {
+    const { sink, writeFd } = await setup();
+    try {
+      const code = await until(() => {
+        try {
+          sink.end();
+        } catch (e: any) {
+          return e.code;
+        }
+      });
+      expect(code).toBe("EPIPE");
+    } finally {
+      fs.closeSync(writeFd);
+    }
+  });
+
+  it.concurrent("write() rejects with it", async () => {
+    const { sink, writeFd } = await setup();
+    try {
+      const code = await until(() => {
+        const result = sink.write("more");
+        if (result instanceof Promise)
+          return result.then(
+            () => "resolved",
+            (e: any) => e.code,
+          );
+      });
+      expect(await code).toBe("EPIPE");
+    } finally {
+      fs.closeSync(writeFd);
+    }
+  });
+
+  // Once delivered, the error is spent: end() on the dead sink is the no-op
+  // it is after end().
+  it.concurrent("the error is reported once", async () => {
+    const { sink, writeFd } = await setup();
+    try {
+      const code = await until(() => {
+        try {
+          sink.flush();
+        } catch (e: any) {
+          return e.code;
+        }
+      });
+      expect(code).toBe("EPIPE");
+      expect(typeof sink.end()).toBe("number");
+    } finally {
+      fs.closeSync(writeFd);
+    }
+  });
+});
+
 it("fs.promises.writeFile with iterables under GC pressure does not crash", async () => {
   const dir = tmpdirSync();
   await using proc = Bun.spawn({

@@ -343,7 +343,13 @@ function close(stream, err, cb) {
   const fastPath: FileSink | true = stream[kWriteStreamFastPath];
   if (fastPath && fastPath !== true) {
     stream.fd = null;
-    const maybePromise = fastPath.end(err);
+    let maybePromise;
+    try {
+      maybePromise = fastPath.end(err);
+    } catch (e) {
+      cb(err || e);
+      return;
+    }
     thenIfPromise(maybePromise, () => {
       cb(err);
     });
@@ -729,7 +735,14 @@ writeStreamPrototype._writev = function (data, cb) {
 writeStreamPrototype._destroy = function (err, cb) {
   const sink = this[kWriteStreamFastPath];
   if (sink && sink !== true) {
-    const end = sink.end(err);
+    let end;
+    try {
+      end = sink.end(err);
+    } catch (e) {
+      this.fd = null;
+      cb(err || e);
+      return;
+    }
     if ($isPromise(end)) {
       end.then(() => cb(err), cb);
       return;

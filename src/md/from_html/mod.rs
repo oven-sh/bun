@@ -1,13 +1,12 @@
 //! HTML → Markdown (`Bun.markdown.fromHTML`).
 //!
 //! The rule set is turndown's (plus turndown-plugin-gfm) applied to a tree
-//! built by html5ever's tree builder — spec-compliant HTML5 tree
-//! construction — fed by a byte-oriented tokenizer of our own
-//! ([`tokenizer`]) that produces the same tokens html5ever's would, several
-//! times faster. The pipeline is the same shape as turndown's:
+//! built from lol-html's token stream — the parser behind `HTMLRewriter` —
+//! with the structural half of HTML tree construction (implied end tags,
+//! table fix-up, formatting-element recovery) supplied by [`tree`]. The
+//! pipeline is the same shape as turndown's:
 //!
-//! 1. tokenize and build an arena DOM ([`tokenizer`] → [`depth`] → html5ever
-//!    → [`dom`]),
+//! 1. parse into an arena DOM ([`tree`] → [`dom`]),
 //! 2. collapse inter-element whitespace the way a browser would render it,
 //!    noting which subtrees end up blank ([`whitespace`]),
 //! 3. walk the tree bottom-up, turning each element into Markdown with a
@@ -15,28 +14,24 @@
 //!    blank lines ([`emit`]).
 //!
 //! [`convert`] is a pure function of its inputs: no caches, no statics.
-//! (html5ever interns unfamiliar tag/attribute names in string_cache's
-//! process-wide, mutex-guarded atom table; entries are refcounted and
-//! removed on drop, so nothing outlives the call.)
 
-mod depth;
 mod dom;
 mod emit;
+mod entities;
 mod scan;
 mod text;
-mod tokenizer;
+mod tree;
 mod whitespace;
 
 use bun_core::strings;
-use html5ever::tendril::StrTendril;
-use html5ever::tree_builder::{TreeBuilder, TreeBuilderOpts, TreeSink};
 
-pub use depth::MAX_TREE_DEPTH;
 pub use emit::MAX_DEPTH;
+pub use tree::MAX_TREE_DEPTH;
 
-/// Largest input [`convert`] accepts. html5ever's buffers index with `u32`;
-/// this leaves headroom for the entity expansion and element synthesis the
-/// parser can do on top of the raw bytes.
+/// Largest input [`convert_utf8_bytes`] accepts: the DOM keeps a decoded
+/// copy of the text, and the output buffer is sized from the input, so a
+/// multi-gigabyte document is refused up front rather than run out of
+/// memory half way.
 pub const MAX_INPUT_LEN: usize = (u32::MAX / 4) as usize;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -191,70 +186,40 @@ impl Options {
 pub struct InputTooLong;
 
 /// Converts an HTML document (or fragment) to Markdown. Never fails: any
-/// input the HTML parser accepts produces some Markdown, and the parser
-/// accepts everything. Callers bound `html.len()` by [`MAX_INPUT_LEN`].
+/// input produces some Markdown, since HTML parsing accepts everything.
 pub fn convert(html: &str, options: &Options) -> String {
-    convert_tendril(&StrTendril::from(html), options)
+    convert_bytes(html.as_bytes(), options)
 }
 
 /// [`convert`] for bytes that are supposed to be UTF-8 and may be backed
-/// by memory another thread can write (a `SharedArrayBuffer`). The bytes
-/// are copied first — the parser needs its own buffer regardless — and
-/// only that private copy is validated and parsed, so nothing another
-/// thread does afterwards can invalidate the check. Invalid sequences become
-/// U+FFFD, as a browser decoding the same bytes would have it.
+/// by memory another thread can write (a `SharedArrayBuffer`). The bytes go
+/// to the parser as bytes — lol-html validates UTF-8 itself as it produces
+/// each text chunk, name and attribute value, substituting U+FFFD where it
+/// must — so no `&str` is ever formed over the shared memory and a racing
+/// writer can garble the content but nothing else. Input that is invalid to
+/// begin with is decoded lossily up front so the substitution matches what
+/// a browser decoding the same bytes would show.
 pub fn convert_utf8_bytes(bytes: &[u8], options: &Options) -> Result<String, InputTooLong> {
-    use html5ever::tendril::ByteTendril;
     if bytes.len() > MAX_INPUT_LEN {
         return Err(InputTooLong);
     }
-    let copy = ByteTendril::from_slice(bytes);
-    let input = if strings::is_valid_utf8(&copy) {
-        // SAFETY: validated on the line above, on this private copy.
-        unsafe { copy.reinterpret_without_validating() }
-    } else {
-        #[allow(clippy::disallowed_methods)] // U+FFFD substitution is the point here
-        let lossy = String::from_utf8_lossy(&copy).into_owned();
-        drop(copy);
-        // Each replaced byte grew to three.
-        if lossy.len() > MAX_INPUT_LEN {
-            return Err(InputTooLong);
-        }
-        StrTendril::from(lossy)
-    };
-    Ok(convert_tendril(&input, options))
+    if strings::is_valid_utf8(bytes) {
+        return Ok(convert_bytes(bytes, options));
+    }
+    #[allow(clippy::disallowed_methods)] // U+FFFD substitution is the point here
+    let lossy = String::from_utf8_lossy(bytes).into_owned();
+    // Each replaced byte grew to three.
+    if lossy.len() > MAX_INPUT_LEN {
+        return Err(InputTooLong);
+    }
+    Ok(convert_bytes(lossy.as_bytes(), options))
 }
 
-fn convert_tendril(input: &StrTendril, options: &Options) -> String {
-    debug_assert!(input.len() <= MAX_INPUT_LEN);
-    let arena = dom::Arenas::with_capacity(input.len() / 32);
-
-    let tree_builder = TreeBuilder::new(
-        dom::Sink::new(&arena),
-        TreeBuilderOpts {
-            // With scripting on, `<noscript>` bodies stay a single raw text
-            // node, which is cheaper to skip than a parsed subtree.
-            scripting_enabled: true,
-            drop_doctype: true,
-            ..Default::default()
-        },
-    );
-    // Tokens flow tokenizer → depth limiter → html5ever tree builder → sink.
-    let limiter = depth::DepthLimiter::new(tree_builder);
-    tokenizer::FastTokenizer::new(input, &limiter).run();
-    let document = limiter.inner.sink.get_document();
-
-    // Convert `<body>` when the parser produced one (it always does for
-    // document input); fall back to `<html>` for frameset documents.
-    let html_el = document.children().find(|c| c.tag() == dom::Tag::Html);
-    let root = html_el
-        .and_then(|h| h.children().find(|c| c.tag() == dom::Tag::Body))
-        .or(html_el)
-        .unwrap_or(document);
-
-    whitespace::collapse_whitespace(root);
-
-    let mut out = String::with_capacity(input.len() / 2);
+fn convert_bytes(html: &[u8], options: &Options) -> String {
+    let arena = dom::Arenas::with_capacity(html.len() / 32, html.len() / 2);
+    let root = tree::parse(html, &arena);
+    whitespace::collapse_whitespace(root, &arena);
+    let mut out = String::with_capacity(html.len() / 2);
     emit::Converter::new(options).convert(root, &mut out);
     out
 }

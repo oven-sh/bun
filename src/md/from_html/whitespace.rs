@@ -11,9 +11,7 @@
 
 use core::ptr;
 
-use html5ever::tendril::StrTendril;
-
-use super::dom::{self, FLAG_WS_ONLY, NodeData, Ref, Tag};
+use super::dom::{self, Arena, FLAG_WS_ONLY, NodeData, Ref, Tag, Text};
 use super::scan;
 use super::text::is_js_whitespace;
 
@@ -30,7 +28,7 @@ fn is_opaque(node: Ref<'_>) -> bool {
 /// walk, fills in each node's subtree flags (see [`dom::contribute_flags`]):
 /// a node's flags are final when the walk leaves it, at which point they are
 /// folded into the parent's.
-pub(crate) fn collapse_whitespace(root: Ref<'_>) {
+pub(crate) fn collapse_whitespace<'a>(root: Ref<'a>, arena: Arena<'a>) {
     if is_opaque(root) {
         dom::compute_subtree_flags(root);
         return;
@@ -54,17 +52,15 @@ pub(crate) fn collapse_whitespace(root: Ref<'_>) {
         // Enter `node` (turndown's per-node step). `true` = descend next.
         let descend = match &node.data {
             NodeData::Text(cell) => {
-                let mut data = cell.borrow_mut();
                 let strip_leading = !state.keep_leading_ws
                     && (state.prev_text.is_none() || state.prev_text_ends_with_space);
-                collapse_text(&mut data, strip_leading, &mut state.scratch);
+                collapse_text(cell, arena, strip_leading, &mut state.scratch);
+                let data = cell.get();
                 if data.is_empty() {
-                    drop(data);
                     node.detach();
                 } else {
                     state.prev_text_ends_with_space = data.ends_with(' ');
                     let ws_only = data.chars().all(is_js_whitespace);
-                    drop(data);
                     state.prev_text = Some(node);
                     node.set_flags(if ws_only { FLAG_WS_ONLY } else { 0 });
                     dom::contribute_flags(parent, node);
@@ -123,7 +119,7 @@ pub(crate) fn collapse_whitespace(root: Ref<'_>) {
 
     if let Some(p) = state.prev_text {
         trim_trailing_space(p);
-        if p.as_text().unwrap().borrow().is_empty() {
+        if p.as_text().unwrap().get().is_empty() {
             p.detach();
         }
     }
@@ -165,9 +161,8 @@ impl State<'_> {
 
 fn trim_trailing_space(text_node: Ref<'_>) {
     let cell = text_node.as_text().unwrap();
-    let mut t = cell.borrow_mut();
-    if t.ends_with(' ') {
-        t.pop_back(1);
+    if let Some(t) = cell.get().strip_suffix(' ') {
+        cell.set(t);
     }
 }
 
@@ -177,27 +172,28 @@ fn is_ascii_ws(b: u8) -> bool {
 }
 
 /// `text.replace(/[ \r\n\t]+/g, ' ')`, then drop one leading space if
-/// `strip_leading`. `scratch` is a reusable buffer for the rewrite.
-fn collapse_text(t: &mut StrTendril, strip_leading: bool, scratch: &mut String) {
-    let text: &str = t;
+/// `strip_leading`. Results that are not a sub-slice of the original are
+/// built in `scratch` and copied into the arena.
+fn collapse_text<'a>(cell: &Text<'a>, arena: Arena<'a>, strip_leading: bool, scratch: &mut String) {
+    let text: &'a str = cell.get();
     let bytes = text.as_bytes();
 
     // The indentation between tags is the most common text node by count;
-    // settle it without allocating.
+    // settle it without copying.
     if bytes.iter().all(|&b| is_ascii_ws(b)) {
         if strip_leading {
-            t.clear();
+            cell.set("");
         } else if bytes != b" " {
-            *t = StrTendril::from_slice(" ");
+            cell.set(" ");
         }
         return;
     }
 
     // First place that needs rewriting: a tab/CR/LF, or the second space
-    // of a run. Everything before it is copied verbatim.
+    // of a run. Everything before it is kept verbatim.
     let Some(first_bad) = scan::first_uncollapsed(bytes) else {
         if strip_leading && bytes[0] == b' ' {
-            t.pop_front(1);
+            cell.set(&text[1..]);
         }
         return;
     };
@@ -234,5 +230,5 @@ fn collapse_text(t: &mut StrTendril, strip_leading: bool, scratch: &mut String) 
             scratch.push_str(&text[start..i]);
         }
     }
-    *t = StrTendril::from_slice(scratch);
+    cell.set(arena.alloc_str(scratch));
 }

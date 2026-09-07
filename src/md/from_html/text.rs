@@ -72,13 +72,13 @@ pub(crate) fn leading_newlines(s: &str) -> usize {
 /// `textContent`), leaving out dropped (`is_skipped`) subtrees.
 pub(crate) fn push_text_content(root: Ref<'_>, out: &mut String) {
     if let Some(t) = root.as_text() {
-        out.push_str(&t.borrow());
+        out.push_str(t.get());
         return;
     }
     let mut cur = root.first_child.get();
     while let Some(node) = cur {
         if let Some(t) = node.as_text() {
-            out.push_str(&t.borrow());
+            out.push_str(t.get());
         }
         cur = next_in_preorder(node, root, !node.tag().is_skipped());
     }
@@ -140,7 +140,7 @@ pub(crate) fn leading_whitespace(node: Ref<'_>, ascii: &mut String, rest: &mut S
     ascii.clear();
     rest.clear();
     for t in text_nodes(node, false) {
-        let t = t.as_text().unwrap().borrow();
+        let t = t.as_text().unwrap().get();
         for c in t.chars() {
             if !is_js_whitespace(c) {
                 return;
@@ -164,7 +164,7 @@ pub(crate) fn trailing_whitespace(node: Ref<'_>, rest: &mut String, ascii: &mut 
     // Collected in reverse; flipped at the end.
     let mut saw_non_ws = false;
     'outer: for t in text_nodes(node, true) {
-        let t = t.as_text().unwrap().borrow();
+        let t = t.as_text().unwrap().get();
         for c in t.chars().rev() {
             if !is_js_whitespace(c) {
                 saw_non_ws = true;
@@ -196,7 +196,7 @@ fn reverse_in_place(s: &mut String) {
 /// Whether `node.textContent` ends with an ASCII space (`/ $/`).
 pub(crate) fn text_content_ends_with_space(node: Ref<'_>) -> bool {
     for t in text_nodes(node, true) {
-        let t = t.as_text().unwrap().borrow();
+        let t = t.as_text().unwrap().get();
         if !t.is_empty() {
             return t.ends_with(' ');
         }
@@ -207,7 +207,7 @@ pub(crate) fn text_content_ends_with_space(node: Ref<'_>) -> bool {
 /// Whether `node.textContent` starts with an ASCII space (`/^ /`).
 pub(crate) fn text_content_starts_with_space(node: Ref<'_>) -> bool {
     for t in text_nodes(node, false) {
-        let t = t.as_text().unwrap().borrow();
+        let t = t.as_text().unwrap().get();
         if !t.is_empty() {
             return t.starts_with(' ');
         }

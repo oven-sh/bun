@@ -1,35 +1,104 @@
-//! Arena-backed DOM that html5ever's tree builder writes into.
+//! Arena-backed DOM the tree builder ([`super::tree`]) writes into.
 //!
 //! Nodes are bump-allocated in a `typed_arena::Arena` and linked with
-//! `Cell<Option<&Node>>` pointers (the shape of html5ever's own `arena.rs`
-//! example). Handles are plain shared references, so `elem_name` can borrow
-//! the name straight out of the node without going through the sink, and
-//! dropping the arena frees every node in one flat sweep — there is no
-//! recursive `Drop`, so pathological nesting cannot overflow the stack on
-//! teardown.
+//! `Cell<Option<&Node>>` pointers. Handles are plain shared references, text
+//! and attribute strings live in a byte arena beside the nodes, and dropping
+//! the arenas frees everything in a few flat sweeps — there is no recursive
+//! `Drop`, so pathological nesting cannot overflow the stack on teardown.
 
-use core::cell::{Cell, RefCell};
-use core::ptr;
-use std::borrow::Cow;
+use core::cell::Cell;
+use core::marker::PhantomData;
+use core::ptr::{self, NonNull};
 
-use html5ever::interface::tree_builder::{ElementFlags, NodeOrText, QuirksMode, TreeSink};
-use html5ever::tendril::StrTendril;
-use html5ever::{Attribute, ExpandedName, LocalName, Namespace, QualName, local_name, ns};
-
-/// Backing storage for one document: nodes in one arena, attribute lists
-/// in another (so a start tag's attributes cost no allocation of their own
-/// and are dropped in one sweep with everything else).
+/// Backing storage for one document.
 pub(crate) struct Arenas<'a> {
     nodes: typed_arena::Arena<Node<'a>>,
-    attrs: typed_arena::Arena<Attribute>,
+    attrs: typed_arena::Arena<Attr<'a>>,
+    strs: typed_arena::Arena<u8>,
 }
 
-impl Arenas<'_> {
-    pub(crate) fn with_capacity(nodes: usize) -> Self {
+impl<'a> Arenas<'a> {
+    pub(crate) fn with_capacity(nodes: usize, text_bytes: usize) -> Self {
         Arenas {
             nodes: typed_arena::Arena::with_capacity(nodes),
-            attrs: typed_arena::Arena::with_capacity(nodes),
+            attrs: typed_arena::Arena::with_capacity(nodes / 4),
+            strs: typed_arena::Arena::with_capacity(text_bytes),
         }
+    }
+
+    pub(crate) fn alloc_str(&'a self, s: &str) -> &'a str {
+        if s.is_empty() {
+            return "";
+        }
+        self.strs.alloc_str(s)
+    }
+
+    pub(crate) fn new_document(&'a self) -> Ref<'a> {
+        self.nodes
+            .alloc(Node::new(NodeData::Document, Tag::NotAnElement))
+    }
+
+    pub(crate) fn new_ignored(&'a self) -> Ref<'a> {
+        self.nodes
+            .alloc(Node::new(NodeData::Ignored, Tag::NotAnElement))
+    }
+
+    /// `name` must already be ASCII-lowercased (lol-html hands names over
+    /// that way). `attrs` are copied into the attribute arena.
+    pub(crate) fn new_element(&'a self, name: &'a str, html: bool, attrs: &[Attr<'a>]) -> Ref<'a> {
+        let tag = if html {
+            Tag::from_name(name)
+        } else {
+            Tag::Other
+        };
+        let attrs: &'a [Attr<'a>] = if attrs.is_empty() {
+            &[]
+        } else {
+            self.attrs.alloc_extend(attrs.iter().copied())
+        };
+        self.nodes
+            .alloc(Node::new(NodeData::Element { name, html, attrs }, tag))
+    }
+
+    /// A fresh element with the same name and attributes as `node` (the
+    /// tree builder's "create an element for the token" when it reopens a
+    /// formatting element).
+    pub(crate) fn clone_element(&'a self, node: Ref<'a>) -> Ref<'a> {
+        match node.data {
+            NodeData::Element { name, html, attrs } => self
+                .nodes
+                .alloc(Node::new(NodeData::Element { name, html, attrs }, node.tag)),
+            _ => unreachable!("clone_element on a non-element"),
+        }
+    }
+
+    /// Appends text to `parent`, merging with a trailing text child.
+    pub(crate) fn append_text(&'a self, parent: Ref<'a>, text: &str) {
+        if let Some(prev) = parent.last_child.get()
+            && let NodeData::Text(t) = &prev.data
+        {
+            t.push_str(self, text);
+            return;
+        }
+        parent.append(self.new_text(text));
+    }
+
+    /// Inserts text before `sibling`, merging with a preceding text node.
+    pub(crate) fn insert_text_before(&'a self, sibling: Ref<'a>, text: &str) {
+        if let Some(prev) = sibling.previous_sibling.get()
+            && let NodeData::Text(t) = &prev.data
+        {
+            t.push_str(self, text);
+            return;
+        }
+        sibling.insert_before(self.new_text(text));
+    }
+
+    fn new_text(&'a self, text: &str) -> Ref<'a> {
+        let t = Text::default();
+        t.set(self.alloc_str(text));
+        self.nodes
+            .alloc(Node::new(NodeData::Text(t), Tag::NotAnElement))
     }
 }
 
@@ -37,8 +106,81 @@ pub(crate) type Arena<'a> = &'a Arenas<'a>;
 pub(crate) type Ref<'a> = &'a Node<'a>;
 type Link<'a> = Cell<Option<Ref<'a>>>;
 
-/// Kept small (88 bytes: five links plus payload): every pass over the
-/// document is a pointer walk, so node size is traversal speed.
+/// One attribute. Only the attributes the converter reads are kept (see
+/// [`super::tree`]); values are entity-decoded.
+#[derive(Clone, Copy)]
+pub(crate) struct Attr<'a> {
+    pub(crate) name: &'a str,
+    pub(crate) value: &'a str,
+}
+
+/// A text node's content: a string in the byte arena (or a `'static` one).
+/// The tree builder appends to it as character tokens arrive — in place
+/// while the allocation behind it has room, otherwise into a fresh,
+/// geometrically larger one, so a text node assembled from many pieces costs
+/// amortised linear space — and the whitespace pass later swaps in its
+/// collapsed form with [`Text::set`].
+pub(crate) struct Text<'a> {
+    ptr: Cell<NonNull<u8>>,
+    len: Cell<usize>,
+    /// Writable bytes at `ptr` (zero when `ptr` came from a shared `&str`).
+    cap: Cell<usize>,
+    _marker: PhantomData<&'a str>,
+}
+
+impl Default for Text<'_> {
+    fn default() -> Self {
+        Text {
+            ptr: Cell::new(NonNull::dangling()),
+            len: Cell::new(0),
+            cap: Cell::new(0),
+            _marker: PhantomData,
+        }
+    }
+}
+
+impl<'a> Text<'a> {
+    #[inline]
+    pub(crate) fn get(&self) -> &'a str {
+        // SAFETY: `ptr[..len]` is always either a `&'a str` handed to `set`
+        // or arena bytes `push_str` copied whole `str`s into.
+        unsafe {
+            core::str::from_utf8_unchecked(core::slice::from_raw_parts(
+                self.ptr.get().as_ptr(),
+                self.len.get(),
+            ))
+        }
+    }
+
+    #[inline]
+    pub(crate) fn set(&self, s: &'a str) {
+        self.ptr.set(NonNull::from(s.as_bytes()).cast());
+        self.len.set(s.len());
+        self.cap.set(0); // read-only provenance: the next append must copy
+    }
+
+    fn push_str(&self, arena: &'a Arenas<'a>, s: &str) {
+        let len = self.len.get();
+        let new_len = len + s.len();
+        if new_len > self.cap.get() {
+            let cap = new_len.max(len.saturating_mul(2)).max(16);
+            let buf = arena.strs.alloc_extend(core::iter::repeat_n(0u8, cap));
+            buf[..len].copy_from_slice(self.get().as_bytes());
+            self.ptr.set(NonNull::from(&mut *buf).cast());
+            self.cap.set(cap);
+        }
+        // SAFETY: `ptr` has `cap >= new_len` writable bytes (it came from
+        // the arena's `&mut [u8]` above, now or on an earlier call), and no
+        // `&str` handed out by `get` extends past `len`.
+        unsafe {
+            core::ptr::copy_nonoverlapping(s.as_ptr(), self.ptr.get().as_ptr().add(len), s.len())
+        };
+        self.len.set(new_len);
+    }
+}
+
+/// Kept small (five links plus payload): every pass over the document is a
+/// pointer walk, so node size is traversal speed.
 pub(crate) struct Node<'a> {
     pub(crate) parent: Link<'a>,
     pub(crate) previous_sibling: Link<'a>,
@@ -50,25 +192,20 @@ pub(crate) struct Node<'a> {
     /// Subtree facts (the `FLAG_*` constants), accumulated by the
     /// whitespace pass via [`contribute_flags`] once parsing is done.
     flags: Cell<u8>,
-    mathml_annotation_xml_integration_point: bool,
-    /// Distance from the document node at insertion time. Only maintained
-    /// during parsing as a hint for the depth limiter; later re-parenting
-    /// does not update it.
-    depth: Cell<u32>,
     pub(crate) data: NodeData<'a>,
 }
 
 pub(crate) enum NodeData<'a> {
     Document,
-    /// Doctype / comment / processing instruction. None of these produce
-    /// Markdown, so their payloads are not retained.
+    /// Comment / doctype. Neither produces Markdown, but a comment still
+    /// separates the text nodes on either side of it, as it does in a DOM.
     Ignored,
-    Text(RefCell<StrTendril>),
+    Text(Text<'a>),
     Element {
-        ns: Namespace,
-        local: LocalName,
-        /// Lives in [`Arenas::attrs`].
-        attrs: &'a [Attribute],
+        name: &'a str,
+        /// In the HTML namespace (as opposed to SVG / MathML).
+        html: bool,
+        attrs: &'a [Attr<'a>],
     },
 }
 
@@ -93,8 +230,6 @@ impl<'a> Node<'a> {
             last_child: Cell::new(None),
             tag,
             flags: Cell::new(FLAG_WS_ONLY),
-            mathml_annotation_xml_integration_point: false,
-            depth: Cell::new(0),
             data,
         }
     }
@@ -120,22 +255,28 @@ impl<'a> Node<'a> {
     }
 
     #[inline]
-    pub(crate) fn as_text(&self) -> Option<&RefCell<StrTendril>> {
+    pub(crate) fn as_text(&self) -> Option<&Text<'a>> {
         match &self.data {
             NodeData::Text(t) => Some(t),
             _ => None,
         }
     }
 
-    /// Value of the (namespace-less) attribute `name`, if present.
-    pub(crate) fn attr(&self, name: &LocalName) -> Option<&'a str> {
-        let NodeData::Element { attrs, .. } = &self.data else {
-            return None;
-        };
-        attrs
+    pub(crate) fn attrs(&self) -> &'a [Attr<'a>] {
+        match self.data {
+            NodeData::Element { attrs, .. } => attrs,
+            _ => &[],
+        }
+    }
+
+    /// Value of the attribute `name`, if present. Only the attributes the
+    /// tree builder keeps for this kind of element are visible (see
+    /// `tree::Builder::take_attrs`); reading a new one means listing it there.
+    pub(crate) fn attr(&self, name: &str) -> Option<&'a str> {
+        self.attrs()
             .iter()
-            .find(|a| a.name.local == *name && a.name.ns == ns!())
-            .map(|a| &*a.value)
+            .find(|a| a.name == name)
+            .map(|a| a.value)
     }
 
     pub(crate) fn children(&self) -> Children<'a> {
@@ -175,10 +316,9 @@ impl<'a> Node<'a> {
         }
     }
 
-    fn append(&'a self, new_child: Ref<'a>) {
+    pub(crate) fn append(&'a self, new_child: Ref<'a>) {
         new_child.detach();
         new_child.parent.set(Some(self));
-        new_child.depth.set(self.depth.get() + 1);
         if let Some(last_child) = self.last_child.take() {
             new_child.previous_sibling.set(Some(last_child));
             debug_assert!(last_child.next_sibling.get().is_none());
@@ -190,10 +330,9 @@ impl<'a> Node<'a> {
         self.last_child.set(Some(new_child));
     }
 
-    fn insert_before(&'a self, new_sibling: Ref<'a>) {
+    pub(crate) fn insert_before(&'a self, new_sibling: Ref<'a>) {
         new_sibling.detach();
         new_sibling.parent.set(self.parent.get());
-        new_sibling.depth.set(self.depth.get());
         new_sibling.next_sibling.set(Some(self));
         if let Some(previous_sibling) = self.previous_sibling.take() {
             new_sibling.previous_sibling.set(Some(previous_sibling));
@@ -207,6 +346,15 @@ impl<'a> Node<'a> {
             parent.first_child.set(Some(new_sibling));
         }
         self.previous_sibling.set(Some(new_sibling));
+    }
+
+    /// Moves all of `self`'s children to the end of `new_parent`.
+    pub(crate) fn reparent_children(&self, new_parent: Ref<'a>) {
+        let mut next_child = self.first_child.get();
+        while let Some(child) = next_child {
+            next_child = child.next_sibling.get();
+            new_parent.append(child)
+        }
     }
 }
 
@@ -282,7 +430,7 @@ pub(crate) fn compute_subtree_flags(root: Ref<'_>) {
         }
         loop {
             if let NodeData::Text(t) = &node.data {
-                let ws_only = t.borrow().chars().all(super::text::is_js_whitespace);
+                let ws_only = t.get().chars().all(super::text::is_js_whitespace);
                 node.flags.set(if ws_only { FLAG_WS_ONLY } else { 0 });
             }
             if ptr::eq(node, root) {
@@ -299,229 +447,9 @@ pub(crate) fn compute_subtree_flags(root: Ref<'_>) {
     }
 }
 
-pub(crate) struct Sink<'a> {
-    arena: Arena<'a>,
-    document: Ref<'a>,
-    /// Depth of the most recently inserted element; see [`super::depth`].
-    last_insert_depth: Cell<u32>,
-    /// An emptied attribute vector (capacity intact) for the tokenizer to
-    /// build the next tag's attributes in; see [`Sink::take_attr_buf`].
-    spare_attrs: Cell<Vec<Attribute>>,
-}
-
-impl<'a> Sink<'a> {
-    pub(crate) fn new(arena: Arena<'a>) -> Self {
-        Sink {
-            arena,
-            document: arena
-                .nodes
-                .alloc(Node::new(NodeData::Document, Tag::NotAnElement)),
-            last_insert_depth: Cell::new(0),
-            spare_attrs: Cell::new(Vec::new()),
-        }
-    }
-
-    #[inline]
-    pub(crate) fn depth_hint(&self) -> u32 {
-        self.last_insert_depth.get()
-    }
-
-    /// html5ever's `Tag` carries attributes as a `Vec`, so every start tag
-    /// with attributes would cost an allocation and, at teardown, a free.
-    /// Instead the vector's contents are moved into the attribute arena when
-    /// the element is created and the empty vector is parked here for the
-    /// tokenizer to pick up for the next tag: one buffer cycles between the
-    /// two for the whole document.
-    #[inline]
-    pub(crate) fn take_attr_buf(&self) -> Vec<Attribute> {
-        self.spare_attrs.take()
-    }
-
-    fn store_attrs(&self, mut attrs: Vec<Attribute>) -> &'a [Attribute] {
-        if attrs.is_empty() {
-            return &[];
-        }
-        let stored: &'a [Attribute] = self.arena.attrs.alloc_extend(attrs.drain(..));
-        // Park the (now empty) buffer unless a roomier one is already there.
-        let parked = self.spare_attrs.take();
-        self.spare_attrs
-            .set(if parked.capacity() > attrs.capacity() {
-                parked
-            } else {
-                attrs
-            });
-        stored
-    }
-
-    #[inline]
-    fn new_node(&self, data: NodeData<'a>, tag: Tag) -> Ref<'a> {
-        self.arena.nodes.alloc(Node::new(data, tag))
-    }
-
-    fn append_common<P, A>(&self, child: NodeOrText<Ref<'a>>, previous: P, append: A)
-    where
-        P: FnOnce() -> Option<Ref<'a>>,
-        A: FnOnce(Ref<'a>),
-    {
-        let new_node = match child {
-            NodeOrText::AppendText(text) => {
-                // Merge with an existing adjacent text node if there is one.
-                if let Some(&Node {
-                    data: NodeData::Text(ref contents),
-                    ..
-                }) = previous()
-                {
-                    contents.borrow_mut().push_tendril(&text);
-                    return;
-                }
-                self.new_node(NodeData::Text(RefCell::new(text)), Tag::NotAnElement)
-            }
-            NodeOrText::AppendNode(node) => node,
-        };
-        append(new_node);
-        if new_node.is_element() {
-            self.last_insert_depth.set(new_node.depth.get());
-        }
-    }
-}
-
-impl<'a> TreeSink for Sink<'a> {
-    type Handle = Ref<'a>;
-    type Output = Ref<'a>;
-    type ElemName<'b>
-        = ExpandedName<'b>
-    where
-        Self: 'b;
-
-    fn finish(self) -> Ref<'a> {
-        self.document
-    }
-
-    fn parse_error(&self, _: Cow<'static, str>) {}
-
-    fn get_document(&self) -> Ref<'a> {
-        self.document
-    }
-
-    fn set_quirks_mode(&self, _mode: QuirksMode) {}
-
-    fn same_node(&self, x: &Ref<'a>, y: &Ref<'a>) -> bool {
-        ptr::eq::<Node>(*x, *y)
-    }
-
-    fn elem_name<'b>(&'b self, target: &'b Ref<'a>) -> ExpandedName<'b> {
-        match &target.data {
-            NodeData::Element { ns, local, .. } => ExpandedName { ns, local },
-            _ => panic!("not an element"),
-        }
-    }
-
-    /// `<template>` children are hung directly off the element (the
-    /// converter skips the subtree either way), so no separate fragment
-    /// node is allocated.
-    fn get_template_contents(&self, target: &Ref<'a>) -> Ref<'a> {
-        target
-    }
-
-    fn is_mathml_annotation_xml_integration_point(&self, target: &Ref<'a>) -> bool {
-        target.mathml_annotation_xml_integration_point
-    }
-
-    fn create_element(
-        &self,
-        name: QualName,
-        attrs: Vec<Attribute>,
-        flags: ElementFlags,
-    ) -> Ref<'a> {
-        let tag = if name.ns == ns!(html) {
-            Tag::from_local_name(&name.local)
-        } else {
-            Tag::Other
-        };
-        let attrs = self.store_attrs(attrs);
-        self.arena.nodes.alloc(Node {
-            mathml_annotation_xml_integration_point: flags.mathml_annotation_xml_integration_point,
-            ..Node::new(
-                NodeData::Element {
-                    ns: name.ns,
-                    local: name.local,
-                    attrs,
-                },
-                tag,
-            )
-        })
-    }
-
-    fn create_comment(&self, _text: StrTendril) -> Ref<'a> {
-        self.new_node(NodeData::Ignored, Tag::NotAnElement)
-    }
-
-    fn create_pi(&self, _target: StrTendril, _data: StrTendril) -> Ref<'a> {
-        self.new_node(NodeData::Ignored, Tag::NotAnElement)
-    }
-
-    fn append(&self, parent: &Ref<'a>, child: NodeOrText<Ref<'a>>) {
-        self.append_common(
-            child,
-            || parent.last_child.get(),
-            |new_node| parent.append(new_node),
-        )
-    }
-
-    fn append_before_sibling(&self, sibling: &Ref<'a>, child: NodeOrText<Ref<'a>>) {
-        self.append_common(
-            child,
-            || sibling.previous_sibling.get(),
-            |new_node| sibling.insert_before(new_node),
-        )
-    }
-
-    fn append_based_on_parent_node(
-        &self,
-        element: &Ref<'a>,
-        prev_element: &Ref<'a>,
-        child: NodeOrText<Ref<'a>>,
-    ) {
-        if element.parent.get().is_some() {
-            self.append_before_sibling(element, child)
-        } else {
-            self.append(prev_element, child)
-        }
-    }
-
-    fn append_doctype_to_document(
-        &self,
-        _name: StrTendril,
-        _public_id: StrTendril,
-        _system_id: StrTendril,
-    ) {
-        self.document
-            .append(self.new_node(NodeData::Ignored, Tag::NotAnElement));
-    }
-
-    fn add_attrs_if_missing(&self, _target: &Ref<'a>, _attrs: Vec<Attribute>) {
-        // Only ever called to merge a repeated `<html>`/`<body>` start tag's
-        // attributes into the existing element. Nothing here reads either
-        // element's attributes, and honouring it would let `<body a1><body
-        // a2>…` grow one element's attribute list without bound.
-    }
-
-    fn remove_from_parent(&self, target: &Ref<'a>) {
-        target.detach()
-    }
-
-    fn reparent_children(&self, node: &Ref<'a>, new_parent: &Ref<'a>) {
-        let mut next_child = node.first_child.get();
-        while let Some(child) = next_child {
-            debug_assert!(ptr::eq::<Node>(child.parent.get().unwrap(), *node));
-            next_child = child.next_sibling.get();
-            new_parent.append(child)
-        }
-    }
-}
-
-/// HTML element names the converter distinguishes. Anything else in the
-/// HTML namespace, and every foreign (SVG/MathML) element, is `Other`.
+/// HTML element names the converter or the tree builder distinguish.
+/// Anything else in the HTML namespace, and every foreign (SVG/MathML)
+/// element, is `Other`.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 #[repr(u8)]
 pub(crate) enum Tag {
@@ -529,15 +457,20 @@ pub(crate) enum Tag {
     Other,
     A,
     Address,
+    Applet,
     Area,
     Article,
     Aside,
     Audio,
     B,
     Base,
+    Basefont,
+    Bgsound,
+    Big,
     Blockquote,
     Body,
     Br,
+    Button,
     Canvas,
     Caption,
     Center,
@@ -558,8 +491,10 @@ pub(crate) enum Tag {
     Fieldset,
     Figcaption,
     Figure,
+    Font,
     Footer,
     Form,
+    Frame,
     Frameset,
     H1,
     H2,
@@ -574,136 +509,188 @@ pub(crate) enum Tag {
     Html,
     I,
     Iframe,
+    Image,
     Img,
     Input,
     Isindex,
     Keygen,
     Li,
     Link,
+    Listing,
     Main,
+    Marquee,
+    Math,
     Menu,
     Meta,
     Nav,
+    Nobr,
+    Noembed,
     Noframes,
     Noscript,
+    Object,
     Ol,
+    Optgroup,
+    Option,
     Output,
     P,
     Param,
+    Plaintext,
     Pre,
+    Rb,
+    Rp,
+    Rt,
+    Rtc,
+    Ruby,
     S,
     Script,
+    Search,
     Section,
+    Select,
+    Small,
     Source,
     Strike,
     Strong,
     Style,
     Summary,
+    Svg,
     Table,
     Tbody,
     Td,
     Template,
+    Textarea,
     Tfoot,
     Th,
     Thead,
     Title,
     Tr,
     Track,
+    Tt,
+    U,
     Ul,
     Video,
     Wbr,
+    Xmp,
 }
 
 impl Tag {
-    pub(crate) fn from_local_name(name: &LocalName) -> Tag {
-        // Static atoms compare as packed integers, so this is a jump table
-        // rather than string comparisons.
-        match *name {
-            local_name!("a") => Tag::A,
-            local_name!("address") => Tag::Address,
-            local_name!("area") => Tag::Area,
-            local_name!("article") => Tag::Article,
-            local_name!("aside") => Tag::Aside,
-            local_name!("audio") => Tag::Audio,
-            local_name!("b") => Tag::B,
-            local_name!("base") => Tag::Base,
-            local_name!("blockquote") => Tag::Blockquote,
-            local_name!("body") => Tag::Body,
-            local_name!("br") => Tag::Br,
-            local_name!("canvas") => Tag::Canvas,
-            local_name!("caption") => Tag::Caption,
-            local_name!("center") => Tag::Center,
-            local_name!("code") => Tag::Code,
-            local_name!("col") => Tag::Col,
-            local_name!("colgroup") => Tag::Colgroup,
-            local_name!("command") => Tag::Command,
-            local_name!("dd") => Tag::Dd,
-            local_name!("del") => Tag::Del,
-            local_name!("details") => Tag::Details,
-            local_name!("dialog") => Tag::Dialog,
-            local_name!("dir") => Tag::Dir,
-            local_name!("div") => Tag::Div,
-            local_name!("dl") => Tag::Dl,
-            local_name!("dt") => Tag::Dt,
-            local_name!("em") => Tag::Em,
-            local_name!("embed") => Tag::Embed,
-            local_name!("fieldset") => Tag::Fieldset,
-            local_name!("figcaption") => Tag::Figcaption,
-            local_name!("figure") => Tag::Figure,
-            local_name!("footer") => Tag::Footer,
-            local_name!("form") => Tag::Form,
-            local_name!("frameset") => Tag::Frameset,
-            local_name!("h1") => Tag::H1,
-            local_name!("h2") => Tag::H2,
-            local_name!("h3") => Tag::H3,
-            local_name!("h4") => Tag::H4,
-            local_name!("h5") => Tag::H5,
-            local_name!("h6") => Tag::H6,
-            local_name!("head") => Tag::Head,
-            local_name!("header") => Tag::Header,
-            local_name!("hgroup") => Tag::Hgroup,
-            local_name!("hr") => Tag::Hr,
-            local_name!("html") => Tag::Html,
-            local_name!("i") => Tag::I,
-            local_name!("iframe") => Tag::Iframe,
-            local_name!("img") => Tag::Img,
-            local_name!("input") => Tag::Input,
-            local_name!("isindex") => Tag::Isindex,
-            local_name!("keygen") => Tag::Keygen,
-            local_name!("li") => Tag::Li,
-            local_name!("link") => Tag::Link,
-            local_name!("main") => Tag::Main,
-            local_name!("menu") => Tag::Menu,
-            local_name!("meta") => Tag::Meta,
-            local_name!("nav") => Tag::Nav,
-            local_name!("noframes") => Tag::Noframes,
-            local_name!("noscript") => Tag::Noscript,
-            local_name!("ol") => Tag::Ol,
-            local_name!("output") => Tag::Output,
-            local_name!("p") => Tag::P,
-            local_name!("param") => Tag::Param,
-            local_name!("pre") => Tag::Pre,
-            local_name!("s") => Tag::S,
-            local_name!("script") => Tag::Script,
-            local_name!("section") => Tag::Section,
-            local_name!("source") => Tag::Source,
-            local_name!("strike") => Tag::Strike,
-            local_name!("strong") => Tag::Strong,
-            local_name!("style") => Tag::Style,
-            local_name!("summary") => Tag::Summary,
-            local_name!("table") => Tag::Table,
-            local_name!("tbody") => Tag::Tbody,
-            local_name!("td") => Tag::Td,
-            local_name!("template") => Tag::Template,
-            local_name!("tfoot") => Tag::Tfoot,
-            local_name!("th") => Tag::Th,
-            local_name!("thead") => Tag::Thead,
-            local_name!("title") => Tag::Title,
-            local_name!("tr") => Tag::Tr,
-            local_name!("track") => Tag::Track,
-            local_name!("ul") => Tag::Ul,
-            local_name!("video") => Tag::Video,
-            local_name!("wbr") => Tag::Wbr,
+    /// `name` is ASCII-lowercase.
+    pub(crate) fn from_name(name: &str) -> Tag {
+        match name {
+            "a" => Tag::A,
+            "address" => Tag::Address,
+            "applet" => Tag::Applet,
+            "area" => Tag::Area,
+            "article" => Tag::Article,
+            "aside" => Tag::Aside,
+            "audio" => Tag::Audio,
+            "b" => Tag::B,
+            "base" => Tag::Base,
+            "basefont" => Tag::Basefont,
+            "bgsound" => Tag::Bgsound,
+            "big" => Tag::Big,
+            "blockquote" => Tag::Blockquote,
+            "body" => Tag::Body,
+            "br" => Tag::Br,
+            "button" => Tag::Button,
+            "canvas" => Tag::Canvas,
+            "caption" => Tag::Caption,
+            "center" => Tag::Center,
+            "code" => Tag::Code,
+            "col" => Tag::Col,
+            "colgroup" => Tag::Colgroup,
+            "command" => Tag::Command,
+            "dd" => Tag::Dd,
+            "del" => Tag::Del,
+            "details" => Tag::Details,
+            "dialog" => Tag::Dialog,
+            "dir" => Tag::Dir,
+            "div" => Tag::Div,
+            "dl" => Tag::Dl,
+            "dt" => Tag::Dt,
+            "em" => Tag::Em,
+            "embed" => Tag::Embed,
+            "fieldset" => Tag::Fieldset,
+            "figcaption" => Tag::Figcaption,
+            "figure" => Tag::Figure,
+            "font" => Tag::Font,
+            "footer" => Tag::Footer,
+            "form" => Tag::Form,
+            "frame" => Tag::Frame,
+            "frameset" => Tag::Frameset,
+            "h1" => Tag::H1,
+            "h2" => Tag::H2,
+            "h3" => Tag::H3,
+            "h4" => Tag::H4,
+            "h5" => Tag::H5,
+            "h6" => Tag::H6,
+            "head" => Tag::Head,
+            "header" => Tag::Header,
+            "hgroup" => Tag::Hgroup,
+            "hr" => Tag::Hr,
+            "html" => Tag::Html,
+            "i" => Tag::I,
+            "iframe" => Tag::Iframe,
+            "image" => Tag::Image,
+            "img" => Tag::Img,
+            "input" => Tag::Input,
+            "isindex" => Tag::Isindex,
+            "keygen" => Tag::Keygen,
+            "li" => Tag::Li,
+            "link" => Tag::Link,
+            "listing" => Tag::Listing,
+            "main" => Tag::Main,
+            "marquee" => Tag::Marquee,
+            "math" => Tag::Math,
+            "menu" => Tag::Menu,
+            "meta" => Tag::Meta,
+            "nav" => Tag::Nav,
+            "nobr" => Tag::Nobr,
+            "noembed" => Tag::Noembed,
+            "noframes" => Tag::Noframes,
+            "noscript" => Tag::Noscript,
+            "object" => Tag::Object,
+            "ol" => Tag::Ol,
+            "optgroup" => Tag::Optgroup,
+            "option" => Tag::Option,
+            "output" => Tag::Output,
+            "p" => Tag::P,
+            "param" => Tag::Param,
+            "plaintext" => Tag::Plaintext,
+            "pre" => Tag::Pre,
+            "rb" => Tag::Rb,
+            "rp" => Tag::Rp,
+            "rt" => Tag::Rt,
+            "rtc" => Tag::Rtc,
+            "ruby" => Tag::Ruby,
+            "s" => Tag::S,
+            "script" => Tag::Script,
+            "search" => Tag::Search,
+            "section" => Tag::Section,
+            "select" => Tag::Select,
+            "small" => Tag::Small,
+            "source" => Tag::Source,
+            "strike" => Tag::Strike,
+            "strong" => Tag::Strong,
+            "style" => Tag::Style,
+            "summary" => Tag::Summary,
+            "svg" => Tag::Svg,
+            "table" => Tag::Table,
+            "tbody" => Tag::Tbody,
+            "td" => Tag::Td,
+            "template" => Tag::Template,
+            "textarea" => Tag::Textarea,
+            "tfoot" => Tag::Tfoot,
+            "th" => Tag::Th,
+            "thead" => Tag::Thead,
+            "title" => Tag::Title,
+            "tr" => Tag::Tr,
+            "track" => Tag::Track,
+            "tt" => Tag::Tt,
+            "u" => Tag::U,
+            "ul" => Tag::Ul,
+            "video" => Tag::Video,
+            "wbr" => Tag::Wbr,
+            "xmp" => Tag::Xmp,
             _ => Tag::Other,
         }
     }

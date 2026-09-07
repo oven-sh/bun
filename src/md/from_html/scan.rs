@@ -1,30 +1,26 @@
 //! Short-range byte scans.
 //!
 //! `bun_core::strings::index_of_any` is a highway kernel: unbeatable over
-//! distance, but every call pays for dynamic dispatch, broadcasting the set
-//! into vector registers and a first wide load — some fifty cycles before it
-//! has looked at anything. The HTML tokenizer issues one such scan per tag,
-//! per attribute value and per text run (60–90k per MB of markup), and on
-//! real pages most of them end within a few dozen bytes: the closing quote,
-//! the `<` of the next tag. At that range the fixed cost *is* the cost, and
-//! it was the single largest line in the conversion's profile.
+//! distance, but every call pays for dispatch, broadcasting the set into
+//! vector registers and a first 64-byte load — roughly fifty cycles before
+//! it has looked at anything. The converter issues one such scan per text
+//! node several times over (entity check, whitespace collapse, Markdown
+//! escaping — tens of thousands per MB of markup), and on real pages most
+//! of them end, or run out of input, within sixteen bytes. At that range the
+//! fixed cost *is* the cost.
 //!
-//! So these helpers examine the first [`PROBE`] bytes inline, sixteen at a
-//! time with portable SIMD (baseline SSE2 / NEON, no dispatch), and hand only
-//! the scans that get past that to the kernel.
-
-use core::simd::cmp::SimdPartialEq;
-use core::simd::u8x16;
+//! So these helpers test the first sixteen bytes inline — eight at a time
+//! with the classic SWAR zero-byte trick on plain `u64`s, no per-byte
+//! branches and no vector code of our own — and hand only the scans that
+//! get past that to the highway kernel.
 
 use bun_core::strings;
 
-const LANES: usize = 16;
-
 /// How far to look before calling the SIMD kernel.
-const PROBE: usize = 64;
+const PROBE: usize = 16;
 
-/// Below this the kernel's own scalar prologue would end up doing the work a
-/// byte at a time; such leftovers are finished here instead.
+/// Below this the kernel's own scalar prologue would end up doing the work,
+/// a byte at a time; such haystacks are finished here instead.
 const KERNEL_MIN: usize = 16;
 
 /// How many leading bytes to examine inline: the probe, or everything if
@@ -38,25 +34,24 @@ fn inline_len(len: usize) -> usize {
     }
 }
 
-/// Bit *i* set iff lane *i* of `v` is one of `set`.
+const LO: u64 = 0x0101_0101_0101_0101;
+const HI: u64 = 0x8080_8080_8080_8080;
+
+/// A word with the high bit of byte *i* set iff byte *i* of `w` is `c` —
+/// exactly for the lowest such byte, which is all `trailing_zeros` needs
+/// (higher bytes may report false positives after a borrow, the usual
+/// caveat of this formulation, and are never consulted).
 #[inline(always)]
-fn any_of<const N: usize>(v: u8x16, set: &[u8; N]) -> u64 {
-    let mut m = v.simd_eq(u8x16::splat(set[0]));
-    for &c in &set[1..] {
-        m |= v.simd_eq(u8x16::splat(c));
-    }
-    m.to_bitmask()
+fn eq_mask(w: u64, c: u8) -> u64 {
+    let x = w ^ LO.wrapping_mul(u64::from(c));
+    x.wrapping_sub(LO) & !x & HI
 }
 
-/// The `< LANES` bytes at `hay[at..end]` as a vector padded with zeros, and
-/// the mask of lanes that are real.
 #[inline(always)]
-fn tail(hay: &[u8], at: usize, end: usize) -> (u8x16, u64) {
-    debug_assert!(end - at < LANES);
-    (
-        u8x16::load_or_default(&hay[at..end]),
-        (1u64 << (end - at)) - 1,
-    )
+fn load(hay: &[u8], at: usize) -> u64 {
+    let mut b = [0u8; 8];
+    b.copy_from_slice(&hay[at..at + 8]);
+    u64::from_le_bytes(b)
 }
 
 /// Index of the first byte of `hay` that is in `set`.
@@ -64,19 +59,22 @@ fn tail(hay: &[u8], at: usize, end: usize) -> (u8x16, u64) {
 pub(crate) fn find_any<const N: usize>(hay: &[u8], set: &[u8; N]) -> Option<usize> {
     let n = inline_len(hay.len());
     let mut i = 0;
-    while i + LANES <= n {
-        let bits = any_of(u8x16::from_slice(&hay[i..i + LANES]), set);
-        if bits != 0 {
-            return Some(i + bits.trailing_zeros() as usize);
+    while i + 8 <= n {
+        let w = load(hay, i);
+        let mut m = 0u64;
+        for &c in set {
+            m |= eq_mask(w, c);
         }
-        i += LANES;
+        if m != 0 {
+            return Some(i + (m.trailing_zeros() / 8) as usize);
+        }
+        i += 8;
     }
-    if i < n {
-        let (v, live) = tail(hay, i, n);
-        let bits = any_of(v, set) & live;
-        if bits != 0 {
-            return Some(i + bits.trailing_zeros() as usize);
+    while i < n {
+        if set.contains(&hay[i]) {
+            return Some(i);
         }
+        i += 1;
     }
     if n == hay.len() {
         return None;
@@ -87,7 +85,35 @@ pub(crate) fn find_any<const N: usize>(hay: &[u8], set: &[u8; N]) -> Option<usiz
 /// Index of the first `c` in `hay`.
 #[inline(always)]
 pub(crate) fn find_byte(hay: &[u8], c: u8) -> Option<usize> {
-    find_any(hay, &[c])
+    let n = inline_len(hay.len());
+    let mut i = 0;
+    while i + 8 <= n {
+        let m = eq_mask(load(hay, i), c);
+        if m != 0 {
+            return Some(i + (m.trailing_zeros() / 8) as usize);
+        }
+        i += 8;
+    }
+    while i < n {
+        if hay[i] == c {
+            return Some(i);
+        }
+        i += 1;
+    }
+    if n == hay.len() {
+        return None;
+    }
+    strings::index_of_char_usize(&hay[n..], c).map(|p| p + n)
+}
+
+/// A word with the high bit of byte *i* set iff byte *i* of `w` is `c`,
+/// exactly, for every byte (no false positives; a few more operations than
+/// [`eq_mask`]).
+#[inline(always)]
+fn eq_mask_exact(w: u64, c: u8) -> u64 {
+    const LO7: u64 = 0x7f7f_7f7f_7f7f_7f7f;
+    let x = w ^ LO.wrapping_mul(u64::from(c));
+    !((x & LO7).wrapping_add(LO7) | x) & HI
 }
 
 /// The first byte of `text` that whitespace collapsing has to rewrite: a
@@ -97,29 +123,27 @@ pub(crate) fn find_byte(hay: &[u8], c: u8) -> Option<usize> {
 pub(crate) fn first_uncollapsed(text: &[u8]) -> Option<usize> {
     let n = inline_len(text.len());
     let mut i = 0;
-    // Bit 0 set iff the byte before this chunk was a space.
+    // High bit of the previous word's last byte, if that byte was a space,
+    // moved to where byte 0 of this word looks for its left neighbour.
     let mut carry = 0u64;
-    let step = |v: u8x16, carry: u64| -> (u64, u64) {
-        let spaces = v.simd_eq(u8x16::splat(b' ')).to_bitmask();
-        let second_space = spaces & ((spaces << 1) | carry);
-        let hits = any_of(v, b"\t\n\r") | second_space;
-        (hits, (spaces >> (LANES - 1)) & 1)
-    };
-    while i + LANES <= n {
-        let (hits, c) = step(u8x16::from_slice(&text[i..i + LANES]), carry);
-        if hits != 0 {
-            return Some(i + hits.trailing_zeros() as usize);
+    while i + 8 <= n {
+        let w = load(text, i);
+        let spaces = eq_mask_exact(w, b' ');
+        let second_space = spaces & ((spaces << 8) | carry);
+        let m = eq_mask(w, b'\t') | eq_mask(w, b'\n') | eq_mask(w, b'\r') | second_space;
+        if m != 0 {
+            return Some(i + (m.trailing_zeros() / 8) as usize);
         }
-        carry = c;
-        i += LANES;
+        carry = spaces >> 56;
+        i += 8;
     }
-    if i < n {
-        let (v, live) = tail(text, i, n);
-        let (hits, _) = step(v, carry);
-        let hits = hits & live;
-        if hits != 0 {
-            return Some(i + hits.trailing_zeros() as usize);
+    while i < n {
+        match text[i] {
+            b'\t' | b'\n' | b'\r' => return Some(i),
+            b' ' if i > 0 && text[i - 1] == b' ' => return Some(i),
+            _ => {}
         }
+        i += 1;
     }
     if n == text.len() {
         return None;
@@ -150,12 +174,12 @@ mod tests {
 
     #[test]
     fn space_pair_across_the_probe_boundary() {
-        // The inline probe ends at 64; a pair at 63–64 is the kernel's find.
+        // A pair straddling the end of the inline probe is the kernel's find.
         let mut t = vec![b'a'; 96];
-        t[63] = b' ';
-        t[64] = b' ';
-        assert_eq!(first_uncollapsed(&t), Some(64));
-        t[64] = b'a';
+        t[PROBE - 1] = b' ';
+        t[PROBE] = b' ';
+        assert_eq!(first_uncollapsed(&t), Some(PROBE));
+        t[PROBE] = b'a';
         t[70] = b'\n';
         assert_eq!(first_uncollapsed(&t), Some(70));
         assert_eq!(find_any(&t, b"\n\t"), Some(70));

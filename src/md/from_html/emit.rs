@@ -8,7 +8,6 @@ use core::fmt::Write as _;
 use core::ptr;
 
 use bun_core::strings;
-use html5ever::local_name;
 
 use super::Options;
 use super::dom::{
@@ -75,16 +74,16 @@ impl<'o> Converter<'o> {
         for child in parent.children() {
             match &child.data {
                 NodeData::Text(t) => {
-                    let t = t.borrow();
+                    let t = t.get();
                     if in_code {
-                        join(out, &t);
+                        join(out, t);
                     } else {
                         // Collapsed text never starts with a newline, so the
                         // join boundary is computed against zero leading
                         // newlines and the text is escaped straight into `out`.
                         join_boundary(out, 0);
                         let at_line_start = out.is_empty() || out.ends_with('\n');
-                        escape_markdown_into(&t, at_line_start, out);
+                        escape_markdown_into(t, at_line_start, out);
                     }
                 }
                 NodeData::Element { .. } => {
@@ -158,7 +157,7 @@ impl<'o> Converter<'o> {
         let opts = self.opts;
         match tag {
             // ── rules that wrap their content as-is: children write in place ──
-            Tag::A => match node.attr(&local_name!("href")) {
+            Tag::A => match node.attr("href") {
                 Some(href) if !href.is_empty() => {
                     out.push('[');
                     self.children_in_place(node, out, depth, in_code, hoisted);
@@ -202,9 +201,9 @@ impl<'o> Converter<'o> {
                 out.push_str("\n\n");
             }
             Tag::Img => {
-                if let Some(src) = node.attr(&local_name!("src")).filter(|s| !s.is_empty()) {
+                if let Some(src) = node.attr("src").filter(|s| !s.is_empty()) {
                     out.push_str("![");
-                    if let Some(alt) = node.attr(&local_name!("alt")) {
+                    if let Some(alt) = node.attr("alt") {
                         let mut cleaned = String::new();
                         clean_attribute(alt, &mut cleaned);
                         escape_markdown_into(&cleaned, false, out);
@@ -216,7 +215,7 @@ impl<'o> Converter<'o> {
                 }
             }
             Tag::Input if opts.tasklists && is_task_checkbox(node) => {
-                let checked = node.attr(&local_name!("checked")).is_some();
+                let checked = node.attr("checked").is_some();
                 out.push_str(if checked { "[x]" } else { "[ ]" });
                 if !is_flanked_by_whitespace_right(node) {
                     out.push(' ');
@@ -354,7 +353,7 @@ impl<'o> Converter<'o> {
         let prefix_start = rep.len();
         if parent.is_some_and(|p| p.tag() == Tag::Ol) {
             let start = parent
-                .and_then(|p| p.attr(&local_name!("start")))
+                .and_then(|p| p.attr("start"))
                 .and_then(|s| js_trim(s).parse::<i64>().ok())
                 .unwrap_or(1);
             // A negative `start` is valid HTML but has no list-marker spelling.
@@ -539,10 +538,10 @@ impl<'o> Converter<'o> {
             let mut descend = true;
             match &node.data {
                 NodeData::Text(t) => {
-                    let t = t.borrow();
+                    let t = t.get();
                     join_boundary(out, 0);
                     let at_line_start = out.is_empty() || out.ends_with('\n');
-                    escape_markdown_into(&t, at_line_start, out);
+                    escape_markdown_into(t, at_line_start, out);
                 }
                 NodeData::Element { .. } => {
                     let tag = node.tag();
@@ -660,7 +659,7 @@ fn flanking_whitespace(node: Ref<'_>, leading: &mut String, trailing: &mut Strin
         && only.next_sibling.get().is_none()
         && let Some(t) = only.as_text()
     {
-        let t = t.borrow();
+        let t = t.get();
         if !t.starts_with(is_js_whitespace) && !t.ends_with(is_js_whitespace) {
             return false;
         }
@@ -689,7 +688,7 @@ fn flanking_whitespace(node: Ref<'_>, leading: &mut String, trailing: &mut Strin
 fn is_flanked_by_whitespace_left(node: Ref<'_>) -> bool {
     match node.previous_sibling.get() {
         Some(sib) => match &sib.data {
-            NodeData::Text(t) => t.borrow().ends_with(' '),
+            NodeData::Text(t) => t.get().ends_with(' '),
             NodeData::Element { .. } => {
                 let tag = sib.tag();
                 !tag.is_block() && !tag.is_skipped() && text_content_ends_with_space(sib)
@@ -703,7 +702,7 @@ fn is_flanked_by_whitespace_left(node: Ref<'_>) -> bool {
 fn is_flanked_by_whitespace_right(node: Ref<'_>) -> bool {
     match node.next_sibling.get() {
         Some(sib) => match &sib.data {
-            NodeData::Text(t) => t.borrow().starts_with(' '),
+            NodeData::Text(t) => t.get().starts_with(' '),
             NodeData::Element { .. } => {
                 let tag = sib.tag();
                 !tag.is_block() && !tag.is_skipped() && text_content_starts_with_space(sib)
@@ -802,7 +801,7 @@ fn code_language(pre: Ref<'_>) -> String {
 
 fn code_language_candidate(pre: Ref<'_>) -> String {
     fn from_class(node: Ref<'_>, prefixes: &[&str]) -> Option<String> {
-        let class = node.attr(&local_name!("class"))?;
+        let class = node.attr("class")?;
         for token in class.split_ascii_whitespace() {
             for p in prefixes {
                 if let Some(rest) = token.strip_prefix(p) {
@@ -823,7 +822,7 @@ fn code_language_candidate(pre: Ref<'_>) -> String {
         return l;
     }
     // GitHub's rendered-markdown HTML: `<pre lang="ts"><code>`.
-    if let Some(l) = pre.attr(&local_name!("lang")) {
+    if let Some(l) = pre.attr("lang") {
         let l = js_trim(l);
         if !l.is_empty() {
             return l.to_owned();
@@ -893,7 +892,7 @@ fn push_link_destination(rep: &mut String, dest: &str) {
 }
 
 fn push_link_title(rep: &mut String, node: Ref<'_>) {
-    let Some(title) = node.attr(&local_name!("title")) else {
+    let Some(title) = node.attr("title") else {
         return;
     };
     let mut cleaned = String::new();
@@ -913,7 +912,7 @@ fn push_link_title(rep: &mut String, node: Ref<'_>) {
 
 fn is_task_checkbox(input: Ref<'_>) -> bool {
     input
-        .attr(&local_name!("type"))
+        .attr("type")
         .is_some_and(|t| t.eq_ignore_ascii_case("checkbox"))
         && input.parent.get().is_some_and(|p| p.tag() == Tag::Li)
 }
@@ -969,7 +968,7 @@ const MAX_PADDED_COLUMNS: usize = 64;
 const MAX_COLSPAN: usize = 64;
 
 fn colspan(cell: Ref<'_>) -> usize {
-    cell.attr(&local_name!("colspan"))
+    cell.attr("colspan")
         .and_then(|v| js_trim(v).parse::<usize>().ok())
         .filter(|&n| n >= 1)
         .map_or(1, |n| n.min(MAX_COLSPAN))
@@ -996,13 +995,13 @@ fn cell_alignment(cell: Ref<'_>) -> Align {
             Align::None
         }
     }
-    if let Some(a) = cell.attr(&local_name!("align")) {
+    if let Some(a) = cell.attr("align") {
         let r = parse(a);
         if !matches!(r, Align::None) {
             return r;
         }
     }
-    if let Some(style) = cell.attr(&local_name!("style")) {
+    if let Some(style) = cell.attr("style") {
         // `text-align: center;` — a substring scan is enough here.
         let lower = style.to_ascii_lowercase();
         if let Some(i) = strings::index_of(lower.as_bytes(), b"text-align") {

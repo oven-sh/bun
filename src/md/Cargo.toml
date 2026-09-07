@@ -10,7 +10,7 @@ path = "lib.rs"
 workspace = true
 
 [dependencies]
-html5ever.workspace = true
+lol_html.workspace = true
 typed-arena.workspace = true
 strum.workspace = true
 scopeguard.workspace = true

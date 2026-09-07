@@ -39,6 +39,11 @@ export const lolhtml: Dependency = {
     commit: LOLHTML_COMMIT,
   }),
 
+  // Two quadratic-in-nesting-depth paths on end tags (handler dispatch and
+  // the selector VM's open-element stack); see the patch headers. Both are
+  // meant to move into the fork's `bun` branch.
+  patches: ["patches/lolhtml/end-tag-handlers-early-exit.patch", "patches/lolhtml/stack-pop-unmatched-end-tag.patch"],
+
   // No separate build — compiled as part of the workspace cargo build via
   // `bun_runtime`/`bun_bundler`'s path dep on `vendor/lolhtml`.
   build: () => ({ kind: "none" }),

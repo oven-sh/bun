@@ -399,7 +399,7 @@ const res = await fetch("https://bun.com/docs/runtime/markdown");
 const md = Bun.markdown.fromHTML(await res.text());
 ```
 
-Bun parses the input with a spec-compliant HTML5 parser, so malformed markup is recovered the same way a browser recovers it. The conversion never throws on bad HTML. Only `<body>` content is converted. `<script>`, `<style>`, `<template>`, and `<noscript>` elements are dropped together with their contents, as if they were not in the document, and comments are ignored.
+Bun tokenizes the input with the same parser that powers [`HTMLRewriter`](/runtime/html-rewriter) and applies the HTML tree-construction rules that decide structure: omitted end tags (`<p>a<p>b`, `<li>`, `<td>`), mis-nested inline formatting, and table sections are recovered the way a browser recovers them. The conversion never throws on bad HTML. Only `<body>` content is converted. `<script>`, `<style>`, `<template>`, and `<noscript>` elements are dropped together with their contents, as if they were not in the document, and comments are ignored.
 
 GFM output is on by default. Tables become pipe tables, `<del>` becomes `~~strikethrough~~`, and checkboxes at the start of list items become task list markers:
 

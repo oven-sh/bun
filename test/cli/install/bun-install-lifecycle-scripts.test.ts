@@ -732,6 +732,86 @@ test.concurrent(
   },
 );
 
+describe.concurrent("trustedDependencies in a workspace member's package.json", () => {
+  async function writeWorkspace(packageDir: string, root: object, members: Record<string, object>) {
+    await writeFile(join(packageDir, "package.json"), JSON.stringify({ workspaces: ["packages/*"], ...root }));
+    for (const [dir, json] of Object.entries(members)) {
+      await mkdir(join(packageDir, "packages", dir), { recursive: true });
+      await writeFile(join(packageDir, "packages", dir, "package.json"), JSON.stringify(json));
+    }
+  }
+
+  async function install(cwd: string, env: Record<string, string>, ...args: string[]) {
+    await using proc = spawn({
+      cmd: [bunExe(), "install", ...args],
+      cwd,
+      stdout: "pipe",
+      stdin: "ignore",
+      stderr: "pipe",
+      env,
+    });
+    const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { out, err, exitCode };
+  }
+
+  test("does not grant trust to a dependency that only a sibling declares", async () => {
+    using ctx = await setupTest();
+    const { packageDir, env } = ctx;
+
+    await writeWorkspace(
+      packageDir,
+      { name: "foo" },
+      {
+        lib: { name: "lib", dependencies: { "all-lifecycle-scripts": "1.0.0" } },
+        leaf: { name: "leaf", trustedDependencies: ["all-lifecycle-scripts"] },
+      },
+    );
+
+    const { out, err, exitCode } = await install(packageDir, env);
+    expect(err).toContain("Saved lockfile");
+    expect(err).not.toContain("error:");
+    expect(err).toContain(
+      'warn: "trustedDependencies" in packages/leaf/package.json is ignored. bun only reads it from the root package.json; move the entries there',
+    );
+    expect(err).not.toContain("packages/lib/package.json");
+    expect(out).toContain("Blocked 3 postinstalls. Run `bun pm untrusted` for details.");
+    expect(await exists(join(packageDir, "node_modules", "all-lifecycle-scripts", "postinstall.txt"))).toBeFalse();
+    expect(await file(join(packageDir, "bun.lock")).text()).not.toContain("trustedDependencies");
+    expect(exitCode).toBe(0);
+
+    // Same with bun.lock present and the member left out of the install.
+    await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
+    const filtered = await install(packageDir, env, "--filter", "!leaf");
+    expect(filtered.err).not.toContain("error:");
+    expect(filtered.out).toContain("2 packages installed");
+    expect(await exists(join(packageDir, "node_modules", "all-lifecycle-scripts", "package.json"))).toBeTrue();
+    expect(await exists(join(packageDir, "node_modules", "all-lifecycle-scripts", "postinstall.txt"))).toBeFalse();
+    expect(filtered.exitCode).toBe(0);
+  });
+
+  test("does not replace the default trusted dependencies list for the rest of the project", async () => {
+    using ctx = await setupTest();
+    const { packageDir, env } = ctx;
+
+    // `electron` is on the default list, so the root needs no trustedDependencies
+    // entry for its preinstall to run.
+    await writeWorkspace(
+      packageDir,
+      { name: "foo", dependencies: { electron: "1.0.0" } },
+      { leaf: { name: "leaf", trustedDependencies: [] } },
+    );
+
+    const { out, err, exitCode } = await install(packageDir, env);
+    expect(err).toContain("Saved lockfile");
+    expect(err).not.toContain("error:");
+    expect(out).not.toContain("Blocked");
+    expect(await file(join(packageDir, "node_modules", "electron", "preinstall.txt")).text()).toBe(
+      "preinstall success!",
+    );
+    expect(exitCode).toBe(0);
+  });
+});
+
 // waiter thread is only a thing on Linux.
 for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
   describe.concurrent("lifecycle scripts" + (forceWaiterThread ? " (waiter thread)" : ""), async () => {

@@ -2169,24 +2169,53 @@ test.concurrent.skipIf(isWindows || process.getuid?.() === 0)(
   },
 );
 
-test.concurrent("--trust --filter writes trustedDependencies into every target, not the root", async () => {
-  const dir = await makeMonorepo({ root: '{ "name": "root", "workspaces": ["packages/*"] }' });
-  const rootBefore = await pkgText(dir, "root");
+// `bun install` reads trustedDependencies from the root package.json only, so that is where `--trust` records the name.
+test.concurrent("--trust --filter writes trustedDependencies into the root, not the targets", async () => {
+  const dir = await makeMonorepo();
 
   const { stderr, exitCode } = await run(["add", "uses-what-bin@1.0.0", "--trust", "--filter", "pkg-*"], dir, {
     linker: "hoisted",
   });
   expect(stderr).not.toContain("error:");
+  expect(stderr).not.toContain("warn:");
   expect(exitCode).toBe(0);
 
   expect(await allPackageJsons(dir)).toStrictEqual([
-    ROOT,
+    { ...ROOT, trustedDependencies: ["uses-what-bin"] },
     API,
     WEB,
-    { name: "pkg-a", dependencies: { "uses-what-bin": "1.0.0" }, trustedDependencies: ["uses-what-bin"] },
-    { name: "pkg-b", dependencies: { "uses-what-bin": "1.0.0" }, trustedDependencies: ["uses-what-bin"] },
+    { name: "pkg-a", dependencies: { "uses-what-bin": "1.0.0" } },
+    { name: "pkg-b", dependencies: { "uses-what-bin": "1.0.0" } },
   ]);
-  expect(await pkgText(dir, "root")).toBe(rootBefore);
+  expect((await lockfileJson(dir)).trustedDependencies).toStrictEqual(["uses-what-bin"]);
+  expect(await exists(join(dir, "node_modules", "uses-what-bin", "what-bin.txt"))).toBeTrue();
+
+  // A later install from the manifests alone still trusts it.
+  await rm(join(dir, "node_modules"), { recursive: true, force: true });
+  await rm(join(dir, "bun.lock"), { force: true });
+  await installOk(dir, "hoisted");
+  expect(await exists(join(dir, "node_modules", "uses-what-bin", "what-bin.txt"))).toBeTrue();
+});
+
+test.concurrent("--trust from inside a workspace writes trustedDependencies into the root", async () => {
+  const dir = await makeMonorepo();
+
+  const { stderr, exitCode } = await run(["add", "uses-what-bin@1.0.0", "--trust"], dir, {
+    linker: "hoisted",
+    cwd: join(dir, "packages", "pkg-a"),
+  });
+  expect(stderr).not.toContain("error:");
+  expect(stderr).not.toContain("warn:");
+  expect(exitCode).toBe(0);
+
+  expect(await allPackageJsons(dir)).toStrictEqual([
+    { ...ROOT, trustedDependencies: ["uses-what-bin"] },
+    API,
+    WEB,
+    { name: "pkg-a", dependencies: { "uses-what-bin": "1.0.0" } },
+    PKG_B,
+  ]);
+  expect((await lockfileJson(dir)).trustedDependencies).toStrictEqual(["uses-what-bin"]);
   expect(await exists(join(dir, "node_modules", "uses-what-bin", "what-bin.txt"))).toBeTrue();
 });
 

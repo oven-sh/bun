@@ -2927,6 +2927,16 @@ impl Package<u64> {
                             ),
                         );
                     }
+                    if entry.has_trusted_dependencies {
+                        log.add_warning_fmt(
+                            None,
+                            bun_ast::Loc::EMPTY,
+                            format_args!(
+                                "\"trustedDependencies\" in {}/package.json is ignored. bun only reads it from the root package.json; move the entries there",
+                                bstr::BStr::new(strings::without_trailing_slash(path_)),
+                            ),
+                        );
+                    }
 
                     let workspace_version = 'brk: {
                         if let Some(version_string) = &entry.version {

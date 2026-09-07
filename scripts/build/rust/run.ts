@@ -334,8 +334,13 @@ if (mode === "meta") {
     env: { ...process.env, BUN_RUST_MONITOR_HOLDS_TOKEN: token !== undefined ? "1" : "" },
   });
   // The token's descriptor/handle is this process's; the monitor re-acquires nothing and instead returns one unit to
-  // the pool on our behalf when rustc ends. Dropping our handle without releasing keeps the count right.
-  void token;
+  // the pool on our behalf when rustc ends. Dropping our handle without releasing keeps the count right — except
+  // where the monitor never got to run or died without reporting, below, where this process returns it.
+  if (child.pid === undefined) {
+    token?.release();
+    process.stderr.write(`error: ${unit.crateName}: could not start the rustc monitor process\n`);
+    process.exit(1);
+  }
   child.unref();
   const offset = { at: 0, buf: "" };
   let sawMetadata = false;
@@ -382,6 +387,7 @@ if (mode === "meta") {
         if (existsSync(exitPath)) return tick();
         follow(offset, line => void render(line));
         killRecorded();
+        token?.release();
         process.stderr.write(`error: ${unit.crateName}: the rustc monitor process died before reporting a result\n`);
         process.exit(1);
       }, 300);

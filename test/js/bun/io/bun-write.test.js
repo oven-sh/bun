@@ -1142,66 +1142,63 @@ int posix_fadvise(int fd, off_t offset, off_t len, int advice) {
       ).rejects.toThrow(expect.objectContaining({ code: "ENOENT" }));
     });
 
-    // A direct stream whose pull() rejects after it returned calls neither controller.end()
-    // nor controller.close(), so the controller cell kept its pointer to the FileSink. The
-    // cell's destructor then released a reference it never took, which freed the sink while
-    // the flush task the sink had queued on the event loop still pointed at it.
-    describe.each([
-      ["an async generator that throws right after a yield", `yield "first"; throw new Error("boom");`],
-      ["an async generator that throws before the first yield", `throw new Error("boom");`],
-    ])("a body that fails: %s", (_label, generatorBody) => {
-      it("rejects, and the collected controller does not free the sink", async () => {
-        using dir = tempDir("bun-write-failed-generator", {});
-        await using proc = Bun.spawn({
-          cmd: [
-            bunExe(),
-            "-e",
-            `const dest = ${JSON.stringify(join(String(dir), "out.txt"))};
-             const body = async function* () { ${generatorBody} };
-             for (let i = 0; i < 5; i++) {
-               const reason = await Bun.write(dest, new Response(body())).then(() => "resolved", e => e.message);
-               if (reason !== "boom") { console.log("unexpected:", reason); process.exit(2); }
-               Bun.gc(true);
-             }
-             console.log("survived");`,
-          ],
-          env: bunEnv,
-          stderr: "pipe",
-        });
-        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-        expect({ stdout, stderr }).toEqual({ stdout: "survived\n", stderr: "" });
-        expect(exitCode).toBe(0);
-      });
-    });
-
-    it("a body that fails: a direct stream whose pull rejects", async () => {
-      using dir = tempDir("bun-write-failed-direct-stream", {});
+    // A direct stream whose pull() settles without a controller.end() or controller.close()
+    // left the controller cell pointing at the FileSink. When the cell was collected it
+    // released a reference it never took: that freed the sink under the flush task the sink
+    // had queued on the event loop, or under a later write through the same controller.
+    it.each([
+      [
+        "an async generator that throws right after a yield",
+        `async function* () { yield "first"; throw new Error("boom"); }`,
+        "rejected: boom",
+        "first",
+      ],
+      [
+        "an async generator that throws before its first yield",
+        `async function* () { throw new Error("boom"); }`,
+        "rejected: boom",
+        "",
+      ],
+      [
+        "a direct ReadableStream whose pull rejects",
+        `() => new ReadableStream({ type: "direct", async pull(ctrl) { ctrl.write("first"); await 1; throw new Error("boom"); } })`,
+        "rejected: boom",
+        "first",
+      ],
+      [
+        "a direct ReadableStream whose pull resolves without closing it",
+        `() => new ReadableStream({ type: "direct", async pull(ctrl) { ctrl.write("first"); await 1; } })`,
+        "resolved: 5",
+        "first",
+      ],
+    ])("the body's sink controller is collectable after %s", async (_label, body, settled, content) => {
+      using dir = tempDir("bun-write-settled-controller", {});
+      // A Windows file write completes on the libuv thread pool, so the bytes may land after
+      // Bun.write has settled; only the outcome is checked there.
+      const tail = isWindows ? `""` : `", " + JSON.stringify(readFileSync(dest, "utf8"))`;
       await using proc = Bun.spawn({
         cmd: [
           bunExe(),
           "-e",
-          `const dest = ${JSON.stringify(join(String(dir), "out.txt"))};
-           const body = () =>
-             new ReadableStream({
-               type: "direct",
-               async pull(controller) {
-                 controller.write("first");
-                 await Promise.resolve();
-                 throw new Error("boom");
-               },
-             });
+          `const { readFileSync } = require("fs");
+           const dest = ${JSON.stringify(join(String(dir), "out.txt"))};
+           const body = ${body};
+           const outcomes = new Set();
            for (let i = 0; i < 5; i++) {
-             const reason = await Bun.write(dest, new Response(body())).then(() => "resolved", e => e.message);
-             if (reason !== "boom") { console.log("unexpected:", reason); process.exit(2); }
+             const settled = await Bun.write(dest, new Response(body())).then(n => "resolved: " + n, e => "rejected: " + e.message);
+             outcomes.add(settled + ${tail});
              Bun.gc(true);
            }
-           console.log("survived");`,
+           console.log([...outcomes].join(" | "));`,
         ],
         env: bunEnv,
         stderr: "pipe",
       });
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      expect({ stdout, stderr }).toEqual({ stdout: "survived\n", stderr: "" });
+      expect({ stdout: stdout.trim(), stderr }).toEqual({
+        stdout: isWindows ? settled : `${settled}, ${JSON.stringify(content)}`,
+        stderr: "",
+      });
       expect(exitCode).toBe(0);
     });
   });

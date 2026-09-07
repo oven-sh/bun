@@ -20,7 +20,7 @@ function makeCopies(req: Request): Copies {
 const requestIPs = (server: Bun.Server, copies: Copies) =>
   Object.fromEntries(Object.entries(copies).map(([name, request]) => [name, server.requestIP(request)]));
 
-describe("copies of the server's Request keep the connection", () => {
+describe.concurrent("copies of the server's Request keep the connection", () => {
   test("server.requestIP()", async () => {
     let lastCopies: Copies | undefined;
     using server = Bun.serve({
@@ -88,7 +88,13 @@ describe("copies of the server's Request keep the connection", () => {
     }
   });
 
-  for (const kind of ["clone", "new Request(req, init)"] as const) {
+  const upgradeCopies = {
+    "req.clone()": (req: Request) => req.clone(),
+    "new Request(req, init)": (req: Request) => new Request(req, { headers: { "x-rewrapped": "1" } }),
+    // https://github.com/oven-sh/bun/issues/11382: rewrite the URL behind a proxy, then upgrade.
+    "new Request(url, req)": (req: Request) => new Request(req.url.replace("/ws", "/rewritten"), req),
+  };
+  for (const [kind, makeCopy] of Object.entries(upgradeCopies)) {
     test(`server.upgrade(${kind})`, async () => {
       let afterUpgrade: unknown;
       using server = Bun.serve({
@@ -101,7 +107,7 @@ describe("copies of the server's Request keep the connection", () => {
           message() {},
         },
         fetch(req, server) {
-          const copy = kind === "clone" ? req.clone() : new Request(req, { headers: { "x-rewrapped": "1" } });
+          const copy = makeCopy(req);
           if (server.upgrade(copy)) {
             // The upgrade consumed the connection, so the original is detached
             // too, with its url and headers captured first.
@@ -146,7 +152,7 @@ describe("copies of the server's Request keep the connection", () => {
         // Shorten the idle timeout through the copy. With no connection behind
         // the copy this did nothing, and the request ran to the deadline below.
         server.timeout(copy, 1);
-        resolve(await Promise.race([aborted, Bun.sleep(30_000).then(() => false)]));
+        resolve(await Promise.race([aborted, Bun.sleep(15_000).then(() => false)]));
         return new Response("too late");
       },
     });
@@ -157,5 +163,5 @@ describe("copies of the server's Request keep the connection", () => {
     );
     expect(await aborted).toBe(true);
     expect(await response).toStartWith("fetch failed:");
-  }, 40_000);
+  }, 30_000);
 });

@@ -5,7 +5,7 @@ use core::ffi::{c_uint, c_void};
 
 use bun_uws as uws;
 
-use crate::webcore::{CookieMap, Request};
+use crate::webcore::{CookieMap, request};
 
 pub use super::request_context::AdditionalOnAbortCallback;
 use super::request_context::RequestContext;
@@ -61,6 +61,11 @@ impl AnyRequestContext {
         derived: false,
         ptr: core::ptr::null_mut(),
     };
+
+    #[inline]
+    pub(crate) fn is_null(self) -> bool {
+        self.tag == CtxTag::None
+    }
 }
 
 /// Internal: maps each `RequestContext` monomorphization to its tag so
@@ -178,17 +183,12 @@ impl AnyRequestContext {
         dispatch!(self, 0, |_T, ctx| ctx.memory_cost())
     }
 
-    /// Registers `request`, a copy of this context's `Request`, with the
-    /// context and returns the handle the copy stores. The context clears that
-    /// handle when the request ends, exactly as it clears the original's.
-    ///
-    /// # Safety
-    /// `request` is the copy's final heap address and carries the
-    /// allocation's own provenance (see [`bun_ptr::WeakPtr::init_ref`]).
-    pub(crate) unsafe fn derive(self, request: *mut Request) -> Self {
+    /// Registers `copy`, a copy of this context's `Request`, with the context
+    /// and returns the handle the copy stores. The context clears that handle
+    /// when the request ends, exactly as it clears the original's.
+    pub(crate) fn derive(self, copy: request::WeakRef) -> Self {
         dispatch!(self, Self::NULL, |_T, ctx| {
-            // SAFETY: caller contract.
-            unsafe { ctx.attach_derived_request(request) };
+            ctx.attach_derived_request(copy);
             Self {
                 derived: true,
                 ..self

@@ -657,10 +657,7 @@ where
 
     /// Tracks a copy of the `Request` that stores a derived handle to this
     /// context (see [`AnyRequestContext::derive`]).
-    ///
-    /// # Safety
-    /// Same contract as [`request::WeakRef::init_ref`].
-    pub(crate) unsafe fn attach_derived_request(&self, request: *mut Request) {
+    pub(crate) fn attach_derived_request(&self, copy: request::WeakRef) {
         self.derived_requests.with_mut(|list| {
             if list.len() == list.capacity() {
                 // Before growing, drop entries whose `Request` JS already
@@ -668,8 +665,7 @@ where
                 // the live copies until the request ends.
                 list.retain_mut(|weak| weak.get().is_some());
             }
-            // SAFETY: caller contract.
-            list.push(unsafe { request::WeakRef::init_ref(request) });
+            list.push(copy);
         });
     }
 

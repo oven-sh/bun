@@ -406,12 +406,17 @@ impl Request {
     /// `server.upgrade()` accept the copy like the original.
     ///
     /// # Safety
-    /// `copy` is the copy's final heap address and carries the allocation's
-    /// own provenance (`heap::into_raw`): the context keeps a weak pointer to
-    /// it until the request ends.
+    /// `copy` is the copy's final heap address, fresh from `heap::into_raw`
+    /// and not yet finalized: the context keeps a weak pointer to it until the
+    /// request ends (see [`WeakRef::init_ref`]).
     pub(crate) unsafe fn derive_request_context(&self, copy: *mut Request) {
+        if self.request_context.is_null() {
+            return;
+        }
         // SAFETY: caller contract; `copy` is live and not aliased by `self`.
-        unsafe { (*copy).request_context = self.request_context.derive(copy) };
+        unsafe {
+            (*copy).request_context = self.request_context.derive(WeakRef::init_ref(copy));
+        }
     }
 
     /// `JSBunRequest::clone` tail: mirror [`Self::do_clone`]'s cache sync so a

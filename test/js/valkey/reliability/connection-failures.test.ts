@@ -1045,6 +1045,71 @@ describe("Valkey: Recovering After fail()", () => {
     }
   });
 
+  test("a listener subscribed again from onconnect after an auto-reconnect is registered once", async () => {
+    // The listeners of a channel survive an auto-reconnect, and re-subscribing
+    // from onconnect is how callers restore the server side. The listeners are
+    // a set, so doing that with the same function must not deliver twice.
+    const sockets: net.Socket[] = [];
+    const frames: string[] = [];
+    const server = net.createServer(socket => {
+      sockets.push(socket);
+      const connection = sockets.length;
+      const state = { buffer: Buffer.alloc(0) };
+      socket.on("data", chunk => {
+        state.buffer = Buffer.concat([state.buffer, chunk]);
+        for (const [name, ...args] of readCommands(state)) {
+          if (name === "HELLO") socket.write("+OK\r\n");
+          if (name === "PING") socket.write("+PONG\r\n");
+          if (name !== "SUBSCRIBE" && name !== "UNSUBSCRIBE") continue;
+          frames.push(`${connection}: ${name} ${args.join(" ")}`);
+          socket.write(push(name.toLowerCase(), "ch", name === "SUBSCRIBE" ? 1 : 0));
+          // The second connection has a message waiting right behind the confirmation.
+          if (name === "SUBSCRIBE" && connection === 2) socket.write(push("message", "ch", "m0"));
+        }
+      });
+      socket.on("error", () => {});
+    });
+    await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
+    const { port } = server.address() as net.AddressInfo;
+    const client = new RedisClient(`redis://127.0.0.1:${port}`);
+    try {
+      await client.connect();
+      const delivered: string[] = [];
+      const firstDelivered = Promise.withResolvers<void>();
+      const listener = (message: string) => {
+        delivered.push(message);
+        firstDelivered.resolve();
+      };
+      expect(await client.subscribe("ch", listener)).toBe(1);
+
+      const resubscribed = Promise.withResolvers<string>();
+      client.onconnect = () =>
+        resubscribed.resolve(
+          client.subscribe("ch", listener).then(
+            count => `subscribed: ${count}`,
+            (err: Error) => `rejected: ${err.message}`,
+          ),
+        );
+      sockets[0].destroy();
+
+      expect(await resubscribed.promise).toBe("subscribed: 1");
+      await firstDelivered.promise;
+      // The PONG is read after m0, so a second delivery would be in `delivered` by now.
+      expect(await client.ping()).toBe("PONG");
+      // One registration, so one unsubscribe(channel, listener) drops the channel.
+      await client.unsubscribe("ch", listener);
+      expect({ delivered, frames, connections: sockets.length }).toEqual({
+        delivered: ["m0"],
+        frames: ["1: SUBSCRIBE ch", "2: SUBSCRIBE ch", "2: UNSUBSCRIBE ch"],
+        connections: 2,
+      });
+    } finally {
+      client.close();
+      server.close();
+      for (const socket of sockets) socket.destroy();
+    }
+  });
+
   test("a connect() issued from onclose after a failed TLS handshake gets to dial again", async () => {
     let handshakes = 0;
     const server = net.createServer(socket => {
@@ -1766,7 +1831,9 @@ describe("Valkey: Recovering After fail()", () => {
       expect(() => client.unsubscribe("ch")).toThrow("can only be called while in subscriber mode");
 
       // A subscribe on the next connection is the only registration: the
-      // message arrives once, not once per attempt.
+      // message arrives once, not once per attempt. It registers a different
+      // function, since registering the same one again is a no-op that would
+      // hide a listener left behind by the rejected attempt.
       client.onclose = () => {};
       await client.connect();
       const connection2 = fake.sockets[1];
@@ -1775,7 +1842,7 @@ describe("Valkey: Recovering After fail()", () => {
           connection2.write(push("subscribe", "ch", 1) + push("message", "ch", "m0"));
         }
       });
-      await client.subscribe("ch", listener);
+      await client.subscribe("ch", (message: string) => listener(message));
       await firstDelivered.promise;
       // PONG comes back after anything else the stub wrote, so a second
       // delivery of m0 would be in `delivered` by now.
@@ -1808,7 +1875,9 @@ describe("Valkey: Recovering After fail()", () => {
       });
       expect(() => client.unsubscribe("ch")).toThrow("can only be called while in subscriber mode");
 
-      // That dial completes on its own.
+      // That dial completes on its own. The subscribe on it registers a
+      // different function, so a listener left behind by the rejected attempt
+      // would show as a second delivery instead of being deduplicated away.
       await connected.promise;
       const connection = fake.sockets[0];
       connection.on("data", chunk => {
@@ -1816,7 +1885,7 @@ describe("Valkey: Recovering After fail()", () => {
           connection.write(push("subscribe", "ch", 1) + push("message", "ch", "m0"));
         }
       });
-      await client.subscribe("ch", listener);
+      await client.subscribe("ch", (message: string) => listener(message));
       await firstDelivered.promise;
       await client.ping();
       expect({ delivered, connections: fake.connections }).toEqual({ delivered: ["m0"], connections: 1 });

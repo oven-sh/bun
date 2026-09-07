@@ -6971,6 +6971,51 @@ for (const connectionType of [ConnectionType.TLS, ConnectionType.TCP]) {
         await subscriber.unsubscribe(channel);
       });
 
+      test("subscribing the same listener to a channel twice delivers each message once", async () => {
+        const subscriber = await ctx.newSubscriberClient(connectionType);
+        const channel = testChannel();
+        const other = testChannel();
+
+        const counter = awaitableCounter();
+        const received: [string, string][] = [];
+        const listener = (message: string, channel: string) => {
+          received.push([channel, message]);
+          counter.increment();
+        };
+
+        // The listeners of a channel are a set: a second registration of the
+        // same function is a no-op, so the resolved channel count stays put.
+        expect(await subscriber.subscribe(channel, listener)).toBe(1);
+        expect(await subscriber.subscribe(channel, listener)).toBe(1);
+        expect(await subscriber.subscribe([other, other], listener)).toBe(2);
+
+        expect(await ctx.redis.publish(channel, "one")).toBe(1);
+        expect(await ctx.redis.publish(other, "two")).toBe(1);
+        await counter.untilValue(2);
+        // The PONG is read after both messages, so a second delivery of either
+        // would be in `received` by now.
+        expect(await subscriber.ping()).toBe("PONG");
+        expect(received).toEqual([
+          [channel, "one"],
+          [other, "two"],
+        ]);
+
+        // One unsubscribe(channel, listener) removes the only registration and
+        // with it the channel.
+        await subscriber.unsubscribe(channel, listener);
+        expect(await ctx.redis.publish(channel, "three")).toBe(0);
+        expect(await ctx.redis.publish(other, "four")).toBe(1);
+        await counter.untilValue(3);
+        expect(await subscriber.ping()).toBe("PONG");
+        expect(received).toEqual([
+          [channel, "one"],
+          [other, "two"],
+          [other, "four"],
+        ]);
+
+        await subscriber.unsubscribe(other);
+      });
+
       test("empty string messages", async () => {
         const channel = "empty-message-channel";
         const subscriber = createClient(connectionType);

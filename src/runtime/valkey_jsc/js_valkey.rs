@@ -203,7 +203,14 @@ impl JSValkeyClient {
                 handlers_array = JSArray::create_empty(global_object, 0)?;
                 is_new_channel = true;
             } else if existing_handler_arr.is_array() {
-                // Use the existing array
+                // Listeners are a set per channel, as in node-redis: registering the same
+                // function again is a no-op, so one unsubscribe(channel, listener) removes it.
+                let mut existing = existing_handler_arr.array_iterator(global_object)?;
+                while let Some(listener) = existing.next()? {
+                    if listener == callback {
+                        return Ok(());
+                    }
+                }
                 handlers_array = existing_handler_arr;
             } else {
                 unreachable!();

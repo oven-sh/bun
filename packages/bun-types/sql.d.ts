@@ -713,9 +713,8 @@ declare module "bun" {
     end(options?: { timeout?: number }): Promise<void>;
 
     /**
-     * Flushes any pending operations
-     *
-     * @throws {Error} If the adapter does not support flushing (e.g., SQLite)
+     * Flushes any pending operations. A no-op on SQLite, where queries run
+     * synchronously and nothing is buffered.
      *
      * @example
      * ```ts

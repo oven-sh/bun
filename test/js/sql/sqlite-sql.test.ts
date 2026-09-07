@@ -1832,8 +1832,9 @@ describe("Helper argument validation", () => {
     expect(await read({})).toEqual({ big: 9007199254740992, small: 5 });
     expect(await read({ bigint: true })).toEqual({ big: 9007199254740993n, small: 5n });
     expect(await read({ safeIntegers: true })).toEqual({ big: 9007199254740993n, small: 5n });
-    // An explicit safeIntegers wins over the alias.
+    // An explicit safeIntegers wins over the alias; an undefined one does not.
     expect(await read({ bigint: true, safeIntegers: false })).toEqual({ big: 9007199254740992, small: 5 });
+    expect(await read({ bigint: true, safeIntegers: undefined })).toEqual({ big: 9007199254740993n, small: 5n });
     expect(await read({ bigint: false })).toEqual({ big: 9007199254740992, small: 5 });
   });
 

@@ -39,7 +39,9 @@ describe.concurrent("Yarr bytecode compiler", () => {
       // The last character differs per run so the RegExp cache does not hand
       // back an already compiled RegExp.
       function compileAndMatch(depth, salt) {
-        const pattern = "(?:".repeat(depth) + body + ")".repeat(depth) + salt;
+        const open = Buffer.alloc(depth * 3, "(?:").toString();
+        const close = Buffer.alloc(depth, ")").toString();
+        const pattern = open + body + close + salt;
         const input = body + salt;
         const start = performance.now();
         const match = new RegExp(pattern).exec(input);
@@ -58,7 +60,7 @@ describe.concurrent("Yarr bytecode compiler", () => {
     `)) as { flat: number; deep: number };
 
     expect(result.deep / result.flat).toBeLessThan(4);
-  }, 30_000); // about 3 s of work in a debug build
+  });
 
   test("groups with one or more alternatives still match", async () => {
     // One case per group kind the bytecode compiler emits (once, terminal,

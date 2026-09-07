@@ -1766,8 +1766,8 @@ describe("tsconfig paths skip `.d.ts` substitutions", () => {
 describe.skipIf(isWindows)("tsconfig in a world-writable sticky directory", () => {
   // `shared/` stands in for `/tmp`: another user plants the config, the victim's
   // project is a private subdirectory with its own package.json and node_modules.
-  function plantedFixture(configName: "tsconfig.json" | "jsconfig.json", extra: Record<string, string> = {}) {
-    const dir = tempDir("tsconfig-shared-dir", {
+  function plantedFixture(configName: "tsconfig.json" | "jsconfig.json") {
+    return tempDir("tsconfig-shared-dir", {
       [`shared/${configName}`]: JSON.stringify({
         compilerOptions: { paths: { "lib": ["./planted.js"] } },
       }),
@@ -1776,9 +1776,7 @@ describe.skipIf(isWindows)("tsconfig in a world-writable sticky directory", () =
       "shared/proj/node_modules/lib/package.json": JSON.stringify({ name: "lib", version: "1.0.0" }),
       "shared/proj/node_modules/lib/index.js": `module.exports = "GENUINE";`,
       "shared/proj/app.js": `console.log(require("lib"));`,
-      ...extra,
     });
-    return dir;
   }
 
   test.concurrent("a planted tsconfig does not rewrite a bare import at runtime", async () => {
@@ -1853,7 +1851,9 @@ describe.skipIf(isWindows)("tsconfig in a world-writable sticky directory", () =
       stdout: "pipe",
       stderr: "pipe",
     });
-    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    // stderr is drained but not asserted: `--tsconfig-override` prints an
+    // unrelated "directory mismatch" note (#34980).
+    const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stdout.trim()).toBe("PLANTED");
     expect(exitCode).toBe(0);
   });

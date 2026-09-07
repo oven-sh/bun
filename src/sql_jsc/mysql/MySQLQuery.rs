@@ -64,10 +64,7 @@ const KNOWN_KEYWORDS: [&[u8]; 16] = [
 /// Upper-cases an ASCII keyword and converts it to the value JS receives as
 /// the command: a number for `KNOWN_KEYWORDS`, a string otherwise, `null`
 /// when there is no keyword.
-fn keyword_to_js<T: Copy + Into<u32>>(
-    global: &JSGlobalObject,
-    keyword: &[T],
-) -> JsResult<JSValue> {
+fn keyword_to_js<T: Copy + Into<u32>>(global: &JSGlobalObject, keyword: &[T]) -> JsResult<JSValue> {
     if keyword.is_empty() {
         return Ok(JSValue::NULL);
     }

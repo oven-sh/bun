@@ -51,7 +51,10 @@ fn is_alpha<T: Copy + Into<u32>>(c: T) -> bool {
 fn skip_to_keyword<T: Copy + Into<u32>>(sql: &[T], mut pos: usize) -> usize {
     while pos < sql.len() {
         let c = at(sql, pos);
-        if c == u32::from(b' ') || (c >= u32::from(b'\t') && c <= u32::from(b'\r')) || c == u32::from(b'(') {
+        if c == u32::from(b' ')
+            || (c >= u32::from(b'\t') && c <= u32::from(b'\r'))
+            || c == u32::from(b'(')
+        {
             pos += 1;
         } else if let Some(end) = comment_end(sql, pos) {
             pos = end;
@@ -74,7 +77,9 @@ fn comment_end<T: Copy + Into<u32>>(sql: &[T], pos: usize) -> Option<usize> {
     }
     if c == u32::from(b'/') && at(sql, pos + 1) == u32::from(b'*') {
         let mut end = pos + 2;
-        while end < sql.len() && !(at(sql, end) == u32::from(b'*') && at(sql, end + 1) == u32::from(b'/')) {
+        while end < sql.len()
+            && !(at(sql, end) == u32::from(b'*') && at(sql, end + 1) == u32::from(b'/'))
+        {
             end += 1;
         }
         return Some((end + 2).min(sql.len()));

@@ -2339,7 +2339,9 @@ impl<'a> Installer<'a> {
         let pkg_resolutions = pkgs.items_resolution();
         let link_order_of = |dep: &store::entry::DependenciesItem| {
             let node_id = entry_node_ids[dep.entry_id.get() as usize];
-            bin_real::LinkOrder::of(pkg_resolutions[node_pkg_ids[node_id.get() as usize] as usize].tag)
+            bin_real::LinkOrder::of(
+                pkg_resolutions[node_pkg_ids[node_id.get() as usize] as usize].tag,
+            )
         };
         let ordered_deps = [
             bin_real::LinkOrder::ExtractedPackage,

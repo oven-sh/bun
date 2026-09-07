@@ -5775,8 +5775,9 @@ pub(crate) fn on_file_stream_reject_request_stream(
     };
     let err = args[0];
 
-    // The pump failed without an `end()`/`close()` on the controller, so the
-    // cell still points at the sink whose last reference this call owns.
+    // A direct stream's pump fails without an `end()`/`close()` on the
+    // controller, so the cell may still point at the sink whose last reference
+    // this call owns.
     this.sink.detach_js_controller(global_this);
 
     let strong = core::mem::take(&mut this.readable_stream_ref);

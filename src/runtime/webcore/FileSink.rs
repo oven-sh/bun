@@ -1021,13 +1021,13 @@ impl FileSink {
     ///
     /// `JSSink::assign_to_stream` hands the `JSReadableFileSinkController` cell
     /// a raw `*FileSink` and takes no refcount claim for it, while the cell's
-    /// destructor releases one (`FileSink__finalize`). Every pump that reaches
-    /// its end calls `controller.end()`/`.close()` first, which nulls the
-    /// cell's sink pointer, so the destructor releases nothing and a later
-    /// `controller.write()` is a no-op. A pump that fails after it returned (a
-    /// direct stream whose `pull()` promise rejects) calls neither. So the
-    /// owner of the sink detaches the cell here, on every path that gives up
-    /// its own reference.
+    /// destructor releases one (`FileSink__finalize`). A pump that closes the
+    /// controller (`controller.end()`/`.close()`) nulls the cell's sink
+    /// pointer first, so the destructor releases nothing and a later
+    /// `controller.write()` is a no-op. A direct stream whose `pull()` settles
+    /// without closing the controller never does. So the owner of the sink
+    /// detaches the cell here, on every path that gives up its own reference.
+    /// A no-op once the controller is detached.
     pub(crate) fn detach_js_controller(&self, global_this: &JSGlobalObject) {
         if !matches!(self.source.get(), streams::SourceHandle::JSController(_)) {
             return;

@@ -22,13 +22,12 @@
 
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { createReadStream, existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { basename, join } from "node:path";
-import { downloadWithRetry, extractTarGz, fetchPrebuilt, gitArchive, parseGitArchiveUrl } from "./download.ts";
+import { downloadWithRetry, extractTarGz, fetchPrebuilt } from "./download.ts";
 import { BuildError, assert } from "./error.ts";
 import { writeIfChanged } from "./fs.ts";
-import { formatElapsed } from "./tty.ts";
 
 /**
  * Absolute path to this file. Ninja rules use this in their command strings.
@@ -48,11 +47,11 @@ async function main(): Promise<void> {
 
   switch (kind) {
     case "dep": {
-      // fetch-cli.ts dep <name> <url> <ref> <dest> <cache> [...patches]
-      const [name, url, ref, dest, cache, ...patches] = args;
-      assert(name !== undefined && url !== undefined && ref !== undefined, "dep: missing name/url/ref");
+      // fetch-cli.ts dep <name> <repo> <commit> <dest> <cache> [...patches]
+      const [name, repo, commit, dest, cache, ...patches] = args;
+      assert(name !== undefined && repo !== undefined && commit !== undefined, "dep: missing name/repo/commit");
       assert(dest !== undefined && cache !== undefined, "dep: missing dest/cache");
-      return fetchDep(name, url, ref, dest, cache, patches);
+      return fetchDep(name, repo, commit, dest, cache, patches);
     }
 
     case "subst": {
@@ -116,7 +115,7 @@ const USAGE = `\
 Usage: bun fetch-cli.ts <kind> <args...>
 
 Kinds:
-  dep             <name> <url> <ref> <dest> <cache> [...patches]
+  dep             <name> <repo> <commit> <dest> <cache> [...patches]
   prebuilt        <name> <url> <dest> <identity> [...rm_paths]
   subst           <in> <out> [<from> <to>]...
   check-undefined <name> <nm> <rspfile> <stamp> <symbol,...>
@@ -192,18 +191,11 @@ function checkUndefined(name: string, nm: string, rspfile: string, stamp: string
 }
 
 // ───────────────────────────────────────────────────────────────────────────
-// dep fetch: download tarball (or sparse git fetch), extract, patch, stamp
+// github-archive dep fetch: download tarball, extract, patch, stamp
 // ───────────────────────────────────────────────────────────────────────────
 
 /**
- * Fetch a source tree, extract, apply patches, write .ref stamp.
- *
- * `url` is a tarball URL (a GitHub `/archive/` URL or any release asset), or
- * a `git+https://github.com/<repo>@<commit>?sparse=<patterns>` pseudo-URL
- * (download.ts gitArchiveUrl) for a sparse git fetch, which is cached as a
- * tarball of the same shape — everything from extraction on is one path.
- * `ref` seeds the identity stamp: the commit for github sources,
- * `sha256:<digest>` for tarballs (the download is verified against it).
+ * Fetch a github archive, extract, apply patches, write .ref stamp.
  *
  * Idempotent: if .ref exists and matches the computed identity, does nothing.
  * The ninja rule has restat=1, so a no-op fetch won't trigger downstream.
@@ -214,14 +206,13 @@ function checkUndefined(name: string, nm: string, rspfile: string, stamp: string
  */
 async function fetchDep(
   name: string,
-  url: string,
-  ref: string,
+  repo: string,
+  commit: string,
   dest: string,
   cache: string,
   patches: string[],
 ): Promise<void> {
   const refPath = join(dest, ".ref");
-  assertManagedSource(name, dest, refPath);
 
   // Read patch contents (needed for identity + applying later).
   // If a listed patch doesn't exist, that's a bug in the dep definition.
@@ -237,8 +228,7 @@ async function fetchDep(
     }
   }
 
-  const git = parseGitArchiveUrl(url);
-  const identity = computeSourceIdentity(ref, git?.sparse ?? [], patchContents);
+  const identity = computeSourceIdentity(commit, patchContents);
 
   // Short-circuit: already fetched at this identity?
   if (existsSync(refPath)) {
@@ -253,32 +243,17 @@ async function fetchDep(
     console.log(`source identity changed (was ${existing.slice(0, 8)}, now ${identity.slice(0, 8)})`);
   }
 
-  console.log(`fetching ${git ? `${git.repo}@${git.commit.slice(0, 8)}` : url}`);
-  const started = performance.now();
+  console.log(`fetching ${repo}@${commit.slice(0, 8)}`);
 
   // ─── Download (with cache) ───
+  const url = `https://github.com/${repo}/archive/${commit}.tar.gz`;
   const urlHash = createHash("sha256").update(url).digest("hex").slice(0, 16);
   const tarballPath = join(cache, `${name}-${urlHash}.tar.gz`);
 
   await mkdir(cache, { recursive: true });
 
   if (!existsSync(tarballPath)) {
-    if (git) await gitArchive(git.repo, git.commit, git.sparse, tarballPath);
-    else await downloadWithRetry(url, tarballPath, name);
-  }
-
-  // A `sha256:<hex>` ref pins the file's contents (release tarballs, whose
-  // URL says nothing about the bytes). Checked on the cached copy too, and a
-  // mismatching file is removed so the next run downloads afresh.
-  if (ref.startsWith("sha256:")) {
-    const expected = ref.slice("sha256:".length);
-    const actual = await sha256File(tarballPath);
-    if (actual !== expected) {
-      await rm(tarballPath, { force: true });
-      throw new BuildError(`${name}: ${url} has sha256 ${actual}, expected ${expected}`, {
-        hint: `If the upstream file legitimately changed, update sha256 in deps/${name}.ts`,
-      });
-    }
+    await downloadWithRetry(url, tarballPath, name);
   }
 
   // ─── Extract ───
@@ -286,7 +261,7 @@ async function fetchDep(
   await rm(dest, { recursive: true, force: true });
   await mkdir(dest, { recursive: true });
 
-  // Github archives (and release tarballs) have one top-level directory. Strip it.
+  // Github archives have a top-level directory <repo>-<commit>/. Strip it.
   await extractTarGz(tarballPath, dest);
 
   // ─── Apply patches / overlays ───
@@ -307,65 +282,13 @@ async function fetchDep(
   // ─── Write stamp ───
   // Written LAST — if anything above failed, no stamp means next build retries.
   await writeFile(refPath, identity + "\n");
-  console.log(`done → ${dest} (${formatElapsed(performance.now() - started)})`);
+  console.log(`done → ${dest}`);
 }
 
 /**
- * A vendor/<name>/ holding a `.git` but no `.ref` is somebody's clone, not a
- * tree the build fetched (those never contain `.git`). Refuse to touch it —
- * the fetch would otherwise wipe it, local branches and all. vendor/WebKit is
- * the case that matters: it is where a full WebKit clone has always lived.
- */
-export function assertManagedSource(name: string, srcDir: string, refStamp: string): void {
-  if (existsSync(refStamp) || !existsSync(join(srcDir, ".git"))) return;
-  throw new BuildError(`${srcDir} is a git clone, not a source tree fetched by the build; refusing to replace it`, {
-    hint:
-      name === "WebKit"
-        ? `vendor/WebKit is where the build fetches the pinned WebKit sources now. Move your clone out of the ` +
-          `repository (e.g. \`mv vendor/WebKit ../WebKit\`) and \`export BUN_WEBKIT_PATH=<that path>\` — every ` +
-          `worktree can then share the one clone: \`bun run build:local\` builds it ` +
-          `(--local-deps=WebKit=$BUN_WEBKIT_PATH), plain \`bun run build\` fetches the pinned commit here.`
-        : `To build that clone, pass --local-deps=${name}=${srcDir}. To let the build fetch the pinned commit here instead, move or delete it.`,
-  });
-}
-
-/**
- * The identity a dep's `.ref` should hold for (ref, sparse, patches), with
- * the patch files read from disk. A missing patch hashes as "<missing>" so the
- * identity can't match and the fetch that follows reports the real error.
- */
-export function expectedSourceIdentity(ref: string, sparse: string[], patchPaths: string[]): string {
-  const patchContents = patchPaths.map(p => {
-    try {
-      return readFileSync(p, "utf8");
-    } catch {
-      return "<missing>";
-    }
-  });
-  return computeSourceIdentity(ref, sparse, patchContents);
-}
-
-/** Whether `dest/.ref` records exactly this (ref, sparse, patches). */
-export function sourceIsCurrent(dest: string, ref: string, sparse: string[], patchPaths: string[]): boolean {
-  try {
-    return readFileSync(join(dest, ".ref"), "utf8").trim() === expectedSourceIdentity(ref, sparse, patchPaths);
-  } catch {
-    return false;
-  }
-}
-
-async function sha256File(path: string): Promise<string> {
-  const hash = createHash("sha256");
-  for await (const chunk of createReadStream(path)) hash.update(chunk as Buffer);
-  return hash.digest("hex");
-}
-
-/**
- * Source identity: sha256(commit + sparse set + patch_contents)[:16]. This is
- * what goes in the .ref stamp. Hashing patch CONTENTS (not paths) means
- * editing a patch invalidates the source without a commit bump. An empty
- * sparse set contributes nothing, so whole-tree identities are just
- * sha256(commit + patch_contents).
+ * Source identity: sha256(commit + patch_contents)[:16]. This is what goes
+ * in the .ref stamp. Hashing patch CONTENTS (not paths) means editing a
+ * patch invalidates the source without a commit bump.
  *
  * CRLF→LF normalized before hashing: git autocrlf may have converted
  * LF→CRLF on Windows checkout. Without normalization, the same patch
@@ -378,13 +301,9 @@ async function sha256File(path: string): Promise<string> {
  * Exported so source.ts can compute the same identity at configure time
  * (for the preemptive-delete-on-mismatch check).
  */
-export function computeSourceIdentity(commit: string, sparse: string[], patchContents: string[]): string {
+export function computeSourceIdentity(commit: string, patchContents: string[]): string {
   const h = createHash("sha256");
   h.update(commit);
-  for (const pattern of sparse) {
-    h.update("\0sparse\0");
-    h.update(pattern);
-  }
   for (const content of patchContents) {
     h.update("\0"); // Separator so patch concatenation can't produce collisions.
     h.update(normalizeLf(content));

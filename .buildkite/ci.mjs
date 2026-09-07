@@ -168,7 +168,8 @@ const buildPlatforms = [
   // only runs tests, signing, and baseline verification, against these
   // artifacts (see testPlatforms), and these are the Windows artifacts the
   // release ships. x64 uses ThinLTO + cross-language LTO by default; arm64
-  // stays non-LTO (no windows-arm64-lto WebKit prebuilt, see config.ts).
+  // stays non-LTO (LLVM's CodeView emitter aborts on ARM64 NEON tuple
+  // registers under LTO, see config.ts).
   { os: "windows", arch: "x64", crossCompile: true, distro: "debian", release: "13" },
   { os: "windows", arch: "aarch64", crossCompile: true, distro: "debian", release: "13" },
 ];
@@ -510,7 +511,7 @@ function getBuildCommand(target, options, mode) {
 }
 
 /**
- * deps + C++ + cargo + link on one agent; also uploads libbun-*.a, libbun_runtime.a and the dep libs.
+ * deps + C++ + cargo + link on one agent, then package + upload the zips.
  *
  * @param {Platform} platform
  * @param {PipelineOptions} options
@@ -905,30 +906,25 @@ function getTestBunStep(platform, options, testOptions = {}) {
  *
  * @param {Platform} platform
  * @param {PipelineOptions} options
+ * @returns {Step[]} steps for the `build-images` group; the last one's key is
+ *   `${getImageKey(platform)}-build-image`, which is what dependents wait on.
+ */
+function getBuildImageSteps(platform, options) {
+  return platform.os === "windows"
+    ? [getWindowsBuildImageStep(platform, options)]
+    : getLinuxBuildImageSteps(platform, options);
+}
+
+/**
+ * Windows images bake on Azure through Packer (WinRM) from the hosted queue.
+ * @param {Platform} platform
+ * @param {PipelineOptions} options
  * @returns {Step}
  */
-function getBuildImageStep(platform, options) {
-  const { os, arch, distro, release, features } = platform;
+function getWindowsBuildImageStep(platform, options) {
+  const { os, arch, release } = platform;
   const { publishImages } = options;
   const action = publishImages ? "publish-image" : "create-image";
-
-  const cloud = os === "windows" ? "azure" : "aws";
-  const command = [
-    "node",
-    "./scripts/machine.mjs",
-    action,
-    `--os=${os}`,
-    `--arch=${arch}`,
-    distro && `--distro=${distro}`,
-    `--release=${release}`,
-    `--cloud=${cloud}`,
-    "--ci",
-    "--authorized-org=oven-sh",
-  ];
-  for (const feature of features || []) {
-    command.push(`--feature=${feature}`);
-  }
-
   return {
     key: `${getImageKey(platform)}-build-image`,
     label: `${getImageLabel(platform)} - build-image`,
@@ -945,9 +941,71 @@ function getBuildImageStep(platform, options) {
     },
     retry: getRetry(),
     cancel_on_build_failing: isMergeQueue(),
-    command: command.filter(Boolean).join(" "),
+    command: `node ./scripts/machine.mjs ${action} --os=${os} --arch=${arch} --release=${release} --cloud=azure --ci --authorized-org=oven-sh`,
     timeout_in_minutes: 3 * 60,
   };
+}
+
+/**
+ * Linux images bake in two steps:
+ *
+ *  1. `…-bake-image` runs ON a fresh machine of the target distro (requested
+ *     with the `bake` agent tag): bootstrap.sh provisions it — so this step's
+ *     log is the bootstrap log — and agent.mjs installs the agent service.
+ *     The machine is imaged as `image-name` once the step passes.
+ *  2. `…-build-image` (labelled wait-for-image) waits for that image to be
+ *     available. It keeps the key the rest of the pipeline depends on.
+ *
+ * @param {Platform} platform
+ * @param {PipelineOptions} options
+ * @returns {Step[]}
+ */
+function getLinuxBuildImageSteps(platform, options) {
+  const { arch, features } = platform;
+  const imageKey = getImageKey(platform);
+  const imageName = getImageName(platform, options);
+  const bootstrapArgs = ["--ci", ...(features || []).map(feature => `--${feature}`)];
+  // prefetch_build_deps shallow-clones the repo at this ref for the dep pins
+  // in scripts/build/deps/; bake from the branch that changed them.
+  const branch = getEnv("BUILDKITE_BRANCH", false);
+  const repoRef = branch && /^[\w./-]+$/.test(branch) ? branch : "main";
+
+  const bakeStep = {
+    key: `${imageKey}-bake-image`,
+    label: `${getImageLabel(platform)} - bake-image`,
+    agents: {
+      ...getEc2Agent(platform, options, { instanceType: arch === "aarch64" ? "t4g.large" : "t3.large" }),
+      bake: true,
+    },
+    env: {
+      BUN_BOOTSTRAP_REPO_REF: repoRef,
+    },
+    retry: getRetry(),
+    cancel_on_build_failing: isMergeQueue(),
+    // Install the service from the machine's own copy of agent.mjs rather
+    // than this checkout's, so the unit outlives the build directory.
+    // ($$ is a literal $ after pipeline-upload interpolation.)
+    command: [
+      `sh ./scripts/bootstrap.sh ${bootstrapArgs.join(" ")}`,
+      `$$([ "$$(id -u)" = 0 ] || echo sudo -n) node /var/lib/buildkite-agent/agent.mjs install`,
+    ],
+    timeout_in_minutes: 3 * 60,
+  };
+
+  const waitStep = {
+    key: `${imageKey}-build-image`,
+    label: `${getImageLabel(platform)} - wait-for-image`,
+    depends_on: [bakeStep.key],
+    agents: {
+      queue: "build-image",
+    },
+    retry: getRetry(),
+    cancel_on_build_failing: isMergeQueue(),
+    command: `node ./scripts/machine.mjs wait-image --name=${imageName} --build=${getBuildNumber()}`,
+    timeout_in_minutes: 120,
+  };
+
+  return [bakeStep, waitStep];
 }
 
 /**
@@ -1586,7 +1644,7 @@ async function getPipeline(options = {}) {
     steps.push({
       key: "build-images",
       group: getBuildkiteEmoji("aws"),
-      steps: [...imagePlatforms.values()].map(platform => getBuildImageStep(platform, options)),
+      steps: [...imagePlatforms.values()].flatMap(platform => getBuildImageSteps(platform, options)),
     });
   }
 
@@ -1607,31 +1665,85 @@ async function getPipeline(options = {}) {
 
   const includeASAN = !isMainBranch();
 
+  // verify-baseline / trace-order: checks that run on a built binary on a
+  // test-fleet host. They are drawn in that host's test group (or a
+  // lane-style group of their own when the target has no test lane, e.g.
+  // android) rather than in
+  // the build group — Buildkite's canvas draws every edge into a group as
+  // leaving after the whole group, so nesting them with build-bun made
+  // test-bun look like it waited on them — and rather than top-level, where
+  // a step still waiting on its depends_on renders greyed out like a skipped
+  // one. Emitted after the test groups so the same-label merge below folds
+  // them into the test group and that group keeps its own depends_on.
+  // Scheduling is by step key either way: each depends on <target>-build-bun.
+  /** @type {Step[]} */
+  const binaryCheckSteps = [];
+  /**
+   * The group a binary check is drawn in: the host's test group when the
+   * target has a test lane there (returned via binaryCheckSteps, emitted after
+   * the test groups), else a lane-style group of its own for that target on
+   * that host — `<host distro> <release> <arch>-<abi>` — returned for the
+   * caller to emit next to the build group.
+   * @param {Target} target
+   * @param {Platform} host
+   * @param {Step} step
+   * @returns {Step[]}
+   */
+  const placeBinaryCheck = (target, host, step) => {
+    const inTestLane = testPlatforms.some(
+      p => getPlatformKey(p) === getPlatformKey(host) && (p.abi ?? null) === (target.abi ?? null),
+    );
+    if (inTestLane) {
+      binaryCheckSteps.push({ key: getPlatformKey(host), group: getPlatformLabel(host), steps: [step] });
+      return [];
+    }
+    const lane = { ...host, abi: target.abi, baseline: target.baseline, profile: target.profile };
+    return [
+      {
+        key: getPlatformKey(lane),
+        group: getPlatformLabel({ ...lane, arch: `${lane.arch}-${target.abi}` }),
+        steps: [step],
+      },
+    ];
+  };
+
   if (!buildId) {
     let relevantBuildPlatforms = includeASAN
       ? buildPlatforms
       : buildPlatforms.filter(({ profile }) => profile !== "asan");
 
     steps.push(
-      ...relevantBuildPlatforms.map(target => {
+      ...relevantBuildPlatforms.flatMap(target => {
         // build-bun always runs on buildHostPlatform regardless of
         // target, so the only build-image dependency is the host's.
         const imageKey = getImageKey(buildHostPlatform);
-        const dependsOn = [];
-        if (imagePlatforms.has(imageKey)) {
-          dependsOn.push(`${imageKey}-build-image`);
-        }
+        const dependsOn = imagePlatforms.has(imageKey) ? [`${imageKey}-build-image`] : [];
 
-        const steps = [getBuildBunStep(target, options)];
+        /** @type {Step[]} */
+        const steps = [
+          getStepWithDependsOn(
+            {
+              key: getTargetKey(target),
+              group: getTargetLabel(target),
+              steps: [getBuildBunStep(target, options)],
+            },
+            ...dependsOn,
+          ),
+        ];
 
         if (needsBaselineVerification(target)) {
           // verify-baseline runs on a per-target-arch native host (see
-          // getVerifyBaselineHost), not buildHostPlatform; its image dep goes
-          // on the step itself so build-bun doesn't wait for it.
-          const verifyImageKey = getImageKey(getVerifyBaselineHost(target));
-          const verifyDeps =
-            verifyImageKey !== imageKey && imagePlatforms.has(verifyImageKey) ? [`${verifyImageKey}-build-image`] : [];
-          steps.push(getStepWithDependsOn(getVerifyBaselineStep(target, options), ...verifyDeps));
+          // getVerifyBaselineHost), not buildHostPlatform.
+          const verifyHost = getVerifyBaselineHost(target);
+          const verifyImageKey = getImageKey(verifyHost);
+          const verifyDeps = imagePlatforms.has(verifyImageKey) ? [`${verifyImageKey}-build-image`] : [];
+          steps.push(
+            ...placeBinaryCheck(
+              target,
+              verifyHost,
+              getStepWithDependsOn(getVerifyBaselineStep(target, options), ...verifyDeps),
+            ),
+          );
         }
 
         // Seed the symbol order file for a cross-compiled target on its native
@@ -1645,22 +1757,19 @@ async function getPipeline(options = {}) {
             t.os === target.os && t.arch === target.arch && !target.abi && (target.profile ?? "release") === "release",
         );
         if (traceOn && (isMainBranch() || /\[generate symbol order\]/i.test(getCommitMessage()))) {
-          // The trace host's image, same as verify-baseline: on the step, so
-          // build-bun doesn't wait for it. Darwin has no cloud image.
+          // Darwin has no cloud image.
           const traceImageKey = getImageKey(traceOn.on);
-          const traceDeps =
-            traceImageKey !== imageKey && imagePlatforms.has(traceImageKey) ? [`${traceImageKey}-build-image`] : [];
-          steps.push(getStepWithDependsOn(getTraceOrderStep(target, traceOn.on, options), ...traceDeps));
+          const traceDeps = imagePlatforms.has(traceImageKey) ? [`${traceImageKey}-build-image`] : [];
+          steps.push(
+            ...placeBinaryCheck(
+              target,
+              traceOn.on,
+              getStepWithDependsOn(getTraceOrderStep(target, traceOn.on, options), ...traceDeps),
+            ),
+          );
         }
 
-        return getStepWithDependsOn(
-          {
-            key: getTargetKey(target),
-            group: getTargetLabel(target),
-            steps,
-          },
-          ...dependsOn,
-        );
+        return steps;
       }),
     );
   }
@@ -1717,6 +1826,8 @@ async function getPipeline(options = {}) {
     }
   }
 
+  steps.push(...binaryCheckSteps);
+
   // Binary-size tracking: main records the baseline, PRs enforce the threshold.
   const strippedPlatforms = buildPlatforms.filter(p => (p.profile ?? "release") === "release");
   if (!buildId && strippedPlatforms.length) {
@@ -1745,29 +1856,27 @@ async function getPipeline(options = {}) {
     steps.push(getReleaseStep(buildPlatforms, options, { signed: shouldSignWindows, testStepKeys }));
   }
 
+  // Merge same-label groups into their first occurrence, keeping every
+  // step's position so the sidebar reads in pipeline order.
   /** @type {Map<string, GroupStep>} */
   const stepsByGroup = new Map();
-
-  for (let i = 0; i < steps.length; i++) {
-    const step = steps[i];
+  /** @type {Step[]} */
+  const mergedSteps = [];
+  for (const step of steps) {
     if (!("group" in step)) {
+      mergedSteps.push(step);
       continue;
     }
-
-    const { group, steps: groupSteps } = step;
-    if (stepsByGroup.has(group)) {
-      stepsByGroup.get(group).steps.push(...groupSteps);
+    const existing = stepsByGroup.get(step.group);
+    if (existing) {
+      existing.steps.push(...step.steps);
     } else {
-      stepsByGroup.set(group, step);
+      stepsByGroup.set(step.group, step);
+      mergedSteps.push(step);
     }
-
-    steps[i] = undefined;
   }
 
-  return {
-    priority,
-    steps: [...steps.filter(step => typeof step !== "undefined"), ...Array.from(stepsByGroup.values())],
-  };
+  return { priority, steps: mergedSteps };
 }
 
 async function main() {

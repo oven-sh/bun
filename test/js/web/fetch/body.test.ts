@@ -49,6 +49,15 @@ function randomFilled(bufferType: (typeof bufferTypes)[number], length: number) 
   return buffer;
 }
 
+function jsonParseError(text: string): SyntaxError {
+  try {
+    JSON.parse(text);
+  } catch (error) {
+    return error as SyntaxError;
+  }
+  throw new Error(`JSON.parse accepted ${JSON.stringify(text)}`);
+}
+
 const utf8 = [
   {
     string: "",
@@ -920,6 +929,13 @@ for (const { body, fn } of bodyTypes) {
       for (const actual of invalidTests) {
         test(actual || "<empty>", async () => {
           expect(async () => await fn(actual).json()).toThrow(SyntaxError);
+          // An empty body is rejected before the parser runs, with its own message.
+          if (actual !== "") {
+            const error = await fn(actual)
+              .json()
+              .catch(error => error);
+            expect(error.message).toBe(jsonParseError(actual).message);
+          }
         });
       }
     });

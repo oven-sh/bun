@@ -90,7 +90,7 @@ export const libjpegTurbo: Dependency = {
   name: "libjpeg-turbo",
 
   source: () => ({
-    kind: "github-archive",
+    kind: "github",
     repo: "libjpeg-turbo/libjpeg-turbo",
     commit: LIBJPEG_TURBO_COMMIT,
   }),

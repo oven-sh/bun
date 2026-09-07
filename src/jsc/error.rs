@@ -20,6 +20,8 @@ pub enum Error {
     MissingData,
     #[error("InvalidHash")]
     InvalidHash,
+    #[error("InvalidSourceMap")]
+    InvalidSourceMap,
     #[error("NotARegularFile")]
     NotARegularFile,
     #[error("CacheDisabled")]
@@ -100,6 +102,7 @@ impl Error {
             Self::WriteFailed => "WriteFailed",
             Self::MissingData => "MissingData",
             Self::InvalidHash => "InvalidHash",
+            Self::InvalidSourceMap => "InvalidSourceMap",
             Self::NotARegularFile => "NotARegularFile",
             Self::CacheDisabled => "CacheDisabled",
             Self::InvalidInputHash => "InvalidInputHash",

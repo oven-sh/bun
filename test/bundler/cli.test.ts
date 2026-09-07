@@ -943,6 +943,57 @@ describe.concurrent("bun build refuses to write an output over an input", () => 
     expect(await Bun.file(path.join(String(dir), "app.js")).text()).toBe(`console.log("APP");\n`);
   });
 
+  test("--metafile that names an input", async () => {
+    using dir = tempDir("build-overwrite-metafile", {
+      "a.js": `import data from "./data.json";\nconsole.log(data);\n`,
+      "data.json": `{ "source": true }\n`,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", "./a.js", "--outdir", "out", "--metafile=data.json"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toContain('Refusing to overwrite input file "data.json"');
+    expect(exitCode).toBe(1);
+    expect(await Bun.file(path.join(String(dir), "data.json")).text()).toBe(`{ "source": true }\n`);
+  });
+
+  test("Bun.build with a metafile path that names an input", async () => {
+    using dir = tempDir("build-api-overwrite-metafile", {
+      "a.js": `import data from "./data.json";\nconsole.log(data);\n`,
+      "data.json": `{ "source": true }\n`,
+      "run.js": `
+        const result = await Bun.build({
+          entrypoints: ["./a.js"],
+          outdir: "./out",
+          metafile: "../data.json",
+          throw: false,
+        });
+        console.log(JSON.stringify({ success: result.success, logs: result.logs.map(l => l.message) }));
+      `,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "run.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({
+      success: false,
+      logs: [expect.stringContaining('Refusing to overwrite input file "data.json"')],
+    });
+    expect(exitCode).toBe(0);
+    expect(await Bun.file(path.join(String(dir), "data.json")).text()).toBe(`{ "source": true }\n`);
+  });
+
   test("Bun.build with outdir set to the source directory", async () => {
     using dir = tempDir("build-api-overwrite", {
       "a.js": `import "./b.js";\nconsole.log("A");\n`,

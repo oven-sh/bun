@@ -754,5 +754,16 @@ fn overwritten_input(
         }
     }
 
+    for metafile_path in [
+        c.options.metafile_json_path,
+        c.options.metafile_markdown_path,
+    ] {
+        if !metafile_path.is_empty() {
+            if let Some(input) = check(metafile_path) {
+                return Some(input);
+            }
+        }
+    }
+
     None
 }

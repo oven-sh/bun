@@ -697,6 +697,18 @@ impl BuildCommand {
 
             // Write metafile if requested
             if let Some(metafile_json) = build_result.metafile.as_deref() {
+                refuse_to_overwrite_inputs(
+                    &build_result.input_paths,
+                    b"",
+                    [
+                        &ctx.bundler_options.metafile,
+                        &ctx.bundler_options.metafile_md,
+                    ]
+                    .into_iter()
+                    .filter(|path| !path.is_empty())
+                    .map(|path| &**path),
+                    ctx.debug.hot_reload == HotReload::Watch,
+                );
                 if !ctx.bundler_options.metafile.is_empty() {
                     // Use makeOpen which auto-creates parent directories on failure
                     let file = match bun_sys::File::make_open(

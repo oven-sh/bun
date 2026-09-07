@@ -3,7 +3,7 @@ use super::JSValueTestExt;
 use super::FormatterTestExt;
 use bun_jsc::console_object::Formatter;
 use bun_jsc::JsClass;
-use bun_core::{strings, ZigString};
+use bun_core::strings;
 
 use super::Expect;
 use super::ExpectAny;
@@ -113,15 +113,12 @@ pub(crate) fn to_throw(
                 Some(JSValue::from_cell(result.to_js_string(global)?))
             })
             .unwrap_or(JSValue::UNDEFINED);
-            if global.has_exception() {
-                return Ok(JSValue::ZERO);
-            }
 
             // TODO: remove this allocation
             // partial match
             {
-                let expected_slice = expected_value.to_slice_or_null(global)?;
-                let received_slice = received_message.to_slice_or_null(global)?;
+                let expected_slice = expected_value.to_utf8(global)?;
+                let received_slice = received_message.to_utf8(global)?;
                 if !strings::contains(received_slice.slice(), expected_slice.slice()) {
                     return Ok(JSValue::UNDEFINED);
                 }
@@ -146,14 +143,9 @@ pub(crate) fn to_throw(
             })
             .unwrap_or(JSValue::UNDEFINED);
 
-            if global.has_exception() {
-                return Ok(JSValue::ZERO);
-            }
             // TODO: REMOVE THIS GETTER! Expose a binding to call .test on the RegExp object directly.
             if let Some(test_fn) = expected_value.get(global, "test")? {
-                let matches = test_fn
-                    .call(global, expected_value, &[received_message])
-                    .unwrap_or_else(|err| global.take_exception(err));
+                let matches = test_fn.call(global, expected_value, &[received_message])?;
                 if !matches.to_boolean() {
                     return Ok(JSValue::UNDEFINED);
                 }
@@ -177,9 +169,6 @@ pub(crate) fn to_throw(
                 Some(JSValue::from_cell(result.to_js_string(global)?))
             })
             .unwrap_or(JSValue::UNDEFINED);
-            if global.has_exception() {
-                return Ok(JSValue::ZERO);
-            }
 
             // no partial match for this case
             if !expected_message.is_same_value(received_message, global)? {
@@ -199,8 +188,7 @@ pub(crate) fn to_throw(
             return Ok(JSValue::UNDEFINED);
         }
 
-        let mut expected_class = ZigString::EMPTY;
-        expected_value.get_class_name(global, &mut expected_class)?;
+        let expected_class = expected_value.get_class_name(global)?;
         let received_message: JSValue = result
             .fast_get(global, bun_jsc::BuiltinName::Message)?
             .unwrap_or(JSValue::UNDEFINED);
@@ -235,8 +223,8 @@ pub(crate) fn to_throw(
             if let Some(received_message) = received_message_opt {
                 // TODO: remove this allocation
                 // partial match
-                let expected_slice = expected_value.to_slice_or_null(global)?;
-                let received_slice = received_message.to_slice(global)?;
+                let expected_slice = expected_value.to_utf8(global)?;
+                let received_slice = received_message.to_utf8(global)?;
                 if strings::contains(received_slice.slice(), expected_slice.slice()) {
                     return Ok(JSValue::UNDEFINED);
                 }
@@ -273,9 +261,7 @@ pub(crate) fn to_throw(
             if let Some(received_message) = received_message_opt {
                 // TODO: REMOVE THIS GETTER! Expose a binding to call .test on the RegExp object directly.
                 if let Some(test_fn) = expected_value.get(global, "test")? {
-                    let matches = test_fn
-                        .call(global, expected_value, &[received_message])
-                        .unwrap_or_else(|err| global.take_exception(err));
+                    let matches = test_fn.call(global, expected_value, &[received_message])?;
                     if matches.to_boolean() {
                         return Ok(JSValue::UNDEFINED);
                     }
@@ -312,10 +298,6 @@ pub(crate) fn to_throw(
         if Expect::is_asymmetric_matcher(expected_value) {
             let signature: &'static str = get_signature("toThrow", "<green>expected<r>", false);
             let is_equal = result.jest_strict_deep_equals(expected_value, global)?;
-
-            if global.has_exception() {
-                return Ok(JSValue::ZERO);
-            }
 
             if is_equal {
                 return Ok(JSValue::UNDEFINED);
@@ -376,10 +358,8 @@ pub(crate) fn to_throw(
 
         // error: received error not instance of received error constructor
         let mut formatter = Formatter::new(global).with_quote_strings(true);
-        let mut expected_class = ZigString::EMPTY;
-        let mut received_class = ZigString::EMPTY;
-        expected_value.get_class_name(global, &mut expected_class)?;
-        result.get_class_name(global, &mut received_class)?;
+        let expected_class = expected_value.get_class_name(global)?;
+        let received_class = result.get_class_name(global)?;
         let signature: &'static str = get_signature("toThrow", "<green>expected<r>", false);
 
         if let Some(received_message) = received_message_opt {
@@ -458,8 +438,7 @@ pub(crate) fn to_throw(
         );
     }
 
-    let mut expected_class = ZigString::EMPTY;
-    expected_value.get_class_name(global, &mut expected_class)?;
+    let expected_class = expected_value.get_class_name(global)?;
     throw!(
         this,
         global,

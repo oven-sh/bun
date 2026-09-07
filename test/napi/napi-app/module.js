@@ -16,17 +16,23 @@ async function tryGcUntil(fn, max = 100) {
     await new Promise(resolve => {
       setTimeout(resolve, 1);
     });
-    if (typeof Bun == "object") {
-      Bun.gc(true);
-    } else {
-      // if this fails, you need to pass --expose-gc to node
-      global.gc();
-    }
+    collectGarbage();
     if (fn()) {
       return true;
     }
   }
   return false;
+}
+
+// Unlike the GC runner main.js passes in, this prints nothing, so tests whose
+// number of GCs differs between the runtimes can use it.
+function collectGarbage() {
+  if (typeof Bun == "object") {
+    Bun.gc(true);
+  } else {
+    // if this fails, you need to pass --expose-gc to node
+    global.gc();
+  }
 }
 
 async function gcUntil(fn, max = 100) {
@@ -116,6 +122,17 @@ nativeTests.test_threadsafe_function_abort_full_queue = async () => {
   console.log("finalized:", nativeTests.test_napi_threadsafe_function_abort_full_queue_finalized());
 };
 
+nativeTests.test_threadsafe_function_finalizer_uses_handle = async () => {
+  nativeTests.test_napi_threadsafe_function_finalizer_uses_handle();
+  let report;
+  for (let i = 0; i < 1000; i++) {
+    report = nativeTests.test_napi_threadsafe_function_finalizer_uses_handle_report();
+    if (report !== undefined) break;
+    await new Promise(resolve => setImmediate(resolve));
+  }
+  console.log("finalizer saw:", report);
+};
+
 nativeTests.test_threadsafe_function_abort_blocked_producers = async () => {
   // create (max_queue_size=1, thread_count=3), fill the queue, spawn two
   // producers that block on the condvar, then abort
@@ -125,6 +142,35 @@ nativeTests.test_threadsafe_function_abort_blocked_producers = async () => {
     await new Promise(resolve => setImmediate(resolve));
   }
   console.log("finalized:", nativeTests.test_napi_threadsafe_function_abort_blocked_producers_finalized());
+};
+
+nativeTests.test_threadsafe_function_abort_with_outstanding_ref = async () => {
+  // create (thread_count=2) with the second reference held by a thread that
+  // makes no calls, then abort from this thread
+  nativeTests.test_napi_threadsafe_function_abort_with_outstanding_ref();
+  // the finalizer runs from the abort's dispatch on this thread, so a bounded
+  // number of turns is enough; it must not wait for the other thread
+  for (let i = 0; i < 1000; i++) {
+    if (nativeTests.test_napi_threadsafe_function_abort_with_outstanding_ref_finalized()) break;
+    await new Promise(resolve => setImmediate(resolve));
+  }
+  console.log("finalized:", nativeTests.test_napi_threadsafe_function_abort_with_outstanding_ref_finalized());
+  // the other thread releases once it has seen the finalizer run (or gives up
+  // after 2s and says so); that is the one step here that depends on OS
+  // scheduling, so wait for it by deadline, under the test runner's 5s
+  const deadline = Date.now() + 3_000;
+  while (
+    nativeTests.test_napi_threadsafe_function_abort_with_outstanding_ref_release_status() === -1 &&
+    Date.now() < deadline
+  ) {
+    await new Promise(resolve => setTimeout(resolve, 1));
+  }
+  console.log(
+    "released after finalize:",
+    nativeTests.test_napi_threadsafe_function_abort_with_outstanding_ref_released_after_finalize(),
+    "status:",
+    nativeTests.test_napi_threadsafe_function_abort_with_outstanding_ref_release_status(),
+  );
 };
 
 nativeTests.test_get_exception = (_, value) => {
@@ -1416,6 +1462,18 @@ nativeTests.test_cleanup_hook_order = () => {
   addon.test();
 };
 
+// Node tears an addon's env down (its cleanup hooks, then the finalizers of
+// whatever it still has alive) only when the main thread's event loop runs dry.
+// process.exit() skips all of it, so only the two lines printed by test() are
+// expected here: no "hookN executed" lines and no "finalize order" line.
+nativeTests.test_env_teardown_skipped_by_process_exit = () => {
+  const hooks = require("./build/Debug/test_cleanup_hook_order.node");
+  const wraps = require("./build/Debug/test_wrap_cleanup_order.node");
+  hooks.test();
+  globalThis.keep = wraps.createParentAndChildren(1);
+  process.exit(0);
+};
+
 nativeTests.test_cleanup_hook_remove_nonexistent = () => {
   const addon = require("./build/Debug/test_cleanup_hook_remove_nonexistent.node");
   addon.test();
@@ -1444,6 +1502,34 @@ nativeTests.test_cleanup_hook_mixed_order = () => {
 nativeTests.test_cleanup_hook_modification_during_iteration = () => {
   const addon = require("./build/Debug/test_cleanup_hook_modification_during_iteration.node");
   addon.test();
+};
+
+nativeTests.test_create_reference_primitive_by_version = () => {
+  const v10 = require("./build/Debug/test_create_reference_primitive_v10.node");
+  const v8 = require("./build/Debug/test_create_reference_primitive_v8.node");
+  const cases = [
+    ["undefined", undefined],
+    ["null", null],
+    ["boolean", true],
+    ["number", 1.5],
+    ["string", "s"],
+    ["bigint", 7n],
+    ["symbol", Symbol("sym")],
+    ["registered symbol", Symbol.for("test_create_reference_primitive")],
+    ["object", { a: 1 }],
+    ["function", () => 0],
+  ];
+  for (const [declared, addon] of [
+    [10, v10],
+    [8, v8],
+  ]) {
+    for (const [name, value] of cases) {
+      const { status, roundTrip, heldAtZero, reref, declared: d } = addon.create_ref(value);
+      let line = `declared=${declared} header=${d} ${name}: status=${status}`;
+      if (status === 0) line += ` roundTrip=${roundTrip} heldAtZero=${heldAtZero} reref=${reref}`;
+      console.log(line);
+    }
+  }
 };
 
 // Test for napi_typeof with boxed primitive objects (String, Number, Boolean)
@@ -1571,6 +1657,87 @@ nativeTests.test_finalizer_registered_during_env_cleanup = async () => {
   console.log("late=" + nativeTests.late_finalizer_run_count());
 };
 
+// The ArrayBuffer behind napi_create_external_arraybuffer / napi_create_external_buffer is
+// untransferable (node: Buffer::New with a free callback marks it so): its finalizer belongs
+// to the env that created it, and that env's teardown frees the bytes. Every transfer entry
+// point refuses it with a DataCloneError and leaves it, the rest of the transfer list, and the
+// finalizer untouched; cloning without a transfer still copies it.
+nativeTests.test_external_buffer_untransferable = () => {
+  const { MessageChannel, Worker, isMarkedAsUntransferable } = require("node:worker_threads");
+  const attempt = (label, transfer) => {
+    try {
+      transfer();
+      console.log(`${label}: transferred`);
+    } catch (e) {
+      console.log(`${label}: ${e.name} code=${e.code}`);
+    }
+  };
+  // Everything created here stays alive until the stats are printed, so the
+  // only way a finalizer can run is a transfer attempt running it.
+  const keepAlive = [];
+  for (const kind of ["arraybuffer", "buffer"]) {
+    const created =
+      kind === "arraybuffer"
+        ? nativeTests.create_external_arraybuffer_for_transfer(8)
+        : nativeTests.create_external_buffer_for_transfer(8);
+    keepAlive.push(created);
+    const arrayBuffer = kind === "arraybuffer" ? created : created.buffer;
+    console.log(
+      `${kind}: isMarkedAsUntransferable(created)=${isMarkedAsUntransferable(created)}`,
+      `isMarkedAsUntransferable(arrayBuffer)=${isMarkedAsUntransferable(arrayBuffer)}`,
+      `ownKeys=${Reflect.ownKeys(arrayBuffer).length}`,
+    );
+
+    attempt(`${kind}: structuredClone`, () => structuredClone(arrayBuffer, { transfer: [arrayBuffer] }));
+    const { port1, port2 } = new MessageChannel();
+    attempt(`${kind}: MessagePort.postMessage`, () => port1.postMessage(arrayBuffer, [arrayBuffer]));
+    port1.close();
+    port2.close();
+    attempt(
+      `${kind}: new Worker transferList`,
+      () => new Worker("", { eval: true, workerData: arrayBuffer, transferList: [arrayBuffer] }),
+    );
+    const plain = new ArrayBuffer(2);
+    attempt(`${kind}: structuredClone after a plain ArrayBuffer`, () =>
+      structuredClone([plain, arrayBuffer], { transfer: [plain, arrayBuffer] }),
+    );
+    console.log(`${kind}: byteLength=${arrayBuffer.byteLength} plain.byteLength=${plain.byteLength}`);
+
+    const copy = structuredClone(arrayBuffer);
+    console.log(`${kind}: copy=[${new Uint8Array(copy).join(",")}] byteLength=${arrayBuffer.byteLength}`);
+  }
+  // Length 0 is a separate path inside napi_create_external_buffer; it is marked all the same.
+  // (Only the mark and the transfer are compared: bun detaches this buffer, node does not.)
+  for (const kind of ["arraybuffer", "buffer"]) {
+    const created =
+      kind === "arraybuffer"
+        ? nativeTests.create_external_arraybuffer_for_transfer(0)
+        : nativeTests.create_external_buffer_for_transfer(0);
+    keepAlive.push(created);
+    const arrayBuffer = kind === "arraybuffer" ? created : created.buffer;
+    console.log(`empty ${kind}: isMarkedAsUntransferable(arrayBuffer)=${isMarkedAsUntransferable(arrayBuffer)}`);
+    attempt(`empty ${kind}: structuredClone`, () => structuredClone(arrayBuffer, { transfer: [arrayBuffer] }));
+  }
+  console.log("stats:", JSON.stringify(nativeTests.external_for_transfer_stats()));
+};
+
+// A worker creates the buffers and exits: the parent can only ever have copies,
+// and the worker's env teardown finalizes both on the thread that created them.
+nativeTests.test_external_buffer_worker_exit = async () => {
+  const { Worker } = require("node:worker_threads");
+  const path = require("node:path");
+  const worker = new Worker(path.join(__dirname, "external-buffer-worker.js"));
+  const messages = [];
+  const exitCode = await new Promise((resolve, reject) => {
+    worker.on("message", message => messages.push(message));
+    worker.on("error", reject);
+    worker.on("exit", resolve);
+  });
+  console.log("worker exited with", exitCode);
+  console.log("messages:", JSON.stringify(messages));
+  console.log("stats after exit:", JSON.stringify(nativeTests.external_for_transfer_stats()));
+};
+
 // Bun-only: an orphaned threadsafe function is freed by whichever thread drops
 // its last reference, including a call that reports napi_closing. Every
 // iteration must end with as many live threadsafe functions as it started with.
@@ -1584,6 +1751,64 @@ nativeTests.test_threadsafe_function_orphan_leak = async () => {
     const closing = nativeTests.call_leaked_threadsafe_functions();
     console.log(`orphaned=${orphaned} closing=${closing} leaked=${napiThreadsafeFunctionLiveCount() - before}`);
   }
+};
+
+// Items still queued on a threadsafe function when the process exits are
+// dropped: node's process.exit() never gets back to the function, and an
+// addon's call_js usually cannot take a null env.
+nativeTests.test_threadsafe_function_queued_items_at_process_exit = () => {
+  nativeTests.queue_threadsafe_function_items(() => {}, 3, /* print_finalize */ false);
+  require("node:fs").writeSync(1, "exiting with 3 items queued\n");
+  process.exit(0);
+};
+
+// The same from inside the function's own callback: the items behind the one
+// that is running must not be delivered into the callback's frame.
+nativeTests.test_threadsafe_function_process_exit_inside_callback = () => {
+  nativeTests.queue_threadsafe_function_items(() => process.exit(0), 3, /* print_finalize */ false);
+  // Returning a pending promise keeps main.js quiet; the first item's callback
+  // exits the process.
+  return new Promise(() => {});
+};
+
+// A worker that exits (process.exit()) or is terminated with items queued: the
+// addon gets each item through call_js with the live env (calling into JS is
+// refused), then the finalizer, as when node's env cleanup turns the loop.
+async function runQueuedItemsWorker(how) {
+  const { Worker } = require("node:worker_threads");
+  const path = require("node:path");
+  const worker = new Worker(path.join(__dirname, "tsfn-queued-items-worker.js"), { workerData: { how } });
+  const code = await new Promise((resolve, reject) => {
+    worker.on("error", reject);
+    worker.on("exit", resolve);
+    if (how === "terminate") {
+      worker.on("message", () => worker.terminate());
+    }
+  });
+  console.log("worker exited with", code);
+}
+
+nativeTests.test_threadsafe_function_queued_items_at_worker_exit = () => runQueuedItemsWorker("exit");
+nativeTests.test_threadsafe_function_queued_items_at_worker_terminate = () => runQueuedItemsWorker("terminate");
+
+// napi_tsfn_abort with items queued: none of them runs; each goes back to
+// call_js with a null env and js_callback so the addon can free it, and then
+// the function finalizes.
+nativeTests.test_threadsafe_function_abort_hands_queued_items_back = async () => {
+  // writeSync: these interleave with the addon's printf lines, so they must
+  // reach stdout synchronously.
+  const { writeSync } = require("node:fs");
+  nativeTests.queue_threadsafe_function_items(
+    () => writeSync(1, "js callback ran after abort\n"),
+    3,
+    /* print_finalize */ true,
+  );
+  writeSync(1, `abort: ${nativeTests.abort_threadsafe_function_with_queued_items()}\n`);
+  for (let i = 0; i < 1000; i++) {
+    if (nativeTests.threadsafe_function_with_queued_items_finalized()) break;
+    await new Promise(resolve => setImmediate(resolve));
+  }
+  writeSync(1, `finalized: ${nativeTests.threadsafe_function_with_queued_items_finalized()}\n`);
 };
 
 // When napi_create_threadsafe_function is given no JS func, the call_js
@@ -1603,6 +1828,59 @@ nativeTests.test_reference_ref_after_collect_driver = async gc => {
   const ext = nativeTests.test_create_weak_ref_for_gc();
   await gcUntil(() => nativeTests.test_weak_ref_is_collected(gc, ext));
   nativeTests.test_reference_ref_after_collect(gc, ext);
+};
+
+const tickImmediate = () => new Promise(resolve => setImmediate(resolve));
+
+// The test_delete_ref_cancels_finalizer addon declares a released Node-API
+// version, so its finalizers run from the event loop after the GC. Deleting
+// the reference in between (what an addon does when it frees the native
+// object itself) must cancel them. Both drivers retry with fresh objects when a
+// conservative scan keeps an object alive, and print only what does not depend
+// on how many attempts that took.
+nativeTests.test_delete_ref_after_collect = async () => {
+  const addon = require("./build/Debug/test_delete_ref_cancels_finalizer.node");
+  for (const [name, useAddFinalizer] of [
+    ["napi_wrap", false],
+    ["napi_add_finalizer", true],
+  ]) {
+    let collected = false;
+    for (let attempt = 0; attempt < 100 && !collected; attempt++) {
+      addon.makeSolo(useAddFinalizer);
+      collectGarbage();
+      collected = addon.isSoloCollected();
+      // In the same turn as the GC that queued the finalizer.
+      addon.deleteSolo();
+      if (!collected) await new Promise(resolve => setTimeout(resolve, 1));
+    }
+    // A queued finalizer would run on the next turn.
+    for (let i = 0; i < 5; i++) await tickImmediate();
+    console.log(
+      `${name}: collected before delete: ${collected}, finalized after delete: ${addon.soloFinalizedAfterDelete()}`,
+    );
+  }
+};
+
+nativeTests.test_delete_ref_after_collect_parent_and_children = async () => {
+  const addon = require("./build/Debug/test_delete_ref_cancels_finalizer.node");
+  for (const parentFirst of [true, false]) {
+    let collected = false;
+    for (let attempt = 0; attempt < 100 && !collected; attempt++) {
+      addon.makePair(parentFirst);
+      collectGarbage();
+      collected = addon.isParentCollected();
+      if (!collected) {
+        addon.discardPair();
+        await new Promise(resolve => setTimeout(resolve, 1));
+      }
+    }
+    for (let i = 0; i < 1000 && !addon.isParentFinalized(); i++) await tickImmediate();
+    // Give the children's finalizers, queued by the same GC, their turn too.
+    for (let i = 0; i < 5; i++) await tickImmediate();
+    console.log(
+      `parent created ${parentFirst ? "before" : "after"} children: parent collected: ${collected}, parent finalized: ${addon.isParentFinalized()}, children finalized after delete: ${addon.childFinalizedAfterDelete()}`,
+    );
+  }
 };
 
 // Microtasks queued by one threadsafe-function callback must be drained before

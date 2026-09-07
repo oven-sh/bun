@@ -10,15 +10,7 @@ pub const STORE_FILE_DESCRIPTORS: bool = !env::IS_BROWSER;
 
 pub const TRACING: bool = true;
 
-pub const ENABLE_ENTRY_CACHE: bool = true;
-
-// TODO: remove this flag, it should use bun.Output.scoped
-pub const VERBOSE_FS: bool = false;
-
 pub const WATCH_DIRECTORIES: bool = true;
-
-// This feature flag exists so when you have defines inside package.json, you can use single quotes in nested strings.
-pub const ALLOW_JSON_SINGLE_QUOTES: bool = true;
 
 pub const DISABLE_COMPRESSION_IN_HTTP_CLIENT: bool = false;
 
@@ -27,12 +19,6 @@ pub const ENABLE_KEEPALIVE: bool = true;
 pub const ATOMIC_FILE_WATCHER: bool = env::IS_LINUX;
 
 pub const HTTP_BUFFER_POOLING: bool = true;
-
-/// There is, what I think is, a bug in getaddrinfo()
-/// on macOS that specifically impacts localhost and not
-/// other ipv4 hosts. This is a workaround for that.
-/// "localhost" fails to connect.
-pub const HARDCODE_LOCALHOST_TO_127_0_0_1: bool = false;
 
 /// React will issue warnings in development if there are multiple children
 /// without keys and "jsxs" is not used.

@@ -164,8 +164,12 @@
     __ZN2v811CpuProfiler19SetSamplingIntervalEi;
     __ZN2v811CpuProfiler5StartENS_5LocalINS_6StringEEENS_16CpuProfilingModeEbj;
     __ZN2v811CpuProfiler4StopEj;
+    __ZN2v811CpuProfiler14StartProfilingENS_5LocalINS_6StringEEENS_16CpuProfilingModeEbj;
+    __ZN2v811CpuProfiler14StartProfilingENS_5LocalINS_6StringEEEb;
+    __ZN2v811CpuProfiler13StopProfilingENS_5LocalINS_6StringEEE;
     __ZN2v811CpuProfiler13CollectSampleEPNS_7IsolateESt8optionalImE;
     __ZN2v810CpuProfile6DeleteEv;
+    __ZNK2v810CpuProfile8GetTitleEv;
     __ZNK2v810CpuProfile10GetEndTimeEv;
     __ZNK2v810CpuProfile12GetStartTimeEv;
     __ZNK2v810CpuProfile14GetTopDownRootEv;

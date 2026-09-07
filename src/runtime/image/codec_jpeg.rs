@@ -107,6 +107,7 @@ const TJPARAM_QUALITY: c_int = 3;
 const TJPARAM_SUBSAMP: c_int = 4;
 pub(crate) const TJPARAM_JPEGWIDTH: c_int = 5;
 pub(crate) const TJPARAM_JPEGHEIGHT: c_int = 6;
+const TJPARAM_COLORSPACE: c_int = 8;
 const TJPARAM_PROGRESSIVE: c_int = 12;
 const TJPARAM_MAXPIXELS: c_int = 24;
 /// `2` = save only APP2/ICC_PROFILE markers (enough for colour management,
@@ -114,6 +115,9 @@ const TJPARAM_MAXPIXELS: c_int = 24;
 /// parser keeps the profile around for `tj3GetICCProfile`.
 const TJPARAM_SAVEMARKERS: c_int = 25;
 const TJPF_RGBA: c_int = 7;
+const TJPF_CMYK: c_int = 11;
+const TJCS_CMYK: c_int = 3;
+const TJCS_YCCK: c_int = 4;
 const TJSAMP_420: c_int = 2;
 
 pub(crate) fn decode(
@@ -150,6 +154,12 @@ pub(crate) fn decode(
     let src_w: u32 = u32::try_from(rw).expect("int cast");
     let src_h: u32 = u32::try_from(rh).expect("int cast");
     codecs::guard(src_w, src_h, max_pixels)?;
+    // libjpeg-turbo won't convert 4-component JPEGs to RGB; decode as packed CMYK (also 4 bytes/px) and convert below.
+    // SAFETY: `h` is live; tj3Get only reads handle state.
+    let cmyk = matches!(
+        unsafe { tj3Get(h, TJPARAM_COLORSPACE) },
+        TJCS_CMYK | TJCS_YCCK
+    );
 
     let mut w = src_w;
     let mut ht = src_h;
@@ -241,7 +251,7 @@ pub(crate) fn decode(
             bytes.len(),
             out.as_mut_ptr(),
             c_int::try_from(w * 4).expect("int cast"),
-            TJPF_RGBA,
+            if cmyk { TJPF_CMYK } else { TJPF_RGBA },
         )
     } != 0
     {
@@ -253,6 +263,9 @@ pub(crate) fn decode(
     }
     // SAFETY: rc 0 (no warning) with unchanged dims means all `ht` rows of `w` pixels were written.
     unsafe { bun_core::vec::commit_spare(&mut out, out_len) };
+    if cmyk {
+        codecs::cmyk_to_rgba(&mut out);
+    }
 
     // Extract the APP2 ICC profile (if the source carried one). The marker
     // parser ran during tj3DecompressHeader, so this is a copy-out of
@@ -267,6 +280,10 @@ pub(crate) fn decode(
     let mut icc_ptr: *mut u8 = core::ptr::null_mut();
     let mut icc_size: usize = 0;
     let icc: Option<Vec<u8>> = 'blk: {
+        // A CMYK profile describes ink channels, not the RGBA produced above.
+        if cmyk {
+            break 'blk None;
+        }
         // SAFETY: `h` is live; out-params are valid `&mut` locals.
         if unsafe { tj3GetICCProfile(h, &raw mut icc_ptr, &raw mut icc_size) } != 0 || icc_size == 0
         {

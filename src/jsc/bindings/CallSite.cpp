@@ -99,17 +99,21 @@ JSValue createNativeFrameForTesting(Zig::GlobalObject* globalObject)
 
 void CallSite::formatAsString(JSC::VM& vm, JSC::JSGlobalObject* globalObject, WTF::StringBuilder& sb)
 {
+    auto scope = DECLARE_THROW_SCOPE(vm);
     JSValue thisValue = jsUndefined();
     if (m_thisValue) {
         thisValue = m_thisValue.get();
     }
 
     JSString* myFunctionName = functionName().toStringOrNull(globalObject);
+    RETURN_IF_EXCEPTION(scope, );
     JSString* mySourceURL = sourceURL().toStringOrNull(globalObject);
+    RETURN_IF_EXCEPTION(scope, );
 
     String functionName;
     if (myFunctionName && myFunctionName->length() > 0) {
         functionName = myFunctionName->getString(globalObject);
+        RETURN_IF_EXCEPTION(scope, );
     } else if (m_flags & (static_cast<unsigned int>(Flags::IsFunction) | static_cast<unsigned int>(Flags::IsEval))) {
         functionName = "<anonymous>"_s;
     }
@@ -155,6 +159,7 @@ void CallSite::formatAsString(JSC::VM& vm, JSC::JSGlobalObject* globalObject, WT
             sb.append("unknown"_s);
         } else {
             sb.append(mySourceURL->getString(globalObject));
+            RETURN_IF_EXCEPTION(scope, );
         }
 
         if (line && column) {

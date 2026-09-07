@@ -42,7 +42,7 @@ pub struct NetworkTask {
     // sibling fields, so the lifetime is erased to `'static`.
     // `MaybeUninit` because the slot comes from `HiveArrayFallback`
     // as *uninitialized* memory (often zero-page on first mmap, but not
-    // guaranteed — `get()`'s heap fallback is `Box::new_uninit()`) and is
+    // guaranteed — `claim()`'s heap fallback is `Box::new_uninit()`) and is
     // overwritten by plain `=` in `for_manifest`/`for_tarball`.
     // `MaybeUninit<T>` is the spec-correct mapping for that semantic — unlike
     // `ManuallyDrop<T>`, it suppresses `T`'s validity invariant, so
@@ -207,7 +207,12 @@ impl NetworkTask {
             // main thread and later chunk callbacks can see it.
             if let Some(m) = result.metadata.take() {
                 // SAFETY: `stream` is the live heap-allocated `TarballStream`.
-                unsafe { (*stream).status_code = m.response.status_code };
+                unsafe {
+                    (*stream).status_code = m.response.status_code;
+                    if let http::BodySize::ContentLength(len) = result.body_size {
+                        (*stream).content_length = Some(len);
+                    }
+                }
                 // New attempt's headers arrived — drop any bytes buffered from
                 // a prior failed attempt (pre-refactor `HTTPClient::start()`
                 // did this via `body_out_str.reset()`).
@@ -245,11 +250,11 @@ impl NetworkTask {
                         // runs at most once at a time, releases the
                         // worker on ARCHIVE_RETRY, and is re-enqueued by
                         // the next chunk. Pending-task accounting stays
-                        // balanced: this NetworkTask is never pushed to
-                        // `async_network_task_queue` once committed, so
-                        // its `increment_pending_tasks()` is satisfied by
-                        // the extract Task that `TarballStream.finish()`
-                        // publishes to `resolve_tasks`.
+                        // balanced: `TarballStream.finish()` publishes
+                        // exactly one of the extract Task (to
+                        // `resolve_tasks`) or, when the connection failed
+                        // mid-body, this NetworkTask (to
+                        // `async_network_task_queue`).
                         // SAFETY: `this` is live; the HTTP thread is its sole writer here.
                         unsafe { (*this).streaming_committed = true };
                         // SAFETY: `stream` is the live heap-allocated
@@ -452,11 +457,6 @@ impl From<ForManifestError> for crate::Error {
         }
     }
 }
-impl PartialEq<crate::Error> for ForManifestError {
-    fn eq(&self, other: &crate::Error) -> bool {
-        <&'static str>::from(self) == other.name()
-    }
-}
 impl bun_core::output::ErrName for ForManifestError {
     fn name(&self) -> &[u8] {
         <&'static str>::from(self).as_bytes()
@@ -490,13 +490,10 @@ impl NetworkTask {
                 name
             };
 
-            // `OwnedString` derefs the WTF-backed result on scope exit —
-            // covers both the
-            // success path and the InvalidURL early returns below.
-            let tmp = bun_core::OwnedString::new(bun_url::join(
+            let tmp = bun_url::join(
                 &bun_core::String::borrow_utf8(scope.url.href()),
                 &bun_core::String::borrow_utf8(encoded_name),
-            ));
+            );
 
             if tmp.tag() == bun_core::Tag::Dead {
                 if !is_optional {
@@ -523,14 +520,14 @@ impl NetworkTask {
                 return Err(ForManifestError::InvalidURL);
             }
 
-            if !(tmp.has_prefix_comptime(b"https://") || tmp.has_prefix_comptime(b"http://")) {
+            if !(tmp.starts_with_ascii(b"https://") || tmp.starts_with_ascii(b"http://")) {
                 if !is_optional {
                     log.add_error_fmt(
                         None,
                         bun_ast::Loc::EMPTY,
                         format_args!(
                             "Registry URL must be http:// or https://\nReceived: \"{}\"",
-                            *tmp
+                            tmp
                         ),
                     );
                 } else {
@@ -539,14 +536,14 @@ impl NetworkTask {
                         bun_ast::Loc::EMPTY,
                         format_args!(
                             "Registry URL must be http:// or https://\nReceived: \"{}\"",
-                            *tmp
+                            tmp
                         ),
                     );
                 }
                 return Err(ForManifestError::InvalidURL);
             }
 
-            // This actually duplicates the string! So we defer deref the WTF managed one above.
+            // This actually duplicates the string! The WTF managed one above drops at scope exit.
             let url_bytes = tmp.to_owned_slice().into_boxed_slice();
 
             {
@@ -739,6 +736,10 @@ pub enum ForTarballError {
     OutOfMemory,
     #[error("InvalidURL")]
     InvalidURL,
+    /// `--offline` and the tarball is not in the cache. Already reported (once per
+    /// package); callers treat it like `AlreadyFailed`.
+    #[error("TarballFailedToDownload")]
+    Offline,
     /// Returned by `enqueue_*_for_download` when the dedupe map already records
     /// a terminal failure for this task id. Callers handle it silently (the
     /// original failure was already reported) and advance their own bookkeeping.
@@ -751,7 +752,9 @@ impl From<ForTarballError> for crate::Error {
         match e {
             ForTarballError::OutOfMemory => crate::Error::Alloc(bun_alloc::AllocError),
             ForTarballError::InvalidURL => crate::Error::InvalidURL,
-            ForTarballError::AlreadyFailed => crate::Error::TarballFailedToDownload,
+            ForTarballError::AlreadyFailed | ForTarballError::Offline => {
+                crate::Error::TarballFailedToDownload
+            }
         }
     }
 }
@@ -952,7 +955,7 @@ impl NetworkTask {
         if !self.streaming_extract_task.is_null() {
             // ARENA: returned to `preallocated_resolve_tasks` pool, not freed.
             // SAFETY: `streaming_extract_task` was obtained from this same
-            // `preallocated_resolve_tasks` pool via `get()` and is not aliased
+            // `preallocated_resolve_tasks` pool via `get_init()` and is not aliased
             // (cleared immediately below); `put()` runs `Task::drop` on the
             // slot — the Task was fully initialized via
             // `enqueue::create_extract_task_for_streaming` so this is sound.
@@ -965,24 +968,35 @@ impl NetworkTask {
         }
     }
 
-    /// Prepare this task for another HTTP attempt (used by retry logic when
-    /// streaming extraction never started). Keeps the stream allocation so the
-    /// retry can still benefit from streaming.
+    /// Prepare this task for another HTTP attempt. A stream that never ran is
+    /// reused; one consumed by a download that failed mid-body (released in
+    /// `TarballStream::finish`) is replaced, keeping the same extract Task.
     pub(crate) fn reset_streaming_for_retry(&mut self) {
         debug_assert!(!self.streaming_committed);
         if let Some(stream) = self.tarball_stream.as_deref_mut() {
             stream.reset_for_retry();
+        } else if !self.streaming_extract_task.is_null() {
+            let manager = self.package_manager.as_mut_ptr();
+            let this: *mut NetworkTask = self;
+            // SAFETY: `init` returns a fresh heap allocation owned here.
+            self.tarball_stream = Some(unsafe {
+                bun_core::heap::take(TarballStream::init(
+                    self.streaming_extract_task,
+                    this,
+                    manager,
+                ))
+            });
         }
         self.response = HTTPClientResult::default();
     }
 
     /// Initialize a freshly-vended pool slot in place — a full struct overwrite
     /// that resets every other field to its struct default. The slot may be
-    /// uninitialized heap memory (from `HiveArrayFallback::get()`'s
+    /// uninitialized heap memory (from `HiveArrayFallback::claim()`'s
     /// `Box::new_uninit()` fallback) or stale (reused hive slot whose prior
     /// contents ARE now dropped on `put` since 1e76047), so each field is
     /// written via `addr_of_mut!().write()` without dropping the previous
-    /// value — the slot is freshly poisoned/uninit from `get()`.
+    /// value — the slot is freshly poisoned/uninit from `claim()`.
     ///
     /// Caller-initialized fields (`unsafe_http_client`, `callback`,
     /// `response_buffer`) are written here with drop-safe
@@ -994,7 +1008,7 @@ impl NetworkTask {
     ///
     /// # Safety
     /// `slot` must be the unique handle to a `HiveArrayFallback<NetworkTask>`
-    /// slot returned by `get()`; its prior contents are treated as garbage
+    /// slot returned by `claim()`; its prior contents are treated as garbage
     /// (no destructors run).
     pub(crate) unsafe fn write_init(
         slot: *mut NetworkTask,

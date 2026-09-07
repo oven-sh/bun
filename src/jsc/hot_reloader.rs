@@ -9,7 +9,6 @@ use bun_core::ZStr;
 #[cfg(not(windows))]
 use bun_paths::SEP;
 use bun_paths::strings;
-use bun_paths::{self, PathBuffer};
 #[cfg(not(windows))]
 use bun_resolver::fs::PathName;
 use bun_resolver::fs::{self as Fs, FileSystem};
@@ -670,6 +669,9 @@ fn arm_watch_reload_grace_timer() {
     let spawned = std::thread::Builder::new()
         .name("WatchReloadGrace".into())
         .spawn(move || {
+            // `force()` clears the terminal through this thread's `Output`
+            // writers; they are zeroed until the thread is configured.
+            Output::Source::configure_thread_no_js();
             const STEP_MS: u64 = 10;
             // Budget to drain the posted WatchReloadTask; extended once when
             // the kill-signal emit is observed so a bounded synchronous
@@ -861,7 +863,7 @@ where
         let rfs: &mut Fs::file_system::RealFS = &mut fs.fs;
         #[cfg(windows)]
         let _ = (changed_files, parents, file_descriptors, rfs);
-        let mut _on_file_update_path_buf = PathBuffer::uninit();
+        let mut _on_file_update_path_buf = bun_paths::path_buffer_pool::get();
 
         for event in events.iter() {
             // Stale udata: kevent.udata can outlive a swapRemove in flushEvictions.
@@ -1018,7 +1020,7 @@ where
                                             // bun_sys::access takes a &ZStr; build one on the
                                             // stack from the &[u8] watch-list slice.
                                             let was_deleted = {
-                                                let mut zbuf = PathBuffer::uninit();
+                                                let mut zbuf = bun_paths::path_buffer_pool::get();
                                                 if affected_path.len() >= zbuf.len() {
                                                     false
                                                 } else {
@@ -1096,7 +1098,7 @@ where
                                     continue;
                                 }
                                 let main_exists = {
-                                    let mut zbuf = PathBuffer::uninit();
+                                    let mut zbuf = bun_paths::path_buffer_pool::get();
                                     if self.main.file.len() >= zbuf.len() {
                                         false
                                     } else {

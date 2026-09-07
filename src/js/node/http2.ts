@@ -72,7 +72,6 @@ const { Duplex } = Stream;
 const { SafeArrayIterator, SafeSet } = require("internal/primordials");
 const { promisify } = require("internal/promisify");
 
-const RegExpPrototypeExec = RegExp.prototype.exec;
 const ObjectAssign = Object.assign;
 const ArrayIsArray = Array.isArray;
 const ObjectKeys = Object.keys;
@@ -83,21 +82,9 @@ const StringPrototypeToLowerCase = String.prototype.toLowerCase;
 const StringPrototypeIncludes = String.prototype.includes;
 const StringPrototypeStartsWith = String.prototype.startsWith;
 const ObjectPrototypeHasOwnProperty = Object.prototype.hasOwnProperty;
-const DatePrototypeToUTCString = Date.prototype.toUTCString;
-const DatePrototypeGetMilliseconds = Date.prototype.getMilliseconds;
 
 const H2FrameParser = $rust("h2_frame_parser.rs", "H2FrameParserConstructor");
 const { upgradeRawSocketToH2 } = require("node:_http2_upgrade");
-
-const kSettingNames = {
-  headerTableSize: 0x1,
-  enablePush: 0x2,
-  maxConcurrentStreams: 0x3,
-  initialWindowSize: 0x4,
-  maxFrameSize: 0x5,
-  maxHeaderListSize: 0x6,
-  enableConnectProtocol: 0x8,
-};
 
 const kSettingIds: Record<number, string> = {
   0x1: "headerTableSize",
@@ -4404,10 +4391,8 @@ class ServerHttp2Session extends Http2Session {
       // be invalid.
       if (typeof origin !== "string") {
         throw $ERR_INVALID_ARG_TYPE("originOrStream", ["string", "number", "URL", "object"], originOrStream);
-      } else if (!origin) {
+      } else if (origin === "null" || origin === "") {
         throw $ERR_HTTP2_ALTSVC_INVALID_ORIGIN();
-      } else {
-        origin = getOrigin(origin, true);
       }
     }
 
@@ -4511,6 +4496,12 @@ class ServerHttp2Session extends Http2Session {
     socket.on("drain", this.#onDrain.bind(this));
 
     process.nextTick(emitConnectNT, this, socket);
+  }
+
+  // undefined for performServerHandshake() sessions; node never clears it, not even on destroy().
+  // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/http2/core.js (ServerHttp2Session#server)
+  get server() {
+    return this[kServer];
   }
 
   get originSet() {
@@ -5810,7 +5801,12 @@ class ClientHttp2Session extends Http2Session {
       }
       cancelPendingPings(this.#pingCallbacks);
       this.#pingCallbacks = null;
-      if (typeof error === "number") {
+      if (error === undefined) {
+        // node's signature is destroy(error = NGHTTP2_NO_ERROR, code): the defaulted error is a
+        // number and replaces code, so destroy(undefined, code) is destroy(). An explicit code only
+        // reaches the wire next to an Error (or null).
+        code = undefined;
+      } else if (typeof error === "number") {
         code = error;
         error = code !== constants.NGHTTP2_NO_ERROR ? $ERR_HTTP2_SESSION_ERROR(code) : undefined;
       }
@@ -6660,10 +6656,14 @@ class Http2SecureServer extends tls.Server {
     }
     this[kOptions].settings = { ...this[kOptions].settings, ...settings };
   }
+  // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/http2/core.js#L3475-L3487
   close(callback?: Function) {
     super.close(callback);
-    closeIdleHttp1Connections(this);
+    if (this[bunSocketServerOptions]?.allowHTTP1 === true) this.closeIdleConnections();
     closeAllSessions(this);
+  }
+  closeIdleConnections() {
+    if (this[bunSocketServerOptions]?.allowHTTP1 === true) closeIdleHttp1Connections(this);
   }
 }
 function createServer(options, onRequestHandler) {

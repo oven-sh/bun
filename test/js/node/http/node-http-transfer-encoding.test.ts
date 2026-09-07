@@ -98,6 +98,153 @@ test("should not duplicate transfer-encoding header in response when explicitly 
   expect(bodySection).toContain("Goodbye, World!");
 });
 
+// llhttp flags Transfer-Encoding as present only once a non-whitespace value
+// byte arrives, so node treats a TE field with an empty (or whitespace-only)
+// value as if the header were absent: no clientError, Content-Length framing
+// applies. oven-sh/bun#40124: Bun served the request AND fired a spurious
+// clientError, so a typical handler destroyed the live connection.
+test.each([
+  ["empty", ""],
+  ["whitespace-only", "   "],
+])("%s Transfer-Encoding value is ignored like node, no clientError", async (name, te) => {
+  const events: string[] = [];
+  await using server = createServer((req, res) => {
+    events.push(`request ${req.url}`);
+    res.end("ok");
+  });
+  server.on("clientError", (err: any, socket) => {
+    events.push(`clientError ${err.code}`);
+    socket.destroy();
+  });
+  await once(server.listen(0, "127.0.0.1"), "listening");
+  const { port } = server.address() as AddressInfo;
+
+  const { promise, resolve } = Promise.withResolvers<string>();
+  // Pipeline a second request: the spurious clientError kills the
+  // connection after the first response, so /b proves it survived.
+  const socket = connect(port, "127.0.0.1", () => {
+    socket.write(
+      `GET /a HTTP/1.1\r\nHost: x\r\nTransfer-Encoding:${te}\r\n\r\n` +
+        "GET /b HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n",
+    );
+  });
+  let raw = "";
+  socket.on("data", chunk => (raw += chunk.toString()));
+  socket.on("error", () => {});
+  socket.on("close", () => resolve(raw));
+  const response = await promise;
+  expect(events).toEqual(["request /a", "request /b"]);
+  expect(response.match(/HTTP\/1\.1 200/g)).toHaveLength(2);
+});
+
+test("empty Transfer-Encoding with Content-Length frames the body like node", async () => {
+  const events: string[] = [];
+  await using server = createServer((req, res) => {
+    let body = "";
+    req.on("data", d => (body += d));
+    req.on("end", () => {
+      events.push(`request ${req.url} body=${body}`);
+      res.end("ok");
+    });
+  });
+  server.on("clientError", (err: any, socket) => {
+    events.push(`clientError ${err.code}`);
+    socket.destroy();
+  });
+  await once(server.listen(0, "127.0.0.1"), "listening");
+  const { port } = server.address() as AddressInfo;
+
+  const { promise, resolve } = Promise.withResolvers<string>();
+  const socket = connect(port, "127.0.0.1", () => {
+    socket.write(
+      "POST /p HTTP/1.1\r\nHost: x\r\nTransfer-Encoding:\r\nContent-Length: 5\r\nConnection: close\r\n\r\nhello",
+    );
+  });
+  let raw = "";
+  socket.on("data", chunk => (raw += chunk.toString()));
+  socket.on("error", () => {});
+  socket.on("close", () => resolve(raw));
+  const response = await promise;
+  expect(events).toEqual(["request /p body=hello"]);
+  expect(response).toStartWith("HTTP/1.1 200");
+});
+
+// An empty field followed by "Transfer-Encoding: chunked" combines to just
+// "chunked" (RFC 9110 5.6.1). llhttp frames the body as chunked and node
+// delivers it. The has-body decision must look at every Transfer-Encoding
+// field: reading only the first one sees an empty value and drops the body.
+test.each([
+  ["empty", ""],
+  ["whitespace-only", "   "],
+])("%s Transfer-Encoding field followed by chunked delivers the body like node", async (name, te) => {
+  const events: string[] = [];
+  await using server = createServer((req, res) => {
+    let body = "";
+    req.on("data", d => (body += d));
+    req.on("end", () => {
+      events.push(`request ${req.url} body=${body}`);
+      res.end("ok");
+    });
+  });
+  server.on("clientError", (err: any, socket) => {
+    events.push(`clientError ${err.code}`);
+    socket.destroy();
+  });
+  await once(server.listen(0, "127.0.0.1"), "listening");
+  const { port } = server.address() as AddressInfo;
+
+  const { promise, resolve } = Promise.withResolvers<string>();
+  const socket = connect(port, "127.0.0.1", () => {
+    socket.write(
+      `POST /a HTTP/1.1\r\nHost: x\r\nTransfer-Encoding:${te}\r\nTransfer-Encoding: chunked\r\n\r\n` +
+        "5\r\nhello\r\n0\r\n\r\n" +
+        "GET /b HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n",
+    );
+  });
+  let raw = "";
+  socket.on("data", chunk => (raw += chunk.toString()));
+  socket.on("error", () => {});
+  socket.on("close", () => resolve(raw));
+  const response = await promise;
+  expect(events).toEqual(["request /a body=hello", "request /b body="]);
+  expect(response.match(/HTTP\/1\.1 200/g)).toHaveLength(2);
+});
+
+// Boundary of the leniency: node errors once any non-whitespace value byte
+// arrives, even one that names no coding.
+test("comma-only Transfer-Encoding value still fires clientError like node", async () => {
+  const { promise, resolve, reject } = Promise.withResolvers<any>();
+  const urls: string[] = [];
+  await using server = createServer((req, res) => {
+    urls.push(req.url!);
+    req.resume();
+    res.end("ok");
+  });
+  server.on("clientError", (err, socket) => {
+    socket.destroy();
+    resolve(err);
+  });
+  await once(server.listen(0, "127.0.0.1"), "listening");
+  const { port } = server.address() as AddressInfo;
+
+  // Pipeline a follow-up with Connection: close so that, if the comma value
+  // were wrongly treated as absent, /b is served and the socket closes,
+  // rejecting below instead of idling on keep-alive until the test times out.
+  const socket = connect(port, "127.0.0.1", () => {
+    socket.write(
+      "GET /a HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: ,\r\n\r\n" +
+        "GET /b HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n",
+    );
+  });
+  socket.resume();
+  socket.on("error", () => {});
+  socket.on("close", () => reject(new Error(`socket closed without clientError, served: ${urls.join(",")}`)));
+  const err = await promise;
+  socket.destroy();
+  expect(err.code).toBe("HPE_INVALID_TRANSFER_ENCODING");
+  expect(urls).toEqual(["/a"]);
+});
+
 // Value lengths landing parseTrailerFields' 8-byte field-value scan on the
 // alignments where its last load reaches past the terminating CRLF CRLF: that
 // read leaves the heap allocation without the section's post-padding (ASAN).

@@ -174,7 +174,7 @@ public:
     using Base = JSC::JSNonFinalObject;
     static JSErrorEventPrototype* create(JSC::VM& vm, JSDOMGlobalObject* globalObject, JSC::Structure* structure)
     {
-        JSErrorEventPrototype* ptr = new (NotNull, JSC::allocateCell<JSErrorEventPrototype>(vm)) JSErrorEventPrototype(vm, globalObject, structure);
+        JSErrorEventPrototype* ptr = new (NotNull, Bun::allocatePlainObjectCell(vm, sizeof(JSErrorEventPrototype))) JSErrorEventPrototype(vm, globalObject, structure);
         ptr->finishCreation(vm);
         return ptr;
     }
@@ -188,7 +188,7 @@ public:
     }
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
     {
-        return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
+        return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
     }
 
 private:
@@ -239,11 +239,7 @@ template<> JSValue JSErrorEventDOMConstructor::prototypeForStructure(JSC::VM& vm
 
 template<> void JSErrorEventDOMConstructor::initializeProperties(VM& vm, JSDOMGlobalObject& globalObject)
 {
-    putDirect(vm, vm.propertyNames->length, jsNumber(1), JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontEnum);
-    JSString* nameString = jsNontrivialString(vm, "ErrorEvent"_s);
-    m_originalName.set(vm, this, nameString);
-    putDirect(vm, vm.propertyNames->name, nameString, JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontEnum);
-    putDirect(vm, vm.propertyNames->prototype, JSErrorEvent::prototype(vm, globalObject), JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::DontDelete);
+    initializeBaseProperties(vm, 1, "ErrorEvent"_s, JSErrorEvent::prototype(vm, globalObject));
 }
 
 /* Hash table for prototype */
@@ -262,8 +258,8 @@ const ClassInfo JSErrorEventPrototype::s_info = { "ErrorEvent"_s, &Base::s_info,
 void JSErrorEventPrototype::finishCreation(VM& vm)
 {
     Base::finishCreation(vm);
-    reifyStaticProperties(vm, JSErrorEvent::info(), JSErrorEventPrototypeTableValues, *this);
-    JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
+    Bun::reifyStaticPropertyTable(vm, JSErrorEvent::info(), JSErrorEventPrototypeTableValues, *this);
+    Bun::putToStringTagWithoutTransition(vm, this, info());
 }
 
 const ClassInfo JSErrorEvent::s_info = { "ErrorEvent"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSErrorEvent) };
@@ -373,12 +369,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsErrorEvent_error, (JSGlobalObject * lexicalGlobalObje
 
 JSC::GCClient::IsoSubspace* JSErrorEvent::subspaceForImpl(JSC::VM& vm)
 {
-    return WebCore::subspaceForImpl<JSErrorEvent, UseCustomHeapCellType::No>(
-        vm,
-        [](auto& spaces) { return spaces.m_clientSubspaceForErrorEvent.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForErrorEvent = std::forward<decltype(space)>(space); },
-        [](auto& spaces) { return spaces.m_subspaceForErrorEvent.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_subspaceForErrorEvent = std::forward<decltype(space)>(space); });
+    return WebCore::subspaceForImpl<JSErrorEvent, UseCustomHeapCellType::No>(vm, BUN_SUBSPACE_SLOTS(m_clientSubspaceForErrorEvent, m_subspaceForErrorEvent));
 }
 
 template<typename Visitor>

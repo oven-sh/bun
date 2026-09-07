@@ -47,20 +47,6 @@ pub struct Theme<'a> {
     pub image_base_dir: Option<&'a [u8]>,
 }
 
-impl<'a> Default for Theme<'a> {
-    fn default() -> Self {
-        Self {
-            light: false,
-            columns: 80,
-            colors: true,
-            hyperlinks: false,
-            kitty_graphics: false,
-            remote_image_paths: None,
-            image_base_dir: None,
-        }
-    }
-}
-
 /// Renderer that only collects image URLs — no output. Used by the CLI
 /// pre-scan pass to decide which remote images to download.
 #[derive(Default)]
@@ -2716,7 +2702,7 @@ fn resolve_local_image_path(src: &[u8], base_dir: Option<&[u8]>) -> Option<Box<[
     // Prefer the markdown file's directory when provided; otherwise fall
     // back to cwd so `Bun.markdown.ansi()` callers without a source path
     // still work.
-    let mut cwd_buf = bun_paths::PathBuffer::uninit();
+    let mut cwd_buf = bun_paths::path_buffer_pool::get();
     let base: &[u8] = if let Some(d) = base_dir {
         d
     } else {
@@ -2733,7 +2719,7 @@ fn resolve_local_image_path(src: &[u8], base_dir: Option<&[u8]>) -> Option<Box<[
     // for any entry, including directories — and emitKittyImageFile sets
     // q=2 so the terminal silently drops directory paths without falling
     // through to alt text.
-    let mut zbuf = bun_paths::PathBuffer::uninit();
+    let mut zbuf = bun_paths::path_buffer_pool::get();
     let abs_z = bun_paths::resolve_path::z(&abs, &mut zbuf);
     match bun_sys::stat(abs_z) {
         Ok(s) => {

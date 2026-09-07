@@ -56,10 +56,7 @@ namespace WebCore {
 using ReducedResolutionSeconds = Seconds;
 using DOMHighResTimeStamp = double;
 
-class CachedResource;
 class Document;
-class DocumentLoader;
-class NetworkLoadMetrics;
 class PerformanceUserTiming;
 class PerformanceEntry;
 class PerformanceMark;
@@ -116,12 +113,6 @@ public:
     void ref() const final { RefCounted::ref(); }
     void deref() const final { RefCounted::deref(); }
     USING_CAN_MAKE_WEAKPTR(EventTarget);
-
-    // PerformanceNavigationTiming* navigationTiming() { return m_navigationTiming.get(); }
-
-    // EventTargetData* eventTargetData() override;
-    // EventTargetData* eventTargetDataConcurrently() override;
-    // EventTargetData& ensureEventTargetData() override;
 
 private:
     Performance(ScriptExecutionContext*, MonotonicTime timeOrigin);

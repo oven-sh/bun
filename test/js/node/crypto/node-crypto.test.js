@@ -691,6 +691,99 @@ describe("DiffieHellman", () => {
   });
 });
 
+// An integer-valued Number is not always an int32 JSValue. An element of an array that
+// also holds a non-int32 number, or anything read out of a Float64Array, is stored as a
+// double. Node validates these arguments by value, so every case below works there.
+describe("integer arguments whose JSValue is a double", () => {
+  const asDouble = n => new Float64Array([n])[0];
+  const [, twentyFromJson] = JSON.parse("[1e10, 20]");
+
+  function errorCode(fn) {
+    try {
+      fn();
+      return "no error";
+    } catch (e) {
+      return e.code;
+    }
+  }
+
+  it("sign() and verify() accept padding and saltLength by value", () => {
+    const { privateKey, publicKey } = crypto.generateKeyPairSync("rsa", { modulusLength: 1024 });
+    const data = Buffer.from("msg");
+    const pss = crypto.constants.RSA_PKCS1_PSS_PADDING;
+    const signature = crypto.sign("sha256", data, { key: privateKey, padding: pss, saltLength: 20 });
+    const verifyWith = (options, sig = signature) =>
+      crypto.verify("sha256", data, { key: publicKey, padding: pss, ...options }, sig);
+
+    expect({
+      doubleSaltLength: verifyWith({ saltLength: asDouble(20) }),
+      saltLengthFromJsonArray: verifyWith({ saltLength: twentyFromJson }),
+      doublePadding: verifyWith({ padding: asDouble(pss), saltLength: 20 }),
+      createVerifyDoubleSaltLength: crypto
+        .createVerify("sha256")
+        .update(data)
+        .verify({ key: publicKey, padding: pss, saltLength: asDouble(20) }, signature),
+      signDoubleSaltLength: verifyWith(
+        { saltLength: 20 },
+        crypto.sign("sha256", data, { key: privateKey, padding: pss, saltLength: asDouble(20) }),
+      ),
+      createSignDoubleSaltLength: verifyWith(
+        { saltLength: 20 },
+        crypto
+          .createSign("sha256")
+          .update(data)
+          .sign({ key: privateKey, padding: pss, saltLength: asDouble(20) }),
+      ),
+      // Node's check is `value === value >> 0`, which accepts -0 as 0.
+      negativeZeroSaltLength: verifyWith(
+        { saltLength: -0 },
+        crypto.sign("sha256", data, { key: privateKey, padding: pss, saltLength: 0 }),
+      ),
+      fractionalSaltLength: errorCode(() => verifyWith({ saltLength: 20.5 })),
+      saltLengthPastInt32: errorCode(() => verifyWith({ saltLength: 2 ** 31 })),
+      stringSaltLength: errorCode(() => verifyWith({ saltLength: "20" })),
+    }).toEqual({
+      doubleSaltLength: true,
+      saltLengthFromJsonArray: true,
+      doublePadding: true,
+      createVerifyDoubleSaltLength: true,
+      signDoubleSaltLength: true,
+      createSignDoubleSaltLength: true,
+      negativeZeroSaltLength: true,
+      fractionalSaltLength: "ERR_INVALID_ARG_VALUE",
+      saltLengthPastInt32: "ERR_INVALID_ARG_VALUE",
+      stringSaltLength: "ERR_INVALID_ARG_VALUE",
+    });
+  });
+
+  it("generateKeySync('aes') accepts the length by value", () => {
+    expect({
+      double128: crypto.generateKeySync("aes", { length: asDouble(128) }).symmetricKeySize,
+      double256: crypto.generateKeySync("aes", { length: asDouble(256) }).symmetricKeySize,
+    }).toEqual({ double128: 16, double256: 32 });
+    for (const length of [128.5, 64, "128"]) {
+      expect(() => crypto.generateKeySync("aes", { length })).toThrow(
+        "The property 'options.length' must be one of: 128, 192, 256",
+      );
+    }
+  });
+
+  it("createDiffieHellman(prime, generator) reads a double generator", () => {
+    const prime = crypto.getDiffieHellman("modp5").getPrime();
+    const generatorOf = generator => crypto.createDiffieHellman(prime, generator).getGenerator().toString("hex");
+    // Before the fix the double was read as 0 and rejected as a bad generator.
+    expect({ double2: generatorOf(asDouble(2)), double5: generatorOf(asDouble(5)) }).toEqual({
+      double2: "02",
+      double5: "05",
+    });
+  });
+
+  it("getCipherInfo(nid) reads a double nid", () => {
+    const info = crypto.getCipherInfo("aes-128-cbc");
+    expect(crypto.getCipherInfo(asDouble(info.nid))).toEqual(info);
+  });
+});
+
 describe("ECDH", () => {
   it("should have correct method names", () => {
     const ecdh = crypto.createECDH("prime256v1");

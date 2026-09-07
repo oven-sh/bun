@@ -21,13 +21,15 @@ import type { Source } from "./source.ts";
 
 /**
  * Pull a version identifier from a Source. The shape depends on the kind:
- * github-archive → commit hash, prebuilt → identity string. Local/in-tree
+ * github → commit hash, prebuilt → identity string. Local/in-tree
  * don't have a pinned identifier.
  */
 function sourceIdentifier(source: Source): string | undefined {
   switch (source.kind) {
-    case "github-archive":
+    case "github":
       return source.commit;
+    case "tarball":
+      return source.version;
     case "prebuilt":
       return source.identity;
     case "local":
@@ -102,7 +104,7 @@ export function generateDepVersionsHeader(cfg: Config): string {
     "#endif",
     "",
     "// C string constants for easy access",
-    ...versions.map(([name, val]) => `static const char* const BUN_VERSION_${name} = "${val}";`),
+    ...versions.map(([name, val]) => `static constexpr const char* BUN_VERSION_${name} = "${val}";`),
     "",
     "#ifdef __cplusplus",
     "}",

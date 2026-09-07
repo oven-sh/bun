@@ -13,7 +13,7 @@ use bun_install::lockfile::package::PackageColumns as _;
 use bun_install::lockfile::{LoadResult, LoadStep};
 use bun_install::package_manager::options::Do;
 use bun_install::package_manager::{
-    LogLevel, ManifestLoad, Subcommand, WorkspaceFilter, populate_manifest_cache,
+    LogLevel, Subcommand, WorkspaceFilter, populate_manifest_cache,
     update_package_json_and_install_with_manager,
 };
 use bun_install::package_manager_real::command_line_arguments::UpdateGroups;
@@ -271,7 +271,7 @@ match manager.workspace_package_json_cache.get_with_path(
         // Write the updated package.json
         // Routes through `bun_sys::File::write_file` (cwd-relative
         // open + write + close) per src/CLAUDE.md.
-        let mut path_zbuf = PathBuffer::uninit();
+        let mut path_zbuf = bun_paths::path_buffer_pool::get();
         let path_z = path::resolve_path::z(package_json_path, &mut path_zbuf);
         if let Err(err) =
             bun_sys::File::write_file(bun_sys::Fd::cwd(), path_z, &new_package_json_source)
@@ -374,7 +374,7 @@ match manager.workspace_package_json_cache.get_with_path(
             // Build the package.json path for this workspace
             // SAFETY: `FileSystem::init` ran during `PackageManager::init`.
             let root_dir = FileSystem::get().top_level_dir;
-            let mut path_buf = PathBuffer::uninit();
+            let mut path_buf = bun_paths::path_buffer_pool::get();
             let package_json_path =
                 Self::build_package_json_path(root_dir, workspace_path, &mut path_buf);
 
@@ -504,7 +504,7 @@ match manager.workspace_package_json_cache.get_with_path(
             // Build the package.json path for this workspace
             // SAFETY: `FileSystem::init` ran during `PackageManager::init`.
             let root_dir = FileSystem::get().top_level_dir;
-            let mut path_buf = PathBuffer::uninit();
+            let mut path_buf = bun_paths::path_buffer_pool::get();
             let package_json_path =
                 Self::build_package_json_path(root_dir, workspace_path, &mut path_buf);
 
@@ -945,7 +945,6 @@ match manager.workspace_package_json_cache.get_with_path(
                     &scope,
                     package_name,
                     Some(&mut expired),
-                    ManifestLoad::LoadFromMemoryFallbackToDisk,
                     needs_extended,
                 ) else {
                     continue;
@@ -1284,10 +1283,7 @@ match manager.workspace_package_json_cache.get_with_path(
         let result = match Self::process_multi_select(&mut state, terminal_size) {
             Ok(r) => r,
             Err(err) => {
-                if matches!(
-                    err,
-                    crate::Error::EndOfStream | crate::Error::Core(bun_core::Error::EndOfStream)
-                ) {
+                if matches!(err, crate::Error::Core(bun_core::Error::EndOfStream)) {
                     Output::flush();
                     bun_core::prettyln!("\n<r><red>x<r> Cancelled");
                     Global::exit(0);
@@ -1999,7 +1995,7 @@ match manager.workspace_package_json_cache.get_with_path(
                     // ctrl+c, ctrl+d
                     reprint_menu = false;
                     cleanup_and_reprint!(reprint_menu);
-                    return Err(crate::Error::EndOfStream);
+                    return Err(crate::Error::Core(bun_core::Error::EndOfStream));
                 }
                 b' ' => {
                     state.selected[state.cursor] = !state.selected[state.cursor];

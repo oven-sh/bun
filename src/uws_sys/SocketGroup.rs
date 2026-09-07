@@ -81,12 +81,6 @@ impl Default for SocketGroup {
     }
 }
 
-impl Default for VTable {
-    fn default() -> Self {
-        bun_core::ffi::zeroed()
-    }
-}
-
 pub enum ConnectResult {
     Socket(*mut us_socket_t),
     Connecting(*mut ConnectingSocket),

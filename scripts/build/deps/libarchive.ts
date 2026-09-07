@@ -83,7 +83,7 @@ export const libarchive: Dependency = {
   versionMacro: "LIBARCHIVE",
 
   source: () => ({
-    kind: "github-archive",
+    kind: "github",
     repo: "libarchive/libarchive",
     commit: LIBARCHIVE_COMMIT,
   }),

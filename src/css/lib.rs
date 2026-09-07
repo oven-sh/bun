@@ -121,7 +121,7 @@ pub(crate) use compat::Feature;
 /// Alias of `error::ParserErrorKind`.
 pub use error::ParserErrorKind as ParseErrorKind;
 pub use properties::custom::{TokenList, TokenListFns};
-pub use values::ident::{CustomIdentFns, DashedIdentFns, IdentFns};
+pub use values::ident::IdentFns;
 pub use values::string::{CssString as CSSString, CssStringFns as CSSStringFns};
 
 // `css::generic::*` is an alternate spelling of the protocol traits +
@@ -345,7 +345,9 @@ pub struct Dimension {
 // Every `&'static [u8]` payload actually borrows the parser arena/source text and
 // must not outlive the arena; `&'static` is the crate-wide placeholder until the
 // bumpalo arena lifetime is plumbed through.
-#[derive(Clone, Debug)]
+// `Copy`: every payload is a borrowed slice or scalar, and with `Copy` the
+// derived `clone()` is a plain 24-byte copy instead of a per-variant match.
+#[derive(Clone, Copy, Debug)]
 pub enum Token {
     Ident(&'static [u8]),
     Function(&'static [u8]),
@@ -390,43 +392,7 @@ pub enum Token {
 
 impl core::fmt::Display for Token {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        // Minimal rendering for error messages. Full CSS serialization
-        // lives in `css_parser.rs` via `serializer::*`.
-        use bstr::BStr;
-        match self {
-            Token::Ident(v)
-            | Token::Function(v)
-            | Token::AtKeyword(v)
-            | Token::UnrestrictedHash(v)
-            | Token::IdHash(v)
-            | Token::QuotedString(v)
-            | Token::BadString(v)
-            | Token::UnquotedUrl(v)
-            | Token::BadUrl(v)
-            | Token::Whitespace(v)
-            | Token::Comment(v) => {
-                write!(f, "{}", BStr::new(v))
-            }
-            Token::Delim(c) => write!(f, "{}", char::from_u32(*c).unwrap_or('\u{FFFD}')),
-            Token::Number(n) => write!(f, "{}", n.value),
-            Token::Percentage { unit_value, .. } => write!(f, "{}%", *unit_value * 100.0),
-            Token::Dimension(d) => write!(f, "{}{}", d.num.value, BStr::new(d.unit)),
-            Token::Cdo => f.write_str("<!--"),
-            Token::Cdc => f.write_str("-->"),
-            Token::IncludeMatch => f.write_str("~="),
-            Token::DashMatch => f.write_str("|="),
-            Token::PrefixMatch => f.write_str("^="),
-            Token::SuffixMatch => f.write_str("$="),
-            Token::SubstringMatch => f.write_str("*="),
-            Token::Colon => f.write_str(":"),
-            Token::Semicolon => f.write_str(";"),
-            Token::Comma => f.write_str(","),
-            Token::OpenSquare => f.write_str("["),
-            Token::CloseSquare => f.write_str("]"),
-            Token::OpenParen => f.write_str("("),
-            Token::CloseParen => f.write_str(")"),
-            Token::OpenCurly => f.write_str("{"),
-            Token::CloseCurly => f.write_str("}"),
-        }
+        self.to_css_generic(&mut bun_io::FmtAdapter::new(f))
+            .map_err(|_| core::fmt::Error)
     }
 }

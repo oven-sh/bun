@@ -204,7 +204,7 @@ test.concurrent("the orphaned store entry survives the re-link until bun prune",
     "bun prune <version> (<revision>)
 
     - no-deps@1.1.0
-    1 package removed (checked 4)"
+    1 package removed (checked 4 installed packages)"
   `);
   expect(err).not.toContain("error:");
   expect(exitCode).toBe(0);

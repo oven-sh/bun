@@ -1,3 +1,4 @@
+import { bunEnv, bunExe, tempDir } from "harness";
 import util from "util";
 
 test("postMessage results in correct event", done => {
@@ -215,6 +216,43 @@ test("broadcast channel used with workers", async () => {
     console.count("Batch complete");
   }
 }, 99999);
+
+test("objects posted to channels in two workers", async () => {
+  using dir = tempDir("broadcast-channel-two-workers", {
+    "main.mjs": `import { Worker, isMainThread, parentPort } from "node:worker_threads";
+      const bc = new BroadcastChannel("objects");
+      if (isMainThread) {
+        const workers = [new Worker(new URL(import.meta.url)), new Worker(new URL(import.meta.url))];
+        await Promise.all(workers.map(w => new Promise(r => w.once("message", r))));
+        for (let r = 0; r < 50; r++) {
+          bc.postMessage([{ ["key" + r]: r }]);
+          bc.postMessage({ ["obj" + r]: r });
+        }
+        bc.postMessage("end");
+        const counts = await Promise.all(workers.map(w => new Promise(r => w.once("message", r))));
+        console.log(counts.join(" "));
+        bc.close();
+        await Promise.all(workers.map(w => w.terminate()));
+      } else {
+        const seen = {};
+        bc.onmessage = e => {
+          if (e.data === "end") {
+            bc.close();
+            Bun.gc(true);
+            parentPort.postMessage(Object.keys(seen).length);
+            return;
+          }
+          for (const obj of Array.isArray(e.data) ? e.data : [e.data]) for (const k in obj) seen[k] = obj[k];
+        };
+        parentPort.postMessage("ready");
+      }`,
+  });
+  await using proc = Bun.spawn({ cmd: [bunExe(), "main.mjs"], cwd: String(dir), env: bunEnv, stderr: "pipe" });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(stdout.trim()).toBe("100 100");
+  expect(exitCode).toBe(0);
+});
 
 test("user options are forwarded through custom inspect", () => {
   const bc = new BroadcastChannel("hello");

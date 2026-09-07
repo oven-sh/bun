@@ -320,22 +320,6 @@ pub mod entry {
         }
     }
 
-    impl Default for Entry {
-        fn default() -> Self {
-            Self {
-                node_id: super::node::Id::INVALID,
-                dependencies: Dependencies::EMPTY,
-                parents: Vec::new(),
-                // `Step::LinkPackage as u32 == 0`.
-                step: core::sync::atomic::AtomicU32::new(0),
-                hoisted: false,
-                peer_hash: PeerHash::NONE,
-                entry_hash: 0,
-                scripts: core::cell::Cell::new(None),
-            }
-        }
-    }
-
     #[repr(transparent)]
     #[derive(Copy, Clone, PartialEq, Eq, Hash)]
     pub struct PeerHash(u64);
@@ -533,7 +517,6 @@ pub mod entry {
         let entry_parents = store.entries.items_parents();
 
         let mut parents: ArrayHashMap<Id, ()> = ArrayHashMap::default();
-        // defer parents.deinit(bun.default_allocator);
 
         for &parent_id in entry_parents[entry_id.get() as usize].as_slice() {
             if parent_id == Id::INVALID {

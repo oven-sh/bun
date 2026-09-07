@@ -16,7 +16,7 @@ pub type ErrorFunc<Ctx> = unsafe extern "C" fn(ctx: *mut Ctx, msg: *const c_char
 // On those platforms these `extern "C"` decls would be undefined at link:
 // `bun_runtime::ffi::ffi_body::{Source::add,
 // CompileC::compile}` are reachable from `extern "C"` JS bindings and the
-// monomorphized refs land in `libbun_rust.a` regardless of any
+// monomorphized refs land in `libbun_runtime.a` regardless of any
 // `if !ENABLE_TINYCC { return }` runtime guard. Swap the `extern` block for
 // stub *definitions* on those targets so the link resolves; the gated Rust
 // callers never reach them at runtime (they early-return with "not available

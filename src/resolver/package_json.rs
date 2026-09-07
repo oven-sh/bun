@@ -54,17 +54,6 @@ pub struct DependencyMap {
     pub source_buf: &'static [u8],
 }
 
-impl Clone for DependencyMap {
-    /// Deep-clones the small key/value vecs; `SemverString`/`Dependency` are
-    /// POD over `source_buf`.
-    fn clone(&self) -> Self {
-        Self {
-            map: self.map.clone().expect("OOM"),
-            source_buf: self.source_buf,
-        }
-    }
-}
-
 // Inherent impls cannot carry associated type aliases (stable), so use a free alias.
 type DependencyHashMap =
     ArrayHashMap<SemverString, Dependency /* , SemverString::ArrayHashContext */>;
@@ -293,7 +282,7 @@ trait FileSystemPackageJsonExt {
 }
 impl FileSystemPackageJsonExt for crate::fs::FileSystem {
     fn join(&self, parts: &[&[u8]]) -> &'static [u8] {
-        resolve_path::resolve_path::join::<resolve_path::resolve_path::platform::Loose>(parts)
+        resolve_path::resolve_path::join::<resolve_path::resolve_path::platform::Auto>(parts)
     }
 }
 
@@ -1266,8 +1255,6 @@ pub type ConditionsMap = StringArrayHashMap<()>;
 pub(crate) struct ESModule<'a> {
     pub(crate) debug_logs: Option<&'a mut resolver::DebugLogs>,
     pub(crate) conditions: &'a ConditionsMap,
-    // allocator dropped — global mimalloc
-    pub(crate) module_type: &'a mut ModuleType,
 }
 
 #[derive(Clone)]
@@ -1340,16 +1327,6 @@ pub struct Package<'a> {
     pub(crate) subpath: &'a [u8],
 }
 
-impl Default for Package<'_> {
-    fn default() -> Self {
-        Package {
-            name: b"",
-            version: b"",
-            subpath: b"",
-        }
-    }
-}
-
 #[derive(Clone, Copy, Default)]
 pub struct PackageExternal {
     pub name: Semver::String,
@@ -1362,7 +1339,7 @@ impl<'a> Package<'a> {
 
     pub(crate) fn clone(self, builder: &mut Semver::semver_string::Builder) -> PackageExternal {
         PackageExternal {
-            name: builder.append_utf8_without_pool::<Semver::String>(self.name, 0),
+            name: builder.append_without_pool::<Semver::String>(self.name, 0),
         }
     }
 
@@ -1515,6 +1492,19 @@ struct ModuleBufs {
     resolve_target_buf2: PathBuffer,
 }
 
+/// Same shape as `resolver::BufsSlot`: the `Drop` reclaims the box when a worker thread exits.
+struct ModuleBufsSlot(core::cell::Cell<*mut ModuleBufs>);
+impl Drop for ModuleBufsSlot {
+    fn drop(&mut self) {
+        let p = self.0.get();
+        if !p.is_null() {
+            // SAFETY: produced by `into_raw` in `module_bufs`; this thread is exiting, so no
+            // resolution frame still points into the buffers.
+            unsafe { bun_core::heap::destroy(p) };
+        }
+    }
+}
+
 thread_local! {
     // Heap-allocate the buffer struct on first use and store only a pointer
     // in TLS so the static-TLS template stays small (PE/COFF has no
@@ -1523,28 +1513,26 @@ thread_local! {
     // RefCell + escaped `&mut PathBuffer` would create aliased `&mut` at the inner call → UB.
     // Use raw-pointer access; only form `&mut PathBuffer` inside the non-recursive `String` arms
     // where the buffers are actually written (no overlap with a live outer `&mut`).
-    static MODULE_BUFS: core::cell::Cell<*mut ModuleBufs> =
-        const { core::cell::Cell::new(core::ptr::null_mut()) };
+    static MODULE_BUFS: ModuleBufsSlot =
+        const { ModuleBufsSlot(core::cell::Cell::new(core::ptr::null_mut())) };
 }
 
 #[inline]
 fn module_bufs() -> *mut ModuleBufs {
-    MODULE_BUFS.with(|c| {
-        let mut p = c.get();
+    MODULE_BUFS.with(|slot| {
+        let mut p = slot.0.get();
         if p.is_null() {
             p = bun_core::heap::into_raw(Box::new(ModuleBufs {
                 resolved_path_buf_percent: PathBuffer::ZEROED,
                 resolve_target_buf: PathBuffer::ZEROED,
                 resolve_target_buf2: PathBuffer::ZEROED,
             }));
-            c.set(p);
+            slot.0.set(p);
         }
         p
     })
 }
 
-// `module_type` / `debug_logs` are `&'a mut T`, so reading/writing them
-// requires `&mut self`. All resolution methods take `&mut self`.
 impl<'a> ESModule<'a> {
     pub(crate) fn resolve(
         &mut self,
@@ -2060,7 +2048,7 @@ impl<'a> ESModule<'a> {
                         };
                     }
 
-                    // Wildcard expansion: tag for `probe_wildcard_extensions` (oven-sh/bun#29679, #10001).
+                    // Wildcard expansion: tag for `probe_target_extensions` (oven-sh/bun#29679, #10001).
                     dedent!();
                     return Resolution {
                         path: Box::<[u8]>::from(result),
@@ -2098,7 +2086,6 @@ impl<'a> ESModule<'a> {
                             ));
                         }
 
-                        let prev_module_type = *self.module_type;
                         let result = self.resolve_target::<PATTERN>(
                             package_url,
                             &entry.value,
@@ -2106,16 +2093,7 @@ impl<'a> ESModule<'a> {
                             internal,
                         );
                         if result.status.is_undefined() {
-                            *self.module_type = prev_module_type;
                             continue;
-                        }
-
-                        if key == b"import" {
-                            *self.module_type = ModuleType::Esm;
-                        }
-
-                        if key == b"require" {
-                            *self.module_type = ModuleType::Cjs;
                         }
 
                         return result;
@@ -2157,7 +2135,6 @@ impl<'a> ESModule<'a> {
 
                 for target_value in array.iter() {
                     // Let resolved be the result, continuing the loop on any Invalid Package Target error.
-                    let prev_module_type = *self.module_type;
                     let result = self.resolve_target::<PATTERN>(
                         package_url,
                         target_value,
@@ -2171,7 +2148,6 @@ impl<'a> ESModule<'a> {
                     }
 
                     if result.status.is_undefined() {
-                        *self.module_type = prev_module_type;
                         continue;
                     }
 

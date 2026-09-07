@@ -8,6 +8,7 @@ import {
   runInNewContext,
   runInThisContext,
   Script,
+  SourceTextModule,
 } from "node:vm";
 
 function capture(_: any, _1?: any) {}
@@ -920,6 +921,16 @@ test("can't use bytecode from a different script", () => {
   expect(secondScript.cachedDataRejected).toBeTrue();
   expect(firstScript.runInThisContext()).toBe(2);
   expect(secondScript.runInThisContext()).toBe(4);
+});
+
+test("SourceTextModule accepts the cachedData it produced", () => {
+  const source = `{ function inBlock() { return 1; } }\nexport default await Promise.resolve(inBlock);`; // module-only syntax, and a block function (strict semantics)
+  const cachedData = new SourceTextModule(source, { identifier: "m" }).createCachedData();
+  expect(cachedData.length).toBeGreaterThan(0);
+  expect(() => new SourceTextModule(source, { identifier: "m", cachedData })).not.toThrow(); // ERR_VM_MODULE_CACHED_DATA_REJECTED otherwise
+  expect(() => new SourceTextModule("export default 2;", { identifier: "m", cachedData })).toThrow(
+    expect.objectContaining({ code: "ERR_VM_MODULE_CACHED_DATA_REJECTED" }),
+  );
 });
 
 describe("Script compiles its source once and links that in every context it runs in", () => {
@@ -1845,6 +1856,25 @@ test("a module whose evaluation times out is errored", async () => {
   );
   expect(exitCode).toBe(0);
 }, 30_000);
+
+// The same timeout value reaches the native evaluate() either as an int32 or as a double (a
+// Float64Array element is always the latter). Only the value may decide whether the deadline is armed.
+test("SourceTextModule#evaluate() arms the timeout when the number is boxed as a double", async () => {
+  const code = `
+    const vm = require("node:vm");
+    const timeout = new Float64Array([20])[0];
+    // Spins far past the 20ms deadline, but not forever: without the deadline the body finishes
+    // and evaluate() resolves, so a timeout that is not armed fails this test instead of hanging it.
+    const m = new vm.SourceTextModule("for (const end = Date.now() + 2000; Date.now() < end;) {}", { context: vm.createContext({}) });
+    await m.link(() => { throw new Error("unreachable"); });
+    console.log(timeout === 20, await m.evaluate({ timeout }).then(() => "resolved", (e) => e.code), m.status);
+  `;
+  await using proc = Bun.spawn({ cmd: [bunExe(), "-e", code], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(stdout).toBe("true ERR_SCRIPT_EXECUTION_TIMEOUT errored\n");
+  expect(exitCode).toBe(0);
+});
 
 // A vm timeout that lands while a host function beneath the timed script is spinning a nested event-loop
 // wait (expect().resolves ticks the loop until its promise settles) must unwind to the run and surface as

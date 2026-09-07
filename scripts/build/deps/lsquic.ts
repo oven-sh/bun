@@ -95,7 +95,7 @@ export const lsquic: Dependency = {
   name: "lsquic",
 
   source: () => ({
-    kind: "github",
+    kind: "github-archive",
     repo: "litespeedtech/lsquic",
     commit: LSQUIC_COMMIT,
   }),

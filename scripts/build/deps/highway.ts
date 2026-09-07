@@ -23,7 +23,7 @@ export const highway: Dependency = {
   name: "highway",
 
   source: () => ({
-    kind: "github",
+    kind: "github-archive",
     repo: "google/highway",
     commit: HIGHWAY_COMMIT,
   }),

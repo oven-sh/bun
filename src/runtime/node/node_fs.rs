@@ -456,6 +456,26 @@ fn directory_exists_at_os_path(dir: FD, path: &OSPathSliceZ) -> Maybe<bool> {
     }
 }
 
+/// The error a recursive copy of a directory onto `dest` fails with when `dest`
+/// is a link, or `None` when it is not one.
+///
+/// `mkdir(2)` reports EEXIST for a name that another entry already holds, and
+/// the recursive mkdir accepts that name when the directory check above finds a
+/// directory. The check follows a link, so a link at `dest` made the walk write
+/// the whole source subtree through it. GNU `cp -r` and `fs.cp` both refuse to
+/// copy a directory onto anything that is not one.
+fn cp_dest_link_error(nodefs: &mut NodeFS, dest: &OSPathSliceZ) -> Option<sys::Error> {
+    if !sys::is_symlink_os_path(dest) {
+        return None;
+    }
+    Some(sys::Error {
+        errno: E::EEXIST as _,
+        syscall: sys::Tag::mkdir,
+        path: nodefs.os_path_into_sync_error_buf(dest).into(),
+        ..Default::default()
+    })
+}
+
 type ReadPosition = i64;
 type Buffer = super::types::Buffer;
 type GidT = node::gid_t;
@@ -1994,6 +2014,11 @@ mod _async_tasks {
             };
             #[cfg(not(windows))]
             let normdest: &OSPathSliceZ = dest;
+
+            if let Some(err) = cp_dest_link_error(nodefs, normdest) {
+                this_ref.finish_concurrently(Err(err));
+                return false;
+            }
 
             let mkdir_ = nodefs.mkdir_recursive_os_path(normdest, args::Mkdir::DEFAULT_MODE, false);
             match mkdir_ {
@@ -8052,6 +8077,10 @@ impl NodeFS {
             Ok(fd_) => fd_,
         };
         let _close = scopeguard::guard(fd, |fd| fd.close());
+
+        if let Some(err) = cp_dest_link_error(self, dest) {
+            return Err(err);
+        }
 
         match self.mkdir_recursive_os_path(dest, args::Mkdir::DEFAULT_MODE, false) {
             Err(err) => return Err(err),

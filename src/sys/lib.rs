@@ -7047,6 +7047,44 @@ pub fn get_file_attributes(path: &ZStr) -> Option<WindowsFileAttributes> {
     })
 }
 
+/// Whether `path` names an entry that stands in for another path: a symbolic
+/// link on POSIX, a name-surrogate reparse point (a symlink or a junction) on
+/// Windows. `false` when nothing holds the name, and when the name cannot be
+/// read.
+pub fn is_symlink_os_path(path: &bun_paths::OSPathSliceZ) -> bool {
+    #[cfg(not(windows))]
+    {
+        match lstat(path) {
+            Ok(st) => S::ISLNK(st.st_mode as _),
+            Err(_) => false,
+        }
+    }
+    #[cfg(windows)]
+    {
+        use bun_windows_sys::externs as w;
+        // SAFETY: path is NUL-terminated UTF-16.
+        let attrs = unsafe { w::GetFileAttributesW(path.as_ptr()) };
+        if attrs == windows::INVALID_FILE_ATTRIBUTES
+            || (attrs & w::FILE_ATTRIBUTE_REPARSE_POINT) == 0
+        {
+            return false;
+        }
+        // Only a name surrogate stands in for another path. An opaque tag such
+        // as IO_REPARSE_TAG_APPEXECLINK names the entry itself.
+        let mut found: w::WIN32_FIND_DATAW = bun_core::ffi::zeroed();
+        // SAFETY: path is NUL-terminated UTF-16; found is valid for write.
+        let find = unsafe { w::FindFirstFileW(path.as_ptr(), &mut found) };
+        if find == bun_windows_sys::INVALID_HANDLE_VALUE {
+            return false;
+        }
+        // SAFETY: valid find handle from FindFirstFileW.
+        unsafe {
+            let _ = w::FindClose(find);
+        }
+        w::is_reparse_tag_name_surrogate(found.dwReserved0)
+    }
+}
+
 /// `access(path, F_OK) == 0`. `file_only` ignored on POSIX.
 pub fn exists_os_path(path: &bun_paths::OSPathSliceZ, file_only: bool) -> bool {
     #[cfg(not(windows))]

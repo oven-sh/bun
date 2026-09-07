@@ -1,7 +1,9 @@
 import { $ } from "bun";
 import { shellInternals } from "bun:internal-for-testing";
-import { describe, expect } from "bun:test";
-import { tempDirWithFiles } from "harness";
+import { describe, expect, test } from "bun:test";
+import { bunEnv, tempDir, tempDirWithFiles } from "harness";
+import { mkdirSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import { bunExe, createTestBuilder } from "../test_builder";
 import { sortedShellOutput } from "../util";
 const { builtinDisabled } = shellInternals;
@@ -170,6 +172,73 @@ describe.if(!builtinDisabled("cp"))("bunshell cp", async () => {
       .fileEquals(TEST_COPY_TO_FOLDER_NEW_FILE, "Hello, World!")
       .testMini({ cwd: mini_tmpdir })
       .runAsTest("cp_recurse");
+  });
+});
+
+// The builtin is the default `cp` on Windows only, so these spawn a child with
+// it force-enabled to cover POSIX as well.
+describe.concurrent("bunshell cp -R onto a link", () => {
+  const runCp = async (cwd: string, command: string) => {
+    const script = `
+      const { $ } = require("bun");
+      const r = await $\`${command}\`.nothrow().quiet();
+      console.log(JSON.stringify({ exitCode: r.exitCode, stderr: r.stderr.toString() }));
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: { ...bunEnv, BUN_ENABLE_EXPERIMENTAL_SHELL_BUILTINS: "1" },
+      cwd,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+    return JSON.parse(stdout) as { exitCode: number; stderr: string };
+  };
+
+  const tree = {
+    src: { a: { "f1.txt": "from-source" } },
+    dest: { src: { "keep.txt": "" } },
+    outside: { "f1.txt": "original" },
+  };
+
+  test("a link at a destination subdirectory path is refused", async () => {
+    using dir = tempDir("shell-cp-nested-link", tree);
+    const root = String(dir);
+    symlinkSync(join(root, "outside"), join(root, "dest", "src", "a"), "dir");
+
+    const result = await runCp(root, "cp -R src dest");
+
+    expect(result.stderr).toContain(p("dest/src/a"));
+    expect(result.exitCode).toBe(1);
+    expect(readFileSync(join(root, "outside", "f1.txt"), "utf8")).toBe("original");
+  });
+
+  test("a link at the destination operand is refused", async () => {
+    using dir = tempDir("shell-cp-operand-link", tree);
+    const root = String(dir);
+    symlinkSync(join(root, "outside"), join(root, "dest", "a"), "dir");
+
+    const result = await runCp(root, "cp -R src/a dest");
+
+    expect(result.stderr).toContain(p("dest/a"));
+    expect(result.exitCode).toBe(1);
+    expect(readFileSync(join(root, "outside", "f1.txt"), "utf8")).toBe("original");
+  });
+
+  test("a real directory at a destination subdirectory path still merges", async () => {
+    using dir = tempDir("shell-cp-nested-dir", tree);
+    const root = String(dir);
+    mkdirSync(join(root, "dest", "src", "a"));
+    writeFileSync(join(root, "dest", "src", "a", "f2.txt"), "kept");
+
+    const result = await runCp(root, "cp -R src dest");
+
+    expect(result.stderr).toBe("");
+    expect(result.exitCode).toBe(0);
+    expect(readFileSync(join(root, "dest", "src", "a", "f1.txt"), "utf8")).toBe("from-source");
+    expect(readFileSync(join(root, "dest", "src", "a", "f2.txt"), "utf8")).toBe("kept");
   });
 });
 

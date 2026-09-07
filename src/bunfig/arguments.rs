@@ -229,8 +229,7 @@ pub fn load_config(
     // `config_buf` outlives the call.
     let config_path = ZStr::from_buf(&config_buf[..], config_path_len);
 
-    // A path the user spelled out with `--config` carries the user's own
-    // trust. The auto-discovered `bunfig.toml` is part of the project tree.
+    // `auto_loaded` is false only when the user named the path with `--config`.
     let scope = if auto_loaded {
         ConfigScope::Project
     } else {

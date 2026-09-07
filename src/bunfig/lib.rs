@@ -15,16 +15,12 @@ pub mod error;
 pub use arguments::{load_config, load_config_path, load_config_with_cmd_args};
 pub use error::{Error, Result};
 
-/// Which bunfig file a value comes from.
-///
-/// A project `bunfig.toml` is part of a checkout, so it is no more trusted
-/// than the rest of the tree. Keys that point Bun at a machine-global write
-/// location are accepted from [`ConfigScope::User`] only.
+/// Which bunfig a value comes from. `[install] globalDir` and `globalBinDir`
+/// are accepted from [`ConfigScope::User`] only.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum ConfigScope {
-    /// `$XDG_CONFIG_HOME/.bunfig.toml`, `$HOME/.bunfig.toml`, or the path the
-    /// user passed to `--config`.
+    /// `$XDG_CONFIG_HOME/.bunfig.toml`, `$HOME/.bunfig.toml`, or `--config`.
     User,
-    /// The `bunfig.toml` that Bun discovers next to the project.
+    /// The `bunfig.toml` next to the project.
     Project,
 }

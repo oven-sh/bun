@@ -1444,13 +1444,7 @@ impl<'a> Parser<'a> {
         if let Some(v) = install_obj.get(b"dev").and_then(|e| e.as_bool()) {
             install.save_dev = Some(v);
         }
-        // `globalDir` and `globalBinDir` send writes outside the project, and
-        // the global bin linker replaces whatever is already at each
-        // destination. A project bunfig is part of the checkout, so it does
-        // not get to pick those directories: a cloned repository would
-        // otherwise make `bun link` plant its own `"bin"` entries anywhere on
-        // the machine. Only package manager commands read these keys, so
-        // `bun run` and `bun test` skip them without the warning.
+        // Only the install family reads these two, so nothing else warns.
         let warn_ignored = cmd.is_npm_related();
         if let Some(v) = install_obj.get(b"globalDir") {
             if let Some(path) = v.as_string(self.bump) {

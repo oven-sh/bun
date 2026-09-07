@@ -48,8 +48,7 @@ fn link(ctx: command::Context) -> crate::Result<()> {
         Output::flush();
     }
 
-    // `bun link` with no arguments never reaches the install path that prints
-    // the log, so a bunfig warning would go nowhere.
+    // Nothing later on this path prints the log.
     if manager.log_mut().has_any() {
         let _ = manager
             .log_mut()

@@ -2329,24 +2329,46 @@ test.concurrent(
   },
 );
 
+// pkg1 has a stale direct entry (a-dep) and a transitive row (no-deps under one-range-dep) parked one release behind; pkg2 has a stale direct entry only.
+async function staleMemberTransitive() {
+  const pkg1 = (aDep: string, extra: Json = {}) =>
+    member("pkg1", { "one-range-dep": "1.0.0", "a-dep": aDep, ...extra });
+  const dir = await setup({
+    "package.json": ROOT,
+    "packages/pkg1/package.json": pkg1("1.0.1", { "no-deps": "1.0.0" }),
+    "packages/pkg2/package.json": member("pkg2", { "dep-with-tags": "1.0.0" }),
+  });
+  await write(join(dir, "packages/pkg2/package.json"), stringify(member("pkg2", { "dep-with-tags": "^1.0.0" })));
+  await reinstall(dir, pkg1("^1.0.1"), {}, "packages/pkg1");
+  expect(await lockedVersions(dir, "no-deps")).toStrictEqual(["1.0.0"]);
+  expect(await lockedVersions(dir, "a-dep")).toStrictEqual(["1.0.1"]);
+  expect(await lockedVersions(dir, "dep-with-tags")).toStrictEqual(["1.0.0"]);
+  return { dir, pkg1 };
+}
+
 test.concurrent("`bun update --depth 0 -r` moves every workspace's direct entries and nothing else", async () => {
-  const { dir, locked, stale, texts, textsBefore } = await staleMemberGroups();
-  const [rootBefore] = textsBefore;
+  const { dir, pkg1 } = await staleMemberTransitive();
+  const rootBefore = await packageJsonText(dir);
   const { stdout, stderr, exitCode } = await run(dir, "update", "--depth", "0", "-r");
+  expect(movedRows(stdout).sort()).toStrictEqual([A_DEP_ROW, movedRow("dep-with-tags", "1.0.0", "1.0.1")]);
+  expectCleanStderr(stderr);
+  expect(await packageJsonText(dir)).toBe(rootBefore);
+  expect(await packageJsonOf(dir, "packages/pkg1")).toStrictEqual(pkg1("^1.0.10"));
+  expect(await packageJsonOf(dir, "packages/pkg2")).toStrictEqual(member("pkg2", { "dep-with-tags": "^1.0.1" }));
+  expect(await lockedVersions(dir, "no-deps")).toStrictEqual(["1.0.0"]);
+  expect(await lockedVersions(dir, "a-dep")).toStrictEqual(["1.0.10"]);
+  expect(await lockedVersions(dir, "dep-with-tags")).toStrictEqual(["1.0.1"]);
+  await frozen(dir);
+  expect(exitCode).toBe(0);
+});
+
+// The contrast: a bare `bun update -r` on the same fixture moves the transitive row too.
+test.concurrent("`bun update -r` on the same fixture also moves the transitive row", async () => {
+  const { dir } = await staleMemberTransitive();
+  const { stdout, stderr, exitCode } = await run(dir, "update", "-r");
   expect(movedRows(stdout).sort()).toStrictEqual([A_DEP_ROW, movedRow("dep-with-tags", "1.0.0", "1.0.1"), NO_DEPS_ROW]);
   expectCleanStderr(stderr);
-  expect(await texts()).toStrictEqual([
-    rootBefore,
-    stringify(PKG1_GROUPS("^1.1.0", "^1.0.0", "^1.0.10")),
-    stringify(PKG2_GROUPS("^1.0.1", "^1.0.0")),
-  ]);
-  expect(await locked()).toStrictEqual({
-    ...stale,
-    "no-deps": ["1.1.0"],
-    "a-dep": ["1.0.10"],
-    "dep-with-tags": ["1.0.1"],
-  });
-  await frozen(dir);
+  expect(await lockedVersions(dir, "no-deps")).toStrictEqual(["1.1.0"]);
   expect(exitCode).toBe(0);
 });
 

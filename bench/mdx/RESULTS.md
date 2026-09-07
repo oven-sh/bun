@@ -1,5 +1,7 @@
 # Native MDX: real-document benchmark
 
+This report records the pre-optimization baseline. See [the subsequent optimization report](OPTIMIZATION.md) for native before/after timings, the expanded 3,551-document check, and the static HTML experiment.
+
 Measured on September 7, 2026 UTC (September 6 locally). Native compiler source: [`89797b3a68`](https://github.com/benpsnyder/bun/commit/89797b3a686cef345cc778e75250bed86e22bd00). [Proposed Bun feature, PR #27047](https://github.com/oven-sh/bun/pull/27047).
 
 Across six real sales and legal MDX documents, native compilation achieved a **57.43× geometric-mean speedup for MDX → JSX** and **24.81× for MDX → JavaScript**, compared with `@mdx-js/mdx` 3.1.1 on the same Bun release executable. These are warmed compiler measurements, not application rendering or complete build times.

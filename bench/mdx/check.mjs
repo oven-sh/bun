@@ -105,7 +105,7 @@ function inspect(code, native, hasFrontmatter) {
     node.declaration?.declarations?.length === 1 &&
     node.declaration.declarations[0].id.name === "frontmatter";
   return {
-    content: canonical(content),
+    content: children([content], false),
     imports: ast.body.filter(node => node.type === "ImportDeclaration").map(expression),
     namedExports: namedExports.filter(node => !isFrontmatter(node)).map(expression),
     frontmatter: namedExports.filter(isFrontmatter).map(expression),

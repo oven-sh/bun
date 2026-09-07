@@ -2,6 +2,8 @@
 
 This benchmark compares native `Bun.mdx.compile` with `@mdx-js/mdx` 3.1.1, including GFM and YAML frontmatter support. It measures compilation from an in-memory string. It does not measure application rendering, bundling, file loading, or network requests.
 
+The HTML harness below measures rendering separately. See [optimization results](OPTIMIZATION.md) for the native before/after comparison and the 3,551-document validation run. [RESULTS.md](RESULTS.md) records the earlier reference-compiler baseline.
+
 Install the pinned dependency tree with `npm ci --ignore-scripts --prefix bench/mdx` from the repository root. Supply a JSON manifest with entries shaped like `{ "id": "example", "label": "Example document", "path": "./example.mdx" }`. Paths resolve relative to the manifest. An empty array runs only the generated ASCII and Unicode controls, approximately 1, 10, and 100 KB each.
 
 Run from the repository root:
@@ -48,3 +50,23 @@ node bench/mdx/summarize-html.mjs /absolute/path/results
 ```
 
 This pipeline executes the supplied MDX, so use trusted input without application imports or custom components. It supports GFM and measures a specific compile-and-render pipeline, not a full framework request or a browser page load. Declare the HTML corpus separately when it differs from the compilation corpus.
+
+The `native-fast` engine first tries `tryRenderStaticMdx` from `static-html.mjs`. This benchmark helper accepts a limited static subset: Markdown with bare `<br />` tags, without expressions, module declarations, frontmatter, images, or other JSX. Accepted inputs are parsed and rendered afresh by `Bun.markdown.html`; other inputs use the full native compilation and React pipeline. The helper is not a new `Bun.mdx` API. The same normalized HTML preflight applies to all three engines. It does not establish byte equality or arbitrary MDX runtime compatibility.
+
+`html-fast-summary.json` reports the arithmetic mean of the three round means, giving each document equal weight. This is separate from the median-based full-pipeline speedup. Set `MDX_HTML_PREFLIGHT_ONLY=1` to run only the HTML compatibility check.
+
+## Native before/after and whole-corpus checks
+
+`corpus.mjs` compiles every manifest entry with native and reference compilers and checks the resulting JSX with `Bun.Transpiler`. It does not execute document modules. Its reports contain identifiers, sizes, hashes, success flags, and error classes. An optional `MDX_CORPUS_BASELINE` executable adds a previous native build to the check.
+
+```sh
+bun run build:release bench/mdx/corpus.mjs /absolute/path/manifest.json /absolute/path/corpus-results
+
+MDX_CORPUS_BASELINE=/absolute/path/previous-native-bun \
+MDX_COMPARE_CORPUS=/absolute/path/common-valid-manifest.json \
+bun run build:release bench/mdx/compare.mjs /absolute/path/benchmark-manifest.json /absolute/path/comparison
+
+node bench/mdx/summarize-comparison.mjs /absolute/path/comparison
+```
+
+The before/after benchmark reuses the main harness's ASCII/Unicode controls and warm timing protocol. It alternates executable order across stages and rounds. The optional corpus timing runs three warmup passes and 21 measured passes in each of three processes per executable. Supply only documents that compile successfully in both builds for that timing manifest. File reads occur before timing, and every iteration consumes the output length. The summary retains each round's median and reports the median of those medians.

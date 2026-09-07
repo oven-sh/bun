@@ -295,7 +295,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
                     if !p.is_control_flow_dead
                         && id.ref_.eql(p.module_ref)
-                        && !p.has_user_declared_module_or_exports
+                        && !p.has_user_declared_module
                     {
                         // Rewrite "module.require()" to "require()" for Webpack compatibility.
                         // See https://github.com/webpack/webpack/pull/7750 for more info.
@@ -303,7 +303,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         if identifier_opts.is_call_target() && name == b"require" {
                             p.ignore_usage(p.module_ref);
                             return Some(p.value_for_require(name_loc));
-                        } else if !p.commonjs_named_exports_deoptimized && name == b"exports" {
+                        } else if !p.commonjs_named_exports_deoptimized
+                            // The rewrite prints through `exports_ref`, which is the user's binding here.
+                            && !p.has_user_declared_exports
+                            && name == b"exports"
+                        {
                             if identifier_opts.assign_target() != js_ast::AssignTarget::None {
                                 p.commonjs_module_exports_assigned_deoptimized = true;
                             }
@@ -465,7 +469,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     if p.should_unwrap_common_js_to_esm() {
                         if !p.is_control_flow_dead && id.ref_.eql(p.exports_ref) {
                             if !p.commonjs_named_exports_deoptimized
-                                && !p.has_user_declared_module_or_exports
+                                && !p.has_user_declared_module
+                                && !p.has_user_declared_exports
                             {
                                 if identifier_opts.is_delete_target() {
                                     p.deoptimize_common_js_named_exports();

@@ -1610,7 +1610,8 @@ impl<'a> Parser<'a> {
             && !p.has_top_level_return
             && !p.has_with_scope
             && !p.has_top_level_function_merged_with_var
-            && !p.has_user_declared_module_or_exports
+            && !p.has_user_declared_module
+            && !p.has_user_declared_exports
             && p.symbols.as_slice()[p.module_ref.inner_index() as usize].use_count_estimate == 1
             && p.symbols.as_slice()[p.exports_ref.inner_index() as usize].use_count_estimate == 0
         {

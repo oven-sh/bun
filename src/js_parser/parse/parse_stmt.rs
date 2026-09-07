@@ -150,7 +150,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         p.lexer.next()?;
         let decls = p.parse_and_declare_decls(js_ast::symbol::Kind::Hoisted, opts)?;
         p.lexer.expect_or_insert_semicolon()?;
-        p.note_var_shadowing_module_or_exports(decls.slice());
+        if !opts.is_typescript_declare {
+            p.note_var_shadowing_module_or_exports(decls.slice());
+        }
         Ok(p.s(
             S::Local {
                 kind: js_ast::s::Kind::KVar,
@@ -170,26 +172,66 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             let Some(value) = decl.value else {
                 continue;
             };
-            let js_ast::b::B::BIdentifier(id) = decl.binding.data else {
-                continue;
-            };
-            let name = self.symbols[id.r#ref.inner_index() as usize]
-                .original_name
-                .slice();
-            if name != b"module" && name != b"exports" {
-                continue;
-            }
-            if self.is_module_dot_exports_at_parse(value) {
-                continue;
-            }
-            let mut scope = self.current_scope_ref();
-            while !scope.kind_stops_hoisting() {
-                scope = scope.parent.unwrap();
-            }
-            if scope == self.module_scope_ref() {
-                self.has_user_declared_module_or_exports = true;
+            match decl.binding.data {
+                js_ast::b::B::BIdentifier(id) => {
+                    let name = self.load_name_from_ref(id.r#ref);
+                    if name != b"module" && name != b"exports" {
+                        continue;
+                    }
+                    if name == b"exports" && self.is_module_dot_exports_at_parse(value) {
+                        continue;
+                    }
+                    if !self.var_hoists_to_module_scope() {
+                        return;
+                    }
+                    if name == b"module" {
+                        self.has_user_declared_module = true;
+                    } else {
+                        self.has_user_declared_exports = true;
+                    }
+                }
+                js_ast::b::B::BArray(_) | js_ast::b::B::BObject(_) => {
+                    let (module, exports) = self.binding_names_module_or_exports(&decl.binding);
+                    if (module || exports) && self.var_hoists_to_module_scope() {
+                        self.has_user_declared_module |= module;
+                        self.has_user_declared_exports |= exports;
+                    }
+                }
+                js_ast::b::B::BMissing(_) => {}
             }
         }
+    }
+
+    /// (`module`, `exports`) found anywhere in a destructuring pattern.
+    fn binding_names_module_or_exports(&self, binding: &js_ast::Binding) -> (bool, bool) {
+        match binding.data {
+            js_ast::b::B::BIdentifier(id) => {
+                let name = self.load_name_from_ref(id.r#ref);
+                (name == b"module", name == b"exports")
+            }
+            js_ast::b::B::BArray(array) => array.items().iter().fold((false, false), |acc, item| {
+                let (m, e) = self.binding_names_module_or_exports(&item.binding);
+                (acc.0 || m, acc.1 || e)
+            }),
+            js_ast::b::B::BObject(object) => {
+                object
+                    .properties()
+                    .iter()
+                    .fold((false, false), |acc, prop| {
+                        let (m, e) = self.binding_names_module_or_exports(&prop.value);
+                        (acc.0 || m, acc.1 || e)
+                    })
+            }
+            js_ast::b::B::BMissing(_) => (false, false),
+        }
+    }
+
+    fn var_hoists_to_module_scope(&self) -> bool {
+        let mut scope = self.current_scope_ref();
+        while !scope.kind_stops_hoisting() {
+            scope = scope.parent.unwrap();
+        }
+        scope == self.module_scope_ref()
     }
 
     /// `module.exports` or `module.exports = ...` before the visit pass resolves names.
@@ -604,6 +646,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     let mut stmt_opts = ParseStatementOptions::default();
                     let decls =
                         p.parse_and_declare_decls(js_ast::symbol::Kind::Hoisted, &mut stmt_opts)?;
+                    p.note_var_shadowing_module_or_exports(decls.slice());
                     decls_ptr = bun_ast::StoreSlice::new(decls.slice());
                     init_ = Some(p.s(
                         S::Local {

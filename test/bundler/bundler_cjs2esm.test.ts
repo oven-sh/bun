@@ -2419,7 +2419,45 @@ describe("bundler", () => {
         import nested from "./nested.cjs";
         import { a as aliasedA } from "./aliased.cjs";
         import { b as chainedB } from "./chained.cjs";
-        console.log(JSON.stringify({ lib, fake, reassigned, uninit, nested, aliasedA, chainedB }));
+        import destructured from "./destructured.cjs";
+        import forHeader from "./for-header.cjs";
+        import moduleRequire from "./module-require.cjs";
+        import { ok as ambientOk } from "./ambient.cts";
+        console.log(
+          JSON.stringify({
+            lib,
+            fake,
+            reassigned,
+            uninit,
+            nested,
+            aliasedA,
+            chainedB,
+            destructured,
+            forHeader,
+            moduleRequire,
+            ambientOk,
+          }),
+        );
+      `,
+      "/destructured.cjs": /* js */ `
+        var { exports } = { exports: { local: true } };
+        module.exports.kind = typeof exports.local;
+      `,
+      "/for-header.cjs": /* js */ `
+        for (var exports = { local: true }; false; ) {}
+        module.exports.kind = typeof exports.local;
+      `,
+      "/module-require.cjs": /* js */ `
+        var exports = { local: true };
+        module.exports.dep = module.require("./dep.cjs").value;
+        module.exports.kind = typeof exports.local;
+      `,
+      "/dep.cjs": /* js */ `
+        exports.value = "dep";
+      `,
+      "/ambient.cts": /* ts */ `
+        declare var exports = {};
+        module.exports.ok = 1;
       `,
       "/aliased.cjs": /* js */ `
         var exports = module.exports;
@@ -2460,11 +2498,22 @@ describe("bundler", () => {
     },
     cjs2esm: {
       // chained.cjs keeps its wrapper because of the `module.exports = {}` assignment, as before.
-      unhandled: ["/lib.cjs", "/fake-module.cjs", "/reassigned.cjs", "/nested.cjs", "/chained.cjs"],
+      unhandled: [
+        "/lib.cjs",
+        "/fake-module.cjs",
+        "/reassigned.cjs",
+        "/nested.cjs",
+        "/chained.cjs",
+        "/destructured.cjs",
+        "/for-header.cjs",
+        "/module-require.cjs",
+        // dep.cjs is loaded through require(), which always keeps the wrapper.
+        "/dep.cjs",
+      ],
     },
     run: {
       stdout:
-        '{"lib":{"answer":42,"kind":"boolean"},"fake":{"viaParam":"boolean","id":"user"},"reassigned":{"before":1,"after":"string"},"uninit":{"foo":123,"bar":124},"nested":{"viaParam":"boolean"},"aliasedA":"aliased","chainedB":"chained"}',
+        '{"lib":{"answer":42,"kind":"boolean"},"fake":{"viaParam":"boolean","id":"user"},"reassigned":{"before":1,"after":"string"},"uninit":{"foo":123,"bar":124},"nested":{"viaParam":"boolean"},"aliasedA":"aliased","chainedB":"chained","destructured":{"kind":"boolean"},"forHeader":{"kind":"boolean"},"moduleRequire":{"dep":"dep","kind":"boolean"},"ambientOk":1}',
     },
   });
 });

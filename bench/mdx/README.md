@@ -2,7 +2,7 @@
 
 This benchmark compares native `Bun.mdx.compile` with `@mdx-js/mdx` 3.1.1, including GFM and YAML frontmatter support. It measures compilation from an in-memory string. It does not measure application rendering, bundling, file loading, or network requests.
 
-The HTML harness below measures rendering separately. See [optimization results](OPTIMIZATION.md) for the native before/after comparison and the 3,551-document validation run. [RESULTS.md](RESULTS.md) records the earlier reference-compiler baseline.
+The HTML harness below measures rendering separately. Keep generated reports, CSV files, and raw measurement archives outside the source tree.
 
 Install the pinned dependency tree with `npm ci --ignore-scripts --prefix bench/mdx` from the repository root. Supply a JSON manifest with entries shaped like `{ "id": "example", "label": "Example document", "path": "./example.mdx" }`. Paths resolve relative to the manifest. An empty array runs only the generated ASCII and Unicode controls, approximately 1, 10, and 100 KB each.
 

@@ -3,7 +3,7 @@
  * prebuilt tarball's release tag). Override via `--webkit-version=<hash>` to test a
  * branch. From https://github.com/oven-sh/WebKit releases.
  */
-export const WEBKIT_VERSION = "0519c8236e9b7b68b9035ced02f5cda187656f82";
+export const WEBKIT_VERSION = "ea87231180f0c2b2d4d08cc8cb5427462fed6828";
 
 /**
  * WebKit (JavaScriptCore) — the JS engine, with WTF and bmalloc.
@@ -1287,6 +1287,7 @@ function standaloneExeLinkFlags(cfg: Config): string[] {
     "WTFTimer__isActive",
     "WTFTimer__secondsUntilTimer",
     "WTFTimer__cancel",
+    "Bun__thisThreadHasVM",
     "Bun__errorInstance__finalize",
     "Bun__reportUnhandledError",
   ];

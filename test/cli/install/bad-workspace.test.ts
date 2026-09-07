@@ -347,16 +347,18 @@ describe("untrusted ancestor package.json", () => {
   };
 
   // A planted project with no `workspaces` field at all, above a directory that has no
-  // package.json of its own.
+  // package.json of its own. The walk goes on up past a manifest it ignores, so an empty
+  // project this user owns sits above the planted one and catches it inside the fixture.
   const noWorkspacesFiles = {
-    "package.json": JSON.stringify({
+    "package.json": JSON.stringify({ name: "fence", version: "0.0.0" }),
+    "planted/package.json": JSON.stringify({
       name: "planted-project",
       version: "1.0.0",
       dependencies: { dep: "file:./dep" },
       trustedDependencies: ["dep"],
     }),
-    ...DEP,
-    "sub/.keep": "",
+    "planted/dep/package.json": DEP["dep/package.json"],
+    "planted/sub/.keep": "",
   };
 
   function marker(root: string) {
@@ -369,6 +371,20 @@ describe("untrusted ancestor package.json", () => {
 
   function chownToOtherUser(path: string) {
     chownSync(path, OTHER_UID, OTHER_UID);
+  }
+
+  // Installs in `planted/sub` and asserts that the walk passed over `planted/package.json`
+  // and installed the empty project above it instead: no error, and nothing in `planted`.
+  async function expectPlantedProjectIgnored(root: string) {
+    const { stdout, stderr, exitCode } = await installIn(root, "planted/sub");
+
+    expect(stderr).toContain(`another user owns ${join(root, "planted")}/package.json`);
+    expect(stderr).not.toContain("error");
+    expect(stdout).not.toContain("+ dep");
+    expect(existsSync(marker(root))).toBe(false);
+    expect(existsSync(join(root, "planted", "bun.lock"))).toBe(false);
+    expect(existsSync(join(root, "planted", "node_modules"))).toBe(false);
+    expect(exitCode).toBe(0);
   }
 
   test.skipIf(notRoot)("is not the workspace root, and its trustedDependencies do not run a script", async () => {
@@ -388,21 +404,14 @@ describe("untrusted ancestor package.json", () => {
     expect(exitCode).toBe(0);
   });
 
-  // The same manifest without a `workspaces` field, found by the walk for the project's
-  // own package.json. bun reports no project instead of installing this one.
+  // The same kind of manifest without a `workspaces` field, found by the walk for the
+  // project's own package.json.
   test.skipIf(notRoot)("is not the project either, when the directory has no package.json", async () => {
     using dir = tempDir("bad-workspace-project-other-user", noWorkspacesFiles);
     const root = String(dir);
-    chownToOtherUser(join(root, "package.json"));
+    chownToOtherUser(join(root, "planted", "package.json"));
 
-    const { stderr, exitCode } = await installIn(root, "sub");
-
-    expect(stderr).toContain(`another user owns ${root}/package.json`);
-    expect(stderr).toContain("could not find a package.json file to install from");
-    expect(existsSync(marker(root))).toBe(false);
-    expect(existsSync(join(root, "bun.lock"))).toBe(false);
-    expect(existsSync(join(root, "node_modules"))).toBe(false);
-    expect(exitCode).toBe(1);
+    await expectPlantedProjectIgnored(root);
   });
 
   // `fstat` on the descriptor the walk holds reports the owner of a symlink's target, so
@@ -411,18 +420,11 @@ describe("untrusted ancestor package.json", () => {
   test.skipIf(notRoot)("is not the project when a link another user owns names it", async () => {
     using dir = tempDir("bad-workspace-project-other-user-link", noWorkspacesFiles);
     const root = String(dir);
-    renameSync(join(root, "package.json"), join(root, "real.json"));
-    symlinkSync("real.json", join(root, "package.json"));
-    lchownSync(join(root, "package.json"), OTHER_UID, OTHER_UID);
+    renameSync(join(root, "planted", "package.json"), join(root, "planted", "real.json"));
+    symlinkSync("real.json", join(root, "planted", "package.json"));
+    lchownSync(join(root, "planted", "package.json"), OTHER_UID, OTHER_UID);
 
-    const { stderr, exitCode } = await installIn(root, "sub");
-
-    expect(stderr).toContain(`another user owns ${root}/package.json`);
-    expect(stderr).toContain("could not find a package.json file to install from");
-    expect(existsSync(marker(root))).toBe(false);
-    expect(existsSync(join(root, "bun.lock"))).toBe(false);
-    expect(existsSync(join(root, "node_modules"))).toBe(false);
-    expect(exitCode).toBe(1);
+    await expectPlantedProjectIgnored(root);
   });
 
   // Owning the manifest is not enough in a directory with the mode `/tmp` has: another

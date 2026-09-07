@@ -1802,8 +1802,7 @@ pub fn init(
                             continue;
                         }
                     };
-                    // Before the read and the parse: bun does not look at what it will
-                    // not use, and a manifest it cannot parse is then not an error either.
+                    // Before the read, so a manifest bun will not use is never parsed.
                     #[cfg(unix)]
                     {
                         // SAFETY: NUL written above

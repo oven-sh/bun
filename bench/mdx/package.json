@@ -1,0 +1,16 @@
+{
+  "name": "bun-mdx-benchmark",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@mdx-js/mdx": "3.1.1",
+    "acorn": "8.18.0",
+    "acorn-jsx": "5.3.2",
+    "parse5": "8.0.1",
+    "react": "19.2.8",
+    "react-dom": "19.2.8",
+    "remark-frontmatter": "5.0.0",
+    "remark-gfm": "4.0.1",
+    "remark-mdx-frontmatter": "5.2.0"
+  }
+}

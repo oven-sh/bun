@@ -850,8 +850,8 @@ impl<'a> LifecycleScriptSubprocess<'a> {
         // fields (`heap`/`manager`) — see `ensure_not_in_heap` doc.
         unsafe { Self::ensure_not_in_heap(std::ptr::from_mut::<Self>(self)) };
 
-        // Draining after a forwarded signal: do not chain or exit on this
-        // script's status; `on_script_exited` ends the process after the last.
+        // A signal is pending: do not chain or exit on this script's status;
+        // `on_script_exited` ends the process after the last one.
         #[cfg(unix)]
         if crate::lifecycle_signals::pending().is_some() {
             if let Status::Signaled(signal) = status {

@@ -3,7 +3,7 @@
 //! `bun_spawn::exit_signals`). After forwarding, a second signal is default.
 
 use core::ffi::c_int;
-use core::sync::atomic::{AtomicBool, AtomicPtr, AtomicUsize, Ordering};
+use core::sync::atomic::{AtomicPtr, AtomicUsize, Ordering};
 
 use bun_spawn::exit_signals;
 
@@ -11,15 +11,11 @@ use crate::PackageManager;
 use crate::lifecycle_script_runner::LifecycleScriptSubprocess;
 
 static RUNNING: AtomicUsize = AtomicUsize::new(0);
-/// A signal was forwarded; the install is draining.
-static DRAINING: AtomicBool = AtomicBool::new(false);
 static MANAGER: AtomicPtr<PackageManager> = AtomicPtr::new(core::ptr::null_mut());
 
-/// The forwarded signal, if draining. While `Some`, no script starts or chains.
+/// A hooked signal arrived (forwarded or about to be). While `Some`, no
+/// script starts or chains, and the install ends by it after the last script.
 pub(crate) fn pending() -> Option<bun_core::SignalCode> {
-    if !DRAINING.load(Ordering::Relaxed) {
-        return None;
-    }
     exit_signals::received().map(signal_code)
 }
 
@@ -43,17 +39,19 @@ pub(crate) fn on_script_started(manager: *mut PackageManager) {
     exit_signals::hook(event_loop, on_signal);
 }
 
-/// Call when a lifecycle script exited or failed to spawn. After the last
-/// one, dies by the forwarded signal if draining, else unhooks.
+/// Call when a lifecycle script exited or failed to spawn. After the last one
+/// unhooks, then dies by a signal that arrived while hooked, if any.
 pub(crate) fn on_script_exited() {
     if RUNNING.fetch_sub(1, Ordering::Relaxed) != 1 {
         return;
     }
+    exit_signals::unhook();
+    MANAGER.store(core::ptr::null_mut(), Ordering::Relaxed);
+    // Checked after `unhook` so a signal either shows up here or already took
+    // the default action; none is lost in between.
     if let Some(sig) = pending() {
         die(sig);
     }
-    exit_signals::unhook();
-    MANAGER.store(core::ptr::null_mut(), Ordering::Relaxed);
 }
 
 fn die(sig: bun_core::SignalCode) -> ! {
@@ -68,7 +66,6 @@ fn on_signal(sig: c_int) {
         // The last script exited before this ran: nothing to wait for.
         die(signal_code(sig));
     }
-    DRAINING.store(true, Ordering::Relaxed);
     exit_signals::unhook();
     let forward = signal_code(sig) as u8;
     // SAFETY: `manager` is live (see `on_script_started`); the heap is only

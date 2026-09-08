@@ -226,8 +226,7 @@ impl TSConfigJSON {
         !self.base_url.is_empty()
     }
 
-    /// `Some` only when `compilerOptions.jsx` is `react-jsx` (false) or
-    /// `react-jsxdev` (true).
+    /// Set only by `"jsx": "react-jsx"` (false) or `"react-jsxdev"` (true).
     pub fn jsx_development(&self) -> Option<bool> {
         self.jsx_flags
             .contains(JsxField::Development)

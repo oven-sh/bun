@@ -195,10 +195,7 @@ impl Pragma {
     pub fn hash_for_runtime_transpiler(&self, hasher: &mut bun_wyhash::Wyhash) {
         // Uses `bun_wyhash::Wyhash` (the algorithm behind `bun.hash`) — distinct
         // from `Wyhash11`, which would yield a different cache key.
-        //
-        // Exhaustive destructure: a new field is a compile error here until it
-        // is either hashed or explicitly skipped. The caller only hashes when
-        // `parse` is set.
+        // Exhaustive, so a new field has to be hashed or skipped here.
         let Pragma {
             factory,
             fragment,

@@ -736,9 +736,7 @@ impl<'a> Transpiler<'a> {
                     match &self.options.transform_options.jsx {
                         // If we don't explicitly pass JSX, try to get it from the root tsconfig
                         None => self.options.jsx = jsx_pragma_from_resolver(&tsconfig.jsx),
-                        // JSX options that leave dev/prod open (`--jsx-*` flags, a
-                        // bunfig.toml without `jsx`) take it from the root tsconfig,
-                        // the same as the per-file tsconfig merge in the resolver.
+                        // dev/prod left open (e.g. by `--jsx-*` flags): the root tsconfig decides.
                         Some(jsx) if jsx.development.is_none() => {
                             if let Some(development) = tsconfig.jsx_development() {
                                 self.options.jsx.development = development;

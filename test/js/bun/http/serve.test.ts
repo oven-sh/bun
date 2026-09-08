@@ -2465,8 +2465,15 @@ it("derives the same content-type when .body was read before the Response is ret
     "headers-then-rewrap": (res: Response) => (res.headers, new Response(res.body, res)),
     "bodycheck": (res: Response) => (res.body, res),
   };
+  // A `routes` entry snapshots the Response when the server starts, through a
+  // different path (StaticRoute) than a handler's return value.
+  const routes = {};
+  for (const body of Object.keys(bodies)) {
+    routes[`/${body}/static-route`] = modes.bodycheck(bodies[body]());
+  }
   using server = Bun.serve({
     port: 0,
+    routes,
     fetch(req) {
       const [, body, mode] = new URL(req.url).pathname.split("/");
       return modes[mode](bodies[body]());
@@ -2476,7 +2483,9 @@ it("derives the same content-type when .body was read before the Response is ret
   const actual = {};
   const expected = {};
   for (const body of Object.keys(bodies)) {
-    for (const mode of Object.keys(modes)) {
+    for (const mode of [...Object.keys(modes), "static-route"]) {
+      // Untyped bytes imply no type; what each path falls back to then is not under test.
+      if (body === "bytes" && mode === "static-route") continue;
       const res = await fetch(`${server.url.origin}/${body}/${mode}`);
       actual[`${body} ${mode}`] = { type: res.headers.get("content-type"), text: await res.text() };
       expected[`${body} ${mode}`] = {

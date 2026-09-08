@@ -90,6 +90,75 @@ describe("bundler", () => {
     ],
     minifySyntax: true,
   });
+  // `--define` values are parsed as JSON, outside the lexer. A non-ASCII string
+  // value must fold per UTF-16 code unit like a source literal does, not per
+  // UTF-8 byte (`U[0]`, `` `${U}`.length ``, `+D`, `case` DCE).
+  for (const backend of ["cli", "api"] as const) {
+    itBundled(`minify/DefineNonAsciiStringFolding${backend === "cli" ? "Cli" : "Api"}`, {
+      files: {
+        "/entry.ts": /* ts */ `
+          declare const U: string, E: string, D: string, S: string, A: { s: string; n: string[] };
+          console.log(JSON.stringify([U, U[0], U[1], U[3], \`\${U}\`.length, U.length, (U + "")[0], U + "!", U === "é😀", U.charCodeAt(0)]));
+          console.log(JSON.stringify([E === U, E[0], \`\${E}\`.length]));
+          console.log(JSON.stringify([+D, -D, ~D]));
+          console.log(JSON.stringify([S.length, S.charCodeAt(0), \`\${S}\`.length]));
+          console.log(JSON.stringify([A.s[0], A.n[0][0], \`\${A.n[0]}\`.length]));
+          switch (U[0]) {
+            case "é":
+              console.log("case é");
+              break;
+            default:
+              console.log("default");
+          }
+        `,
+      },
+      define: {
+        U: '"é😀"',
+        // the same value spelled in ASCII
+        E: '"\\u00e9\\ud83d\\ude00"',
+        // U+2028 is StrWhiteSpace for ToNumber
+        D: '"\u2028 12 "',
+        // a lone surrogate survives as one code unit
+        S: '"\\ud800"',
+        A: '{"s":"ü!","n":["中文"]}',
+      },
+      minifySyntax: true,
+      backend,
+      run: {
+        stdout: [
+          '["é😀","é","\\ud83d",null,3,3,"é","é😀!",true,233]',
+          '[true,"é",3]',
+          "[12,-12,-13]",
+          "[1,55296,1]",
+          '["ü","中",2]',
+          "case é",
+        ].join("\n"),
+      },
+    });
+  }
+  // `import.meta.file`/`dir` (cjs output) and `module.filename` are inlined from the
+  // file path. A non-ASCII path must fold like a source literal, not per UTF-8 byte.
+  itBundled("minify/InlinedImportMetaPathNonAscii", {
+    files: {
+      "/dér/filé.js": /* js */ `
+        console.log(JSON.stringify([import.meta.file, import.meta.file[3], import.meta.file[4], \`\${import.meta.file}\`.length, \`\${import.meta.dir}\`.length === import.meta.dir.length]));
+      `,
+    },
+    format: "cjs",
+    target: "bun",
+    minifySyntax: true,
+    run: { stdout: '["filé.js","é",".",7,true]' },
+  });
+  itBundled("minify/InlinedModuleFilenameNonAscii", {
+    files: {
+      "/dér/cjé.cjs": /* js */ `
+        console.log(JSON.stringify([module.filename, module.filename[2], module.filename[3], \`\${module.filename}\`.length]));
+      `,
+    },
+    target: "bun",
+    minifySyntax: true,
+    run: { stdout: '["cjé.cjs","é",".",7]' },
+  });
   itBundled("minify/FunctionExpressionRemoveName", {
     files: {
       "/entry.js": /* js */ `

@@ -237,6 +237,41 @@ test("a macro that returns a JSON or text Response or Blob is inlined by its con
   expect(exitCode).toBe(0);
 });
 
+// The body bytes are inlined as the text they encode: a JSON string with non-ASCII characters folds per
+// UTF-16 code unit like a source literal (not per UTF-8 byte), and a text body keeps its quotes,
+// backslashes, newlines and non-ASCII characters instead of their JSON escapes.
+test("non-ASCII and escaped text in a macro's JSON or text Response is inlined verbatim", async () => {
+  using dir = tempDir("macro-response-non-ascii", {
+    "m.ts": [
+      `export function json() {`,
+      `  return Response.json(["é😀", { "clé": "ü\\n\\"" }]);`,
+      `}`,
+      `export function text() {`,
+      `  return new Response('é😀 "q" \\\\ \\n end', { headers: { "content-type": "text/plain" } });`,
+      `}`,
+    ].join("\n"),
+    "index.ts": [
+      `import { json, text } from "./m.ts" with { type: "macro" };`,
+      `console.log(JSON.stringify([json()[0], json()[0][0], json()[0][1], \`\${json()[0]}\`.length, json()[1], text(), text()[0], text().length]));`,
+      ``,
+    ].join("\n"),
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "run", "index.ts"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  // Debug builds print "[macro] call <name>" to stdout before the script's own output.
+  expect({ lastLine: stdout.trim().split("\n").pop(), stderr }).toEqual({
+    lastLine: JSON.stringify(["é😀", "é", "\ud83d", 3, { "clé": 'ü\n"' }, 'é😀 "q" \\ \n end', "é", 15]),
+    stderr: "",
+  });
+  expect(exitCode).toBe(0);
+});
+
 // The classification follows the MIME essence, not the category table the runtime uses for blob types:
 // any `+json` suffix or `/json` subtype is JSON, and the JavaScript and XML `application/*` types are text.
 // The data URL keeps the raw content type, parameters included.

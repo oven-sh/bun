@@ -2395,6 +2395,35 @@ export default <>hi</>
     expect(exitCode).toBe(0);
   });
 
+  // A define value is parsed as JSON outside the lexer; a non-ASCII string must fold per UTF-16
+  // code unit like a source literal (`U[0]`, template `.length`, `+D`), not per UTF-8 byte. Run in
+  // a subprocess: a debug build asserts on the byte-wise fold instead of printing a wrong string.
+  it("non-ascii define values fold like string literals", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          const t = new Bun.Transpiler({
+            loader: "ts",
+            target: "bun",
+            define: { U: JSON.stringify("é😀"), E: '"\\\\u00e9"', D: JSON.stringify("\\u2028 12 ") },
+          });
+          const code = t.transformSync("globalThis.out = [U, U[0], U[1], \`\${U}\`.length, U.length, (U + '')[0], E, E[0], +D, ~D];");
+          (0, eval)(code);
+          process.stdout.write(JSON.stringify(globalThis.out));
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe('["é😀","é","\\ud83d",3,3,"é","é","é",12,-13]');
+    expect(exitCode).toBe(0);
+  });
+
   it("JSX keys", () => {
     var bun = new Bun.Transpiler({
       loader: "jsx",

@@ -7169,6 +7169,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 );
             }
             js_ast::ExprData::EString(str_) => {
+                // Constant folding reads an 8-bit string one byte per character.
+                debug_assert!(str_.is_utf16 || strings::is_all_ascii(&str_.data));
                 return self.new_expr(&*str_, loc);
             }
             _ => {}

@@ -27,6 +27,32 @@ for (let backend of ["api", "cli"] as const) {
         },
       });
 
+    // Inlined values are raw environment bytes. A non-ASCII value has to fold like a source string literal under
+    // --minify-syntax: per UTF-16 code unit (`[0]`, template `.length`), with U+2028 as numeric whitespace (`+x`).
+    if (backend === "cli")
+      itBundled("env/inline non-ascii", {
+        env: {
+          INLINE_NON_ASCII: "é😀",
+          INLINE_LS_NUMBER: "\u2028 12 ",
+        },
+        backend: backend,
+        dotenv: "inline",
+        minifySyntax: true,
+        files: {
+          "/a.js": `
+        const v = process.env.INLINE_NON_ASCII;
+        console.log(JSON.stringify([v, process.env.INLINE_NON_ASCII[0], process.env.INLINE_NON_ASCII?.[1], \`\${process.env.INLINE_NON_ASCII}\`.length, process.env.INLINE_NON_ASCII === "é😀", +process.env.INLINE_LS_NUMBER, ~process.env.INLINE_LS_NUMBER]));
+      `,
+        },
+        run: {
+          env: {
+            INLINE_NON_ASCII: "the run-time value, which inlining should have replaced",
+            INLINE_LS_NUMBER: "0",
+          },
+          stdout: '["é😀","é","\\ud83d",3,true,12,-13]',
+        },
+      });
+
     // A variable from the process environment (not a .env file) is inlined at build time. It has to be one this
     // process started with (the api backend builds in-process), spelled as the environment spells it (on Windows the
     // inlined name is case-sensitive even though process.env is not: `Path`, not `PATH`).

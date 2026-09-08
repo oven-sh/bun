@@ -1807,19 +1807,17 @@ impl EString {
             ..Default::default()
         }
     }
-    /// E.String containing non-ascii characters may not fully work.
-    /// https://github.com/oven-sh/bun/issues/11963
-    /// More investigation is needed.
-    pub fn init_re_encode_utf8(utf8: &[u8], bump: &Bump) -> EString {
-        if strings::first_non_ascii(utf8).is_none() {
-            Self::init(utf8)
-        } else {
-            // PERF: transcodes to a heap Vec then copies into the bump
-            // arena — profile.
-            // `fail_if_invalid = false` means the only possible error is `OutOfMemory`.
-            let utf16 = bun_core::handle_oom(strings::to_utf16_alloc_for_real(utf8, false, false));
-            let arena_slice: &mut [u16] = bump.alloc_slice_copy(&utf16);
-            Self::init_utf16(arena_slice)
+    /// For string values that enter the JS AST from outside the lexer (enum
+    /// member names, TOML, `--define`/env values, macro `Response` bodies,
+    /// inlined `import.meta.dir`/`module.filename` paths).
+    /// The visit pass folds `"x"[0]`, `` `${x}`.length ``, `+x`, ... on an
+    /// 8-bit string one byte per character. The lexer makes that correct by
+    /// storing every non-ASCII literal as UTF-16, so do the same here.
+    /// WTF-8 surrogates in `wtf8` (JSON `"\ud800"`) are kept as code units.
+    pub fn init_re_encode_utf8(wtf8: &[u8], bump: &Bump) -> EString {
+        match strings::wtf8_to_utf16_alloc(wtf8) {
+            Some(utf16) => Self::init_utf16(bump.alloc_slice_copy(&utf16)),
+            None => Self::init(wtf8),
         }
     }
     /// Ensure `data` is UTF-8 (transcode from UTF-16 rope if needed).

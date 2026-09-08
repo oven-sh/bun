@@ -1068,8 +1068,7 @@ pub(crate) fn scan_imports_and_exports(
             );
 
             let parts_len = col_ref!(parts_list)[id].len() as usize;
-            // Counted across the whole file: `InsideWrapperPrefix::append_async_dependency`
-            // joins every `await init_x()` after the first into one `await __promiseAll([...])`.
+            // Per file, not per part: see `InsideWrapperPrefix::append_async_dependency`.
             let mut async_esm_init_count: u32 = 0;
             for part_index in 0..parts_len {
                 let mut to_esm_uses: u32 = 0;

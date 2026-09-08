@@ -16,6 +16,7 @@ import {
 import { createServer as createTcpServer } from "net";
 import path, { join } from "path";
 import { setImmediate as setImmediatePromise } from "timers/promises";
+import { pathToFileURL } from "url";
 var setTimeoutAsync = (fn, delay) => {
   return new Promise((resolve, reject) => {
     setTimeout(() => {
@@ -1824,12 +1825,15 @@ describe("transform() carries the input Response's Content-Type", () => {
     });
   });
 
-  it("Response built by fetch() for a data: URL", async () => {
-    const response = rewrite(await fetch("data:text/html,<p>original</p>"));
-    expect(await contentTypeAndBody(response)).toEqual({
-      contentType: "text/html;charset=utf-8",
-      body: "<p>rewritten</p>",
-    });
+  it("Response built by fetch() for a data: or file: URL", async () => {
+    using dir = tempDir("html-rewriter-content-type-fetch", { "index.html": "<p>original</p>" });
+    for (const url of ["data:text/html,<p>original</p>", pathToFileURL(join(String(dir), "index.html"))]) {
+      const response = rewrite(await fetch(url));
+      expect(await contentTypeAndBody(response)).toEqual({
+        contentType: "text/html;charset=utf-8",
+        body: "<p>rewritten</p>",
+      });
+    }
   });
 
   it("FormData body keeps the boundary of the encoded body", async () => {

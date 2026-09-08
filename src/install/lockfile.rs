@@ -756,8 +756,7 @@ impl Lockfile {
         Some(catalog_dep.version)
     }
 
-    /// The range the resolver resolves an edge against: its `overrides` rule if any, else the
-    /// declared range, with `catalog:` references looked up either way.
+    /// The range the resolver holds an edge to: its `overrides` rule, else the declared range.
     pub(crate) fn enforced_range(&self, dep_id: DependencyID) -> EnforcedRange<'_> {
         use dependency::DependencyExt as _;
 

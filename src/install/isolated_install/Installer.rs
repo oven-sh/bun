@@ -1773,8 +1773,8 @@ impl Task {
                     );
                     // `.bin` is the installer's directory. Open the entry's
                     // `node_modules` and the `.bin` below it without following
-                    // symlinks before `bin::Linker` writes there by absolute path.
-                    // No real `.bin`, no bin links.
+                    // symlinks before `bin::Linker` reaches `.bin` through this
+                    // `node_modules` path. No real `.bin`, no bin links.
                     if let Err(err) =
                         crate::isolated_install::make_store_path(node_modules_path.slice())
                             .and_then(|dir| dir.make_open_real_dir(b".bin"))
@@ -1833,6 +1833,7 @@ impl Task {
                         abs_target_buf: &mut *abs_target_buf,
                         abs_dest_buf: &mut *abs_dest_buf,
                         rel_buf: &mut *rel_buf,
+                        bin_dir: None,
                         err: None,
                         skipped_due_to_missing_bin: false,
                     };
@@ -2386,8 +2387,8 @@ impl<'a> Installer<'a> {
             if !bin_dir_is_real {
                 // `.bin` is the installer's directory. Open the entry's
                 // `node_modules` and the `.bin` below it without following
-                // symlinks before `bin::Linker` writes there by absolute path.
-                // No real `.bin`, no bin links.
+                // symlinks before `bin::Linker` reaches `.bin` through this
+                // `node_modules` path. No real `.bin`, no bin links.
                 crate::isolated_install::make_store_path(node_modules_path.slice())?
                     .make_open_real_dir(b".bin")?;
                 bin_dir_is_real = true;
@@ -2448,6 +2449,7 @@ impl<'a> Installer<'a> {
                 abs_target_buf: &mut *link_target_buf,
                 abs_dest_buf: &mut *link_dest_buf,
                 rel_buf: &mut *link_rel_buf,
+                bin_dir: None,
                 err: None,
                 skipped_due_to_missing_bin: false,
             };

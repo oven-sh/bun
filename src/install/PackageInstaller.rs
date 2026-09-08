@@ -589,9 +589,10 @@ impl<'a> PackageInstaller<'a> {
     ) {
         // `.bin` is the installer's directory. Open this tree's `node_modules`
         // and the `.bin` below it without following symlinks before
-        // `bin::Linker` writes there by absolute path: a symlink planted at
-        // either one would redirect the links, and the delete-and-retry of an
-        // existing entry, out of the project. No real `.bin`, no linking.
+        // `bin::Linker` runs: it reaches `.bin` through this `node_modules`
+        // path, and writes Windows shims by absolute path, so a symlink
+        // planted at either one would redirect the links out of the project.
+        // No real `.bin`, no linking.
         if let Err(err) = self
             .node_modules
             .make_and_open_dir(&self.root_node_modules_folder)
@@ -763,6 +764,7 @@ impl<'a> PackageInstaller<'a> {
                     abs_target_buf: link_target_buf,
                     abs_dest_buf: link_dest_buf,
                     rel_buf: link_rel_buf,
+                    bin_dir: None,
                     err: None,
                     skipped_due_to_missing_bin: false,
                 };

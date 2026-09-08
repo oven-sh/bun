@@ -1311,4 +1311,129 @@ describe("node_modules destination symlinks", () => {
     expect((await lstat(planted)).isSymbolicLink()).toBe(false);
     expect(exitCode).toBe(0);
   });
+
+  // A `bin` key is a free-form file name. Through a symlinked `.bin`, a
+  // regular file of that name in the link target was unlinked and replaced by
+  // a link that dangles there. POSIX-only: Windows writes shims, not links.
+  it.skipIf(isWindows)("does not replace files in the target of a symlinked node_modules/.bin", async () => {
+    using dir = tempDir("nm-bin-files", {
+      "bunfig.toml": `[install]\nlinker = "hoisted"\n`,
+      "package.json": JSON.stringify({
+        name: "bin-dir-symlink-app",
+        version: "1.0.0",
+        workspaces: ["packages/*"],
+        dependencies: { dep: "workspace:*" },
+      }),
+      "packages/dep/package.json": JSON.stringify({
+        name: "dep",
+        version: "1.0.0",
+        bin: { dep: "bin/cli.js", "notes.txt": "bin/cli.js" },
+      }),
+      "packages/dep/bin/cli.js": `#!/usr/bin/env node\nconsole.log("ok");\n`,
+      "victim/dep": KEEP,
+      "victim/notes.txt": KEEP,
+    });
+    const repo = await realpath(String(dir));
+    const victim = join(repo, "victim");
+    await mkdir(join(repo, "node_modules"));
+    await symlink(victim, join(repo, "node_modules", ".bin"));
+
+    const { stderr, exitCode } = await install(repo);
+
+    expect((await readdir(victim)).sort()).toEqual(["dep", "notes.txt"]);
+    expect((await lstat(join(victim, "dep"))).isFile()).toBe(true);
+    expect((await lstat(join(victim, "notes.txt"))).isFile()).toBe(true);
+    expect(await Bun.file(join(victim, "dep")).text()).toBe(KEEP);
+    // The symlink is replaced by the directory the links belong in.
+    const binDir = join(repo, "node_modules", ".bin");
+    expect((await lstat(binDir)).isDirectory()).toBe(true);
+    expect((await readdir(binDir)).sort()).toEqual(["dep", "notes.txt"]);
+    expect(await readlink(join(binDir, "dep"))).toBe("../dep/bin/cli.js");
+    expect(stderr).not.toContain("error:");
+    expect(exitCode).toBe(0);
+  });
+
+  // A `file:` folder dependency is placed as one link at
+  // `node_modules/@scope/<name>`, a separate install method from a tarball.
+  // The rename-aside that clears the destination used to delete
+  // `<link target>/<name>` first.
+  it("does not link a folder dependency through a symlinked node_modules/@scope", async () => {
+    using dir = tempDir("nm-scope-folder", {
+      "bunfig.toml": `[install]\nlinker = "hoisted"\n`,
+      "package.json": JSON.stringify({
+        name: "scope-dir-symlink-app",
+        version: "1.0.0",
+        dependencies: { "@scope/dep": "file:./src" },
+      }),
+      "src/package.json": JSON.stringify({ name: "@scope/dep", version: "1.0.0" }),
+      "src/index.js": `module.exports = 1;\n`,
+      "victim/dep/keep.txt": KEEP,
+    });
+    const repo = await realpath(String(dir));
+    const victim = join(repo, "victim");
+    await mkdir(join(repo, "node_modules"));
+    await linkDir(victim, join(repo, "node_modules", "@scope"));
+
+    const { stderr, exitCode } = await install(repo);
+
+    expect(await readdir(victim)).toEqual(["dep"]);
+    await expectVictimUntouched(victim, "dep");
+    // The symlink is replaced by the directory the package belongs in.
+    const scopeDir = join(repo, "node_modules", "@scope");
+    expect((await lstat(scopeDir)).isSymbolicLink()).toBe(false);
+    expect(await readdir(scopeDir)).toEqual(["dep"]);
+    expect(await readdir(join(scopeDir, "dep"))).toContain("index.js");
+    expect(stderr).not.toContain("error:");
+    expect(exitCode).toBe(0);
+  });
+
+  // Unlike the remove case above, the links here are planted after the
+  // install, so only the `bun remove` guards stand between the deletes and the
+  // link target: the leftover `@scope/<name>` delete, and the dangling-bin
+  // sweep of `.bin`, which would take the target's own dangling link for a
+  // stale bin. POSIX-only: it needs a link to a path that does not exist.
+  it.skipIf(isWindows)(
+    "bun remove does not delete through node_modules/@scope or .bin symlinks planted after the install",
+    async () => {
+      using dir = tempDir("nm-remove-planted", {
+        "bunfig.toml": `[install]\nlinker = "hoisted"\n`,
+        "package.json": JSON.stringify({
+          name: "remove-scope-symlink-app",
+          version: "1.0.0",
+          dependencies: { "@scope/dep": "file:./dep", plain: "file:./plain" },
+        }),
+        "dep/package.json": JSON.stringify({ name: "@scope/dep", version: "1.0.0" }),
+        "dep/index.js": `module.exports = 1;\n`,
+        "plain/package.json": JSON.stringify({ name: "plain", version: "1.0.0" }),
+        "plain/index.js": `module.exports = 2;\n`,
+        "victim/dep/keep.txt": KEEP,
+      });
+      const repo = await realpath(String(dir));
+      const victim = join(repo, "victim");
+      // A dangling link of the user's own, which the `.bin` sweep would take for a stale bin.
+      await symlink("./moved-away", join(victim, "stale"));
+
+      expect((await install(repo)).exitCode).toBe(0);
+      expect(await readdir(join(repo, "node_modules", "@scope"))).toEqual(["dep"]);
+
+      await rm(join(repo, "node_modules", "@scope"), { recursive: true });
+      await symlink(victim, join(repo, "node_modules", "@scope"));
+      await symlink(victim, join(repo, "node_modules", ".bin"));
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "remove", "@scope/dep"],
+        cwd: repo,
+        stdout: "pipe",
+        stderr: "pipe",
+        env: { ...env, BUN_INSTALL_CACHE_DIR: join(repo, ".bun-cache") },
+      });
+      const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      expect((await readdir(victim)).sort()).toEqual(["dep", "stale"]);
+      await expectVictimUntouched(victim, "dep");
+      expect((await Bun.file(join(repo, "package.json")).json()).dependencies).toEqual({ plain: "file:./plain" });
+      expect(stderr).not.toContain("error:");
+      expect(exitCode).toBe(0);
+    },
+  );
 });

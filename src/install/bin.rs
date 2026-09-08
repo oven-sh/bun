@@ -827,6 +827,9 @@ pub struct Linker<'a> {
     pub abs_dest_buf: &'a mut [u8],
     pub rel_buf: &'a mut [u8],
 
+    /// The opened `.bin` (or global bin) directory, reused across this package's bins.
+    pub bin_dir: Option<sys::Dir>,
+
     pub err: Option<Error>,
     pub skipped_due_to_missing_bin: bool,
 }
@@ -942,7 +945,8 @@ impl<'a> Linker<'a> {
         }
 
         if self.err.is_some() {
-            // cleanup on error just in case
+            // Remove a half-written shim pair. POSIX has nothing to undo.
+            #[cfg(windows)]
             Self::unlink_bin_or_shim(abs_dest);
             return;
         }
@@ -1252,11 +1256,74 @@ impl<'a> Linker<'a> {
         }
     }
 
+    /// `node_modules/.bin` opened without following a planted symlink, or the global bin dir.
+    #[cfg(not(windows))]
+    fn open_bin_dir(
+        node_modules_path: &AbsPath,
+        global_bin_path: &ZStr,
+        global: bool,
+    ) -> sys::Maybe<sys::Dir> {
+        if global {
+            return sys::Dir::open(strings::without_trailing_slash(global_bin_path.as_bytes()));
+        }
+
+        let node_modules = strings::without_trailing_slash(node_modules_path.slice());
+        let node_modules = match sys::Dir::open(node_modules) {
+            Ok(dir) => dir,
+            Err(err) if err.get_errno() == sys::Errno::ENOENT => {
+                sys::Dir::cwd().make_path(node_modules)?;
+                sys::Dir::open(node_modules)?
+            }
+            Err(err) => return Err(err),
+        };
+        node_modules.make_open_real_dir(b".bin")
+    }
+
+    /// `symlinkat` with the `EBUSY`/`ETXTBSY` retry of `sys::symlink_running_executable`.
+    #[cfg(not(windows))]
+    fn symlink_bin(bin_dir: &sys::Dir, rel_target: &ZStr, name: &ZStr) -> sys::Maybe<()> {
+        match sys::symlinkat(rel_target, bin_dir.fd(), name) {
+            Err(err)
+                if err.get_errno() == sys::Errno::EBUSY
+                    || err.get_errno() == sys::Errno::ETXTBSY =>
+            {
+                let _ = sys::unlinkat(bin_dir.fd(), name);
+                sys::symlinkat(rel_target, bin_dir.fd(), name)
+            }
+            result => result,
+        }
+    }
+
     #[cfg(not(windows))]
     fn create_symlink(&mut self, abs_target: &ZStr, abs_dest: &ZStr, global: bool) {
         // hoisted from `defer { if (this.err == null) chmod }` — scopeguard
         // cannot capture `&mut self.err` without conflicting with the body's writes,
         // so each return path calls `Self::chmod_on_ok` explicitly instead.
+
+        let bin_fd = match self.bin_dir.as_ref().map(sys::Dir::fd) {
+            Some(fd) => fd,
+            None => {
+                match Self::open_bin_dir(self.node_modules_path, self.global_bin_path, global) {
+                    Ok(dir) => {
+                        let fd = dir.fd();
+                        self.bin_dir = Some(dir);
+                        fd
+                    }
+                    Err(err) => {
+                        self.err = Some(err.into());
+                        Self::chmod_on_ok(self.err, abs_target);
+                        return;
+                    }
+                }
+            }
+        };
+        let bin_dir = sys::Dir::borrow(&bin_fd);
+
+        // `build_destination_dir` put the name directly inside `bin_dir`.
+        let name = ZStr::from_slice_with_nul(
+            &abs_dest.as_bytes_with_nul()
+                [abs_dest.len() - path::basename(abs_dest.as_bytes()).len()..],
+        );
 
         let abs_dest_dir = resolve_path::dirname::<PlatformAuto>(abs_dest.as_bytes());
         let rel_target =
@@ -1264,56 +1331,18 @@ impl<'a> Linker<'a> {
 
         debug_assert!(strings::has_prefix(rel_target.as_bytes(), b".."));
 
-        match sys::symlink_running_executable(rel_target, abs_dest) {
-            sys::Result::Err(err) => {
-                if err.get_errno() != sys::Errno::EEXIST && err.get_errno() != sys::Errno::ENOENT {
+        match Self::symlink_bin(bin_dir, rel_target, name) {
+            Ok(()) => {}
+            Err(err) if err.get_errno() == sys::Errno::EEXIST => {
+                // delete and try again
+                let _ = bin_dir.delete_tree(name.as_bytes());
+                if let Err(err) = Self::symlink_bin(bin_dir, rel_target, name) {
                     self.err = Some(err.into());
-                    Self::chmod_on_ok(self.err, abs_target);
-                    return;
                 }
-
-                // ENOENT means `.bin` hasn't been created yet. Should only happen if this isn't global
-                if err.get_errno() == sys::Errno::ENOENT {
-                    if global {
-                        self.err = Some(err.into());
-                        Self::chmod_on_ok(self.err, abs_target);
-                        return;
-                    }
-
-                    // Capture `len()` and restore via `set_length()` so the path
-                    // can be re-borrowed for `append`/`slice` in between.
-                    let node_modules_path_save = self.node_modules_path.len();
-                    let _ = self.node_modules_path.append(b".bin");
-                    let _ = sys::Dir::cwd().make_path(self.node_modules_path.slice());
-                    self.node_modules_path.set_length(node_modules_path_save);
-
-                    match sys::symlink_running_executable(rel_target, abs_dest) {
-                        sys::Result::Err(real_error) => {
-                            // It was just created, no need to delete destination and symlink again
-                            self.err = Some(real_error.into());
-                            Self::chmod_on_ok(self.err, abs_target);
-                            return;
-                        }
-                        sys::Result::Ok(()) => {
-                            Self::chmod_on_ok(self.err, abs_target);
-                            return;
-                        }
-                    }
-                }
-
-                // beyond this error can only be `.EXIST`
-                debug_assert!(err.get_errno() == sys::Errno::EEXIST);
             }
-            sys::Result::Ok(()) => {
-                Self::chmod_on_ok(self.err, abs_target);
-                return;
+            Err(err) => {
+                self.err = Some(err.into());
             }
-        }
-
-        // delete and try again
-        let _ = sys::delete_tree_absolute(abs_dest.as_bytes());
-        if let Err(err) = sys::symlink_running_executable(rel_target, abs_dest) {
-            self.err = Some(err.into());
         }
         Self::chmod_on_ok(self.err, abs_target);
     }

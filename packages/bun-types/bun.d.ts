@@ -7087,6 +7087,22 @@ declare module "bun" {
      */
     exclusive?: boolean;
     /**
+     * Whether the `SO_REUSEPORT` flag should be set.
+     *
+     * This allows multiple processes to bind to the same port, which is useful for load balancing.
+     * Ignored when {@link exclusive} is `true`.
+     *
+     * @default false
+     */
+    reusePort?: boolean;
+    /**
+     * Whether the `IPV6_V6ONLY` flag should be set, so that a socket bound to an IPv6
+     * address does not also accept IPv4 connections.
+     *
+     * @default false
+     */
+    ipv6Only?: boolean;
+    /**
      * Whether to allow half-open connections.
      *
      * A half-open connection occurs when one end of the connection has called `close()`
@@ -7118,18 +7134,16 @@ declare module "bun" {
      */
     tls?: TLSOptions | boolean;
     /**
-     * Whether to use exclusive mode.
-     *
-     * When set to `true`, the socket binds exclusively to the specified address:port
-     * combination, preventing other processes from binding to the same port.
-     *
-     * When `false` (default), other sockets may be able to bind to the same port
-     * depending on the operating system's socket sharing capabilities and settings.
-     *
-     * @default false
+     * @deprecated Has no effect on a client socket. These are bind options for {@link Bun.listen} (see {@link TCPSocketListenOptions}).
      */
     exclusive?: boolean;
+    /**
+     * @deprecated Has no effect on a client socket. These are bind options for {@link Bun.listen} (see {@link TCPSocketListenOptions}).
+     */
     reusePort?: boolean;
+    /**
+     * @deprecated Has no effect on a client socket. These are bind options for {@link Bun.listen} (see {@link TCPSocketListenOptions}).
+     */
     ipv6Only?: boolean;
   }
 

@@ -1,11 +1,11 @@
-use core::mem::{ManuallyDrop, MaybeUninit};
+use core::mem::MaybeUninit;
 use core::ptr::{self, NonNull};
 use core::sync::atomic::Ordering;
 
 use crate::bun_fs::{FileSystem, FilenameStore};
 use bun_collections::HashMap;
 use bun_core::{self, fmt::quote};
-use bun_core::{MutableString, StringBuilder, strings};
+use bun_core::{MutableString, strings};
 use bun_http::{
     self as http, AsyncHTTP, HTTPClientResult, HTTPClientResultCallback, HTTPVerboseLevel,
     HeaderBuilder, async_http::Options as AsyncHTTPOptions,
@@ -38,11 +38,11 @@ pub(crate) fn filename_store_appender() -> FilenameStoreAppender<'static> {
 }
 
 pub struct NetworkTask {
-    // Self-referential: borrows `url_buf` / leaked header content owned by
+    // Self-referential: borrows `url_buf` / `header_buf` owned by
     // sibling fields, so the lifetime is erased to `'static`.
     // `MaybeUninit` because the slot comes from `HiveArrayFallback`
     // as *uninitialized* memory (often zero-page on first mmap, but not
-    // guaranteed — `get()`'s heap fallback is `Box::new_uninit()`) and is
+    // guaranteed — `claim()`'s heap fallback is `Box::new_uninit()`) and is
     // overwritten by plain `=` in `for_manifest`/`for_tarball`.
     // `MaybeUninit<T>` is the spec-correct mapping for that semantic — unlike
     // `ManuallyDrop<T>`, it suppresses `T`'s validity invariant, so
@@ -60,6 +60,7 @@ pub struct NetworkTask {
     // `tarball.url` in the latter would be a self-reference
     // into `callback`; owning avoids that at the cost of one copy per tarball download.
     pub(crate) url_buf: Box<[u8]>,
+    pub(crate) header_buf: Box<[u8]>,
     pub(crate) retried: u16,
     pub(crate) response_buffer: MutableString,
     // BACKREF: PackageManager owns this task via `preallocated_network_tasks`.
@@ -206,7 +207,12 @@ impl NetworkTask {
             // main thread and later chunk callbacks can see it.
             if let Some(m) = result.metadata.take() {
                 // SAFETY: `stream` is the live heap-allocated `TarballStream`.
-                unsafe { (*stream).status_code = m.response.status_code };
+                unsafe {
+                    (*stream).status_code = m.response.status_code;
+                    if let http::BodySize::ContentLength(len) = result.body_size {
+                        (*stream).content_length = Some(len);
+                    }
+                }
                 // New attempt's headers arrived — drop any bytes buffered from
                 // a prior failed attempt (pre-refactor `HTTPClient::start()`
                 // did this via `body_out_str.reset()`).
@@ -244,11 +250,11 @@ impl NetworkTask {
                         // runs at most once at a time, releases the
                         // worker on ARCHIVE_RETRY, and is re-enqueued by
                         // the next chunk. Pending-task accounting stays
-                        // balanced: this NetworkTask is never pushed to
-                        // `async_network_task_queue` once committed, so
-                        // its `increment_pending_tasks()` is satisfied by
-                        // the extract Task that `TarballStream.finish()`
-                        // publishes to `resolve_tasks`.
+                        // balanced: `TarballStream.finish()` publishes
+                        // exactly one of the extract Task (to
+                        // `resolve_tasks`) or, when the connection failed
+                        // mid-body, this NetworkTask (to
+                        // `async_network_task_queue`).
                         // SAFETY: `this` is live; the HTTP thread is its sole writer here.
                         unsafe { (*this).streaming_committed = true };
                         // SAFETY: `stream` is the live heap-allocated
@@ -407,6 +413,34 @@ fn count_auth(header_builder: &mut HeaderBuilder, scope: &npm::registry::Scope) 
     header_builder.count("npm-auth-type", "legacy");
 }
 
+/// Splits `http://user:pass@host/pkg.tgz` into `user:pass` and `http://host/pkg.tgz`; only an `@` in the authority counts, not `/@scope/`.
+fn split_url_userinfo(url: &[u8]) -> Option<(&[u8], Box<[u8]>)> {
+    let authority_start = strings::index_of(url, b"://")? + b"://".len();
+    let rest = &url[authority_start..];
+    let authority = &rest[..strings::index_of_any(rest, b"/?#").unwrap_or(rest.len())];
+    let at = strings::last_index_of_char(authority, b'@')?;
+
+    let mut without_userinfo = Vec::with_capacity(url.len() - (at + 1));
+    without_userinfo.extend_from_slice(&url[..authority_start]);
+    without_userinfo.extend_from_slice(&rest[at + 1..]);
+    Some((&rest[..at], without_userinfo.into_boxed_slice()))
+}
+
+/// `Basic base64(userinfo)` as written (no percent-decoding, `user` means `user:`), matching what npm sends via node's `auth` option.
+fn basic_authorization_from_userinfo(userinfo: &[u8]) -> Vec<u8> {
+    const SCHEME: &[u8] = b"Basic ";
+    let mut user_pass = Vec::with_capacity(userinfo.len() + 1);
+    user_pass.extend_from_slice(userinfo);
+    if !strings::contains_char(userinfo, b':') {
+        user_pass.push(b':');
+    }
+    let mut value = vec![0u8; SCHEME.len() + bun_core::base64::encode_len(&user_pass)];
+    value[..SCHEME.len()].copy_from_slice(SCHEME);
+    let encoded_len = bun_core::base64::encode(&mut value[SCHEME.len()..], &user_pass);
+    value.truncate(SCHEME.len() + encoded_len);
+    value
+}
+
 #[derive(thiserror::Error, Debug, strum::IntoStaticStr)]
 pub enum ForManifestError {
     #[error("OutOfMemory")]
@@ -421,11 +455,6 @@ impl From<ForManifestError> for crate::Error {
             ForManifestError::OutOfMemory => crate::Error::Alloc(bun_alloc::AllocError),
             ForManifestError::InvalidURL => crate::Error::InvalidURL,
         }
-    }
-}
-impl PartialEq<crate::Error> for ForManifestError {
-    fn eq(&self, other: &crate::Error) -> bool {
-        <&'static str>::from(self) == other.name()
     }
 }
 impl bun_core::output::ErrName for ForManifestError {
@@ -461,13 +490,10 @@ impl NetworkTask {
                 name
             };
 
-            // `OwnedString` derefs the WTF-backed result on scope exit —
-            // covers both the
-            // success path and the InvalidURL early returns below.
-            let tmp = bun_core::OwnedString::new(bun_url::join(
+            let tmp = bun_url::join(
                 &bun_core::String::borrow_utf8(scope.url.href()),
                 &bun_core::String::borrow_utf8(encoded_name),
-            ));
+            );
 
             if tmp.tag() == bun_core::Tag::Dead {
                 if !is_optional {
@@ -494,14 +520,14 @@ impl NetworkTask {
                 return Err(ForManifestError::InvalidURL);
             }
 
-            if !(tmp.has_prefix_comptime(b"https://") || tmp.has_prefix_comptime(b"http://")) {
+            if !(tmp.starts_with_ascii(b"https://") || tmp.starts_with_ascii(b"http://")) {
                 if !is_optional {
                     log.add_error_fmt(
                         None,
                         bun_ast::Loc::EMPTY,
                         format_args!(
                             "Registry URL must be http:// or https://\nReceived: \"{}\"",
-                            *tmp
+                            tmp
                         ),
                     );
                 } else {
@@ -510,14 +536,14 @@ impl NetworkTask {
                         bun_ast::Loc::EMPTY,
                         format_args!(
                             "Registry URL must be http:// or https://\nReceived: \"{}\"",
-                            *tmp
+                            tmp
                         ),
                     );
                 }
                 return Err(ForManifestError::InvalidURL);
             }
 
-            // This actually duplicates the string! So we defer deref the WTF managed one above.
+            // This actually duplicates the string! The WTF managed one above drops at scope exit.
             let url_bytes = tmp.to_owned_slice().into_boxed_slice();
 
             {
@@ -576,20 +602,19 @@ impl NetworkTask {
 
         if !etag.is_empty() {
             header_builder.count("If-None-Match", etag);
-        }
-
-        if !last_modified.is_empty() {
+        } else if !last_modified.is_empty() {
             header_builder.count("If-Modified-Since", last_modified);
         }
 
-        if header_builder.header_count > 0 {
+        let headers_buf: &'static [u8] = if header_builder.header_count > 0 {
             let accept_header = if needs_extended {
                 ACCEPT_HEADER_VALUE_EXTENDED
             } else {
                 ACCEPT_HEADER_VALUE
             };
             header_builder.count("Accept", accept_header);
-            if !last_modified.is_empty() && !etag.is_empty() {
+            let trailing_last_modified = !last_modified.is_empty() && !etag.is_empty();
+            if trailing_last_modified {
                 header_builder.content.count(last_modified);
             }
             header_builder.allocate()?;
@@ -604,15 +629,19 @@ impl NetworkTask {
 
             header_builder.append("Accept", accept_header);
 
-            if !last_modified.is_empty() && !etag.is_empty() {
-                let appended = header_builder.content.append(last_modified);
-                // SAFETY: lifetime extension — the appended slice points into
-                // `header_builder.content`'s heap buffer, which is moved into
-                // `self.unsafe_http_client.client.header_buf` below and
-                // outlives the request. Detach the borrow so
-                // `header_builder.content` can be read again for `headers_buf`.
-                last_modified = unsafe { bun_ptr::detach_lifetime(appended) };
+            let last_modified_start = header_builder.content.len;
+            if trailing_last_modified {
+                let _ = header_builder.content.append(last_modified);
             }
+            debug_assert_eq!(header_builder.content.len, header_builder.content.cap);
+            self.header_buf = header_builder.content.move_to_slice();
+            if trailing_last_modified {
+                // SAFETY: `self.header_buf` outlives the request; it is freed when the slot returns to the pool.
+                last_modified =
+                    unsafe { bun_ptr::detach_lifetime(&self.header_buf[last_modified_start..]) };
+            }
+            // SAFETY: same invariant as `last_modified` above.
+            unsafe { bun_ptr::detach_lifetime(&*self.header_buf) }
         } else {
             let header_buf: &'static str = if needs_extended {
                 EXTENDED_HEADERS_BUF
@@ -630,34 +659,15 @@ impl NetworkTask {
                 },
             })?;
             header_builder.header_count = 1;
-            // SAFETY: header_buf is &'static str; StringBuilder borrows it
-            // mutably in type but is never written to on this path.
-            header_builder.content = StringBuilder {
-                ptr: NonNull::new(header_buf.as_ptr().cast_mut()),
-                len: header_buf.len(),
-                cap: header_buf.len(),
-            };
-        }
+            self.header_buf = Box::default();
+            header_buf.as_bytes()
+        };
 
         self.response_buffer = MutableString::init(0)?;
 
-        // SAFETY: lifetime extension — `url_buf` and the header content buffer
-        // are heap allocations owned by / leaked into `*self`, which outlives
-        // the HTTP request. `AsyncHTTP::init` demands `'static` borrows
-        // because the HTTP thread reads them concurrently. See the
-        // identical pattern in `s3/simple_request.rs`.
+        // SAFETY: `self.url_buf` outlives the request, same as `header_buf` above (see `s3/simple_request.rs`).
         let url = URL::parse(unsafe { bun_ptr::detach_lifetime(&self.url_buf) });
         let http_proxy = pm.http_proxy(&url);
-        // SAFETY: `written_slice()` is the safe (ptr,len) accessor; only the
-        // `'static` erasure remains unsafe — the buffer is leaked into the
-        // HTTP client below (`ManuallyDrop`), so it genuinely outlives this frame.
-        let headers_buf: &'static [u8] =
-            unsafe { bun_ptr::detach_lifetime(header_builder.content.written_slice()) };
-        // `header_builder.content` is intentionally leaked (ownership
-        // transfers to the HTTP client). Forget it so
-        // `StringBuilder::drop` doesn't free the buffer that `headers_buf` /
-        // `last_modified` now alias.
-        let _ = ManuallyDrop::new(core::mem::take(&mut header_builder.content));
         let completion_callback = self.get_completion_callback();
         // MaybeUninit overwrite — see field doc; old slot value is
         // either uninitialized (fresh hive slot) or a stale bitwise copy from
@@ -701,11 +711,7 @@ impl NetworkTask {
                 .unwrap_or(false)
         {
             self.http_mut().client.flags.force_last_modified = true;
-            // SAFETY: lifetime extension — `last_modified` either points into
-            // the leaked `header_builder.content` buffer (reassigned above) or
-            // into the manifest's `string_buf`, which is the same allocation
-            // referenced by the `PackageManifest` we just cloned into
-            // `self.callback`. Both outlive the HTTP request.
+            // SAFETY: `last_modified` points into `self.header_buf` or into the manifest `string_buf` cloned into `self.callback`; both outlive the request.
             self.http_mut().client.if_modified_since =
                 unsafe { bun_ptr::detach_lifetime(last_modified) };
         }
@@ -730,6 +736,10 @@ pub enum ForTarballError {
     OutOfMemory,
     #[error("InvalidURL")]
     InvalidURL,
+    /// `--offline` and the tarball is not in the cache. Already reported (once per
+    /// package); callers treat it like `AlreadyFailed`.
+    #[error("TarballFailedToDownload")]
+    Offline,
     /// Returned by `enqueue_*_for_download` when the dedupe map already records
     /// a terminal failure for this task id. Callers handle it silently (the
     /// original failure was already reported) and advance their own bookkeeping.
@@ -742,7 +752,9 @@ impl From<ForTarballError> for crate::Error {
         match e {
             ForTarballError::OutOfMemory => crate::Error::Alloc(bun_alloc::AllocError),
             ForTarballError::InvalidURL => crate::Error::InvalidURL,
-            ForTarballError::AlreadyFailed => crate::Error::TarballFailedToDownload,
+            ForTarballError::AlreadyFailed | ForTarballError::Offline => {
+                crate::Error::TarballFailedToDownload
+            }
         }
     }
 }
@@ -803,6 +815,17 @@ impl NetworkTask {
             return Err(ForTarballError::InvalidURL);
         }
 
+        // Userinfo becomes a header and leaves the URL: `bun_url` keeps it in `origin`, which the redirect same-origin check compares.
+        let url_authorization: Option<Vec<u8>> = match split_url_userinfo(&self.url_buf) {
+            Some((userinfo, url_without_userinfo)) => {
+                let value =
+                    (!userinfo.is_empty()).then(|| basic_authorization_from_userinfo(userinfo));
+                self.url_buf = url_without_userinfo;
+                value
+            }
+            None => None,
+        };
+
         // Only attach the registry `Authorization` header when the tarball URL
         // origin matches the configured registry scope origin. The npm manifest
         // is registry-controlled, so a malicious registry could otherwise point
@@ -829,29 +852,34 @@ impl NetworkTask {
         self.response_buffer = MutableString::init_empty();
 
         let mut header_builder = HeaderBuilder::default();
-        let mut header_buf: &'static [u8] = b"";
 
         if send_auth {
             count_auth(&mut header_builder, scope);
         }
 
-        if header_builder.header_count > 0 {
-            header_builder.allocate()?;
-
-            if send_auth {
-                append_auth(&mut header_builder, scope);
+        // Registry credentials win over URL userinfo, as in npm.
+        let url_authorization = match url_authorization {
+            Some(value) if header_builder.header_count == 0 => {
+                header_builder.count("Authorization", &value);
+                Some(value)
             }
+            _ => None,
+        };
 
-            // SAFETY: `written_slice()` is the safe (ptr,len) accessor; only the
-            // `'static` erasure remains unsafe — buffer is leaked below.
-            header_buf =
-                unsafe { bun_ptr::detach_lifetime(header_builder.content.written_slice()) };
-        }
-        // `header_builder.content` is intentionally leaked (ownership
-        // transfers to the HTTP client). Forget it so
-        // `StringBuilder::drop` doesn't free the buffer that `header_buf` now
-        // aliases.
-        let _ = ManuallyDrop::new(core::mem::take(&mut header_builder.content));
+        let header_buf: &'static [u8] = if header_builder.header_count > 0 {
+            header_builder.allocate()?;
+            match &url_authorization {
+                Some(value) => header_builder.append("Authorization", value),
+                None => append_auth(&mut header_builder, scope),
+            }
+            debug_assert_eq!(header_builder.content.len, header_builder.content.cap);
+            self.header_buf = header_builder.content.move_to_slice();
+            // SAFETY: `self.header_buf` outlives the request; it is freed when the slot returns to the pool.
+            unsafe { bun_ptr::detach_lifetime(&*self.header_buf) }
+        } else {
+            self.header_buf = Box::default();
+            b""
+        };
 
         // SAFETY: lifetime extension — `url_buf` is a heap allocation owned by
         // `*self`, which outlives the HTTP request. `AsyncHTTP::init` demands a
@@ -927,7 +955,7 @@ impl NetworkTask {
         if !self.streaming_extract_task.is_null() {
             // ARENA: returned to `preallocated_resolve_tasks` pool, not freed.
             // SAFETY: `streaming_extract_task` was obtained from this same
-            // `preallocated_resolve_tasks` pool via `get()` and is not aliased
+            // `preallocated_resolve_tasks` pool via `get_init()` and is not aliased
             // (cleared immediately below); `put()` runs `Task::drop` on the
             // slot — the Task was fully initialized via
             // `enqueue::create_extract_task_for_streaming` so this is sound.
@@ -940,24 +968,35 @@ impl NetworkTask {
         }
     }
 
-    /// Prepare this task for another HTTP attempt (used by retry logic when
-    /// streaming extraction never started). Keeps the stream allocation so the
-    /// retry can still benefit from streaming.
+    /// Prepare this task for another HTTP attempt. A stream that never ran is
+    /// reused; one consumed by a download that failed mid-body (released in
+    /// `TarballStream::finish`) is replaced, keeping the same extract Task.
     pub(crate) fn reset_streaming_for_retry(&mut self) {
         debug_assert!(!self.streaming_committed);
         if let Some(stream) = self.tarball_stream.as_deref_mut() {
             stream.reset_for_retry();
+        } else if !self.streaming_extract_task.is_null() {
+            let manager = self.package_manager.as_mut_ptr();
+            let this: *mut NetworkTask = self;
+            // SAFETY: `init` returns a fresh heap allocation owned here.
+            self.tarball_stream = Some(unsafe {
+                bun_core::heap::take(TarballStream::init(
+                    self.streaming_extract_task,
+                    this,
+                    manager,
+                ))
+            });
         }
         self.response = HTTPClientResult::default();
     }
 
     /// Initialize a freshly-vended pool slot in place — a full struct overwrite
     /// that resets every other field to its struct default. The slot may be
-    /// uninitialized heap memory (from `HiveArrayFallback::get()`'s
+    /// uninitialized heap memory (from `HiveArrayFallback::claim()`'s
     /// `Box::new_uninit()` fallback) or stale (reused hive slot whose prior
     /// contents ARE now dropped on `put` since 1e76047), so each field is
     /// written via `addr_of_mut!().write()` without dropping the previous
-    /// value — the slot is freshly poisoned/uninit from `get()`.
+    /// value — the slot is freshly poisoned/uninit from `claim()`.
     ///
     /// Caller-initialized fields (`unsafe_http_client`, `callback`,
     /// `response_buffer`) are written here with drop-safe
@@ -969,7 +1008,7 @@ impl NetworkTask {
     ///
     /// # Safety
     /// `slot` must be the unique handle to a `HiveArrayFallback<NetworkTask>`
-    /// slot returned by `get()`; its prior contents are treated as garbage
+    /// slot returned by `claim()`; its prior contents are treated as garbage
     /// (no destructors run).
     pub(crate) unsafe fn write_init(
         slot: *mut NetworkTask,
@@ -992,6 +1031,7 @@ impl NetworkTask {
             // Struct-default fields.
             addr_of_mut!((*slot).response).write(HTTPClientResult::default());
             addr_of_mut!((*slot).url_buf).write(Box::default());
+            addr_of_mut!((*slot).header_buf).write(Box::default());
             addr_of_mut!((*slot).retried).write(0);
             addr_of_mut!((*slot).next).write(bun_threading::Link::new());
             addr_of_mut!((*slot).tarball_stream).write(None);

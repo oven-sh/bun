@@ -1,7 +1,5 @@
 // Hardcoded module "node:util"
 const types = require("node:util/types");
-/** @type {import('node-inspect-extracted')} */
-const utl = require("internal/util/inspect");
 const { promisify } = require("internal/promisify");
 const {
   validateString,
@@ -40,10 +38,10 @@ const { isDeepStrictEqual } = require("internal/util/comparisons");
 
 const parseArgs = $newRustFunction("parse_args.rs", "parseArgs", 1);
 
-const inspect = utl.inspect;
-const formatWithOptions = utl.formatWithOptions;
-const format = utl.format;
-const stripVTControlCharacters = utl.stripVTControlCharacters;
+let utl;
+function lazyInspectModule() {
+  return (utl ??= require("internal/util/inspect"));
+}
 
 var debugs = {};
 var debugEnvRegex = /^$/;
@@ -80,7 +78,7 @@ function debuglog(set) {
       var pid = process.pid;
       emitWarningIfNeeded(set);
       debugs[set] = function () {
-        var msg = format.$apply(cjs_exports, arguments);
+        var msg = lazyInspectModule().format.$apply(cjs_exports, arguments);
         console.error("%s %d: %s", set, pid, msg);
       };
     } else {
@@ -142,7 +140,7 @@ function timestamp() {
   return [d.getDate(), months[d.getMonth()], time].join(" ");
 }
 var log = function log() {
-  console.log("%s - %s", timestamp(), format.$apply(cjs_exports, arguments));
+  console.log("%s - %s", timestamp(), lazyInspectModule().format.$apply(cjs_exports, arguments));
 };
 var inherits = function inherits(ctor, superCtor) {
   if (ctor === undefined || ctor === null) {
@@ -249,7 +247,7 @@ function getHexStyleCache() {
 function getStyleCache() {
   if (styleCache === undefined) {
     styleCache = { __proto__: null };
-    const colors = inspect.colors;
+    const colors = lazyInspectModule().inspect.colors;
     for (const key of ObjectGetOwnPropertyNames(colors)) {
       const codes = colors[key];
       if (codes) {
@@ -391,7 +389,7 @@ function styleText(format, text, options) {
 
     const style = cache[key];
     if (style === undefined) {
-      validateOneOf(key, "format", ObjectGetOwnPropertyNames(inspect.colors));
+      validateOneOf(key, "format", ObjectGetOwnPropertyNames(lazyInspectModule().inspect.colors));
     }
     openCodes += style.openSeq;
     closeCodes = style.closeSeq + closeCodes;
@@ -622,12 +620,12 @@ function convertProcessSignalToExitCode(signalCode) {
 
 let lazyAbortedRegistry: FinalizationRegistry<{
   ref: WeakRef<AbortSignal>;
-  unregisterToken: (...args: any[]) => void;
+  listener: (...args: any[]) => void;
 }>;
-function onAbortedCallback(resolveFn: Function) {
-  lazyAbortedRegistry.unregister(resolveFn);
+function onAbortedCallback(promise: Promise<void>) {
+  lazyAbortedRegistry.unregister(promise);
 
-  resolveFn();
+  $resolvePromiseWithFirstResolvingFunctionCallCheck(promise, undefined);
 }
 
 function aborted(signal: AbortSignal, resource: object) {
@@ -643,20 +641,20 @@ function aborted(signal: AbortSignal, resource: object) {
     return Promise.$resolve();
   }
 
-  const { promise, resolve } = $newPromiseCapability(Promise);
-  const unregisterToken = onAbortedCallback.bind(undefined, resolve);
+  const promise = $newPromise();
+  const listener = onAbortedCallback.bind(undefined, promise);
   signal.addEventListener(
     "abort",
     // Do not leak the current scope into the listener.
     // Instead, create a new function.
-    unregisterToken,
+    listener,
     resistStopPropagation({ __proto__: null, once: true }),
   );
 
   if (!lazyAbortedRegistry) {
-    lazyAbortedRegistry = new FinalizationRegistry(({ ref, unregisterToken }) => {
+    lazyAbortedRegistry = new FinalizationRegistry(({ ref, listener }) => {
       const signal = ref.deref();
-      if (signal) signal.removeEventListener("abort", unregisterToken);
+      if (signal) signal.removeEventListener("abort", listener);
     });
   }
 
@@ -667,9 +665,9 @@ function aborted(signal: AbortSignal, resource: object) {
     resource,
     {
       ref: new WeakRef(signal),
-      unregisterToken,
+      listener,
     },
-    unregisterToken,
+    promise,
   );
 
   return promise;
@@ -698,19 +696,49 @@ cjs_exports = {
   debug: debuglog,
   debuglog,
   deprecate,
-  format,
+  get format() {
+    return lazyInspectModule().format;
+  },
+  set format(value) {
+    Object.defineProperty(cjs_exports, "format", { value, writable: true, enumerable: true, configurable: true });
+  },
   styleText,
-  formatWithOptions,
+  get formatWithOptions() {
+    return lazyInspectModule().formatWithOptions;
+  },
+  set formatWithOptions(value) {
+    Object.defineProperty(cjs_exports, "formatWithOptions", {
+      value,
+      writable: true,
+      enumerable: true,
+      configurable: true,
+    });
+  },
   getCallSites,
   getSystemErrorMap,
   getSystemErrorName,
   getSystemErrorMessage,
   inherits,
-  inspect,
+  get inspect() {
+    return lazyInspectModule().inspect;
+  },
+  set inspect(value) {
+    Object.defineProperty(cjs_exports, "inspect", { value, writable: true, enumerable: true, configurable: true });
+  },
   isDeepStrictEqual,
   promisify,
   setTraceSigInt,
-  stripVTControlCharacters,
+  get stripVTControlCharacters() {
+    return lazyInspectModule().stripVTControlCharacters;
+  },
+  set stripVTControlCharacters(value) {
+    Object.defineProperty(cjs_exports, "stripVTControlCharacters", {
+      value,
+      writable: true,
+      enumerable: true,
+      configurable: true,
+    });
+  },
   toUSVString,
   // transferableAbortSignal,
   // transferableAbortController,

@@ -6,6 +6,7 @@
 // to catch both SIGILL and miscompilation from wrong instruction lowering.
 
 import { describe, expect, test } from "bun:test";
+import { deflateSync } from "node:zlib";
 
 // Use Buffer.alloc instead of "x".repeat() — repeat is slow in debug JSC builds.
 const ascii256 = Buffer.alloc(256, "a").toString();
@@ -199,5 +200,80 @@ describe("String search — Highway memMem/indexOfChar", () => {
     const haystack = Buffer.alloc(1000, "a").toString() + "needle" + Buffer.alloc(1000, "b").toString();
     expect(haystack.includes("needle")).toBe(true);
     expect(haystack.includes("missing")).toBe(false);
+  });
+});
+
+describe("JPEG codec: libjpeg-turbo jsimd runtime dispatch", () => {
+  // libjpeg-turbo picks its kernels per call from CPUID (simd/x86_64/jsimd.c on
+  // x64: AVX2, else SSE2; Neon on aarch64). On the emulated baseline CPU the
+  // AVX2 kernels must stay unselected, so this traps if that gate breaks.
+  // 72 px wide: two full 32-pixel AVX2 / 16-pixel SSE2 column iterations plus an
+  // 8-pixel tail; 40 px tall keeps h2v2 chroma downsampling and upsampling busy.
+  const width = 72;
+  const height = 40;
+
+  function crc32(bytes: Uint8Array): number {
+    let crc = ~0 >>> 0;
+    for (const byte of bytes) {
+      crc ^= byte;
+      for (let bit = 0; bit < 8; bit++) crc = (crc >>> 1) ^ (0xedb88320 & -(crc & 1));
+    }
+    return ~crc >>> 0;
+  }
+
+  function pngChunk(type: string, data: Uint8Array): Uint8Array {
+    const chunk = new Uint8Array(12 + data.length);
+    const view = new DataView(chunk.buffer);
+    view.setUint32(0, data.length);
+    chunk.set(Buffer.from(type, "latin1"), 4);
+    chunk.set(data, 8);
+    view.setUint32(8 + data.length, crc32(chunk.subarray(4, 8 + data.length)));
+    return chunk;
+  }
+
+  /** 8-bit RGB PNG whose pixel (x, y) is `rgb(x, y)`. */
+  function png(rgb: (x: number, y: number) => [number, number, number]): Uint8Array {
+    const stride = 1 + width * 3;
+    const raw = new Uint8Array(height * stride);
+    for (let y = 0; y < height; y++) {
+      for (let x = 0; x < width; x++) raw.set(rgb(x, y), y * stride + 1 + x * 3);
+    }
+    const ihdr = new Uint8Array(13);
+    const view = new DataView(ihdr.buffer);
+    view.setUint32(0, width);
+    view.setUint32(4, height);
+    ihdr.set([8, 2, 0, 0, 0], 8); // 8 bits per sample, truecolor
+    return Buffer.concat([
+      Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+      pngChunk("IHDR", ihdr),
+      pngChunk("IDAT", deflateSync(raw)),
+      pngChunk("IEND", new Uint8Array(0)),
+    ]);
+  }
+
+  test("flat grey survives encode, decode, encode byte for byte", async () => {
+    // Every 8x8 block of a flat image is a lone DC coefficient, which quality
+    // 100 stores exactly, and a grey value converts to YCbCr and back exactly.
+    // So decoding the JPEG gives back the exact source pixels, and encoding
+    // them again has to reproduce the first file. That runs the colour
+    // conversion, downsampling, DCT, quantization and Huffman kernels on the
+    // encode side and the IDCT, upsampling and colour conversion kernels on the
+    // decode side, and checks their results, not just that they did not trap.
+    const first = await new Bun.Image(png(() => [77, 77, 77])).jpeg({ quality: 100 }).bytes();
+    const second = await new Bun.Image(first).jpeg({ quality: 100 }).bytes();
+    expect(first.subarray(0, 2)).toEqual(new Uint8Array([0xff, 0xd8]));
+    expect(second).toEqual(first);
+  });
+
+  test("gradient round-trips through baseline and progressive encoders", async () => {
+    // Non-flat content drives the AC coefficient paths of the Huffman kernels
+    // and of the progressive encoder's coefficient preparation.
+    const source = png((x, y) => [x * 3, y * 6, (x + y) & 0xff]);
+    for (const progressive of [false, true]) {
+      const jpeg = await new Bun.Image(source).jpeg({ quality: 90, progressive }).bytes();
+      expect(await new Bun.Image(jpeg).metadata()).toEqual({ width, height, format: "jpeg" });
+      const decoded = await new Bun.Image(jpeg).png().bytes();
+      expect(await new Bun.Image(decoded).metadata()).toEqual({ width, height, format: "png" });
+    }
   });
 });

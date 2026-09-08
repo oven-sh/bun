@@ -100,6 +100,26 @@ fn map_err(rc: i32) -> BackendError {
     }
 }
 
+/// Dimensions only: ImageIO parses the container header without running the codec.
+pub(crate) fn probe(bytes: &[u8], max_pixels: u64) -> Result<(u32, u32), BackendError> {
+    let mut w: u32 = 0;
+    let mut h: u32 = 0;
+    // SAFETY: bytes is a valid slice; out=null signals "probe only" to the shim.
+    match unsafe {
+        bun_coregraphics_decode(
+            bytes.as_ptr(),
+            bytes.len(),
+            max_pixels,
+            &raw mut w,
+            &raw mut h,
+            core::ptr::null_mut(),
+        )
+    } {
+        CG_OK => Ok((w, h)),
+        rc => Err(map_err(rc)),
+    }
+}
+
 pub(crate) fn decode(bytes: &[u8], max_pixels: u64) -> Result<codecs::Decoded, BackendError> {
     let mut w: u32 = 0;
     let mut h: u32 = 0;
@@ -119,8 +139,8 @@ pub(crate) fn decode(bytes: &[u8], max_pixels: u64) -> Result<codecs::Decoded, B
         CG_OK => {}
         rc => return Err(map_err(rc)),
     }
-    // PERF: vec![0u8; n] zero-fills — profile if hot.
-    let mut out = vec![0u8; (w as usize) * (h as usize) * 4];
+    let n = (w as usize) * (h as usize) * 4;
+    let mut out: Vec<u8> = Vec::with_capacity(n);
     // Phase 2: render. The C side re-creates the CGImageSource (cheap — the
     // header parse is the only repeated work) so we don't have to thread an
     // opaque handle across the boundary.
@@ -138,6 +158,8 @@ pub(crate) fn decode(bytes: &[u8], max_pixels: u64) -> Result<codecs::Decoded, B
         CG_OK => {}
         rc => return Err(map_err(rc)),
     }
+    // SAFETY: the shim returned CG_OK only after writing all n bytes.
+    unsafe { out.set_len(n) };
     Ok(codecs::Decoded {
         rgba: out,
         width: w,

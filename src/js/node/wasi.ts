@@ -401,11 +401,6 @@ var require_constants = __commonJS({
 // node_modules/wasi-js/dist/wasi.js
 var require_wasi = __commonJS({
   "node_modules/wasi-js/dist/wasi.js"(exports) {
-    var __importDefault =
-      (exports && exports.__importDefault) ||
-      function (mod) {
-        return mod && mod.__esModule ? mod : { default: mod };
-      };
     let fs;
     Object.defineProperty(exports, "__esModule", { value: true });
     var SC_OPEN_MAX = 32768;

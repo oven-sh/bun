@@ -87,7 +87,7 @@ JSSign* JSSign::create(JSC::VM& vm, JSC::Structure* structure)
 
 JSC::Structure* JSSign::createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
 {
-    return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
+    return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
 }
 
 template<typename CellType, JSC::SubspaceAccess mode>
@@ -95,12 +95,7 @@ JSC::GCClient::IsoSubspace* JSSign::subspaceFor(JSC::VM& vm)
 {
     if constexpr (mode == JSC::SubspaceAccess::Concurrently)
         return nullptr;
-    return WebCore::subspaceForImpl<JSSign, WebCore::UseCustomHeapCellType::No>(
-        vm,
-        [](auto& spaces) { return spaces.m_clientSubspaceForJSSign.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForJSSign = std::forward<decltype(space)>(space); },
-        [](auto& spaces) { return spaces.m_subspaceForJSSign.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_subspaceForJSSign = std::forward<decltype(space)>(space); });
+    return WebCore::subspaceForImpl<JSSign, WebCore::UseCustomHeapCellType::No>(vm, BUN_SUBSPACE_SLOTS(m_clientSubspaceForJSSign, m_subspaceForJSSign));
 }
 
 // JSSignPrototype implementation
@@ -113,8 +108,8 @@ JSSignPrototype::JSSignPrototype(JSC::VM& vm, JSC::Structure* structure)
 void JSSignPrototype::finishCreation(JSC::VM& vm)
 {
     Base::finishCreation(vm);
-    reifyStaticProperties(vm, JSSign::info(), JSSignPrototypeTableValues, *this);
-    JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
+    Bun::reifyStaticPropertyTable(vm, JSSign::info(), JSSignPrototypeTableValues, *this);
+    Bun::putToStringTagWithoutTransition(vm, this, info());
 }
 
 JSSignPrototype* JSSignPrototype::create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure)
@@ -126,7 +121,7 @@ JSSignPrototype* JSSignPrototype::create(JSC::VM& vm, JSC::JSGlobalObject* globa
 
 JSC::Structure* JSSignPrototype::createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
 {
-    auto* structure = JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
+    auto* structure = Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
     structure->setMayBePrototype(true);
     return structure;
 }
@@ -153,7 +148,7 @@ JSSignConstructor* JSSignConstructor::create(JSC::VM& vm, JSC::Structure* struct
 
 JSC::Structure* JSSignConstructor::createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
 {
-    return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::InternalFunctionType, StructureFlags), info());
+    return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::InternalFunctionType, StructureFlags), info());
 }
 
 // Prototype function implementations

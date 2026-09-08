@@ -1,5 +1,4 @@
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
-use bun_core::ZigString;
 
 use super::Expect;
 use super::get_signature;
@@ -41,12 +40,12 @@ pub(crate) fn to_throw_error_matching_snapshot(
     };
     let _ = &bun_test_strong;
 
-    let mut hint_string: ZigString = ZigString::EMPTY;
+    let mut hint_string = None;
     match arguments.len() {
         0 => {}
         1 => {
             if arguments[0].is_string() {
-                arguments[0].to_zig_string(&mut hint_string, global)?;
+                hint_string = Some(arguments[0].to_js_string_view(global)?);
             } else {
                 return throw!(
                     this,
@@ -66,7 +65,7 @@ pub(crate) fn to_throw_error_matching_snapshot(
         }
     }
 
-    let hint = hint_string.to_slice();
+    let hint = hint_string.as_ref().map_or(bun_core::Utf8Bytes::EMPTY, |s| s.to_utf8());
 
     let Some(value): Option<JSValue> = this.fn_to_err_string_or_undefined(
         global,

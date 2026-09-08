@@ -67,13 +67,9 @@ void reportException(JSGlobalObject* lexicalGlobalObject, JSC::Exception* except
     int lineNumber = 0;
     int columnNumber = 0;
     String exceptionSourceURL;
-    // if (auto* callFrame = callStack->firstNonNativeCallFrame()) {
-    //     lineNumber = callFrame->lineNumber();
-    //     columnNumber = callFrame->columnNumber();
-    //     exceptionSourceURL = callFrame->sourceURL();
-    // }
 
     Zig::GlobalObject::reportUncaughtExceptionAtEventLoop(globalObject, exception);
+    RETURN_IF_EXCEPTION(scope, );
 
     if (exceptionDetails) {
         auto errorMessage = retrieveErrorMessage(*lexicalGlobalObject, vm, exception->value(), scope);

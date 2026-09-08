@@ -247,10 +247,7 @@ impl GraphTraceState {
     }
 
     pub(crate) fn resize(&mut self, side: Side, new_size: usize) -> Result<(), crate::Error> {
-        let b = match side {
-            Side::Client => &mut self.client_bits,
-            Side::Server => &mut self.server_bits,
-        };
+        let b = self.bits(side);
         if b.unmanaged.bit_length < new_size {
             b.resize(new_size, false)?;
         }
@@ -278,11 +275,7 @@ pub mod route_bundle;
 pub mod serialized_failure;
 pub mod source_map_store;
 
-pub use assets::Assets;
-pub use incremental_graph::IncrementalGraph;
-pub use route_bundle::RouteBundle;
 pub use serialized_failure::SerializedFailure;
-pub use source_map_store::SourceMapStore;
 
 /// Local response trait — the response type is a generic bound.
 /// Method shapes mirror `bun_uws_sys::Response<SSL>` so the `R`-generic
@@ -292,14 +285,6 @@ pub trait ResponseLike {
     fn write_status(&mut self, status: &[u8]);
     fn end(&mut self, data: &[u8], close_connection: bool);
     fn as_any_response(&mut self) -> bun_uws::AnyResponse;
-    fn upgrade<D>(
-        &mut self,
-        data: D,
-        sec_web_socket_key: &[u8],
-        sec_web_socket_protocol: &[u8],
-        sec_web_socket_extensions: &[u8],
-        ctx: &mut bun_uws::WebSocketUpgradeContext,
-    );
 }
 
 // `AnyResponse` already type-erases SSL/TCP/H3 — it satisfies `resp: anytype`
@@ -315,23 +300,6 @@ impl ResponseLike for bun_uws::AnyResponse {
     }
     fn as_any_response(&mut self) -> bun_uws::AnyResponse {
         *self
-    }
-    fn upgrade<D>(
-        &mut self,
-        data: D,
-        sec_web_socket_key: &[u8],
-        sec_web_socket_protocol: &[u8],
-        sec_web_socket_extensions: &[u8],
-        ctx: &mut bun_uws::WebSocketUpgradeContext,
-    ) {
-        let boxed = bun_core::heap::into_raw(Box::new(data));
-        let _ = (*self).upgrade(
-            boxed,
-            sec_web_socket_key,
-            sec_web_socket_protocol,
-            sec_web_socket_extensions,
-            Some(ctx),
-        );
     }
 }
 
@@ -1029,24 +997,13 @@ pub struct DirectoryWatchStore {
     /// Dependencies cannot be re-ordered. This list tracks what indexes are free.
     pub(crate) dependencies_free_list: Vec<u32>,
 }
-impl DirectoryWatchStore {
-    /// Intrusive backref: recover `*mut DevServer`.
-    /// Returns a raw ptr (not `&mut DevServer`) because `&mut self` is live;
-    /// callers must scope their borrow of fields disjoint from
-    /// `directory_watchers` to avoid aliasing UB.
-    #[inline]
-    fn owner(&mut self) -> *mut DevServer {
-        // SAFETY: `DirectoryWatchStore` is only ever the `directory_watchers`
-        // field of a heap-allocated `DevServer` (never moved post-init).
-        unsafe {
-            bun_core::from_field_ptr!(
-                DevServer,
-                directory_watchers,
-                std::ptr::from_mut::<Self>(self)
-            )
-        }
-    }
+// SAFETY: `DirectoryWatchStore` is only ever the `directory_watchers` field of
+// a heap-allocated `DevServer` (never moved post-init). Raw ptr (not `&mut
+// DevServer`) because `&mut self` is live; callers scope their borrows to
+// fields disjoint from `directory_watchers`.
+bun_core::impl_field_parent! { DirectoryWatchStore => DevServer.directory_watchers; fn mut owner; }
 
+impl DirectoryWatchStore {
     /// Safe sibling-projection: borrow the owning [`DevServer`]'s
     /// `bun_watcher` while holding `&mut self`. The two fields are disjoint,
     /// so the returned `&mut Watcher` does not alias `self`.

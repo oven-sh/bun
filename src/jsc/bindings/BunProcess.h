@@ -98,8 +98,7 @@ public:
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject,
         JSC::JSValue prototype)
     {
-        return JSC::Structure::create(vm, globalObject, prototype,
-            JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
+        return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
     }
 
     static Process* create(WebCore::JSDOMGlobalObject& globalObject, JSC::Structure* structure)
@@ -117,12 +116,7 @@ public:
     {
         if constexpr (mode == JSC::SubspaceAccess::Concurrently)
             return nullptr;
-        return WebCore::subspaceForImpl<Process, WebCore::UseCustomHeapCellType::No>(
-            vm,
-            [](auto& spaces) { return spaces.m_clientSubspaceForProcessObject.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForProcessObject = std::forward<decltype(space)>(space); },
-            [](auto& spaces) { return spaces.m_subspaceForProcessObject.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_subspaceForProcessObject = std::forward<decltype(space)>(space); });
+        return WebCore::subspaceForImpl<Process, WebCore::UseCustomHeapCellType::No>(vm, BUN_SUBSPACE_SLOTS(m_clientSubspaceForProcessObject, m_subspaceForProcessObject));
     }
 
     void finishCreation(JSC::VM& vm);

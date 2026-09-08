@@ -411,16 +411,6 @@ pub struct CssModuleExport<'a> {
 ///
 /// See [CssModuleExport](CssModuleExport).
 pub enum CssModuleReference<'a> {
-    /// A local reference.
-    Local {
-        /// The local (compiled) name for the reference.
-        name: &'a [u8],
-    },
-    /// A global reference.
-    Global {
-        /// The referenced global name.
-        name: &'a [u8],
-    },
     /// A reference to an export in a different file.
     Dependency {
         /// The name to reference within the dependency.
@@ -430,27 +420,6 @@ pub enum CssModuleReference<'a> {
         /// import record idx
         specifier: &'a [u8],
     },
-}
-
-impl<'a> CssModuleReference<'a> {
-    pub fn eql(&self, other: &Self) -> bool {
-        match (self, other) {
-            (Self::Local { name: a }, Self::Local { name: b }) => a == b,
-            (Self::Global { name: a }, Self::Global { name: b }) => a == b,
-            // .dependency => |v| bun.strings.eql(v.name, other.dependency.name) and bun.strings.eql(v.specifier, other.dependency.specifier),
-            (
-                Self::Dependency {
-                    name: an,
-                    specifier: asp,
-                },
-                Self::Dependency {
-                    name: bn,
-                    specifier: bsp,
-                },
-            ) => an == bn && asp == bsp,
-            _ => false,
-        }
-    }
 }
 
 /// LAYERING: canonical implementation lives in `bun_base64::wyhash_url_safe`

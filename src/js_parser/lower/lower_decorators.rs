@@ -306,6 +306,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     target: target_expr,
                     index: key_expr,
                     optional_chain: None,
+                    is_import_property_use: false,
                 },
                 key_expr.loc,
             );
@@ -331,6 +332,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 target: target_expr,
                 index: key_expr,
                 optional_chain: None,
+                is_import_property_use: false,
             },
             key_expr.loc,
         )

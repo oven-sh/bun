@@ -71,9 +71,7 @@ let http1Fallback;
 const kConnectionsCheckingInterval = Symbol("http.server.connectionsCheckingInterval");
 const kTrackedConnections = Symbol("http.server.trackedConnections");
 const kPendingDrainClose = Symbol("http.server.pendingDrainClose");
-// Set once a socket is handed to 'connect'/'upgrade'. Node frees the parser
-// there, which takes the socket off the list that closeAllConnections() and
-// closeIdleConnections() iterate; it still counts as a connection for 'close'.
+// Set on the 'connect'/'upgrade' handoff; closeAll/closeIdleConnections() skip these, as in Node.
 const kHandedOff = Symbol("http.server.socketHandedOff");
 const kHttpAllowHalfOpen = Symbol("http.server.httpAllowHalfOpen");
 

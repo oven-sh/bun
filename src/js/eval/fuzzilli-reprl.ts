@@ -42,8 +42,7 @@ if (responseBytes !== 4) {
   throw new Error(`REPRL handshake failed: expected 4 bytes, got ${responseBytes}`);
 }
 
-// Fuzzed scripts must not end the REPRL child, or signal it, the fuzzer (its
-// parent) or the other REPRL children in the same process group.
+// Likewise for exiting, and for signalling this process, the fuzzer, or sibling REPRL children.
 process.exit = process.reallyExit = () => {};
 process.kill = () => true;
 process._kill = () => 0;

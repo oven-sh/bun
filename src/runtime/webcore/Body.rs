@@ -370,6 +370,24 @@ impl PendingValue {
         None
     }
 
+    /// [`Self::to_any_blob`] for `clone()`: the stream is the wrapper's cached
+    /// `.body` when there is one, and it is detached afterwards so a reference
+    /// the caller still holds reads as locked, the state a tee leaves it in.
+    fn take_blob_from_unread_stream(
+        &mut self,
+        global: &JSGlobalObject,
+        cached: Option<ReadableStream>,
+    ) -> Option<AnyBlob> {
+        if self.promise.is_some() || self.on_receive_value.is_some() {
+            return None;
+        }
+        let mut stream = cached.or_else(|| self.readable.get())?;
+        let blob = stream.to_any_blob(global)?;
+        stream.force_detach(global);
+        self.readable.deinit();
+        Some(blob)
+    }
+
     fn set_promise(
         &mut self,
         global_this: &JSGlobalObject,
@@ -1526,11 +1544,16 @@ impl Value {
         global_this: &JSGlobalObject,
         readable: Option<&mut ReadableStream>,
     ) -> JsResult<Value> {
-        // Tee a Locked body before any blob extraction: `to_blob_if_possible()`
-        // would `.done()` an already-materialized `.body` stream, leaving the
-        // user-visible cached stream empty instead of a live tee branch.
-        if matches!(self, Value::Locked(_)) {
-            return self.tee(global_this, readable);
+        // A native blob, file, or fully buffered byte stream that nothing has
+        // read goes back to being a Blob, so both bodies share one store (and
+        // its type) instead of pumping the bytes through a JS tee. The owner
+        // must then drop its cached `.body` (`sync_body_stream_caches`).
+        // Anything else is teed.
+        if let Value::Locked(locked) = self {
+            match locked.take_blob_from_unread_stream(global_this, readable.as_deref().copied()) {
+                Some(blob) => *self = Value::from(blob),
+                None => return self.tee(global_this, readable),
+            }
         }
 
         self.to_blob_if_possible();
@@ -1651,9 +1674,29 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
         }
     }
 
+    /// After `clone()` replaced this body's stream: point the wrapper's cached
+    /// `body` at the tee branch now in `Locked.readable`, or, when the clone
+    /// moved an unread native stream back into a Blob, forget the detached
+    /// stream so `.body` is rebuilt from that Blob.
+    fn sync_body_stream_caches(&self, this_value: JSValue, global_this: &JSGlobalObject) {
+        match self.get_body_value() {
+            Value::Locked(locked) => {
+                if let Some(readable) = locked.readable.get() {
+                    Self::body_set_cached(this_value, global_this, readable.value);
+                }
+            }
+            _ => {
+                if Self::stream_get_cached(this_value).is_some() {
+                    Self::stream_set_cached(this_value, global_this, JSValue::ZERO);
+                    Self::body_set_cached(this_value, global_this, JSValue::ZERO);
+                }
+            }
+        }
+    }
+
     /// Shared tail of `do_clone`: after the clone's `to_js` ran
     /// `check_body_stream_ref`, sync both wrappers' cached `body` slots to
-    /// their respective teed streams, then migrate the original's
+    /// their respective streams, then migrate the original's
     /// `Locked.readable` into its own `js.gc.stream`.
     fn sync_cloned_body_stream_caches(
         &self,
@@ -1666,17 +1709,13 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
                 Self::body_set_cached(js_wrapper, global_this, cloned_stream);
             }
         }
-        if let Value::Locked(locked) = self.get_body_value() {
-            if let Some(readable) = locked.readable.get() {
-                Self::body_set_cached(this_value, global_this, readable.value);
-            }
-        }
+        self.sync_body_stream_caches(this_value, global_this);
         self.check_body_stream_ref(global_this);
     }
 
-    /// Shared body-clone for `clone_into` / `clone_value`: tee through the
-    /// JS-side cached stream when present, then repoint this owner's
-    /// `body`/`stream` cache slots at the fresh branch in `locked.readable`.
+    /// Shared body-clone for `clone_into` / `clone_value`: clone through the
+    /// JS-side cached stream when present, then resync this owner's
+    /// `body`/`stream` cache slots with whatever the body now holds.
     fn clone_body_value_via_cached_stream(&self, global_this: &JSGlobalObject) -> JsResult<Value> {
         let cloned = 'brk: {
             if let Some(js_ref) = self.js_ref() {
@@ -1692,11 +1731,7 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
             self.get_body_value().clone(global_this)?
         };
         if let Some(js_ref) = self.js_ref() {
-            if let Value::Locked(locked) = self.get_body_value() {
-                if let Some(readable) = locked.readable.get() {
-                    Self::body_set_cached(js_ref, global_this, readable.value);
-                }
-            }
+            self.sync_body_stream_caches(js_ref, global_this);
         }
         self.check_body_stream_ref(global_this);
         Ok(cloned)

@@ -85,4 +85,30 @@ describe.concurrent("run-extensionless", () => {
       expect(exitCode).toBe(0);
     });
   }
+
+  // The override also reaches an extensionless entry point. `<T>(x: T) => x` is
+  // a generic arrow to the ts loader and an unclosed tag to the tsx loader, so
+  // it parses only when the mapping took effect.
+  for (const [via, files, args] of [
+    ["--loader :", {}, ["--loader=:ts"]],
+    ["bunfig [loader]", { "bunfig.toml": `[loader]\n"" = "ts"\n` }, []],
+  ] as const) {
+    test(`${via} overrides the loader for an extensionless entry point`, async () => {
+      using dir = tempDir("run-extensionless-entry-override", {
+        ...files,
+        "cool": `const id = <T>(x: T) => x; console.log(id("hello world"));`,
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), ...args, "./cool"],
+        cwd: String(dir),
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("hello world\n");
+      expect(exitCode).toBe(0);
+    });
+  }
 });

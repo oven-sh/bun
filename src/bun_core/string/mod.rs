@@ -845,7 +845,8 @@ impl String {
     /// `ascii` in either case.
     #[inline]
     pub fn starts_with_ascii_case_insensitive(&self, ascii: &[u8]) -> bool {
-        self.to_encoded_slice().starts_with_ascii_case_insensitive(ascii)
+        self.to_encoded_slice()
+            .starts_with_ascii_case_insensitive(ascii)
     }
 
     /// True when `self` holds no string: [`Tag::Dead`] or [`Tag::OutOfMemory`].
@@ -1422,7 +1423,10 @@ impl<'a> EncodedSlice<'a> {
 
     /// Encoding-aware ASCII prefix check that ignores ASCII letter case.
     pub fn starts_with_ascii_case_insensitive(self, ascii: &[u8]) -> bool {
-        debug_assert!(ascii.is_ascii(), "starts_with_ascii_case_insensitive expects ASCII");
+        debug_assert!(
+            ascii.is_ascii(),
+            "starts_with_ascii_case_insensitive expects ASCII"
+        );
         if self.is_16bit() {
             return immutable::has_prefix_case_insensitive_t(self.utf16_slice(), ascii);
         }

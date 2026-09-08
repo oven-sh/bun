@@ -1830,9 +1830,7 @@ where
         let mut sec_websocket_version = Utf8Bytes::EMPTY;
         let mut upgrade_header = Utf8Bytes::EMPTY;
 
-        // Read the handshake only from `request.headers`, the view the handler
-        // can edit. The raw uws request disagrees with it on repeated and
-        // deleted fields.
+        // The handshake is what `request.headers` says, never the raw uws request.
         let Some(head) = request.get_fetch_headers_unless_empty() else {
             return Ok(JSValue::FALSE);
         };
@@ -1986,8 +1984,7 @@ where
         let signal = upgrader.signal.take();
         upgrader.resp.set(None);
 
-        // Snapshot the lazy url before detaching (the headers were materialized
-        // above), as to_async_without_abort_handler does.
+        // Snapshot the lazy url before detaching (mirrors to_async_without_abort_handler).
         // SAFETY: re-derived after the JS-running option getters above; still
         // the live JsClass payload for `object`.
         let request = unsafe { &*request_ptr };

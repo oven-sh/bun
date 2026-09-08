@@ -1199,6 +1199,20 @@ pub enum StrictModeKind {
     ImplicitStrictModeExport,
     ImplicitStrictModeTopLevelAwait,
     ImplicitStrictModeClass,
+    /// Strict only because ".mjs"/".mts" or package.json "type": "module"
+    /// forces ESM. Errors under this kind are deferred until `exports_kind`
+    /// is known and emitted only for `ExportsKind::Esm`; every other
+    /// classification executes as sloppy CommonJS and discards them.
+    ImplicitStrictModeModuleType,
+}
+
+impl StrictModeKind {
+    /// Final strictness. `ImplicitStrictModeModuleType` is provisional until
+    /// `exports_kind` is classified, so structural decisions made before then
+    /// (Annex B hoisting, mapped `arguments`) treat it as sloppy.
+    pub fn is_settled_strict(self) -> bool {
+        !matches!(self, Self::SloppyMode | Self::ImplicitStrictModeModuleType)
+    }
 }
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq, strum::IntoStaticStr)]

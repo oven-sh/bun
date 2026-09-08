@@ -186,7 +186,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         // A sloppy-mode function with a simple parameter list has a mapped
         // `arguments` object: `arguments[0] = v` rebinds the first parameter.
-        if !self.is_strict_mode()
+        if !self.is_settled_strict_mode()
             && func.arguments_ref.is_valid()
             && self.symbols[func.arguments_ref.inner_index() as usize].use_count_estimate > 0
             && Self::is_simple_parameter_list(

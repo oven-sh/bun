@@ -306,8 +306,9 @@ function hasNoGlobMagic(pattern: string) {
 function discoverRunFiles(opts: ReturnType<typeof validateRunOptions>): string[] {
   const path = require("node:path");
   const cwd = opts.cwd as string;
-  const files = opts.files as string[] | undefined;
-  if (files !== undefined) {
+  // Validation accepts null as "not given" (files != null), like node's runner.
+  const files = opts.files as string[] | null | undefined;
+  if (files != null) {
     function resolveFromCwd(file: string) {
       return path.resolve(cwd, file);
     }
@@ -399,7 +400,7 @@ async function runFiles(opts: ReturnType<typeof validateRunOptions>, reporter: T
   try {
     if (typeof opts.setup === "function") await opts.setup(reporter);
 
-    const files = opts.files !== undefined ? (opts.files as string[]) : discoverRunFiles(opts);
+    const files = opts.files != null ? (opts.files as string[]) : discoverRunFiles(opts);
     function onInterrupt() {
       state.interrupted = true;
       state.childProc?.kill();

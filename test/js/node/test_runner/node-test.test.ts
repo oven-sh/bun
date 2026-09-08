@@ -1230,6 +1230,54 @@ test.concurrent("junit reporter escapes attribute quotes exactly like node", asy
   expect(stdout).toContain('name="line1&#10;line2 &amp;quot;q&amp;quot; &amp; &lt;angle>"');
 });
 
+test.concurrent("spec and dot reporters emit node's color codes and nothing else", async () => {
+  // The reporters read gray, yellow and reset off internal/util/colors. When
+  // that module lacked them every test line carried a literal "undefined"
+  // (`✔ passes undefined(1.2ms)`, `.undefined` per dot). Expected bytes are
+  // node v26.3.0's for the same fixture, with durations stripped (node also
+  // times a skipped test, bun reports it without a duration).
+  using dir = tempDir("node-test-reporter-colors", {
+    "g.test.mjs": `
+      import { test } from 'node:test';
+      test('passes', () => {});
+      test('skipped', { skip: 'why' }, () => {});
+      test('todo fails', { todo: 'later' }, () => { throw new Error('x'); });
+    `,
+  });
+  async function report(reporter: string, color: boolean) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "--test", `--test-reporter=${reporter}`, "g.test.mjs"],
+      env: color ? { ...bunEnv, NO_COLOR: undefined, FORCE_COLOR: "1" } : bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return stdout.replace(/ (?:\x1b\[90m)?\(\d+(?:\.\d+)?ms\)(?:\x1b\[39m)?/g, "").split("\n");
+  }
+  const [specPlain, specColor, dotPlain, dotColor] = await Promise.all([
+    report("spec", false),
+    report("spec", true),
+    report("dot", false),
+    report("dot", true),
+  ]);
+  expect({
+    specPlain: specPlain.slice(0, 3),
+    specColor: specColor.slice(0, 3),
+    dotPlain: dotPlain[0],
+    dotColor: dotColor[0],
+  }).toEqual({
+    specPlain: ["✔ passes", "﹣ skipped # why", "⚠ todo fails # later"],
+    specColor: [
+      "\x1b[32m✔ passes\x1b[39m",
+      "\x1b[90m﹣ skipped # why\x1b[39m",
+      "\x1b[33m⚠ todo fails # later\x1b[39m",
+    ],
+    dotPlain: "..X",
+    dotColor: "\x1b[32m.\x1b[0m\x1b[32m.\x1b[0m\x1b[31mX\x1b[0m",
+  });
+});
+
 test.concurrent.each([
   ["process", ""],
   ["none", ", isolation: 'none'"],
@@ -1501,6 +1549,46 @@ test.concurrent("run({globPatterns}): literal entries follow node's createTestFi
       directory: { pass: ["a"], fail: [], success: true, error: null },
       missing: { pass: [], fail: [], success: null, error: "Could not find './nope.mjs'" },
     },
+    stderr: "",
+    exitCode: 0,
+  });
+});
+
+test.concurrent.each([
+  ["process", ""],
+  ["none", ", isolation: 'none'"],
+] as const)("run({files: null}) with %s isolation discovers files like node", async (_label, isolationArg) => {
+  // Validation accepts null as "not given" (node: files != null), but both
+  // consumers compared against undefined, so null reached .map/.length and the
+  // stream errored with a TypeError instead of running default discovery.
+  using dir = tempDir("node-test-files-null", {
+    "tests/a.test.mjs": `
+      import { test } from 'node:test';
+      test('a', () => {});
+    `,
+    "driver.mjs": `
+      import { run } from 'node:test';
+      const out = { pass: [], error: null };
+      try {
+        const stream = run({ files: null, cwd: import.meta.dirname${isolationArg} });
+        stream.on('test:pass', t => out.pass.push(t.name.split(/[\\\\/]/).pop()));
+        for await (const _ of stream);
+      } catch (err) {
+        out.error = String(err);
+      }
+      console.log(JSON.stringify(out));
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "run", join(String(dir), "driver.mjs")],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ result: JSON.parse(stdout.trim() || "null"), stderr, exitCode }).toEqual({
+    result: { pass: ["a"], error: null },
     stderr: "",
     exitCode: 0,
   });

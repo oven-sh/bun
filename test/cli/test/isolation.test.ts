@@ -1167,6 +1167,68 @@ describe.concurrent("--isolate: a finished file's late completions do not run in
     if (exitCode !== 0) expect(stderr).toBe("");
     expect(exitCode).toBe(0);
   });
+
+  // A FinalizationRegistry cleanup that a finished file created reaches none of
+  // the checks above: JSC calls it directly from a DeferredWorkTimer job, not
+  // through a microtask, a Job or run_callback. The cleanup ran in the retired
+  // realm while a later file executed, and an error it threw was charged to
+  // that later file (which then lost its remaining tests to "Cannot call test()
+  // after the test run has completed"). The retired realm now reports its
+  // script execution as stopped, so Bun drops the job, as JSC's own
+  // DeferredWorkTimer::doWork does for a stopped realm.
+  test("a finished file's FinalizationRegistry cleanup does not run in the next file", async () => {
+    using dir = tempDir("isolate-finalization-registry", {
+      "a-registry.test.ts": `
+        import { test, expect } from "bun:test";
+        import { existsSync, writeFileSync } from "node:fs";
+        import { join } from "node:path";
+
+        const dir = import.meta.dir;
+        // The cleanup only acts once b-registry.test.ts says it is running, and it
+        // registers fresh garbage each time, so this registry has dead entries at
+        // every collection for as long as its realm is alive.
+        const registry = new FinalizationRegistry(() => {
+          if (existsSync(join(dir, "b-running"))) writeFileSync(join(dir, "a-acted"), "");
+          registry.register({}, 0);
+        });
+
+        test("registers objects that die at once", () => {
+          for (let i = 0; i < 200; i++) registry.register({ i }, i);
+          expect(existsSync(join(dir, "b-running"))).toBe(false);
+        });
+      `,
+      "b-registry.test.ts": `
+        import { test, expect } from "bun:test";
+        import { existsSync, writeFileSync } from "node:fs";
+        import { join } from "node:path";
+
+        const dir = import.meta.dir;
+        writeFileSync(join(dir, "b-running"), "");
+
+        test("A's FinalizationRegistry cleanup does not run here", async () => {
+          // Collect, then round-trip the thread pool, so a cleanup A left queued gets
+          // every chance to land here.
+          for (let i = 0; i < 20 && !existsSync(join(dir, "a-acted")); i++) {
+            Bun.gc(true);
+            await Bun.password.hash("pw", { algorithm: "bcrypt", cost: 4 });
+          }
+          expect(existsSync(join(dir, "a-acted"))).toBe(false);
+        });
+      `,
+    });
+    const { stderr, exitCode } = await runTests(
+      String(dir),
+      ["--isolate"],
+      ["./a-registry.test.ts", "./b-registry.test.ts"],
+      // A collects between its last drain and the swap, which is when the cleanup it
+      // leaves behind is queued. Natural GC timing does that only sometimes.
+      { ...bunEnv, BUN_JSC_collectContinuously: "1" },
+    );
+    expect(normalizeBunSnapshot(stderr, dir)).toContain("2 pass");
+    expect(normalizeBunSnapshot(stderr, dir)).toContain("0 fail");
+    if (exitCode !== 0) expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+  });
 });
 
 // Each of these leaked handles used to pin its test file's ENTIRE global

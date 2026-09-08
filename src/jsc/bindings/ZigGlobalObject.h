@@ -870,6 +870,13 @@ ALWAYS_INLINE void* vm(JSC::JSGlobalObject* lexicalGlobalObject)
     return WebCore::clientData(lexicalGlobalObject->vm())->bunVM;
 }
 
+// A realm that `bun test --isolate` retired because its file finished
+// (Zig__GlobalObject__retireForTestIsolation). Nothing enters its script again.
+ALWAYS_INLINE bool isRetiredTestIsolationRealm(const JSC::JSGlobalObject* globalObject)
+{
+    return globalObject->microtaskRunnability() == JSC::QueuedTaskResult::Discard;
+}
+
 }
 
 #ifndef RENAMED_JSDOM_GLOBAL_OBJECT

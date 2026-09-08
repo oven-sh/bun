@@ -1071,9 +1071,7 @@ pub fn loaders_from_transform_options(
         }
     }
 
-    // A file with no extension (`bin/cli`, `./tool`) is source code, at runtime
-    // and in `bun build` alike. `PathName::ext` is `""` for such a file, so the
-    // empty key is its entry. `--loader :<name>` overrides it.
+    // Files with no extension (`bin/cli`): `PathName::ext` is `""` for them.
     if !loaders.contains(b"") {
         loaders.insert(b"", Loader::Tsx);
     }

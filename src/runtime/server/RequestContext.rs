@@ -4271,7 +4271,9 @@ where
                 if matches!(old, Body::Value::Locked(_)) {
                     let _exit = vm.enter_event_loop_scope();
 
-                    let _ = Body::Value::resolve(&mut old, body, global_this); // TODO: properly propagate exception upwards
+                    if let Err(err) = Body::Value::resolve(&mut old, body, global_this) {
+                        this.run_error_handler(global_this.take_exception(err));
+                    }
                 }
                 return;
             }
@@ -4430,8 +4432,11 @@ where
                     }
                     let mut new_body: Body::Value = Body::Value::Null;
                     let global_this = server.global_this();
-                    let _ = Body::Value::resolve(&mut old, &mut new_body, global_this); // TODO: properly propagate exception upwards
+                    let resolved = Body::Value::resolve(&mut old, &mut new_body, global_this);
                     *body = new_body;
+                    if let Err(err) = resolved {
+                        self.run_error_handler(global_this.take_exception(err));
+                    }
                 }
             }
         }

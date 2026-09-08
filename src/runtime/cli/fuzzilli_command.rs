@@ -1,8 +1,4 @@
-//! `bun fuzzilli`: the REPRL child the Fuzzilli fuzzer drives (protocol:
-//! googleprojectzero/fuzzilli Targets/README.md). fd 100 in: `HELO`, then per
-//! program `exec` + u64 length. fd 101 out: `HELO`, then per program a u32
-//! status (`exit_code << 8`). fd 102 in: program source. fd 103 out:
-//! `FUZZILLI_PRINT`. Every program runs on a fresh global, as in jsc and d8.
+//! `bun fuzzilli`: Fuzzilli's REPRL child (googleprojectzero/fuzzilli, Targets/README.md).
 
 use bun_core::{Environment, Global};
 
@@ -54,7 +50,7 @@ mod reprl {
     /// libreprl's `REPRL_MAX_DATA_SIZE`.
     const MAX_PROGRAM_SIZE: u64 = 16 << 20;
 
-    /// Per program. Fuzzilli's timeout for a whole program is 2500 ms.
+    /// Per program, whose loop may never end by itself. Fuzzilli's own timeout is 2500 ms.
     const EVENT_LOOP_BUDGET_MS: i64 = 250;
 
     /// Runs first on every global. A real `process.execve` replaces the child.
@@ -214,9 +210,7 @@ mod reprl {
         ok
     }
 
-    /// Microtasks, timers and I/O, for at most `EVENT_LOOP_BUDGET_MS`: a server
-    /// or interval the program leaves behind would keep the loop alive forever,
-    /// and the reset that follows stops those anyway.
+    /// The program's microtasks, timers and I/O, for at most `EVENT_LOOP_BUDGET_MS`.
     fn run_event_loop(vm: &mut VirtualMachine) {
         let deadline = bun_core::Timespec::now(bun_core::TimespecMockMode::ForceRealTime)
             .add_ms(EVENT_LOOP_BUDGET_MS);

@@ -1133,10 +1133,7 @@ unsafe fn auto_tick_active(vm: *mut VirtualMachine) {
     unsafe { auto_tick_active_with_max_wait(vm, None) }
 }
 
-/// [`auto_tick_active`], but the I/O poll blocks for at most `max_wait`.
-///
-/// # Safety
-/// `vm` is the live per-thread VM.
+/// [`auto_tick_active`] with the I/O poll capped at `max_wait`. Safety: as [`auto_tick_active`].
 pub(crate) unsafe fn auto_tick_active_with_max_wait(
     vm: *mut VirtualMachine,
     max_wait: Option<&bun_core::Timespec>,

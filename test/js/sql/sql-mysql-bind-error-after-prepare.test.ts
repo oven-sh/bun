@@ -1,10 +1,12 @@
-// A parameter whose conversion throws in JS (a BigInt inside an object that is
-// JSON-serialised, a cyclic object, a throwing toJSON) is only converted after
-// the server answers COM_STMT_PREPARE. On a statement text that is not yet in
-// the prepared-statement cache, that bind runs from the queue (PREPARE_OK ->
+// A parameter whose conversion throws (a BigInt inside an object that is
+// JSON-serialised, a cyclic object, a throwing toJSON, a Date outside the
+// DATETIME encoder's range) is only converted after the server answers
+// COM_STMT_PREPARE. On a statement text that is not yet in the
+// prepared-statement cache, that bind runs from the queue (PREPARE_OK ->
 // advance -> run), not from the JS caller. The error raised there must reach
-// the query's reject path: before the fix the promise never settled and the
-// connection stayed checked out (sql.begin hung the whole pool).
+// the query's reject path: before the fix the promise never settled, the
+// connection stayed checked out (sql.begin hung the whole pool), and
+// sql.close() never resolved.
 //
 // The mock server is here so the test runs without docker; the same sequence
 // happens against a real MySQL server, see the matching test in
@@ -77,6 +79,10 @@ test("MySQL: a bind error after PREPARE_OK rejects the query instead of hanging 
         next: () => sql\`select \${"fine"} as v\`,
         inTransaction: () => sql.begin(tx => tx\`select \${{ big: 1n }} as intx\`),
         afterTransaction: () => sql\`select \${"after"} as v\`,
+        // Not a JSON error: the DATETIME encoder's own range check throws
+        // from the same bind step (year 275760 fits no MySQL date type).
+        dateOutOfRange: () => sql\`select \${new Date(8.64e15)} as far\`,
+        close: () => sql.close(),
       };
       const out = {};
       for (const [name, step] of Object.entries(steps)) {
@@ -110,6 +116,8 @@ test("MySQL: a bind error after PREPARE_OK rejects the query instead of hanging 
         next: "resolved",
         inTransaction: "rejected: JSON.stringify cannot serialize BigInt.",
         afterTransaction: "resolved",
+        dateOutOfRange: expect.stringMatching(/^rejected: .*(DATETIME|out of range)/),
+        close: "resolved",
       },
       // The two healthy queries are the only COM_STMT_EXECUTEs on the wire;
       // every failed bind leaves its prepared statement unexecuted.
@@ -121,6 +129,7 @@ test("MySQL: a bind error after PREPARE_OK rejects the query instead of hanging 
       "select ? as t",
       "select ? as v",
       "select ? as intx",
+      "select ? as far",
     ]);
     expect(exitCode).toBe(0);
   } finally {

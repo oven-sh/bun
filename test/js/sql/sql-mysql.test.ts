@@ -1205,6 +1205,11 @@ if (isDockerEnabled()) {
             await sql.begin(tx => tx`select ${{ big: 1n }} as bind_error_in_tx`).catch((e: any) => e.message),
           ).toBe("JSON.stringify cannot serialize BigInt.");
           expect(await sql`select ${"after"} as v`).toEqual([{ v: "after" }]);
+          // The DATETIME encoder's range check throws from the same bind step.
+          expect(await sql`select ${new Date(8.64e15)} as bind_error_date`.catch((e: any) => e.message)).toMatch(
+            /DATETIME|out of range/,
+          );
+          expect(await sql`select ${"last"} as v`).toEqual([{ v: "last" }]);
         });
 
         test("flush should work", async () => {

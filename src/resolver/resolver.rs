@@ -6738,14 +6738,10 @@ fn is_dot_slash(path: &[u8]) -> bool {
     }
 }
 
-/// True for an open directory that is both world-writable and sticky (mode
-/// `1777`: `/tmp`, `/var/tmp`, `/dev/shm`), or whose mode cannot be read.
-///
-/// Every user on the system can create a file in such a directory, so a file
-/// found there during the upward walk can belong to anyone. The sticky bit is
-/// the boundary that matters: a world-writable directory without it lets the
-/// same attacker rename the project itself, so nothing in the subtree is
-/// trustworthy either way.
+/// True when every user can create a file in the open directory `dir` (mode
+/// `1777`, world-writable and sticky: `/tmp`, `/var/tmp`, `/dev/shm`), or when
+/// its mode cannot be read. Without the sticky bit any user could also rename
+/// the project below it, so that case gets no check of its own.
 fn is_shared_scratch_dir(dir: FD) -> bool {
     #[cfg(unix)]
     {

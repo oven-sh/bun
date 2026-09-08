@@ -219,11 +219,24 @@ impl SSLConfigFromJs for SSLConfig {
             || result.session_timeout != 0
             || result.allow_partial_trust_chain;
 
+        // The SSL_CTX holds one identity per key type, so a file and an inline
+        // value for the same slot cannot both be used; refuse instead of
+        // serving whichever one the builder happens to load.
         if let Some(key_file) = generated.key_file.as_ref() {
+            if result.key.is_some() {
+                return Err(global.throw_invalid_arguments(format_args!(
+                    "TLSOptions.key and TLSOptions.keyFile cannot both be set. Pass the file as key: Bun.file(path) instead."
+                )));
+            }
             result.key_file_name = handle_path(global, "keyFile", key_file)?;
             result.requires_custom_request_ctx = true;
         }
         if let Some(cert_file) = generated.cert_file.as_ref() {
+            if result.cert.is_some() {
+                return Err(global.throw_invalid_arguments(format_args!(
+                    "TLSOptions.cert and TLSOptions.certFile cannot both be set. Pass the file as cert: Bun.file(path) instead."
+                )));
+            }
             result.cert_file_name = handle_path(global, "certFile", cert_file)?;
             result.requires_custom_request_ctx = true;
         }

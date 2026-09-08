@@ -232,6 +232,56 @@ describe("certificate authority", () => {
     expect(err).not.toContain("error:");
     expect(await exited).toBe(0);
   });
+  test("--ca is trusted in addition to a cafile from bunfig", async () => {
+    // The registry's certificate is only in --ca; the bunfig cafile holds an
+    // unrelated CA. Both are one trust list, so the CLI flag is not shadowed
+    // by the config file.
+    using server = Bun.serve({
+      port: 0,
+      fetch: mockRegistryFetch(),
+      ...tls,
+    });
+    await Promise.all([
+      write(
+        packageJson,
+        JSON.stringify({
+          name: "foo",
+          version: "1.1.1",
+          dependencies: {
+            "no-deps": `https://localhost:${server.port}/no-deps-1.0.0.tgz`,
+          },
+        }),
+      ),
+      write(
+        join(packageDir, "bunfig.toml"),
+        Bun.TOML.stringify({
+          install: {
+            cache: false,
+            registry: `https://localhost:${server.port}/`,
+            cafile: "unrelated-ca.pem",
+          },
+        }),
+      ),
+      write(
+        join(packageDir, "unrelated-ca.pem"),
+        file(join(import.meta.dir, "..", "..", "js", "node", "tls", "fixtures", "ca1-cert.pem")),
+      ),
+    ]);
+
+    const { stdout, stderr, exited } = spawn({
+      cmd: [bunExe(), "install", "--ca", tls.cert],
+      cwd: packageDir,
+      stderr: "pipe",
+      stdout: "pipe",
+      env,
+    });
+    const out = await stdout.text();
+    const err = await stderr.text();
+    expect(err).not.toContain("DEPTH_ZERO_SELF_SIGNED_CERT");
+    expect(err).not.toContain("error:");
+    expect(out).toContain("+ no-deps@");
+    expect(await exited).toBe(0);
+  });
   test(`non-existent --cafile`, async () => {
     await write(packageJson, JSON.stringify({ name: "foo", version: "1.0.0", "dependencies": { "no-deps": "1.1.1" } }));
 

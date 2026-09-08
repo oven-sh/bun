@@ -1091,7 +1091,7 @@ describe("Bun.build compile optimize", () => {
     const entry = flags.includes("--format=cjs") ? "entry-cjs.ts" : "entry.ts";
     await Bun.write(
       join(String(dir), "entry-cjs.ts"),
-      files["entry.ts"].replace("(await import(\"./lazy\")).lazy()", "require(\"./lazy\").lazy()"),
+      files["entry.ts"].replace('(await import("./lazy")).lazy()', 'require("./lazy").lazy()'),
     );
     await using build = Bun.spawn({
       cmd: [bunExe(), "build", "--compile", "--bytecode", ...flags, entry, "--outfile", outfile],

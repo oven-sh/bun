@@ -517,7 +517,9 @@ pub fn initialize(options: InitializeOptions) {
             options.eval_mode,
             options.one_shot,
             options.short_lived_globals,
-            options.startup_jit_deferral_max_ms.map_or(0, |ms| i32::try_from(ms).unwrap_or(i32::MAX)),
+            options
+                .startup_jit_deferral_max_ms
+                .map_or(0, |ms| i32::try_from(ms).unwrap_or(i32::MAX)),
         )
     };
 }

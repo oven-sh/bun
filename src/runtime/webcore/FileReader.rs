@@ -774,7 +774,9 @@ impl FileReader {
     fn note_first_stdin_data(&self) {
         if self.ends_startup_jit_deferral.get() {
             self.ends_startup_jit_deferral.set(false);
-            self.parent_global().vm().end_startup_jit_deferral_because(c"first stdin data");
+            self.parent_global()
+                .vm()
+                .end_startup_jit_deferral_because(c"first stdin data");
         }
     }
 

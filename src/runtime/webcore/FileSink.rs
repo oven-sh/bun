@@ -1058,7 +1058,8 @@ impl FileSink {
         if self.ends_startup_jit_deferral.get() {
             self.ends_startup_jit_deferral.set(false);
             if let Some(vm) = self.js_vm() {
-                vm.jsc_vm().end_startup_jit_deferral_because(c"first write to stdout/stderr");
+                vm.jsc_vm()
+                    .end_startup_jit_deferral_because(c"first write to stdout/stderr");
             }
         }
     }

@@ -735,10 +735,7 @@ mod elf {
             )
         };
         let wanted = UFFD_FEATURE_WP_ASYNC | UFFD_FEATURE_WP_UNPOPULATED;
-        if rc != 0
-            || (api.features & wanted) != wanted
-            || (api.ioctls & UFFDIO_REGISTER_BIT) == 0
-        {
+        if rc != 0 || (api.features & wanted) != wanted || (api.ioctls & UFFDIO_REGISTER_BIT) == 0 {
             bun_core::scoped_log!(
                 super::StandaloneModuleGraph,
                 "noFaultAround: UFFDIO_API rc={} errno={} features={:#x} ioctls={:#x}",
@@ -3083,7 +3080,9 @@ impl StandaloneModuleGraph {
     fn disable_payload_fault_around(&self) {
         #[cfg(target_os = "linux")]
         {
-            let mode = bun_core::env_var::BUN_STANDALONE_NO_FAULTAROUND.get().unwrap_or(1);
+            let mode = bun_core::env_var::BUN_STANDALONE_NO_FAULTAROUND
+                .get()
+                .unwrap_or(1);
             if mode == 0
                 || bun_core::env_var::feature_flag::BUN_FEATURE_FLAG_DISABLE_STANDALONE_MADVISE::get()
                     .unwrap_or(false)
@@ -3134,7 +3133,9 @@ impl StandaloneModuleGraph {
                 let (lo, hi) = ((lo + page - 1) & !(page - 1), hi & !(page - 1));
                 if lo < hi {
                     // SAFETY: page-aligned range inside the mapped executable image; only sets a VMA flag.
-                    unsafe { libc::madvise(lo as *mut core::ffi::c_void, hi - lo, libc::MADV_NOHUGEPAGE) };
+                    unsafe {
+                        libc::madvise(lo as *mut core::ffi::c_void, hi - lo, libc::MADV_NOHUGEPAGE)
+                    };
                 }
             }
             if mode == 1

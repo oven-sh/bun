@@ -1978,6 +1978,33 @@ describe.concurrent("bins", () => {
     ]);
   });
 
+  // npm skips a `bin` entry that is not a regular file. It must not fail the pack either.
+  test("that name a directory or nothing are ignored", async () => {
+    using dir = tempDir("pack-bins-not-files", {
+      "package.json": JSON.stringify({
+        name: "pack-bins-not-files",
+        version: "1.0.0",
+        bin: { "a-directory": "lib", "empty": "", "real": "real-bin.js" },
+      }),
+      "index.js": "console.log('index')",
+      "lib/a.js": "console.log('a')",
+      "real-bin.js": "console.log('real bin')",
+    });
+
+    const { err, exitCode } = await runPack(dir);
+    expect(err).toBe("");
+    expect(exitCode).toBe(0);
+
+    const tarball = readTarball(join(dir, "pack-bins-not-files-1.0.0.tgz"));
+    expect(entryNames(tarball)).toEqual([
+      "package/package.json",
+      "package/index.js",
+      "package/lib/a.js",
+      "package/real-bin.js",
+    ]);
+    expect(tarball.entries[3].perm & 0o755).toBe(0o755);
+  });
+
   test('are included even if not included in "files"', async () => {
     using dir = tempDir("pack-bins-and-files-1", {
       "package.json": JSON.stringify({
@@ -2212,6 +2239,61 @@ describe.concurrent("symlinks", () => {
     expect(await packed(dir, "pack-link-bin-1.0.0.tgz")).toEqual(["package/package.json"]);
   });
 
+  // Wherever the link points: outside the package (relative or absolute), inside it,
+  // or through a linked directory. A real bin next to them is still packed, and
+  // `--dry-run` lists the same files. True symlinks on Windows too, not junctions.
+  test("bins that are symlinks are neither packed nor listed by --dry-run", async () => {
+    using dir = tempDir("pack-link-bins", {
+      "pkg/package.json": JSON.stringify({
+        name: "pack-link-bins",
+        version: "1.0.0",
+        // `files` leaves every bin out, so only the bin handling can add them.
+        files: ["index.js"],
+        bin: {
+          "real": "real-bin.js",
+          "relative-link": "relative-link.js",
+          "absolute-link": "absolute-link.js",
+          "link-inside-package": "link-to-real.js",
+          "through-linked-dir": "linked-dir/inner.js",
+          "through-linked-dir-backslash": "linked-dir\\inner.js",
+        },
+      }),
+      "pkg/index.js": "console.log('index')",
+      "pkg/real-bin.js": "console.log('real bin')",
+      "outside/secret.js": "outside\n",
+      "outside/nested/inner.js": "outside\n",
+    });
+    symlinkSync(join("..", "outside", "secret.js"), join(String(dir), "pkg", "relative-link.js"), "file");
+    symlinkSync(outside(dir, "secret.js"), join(String(dir), "pkg", "absolute-link.js"), "file");
+    symlinkSync("real-bin.js", join(String(dir), "pkg", "link-to-real.js"), "file");
+    symlinkSync(join("..", "outside", "nested"), join(String(dir), "pkg", "linked-dir"), "dir");
+
+    const dryRun = await runPack(join(String(dir), "pkg"), ["--dry-run"]);
+    expect(dryRun.err).toBe("");
+    expect(dryRun.out).toMatchInlineSnapshot(`
+      "bun pack <version> (<revision>)
+
+      packed 300B package.json
+      packed 20B index.js
+      packed 23B real-bin.js
+
+      pack-link-bins-1.0.0.tgz
+
+      Total files: 3
+      Unpacked size: 343B"
+    `);
+    expect(dryRun.exitCode).toBe(0);
+
+    const { err, exitCode } = await runPack(join(String(dir), "pkg"));
+    expect(err).toBe("");
+    expect(exitCode).toBe(0);
+
+    const tarball = readTarball(join(String(dir), "pkg", "pack-link-bins-1.0.0.tgz"));
+    expect(entryNames(tarball)).toEqual(["package/package.json", "package/index.js", "package/real-bin.js"]);
+    expect(tarball.entries[2].contents).toBe("console.log('real bin')");
+    expect(tarball.entries[2].perm & 0o755).toBe(0o755);
+  });
+
   test("a bin inside a symlinked directory is not packed", async () => {
     using dir = tempDir("pack-link-bin-dir", {
       "pkg/package.json": JSON.stringify({ name: "pack-link-bin-dir", version: "1.0.0", bin: "sub/cli.js" }),
@@ -2246,6 +2328,25 @@ describe.concurrent("symlinks", () => {
     linkOutside(dir, "sub", "sub", "junction");
 
     expect(await packed(dir, "pack-link-bins-dir-1.0.0.tgz")).toEqual(["package/package.json"]);
+  });
+
+  test('a "directories.bin" that is itself a symlink is not packed', async () => {
+    using dir = tempDir("pack-link-bins-dir-last", {
+      "pkg/package.json": JSON.stringify({
+        name: "pack-link-bins-dir-last",
+        version: "1.0.0",
+        directories: { bin: "./bins/" },
+      }),
+      "pkg/index.js": "console.log('index')",
+      "outside/bins/a.js": "outside\n",
+      "outside/bins/b.js": "outside\n",
+    });
+    linkOutside(dir, "bins", "bins", "junction");
+
+    expect(await packed(dir, "pack-link-bins-dir-last-1.0.0.tgz")).toEqual([
+      "package/package.json",
+      "package/index.js",
+    ]);
   });
 
   test("a bundled dependency inside a symlinked node_modules is not packed", async () => {

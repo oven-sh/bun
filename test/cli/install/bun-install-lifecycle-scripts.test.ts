@@ -316,11 +316,13 @@ test.concurrent(
     expect(await file(join(depDir, "postinstall.txt")).text()).toBe("postinstall!");
     expect(result.exitCode).toBe(0);
 
-    // With nothing changed the lockfile is up to date.
+    // With nothing changed the lockfile is up to date and the scripts do not run again
+    // (the fixture rewrites the file with "postinstall exists!" on a second run).
     result = await install();
     expect(result.err).not.toContain("Saved lockfile");
     expect(result.err).not.toContain("error:");
     expect(result.out).toContain("Checked 2 installs across 3 packages (no changes)");
+    expect(await file(join(depDir, "postinstall.txt")).text()).toBe("postinstall!");
     expect(result.exitCode).toBe(0);
 
     // Removing the entry from the member's package.json removes it from bun.lock.
@@ -329,6 +331,7 @@ test.concurrent(
     expect(result.err).toContain("Saved lockfile");
     expect(result.err).not.toContain("error:");
     expect(result.lockfile).not.toContain("trustedDependencies");
+    expect(await file(join(depDir, "postinstall.txt")).text()).toBe("postinstall!");
     expect(result.exitCode).toBe(0);
   },
 );

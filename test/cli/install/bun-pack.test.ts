@@ -1,6 +1,7 @@
 import { write } from "bun";
 import { readTarball } from "bun:internal-for-testing";
 import { describe, expect, test } from "bun:test";
+import { randomBytes } from "crypto";
 import { symlinkSync } from "fs";
 import { readdir, rm } from "fs/promises";
 import { bunEnv, bunExe, isLinux, isWindows, normalizeBunSnapshot, runBunInstall, tempDir } from "harness";
@@ -476,6 +477,24 @@ describe.concurrent("flags", () => {
     expect(out).toBe("bun pack <version> (<revision>)");
     expect(exitCode).toBe(1);
     expect(await sortedNames(dir)).toEqual(["index.js", "package.json"]);
+  });
+
+  // Every write(2) to /dev/full fails with ENOSPC, the same as a tarball destination on a full disk.
+  // "an entry": enough incompressible data that libarchive flushes a block while it writes index.js.
+  // "the end of the archive": small enough that the only write(2) happens when the archive is closed.
+  test.skipIf(!isLinux).each([
+    ["an entry", () => `// ${randomBytes(128 * 1024).toString("base64")}`],
+    ["the end of the archive", () => indexJs],
+  ] as const)("reports ENOSPC when the disk fills up while writing %s", async (_, indexJsContents) => {
+    using dir = tempDir("pack-enospc", {
+      "package.json": JSON.stringify({ name: "pack-enospc", version: "1.1.1" }),
+      "index.js": indexJsContents(),
+    });
+
+    const { out, err, exitCode } = await runPack(dir, ["--filename=/dev/full"]);
+    expect(err).toBe(`ENOSPC: No space left on device: failed to write tarball "/dev/full" (write)`);
+    expect(out).toBe("bun pack <version> (<revision>)");
+    expect(exitCode).toBe(1);
   });
 
   test("--filename and --destination", async () => {

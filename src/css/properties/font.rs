@@ -19,6 +19,7 @@ use bun_alloc::ArenaVecExt as _;
 
 use crate::values as css_values;
 use css_values::angle::Angle;
+use css_values::ident::is_reserved_custom_ident;
 use css_values::length::{LengthPercentage, LengthValue};
 use css_values::number::{CSSNumber, CSSNumberFns};
 use css_values::percentage::{DimensionPercentage, Percentage};
@@ -251,6 +252,18 @@ impl FontStretch {
         }
     }
 
+    /// The keyword with the same computed value, if there is one. The `font`
+    /// shorthand only accepts these keywords (`<font-stretch-css3>`), never a
+    /// percentage.
+    pub(crate) fn keyword(self) -> Option<FontStretchKeyword> {
+        match self {
+            FontStretch::Keyword(kw) => Some(kw),
+            FontStretch::Percentage(val) => FontStretchKeyword::ALL
+                .into_iter()
+                .find(|kw| kw.into_percentage() == val),
+        }
+    }
+
     pub(crate) fn is_compatible(self, browsers: &crate::targets::Browsers) -> bool {
         match self {
             FontStretch::Percentage(_) => Feature::FontStretchPercentage.is_compatible(browsers),
@@ -260,11 +273,6 @@ impl FontStretch {
 
     // eql → derived PartialEq
     // deepClone → derived Clone
-
-    #[inline]
-    fn default() -> FontStretch {
-        FontStretch::Keyword(FontStretchKeyword::default())
-    }
 }
 
 /// A [font stretch keyword](https://www.w3.org/TR/css-fonts-4/#font-stretch-prop),
@@ -294,6 +302,18 @@ pub enum FontStretchKeyword {
 }
 
 impl FontStretchKeyword {
+    const ALL: [FontStretchKeyword; 9] = [
+        FontStretchKeyword::Normal,
+        FontStretchKeyword::UltraCondensed,
+        FontStretchKeyword::ExtraCondensed,
+        FontStretchKeyword::Condensed,
+        FontStretchKeyword::SemiCondensed,
+        FontStretchKeyword::SemiExpanded,
+        FontStretchKeyword::Expanded,
+        FontStretchKeyword::ExtraExpanded,
+        FontStretchKeyword::UltraExpanded,
+    ];
+
     #[inline]
     fn default() -> FontStretchKeyword {
         FontStretchKeyword::Normal
@@ -344,15 +364,15 @@ impl FontFamily {
         // SAFETY: arena outlives the returned `FontFamily` (parser source/arena lives for 'bump).
         let bump: &'static bun_alloc::Arena =
             unsafe { &*std::ptr::from_ref::<bun_alloc::Arena>(input.arena()) };
-        let value: *const [u8] = std::ptr::from_ref::<[u8]>(input.expect_ident()?);
+        let location = input.current_source_location();
+        let value: &'static [u8] = input.expect_ident_cloned()?;
         // AST crate: ArrayListUnmanaged fed input.arena() (arena) → bumpalo Vec
         let mut string: Option<bun_alloc::ArenaVec<'_, u8>> = None;
         while let Ok(ident) = input.try_parse(|p| p.expect_ident().map(std::ptr::from_ref::<[u8]>))
         {
             if string.is_none() {
                 let mut s = bun_alloc::ArenaVec::<u8>::new_in(bump);
-                // SAFETY: arena-owned slice valid for 'bump.
-                s.extend_from_slice(unsafe { crate::arena_str(value) });
+                s.extend_from_slice(value);
                 string = Some(s);
             }
 
@@ -365,7 +385,14 @@ impl FontFamily {
 
         let final_value: *const [u8] = match string {
             Some(s) => std::ptr::from_ref::<[u8]>(s.into_bump_slice()),
-            None => value,
+            // A css-wide keyword or `default` is a <family-name> only when more
+            // identifiers follow it (`inherit foo`). On its own it is that keyword,
+            // which only a whole `Property::Unparsed` declaration can carry.
+            // https://drafts.csswg.org/css-fonts-4/#family-name-syntax
+            None if is_reserved_custom_ident(value) => {
+                return Err(location.new_unexpected_token_error(crate::Token::Ident(value)));
+            }
+            None => std::ptr::from_ref::<[u8]>(value),
         };
 
         Ok(FontFamily::FamilyName(final_value))
@@ -382,6 +409,7 @@ impl FontFamily {
                 // https://www.w3.org/TR/css-fonts-4/#family-name-syntax
 
                 if !val.is_empty()
+                    && !is_reserved_custom_ident(val)
                     && !css::parse_utility::parse_string::<GenericFontFamily>(
                         dest.arena,
                         val,
@@ -483,21 +511,6 @@ pub enum GenericFontFamily {
     UiSansSerif,
     UiMonospace,
     UiRounded,
-
-    // CSS wide keywords. These must be parsed as identifiers so they
-    // don't get serialized as strings.
-    // https://www.w3.org/TR/css-values-4/#common-keywords
-    Initial,
-    Inherit,
-    Unset,
-    // Default is also reserved by the <custom-ident> type.
-    // https://www.w3.org/TR/css-values-4/#custom-idents
-    Default,
-
-    // CSS defaulting keywords
-    // https://drafts.csswg.org/css-cascade-5/#defaulting-keywords
-    Revert,
-    RevertLayer,
 }
 
 impl GenericFontFamily {
@@ -684,8 +697,8 @@ pub struct Font {
     pub(crate) style: FontStyle,
     /// The font weight.
     pub(crate) weight: FontWeight,
-    /// The font stretch.
-    pub(crate) stretch: FontStretch,
+    /// The font stretch. The shorthand grammar admits only the keywords.
+    pub(crate) stretch: FontStretchKeyword,
     /// The line height.
     pub(crate) line_height: LineHeight,
     /// How the text should be capitalized. Only CSS 2.1 values are supported.
@@ -698,7 +711,7 @@ impl Font {
     pub(crate) fn parse(input: &mut css::Parser) -> CssResult<Font> {
         let mut style: Option<FontStyle> = None;
         let mut weight: Option<FontWeight> = None;
-        let mut stretch: Option<FontStretch> = None;
+        let mut stretch: Option<FontStretchKeyword> = None;
         let final_size: FontSize;
         let mut variant_caps: Option<FontVariantCaps> = None;
         let mut count: i32 = 0;
@@ -740,7 +753,7 @@ impl Font {
 
             if stretch.is_none() {
                 if let Ok(value) = input.try_parse(FontStretchKeyword::parse) {
-                    stretch = Some(FontStretch::Keyword(value));
+                    stretch = Some(value);
                     count += 1;
                     continue;
                 }
@@ -769,7 +782,7 @@ impl Font {
             size: final_size,
             style: style.unwrap_or_else(FontStyle::default),
             weight: weight.unwrap_or_else(FontWeight::default),
-            stretch: stretch.unwrap_or_else(FontStretch::default),
+            stretch: stretch.unwrap_or_else(FontStretchKeyword::default),
             line_height: line_height.unwrap_or_else(LineHeight::default),
             variant_caps: variant_caps.unwrap_or_else(FontVariantCaps::default),
         })
@@ -791,7 +804,7 @@ impl Font {
             dest.write_char(b' ')?;
         }
 
-        if self.stretch != FontStretch::default() {
+        if self.stretch != FontStretchKeyword::default() {
             self.stretch.to_css(dest)?;
             dest.write_char(b' ')?;
         }
@@ -912,11 +925,12 @@ impl FontHandler {
             Property::FontVariantCaps(val) => property_helper!(self, variant_caps, val),
             Property::LineHeight(val) => property_helper!(self, line_height, val),
             Property::Font(val) => {
+                let stretch = FontStretch::Keyword(val.stretch);
                 flush_helper!(self, family, &val.family);
                 flush_helper!(self, size, &val.size);
                 flush_helper!(self, style, &val.style);
                 flush_helper!(self, weight, &val.weight);
-                flush_helper!(self, stretch, &val.stretch);
+                flush_helper!(self, stretch, &stretch);
                 flush_helper!(self, line_height, &val.line_height);
                 flush_helper!(self, variant_caps, &val.variant_caps);
 
@@ -924,7 +938,7 @@ impl FontHandler {
                 self.size = Some(val.size.clone());
                 self.style = Some(val.style);
                 self.weight = Some(val.weight.clone());
-                self.stretch = Some(val.stretch);
+                self.stretch = Some(stretch);
                 self.line_height = Some(val.line_height.clone());
                 self.variant_caps = Some(val.variant_caps);
                 self.has_any = true;
@@ -1017,7 +1031,15 @@ impl FontHandler {
             }
         }
 
-        if let (Some(_), Some(_), Some(_), Some(_), Some(_), Some(_), Some(variant_caps_v)) = (
+        if let (
+            Some(_),
+            Some(_),
+            Some(_),
+            Some(_),
+            Some(stretch_v),
+            Some(_),
+            Some(variant_caps_v),
+        ) = (
             family.as_ref(),
             size.as_ref(),
             style.as_ref(),
@@ -1027,6 +1049,8 @@ impl FontHandler {
             variant_caps.as_ref(),
         ) {
             let caps = *variant_caps_v;
+            let stretch = *stretch_v;
+            let stretch_keyword = stretch.keyword();
             push_prop!(
                 Font,
                 Font {
@@ -1034,7 +1058,7 @@ impl FontHandler {
                     size: size.unwrap(),
                     style: style.unwrap(),
                     weight: weight.unwrap(),
-                    stretch: stretch.unwrap(),
+                    stretch: stretch_keyword.unwrap_or_else(FontStretchKeyword::default),
                     line_height: line_height.unwrap(),
                     variant_caps: if caps.is_css2() {
                         caps
@@ -1048,6 +1072,13 @@ impl FontHandler {
             // If we have a CSS 3+ value, we need to add a separate property.
             if !caps.is_css2() {
                 push_prop!(FontVariantCaps, FONT_VARIANT_CAPS, caps);
+            }
+
+            // Likewise it only accepts the font-stretch keywords. A percentage that
+            // matches none of them follows the shorthand (which resets font-stretch)
+            // as its own declaration.
+            if stretch_keyword.is_none() {
+                push_prop!(FontStretch, FONT_STRETCH, stretch);
             }
         } else {
             if let Some(val) = family {

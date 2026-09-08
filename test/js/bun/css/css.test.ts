@@ -4912,8 +4912,56 @@ describe("css tests", () => {
         line-height: 1.2em;
       }
     `,
-      indoc`.foo{font:italic small-caps 700 125% 12px/1.2em Helvetica,Times New Roman,sans-serif}`,
+      // The `font` shorthand only takes the `<font-stretch-css3>` keywords, so
+      // `expanded` must not become `125%` there (parcel-bundler/lightningcss#1140).
+      indoc`.foo{font:italic small-caps 700 expanded 12px/1.2em Helvetica,Times New Roman,sans-serif}`,
     );
+
+    // A font-stretch that reaches the shorthand from a longhand is printed as
+    // the keyword with the same computed value, or stays a longhand after the
+    // shorthand (which resets it) when no keyword matches.
+    minify_test(".foo { font: 12px foo; font-stretch: condensed }", ".foo{font:condensed 12px foo}");
+    minify_test(".foo { font: 12px foo; font-stretch: 75% }", ".foo{font:condensed 12px foo}");
+    minify_test(".foo { font: 12px foo; font-stretch: 110% }", ".foo{font:12px foo;font-stretch:110%}");
+    minify_test(".foo { font: condensed 12px/14px foo }", ".foo{font:condensed 12px/14px foo}");
+    minify_test(".foo { font-stretch: condensed }", ".foo{font-stretch:75%}");
+    cssTest(
+      `
+      .foo {
+        font-family: foo;
+        font-size: 12px;
+        font-weight: normal;
+        font-style: normal;
+        font-stretch: 110%;
+        font-variant-caps: all-small-caps;
+        line-height: normal;
+      }
+    `,
+      indoc`
+      .foo {
+        font: 12px foo;
+        font-variant-caps: all-small-caps;
+        font-stretch: 110%;
+      }
+`,
+    );
+
+    // A css-wide keyword (or the reserved `default`) on a longhand cannot be
+    // folded into the `font` shorthand: the shorthand has no slot for it, and
+    // `font: 12px inherit` is an invalid declaration that browsers drop whole.
+    for (const keyword of ["initial", "inherit", "unset", "revert", "revert-layer", "default"]) {
+      minify_test(
+        `.foo { font: italic .875rem/normal Arial, sans-serif; font-family: ${keyword} }`,
+        `.foo{font:italic .875rem Arial,sans-serif;font-family:${keyword}}`,
+      );
+      minify_test(
+        `.foo { font: 12px serif; font-family: ${keyword}, foo }`,
+        `.foo{font:12px serif;font-family:${keyword},foo}`,
+      );
+      minify_test(`.foo { font: 12px serif; font-family: "${keyword}" }`, `.foo{font:12px "${keyword}"}`);
+      minify_test(`.foo { font: 12px serif; font-family: ${keyword} foo }`, `.foo{font:12px ${keyword} foo}`);
+      minify_test(`.foo { font: 12px ${keyword} }`, `.foo{font:12px ${keyword}}`);
+    }
 
     cssTest(
       `
@@ -6575,6 +6623,25 @@ describe("css tests", () => {
     minify_test(".foo { transition: width 2s ease 1s }", ".foo{transition:width 2s 1s}");
     minify_test(".foo { transition: ease-in 1s width 4s }", ".foo{transition:width 1s ease-in 4s}");
     minify_test(".foo { transition: opacity 0s .6s }", ".foo{transition:opacity 0s .6s}");
+    minify_test(".foo { transition: opacity 1s; transition-property: none }", ".foo{transition:none 1s}");
+    minify_test(".foo { transition: opacity 1s; transition-property: all }", ".foo{transition:all 1s}");
+    // `<single-transition-property>` is a <custom-ident>: a css-wide keyword or
+    // `default` is not a property name and cannot move into the shorthand.
+    for (const keyword of ["initial", "inherit", "unset", "revert", "revert-layer", "default"]) {
+      minify_test(
+        `.foo { transition: opacity 1.5s, color 1s; transition-property: ${keyword} }`,
+        `.foo{transition:opacity 1.5s,color 1s;transition-property:${keyword}}`,
+      );
+      minify_test(
+        `.foo { transition-property: ${keyword}; transition-duration: 2s }`,
+        `.foo{transition-property:${keyword};transition-duration:2s}`,
+      );
+      minify_test(
+        `.foo { transition-property: opacity, ${keyword}; transition-duration: 2s }`,
+        `.foo{transition-property:opacity,${keyword};transition-duration:2s}`,
+      );
+      minify_test(`.foo { transition: ${keyword} 2s }`, `.foo{transition:${keyword} 2s}`);
+    }
     cssTest(
       `
       .foo {

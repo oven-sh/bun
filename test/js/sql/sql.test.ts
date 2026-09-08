@@ -1053,7 +1053,10 @@ if (isDockerEnabled()) {
         expect((await sql`select 0.1::real as x, 61885352::real as y`)[0]).toEqual({ x: 0.1, y: 61885352 });
       }
       // A wide deterministic sample of f32 bit patterns across every exponent:
-      // the binary decoder must produce exactly the number float4out prints.
+      // the parameterized path must return exactly the number float4out prints
+      // (it does by construction while real is read as text; this guards a
+      // return to client-side conversion, which got ties and halfway cases
+      // wrong).
       const bits = new Uint32Array(512);
       let seed = 0x9e3779b9;
       for (let i = 0; i < bits.length; i++) {
@@ -1064,9 +1067,9 @@ if (isDockerEnabled()) {
       // 9 significant digits always identify an f32, so these literals store
       // exactly the sampled values.
       const list = `unnest(array[${sample.map(v => v.toPrecision(9)).join(",")}]::real[])`;
-      const viaBinary = await sql.unsafe(`select x, x::text as t from ${list} as x where $1 = 1`, [1]);
-      expect(viaBinary.length).toBe(sample.length);
-      expect(viaBinary.map(row => row.x)).toEqual(viaBinary.map(row => Number(row.t)));
+      const parameterized = await sql.unsafe(`select x, x::text as t from ${list} as x where $1 = 1`, [1]);
+      expect(parameterized.length).toBe(sample.length);
+      expect(parameterized.map(row => row.x)).toEqual(parameterized.map(row => Number(row.t)));
     });
 
     test("String", async () => {

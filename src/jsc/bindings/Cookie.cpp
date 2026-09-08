@@ -111,8 +111,12 @@ ExceptionOr<Ref<Cookie>> Cookie::parse(StringView cookieString)
                     domain = attributeValue.convertToASCIILowercase();
                 }
             } else if (attributeName == "path"_s) {
+                // 5.2.4: unlike an empty Domain or a bad Expires, which are ignored, an empty or
+                // relative Path still counts and selects the default-path.
                 if (!attributeValue.isEmpty() && attributeValue.startsWith('/'))
                     path = attributeValue;
+                else
+                    path = "/"_s;
             } else if (attributeName == "expires"_s && !attributeValue.isEmpty()) {
                 if (!attributeValue.is8Bit()) [[unlikely]] {
                     auto asLatin1 = attributeValue.latin1();
@@ -138,12 +142,14 @@ ExceptionOr<Ref<Cookie>> Cookie::parse(StringView cookieString)
             } else if (attributeName == "partitioned"_s) {
                 partitioned = true;
             } else if (attributeName == "samesite"_s) {
+                // RFC 6265bis 5.6.7: an unknown or empty value records "Default" enforcement (Lax
+                // here) rather than being ignored, so it still overrides an earlier SameSite.
                 if (WTF::equalIgnoringASCIICase(attributeValue, "strict"_s))
                     sameSite = CookieSameSite::Strict;
-                else if (WTF::equalIgnoringASCIICase(attributeValue, "lax"_s))
-                    sameSite = CookieSameSite::Lax;
                 else if (WTF::equalIgnoringASCIICase(attributeValue, "none"_s))
                     sameSite = CookieSameSite::None;
+                else
+                    sameSite = CookieSameSite::Lax;
             }
         }
     }

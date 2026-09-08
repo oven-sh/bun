@@ -3521,7 +3521,7 @@ test.skipIf(isWindows)("external command resolution uses the PATH from the shell
   }
 });
 
-test.skipIf(isWindows)("external command resolution without a PATH does not use the process's launch PATH", async () => {
+test.skipIf(isWindows)("external command resolution without a PATH ignores the launch PATH", async () => {
   using dir = tempDir("shell-argv0-nopath", {
     "onlyinlaunchpath": "#!/bin/sh\necho should-not-run\n",
   });
@@ -3633,7 +3633,11 @@ describe.concurrent.skipIf(!isWindows)("external command resolution on Windows",
       "runtime PATH": { exitCode: 0, stdout: "from-runtime", stderr: "" },
       "runtime PATH, env() without PATH": { exitCode: 0, stdout: "from-runtime", stderr: "" },
       "deleted PATH": { exitCode: 1, stdout: "", stderr: "bun: command not found: onlyintool-launch" },
-      "deleted PATH, env() without PATH": { exitCode: 1, stdout: "", stderr: "bun: command not found: onlyintool-launch" },
+      "deleted PATH, env() without PATH": {
+        exitCode: 1,
+        stdout: "",
+        stderr: "bun: command not found: onlyintool-launch",
+      },
     });
     expect(exitCode).toBe(0);
   });

@@ -479,15 +479,16 @@ impl Cmd {
         let resolved: Option<Vec<u8>> = {
             let path = interp.as_cmd(this).base.shell().command_path();
             let mut path_buf = bun_paths::path_buffer_pool::get();
-            let found = match bun_which::which(&mut *path_buf, path.slice(), spawn_args.cwd, &first_arg) {
-                Some(z) => Some(z.as_bytes().to_vec()),
-                None if &first_arg[..] == b"bun" || &first_arg[..] == b"bun-debug" => {
-                    bun_core::self_exe_path()
-                        .ok()
-                        .map(|z| z.as_bytes().to_vec())
-                }
-                None => None,
-            };
+            let found =
+                match bun_which::which(&mut *path_buf, path.slice(), spawn_args.cwd, &first_arg) {
+                    Some(z) => Some(z.as_bytes().to_vec()),
+                    None if &first_arg[..] == b"bun" || &first_arg[..] == b"bun-debug" => {
+                        bun_core::self_exe_path()
+                            .ok()
+                            .map(|z| z.as_bytes().to_vec())
+                    }
+                    None => None,
+                };
             path.deref();
             found
         };

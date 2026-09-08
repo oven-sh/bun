@@ -1441,7 +1441,9 @@ pub(crate) fn default_path_for_unset_env() -> sh::EnvStr {
     {
         // SAFETY: `BUN_DEFAULT_PATH_FOR_SPAWN` is a NUL-terminated C-string
         // constant with static storage.
-        sh::EnvStr::init_slice(unsafe { core::ffi::CStr::from_ptr(BUN_DEFAULT_PATH_FOR_SPAWN) }.to_bytes())
+        sh::EnvStr::init_slice(
+            unsafe { core::ffi::CStr::from_ptr(BUN_DEFAULT_PATH_FOR_SPAWN) }.to_bytes(),
+        )
     }
 }
 

@@ -27,9 +27,10 @@ use crate::mysql::protocol::error_packet_jsc::ErrorPacketJsc;
 // is intentionally NOT imported by name — that ident is taken in this module's
 // value namespace by the `declare_scope!` static and in the type namespace by
 // the `pub use JSMySQLConnection as MySQLConnection` re-export below.
-use super::my_sql_connection::{self as my_sql_connection};
+use super::my_sql_connection::{self as my_sql_connection, TlsHandshakeStep};
 use super::my_sql_statement::MySQLStatement;
 use super::protocol::result_set::{self as ResultSet};
+use bun_jsc::tls_server_identity;
 
 bun_core::declare_scope!(MySQLConnection, visible);
 
@@ -544,6 +545,13 @@ impl JSMySQLConnection {
             .with_mut(|r| r.set_strong(js_value, global_object));
         js::onconnect_set_cached(js_value, global_object, on_connect);
         js::onclose_set_cached(js_value, global_object, on_close);
+        if args.check_server_identity.is_callable() {
+            js::check_server_identity_set_cached(
+                js_value,
+                global_object,
+                args.check_server_identity,
+            );
+        }
 
         Ok(js_value)
     }
@@ -704,6 +712,37 @@ impl JSMySQLConnection {
     fn fail(&self, message: &[u8], err: AnyMySQLErrorT) {
         let instance = mysql_error_to_js(&self.global_object, message, err);
         self.fail_with_js_value(instance);
+    }
+
+    /// `tls.checkServerIdentity` when the user set one, else the built-in
+    /// hostname match when the ssl mode asks for it (verify-full).
+    fn verify_server_identity(&self, hostname_must_match: bool) -> Result<(), JSValue> {
+        let global: &JSGlobalObject = &self.global_object;
+        let (hostname, ssl_ptr) = {
+            let connection = self.connection.get();
+            (connection.tls_server_name().to_vec(), connection.ssl())
+        };
+        // SAFETY: in the handshake callback the native handle is the live `SSL*`.
+        let Some(ssl) = (unsafe { ssl_ptr.as_mut() }) else {
+            return Err(mysql_error_to_js(
+                global,
+                b"Failed to upgrade to TLS",
+                AnyMySQLErrorT::ConnectionFailed,
+            ));
+        };
+        let callback = self
+            .js_value
+            .get()
+            .try_get()
+            .and_then(js::check_server_identity_get_cached)
+            .filter(|cb| cb.is_callable());
+        if let Some(callback) = callback {
+            return tls_server_identity::check_with_callback(global, callback, ssl, &hostname);
+        }
+        if !hostname_must_match {
+            return Ok(());
+        }
+        tls_server_identity::check_builtin(global, ssl, &hostname)
     }
 
     pub(crate) fn on_connection_estabilished(&self) {
@@ -888,16 +927,32 @@ impl<const SSL: bool> SocketHandler<SSL> {
         success: i32,
         ssl_error: uws::us_bun_verify_error_t,
     ) {
-        let handshake_was_successful = match this.connection_mut().do_handshake(success, ssl_error)
+        match this
+            .connection_mut()
+            .begin_tls_handshake(success, &ssl_error)
         {
-            Ok(v) => v,
-            Err(e) => {
-                return this.fail_fmt(e, format_args!("Failed to send handshake response"));
+            TlsHandshakeStep::Failed => {
+                let v = crate::jsc::verify_error_to_js(&ssl_error, &this.global_object);
+                return this.fail_with_js_value(v);
             }
-        };
-        if !handshake_was_successful {
-            let v = crate::jsc::verify_error_to_js(&ssl_error, &this.global_object);
-            this.fail_with_js_value(v);
+            TlsHandshakeStep::VerifyIdentity {
+                hostname_must_match,
+            } => {
+                // May run user JS (`tls.checkServerIdentity`), which can close
+                // this connection.
+                let _guard = this.ref_guard();
+                if let Err(err) = this.verify_server_identity(hostname_must_match) {
+                    this.connection_mut().fail_tls_handshake();
+                    return this.fail_with_js_value(err);
+                }
+                if !this.connection.get().is_active() {
+                    return;
+                }
+            }
+            TlsHandshakeStep::Proceed => {}
+        }
+        if let Err(e) = this.connection_mut().finish_tls_handshake() {
+            this.fail_fmt(e, format_args!("Failed to send handshake response"));
         }
     }
 

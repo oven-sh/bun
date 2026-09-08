@@ -445,6 +445,8 @@ pub mod js_property_iterator;
 pub mod node_compile_cache;
 #[path = "SystemError.rs"]
 pub mod system_error;
+#[path = "TlsServerIdentity.rs"]
+pub mod tls_server_identity;
 #[path = "URL.rs"]
 pub mod url;
 #[path = "VM.rs"]

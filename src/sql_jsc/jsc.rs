@@ -615,7 +615,7 @@ pub use bun_jsc::JsClass;
 
 pub mod codegen {
     ::bun_jsc::js_class_module!(JSPostgresSQLConnection = "PostgresSQLConnection"
-        as crate::postgres::PostgresSQLConnection { queries, onconnect, onclose, onnotification });
+        as crate::postgres::PostgresSQLConnection { queries, onconnect, onclose, checkServerIdentity, onnotification });
     ::bun_jsc::js_class_module!(
         JSPostgresSQLQuery = "PostgresSQLQuery" as crate::postgres::PostgresSQLQuery,
         impl_js_class {
@@ -627,7 +627,7 @@ pub mod codegen {
     );
 
     ::bun_jsc::js_class_module!(js_mysql_connection = "MySQLConnection"
-        as crate::mysql::js_my_sql_connection::JSMySQLConnection { queries, onconnect, onclose });
+        as crate::mysql::js_my_sql_connection::JSMySQLConnection { queries, onconnect, onclose, checkServerIdentity });
     pub use js_mysql_connection as JSMySQLConnection;
 
     ::bun_jsc::js_class_module!(

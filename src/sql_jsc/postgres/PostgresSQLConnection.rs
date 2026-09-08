@@ -1,5 +1,6 @@
 use bun_collections::VecExt;
 use bun_jsc::JsCell;
+use bun_jsc::tls_server_identity;
 use core::cell::Cell;
 use core::ffi::c_void;
 use core::sync::atomic::{AtomicU32, Ordering};
@@ -865,55 +866,72 @@ impl PostgresSQLConnection {
     pub(crate) fn on_handshake(&self, success: i32, ssl_error: uws::us_bun_verify_error_t) {
         debug!("onHandshake: {} {}", success, ssl_error.error_no);
         let handshake_success = success == 1;
-        if handshake_success {
-            if self.tls_config.reject_unauthorized() != 0 {
-                // only reject the connection if reject_unauthorized == true
-                match self.ssl_mode {
-                    // https://github.com/porsager/postgres/blob/6ec85a432b17661ccacbdf7f765c651e88969d36/src/connection.js#L272-L279
-                    SSLMode::VerifyCa | SSLMode::VerifyFull => {
-                        if ssl_error.error_no != 0 {
-                            let v = verify_error_to_js(&ssl_error, self.global());
-                            self.fail_with_js_value(v);
-                            return;
-                        }
-
-                        if self.ssl_mode == SSLMode::VerifyFull {
-                            let servername = self.tls_config.server_name();
-                            let ok = if servername.is_null() {
-                                false
-                            } else {
-                                // SAFETY: native handle of a connected TLS socket is `SSL*`.
-                                let ssl_ptr: *mut BoringSSL::c::SSL = self
-                                    .socket
-                                    .get()
-                                    .get_native_handle()
-                                    .map_or(core::ptr::null_mut(), |p| p.cast());
-                                // SAFETY: `servername` is a NUL-terminated C string owned by `tls_config`.
-                                let hostname =
-                                    unsafe { bun_core::ffi::cstr(servername) }.to_bytes();
-                                // SAFETY: `ssl_ptr` is the live SSL* of a connected TLS socket.
-                                !ssl_ptr.is_null()
-                                    && BoringSSL::check_server_identity(
-                                        unsafe { &mut *ssl_ptr },
-                                        hostname,
-                                    )
-                            };
-                            if !ok {
-                                let v = verify_error_to_js(&ssl_error, self.global());
-                                self.fail_with_js_value(v);
-                            }
-                        }
-                    }
-                    // require is the same as prefer
-                    SSLMode::Require | SSLMode::Prefer | SSLMode::Disable => {}
-                }
-            }
-        } else {
+        if !handshake_success {
             // if we are here is because server rejected us, and the error_no is the cause of this
             // no matter if reject_unauthorized is false because we are disconnected by the server
             let v = verify_error_to_js(&ssl_error, self.global());
             self.fail_with_js_value(v);
+            return;
         }
+        if self.tls_config.reject_unauthorized() == 0 {
+            return;
+        }
+        // only reject the connection if reject_unauthorized == true
+        match self.ssl_mode {
+            // https://github.com/porsager/postgres/blob/6ec85a432b17661ccacbdf7f765c651e88969d36/src/connection.js#L272-L279
+            SSLMode::VerifyCa | SSLMode::VerifyFull => {
+                if ssl_error.error_no != 0 {
+                    let v = verify_error_to_js(&ssl_error, self.global());
+                    self.fail_with_js_value(v);
+                    return;
+                }
+                // May run user JS (`tls.checkServerIdentity`).
+                let _guard = self.ref_guard();
+                if let Err(err) = self.verify_server_identity() {
+                    self.fail_with_js_value(err);
+                }
+            }
+            // require is the same as prefer
+            SSLMode::Require | SSLMode::Prefer | SSLMode::Disable => {}
+        }
+    }
+
+    /// After the chain verified: `tls.checkServerIdentity` when the user set
+    /// one (verify-ca and verify-full), else the built-in hostname match
+    /// (verify-full only; verify-ca skips it by definition).
+    fn verify_server_identity(&self) -> Result<(), JSValue> {
+        let global = self.global();
+        let hostname: &[u8] = match self.tls_config.server_name() {
+            servername if servername.is_null() => b"",
+            // SAFETY: `servername` is a NUL-terminated C string owned by `tls_config`.
+            servername => unsafe { bun_core::ffi::cstr(servername) }.to_bytes(),
+        };
+        let ssl_ptr: *mut BoringSSL::c::SSL = self
+            .socket
+            .get()
+            .get_native_handle()
+            .map_or(core::ptr::null_mut(), |p| p.cast());
+        // SAFETY: in the handshake callback the native handle is the live `SSL*`.
+        let Some(ssl) = (unsafe { ssl_ptr.as_mut() }) else {
+            return Err(postgres_error_to_js(
+                global,
+                Some(b"Failed to upgrade to TLS"),
+                AnyPostgresError::TLSUpgradeFailed,
+            ));
+        };
+        let callback = self
+            .js_value
+            .get()
+            .try_get()
+            .and_then(js::check_server_identity_get_cached)
+            .filter(|cb| cb.is_callable());
+        if let Some(callback) = callback {
+            return tls_server_identity::check_with_callback(global, callback, ssl, hostname);
+        }
+        if self.ssl_mode != SSLMode::VerifyFull {
+            return Ok(());
+        }
+        tls_server_identity::check_builtin(global, ssl, hostname)
     }
 
     pub(crate) fn on_timeout(&self) {
@@ -1272,6 +1290,9 @@ pub(crate) fn call(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsR
     this.js_value.set(crate::jsc::JsRef::init_weak(js_value));
     js::onconnect_set_cached(js_value, global_object, on_connect);
     js::onclose_set_cached(js_value, global_object, on_close);
+    if args.check_server_identity.is_callable() {
+        js::check_server_identity_set_cached(js_value, global_object, args.check_server_identity);
+    }
     bun_analytics::features::postgres_connections.fetch_add(1, Ordering::Relaxed);
     Ok(js_value)
 }

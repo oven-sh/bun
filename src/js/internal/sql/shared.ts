@@ -2113,13 +2113,22 @@ function parseOptions(
     }
   }
 
-  if ($isObject(tls) && sslMode < SSLMode.verify_ca) {
-    if (tls.rejectUnauthorized === true || (tls.rejectUnauthorized !== false && (tls.ca || tls.caFile))) {
+  if ($isObject(tls)) {
+    if (tls.checkServerIdentity !== undefined && !$isCallable(tls.checkServerIdentity)) {
+      throw $ERR_INVALID_ARG_TYPE("tls.checkServerIdentity", "function", tls.checkServerIdentity);
+    }
+    // Options that only make sense with certificate verification request it,
+    // unless verification is explicitly turned off.
+    if (
+      sslMode < SSLMode.verify_ca &&
+      (tls.rejectUnauthorized === true ||
+        (tls.rejectUnauthorized !== false && (tls.ca || tls.caFile || tls.checkServerIdentity)))
+    ) {
       sslMode = SSLMode.verify_full;
     }
   }
 
-  if (sslMode !== SSLMode.disable && !tls?.serverName) {
+  if (sslMode !== SSLMode.disable && !tls?.serverName && !tls?.servername) {
     if (hostname) {
       tls = { ...tls, serverName: hostname };
     } else if (tls) {

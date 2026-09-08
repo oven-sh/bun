@@ -35,9 +35,23 @@ declare module "bun" {
     enableOfflineQueue?: boolean;
 
     /**
-     * TLS options
+     * TLS options. `true` (or a `rediss://` URL) enables TLS with the default
+     * options. `serverName` sets the SNI and the name the certificate is
+     * verified against (by default the URL host).
      */
-    tls?: boolean | Bun.TLSOptions;
+    tls?:
+      | boolean
+      | (Bun.TLSOptions & {
+          /**
+           * Replaces the built-in check of the server certificate against
+           * `serverName`, as in `tls.connect()`. It runs once the certificate
+           * chain is verified, and not at all with `rejectUnauthorized: false`.
+           * @param hostname The name the certificate is expected to match
+           * @param cert The server's certificate
+           * @returns An `Error` to refuse the connection, or `undefined` to accept it
+           */
+          checkServerIdentity?: NonNullable<import("node:tls").ConnectionOptions["checkServerIdentity"]>;
+        });
 
     /**
      * Whether to enable auto-pipelining

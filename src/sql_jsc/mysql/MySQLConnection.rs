@@ -52,6 +52,17 @@ use crate::jsc::api::server_config::SSLConfig;
 
 bun_core::define_scoped_log!(debug, MySQLConnection, visible);
 
+/// What [`MySQLConnection::begin_tls_handshake`] leaves for the caller to do.
+pub(crate) enum TlsHandshakeStep {
+    /// The handshake or the certificate chain failed: fail with the verify error.
+    Failed,
+    /// Verify the server identity (`tls.checkServerIdentity` if set, else the
+    /// built-in hostname match when `hostname_must_match`), then finish.
+    VerifyIdentity { hostname_must_match: bool },
+    /// Nothing to verify: finish.
+    Proceed,
+}
+
 pub struct MySQLConnection {
     socket: Socket,
     pub(crate) status: ConnectionState,
@@ -388,11 +399,14 @@ impl MySQLConnection {
         true
     }
 
-    pub(crate) fn do_handshake(
+    /// Records the TLS handshake result. The caller then does what the
+    /// returned step says; the identity check is split out because
+    /// `tls.checkServerIdentity` runs user JS, which must not hold `&mut self`.
+    pub(crate) fn begin_tls_handshake(
         &mut self,
         success: i32,
-        ssl_error: uws::us_bun_verify_error_t,
-    ) -> Result<bool, AnyMySQLError> {
+        ssl_error: &uws::us_bun_verify_error_t,
+    ) -> TlsHandshakeStep {
         bun_core::scoped_log!(
             MySQLConnection,
             "onHandshake: {} {} {:?}",
@@ -400,62 +414,61 @@ impl MySQLConnection {
             ssl_error.error_no,
             self.ssl_mode
         );
-        let handshake_success = success == 1;
         self.sequence_id = self.sequence_id.wrapping_add(1);
-        if handshake_success {
-            self.tls_status = TLSStatus::SslOk;
-            if self.tls_config.reject_unauthorized() != 0 {
-                // follow the same rules as postgres
-                // https://github.com/porsager/postgres/blob/6ec85a432b17661ccacbdf7f765c651e88969d36/src/connection.js#L272-L279
-                // only reject the connection if reject_unauthorized == true
-                match self.ssl_mode {
-                    SSLMode::VerifyCa | SSLMode::VerifyFull => {
-                        if ssl_error.error_no != 0 {
-                            self.tls_status = TLSStatus::SslFailed;
-                            return Ok(false);
-                        }
-
-                        // VerifyFull additionally requires the certificate identity to
-                        // match the intended host. Absence of a configured server name is
-                        // not a license to skip the check — fail closed.
-                        if self.ssl_mode == SSLMode::VerifyFull {
-                            let servername = self.tls_config.server_name();
-                            if servername.is_null() {
-                                self.tls_status = TLSStatus::SslFailed;
-                                return Ok(false);
-                            }
-                            // SAFETY: native handle of a connected TLS socket is `SSL*`.
-                            let ssl_ptr: *mut bun_boringssl_sys::SSL = self
-                                .socket
-                                .get_native_handle()
-                                .map(|h| h.cast())
-                                .unwrap_or(core::ptr::null_mut());
-                            // SAFETY: `server_name` is a NUL-terminated C string owned by
-                            // `tls_config` for the connection lifetime.
-                            let hostname = unsafe { bun_core::ffi::cstr(servername) }.to_bytes();
-                            if ssl_ptr.is_null()
-                                || !bun_boringssl::check_server_identity(
-                                    // SAFETY: `ssl_ptr` is non-null (checked by the short-circuit above) and live (handshake just succeeded).
-                                    unsafe { &mut *ssl_ptr },
-                                    hostname,
-                                )
-                            {
-                                self.tls_status = TLSStatus::SslFailed;
-                                return Ok(false);
-                            }
-                        }
-                    }
-                    // require is the same as prefer
-                    SSLMode::Require | SSLMode::Prefer | SSLMode::Disable => {}
+        if success != 1 {
+            // if we are here is because server rejected us, and the error_no is the cause of this
+            // no matter if reject_unauthorized is false because we are disconnected by the server
+            self.tls_status = TLSStatus::SslFailed;
+            return TlsHandshakeStep::Failed;
+        }
+        self.tls_status = TLSStatus::SslOk;
+        if self.tls_config.reject_unauthorized() == 0 {
+            return TlsHandshakeStep::Proceed;
+        }
+        // follow the same rules as postgres
+        // https://github.com/porsager/postgres/blob/6ec85a432b17661ccacbdf7f765c651e88969d36/src/connection.js#L272-L279
+        // only reject the connection if reject_unauthorized == true
+        match self.ssl_mode {
+            SSLMode::VerifyCa | SSLMode::VerifyFull => {
+                if ssl_error.error_no != 0 {
+                    self.tls_status = TLSStatus::SslFailed;
+                    return TlsHandshakeStep::Failed;
+                }
+                TlsHandshakeStep::VerifyIdentity {
+                    hostname_must_match: self.ssl_mode == SSLMode::VerifyFull,
                 }
             }
-            self.send_handshake_response()?;
-            return Ok(true);
+            // require is the same as prefer
+            SSLMode::Require | SSLMode::Prefer | SSLMode::Disable => TlsHandshakeStep::Proceed,
         }
+    }
+
+    pub(crate) fn fail_tls_handshake(&mut self) {
         self.tls_status = TLSStatus::SslFailed;
-        // if we are here is because server rejected us, and the error_no is the cause of this
-        // no matter if reject_unauthorized is false because we are disconnected by the server
-        Ok(false)
+    }
+
+    /// Sends the MySQL handshake response over the now-verified TLS socket.
+    pub(crate) fn finish_tls_handshake(&mut self) -> Result<(), AnyMySQLError> {
+        self.send_handshake_response()
+    }
+
+    /// `tls.serverName`: the SNI sent and the name the certificate must match.
+    pub(crate) fn tls_server_name(&self) -> &[u8] {
+        let server_name = self.tls_config.server_name();
+        if server_name.is_null() {
+            return b"";
+        }
+        // SAFETY: `server_name` is a NUL-terminated C string owned by
+        // `tls_config` for the connection lifetime.
+        unsafe { bun_core::ffi::cstr(server_name) }.to_bytes()
+    }
+
+    /// The live `SSL*` of the TLS socket, or null before the upgrade.
+    pub(crate) fn ssl(&self) -> *mut bun_boringssl_sys::SSL {
+        self.socket
+            .get_native_handle()
+            .map(|h| h.cast())
+            .unwrap_or(core::ptr::null_mut())
     }
 
     pub(crate) fn read_and_process_data(&mut self, data: &[u8]) -> Result<(), AnyMySQLError> {

@@ -995,19 +995,13 @@ impl Response {
             };
 
             if let Some(arg_init) = args.next_eat() {
-                // `new Number(307)` etc. take the numeric path, not the
-                // ResponseInit path.
                 let arg_init = arg_init.unwrap_boxed_primitive(global_this)?;
                 if arg_init.is_undefined() {
-                    // WebIDL `optional unsigned short status = 302`: omitted.
+                    // WebIDL `optional unsigned short status = 302`
                 } else if arg_init.is_object() {
-                    // Bun extension: accept a ResponseInit-like object for
-                    // headers/statusText. `status` is read once inside
-                    // `init_with_default_status` (default 302 when absent) and
-                    // validated as a redirect status below.
+                    // Bun extension: `ResponseInit` (status defaults to 302).
                     if let Some(init) = Init::init_with_default_status(global_this, arg_init, 302)?
                     {
-                        // cleanup is handled by Init's drop glue on `?` below
                         response.init.set(init);
                     }
                     let status = Self::validate_redirect_status_code(
@@ -1016,8 +1010,7 @@ impl Response {
                     )?;
                     response.init.with_mut(|i| i.status_code = status);
                 } else {
-                    // WebIDL `unsigned short status`: ToNumber-convert any
-                    // primitive (string, boolean, null) and range-check.
+                    // WebIDL `unsigned short`: ToNumber, then range-check.
                     let status = Self::validate_redirect_status_code(
                         global_this,
                         arg_init.coerce_to_i32(global_this)?,

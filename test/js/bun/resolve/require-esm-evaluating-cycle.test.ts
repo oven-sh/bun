@@ -44,9 +44,10 @@ test("require(esm) inside a require cycle returns the live namespace, not an emp
   expect(exitCode).toBe(0);
 });
 
-// The CommonJS side reads `__esModule` / `"module.exports"` off that live
-// namespace; when the module happens to export a binding by that name that is
-// still in TDZ, require() itself must not throw (reading it afterwards does).
+// The CommonJS side reads `"module.exports"` off that live namespace and checks
+// for an `__esModule` export with `in`; when the module happens to export a
+// binding by either name that is still in TDZ, require() itself must not throw
+// (reading it afterwards does).
 test("require(esm) inside a require cycle tolerates a TDZ `__esModule` export", async () => {
   using dir = tempDir("require-esm-evaluating-cycle-tdz", {
     "a.mjs": `

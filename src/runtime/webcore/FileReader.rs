@@ -480,10 +480,12 @@ impl FileReader {
             #[cfg(unix)]
             {
                 use bun_io::pipe_reader::PosixFlags;
-                if !was_lazy && self.reader().flags.contains(PosixFlags::POLLABLE) {
-                    // A from_pipe() reader may arrive with IS_PAUSED set (lazy
-                    // subprocess stdio); clear it so read() does not no-op.
-                    self.reader().unpause();
+                // An IS_PAUSED arrival is lazy subprocess stdio: its first read is
+                // the bounded on_pull, not an eager loop that outruns the consumer.
+                if !was_lazy
+                    && self.reader().flags.contains(PosixFlags::POLLABLE)
+                    && !self.reader().flags.contains(PosixFlags::IS_PAUSED)
+                {
                     // SAFETY: the reader cell is live for `self`'s lifetime; `read` is
                     // the raw re-entrancy-safe entry (its dispatch runs user JS).
                     unsafe { IOReader::read(self.reader.get()) };
@@ -809,6 +811,8 @@ impl FileReader {
         }
 
         if !self.reader().has_pending_read() && self.flowing.get() {
+            // A consumer is pulling: a lazy subprocess pipe left paused by on_start reads now, bounded by `buffer`.
+            self.reader().unpause();
             // SAFETY: the reader cell is live for `self`'s lifetime; `read_into` is the raw re-entrancy-safe entry (EOF/error dispatch runs user JS).
             let (amount_read, state) = unsafe { IOReader::read_into(self.reader.get(), buffer) };
             bun_core::scoped_log!(FileReader, "onPull({}) = {}", buffer.len(), amount_read);

@@ -347,10 +347,11 @@ impl PosixBufferedReader {
         }
         self.flags.insert(PosixFlags::IS_PAUSED);
 
-        // Unregister the FilePoll if it's registered
+        // Forced: a just-fired one-shot poll (NeedsRearm) is otherwise left
+        // live on kqueue (EV_DISPATCH) and keeps delivering reads.
         if let PollOrFd::Poll(poll) = &mut self.handle {
-            if poll.is_registered() {
-                let _ = poll.unregister(self.vtable.loop_().cast(), false);
+            if poll.is_registered() || poll.has_flag(FilePollFlag::NeedsRearm) {
+                let _ = poll.unregister(self.vtable.loop_().cast(), true);
             }
         }
     }

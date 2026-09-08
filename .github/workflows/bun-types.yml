@@ -12,12 +12,18 @@ on:
       - "test/integration/bun-types/**"
       - "src/cli/init/tsconfig.default.json"
       - ".github/workflows/bun-types.yml"
+      # the inventory snapshots record the typescript and @types/node versions
+      - "package.json"
+      - "bun.lock"
   pull_request:
     paths:
       - "packages/bun-types/**"
       - "test/integration/bun-types/**"
       - "src/cli/init/tsconfig.default.json"
       - ".github/workflows/bun-types.yml"
+      # the inventory snapshots record the typescript and @types/node versions
+      - "package.json"
+      - "bun.lock"
 
 env:
   BUN_VERSION: "canary"

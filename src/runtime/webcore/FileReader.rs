@@ -655,9 +655,7 @@ impl FileReader {
             // No JS read is waiting; stop at the highwater mark and let onPull restart. `started` gates it: a non-lazy `Bun.spawn` pipe is already reading before any consumer attaches, and throttling then deadlocks a child alternating stdout/stderr writes.
             let keep_going = !self.started.get()
                 || (self.flowing.get() && self.buffered.get().len() < self.highwater_mark);
-            // Returning `false` only ends this read loop. `pause()` is what stops the reader: it cancels the next
-            // completion read (Windows) or unregisters the poll, which also releases its hold on the event loop
-            // (POSIX; an unarmed poll could not even observe the peer closing). `on_pull` unpauses.
+            // `false` only ends this read loop; `pause()` stops the reader and releases its hold on the event loop until `on_pull`.
             if !keep_going {
                 self.reader().pause();
             }

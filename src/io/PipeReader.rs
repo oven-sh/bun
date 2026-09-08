@@ -239,9 +239,7 @@ impl PosixBufferedReader {
         let Some(poll) = self.handle.get_poll() else {
             return;
         };
-        // A ref'd reader holds the loop only while its poll is armed: an
-        // unarmed poll delivers nothing, and `try_register_poll` re-applies
-        // KEEP_ALIVE when it arms again.
+        // An unarmed poll delivers nothing; `try_register_poll` applies KEEP_ALIVE when it arms.
         if value && !poll.is_watching() {
             return;
         }

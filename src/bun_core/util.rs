@@ -3531,9 +3531,7 @@ pub mod hash {
 }
 
 // ── base64 ────────────────────────────────────────────────────────────────
-// Thin simdutf-backed encoders — the subset tier-0/1 callers need (npm auth,
-// ansi_renderer). Decoding and the URL-safe / streaming variants live in
-// bun_base64.
+// simdutf-backed encoders for tier-0/1 callers; decoding lives in bun_base64.
 pub mod base64 {
     use bun_simdutf_sys::simdutf;
 

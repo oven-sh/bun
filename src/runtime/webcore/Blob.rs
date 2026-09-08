@@ -5964,7 +5964,8 @@ fn resolve_file_stat(store: &RefPtr<Store>) {
 }
 
 /// Stat a file-backed store and record size, mode, seekability and mtime on
-/// it. The error carries the path or fd.
+/// it. The error is the bare stat error; callers that surface it attach the
+/// path or fd.
 pub(crate) fn stat_file_store(store: &RefPtr<Store>) -> bun_sys::Result<()> {
     // `Store::data_mut` encapsulates the raw-pointer deref under the
     // `RefPtr<Store>` liveness invariant; the caller holds the only ref across
@@ -5973,9 +5974,9 @@ pub(crate) fn stat_file_store(store: &RefPtr<Store>) -> bun_sys::Result<()> {
     let stat = match &file.pathlike {
         PathOrFileDescriptor::Path(path) => {
             let mut buffer = bun_paths::path_buffer_pool::get();
-            bun_sys::stat(path.slice_z(&mut buffer)).map_err(|err| err.with_path(path.slice()))?
+            bun_sys::stat(path.slice_z(&mut buffer))?
         }
-        PathOrFileDescriptor::Fd(fd) => bun_sys::fstat(*fd).map_err(|err| err.with_fd(*fd))?,
+        PathOrFileDescriptor::Fd(fd) => bun_sys::fstat(*fd)?,
     };
     file.max_size = if bun_sys::S::ISREG(stat.st_mode as _) || stat.st_size > 0 {
         ((stat.st_size.max(0)) as u64) as SizeType

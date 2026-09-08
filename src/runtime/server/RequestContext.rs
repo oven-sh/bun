@@ -2662,10 +2662,16 @@ where
                 // stat here so HEAD does the same instead of answering 200
                 // with `content-length: 0`.
                 if blob.needs_to_read_file() {
-                    let stat = crate::webcore::blob::stat_file_store(
-                        blob.store.get().as_ref().expect("file blob has a store"),
-                    );
-                    if let Err(err) = stat {
+                    let store = blob.store.get().as_ref().expect("file blob has a store");
+                    if let Err(err) = crate::webcore::blob::stat_file_store(store) {
+                        let err = match &store.data.as_file().pathlike {
+                            crate::webcore::node_types::PathOrFileDescriptor::Path(p) => {
+                                err.with_path(p.slice())
+                            }
+                            crate::webcore::node_types::PathOrFileDescriptor::Fd(fd) => {
+                                err.with_fd(*fd)
+                            }
+                        };
                         this.run_error_handler(err.to_js(global_this));
                         return;
                     }

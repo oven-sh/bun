@@ -1350,6 +1350,9 @@ pub struct Options<'a> {
     pub print_dce_annotations: bool,
 
     pub inline_require_and_import_errors: bool,
+    /// A bundler renamer named every symbol. Those renamers reserve `NaN`,
+    /// `Infinity` and `undefined`, so the printer may emit those globals as
+    /// bare identifiers without a user binding shadowing them.
     pub has_run_symbol_renamer: bool,
 
     pub require_or_import_meta_for_source_callback: RequireOrImportMetaCallback,

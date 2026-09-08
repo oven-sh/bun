@@ -1597,9 +1597,7 @@ impl FileSink {
         aborted
     }
 
-    /// The pump is over. `on_close` normally ran the controller's `end()`, which detached it; when
-    /// its `onClose` could not run (terminating worker, pending exception) detach it here, so the
-    /// cell never outlives this sink attached.
+    /// The pump is over: a controller whose `onClose` could not run must not outlive this sink attached.
     fn detach_js_controller(&self, global_this: &JSGlobalObject) {
         if let streams::SourceHandle::JSController(cell) = *self.source.get() {
             self.source.set(streams::SourceHandle::None);

@@ -126,7 +126,9 @@ bun build <entry points>
 </ParamField>
 
 <ParamField path="--css-chunking" type="boolean">
-  Chunk CSS files together to reduce duplication (only when multiple entry points import CSS)
+  Write one shared CSS file for entry points whose CSS imports are identical, instead of one identical file each. Bun
+  has done this by default since v1.3.10, so the flag currently has no additional effect. See [CSS > Multiple entry
+  points](/bundler/css#multiple-entry-points).
 </ParamField>
 
 ### Minification & Optimization

@@ -449,7 +449,7 @@ CSS files can be directly imported. The bundler parses and bundles them, handlin
 import "./styles.css";
 ```
 
-During bundling, Bun combines all imported CSS files into a single `.css` file in the output directory.
+During bundling, Bun combines the CSS files that an entry point imports into one `.css` file per entry point, in the order they are imported. [Importing CSS from JavaScript](/bundler/css#importing-css-from-javascript) describes the exact order and what happens with `import()`, code splitting, and multiple entry points.
 
 ```css
 .my-class {

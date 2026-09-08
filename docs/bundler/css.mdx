@@ -5,10 +5,67 @@ description: Bun's bundler has built-in support for CSS with modern features
 
 Bun's bundler has built-in support for CSS with the following features:
 
+- Bundling the CSS that JavaScript imports into one stylesheet per entry point
 - Transpiling modern/future features to work on all browsers (including vendor prefixing)
 - Minification
 - CSS Modules
 - Tailwind (through a native bundler plugin)
+
+## Importing CSS from JavaScript
+
+Import a `.css` file from a JavaScript or TypeScript module to include it in the bundle. A plain `.css` import has no value at runtime (a [CSS module](#css-modules) import also returns its class names). It tells the bundler that the module depends on the stylesheet.
+
+```ts title="app.ts" icon="/icons/typescript.svg"
+import "./reset.css";
+import { Button } from "./Button"; // Button.tsx imports "./Button.css"
+import "./app.css";
+```
+
+For each JavaScript entry point that reaches at least one CSS file, Bun writes one CSS file next to the JavaScript output. The CSS file uses the entry point's [`naming`](/bundler#naming) template, so `./app.ts` produces `out/app.js` and `out/app.css`. A CSS file counts as reached when any module in the entry point's graph imports it, including modules loaded with `require()` or `import()`.
+
+Bun does not generate code that loads the stylesheet at runtime. Reference the CSS file from your page with a `<link>` tag, or build an [HTML entry point](/bundler/html-static) and Bun inserts the tag for you.
+
+### Order of the bundled CSS
+
+The output file contains the stylesheets in the order a depth-first walk of the module graph finds them:
+
+1. In each module, Bun follows the `import` and `export ... from` declarations first, in source order, and then the `require()` and `import()` calls, in source order. ES imports are hoisted, so they run before any other statement in the module.
+2. Bun walks each imported module completely before it moves on to the next import of the current module.
+3. Bun visits each JavaScript module once. A CSS file that several modules import appears once, at the **first** place the walk reaches it.
+4. Bun then expands the `@import` rules inside those CSS files with CSS semantics: when the same file is imported more than once this way, the **last** occurrence is the one that stays.
+
+In the example above the order is `reset.css`, `Button.css`, `app.css`. A rule in `app.css` overrides a rule of equal specificity in `Button.css`. esbuild produces the same order.
+
+### CSS behind `import()`
+
+A stylesheet that is only reachable through a dynamic `import()` or a `require()` call is still part of the importing entry point's CSS file. Bun places it where the call sits in the walk, not at the end of the file:
+
+```ts title="entry.ts" icon="/icons/typescript.svg"
+import "./app"; // app.ts calls import("./dialog"), and dialog.ts imports "./dialog.css"
+import "./base.css";
+```
+
+Here `entry.css` contains `dialog.css` **before** `base.css`, because the walk reaches the `import()` inside `app.ts` before it reaches `base.css`. A module loader that injects each stylesheet when its module first runs would add `dialog.css` last, after the promise resolves. When a rule depends on that late insertion to win the cascade, give it higher specificity or move it into a [CSS module](#css-modules) rather than relying on load order across an `import()` boundary.
+
+esbuild makes the same choice, for the same reason: the bundler cannot know when the `import()` resolves, and it does not manage `<style>` tags at runtime, so it includes every stylesheet the entry point can activate.
+
+### With code splitting
+
+[`splitting`](/bundler#splitting) splits JavaScript, not CSS. With splitting enabled:
+
+- Each entry point's CSS file still contains every stylesheet its graph reaches, including stylesheets behind `import()`. Loading that one file is always enough for the entry point.
+- Each `import()` target that becomes its own chunk and reaches CSS also gets a CSS file of its own. That file uses the chunk [`naming`](/bundler#naming) template (for example `dialog-x7k2m9q1.css`) and contains only the stylesheets the chunk reaches. The [metafile](/bundler#metafile) records it as the chunk's `cssBundle`. Bun does not load it automatically. It is there for a router or framework that loads CSS per route.
+- Chunks of JavaScript shared between entry points never get a CSS file. Their stylesheets are part of each entry point's CSS file instead.
+
+### Multiple entry points
+
+Each entry point that imports CSS gets its own CSS file. When two entry points reach exactly the same stylesheets in the same order, the two files would be identical, so Bun writes the CSS once, named after the first of those entry points, and points both entry points at it. In the [metafile](/bundler#metafile) both outputs have the same `cssBundle`, and HTML entry points link to the same file.
+
+```bash terminal icon="terminal"
+# home.ts and about.ts each contain only: import "./styles.css"
+bun build ./home.ts ./about.ts --outdir ./out
+# writes out/home.js, out/about.js and out/home.css
+```
 
 ## Transpiling
 

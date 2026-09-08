@@ -66,8 +66,7 @@ fn set_blob_content_type(blob: &Blob, mime_type: MimeType) {
         .set(blob::BlobContentType::from(mime_type));
 }
 
-/// `readableStreamToBlob` (BunStreamConsumers.cpp) built `blob` from a body's
-/// stream; give it the body's MIME type the way the other body readers do.
+/// For `readableStreamToBlob` (C++): type the Blob it built like the other body readers do.
 #[unsafe(no_mangle)]
 pub extern "C" fn Body__setBlobContentType(blob: JSValue, content_type: *const u8, length: usize) {
     let Some(blob) = <Blob as bun_jsc::JsClass>::from_js(blob) else {
@@ -1611,8 +1610,7 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
     /// (FFI signature is `*mut`). Returning `NonNull` instead of `&FetchHeaders`
     /// avoids deriving `&mut T` from `&T` at the call sites (UB).
     fn get_fetch_headers(&self) -> Option<NonNull<FetchHeaders>>;
-    /// The owner's `Content-Type` (falling back to the body Blob's own type):
-    /// the MIME type `blob()` and `formData()` use.
+    /// The owner's `Content-Type`, else the body Blob's own type; used by `blob()`/`formData()`.
     fn get_content_type(&self) -> JsResult<Option<Utf8Bytes<'_>>>;
 
     fn get_form_data_encoding(&self) -> JsResult<Option<Box<bun_core::form_data::AsyncFormData>>> {
@@ -2172,8 +2170,7 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
             }
         }
 
-        // A body Blob that carries its own type keeps it; otherwise the owner's
-        // Content-Type applies. Decided before `use_()` empties the body.
+        // A typed body Blob keeps its type. Checked before `use_()` empties the body.
         let has_own_type = matches!(self.get_body_value(), Value::Blob(blob) if !blob.content_type_slice().is_empty());
         let mime_type = if has_own_type {
             None

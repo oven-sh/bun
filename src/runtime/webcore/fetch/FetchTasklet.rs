@@ -827,8 +827,7 @@ impl FetchTasklet {
                 }
             }
 
-            // raw ptr: `body` lives in `response`, disjoint from the `self` fields used below, but
-            // borrowck can't see through the accessors.
+            // raw ptr: borrowck can't see that `body` (in `response`) is disjoint from `self`.
             let body: *mut BodyValue = response.get_body_value();
             // `BodyAbortListener::on_abort` may have set `Error` while this
             // callback was queued; checked before `buffer_reset.set(false)` so

@@ -41,7 +41,7 @@
 #include <wtf/Vector.h>
 #include <wtf/text/StringBuilder.h>
 
-// Body.rs: set a Blob's type from a Content-Type value with the body readers' MIME rules.
+// Body.rs
 extern "C" void Body__setBlobContentType(JSC::EncodedJSValue blob, const uint8_t* contentType, size_t length);
 
 namespace WebCore {
@@ -1506,9 +1506,7 @@ JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_onReadableStreamToJSONFulfilled, (J
     RELEASE_AND_RETURN(scope, JSValue::encode(JSONParseWithException(globalObject, text)));
 }
 
-// `contentType` is the body's Content-Type as a JSString, or undefined. Applied through
-// Body.rs so the Blob gets the same MIME rules as the non-stream body readers, not the
-// `new Blob([], { type })` lookup table.
+// Through Body.rs, not `new Blob([], { type })`: same MIME rules as the other body readers.
 static void setBodyBlobContentType(JSGlobalObject* globalObject, JSValue blob, JSValue contentType)
 {
     auto& vm = getVM(globalObject);

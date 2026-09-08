@@ -153,12 +153,9 @@ pub struct RequestContext<
     pub(crate) blob: JsCell<AnyBlob>,
 
     pub(crate) sendfile: Cell<SendfileContext>,
-    /// The request's `Range`, read from `req.headers` when the response is
-    /// rendered (after the handler may have set or deleted it).
+    /// `Range` as `req.headers` had it when the response was rendered.
     pub(crate) range: Cell<RangeRequest::Raw>,
-    /// A ref on the `Request`'s own `FetchHeaders`, held from the moment the
-    /// request goes async until the response is rendered, so that the `Range`
-    /// read above does not depend on the JS `Request` staying alive.
+    /// The `Request`'s `FetchHeaders`, held from `to_async` until render for `range`.
     pub(crate) request_headers: JsCell<Option<response::HeadersRef>>,
 
     pub(crate) request_body_readable_stream_ref: JsCell<readable_stream::Strong>,
@@ -2380,8 +2377,7 @@ where
                 request_object.set_fetch_headers(Some(response::HeadersRef::create_from_uws(req)));
             }
         }
-        // Render-time header reads (`request_header`) must not depend on the JS
-        // `Request` staying alive until then.
+        // For `capture_request_range`, whether or not the JS `Request` lives until render.
         if self.request_headers.get().is_none() {
             if let Some(headers) = request_object.fetch_headers() {
                 self.request_headers.set(Some(headers.new_ref()));
@@ -2393,9 +2389,7 @@ where
         request_object.request_context.detach_request();
     }
 
-    /// Reads `Range` as the handler sees it through `req.headers`, for
-    /// `do_sendfile`, and releases the ref taken in `to_async`: nothing after
-    /// render reads request headers.
+    /// Reads `Range` through `req.headers` for `do_sendfile` and drops the `to_async` ref.
     fn capture_request_range(&self) {
         let parse = |value: Option<bun_core::Utf8Bytes<'_>>| {
             value.map_or(RangeRequest::Raw::None, |value| {

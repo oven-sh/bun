@@ -188,11 +188,9 @@ namespace WebCore {
 // owner: BunStreamConsumers.cpp.
 //   onBufferedFastPath*: context = the JSReadableStream (the fast path's catch/finally pair).
 //   onReadableStreamTo*Fulfilled: the generic-path promise chains
-//     (toArrayBuffer/toBytes: value = the chunk array; toBlob: value = the chunk array,
-//      context = the contentType JSString or undefined; toJSON: value = the text;
-//      toFormData: value = the Blob, context = the contentType JSString).
-//   onReadableStreamToBlobSetType: toBlob's buffered fast path when a contentType is given;
-//     value = the native handle's Blob, context = the contentType JSString.
+//     (toArrayBuffer/toBytes/toBlob: value = the chunk array; toJSON: value = the text;
+//      toBlob/toFormData: context = the contentType JSString; toFormData: value = the Blob).
+//   onReadableStreamToBlobSetType: value = the fast path's Blob, context = the contentType.
 //   onIntoArrayReadMany*: readableStreamIntoArray's readMany() continuation (readMany may
 //     return a Promise); context = an InternalFieldTuple{reader, resultArray}.
 //   onDirectConsumeLoopRead*: the readableStreamTo{Text,Array}Direct read loop;

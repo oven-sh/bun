@@ -234,13 +234,8 @@ impl Request {
         self.headers.set(headers);
     }
 
-    /// The request's `FetchHeaders`, built from the live uWS request first if a
-    /// `Bun.serve` handler has not read `headers` yet. `None` only when there
-    /// are no headers and no uWS request to build them from.
-    ///
-    /// Every native reader of a request header goes through here, so that it
-    /// sees the same values as JS does through `req.headers` (including any
-    /// `set()`/`delete()` the handler made) instead of the original bytes.
+    /// `req.headers`, built from the live uWS request if not built yet. Native
+    /// header reads go through here so they match what JS sees, edits included.
     #[allow(clippy::mut_from_ref)]
     fn materialized_headers(&self) -> Option<&mut HeadersRef> {
         if self.headers.get().is_none() {
@@ -257,25 +252,21 @@ impl Request {
         self.headers.get().as_ref()
     }
 
-    /// One request header as `req.headers.get()` would return it. `wire_name`
-    /// is `name` in lowercase.
+    /// One header as `req.headers.get()` returns it. `wire_name` is `name` in lowercase.
     pub(crate) fn get_header(
         &self,
         name: HTTPHeaderName,
         wire_name: &[u8],
     ) -> Option<bun_core::Utf8Bytes<'_>> {
         if self.headers.get().is_none() {
-            // Not built yet, so nothing was set or deleted: a header that is not
-            // on the wire is absent. Answer that without building the headers.
+            // Nothing built, so nothing edited: absent on the wire means absent.
             let req = self.request_context.get_request()?;
             bun_opaque::opaque_deref(req).header(wire_name)?;
         }
         Some(self.materialized_headers()?.fast_get(name)?.to_utf8())
     }
 
-    /// Returns the headers of the request, creating them if they do not exist
-    /// yet: from the uWS request when served by `Bun.serve`, otherwise empty
-    /// (plus the body Blob's content type, if any).
+    /// `req.headers`, created empty (plus the body Blob's type) when there is no uWS request.
     #[allow(clippy::mut_from_ref)]
     pub(crate) fn ensure_fetch_headers(
         &self,

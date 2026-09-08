@@ -1157,18 +1157,13 @@ impl Request {
                     }
 
                     if !fields.contains(Fields::Headers) {
-                        if let Some(headers) = response.get_init_headers_mut() {
-                            // The flag is set unconditionally once `getInitHeaders()` yielded a
-                            // value, even if `cloneThis` returns null — so a later arg can't
-                            // repopulate headers from a different source.
-                            match headers.clone_this(global_this) {
-                                Ok(h) => {
-                                    // SAFETY: clone_this returns a +1 ref FetchHeaders.
-                                    req.headers.set(h.map(|p| unsafe { HeadersRef::adopt(p) }));
-                                    fields.insert(Fields::Headers);
-                                }
-                                Err(e) => bail!(Err(e)),
+                        match response.clone_headers(global_this) {
+                            Ok(Some(headers)) => {
+                                req.headers.set(Some(headers));
+                                fields.insert(Fields::Headers);
                             }
+                            Ok(None) => {}
+                            Err(e) => bail!(Err(e)),
                         }
                     }
 
@@ -1398,22 +1393,21 @@ impl Request {
 
         req.url.set(href);
 
-        if matches!(req.body_value(), BodyValue::Blob(_)) && req.headers.get().is_some() {
-            if let BodyValue::Blob(blob) = req.body_value() {
-                let ct: &[u8] = blob.content_type_slice();
-                if !ct.is_empty()
-                    && !req
-                        .headers_mut()
-                        .as_mut()
-                        .unwrap()
-                        .fast_has(HTTPHeaderName::ContentType)
-                {
-                    // Reshaped for borrowck — split borrow of req.body and req.headers
-                    let ct_ptr: *const [u8] = ct;
-                    match req.headers_mut().as_mut().unwrap().put(
+        // https://fetch.spec.whatwg.org/#dom-request step 41: append the body's
+        // `Content-Type` unless the header list has one. `Response` defers this
+        // while it has no header list (`Init::pending_content_type`). `Request`
+        // allocates the list instead: `fetch()` builds one from it anyway, and
+        // nothing keys off its absence.
+        if let BodyValue::Blob(blob) = req.body_value() {
+            let content_type = blob.content_type_slice();
+            if !content_type.is_empty() {
+                let headers = req
+                    .headers_mut()
+                    .get_or_insert_with(HeadersRef::create_empty);
+                if !headers.fast_has(HTTPHeaderName::ContentType) {
+                    match headers.put(
                         HTTPHeaderName::ContentType,
-                        // SAFETY: ct_ptr borrows req.body which is not mutated here.
-                        &BunString::ascii(unsafe { &*ct_ptr }),
+                        &BunString::ascii(content_type),
                         global_this,
                     ) {
                         Ok(()) => {}

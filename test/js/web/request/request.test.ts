@@ -76,6 +76,48 @@ test("clone() does not lock original body when body was accessed before clone", 
   expect(clonedText).toBe("Hello, world!");
 });
 
+// The Content-Type that `new Request(url, { body })` takes from a Blob body is
+// part of the request from construction on, so it must not depend on whether
+// `.headers` is read before or after the body leaves its Blob state.
+describe("body-derived Content-Type does not depend on access order", () => {
+  const make = () =>
+    new Request("http://example.com/", { method: "POST", body: new Blob(["x"], { type: "text/x-custom" }) });
+
+  test(".body first", () => {
+    const req = make();
+    expect(req.body).toBeInstanceOf(ReadableStream);
+    expect(req.headers.get("content-type")).toBe("text/x-custom");
+  });
+
+  test(".text() first", async () => {
+    const req = make();
+    await req.text();
+    expect(req.headers.get("content-type")).toBe("text/x-custom");
+  });
+
+  test("new Request(req, { body }) keeps the original Content-Type", () => {
+    // Same as `{ headers: req.headers, body }`: the copied header list already
+    // has a Content-Type, so the new body's is not appended.
+    expect(new Request(make(), { body: "y" }).headers.get("content-type")).toBe("text/x-custom");
+  });
+
+  test("used as ResponseInit", () => {
+    expect(new Response("y", make()).headers.get("content-type")).toBe("text/x-custom");
+  });
+
+  test("fetch() sends it after .body was read", async () => {
+    await using server = Bun.serve({
+      port: 0,
+      fetch: req => new Response(req.headers.get("content-type") ?? "(none)"),
+    });
+    const req = new Request(server.url, { method: "POST", body: new Blob(["x"], { type: "text/x-custom" }) });
+    expect(req.body).toBeInstanceOf(ReadableStream);
+    const res = await fetch(req);
+    expect(await res.text()).toBe("text/x-custom");
+    expect(req.headers.get("content-type")).toBe("text/x-custom");
+  });
+});
+
 describe("RequestInit signal presence", () => {
   // Fetch spec step 27: "If init['signal'] exists, then set signal to it."
   // A present `signal: null` must replace (detach from) the input Request's signal.

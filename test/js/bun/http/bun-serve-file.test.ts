@@ -104,6 +104,18 @@ describe("Bun.file in serve routes", () => {
         new Response(Bun.file(join(tempDir, "partial.txt")), {
           headers: { "Cache-Control": "max-age=3600", "X-Custom": "abc" },
         }),
+      // `Bun.file(path, { type })` overrides the extension-derived type. The
+      // override must reach the wire no matter what the handler read first.
+      "/type-override": () => new Response(Bun.file(join(tempDir, "hello.txt"), { type: "image/png" })),
+      "/type-override-body-read": () => {
+        const res = new Response(Bun.file(join(tempDir, "hello.txt"), { type: "image/png" }));
+        if (!res.body) throw new Error("no body");
+        return res;
+      },
+      "/type-override-rewrap": () => {
+        const res = new Response(Bun.file(join(tempDir, "hello.txt"), { type: "image/png" }));
+        return new Response(res.body, res);
+      },
     } as const;
 
     server = Bun.serve({
@@ -879,6 +891,15 @@ describe("Bun.file in serve routes", () => {
       const res = await fetch(new URL(`/binary.bin`, server.url));
       expect(res.headers.get("Content-Type")).toMatch(/application\/octet-stream/);
     });
+
+    it.each(["/type-override", "/type-override-body-read", "/type-override-rewrap"])(
+      "a Bun.file() type override wins over the extension (%s)",
+      async path => {
+        const res = await fetch(new URL(path, server.url));
+        expect(res.headers.get("Content-Type")).toBe("image/png");
+        expect(await res.text()).toBe(files["hello.txt"]);
+      },
+    );
   });
 
   describe.concurrent.each([

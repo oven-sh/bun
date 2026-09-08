@@ -1,5 +1,6 @@
-import { describe, expect, test } from "bun:test";
-import { normalizeBunSnapshot } from "harness";
+import { beforeAll, describe, expect, test } from "bun:test";
+import { normalizeBunSnapshot, tempDirWithFiles } from "harness";
+import { join } from "node:path";
 
 test("zero args returns an otherwise empty 200 response", () => {
   const response = new Response();
@@ -49,7 +50,7 @@ describe("2-arg form", () => {
 test("print size", () => {
   expect(normalizeBunSnapshot(Bun.inspect(new Response(Bun.file(import.meta.filename)))), import.meta.dir)
     .toMatchInlineSnapshot(`
-    "Response (8.0 KB) {
+    "Response (11.70 KB) {
       ok: true,
       url: "",
       status: 200,
@@ -213,5 +214,89 @@ describe("clone()", () => {
 
     expect(originalText).toBe("Hello, world!");
     expect(clonedText).toBe("Hello, world!");
+  });
+});
+
+// The Content-Type that `new Response(body)` takes from a Blob/File body is
+// part of the response from construction on (fetch spec "initialize a
+// response"), so it must not depend on whether `.headers` is read before or
+// after something moves the body out of its Blob state.
+describe("body-derived Content-Type does not depend on access order", () => {
+  let dir: string;
+  beforeAll(() => {
+    dir = tempDirWithFiles("response-content-type", { "page.html": "<p>hi</p>" });
+  });
+  const file = () => Bun.file(join(dir, "page.html"), { type: "image/png" });
+  const blob = () => new Blob(["<p>hi</p>"], { type: "text/x-custom" });
+
+  for (const [name, body, expected] of [
+    ["Blob", blob, "text/x-custom"],
+    ["Bun.file with type override", file, "image/png"],
+  ] as const) {
+    describe(name, () => {
+      test(".headers first", () => {
+        const res = new Response(body());
+        expect(res.headers.get("content-type")).toBe(expected);
+      });
+
+      test(".body first", () => {
+        const res = new Response(body());
+        expect(res.body).toBeInstanceOf(ReadableStream);
+        expect(res.headers.get("content-type")).toBe(expected);
+      });
+
+      test.each(["text", "arrayBuffer", "bytes", "blob"] as const)(".%s() first", async method => {
+        const res = new Response(body());
+        await res[method]();
+        expect(res.headers.get("content-type")).toBe(expected);
+      });
+
+      test("new Response(res.body, res)", () => {
+        const res = new Response(body());
+        const rewrapped = new Response(res.body, res);
+        expect(rewrapped.headers.get("content-type")).toBe(expected);
+        expect(res.headers.get("content-type")).toBe(expected);
+      });
+
+      test("used as ResponseInit, its Content-Type wins over the new body's", () => {
+        // Same as `{ headers: res.headers }`: the init's header list already
+        // has a Content-Type, so the new body's is not appended.
+        const res = new Response(body());
+        expect(new Response(new Blob(["x"], { type: "text/plain" }), res).headers.get("content-type")).toBe(expected);
+        expect(new Response("x", res).headers.get("content-type")).toBe(expected);
+      });
+
+      test("used as RequestInit", () => {
+        const res = new Response(body());
+        expect(new Request("http://example.com/", res).headers.get("content-type")).toBe(expected);
+      });
+
+      test("clone() after .body", () => {
+        const res = new Response(body());
+        void res.body;
+        const clone = res.clone();
+        expect(clone.headers.get("content-type")).toBe(expected);
+        expect(res.headers.get("content-type")).toBe(expected);
+      });
+
+      test("HTMLRewriter output", async () => {
+        const res = new Response(body());
+        const out = new HTMLRewriter().on("p", { element: e => void e.setInnerContent("yo") }).transform(res);
+        expect(out.headers.get("content-type")).toBe(expected);
+        expect(await out.text()).toBe("<p>yo</p>");
+      });
+    });
+  }
+
+  test("a ReadableStream body contributes no Content-Type, the init still does", () => {
+    const stream = () => new ReadableStream({ start: c => c.close() });
+    expect(new Response(stream()).headers.get("content-type")).toBeNull();
+    expect(new Response(stream(), new Response(blob())).headers.get("content-type")).toBe("text/x-custom");
+  });
+
+  test("an explicit Content-Type header wins over the body's", () => {
+    const res = new Response(blob(), { headers: { "Content-Type": "text/plain" } });
+    void res.body;
+    expect(res.headers.get("content-type")).toBe("text/plain");
   });
 });

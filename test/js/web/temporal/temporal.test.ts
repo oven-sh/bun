@@ -89,33 +89,36 @@ describe("Temporal core operations", () => {
 
 // Divergences from V8 found by differential fuzzing. Expected values are what Node 26 / Chromium 148 print.
 describe("Temporal spec conformance", () => {
-  test("PlainDate.from rejects a non-object options before it resolves the calendar fields", () => {
-    // ToTemporalDate: PrepareCalendarFields, then GetOptionsObject (TypeError), then CalendarDateFromFields
-    // (era resolution and the ISODateWithinLimits check, both RangeError).
-    const lateFailingBags = [
-      { year: -271821, month: 2, day: 31 },
-      { year: 275760, month: 9, day: 14 },
-      { era: "xx", eraYear: 1, month: 1, day: 1, calendar: "gregory" },
-      { year: 2024, month: 13, day: 1 },
-    ];
-    for (const bag of lateFailingBags) {
+  // ToTemporalDate: PrepareCalendarFields, then GetOptionsObject (TypeError), then CalendarDateFromFields
+  // (era resolution and the ISODateWithinLimits check, both RangeError).
+  describe("PlainDate.from rejects a non-object options before it resolves the calendar fields", () => {
+    test.each([
+      [{ year: -271821, month: 2, day: 31 }, RangeError],
+      [{ year: 275760, month: 9, day: 14 }, RangeError],
+      [{ era: "xx", eraYear: 1, month: 1, day: 1, calendar: "gregory" }, RangeError],
+      [{ year: 2024, month: 13, day: 1 }, "2024-12-01"],
+    ] as const)("%j", (bag, withValidOptions) => {
       for (const options of [null, "constrain", 1, true]) {
         expect(() => Temporal.PlainDate.from(bag, options as any)).toThrow(TypeError);
       }
-    }
-    // The bag is still read first, and PrepareCalendarFields errors still win.
-    const reads: PropertyKey[] = [];
-    const bag = new Proxy(
-      { year: -271821, month: 2, day: 31 },
-      { get: (t, k, r) => (reads.push(k), Reflect.get(t, k, r)) },
-    );
-    expect(() => Temporal.PlainDate.from(bag, null as any)).toThrow(TypeError);
-    expect(reads).toEqual(["calendar", "day", "month", "monthCode", "year"]);
-    expect(() => Temporal.PlainDate.from({ year: 2024, month: 0, day: 1 }, null as any)).toThrow(RangeError);
-    // With a real options object the late RangeErrors surface.
-    expect(() => Temporal.PlainDate.from(lateFailingBags[0], {})).toThrow(RangeError);
-    expect(() => Temporal.PlainDate.from(lateFailingBags[2], {})).toThrow(RangeError);
-    expect(Temporal.PlainDate.from(lateFailingBags[3], {}).toString()).toBe("2024-12-01");
+      // With a real options object the late RangeError (or the constrained date) surfaces.
+      if (typeof withValidOptions === "string") {
+        expect(Temporal.PlainDate.from(bag, {}).toString()).toBe(withValidOptions);
+      } else {
+        expect(() => Temporal.PlainDate.from(bag, {})).toThrow(withValidOptions);
+      }
+    });
+
+    test("the bag is read first, and PrepareCalendarFields errors still win", () => {
+      const reads: PropertyKey[] = [];
+      const bag = new Proxy(
+        { year: -271821, month: 2, day: 31 },
+        { get: (t, k, r) => (reads.push(k), Reflect.get(t, k, r)) },
+      );
+      expect(() => Temporal.PlainDate.from(bag, null as any)).toThrow(TypeError);
+      expect(reads).toEqual(["calendar", "day", "month", "monthCode", "year"]);
+      expect(() => Temporal.PlainDate.from({ year: 2024, month: 0, day: 1 }, null as any)).toThrow(RangeError);
+    });
   });
 
   test("rounding to weeks accepts a window edge on the minimum PlainDate", () => {
@@ -144,22 +147,25 @@ describe("Temporal spec conformance", () => {
     expect(() => later.since("-271821-04-19", { smallestUnit: "weeks" })).toThrow(RangeError);
   });
 
-  test("era codes match the lowercase CLDR identifiers exactly", () => {
-    for (const [calendar, era] of [
+  describe("era codes match the lowercase CLDR identifiers exactly", () => {
+    test.each([
       ["gregory", "CE"],
       ["gregory", "Bce"],
       ["gregory", "AD"],
       ["japanese", "Reiwa"],
       ["hebrew", "AM"],
-    ]) {
+    ])("%s rejects %s", (calendar, era) => {
       expect(() => Temporal.PlainDate.from({ era, eraYear: 1, month: 1, day: 1, calendar })).toThrow(RangeError);
-    }
-    expect(Temporal.PlainDate.from({ era: "ce", eraYear: 1, month: 1, day: 1, calendar: "gregory" }).toString()).toBe(
-      "0001-01-01[u-ca=gregory]",
-    );
-    expect(Temporal.PlainDate.from({ era: "ad", eraYear: 1, month: 1, day: 1, calendar: "gregory" }).era).toBe("ce");
-    expect(
-      Temporal.PlainDate.from({ era: "reiwa", eraYear: 1, month: 5, day: 1, calendar: "japanese" }).toString(),
-    ).toBe("2019-05-01[u-ca=japanese]");
+    });
+
+    test("lowercase codes and aliases resolve", () => {
+      expect(Temporal.PlainDate.from({ era: "ce", eraYear: 1, month: 1, day: 1, calendar: "gregory" }).toString()).toBe(
+        "0001-01-01[u-ca=gregory]",
+      );
+      expect(Temporal.PlainDate.from({ era: "ad", eraYear: 1, month: 1, day: 1, calendar: "gregory" }).era).toBe("ce");
+      expect(
+        Temporal.PlainDate.from({ era: "reiwa", eraYear: 1, month: 5, day: 1, calendar: "japanese" }).toString(),
+      ).toBe("2019-05-01[u-ca=japanese]");
+    });
   });
 });

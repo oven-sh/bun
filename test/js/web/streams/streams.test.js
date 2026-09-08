@@ -1705,6 +1705,104 @@ describe("multi-chunk consumers produce exactly the concatenated bytes", () => {
     });
   });
 
+  // A consumer that takes the whole body (.text(), .bytes(), Bun.readableStreamTo*(), a native
+  // sink) calls a direct stream's pull() once. When that pull() returns a promise, the promise
+  // resolving without close()/end() is the end of the body: the consumer finishes with everything
+  // written, as Bun.serve always did. Before, these consumers pulled once and then never settled.
+  // A reader (getReader/for-await/pipeTo) is a demand signal instead and pulls again; a sync
+  // pull() that returns without closing gives no completion signal, so it waits for close().
+  describe("an async direct pull() that resolves without close() completes a whole-body consumer", () => {
+    const nextTask = () => new Promise(resolve => setImmediate(resolve));
+    const mk = (hooks = {}) =>
+      new ReadableStream({
+        type: "direct",
+        async pull(c) {
+          c.write("hello");
+          await nextTask();
+          c.write(new TextEncoder().encode("wor"));
+          c.write("ld");
+        },
+        ...hooks,
+      });
+    const decode = bytes => new TextDecoder().decode(bytes);
+
+    it("Response and Request body methods", async () => {
+      expect(await new Response(mk()).text()).toBe("helloworld");
+      expect(decode(await new Response(mk()).bytes())).toBe("helloworld");
+      expect(decode(new Uint8Array(await new Response(mk()).arrayBuffer()))).toBe("helloworld");
+      expect(await (await new Response(mk()).blob()).text()).toBe("helloworld");
+      expect(await new Request("http://example.com/", { method: "POST", body: mk() }).text()).toBe("helloworld");
+      const json = new ReadableStream({
+        type: "direct",
+        async pull(c) {
+          c.write('{"hello":');
+          await nextTask();
+          c.write('"world"}');
+        },
+      });
+      expect(await new Response(json).json()).toEqual({ hello: "world" });
+    });
+
+    it("ReadableStream methods", async () => {
+      expect(await mk().text()).toBe("helloworld");
+      expect(decode(await mk().bytes())).toBe("helloworld");
+      expect(await (await mk().blob()).text()).toBe("helloworld");
+    });
+
+    it("Bun.readableStreamTo*()", async () => {
+      expect(await readableStreamToText(mk())).toBe("helloworld");
+      expect(decode(await readableStreamToBytes(mk()))).toBe("helloworld");
+      expect(decode(new Uint8Array(await readableStreamToArrayBuffer(mk())))).toBe("helloworld");
+      const chunks = await readableStreamToArray(mk());
+      expect(chunks.map(chunk => (typeof chunk === "string" ? chunk : decode(chunk))).join("")).toBe("helloworld");
+    });
+
+    it("runs the source's close() hook once, as an explicit close() does", async () => {
+      let textCloses = 0;
+      expect(await new Response(mk({ close: () => textCloses++ })).text()).toBe("helloworld");
+      let bytesCloses = 0;
+      expect(decode(await new Response(mk({ close: () => bytesCloses++ })).bytes())).toBe("helloworld");
+      expect([textCloses, bytesCloses]).toEqual([1, 1]);
+    });
+
+    it("a sync pull() that returns without close() still waits for close()", async () => {
+      let controller;
+      const text = new Response(
+        new ReadableStream({
+          type: "direct",
+          pull(c) {
+            controller = c;
+            c.write("hello");
+          },
+        }),
+      ).text();
+      let settled = false;
+      text.finally(() => (settled = true));
+      await nextTask();
+      expect(settled).toBe(false);
+      controller.write("world");
+      controller.close();
+      expect(await text).toBe("helloworld");
+    });
+
+    it("a reader still pulls again after each pull() resolves", async () => {
+      let pulls = 0;
+      const rs = new ReadableStream({
+        type: "direct",
+        async pull(c) {
+          pulls++;
+          await nextTask();
+          c.write("x");
+          if (pulls === 3) c.close();
+        },
+      });
+      const chunks = [];
+      for await (const chunk of rs) chunks.push(decode(chunk));
+      expect(pulls).toBe(3);
+      expect(chunks.join("")).toBe("xxx");
+    });
+  });
+
   it("a patched Object.prototype.then that releases the reader mid-resolution does not crash", async () => {
     let releaseNow = null;
     Object.defineProperty(Object.prototype, "then", {

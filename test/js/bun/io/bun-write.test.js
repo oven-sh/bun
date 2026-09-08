@@ -1023,6 +1023,75 @@ int posix_fadvise(int fd, off_t offset, off_t len, int advice) {
       expect(Buffer.from(await Bun.file(dest).arrayBuffer())).toEqual(expected);
     });
 
+    // A direct stream's pull() runs once; its promise resolving without close() is the end of the
+    // body, as for Bun.serve. Before, bytes written after the sink's last flush were dropped while
+    // the resolved count still included them, and the sink was freed with its JS controller still
+    // attached, which read the freed sink once the controller was collected.
+    it("a direct stream whose pull() resolves without close()", async () => {
+      using dir = tempDir("bun-write-direct-no-close", {});
+      const dest = join(String(dir), "out.txt");
+      const fixture = /* js */ `
+        const { fileSinkInternals } = require("bun:internal-for-testing");
+        const nextTask = () => new Promise(resolve => setImmediate(resolve));
+        const baseline = fileSinkInternals.liveCount();
+        const stream = new ReadableStream({
+          type: "direct",
+          async pull(c) {
+            c.write("hello");
+            // The sink flushes "hello" to the file before this resolves.
+            await nextTask();
+            c.write(" ");
+            c.write(new TextEncoder().encode("wörld"));
+          },
+        });
+        const written = await Bun.write(process.env.DEST, new Response(stream));
+        const onDisk = await Bun.file(process.env.DEST).text();
+        // Collect the stream and its sink controller.
+        Bun.gc(true);
+        await nextTask();
+        Bun.gc(true);
+        console.log(JSON.stringify({ written, onDisk, leakedSinks: fileSinkInternals.liveCount() - baseline }));
+      `;
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", fixture],
+        env: { ...bunEnv, DEST: dest },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(JSON.parse(stdout)).toEqual({ written: 12, onDisk: "hello wörld", leakedSinks: 0 });
+      expect(exitCode).toBe(0);
+    });
+
+    it("a stream whose source fails rejects with that error", async () => {
+      using dir = tempDir("bun-write-stream-reject", {});
+      const nextTask = () => new Promise(resolve => setImmediate(resolve));
+      const direct = new ReadableStream({
+        type: "direct",
+        async pull(c) {
+          c.write("hello");
+          await nextTask();
+          throw new Error("boom");
+        },
+      });
+      await expect(Bun.write(join(String(dir), "direct.txt"), new Response(direct))).rejects.toThrow("boom");
+      const midway = new ReadableStream({
+        async pull(c) {
+          c.enqueue("hello");
+          await nextTask();
+          c.error(new Error("boom"));
+        },
+      });
+      await expect(Bun.write(join(String(dir), "midway.txt"), midway)).rejects.toThrow("boom");
+      const upfront = new ReadableStream({
+        start(c) {
+          c.error(new Error("boom"));
+        },
+      });
+      await expect(Bun.write(join(String(dir), "upfront.txt"), upfront)).rejects.toThrow("boom");
+    });
+
     // /dev/full: every write fails with ENOSPC.
     it.skipIf(process.platform !== "linux")("rejects with the write error, for each kind of body", async () => {
       await using server = await origin();

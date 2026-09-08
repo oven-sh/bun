@@ -595,19 +595,22 @@ describe("bundler", async () => {
       run: { stdout: "cjs" },
     });
 
-    // `--loader :<name>` maps the empty extension, which overrides the default.
-    itBundled("bun/loader-extensionless-override", {
-      backend: "cli",
-      loader: { "": "text" },
-      files: {
-        "/entry.ts": /* ts */ `
-          import license from "./LICENSE";
-          console.log(JSON.stringify(license));
-        `,
-        "/LICENSE": `not (valid) typescript: at all`,
-      },
-      run: { stdout: `"not (valid) typescript: at all"` },
-    });
+    // The empty extension maps files that have none, which overrides the default:
+    // `--loader :<name>` on the CLI, `loader: { "": <name> }` in Bun.build.
+    for (const backend of ["cli", "api"] as const) {
+      itBundled(`bun/loader-extensionless-override-${backend}`, {
+        backend,
+        loader: { "": "text" },
+        files: {
+          "/entry.ts": /* ts */ `
+            import license from "./LICENSE";
+            console.log(JSON.stringify(license));
+          `,
+          "/LICENSE": `not (valid) typescript: at all`,
+        },
+        run: { stdout: `"not (valid) typescript: at all"` },
+      });
+    }
   });
 
   // Lazy-export modules (JSON, TOML, CSS modules, ...) used to crash the

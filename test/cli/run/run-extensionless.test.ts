@@ -59,22 +59,30 @@ describe.concurrent("run-extensionless", () => {
     }
   });
 
-  // `--loader :<name>` maps the empty extension, which overrides the tsx default.
-  test("--loader : overrides the loader for extensionless files", async () => {
-    using dir = tempDir("run-extensionless-override", {
-      "LICENSE": `not (valid) typescript: at all`,
-      "entry.ts": `import text from "./LICENSE"; console.log(JSON.stringify(text));`,
+  // The empty extension maps files that have none, which overrides the tsx
+  // default: `--loader :<name>` on the CLI, `"" = "<name>"` under `[loader]`
+  // in bunfig.toml.
+  for (const [via, files, args] of [
+    ["--loader :", {}, ["--loader", ":text"]],
+    ["bunfig [loader]", { "bunfig.toml": `[loader]\n"" = "text"\n` }, []],
+  ] as const) {
+    test(`${via} overrides the loader for extensionless files`, async () => {
+      using dir = tempDir("run-extensionless-override", {
+        ...files,
+        "LICENSE": `not (valid) typescript: at all`,
+        "entry.ts": `import text from "./LICENSE"; console.log(JSON.stringify(text));`,
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), ...args, "entry.ts"],
+        cwd: String(dir),
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(stdout).toBe(`"not (valid) typescript: at all"\n`);
+      expect(exitCode).toBe(0);
     });
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "--loader", ":text", "entry.ts"],
-      cwd: String(dir),
-      env: bunEnv,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stderr).toBe("");
-    expect(stdout).toBe(`"not (valid) typescript: at all"\n`);
-    expect(exitCode).toBe(0);
-  });
+  }
 });

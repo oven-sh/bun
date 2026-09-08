@@ -3285,6 +3285,17 @@ declare module "bun" {
     publicPath?: string;
     define?: Record<string, string>;
     // origin?: string; // e.g. http://mydomain.com
+    /**
+     * Map file extensions to built-in loaders, e.g. `{ ".png": "dataurl" }`.
+     *
+     * The empty extension `""` maps files that have none. They use the
+     * `"tsx"` loader by default.
+     *
+     * @example
+     * ```ts
+     * loader: { ".txt": "file", "": "js" }
+     * ```
+     */
     loader?: { [k in string]: Loader };
     /**
      * Specifies if and how to generate source maps.

@@ -1137,17 +1137,17 @@ pub mod js_bundler {
                     global_this,
                     loaders_ref,
                     jsc::JSPropertyIteratorOptions {
-                        skip_empty_name: true,
+                        // `""` maps files with no extension, as `--loader :tsx` does.
+                        skip_empty_name: false,
                         include_value: true,
                         ..Default::default()
                     },
                 )?;
 
                 // `loader_iter.i` is the property position, not a dense index of yielded
-                // entries. With `skip_empty_name = true` (or a skipped property getter),
-                // writing at `loader_iter.i` would leave earlier slots uninitialized and
-                // later freed as garbage. Use ArrayLists so the stored slice is always
-                // exactly what was appended.
+                // entries. With a skipped property getter, writing at `loader_iter.i`
+                // would leave earlier slots uninitialized and later freed as garbage.
+                // Use Vecs so the stored slice is always exactly what was appended.
                 let mut loader_names: Vec<Box<[u8]>> = Vec::new();
                 // errdefer: Vec<Box<[u8]>> drops automatically
                 let mut loader_values: Vec<api::Loader> = Vec::new();
@@ -1157,9 +1157,11 @@ pub mod js_bundler {
 
                 while let Some((prop, value)) = loader_iter.next()? {
                     let prop_slice = prop.to_utf8();
-                    if !prop_slice.slice().starts_with(b".") || prop.length() < 2 {
+                    if !prop_slice.slice().is_empty()
+                        && (!prop_slice.slice().starts_with(b".") || prop.length() < 2)
+                    {
                         return Err(global_this.throw_invalid_arguments(format_args!(
-                            "loader property names must be file extensions, such as '.txt'"
+                            "loader property names must be file extensions, such as '.txt', or '' for files with no extension"
                         )));
                     }
                     drop(prop_slice);

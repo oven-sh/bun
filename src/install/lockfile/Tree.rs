@@ -143,6 +143,13 @@ pub(crate) struct Placement {
     pub bundled: bool,
 }
 
+/// Whether a tree reports the peers it serves out of range; only the tree an install writes does.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum PeerRanges {
+    Report,
+    Ignore,
+}
+
 #[derive(thiserror::Error, Debug, strum::IntoStaticStr)]
 pub enum SubtreeError {
     #[error("OutOfMemory")]
@@ -436,8 +443,7 @@ pub struct Builder<'a, const METHOD: BuilderMethod> {
         ArrayHashMap<PackageNameHash, ArrayHashMap<DependencyID, ()>>,
     /// An optional peer got bound after its dependent was placed; see `Lockfile::resolve`.
     pub(crate) late_bound_optional_peer: bool,
-    /// Range-check the peers this tree serves (`report_peer`); only the tree an install writes does.
-    pub(crate) report_peers: bool,
+    pub(crate) peer_ranges: PeerRanges,
     /// `(peer edge, package serving it)` pairs already checked, one per distinct outcome.
     pub(crate) reported_peers: HashMap<(DependencyID, PackageID), ()>,
     pub(crate) manager: Option<&'a PackageManager>,
@@ -489,7 +495,7 @@ impl<'a, const METHOD: BuilderMethod> Builder<'a, METHOD> {
 
     /// This tree serves `dependent`'s peer edge `dep_id` with `served`; warn if it is out of range.
     fn report_peer(&mut self, dependent: PackageID, dep_id: DependencyID, served: PackageID) {
-        if !self.report_peers {
+        if self.peer_ranges == PeerRanges::Ignore {
             return;
         }
         if self.reported_peers.insert((dep_id, served), ()).is_some() {

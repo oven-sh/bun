@@ -1442,7 +1442,7 @@ impl Lockfile {
             true,
             &[],
             None,
-            false,
+            tree::PeerRanges::Ignore,
         )? {}
         Ok(())
     }
@@ -1462,7 +1462,11 @@ impl Lockfile {
             install_root_dependencies,
             workspace_filters,
             packages_to_install,
-            packages_to_install.is_none(),
+            if packages_to_install.is_none() {
+                tree::PeerRanges::Report
+            } else {
+                tree::PeerRanges::Ignore
+            },
         )?;
         Ok(())
     }
@@ -1477,7 +1481,7 @@ impl Lockfile {
         install_root_dependencies: bool,
         workspace_filters: &[WorkspaceFilter],
         packages_to_install: Option<&[PackageID]>,
-        report_peers: bool,
+        peer_ranges: tree::PeerRanges,
     ) -> Result<bool, tree::SubtreeError> {
         let slice = self.packages.slice();
 
@@ -1509,7 +1513,7 @@ impl Lockfile {
             packages_to_install,
             pending_optional_peers: Default::default(),
             late_bound_optional_peer: false,
-            report_peers,
+            peer_ranges,
             reported_peers: Default::default(),
             list: Default::default(),
             sort_buf: Default::default(),

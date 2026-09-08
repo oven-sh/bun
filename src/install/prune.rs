@@ -786,7 +786,7 @@ fn hoist_install_tree(
                 true,
                 &[],
                 None,
-                false,
+                tree::PeerRanges::Ignore,
             )
         }
     });

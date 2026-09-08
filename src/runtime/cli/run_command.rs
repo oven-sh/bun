@@ -3650,11 +3650,11 @@ impl RunCommand {
                         // resolver dir-cache for the process lifetime.
                         let value = unsafe { &**entry.1 };
                         let name = value.base();
+                        let ext = paths::extension(name);
+                        // `Makefile`, `LICENSE`: runnable as tsx, but not worth completing.
                         if name[0] != b'.'
-                            && this_transpiler
-                                .options
-                                .loader(paths::extension(name))
-                                .can_be_run_by_bun()
+                            && !ext.is_empty()
+                            && this_transpiler.options.loader(ext).can_be_run_by_bun()
                             && !strings::contains(name, b".config")
                             && !strings::contains(name, b".d.ts")
                             && !strings::contains(name, b".d.mts")

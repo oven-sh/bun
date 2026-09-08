@@ -35,8 +35,7 @@ fn list_to_stmts<'a>(list: StmtList<'a>) -> StmtNodeList {
     StmtNodeList::from_bump(list)
 }
 
-// ─── TypeScript constant expressions (see `P::eval_ts_constant_expression`) ─────
-// The parts that do not need the parser are free functions so they are compiled once.
+// ─── `P::eval_ts_constant_expression` helpers: free functions, so not compiled per `P` instantiation ───
 
 fn ts_constant_string(str_: js_ast::StoreRef<E::EString>) -> TSConstantValue {
     debug_assert!(

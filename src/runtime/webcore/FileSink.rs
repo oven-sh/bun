@@ -563,8 +563,8 @@ impl FileSink {
         }
         if let Some(promise) = promise {
             self.stream_done.set(promise);
-            // Otherwise a flush is still draining: it holds the keep-alive ref and its `on_close` settles.
-            if !self.must_be_kept_alive_until_eof.get() {
+            // Otherwise `end()` left a flush draining (`done` is set): its `on_write` reaches `end_writer`, which settles.
+            if !self.writer.get().has_pending_data() {
                 self.settle_stream_done();
             }
         }

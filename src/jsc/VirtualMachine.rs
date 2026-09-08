@@ -2938,6 +2938,8 @@ impl VirtualMachine {
                         JSC__JSInternalPromise__resolvedPromise(global_ref, ret)
                     })
                     .map_err(|_| crate::CrateError::JSError)?;
+                    // This VM reports the entry promise itself; the loader's promises come handled too.
+                    crate::JSPromise::opaque_mut(resolved).set_handled();
                     self.pending_internal_promise = Some(resolved);
                     self.pending_internal_promise_is_protected = false;
                     return Ok(resolved);

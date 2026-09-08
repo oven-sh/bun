@@ -86,3 +86,119 @@ describe("Temporal core operations", () => {
     expect(() => structuredClone(Temporal.Instant.from("2024-06-15T00:00Z"))).toThrow(DOMException);
   });
 });
+
+// ICU4C evaluates the tabular Hijri leap rule ((14 + 11y) mod 30 < 11) and the Persian one
+// ((25y + 11) mod 33 < 8) with a truncating %, so on its own it calls almost every year below 1 a
+// leap year while still placing the days correctly. The engine has to report lengths that agree
+// with where the days are (and with icu4x): a floored remainder.
+describe("Temporal non-ISO calendars before their epoch", () => {
+  const mod = (a: number, n: number) => ((a % n) + n) % n;
+  const tabularLeapYear = (calendar: string, year: number) =>
+    calendar === "persian" ? mod(25 * year + 11, 33) < 8 : mod(14 + 11 * year, 30) < 11;
+  const fields = (d: Temporal.PlainDate) => `${d.year}-${d.monthCode}-${d.day}`;
+  const hijri = ["islamic-civil", "islamic-tbla", "islamic-umalqura"];
+
+  test.each([...hijri, "persian"])("%s: year and month lengths match the dates in years <= 0", calendar => {
+    const commonYear = calendar === "persian" ? 365 : 354;
+    for (let year = -34; year <= 3; year++) {
+      const leap = tabularLeapYear(calendar, year);
+      const first = Temporal.PlainDate.from({ year, month: 1, day: 1, calendar });
+      const next = Temporal.PlainDate.from({ year: year + 1, month: 1, day: 1, calendar });
+      const lastMonth = Temporal.PlainDate.from({ year, month: 12, day: 1, calendar });
+      let sumOfMonths = 0;
+      for (let month = 1; month <= 12; month++) {
+        sumOfMonths += Temporal.PlainDate.from({ year, month, day: 1, calendar }).daysInMonth;
+      }
+      expect({
+        year,
+        inLeapYear: first.inLeapYear,
+        daysInYear: first.daysInYear,
+        daysUntilNextYear: first.until(next, { largestUnit: "days" }).days,
+        sumOfMonths,
+        lastMonthDays: lastMonth.daysInMonth,
+        lastDayOfYear: lastMonth.with({ day: 30 }).dayOfYear,
+        day30Constrained: Temporal.PlainDate.from({ year, month: 12, day: 30, calendar }).day,
+        dayAfterLastDay: fields(lastMonth.with({ day: 30 }).add({ days: 1 })),
+      }).toEqual({
+        year,
+        inLeapYear: leap,
+        daysInYear: commonYear + +leap,
+        daysUntilNextYear: commonYear + +leap,
+        sumOfMonths: commonYear + +leap,
+        lastMonthDays: 29 + +leap,
+        lastDayOfYear: commonYear + +leap,
+        day30Constrained: 29 + +leap,
+        dayAfterLastDay: `${year + 1}-M01-1`,
+      });
+      const rejectDay30 = () => Temporal.PlainDate.from({ year, month: 12, day: 30, calendar }, { overflow: "reject" });
+      if (leap) expect(rejectDay30().day).toBe(30);
+      else expect(rejectDay30).toThrow(RangeError);
+    }
+  });
+
+  test.each(hijri)("%s: year and month arithmetic regulates the day against the real month length", calendar => {
+    // -4 and -6 are leap (30-day Dhu al-Hijjah); -3, -5 and -7 are common.
+    const leapLastDay = Temporal.PlainDate.from({ year: -4, month: 12, day: 30, calendar });
+    const muharram30 = Temporal.PlainDate.from({ year: -7, month: 1, day: 30, calendar });
+    const newYearMinus5 = Temporal.PlainDate.from({ year: -5, month: 1, day: 1, calendar });
+    expect({
+      plusOneYear: fields(leapLastDay.add({ years: 1 })),
+      minusThreeYears: fields(leapLastDay.subtract({ years: 3 })),
+      plusThreeYears: fields(leapLastDay.add({ years: 3 }, { overflow: "reject" })),
+      plus11Months: fields(muharram30.add({ months: 11 })),
+      plus23Months: fields(muharram30.add({ months: 23 }, { overflow: "reject" })),
+      plus11Months1Day: fields(muharram30.add({ months: 11, days: 1 })),
+      untilYears: muharram30.until(newYearMinus5, { largestUnit: "years" }).toString(),
+      untilMonths: muharram30.until(newYearMinus5, { largestUnit: "months" }).toString(),
+      sinceMonths: muharram30.since(newYearMinus5, { largestUnit: "months" }).toString(),
+      roundTrip: muharram30.add("P1Y11M1D").equals(newYearMinus5),
+      yearMonthPlusOneYear: Temporal.PlainYearMonth.from({ year: -4, month: 12, calendar }).add({ years: 1 }).daysInMonth,
+    }).toEqual({
+      plusOneYear: "-3-M12-29",
+      minusThreeYears: "-7-M12-29",
+      plusThreeYears: "-1-M12-30",
+      plus11Months: "-7-M12-29",
+      plus23Months: "-6-M12-30",
+      plus11Months1Day: "-6-M01-1",
+      untilYears: "P1Y11M1D",
+      untilMonths: "P23M1D",
+      sinceMonths: "-P23M1D",
+      roundTrip: true,
+      yearMonthPlusOneYear: 29,
+    });
+    expect(() => leapLastDay.add({ years: 1 }, { overflow: "reject" })).toThrow(RangeError);
+    expect(() => muharram30.add({ months: 11 }, { overflow: "reject" })).toThrow(RangeError);
+  });
+
+  test("persian: year and month arithmetic regulates the day against the real month length", () => {
+    const calendar = "persian";
+    // -3 and -7 are leap (30-day Esfand); -4, -2, -1 and 0 are common.
+    const bahman30 = Temporal.PlainDate.from({ year: -1, month: 11, day: 30, calendar });
+    const leapLastDay = Temporal.PlainDate.from({ year: -3, month: 12, day: 30, calendar });
+    const farvardin31 = Temporal.PlainDate.from({ year: -2, month: 1, day: 31, calendar });
+    const newYear0 = Temporal.PlainDate.from({ year: 0, month: 1, day: 1, calendar });
+    expect({
+      plusOneMonth: fields(bahman30.add({ months: 1 })),
+      plusTwoYears: fields(leapLastDay.add({ years: 2 })),
+      minusOneYear: fields(leapLastDay.subtract({ years: 1 })),
+      minusFourYears: fields(leapLastDay.subtract({ years: 4 }, { overflow: "reject" })),
+      plus23Months: fields(farvardin31.add({ months: 23 })),
+      untilYears: farvardin31.until(newYear0, { largestUnit: "years" }).toString(),
+      untilMonths: farvardin31.until(newYear0, { largestUnit: "months" }).toString(),
+      roundTrip: farvardin31.add("P1Y11M1D").equals(newYear0),
+      firstDayISO: Temporal.PlainDate.from({ year: -1, month: 1, day: 1, calendar }).toString(),
+    }).toEqual({
+      plusOneMonth: "-1-M12-29",
+      plusTwoYears: "-1-M12-29",
+      minusOneYear: "-4-M12-29",
+      minusFourYears: "-7-M12-30",
+      plus23Months: "-1-M12-29",
+      untilYears: "P1Y11M1D",
+      untilMonths: "P23M1D",
+      roundTrip: true,
+      firstDayISO: "0620-03-21[u-ca=persian]",
+    });
+    expect(() => bahman30.add({ months: 1 }, { overflow: "reject" })).toThrow(RangeError);
+    expect(() => leapLastDay.add({ years: 2 }, { overflow: "reject" })).toThrow(RangeError);
+  });
+});

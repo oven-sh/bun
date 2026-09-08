@@ -865,10 +865,7 @@ impl IntermediateOutput {
                                     )
                                 },
                             );
-                            count += cheap_normalizer
-                                .iter()
-                                .map(|part| part.len())
-                                .sum::<usize>();
+                            count += cheap_normalizer.len();
                         }
                         QueryKind::None => {}
                     }
@@ -1067,7 +1064,7 @@ impl IntermediateOutput {
                                 },
                             );
 
-                            for part in cheap_normalizer {
+                            for part in cheap_normalizer.parts() {
                                 if part.is_empty() {
                                     continue;
                                 }

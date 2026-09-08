@@ -18,7 +18,7 @@ use crate::output_file::{
     BakeExtra, Index as OutputFileIndex, IndexOptional, Options as OutputFileInit,
     OptionsData as OutputFileData, SavedFile, Value as OutputFileValue,
 };
-use crate::{BundleV2, Chunk, cheap_prefix_normalizer};
+use crate::{BundleV2, Chunk, PrefixedPath, cheap_prefix_normalizer};
 
 use bun_sys::{
     FdDirExt, PathOrFileDescriptor, WriteFileArgs, WriteFileData, WriteFileEncoding,
@@ -302,18 +302,22 @@ pub(crate) fn write_output_files_to_disk(
                 let source_map_final_rel_path = strings::concat(&[&chunk.final_rel_path, b".map"]);
 
                 if tag == SourceMapOption::Linked {
-                    let url_parts: [&[u8]; 3] = if !public_path.is_empty() {
+                    let url = if !public_path.is_empty() {
                         cheap_prefix_normalizer(public_path, &source_map_final_rel_path)
                     } else {
-                        [b"", b"", paths::basename(&source_map_final_rel_path)]
+                        PrefixedPath {
+                            prefix: b"",
+                            separator: b"",
+                            path: paths::basename(&source_map_final_rel_path),
+                        }
                     };
 
                     code_result.buffer = strings::concat(&[
                         &code_result.buffer,
                         b"//# sourceMappingURL=",
-                        url_parts[0],
-                        url_parts[1],
-                        url_parts[2],
+                        url.prefix,
+                        url.separator,
+                        url.path,
                         b"\n",
                     ]);
                 }

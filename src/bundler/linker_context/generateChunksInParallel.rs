@@ -15,10 +15,10 @@ use crate::Chunk;
 use crate::Index;
 use crate::analyze_transpiled_module;
 use crate::analyze_transpiled_module::StringIDExt as _;
-use crate::cheap_prefix_normalizer;
 use crate::chunk::{ReferencePathStyle, SourceMapShiftTracking};
 use crate::options;
 use crate::options::Loader;
+use crate::{PrefixedPath, cheap_prefix_normalizer};
 
 use crate::LinkerContext;
 use crate::linker_context::generate_compile_result_for_css_chunk::generate_compile_result_for_css_chunk;
@@ -555,8 +555,7 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                 } else {
                     c.options.public_path
                 };
-                let resolved =
-                    strings::concat(&cheap_prefix_normalizer(public_path, &ch.final_rel_path));
+                let resolved = cheap_prefix_normalizer(public_path, &ch.final_rel_path).to_boxed();
                 let _ = unique_key_to_path.put(ch.unique_key, resolved); // OOM-only Result
             }
         }
@@ -741,7 +740,7 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                         // file rather than a JS file next to the .map. Point at
                         // the .map path relative to the HTML chunk's directory.
                         let mut relative_platform_buf = path::path_buffer_pool::get();
-                        let url_parts: [&[u8]; 3] = if !c.options.public_path.is_empty() {
+                        let url = if !c.options.public_path.is_empty() {
                             cheap_prefix_normalizer(
                                 c.options.public_path,
                                 &source_map_final_rel_path,
@@ -783,9 +782,9 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                         buffer = strings::concat(&[
                             &buffer,
                             b"//# sourceMappingURL=",
-                            url_parts[0],
-                            url_parts[1],
-                            url_parts[2],
+                            url.prefix,
+                            url.separator,
+                            url.path,
                             b"\n",
                         ]);
                     }
@@ -989,18 +988,22 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                     source_map_final_rel_path.extend_from_slice(b".map");
 
                     if tag == SourceMapOption::Linked {
-                        let url_parts: [&[u8]; 3] = if public_path.len() > 0 {
+                        let url = if public_path.len() > 0 {
                             cheap_prefix_normalizer(public_path, &source_map_final_rel_path)
                         } else {
-                            [b"", b"", path::basename(&source_map_final_rel_path)]
+                            PrefixedPath {
+                                prefix: b"",
+                                separator: b"",
+                                path: path::basename(&source_map_final_rel_path),
+                            }
                         };
 
                         code_result.buffer = strings::concat(&[
                             &code_result.buffer,
                             b"//# sourceMappingURL=",
-                            url_parts[0],
-                            url_parts[1],
-                            url_parts[2],
+                            url.prefix,
+                            url.separator,
+                            url.path,
                             b"\n",
                         ]);
                     }
@@ -1069,10 +1072,10 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                         // with module_info path fixup.
                         // For non-compile builds, use the normal .jsc extension.
                         let source_provider_url = if c.options.compile_mode.is_executable() {
-                            BunString::clone_utf8(&strings::concat(&cheap_prefix_normalizer(
-                                public_path,
-                                &chunk.final_rel_path,
-                            )))
+                            BunString::clone_utf8(
+                                &cheap_prefix_normalizer(public_path, &chunk.final_rel_path)
+                                    .to_boxed(),
+                            )
                         } else {
                             BunString::create_format(format_args!(
                                 "{}{}",

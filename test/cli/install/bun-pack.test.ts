@@ -1,6 +1,7 @@
 import { write } from "bun";
 import { readTarball } from "bun:internal-for-testing";
 import { describe, expect, test } from "bun:test";
+import { symlinkSync } from "fs";
 import { readdir, rm } from "fs/promises";
 import { bunEnv, bunExe, isLinux, isWindows, normalizeBunSnapshot, runBunInstall, tempDir } from "harness";
 import { join } from "path";
@@ -2149,4 +2150,93 @@ test.concurrent("$npm_lifecycle_event is accurate", async () => {
     postpack"
   `);
   expect(exitCode).toBe(0);
+});
+
+describe.concurrent("symlinks", () => {
+  // The tree walk lists only regular files and directories, the same as npm-packlist
+  // (`follow: false`). The steps that resolve a path instead of a listed entry must do
+  // the same, or a link inside the package puts a file from outside it in the tarball.
+  const outside = (dir: string, rel: string) => join(String(dir), "outside", rel);
+  const linkOutside = (dir: string, rel: string, target: string, type?: "junction") =>
+    symlinkSync(outside(dir, target), join(String(dir), "pkg", rel), type);
+  const packed = async (dir: string, name: string) => {
+    const { err, exitCode } = await runPack(join(String(dir), "pkg"));
+    expect(err).toBe("");
+    expect(exitCode).toBe(0);
+    return tarballEntries(join(String(dir), "pkg", name));
+  };
+
+  test.skipIf(isWindows)("a bin that is a symlink is not packed", async () => {
+    using dir = tempDir("pack-link-bin", {
+      "pkg/package.json": JSON.stringify({ name: "pack-link-bin", version: "1.0.0", bin: "cli.js" }),
+      "outside/secret.js": "outside\n",
+    });
+    linkOutside(dir, "cli.js", "secret.js");
+
+    expect(await packed(dir, "pack-link-bin-1.0.0.tgz")).toEqual(["package/package.json"]);
+  });
+
+  test("a bin inside a symlinked directory is not packed", async () => {
+    using dir = tempDir("pack-link-bin-dir", {
+      "pkg/package.json": JSON.stringify({ name: "pack-link-bin-dir", version: "1.0.0", bin: "sub/cli.js" }),
+      "outside/sub/cli.js": "outside\n",
+    });
+    linkOutside(dir, "sub", "sub", "junction");
+
+    expect(await packed(dir, "pack-link-bin-dir-1.0.0.tgz")).toEqual(["package/package.json"]);
+  });
+
+  test('a symlinked "directories.bin" is not packed', async () => {
+    using dir = tempDir("pack-link-bins-dir", {
+      "pkg/package.json": JSON.stringify({
+        name: "pack-link-bins-dir",
+        version: "1.0.0",
+        directories: { bin: "sub/bins" },
+      }),
+      "outside/sub/bins/cli.js": "outside\n",
+    });
+    linkOutside(dir, "sub", "sub", "junction");
+
+    expect(await packed(dir, "pack-link-bins-dir-1.0.0.tgz")).toEqual(["package/package.json"]);
+  });
+
+  test("a bundled dependency inside a symlinked node_modules is not packed", async () => {
+    using dir = tempDir("pack-link-node-modules", {
+      "pkg/package.json": JSON.stringify({
+        name: "pack-link-node-modules",
+        version: "1.0.0",
+        dependencies: { dep1: "1.1.1" },
+        bundledDependencies: ["dep1"],
+      }),
+      "outside/node_modules/dep1/package.json": JSON.stringify({ name: "dep1", version: "1.1.1" }),
+      "outside/node_modules/dep1/secret.js": "outside\n",
+    });
+    linkOutside(dir, "node_modules", "node_modules", "junction");
+
+    expect(await packed(dir, "pack-link-node-modules-1.0.0.tgz")).toEqual(["package/package.json"]);
+  });
+
+  test("a dependency of a bundled dependency inside a symlinked node_modules is not packed", async () => {
+    using dir = tempDir("pack-link-nested", {
+      "pkg/package.json": JSON.stringify({
+        name: "pack-link-nested",
+        version: "1.0.0",
+        dependencies: { dep1: "1.1.1" },
+        bundledDependencies: ["dep1"],
+      }),
+      "pkg/node_modules/dep1/package.json": JSON.stringify({
+        name: "dep1",
+        version: "1.1.1",
+        dependencies: { dep2: "1.1.1" },
+      }),
+      "outside/node_modules/dep2/package.json": JSON.stringify({ name: "dep2", version: "1.1.1" }),
+      "outside/node_modules/dep2/secret.js": "outside\n",
+    });
+    linkOutside(dir, "node_modules/dep1/node_modules", "node_modules", "junction");
+
+    expect(await packed(dir, "pack-link-nested-1.0.0.tgz")).toEqual([
+      "package/package.json",
+      "package/node_modules/dep1/package.json",
+    ]);
+  });
 });

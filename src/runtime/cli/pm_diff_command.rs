@@ -598,21 +598,28 @@ fn read_dir_tree(root: &[u8]) -> Result<Tree, crate::Error> {
                     &bump,
                     bun_install::package_manager::LogLevel::Silent,
                 )?;
-                let _ = dir.into_raw();
+                // Same opens as pack: an optional (bin) entry that does not open is left out, and
+                // nothing is read through a symlink.
+                let mut opener = crate::cli::pack_command::PackFileOpener::new();
                 for (path, optional) in queue.into_paths() {
                     let rel = path.as_bytes();
-                    match bun_sys::File::read_from(root_fd, rel) {
-                        Err(err) if optional && err.get_errno() == bun_sys::E::ENOENT => {}
-                        Ok(bytes) => {
+                    let read = match opener.open(&dir, path.as_zstr()) {
+                        Ok((file, stat)) => file.read_to_end().map(|bytes| (bytes, stat)),
+                        Err(err) => Err(err),
+                    };
+                    match read {
+                        Err(_) if optional => {}
+                        Ok((bytes, _stat)) => {
                             #[cfg(not(windows))]
-                            if let Ok(st) = bun_sys::fstatat(root_fd, path.as_zstr()) {
-                                tree.modes.insert(rel.to_vec(), st.st_mode as u32 & 0o777);
-                            }
+                            tree.modes
+                                .insert(rel.to_vec(), _stat.st_mode as u32 & 0o777);
                             tree.files.insert(rel.to_vec(), bytes);
                         }
                         Err(err) => fail(err, rel),
                     }
                 }
+                drop(opener);
+                let _ = dir.into_raw();
                 tree.files.insert(b"package.json".to_vec(), pkg);
                 root_fd.close();
                 return Ok(tree);

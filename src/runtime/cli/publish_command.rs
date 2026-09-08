@@ -1751,15 +1751,18 @@ impl PublishCommand {
                     return Ok(());
                 }
 
-                let bin_dir = match bun_sys::openat(
-                    workspace_root,
-                    &normalized_bin_dir,
-                    bun_sys::O::DIRECTORY,
-                    0,
+                let bin_dir = match pack::open_walk_dir_beneath(
+                    bun_sys::Dir::borrow(&workspace_root),
+                    normalized_bin_dir.as_bytes(),
                 ) {
-                    Ok(fd) => fd,
+                    Ok(dir) => dir.into_raw(),
                     Err(e) => {
-                        if e.get_errno() == bun_sys::E::ENOENT {
+                        // `ENOTDIR`/`ELOOP`: it, or a directory on the way to it, is a symlink
+                        // (pack does not follow one either) or some other non-directory.
+                        if matches!(
+                            e.get_errno(),
+                            bun_sys::E::ENOENT | bun_sys::E::ENOTDIR | bun_sys::E::ELOOP
+                        ) {
                             bun_core::warn!(
                                 "bin directory '{}' does not exist",
                                 bstr::BStr::new(normalized_bin_dir.as_bytes()),
@@ -1841,8 +1844,12 @@ impl PublishCommand {
                         });
 
                         if entry.kind == bun_sys::EntryKind::Directory {
-                            let Ok(subdir) = bun_sys::openat(dir, name, bun_sys::O::DIRECTORY, 0)
-                            else {
+                            let Ok(subdir) = bun_sys::openat(
+                                dir,
+                                name,
+                                bun_sys::O::DIRECTORY | bun_sys::O::NOFOLLOW,
+                                0,
+                            ) else {
                                 continue;
                             };
                             dirs.push((subdir, subpath.as_bytes().into(), true));

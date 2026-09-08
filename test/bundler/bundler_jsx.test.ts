@@ -1393,12 +1393,16 @@ describe("bundler", () => {
           };
         };
       `,
-      // What a host does for the default (globals) contract.
-      "/host.js": /* js */ `
-        const RefreshRuntime = require("react-refresh/runtime");
+      // What a host does for the default (globals) contract: define both
+      // globals before the transformed module evaluates.
+      "/install-refresh-globals.js": /* js */ `
+        import RefreshRuntime from "react-refresh/runtime";
         globalThis.$RefreshReg$ = RefreshRuntime.register;
         globalThis.$RefreshSig$ = RefreshRuntime.createSignatureFunctionForTransform;
-        await import("./out.js");
+      `,
+      "/host.js": /* js */ `
+        import "./install-refresh-globals.js";
+        import "./out.js";
       `,
     };
     const component = /* tsx */ `
@@ -1417,7 +1421,7 @@ describe("bundler", () => {
       register default App
     `;
 
-    for (const ext of ["tsx", "jsx"]) {
+    describe.each(["tsx", "jsx"])("%s", ext => {
       // Default contract, the same as `react-refresh/babel`: `$RefreshReg$` /
       // `$RefreshSig$` are globals that the host defines. No import is
       // generated, so nothing has to resolve at build time.
@@ -1476,7 +1480,34 @@ describe("bundler", () => {
         },
         run: { stdout },
       });
-    }
+    });
+
+    // A module binding that happens to share a name with one of the globals is
+    // renamed out of the way; the generated calls keep targeting the host's
+    // globals.
+    itBundled("jsx/ReactFastRefreshGlobalsNameCollision", {
+      files: {
+        "/index.tsx": /* tsx */ `
+          export const $RefreshReg$ = (type: unknown, id: string) => console.log("local " + id);
+          export function $RefreshSig$() {
+            return <i />;
+          }
+          export function Counter() {
+            return <b />;
+          }
+        `,
+        ...refreshFiles,
+      },
+      reactFastRefresh: true,
+      external: ["react", "react/*"],
+      onAfterBundle(api) {
+        const file = api.readFile("out.js");
+        expect(file).toContain('$RefreshReg$(Counter, "index.tsx:Counter");');
+        expect(file).not.toMatch(/^(?:var|let|const|function)\s+\$Refresh(?:Reg|Sig)\$[\s=(]/m);
+      },
+      // The host's `register` logs; the module's own `$RefreshReg$` would print "local".
+      run: { file: "/host.js", stdout: "register Counter Counter" },
+    });
 
     // `--react-fast-refresh-import-source` with a specifier other than the
     // React runtime: a host can point it at a module of its own.

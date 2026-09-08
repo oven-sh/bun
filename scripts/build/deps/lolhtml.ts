@@ -26,7 +26,7 @@ import type { Dependency } from "../source.ts";
 // base commit is recorded here so a rebase onto a new upstream tag is
 // `git rebase --onto <new-tag> <LOLHTML_UPSTREAM_BASE> bun` in the fork.
 const LOLHTML_UPSTREAM_BASE = "77127cd2b8545998756e8d64e36ee2313c4bb312"; // v2.7.2
-const LOLHTML_COMMIT = "725ce499aa9b71e38b7a2d0a9fbb6d7294a4079e";
+const LOLHTML_COMMIT = "85f256850f0b425f6477c44503b65d76327fb551";
 void LOLHTML_UPSTREAM_BASE;
 
 export const lolhtml: Dependency = {
@@ -38,11 +38,6 @@ export const lolhtml: Dependency = {
     repo: "oven-sh/lol-html",
     commit: LOLHTML_COMMIT,
   }),
-
-  // Two quadratic-in-nesting-depth paths on end tags (handler dispatch and
-  // the selector VM's open-element stack); see the patch headers. Both are
-  // meant to move into the fork's `bun` branch.
-  patches: ["patches/lolhtml/end-tag-handlers-early-exit.patch", "patches/lolhtml/stack-pop-unmatched-end-tag.patch"],
 
   // No separate build — compiled as part of the workspace cargo build via
   // `bun_runtime`/`bun_bundler`'s path dep on `vendor/lolhtml`.

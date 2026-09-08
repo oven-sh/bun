@@ -1,31 +1,36 @@
-//! Tree construction on top of lol-html.
+//! Tree construction on top of lol-html's tokenizer.
 //!
-//! lol-html (Bun's `HTMLRewriter`) tokenizes and tracks just enough parser
-//! state to pick text modes (`<script>`, `<textarea>`, …) and namespaces,
-//! and reports start tags, end tags, text and comments through its handler
-//! API. It does not build a tree or run the HTML tree-construction
-//! algorithm. This module supplies the parts of that algorithm that decide
-//! document *structure* — implied end tags (`<p>a<p>b`, `<li>a<li>b`, cells
-//! and rows), scope-limited end-tag matching, table sections and foster
-//! parenting, void elements, active formatting elements (reopening `<b>`
-//! across a paragraph break, the adoption agency for `<b><p></b></p>`) —
-//! and builds the arena DOM the whitespace pass and the emitter walk.
+//! lol-html (the engine behind `HTMLRewriter`) is driven here through its
+//! `transform` layer: a `TransformStream` runs the tokenizer over the input
+//! and reports every start tag and end tag by name to a
+//! `TransformController` ([`Driver`]), which asks for the full token — with
+//! attributes — only for the handful of elements whose attributes the
+//! converter reads, and always for text and comments. No selector matching,
+//! handler dispatch or output serialization is involved.
+//!
+//! lol-html tracks just enough parser state to pick text modes (`<script>`,
+//! `<textarea>`, …) and namespaces; it does not build a tree or run the HTML
+//! tree-construction algorithm. [`Builder`] supplies the parts of that
+//! algorithm that decide document *structure* — implied end tags (`<p>a<p>b`,
+//! `<li>a<li>b`, cells and rows), scope-limited end-tag matching, table
+//! sections and foster parenting, void elements, foreign-content breakout,
+//! and the list of active formatting elements (reopening `<b>` across a
+//! paragraph break, the adoption agency for `<b><p></b></p>`) — and builds
+//! the arena DOM the whitespace pass and the emitter walk.
 //!
 //! Left out, because none of it changes the Markdown: the `<head>` /
 //! `<frameset>` / `<template>` / `<select>` insertion modes, quirks mode,
 //! the form element pointer, and attribute adjustments for foreign content.
 //!
-//! lol-html hands names and attribute values over as fresh `String`s and
-//! leaves character references undecoded; [`super::entities`] decodes them
-//! and the results are copied into the DOM's string arena.
+//! Character references in text and attribute values arrive undecoded;
+//! [`super::entities`] decodes them and the results are copied into the
+//! DOM's string arena.
 
-use core::cell::RefCell;
-use std::borrow::Cow;
-
-use lol_html::html_content::{Comment, Element, EndTag, TextChunk, TextType};
-use lol_html::{
-    DocumentContentHandlers, ElementContentHandlers, HtmlRewriter, LocalHandlerTypes,
-    MemorySettings, Settings,
+use lol_html::errors::RewritingError;
+use lol_html::html_content::{StartTag, TextType};
+use lol_html::transform::{
+    DocumentEnd, LocalName, Namespace, SharedEncoding, SharedMemoryLimiter, StartTagHandlingResult,
+    Token, TokenCaptureFlags, TransformController, TransformStream, TransformStreamSettings,
 };
 
 use super::dom::{Arena, Attr, Ref, Tag};
@@ -42,8 +47,6 @@ pub const MAX_TREE_DEPTH: usize = 512;
 /// grow the per-token work without bound. Formatting start tags past it
 /// are dropped.
 const MAX_HANDLES: usize = 2 * MAX_TREE_DEPTH;
-
-const NS_HTML: &str = "http://www.w3.org/1999/xhtml";
 
 #[derive(Clone, Copy)]
 struct Open<'a> {
@@ -101,9 +104,6 @@ struct Builder<'a> {
     /// friends belong to `<head>` and are not inserted.
     in_body: bool,
     attr_buf: Vec<Attr<'a>>,
-    /// Formatting elements whose end tags can no longer arrive; see
-    /// [`Builder::end_tag_unreachable`].
-    unreachable: Vec<Ref<'a>>,
     /// How many more elements reconstruction and the adoption agency may
     /// clone. Both re-create formatting elements a token did not itself
     /// carry (`<li><b>…<li>x` reopens every listed `<b>` for each item), so
@@ -111,14 +111,19 @@ struct Builder<'a> {
     /// turn each later token into hundreds of nodes. Once spent, formatting
     /// is simply no longer reopened.
     clone_budget: usize,
+    /// Start tags dropped at the depth cap whose end tags are still due,
+    /// counted per [`Tag`] (all unknown names share `Tag::Other`), so those
+    /// end tags are dropped too instead of closing something further out.
+    dropped: [u32; Tag::COUNT],
+    dropped_total: u32,
 }
 
 impl<'a> Builder<'a> {
     fn new(arena: Arena<'a>, input_len: usize) -> Self {
         let document = arena.new_document();
-        let html = arena.new_element("html", true, &[]);
+        let html = arena.new_element(Tag::Html, "html", true, &[]);
         document.append(html);
-        let body = arena.new_element("body", true, &[]);
+        let body = arena.new_element(Tag::Body, "body", true, &[]);
         html.append(body);
         Builder {
             arena,
@@ -130,8 +135,9 @@ impl<'a> Builder<'a> {
             skip_lf: false,
             in_body: false,
             attr_buf: Vec::new(),
-            unreachable: Vec::new(),
             clone_budget: input_len / 8 + 1024,
+            dropped: [0; Tag::COUNT],
+            dropped_total: 0,
         }
     }
 
@@ -174,7 +180,6 @@ impl<'a> Builder<'a> {
     }
 
     fn insert_text(&mut self, raw: &str) {
-        self.settle_unreachable();
         if !self.in_body && self.stack.is_empty() {
             if raw.bytes().all(is_html_space) {
                 return;
@@ -249,19 +254,20 @@ impl<'a> Builder<'a> {
     }
 
     /// Inserts an HTML element and makes it the current node.
-    fn open(&mut self, name: &str, attrs: &[Attr<'a>]) -> Ref<'a> {
-        self.insert(name, Ns::Html, attrs, Then::Push)
+    fn open(&mut self, tag: Tag, name: &str, attrs: &[Attr<'a>]) -> Ref<'a> {
+        self.insert(tag, name, Ns::Html, attrs, Then::Push)
     }
 
     /// Inserts an HTML element that takes no content (void, or ignored).
-    fn insert_leaf(&mut self, name: &str, attrs: &[Attr<'a>]) -> Ref<'a> {
-        self.insert(name, Ns::Html, attrs, Then::Leave)
+    fn insert_leaf(&mut self, tag: Tag, name: &str, attrs: &[Attr<'a>]) -> Ref<'a> {
+        self.insert(tag, name, Ns::Html, attrs, Then::Leave)
     }
 
-    fn insert(&mut self, name: &str, ns: Ns, attrs: &[Attr<'a>], then: Then) -> Ref<'a> {
+    fn insert(&mut self, tag: Tag, name: &str, ns: Ns, attrs: &[Attr<'a>], then: Then) -> Ref<'a> {
         let html = matches!(ns, Ns::Html);
+        let tag = if html { tag } else { Tag::Other };
         let name = self.arena.alloc_str(name);
-        let node = self.arena.new_element(name, html, attrs);
+        let node = self.arena.new_element(tag, name, html, attrs);
         self.insert_node(node);
         if matches!(then, Then::Push) {
             self.stack.push(Open {
@@ -606,46 +612,15 @@ impl<'a> Builder<'a> {
         true
     }
 
-    /// lol-html matched an ancestor's end tag past `node`, so `node`'s own
-    /// end tag — if one ever comes — will not be reported. For a formatting
-    /// element the builder pops but keeps listed for reopening
-    /// (`<p><i>a</p><p>b</i>c`), that would reopen it into every block that
-    /// follows with nothing left to close it; dropping it from the list
-    /// instead confines the difference to the stretch a browser would still
-    /// have shown formatted (`b`). lol-html reports this *before* the end
-    /// tag that caused it, so the check waits until that tag has been
-    /// processed.
-    fn end_tag_unreachable(&mut self, node: Ref<'a>) {
-        if is_formatting(node.tag()) {
-            self.unreachable.push(node);
-        }
-    }
-
-    fn settle_unreachable(&mut self) {
-        while let Some(node) = self.unreachable.pop() {
-            if let Some(i) = self.afe_position(node)
-                && self.stack_position(node).is_none()
-            {
-                self.afe.remove(i);
-            }
-        }
-    }
-
     // ───────────────────────── tags ─────────────────────────
 
-    /// Returns the element if it went onto the open-element stack, i.e. if
-    /// its end tag will mean anything to the builder.
-    fn start_tag(
-        &mut self,
-        name: &str,
-        ns_html: bool,
-        self_closing: bool,
-        el: &Element<'_, '_>,
-    ) -> Option<Ref<'a>> {
+    /// `token` is the lexed start tag when the driver asked for it (for
+    /// attributes, or a foreign element's self-closing flag); `None` means
+    /// an HTML element none of whose attributes are read.
+    fn start_tag(&mut self, tag: Tag, name: &str, ns_html: bool, token: Option<&StartTag<'_>>) {
         self.flush_text();
-        self.settle_unreachable();
         self.skip_lf = false;
-        let tag = Tag::from_name(name);
+        let self_closing = token.is_some_and(|t| t.self_closing());
         // lol-html reports the SVG/MathML elements whose *content* is HTML
         // (`<svg><title>`, `<math><mi>`, …) in the HTML namespace; the
         // elements themselves are foreign.
@@ -673,7 +648,10 @@ impl<'a> Builder<'a> {
             if html && tag.is_block() {
                 self.arena.append_text(self.current(), " ");
             }
-            return None;
+            let tag = if html { tag } else { Tag::Other };
+            self.dropped[tag as usize] += 1;
+            self.dropped_total += 1;
+            return;
         }
 
         if !html {
@@ -681,8 +659,9 @@ impl<'a> Builder<'a> {
                 self.reconstruct_formatting();
             }
             self.in_body = true;
-            let attrs = self.take_attrs(el, tag, false);
-            let node = self.insert(
+            let attrs = self.take_attrs(token, tag, false);
+            self.insert(
+                Tag::Other,
                 name,
                 Ns::Foreign,
                 &attrs,
@@ -693,7 +672,7 @@ impl<'a> Builder<'a> {
                 },
             );
             self.attr_buf = attrs;
-            return (!self_closing).then_some(node);
+            return;
         }
 
         // An HTML start tag while foreign elements are open (lol-html has
@@ -709,12 +688,12 @@ impl<'a> Builder<'a> {
         }
 
         match tag {
-            Tag::Html | Tag::Head | Tag::Body | Tag::Frameset | Tag::Frame => return None,
+            Tag::Html | Tag::Head | Tag::Body | Tag::Frameset | Tag::Frame => return,
             Tag::Base | Tag::Basefont | Tag::Bgsound | Tag::Link | Tag::Meta => {
                 if self.in_body {
-                    self.insert_leaf(name, &[]);
+                    self.insert_leaf(tag, name, &[]);
                 }
-                return None;
+                return;
             }
             Tag::Title
             | Tag::Style
@@ -724,7 +703,8 @@ impl<'a> Builder<'a> {
             | Tag::Noframes => {
                 // Contents are dropped by the converter; the element still
                 // goes in so it separates the text either side.
-                return Some(self.open(name, &[]));
+                self.open(tag, name, &[]);
+                return;
             }
             _ => {}
         }
@@ -778,8 +758,8 @@ impl<'a> Builder<'a> {
             Tag::Plaintext => self.close_p(),
             Tag::Hr => {
                 self.close_p();
-                self.insert_leaf(name, &[]);
-                return None;
+                self.insert_leaf(tag, name, &[]);
+                return;
             }
             Tag::Li => self.close_list_item(&[Tag::Li]),
             Tag::Dd | Tag::Dt => self.close_list_item(&[Tag::Dd, Tag::Dt]),
@@ -816,31 +796,31 @@ impl<'a> Builder<'a> {
             }
             Tag::Caption | Tag::Colgroup | Tag::Tbody | Tag::Tfoot | Tag::Thead => {
                 if !self.in_table_scope(Tag::Table) {
-                    return None;
+                    return;
                 }
                 self.clear_to(&[Tag::Table]);
             }
             Tag::Col => {
                 if !self.in_table_scope(Tag::Table) {
-                    return None;
+                    return;
                 }
                 self.clear_to(&[Tag::Table, Tag::Colgroup]);
-                self.insert_leaf(name, &[]);
-                return None;
+                self.insert_leaf(tag, name, &[]);
+                return;
             }
             Tag::Tr => {
                 if !self.in_table_scope(Tag::Table) {
-                    return None;
+                    return;
                 }
                 self.clear_to(&[Tag::Table, Tag::Tbody, Tag::Thead, Tag::Tfoot]);
             }
             Tag::Td | Tag::Th => {
                 if !self.in_table_scope(Tag::Table) {
-                    return None;
+                    return;
                 }
                 self.clear_to(&[Tag::Table, Tag::Tbody, Tag::Thead, Tag::Tfoot, Tag::Tr]);
                 if !self.current_is(Tag::Tr) {
-                    self.open("tr", &[]);
+                    self.open(Tag::Tr, "tr", &[]);
                 }
             }
             Tag::A => {
@@ -876,34 +856,29 @@ impl<'a> Builder<'a> {
             _ => {}
         }
 
-        let attrs = self.take_attrs(el, tag, true);
-        let pushed = if is_formatting(tag) {
+        let attrs = self.take_attrs(token, tag, true);
+        if is_formatting(tag) {
             if self.stack.len() + self.afe.len() < MAX_HANDLES {
                 self.reconstruct_formatting();
-                let node = self.open(name, &attrs);
+                let node = self.open(tag, name, &attrs);
                 self.push_formatting(node, tag);
-                Some(node)
-            } else {
-                None
             }
         } else if matches!(tag, Tag::Applet | Tag::Marquee | Tag::Object) {
             self.reconstruct_formatting();
-            let node = self.open(name, &attrs);
+            self.open(tag, name, &attrs);
             self.afe.push(Afe::Marker);
-            Some(node)
         } else if matches!(tag, Tag::Td | Tag::Th | Tag::Caption) {
-            let node = self.open(name, &attrs);
+            self.open(tag, name, &attrs);
             self.afe.push(Afe::Marker);
-            Some(node)
         } else if tag == Tag::Image {
             self.reconstruct_formatting();
-            self.insert_leaf("img", &attrs);
-            None
+            self.insert_leaf(Tag::Img, "img", &attrs);
         } else {
             if reconstructs_formatting(tag) {
                 self.reconstruct_formatting();
             }
-            let node = self.insert(
+            self.insert(
+                tag,
                 name,
                 Ns::Html,
                 &attrs,
@@ -913,21 +888,30 @@ impl<'a> Builder<'a> {
                     Then::Push
                 },
             );
-            (!tag.is_void()).then_some(node)
-        };
+        }
         self.attr_buf = attrs;
-        pushed
     }
 
-    fn end_tag(&mut self, name: &str, html: bool) {
-        self.end_tag_rules(name, html);
-        self.settle_unreachable();
-    }
-
-    fn end_tag_rules(&mut self, name: &str, html: bool) {
+    fn end_tag(&mut self, tag: Tag, name: &str) {
         self.flush_text();
         self.skip_lf = false;
-        if !html {
+        if self.dropped_total > 0 {
+            let t = if self.stack.last().is_some_and(|o| !o.html) {
+                Tag::Other
+            } else {
+                tag
+            };
+            if self.dropped[t as usize] > 0 {
+                // The end of an element dropped at the depth cap.
+                self.dropped[t as usize] -= 1;
+                self.dropped_total -= 1;
+                if t.is_block() {
+                    self.arena.append_text(self.current(), " ");
+                }
+                return;
+            }
+        }
+        if self.stack.last().is_some_and(|o| !o.html) {
             // "In foreign content" end tag: walk down through foreign elements
             // looking for one with this name; on reaching an HTML element,
             // hand the tag to the HTML rules instead.
@@ -942,18 +926,17 @@ impl<'a> Builder<'a> {
                 }
             }
         }
-        let tag = Tag::from_name(name);
         match tag {
             Tag::Html | Tag::Head | Tag::Body => {}
             Tag::Br => {
                 self.reconstruct_formatting();
-                self.insert_leaf("br", &[]);
+                self.insert_leaf(Tag::Br, "br", &[]);
             }
             Tag::P => {
                 if !self.close_in_scope(&[Tag::P], &[Tag::Button]) {
                     // `</p>` with no open <p> makes an empty paragraph.
                     self.close_p();
-                    self.insert_leaf("p", &[]);
+                    self.insert_leaf(Tag::P, "p", &[]);
                 }
             }
             Tag::Li => {
@@ -1032,29 +1015,16 @@ impl<'a> Builder<'a> {
     /// elements whose attributes are never consulted skip all of it.
     /// Formatting elements keep everything (the Noah's Ark clause compares
     /// whole attribute lists).
-    fn take_attrs(&mut self, el: &Element<'_, '_>, tag: Tag, html: bool) -> Vec<Attr<'a>> {
+    fn take_attrs(&mut self, token: Option<&StartTag<'_>>, tag: Tag, html: bool) -> Vec<Attr<'a>> {
         let mut out = core::mem::take(&mut self.attr_buf);
         out.clear();
-        let wanted: &[&str] = if !html {
-            &[]
-        } else {
-            match tag {
-                Tag::A => &["href", "title"],
-                Tag::Img | Tag::Image => &["src", "alt", "title"],
-                Tag::Pre => &["class", "lang"],
-                Tag::Code | Tag::Div => &["class"],
-                Tag::Ol => &["start"],
-                Tag::Td | Tag::Th => &["colspan", "align", "style"],
-                Tag::Input => &["type", "checked"],
-                _ if is_formatting(tag) => &["*"],
-                _ => &[],
-            }
-        };
+        let wanted = if html { wanted_attrs(tag) } else { &[] };
+        let Some(token) = token else { return out };
         if wanted.is_empty() {
             return out;
         }
         let all = wanted[0] == "*";
-        for a in el
+        for a in token
             .attributes()
             .iter()
             .take(if all { MAX_KEPT_ATTRS } else { usize::MAX })
@@ -1073,6 +1043,24 @@ impl<'a> Builder<'a> {
             out.push(Attr { name, value });
         }
         out
+    }
+}
+
+/// The attributes the converter reads, per element; `"*"` (formatting
+/// elements) keeps them all, since the Noah's Ark clause compares whole
+/// attribute lists. Elements not listed have no start tag token requested
+/// for them at all.
+fn wanted_attrs(tag: Tag) -> &'static [&'static str] {
+    match tag {
+        Tag::A => &["href", "title"],
+        Tag::Img | Tag::Image => &["src", "alt", "title"],
+        Tag::Pre => &["class", "lang"],
+        Tag::Code | Tag::Div => &["class"],
+        Tag::Ol => &["start"],
+        Tag::Td | Tag::Th => &["colspan", "align", "style"],
+        Tag::Input => &["type", "checked"],
+        _ if is_formatting(tag) => &["*"],
+        _ => &[],
     }
 }
 
@@ -1313,104 +1301,171 @@ fn is_special(o: &Open<'_>) -> bool {
 
 // ─────────────────────────── driver ───────────────────────────
 
+const CAPTURE: TokenCaptureFlags = TokenCaptureFlags::TEXT.union(TokenCaptureFlags::COMMENTS);
+
+/// A tag name held between lol-html's name-only start tag callback and the
+/// token that follows when one was requested. Inline for anything up to 48
+/// bytes (every standard element and nearly every custom one).
+struct NameBuf {
+    buf: [u8; 48],
+    len: usize,
+    heap: String,
+}
+
+impl NameBuf {
+    const fn new() -> Self {
+        NameBuf {
+            buf: [0; 48],
+            len: 0,
+            heap: String::new(),
+        }
+    }
+
+    /// Stores `name` ASCII-lowercased.
+    fn set(&mut self, name: &LocalName<'_>) {
+        self.heap.clear();
+        self.len = 0;
+        match name {
+            LocalName::Hash(h) => {
+                let mut tmp = [0u8; 12];
+                let s = h.decode(&mut tmp).unwrap_or("");
+                self.buf[..s.len()].copy_from_slice(s.as_bytes());
+                self.len = s.len();
+            }
+            LocalName::Bytes(b) => {
+                let bytes: &[u8] = b;
+                if bytes.len() <= self.buf.len() {
+                    for (d, s) in self.buf.iter_mut().zip(bytes) {
+                        *d = s.to_ascii_lowercase();
+                    }
+                    self.len = bytes.len();
+                } else {
+                    #[allow(clippy::disallowed_methods)]
+                    // sliced from input validated as UTF-8 up front
+                    self.heap
+                        .push_str(&String::from_utf8_lossy(bytes).to_ascii_lowercase());
+                }
+            }
+        }
+    }
+
+    fn get(&self) -> &str {
+        if self.heap.is_empty() {
+            // ASCII-lowercasing valid UTF-8 (tag names are sliced from the
+            // validated input at ASCII boundaries) keeps it valid.
+            core::str::from_utf8(&self.buf[..self.len]).unwrap_or("")
+        } else {
+            &self.heap
+        }
+    }
+}
+
+struct Driver<'a> {
+    builder: Builder<'a>,
+    name: NameBuf,
+    tag: Tag,
+    /// Set while a start tag token has been requested: its namespace.
+    pending_html: Option<bool>,
+}
+
+fn tag_of(name: &LocalName<'_>) -> Tag {
+    match name {
+        LocalName::Hash(h) => Tag::from_name_hash(h.as_u64()),
+        // Every name the converter knows is representable as a hash.
+        LocalName::Bytes(_) => Tag::Other,
+    }
+}
+
+impl TransformController for Driver<'_> {
+    fn initial_capture_flags(&self) -> TokenCaptureFlags {
+        CAPTURE
+    }
+
+    fn handle_start_tag(
+        &mut self,
+        name: LocalName<'_>,
+        ns: Namespace,
+    ) -> StartTagHandlingResult<Self> {
+        self.name.set(&name);
+        self.tag = tag_of(&name);
+        let html = matches!(ns, Namespace::Html);
+        // Only elements whose attributes are read (or foreign ones, whose
+        // self-closing flag matters) need the full start tag token; for the
+        // rest the name is all there is to know.
+        if !html || !wanted_attrs(self.tag).is_empty() {
+            self.pending_html = Some(html);
+            return Ok(CAPTURE | TokenCaptureFlags::NEXT_START_TAG);
+        }
+        self.builder
+            .start_tag(self.tag, self.name.get(), true, None);
+        Ok(CAPTURE)
+    }
+
+    fn handle_end_tag(&mut self, name: LocalName<'_>) -> TokenCaptureFlags {
+        self.name.set(&name);
+        self.builder.end_tag(tag_of(&name), self.name.get());
+        CAPTURE
+    }
+
+    fn handle_token(&mut self, token: &mut Token<'_>) -> Result<(), RewritingError> {
+        match token {
+            Token::TextChunk(t) => {
+                let rules = match t.text_type() {
+                    TextType::Data => entities::DATA,
+                    TextType::RCData => entities::RCDATA,
+                    _ => entities::RAW,
+                };
+                self.builder
+                    .text_chunk(t.as_str(), rules, t.last_in_text_node());
+            }
+            Token::StartTag(t) => {
+                if let Some(html) = self.pending_html.take() {
+                    self.builder
+                        .start_tag(self.tag, self.name.get(), html, Some(t));
+                }
+            }
+            Token::Comment(_) => self.builder.comment(),
+            Token::EndTag(_) | Token::Doctype(_) => {}
+        }
+        Ok(())
+    }
+
+    fn handle_end(&mut self, _: &mut DocumentEnd<'_>) -> Result<(), RewritingError> {
+        self.builder.flush_text();
+        Ok(())
+    }
+
+    fn should_emit_content(&self) -> bool {
+        // Nothing is rewritten; skipping serialization is the point.
+        false
+    }
+}
+
 /// Parses `html` into `arena` and returns the `<body>` element to convert.
 pub(crate) fn parse<'a>(html: &[u8], arena: Arena<'a>) -> Ref<'a> {
     // Input-stream preprocessing: a leading BOM is not content.
     let html = html.strip_prefix(b"\xEF\xBB\xBF").unwrap_or(html);
 
-    let builder = RefCell::new(Builder::new(arena, html.len()));
-    let b = &builder;
-
-    let on_element = |el: &mut Element<'_, '_>| -> lol_html::HandlerResult {
-        let name = el.tag_name();
-        let ns_html = el.namespace_uri() == NS_HTML;
-        let self_closing = el.is_self_closing();
-        let pushed = b.borrow_mut().start_tag(&name, ns_html, self_closing, el);
-        // Elements that did not go on the stack (voids, dropped or ignored
-        // tags) have nothing to close, and each registered handler costs
-        // lol-html an allocation and bookkeeping per open element.
-        if let Some(node) = pushed
-            && let Some(handlers) = el.end_tag_handlers()
-        {
-            let html = b.borrow().stack.last().is_none_or(|o| o.html);
-            // lol-html wants end tag handlers `'static`; the builder and the
-            // node they reach both outlive the rewriter owning them, so their
-            // addresses travel as integers.
-            let bp = core::ptr::from_ref(b) as usize;
-            let np = core::ptr::from_ref(node) as usize;
-            handlers.push(Box::new(move |end: &mut EndTag<'_>| {
-                // SAFETY: see `bp`/`np` above — `builder` and the arena are
-                // alive for every callback the rewriter makes, and the builder
-                // is only otherwise borrowed through the same `RefCell`.
-                let (b, node) = unsafe {
-                    (
-                        &*(bp as *const RefCell<Builder<'_>>),
-                        &*(np as *const super::dom::Node<'_>),
-                    )
-                };
-                // lol-html also runs this when an ancestor's end tag closes
-                // the element in its (non-tree-building) view; that is not a
-                // token for the tree builder, but it does mean the element's
-                // real end tag will never be delivered.
-                if end.name().eq_ignore_ascii_case(&name) {
-                    b.borrow_mut().end_tag(&name, html);
-                } else {
-                    b.borrow_mut().end_tag_unreachable(node);
-                }
-                Ok(())
-            }));
-        }
-        Ok(())
-    };
-    let on_comment = |_: &mut Comment<'_>| -> lol_html::HandlerResult {
-        b.borrow_mut().comment();
-        Ok(())
-    };
-    let on_text = |t: &mut TextChunk<'_>| -> lol_html::HandlerResult {
-        let rules = match t.text_type() {
-            TextType::Data => entities::DATA,
-            TextType::RCData => entities::RCDATA,
-            _ => entities::RAW,
-        };
-        b.borrow_mut()
-            .text_chunk(t.as_str(), rules, t.last_in_text_node());
-        Ok(())
-    };
-
-    let settings: Settings<'_, '_, LocalHandlerTypes> = Settings {
-        element_content_handlers: vec![(
-            Cow::Owned("*".parse().expect("static selector")),
-            ElementContentHandlers {
-                element: Some(Box::new(on_element)),
-                comments: None,
-                text: None,
-            },
-        )],
-        document_content_handlers: vec![DocumentContentHandlers {
-            doctype: None,
-            comments: Some(Box::new(on_comment)),
-            text: Some(Box::new(on_text)),
-            end: None,
-        }],
-        encoding: lol_html::AsciiCompatibleEncoding::utf_8(),
-        memory_settings: MemorySettings {
-            preallocated_parsing_buffer_size: 1024,
-            max_allowed_memory_usage: usize::MAX,
+    let mut stream = TransformStream::new(TransformStreamSettings {
+        transform_controller: Driver {
+            builder: Builder::new(arena, html.len()),
+            name: NameBuf::new(),
+            tag: Tag::Other,
+            pending_html: None,
         },
+        output_sink: |_: &[u8]| {},
+        preallocated_parsing_buffer_size: 0,
+        memory_limiter: SharedMemoryLimiter::new(usize::MAX),
+        encoding: SharedEncoding::new(lol_html::AsciiCompatibleEncoding::utf_8()),
         strict: false,
-        enable_esi_tags: false,
-        adjust_charset_on_meta_tag: false,
-    };
-    let mut rewriter = HtmlRewriter::new(settings, |_: &[u8]| {});
-    // The input is one complete in-memory buffer and no handler fails, so
-    // neither call can error; were one to, the tree built so far is used.
-    if rewriter.write(html).is_ok() {
-        let _ = rewriter.end();
-    } else {
-        drop(rewriter);
+    });
+    // The input is one complete in-memory buffer and the controller never
+    // fails, so neither call can error; were one to, the tree built so far
+    // is used.
+    if stream.write(html).is_ok() {
+        let _ = stream.end();
     }
-
-    let mut builder = builder.into_inner();
-    builder.flush_text();
-    builder.body
+    let driver = stream.controller();
+    driver.builder.flush_text();
+    driver.builder.body
 }

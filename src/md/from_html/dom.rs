@@ -6,7 +6,7 @@
 //! the arenas frees everything in a few flat sweeps — there is no recursive
 //! `Drop`, so pathological nesting cannot overflow the stack on teardown.
 
-use core::cell::Cell;
+use core::cell::{Cell, RefCell};
 use core::marker::PhantomData;
 use core::ptr::{self, NonNull};
 
@@ -14,7 +14,7 @@ use core::ptr::{self, NonNull};
 pub(crate) struct Arenas<'a> {
     nodes: typed_arena::Arena<Node<'a>>,
     attrs: typed_arena::Arena<Attr<'a>>,
-    strs: typed_arena::Arena<u8>,
+    strs: ByteArena,
 }
 
 impl<'a> Arenas<'a> {
@@ -22,7 +22,7 @@ impl<'a> Arenas<'a> {
         Arenas {
             nodes: typed_arena::Arena::with_capacity(nodes),
             attrs: typed_arena::Arena::with_capacity(nodes / 4),
-            strs: typed_arena::Arena::with_capacity(text_bytes),
+            strs: ByteArena::with_capacity(text_bytes),
         }
     }
 
@@ -30,7 +30,10 @@ impl<'a> Arenas<'a> {
         if s.is_empty() {
             return "";
         }
-        self.strs.alloc_str(s)
+        let buf = self.strs.alloc(s.len());
+        buf.copy_from_slice(s.as_bytes());
+        // SAFETY: copied from a `str`.
+        unsafe { core::str::from_utf8_unchecked(buf) }
     }
 
     pub(crate) fn new_document(&'a self) -> Ref<'a> {
@@ -43,14 +46,16 @@ impl<'a> Arenas<'a> {
             .alloc(Node::new(NodeData::Ignored, Tag::NotAnElement))
     }
 
-    /// `name` must already be ASCII-lowercased (lol-html hands names over
-    /// that way). `attrs` are copied into the attribute arena.
-    pub(crate) fn new_element(&'a self, name: &'a str, html: bool, attrs: &[Attr<'a>]) -> Ref<'a> {
-        let tag = if html {
-            Tag::from_name(name)
-        } else {
-            Tag::Other
-        };
+    /// `tag` is `Other` for foreign elements whatever their name; `name` is
+    /// ASCII-lowercase. `attrs` are copied into the attribute arena.
+    pub(crate) fn new_element(
+        &'a self,
+        tag: Tag,
+        name: &'a str,
+        html: bool,
+        attrs: &[Attr<'a>],
+    ) -> Ref<'a> {
+        debug_assert!(html || tag == Tag::Other);
         let attrs: &'a [Attr<'a>] = if attrs.is_empty() {
             &[]
         } else {
@@ -99,6 +104,69 @@ impl<'a> Arenas<'a> {
         t.set(self.alloc_str(text));
         self.nodes
             .alloc(Node::new(NodeData::Text(t), Tag::NotAnElement))
+    }
+}
+
+/// Bump allocator for the document's text and attribute bytes: hands out
+/// zeroed `&mut [u8]` runs from large chunks and frees them all on drop.
+/// (`typed_arena::Arena<u8>` fills byte by byte through an iterator, which
+/// showed up as the largest line in the profile after the tokenizer.)
+struct ByteArena {
+    /// Owned allocations (from `Box<[u8]>::into_raw`), freed on drop. Kept
+    /// as raw pointers so that no `Box` is moved while slices into it are
+    /// live.
+    chunks: RefCell<Vec<(*mut u8, usize)>>,
+    /// Unused tail of the last chunk: `next..end`.
+    next: Cell<*mut u8>,
+    end: Cell<*mut u8>,
+}
+
+impl ByteArena {
+    const MIN_CHUNK: usize = 64 << 10;
+
+    fn with_capacity(bytes: usize) -> Self {
+        let arena = ByteArena {
+            chunks: RefCell::new(Vec::new()),
+            next: Cell::new(ptr::null_mut()),
+            end: Cell::new(ptr::null_mut()),
+        };
+        arena.grow(bytes);
+        arena
+    }
+
+    fn grow(&self, at_least: usize) {
+        let size = at_least.max(Self::MIN_CHUNK);
+        let start = Box::into_raw(vec![0u8; size].into_boxed_slice()).cast::<u8>();
+        self.chunks.borrow_mut().push((start, size));
+        self.next.set(start);
+        // SAFETY: one past the end of the allocation just made.
+        self.end.set(unsafe { start.add(size) });
+    }
+
+    /// `len` zeroed bytes, valid for as long as the arena is.
+    #[allow(clippy::mut_from_ref)] // each call hands out a disjoint region
+    fn alloc(&self, len: usize) -> &mut [u8] {
+        if (self.end.get() as usize) - (self.next.get() as usize) < len {
+            self.grow(len);
+        }
+        let start = self.next.get();
+        // SAFETY: `start..start+len` lies within the last chunk (checked or
+        // grown above), chunks are neither moved nor freed before `self`
+        // is dropped, and `next` is bumped past the region so it is never
+        // handed out twice.
+        unsafe {
+            self.next.set(start.add(len));
+            core::slice::from_raw_parts_mut(start, len)
+        }
+    }
+}
+
+impl Drop for ByteArena {
+    fn drop(&mut self) {
+        for &(start, size) in self.chunks.get_mut().iter() {
+            // SAFETY: exactly the pointer/length pair `Box::into_raw` gave.
+            drop(unsafe { Box::from_raw(ptr::slice_from_raw_parts_mut(start, size)) });
+        }
     }
 }
 
@@ -164,7 +232,7 @@ impl<'a> Text<'a> {
         let new_len = len + s.len();
         if new_len > self.cap.get() {
             let cap = new_len.max(len.saturating_mul(2)).max(16);
-            let buf = arena.strs.alloc_extend(core::iter::repeat_n(0u8, cap));
+            let buf = arena.strs.alloc(cap);
             buf[..len].copy_from_slice(self.get().as_bytes());
             self.ptr.set(NonNull::from(&mut *buf).cast());
             self.cap.set(cap);
@@ -447,261 +515,160 @@ pub(crate) fn compute_subtree_flags(root: Ref<'_>) {
     }
 }
 
-/// HTML element names the converter or the tree builder distinguish.
-/// Anything else in the HTML namespace, and every foreign (SVG/MathML)
-/// element, is `Other`.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-#[repr(u8)]
-pub(crate) enum Tag {
-    NotAnElement,
-    Other,
-    A,
-    Address,
-    Applet,
-    Area,
-    Article,
-    Aside,
-    Audio,
-    B,
-    Base,
-    Basefont,
-    Bgsound,
-    Big,
-    Blockquote,
-    Body,
-    Br,
-    Button,
-    Canvas,
-    Caption,
-    Center,
-    Code,
-    Col,
-    Colgroup,
-    Command,
-    Dd,
-    Del,
-    Details,
-    Dialog,
-    Dir,
-    Div,
-    Dl,
-    Dt,
-    Em,
-    Embed,
-    Fieldset,
-    Figcaption,
-    Figure,
-    Font,
-    Footer,
-    Form,
-    Frame,
-    Frameset,
-    H1,
-    H2,
-    H3,
-    H4,
-    H5,
-    H6,
-    Head,
-    Header,
-    Hgroup,
-    Hr,
-    Html,
-    I,
-    Iframe,
-    Image,
-    Img,
-    Input,
-    Isindex,
-    Keygen,
-    Li,
-    Link,
-    Listing,
-    Main,
-    Marquee,
-    Math,
-    Menu,
-    Meta,
-    Nav,
-    Nobr,
-    Noembed,
-    Noframes,
-    Noscript,
-    Object,
-    Ol,
-    Optgroup,
-    Option,
-    Output,
-    P,
-    Param,
-    Plaintext,
-    Pre,
-    Rb,
-    Rp,
-    Rt,
-    Rtc,
-    Ruby,
-    S,
-    Script,
-    Search,
-    Section,
-    Select,
-    Small,
-    Source,
-    Strike,
-    Strong,
-    Style,
-    Summary,
-    Svg,
-    Table,
-    Tbody,
-    Td,
-    Template,
-    Textarea,
-    Tfoot,
-    Th,
-    Thead,
-    Title,
-    Tr,
-    Track,
-    Tt,
-    U,
-    Ul,
-    Video,
-    Wbr,
-    Xmp,
-}
+/// Declares [`Tag`]: the HTML element names the converter or the tree
+/// builder distinguish, each with the tokenizer's packed form of its name
+/// (`lol_html`'s `LocalNameHash`) so a scanned tag maps to a variant by
+/// integer `match` rather than by string.
+macro_rules! html_tags {
+    ($($variant:ident = $name:literal,)*) => {
+        /// An HTML element name the converter knows. Anything else in the
+        /// HTML namespace, and every foreign (SVG/MathML) element, is `Other`.
+        #[derive(Clone, Copy, PartialEq, Eq, Debug)]
+        #[repr(u8)]
+        pub(crate) enum Tag {
+            NotAnElement,
+            Other,
+            $($variant,)*
+        }
 
-bun_core::comptime_string_map! {
-    static TAG_NAMES: Tag = {
-        b"a" => Tag::A,
-        b"address" => Tag::Address,
-        b"applet" => Tag::Applet,
-        b"area" => Tag::Area,
-        b"article" => Tag::Article,
-        b"aside" => Tag::Aside,
-        b"audio" => Tag::Audio,
-        b"b" => Tag::B,
-        b"base" => Tag::Base,
-        b"basefont" => Tag::Basefont,
-        b"bgsound" => Tag::Bgsound,
-        b"big" => Tag::Big,
-        b"blockquote" => Tag::Blockquote,
-        b"body" => Tag::Body,
-        b"br" => Tag::Br,
-        b"button" => Tag::Button,
-        b"canvas" => Tag::Canvas,
-        b"caption" => Tag::Caption,
-        b"center" => Tag::Center,
-        b"code" => Tag::Code,
-        b"col" => Tag::Col,
-        b"colgroup" => Tag::Colgroup,
-        b"command" => Tag::Command,
-        b"dd" => Tag::Dd,
-        b"del" => Tag::Del,
-        b"details" => Tag::Details,
-        b"dialog" => Tag::Dialog,
-        b"dir" => Tag::Dir,
-        b"div" => Tag::Div,
-        b"dl" => Tag::Dl,
-        b"dt" => Tag::Dt,
-        b"em" => Tag::Em,
-        b"embed" => Tag::Embed,
-        b"fieldset" => Tag::Fieldset,
-        b"figcaption" => Tag::Figcaption,
-        b"figure" => Tag::Figure,
-        b"font" => Tag::Font,
-        b"footer" => Tag::Footer,
-        b"form" => Tag::Form,
-        b"frame" => Tag::Frame,
-        b"frameset" => Tag::Frameset,
-        b"h1" => Tag::H1,
-        b"h2" => Tag::H2,
-        b"h3" => Tag::H3,
-        b"h4" => Tag::H4,
-        b"h5" => Tag::H5,
-        b"h6" => Tag::H6,
-        b"head" => Tag::Head,
-        b"header" => Tag::Header,
-        b"hgroup" => Tag::Hgroup,
-        b"hr" => Tag::Hr,
-        b"html" => Tag::Html,
-        b"i" => Tag::I,
-        b"iframe" => Tag::Iframe,
-        b"image" => Tag::Image,
-        b"img" => Tag::Img,
-        b"input" => Tag::Input,
-        b"isindex" => Tag::Isindex,
-        b"keygen" => Tag::Keygen,
-        b"li" => Tag::Li,
-        b"link" => Tag::Link,
-        b"listing" => Tag::Listing,
-        b"main" => Tag::Main,
-        b"marquee" => Tag::Marquee,
-        b"math" => Tag::Math,
-        b"menu" => Tag::Menu,
-        b"meta" => Tag::Meta,
-        b"nav" => Tag::Nav,
-        b"nobr" => Tag::Nobr,
-        b"noembed" => Tag::Noembed,
-        b"noframes" => Tag::Noframes,
-        b"noscript" => Tag::Noscript,
-        b"object" => Tag::Object,
-        b"ol" => Tag::Ol,
-        b"optgroup" => Tag::Optgroup,
-        b"option" => Tag::Option,
-        b"output" => Tag::Output,
-        b"p" => Tag::P,
-        b"param" => Tag::Param,
-        b"plaintext" => Tag::Plaintext,
-        b"pre" => Tag::Pre,
-        b"rb" => Tag::Rb,
-        b"rp" => Tag::Rp,
-        b"rt" => Tag::Rt,
-        b"rtc" => Tag::Rtc,
-        b"ruby" => Tag::Ruby,
-        b"s" => Tag::S,
-        b"script" => Tag::Script,
-        b"search" => Tag::Search,
-        b"section" => Tag::Section,
-        b"select" => Tag::Select,
-        b"small" => Tag::Small,
-        b"source" => Tag::Source,
-        b"strike" => Tag::Strike,
-        b"strong" => Tag::Strong,
-        b"style" => Tag::Style,
-        b"summary" => Tag::Summary,
-        b"svg" => Tag::Svg,
-        b"table" => Tag::Table,
-        b"tbody" => Tag::Tbody,
-        b"td" => Tag::Td,
-        b"template" => Tag::Template,
-        b"textarea" => Tag::Textarea,
-        b"tfoot" => Tag::Tfoot,
-        b"th" => Tag::Th,
-        b"thead" => Tag::Thead,
-        b"title" => Tag::Title,
-        b"tr" => Tag::Tr,
-        b"track" => Tag::Track,
-        b"tt" => Tag::Tt,
-        b"u" => Tag::U,
-        b"ul" => Tag::Ul,
-        b"video" => Tag::Video,
-        b"wbr" => Tag::Wbr,
-        b"xmp" => Tag::Xmp,
+        impl Tag {
+            /// Number of variants (for tables indexed by `tag as usize`).
+            pub(crate) const COUNT: usize = 2 + [$(Tag::$variant,)*].len();
+
+            /// From `lol_html::transform::LocalNameHash::as_u64`.
+            pub(crate) fn from_name_hash(hash: u64) -> Tag {
+                $(
+                    #[allow(non_upper_case_globals)]
+                    const $variant: u64 = lol_html::transform::LocalNameHash::from_ascii($name).as_u64();
+                )*
+                match hash {
+                    $($variant => Tag::$variant,)*
+                    _ => Tag::Other,
+                }
+            }
+        }
     };
 }
 
-impl Tag {
-    /// `name` is ASCII-lowercase.
-    #[inline]
-    pub(crate) fn from_name(name: &str) -> Tag {
-        TAG_NAMES
-            .get(name.as_bytes())
-            .copied()
-            .unwrap_or(Tag::Other)
-    }
+html_tags! {
+    A = b"a",
+    Address = b"address",
+    Applet = b"applet",
+    Area = b"area",
+    Article = b"article",
+    Aside = b"aside",
+    Audio = b"audio",
+    B = b"b",
+    Base = b"base",
+    Basefont = b"basefont",
+    Bgsound = b"bgsound",
+    Big = b"big",
+    Blockquote = b"blockquote",
+    Body = b"body",
+    Br = b"br",
+    Button = b"button",
+    Canvas = b"canvas",
+    Caption = b"caption",
+    Center = b"center",
+    Code = b"code",
+    Col = b"col",
+    Colgroup = b"colgroup",
+    Command = b"command",
+    Dd = b"dd",
+    Del = b"del",
+    Details = b"details",
+    Dialog = b"dialog",
+    Dir = b"dir",
+    Div = b"div",
+    Dl = b"dl",
+    Dt = b"dt",
+    Em = b"em",
+    Embed = b"embed",
+    Fieldset = b"fieldset",
+    Figcaption = b"figcaption",
+    Figure = b"figure",
+    Font = b"font",
+    Footer = b"footer",
+    Form = b"form",
+    Frame = b"frame",
+    Frameset = b"frameset",
+    H1 = b"h1",
+    H2 = b"h2",
+    H3 = b"h3",
+    H4 = b"h4",
+    H5 = b"h5",
+    H6 = b"h6",
+    Head = b"head",
+    Header = b"header",
+    Hgroup = b"hgroup",
+    Hr = b"hr",
+    Html = b"html",
+    I = b"i",
+    Iframe = b"iframe",
+    Image = b"image",
+    Img = b"img",
+    Input = b"input",
+    Isindex = b"isindex",
+    Keygen = b"keygen",
+    Li = b"li",
+    Link = b"link",
+    Listing = b"listing",
+    Main = b"main",
+    Marquee = b"marquee",
+    Math = b"math",
+    Menu = b"menu",
+    Meta = b"meta",
+    Nav = b"nav",
+    Nobr = b"nobr",
+    Noembed = b"noembed",
+    Noframes = b"noframes",
+    Noscript = b"noscript",
+    Object = b"object",
+    Ol = b"ol",
+    Optgroup = b"optgroup",
+    Option = b"option",
+    Output = b"output",
+    P = b"p",
+    Param = b"param",
+    Plaintext = b"plaintext",
+    Pre = b"pre",
+    Rb = b"rb",
+    Rp = b"rp",
+    Rt = b"rt",
+    Rtc = b"rtc",
+    Ruby = b"ruby",
+    S = b"s",
+    Script = b"script",
+    Search = b"search",
+    Section = b"section",
+    Select = b"select",
+    Small = b"small",
+    Source = b"source",
+    Strike = b"strike",
+    Strong = b"strong",
+    Style = b"style",
+    Summary = b"summary",
+    Svg = b"svg",
+    Table = b"table",
+    Tbody = b"tbody",
+    Td = b"td",
+    Template = b"template",
+    Textarea = b"textarea",
+    Tfoot = b"tfoot",
+    Th = b"th",
+    Thead = b"thead",
+    Title = b"title",
+    Tr = b"tr",
+    Track = b"track",
+    Tt = b"tt",
+    U = b"u",
+    Ul = b"ul",
+    Video = b"video",
+    Wbr = b"wbr",
+    Xmp = b"xmp",
+}
 
+impl Tag {
     /// turndown's `blockElements`, plus the HTML5 sectioning elements it
     /// predates (`details`, `summary`, `dialog`). Block-ness only decides
     /// where blank lines go, so the additions are whitespace-only changes.

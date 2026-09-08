@@ -641,35 +641,15 @@ describe("Bun.markdown.fromHTML", () => {
         "<p>a</p><body class=x><html lang=y><head><p>b</p>",
         "a\n\nb",
       ],
+      ["stray </p> makes an empty paragraph", "x</p>y", "x\n\ny"],
+      ["stray </br> is a <br>", "<p>a</br>b</p>", "a  \nb"],
+      ["adoption agency: </b> inside <i> reopens the <i>", "<p><b>a<i>b</b>c</i>d</p>", "**a_b_**_c_d"],
+      ["<i> mis-closed by </p> reopens until its own end tag", "<p><i>a</p><p>b</i>c</p><p>d</p>", "_a_\n\n_b_c\n\nd"],
+      ["<i> never closed reopens in every later block", "<p><i>a</p><p>b</p>", "_a_\n\n_b_"],
     ];
     for (const [name, html, md] of cases) {
       test(name, () => expect(fromHTML(html)).toBe(md));
     }
-
-    // HTMLRewriter reports an end tag only for an element it considers open,
-    // and it closes elements by plain name matching. So an end tag with no
-    // open element of that name is never seen, and once an ancestor's end
-    // tag has gone past a mis-nested formatting element, that element's own
-    // end tag can no longer arrive; rather than let it reopen into every
-    // later block, the converter stops reopening it. A browser differs on
-    // these inputs as noted.
-    describe("end tags the tokenizer does not report", () => {
-      const cases: [string, string, string, string][] = [
-        ["stray </p>", "x</p>y", "xy", "x\n\ny"],
-        ["stray </br>", "<p>a</br>b</p>", "ab", "a  \nb"],
-        ["</b> inside <i>: the <i> is not reopened", "<p><b>a<i>b</b>c</i>d</p>", "**a_b_**cd", "**a_b_**_c_d"],
-        [
-          "<i> closed by </p>: not reopened in the next paragraph",
-          "<p><i>a</p><p>b</i>c</p><p>d</p>",
-          "_a_\n\nbc\n\nd",
-          "_a_\n\n_b_c\n\nd",
-        ],
-        ["<i> never closed: same", "<p><i>a</p><p>b</p>", "_a_\n\nb", "_a_\n\n_b_"],
-      ];
-      for (const [name, html, md, _browser] of cases) {
-        test(name, () => expect(fromHTML(html)).toBe(md));
-      }
-    });
   });
 
   describe("malformed input never throws", () => {

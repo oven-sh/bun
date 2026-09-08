@@ -618,17 +618,47 @@ describe("bundler", () => {
     },
   });
   // The diagnostic names the build's actual target, not "Browser".
+  const targetNodeImportBunFiles = {
+    "/entry.js": `
+      import { file } from "bun";
+      const { serve } = require("bun");
+      const dynamic = import("bun");
+      console.log(file, serve, dynamic);
+    `,
+  };
+  const targetNodeImportBunErrors = {
+    "/entry.js": ["import", "require()", "import()"].map(
+      label => `Node.js build cannot ${label} Bun builtin: "bun". When bundling for Bun, set target to 'bun'`,
+    ),
+  };
   itBundled("browser/TargetNodeImportBunError", {
+    skipOnEsbuild: true,
+    files: targetNodeImportBunFiles,
+    target: "node",
+    backend: "api",
+    bundleErrors: targetNodeImportBunErrors,
+  });
+  itBundled("browser/TargetNodeImportBunErrorCLI", {
+    skipOnEsbuild: true,
+    files: targetNodeImportBunFiles,
+    target: "node",
+    backend: "cli",
+    bundleErrors: targetNodeImportBunErrors,
+  });
+  // Unlike the bare "bun" specifier, "bun:*" is left external when targeting node.
+  itBundled("browser/TargetNodeBunPrefixedBuiltinShouldBeExternal", {
     skipOnEsbuild: true,
     files: {
       "/entry.js": `
-        import { version } from "bun";
-        console.log(version);
+        import { Database } from "bun:sqlite";
+        console.log(Database);
       `,
     },
     target: "node",
-    bundleErrors: {
-      "/entry.js": [`Node.js build cannot import Bun builtin: "bun". When bundling for Bun, set target to 'bun'`],
+    onAfterBundle(api) {
+      expect(new Bun.Transpiler().scanImports(api.readFile("out.js"))).toStrictEqual([
+        { kind: "import-statement", path: "bun:sqlite" },
+      ]);
     },
   });
 

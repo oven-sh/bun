@@ -293,6 +293,9 @@ describe("css tests", () => {
   });
 
   describe("border", () => {
+    // The `border` shorthand also resets `border-image`, which none of these
+    // declarations touch, so it is only synthesized when the rule had a
+    // `border` itself or declares a complete `border-image` too.
     cssTest(
       `
       .foo {
@@ -304,7 +307,172 @@ describe("css tests", () => {
     `,
       `
       .foo {
+        border-style: solid;
+        border-width: 2px;
+        border-color: red;
+      }
+    `,
+    );
+
+    cssTest(
+      `
+      .foo {
+        border-width: 2px;
+        border-style: solid;
+        border-color: red;
+      }
+    `,
+      `
+      .foo {
+        border-style: solid;
+        border-width: 2px;
+        border-color: red;
+      }
+    `,
+    );
+
+    cssTest(
+      `
+      .foo {
+        border: 1px dotted green;
+        border-width: 2px;
+        border-style: solid;
+        border-color: red;
+      }
+    `,
+      `
+      .foo {
         border: 2px solid red;
+      }
+    `,
+    );
+
+    cssTest(
+      `
+      .foo {
+        border-image: linear-gradient(red, blue) 10 / 4px round;
+        border-width: 2px;
+        border-style: solid;
+        border-color: red;
+      }
+    `,
+      `
+      .foo {
+        border: 2px solid red;
+        border-image: linear-gradient(red, #00f) 10 / 4px round;
+      }
+    `,
+    );
+
+    cssTest(
+      `
+      .foo {
+        border-width: 2px;
+        border-style: solid;
+        border-color: red;
+        border-image-source: linear-gradient(red, blue);
+      }
+    `,
+      `
+      .foo {
+        border-style: solid;
+        border-width: 2px;
+        border-color: red;
+        border-image-source: linear-gradient(red, #00f);
+      }
+    `,
+    );
+
+    cssTest(
+      `
+      .foo {
+        -webkit-border-image: linear-gradient(red, blue) 10;
+        border-width: 2px;
+        border-style: solid;
+        border-color: red;
+      }
+    `,
+      `
+      .foo {
+        border-style: solid;
+        border-width: 2px;
+        border-color: red;
+        -webkit-border-image: linear-gradient(red, #00f) 10;
+      }
+    `,
+    );
+
+    cssTest(
+      `
+      .foo {
+        border-image: linear-gradient(red, blue) 10;
+        border-image-width: var(--w);
+        border-width: 2px;
+        border-style: solid;
+        border-color: red;
+      }
+    `,
+      `
+      .foo {
+        border-image: linear-gradient(red, #00f) 10;
+        border-image-width: var(--w);
+        border-style: solid;
+        border-width: 2px;
+        border-color: red;
+      }
+    `,
+    );
+
+    cssTest(
+      `
+      .foo {
+        border: 1px dotted green;
+        border-top-color: var(--c);
+        border-width: 2px;
+        border-style: solid;
+        border-color: red;
+      }
+    `,
+      `
+      .foo {
+        border: 1px dotted green;
+        border-top-color: var(--c);
+        border-style: solid;
+        border-width: 2px;
+        border-color: red;
+      }
+    `,
+    );
+
+    cssTest(
+      `
+      .foo {
+        border-style: solid double;
+        border-width: 0 1px;
+        border-color: black;
+      }
+    `,
+      `
+      .foo {
+        border-style: solid double;
+        border-width: 0 1px;
+        border-color: #000;
+      }
+    `,
+    );
+
+    cssTest(
+      `
+      .foo {
+        border-block: 2px solid red;
+        border-inline: 2px solid red;
+      }
+    `,
+      `
+      .foo {
+        border-style: solid;
+        border-width: 2px;
+        border-color: red;
       }
     `,
     );
@@ -640,6 +808,23 @@ describe("css tests", () => {
     `,
       `
       .foo {
+        border-style: solid;
+        border-width: 1px 2px;
+        border-color: #000;
+      }
+    `,
+    );
+
+    cssTest(
+      `
+      .foo {
+        border: 1px solid black;
+        border-left: 2px solid black;
+        border-right: 2px solid black;
+      }
+    `,
+      `
+      .foo {
         border: 1px solid #000;
         border-width: 1px 2px;
       }
@@ -653,6 +838,22 @@ describe("css tests", () => {
         border-bottom: 1px solid black;
         border-left: 2px solid black;
         border-right: 1px solid black;
+      }
+    `,
+      `
+      .foo {
+        border-style: solid;
+        border-width: 1px 1px 1px 2px;
+        border-color: #000;
+      }
+    `,
+    );
+
+    cssTest(
+      `
+      .foo {
+        border: 1px solid black;
+        border-left: 2px solid black;
       }
     `,
       `
@@ -674,8 +875,42 @@ describe("css tests", () => {
     `,
       `
       .foo {
+        border-style: solid;
+        border-width: 1px;
+        border-color: #000 red;
+      }
+    `,
+    );
+
+    cssTest(
+      `
+      .foo {
+        border: 1px solid black;
+        border-left-color: red;
+        border-right-color: red;
+      }
+    `,
+      `
+      .foo {
         border: 1px solid #000;
         border-color: #000 red;
+      }
+    `,
+    );
+
+    cssTest(
+      `
+      .foo {
+        border: 1px solid black;
+        border-top: 1px solid red;
+        border-left: 2px dotted red;
+      }
+    `,
+      `
+      .foo {
+        border: 1px solid #000;
+        border-top-color: red;
+        border-left: 2px dotted red;
       }
     `,
     );
@@ -691,8 +926,8 @@ describe("css tests", () => {
     `,
       `
       .foo {
-        border: 1px solid #000;
-        border-inline-color: red;
+        border-block: 1px solid #000;
+        border-inline: 1px solid red;
       }
     `,
     );
@@ -708,8 +943,8 @@ describe("css tests", () => {
     `,
       `
       .foo {
-        border: 1px solid #000;
-        border-inline-width: 2px;
+        border-block: 1px solid #000;
+        border-inline: 2px solid #000;
       }
     `,
     );
@@ -725,7 +960,7 @@ describe("css tests", () => {
     `,
       `
       .foo {
-        border: 1px solid #000;
+        border-block: 1px solid #000;
         border-inline: 2px solid red;
       }
     `,
@@ -742,7 +977,7 @@ describe("css tests", () => {
     `,
       `
       .foo {
-        border: 1px solid #000;
+        border-block: 1px solid #000;
         border-inline-start: 2px solid red;
         border-inline-end: 3px solid red;
       }
@@ -760,9 +995,9 @@ describe("css tests", () => {
     `,
       `
       .foo {
-        border: 2px solid red;
-        border-block-start-color: #000;
+        border-block-start: 2px solid #000;
         border-block-end: 1px solid #000;
+        border-inline: 2px solid red;
       }
     `,
     );
@@ -778,8 +1013,9 @@ describe("css tests", () => {
     `,
       `
       .foo {
-        border: 2px solid red;
-        border-block-end-width: 1px;
+        border-block-start: 2px solid red;
+        border-block-end: 1px solid red;
+        border-inline: 2px solid red;
       }
     `,
     );
@@ -795,8 +1031,9 @@ describe("css tests", () => {
     `,
       `
       .foo {
-        border: 2px solid red;
-        border-inline-end-width: 1px;
+        border-block: 2px solid red;
+        border-inline-start: 2px solid red;
+        border-inline-end: 1px solid red;
       }
     `,
     );
@@ -6575,6 +6812,8 @@ describe("css tests", () => {
     minify_test(".foo { transition: width 2s ease 1s }", ".foo{transition:width 2s 1s}");
     minify_test(".foo { transition: ease-in 1s width 4s }", ".foo{transition:width 1s ease-in 4s}");
     minify_test(".foo { transition: opacity 0s .6s }", ".foo{transition:opacity 0s .6s}");
+    // The `transition` shorthand also resets `transition-behavior`, so the
+    // longhands only fold into it when the rule sets that one too.
     cssTest(
       `
       .foo {
@@ -6586,9 +6825,107 @@ describe("css tests", () => {
     `,
       `
       .foo {
+        transition-property: opacity;
+        transition-duration: 90ms;
+        transition-delay: .5s;
+        transition-timing-function: ease-in-out;
+      }
+    `,
+    );
+    cssTest(
+      `
+      .foo {
+        transition-property: opacity;
+        transition-duration: 0.09s;
+        transition-timing-function: ease-in-out;
+        transition-delay: 500ms;
+        transition-behavior: normal;
+      }
+    `,
+      `
+      .foo {
         transition: opacity 90ms ease-in-out .5s;
       }
     `,
+    );
+    cssTest(
+      `
+      .foo {
+        transition-behavior: allow-discrete;
+        transition-property: opacity;
+        transition-duration: 0.09s;
+        transition-timing-function: ease-in-out;
+        transition-delay: 500ms;
+      }
+    `,
+      `
+      .foo {
+        transition: opacity 90ms ease-in-out .5s;
+        transition-behavior: allow-discrete;
+      }
+    `,
+    );
+    cssTest(
+      `
+      .foo {
+        transition: opacity 2s, display 2s;
+        transition-behavior: allow-discrete;
+      }
+    `,
+      `
+      .foo {
+        transition: opacity 2s, display 2s;
+        transition-behavior: allow-discrete;
+      }
+    `,
+    );
+    cssTest(
+      `
+      .foo {
+        transition-behavior: allow-discrete;
+        transition: opacity 2s, display 2s;
+      }
+    `,
+      `
+      .foo {
+        transition: opacity 2s, display 2s;
+      }
+    `,
+    );
+    cssTest(
+      `
+      .foo {
+        transition: opacity 2s;
+        transition-behavior: var(--b);
+        transition-delay: 1s;
+      }
+    `,
+      `
+      .foo {
+        transition: opacity 2s;
+        transition-behavior: var(--b);
+        transition-delay: 1s;
+      }
+    `,
+    );
+    cssTest(
+      `
+      .foo {
+        transition-property: opacity;
+        transition-behavior: allow-discrete, normal;
+      }
+    `,
+      `
+      .foo {
+        transition-property: opacity;
+        transition-behavior: allow-discrete, normal;
+      }
+    `,
+    );
+    minify_test(".foo { transition-behavior: Allow-Discrete , NORMAL }", ".foo{transition-behavior:allow-discrete,normal}");
+    minify_test(
+      ".foo { transition: display 2s allow-discrete, opacity 2s }",
+      ".foo{transition:display 2s allow-discrete,opacity 2s}",
     );
     cssTest(
       `
@@ -6645,6 +6982,25 @@ describe("css tests", () => {
     `,
       `
       .foo {
+        transition-property: opacity, color;
+        transition-duration: 2s, 4s;
+        transition-delay: .5s, 0s;
+        transition-timing-function: ease-in-out, ease-in;
+      }
+    `,
+    );
+    cssTest(
+      `
+      .foo {
+        transition: none;
+        transition-property: opacity, color;
+        transition-duration: 2s, 4s;
+        transition-timing-function: ease-in-out, ease-in;
+        transition-delay: 500ms, 0s;
+      }
+    `,
+      `
+      .foo {
         transition: opacity 2s ease-in-out .5s, color 4s ease-in;
       }
     `,
@@ -6652,6 +7008,7 @@ describe("css tests", () => {
     cssTest(
       `
       .foo {
+        transition: none;
         transition-property: opacity, color;
         transition-duration: 2s;
         transition-timing-function: ease-in-out;
@@ -6667,6 +7024,7 @@ describe("css tests", () => {
     cssTest(
       `
       .foo {
+        transition: none;
         transition-property: opacity, color, width, height;
         transition-duration: 2s, 4s;
         transition-timing-function: ease;
@@ -6691,6 +7049,26 @@ describe("css tests", () => {
     `,
       `
       .foo {
+        -webkit-transition-property: opacity, color;
+        -webkit-transition-duration: 2s, 4s;
+        -webkit-transition-delay: .5s, 0s;
+        -webkit-transition-timing-function: ease-in-out, ease-in;
+      }
+    `,
+    );
+
+    cssTest(
+      `
+      .foo {
+        -webkit-transition: none;
+        -webkit-transition-property: opacity, color;
+        -webkit-transition-duration: 2s, 4s;
+        -webkit-transition-timing-function: ease-in-out, ease-in;
+        -webkit-transition-delay: 500ms, 0s;
+      }
+    `,
+      `
+      .foo {
         -webkit-transition: opacity 2s ease-in-out .5s, color 4s ease-in;
       }
     `,
@@ -6699,6 +7077,7 @@ describe("css tests", () => {
     cssTest(
       `
       .foo {
+        transition-behavior: normal;
         -webkit-transition-property: opacity, color;
         -webkit-transition-duration: 2s, 4s;
         -webkit-transition-timing-function: ease-in-out, ease-in;
@@ -6737,6 +7116,7 @@ describe("css tests", () => {
         -webkit-transition-delay: 500ms, 0s;
         -moz-transition-delay: 500ms, 0s;
         transition-delay: 500ms, 0s;
+        transition-behavior: normal;
       }
     `,
       `

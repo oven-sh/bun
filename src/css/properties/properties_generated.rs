@@ -246,6 +246,7 @@ pub enum PropertyIdTag {
     TransitionDelay,
     TransitionTimingFunction,
     Transition,
+    TransitionBehavior,
     Animation,
     AnimationName,
     Transform,
@@ -561,6 +562,7 @@ impl PropertyIdTag {
             PropertyIdTag::TransitionDelay => b"transition-delay",
             PropertyIdTag::TransitionTimingFunction => b"transition-timing-function",
             PropertyIdTag::Transition => b"transition",
+            PropertyIdTag::TransitionBehavior => b"transition-behavior",
             PropertyIdTag::Animation => b"animation",
             PropertyIdTag::AnimationName => b"animation-name",
             PropertyIdTag::Transform => b"transform",
@@ -829,6 +831,7 @@ pub enum PropertyId {
     TransitionDelay(VendorPrefix),
     TransitionTimingFunction(VendorPrefix),
     Transition(VendorPrefix),
+    TransitionBehavior,
     Animation(VendorPrefix),
     AnimationName(VendorPrefix),
     Transform(VendorPrefix),
@@ -1114,6 +1117,7 @@ impl PropertyId {
             PropertyId::TransitionDelay(..) => PropertyIdTag::TransitionDelay,
             PropertyId::TransitionTimingFunction(..) => PropertyIdTag::TransitionTimingFunction,
             PropertyId::Transition(..) => PropertyIdTag::Transition,
+            PropertyId::TransitionBehavior => PropertyIdTag::TransitionBehavior,
             PropertyId::Animation(..) => PropertyIdTag::Animation,
             PropertyId::AnimationName(..) => PropertyIdTag::AnimationName,
             PropertyId::Transform(..) => PropertyIdTag::Transform,
@@ -1496,6 +1500,7 @@ impl PropertyId {
                 b"transition-delay" => (VendorPrefix::NONE.union(VendorPrefix::WEBKIT).union(VendorPrefix::MOZ).union(VendorPrefix::MS), PropertyId::TransitionDelay),
                 b"transition-timing-function" => (VendorPrefix::NONE.union(VendorPrefix::WEBKIT).union(VendorPrefix::MOZ).union(VendorPrefix::MS), PropertyId::TransitionTimingFunction),
                 b"transition" => (VendorPrefix::NONE.union(VendorPrefix::WEBKIT).union(VendorPrefix::MOZ).union(VendorPrefix::MS), PropertyId::Transition),
+                b"transition-behavior" => (VendorPrefix::NONE, |_| PropertyId::TransitionBehavior),
                 b"animation-name" => (VendorPrefix::NONE.union(VendorPrefix::WEBKIT).union(VendorPrefix::MOZ).union(VendorPrefix::O).union(VendorPrefix::MS), PropertyId::AnimationName),
                 b"animation" => (VendorPrefix::NONE.union(VendorPrefix::WEBKIT).union(VendorPrefix::MOZ).union(VendorPrefix::O).union(VendorPrefix::MS), PropertyId::Animation),
                 b"transform" => (VendorPrefix::NONE.union(VendorPrefix::WEBKIT).union(VendorPrefix::MOZ).union(VendorPrefix::MS).union(VendorPrefix::O), PropertyId::Transform),
@@ -1819,6 +1824,7 @@ pub enum Property {
         ),
     ),
     Transition((SmallList<transition::Transition, 1>, VendorPrefix)),
+    TransitionBehavior(SmallList<transition::TransitionBehavior, 1>),
     Animation((SmallList<animation::Animation, 1>, VendorPrefix)),
     AnimationName((SmallList<animation::AnimationName, 1>, VendorPrefix)),
     Transform((transform::TransformList, VendorPrefix)),
@@ -2099,6 +2105,7 @@ impl Property {
             Property::TransitionDelay(v) => PropertyId::TransitionDelay(v.1),
             Property::TransitionTimingFunction(v) => PropertyId::TransitionTimingFunction(v.1),
             Property::Transition(v) => PropertyId::Transition(v.1),
+            Property::TransitionBehavior(..) => PropertyId::TransitionBehavior,
             Property::Animation(v) => PropertyId::Animation(v.1),
             Property::AnimationName(v) => PropertyId::AnimationName(v.1),
             Property::Transform(v) => PropertyId::Transform(v.1),
@@ -2371,6 +2378,7 @@ impl Property {
             Property::TransitionDelay(v) => css::generic::to_css(&v.0, dest),
             Property::TransitionTimingFunction(v) => css::generic::to_css(&v.0, dest),
             Property::Transition(v) => css::generic::to_css(&v.0, dest),
+            Property::TransitionBehavior(v) => css::generic::to_css(v, dest),
             Property::Animation(v) => css::generic::to_css(&v.0, dest),
             Property::AnimationName(v) => css::generic::to_css(&v.0, dest),
             Property::Transform(v) => css::generic::to_css(&v.0, dest),
@@ -3602,6 +3610,13 @@ impl Property {
                     return Ok(Property::Transition((c, pre)));
                 }
             }
+            PropertyId::TransitionBehavior => {
+                if let Some(c) =
+                    parse_value::<SmallList<transition::TransitionBehavior, 1>>(input, options)
+                {
+                    return Ok(Property::TransitionBehavior(c));
+                }
+            }
             PropertyId::Animation(pre) => {
                 if let Some(c) = parse_value::<SmallList<animation::Animation, 1>>(input, options) {
                     return Ok(Property::Animation((c, pre)));
@@ -4358,6 +4373,9 @@ impl Property {
             Property::Transition(v) => {
                 Property::Transition((css::generic::deep_clone(&v.0, arena), v.1))
             }
+            Property::TransitionBehavior(v) => {
+                Property::TransitionBehavior(css::generic::deep_clone(v, arena))
+            }
             Property::Animation(v) => {
                 Property::Animation((css::generic::deep_clone(&v.0, arena), v.1))
             }
@@ -4902,6 +4920,9 @@ impl Property {
             }
             (Property::Transition(a), Property::Transition(b)) => {
                 css::generic::eql(&a.0, &b.0) && a.1 == b.1
+            }
+            (Property::TransitionBehavior(a), Property::TransitionBehavior(b)) => {
+                css::generic::eql(a, b)
             }
             (Property::Animation(a), Property::Animation(b)) => {
                 css::generic::eql(&a.0, &b.0) && a.1 == b.1

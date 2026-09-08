@@ -609,6 +609,9 @@ pub struct BorderHandler {
     border_image_handler: BorderImageHandler,
     border_radius_handler: BorderRadiusHandler,
     flushed_properties: BorderProperty,
+    /// A `border` declaration was seen since the last flush. It resets
+    /// `border-image`, so writing a `border` shorthand keeps that reset.
+    has_border_shorthand: bool,
     has_any: bool,
 }
 
@@ -649,6 +652,9 @@ mod border_handler_body {
         arena: &'bump Bump,
         logical_supported: bool,
         logical_shorthand_supported: bool,
+        /// `border` also resets `border-image`, so it may only be synthesized
+        /// when this block resets or fully redeclares `border-image` anyway.
+        border_shorthand_safe: bool,
     }
 
     // `f.logicalProp(ltr, ltr_key, rtl, rtl_key, val)` — ltr_key/rtl_key were unused.
@@ -1039,11 +1045,12 @@ mod border_handler_body {
             }};
         }
 
-        if block_start.is_valid()
+        let all_valid = block_start.is_valid()
             && block_end.is_valid()
             && inline_start.is_valid()
-            && inline_end.is_valid()
-        {
+            && inline_end.is_valid();
+
+        if all_valid && f.border_shorthand_safe {
             let top_eq_bottom = block_start.eql(block_end);
             let left_eq_right = inline_start.eql(inline_end);
             let top_eq_left = block_start.eql(inline_start);
@@ -1142,9 +1149,17 @@ mod border_handler_body {
                 }, false);
             }
         } else {
-            shorthand!(BorderStyle, BorderStyle, style);
-            shorthand!(BorderWidth, BorderWidth, width);
-            shorthand!(BorderColor, BorderColor, color);
+            // Four complete but unequal logical sides are shorter as the
+            // `border-block` / `border-inline` properties below than as what
+            // is left over after three four-sided physical shorthands.
+            let all_equal = block_start.eql(block_end)
+                && block_start.eql(inline_start)
+                && block_start.eql(inline_end);
+            if !$is_logical || !all_valid || all_equal {
+                shorthand!(BorderStyle, BorderStyle, style);
+                shorthand!(BorderWidth, BorderWidth, width);
+                shorthand!(BorderColor, BorderColor, color);
+            }
 
             if $is_logical && block_start.eql(block_end) && block_start.is_valid() {
                 if f.logical_supported {
@@ -1424,6 +1439,7 @@ mod border_handler_body {
 
                     // Setting the `border` property resets `border-image`
                     self.border_image_handler.reset();
+                    self.has_border_shorthand = true;
                     self.has_any = true;
                 }
                 Property::Unparsed(val) => {
@@ -1476,8 +1492,10 @@ mod border_handler_body {
 
             self.has_any = false;
 
-            self.flush_physical(dest, context);
-            self.flush_logical(dest, context);
+            let border_shorthand_safe =
+                self.has_border_shorthand || self.border_image_handler.will_flush_shorthand();
+            self.flush_physical(dest, context, border_shorthand_safe);
+            self.flush_logical(dest, context, border_shorthand_safe);
 
             let arena = dest.bump();
             self.border_top.reset(arena);
@@ -1488,6 +1506,7 @@ mod border_handler_body {
             self.border_block_end.reset(arena);
             self.border_inline_start.reset(arena);
             self.border_inline_end.reset(arena);
+            self.has_border_shorthand = false;
         }
 
         #[inline(never)]
@@ -1495,6 +1514,7 @@ mod border_handler_body {
             &mut self,
             dest: &mut DeclarationList,
             context: &mut PropertyHandlerContext,
+            border_shorthand_safe: bool,
         ) {
             let logical_supported = !context.should_compile_logical(Feature::LogicalBorders);
             let logical_shorthand_supported =
@@ -1510,6 +1530,7 @@ mod border_handler_body {
                 arena,
                 logical_supported,
                 logical_shorthand_supported,
+                border_shorthand_safe,
             };
 
             flush_category!(
@@ -1543,6 +1564,7 @@ mod border_handler_body {
             &mut self,
             dest: &mut DeclarationList,
             context: &mut PropertyHandlerContext,
+            border_shorthand_safe: bool,
         ) {
             let logical_supported = !context.should_compile_logical(Feature::LogicalBorders);
             let logical_shorthand_supported =
@@ -1556,6 +1578,7 @@ mod border_handler_body {
                 arena,
                 logical_supported,
                 logical_shorthand_supported,
+                border_shorthand_safe,
             };
 
             flush_category!(

@@ -110,6 +110,18 @@ impl Transition {
     }
 }
 
+/// A value for the [transition-behavior](https://drafts.csswg.org/css-transitions-2/#transition-behavior-property) property.
+#[derive(
+    Clone, Copy, PartialEq, Eq, Default, crate::Parse, crate::ToCss, crate::CssEql, crate::DeepClone,
+)]
+pub enum TransitionBehavior {
+    /// Transitions do not start for discretely animatable properties.
+    #[default]
+    Normal,
+    /// Transitions start for discretely animatable properties too.
+    AllowDiscrete,
+}
+
 /// A value for the [view-transition-name](https://drafts.csswg.org/css-view-transitions-1/#view-transition-name-prop) property.
 ///
 /// Under CSS modules the `<custom-ident>` is scoped with the same hash as the
@@ -146,6 +158,9 @@ pub struct TransitionHandler {
     pub(crate) durations: Option<(SmallList<Time, 1>, VendorPrefix)>,
     pub(crate) delays: Option<(SmallList<Time, 1>, VendorPrefix)>,
     pub(crate) timing_functions: Option<(SmallList<EasingFunction, 1>, VendorPrefix)>,
+    /// `transition-behavior` has no vendor prefixes. The `transition` shorthand
+    /// resets it, so the shorthand is only written when this is known too.
+    pub(crate) behaviors: Option<SmallList<TransitionBehavior, 1>>,
     pub(crate) has_any: bool,
 }
 
@@ -323,6 +338,18 @@ mod transition_handler_body {
                         &timing_functions,
                         vp
                     );
+
+                    // The shorthand resets `transition-behavior` to `normal` for each entry.
+                    let mut behaviors =
+                        SmallList::<TransitionBehavior, 1>::init_capacity(val.len());
+                    for _ in val.slice() {
+                        behaviors.append(TransitionBehavior::Normal);
+                    }
+                    self.behaviors = Some(behaviors);
+                }
+                Property::TransitionBehavior(x) => {
+                    self.behaviors = Some(x.deep_clone(arena));
+                    self.has_any = true;
                 }
                 Property::Unparsed(x) => {
                     if is_transition_property(&x.property_id) {
@@ -364,6 +391,7 @@ mod transition_handler_body {
             let mut _delays: Option<(SmallList<Time, 1>, VendorPrefix)> = self.delays.take();
             let mut _timing_functions: Option<(SmallList<EasingFunction, 1>, VendorPrefix)> =
                 self.timing_functions.take();
+            let mut _behaviors: Option<SmallList<TransitionBehavior, 1>> = self.behaviors.take();
 
             let mut rtl_properties: Option<SmallList<PropertyId, 1>> =
                 if let Some(p) = &mut _properties {
@@ -371,17 +399,27 @@ mod transition_handler_body {
                 } else {
                     None
                 };
+            let mut shorthand_is_logical = false;
+            // `Some(true)` when every buffered `transition-behavior` is `normal`,
+            // which any `transition` shorthand already implies.
+            let behaviors_all_normal: Option<bool> = _behaviors
+                .as_ref()
+                .map(|b| b.slice().iter().all(|b| *b == TransitionBehavior::Normal));
 
+            // The shorthand resets every `transition-*` longhand, so it is only
+            // equivalent to the declarations seen when all of them were set.
             if let (
                 Some((properties, property_prefixes)),
                 Some((durations, duration_prefixes)),
                 Some((delays, delay_prefixes)),
                 Some((timing_functions, timing_prefixes)),
+                Some(behaviors_all_normal),
             ) = (
                 &mut _properties,
                 &mut _durations,
                 &mut _delays,
                 &mut _timing_functions,
+                behaviors_all_normal,
             ) {
                 // Find the intersection of prefixes with the same value.
                 // Remove that from the prefixes of each of the properties. The remaining
@@ -404,6 +442,7 @@ mod transition_handler_body {
                             Property::Transition((transitions, intersection)),
                             Property::Transition((rtl_transitions, intersection)),
                         );
+                        shorthand_is_logical = true;
                     } else {
                         dest.push(Property::Transition((
                             transitions.deep_clone(arena),
@@ -415,6 +454,10 @@ mod transition_handler_body {
                     duration_prefixes.remove(intersection);
                     timing_prefixes.remove(intersection);
                     delay_prefixes.remove(intersection);
+
+                    if behaviors_all_normal {
+                        _behaviors = None;
+                    }
                 }
             }
 
@@ -452,6 +495,18 @@ mod transition_handler_body {
                 }
             }
 
+            if let Some(behaviors) = _behaviors.take() {
+                if shorthand_is_logical {
+                    // Keep it after the shorthand, which went into the `:dir()` rules.
+                    context.add_logical_rule(
+                        Property::TransitionBehavior(behaviors.deep_clone(arena)),
+                        Property::TransitionBehavior(behaviors),
+                    );
+                } else {
+                    dest.push(Property::TransitionBehavior(behaviors));
+                }
+            }
+
             self.reset();
         }
 
@@ -460,6 +515,7 @@ mod transition_handler_body {
             self.durations = None;
             self.delays = None;
             self.timing_functions = None;
+            self.behaviors = None;
             self.has_any = false;
         }
     }
@@ -843,6 +899,7 @@ mod transition_handler_body {
                 | PropertyId::TransitionDuration(..)
                 | PropertyId::TransitionDelay(..)
                 | PropertyId::TransitionTimingFunction(..)
+                | PropertyId::TransitionBehavior
                 | PropertyId::Transition(..)
         )
     }

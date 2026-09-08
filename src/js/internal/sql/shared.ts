@@ -2114,15 +2114,15 @@ function parseOptions(
   }
 
   if ($isObject(tls)) {
-    if (tls.checkServerIdentity !== undefined && !$isCallable(tls.checkServerIdentity)) {
-      throw $ERR_INVALID_ARG_TYPE("tls.checkServerIdentity", "function", tls.checkServerIdentity);
+    const { checkServerIdentity, rejectUnauthorized } = tls;
+    if (checkServerIdentity !== undefined && !$isCallable(checkServerIdentity)) {
+      throw $ERR_INVALID_ARG_TYPE("tls.checkServerIdentity", "function", checkServerIdentity);
     }
     // Options that only make sense with certificate verification request it,
     // unless verification is explicitly turned off.
     if (
       sslMode < SSLMode.verify_ca &&
-      (tls.rejectUnauthorized === true ||
-        (tls.rejectUnauthorized !== false && (tls.ca || tls.caFile || tls.checkServerIdentity)))
+      (rejectUnauthorized === true || (rejectUnauthorized !== false && (tls.ca || tls.caFile || checkServerIdentity)))
     ) {
       sslMode = SSLMode.verify_full;
     }

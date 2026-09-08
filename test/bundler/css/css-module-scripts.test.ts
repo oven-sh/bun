@@ -108,7 +108,8 @@ describe("bundler", () => {
     outdir: "/out",
     target: "browser",
     onAfterBundle(api) {
-      expect(outputFiles(api.outdir, ".css")).toEqual([]);
+      // A page stylesheet for this entry would be emitted next to it, in chunks/.
+      expect(outputFiles(api.outdir + "/chunks", ".css")).toEqual([]);
       expect(outputFiles(api.outdir + "/assets", ".png")).toHaveLength(1);
     },
     run: {

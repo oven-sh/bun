@@ -201,16 +201,12 @@ pub struct RuntimeTranspilerStore {
     pub(crate) generation_number: AtomicU32,
     pub(crate) store: TranspilerJobStore,
     pub enabled: bool,
-    /// Scheduled jobs no pool thread has started yet, oldest first. Each
-    /// scheduled job also puts one [`TranspileRunner`] on the pool, and each
-    /// runner starts the oldest job here rather than a fixed one, so a burst of
-    /// jobs starts in scheduling order whatever order the pool runs its tasks
-    /// in. That keeps a finished job's wait for its turn (below) short.
+    /// Scheduled jobs no pool thread has started, oldest first. Pool threads
+    /// start them in this order (see [`TranspileRunner`]).
     unstarted: Guarded<VecDeque<UnstartedJob>>,
     /// Finished jobs, pushed by pool threads in completion order.
     pub(crate) queue: Queue,
-    /// JS thread only. Hands finished jobs back to JSC in scheduling order;
-    /// see [`FulfillOrder`].
+    /// JS thread only. The order finished jobs go back to JSC in.
     order: FulfillOrder,
 }
 
@@ -234,29 +230,18 @@ impl Default for RuntimeTranspilerStore {
     }
 }
 
-/// Finished jobs go back to JSC strictly in the order `transpile()` scheduled
-/// them, not in the order pool threads happen to finish them.
-///
-/// The order in which fetches settle is the one input to JSC's module loader
-/// that used to depend on thread timing. Everything the loader does after a
-/// fetch settles (parse, request the imports, and, once the last fetch of a
-/// graph is in, link and evaluate it) runs on the JS thread in microtasks, and
-/// each hand-back is followed by a microtask drain. So with fetches settling in
-/// scheduling order, the order in which concurrently loading graphs evaluate
-/// (two `import()` calls in one tick, say), and which error a graph with
-/// several bad modules reports, are functions of the module graph alone and
-/// come out the same on every run: a graph evaluates right after the hand-back
-/// of the last module it was still waiting for. For graphs that share no
-/// modules that puts the shallower graph first and graphs of equal depth in
-/// the order they were requested, as node does. Transpiling stays parallel.
+/// Hands finished jobs back to JSC strictly in the order `transpile()`
+/// scheduled them, not in the order pool threads finish them. JSC evaluates a
+/// module graph in the microtask drain after its last fetch settles, so the
+/// settle order decides which of several concurrently loading graphs (two
+/// `import()` calls in one tick, say) evaluates first. Scheduling order makes
+/// that the same on every run. Transpiling itself stays parallel.
 #[derive(Default)]
 struct FulfillOrder {
-    /// Sequence number for the next job `transpile()` schedules.
     next_seq: u64,
     /// Sequence number of the next job to hand back.
     next_to_fulfill: u64,
-    /// Finished jobs waiting for an older one to finish; slot `i` holds the
-    /// job with sequence number `next_to_fulfill + i`.
+    /// Finished jobs waiting for an older one; slot `i` is job `next_to_fulfill + i`.
     parked: VecDeque<Option<NonNull<TranspilerJob>>>,
 }
 
@@ -300,8 +285,9 @@ impl FulfillOrder {
     }
 }
 
-/// A pool task that transpiles the oldest job no thread has started yet; see
-/// `RuntimeTranspilerStore::unstarted`.
+/// One per scheduled job. Runs the oldest unstarted job rather than its own,
+/// so a burst of imports starts transpiling in request order even though the
+/// pool runs tasks newest-first, which keeps `FulfillOrder`'s waits short.
 struct TranspileRunner {
     store: *const RuntimeTranspilerStore,
     task: WorkPoolTask,
@@ -313,10 +299,9 @@ impl TranspileRunner {
     #[allow(clippy::boxed_local)] // `owned_task!`'s required signature
     fn run_owned(self: Box<Self>) {
         let job = {
-            // SAFETY: the store is a field of the VM, which outlives every
-            // unstarted job (each holds a ticket the VM's teardown waits for),
-            // and there is one unstarted job per runner not yet run.
-            // `unstarted` is only touched under its lock.
+            // SAFETY: each unstarted job holds a ticket the VM's teardown
+            // waits for, so the VM (and its store) is alive; one job is queued
+            // per runner, so the pop cannot come back empty.
             let mut unstarted = unsafe { (*self.store).unstarted.lock() };
             let job = unstarted.pop_front();
             if unstarted.is_empty() && unstarted.capacity() > 1024 {
@@ -348,8 +333,7 @@ impl RuntimeTranspilerStore {
     /// turn of the wait): jobs already handed back whose completion will not
     /// run release their source, log and module promise here instead. Queued ⇒
     /// the pool thread's last touch of the slot was the push (its ticket was
-    /// moved out first), so the slot is this thread's again. Parked jobs were
-    /// popped by an earlier drain and are this thread's already.
+    /// moved out first), so the slot is this thread's again. So are parked jobs.
     pub fn release_queued_jobs_for_teardown(&mut self) {
         let batch = self.queue.pop_batch();
         let mut iter = batch.iterator();
@@ -372,12 +356,10 @@ impl RuntimeTranspilerStore {
         }
     }
 
-    /// Fulfil the module promise of every finished job whose turn has come (see
-    /// [`FulfillOrder`]). This drain is a dispatcher: each fulfilment is a JS
-    /// entry of its own, so what one leaves pending is folded here and the
-    /// drain goes on; the VM's termination ends it, with the jobs not yet
-    /// fulfilled left parked (a later drain, or the teardown release, picks
-    /// them up).
+    /// Fulfil the module promise of every finished job whose turn has come.
+    /// Each fulfilment is a JS entry of its own: an error one leaves pending is
+    /// reported here and the drain goes on. The VM's termination ends it; jobs
+    /// not yet fulfilled stay parked for a later drain or the teardown release.
     // Note: takes `NonNull` rather than `&mut` for `event_loop`/`vm`
     // because `&mut self` already aliases `vm.transpiler_store` (this `Self` is
     // a field of `VirtualMachine`). Field-level derefs only.
@@ -390,8 +372,7 @@ impl RuntimeTranspilerStore {
         let batch = self.queue.pop_batch();
         let mut iter = batch.iterator();
         while let Some(job) = NonNull::new(iter.next()) {
-            // SAFETY: a live finished job; `seq` was written in `transpile()`
-            // and the pool thread does not touch it.
+            // SAFETY: a live finished job; the pool thread never touches `seq`.
             let seq = unsafe { (*job.as_ptr()).seq };
             bun_core::scoped_log!(
                 RuntimeTranspilerStore,
@@ -406,9 +387,8 @@ impl RuntimeTranspilerStore {
         // SAFETY: `vm` is the live owning VM (caller is the JS-thread tick loop).
         let jsc_vm = unsafe { (*vm.as_ptr()).jsc_vm() };
         let mut first = true;
-        // Fulfilment and the drain both enter JS, which may schedule more jobs
-        // or re-enter this function, so the next job is looked up afresh on
-        // every turn and taken only right before it is fulfilled.
+        // Fulfilment and the drain enter JS, which may re-enter this function,
+        // so the next job is looked up afresh each turn.
         while self.order.next_is_ready() {
             if !first {
                 // if there are more, we need to drain the microtasks from the previous run
@@ -507,22 +487,18 @@ impl RuntimeTranspilerStore {
     }
 
     fn schedule(&mut self, job: NonNull<TranspilerJob>) {
-        // SAFETY: job fully initialized by `transpile()`; JS thread, and the VM
-        // owns the store this slot lives in.
+        // SAFETY: `job` was fully initialized by `transpile()` on this, the JS
+        // thread; the VM owns the store the slot lives in.
         let vm = unsafe {
-            // Note: the KeepAlive takes an `EventLoopCtx` vtable; resolve it
-            // via the `get_vm_ctx` hook (registered by `bun_runtime::init`).
             (*job.as_ptr()).poll_ref.ref_(get_vm_ctx(AllocatorType::Js));
             let vm = (*job.as_ptr()).vm;
             (*job.as_ptr()).ticket = Some((*vm).ticket());
             vm
         };
-        // `lock()`, not `get_mut()`: pool threads pop through a raw pointer
-        // to the store, so `&mut self` does not make this thread exclusive.
+        // Pool threads pop through a raw pointer, so lock even with `&mut self`.
         self.unstarted.lock().push_back(UnstartedJob(job));
         WorkPool::schedule_new(TranspileRunner {
-            // SAFETY: BACKREF — the VM owns the store and outlives the runner
-            // (see `TranspileRunner::run_owned`).
+            // SAFETY: BACKREF — the VM owns the store and outlives the runner.
             store: unsafe { ptr::addr_of!((*vm).transpiler_store) },
             task: WorkPoolTask::default(),
         });
@@ -700,11 +676,9 @@ impl TranspilerJob {
         )
     }
 
-    /// Pool thread, from a [`TranspileRunner`].
-    ///
     /// # Safety
-    /// `this` is a job `RuntimeTranspilerStore::schedule` queued and no thread
-    /// has started.
+    /// Pool thread only; `this` was queued by `RuntimeTranspilerStore::schedule`
+    /// and no thread has started it.
     unsafe fn run_from_worker_thread(this: NonNull<TranspilerJob>) {
         let this = this.as_ptr();
         // The slot lives inside the VM, which waits for this ticket, so it is

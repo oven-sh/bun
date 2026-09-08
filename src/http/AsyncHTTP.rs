@@ -161,6 +161,7 @@ fn make_client<'a>(
         header_buf,
         url,
         connected_url: URL::default(),
+        served_target: None,
         verbose: HTTPVerboseLevel::None,
         // Note: DEFAULT_REDIRECT_COUNT (= 127) is crate-private in lib.rs;
         // duplicated as a literal here.
@@ -734,6 +735,7 @@ impl<'a> AsyncHTTP<'a> {
                     let client = &mut (*this).client;
                     client.url = original_url;
                     client.connected_url = URL::default();
+                    client.served_target = None;
                     client.method = original_method;
                     // Clone-owned (allocated after `ptr::read`).
                     drop(core::mem::take(&mut client.redirect));

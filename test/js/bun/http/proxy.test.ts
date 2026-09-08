@@ -53,12 +53,12 @@ async function createProxyServer(is_tls: boolean) {
       }
 
       // Absolute-form (non-tunneled) proxying. The client negotiates
-      // keep-alive on the proxy connection, so after a redirect the next
-      // request arrives on this same socket — forward every request that
-      // shows up, not just the first one. The reused proxy connection is
-      // keyed only by the proxy address, so consecutive requests may also
-      // target different origins; keep one upstream per destination at a
-      // time and reconnect when it changes.
+      // keep-alive on the proxy connection, so after a same-origin redirect
+      // the next request arrives on this same socket — forward every request
+      // that shows up, not just the first one. A reused proxy connection
+      // names one target origin (the pool keys it by that origin), but keep
+      // one upstream per destination and reconnect when it changes, so this
+      // mock proxy stays correct for a connection that does switch targets.
       let upstream: net.Socket | undefined;
       let upstreamKey = "";
       let upstreamConnected = false;
@@ -2465,6 +2465,86 @@ test("a proxy connection is not reused for a different target origin", async () 
     // Origin B gets its own connection, and the second request to origin A
     // still reuses the first connection: keep-alive is kept, not disabled.
     expect(log).toEqual([`1 ${a}`, `2 ${b}`, `1 ${a}`]);
+    expect(exitCode).toBe(0);
+  } finally {
+    proxy.close();
+    await once(proxy, "close");
+  }
+});
+
+// A followed redirect reuses the proxy connection that carried the 3xx
+// (#37451). The pool entry for that connection is keyed by the origin it
+// answered for, which `url` no longer names once the redirect is parsed, so a
+// cross-origin redirect must take a fresh connection for the hop and leave the
+// first connection parked under the first origin.
+test("a redirected proxy connection stays keyed to the origin it served", async () => {
+  using originA = Bun.serve({ port: 0, fetch: () => new Response("unused") });
+  using originB = Bun.serve({ port: 0, fetch: () => new Response("unused") });
+  const a = `http://127.0.0.1:${originA.port}`;
+  const b = `http://127.0.0.1:${originB.port}`;
+
+  const log: Array<string> = [];
+  let connections = 0;
+  const proxy = net.createServer(clientSocket => {
+    const id = ++connections;
+    let buffered = "";
+    clientSocket.on("error", () => {});
+    clientSocket.on("data", chunk => {
+      buffered += chunk.toString();
+      for (let end = buffered.indexOf("\r\n\r\n"); end !== -1; end = buffered.indexOf("\r\n\r\n")) {
+        const target = new URL(buffered.slice(0, end).split(" ")[1]);
+        buffered = buffered.slice(end + 4);
+        log.push(`${id} ${target.origin}${target.pathname}`);
+        if (target.pathname === "/same") {
+          clientSocket.write(`HTTP/1.1 302 Found\r\nLocation: ${target.origin}/ok\r\nContent-Length: 0\r\n\r\n`);
+        } else if (target.pathname === "/cross") {
+          clientSocket.write(`HTTP/1.1 302 Found\r\nLocation: ${b}/ok\r\nContent-Length: 0\r\n\r\n`);
+        } else {
+          clientSocket.write(`HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok`);
+        }
+      }
+    });
+  });
+  proxy.listen(0, "127.0.0.1");
+  await once(proxy, "listening");
+  const proxyUrl = `http://127.0.0.1:${(proxy.address() as net.AddressInfo).port}`;
+
+  try {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `for (const url of ${JSON.stringify([`${a}/same`, `${a}/cross`, `${b}/later`, `${a}/later`])}) {
+           const res = await fetch(url, { proxy: ${JSON.stringify(proxyUrl)} });
+           console.log(res.status, await res.text());
+         }`,
+      ],
+      env: {
+        ...bunEnv,
+        NO_PROXY: undefined,
+        no_proxy: undefined,
+        HTTP_PROXY: undefined,
+        http_proxy: undefined,
+        HTTPS_PROXY: undefined,
+        https_proxy: undefined,
+      },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout.trim().split("\n")).toEqual(["200 ok", "200 ok", "200 ok", "200 ok"]);
+    expect(log).toEqual([
+      // The same-origin hop rides the connection that carried the 302.
+      `1 ${a}/same`,
+      `1 ${a}/ok`,
+      // The cross-origin hop does not.
+      `1 ${a}/cross`,
+      `2 ${b}/ok`,
+      // Both connections stay parked under the origin each one served.
+      `2 ${b}/later`,
+      `1 ${a}/later`,
+    ]);
     expect(exitCode).toBe(0);
   } finally {
     proxy.close();

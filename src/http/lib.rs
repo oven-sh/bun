@@ -796,6 +796,13 @@ pub struct HTTPClient<'a> {
     /// until `do_redirect` has released the socket, so it is freed there rather
     /// than at the assignment site. Also freed in `Drop` for error paths.
     pub(crate) prev_redirect: Vec<u8>,
+    /// Hostname and port of the hop the socket in hand just answered for,
+    /// parked by `handle_response_metadata` before it repoints `url` at the
+    /// redirect destination. `do_redirect` keys a proxy connection's pool
+    /// entry on it, because `url` no longer names the origin that connection
+    /// served. Borrows the previous hop's buffer, which `prev_redirect` keeps
+    /// alive until `do_redirect` has released the socket.
+    pub(crate) served_target: Option<(&'a [u8], u16)>,
     // Non-owning back-reference to a `Progress::Node` owned by the caller;
     // raw to avoid threading another lifetime param.
     pub progress_node: Option<NonNull<bun_core::Progress::Node>>,
@@ -2587,23 +2594,24 @@ impl<'a> HTTPClient<'a> {
         // redirect destination could then reuse a TLS session negotiated with the
         // original host. Close the tunnel on redirect; only pool the raw socket.
         //
-        // A plain-HTTP proxy connection has the same problem without a tunnel:
-        // the pool keys it by the origin it served, which is no longer readable
-        // here, so it would be parked under the redirect destination's origin
-        // and a later request to that origin could take a connection that
-        // answered for the original host. Close it too.
-        if self.proxy_tunnel.is_some() || self.http_proxy.is_some() {
-            if self.proxy_tunnel.is_some() {
-                bun_core::scoped_log!(fetch, "close the tunnel");
-                self.close_proxy_tunnel(true);
-            }
+        // A plain-HTTP proxy connection carries the same hazard without a
+        // tunnel: the pool keys it by the origin it served, and `url` no longer
+        // names that origin. `served_target` does.
+        if self.proxy_tunnel.is_some() {
+            bun_core::scoped_log!(fetch, "close the tunnel");
+            self.close_proxy_tunnel(true);
             GenHttpContext::<IS_SSL>::close_socket(socket);
         } else if self.is_keep_alive_possible()
             && self.is_request_fully_sent()
             && !socket.is_closed_or_has_error()
+            && (self.http_proxy.is_none() || self.served_target.is_some())
         {
             bun_core::scoped_log!(fetch, "Keep-Alive release in redirect");
             debug_assert!(!self.connected_url.hostname.is_empty());
+            let (target_hostname, target_port) = match self.served_target {
+                Some(served) if self.http_proxy.is_some() => served,
+                _ => (self.unix_tls_hostname::<IS_SSL>(), 0),
+            };
             Self::ssl_ctx_mut(ctx).release_socket(
                 socket,
                 self.flags.did_have_handshaking_error && !self.flags.reject_unauthorized,
@@ -2612,8 +2620,8 @@ impl<'a> HTTPClient<'a> {
                 self.connected_url.get_port_auto(),
                 self.tls_props.as_ref(),
                 None,
-                self.unix_tls_hostname::<IS_SSL>(),
-                0,
+                target_hostname,
+                target_port,
                 0,
                 None,
                 self.unix_socket_path,
@@ -2621,9 +2629,10 @@ impl<'a> HTTPClient<'a> {
         } else {
             GenHttpContext::<IS_SSL>::close_socket(socket);
         }
-        // Cleared after `release_socket` above, which keys the pool entry on it.
+        // Cleared after `release_socket` above, which keys the pool entry on them.
         self.unix_socket_path = b"";
         self.connected_url = URL::default();
+        self.served_target = None;
         // connected_url was the last borrower of the previous hop's URL buffer
         // (handleResponseMetadata already repointed this.url at the new one).
         self.prev_redirect = Vec::new();
@@ -4289,6 +4298,7 @@ impl<'a> HTTPClient<'a> {
         debug_assert!(self.redirect_type == FetchRedirect::Follow);
         self.unregister_abort_tracker();
         self.connected_url = URL::default();
+        self.served_target = None;
         self.prev_redirect = Vec::new();
         if self.remaining_redirect_count == 0 {
             self.fail(crate::Error::TooManyRedirects);
@@ -5044,6 +5054,7 @@ impl<'a> HTTPClient<'a> {
                             strings::without_trailing_slash(self.url.origin),
                             true,
                         );
+                        self.served_target = Some((self.url.hostname, self.url.get_port_auto()));
                         self.url = new_url;
                         // connected_url still borrows from the previous hop's buffer
                         // until doRedirect releases the socket, so park it in
@@ -5099,6 +5110,7 @@ impl<'a> HTTPClient<'a> {
                             strings::without_trailing_slash(self.url.origin),
                             true,
                         );
+                        self.served_target = Some((self.url.hostname, self.url.get_port_auto()));
                         self.url = new_url;
                         debug_assert!(self.prev_redirect.is_empty());
                         self.prev_redirect =
@@ -5121,6 +5133,7 @@ impl<'a> HTTPClient<'a> {
                         }
                         // SAFETY: self-borrow — `new_url` is moved into `self.redirect`
                         // below, which lives as long as `self` (≥ `'a`).
+                        self.served_target = Some((self.url.hostname, self.url.get_port_auto()));
                         self.url = unsafe { parsed_url.erase_lifetime() };
                         is_same_origin = strings::eql_case_insensitive_ascii(
                             strings::without_trailing_slash(self.url.origin),

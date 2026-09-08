@@ -57,7 +57,9 @@ bun_core::declare_scope!(cache, visible);
 /// Version 27: ModuleInfo string table holds Latin-1 / UTF-16 bodies, not WTF-8.
 /// Version 28: the define table and `--drop` entries participate in the features hash.
 /// Version 29: `new Array(x, ...spread)` is no longer folded into an array literal.
-const EXPECTED_VERSION: u32 = 29;
+/// Version 30: String enum members are stored flat, so a template literal or `+`
+/// around an inlined member no longer appends onto the member's own value.
+const EXPECTED_VERSION: u32 = 30;
 
 /// Source files smaller than this are not written to / read from the on-disk
 /// transpiler cache. Originally 50 KiB, which excluded almost every file in a

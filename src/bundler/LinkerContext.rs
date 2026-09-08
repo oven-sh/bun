@@ -2241,6 +2241,19 @@ impl<'a> LinkerContext<'a> {
         let other_flags = self.graph.meta.items_flags()[record.source_index.get() as usize];
         match other_flags.wrap {
             WrapKind::None => {}
+            // A `<script src>` only runs the module, in document order with the
+            // page's other scripts: "require_foo();"
+            WrapKind::Cjs if is_html_script => {
+                stmts
+                    .inside_wrapper_prefix
+                    .append_sync_dependency(Expr::init(
+                        E::RequireString {
+                            import_record_index,
+                            ..Default::default()
+                        },
+                        loc,
+                    ))?;
+            }
             WrapKind::Cjs => {
                 // Replace the statement with a call to "require()" since the other module is CJS-wrapped
                 stmts

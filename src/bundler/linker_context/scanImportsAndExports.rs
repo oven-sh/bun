@@ -757,6 +757,7 @@ pub(crate) fn scan_imports_and_exports(
             let id = source_index as usize;
 
             let is_entry_point = col_ref!(entry_point_kinds)[id].is_entry_point();
+            let is_html = col_ref!(loaders)[id] == Loader::Html;
             let aliases = &col_ref!(sorted_aliases)[id];
             let flag = col_ref!(flags)[id];
             let wrap = flag.wrap;
@@ -1241,6 +1242,7 @@ pub(crate) fn scan_imports_and_exports(
                         // "__toESM" wrapper as long as it's not a bare "require()".
                         // A same-chunk `import()` of a lifted CommonJS module needs it
                         // too, so that `default` is `module.exports` (the namespace).
+                        // An HTML `<script src>` only runs the module: "require_foo();"
                         if kind != ImportKind::Require
                             && (other_export_kind == ExportsKind::Cjs
                                 || (kind == ImportKind::Dynamic
@@ -1248,6 +1250,7 @@ pub(crate) fn scan_imports_and_exports(
                                     && col_ref!(ast_flags_list)[other_id]
                                         .contains(AstFlags::COMMONJS_LIFTED_TO_ESM)))
                             && output_format != Format::InternalBakeDev
+                            && !is_html
                         {
                             col!(import_records_list)[id].as_mut_slice()
                                 [import_record_index as usize]

@@ -338,7 +338,8 @@ console.log("app: ready");`,
   });
 
   // A classic script that uses CommonJS features (here a UMD wrapper) is
-  // wrapped in a closure by the bundler. The page still runs it in its place.
+  // wrapped in a closure by the bundler. The page still runs it in its place,
+  // also relative to a wrapped module script next to it.
   itBundled("html/commonjs-script-runs-in-place", {
     outdir: "out/",
     files: {
@@ -348,6 +349,7 @@ console.log("app: ready");`,
   <body>
     <script src="./first.js"></script>
     <script src="./umd-badge.js"></script>
+    <script type="module" src="./widget.js"></script>
     <script src="./last.js"></script>
   </body>
 </html>`,
@@ -360,11 +362,18 @@ console.log("app: ready");`,
   console.log("umd badge");
   return {};
 });`,
+      "/widget.js": `
+console.log("widget: start");
+await 0;
+console.log("widget: ready");`,
       "/last.js": `console.log("last");`,
     },
     entryPoints: ["/index.html"],
-    onAfterBundle: writePageRunner,
-    run: { file: "out/run.mjs", stdout: "first\numd badge\nlast" },
+    onAfterBundle(api) {
+      expect(api.readFile("out/" + pageScript(api))).not.toContain("__toESM");
+      writePageRunner(api, `console.log("chunk settled");`);
+    },
+    run: { file: "out/run.mjs", stdout: "first\numd badge\nwidget: start\nlast\nwidget: ready\nchunk settled" },
   });
 
   // A script that another module also loads with import() is lazily

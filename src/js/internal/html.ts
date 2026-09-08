@@ -281,7 +281,9 @@ yourself with Bun.serve().
     }
   }
   const elapsed = (performance.now() - initial).toFixed(2);
-  const enableANSIColors = Bun.enableANSIColors;
+  // Everything below goes to stdout via console.log, so key styling on stdout
+  // alone. `Bun.enableANSIColors` is stdout OR stderr.
+  const enableANSIColors = $rust("BunObject.rs", "enableANSIColorsStdout") as boolean;
   function printInitialMessage(isFirst: boolean) {
     let pathnameToPrint;
     if (servePaths.length === 1) {
@@ -399,10 +401,17 @@ yourself with Bun.serve().
         case "h\n":
           console.clear();
           printInitialMessage(false);
-          console.log("\n  Shortcuts\x1b[2m:\x1b[0m\n");
-          console.log("  \x1b[2m→\x1b[0m   \x1b[36mc + Enter\x1b[0m   clear screen");
-          console.log("  \x1b[2m→\x1b[0m   \x1b[36mo + Enter\x1b[0m   open in browser");
-          console.log("  \x1b[2m→\x1b[0m   \x1b[36mq + Enter\x1b[0m   quit (or Ctrl+C)\n");
+          if (enableANSIColors) {
+            console.log("\n  Shortcuts\x1b[2m:\x1b[0m\n");
+            console.log("  \x1b[2m→\x1b[0m   \x1b[36mc + Enter\x1b[0m   clear screen");
+            console.log("  \x1b[2m→\x1b[0m   \x1b[36mo + Enter\x1b[0m   open in browser");
+            console.log("  \x1b[2m→\x1b[0m   \x1b[36mq + Enter\x1b[0m   quit (or Ctrl+C)\n");
+          } else {
+            console.log("\n  Shortcuts:\n");
+            console.log("  →   c + Enter   clear screen");
+            console.log("  →   o + Enter   open in browser");
+            console.log("  →   q + Enter   quit (or Ctrl+C)\n");
+          }
           break;
       }
     });

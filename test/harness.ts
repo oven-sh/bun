@@ -1883,6 +1883,85 @@ export function libcPathForDlopen() {
   }
 }
 
+/**
+ * Open a pseudo-terminal pair with openpty(3). POSIX only.
+ *
+ * Use this when a spawned process needs a real TTY on some stdio fds and a
+ * pipe on others (e.g. `stdout: "pipe", stderr: pty.slave`), which
+ * `Bun.Terminal` cannot express. Pass `slave` as a stdio fd to `Bun.spawn`.
+ *
+ * To read what the child writes to the TTY, call `closeSlave()` after the
+ * spawn (the child keeps its own copy) and read `takeMaster()` with
+ * `fs.createReadStream("", { fd })`. The stream then ends (macOS) or errors
+ * with EIO (Linux) once the child exits, instead of blocking forever.
+ *
+ * `close()` / `using` closes whichever of the two fds this object still owns.
+ */
+export function openPty(): {
+  readonly master: number;
+  readonly slave: number;
+  /** Close the parent's slave fd. */
+  closeSlave(): void;
+  /** Take ownership of the master fd; `close()` will no longer close it. */
+  takeMaster(): number;
+  close(): void;
+  [Symbol.dispose](): void;
+} {
+  if (isWindows) {
+    throw new Error("openPty: unsupported on Windows, use Bun.Terminal");
+  }
+  const { dlopen, FFIType } = require("bun:ffi") as typeof import("bun:ffi");
+  // glibc keeps openpty(3) in libutil; musl and macOS have it in libc.
+  const lib = dlopen(
+    isMacOS
+      ? "libc.dylib"
+      : isMusl
+        ? process.arch === "arm64"
+          ? "libc.musl-aarch64.so.1"
+          : "libc.musl-x86_64.so.1"
+        : "libutil.so.1",
+    {
+      openpty: {
+        args: [FFIType.ptr, FFIType.ptr, FFIType.ptr, FFIType.ptr, FFIType.ptr],
+        returns: FFIType.i32,
+      },
+    },
+  );
+  const masterBuf = new Int32Array(1);
+  const slaveBuf = new Int32Array(1);
+  if (lib.symbols.openpty(masterBuf, slaveBuf, null, null, null) !== 0) {
+    throw new Error("openpty failed");
+  }
+  lib.close();
+
+  let master = masterBuf[0];
+  let slave = slaveBuf[0];
+  const close = () => {
+    if (slave !== -1) closeSync(slave);
+    if (master !== -1) closeSync(master);
+    slave = master = -1;
+  };
+  return {
+    get master() {
+      return master;
+    },
+    get slave() {
+      return slave;
+    },
+    closeSlave() {
+      if (slave !== -1) closeSync(slave);
+      slave = -1;
+    },
+    takeMaster() {
+      const fd = master;
+      master = -1;
+      return fd;
+    },
+    close,
+    [Symbol.dispose]: close,
+  };
+}
+
 export function cwdScope(cwd: string) {
   const original = process.cwd();
   process.chdir(cwd);

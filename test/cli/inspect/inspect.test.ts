@@ -1,7 +1,7 @@
 import { Subprocess, spawn } from "bun";
 import { afterAll, afterEach, beforeAll, describe, expect, test } from "bun:test";
 import fs from "fs";
-import { bunEnv, bunExe, isPosix, randomPort, tempDir } from "harness";
+import { bunEnv, bunExe, isPosix, isWindows, openPty, randomPort, tempDir } from "harness";
 import { join } from "node:path";
 import stripAnsi from "strip-ansi";
 import { WebSocket } from "ws";
@@ -375,6 +375,37 @@ describe("http metadata endpoint", () => {
     expect(await web.text()).toBe("");
     expect(web.status).toBe(403);
   });
+});
+
+// The "Bun Inspector" banner goes to stderr, so its styling must follow stderr
+// alone. `bun --inspect app.js 2>inspector.log` from an interactive shell
+// (stdout still the terminal) used to put SGR and OSC 8 sequences in the file,
+// because the banner followed `Bun.enableANSIColors` (stdout OR stderr).
+test.skipIf(isWindows)("banner on a piped stderr is plain when stdout is a TTY", async () => {
+  using pty = openPty();
+  await using inspectee = spawn({
+    cwd: import.meta.dir,
+    cmd: [bunExe(), "--inspect=127.0.0.1:0", "inspectee.js"],
+    env: { ...bunEnv, FORCE_COLOR: undefined, NO_COLOR: undefined, TERM: "xterm-256color" },
+    stdin: pty.slave,
+    stdout: pty.slave,
+    stderr: "pipe",
+  });
+  pty.closeSlave();
+
+  let stderr = "";
+  const decoder = new TextDecoder();
+  for await (const chunk of inspectee.stderr as ReadableStream<Uint8Array>) {
+    stderr += decoder.decode(chunk, { stream: true });
+    // The banner opens and closes with the same rule line.
+    if (stderr.split("Bun Inspector").length > 2 && stderr.endsWith("\n")) break;
+  }
+  inspectee.kill();
+
+  expect(stderr).not.toContain("\x1b");
+  expect(stderr).toMatch(
+    /^-+ Bun Inspector -+\nListening:\n  ws:\/\/127\.0\.0\.1:\d+\/[\w-]+\nInspect in browser:\n  https:\/\/debug\.bun\.sh\/#127\.0\.0\.1:\d+\/[\w-]+\n-+ Bun Inspector -+\n$/,
+  );
 });
 
 describe("unix domain socket without websocket", () => {

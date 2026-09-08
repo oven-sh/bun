@@ -1,7 +1,17 @@
 import type { Subprocess } from "bun";
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, isWindows, openPty, tempDir } from "harness";
+import fs from "node:fs";
 import { join } from "node:path";
+
+const bannerFixture = {
+  "index.html": `<!DOCTYPE html><html><head><script type="module" src="./a.ts"></script></head><body></body></html>`,
+  "a.ts": `console.log(1);`,
+};
+
+// No color override either way, so the banner style depends only on which
+// stdio fds are terminals.
+const ttyColorEnv = { ...bunEnv, FORCE_COLOR: undefined, NO_COLOR: undefined, TERM: "xterm-256color" };
 
 async function getServerUrl(process: Subprocess) {
   // Read the port number from stdout
@@ -714,4 +724,85 @@ test.concurrent("subdirectory routes use forward slashes on Windows", async () =
   const buttons = await fetch(new URL("/components/buttons", serverUrl));
   expect(buttons.status).toBe(200);
   expect(await buttons.text()).toContain("<title>Buttons</title>");
+});
+
+// `bun ./index.html > dev.log` from an interactive shell: stdout is a file or
+// pipe while stdin and stderr are still the terminal. The banner goes to
+// stdout, so it must be the plain variant. It used to follow
+// `Bun.enableANSIColors` (stdout OR stderr) and wrote SGR codes into the file.
+test.concurrent.skipIf(isWindows)(
+  "startup banner on a piped stdout is plain when stdin and stderr are a TTY",
+  async () => {
+    using dir = tempDir("html-entry-banner-tty", bannerFixture);
+    using pty = openPty();
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "index.html", "--port=0", "--hostname=127.0.0.1"],
+      env: ttyColorEnv,
+      cwd: String(dir),
+      stdin: pty.slave,
+      stdout: "pipe",
+      stderr: pty.slave,
+    });
+    pty.closeSlave();
+
+    const decoder = new TextDecoder();
+    let text = "";
+    let askedForHelp = false;
+    for await (const chunk of proc.stdout as ReadableStream<Uint8Array>) {
+      text += decoder.decode(chunk, { stream: true });
+      const plain = Bun.stripANSI(text);
+      // Last line of the banner. Only printed when stdin is a TTY, so reaching
+      // it also proves the child saw the pty. Then type the `h` shortcut on
+      // that TTY: the help it prints goes to the piped stdout too.
+      if (!askedForHelp && plain.includes("to show shortcuts\n")) {
+        askedForHelp = true;
+        fs.writeSync(pty.master, "h\n");
+      }
+      if (plain.includes("quit (or Ctrl+C)\n")) break;
+    }
+    proc.kill();
+
+    expect(text).not.toContain("\x1b");
+    expect(text).toMatch(
+      /^Bun v\S+ dev server ready in \S+ ms\n\nurl: http:\/\/127\.0\.0\.1:\d+\/\n\nPress h \+ Enter to show shortcuts\n/,
+    );
+    expect(text).toMatch(
+      /\nBun v\S+\n\nurl: http:\/\/127\.0\.0\.1:\d+\/\n\n  Shortcuts:\n\n  →   c \+ Enter   clear screen\n  →   o \+ Enter   open in browser\n  →   q \+ Enter   quit \(or Ctrl\+C\)\n\n?$/,
+    );
+  },
+);
+
+// The other direction: a TTY stdout keeps the styled banner when stderr is
+// not a terminal (`bun ./index.html 2>err.log`).
+test.concurrent.skipIf(isWindows)("startup banner on a TTY stdout is styled when stderr is piped", async () => {
+  using dir = tempDir("html-entry-banner-tty", bannerFixture);
+  using pty = openPty();
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "index.html", "--port=0", "--hostname=127.0.0.1"],
+    env: ttyColorEnv,
+    cwd: String(dir),
+    stdin: "ignore",
+    stdout: pty.slave,
+    stderr: "pipe",
+  });
+  // The child holds its own copy. Dropping ours lets the master read end when
+  // the child exits instead of blocking.
+  pty.closeSlave();
+
+  let text = "";
+  const { promise: done, resolve } = Promise.withResolvers<void>();
+  const master = fs.createReadStream("", { fd: pty.takeMaster() });
+  master.on("data", (chunk: Buffer) => {
+    text += chunk.toString("utf8");
+    // The URL line is the last line of the banner when stdin is not a TTY.
+    if (/http:\/\/\S+\n/.test(Bun.stripANSI(text).replaceAll("\r\n", "\n"))) proc.kill();
+  });
+  // Linux reports the hangup after the child exits as EIO, macOS as EOF.
+  master.on("error", () => resolve()).on("close", resolve);
+  await done;
+
+  expect(Bun.stripANSI(text).replaceAll("\r\n", "\n")).toMatch(
+    /^ DEV  Bun v\S+ ready in \S+ ms\n\n➜ http:\/\/127\.0\.0\.1:\d+\/\n$/,
+  );
+  expect(text).toContain("\x1b[");
 });

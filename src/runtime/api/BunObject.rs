@@ -772,6 +772,18 @@ fn enable_ansi_colors(_global_this: &JSGlobalObject, _: &JSObject) -> JSValue {
     JSValue::from(Output::enable_ansi_colors_stdout() || Output::enable_ansi_colors_stderr())
 }
 
+/// `$rust("BunObject.rs", "enableANSIColorsStdout")`. `Bun.enableANSIColors`
+/// is the OR of both streams; built-in JS that writes to one known fd keys its
+/// styling on that fd alone.
+pub(crate) fn enable_ansi_colors_stdout(_global_this: &JSGlobalObject) -> JSValue {
+    JSValue::from(Output::enable_ansi_colors_stdout())
+}
+
+/// `$rust("BunObject.rs", "enableANSIColorsStderr")`.
+pub(crate) fn enable_ansi_colors_stderr(_global_this: &JSGlobalObject) -> JSValue {
+    JSValue::from(Output::enable_ansi_colors_stderr())
+}
+
 // callconv(jsc.conv) — `SYSV_ABI` on win-x64 (BunObject.cpp:1103). Returns
 // plain `JSValue` so the generated thunk is a bare deref+call (no
 // `ExceptionValidationScope`).

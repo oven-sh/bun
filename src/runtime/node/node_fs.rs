@@ -6208,9 +6208,7 @@ impl NodeFS {
         matches!(errno, E::ENOENT | E::ENOTDIR | E::EPERM)
     }
 
-    /// `Dirent.parentPath` for the entries of one directory of a recursive
-    /// readdir: the caller's path as given at the root (`rel == None`), and
-    /// `join(root, rel)` below it, the same split as node's `path.join` walker.
+    /// `Dirent.parentPath`: the caller's path as given at the root, `join(root, rel)` below it (as node).
     fn dirent_parent_path<'a>(
         root: &'a [u8],
         rel: Option<&[u8]>,

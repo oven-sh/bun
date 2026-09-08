@@ -1169,12 +1169,7 @@ pub(crate) fn compile_outfile(outfile: &[u8]) -> &[u8] {
     }
 }
 
-/// The executable name for `--compile` / `compile: true` without an outfile: the entry
-/// point's file name minus its extension. `index.*` and `bun.*` take their directory's name
-/// instead. That name falls back to `index` when the entry point has no usable directory
-/// name, or when `dest_dir` (empty: the working directory) already has a directory called
-/// that, as for `./src/index.ts` built from the project root. A Windows executable gets
-/// `.exe` appended, so its name cannot collide with the directory.
+/// Outfile when none is given: the entry's file stem; `index.*`/`bun.*` use their directory's name, or `index` if there is none or `dest_dir` (empty: cwd) already has that directory.
 pub(crate) fn default_compile_outfile<'a>(
     entry_point: &'a [u8],
     dest_dir: &[u8],
@@ -1190,6 +1185,7 @@ pub(crate) fn default_compile_outfile<'a>(
         b"" | b"." | b".." => return b"index",
         dir_name => dir_name,
     };
+    // A Windows executable gets `.exe` appended, so its name cannot collide with the directory.
     if target_os != OperatingSystem::Windows {
         let mut buf = bun_paths::path_buffer_pool::get();
         let dest = resolve_path::join_z_buf::<bun_paths::platform::Auto>(

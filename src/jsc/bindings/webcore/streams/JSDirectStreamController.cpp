@@ -50,10 +50,11 @@ void JSDirectStreamSource::finishCreation(VM& vm, JSValue underlyingSource, JSOb
 {
     Base::finishCreation(vm);
     ASSERT(inherits(info()));
-    m_underlyingSource.set(vm, this, underlyingSource);
-    m_pull.setMayBeNull(vm, this, pull);
-    m_cancel.setMayBeNull(vm, this, cancel);
-    m_close.setMayBeNull(vm, this, close);
+    auto valueOrNull = [](JSObject* object) { return object ? JSValue(object) : jsNull(); };
+    Base::internalField(static_cast<uint32_t>(Field::UnderlyingSource)).set(vm, this, underlyingSource);
+    Base::internalField(static_cast<uint32_t>(Field::Pull)).set(vm, this, valueOrNull(pull));
+    Base::internalField(static_cast<uint32_t>(Field::Cancel)).set(vm, this, valueOrNull(cancel));
+    Base::internalField(static_cast<uint32_t>(Field::Close)).set(vm, this, valueOrNull(close));
 }
 
 JSDirectStreamSource* JSDirectStreamSource::create(VM& vm, Structure* structure, JSValue underlyingSource, JSObject* pull, JSObject* cancel, JSObject* close)
@@ -73,35 +74,31 @@ GCClient::IsoSubspace* JSDirectStreamSource::subspaceForImpl(VM& vm)
     return WebCore::subspaceForImpl<JSDirectStreamSource, UseCustomHeapCellType::No>(vm, BUN_SUBSPACE_SLOTS(m_clientSubspaceForDirectStreamSource, m_subspaceForDirectStreamSource));
 }
 
-DEFINE_VISIT_CHILDREN(JSDirectStreamSource);
-
 template<typename Visitor>
 void JSDirectStreamSource::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 {
     auto* thisObject = uncheckedDowncast<JSDirectStreamSource>(cell);
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
-    visitor.appendHidden(thisObject->m_underlyingSource);
-    visitor.appendHidden(thisObject->m_pull);
-    visitor.appendHidden(thisObject->m_cancel);
-    visitor.appendHidden(thisObject->m_close);
 }
+
+DEFINE_VISIT_CHILDREN(JSDirectStreamSource);
 
 void JSDirectStreamSource::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
 {
     auto* thisObject = uncheckedDowncast<JSDirectStreamSource>(cell);
     auto& vm = cell->vm();
     Base::analyzeHeap(cell, analyzer);
-    analyzeBarrierEdge(vm, analyzer, cell, thisObject->m_underlyingSource, "underlyingSource"_s);
-    analyzeBarrierEdge(vm, analyzer, cell, thisObject->m_pull, "pull"_s);
-    analyzeBarrierEdge(vm, analyzer, cell, thisObject->m_cancel, "cancel"_s);
-    analyzeBarrierEdge(vm, analyzer, cell, thisObject->m_close, "close"_s);
+    analyzeBarrierEdge(vm, analyzer, cell, thisObject->internalField(Field::UnderlyingSource), "underlyingSource"_s);
+    analyzeBarrierEdge(vm, analyzer, cell, thisObject->internalField(Field::Pull), "pull"_s);
+    analyzeBarrierEdge(vm, analyzer, cell, thisObject->internalField(Field::Cancel), "cancel"_s);
+    analyzeBarrierEdge(vm, analyzer, cell, thisObject->internalField(Field::Close), "close"_s);
 }
 
 JSPromise* JSDirectStreamSource::cancel(JSGlobalObject* globalObject, JSReadableStream* stream, JSValue reason)
 {
     auto scope = DECLARE_THROW_SCOPE(getVM(globalObject));
-    JSObject* cancelMethod = m_cancel.get();
+    JSObject* cancelMethod = cancelFunction();
     if (!cancelMethod)
         RELEASE_AND_RETURN(scope, promiseFulfilledWith(globalObject, jsUndefined()));
     MarkedArgumentBuffer args;
@@ -112,7 +109,7 @@ JSPromise* JSDirectStreamSource::cancel(JSGlobalObject* globalObject, JSReadable
 
 void JSDirectStreamSource::close(JSGlobalObject* globalObject, JSValue reason)
 {
-    JSObject* closeMethod = m_close.get();
+    JSObject* closeMethod = closeFunction();
     if (!closeMethod)
         return;
     MarkedArgumentBuffer args;
@@ -713,7 +710,7 @@ static JSValue callDirectPull(JSC::VM& vm, JSGlobalObject* globalObject, JSDirec
     auto scope = DECLARE_THROW_SCOPE(vm);
     StreamAsyncContextScope asyncContextScope(globalObject, controller->m_stream.get());
     auto* source = controller->m_source.get();
-    JSObject* pullFunction = source ? source->m_pull.get() : nullptr;
+    JSObject* pullFunction = source ? source->pullFunction() : nullptr;
     controller->m_pullInFlight = true;
     MarkedArgumentBuffer args;
     args.append(controller);

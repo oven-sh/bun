@@ -785,7 +785,7 @@ static void readDirectStreamCloseImpl(JSC::VM& vm, JSGlobalObject* globalObject,
         RETURN_IF_EXCEPTION(scope, );
     }
     if (source) {
-        JSObject* cancelFunction = source->m_cancel.get();
+        JSObject* cancelFunction = source->cancelFunction();
         if (!cancelFunction)
             return;
         MarkedArgumentBuffer cancelArgs;
@@ -811,7 +811,7 @@ JSValue readDirectStream(JSGlobalObject* globalObject, JSReadableStream* stream,
     state->m_source.set(vm, state, source);
     state->m_sinkController.set(vm, state, sinkController);
 
-    JSObject* pull = source->m_pull.get();
+    JSObject* pull = source->pullFunction();
     if (!pull) {
         readDirectStreamCloseImpl(vm, globalObject, state, jsUndefined(), jsUndefined());
         RETURN_IF_EXCEPTION(scope, {});

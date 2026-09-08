@@ -1020,7 +1020,7 @@ static void installOneShotMethods(JSC::VM& vm, JSGlobalObject* globalObject, JSO
 static JSValue oneShotCallPull(JSC::VM& vm, JSGlobalObject* globalObject, JSDirectStreamSource* source, JSOneShotDirectSink* sink)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
-    JSObject* pullFunction = source->m_pull.get();
+    JSObject* pullFunction = source->pullFunction();
     if (!pullFunction) [[unlikely]] {
         throwTypeError(globalObject, scope, "The 'pull' method of a direct ReadableStream's underlying source is not a function"_s);
         return {};

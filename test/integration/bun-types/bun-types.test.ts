@@ -860,11 +860,12 @@ describe("@types/bun integration test", () => {
         "WebGLVertexArrayObjectOES",
       ]),
       diagnostics: [
+        // lib.dom's Blob has no textStream(); node:buffer's Blob declares it
+        // since @types/node 26.5.0 (added to Node.js in v24.19.0 / v26.5.0).
         {
-          code: 2322,
+          code: 2741,
           line: "24154.ts:11:3",
-          message:
-            "Type 'Blob' is not assignable to type 'import(\"node:buffer\").Blob'.\nThe types returned by 'stream()' are incompatible between these types.\nType 'ReadableStream<Uint8Array<ArrayBuffer>>' is missing the following properties from type 'ReadableStream<NonSharedUint8Array>': blob, text, bytes, json",
+          message: "Property 'textStream' is missing in type 'Blob' but required in type 'import(\"node:buffer\").Blob'.",
         },
         {
           code: 2769,

@@ -59,9 +59,6 @@ public:
     // `canceled1` / `canceled2`
     bool m_canceled1 : 1 { false };
     bool m_canceled2 : 1 { false };
-    // Bun: structured-clone branch2's chunks (Response.clone() passes true;
-    // ReadableStream.prototype.tee() passes false). Default-tee chunkSteps only.
-    bool m_shouldClone : 1 { false };
 
 private:
     JSStreamTeeState(JSC::VM&, JSC::Structure*);

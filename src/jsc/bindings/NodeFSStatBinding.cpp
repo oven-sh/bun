@@ -20,6 +20,7 @@
 #include <JavaScriptCore/PropertyNameArray.h>
 #include "ZigGlobalObject.h"
 #include "JavaScriptCore/DateInstance.h"
+#include <wtf/Int128.h>
 #if !OS(WINDOWS)
 #include <sys/stat.h>
 #endif
@@ -138,7 +139,7 @@ static JSValue modeStatFunction(JSC::JSGlobalObject* globalObject, CallFrame* ca
 {
     auto& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
-    auto* thisObject = dynamicDowncast<JSObject>(callFrame->thisValue());
+    auto* thisObject = dynamicDowncast<JSObject>(callFrame->thisValue().toThis(globalObject, JSC::ECMAMode::strict()));
     if (!thisObject)
         return JSC::jsUndefined();
 
@@ -216,7 +217,7 @@ inline JSC::JSValue getDateField(JSC::JSGlobalObject* globalObject, JSC::Encoded
     auto& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    JSC::JSObject* thisObject = dynamicDowncast<JSC::JSObject>(JSC::JSValue::decode(thisValue));
+    JSC::JSObject* thisObject = dynamicDowncast<JSC::JSObject>(JSC::JSValue::decode(thisValue).toThis(globalObject, JSC::ECMAMode::strict()));
     if (!thisObject)
         return JSC::jsUndefined();
 
@@ -278,7 +279,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsBigIntStatsPrototypeGetter_atime, (JSGlobalObject * g
 JSC_DEFINE_CUSTOM_SETTER(jsStatsPrototypeFunction_DatePutter, (JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::EncodedJSValue encodedValue, JSC::PropertyName propertyName))
 {
     auto& vm = globalObject->vm();
-    JSObject* thisObject = dynamicDowncast<JSObject>(JSValue::decode(thisValue));
+    JSObject* thisObject = dynamicDowncast<JSObject>(JSValue::decode(thisValue).toThis(globalObject, JSC::ECMAMode::strict()));
     if (!thisObject)
         return false;
 
@@ -379,7 +380,7 @@ public:
 
     static JSStatsPrototype* create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure)
     {
-        JSStatsPrototype* prototype = new (NotNull, JSC::allocateCell<JSStatsPrototype>(vm)) JSStatsPrototype(vm, structure);
+        JSStatsPrototype* prototype = new (NotNull, Bun::allocatePlainObjectCell(vm, sizeof(JSStatsPrototype))) JSStatsPrototype(vm, structure);
         prototype->finishCreation(vm);
         return prototype;
     }
@@ -395,7 +396,7 @@ public:
 
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
     {
-        auto* structure = JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
+        auto* structure = Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
         structure->setMayBePrototype(true);
         return structure;
     }
@@ -411,8 +412,8 @@ private:
         Base::finishCreation(vm);
         ASSERT(inherits(info()));
 
-        reifyStaticProperties(vm, this->classInfo(), JSStatsPrototypeTableValues, *this);
-        JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
+        Bun::reifyStaticPropertyTable(vm, this->classInfo(), JSStatsPrototypeTableValues, *this);
+        Bun::putToStringTagWithoutTransition(vm, this, info());
     }
 };
 
@@ -423,7 +424,7 @@ public:
 
     static JSBigIntStatsPrototype* create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure)
     {
-        JSBigIntStatsPrototype* prototype = new (NotNull, JSC::allocateCell<JSBigIntStatsPrototype>(vm)) JSBigIntStatsPrototype(vm, structure);
+        JSBigIntStatsPrototype* prototype = new (NotNull, Bun::allocatePlainObjectCell(vm, sizeof(JSBigIntStatsPrototype))) JSBigIntStatsPrototype(vm, structure);
         prototype->finishCreation(vm);
         return prototype;
     }
@@ -439,7 +440,7 @@ public:
 
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
     {
-        auto* structure = JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
+        auto* structure = Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
         structure->setMayBePrototype(true);
         return structure;
     }
@@ -455,8 +456,8 @@ private:
         Base::finishCreation(vm);
         ASSERT(inherits(info()));
 
-        reifyStaticProperties(vm, this->classInfo(), JSBigIntStatsPrototypeTableValues, *this);
-        JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
+        Bun::reifyStaticPropertyTable(vm, this->classInfo(), JSBigIntStatsPrototypeTableValues, *this);
+        Bun::putToStringTagWithoutTransition(vm, this, info());
     }
 };
 
@@ -482,7 +483,7 @@ public:
 
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
     {
-        return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::InternalFunctionType, StructureFlags), info());
+        return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::InternalFunctionType, StructureFlags), info());
     }
 
 private:
@@ -520,7 +521,7 @@ public:
 
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
     {
-        return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::InternalFunctionType, StructureFlags), info());
+        return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::InternalFunctionType, StructureFlags), info());
     }
 
 private:
@@ -538,7 +539,7 @@ private:
 
 JSC::Structure* createJSStatsObjectStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSObject* prototype)
 {
-    auto structure = JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::FinalObjectType, 0), JSFinalObject::info(), NonArray,
+    auto structure = Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::FinalObjectType, 0), JSFinalObject::info(), NonArray,
         14);
 
     // Add property transitions for all stat fields
@@ -567,7 +568,7 @@ JSC::Structure* createJSStatsObjectStructure(JSC::VM& vm, JSC::JSGlobalObject* g
 
 JSC::Structure* createJSBigIntStatsObjectStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSObject* prototype)
 {
-    auto structure = JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::FinalObjectType, 0), JSFinalObject::info(), NonArray,
+    auto structure = Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::FinalObjectType, 0), JSFinalObject::info(), NonArray,
         18);
 
     // Add property transitions for all bigint stat fields
@@ -642,6 +643,14 @@ extern "C" JSC::EncodedJSValue Bun__createJSStatsObject(Zig::GlobalObject* globa
     return JSC::JSValue::encode(object);
 }
 
+static constexpr WTF::Int128 kNsPerSec = 1'000'000'000;
+static constexpr WTF::Int128 kNsPerMs = 1'000'000;
+
+static ALWAYS_INLINE WTF::Int128 timespecToNs(int64_t sec, int64_t nsec)
+{
+    return static_cast<WTF::Int128>(sec) * kNsPerSec + static_cast<WTF::Int128>(nsec);
+}
+
 extern "C" JSC::EncodedJSValue Bun__createJSBigIntStatsObject(Zig::GlobalObject* globalObject,
     uint64_t dev,
     uint64_t ino,
@@ -653,19 +662,26 @@ extern "C" JSC::EncodedJSValue Bun__createJSBigIntStatsObject(Zig::GlobalObject*
     uint64_t size,
     uint64_t blksize,
     uint64_t blocks,
-    int64_t atimeMs,
-    int64_t mtimeMs,
-    int64_t ctimeMs,
-    int64_t birthtimeMs,
-    uint64_t atimeNs,
-    uint64_t mtimeNs,
-    uint64_t ctimeNs,
-    uint64_t birthtimeNs)
+    int64_t atimeSec,
+    int64_t atimeNsec,
+    int64_t mtimeSec,
+    int64_t mtimeNsec,
+    int64_t ctimeSec,
+    int64_t ctimeNsec,
+    int64_t birthtimeSec,
+    int64_t birthtimeNsec)
 {
     auto& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     auto* structure = getStructure<true>(globalObject);
+
+    // Node computes atimeNs = sec * 1e9n + nsec and atimeMs = atimeNs / 1e6n.
+    const WTF::Int128 atimeNs = timespecToNs(atimeSec, atimeNsec);
+    const WTF::Int128 mtimeNs = timespecToNs(mtimeSec, mtimeNsec);
+    const WTF::Int128 ctimeNs = timespecToNs(ctimeSec, ctimeNsec);
+    const WTF::Int128 birthtimeNs = timespecToNs(birthtimeSec, birthtimeNsec);
+
     // Node.js fills a BigInt64Array via static_cast<int64_t>(uint64_t).
     JSC::JSValue js_dev = JSC::JSBigInt::createFrom(globalObject, static_cast<int64_t>(dev));
     RETURN_IF_EXCEPTION(scope, {});
@@ -687,13 +703,13 @@ extern "C" JSC::EncodedJSValue Bun__createJSBigIntStatsObject(Zig::GlobalObject*
     RETURN_IF_EXCEPTION(scope, {});
     JSC::JSValue js_blocks = JSC::JSBigInt::createFrom(globalObject, static_cast<int64_t>(blocks));
     RETURN_IF_EXCEPTION(scope, {});
-    JSC::JSValue js_atimeMs = JSC::JSBigInt::createFrom(globalObject, atimeMs);
+    JSC::JSValue js_atimeMs = JSC::JSBigInt::createFrom(globalObject, atimeNs / kNsPerMs);
     RETURN_IF_EXCEPTION(scope, {});
-    JSC::JSValue js_mtimeMs = JSC::JSBigInt::createFrom(globalObject, mtimeMs);
+    JSC::JSValue js_mtimeMs = JSC::JSBigInt::createFrom(globalObject, mtimeNs / kNsPerMs);
     RETURN_IF_EXCEPTION(scope, {});
-    JSC::JSValue js_ctimeMs = JSC::JSBigInt::createFrom(globalObject, ctimeMs);
+    JSC::JSValue js_ctimeMs = JSC::JSBigInt::createFrom(globalObject, ctimeNs / kNsPerMs);
     RETURN_IF_EXCEPTION(scope, {});
-    JSC::JSValue js_birthtimeMs = JSC::JSBigInt::createFrom(globalObject, birthtimeMs);
+    JSC::JSValue js_birthtimeMs = JSC::JSBigInt::createFrom(globalObject, birthtimeNs / kNsPerMs);
     RETURN_IF_EXCEPTION(scope, {});
     JSC::JSValue js_atimeNs = JSC::JSBigInt::createFrom(globalObject, atimeNs);
     RETURN_IF_EXCEPTION(scope, {});
@@ -824,7 +840,6 @@ inline JSValue constructJSStatsObject(JSC::JSGlobalObject* lexicalGlobalObject, 
     JSObject* newTarget = asObject(callFrame->newTarget());
 
     if (constructor != newTarget) {
-        auto scope = DECLARE_THROW_SCOPE(vm);
         auto* functionGlobalObject = static_cast<Zig::GlobalObject*>(
             // ShadowRealm functions belong to a different global object.
             getFunctionRealm(lexicalGlobalObject, newTarget));

@@ -54,8 +54,6 @@ public:
     ControllerKind m_controllerKind { ControllerKind::None };
     // [[disturbed]]
     bool m_disturbed : 1 { false };
-    // [[Detached]] (transferable streams are not implemented; the slot exists)
-    bool m_detached : 1 { false };
     // Bun: locked by a native/direct consumer WITHOUT a real reader object. Part of every
     // isReadableStreamLocked() check.
     bool m_lockedWithoutReader : 1 { false };
@@ -66,8 +64,6 @@ public:
     // Body.textStream(): the native source adapter decodes each chunk as UTF-8
     // text before enqueue.
     bool m_nativeTextMode : 1 { false };
-    // `$bunNativeType`: write-only today, kept for the FFI ABI.
-    int32_t m_nativeType { 0 };
 
     // [[reader]] — a default reader, a BYOB reader, or null (undefined).
     JSC::WriteBarrier<JSReadableStreamReaderBase> m_reader;

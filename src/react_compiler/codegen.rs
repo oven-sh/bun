@@ -48,24 +48,25 @@ use crate::reactive_scopes::{
     rename_variables,
 };
 
+use crate::imports::ProgramContext;
 use crate::program::{Host, JsxImportKind};
 
 /// Result of code generation for a single function.
 pub struct CodegenFunction {
-    pub loc: Option<DiagSourceLocation>,
-    pub id: Option<LocRef>,
-    pub name_hint: Option<String>,
-    pub params: Vec<G::Arg>,
-    pub has_rest_arg: bool,
-    pub body: Vec<Stmt>,
-    pub generator: bool,
-    pub is_async: bool,
-    pub memo_slots_used: u32,
-    pub memo_blocks: u32,
-    pub memo_values: u32,
-    pub pruned_memo_blocks: u32,
-    pub pruned_memo_values: u32,
-    pub outlined: Vec<OutlinedFunction>,
+    pub(crate) id: Option<LocRef>,
+    #[cfg(any(debug_assertions, bun_asan, feature = "fixtures"))]
+    pub(crate) name_hint: Option<String>,
+    pub(crate) params: Vec<G::Arg>,
+    pub(crate) has_rest_arg: bool,
+    pub(crate) body: Vec<Stmt>,
+    pub(crate) generator: bool,
+    pub(crate) is_async: bool,
+    pub(crate) memo_slots_used: u32,
+    pub(crate) memo_blocks: u32,
+    pub(crate) memo_values: u32,
+    pub(crate) pruned_memo_blocks: u32,
+    pub(crate) pruned_memo_values: u32,
+    pub(crate) outlined: Vec<OutlinedFunction>,
 }
 
 impl std::fmt::Debug for CodegenFunction {
@@ -81,13 +82,13 @@ impl std::fmt::Debug for CodegenFunction {
 }
 
 pub struct OutlinedFunction {
-    pub func: CodegenFunction,
-    pub fn_type: Option<crate::hir::ReactFunctionType>,
+    pub(crate) func: CodegenFunction,
+    #[cfg(any(debug_assertions, bun_asan, feature = "fixtures"))]
+    pub(crate) fn_type: Option<crate::hir::ReactFunctionType>,
 }
 
 #[derive(Clone, Copy)]
 enum WellKnown {
-    UseMemoCache,
     MemoCache,
     NaN,
     Infinity,
@@ -97,15 +98,15 @@ enum WellKnown {
 }
 
 impl WellKnown {
-    const COUNT: usize = 7;
+    const COUNT: usize = 6;
 }
 
 /// Host-side state shared across nested function-expression codegen so the
 /// same identifier name resolves to the same `Ref` everywhere in the compiled
 /// component.
-pub struct Codegen<'h> {
-    pub host: &'h mut dyn Host,
-    pub arena: &'h Arena,
+pub(crate) struct Codegen<'h> {
+    pub(crate) host: &'h mut dyn Host,
+    pub(crate) arena: &'h Arena,
     id_to_ref: IdMap<IdentifierId, Ref>,
     well_known: [Option<Ref>; WellKnown::COUNT],
     name_to_ref: HashMap<StoreStr, Ref>,
@@ -113,14 +114,12 @@ pub struct Codegen<'h> {
 }
 
 impl<'h> Codegen<'h> {
-    pub fn new(host: &'h mut dyn Host, arena: &'h Arena, memo_cache_import: Option<Ref>) -> Self {
-        let mut well_known = [None; WellKnown::COUNT];
-        well_known[WellKnown::UseMemoCache as usize] = memo_cache_import;
+    pub(crate) fn new(host: &'h mut dyn Host, arena: &'h Arena) -> Self {
         Codegen {
             host,
             arena,
             id_to_ref: IdMap::new(),
-            well_known,
+            well_known: [None; WellKnown::COUNT],
             name_to_ref: HashMap::new(),
             label_to_ref: IdMap::new(),
         }
@@ -209,10 +208,11 @@ impl<'h> Codegen<'h> {
 }
 
 /// Top-level entry point: generates code for a reactive function.
-pub fn codegen_function(
+pub(crate) fn codegen_function(
     func: &ReactiveFunction,
     env: &mut Environment,
     cg: &mut Codegen<'_>,
+    context: &mut ProgramContext,
     unique_identifiers: HashSet<String>,
 ) -> Result<CodegenFunction, CompilerError> {
     let mut cx = Context::new(env, cg, unique_identifiers);
@@ -240,15 +240,14 @@ pub fn codegen_function(
         let cache_name = cx.synthesize_name("$");
         let loc = Loc::EMPTY;
 
+        // The import declaration for `useMemoCache` is emitted by
+        // `add_imports_to_program`. Register it only here, so a function that
+        // compiles to zero memo slots does not pull in `react/compiler-runtime`.
+        let use_memo_cache_ref = context.add_memo_cache_import(cx.cg.host).name_ref;
+        cx.cg.host.record_usage(use_memo_cache_ref);
         // Synthesized AST is never re-visited by the parser's `EIdentifier→EImportIdentifier`
         // promotion, so emit `EImportIdentifier` directly.
-        let use_memo_cache = Expr::init(
-            E::ImportIdentifier::new(
-                cx.cg.well_known(WellKnown::UseMemoCache, b"useMemoCache"),
-                true,
-            ),
-            loc,
-        );
+        let use_memo_cache = Expr::init(E::ImportIdentifier::new(use_memo_cache_ref, true), loc);
         let call = Expr::init(
             E::Call {
                 target: use_memo_cache,
@@ -359,6 +358,7 @@ pub fn codegen_function(
         let codegen = codegen_reactive_function(&mut outlined_cx, &reactive_fn_mut)?;
         outlined.push(OutlinedFunction {
             func: codegen,
+            #[cfg(any(debug_assertions, bun_asan, feature = "fixtures"))]
             fn_type: entry.fn_type,
         });
     }
@@ -463,10 +463,7 @@ fn codegen_reactive_function(
     func: &ReactiveFunction,
 ) -> Result<CodegenFunction, CompilerError> {
     for param in &func.params {
-        let place = match param {
-            ParamPattern::Place(p) => p,
-            ParamPattern::Spread(sp) => &sp.place,
-        };
+        let place = param.place();
         let ident = &cx.env.identifiers[place.identifier.0 as usize];
         cx.temp.insert(ident.declaration_id, None);
         cx.declare(place.identifier);
@@ -514,8 +511,8 @@ fn codegen_reactive_function(
     });
 
     Ok(CodegenFunction {
-        loc: func.loc,
         id,
+        #[cfg(any(debug_assertions, bun_asan, feature = "fixtures"))]
         name_hint: func.name_hint.clone(),
         params,
         has_rest_arg,
@@ -666,6 +663,7 @@ fn codegen_reactive_scope(
                 target: cache_ident(),
                 index: Expr::init(E::Number::new(index as f64), loc),
                 optional_chain: None,
+                is_import_property_use: false,
             },
             loc,
         )
@@ -1847,14 +1845,17 @@ fn codegen_base_instruction_value(
             ))
         }
         InstructionValue::UnaryExpression {
-            operator, value, ..
+            operator,
+            value,
+            bun_flags,
+            ..
         } => {
             let arg = codegen_place_to_expression(cx, value)?;
             Ok(Expr::init(
                 E::Unary {
                     op: convert_unary_operator(*operator),
                     value: arg,
-                    flags: E::UnaryFlags::empty(),
+                    flags: *bun_flags,
                 },
                 loc,
             ))
@@ -1886,6 +1887,7 @@ fn codegen_base_instruction_value(
                         expr: it.next().unwrap_or(orig.expr),
                         options: it.next().unwrap_or(Expr::EMPTY),
                         import_record_index: orig.import_record_index,
+                        namespace_ref: orig.namespace_ref,
                     },
                     loc,
                 ));
@@ -1989,7 +1991,8 @@ fn codegen_base_instruction_value(
                 E::Unary {
                     op: OpCode::UnDelete,
                     value: property_access_expr(obj, property, loc, None),
-                    flags: E::UnaryFlags::empty(),
+                    // `lower_unary` only creates PropertyDelete when this flag was set.
+                    flags: E::UnaryFlags::WAS_ORIGINALLY_DELETE_OF_IDENTIFIER_OR_PROPERTY_ACCESS,
                 },
                 loc,
             ))
@@ -2004,6 +2007,7 @@ fn codegen_base_instruction_value(
                     target: obj,
                     index: prop,
                     optional_chain: None,
+                    is_import_property_use: false,
                 },
                 loc,
             ))
@@ -2025,6 +2029,7 @@ fn codegen_base_instruction_value(
                             target: obj,
                             index: prop,
                             optional_chain: None,
+                            is_import_property_use: false,
                         },
                         loc,
                     ),
@@ -2046,10 +2051,11 @@ fn codegen_base_instruction_value(
                             target: obj,
                             index: prop,
                             optional_chain: None,
+                            is_import_property_use: false,
                         },
                         loc,
                     ),
-                    flags: E::UnaryFlags::empty(),
+                    flags: E::UnaryFlags::WAS_ORIGINALLY_DELETE_OF_IDENTIFIER_OR_PROPERTY_ACCESS,
                 },
                 loc,
             ))
@@ -2368,6 +2374,7 @@ fn codegen_function_expression(
                 ),
                 index: Expr::init(E::EString::init(hint.slice()), loc),
                 optional_chain: None,
+                is_import_property_use: false,
             },
             loc,
         );
@@ -3230,6 +3237,7 @@ fn property_access_expr(
                 target,
                 index: Expr::init(E::Number::new(n.value()), loc),
                 optional_chain,
+                is_import_property_use: false,
             },
             loc,
         ),

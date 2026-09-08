@@ -10,7 +10,7 @@
 // Kept in its own file so the happy-path image.test.ts stays readable.
 
 import { afterEach, describe, expect, test } from "bun:test";
-import { gcTick, isASAN, tempDir } from "harness";
+import { gcTick, isASAN, rss, tempDir } from "harness";
 import { join } from "node:path";
 import zlib from "node:zlib";
 
@@ -403,6 +403,15 @@ describe("malformed PNG structure", () => {
     expect(await new Bun.Image(buf).metadata()).toEqual({ width: 2, height: 2, format: "png" });
   });
 
+  test("IDAT CRC and zlib adler32 mismatches are tolerated (checksums are skipped on decode)", async () => {
+    const expected = await rgbaOf(tinyPng);
+    const buf = Buffer.from(tinyPng);
+    const idatLen = buf.readUInt32BE(33);
+    buf[33 + 8 + idatLen - 1] ^= 0xff; // last adler32 byte of the zlib stream
+    buf[33 + 8 + idatLen + 3] ^= 0xff; // last IDAT CRC byte
+    expect(await rgbaOf(buf)).toStrictEqual(expected);
+  });
+
   test("missing IEND is tolerated (spec recovery: stream ending after a complete IDAT is valid)", async () => {
     const buf = tinyPng.subarray(0, tinyPng.length - 12);
     expect(await new Bun.Image(buf).metadata()).toEqual({ width: 2, height: 2, format: "png" });
@@ -547,13 +556,13 @@ describe("memory hygiene", () => {
       if ((i & 127) === 0) gcTick();
     }
     gcTick();
-    const before = process.memoryUsage().rss;
+    const before = rss();
     for (let i = 0; i < run; i++) {
       await body();
       if ((i & 127) === 0) gcTick();
     }
     gcTick();
-    return process.memoryUsage().rss - before;
+    return rss() - before;
   }
 
   test("decode/encode cycles plateau (no per-call leak after warmup)", async () => {
@@ -571,7 +580,7 @@ describe("memory hygiene", () => {
   });
 
   test("constructor with throwing getter cleans up under repetition", () => {
-    const before = process.memoryUsage().rss;
+    const before = rss();
     for (let i = 0; i < 10_000; i++) {
       try {
         new Bun.Image(tinyPng, {
@@ -583,7 +592,7 @@ describe("memory hygiene", () => {
       if ((i & 1023) === 0) gcTick();
     }
     gcTick();
-    expect(process.memoryUsage().rss - before).toBeLessThan((isASAN ? 256 : 64) * 1024 * 1024);
+    expect(rss() - before).toBeLessThan((isASAN ? 256 : 64) * 1024 * 1024);
   });
 });
 

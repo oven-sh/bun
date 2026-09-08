@@ -14,34 +14,34 @@ pub(crate) const CDATA_OPEN: &[u8] = b"![CDATA[";
 
 #[derive(Copy, Clone)]
 pub struct SetextResult {
-    pub is_setext: bool,
-    pub level: u32,
+    pub(crate) is_setext: bool,
+    pub(crate) level: u32,
 }
 
 #[derive(Copy, Clone)]
 pub struct AtxResult {
-    pub is_atx: bool,
-    pub level: u32,
-    pub content_beg: OFF,
+    pub(crate) is_atx: bool,
+    pub(crate) level: u32,
+    pub(crate) content_beg: OFF,
 }
 
 #[derive(Copy, Clone)]
 pub struct FenceResult {
-    pub is_fence: bool,
-    pub fence_data: u32,
+    pub(crate) is_fence: bool,
+    pub(crate) fence_data: u32,
 }
 
 #[derive(Copy, Clone)]
 pub struct TableUnderlineResult {
-    pub is_underline: bool,
-    pub col_count: u32,
+    pub(crate) is_underline: bool,
+    pub(crate) col_count: u32,
 }
 
 #[derive(Clone)]
 pub struct ContainerMarkResult {
-    pub is_container: bool,
-    pub container: Container,
-    pub off: OFF,
+    pub(crate) is_container: bool,
+    pub(crate) container: Container,
+    pub(crate) off: OFF,
 }
 
 // Small helper: index `self.text` (a `&[u8]`) by an `OFF`.
@@ -51,7 +51,7 @@ fn ch(text: &[u8], pos: OFF) -> u8 {
 }
 
 impl Parser<'_> {
-    pub fn is_setext_underline(&self, off: OFF) -> SetextResult {
+    pub(crate) fn is_setext_underline(&self, off: OFF) -> SetextResult {
         let c = ch(self.text, off);
         if c != b'=' && c != b'-' {
             return SetextResult {
@@ -84,7 +84,7 @@ impl Parser<'_> {
         }
     }
 
-    pub fn is_hr_line(&self, off: OFF) -> bool {
+    pub(crate) fn is_hr_line(&self, off: OFF) -> bool {
         let c = ch(self.text, off);
         if c != b'-' && c != b'_' && c != b'*' {
             return false;
@@ -104,7 +104,7 @@ impl Parser<'_> {
         count >= 3
     }
 
-    pub fn is_atx_header_line(&self, off: OFF) -> AtxResult {
+    pub(crate) fn is_atx_header_line(&self, off: OFF) -> AtxResult {
         let mut pos = off;
         let mut level: u32 = 0;
 
@@ -147,7 +147,7 @@ impl Parser<'_> {
         }
     }
 
-    pub fn is_opening_code_fence(&self, off: OFF) -> FenceResult {
+    pub(crate) fn is_opening_code_fence(&self, off: OFF) -> FenceResult {
         if off >= self.size {
             return FenceResult {
                 is_fence: false,
@@ -192,7 +192,7 @@ impl Parser<'_> {
         }
     }
 
-    pub fn is_closing_code_fence(&self, off: OFF, fence_data: u32) -> bool {
+    pub(crate) fn is_closing_code_fence(&self, off: OFF, fence_data: u32) -> bool {
         let fence_char: u8 = fence_data as u8; // @truncate
         let fence_count = fence_data >> 8;
 
@@ -215,7 +215,7 @@ impl Parser<'_> {
         pos >= self.size || helpers::is_newline(ch(self.text, pos))
     }
 
-    pub fn is_html_block_start_condition(&self, off: OFF) -> u8 {
+    pub(crate) fn is_html_block_start_condition(&self, off: OFF) -> u8 {
         if off + 1 >= self.size {
             return 0;
         }
@@ -278,7 +278,7 @@ impl Parser<'_> {
         0
     }
 
-    pub fn is_html_block_end_condition(&self, off: OFF, block_type: u8) -> bool {
+    pub(crate) fn is_html_block_end_condition(&self, off: OFF, block_type: u8) -> bool {
         // Types 6 and 7: end condition is a blank line
         if block_type >= 6 {
             return off >= self.size || helpers::is_newline(ch(self.text, off));
@@ -345,7 +345,7 @@ impl Parser<'_> {
         false
     }
 
-    pub fn match_html_tag(&self, off: OFF, tag: &[u8]) -> bool {
+    pub(crate) fn match_html_tag(&self, off: OFF, tag: &[u8]) -> bool {
         if (off as usize) + 1 + tag.len() >= self.size as usize {
             return false;
         }
@@ -369,7 +369,7 @@ impl Parser<'_> {
         after == b'>' || after == b'/' || helpers::is_blank(after) || helpers::is_newline(after)
     }
 
-    pub fn is_block_level_html_tag(&self, off: OFF) -> bool {
+    pub(crate) fn is_block_level_html_tag(&self, off: OFF) -> bool {
         const BLOCK_TAGS: &[&[u8]] = &[
             b"address",
             b"article",
@@ -443,7 +443,7 @@ impl Parser<'_> {
         false
     }
 
-    pub fn is_complete_html_tag(&self, off: OFF) -> bool {
+    pub(crate) fn is_complete_html_tag(&self, off: OFF) -> bool {
         if off + 1 >= self.size {
             return false;
         }
@@ -590,7 +590,7 @@ impl Parser<'_> {
         pos >= self.size || helpers::is_newline(ch(self.text, pos))
     }
 
-    pub fn is_table_underline(&mut self, off: OFF) -> TableUnderlineResult {
+    pub(crate) fn is_table_underline(&mut self, off: OFF) -> TableUnderlineResult {
         let mut pos = off;
         let mut col_count: u32 = 0;
         let mut had_pipe = false;
@@ -690,7 +690,7 @@ impl Parser<'_> {
 
     /// Count the number of pipe-delimited columns in a table row.
     /// Used to validate that header and delimiter row column counts match (GFM requirement).
-    pub fn count_table_row_columns(&self, beg: OFF, end: OFF) -> u32 {
+    pub(crate) fn count_table_row_columns(&self, beg: OFF, end: OFF) -> u32 {
         let row = &self.text[beg as usize..end as usize];
         let mut col_count: u32 = 0;
         let mut pos: usize = 0;
@@ -729,7 +729,7 @@ impl Parser<'_> {
         col_count
     }
 
-    pub fn is_container_mark(&self, indent: u32, off: OFF) -> ContainerMarkResult {
+    pub(crate) fn is_container_mark(&self, indent: u32, off: OFF) -> ContainerMarkResult {
         if off >= self.size {
             return ContainerMarkResult {
                 is_container: false,

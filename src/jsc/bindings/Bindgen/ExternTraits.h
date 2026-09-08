@@ -123,7 +123,7 @@ template<> struct ExternTraits<JSC::JSValue> {
 };
 
 template<> struct ExternTraits<Bun::StrongRef> {
-    using ExternType = JSC::JSValue*;
+    using ExternType = Bun::StrongRefImpl*;
 
     static ExternType convertToExtern(Bun::StrongRef&& cppValue)
     {

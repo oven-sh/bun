@@ -1,4 +1,4 @@
-import { define } from "../../codegen/class-definitions";
+import { define } from "../../codegen/class-definitions.ts";
 
 const rustPaths = {
   Blob: "crate::webcore::byte_blob_loader::Source",
@@ -92,7 +92,10 @@ function source(name) {
         : {}),
     },
     klass: {},
-    values: ["pendingPromise", "onCloseCallback", "onDrainCallback"],
+    // `owner` roots the GC cell of the peer producing into this source
+    // (`producer` backref); `sinkOwner` roots the peer it pipes into
+    // (`sink` backref). A chained transform needs both.
+    values: ["pendingPromise", "onCloseCallback", "onDrainCallback", "owner", "sinkOwner"],
   });
 }
 

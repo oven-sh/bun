@@ -209,53 +209,6 @@ impl Environment {
         }
     }
 
-    /// Create a child Environment for compiling an outlined function.
-    ///
-    /// The child shares the same config, globals, and shapes, and receives copies of
-    /// all arenas (identifiers, types, scopes, functions) so that references from
-    /// the outlined HIR remain valid. Block/scope counters start past the cloned
-    /// data to avoid ID conflicts.
-    pub fn for_outlined_fn(&self, fn_type: ReactFunctionType) -> Self {
-        Self {
-            // Start block counter past any existing blocks in the outlined function.
-            // The outlined function has BlockId(0), parent may have more. Use parent's
-            // counter which is guaranteed to be > any block ID in the outlined function.
-            next_block_id_counter: self.next_block_id_counter,
-            // Scope counter must be consistent with scopes vec length
-            next_scope_id_counter: self.scopes.len() as u32,
-            next_mutable_range_id_counter: self.next_mutable_range_id_counter,
-            identifiers: self.identifiers.clone(),
-            types: self.types.clone(),
-            scopes: self.scopes.clone(),
-            functions: self.functions.clone(),
-            errors: CompilerError::new(),
-            fn_type,
-            output_mode: self.output_mode,
-            code: self.code,
-            filename: self.filename,
-            instrument_fn_name: self.instrument_fn_name,
-            instrument_gating_name: self.instrument_gating_name,
-            hook_guard_name: self.hook_guard_name,
-            renames: AstAlloc::vec(),
-            reference_node_ids: HashSet::new(),
-            hoisted_identifiers: HashSet::new(),
-            validate_preserve_existing_memoization_guarantees: self
-                .validate_preserve_existing_memoization_guarantees,
-            validate_no_set_state_in_render: self.validate_no_set_state_in_render,
-            enable_preserve_existing_memoization_guarantees: self
-                .enable_preserve_existing_memoization_guarantees,
-            globals: self.globals.clone(),
-            shapes: self.shapes.clone(),
-            module_types: self.module_types.clone(),
-            module_type_errors: self.module_type_errors.clone(),
-            config: self.config.clone(),
-            default_nonmutating_hook: self.default_nonmutating_hook.clone(),
-            default_mutating_hook: self.default_mutating_hook.clone(),
-            outlined_functions: AstAlloc::vec(),
-            uid_known_names: self.uid_known_names.clone(),
-        }
-    }
-
     pub fn next_block_id(&mut self) -> BlockId {
         let id = BlockId(self.next_block_id_counter);
         self.next_block_id_counter += 1;
@@ -291,6 +244,21 @@ impl Environment {
             loc: None,
         });
         id
+    }
+
+    /// Name the temporary `#t<declaration id>` so it survives as a variable.
+    pub fn promote_temporary(&mut self, identifier_id: IdentifierId) {
+        self.promote_temporary_with_kind(identifier_id, b't');
+    }
+
+    /// `#T<declaration id>`: a JSX tag must start with a capital letter.
+    pub fn promote_temporary_jsx_tag(&mut self, identifier_id: IdentifierId) {
+        self.promote_temporary_with_kind(identifier_id, b'T');
+    }
+
+    fn promote_temporary_with_kind(&mut self, identifier_id: IdentifierId, kind: u8) {
+        let identifier = &mut self.identifiers[identifier_id.0 as usize];
+        identifier.name = Some(IdentifierName::promoted(kind, identifier.declaration_id.0));
     }
 
     /// Allocate a new ReactiveScope in the arena, returns its ScopeId.
@@ -632,46 +600,6 @@ impl Environment {
         Ok(None)
     }
 
-    /// Get the type of a numeric property on a receiver type.
-    /// Ported from the numeric branch of TS `getPropertyType`.
-    pub fn get_property_type_numeric(
-        &self,
-        receiver: &Type,
-    ) -> Result<Option<Type>, CompilerDiagnostic> {
-        let shape_id = match receiver {
-            Type::Object { shape_id } | Type::Function { shape_id, .. } => shape_id.as_deref(),
-            _ => None,
-        };
-        if let Some(shape_id) = shape_id {
-            let shape = self
-                .shapes
-                .get(shape_id)
-                .ok_or_else(|| shape_not_found(shape_id))?;
-            return Ok(shape.properties.get("*").cloned());
-        }
-        Ok(None)
-    }
-
-    /// Get the fallthrough (wildcard `*`) property type for computed property access.
-    /// Ported from TS `getFallthroughPropertyType`.
-    pub fn get_fallthrough_property_type(
-        &self,
-        receiver: &Type,
-    ) -> Result<Option<Type>, CompilerDiagnostic> {
-        let shape_id = match receiver {
-            Type::Object { shape_id } | Type::Function { shape_id, .. } => shape_id.as_deref(),
-            _ => None,
-        };
-        if let Some(shape_id) = shape_id {
-            let shape = self
-                .shapes
-                .get(shape_id)
-                .ok_or_else(|| shape_not_found(shape_id))?;
-            return Ok(shape.properties.get("*").cloned());
-        }
-        Ok(None)
-    }
-
     /// Get the function signature for a function type.
     /// Ported from TS `getFunctionSignature`.
     pub fn get_function_signature(
@@ -904,11 +832,6 @@ impl Environment {
         &self.outlined_functions
     }
 
-    /// Take the outlined functions, leaving the vec empty.
-    pub fn take_outlined_functions(&mut self) -> HirVec<OutlinedFunctionEntry> {
-        AstAlloc::take(&mut self.outlined_functions)
-    }
-
     /// Whether memoization is enabled for this compilation.
     /// Ported from TS `get enableMemoization()` in Environment.ts.
     /// Returns true for client/lint modes, false for SSR.
@@ -925,36 +848,6 @@ impl Environment {
         match self.output_mode {
             OutputMode::Client | OutputMode::Lint | OutputMode::Ssr => true,
         }
-    }
-
-    // =========================================================================
-    // Name resolution helpers
-    // =========================================================================
-
-    /// Get the user-visible name for an identifier.
-    ///
-    /// First checks the identifier's own name. If None, looks for another
-    /// identifier with the same `declaration_id` that has a name. This handles
-    /// SSA identifiers that don't carry names but share a declaration_id with
-    /// the original named identifier from lowering.
-    ///
-    /// This is analogous to `identifierName` on Babel's SourceLocation,
-    /// which the parser sets on every identifier node.
-    pub fn identifier_name_for_id(&self, id: IdentifierId) -> Option<StoreStr> {
-        let ident = &self.identifiers[id.0 as usize];
-        if let Some(name) = &ident.name {
-            return Some(StoreStr::new(name.value()));
-        }
-        // Fall back: find another identifier with the same declaration_id that has a Named name
-        let decl_id = ident.declaration_id;
-        for other in &self.identifiers {
-            if other.declaration_id == decl_id {
-                if let Some(IdentifierName::Named(name)) = &other.name {
-                    return Some(*name);
-                }
-            }
-        }
-        None
     }
 
     // =========================================================================
@@ -979,12 +872,6 @@ impl Environment {
     ) -> Result<Option<&HookKind>, CompilerDiagnostic> {
         let ty = &self.types[self.identifiers[identifier_id.0 as usize].type_.0 as usize];
         self.get_hook_kind_for_type(ty)
-    }
-}
-
-impl Default for Environment {
-    fn default() -> Self {
-        Self::new()
     }
 }
 

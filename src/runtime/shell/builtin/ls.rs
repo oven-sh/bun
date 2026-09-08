@@ -9,15 +9,15 @@ use crate::shell::ExitCode;
 use crate::shell::builtin::{Builtin, IoKind, Kind};
 use crate::shell::interpreter::{
     EventLoopHandle, Interpreter, NodeId, OutputSrc, OutputTask, OutputTaskVTable, ShellTask,
-    shell_openat,
+    shell_lstatat, shell_openat, shell_statat,
 };
 use crate::shell::io_writer::{ChildPtr, WriterTag};
 use crate::shell::yield_::Yield;
 
 #[derive(Default)]
 pub struct Ls {
-    pub opts: Opts,
-    pub state: State,
+    pub(crate) opts: Opts,
+    pub(crate) state: State,
 }
 
 #[derive(Default)]
@@ -30,15 +30,15 @@ pub enum State {
 }
 
 pub struct ExecState {
-    pub err: Option<bun_sys::Error>,
-    pub task_count: AtomicUsize,
-    pub tasks_done: usize,
-    pub output_waiting: usize,
-    pub output_done: usize,
+    pub(crate) err: Option<bun_sys::Error>,
+    pub(crate) task_count: AtomicUsize,
+    pub(crate) tasks_done: usize,
+    pub(crate) output_waiting: usize,
+    pub(crate) output_done: usize,
     /// FIFO of in-flight OutputTask pointers awaiting an IOWriter chunk
     /// completion. Stopgap until `WriterTag` can carry the `*mut OutputTask`
     /// directly — see mkdir.rs `Exec::output_queue` for rationale.
-    pub output_queue: std::collections::VecDeque<*mut OutputTask<Ls>>,
+    pub(crate) output_queue: std::collections::VecDeque<*mut OutputTask<Ls>>,
 }
 
 enum ParseFlag {
@@ -52,7 +52,7 @@ impl Ls {
         Self::next(interp, cmd)
     }
 
-    pub(crate) fn next(interp: &Interpreter, cmd: NodeId) -> Yield {
+    fn next(interp: &Interpreter, cmd: NodeId) -> Yield {
         // Match on a tag, drop the borrow, then act.
         enum Tag {
             Idle,
@@ -198,11 +198,7 @@ impl Ls {
     /// # Safety
     /// `task` must be a live heap allocation produced by
     /// [`ShellLsTask::create`]; ownership is reclaimed here.
-    pub(crate) fn on_shell_ls_task_done(
-        interp: &Interpreter,
-        cmd: NodeId,
-        task: NonNull<ShellLsTask>,
-    ) {
+    fn on_shell_ls_task_done(interp: &Interpreter, cmd: NodeId, task: NonNull<ShellLsTask>) {
         // SAFETY: precondition.
         let mut task = unsafe { bun_core::heap::take(task.as_ptr()) };
         if let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state {
@@ -253,8 +249,8 @@ impl Ls {
         }
         for &ch in &flag[1..] {
             match ch {
-                b'a' => opts.show_all = true,
-                b'A' => opts.show_almost_all = true,
+                b'a' => opts.dotfiles = DotfileMode::All,
+                b'A' => opts.dotfiles = DotfileMode::AlmostAll,
                 b'd' => opts.list_directories = true,
                 b'l' => opts.long_listing = true,
                 b'R' => opts.recursive = true,
@@ -369,7 +365,7 @@ pub(crate) struct ShellLsTask {
 }
 
 impl ShellLsTask {
-    pub(crate) fn create(
+    fn create(
         cmd: NodeId,
         opts: Opts,
         task_count: *const AtomicUsize,
@@ -401,15 +397,25 @@ impl ShellLsTask {
     /// discovered subdirectory.
     fn enqueue(&mut self, name: &[u8]) {
         let new_path = self.join(name);
-        let subtask = ShellLsTask::create(
-            self.cmd,
-            self.opts,
-            self.task_count,
-            self.cwd,
-            new_path,
-            self.event_loop,
-            self.interp,
-        );
+        // Pool thread: the subtask inherits our poster rather than deriving
+        // one from the VM (`ShellTask::new` is JS-thread only).
+        let subtask = bun_core::heap::into_raw(Box::new(ShellLsTask {
+            cmd: self.cmd,
+            opts: self.opts,
+            print_directory: false,
+            task_count: self.task_count,
+            cwd: self.cwd,
+            path: new_path,
+            output: Vec::new(),
+            is_absolute: false,
+            err: None,
+            now_secs: 0,
+            event_loop: self.event_loop,
+            interp: self.interp,
+            task: ShellTask::new_child(&self.task),
+        }));
+        // SAFETY: freshly allocated above.
+        unsafe { (*subtask).task.interp = self.interp };
         // SAFETY: `task_count` points into the `Box<Ls>` ExecState which
         // outlives every in-flight task (see `next`). `subtask` is freshly
         // heap-allocated and scheduled via raw `WorkPool::schedule` (no
@@ -444,27 +450,15 @@ impl ShellLsTask {
         ZBox::from_bytes(out)
     }
 
-    pub(crate) fn run_from_thread_pool(this: &mut ShellLsTask) {
+    fn run_from_thread_pool(this: &mut ShellLsTask) {
         // Cache current time once per task for timestamp formatting.
         if this.opts.long_listing {
             this.now_secs = bun_core::time::timestamp().max(0) as u64;
         }
 
         let fd = match shell_openat(this.cwd, this.path.as_zstr(), O::RDONLY | O::DIRECTORY, 0) {
-            Err(e) => {
-                match e.get_errno() {
-                    E::ENOENT => {
-                        this.err = Some(this.error_with_path(&e));
-                    }
-                    E::ENOTDIR => {
-                        // Clone the path to dodge the &mut/& borrow overlap.
-                        let p = ZBox::from_bytes(this.path.as_bytes());
-                        this.add_entry(p.as_bytes(), this.cwd);
-                    }
-                    _ => {
-                        this.err = Some(this.error_with_path(&e));
-                    }
-                }
+            Err(open_err) => {
+                this.list_non_directory_operand(&open_err);
                 return;
             }
             Ok(fd) => fd,
@@ -516,20 +510,41 @@ impl ShellLsTask {
         this.output.push(b'\n');
     }
 
-    fn should_skip_entry(&self, name: &[u8]) -> bool {
-        if self.opts.show_all {
-            return false;
-        }
-        // Show all directory entries whose name begin with a dot (`.`), EXCEPT
-        // `.` and `..`.
-        if self.opts.show_almost_all {
-            if name == b"." || name == b".." {
-                return true;
+    /// coreutils operand rule: `stat`, and on ENOENT or ELOOP `lstat` so a symlink is itself.
+    fn list_non_directory_operand(&mut self, open_err: &bun_sys::Error) {
+        match shell_statat(self.cwd, self.path.as_zstr()) {
+            // A directory that would not open: report the open error.
+            Ok(stat) if S::ISDIR(stat.st_mode as _) => {
+                self.err = Some(self.error_with_path(open_err));
+                return;
             }
-        } else if name.first() == Some(&b'.') {
-            return true;
+            Ok(_) => {}
+            Err(e) if matches!(e.get_errno(), E::ENOENT | E::ELOOP) => {}
+            Err(e) => {
+                self.err = Some(self.error_with_path(&e));
+                return;
+            }
         }
-        false
+        match shell_lstatat(self.cwd, self.path.as_zstr()) {
+            Ok(stat) => {
+                // An operand is never subject to the -a/-A filter.
+                let name = ZBox::from_bytes(self.path.as_bytes());
+                if self.opts.long_listing {
+                    self.add_entry_long_from_stat(name.as_bytes(), &stat);
+                } else {
+                    self.add_entry_short(name.as_bytes());
+                }
+            }
+            Err(e) => self.err = Some(self.error_with_path(&e)),
+        }
+    }
+
+    fn should_skip_entry(&self, name: &[u8]) -> bool {
+        match self.opts.dotfiles {
+            DotfileMode::All => false,
+            DotfileMode::AlmostAll => name == b"." || name == b"..",
+            DotfileMode::Hide => name.first() == Some(&b'.'),
+        }
     }
 
     // TODO more complex output like multi-column
@@ -540,27 +555,32 @@ impl ShellLsTask {
         if self.opts.long_listing {
             self.add_entry_long(name, dir_fd);
         } else {
-            self.output.reserve(name.len() + 1);
-            self.output.extend_from_slice(name);
-            self.output.push(b'\n');
+            self.add_entry_short(name);
         }
+    }
+
+    fn add_entry_short(&mut self, name: &[u8]) {
+        self.output.reserve(name.len() + 1);
+        self.output.extend_from_slice(name);
+        self.output.push(b'\n');
     }
 
     fn add_entry_long(&mut self, name: &[u8], dir_fd: bun_sys::Fd) {
         // Use lstatat to not follow symlinks (so symlinks show as 'l' type).
         let name_z = ZBox::from_bytes(name);
-        let stat = match bun_sys::lstatat(dir_fd, name_z.as_zstr()) {
+        match bun_sys::lstatat(dir_fd, name_z.as_zstr()) {
             Err(_) => {
                 // If stat fails, just output the name with placeholders.
                 self.output
                     .extend_from_slice(b"?????????? ? ? ? ?            ? ");
                 self.output.extend_from_slice(name);
                 self.output.push(b'\n');
-                return;
             }
-            Ok(s) => s,
-        };
+            Ok(stat) => self.add_entry_long_from_stat(name, &stat),
+        }
+    }
 
+    fn add_entry_long_from_stat(&mut self, name: &[u8], stat: &bun_sys::Stat) {
         // File type and permissions.
         let mode: u32 = stat.st_mode as u32;
         let file_type = get_file_type_char(mode);
@@ -577,7 +597,7 @@ impl ShellLsTask {
         let size: i64 = stat.st_size as i64;
 
         // Modification time.
-        let mtime = bun_sys::stat_mtime(&stat);
+        let mtime = bun_sys::stat_mtime(stat);
         let time_str = format_time(mtime.sec, self.now_secs);
 
         // SAFETY: `format_permissions` only writes ASCII bytes (`r`/`w`/`x`/`s`/`S`/`t`/`T`/`-`).
@@ -607,7 +627,7 @@ impl ShellLsTask {
     /// `this` must be a live heap allocation produced by
     /// [`ShellLsTask::create`]; ownership is reclaimed via
     /// [`Ls::on_shell_ls_task_done`].
-    pub(crate) fn run_from_main_thread(this: NonNull<ShellLsTask>, interp: &Interpreter) {
+    fn run_from_main_thread(this: NonNull<ShellLsTask>, interp: &Interpreter) {
         // SAFETY: precondition.
         let cmd = unsafe { this.as_ref() }.cmd;
         Ls::on_shell_ls_task_done(interp, cmd, this);
@@ -751,6 +771,15 @@ fn civil_from_days(z: i64) -> (i32, u8, u8) {
 
 impl bun_event_loop::Taskable for ShellLsTask {
     const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::ShellLsTask;
+    /// A pool completion that will not run: drop the keep-alive and the box
+    /// (nothing else frees an unrun one).
+    unsafe fn release_unrun(this: *mut Self) {
+        // SAFETY: fn contract — the box the builtin scheduled.
+        unsafe {
+            (*this).task.unref_unrun();
+            drop(bun_core::heap::take(this));
+        }
+    }
 }
 
 impl crate::shell::interpreter::ShellTaskCtx for ShellLsTask {
@@ -765,18 +794,26 @@ impl crate::shell::interpreter::ShellTaskCtx for ShellLsTask {
     }
 }
 
+/// `-a` vs `-A`; the last one on the command line wins (GNU coreutils).
+#[derive(Clone, Copy, Default, PartialEq, Eq)]
+pub(crate) enum DotfileMode {
+    #[default]
+    Hide,
+    /// `-A`, `--almost-all` — show dotfiles but skip `.` and `..`.
+    AlmostAll,
+    /// `-a`, `--all` — show everything including `.` and `..`.
+    All,
+}
+
 /// Only the fields actually consulted are kept; the rest are recognised by
 /// `parse_flag` but not stored.
 #[derive(Clone, Copy, Default)]
 pub struct Opts {
-    /// `-a`, `--all` — do not ignore entries starting with `.`
-    pub show_all: bool,
-    /// `-A`, `--almost-all` — like `-a` but skip `.` and `..`
-    pub show_almost_all: bool,
+    pub(crate) dotfiles: DotfileMode,
     /// `-d`, `--directory` — list directories themselves, not their contents
-    pub list_directories: bool,
+    pub(crate) list_directories: bool,
     /// `-l` — use a long listing format
-    pub long_listing: bool,
+    pub(crate) long_listing: bool,
     /// `-R`, `--recursive` — list subdirectories recursively
-    pub recursive: bool,
+    pub(crate) recursive: bool,
 }

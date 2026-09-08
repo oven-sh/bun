@@ -16,11 +16,6 @@ bun_alloc.workspace = true
 strum.workspace = true
 bstr.workspace = true
 scopeguard.workspace = true
-const_format.workspace = true
-enum-map.workspace = true
-enumset.workspace = true
-libc.workspace = true
-bitflags.workspace = true
 bun_core.workspace = true
 bun_collections.workspace = true
 bun_ast.workspace = true
@@ -34,7 +29,3 @@ bun_resolver.workspace = true
 bun_sys.workspace = true
 bun_url.workspace = true
 bun_wyhash.workspace = true
-
-[dev-dependencies]
-# Test harness (Test::make / Test::make_routes) needs the AST stores.
-bun_js_parser.workspace = true

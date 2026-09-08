@@ -28,13 +28,11 @@ static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm) {
     if constexpr (mode == JSC::SubspaceAccess::Concurrently)
         return nullptr;
     return WebCore::subspaceForImpl<MyClassT, WebCore::UseCustomHeapCellType::No>(
-        vm,
-        [](auto& spaces) { return spaces.m_clientSubspaceForMyClassT.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForMyClassT = std::forward<decltype(space)>(space); },
-        [](auto& spaces) { return spaces.m_subspaceForMyClassT.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_subspaceForMyClassT = std::forward<decltype(space)>(space); });
+        vm, BUN_SUBSPACE_SLOTS(m_clientSubspaceForMyClassT, m_subspaceForMyClassT));
 }
 ```
+
+`subspaceForImpl` only reads the slots inline. The subspaces themselves are created by `subspaceForImplSlow` in `src/jsc/bindings/BunClientData.cpp`, which is the only place that constructs an `IsoSubspace` (`test/internal/source-lints/iso-subspace-creation.test.ts` checks this).
 
 ## Property Definitions
 

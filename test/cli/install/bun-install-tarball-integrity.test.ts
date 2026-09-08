@@ -580,7 +580,12 @@ describe.concurrent.each(["hoisted", "isolated"] as const)("tarball integrity mi
         version: "1.0.0",
         dependencies: { pkg: "1.0.0" },
       }),
-      "bunfig.toml": `[install]\nregistry = "http://127.0.0.1:${server.port}/"\nlinker = "${linker}"\n`,
+      "bunfig.toml": Bun.TOML.stringify({
+        install: {
+          registry: `http://127.0.0.1:${server.port}/`,
+          linker,
+        },
+      }),
     });
 
     await using proc = spawn({
@@ -683,7 +688,11 @@ describe.concurrent("tarball integrity metadata forms", () => {
         version: "1.0.0",
         dependencies: { pkg: "1.0.0" },
       }),
-      "bunfig.toml": `[install]\nregistry = "http://127.0.0.1:${port}/"\n`,
+      "bunfig.toml": Bun.TOML.stringify({
+        install: {
+          registry: `http://127.0.0.1:${port}/`,
+        },
+      }),
     });
   }
 

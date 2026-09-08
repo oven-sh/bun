@@ -15,30 +15,19 @@ pub enum SideEffects {
 }
 
 #[derive(Clone, Copy, Debug)]
-pub struct Result {
-    pub side_effects: SideEffects,
-    pub ok: bool,
-    pub value: bool,
-}
-
-impl Default for Result {
-    fn default() -> Self {
-        Self {
-            side_effects: SideEffects::CouldHaveSideEffects,
-            ok: false,
-            value: false,
-        }
-    }
+pub struct Known {
+    pub(crate) value: bool,
+    pub(crate) side_effects: SideEffects,
 }
 
 #[derive(Clone, Copy)]
 pub struct BinaryExpressionSimplifyVisitor {
     // ARENA: points into the AST store (see LIFETIMES.tsv)
-    pub bin: StoreRef<E::Binary>,
+    pub(crate) bin: StoreRef<E::Binary>,
 }
 
 impl SideEffects {
-    pub fn can_change_strict_to_loose(lhs: &ExprData, rhs: &ExprData) -> bool {
+    pub(crate) fn can_change_strict_to_loose(lhs: &ExprData, rhs: &ExprData) -> bool {
         let left = lhs.known_primitive();
         let right = rhs.known_primitive();
         left == right
@@ -46,7 +35,7 @@ impl SideEffects {
             && left != bun_ast::expr::PrimitiveType::Mixed
     }
 
-    pub fn simplify_boolean<'a, const TS: bool, const SCAN: bool>(
+    pub(crate) fn simplify_boolean<'a, const TS: bool, const SCAN: bool>(
         p: &P<'a, TS, SCAN>,
         expr: Expr,
     ) -> Expr {
@@ -78,25 +67,22 @@ impl SideEffects {
                 }
                 ExprData::EBinary(e) => match e.op {
                     Op::Code::BinLogicalAnd => {
-                        let effects = SideEffects::to_boolean(p, &e.right.data);
-                        if effects.ok
-                            && effects.value
-                            && effects.side_effects == SideEffects::NoSideEffects
-                        {
-                            // "if (anything && truthyNoSideEffects)" => "if (anything)"
-                            *expr = e.left;
-                            continue;
+                        if let Some(effects) = SideEffects::to_boolean(p, &e.right.data) {
+                            if effects.value && effects.side_effects == SideEffects::NoSideEffects {
+                                // "if (anything && truthyNoSideEffects)" => "if (anything)"
+                                *expr = e.left;
+                                continue;
+                            }
                         }
                     }
                     Op::Code::BinLogicalOr => {
-                        let effects = SideEffects::to_boolean(p, &e.right.data);
-                        if effects.ok
-                            && !effects.value
-                            && effects.side_effects == SideEffects::NoSideEffects
-                        {
-                            // "if (anything || falsyNoSideEffects)" => "if (anything)"
-                            *expr = e.left;
-                            continue;
+                        if let Some(effects) = SideEffects::to_boolean(p, &e.right.data) {
+                            if !effects.value && effects.side_effects == SideEffects::NoSideEffects
+                            {
+                                // "if (anything || falsyNoSideEffects)" => "if (anything)"
+                                *expr = e.left;
+                                continue;
+                            }
                         }
                     }
                     _ => {}
@@ -109,15 +95,15 @@ impl SideEffects {
 
     // Re-exports of ExprData methods.
     #[inline(always)]
-    pub fn to_number(data: &ExprData) -> Option<f64> {
+    pub(crate) fn to_number(data: &ExprData) -> Option<f64> {
         data.to_number()
     }
     #[inline(always)]
-    pub fn typeof_(data: &ExprData) -> Option<&'static [u8]> {
+    pub(crate) fn typeof_(data: &ExprData) -> Option<&'static [u8]> {
         data.to_typeof()
     }
 
-    pub fn is_primitive_to_reorder(data: &ExprData) -> bool {
+    pub(crate) fn is_primitive_to_reorder(data: &ExprData) -> bool {
         matches!(
             data,
             ExprData::ENull(_)
@@ -132,7 +118,7 @@ impl SideEffects {
         )
     }
 
-    pub fn simplify_unused_expr<'a, const TS: bool, const SCAN: bool>(
+    pub(crate) fn simplify_unused_expr<'a, const TS: bool, const SCAN: bool>(
         p: &mut P<'a, TS, SCAN>,
         expr: Expr,
     ) -> Option<Expr> {
@@ -606,7 +592,7 @@ impl SideEffects {
     /// assign to a global variable instead.
     ///
     /// Caller is expected to first check `p.options.dead_code_elimination` so we only check it once.
-    pub fn should_keep_stmt_in_dead_control_flow(stmt: Stmt, bump: &Bump) -> bool {
+    pub(crate) fn should_keep_stmt_in_dead_control_flow(stmt: Stmt, bump: &Bump) -> bool {
         match stmt.data {
             // Omit these statements entirely
             StmtData::SEmpty(_)
@@ -724,7 +710,7 @@ impl SideEffects {
         }
     }
 
-    pub fn is_primitive_with_side_effects<'a, const TS: bool, const SCAN: bool>(
+    pub(crate) fn is_primitive_with_side_effects<'a, const TS: bool, const SCAN: bool>(
         p: &P<'a, TS, SCAN>,
         loc: bun_ast::Loc,
         data: &ExprData,
@@ -793,17 +779,12 @@ impl SideEffects {
         }
     }
 
-    pub fn to_null_or_undefined<'a, const TS: bool, const SCAN: bool>(
+    pub(crate) fn to_null_or_undefined<'a, const TS: bool, const SCAN: bool>(
         p: &P<'a, TS, SCAN>,
         exp: &ExprData,
-    ) -> Result {
+    ) -> Option<Known> {
         if !p.options.features.dead_code_elimination {
-            // value should not be read if ok is false, all existing calls already adhere to this
-            return Result {
-                ok: false,
-                value: false,
-                side_effects: SideEffects::CouldHaveSideEffects,
-            };
+            return None;
         }
         match exp {
             // Never null or undefined
@@ -814,22 +795,19 @@ impl SideEffects {
             | ExprData::ERegExp(_)
             | ExprData::EFunction(_)
             | ExprData::EArrow(_)
-            | ExprData::EBigInt(_) => Result {
+            | ExprData::EBigInt(_) => Some(Known {
                 value: false,
                 side_effects: SideEffects::NoSideEffects,
-                ok: true,
-            },
-            ExprData::EObject(_) | ExprData::EArray(_) | ExprData::EClass(_) => Result {
+            }),
+            ExprData::EObject(_) | ExprData::EArray(_) | ExprData::EClass(_) => Some(Known {
                 value: false,
                 side_effects: SideEffects::CouldHaveSideEffects,
-                ok: true,
-            },
+            }),
             // Always null or undefined
-            ExprData::ENull(_) | ExprData::EUndefined(_) => Result {
+            ExprData::ENull(_) | ExprData::EUndefined(_) => Some(Known {
                 value: true,
                 side_effects: SideEffects::NoSideEffects,
-                ok: true,
-            },
+            }),
             ExprData::EUnary(e) => match e.op {
                 // Always number or bigint
                 Op::Code::UnPos | Op::Code::UnNeg | Op::Code::UnCpl
@@ -837,13 +815,13 @@ impl SideEffects {
                 | Op::Code::UnPostDec | Op::Code::UnPostInc
                 // Always boolean
                 | Op::Code::UnNot | Op::Code::UnTypeof | Op::Code::UnDelete => {
-                    Result { value: false, side_effects: SideEffects::CouldHaveSideEffects, ok: true }
+                    Some(Known { value: false, side_effects: SideEffects::CouldHaveSideEffects })
                 }
                 // Always undefined
                 Op::Code::UnVoid => {
-                    Result { value: true, side_effects: SideEffects::CouldHaveSideEffects, ok: true }
+                    Some(Known { value: true, side_effects: SideEffects::CouldHaveSideEffects })
                 }
-                _ => Result::default(),
+                _ => None,
             },
             ExprData::EBinary(e) => match e.op {
                 // always string or number or bigint
@@ -863,209 +841,163 @@ impl SideEffects {
                 | Op::Code::BinLooseNe | Op::Code::BinLt | Op::Code::BinGt
                 | Op::Code::BinLe | Op::Code::BinGe | Op::Code::BinInstanceof
                 | Op::Code::BinIn => {
-                    Result { ok: true, value: false, side_effects: SideEffects::CouldHaveSideEffects }
+                    Some(Known { value: false, side_effects: SideEffects::CouldHaveSideEffects })
                 }
                 Op::Code::BinComma => {
-                    let res = Self::to_null_or_undefined(p, &e.right.data);
-                    if res.ok {
-                        Result { value: res.value, side_effects: SideEffects::CouldHaveSideEffects, ok: true }
-                    } else {
-                        Result::default()
-                    }
+                    Self::to_null_or_undefined(p, &e.right.data).map(|res| Known {
+                        value: res.value,
+                        side_effects: SideEffects::CouldHaveSideEffects,
+                    })
                 }
-                _ => Result::default(),
+                _ => None,
             },
             ExprData::EInlinedEnum(e) => Self::to_null_or_undefined(p, &e.value.data),
-            _ => Result::default(),
+            _ => None,
         }
     }
 
-    pub fn to_boolean<'a, const TS: bool, const SCAN: bool>(
+    pub(crate) fn to_boolean<'a, const TS: bool, const SCAN: bool>(
         p: &P<'a, TS, SCAN>,
         exp: &ExprData,
-    ) -> Result {
+    ) -> Option<Known> {
         if !p.options.features.dead_code_elimination {
-            return Result::default();
+            return None;
         }
         if !p.stack_check.is_safe_to_recurse() {
             p.report_stack_overflow(bun_ast::Loc::EMPTY);
-            return Result::default();
+            return None;
         }
         match exp {
-            ExprData::ENull(_) | ExprData::EUndefined(_) => Result {
+            ExprData::ENull(_) | ExprData::EUndefined(_) => Some(Known {
                 value: false,
                 side_effects: SideEffects::NoSideEffects,
-                ok: true,
-            },
-            ExprData::EBoolean(e) | ExprData::EBranchBoolean(e) => Result {
+            }),
+            ExprData::EBoolean(e) | ExprData::EBranchBoolean(e) => Some(Known {
                 value: e.value,
                 side_effects: SideEffects::NoSideEffects,
-                ok: true,
-            },
-            ExprData::ENumber(e) => Result {
+            }),
+            ExprData::ENumber(e) => Some(Known {
                 value: e.value() != 0.0 && !e.value().is_nan(),
                 side_effects: SideEffects::NoSideEffects,
-                ok: true,
-            },
-            ExprData::EBigInt(e) => {
-                let equal = E::BigInt::check_equality(&e.value, b"0");
-                Result {
-                    value: equal == Some(false),
-                    side_effects: SideEffects::NoSideEffects,
-                    ok: equal.is_some(),
-                }
-            }
-            ExprData::EString(e) => Result {
+            }),
+            ExprData::EBigInt(e) => E::BigInt::check_equality(&e.value, b"0").map(|equal| Known {
+                value: !equal,
+                side_effects: SideEffects::NoSideEffects,
+            }),
+            ExprData::EString(e) => Some(Known {
                 // Open-coded `isPresent` to dodge an ambiguous inherent `len()`
                 // while E.rs's duplicate `impl EString` blocks are being merged.
                 value: e.rope_len > 0 || !e.data.is_empty(),
                 side_effects: SideEffects::NoSideEffects,
-                ok: true,
-            },
-            ExprData::EFunction(_) | ExprData::EArrow(_) | ExprData::ERegExp(_) => Result {
+            }),
+            ExprData::EFunction(_) | ExprData::EArrow(_) | ExprData::ERegExp(_) => Some(Known {
                 value: true,
                 side_effects: SideEffects::NoSideEffects,
-                ok: true,
-            },
-            ExprData::EObject(_) | ExprData::EArray(_) | ExprData::EClass(_) => Result {
+            }),
+            ExprData::EObject(_) | ExprData::EArray(_) | ExprData::EClass(_) => Some(Known {
                 value: true,
                 side_effects: SideEffects::CouldHaveSideEffects,
-                ok: true,
-            },
+            }),
             ExprData::EUnary(e) => match e.op {
-                Op::Code::UnVoid => Result {
+                Op::Code::UnVoid => Some(Known {
                     value: false,
                     side_effects: SideEffects::CouldHaveSideEffects,
-                    ok: true,
-                },
+                }),
                 Op::Code::UnTypeof => {
                     // Never an empty string
-                    Result {
+                    Some(Known {
                         value: true,
                         side_effects: SideEffects::CouldHaveSideEffects,
-                        ok: true,
-                    }
+                    })
                 }
-                Op::Code::UnNot => {
-                    let res = Self::to_boolean(p, &e.value.data);
-                    if res.ok {
-                        Result {
-                            value: !res.value,
-                            side_effects: res.side_effects,
-                            ok: true,
-                        }
-                    } else {
-                        Result::default()
-                    }
-                }
-                _ => Result::default(),
+                Op::Code::UnNot => Self::to_boolean(p, &e.value.data).map(|res| Known {
+                    value: !res.value,
+                    side_effects: res.side_effects,
+                }),
+                _ => None,
             },
             ExprData::EBinary(e) => match e.op {
-                Op::Code::BinLogicalOr => {
-                    let res = Self::to_boolean(p, &e.right.data);
-                    if res.ok && res.value {
-                        Result {
-                            value: true,
-                            side_effects: SideEffects::CouldHaveSideEffects,
-                            ok: true,
-                        }
-                    } else {
-                        Result::default()
-                    }
-                }
-                Op::Code::BinLogicalAnd => {
-                    let res = Self::to_boolean(p, &e.right.data);
-                    if res.ok && !res.value {
-                        Result {
-                            value: false,
-                            side_effects: SideEffects::CouldHaveSideEffects,
-                            ok: true,
-                        }
-                    } else {
-                        Result::default()
-                    }
-                }
-                Op::Code::BinComma => {
-                    let res = Self::to_boolean(p, &e.right.data);
-                    if res.ok {
-                        Result {
-                            value: res.value,
-                            side_effects: SideEffects::CouldHaveSideEffects,
-                            ok: true,
-                        }
-                    } else {
-                        Result::default()
-                    }
-                }
+                Op::Code::BinLogicalOr => match Self::to_boolean(p, &e.right.data) {
+                    Some(res) if res.value => Some(Known {
+                        value: true,
+                        side_effects: SideEffects::CouldHaveSideEffects,
+                    }),
+                    _ => None,
+                },
+                Op::Code::BinLogicalAnd => match Self::to_boolean(p, &e.right.data) {
+                    Some(res) if !res.value => Some(Known {
+                        value: false,
+                        side_effects: SideEffects::CouldHaveSideEffects,
+                    }),
+                    _ => None,
+                },
+                Op::Code::BinComma => Self::to_boolean(p, &e.right.data).map(|res| Known {
+                    value: res.value,
+                    side_effects: SideEffects::CouldHaveSideEffects,
+                }),
                 Op::Code::BinGt => {
                     if let Some(left_num) = e.left.data.to_finite_number() {
                         if let Some(right_num) = e.right.data.to_finite_number() {
-                            return Result {
-                                ok: true,
+                            return Some(Known {
                                 value: left_num > right_num,
                                 side_effects: SideEffects::NoSideEffects,
-                            };
+                            });
                         }
                     }
-                    Result::default()
+                    None
                 }
                 Op::Code::BinLt => {
                     if let Some(left_num) = e.left.data.to_finite_number() {
                         if let Some(right_num) = e.right.data.to_finite_number() {
-                            return Result {
-                                ok: true,
+                            return Some(Known {
                                 value: left_num < right_num,
                                 side_effects: SideEffects::NoSideEffects,
-                            };
+                            });
                         }
                     }
-                    Result::default()
+                    None
                 }
                 Op::Code::BinLe => {
                     if let Some(left_num) = e.left.data.to_finite_number() {
                         if let Some(right_num) = e.right.data.to_finite_number() {
-                            return Result {
-                                ok: true,
+                            return Some(Known {
                                 value: left_num <= right_num,
                                 side_effects: SideEffects::NoSideEffects,
-                            };
+                            });
                         }
                     }
-                    Result::default()
+                    None
                 }
                 Op::Code::BinGe => {
                     if let Some(left_num) = e.left.data.to_finite_number() {
                         if let Some(right_num) = e.right.data.to_finite_number() {
-                            return Result {
-                                ok: true,
+                            return Some(Known {
                                 value: left_num >= right_num,
                                 side_effects: SideEffects::NoSideEffects,
-                            };
+                            });
                         }
                     }
-                    Result::default()
+                    None
                 }
-                _ => Result::default(),
+                _ => None,
             },
             ExprData::EInlinedEnum(e) => Self::to_boolean(p, &e.value.data),
             ExprData::ESpecial(special) => match special {
                 E::Special::ModuleExports
                 | E::Special::ResolvedSpecifierString(_)
-                | E::Special::HotData => Result::default(),
+                | E::Special::HotData => None,
                 E::Special::HotAccept | E::Special::HotAcceptVisited | E::Special::HotEnabled => {
-                    Result {
-                        ok: true,
+                    Some(Known {
                         value: true,
                         side_effects: SideEffects::NoSideEffects,
-                    }
+                    })
                 }
-                E::Special::HotDisabled => Result {
-                    ok: true,
+                E::Special::HotDisabled => Some(Known {
                     value: false,
                     side_effects: SideEffects::NoSideEffects,
-                },
+                }),
             },
-            _ => Result::default(),
+            _ => None,
         }
     }
 }

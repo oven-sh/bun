@@ -2232,6 +2232,26 @@ describe("an uncaught error at the end of a worker's life", () => {
       ["message:UR:R"],
       0,
     ],
+    // With the entry module's top-level await still pending the worker waits in
+    // the same loop; the rejection decides the exit, not the unsettled await (13).
+    [
+      "rejection in the last immediate while a top-level await is pending",
+      `setImmediate(() => Promise.reject(new Error("R"))); await new Promise(() => {})`,
+      ["error:R"],
+      1,
+    ],
+    [
+      "the worker's listener takes it and the unsettled top-level await still exits 13",
+      `process.on("unhandledRejection", e => parentPort.postMessage("UR:" + e.message)); setImmediate(() => Promise.reject(new Error("R"))); await new Promise(() => {})`,
+      ["message:UR:R"],
+      13,
+    ],
+    [
+      "process.exit(0) from 'beforeExit' is not turned into 13 by a pending top-level await",
+      `process.on("beforeExit", () => process.exit(0)); await new Promise(() => {})`,
+      [],
+      0,
+    ],
     [
       "an 'exit' listener throwing on a natural exit",
       `process.on("exit", () => { throw new Error("T"); })`,
@@ -2270,6 +2290,37 @@ describe("an uncaught error at the end of a worker's life", () => {
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect({ stdout, stderr, exitCode }).toEqual({
       stdout: JSON.stringify({ events, code }) + "\n",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  // Node reports the rejection right after the macrotask that left it, before
+  // a task that macrotask queued (here a MessagePort delivery) runs.
+  test.concurrent("the rejection is reported before tasks the same turn queued", async () => {
+    const workerSrc = `const { parentPort } = require("node:worker_threads");
+      const { port1, port2 } = new MessageChannel();
+      port2.on("message", () => { parentPort.postMessage("task"); port2.close(); });
+      process.on("unhandledRejection", e => parentPort.postMessage("UR:" + e.message));
+      setImmediate(() => { port1.postMessage(0); Promise.reject(new Error("R")); });`;
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const { Worker } = require("node:worker_threads");
+         const w = new Worker(${JSON.stringify(workerSrc)}, { eval: true });
+         const messages = [];
+         w.on("message", m => messages.push(m));
+         w.on("error", e => messages.push("error:" + e.message));
+         w.on("exit", code => console.log(JSON.stringify({ messages, code })));`,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({
+      stdout: JSON.stringify({ messages: ["UR:R", "task"], code: 0 }) + "\n",
       stderr: "",
       exitCode: 0,
     });

@@ -86,8 +86,6 @@ impl FormData {
     ) -> crate::Result<JSValue> {
         match encoding {
             Encoding::URLEncoded => {
-                // The URL Standard parses each name/value with "UTF-8 decode
-                // without BOM", which treats a leading U+FEFF as data.
                 let str = EncodedSlice::utf8(input);
                 // C++ may throw (e.g. string too long) — `create_from_url_query`
                 // wraps the FFI in a validation scope and maps zero → JsError.
@@ -213,7 +211,6 @@ pub(crate) fn to_js_from_multipart_data(
                 // `append_blob` dupes the content type; release this stack-local.
                 blob.detach();
             } else {
-                // "UTF-8 decode without BOM" keeps a leading U+FEFF as data.
                 let value = EncodedSlice::utf8(value_str);
                 wrap.form.append(&key, &value);
             }

@@ -42,7 +42,10 @@ use bun_wyhash::{Wyhash, Wyhash11};
 use crate::analytics;
 use crate::bun_bunfig::Arguments as Command;
 use crate::bun_progress::{Node as ProgressNode, Progress};
-use crate::lockfile::tree::is_filtered_dependency_or_workspace;
+use crate::lockfile::tree::{
+    DependencyFilter, filter_dependency_or_workspace, is_filtered_dependency_or_workspace,
+    warn_unsupported_platform,
+};
 use crate::lockfile::{self, Lockfile};
 use crate::package_manager::{self, PackageManager, WorkspaceFilter, run_tasks};
 use crate::package_manager_real::ProgressStrings;
@@ -232,6 +235,7 @@ pub(crate) fn build_store(
     let string_buf = &lockfile.buffers.string_bytes[..];
 
     let mut nodes: store::node::List = store::node::List::default();
+    let mut unsupported_platform: Vec<PackageID> = Vec::new();
 
     // DFS so a deduplicated node's full subtree (and therefore its `peers`)
     // is finalized before any later sibling encounters it.
@@ -686,7 +690,8 @@ pub(crate) fn build_store(
             }
 
             for &dep_id in &dep_ids_sort_buf {
-                if is_filtered_dependency_or_workspace(
+                let pkg_id = resolutions[dep_id as usize];
+                match filter_dependency_or_workspace(
                     dep_id,
                     entry.pkg_id,
                     workspace_filters,
@@ -695,10 +700,15 @@ pub(crate) fn build_store(
                     lockfile,
                     resolutions,
                 ) {
-                    continue;
+                    DependencyFilter::Keep => {}
+                    DependencyFilter::Skip => continue,
+                    DependencyFilter::SkipUnsupportedPlatform => {
+                        if !unsupported_platform.contains(&pkg_id) {
+                            unsupported_platform.push(pkg_id);
+                        }
+                        continue;
+                    }
                 }
-
-                let pkg_id = resolutions[dep_id as usize];
                 let dep = &dependencies[dep_id as usize];
 
                 // TODO: handle duplicate dependencies. should be similar logic
@@ -1128,6 +1138,7 @@ pub(crate) fn build_store(
     Ok(Store {
         entries: store_entries,
         nodes,
+        unsupported_platform,
     })
 }
 
@@ -1162,6 +1173,16 @@ pub(crate) fn install_isolated_packages(
         packages_to_install,
         timings,
     )?;
+    // `packages_to_install` is the security scanner pre-pass; the full
+    // install that follows reports these.
+    if packages_to_install.is_none() {
+        warn_unsupported_platform(
+            manager.log_mut(),
+            lockfile,
+            manager,
+            &store.unsupported_platform,
+        );
+    }
 
     let global_store_path: Option<Vec<u8>> = if manager.options.enable.global_virtual_store() {
         'global_store_path: {

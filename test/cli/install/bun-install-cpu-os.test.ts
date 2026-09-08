@@ -604,4 +604,57 @@ describe("bun install --cpu and --os flags", () => {
     // Should skip x64 dep and install other CPU deps
     expect(await readdirSorted(join(package_dir, "node_modules"))).toEqual([".cache", "dep-arm64", "dep-ppc64"]);
   });
+
+  // A required dependency that is dropped for the target platform must not go
+  // missing silently (npm: EBADPLATFORM, pnpm: warning). Optional ones stay quiet.
+  it.each(["hoisted", "isolated"])(
+    "warns for each required dependency skipped for the target platform (%s linker)",
+    async linker => {
+      const urls: string[] = [];
+      setHandler(
+        dummyRegistry(urls, {
+          "1.0.0": { os: ["win32"] },
+          "2.0.0": { cpu: ["arm64", "ppc64"], os: ["!linux"] },
+          "3.0.0": {},
+          "4.0.0": { cpu: ["s390x"] },
+        }),
+      );
+
+      await writeFile(
+        join(package_dir, "package.json"),
+        JSON.stringify({
+          name: "test-platform-warning",
+          version: "1.0.0",
+          dependencies: { "dep-win32-only": "1.0.0", "dep-universal": "3.0.0" },
+          devDependencies: { "dep-not-linux": "2.0.0" },
+          optionalDependencies: { "dep-s390x-only": "4.0.0" },
+        }),
+      );
+
+      await using proc = spawn({
+        cmd: [bunExe(), "install", "--os", "linux", "--cpu", "x64", "--linker", linker],
+        cwd: package_dir,
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      expect(stderr).not.toContain("error:");
+      expect(
+        stderr
+          .split("\n")
+          .filter(line => line.startsWith("warn:"))
+          .sort(),
+      ).toEqual([
+        `warn: dep-not-linux@2.0.0 was not installed: unsupported platform (wants os "!linux" cpu [ "arm64", "ppc64", ], current os "linux" cpu "x64")`,
+        `warn: dep-win32-only@1.0.0 was not installed: unsupported platform (wants os "win32", current os "linux")`,
+      ]);
+      expect(stdout).not.toContain("dep-win32-only");
+      expect((await readdirSorted(join(package_dir, "node_modules"))).filter(name => !name.startsWith("."))).toEqual([
+        "dep-universal",
+      ]);
+      expect(exitCode).toBe(0);
+    },
+  );
 });

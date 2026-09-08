@@ -157,8 +157,8 @@ test("expect.assertions combined with timeout", async () => {
   await Bun.sleep(100);
 }, 1);
 
-// === timing edge case ===
-test.failing("more functions called after delayed done", done => {
+// === timing edge case: an error after done() in the same tick still fails this test ===
+test("more functions called after delayed done", done => {
   process.nextTick(() => {
     done();
     expect(true).toBe(false);
@@ -172,7 +172,7 @@ test("misattributed error", () => {
     expect(true).toBe(false);
   }, 10);
 });
-test.failing("passes because it catches the misattributed error", done => {
+test("fails because it receives the misattributed error", done => {
   setTimeout(done, 50);
 });
 
@@ -265,7 +265,7 @@ describe("done parameter", () => {
   });
 });
 
-test.failing("microtasks and rejections are drained after the test callback is executed", () => {
+test("microtasks and rejections are drained after the test callback is executed", () => {
   Promise.reject(new Error("uh oh!"));
 });
 

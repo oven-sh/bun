@@ -1,32 +1,43 @@
-//! Forward-decl shell task types referenced by `runtime::dispatch::run_task`.
+//! Shell task types referenced by `runtime::dispatch::run_task`.
 //!
 //! Several shell task types collapsed into the NodeId-arena state machine
-//! (`interpreter.rs`); the rest are gated behind `interpreter_body_gated.rs`.
-//! The high-tier dispatcher must still cast the erased `Task.ptr` to a
-//! concrete type and call the per-type entry point, so the shapes are
-//! declared here. Bodies that already exist elsewhere re-export through this
-//! module; the rest carry the body inline (mostly `run_from_main_thread()` →
-//! resume the parent state via NodeId).
+//! (`interpreter.rs`). The high-tier dispatcher must still rebox the erased
+//! `Task.ptr` as a concrete type and call the per-type entry point, so the
+//! shapes are declared here. Bodies that already exist elsewhere re-export
+//! through this module; the rest carry the body inline (mostly
+//! `run_from_main_thread()` → resume the parent state via NodeId).
 
-use crate::shell::interpreter::{Interpreter, NodeId, ShellTask};
+use bun_ptr::ParentRef;
+
+use crate::shell::interpreter::{Interpreter, NodeId, ShellTask, ShellTaskCtx};
+
 /// Task payload for [`ShellAsync`](crate::shell::states::r#async::Async)'s
 /// bounce back to the main thread. The state lives in `interp.nodes`, so
-/// the enqueued payload is `(interp, node)`.
-#[repr(C)]
+/// the enqueued payload is `(interp, node)`; one is boxed per `Async` node
+/// and reused for each bounce.
 pub(crate) struct ShellAsyncTask {
-    pub interp: *mut Interpreter,
+    pub interp: ParentRef<Interpreter>,
     pub node: NodeId,
+    /// Intrusive node for the mini-loop post (the JS loop queues a `Task`).
+    pub concurrent_task: bun_event_loop::AnyTaskWithExtraContext::AnyTaskWithExtraContext,
 }
 
-/// Stat task backing shell conditional expressions (`[ -f x ]` etc.). Wraps an
-/// inner [`ShellTask`].
-#[repr(C)]
+impl ShellAsyncTask {
+    pub(crate) fn run(self: Box<Self>) {
+        crate::shell::states::r#async::Async::run_from_main_thread(self);
+    }
+}
+
+impl bun_event_loop::AnyTaskWithExtraContext::BoxedMiniTaskRunner<ShellAsyncTask>
+    for ShellAsyncTask
+{
+    fn run_from_loop_thread(owner: Box<ShellAsyncTask>) {
+        owner.run();
+    }
+}
+
+/// Stat task backing shell conditional expressions (`[ -f x ]` etc.).
 pub(crate) struct ShellCondExprStatTask {
-    pub task: CondExprStatInner,
-}
-
-#[repr(C)]
-pub(crate) struct CondExprStatInner {
     pub task: ShellTask,
     pub cond: NodeId,
     pub stat: bun_sys::Result<bun_sys::Stat>,
@@ -37,21 +48,23 @@ pub(crate) struct CondExprStatInner {
     pub cwd_fd: bun_sys::Fd,
 }
 
-impl ShellCondExprStatTask {
-    /// # Safety
-    /// `this` must be a live `heap::alloc` payload paired with the schedule
-    /// site. Ownership of `*this` is consumed.
-    // Dispatch trampoline: `this` validity is guaranteed by the `run_task`
-    // contract; signature is fixed by `dispatch.rs`.
-    #[allow(clippy::not_unsafe_ptr_arg_deref)]
-    pub(crate) fn run_from_main_thread(this: *mut Self, interp: &Interpreter) {
-        // SAFETY: live Box'd task; paired with `heap::alloc` at schedule time.
-        let owned = unsafe { bun_core::heap::take(this) };
+crate::shell_task!(ShellCondExprStatTask);
+
+impl ShellTaskCtx for ShellCondExprStatTask {
+    fn shell_task(&self) -> &ShellTask {
+        &self.task
+    }
+    fn shell_task_mut(&mut self) -> &mut ShellTask {
+        &mut self.task
+    }
+    fn run_from_thread_pool(&mut self) {
+        debug_assert!(self.path.last() == Some(&0));
+        let z = bun_core::ZStr::from_buf(&self.path, self.path.len() - 1);
+        self.stat = crate::shell::interpreter::shell_statat(self.cwd_fd, z);
+    }
+    fn run_from_main_thread(self: Box<Self>, interp: &Interpreter) {
         crate::shell::states::cond_expr::CondExpr::on_stat_task_done(
-            interp,
-            owned.task.cond,
-            &owned.task.stat,
-            &owned.task.path,
+            interp, self.cond, &self.stat, &self.path,
         );
     }
 }
@@ -63,7 +76,6 @@ pub enum ShellGlobErr {
 }
 
 /// Glob-expansion task run off the JS thread during word expansion.
-#[repr(C)]
 pub(crate) struct ShellGlobTask {
     pub task: ShellTask,
     pub expansion: NodeId,
@@ -72,63 +84,47 @@ pub(crate) struct ShellGlobTask {
     pub err: Option<ShellGlobErr>,
 }
 
-impl bun_event_loop::Taskable for ShellGlobTask {
-    const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::ShellGlobTask;
-    /// A pool completion that will not run: drop the keep-alive and the box
-    /// (nothing else frees an unrun one).
-    unsafe fn release_unrun(this: *mut Self) {
-        // SAFETY: fn contract — the box the builtin scheduled.
-        unsafe {
-            (*this).task.unref_unrun();
-            drop(bun_core::heap::take(this));
-        }
-    }
-}
+crate::shell_task!(ShellGlobTask);
 
-impl crate::shell::interpreter::ShellTaskCtx for ShellGlobTask {
-    const TASK_OFFSET: usize = core::mem::offset_of!(Self, task);
-    fn run_from_thread_pool(this: &mut Self) {
-        match Self::walk_impl(&mut this.walker, &mut this.result) {
+impl ShellTaskCtx for ShellGlobTask {
+    fn shell_task(&self) -> &ShellTask {
+        &self.task
+    }
+    fn shell_task_mut(&mut self) -> &mut ShellTask {
+        &mut self.task
+    }
+    fn run_from_thread_pool(&mut self) {
+        match Self::walk_impl(&mut self.walker, &mut self.result) {
             Ok(Ok(())) => {}
-            Ok(Err(e)) => this.err = Some(ShellGlobErr::Syscall(e)),
-            Err(e) => this.err = Some(ShellGlobErr::Unknown(e)),
+            Ok(Err(e)) => self.err = Some(ShellGlobErr::Syscall(e)),
+            Err(e) => self.err = Some(ShellGlobErr::Unknown(e)),
         }
     }
-    // Dispatch trampoline: `this` validity is guaranteed by the `run_task`
-    // contract; signature is fixed by the `ShellTaskCtx` trait.
-    #[allow(clippy::not_unsafe_ptr_arg_deref)]
-    fn run_from_main_thread(this: *mut Self, interp: &Interpreter) {
-        // SAFETY: paired with `heap::alloc` in `create_and_schedule`.
-        let mut me = unsafe { bun_core::heap::take(this) };
+    fn run_from_main_thread(mut self: Box<Self>, interp: &Interpreter) {
         crate::shell::states::expansion::Expansion::on_glob_walk_done(
             interp,
-            me.expansion,
-            core::mem::take(&mut me.result),
-            me.err.take(),
+            self.expansion,
+            core::mem::take(&mut self.result),
+            self.err.take(),
         );
     }
 }
 
 impl ShellGlobTask {
-    /// Heap-allocate the glob task for `expansion` and schedule it on the
-    /// work pool; the allocation is freed in `run_from_main_thread`.
+    /// Box the glob task for `expansion` and schedule it on the work pool;
+    /// it comes back through `run_from_main_thread`.
     pub(crate) fn create_and_schedule(
         interp: &Interpreter,
         expansion: NodeId,
         walker: bun_glob::BunGlobWalkerZ,
     ) {
-        let mut task = ShellTask::new(interp.event_loop);
-        task.interp = interp.as_ctx_ptr();
-        let this = bun_core::heap::alloc(ShellGlobTask {
-            task,
+        ShellTask::schedule(Box::new(ShellGlobTask {
+            task: ShellTask::new(interp),
             expansion,
             walker,
             result: Vec::new(),
             err: None,
-        });
-        // SAFETY: `this` is a fresh heap allocation embedding `ShellTask` at
-        // `TASK_OFFSET`; freed in `run_from_main_thread`.
-        unsafe { ShellTask::schedule::<ShellGlobTask>(this) };
+        }));
     }
 
     fn walk_impl(

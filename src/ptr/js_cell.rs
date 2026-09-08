@@ -144,3 +144,187 @@ impl<T: core::fmt::Debug> core::fmt::Debug for JsCell<T> {
         self.get().fmt(f)
     }
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// JsRefCell<T> — `JsCell` with `RefCell`-shaped guards, checked in debug.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// [`JsCell`]'s contract (one owning thread; the hazard is same-thread
+/// re-entrancy) with `core::cell::RefCell`'s API: [`borrow`](Self::borrow) /
+/// [`borrow_mut`](Self::borrow_mut) hand out guards, and in debug builds an
+/// overlapping exclusive borrow panics exactly like `RefCell`. Release builds
+/// compile the flag away, so a guard costs what the reference costs.
+pub struct JsRefCell<T> {
+    value: core::cell::UnsafeCell<T>,
+    #[cfg(debug_assertions)]
+    flag: core::cell::Cell<isize>,
+}
+
+/// Shared borrow of a [`JsRefCell`]; see `core::cell::Ref`.
+pub struct JsCellRef<'b, T: ?Sized> {
+    value: core::ptr::NonNull<T>,
+    #[cfg(debug_assertions)]
+    flag: &'b core::cell::Cell<isize>,
+    _marker: core::marker::PhantomData<&'b T>,
+}
+
+/// Exclusive borrow of a [`JsRefCell`]; see `core::cell::RefMut`.
+pub struct JsCellRefMut<'b, T: ?Sized> {
+    value: core::ptr::NonNull<T>,
+    #[cfg(debug_assertions)]
+    flag: &'b core::cell::Cell<isize>,
+    _marker: core::marker::PhantomData<&'b mut T>,
+}
+
+impl<T> JsRefCell<T> {
+    #[inline(always)]
+    pub const fn new(value: T) -> Self {
+        Self {
+            value: core::cell::UnsafeCell::new(value),
+            #[cfg(debug_assertions)]
+            flag: core::cell::Cell::new(0),
+        }
+    }
+
+    #[inline(always)]
+    #[track_caller]
+    pub fn borrow(&self) -> JsCellRef<'_, T> {
+        #[cfg(debug_assertions)]
+        {
+            let f = self.flag.get();
+            assert!(f >= 0, "JsRefCell already mutably borrowed");
+            self.flag.set(f + 1);
+        }
+        JsCellRef {
+            // SAFETY: `UnsafeCell::get` is never null.
+            value: unsafe { core::ptr::NonNull::new_unchecked(self.value.get()) },
+            #[cfg(debug_assertions)]
+            flag: &self.flag,
+            _marker: core::marker::PhantomData,
+        }
+    }
+
+    #[inline(always)]
+    #[track_caller]
+    pub fn borrow_mut(&self) -> JsCellRefMut<'_, T> {
+        #[cfg(debug_assertions)]
+        {
+            let f = self.flag.get();
+            assert!(f == 0, "JsRefCell already borrowed");
+            self.flag.set(-1);
+        }
+        JsCellRefMut {
+            // SAFETY: `UnsafeCell::get` is never null.
+            value: unsafe { core::ptr::NonNull::new_unchecked(self.value.get()) },
+            #[cfg(debug_assertions)]
+            flag: &self.flag,
+            _marker: core::marker::PhantomData,
+        }
+    }
+
+    #[inline(always)]
+    pub fn get_mut(&mut self) -> &mut T {
+        self.value.get_mut()
+    }
+
+    /// Overwrite the value (dropping the old one) with no borrow outstanding.
+    #[inline(always)]
+    #[track_caller]
+    pub fn set(&self, value: T) {
+        #[cfg(debug_assertions)]
+        {
+            assert!(self.flag.get() == 0, "JsRefCell already borrowed");
+            // Held across the old value's drop, like `*cell.borrow_mut() = v`.
+            self.flag.set(-1);
+        }
+        // SAFETY: no `JsCellRef`/`JsCellRefMut` is live (checked in debug; the
+        // type's single-thread no-overlap contract in release), so this is the
+        // only access to the value for the duration of the write.
+        unsafe { *self.value.get() = value };
+        #[cfg(debug_assertions)]
+        self.flag.set(0);
+    }
+}
+
+impl<'b, T: ?Sized> JsCellRef<'b, T> {
+    #[inline(always)]
+    pub fn map<U: ?Sized>(orig: JsCellRef<'b, T>, f: impl FnOnce(&T) -> &U) -> JsCellRef<'b, U> {
+        let value = core::ptr::NonNull::from(f(&*orig));
+        let orig = core::mem::ManuallyDrop::new(orig);
+        #[cfg(not(debug_assertions))]
+        let _ = &orig;
+        JsCellRef {
+            value,
+            #[cfg(debug_assertions)]
+            flag: orig.flag,
+            _marker: core::marker::PhantomData,
+        }
+    }
+}
+
+impl<'b, T: ?Sized> JsCellRefMut<'b, T> {
+    #[inline(always)]
+    pub fn map<U: ?Sized>(
+        orig: JsCellRefMut<'b, T>,
+        f: impl FnOnce(&mut T) -> &mut U,
+    ) -> JsCellRefMut<'b, U> {
+        let mut orig = core::mem::ManuallyDrop::new(orig);
+        let value = core::ptr::NonNull::from(f(&mut **orig));
+        JsCellRefMut {
+            value,
+            #[cfg(debug_assertions)]
+            flag: orig.flag,
+            _marker: core::marker::PhantomData,
+        }
+    }
+}
+
+impl<T: ?Sized> core::ops::Deref for JsCellRef<'_, T> {
+    type Target = T;
+    #[inline(always)]
+    fn deref(&self) -> &T {
+        // SAFETY: a live `JsCellRef` is a counted shared borrow of the cell (debug)
+        // / the cell's single-thread no-overlap contract (release).
+        unsafe { self.value.as_ref() }
+    }
+}
+
+impl<T: ?Sized> core::ops::Deref for JsCellRefMut<'_, T> {
+    type Target = T;
+    #[inline(always)]
+    fn deref(&self) -> &T {
+        // SAFETY: a live `JsCellRefMut` is the cell's only borrow (see `Deref` for `JsCellRef`).
+        unsafe { self.value.as_ref() }
+    }
+}
+
+impl<T: ?Sized> core::ops::DerefMut for JsCellRefMut<'_, T> {
+    #[inline(always)]
+    fn deref_mut(&mut self) -> &mut T {
+        // SAFETY: a live `JsCellRefMut` is the cell's only borrow (see `Deref` for `JsCellRef`).
+        unsafe { self.value.as_mut() }
+    }
+}
+
+#[cfg(debug_assertions)]
+impl<T: ?Sized> Drop for JsCellRef<'_, T> {
+    #[inline(always)]
+    fn drop(&mut self) {
+        self.flag.set(self.flag.get() - 1);
+    }
+}
+
+#[cfg(debug_assertions)]
+impl<T: ?Sized> Drop for JsCellRefMut<'_, T> {
+    #[inline(always)]
+    fn drop(&mut self) {
+        self.flag.set(0);
+    }
+}
+
+impl<T: Default> Default for JsRefCell<T> {
+    #[inline(always)]
+    fn default() -> Self {
+        Self::new(T::default())
+    }
+}

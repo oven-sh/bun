@@ -1,5 +1,3 @@
-#[cfg(any(target_os = "linux", target_os = "android"))]
-use bun_collections::VecExt;
 use bun_jsc::{self as jsc, JSGlobalObject, JSValue, JsResult};
 #[cfg(windows)]
 use bun_sys::windows::libuv as uv;
@@ -30,16 +28,6 @@ use sys::Stdio as FdStdio;
 // `const log = bun.sys.syslog;`
 bun_output::define_scoped_log!(log, SYS, visible);
 
-/// Payload of `Stdio::Capture`.
-#[derive(Clone, Copy)]
-pub struct Capture {
-    // BACKREF: raw pointer to a capture buffer owned by the shell interpreter.
-    // The shell keeps the buffer alive for the lifetime
-    // of the spawned process; this struct never frees it.
-    #[cfg(any(target_os = "linux", target_os = "android"))]
-    pub(crate) buf: *mut Vec<u8>,
-}
-
 /// Payload of `Stdio::Dup2`.
 #[derive(Clone, Copy)]
 pub struct Dup2 {
@@ -52,7 +40,9 @@ pub struct Dup2 {
 #[allow(clippy::large_enum_variant)]
 pub enum Stdio {
     Inherit,
-    Capture(Capture),
+    /// The shell tees the child's output into its own buffer through the
+    /// `PipeReader`.
+    Capture,
     Ignore,
     Fd(Fd),
     Dup2(Dup2),
@@ -104,10 +94,7 @@ impl Stdio {
     #[cfg(any(target_os = "linux", target_os = "android"))]
     pub(crate) fn byte_slice(&self) -> &[u8] {
         match self {
-            // SAFETY: `buf` is a live backref owned by the caller (shell); the
-            // returned slice borrows `self` and the caller guarantees the
-            // Vec<u8> outlives this Stdio.
-            Self::Capture(c) => unsafe { (*c.buf).slice() },
+            Self::Capture => &[],
             Self::Blob(blob) => blob.slice(),
             _ => &[],
         }
@@ -284,7 +271,7 @@ impl Stdio {
                 out: d.out,
                 to: d.to,
             }),
-            Self::Capture(_) | Self::Pipe | Self::ReadableStream(_) => buffer(),
+            Self::Capture | Self::Pipe | Self::ReadableStream(_) => buffer(),
             #[cfg(not(windows))]
             Self::SocketFd => SpawnOptionsStdio::SocketFd,
             // Windows extra-stdio is a libuv pipe handle (no raw-fd ownership
@@ -308,7 +295,7 @@ impl Stdio {
 
     pub(crate) fn is_piped(&self) -> bool {
         match self {
-            Self::Capture(_) | Self::Blob(_) | Self::Pipe | Self::ReadableStream(_) => true,
+            Self::Capture | Self::Blob(_) | Self::Pipe | Self::ReadableStream(_) => true,
             Self::Ipc => cfg!(windows),
             _ => false,
         }

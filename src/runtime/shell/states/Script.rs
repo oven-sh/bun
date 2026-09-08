@@ -3,18 +3,18 @@
 
 use crate::shell::ExitCode;
 use crate::shell::ast;
-use crate::shell::interpreter::{Interpreter, Node, NodeId, ShellExecEnv, StateKind, log};
+use crate::shell::interpreter::{EnvRc, Interpreter, Node, NodeId, log};
 use crate::shell::io::IO;
 use crate::shell::states::base::Base;
 use crate::shell::states::stmt::Stmt;
 use crate::shell::yield_::Yield;
+use std::rc::Rc;
 
 pub struct Script {
     pub(crate) base: Base,
-    /// Back-reference into the bumpalo-allocated AST (`ShellArgs::__arena`).
-    /// The arena outlives every state node (it's dropped only when the
-    /// interpreter is finalized), so the BackRef invariant holds. Stored
-    /// lifetime-erased to keep `Node` lifetime-free.
+    /// Back-reference into the parsed-script arena (`ShellArgs`). The arena
+    /// outlives every state node (it's reset/dropped only after they are all
+    /// freed), so the BackRef invariant holds.
     pub node: bun_ptr::BackRef<ast::Script>,
     pub(crate) io: IO,
     pub(crate) state: ScriptState,
@@ -31,21 +31,19 @@ impl Default for ScriptState {
 }
 
 impl Script {
+    /// `shell` is this script's env: the caller's own for the root script and
+    /// subshell bodies, a fresh dupe for command substitution (dropped with
+    /// the node).
     pub(crate) fn init(
         interp: &Interpreter,
-        shell: *mut ShellExecEnv,
-        node: *const ast::Script,
+        shell: EnvRc,
+        node: bun_ptr::BackRef<ast::Script>,
         parent: NodeId,
         io: IO,
     ) -> NodeId {
         let id = interp.alloc_node(Node::Script(Script {
             base: Base::new(parent, shell),
-            // SAFETY: `node` is non-null and points into the AST arena
-            // (`ShellArgs::__arena`), which the interpreter holds for its
-            // entire lifetime — strictly outliving every state node (the
-            // BackRef invariant). Callers pass `&raw const` only to escape
-            // borrowck across the `&Interpreter` reborrow.
-            node: unsafe { bun_ptr::BackRef::from_raw(node as *mut ast::Script) },
+            node,
             io,
             state: ScriptState::default(),
         }));
@@ -61,20 +59,19 @@ impl Script {
     }
 
     pub(crate) fn next(interp: &Interpreter, this: NodeId) -> Yield {
-        let (idx, shell) = {
-            let me = interp.as_script_mut(this);
-            let len = Self::stmt_count_of(me);
+        let (idx, shell, node) = {
+            let mut me = interp.as_script_mut(this);
+            let len = Self::stmt_count_of(&me);
             let ScriptState::Normal { idx } = &mut me.state;
             if *idx >= len {
                 return Yield::suspended();
             }
             let i = *idx;
             *idx += 1;
-            (i, me.base.shell)
+            (i, Rc::clone(&me.base.shell), me.node)
         };
-        let stmt_node = Self::stmt_at(interp, this, idx);
-        let io = interp.as_script(this).io.clone();
-        let stmt = Stmt::init(interp, shell, stmt_node, this, io);
+        let stmt_node = bun_ptr::BackRef::new(&node.get().stmts[idx]);
+        let stmt = Stmt::init(interp, shell, stmt_node, this);
         Stmt::start(interp, stmt)
     }
 
@@ -93,7 +90,7 @@ impl Script {
         let (idx, len) = {
             let me = interp.as_script(this);
             let ScriptState::Normal { idx } = me.state;
-            (idx, Self::stmt_count_of(me))
+            (idx, Self::stmt_count_of(&me))
         };
         if idx >= len || interp.interrupted(this) {
             return Self::finish(interp, this, exit_code);
@@ -101,47 +98,22 @@ impl Script {
         Self::next(interp, this)
     }
 
-    pub(crate) fn deinit(interp: &Interpreter, this: NodeId) {
+    pub(crate) fn deinit(_interp: &Interpreter, this: NodeId) {
         log!("Script {} deinit", this);
-        let parent = interp.as_script(this).base.parent;
-        let parent_kind = if parent == NodeId::INTERPRETER {
-            None
-        } else {
-            Some(interp.node(parent).kind())
-        };
-        let me = interp.as_script_mut(this);
-        // io.deref() — IO uses Arc fields; Drop on the cloned `io` handles the
-        // refcount decrement, no explicit call needed.
-        if !matches!(parent_kind, None | Some(StateKind::Subshell)) {
-            // The shell env is owned by the parent when the parent is the
-            // Interpreter or a Subshell; otherwise this Script represents a
-            // command substitution which duped from the parent and must
-            // deinitialize it.
-            if !me.base.shell.is_null() {
-                // SAFETY: `me.base.shell` is the duped env this Script owned;
-                // null-checked and exclusively held here.
-                ShellExecEnv::deinit_impl(me.base.shell);
-                me.base.shell = core::ptr::null_mut();
-            }
-        }
-        // free_node is done by the caller (Interpreter::deinit_node).
+        // `io` and the env handle drop with the slot
+        // (`Interpreter::free_node`); a command-substitution env this Script
+        // owned is freed there.
     }
 
     // ── AST helpers ────────────────────────────────────────────────────────
 
     #[inline]
     fn stmt_count(interp: &Interpreter, this: NodeId) -> usize {
-        Self::stmt_count_of(interp.as_script(this))
+        Self::stmt_count_of(&interp.as_script(this))
     }
 
     #[inline]
     fn stmt_count_of(me: &Script) -> usize {
         me.node.stmts.len()
-    }
-
-    #[inline]
-    fn stmt_at(interp: &Interpreter, this: NodeId, idx: usize) -> *const ast::Stmt {
-        let me = interp.as_script(this);
-        &raw const me.node.stmts[idx]
     }
 }

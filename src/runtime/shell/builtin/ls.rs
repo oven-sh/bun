@@ -1,4 +1,4 @@
-use core::ptr::NonNull;
+use bun_ptr::JsCellRefMut;
 use core::sync::atomic::{AtomicUsize, Ordering};
 use std::io::Write as _;
 
@@ -6,12 +6,11 @@ use bun_core::ZBox;
 use bun_sys::{E, FdExt, O, S, dir_iterator};
 
 use crate::shell::ExitCode;
-use crate::shell::builtin::{Builtin, IoKind, Kind};
+use crate::shell::builtin::{Builtin, Kind};
 use crate::shell::interpreter::{
-    EventLoopHandle, Interpreter, NodeId, OutputSrc, OutputTask, OutputTaskVTable, ShellTask,
-    shell_lstatat, shell_openat, shell_statat,
+    EventLoopHandle, Interpreter, NodeId, OutputQueue, OutputSrc, OutputTask, OutputTaskVTable,
+    ShellTask, shell_lstatat, shell_openat, shell_statat,
 };
-use crate::shell::io_writer::{ChildPtr, WriterTag};
 use crate::shell::yield_::Yield;
 
 #[derive(Default)]
@@ -33,12 +32,7 @@ pub struct ExecState {
     pub(crate) err: Option<bun_sys::Error>,
     pub(crate) task_count: AtomicUsize,
     pub(crate) tasks_done: usize,
-    pub(crate) output_waiting: usize,
-    pub(crate) output_done: usize,
-    /// FIFO of in-flight OutputTask pointers awaiting an IOWriter chunk
-    /// completion. Stopgap until `WriterTag` can carry the `*mut OutputTask`
-    /// directly — see mkdir.rs `Exec::output_queue` for rationale.
-    pub(crate) output_queue: std::collections::VecDeque<*mut OutputTask<Ls>>,
+    pub(crate) output: OutputQueue<Ls>,
 }
 
 enum ParseFlag {
@@ -74,18 +68,15 @@ impl Ls {
                     Ok(p) => p,
                     Err(opt) => {
                         let buf: Vec<u8> = Builtin::fmt_error_arena(
-                            interp,
-                            cmd,
                             Some(Kind::Ls),
                             format_args!("illegal option -- {}\n", bstr::BStr::new(&opt[..])),
-                        )
-                        .to_vec();
+                        );
                         Self::state_mut(interp, cmd).state = State::WaitingWriteErr;
                         return Builtin::write_failing_error(interp, cmd, &buf, 1);
                     }
                 };
 
-                let argc = Builtin::of(interp, cmd).args_slice().len();
+                let argc = Builtin::argc(interp, cmd);
                 let task_count = match paths_start {
                     Some(start) => argc - start,
                     None => 1,
@@ -94,42 +85,37 @@ impl Ls {
                     err: None,
                     task_count: AtomicUsize::new(task_count),
                     tasks_done: 0,
-                    output_waiting: 0,
-                    output_done: 0,
-                    output_queue: std::collections::VecDeque::new(),
+                    output: OutputQueue::default(),
                 });
 
                 // Stable address: `Ls` lives in `Box<Ls>` (Builtin::Impl::Ls),
                 // and the `Exec` variant is held until all tasks finish.
-                let task_count_ptr: *const AtomicUsize = {
-                    let State::Exec(exec) = &Self::state_mut(interp, cmd).state else {
+                let task_count_ptr: bun_ptr::BackRef<AtomicUsize> = {
+                    let me = Self::state_mut(interp, cmd);
+                    let State::Exec(exec) = &me.state else {
                         unreachable!()
                     };
-                    &raw const exec.task_count
+                    bun_ptr::BackRef::new(&exec.task_count)
                 };
 
                 let cwd = Builtin::cwd(interp, cmd);
                 let opts = Self::state_mut(interp, cmd).opts;
                 let evtloop = Builtin::event_loop(interp, cmd);
-                let interp_ptr = interp.as_ctx_ptr();
                 if let Some(start) = paths_start {
                     let print_directory = task_count > 1;
                     for i in start..argc {
-                        let path = Builtin::of(interp, cmd).arg_bytes(i);
-                        let task = ShellLsTask::create(
+                        let path = ZBox::from_bytes(Builtin::of(interp, cmd).arg_bytes(i));
+                        let mut task = ShellLsTask::create(
                             cmd,
                             opts,
                             task_count_ptr,
                             cwd,
-                            ZBox::from_bytes(path),
+                            path,
                             evtloop,
-                            interp_ptr,
+                            interp,
                         );
-                        // SAFETY: freshly heap-allocated.
-                        unsafe {
-                            (*task).print_directory = print_directory;
-                            ShellTask::schedule_no_ref::<ShellLsTask>(task);
-                        }
+                        task.print_directory = print_directory;
+                        ShellTask::schedule_no_ref(task);
                     }
                 } else {
                     let task = ShellLsTask::create(
@@ -139,10 +125,9 @@ impl Ls {
                         cwd,
                         ZBox::from_bytes(b"."),
                         evtloop,
-                        interp_ptr,
+                        interp,
                     );
-                    // SAFETY: freshly heap-allocated.
-                    unsafe { ShellTask::schedule_no_ref::<ShellLsTask>(task) };
+                    ShellTask::schedule_no_ref(task);
                 }
                 Yield::suspended()
             }
@@ -152,7 +137,7 @@ impl Ls {
                         unreachable!()
                     };
                     exec.tasks_done >= exec.task_count.load(Ordering::Relaxed)
-                        && exec.output_done >= exec.output_waiting
+                        && exec.output.drained()
                 };
                 if done {
                     let exit_code: ExitCode = {
@@ -179,28 +164,17 @@ impl Ls {
         written: usize,
         e: Option<bun_sys::SystemError>,
     ) -> Yield {
-        if matches!(Self::state_mut(interp, cmd).state, State::WaitingWriteErr) {
-            return Builtin::done(interp, cmd, 1);
-        }
-        let pending = if let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state {
-            exec.output_queue.pop_front()
-        } else {
-            None
-        };
-        if let Some(task) = pending {
-            // SAFETY: `task` was heap-allocated in `OutputTask::new` and
-            // pushed by `write_err`/`write_out`; not yet freed.
-            return unsafe { OutputTask::<Ls>::on_io_writer_chunk(task, interp, written, e) };
-        }
-        Self::next(interp, cmd)
+        // Only the usage error is written directly; task output goes through
+        // `OutputTask::on_chunk`.
+        let _ = (written, e);
+        debug_assert!(matches!(
+            Self::state_mut(interp, cmd).state,
+            State::WaitingWriteErr
+        ));
+        Builtin::done(interp, cmd, 1)
     }
 
-    /// # Safety
-    /// `task` must be a live heap allocation produced by
-    /// [`ShellLsTask::create`]; ownership is reclaimed here.
-    fn on_shell_ls_task_done(interp: &Interpreter, cmd: NodeId, task: NonNull<ShellLsTask>) {
-        // SAFETY: precondition.
-        let mut task = unsafe { bun_core::heap::take(task.as_ptr()) };
+    fn on_shell_ls_task_done(interp: &Interpreter, cmd: NodeId, mut task: ShellLsTask) {
         if let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state {
             exec.tasks_done += 1;
         }
@@ -208,7 +182,7 @@ impl Ls {
         let output_task = OutputTask::<Ls>::new(cmd, OutputSrc::Arrlist(output));
 
         let errstr: Option<Vec<u8>> = task.err.take().map(|e| {
-            let s = Builtin::task_error_to_string(interp, cmd, Kind::Ls, &e).to_vec();
+            let s = Builtin::task_error_to_string(Kind::Ls, &e);
             if let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state {
                 if exec.err.is_none() {
                     exec.err = Some(e);
@@ -222,21 +196,24 @@ impl Ls {
     /// Returns the index of the first non-flag arg, or `None` if there are no
     /// positional args. `Err` carries the offending flag byte.
     fn parse_opts(interp: &Interpreter, cmd: NodeId) -> Result<Option<usize>, Box<[u8]>> {
-        let argc = Builtin::of(interp, cmd).args_slice().len();
+        let argc = Builtin::argc(interp, cmd);
         if argc == 0 {
             return Ok(None);
         }
-        let mut idx = 0usize;
-        while idx < argc {
-            let flag = Builtin::of(interp, cmd).arg_bytes(idx);
-            match Self::parse_flag(&mut Self::state_mut(interp, cmd).opts, flag) {
-                ParseFlag::Done => return Ok(Some(idx)),
-                ParseFlag::ContinueParsing => {}
-                ParseFlag::IllegalOption(s) => return Err(s),
+        let mut opts = Self::state_mut(interp, cmd).opts;
+        let result = 'parsed: {
+            let bltn = Builtin::of(interp, cmd);
+            for idx in 0..argc {
+                match Self::parse_flag(&mut opts, bltn.arg_bytes(idx)) {
+                    ParseFlag::Done => break 'parsed Ok(Some(idx)),
+                    ParseFlag::ContinueParsing => {}
+                    ParseFlag::IllegalOption(s) => break 'parsed Err(s),
+                }
             }
-            idx += 1;
-        }
-        Ok(None)
+            Ok(None)
+        };
+        Self::state_mut(interp, cmd).opts = opts;
+        result
     }
 
     fn parse_flag(opts: &mut Opts, flag: &[u8]) -> ParseFlag {
@@ -266,75 +243,22 @@ impl Ls {
     }
 
     #[inline]
-    fn state_mut(interp: &Interpreter, cmd: NodeId) -> &mut Ls {
-        match &mut Builtin::of_mut(interp, cmd).impl_ {
+    fn state_mut(interp: &Interpreter, cmd: NodeId) -> JsCellRefMut<'_, Ls> {
+        JsCellRefMut::map(Builtin::of_mut(interp, cmd), |b| match &mut b.impl_ {
             crate::shell::builtin::Impl::Ls(l) => &mut **l,
             _ => unreachable!(),
-        }
+        })
     }
 }
 
 impl OutputTaskVTable for Ls {
-    fn write_err(
-        interp: &Interpreter,
-        cmd: NodeId,
-        child: *mut OutputTask<Self>,
-        errbuf: &[u8],
-    ) -> Option<Yield> {
-        if let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state {
-            exec.output_waiting += 1;
-        }
-        if let Some(safeguard) = Builtin::of(interp, cmd).stderr.needs_io() {
-            // Stash so on_io_writer_chunk can route to the OutputTask state
-            // machine and reclaim the box (stopgap for missing WriterTag).
-            if let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state {
-                exec.output_queue.push_back(child);
-            }
-            let childptr = ChildPtr::new(cmd, WriterTag::Builtin);
-            return Some(
-                Builtin::of_mut(interp, cmd)
-                    .stderr
-                    .enqueue(childptr, errbuf, safeguard),
-            );
-        }
-        let _ = Builtin::write_no_io(interp, cmd, IoKind::Stderr, errbuf);
-        None
+    fn output_queue(interp: &Interpreter, cmd: NodeId) -> JsCellRefMut<'_, OutputQueue<Self>> {
+        JsCellRefMut::map(Self::state_mut(interp, cmd), |me| match &mut me.state {
+            State::Exec(exec) => &mut exec.output,
+            _ => unreachable!("ls output outside Exec"),
+        })
     }
-    fn on_write_err(interp: &Interpreter, cmd: NodeId) {
-        if let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state {
-            exec.output_done += 1;
-        }
-    }
-    fn write_out(
-        interp: &Interpreter,
-        cmd: NodeId,
-        child: *mut OutputTask<Self>,
-        output: &mut OutputSrc,
-    ) -> Option<Yield> {
-        if let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state {
-            exec.output_waiting += 1;
-        }
-        if let Some(safeguard) = Builtin::of(interp, cmd).stdout.needs_io() {
-            if let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state {
-                exec.output_queue.push_back(child);
-            }
-            let childptr = ChildPtr::new(cmd, WriterTag::Builtin);
-            let buf = output.slice().to_vec();
-            return Some(
-                Builtin::of_mut(interp, cmd)
-                    .stdout
-                    .enqueue(childptr, &buf, safeguard),
-            );
-        }
-        let buf = output.slice().to_vec();
-        let _ = Builtin::write_no_io(interp, cmd, IoKind::Stdout, &buf);
-        None
-    }
-    fn on_write_out(interp: &Interpreter, cmd: NodeId) {
-        if let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state {
-            exec.output_done += 1;
-        }
-    }
+
     fn on_done(interp: &Interpreter, cmd: NodeId) -> Yield {
         Self::next(interp, cmd)
     }
@@ -347,8 +271,9 @@ pub(crate) struct ShellLsTask {
     pub opts: Opts,
     pub print_directory: bool,
     /// Shared atomic counter (lives in `ExecState` inside `Box<Ls>`; address
-    /// is stable for the lifetime of the Exec state).
-    pub task_count: *const AtomicUsize,
+    /// is stable for the lifetime of the Exec state, which outlives every
+    /// in-flight task).
+    pub task_count: bun_ptr::BackRef<AtomicUsize>,
     pub cwd: bun_sys::Fd,
     pub path: ZBox,
     pub output: Vec<u8>,
@@ -358,23 +283,22 @@ pub(crate) struct ShellLsTask {
     /// Cached once per task to avoid repeated syscalls.
     now_secs: u64,
     pub event_loop: EventLoopHandle,
-    /// Back-ref so recursive `enqueue` can populate the subtask's
-    /// `task.interp` (needed by [`ShellTask::run_from_main_thread`]).
-    pub interp: *mut Interpreter,
     pub task: ShellTask,
 }
+
+crate::shell_task!(ShellLsTask);
 
 impl ShellLsTask {
     fn create(
         cmd: NodeId,
         opts: Opts,
-        task_count: *const AtomicUsize,
+        task_count: bun_ptr::BackRef<AtomicUsize>,
         cwd: bun_sys::Fd,
         path: ZBox,
         event_loop: EventLoopHandle,
-        interp: *mut Interpreter,
-    ) -> *mut ShellLsTask {
-        let mut task = Box::new(ShellLsTask {
+        interp: &Interpreter,
+    ) -> Box<ShellLsTask> {
+        Box::new(ShellLsTask {
             cmd,
             opts,
             print_directory: false,
@@ -386,11 +310,8 @@ impl ShellLsTask {
             err: None,
             now_secs: 0,
             event_loop,
-            interp,
-            task: ShellTask::new(event_loop),
-        });
-        task.task.interp = interp;
-        bun_core::heap::into_raw(task)
+            task: ShellTask::new(interp),
+        })
     }
 
     /// Spawns a subtask for a recursively
@@ -398,11 +319,13 @@ impl ShellLsTask {
     fn enqueue(&mut self, name: &[u8]) {
         let new_path = self.join(name);
         // Pool thread: the subtask inherits our poster rather than deriving
-        // one from the VM (`ShellTask::new` is JS-thread only).
-        let subtask = bun_core::heap::into_raw(Box::new(ShellLsTask {
+        // one from the VM (`ShellTask::new` is JS-thread only). No
+        // keep-alive ref — it runs on a worker thread with no JS-VM
+        // thread-local.
+        let subtask = Box::new(ShellLsTask {
             cmd: self.cmd,
             opts: self.opts,
-            print_directory: false,
+            print_directory: true,
             task_count: self.task_count,
             cwd: self.cwd,
             path: new_path,
@@ -411,21 +334,10 @@ impl ShellLsTask {
             err: None,
             now_secs: 0,
             event_loop: self.event_loop,
-            interp: self.interp,
             task: ShellTask::new_child(&self.task),
-        }));
-        // SAFETY: freshly allocated above.
-        unsafe { (*subtask).task.interp = self.interp };
-        // SAFETY: `task_count` points into the `Box<Ls>` ExecState which
-        // outlives every in-flight task (see `next`). `subtask` is freshly
-        // heap-allocated and scheduled via raw `WorkPool::schedule` (no
-        // keep-alive ref) — it runs on a worker thread with no JS-VM
-        // thread-local.
-        unsafe {
-            (*self.task_count).fetch_add(1, Ordering::Relaxed);
-            (*subtask).print_directory = true;
-            ShellTask::schedule_no_ref::<ShellLsTask>(subtask);
-        }
+        });
+        self.task_count.fetch_add(1, Ordering::Relaxed);
+        ShellTask::schedule_no_ref(subtask);
     }
 
     fn join(&self, child: &[u8]) -> ZBox {
@@ -622,16 +534,6 @@ impl ShellLsTask {
     fn error_with_path(&self, err: &bun_sys::Error) -> bun_sys::Error {
         err.with_path(self.path.as_bytes())
     }
-
-    /// # Safety
-    /// `this` must be a live heap allocation produced by
-    /// [`ShellLsTask::create`]; ownership is reclaimed via
-    /// [`Ls::on_shell_ls_task_done`].
-    fn run_from_main_thread(this: NonNull<ShellLsTask>, interp: &Interpreter) {
-        // SAFETY: precondition.
-        let cmd = unsafe { this.as_ref() }.cmd;
-        Ls::on_shell_ls_task_done(interp, cmd, this);
-    }
 }
 
 fn get_file_type_char(mode: u32) -> u8 {
@@ -769,28 +671,23 @@ fn civil_from_days(z: i64) -> (i32, u8, u8) {
     ((y + (m <= 2) as i64) as i32, m, d)
 }
 
-impl bun_event_loop::Taskable for ShellLsTask {
-    const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::ShellLsTask;
-    /// A pool completion that will not run: drop the keep-alive and the box
-    /// (nothing else frees an unrun one).
-    unsafe fn release_unrun(this: *mut Self) {
-        // SAFETY: fn contract — the box the builtin scheduled.
-        unsafe {
-            (*this).task.unref_unrun();
-            drop(bun_core::heap::take(this));
-        }
-    }
-}
+// `runtime::dispatch::run_task`'s `task_tag::ShellLsTask` arm reboxes the
+// pointer `ShellTask::on_finish` posted; a completion that will not run drops
+// the keep-alive and the box.
 
 impl crate::shell::interpreter::ShellTaskCtx for ShellLsTask {
-    const TASK_OFFSET: usize = core::mem::offset_of!(Self, task);
-    fn run_from_thread_pool(this: &mut Self) {
-        Self::run_from_thread_pool(this)
+    fn shell_task(&self) -> &ShellTask {
+        &self.task
     }
-    fn run_from_main_thread(this: *mut Self, interp: &Interpreter) {
-        // The `ShellTask` trampoline hands back the live, non-null heap
-        // allocation produced by `ShellLsTask::create`.
-        Self::run_from_main_thread(NonNull::new(this).unwrap(), interp)
+    fn shell_task_mut(&mut self) -> &mut ShellTask {
+        &mut self.task
+    }
+    fn run_from_thread_pool(&mut self) {
+        Self::run_from_thread_pool(self)
+    }
+    fn run_from_main_thread(self: Box<Self>, interp: &Interpreter) {
+        let cmd = self.cmd;
+        Ls::on_shell_ls_task_done(interp, cmd, *self);
     }
 }
 

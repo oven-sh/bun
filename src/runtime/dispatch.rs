@@ -78,7 +78,6 @@ use crate::shell::dispatch_tasks::{ShellCondExprStatTask, ShellGlobTask, ShellRm
 use crate::shell::interpreter::ShellTask;
 #[cfg(not(windows))]
 use crate::shell::io_writer::Poll as ShellBufferedWriterPoll;
-use crate::shell::states::r#async::Async as ShellAsync;
 
 use crate::webcore::fetch::fetch_tasklet::FetchTasklet;
 use crate::webcore::file_sink::FlushPendingTask as FlushPendingFileSinkTask;
@@ -509,47 +508,30 @@ fn run_task_cold(task: Task) {
             task.ptr.cast::<$ty>()
         };
     }
-    /// Shell builtin tasks: route through `ShellTask::run_from_main_thread`
-    /// so the keep-alive ref taken in `ShellTask::schedule` is unref'd before
-    /// the per-builtin body runs.
-    /// The wrapper recovers `&mut Interpreter` from the embedded
-    /// `ShellTask.interp` back-ref.
+    /// Shell builtin tasks: `ShellTask::on_finish` posts a leaked `Box<$ty>`;
+    /// rebox it and route through `ShellTask::run_from_main_thread` so the
+    /// keep-alive ref taken in `ShellTask::schedule` is unref'd before the
+    /// per-builtin body runs.
     macro_rules! shell_dispatch {
         ($ty:ty) => {{
-            // SAFETY: §Dispatch — `t` is a live heap-allocated shell task;
-            // `interp` was set at schedule time and outlives the task.
-            unsafe { ShellTask::run_from_main_thread::<$ty>(cast_ptr!($ty)) };
-        }};
-        // Cond-expr wraps an inner `task: ShellTask`-embedding struct one
-        // level deeper. The type *does* implement `ShellTaskCtx`
-        // (with a two-hop `TASK_OFFSET`, needed for `ShellTask::schedule`),
-        // so this arm is behaviorally identical to the plain arm; the unref +
-        // interp-recovery are inlined here only to keep the `.task.task`
-        // shape explicit at the dispatch site.
-        (nested $ty:ty) => {{
-            let t = cast_ptr!($ty);
-            // SAFETY: see above; `task.task` is the embedded ShellTask.
-            unsafe {
-                let st = &raw mut (*t).task.task;
-                (*st).keep_alive.unref((*st).event_loop.as_event_loop_ctx());
-                let interp = &*(*st).interp;
-                <$ty>::run_from_main_thread(t, interp);
-            }
+            // SAFETY: §Dispatch — tag identifies pointee: the `Box<$ty>`
+            // `ShellTask::on_finish` leaked when posting.
+            let t = unsafe { bun_core::heap::take(cast_ptr!($ty)) };
+            ShellTask::run_from_main_thread::<$ty>(t);
         }};
     }
 
     match task.tag {
         // ── shell interpreter ────────────────────────────────────────────
         task_tag::ShellAsync => {
-            // SAFETY: §Dispatch — tag identifies pointee.
-            let t = unsafe { &mut *cast_ptr!(crate::shell::dispatch_tasks::ShellAsyncTask) };
-            // SAFETY: `interp` set at enqueue; outlives task.
-            let interp = unsafe { &*t.interp };
-            ShellAsync::run_from_main_thread(interp, t.node);
+            // SAFETY: §Dispatch — tag identifies pointee: the box
+            // `Async::enqueue_self` leaked when posting.
+            let t = unsafe {
+                bun_core::heap::take(cast_ptr!(crate::shell::dispatch_tasks::ShellAsyncTask))
+            };
+            t.run();
         }
-        task_tag::ShellCondExprStatTask => {
-            shell_dispatch!(nested ShellCondExprStatTask);
-        }
+        task_tag::ShellCondExprStatTask => shell_dispatch!(ShellCondExprStatTask),
         task_tag::ShellCpTask => shell_dispatch!(ShellCpTask),
         task_tag::ShellTouchTask => shell_dispatch!(ShellTouchTask),
         task_tag::ShellMkdirTask => shell_dispatch!(ShellMkdirTask),

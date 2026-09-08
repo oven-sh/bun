@@ -36,7 +36,7 @@ pub use ConcurrentTask::{Task, TaskTag, Taskable, task_tag};
 pub use DeferredTaskQueue as deferred_task_queue;
 
 pub use any_event_loop::{
-    AnyEventLoop, EventLoopHandle, EventLoopTask, JsPoster, JsPosterVTable, Posted,
+    AnyEventLoop, ArmedLoopTask, EventLoopHandle, EventLoopTask, JsPoster, JsPosterVTable, Posted,
 };
 pub use bun_io::PipeReadScratch;
 

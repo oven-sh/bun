@@ -555,6 +555,21 @@ impl<T: AnyRefCounted> RefPtr<T> {
         }
     }
 
+    /// [`new`](Self::new) for a `T` that stores its own root pointer (to hand
+    /// out [`ThisPtr`](crate::ThisPtr)s from `&self` entry points). `init`
+    /// receives a [`SelfRoot`](crate::SelfRoot) to store in the value; the
+    /// token cannot be dereferenced on its own, only through the `&T` that
+    /// exists once construction is done.
+    pub fn new_cyclic(init: impl FnOnce(crate::SelfRoot<T>) -> T) -> Self {
+        let raw: NonNull<T> = bun_core::heap::into_raw_nn(Box::<T>::new_uninit()).cast::<T>();
+        let value = init(crate::SelfRoot(raw));
+        // SAFETY: `raw` is a live, uninitialized, properly aligned `T` slot.
+        unsafe { raw.as_ptr().write(value) };
+        // SAFETY: freshly written, so live.
+        debug_assert!(unsafe { T::rc_has_one_ref(raw.as_ptr()) });
+        Self(raw)
+    }
+
     /// Take a new ref on the pointee of a [`ThisPtr`](crate::ThisPtr). Safe:
     /// the `ThisPtr` invariant is that its pointee is live. This is the guard
     /// to hold across a re-entrant call that may otherwise drop the last ref.

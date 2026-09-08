@@ -32,12 +32,11 @@ impl Which {
     pub(crate) fn start(interp: &Interpreter, cmd: NodeId) -> Yield {
         let argc = Builtin::of(interp, cmd).args_slice().len();
         if argc == 0 {
-            if let Some(safeguard) = Builtin::of(interp, cmd).stdout.needs_io() {
+            let stdout_needs_io = Builtin::of(interp, cmd).stdout.needs_io();
+            if let Some(safeguard) = stdout_needs_io {
                 Self::state_mut(interp, cmd).state = State::OneArg;
                 let child = ChildPtr::new(cmd, WriterTag::Builtin);
-                return Builtin::of_mut(interp, cmd)
-                    .stdout
-                    .enqueue(child, b"\n", safeguard);
+                return Builtin::write_out(interp, cmd, IoKind::Stdout, child, b"\n", safeguard);
             }
             let _ = Builtin::write_no_io(interp, cmd, IoKind::Stdout, b"\n");
             return Builtin::done(interp, cmd, 1);
@@ -53,23 +52,17 @@ impl Which {
                 match search.resolve(&arg) {
                     Some(resolved) => {
                         let buf = Builtin::fmt_error_arena(
-                            interp,
-                            cmd,
                             None,
                             format_args!("{}\n", bstr::BStr::new(&resolved)),
-                        )
-                        .to_vec();
+                        );
                         let _ = Builtin::write_no_io(interp, cmd, IoKind::Stdout, &buf);
                     }
                     None => {
                         had_not_found = true;
                         let buf = Builtin::fmt_error_arena(
-                            interp,
-                            cmd,
                             Some(Kind::Which),
                             format_args!("{} not found\n", bstr::BStr::new(&arg)),
-                        )
-                        .to_vec();
+                        );
                         let _ = Builtin::write_no_io(interp, cmd, IoKind::Stdout, &buf);
                     }
                 }
@@ -114,8 +107,12 @@ impl Which {
                     *had_not_found = true;
                     *waiting_write = true;
                 }
-                if let Some(safeguard) = Builtin::of(interp, cmd).stdout.needs_io() {
-                    return Builtin::of_mut(interp, cmd).stdout.enqueue_fmt(
+                let stdout_needs_io = Builtin::of(interp, cmd).stdout.needs_io();
+                if let Some(safeguard) = stdout_needs_io {
+                    return Builtin::write_out_fmt(
+                        interp,
+                        cmd,
+                        IoKind::Stdout,
                         child,
                         None,
                         format_args!("{} not found\n", bstr::BStr::new(&arg)),
@@ -123,12 +120,9 @@ impl Which {
                     );
                 }
                 let buf = Builtin::fmt_error_arena(
-                    interp,
-                    cmd,
                     None,
                     format_args!("{} not found\n", bstr::BStr::new(&arg)),
-                )
-                .to_vec();
+                );
                 let _ = Builtin::write_no_io(interp, cmd, IoKind::Stdout, &buf);
                 Self::arg_complete(interp, cmd)
             }
@@ -138,8 +132,12 @@ impl Which {
                 {
                     *waiting_write = true;
                 }
-                if let Some(safeguard) = Builtin::of(interp, cmd).stdout.needs_io() {
-                    return Builtin::of_mut(interp, cmd).stdout.enqueue_fmt(
+                let stdout_needs_io = Builtin::of(interp, cmd).stdout.needs_io();
+                if let Some(safeguard) = stdout_needs_io {
+                    return Builtin::write_out_fmt(
+                        interp,
+                        cmd,
+                        IoKind::Stdout,
                         child,
                         None,
                         format_args!("{}\n", bstr::BStr::new(&resolved)),
@@ -147,12 +145,9 @@ impl Which {
                     );
                 }
                 let buf = Builtin::fmt_error_arena(
-                    interp,
-                    cmd,
                     None,
                     format_args!("{}\n", bstr::BStr::new(&resolved)),
-                )
-                .to_vec();
+                );
                 let _ = Builtin::write_no_io(interp, cmd, IoKind::Stdout, &buf);
                 Self::arg_complete(interp, cmd)
             }
@@ -181,10 +176,18 @@ impl Which {
         if let Some(err) = e {
             return Builtin::done(interp, cmd, err.errno as crate::shell::ExitCode);
         }
-        match Self::state_mut(interp, cmd).state {
-            State::OneArg => Builtin::done(interp, cmd, 1),
-            State::MultiArgs { .. } => Self::arg_complete(interp, cmd),
-            _ => Builtin::done(interp, cmd, 0),
+        enum Then {
+            Done(crate::shell::ExitCode),
+            ArgComplete,
+        }
+        let then = match Self::state_mut(interp, cmd).state {
+            State::OneArg => Then::Done(1),
+            State::MultiArgs { .. } => Then::ArgComplete,
+            _ => Then::Done(0),
+        };
+        match then {
+            Then::Done(code) => Builtin::done(interp, cmd, code),
+            Then::ArgComplete => Self::arg_complete(interp, cmd),
         }
     }
 
@@ -203,6 +206,7 @@ struct SearchEnv {
 impl SearchEnv {
     fn load(interp: &Interpreter, cmd: NodeId) -> Self {
         let shell = Builtin::shell(interp, cmd);
+        let shell = shell.borrow();
         // `EnvMap::get` refs the returned string; balance it.
         let path_env = shell
             .export_env

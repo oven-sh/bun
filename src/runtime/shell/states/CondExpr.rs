@@ -2,11 +2,12 @@
 
 use crate::shell::ExitCode;
 use crate::shell::ast;
-use crate::shell::interpreter::{Interpreter, Node, NodeId, ShellExecEnv, log};
+use crate::shell::interpreter::{EnvRc, Interpreter, Node, NodeId, log};
 use crate::shell::io::IO;
 use crate::shell::states::base::Base;
 use crate::shell::states::expansion::Expansion;
 use crate::shell::yield_::Yield;
+use std::rc::Rc;
 
 pub struct CondExpr {
     pub(crate) base: Base,
@@ -16,7 +17,7 @@ pub struct CondExpr {
     pub args: Vec<Vec<u8>>,
 }
 
-#[derive(Default, strum::IntoStaticStr)]
+#[derive(Default, Clone, Copy, strum::IntoStaticStr)]
 pub enum CondExprState {
     #[default]
     Idle,
@@ -30,7 +31,7 @@ pub enum CondExprState {
 impl CondExpr {
     pub(crate) fn init(
         interp: &Interpreter,
-        shell: *mut ShellExecEnv,
+        shell: EnvRc,
         node: &ast::CondExpr,
         parent: NodeId,
         io: IO,
@@ -51,12 +52,12 @@ impl CondExpr {
     pub(crate) fn next(interp: &Interpreter, this: NodeId) -> Yield {
         // Expand each arg via Expansion, then evaluate the operator.
         loop {
-            let (shell, node) = {
+            let (shell, node, state) = {
                 let me = interp.as_condexpr(this);
-                (me.base.shell, me.node)
+                (Rc::clone(&me.base.shell), me.node, me.state)
             };
             let n = node.get();
-            match interp.as_condexpr(this).state {
+            match state {
                 CondExprState::Idle => {
                     interp.as_condexpr_mut(this).state = CondExprState::ExpandingArgs { idx: 0 };
                     continue;
@@ -65,7 +66,7 @@ impl CondExpr {
                     if (idx as usize) >= n.args.len() {
                         return Self::command_impl_start(interp, this, n.op);
                     }
-                    let atom: *const ast::Atom = n.args.get_const(idx as usize);
+                    let atom = bun_ptr::BackRef::new(n.args.get_const(idx as usize));
                     let child = Expansion::init(interp, shell, atom, this, false);
                     return Expansion::start(interp, child);
                 }
@@ -242,7 +243,7 @@ impl CondExpr {
         let out = Expansion::take_out(interp, child);
         interp.deinit_node(child);
         {
-            let me = interp.as_condexpr_mut(this);
+            let mut me = interp.as_condexpr_mut(this);
             me.args.push(out.buf);
             if let CondExprState::ExpandingArgs { ref mut idx } = me.state {
                 *idx += 1;
@@ -257,26 +258,18 @@ impl CondExpr {
     /// `ShellCondExprStatTask::run_from_main_thread` → `on_stat_task_done`.
     /// `path` is NUL-terminated by the caller.
     fn do_stat(interp: &Interpreter, this: NodeId, cwd_fd: bun_sys::Fd, path: Vec<u8>) -> Yield {
-        use crate::shell::dispatch_tasks::{CondExprStatInner, ShellCondExprStatTask};
+        use crate::shell::dispatch_tasks::ShellCondExprStatTask;
         use crate::shell::interpreter::ShellTask;
         debug_assert!(path.last() == Some(&0));
-        let mut task = ShellTask::new(interp.event_loop);
-        task.interp = interp.as_ctx_ptr();
-        let stat_task = bun_core::heap::alloc(ShellCondExprStatTask {
-            task: CondExprStatInner {
-                task,
-                cond: this,
-                // Placeholder — always overwritten by `run_from_thread_pool`
-                // before the main thread reads it.
-                stat: Err(Default::default()),
-                path,
-                cwd_fd,
-            },
-        });
-        // SAFETY: `stat_task` is a fresh heap allocation embedding `ShellTask`
-        // at `TASK_OFFSET`; consumed (heap::take) in
-        // `ShellCondExprStatTask::run_from_main_thread`.
-        unsafe { ShellTask::schedule::<ShellCondExprStatTask>(stat_task) };
+        ShellTask::schedule(Box::new(ShellCondExprStatTask {
+            task: ShellTask::new(interp),
+            cond: this,
+            // Placeholder — always overwritten by `run_from_thread_pool`
+            // before the main thread reads it.
+            stat: Err(Default::default()),
+            path,
+            cwd_fd,
+        }));
         Yield::suspended()
     }
 
@@ -300,24 +293,21 @@ impl CondExpr {
             interp.as_condexpr_mut(this).state = CondExprState::WaitingWriteErr;
             let child = io_writer::ChildPtr::new(this, io_writer::WriterTag::CondExpr);
             // `OutKind::Fd` guaranteed by `needs_io()`.
-            if let OutKind::Fd(fd) = &interp.as_condexpr(this).io.stderr {
-                return fd.writer.enqueue(child, fd.captured, &buf);
-            }
-            unreachable!()
+            let OutKind::Fd(fd) = interp.as_condexpr(this).io.stderr.clone() else {
+                unreachable!()
+            };
+            return fd.writer.enqueue(child, fd.captured, &buf);
         }
         // No-IO path: append to the shell env's captured stderr and finish
         // synchronously with exit 1 (matches `on_io_writer_chunk`).
         if let OutKind::Pipe = &interp.as_condexpr(this).io.stderr {
-            // SAFETY: single trampoline frame; no other borrow of the env's
-            // (or its parent's) stderr buffer is live.
-            let stderr = unsafe {
-                interp
-                    .as_condexpr_mut(this)
-                    .base
-                    .shell_mut()
-                    .buffered_stderr_mut()
-            };
-            stderr.extend_from_slice(&buf);
+            interp
+                .as_condexpr(this)
+                .base
+                .shell()
+                .buffered_stderr
+                .borrow_mut()
+                .extend_from_slice(&buf);
         }
         let parent = interp.as_condexpr(this).base.parent;
         interp.child_done(parent, this, 1)
@@ -325,46 +315,6 @@ impl CondExpr {
 
     pub(crate) fn deinit(interp: &Interpreter, this: NodeId) {
         log!("CondExpr {} deinit", this);
-        let me = interp.as_condexpr_mut(this);
-        me.args.clear();
-    }
-}
-
-// `runtime::dispatch::run_task`'s `task_tag::ShellCondExprStatTask` arm casts
-// the enqueued pointer back to `ShellCondExprStatTask`; both sides MUST agree.
-impl bun_event_loop::Taskable for crate::shell::dispatch_tasks::ShellCondExprStatTask {
-    const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::ShellCondExprStatTask;
-    /// A stat the pool finished whose result will not be applied: drop the
-    /// keep-alive and the box.
-    unsafe fn release_unrun(this: *mut Self) {
-        // SAFETY: fn contract — the box `do_stat` scheduled.
-        unsafe {
-            (*this).task.task.unref_unrun();
-            drop(bun_core::heap::take(this));
-        }
-    }
-}
-
-impl crate::shell::interpreter::ShellTaskCtx
-    for crate::shell::dispatch_tasks::ShellCondExprStatTask
-{
-    // The `ShellTask` is embedded one level down (`.task.task`); the dispatch
-    // arm (`shell_dispatch!(nested ...)`) walks the same two hops.
-    const TASK_OFFSET: usize =
-        core::mem::offset_of!(crate::shell::dispatch_tasks::ShellCondExprStatTask, task)
-            + core::mem::offset_of!(crate::shell::dispatch_tasks::CondExprStatInner, task);
-
-    fn run_from_thread_pool(this: &mut Self) {
-        let inner = &mut this.task;
-        debug_assert!(inner.path.last() == Some(&0));
-        let z = bun_core::ZStr::from_buf(&inner.path, inner.path.len() - 1);
-        inner.stat = crate::shell::interpreter::shell_statat(inner.cwd_fd, z);
-    }
-
-    fn run_from_main_thread(this: *mut Self, interp: &Interpreter) {
-        // Delegates to the inherent fn in `dispatch_tasks.rs` (which consumes
-        // the heap allocation). The dispatch arm calls the inherent fn
-        // directly; this trait method exists to satisfy `ShellTaskCtx`.
-        crate::shell::dispatch_tasks::ShellCondExprStatTask::run_from_main_thread(this, interp);
+        interp.as_condexpr_mut(this).args.clear();
     }
 }

@@ -25,8 +25,10 @@ impl Export {
             // No args: print all exported vars.
             return Self::print_all(interp, cmd);
         }
+        let shell = Builtin::shell(interp, cmd);
         for i in 0..argc {
-            let s = Builtin::of(interp, cmd).arg_bytes(i);
+            let bltn = Builtin::of(interp, cmd);
+            let s = bltn.arg_bytes(i);
             if s.is_empty() {
                 continue;
             }
@@ -39,9 +41,8 @@ impl Export {
             // `init_slice` here would leave dangling EnvStr in `export_env`.
             let label = EnvStr::dupe_ref_counted(name);
             let val = EnvStr::dupe_ref_counted(value);
-            let shell = interp.as_cmd(cmd).base.shell;
-            // SAFETY: shell env outlives the Cmd node.
-            unsafe { (*shell).export_env.insert(label, val) };
+            drop(bltn);
+            shell.borrow_mut().export_env.insert(label, val);
             label.deref();
             val.deref();
         }
@@ -50,6 +51,7 @@ impl Export {
 
     fn print_all(interp: &Interpreter, cmd: NodeId) -> Yield {
         let mut entries: Vec<(EnvStr, EnvStr)> = Builtin::shell(interp, cmd)
+            .borrow()
             .export_env
             .iter()
             .map(|(k, v)| (*k, *v))
@@ -64,12 +66,12 @@ impl Export {
             buf.push(b'\n');
         }
 
-        if let Some(safeguard) = Builtin::of(interp, cmd).stdout.needs_io() {
+        let stdout_needs_io = Builtin::of(interp, cmd).stdout.needs_io();
+
+        if let Some(safeguard) = stdout_needs_io {
             Self::state_mut(interp, cmd).state = State::WaitingIo;
             let child = ChildPtr::new(cmd, WriterTag::Builtin);
-            return Builtin::of_mut(interp, cmd)
-                .stdout
-                .enqueue(child, &buf, safeguard);
+            return Builtin::write_out(interp, cmd, IoKind::Stdout, child, &buf, safeguard);
         }
         let _ = Builtin::write_no_io(interp, cmd, IoKind::Stdout, &buf);
         Builtin::done(interp, cmd, 0)

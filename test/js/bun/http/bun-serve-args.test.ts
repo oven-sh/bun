@@ -262,11 +262,12 @@ describe("Bun.serve development options", () => {
     server.stop();
   });
 
-  // The default for `development` is decided from `process.env.NODE_ENV` as it
-  // is when `Bun.serve()` is called, so a runtime assignment or delete before
-  // the call counts (the same timing as frameworks that read it at app
-  // creation). An explicit `development` option still wins.
-  const nodeEnvFixture = /* js */ `
+  // The default for `development` is decided from `process.env.NODE_ENV` (or
+  // `BUN_ENV`) as it is when `Bun.serve()` is called, so a runtime assignment
+  // or delete before the call counts (the same timing as frameworks that read
+  // it at app creation). An explicit `development` option still wins.
+  const envTimingFixture = (key: string) => /* js */ `
+    const key = ${JSON.stringify(key)};
     const results = {};
     async function probe(label, options = {}) {
       const server = Bun.serve({
@@ -285,21 +286,21 @@ describe("Bun.serve development options", () => {
       await server.stop(true);
     }
     await probe("at launch");
-    process.env.NODE_ENV = "production";
+    process.env[key] = "production";
     await probe("assigned production");
     await probe("assigned production, development: true", { development: true });
-    process.env.NODE_ENV = "development";
+    process.env[key] = "development";
     await probe("assigned development");
     await probe("assigned development, development: false", { development: false });
-    delete process.env.NODE_ENV;
+    delete process.env[key];
     await probe("deleted");
     console.log(JSON.stringify(results));
   `;
 
-  async function runNodeEnvFixture(NODE_ENV: string | undefined) {
+  async function runEnvTimingFixture(key: string, launchValue: string | undefined) {
     await using proc = Bun.spawn({
-      cmd: [bunExe(), "-e", nodeEnvFixture],
-      env: { ...bunEnv, NODE_ENV },
+      cmd: [bunExe(), "-e", envTimingFixture(key)],
+      env: { ...bunEnv, NODE_ENV: undefined, BUN_ENV: undefined, [key]: launchValue },
       stdout: "pipe",
       stderr: "pipe",
     });
@@ -316,25 +317,27 @@ describe("Bun.serve development options", () => {
   const devPage = { development: true, errorPage: "text/html with message" };
   const prodPage = { development: false, errorPage: "text/plain" };
 
-  test.concurrent("NODE_ENV is read from process.env when serve() is called (unset at launch)", async () => {
-    expect(await runNodeEnvFixture(undefined)).toEqual({
-      "at launch": devPage,
-      "assigned production": prodPage,
-      "assigned production, development: true": devPage,
-      "assigned development": devPage,
-      "assigned development, development: false": prodPage,
-      "deleted": devPage,
+  describe.each(["NODE_ENV", "BUN_ENV"])("%s is read from process.env when serve() is called", key => {
+    test.concurrent("unset at launch", async () => {
+      expect(await runEnvTimingFixture(key, undefined)).toEqual({
+        "at launch": devPage,
+        "assigned production": prodPage,
+        "assigned production, development: true": devPage,
+        "assigned development": devPage,
+        "assigned development, development: false": prodPage,
+        "deleted": devPage,
+      });
     });
-  });
 
-  test.concurrent("NODE_ENV is read from process.env when serve() is called (production at launch)", async () => {
-    expect(await runNodeEnvFixture("production")).toEqual({
-      "at launch": prodPage,
-      "assigned production": prodPage,
-      "assigned production, development: true": devPage,
-      "assigned development": devPage,
-      "assigned development, development: false": prodPage,
-      "deleted": devPage,
+    test.concurrent("production at launch", async () => {
+      expect(await runEnvTimingFixture(key, "production")).toEqual({
+        "at launch": prodPage,
+        "assigned production": prodPage,
+        "assigned production, development: true": devPage,
+        "assigned development": devPage,
+        "assigned development, development: false": prodPage,
+        "deleted": devPage,
+      });
     });
   });
 

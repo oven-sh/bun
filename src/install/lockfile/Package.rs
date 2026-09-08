@@ -1488,8 +1488,7 @@ impl Diff {
         )) as u32;
         if is_root {
             summary.remove = removed_names.len() as u32;
-            // The set is the union over the root and every workspace, so compare it once the
-            // loop above has parsed the workspaces into `to_lockfile`.
+            // After the loop: it adds each workspace's `trustedDependencies` to `to_lockfile`.
             Self::trusted_dependencies(&mut summary, from_lockfile, to_lockfile)?;
         }
 
@@ -1558,27 +1557,14 @@ impl Diff {
         from_lockfile: &mut Lockfile,
         to_lockfile: &Lockfile,
     ) -> crate::Result<()> {
-        // situations:
-        // 1 - Both old lockfile and new lockfile use default trusted dependencies, no diffs
-        // 2 - Both exist, only diffs are from additions and removals
-        //
-        // 3 - Old lockfile has trusted dependencies, new lockfile does not. Added are dependencies
-        //     from default list that didn't exist previously. We need to be careful not to add these
-        //     to the new lockfile. Removed are dependencies from old list that
-        //     don't exist in the default list.
-        //
-        // 4 - Old lockfile used the default list, new lockfile has trusted dependencies. Added
-        //     are dependencies are all from the new lockfile. Removed is empty because the default
-        //     list isn't appended to the lockfile.
-
-        // 1
+        // Both the old and the new lockfile use the default list: no diffs.
         if from_lockfile.trusted_dependencies.is_none()
             && to_lockfile.trusted_dependencies.is_none()
         {
             return Ok(());
         }
 
-        // 2
+        // Both have a list: the diffs are its additions and removals.
         if let (Some(from_trusted_dependencies), Some(to_trusted_dependencies)) = (
             from_lockfile.trusted_dependencies.as_mut(),
             to_lockfile.trusted_dependencies.as_ref(),
@@ -1624,7 +1610,7 @@ impl Diff {
             return Ok(());
         }
 
-        // 3
+        // Back to the default list: its entries are newly trusted but not written to the lockfile.
         if let (Some(from_trusted_dependencies), None) = (
             from_lockfile.trusted_dependencies.as_ref(),
             to_lockfile.trusted_dependencies.as_ref(),
@@ -1632,8 +1618,6 @@ impl Diff {
             // added
             for entry in default_trusted_dependencies::entries() {
                 if !from_trusted_dependencies.contains(&(entry.hash as TruncatedPackageNameHash)) {
-                    // although this is a new trusted dependency, it is from the default
-                    // list so it shouldn't be added to the lockfile
                     summary.added_trusted_dependencies.put(
                         entry.hash as TruncatedPackageNameHash,
                         AddedTrustedDependency {
@@ -1644,7 +1628,7 @@ impl Diff {
                 }
             }
 
-            // removed
+            // removed: the old entries that are not on the default list
             for (&from_trusted, from_name) in from_trusted_dependencies.iter() {
                 if !default_trusted_dependencies::has_with_hash(u64::from(from_trusted)) {
                     summary
@@ -1656,13 +1640,11 @@ impl Diff {
             return Ok(());
         }
 
-        // 4
+        // First explicit list: every entry is added, also one that is on the default list.
         if let (None, Some(to_trusted_dependencies)) = (
             from_lockfile.trusted_dependencies.as_ref(),
             to_lockfile.trusted_dependencies.as_ref(),
         ) {
-            // add all to trusted dependencies, even if they exist in default because they weren't in the
-            // lockfile originally
             for (&to_trusted, to_name) in to_trusted_dependencies.iter() {
                 summary.added_trusted_dependencies.put(
                     to_trusted,

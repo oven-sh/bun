@@ -928,6 +928,86 @@ devTest("css module that was only composed from gets imported directly", {
     await c.expectMessage("base:base true");
   },
 });
+devTest("two importers share one css module instance", {
+  files: {
+    "index.html": emptyHtmlFile({
+      scripts: ["index.ts"],
+    }),
+    "styles.module.css": `
+      .shared { color: red; }
+    `,
+    "a.ts": `
+      import styles from "./styles.module.css";
+      export const mapA = styles;
+    `,
+    "b.ts": `
+      import styles from "./styles.module.css";
+      export const mapB = styles;
+    `,
+    "index.ts": `
+      import { mapA } from "./a";
+      import { mapB } from "./b";
+      console.log("same:" + (mapA === mapB) + " " + mapA.shared);
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    const msg = await c.getStringMessage();
+    assert(msg.startsWith("same:true shared_"), msg);
+  },
+});
+devTest("emptying a css module removes its styles and class map", {
+  files: {
+    "index.html": emptyHtmlFile({
+      scripts: ["index.ts"],
+      body: `<h1>Hello</h1>`,
+    }),
+    "styles.module.css": `
+      .title { color: red; }
+    `,
+    "index.ts": `
+      import styles from "./styles.module.css";
+      document.querySelector("h1").className = styles.title ?? "";
+      console.log("keys:" + Object.keys(styles).sort().join(","));
+      import.meta.hot.accept();
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage("keys:title");
+    const className = await c.js<string>`document.querySelector("h1").className`;
+    await c.style("." + className).color.expect.toBe("red");
+
+    await dev.write("styles.module.css", " ", { dedent: false });
+    await c.expectMessage("keys:");
+    await c.style("." + className).notFound();
+
+    await dev.write("styles.module.css", `.title { color: blue; }`);
+    await c.expectMessage("keys:title");
+    await c.style("." + className).color.expect.toBe("#00f");
+  },
+});
+devTest("plain css import stays side-effect only next to css modules", {
+  files: {
+    "index.html": emptyHtmlFile({
+      scripts: ["index.ts"],
+    }),
+    "plain.css": `
+      body { color: red; }
+    `,
+    "index.ts": `
+      import "./plain.css";
+      globalThis.evalCount = (globalThis.evalCount ?? 0) + 1;
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.style("body").color.expect.toBe("red");
+    await dev.patch("plain.css", { find: "red", replace: "blue" });
+    await c.style("body").color.expect.toBe("#00f");
+    expect(await c.js<number>`globalThis.evalCount`).toBe(1);
+  },
+});
 
 function extractCssUrl(backgroundImage: string): string {
   const url = backgroundImage.match(/url\((['"])(.*?)\1\)/);

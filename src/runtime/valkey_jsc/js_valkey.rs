@@ -719,6 +719,7 @@ impl JSValkeyClient {
                     valkey::TLS::None
                 },
                 database,
+                pending_hello: None,
                 flags: valkey::ConnectionFlags {
                     enable_auto_reconnect: options.enable_auto_reconnect,
                     enable_offline_queue: options.enable_offline_queue,
@@ -822,6 +823,7 @@ impl JSValkeyClient {
                 }),
                 tls,
                 database: client.database,
+                pending_hello: None,
                 flags: valkey::ConnectionFlags {
                     enable_offline_queue: if sub_ctx.is_subscriber {
                         sub_ctx.original_enable_offline_queue

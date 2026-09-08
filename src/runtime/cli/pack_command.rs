@@ -3730,7 +3730,7 @@ impl IgnorePatterns {
 
         let mut has_rel_path = false;
 
-        for line in strings::split(&contents, b"\n") {
+        for line in strings::split(strings::without_utf8_bom(&contents), b"\n") {
             if line.is_empty() {
                 continue;
             }

@@ -1875,6 +1875,25 @@ describe.concurrent(".gitignore/.npmignore", () => {
 
     expect(tarballEntries(join(dir, "pack-ignore-2-1.2.1.tgz"))).toEqual(["package/package.json"]);
   });
+
+  // git's add_patterns_from_buffer() skips a UTF-8 BOM before it splits lines
+  test.each([".gitignore", ".npmignore"])("skips a UTF-8 BOM at the start of %s", async ignoreFile => {
+    using dir = tempDir("pack-ignore-bom", {
+      "package.json": JSON.stringify({ name: "pack-ignore-bom", version: "1.0.0" }),
+      [ignoreFile]: "\uFEFFsecrets/\n*.log\n",
+      "secrets/token.txt": "secret",
+      "debug.log": "log",
+      "index.js": indexJs,
+    });
+
+    const { err, exitCode } = await runPack(dir);
+    expect(err).toBe("");
+    expect(tarballEntries(join(dir, "pack-ignore-bom-1.0.0.tgz"))).toEqual([
+      "package/package.json",
+      "package/index.js",
+    ]);
+    expect(exitCode).toBe(0);
+  });
 });
 
 describe.concurrent("bins", () => {

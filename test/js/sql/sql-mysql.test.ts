@@ -212,16 +212,19 @@ if (isDockerEnabled()) {
           expect(rows).toEqual([{ a: 1 }, { a: 2 }]);
           expect(meta(rows)).toEqual({ count: 2, command: "SELECT", affectedRows: 0 });
           // Text protocol, one result per statement. Quotes and comments that
-          // contain `;` do not split statements.
+          // contain `;` do not split statements, `--` without a space after
+          // it is not a comment, and `/*! */` is code, not a comment.
           const results = await sql`
             insert into ${sql(t)} values (4, 'a;b'); -- not a DELETE;
             select b from ${sql(t)} where a = 4; # also ; ignored
-            (select 7 as n);
+            (select 7--1 as n);
+            /*!40101 update ${sql(t)} set b = 'w' */;
             delete from ${sql(t)}`.simple();
           expect(results.map(meta)).toEqual([
             { count: 1, command: "INSERT", affectedRows: 1 },
             { count: 1, command: "SELECT", affectedRows: 0 },
             { count: 1, command: "SELECT", affectedRows: 0 },
+            { count: 3, command: "UPDATE", affectedRows: 3 },
             { count: 3, command: "DELETE", affectedRows: 3 },
           ]);
           expect(meta(await sql.unsafe("replace into " + t + " values (1, 'r')"))).toEqual({

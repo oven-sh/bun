@@ -222,7 +222,9 @@ impl JSMySQLQuery {
         let global = self.global_object();
         // Computed before `result()` marks the query as answered, so that a
         // failure here can still reject it.
-        let keyword = self.query.with_mut(|q| q.advance_command());
+        let keyword = self
+            .query
+            .with_mut(|q| q.advance_command(result.backslash_escapes));
         let js_command = match self.query.get().command_to_js(global, keyword) {
             Ok(command) => command,
             Err(err) => {

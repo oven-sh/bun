@@ -1418,6 +1418,7 @@ impl MySQLConnection {
     ) {
         self.status_flags = status_flags;
         let is_last_result = !status_flags.has(StatusFlag::SERVER_MORE_RESULTS_EXISTS);
+        let backslash_escapes = !status_flags.has(StatusFlag::SERVER_STATUS_NO_BACKSLASH_ESCAPES);
         debug!(
             "handleResultSetOK: {} {}",
             status_flags.to_int(),
@@ -1458,6 +1459,7 @@ impl MySQLConnection {
                 last_insert_id,
                 affected_rows,
                 is_last_result,
+                backslash_escapes,
             },
         );
 

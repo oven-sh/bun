@@ -40,10 +40,10 @@ pub struct MySQLQuery {
     flags: Flags,
 }
 
-/// `result.command` is passed to JS as an index into this table (offset by
-/// one) for the common statements, so they do not allocate a string per
-/// query. Keep in sync with `commands` in src/js/internal/sql/mysql.ts.
-const KNOWN_KEYWORDS: [&[u8]; 16] = [
+/// Statements common enough that `result.command` reaches JS as an index into
+/// this table (exposed to JS as `commands` on the binding) instead of a string
+/// allocated per query.
+pub(crate) const COMMON_KEYWORDS: [&[u8]; 16] = [
     b"SELECT",
     b"INSERT",
     b"UPDATE",
@@ -62,9 +62,9 @@ const KNOWN_KEYWORDS: [&[u8]; 16] = [
     b"USE",
 ];
 
-/// Upper-cases an ASCII keyword and converts it to the value JS receives as
-/// the command: a number for `KNOWN_KEYWORDS`, a string otherwise, `null`
-/// when there is no keyword.
+/// Upper-cases an ASCII keyword into what JS receives as the command: an
+/// index into `COMMON_KEYWORDS`, a string otherwise, `null` when there is no
+/// keyword.
 fn keyword_to_js<T: Copy + Into<u32>>(global: &JSGlobalObject, keyword: &[T]) -> JsResult<JSValue> {
     if keyword.is_empty() {
         return Ok(JSValue::NULL);
@@ -81,8 +81,8 @@ fn keyword_to_js<T: Copy + Into<u32>>(global: &JSGlobalObject, keyword: &[T]) ->
         // `KeywordCursor` only yields ASCII letters.
         *dst = (c.into() as u8).to_ascii_uppercase();
     }
-    if let Some(i) = KNOWN_KEYWORDS.iter().position(|k| *k == &*upper) {
-        return Ok(JSValue::js_number((i + 1) as f64));
+    if let Some(i) = COMMON_KEYWORDS.iter().position(|k| *k == &*upper) {
+        return Ok(JSValue::js_number(i as f64));
     }
     bun_string_jsc::create_utf8_for_js(global, upper)
 }
@@ -458,11 +458,11 @@ impl MySQLQuery {
 
     /// Advances to the statement whose result arrives next and returns the
     /// range of its leading keyword in the query text.
-    pub(crate) fn advance_command(&mut self) -> Range<usize> {
+    pub(crate) fn advance_command(&mut self, backslash_escapes: bool) -> Range<usize> {
         if self.query.is_utf16() {
-            self.command.next(self.query.utf16())
+            self.command.next(self.query.utf16(), backslash_escapes)
         } else {
-            self.command.next(self.query.latin1())
+            self.command.next(self.query.latin1(), backslash_escapes)
         }
     }
 

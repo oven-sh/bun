@@ -18,6 +18,7 @@ const {
   createConnection: createMySQLConnection,
   createQuery: createMySQLQuery,
   init: initMySQL,
+  commands,
 } = $rust("mysql.rs", "createBinding") as MySQLDotZig;
 
 function wrapError(error: Error | MySQLErrorOptions) {
@@ -27,34 +28,14 @@ function wrapError(error: Error | MySQLErrorOptions) {
   return new MySQLError(error.message, error);
 }
 
-// MySQL replies carry no command tag, so the native side derives `command`
-// from the leading keyword of the statement and passes these as a 1-based
-// index. Keep in sync with KNOWN_KEYWORDS in src/sql_jsc/mysql/MySQLQuery.rs.
-const commands = [
-  null,
-  "SELECT",
-  "INSERT",
-  "UPDATE",
-  "DELETE",
-  "REPLACE",
-  "CALL",
-  "WITH",
-  "SHOW",
-  "SET",
-  "START",
-  "BEGIN",
-  "COMMIT",
-  "ROLLBACK",
-  "SAVEPOINT",
-  "RELEASE",
-  "USE",
-];
-
 initMySQL(
   function onResolveMySQLQuery(query, result, command, count, queries, is_last, last_insert_rowid, affected_rows) {
     $assert(result instanceof SQLResultArray, "Invalid result array");
 
     result.count = count || 0;
+    // MySQL replies carry no command tag; the native side derives this from
+    // the leading keyword of the statement, as an index into `commands` for
+    // the common ones.
     result.command = typeof command === "number" ? commands[command] : command;
     result.lastInsertRowid = last_insert_rowid;
     result.affectedRows = affected_rows || 0;
@@ -105,6 +86,8 @@ initMySQL(
 );
 
 export interface MySQLDotZig {
+  /** `result.command` strings that `onResolveQuery` receives as an index. */
+  commands: string[];
   init: (
     onResolveQuery: (
       query: Query<any, any>,

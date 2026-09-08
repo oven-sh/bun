@@ -487,11 +487,9 @@ export function windowsEnv(
   // assignment (never Object.defineProperty on the target) keeps the
   // proxy CustomAccessors on `internalEnv` and their side effects intact.
   function writeEnvVar(p: string, k: string, value: unknown) {
-    // Read before coerceForWrite: the proxy-var accessors read the native env map,
-    // which coerceForWrite is about to update.
+    // Read first: the proxy-var accessors read the env map that coerceForWrite updates.
     const previous = internalEnv[k];
-    // Node's EnvSetter semantics (DEP0104 + ToString) and the native side effects
-    // (TZ, TLS, proxy, ...); name-matching here survives a prior `delete`.
+    // DEP0104 + ToString, plus the native side effect by name (survives a prior `delete`).
     const coerced = coerceForWrite(k, value);
     // Track the key for enumeration if it isn't already there. Don't gate on
     // `k in internalEnv`: the proxy accessors (HTTP_PROXY, ...) always exist

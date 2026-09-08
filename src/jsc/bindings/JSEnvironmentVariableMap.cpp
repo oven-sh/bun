@@ -103,9 +103,7 @@ static JSC::JSString* coerceEnvValue(JSGlobalObject* globalObject, JSC::ThrowSco
 static void applyTLSRejectFromString(JSGlobalObject*, const String&);
 static void applyVerboseFetchFromString(JSGlobalObject*, const String&);
 
-// TZ / NODE_TLS_REJECT_UNAUTHORIZED / BUN_CONFIG_VERBOSE_FETCH / proxy vars feed native
-// state. Every write and delete path name-matches through these (like Node's
-// RealEnvStore::Set/Delete), so they still work once the CustomAccessor is gone.
+// Every write/delete path name-matches here (like Node's RealEnvStore), not via the accessor.
 static bool isNativeBackedEnvKey(const String& key);
 static bool applyEnvWriteSideEffects(JSGlobalObject*, const String& key, const String& value);
 static bool applyEnvDeleteSideEffects(JSGlobalObject*, const String& key);
@@ -258,8 +256,7 @@ JSC_DEFINE_CUSTOM_SETTER(jsSetterProxyEnvironmentVariable, (JSGlobalObject * glo
     unsigned attributes;
     JSValue existing = object->getDirect(vm, propertyName, attributes);
     if (existing && (attributes & JSC::PropertyAttribute::DontEnum)) {
-        // putDirectCustomAccessor asserts NewProperty, so delete first; the static
-        // JSObject::deleteProperty, so an env map's delete hook can't unset the value.
+        // Static JSObject::deleteProperty: an env map's delete hook would unset the value.
         DeletePropertySlot deleteSlot;
         if (JSObject::deleteProperty(object, globalObject, propertyName, deleteSlot)) {
             object->putDirectCustomAccessor(vm, propertyName, existing,
@@ -318,8 +315,7 @@ bool JSEnvironmentVariableMap::deleteProperty(JSCell* cell, JSGlobalObject* glob
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    // Without this, delete only drops the CustomAccessor and the native state keeps its
-    // last value. put() handles re-set by name.
+    // Base::deleteProperty alone drops the accessor and leaves the native state as is.
     auto* uid = propertyName.publicName();
     if (uid && applyEnvDeleteSideEffects(globalObject, String(uid)) && WTF::equal(uid, "TZ"_s)) [[unlikely]] {
         auto* clientData = WebCore::clientData(vm);
@@ -673,8 +669,7 @@ static bool shouldApplyTZSideEffect(JSGlobalObject* globalObject)
     return !context || context->isMainThread();
 }
 
-// An empty or unresolvable name selects UTC, as it does for libc (and for Node, where
-// ICU ends up on Etc/Unknown), instead of leaving the previous zone in force.
+// An empty or unresolvable name selects UTC, like libc and Node (ICU's Etc/Unknown).
 static void applyTZFromString(JSGlobalObject* globalObject, const String& value)
 {
     if (!shouldApplyTZSideEffect(globalObject))
@@ -684,9 +679,7 @@ static void applyTZFromString(JSGlobalObject* globalObject, const String& value)
     resetDateCachesAfterTimeZoneChange(JSC::getVM(globalObject));
 }
 
-// `delete` reverts to the host zone. With no override JSC asks ICU, and on POSIX ICU
-// reads $TZ from the C environ before /etc/localtime, so a launch-time TZ has to go
-// too. (On Windows ICU asks the OS, and the Proxy trap already cleared the variable.)
+// With no override JSC asks ICU for the host zone, and on POSIX ICU reads $TZ first.
 static void clearTZ(JSGlobalObject* globalObject)
 {
     if (!shouldApplyTZSideEffect(globalObject))
@@ -740,8 +733,7 @@ static bool applyEnvWriteSideEffects(JSGlobalObject* globalObject, const String&
     return false;
 }
 
-// `delete` puts each native-backed key back to its unset default: host time zone,
-// verification on, no verbose fetch, no proxy entry in the env map.
+// Back to the unset default: host zone, verification on, no verbose fetch, no env map entry.
 static bool applyEnvDeleteSideEffects(JSGlobalObject* globalObject, const String& rawKey)
 {
     String key = SharedEnvStore::normalizeKey(rawKey);

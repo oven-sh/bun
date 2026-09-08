@@ -345,18 +345,11 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
             Output::println(format_args!("{}", bstr::BStr::new(&username)));
             Global::exit(0);
         } else if strings::eql_comptime(subcommand, b"view") {
-            let property_path = if pm.options.positionals.len() > 2 {
-                Some(pm.options.positionals[2])
-            } else {
-                None
-            };
-            let spec = if pm.options.positionals.len() > 1 {
-                pm.options.positionals[1]
-            } else {
-                b"".as_slice()
-            };
+            let positionals: &'static [&'static [u8]] = pm.options.positionals;
+            let spec: &[u8] = positionals.get(1).copied().unwrap_or(b"");
+            let fields: &[&[u8]] = positionals.get(2..).unwrap_or(&[]);
             let json_output = pm.options.json_output;
-            PmViewCommand::view(pm, spec, property_path, json_output)?;
+            PmViewCommand::view(pm, spec, fields, json_output)?;
             Global::exit(0);
         } else if strings::eql_comptime(subcommand, b"bin") {
             // SAFETY: `FileSystem::instance()` is initialised during

@@ -1,5 +1,8 @@
+use std::io::Write as _;
+
 use bstr::BStr;
 use bun_alloc::Arena as Bump;
+use bun_ast::{E, Expr, ExprData, G};
 use bun_collections::VecExt;
 use bun_core::MutableString;
 use bun_core::fmt as bun_fmt;
@@ -9,22 +12,24 @@ use bun_http as http;
 use bun_install::PackageManager;
 use bun_install::dependency;
 use bun_install::npm::{self, PackageManifest};
-use bun_js_parser as ast;
 use bun_js_printer as JSPrinter;
 use bun_parsers::json as JSON;
 use bun_semver as Semver;
-use bun_url::URL; // bumpalo::Bump re-export
+use bun_url::URL;
 
 use bun_core::fmt::buf_print_infallible as buf_print;
 
+/// `bun pm view` / `bun info`: fetch the packument for `spec_`, pick the
+/// version the same way `bun add` would, then print either the whole
+/// manifest, or the requested `fields` (npm `view` field-path grammar).
 pub(crate) fn view(
     manager: &mut PackageManager,
     spec_: &[u8],
-    property_path: Option<&[u8]>,
+    fields: &[&[u8]],
     json_output: bool,
 ) -> Result<(), crate::Error> {
     let bump = Bump::new();
-    let (name, mut version) = dependency::split_name_and_version_or_latest('brk: {
+    let (name, version) = dependency::split_name_and_version_or_latest('brk: {
         // Extremely best effort.
         if spec_ == b"." || spec_ == b"" {
             if strings::is_npm_package_name(&manager.root_package_json_name_at_time_of_init) {
@@ -45,7 +50,12 @@ pub(crate) fn view(
                     manager.root_dir.has_comptime_query(b"package.json")
                 };
                 if !has_package_json {
-                    break 'from_package_json;
+                    fail(
+                        json_output,
+                        b"EUSAGE",
+                        b"No package name was given and no package.json was found",
+                        b"",
+                    );
                 }
                 let fd = manager.root_dir.fd;
                 if !fd.is_valid() {
@@ -75,6 +85,17 @@ pub(crate) fn view(
 
         break 'brk spec_;
     });
+
+    for field in fields {
+        if strings::contains(field, b"[]") {
+            fail(
+                json_output,
+                b"EINVALIDSYNTAX",
+                b"Empty brackets are not valid syntax for retrieving values.",
+                b"",
+            );
+        }
+    }
 
     let scope = manager.scope_for_package_name(name);
 
@@ -135,30 +156,74 @@ pub(crate) fn view(
     let res = match req.send_sync(&mut response_buf) {
         Ok(r) => r,
         Err(err) => {
+            if json_output {
+                let mut summary: Vec<u8> = Vec::new();
+                let _ = write!(
+                    &mut summary,
+                    "request to {} failed to send",
+                    bun_fmt::redacted_npm_url(req.url.href)
+                );
+                fail(true, err.name().as_bytes(), &summary, b"");
+            }
             Output::err(err, "view request failed to send", ());
             Global::crash();
         }
     };
 
     if res.status_code() >= 400 {
+        if json_output {
+            let mut code: Vec<u8> = Vec::new();
+            let _ = write!(&mut code, "E{}", res.status_code());
+            let mut summary: Vec<u8> = Vec::new();
+            let _ = write!(
+                &mut summary,
+                "{}{}{}: {}",
+                res.status_code(),
+                if res.status_text().is_empty() {
+                    ""
+                } else {
+                    " "
+                },
+                BStr::new(res.status_text()),
+                bun_fmt::redacted_npm_url(req.url.href),
+            );
+            let mut detail: Vec<u8> = Vec::new();
+            if res.status_code() == 404 {
+                let _ = write!(
+                    &mut detail,
+                    "'{}@{}' does not exist in this registry",
+                    BStr::new(name),
+                    BStr::new(version)
+                );
+            } else if let Some(message) = npm::response_error_message(&response_buf)? {
+                detail = message;
+            }
+            fail(true, &code, &summary, &detail);
+        }
         npm::response_error::<false>(&req, &res, Some((name, version)), &mut response_buf)?;
     }
 
     let mut log = bun_ast::Log::init();
     let source = &bun_ast::Source::init_path_string(b"view.json", response_buf.list.as_slice());
-    let json: ast::Expr = match JSON::parse_utf8(source, &mut log, &bump) {
-        Ok(j) => j,
-        Err(err) => {
-            Output::err(err, "failed to parse response body as JSON", ());
+    let json: Expr = match JSON::parse_utf8(source, &mut log, &bump) {
+        Ok(j) if log.errors == 0 => j,
+        result => {
+            if json_output {
+                fail(
+                    true,
+                    b"EJSONPARSE",
+                    b"failed to parse response body as JSON",
+                    b"",
+                );
+            }
+            match result {
+                Err(err) => Output::err(err, "failed to parse response body as JSON", ()),
+                Ok(_) => log.print(std::ptr::from_mut(Output::error_writer()))?,
+            }
             Global::crash();
         }
     };
-    if log.errors > 0 {
-        log.print(std::ptr::from_mut(Output::error_writer()))?;
-        Global::crash();
-    }
 
-    // Parse the existing JSON response into a PackageManifest using the now-public parse function
     let parsed_manifest = match PackageManifest::parse(
         scope,
         &mut log,
@@ -170,140 +235,462 @@ pub(crate) fn view(
         true, // is_extended_manifest (view uses application/json Accept header)
     ) {
         Ok(Some(m)) => m,
-        Ok(None) => {
-            Output::err_generic("failed to parse package manifest", ());
+        result => {
+            if json_output {
+                fail(
+                    true,
+                    b"EINVALIDMANIFEST",
+                    b"failed to parse package manifest",
+                    b"",
+                );
+            }
+            match result {
+                Err(err) => Output::err(err, "failed to parse package manifest", ()),
+                Ok(_) => Output::err_generic("failed to parse package manifest", ()),
+            }
             Global::crash();
-        }
-        Err(err) => {
-            Output::err(err, "failed to parse package manifest", ());
-            Global::exit(1);
         }
     };
 
-    // Now use the existing version resolution logic from outdated_command
-    let mut manifest;
+    // `versions` keys that parse as semver, oldest first. npm sorts and
+    // validates this list too, so publish order never leaks into `versions`,
+    // the `versions: N` header count, or the "Recent versions" hint.
+    let sorted_versions = SortedVersions::from_packument(&bump, &json);
 
-    let versions_len: usize;
+    let selected: Option<(&[u8], Expr)> = 'select: {
+        let Some(versions_obj) = json.get_object(b"versions") else {
+            break 'select None;
+        };
+        let wanted_version: Semver::Version =
+            if let Some(result) = parsed_manifest.find_by_dist_tag(version) {
+                result.version
+            } else {
+                let sliced_literal = Semver::SlicedString::init(version, version);
+                let query = Semver::query::parse(version, sliced_literal)?;
+                match parsed_manifest.find_best_version(&query, version) {
+                    Some(result) => result.version,
+                    None => break 'select None,
+                }
+            };
 
-    // Note: reshaped for borrowck.
-    'brk: {
-        'from_versions: {
-            if let Some(versions_obj) = json.get_object(b"versions") {
-                // Find the version string from JSON that matches the resolved version
-                let versions_e_obj = versions_obj
-                    .data
-                    .e_object()
-                    .expect("infallible: variant checked");
-                let versions = versions_e_obj.properties.slice();
-                versions_len = versions.len();
+        let mut found: Option<(&[u8], Expr)> = None;
+        versions_obj.for_each_property(|key, _, value| {
+            if found.is_some() {
+                return;
+            }
+            let parsed = Semver::Version::parse(Semver::SlicedString::init(key, key));
+            if parsed.valid && parsed.version.max().eql(wanted_version) {
+                found = Some((&*bump.alloc_slice_copy(key), value));
+            }
+        });
+        found
+    };
 
-                let wanted_version: Semver::Version = 'brk2: {
-                    // First try dist-tag lookup (like "latest", "beta", etc.)
-                    if let Some(result) = parsed_manifest.find_by_dist_tag(version) {
-                        break 'brk2 result.version;
-                    } else {
-                        // Parse as semver query and find best version
-                        let sliced_literal = Semver::SlicedString::init(version, version);
-                        let query = Semver::query::parse(version, sliced_literal)?;
-                        if let Some(result) = parsed_manifest.find_best_version(&query, version) {
-                            break 'brk2 result.version;
-                        }
-                    }
-
-                    break 'from_versions;
-                };
-
-                for prop in versions {
-                    let Some(key) = prop.key.as_ref() else {
-                        continue;
-                    };
-                    let Some(version_str) = key.as_string(&bump) else {
-                        continue;
-                    };
-                    let sliced_version = Semver::SlicedString::init(version_str, version_str);
-                    let parsed_version = Semver::Version::parse(sliced_version);
-                    if parsed_version.valid && parsed_version.version.max().eql(wanted_version) {
-                        version = version_str;
-                        manifest = prop.value.expect("infallible: prop has value");
-                        break 'brk;
-                    }
+    let Some((version, manifest)) = selected else {
+        if json_output {
+            let mut summary: Vec<u8> = Vec::new();
+            let _ = write!(
+                &mut summary,
+                "No version of \"{}\" satisfying \"{}\" found",
+                BStr::new(name),
+                BStr::new(version)
+            );
+            let mut detail: Vec<u8> = Vec::new();
+            let recent = sorted_versions.recent(MAX_RECENT_VERSIONS);
+            if !recent.is_empty() {
+                let _ = write!(&mut detail, "Recent versions:");
+                for (i, v) in recent.iter().enumerate() {
+                    let _ = write!(
+                        &mut detail,
+                        "{}{}",
+                        if i == 0 { " " } else { ", " },
+                        BStr::new(v)
+                    );
                 }
             }
+            fail(true, b"E404", &summary, &detail);
         }
 
-        if json_output {
-            Output::print(format_args!(
-                "{{ \"error\": \"No matching version found\", \"version\": {} }}\n",
-                bun_fmt::format_json_string_utf8(
-                    spec_,
-                    bun_fmt::JSONFormatterUTF8Options { quote: true }
-                ),
-            ));
-            Output::flush();
-        } else {
-            Output::err_generic(
-                "No version of <b>{}<r> satisfying <b>{}<r> found",
-                (bun_fmt::quote(name), bun_fmt::quote(version)),
-            );
-
-            let max_versions_to_display: usize = 5;
-
-            let start_index = parsed_manifest
-                .versions
-                .len()
-                .saturating_sub(max_versions_to_display);
-            let mut versions_to_display = &parsed_manifest.versions[start_index..];
-            versions_to_display =
-                &versions_to_display[..versions_to_display.len().min(max_versions_to_display)];
-            if !versions_to_display.is_empty() {
-                bun_core::pretty_errorln!("\nRecent versions:<r>");
-                for v in versions_to_display {
-                    bun_core::pretty_errorln!("<d>-<r> {}", v.fmt(&parsed_manifest.string_buf));
-                }
-
-                if start_index > 0 {
-                    bun_core::pretty_errorln!("  <d>... and {} more<r>", start_index);
-                }
+        Output::err_generic(
+            "No version of <b>{}<r> satisfying <b>{}<r> found",
+            (bun_fmt::quote(name), bun_fmt::quote(version)),
+        );
+        let recent = sorted_versions.recent(MAX_RECENT_VERSIONS);
+        if !recent.is_empty() {
+            bun_core::pretty_errorln!("\nRecent versions:<r>");
+            for v in &recent {
+                bun_core::pretty_errorln!("<d>-<r> {}", BStr::new(*v));
+            }
+            let hidden = sorted_versions.len() - recent.len();
+            if hidden > 0 {
+                bun_core::pretty_errorln!("  <d>... and {} more<r>", hidden);
             }
         }
         Global::exit(1);
+    };
+
+    // What npm calls the manifest for `view`: the packument root with the
+    // selected version's fields laid over it, `versions` replaced by the
+    // sorted list, and `readme` dropped unless a field asks for it.
+    let wants_readme = fields
+        .iter()
+        .any(|f| FieldPath::parse(f).first().is_some_and(|s| *s == b"readme"));
+    let merged = merge_manifest(json, manifest, sorted_versions.to_array(), wants_readme);
+
+    if !fields.is_empty() {
+        let mut results: Vec<FieldResult<'_>> = Vec::new();
+        for field in fields {
+            FieldPath::collect(&bump, merged, field, &mut results);
+        }
+        print_fields(&results, source, json_output)?;
+        return Ok(());
     }
 
-    // Treat versions specially because npm does some normalization on there.
-    if let Some(versions_object) = json.get_object(b"versions") {
-        let versions_e_obj = versions_object
-            .data
-            .e_object()
-            .expect("infallible: variant checked");
-        let props = versions_e_obj.properties.slice();
-        let mut keys: Vec<ast::Expr> = Vec::with_capacity(props.len());
-        debug_assert_eq!(props.len(), keys.capacity());
-        for prop in props {
-            keys.push(prop.key.expect("infallible: prop has key"));
+    if json_output {
+        Output::print(format_args!(
+            "{}",
+            BStr::new(&to_json_text(merged, source, true)?)
+        ));
+        Output::flush();
+        return Ok(());
+    }
+
+    print_pretty(&bump, name, version, json, merged, sorted_versions.len())
+}
+
+const MAX_RECENT_VERSIONS: usize = 5;
+
+/// Print an error and exit 1. Under `--json` every failure has this one
+/// shape on stdout (the same keys as `npm view --json`), so a consumer can
+/// always read `.error.code`.
+#[cold]
+fn fail(json_output: bool, code: &[u8], summary: &[u8], detail: &[u8]) -> ! {
+    if json_output {
+        let quote = || bun_fmt::JSONFormatterUTF8Options { quote: true };
+        Output::print(format_args!(
+            "{{\n  \"error\": {{\n    \"code\": {},\n    \"summary\": {},\n    \"detail\": {}\n  }}\n}}\n",
+            bun_fmt::format_json_string_utf8(code, quote()),
+            bun_fmt::format_json_string_utf8(summary, quote()),
+            bun_fmt::format_json_string_utf8(detail, quote()),
+        ));
+        Output::flush();
+    } else {
+        Output::err_generic("{}", (BStr::new(summary),));
+        if !detail.is_empty() {
+            bun_core::pretty_errorln!("{}", BStr::new(detail));
         }
-        let versions_array = ast::Expr::init(
-            ast::E::Array {
-                items: ast::ExprNodeList::from_owned_slice(keys.into_boxed_slice()),
+    }
+    Global::exit(1);
+}
+
+struct SortedVersions<'a> {
+    /// `(key expr, key text)` sorted by semver, oldest first.
+    entries: Vec<(Expr, &'a [u8])>,
+}
+
+impl<'a> SortedVersions<'a> {
+    fn from_packument(bump: &'a Bump, json: &Expr) -> Self {
+        let mut entries: Vec<(Expr, &'a [u8], Semver::Version)> = Vec::new();
+        if let Some(versions_obj) = json.get_object(b"versions") {
+            entries.reserve(versions_obj.property_count());
+            versions_obj.for_each_property(|key, loc, _| {
+                let parsed = Semver::Version::parse(Semver::SlicedString::init(key, key));
+                if !parsed.valid {
+                    return;
+                }
+                let key: &'a [u8] = bump.alloc_slice_copy(key);
+                let key_expr = Expr::init(
+                    E::String {
+                        data: E::Str::new(key),
+                        ..Default::default()
+                    },
+                    loc,
+                );
+                entries.push((key_expr, key, parsed.version.min()));
+            });
+        }
+        entries.sort_by(|a, b| a.2.order(b.2, a.1, b.1));
+        Self {
+            entries: entries.into_iter().map(|(e, k, _)| (e, k)).collect(),
+        }
+    }
+
+    fn len(&self) -> usize {
+        self.entries.len()
+    }
+
+    /// The newest `max` versions, oldest first.
+    fn recent(&self, max: usize) -> Vec<&'a [u8]> {
+        let start = self.entries.len().saturating_sub(max);
+        self.entries[start..].iter().map(|(_, k)| *k).collect()
+    }
+
+    fn to_array(&self) -> Expr {
+        let mut items: Vec<Expr> = Vec::with_capacity(self.entries.len());
+        for (expr, _) in &self.entries {
+            items.push(*expr);
+        }
+        Expr::init(
+            E::Array {
+                items: bun_ast::ExprNodeList::from_owned_slice(items.into_boxed_slice()),
                 ..Default::default()
             },
-            bun_ast::Loc { start: -1 },
-        );
-        manifest.set(&bump, b"versions", versions_array)?;
+            bun_ast::Loc::EMPTY,
+        )
+    }
+}
+
+fn property_key(prop: &G::Property) -> Option<&[u8]> {
+    let key = prop.key.as_ref()?;
+    let ExprData::EString(s) = &key.data else {
+        return None;
+    };
+    Some(s.data.slice())
+}
+
+fn new_property(key: &[u8], value: Expr) -> G::Property {
+    G::Property {
+        key: Some(Expr::init(
+            E::String {
+                data: E::Str::new(key),
+                ..Default::default()
+            },
+            bun_ast::Loc::EMPTY,
+        )),
+        value: Some(value),
+        ..Default::default()
+    }
+}
+
+fn new_object(properties: Vec<G::Property>) -> Expr {
+    Expr::init(
+        E::Object {
+            properties: G::PropertyList::from_owned_slice(properties.into_boxed_slice()),
+            ..Default::default()
+        },
+        bun_ast::Loc::EMPTY,
+    )
+}
+
+/// Root packument fields first (in registry order), then the selected
+/// version's fields override or append. This is the object every field path
+/// is resolved against and what bare `--json` prints, same as npm.
+fn merge_manifest(root: Expr, version: Expr, versions_array: Expr, wants_readme: bool) -> Expr {
+    let mut props: Vec<G::Property> =
+        Vec::with_capacity(root.property_count() + version.property_count());
+    let mut has_versions = false;
+    if let ExprData::EObject(obj) = &root.data {
+        for prop in obj.properties.slice() {
+            let (Some(key), Some(value)) = (property_key(prop), prop.value) else {
+                continue;
+            };
+            match key {
+                b"readme" if !wants_readme => continue,
+                b"versions" => {
+                    has_versions = true;
+                    props.push(new_property(key, versions_array));
+                }
+                _ => props.push(new_property(key, value)),
+            }
+        }
+    }
+    if !has_versions {
+        props.push(new_property(b"versions", versions_array));
+    }
+    if let ExprData::EObject(obj) = &version.data {
+        'next: for prop in obj.properties.slice() {
+            let (Some(key), Some(value)) = (property_key(prop), prop.value) else {
+                continue;
+            };
+            // A requested readme comes from the packument root, like npm.
+            if key == b"versions" || (key == b"readme" && wants_readme) {
+                continue;
+            }
+            for existing in props.iter_mut() {
+                if property_key(existing) == Some(key) {
+                    existing.value = Some(value);
+                    continue 'next;
+                }
+            }
+            props.push(new_property(key, value));
+        }
+    }
+    new_object(props)
+}
+
+struct FieldResult<'a> {
+    /// The path as typed, or `a[0].b` style when an array was expanded.
+    label: &'a [u8],
+    value: Expr,
+}
+
+/// npm `view` field paths: `a.b`, `a[0]`, `a[0].b`, `a.0`, `a[key.with.dots]`,
+/// and `array.prop`, which expands to one result per element.
+struct FieldPath;
+
+impl FieldPath {
+    /// Split into keys. Text inside `[...]` is one key taken literally (it
+    /// may contain dots); everything else splits on `.`.
+    fn parse(path: &[u8]) -> Vec<&[u8]> {
+        let mut keys: Vec<&[u8]> = Vec::new();
+        let mut start = 0usize;
+        let mut i = 0usize;
+        while i < path.len() {
+            match path[i] {
+                b'.' => {
+                    keys.push(&path[start..i]);
+                    i += 1;
+                    start = i;
+                }
+                b'[' => {
+                    let Some(close) = strings::index_of_char_usize(&path[i + 1..], b']') else {
+                        i += 1;
+                        continue;
+                    };
+                    let close = i + 1 + close;
+                    if i > start {
+                        keys.push(&path[start..i]);
+                    }
+                    keys.push(&path[i + 1..close]);
+                    i = close + 1;
+                    if i < path.len() && path[i] == b'.' {
+                        i += 1;
+                    }
+                    start = i;
+                }
+                _ => i += 1,
+            }
+        }
+        if start < path.len() {
+            keys.push(&path[start..]);
+        }
+        keys
     }
 
-    // Handle property lookup if specified
-    if let Some(prop_path) = property_path {
-        // This is similar to what npm does.
-        // `bun pm view react version ` => 1.2.3
-        // `bun pm view react versions` => ['1.2.3', '1.2.4', '1.2.5']
-        if let Some(value) = manifest
-            .get_path_may_be_index(&bump, prop_path)
-            .or_else(|| json.get_path_may_be_index(&bump, prop_path))
-        {
-            if let bun_ast::ExprData::EString(e_string) = &value.data {
-                // JSON parse_utf8 always produces UTF-8 strings, so the raw
-                // `data` slice is the literal value.
-                let slice = e_string.data.slice();
+    fn collect<'a>(bump: &'a Bump, root: Expr, path: &'a [u8], out: &mut Vec<FieldResult<'a>>) {
+        let keys = Self::parse(path);
+        if keys.is_empty() {
+            return;
+        }
+        let mut label: Vec<u8> = Vec::new();
+        Self::walk(bump, root, &keys, &mut label, false, path, out);
+    }
+
+    fn walk<'a>(
+        bump: &'a Bump,
+        mut value: Expr,
+        keys: &[&[u8]],
+        label: &mut Vec<u8>,
+        expanded: bool,
+        path: &'a [u8],
+        out: &mut Vec<FieldResult<'a>>,
+    ) {
+        for (i, key) in keys.iter().enumerate() {
+            let index = Self::array_index(key);
+            if value.is_array() && index.is_none() {
+                // `maintainers.name` → `maintainers[0].name`, `maintainers[1].name`, ...
+                let label_len = label.len();
+                let mut items = value.as_array();
+                let mut n = 0usize;
+                while let Some(item) = items.as_mut().and_then(|it| it.next()) {
+                    label.truncate(label_len);
+                    let _ = write!(label, "[{n}]");
+                    Self::walk(bump, item, &keys[i..], label, true, path, out);
+                    n += 1;
+                }
+                label.truncate(label_len);
+                return;
+            }
+            let next = match index {
+                Some(index) if value.is_array() => Self::nth(value, index),
+                _ if value.is_object() => value.get(key),
+                _ => None,
+            };
+            let Some(next) = next else {
+                return;
+            };
+            Self::append_key(label, key, index.is_some() && value.is_array());
+            value = next;
+        }
+        let label: &'a [u8] = if expanded {
+            bump.alloc_slice_copy(label)
+        } else {
+            path
+        };
+        for existing in out.iter_mut() {
+            if existing.label == label {
+                existing.value = value;
+                return;
+            }
+        }
+        out.push(FieldResult { label, value });
+    }
+
+    fn array_index(key: &[u8]) -> Option<usize> {
+        if key.is_empty() || !key.iter().all(u8::is_ascii_digit) {
+            return None;
+        }
+        bun_fmt::parse_decimal::<usize>(key)
+    }
+
+    fn nth(array: Expr, index: usize) -> Option<Expr> {
+        let mut iter = array.as_array()?;
+        let mut i = 0usize;
+        while let Some(item) = iter.next() {
+            if i == index {
+                return Some(item);
+            }
+            i += 1;
+        }
+        None
+    }
+
+    fn append_key(label: &mut Vec<u8>, key: &[u8], is_index: bool) {
+        if is_index || strings::index_of_any(key, b".[]").is_some() || key.is_empty() {
+            label.push(b'[');
+            label.extend_from_slice(key);
+            label.push(b']');
+        } else {
+            if !label.is_empty() {
+                label.push(b'.');
+            }
+            label.extend_from_slice(key);
+        }
+    }
+}
+
+fn to_json_text(
+    value: Expr,
+    source: &bun_ast::Source,
+    newline: bool,
+) -> Result<Vec<u8>, crate::Error> {
+    let mut buffer_writer = JSPrinter::BufferWriter::init();
+    buffer_writer.append_newline = newline;
+    let mut printer = JSPrinter::BufferPrinter::init(buffer_writer);
+    JSPrinter::print_json(
+        &mut printer,
+        value,
+        source,
+        JSPrinter::PrintJsonOptions {
+            mangled_props: None,
+            ..Default::default()
+        },
+    )?;
+    Ok(printer.ctx.get_written().to_vec())
+}
+
+/// One result prints bare (a string without quotes unless `--json`). Several
+/// results print as `label = <json>` lines, or as one JSON object.
+fn print_fields(
+    results: &[FieldResult<'_>],
+    source: &bun_ast::Source,
+    json_output: bool,
+) -> Result<(), crate::Error> {
+    match results {
+        [] => {}
+        [single] => {
+            if let ExprData::EString(s) = &single.value.data {
+                let slice = s.data.slice();
                 if json_output {
                     Output::print(format_args!(
                         "{}\n",
@@ -312,103 +699,67 @@ pub(crate) fn view(
                 } else {
                     Output::print(format_args!("{}\n", BStr::new(slice)));
                 }
-                Output::flush();
-                return Ok(());
-            }
-
-            let mut buffer_writer = JSPrinter::BufferWriter::init();
-            buffer_writer.append_newline = true;
-            let mut package_json_writer = JSPrinter::BufferPrinter::init(buffer_writer);
-            let _ = JSPrinter::print_json(
-                &mut package_json_writer,
-                value,
-                source,
-                JSPrinter::PrintJsonOptions {
-                    mangled_props: None,
-                    ..Default::default()
-                },
-            )?;
-            Output::print(format_args!(
-                "{}",
-                BStr::new(package_json_writer.ctx.get_written())
-            ));
-            Output::flush();
-            Global::exit(0);
-        } else {
-            if json_output {
-                Output::print(format_args!(
-                    "{{ \"error\": \"Property not found\", \"version\": {}, \"property\": {} }}\n",
-                    bun_fmt::format_json_string_utf8(
-                        spec_,
-                        bun_fmt::JSONFormatterUTF8Options { quote: true }
-                    ),
-                    bun_fmt::format_json_string_utf8(
-                        prop_path,
-                        bun_fmt::JSONFormatterUTF8Options { quote: true }
-                    ),
-                ));
-                Output::flush();
             } else {
-                Output::err_generic(
-                    "Property <b>{}<r> not found",
-                    format_args!("{}", BStr::new(prop_path)),
-                );
+                Output::print(format_args!(
+                    "{}",
+                    BStr::new(&to_json_text(single.value, source, true)?)
+                ));
             }
         }
-        Global::exit(1);
+        many => {
+            if json_output {
+                let props: Vec<G::Property> = many
+                    .iter()
+                    .map(|r| new_property(r.label, r.value))
+                    .collect();
+                Output::print(format_args!(
+                    "{}",
+                    BStr::new(&to_json_text(new_object(props), source, true)?)
+                ));
+            } else {
+                for r in many {
+                    Output::print(format_args!(
+                        "{} = {}\n",
+                        BStr::new(r.label),
+                        BStr::new(&to_json_text(r.value, source, false)?)
+                    ));
+                }
+            }
+        }
     }
+    Output::flush();
+    Ok(())
+}
 
-    if json_output {
-        // Output formatted JSON using JSPrinter
-        let mut buffer_writer = JSPrinter::BufferWriter::init();
-        buffer_writer.append_newline = true;
-        let mut package_json_writer = JSPrinter::BufferPrinter::init(buffer_writer);
-        let _ = JSPrinter::print_json(
-            &mut package_json_writer,
-            manifest,
-            source,
-            JSPrinter::PrintJsonOptions {
-                mangled_props: None,
-                indent: bun_ast::Indentation {
-                    count: 2,
-                    ..Default::default()
-                },
-                ..Default::default()
-            },
-        )?;
-        Output::print(format_args!(
-            "{}",
-            BStr::new(package_json_writer.ctx.get_written())
-        ));
-        Output::flush();
-        return Ok(());
-    }
-
+fn print_pretty(
+    bump: &Bump,
+    name: &[u8],
+    version: &[u8],
+    root: Expr,
+    manifest: Expr,
+    versions_len: usize,
+) -> Result<(), crate::Error> {
     let pkg_name: &[u8] = manifest
-        .get_string_cloned(&bump, b"name")
+        .get_string_cloned(bump, b"name")
         .ok()
         .flatten()
         .unwrap_or(name);
     let pkg_version: &[u8] = manifest
-        .get_string_cloned(&bump, b"version")
+        .get_string_cloned(bump, b"version")
         .ok()
         .flatten()
         .unwrap_or(version);
+    // `license` is a string, or the legacy `{ "type": "MIT", "url": ... }`.
     let license: &[u8] = manifest
-        .get_string_cloned(&bump, b"license")
-        .ok()
-        .flatten()
-        .unwrap_or(b"");
-    let mut dep_count: usize = 0;
+        .get(b"license")
+        .and_then(|l| {
+            l.as_string(bump)
+                .or_else(|| l.get_string_cloned(bump, b"type").ok().flatten())
+        })
+        .filter(|l| !l.is_empty())
+        .unwrap_or(b"Proprietary");
     let dependencies_object = manifest.get_object(b"dependencies");
-    if let Some(deps) = &dependencies_object {
-        dep_count = deps
-            .data
-            .e_object()
-            .expect("infallible: variant checked")
-            .properties
-            .len_u32() as usize;
-    }
+    let dep_count = dependencies_object.map_or(0, |deps| deps.property_count());
 
     prettyln!(
         "<b><blue><u>{}<r><d>@<r><blue><b><u>{}<r> <d>|<r> <cyan>{}<r> <d>|<r> deps<d>:<r> {} <d>|<r> versions<d>:<r> {}",
@@ -419,77 +770,80 @@ pub(crate) fn view(
         versions_len,
     );
 
-    // Get description and homepage from the top-level package manifest, not the version-specific one
-    if let Some(desc) = json.get_string_cloned(&bump, b"description").ok().flatten() {
+    if let Some(desc) = manifest
+        .get_string_cloned(bump, b"description")
+        .ok()
+        .flatten()
+    {
         prettyln!("{}", BStr::new(desc));
     }
-    if let Some(hp) = json.get_string_cloned(&bump, b"homepage").ok().flatten() {
-        prettyln!("<blue>{}<r>", BStr::new(hp));
+    if let Some(homepage) = manifest.get(b"homepage").and_then(|h| {
+        h.as_string(bump)
+            .or_else(|| h.get_string_cloned(bump, b"url").ok().flatten())
+    }) {
+        prettyln!("<blue>{}<r>", BStr::new(homepage));
     }
 
-    if let Some(mut iter) = json.get_array(b"keywords") {
-        let mut keywords = MutableString::init(64)?;
-        let mut first = true;
+    if let Some(mut iter) = manifest.get_array(b"keywords") {
+        let mut keywords: Vec<u8> = Vec::new();
         while let Some(kw_expr) = iter.next() {
-            if let Some(kw) = kw_expr.as_string(&bump) {
-                if !first {
-                    keywords.append_slice(b", ")?;
-                } else {
-                    first = false;
+            if let Some(kw) = kw_expr.as_string(bump) {
+                if !keywords.is_empty() {
+                    keywords.extend_from_slice(b", ");
                 }
-                keywords.append_slice(kw)?;
+                keywords.extend_from_slice(kw);
             }
         }
-        if !keywords.list.is_empty() {
-            prettyln!("<d>keywords:<r> {}", BStr::new(keywords.list.as_slice()));
+        if !keywords.is_empty() {
+            prettyln!("<d>keywords:<r> {}", BStr::new(&keywords));
         }
     }
 
-    // Display dependencies if they exist
-    if let Some(deps) = &dependencies_object {
-        let deps_e_obj = deps.data.e_object().expect("infallible: variant checked");
-        let dependencies = deps_e_obj.properties.slice();
-        if !dependencies.is_empty() {
-            prettyln!("\n<b>dependencies<r><d> ({}):<r>", dependencies.len());
-        }
-
-        for prop in dependencies {
-            if prop.key.is_none() || prop.value.is_none() {
-                continue;
+    if let Some(bin) = manifest.get_object(b"bin") {
+        let mut bins: Vec<u8> = Vec::new();
+        bin.for_each_property(|key, _, _| {
+            if !bins.is_empty() {
+                bins.extend_from_slice(b", ");
             }
-            let Some(dep_name) = prop
-                .key
-                .as_ref()
-                .expect("infallible: prop has key")
-                .as_string(&bump)
-            else {
-                continue;
-            };
-            let Some(dep_version) = prop
-                .value
-                .as_ref()
-                .expect("infallible: prop has value")
-                .as_string(&bump)
-            else {
-                continue;
-            };
-            prettyln!(
-                "- <cyan>{}<r><d>:<r> {}",
-                BStr::new(dep_name),
-                BStr::new(dep_version),
-            );
+            bins.extend_from_slice(key);
+        });
+        if !bins.is_empty() {
+            prettyln!("<d>bin:<r> <cyan>{}<r>", BStr::new(&bins));
         }
+    }
+
+    if let Some(deprecated) = manifest
+        .get_string_cloned(bump, b"deprecated")
+        .ok()
+        .flatten()
+    {
+        prettyln!("\n<red><b>DEPRECATED<r> ⚠️  - {}", BStr::new(deprecated));
+    }
+
+    if let Some(deps) = &dependencies_object {
+        if dep_count > 0 {
+            prettyln!("\n<b>dependencies<r><d> ({}):<r>", dep_count);
+        }
+        deps.for_each_property(|dep_name, _, value| {
+            if let Some(dep_version) = value.as_string(bump) {
+                prettyln!(
+                    "- <cyan>{}<r><d>:<r> {}",
+                    BStr::new(dep_name),
+                    BStr::new(dep_version),
+                );
+            }
+        });
     }
 
     if let Some(dist) = manifest.get_object(b"dist") {
         prettyln!("\n<d><r><b>dist<r>");
-        if let Some(t) = dist.get_string_cloned(&bump, b"tarball").ok().flatten() {
+        if let Some(t) = dist.get_string_cloned(bump, b"tarball").ok().flatten() {
             prettyln!(" <d>.<r>tarball<d>:<r> {}", BStr::new(t));
         }
-        if let Some(s) = dist.get_string_cloned(&bump, b"shasum").ok().flatten() {
+        if let Some(s) = dist.get_string_cloned(bump, b"shasum").ok().flatten() {
             prettyln!(" <d>.<r>shasum<r><d>:<r> <green>{}<r>", BStr::new(s));
         }
-        if let Some(i) = dist.get_string_cloned(&bump, b"integrity").ok().flatten() {
+        if let Some(i) = dist.get_string_cloned(bump, b"integrity").ok().flatten() {
             prettyln!(" <d>.<r>integrity<r><d>:<r> <green>{}<r>", BStr::new(i));
         }
         if let Some(u) = dist.get_number(b"unpackedSize") {
@@ -500,44 +854,37 @@ pub(crate) fn view(
         }
     }
 
-    if let Some(tags_obj) = json.get_object(b"dist-tags") {
+    if let Some(tags_obj) = root.get_object(b"dist-tags") {
         prettyln!("\n<b>dist-tags<r><d>:<r>");
-        for prop in tags_obj
-            .data
-            .e_object()
-            .expect("infallible: variant checked")
-            .properties
-            .slice()
-        {
-            if prop.key.is_none() || prop.value.is_none() {
-                continue;
+        tags_obj.for_each_property(|tag, _, value| {
+            let Some(val) = value.as_string(bump) else {
+                return;
+            };
+            if tag == b"latest" {
+                prettyln!("<cyan>{}<r><d>:<r> {}", BStr::new(tag), BStr::new(val));
+            } else if tag == b"beta" {
+                prettyln!("<blue>{}<r><d>:<r> {}", BStr::new(tag), BStr::new(val));
+            } else {
+                prettyln!("<magenta>{}<r><d>:<r> {}", BStr::new(tag), BStr::new(val));
             }
-            let tagname_expr = prop.key.as_ref().expect("infallible: prop has key");
-            let val_expr = prop.value.as_ref().expect("infallible: prop has value");
-            if let Some(tag) = tagname_expr.as_string(&bump) {
-                if let Some(val) = val_expr.as_string(&bump) {
-                    if tag == b"latest" {
-                        prettyln!("<cyan>{}<r><d>:<r> {}", BStr::new(tag), BStr::new(val));
-                    } else if tag == b"beta" {
-                        prettyln!("<blue>{}<r><d>:<r> {}", BStr::new(tag), BStr::new(val));
-                    } else {
-                        prettyln!("<magenta>{}<r><d>:<r> {}", BStr::new(tag), BStr::new(val));
-                    }
-                }
-            }
-        }
+        });
     }
 
-    if let Some(mut iter) = json.get_array(b"maintainers") {
+    // Current owners live on the packument root; the copy inside a version
+    // is frozen at publish time.
+    if let Some(mut iter) = root
+        .get_array(b"maintainers")
+        .or_else(|| manifest.get_array(b"maintainers"))
+    {
         prettyln!("\nmaintainers<r><d>:<r>");
         while let Some(m) = iter.next() {
             let nm: &[u8] = m
-                .get_string_cloned(&bump, b"name")
+                .get_string_cloned(bump, b"name")
                 .ok()
                 .flatten()
                 .unwrap_or(b"");
             let em: &[u8] = m
-                .get_string_cloned(&bump, b"email")
+                .get_string_cloned(bump, b"email")
                 .ok()
                 .flatten()
                 .unwrap_or(b"");
@@ -549,21 +896,14 @@ pub(crate) fn view(
         }
     }
 
-    // Add published date information
-    if let Some(time_obj) = json.get_object(b"time") {
-        // TODO: use a relative time formatter
+    if let Some(time_obj) = root.get_object(b"time") {
         if let Some(published_time) = time_obj
-            .get_string_cloned(&bump, pkg_version)
+            .get_string_cloned(bump, pkg_version)
             .ok()
             .flatten()
+            .or_else(|| time_obj.get_string_cloned(bump, b"modified").ok().flatten())
         {
             prettyln!("\n<b>Published<r><d>:<r> {}", BStr::new(published_time));
-        } else if let Some(modified_time) = time_obj
-            .get_string_cloned(&bump, b"modified")
-            .ok()
-            .flatten()
-        {
-            prettyln!("\n<b>Published<r><d>:<r> {}", BStr::new(modified_time));
         }
     }
 

@@ -711,7 +711,7 @@ for (const [label, earlyReply, body, first, onWindows] of earlyReplyCases) {
 // never processed, yet `fetch()` resolves with 408 and the origin's timeout
 // body.
 //
-// Every round below writes the injected event BEFORE it queues request 2, so
+// Every round writes the injected event BEFORE it queues request 2, so
 // the bytes are in bun's kernel buffer before bun can write that request
 // anywhere. Two ballast requests to an origin that never answers are queued
 // first, which takes the HTTP thread out of `poll()`: without them the loop
@@ -730,27 +730,28 @@ const idleInjections: [label: string, bytes: string][] = [
   ["a FIN", ""],
 ];
 
-test("a pooled connection the origin already wrote to is not reused", async () => {
-  const rounds = 12;
-  // Subprocess so the keep-alive pool starts empty and so the origin shares a
-  // thread with the client: the injected write and the next fetch() are then
-  // ordered by the JS thread, not by a timer.
-  await using proc = Bun.spawn({
-    cmd: [
-      bunExe(),
-      "-e",
-      `
-      const injections = ${JSON.stringify(idleInjections)};
-      const misattributed = [];
+test.concurrent.each(idleInjections)(
+  "a pooled connection the origin answered with %s is not reused",
+  async (_label, bytes) => {
+    const rounds = 12;
+    // Subprocess so the keep-alive pool starts empty and so the origin shares a
+    // thread with the client: the injected write and the next fetch() are then
+    // ordered by the JS thread, not by a timer.
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        const bytes = ${JSON.stringify(bytes)};
+        const misattributed = [];
 
-      // Accepts connections and never answers them.
-      using sink = Bun.listen({
-        hostname: "127.0.0.1",
-        port: 0,
-        socket: { open() {}, data() {}, close() {}, error() {}, drain() {} },
-      });
+        // Accepts connections and never answers them.
+        using sink = Bun.listen({
+          hostname: "127.0.0.1",
+          port: 0,
+          socket: { open() {}, data() {}, close() {}, error() {}, drain() {} },
+        });
 
-      for (const [label, bytes] of injections) {
         let accepted = 0;
         let idle = null;
         using server = Bun.listen({
@@ -804,22 +805,22 @@ test("a pooled connection the origin already wrote to is not reused", async () =
           // accepted later. Anything else means bun read the injected bytes as
           // the answer.
           const honest = /^200:c\\d+$/.test(got) && got !== "200:" + warmConn;
-          if (!honest) misattributed.push(label + " round " + round + " -> " + got);
+          if (!honest) misattributed.push("round " + round + " -> " + got);
         }
-      }
-      console.log(JSON.stringify({ misattributed }));
-      process.exit(0);
-      `,
-    ],
-    env: bunEnv,
-    stdout: "pipe",
-    stderr: "pipe",
-  });
+        console.log(JSON.stringify({ misattributed }));
+        process.exit(0);
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
 
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  const result = stdout.startsWith("{") ? JSON.parse(stdout.trim()) : { stdout, stderr };
-  expect({ result, exitCode }).toEqual({ result: { misattributed: [] }, exitCode: 0 });
-});
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const result = stdout.startsWith("{") ? JSON.parse(stdout.trim()) : { stdout, stderr };
+    expect({ result, exitCode }).toEqual({ result: { misattributed: [] }, exitCode: 0 });
+  },
+);
 
 test.skipIf(isWindows)("a full keep-alive pool evicts the longest-idle connection", async () => {
   function makeServer() {

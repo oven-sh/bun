@@ -66,8 +66,6 @@ ImportMetaObject* ImportMetaObject::create(JSC::JSGlobalObject* globalObject, co
 {
     VM& vm = globalObject->vm();
     Zig::GlobalObject* zigGlobalObject = uncheckedDowncast<Zig::GlobalObject>(globalObject);
-    // bake vs non-bake is distinguished inside finishCreation (by the url) and only
-    // affects which own properties are defined, so a single structure is used here.
     return create(vm, globalObject, zigGlobalObject->ImportMetaObjectStructure(), url);
 }
 
@@ -559,8 +557,7 @@ static const HashTableValue ImportMetaObjectBakeValues[] = {
 
 JSC::Structure* ImportMetaObject::createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject)
 {
-    // import.meta has a null prototype and exposes its members as own properties,
-    // matching Node.js. The members are defined in ImportMetaObject::finishCreation.
+    // Null prototype, like Node. The members are own properties, see finishCreation.
     return Bun::createClassStructure(vm, globalObject, jsNull(), JSC::TypeInfo(ObjectType, StructureFlags), ImportMetaObject::info());
 }
 
@@ -647,12 +644,8 @@ void ImportMetaObject::finishCreation(VM& vm)
         }
     });
 
-    // Define the import.meta members as own properties of this object (instead of
-    // placing them on a prototype) so they are discoverable via
-    // Object.getOwnPropertyNames / Reflect.ownKeys / Object.getOwnPropertyDescriptor,
-    // matching Node.js, where import.meta is a null-prototype object whose members
-    // are own properties. reifyStaticProperty is used (not reifyStaticProperties)
-    // so the puts go through cacheable structure transitions shared across instances.
+    // Per-entry reifyStaticProperty, not reifyStaticPropertyTable: the latter forces
+    // dictionary mode, which would give every import.meta its own structure.
     auto reifyOwnProperties = [&](const auto& values) {
         for (auto& value : values) {
             if (value.m_key.isNull())

@@ -1137,9 +1137,7 @@ TLSSocket.prototype[buntls] = function (port, host) {
 let CLIENT_RENEG_LIMIT = 3,
   CLIENT_RENEG_WINDOW = 600;
 
-// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L1520-L1542
-// requestCert/rejectUnauthorized are part of the interned context on purpose:
-// one SSL_CTX is one session cache, and a resumed session skips client auth.
+// requestCert/rejectUnauthorized key the interned SSL_CTX as well: one SSL_CTX is one session cache.
 function buildSharedCreds(fields, server) {
   return new InternalSecureContext(
     {
@@ -1281,8 +1279,7 @@ function Server(options, secureConnectionListener): void {
       next.key = key;
 
       let ca = options.ca;
-      // The listen path hands raw {key, cert, ca} to the native listener, so
-      // the tls.setDefaultCACertificates() override has to be applied here.
+      // The listen path bypasses InternalSecureContext, so apply the setDefaultCACertificates() override here.
       if (_defaultCACertificatesOverride !== undefined && ca == null) {
         ca = _defaultCACertificatesOverride;
       }
@@ -1360,8 +1357,7 @@ function Server(options, secureConnectionListener): void {
       next.minVersion = options.minVersion;
       next.maxVersion = options.maxVersion;
     }
-    // Built before the fields are assigned: bad key/cert material throws from
-    // here, like Node, and the previous credentials stay in place.
+    // Built before the fields are assigned so a bad key/cert throws here, like Node, and the old ones stay.
     const sharedCreds =
       serverTLSOptions instanceof InternalSecureContext
         ? serverTLSOptions

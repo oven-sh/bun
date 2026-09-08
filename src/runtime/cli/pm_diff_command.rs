@@ -763,14 +763,8 @@ fn fetch_registry_tree(
         version
     };
     let found = 'found: {
-        if let Some(r) = manifest.find_by_dist_tag(version) {
+        if let Ok(r) = manifest.find_by_spec(version) {
             break 'found r;
-        }
-        let sliced = Semver::SlicedString::init(version, version);
-        if let Ok(query) = Semver::query::parse(version, sliced) {
-            if let Some(r) = manifest.find_best_version(&query, version) {
-                break 'found r;
-            }
         }
         Status::clear();
         Output::err_generic(

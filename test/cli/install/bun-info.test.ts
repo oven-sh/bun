@@ -1,5 +1,5 @@
 import { spawn } from "bun";
-import { describe, expect, it, test } from "bun:test";
+import { afterAll, beforeAll, describe, expect, it, test } from "bun:test";
 import { bunEnv, bunExe, isASAN, tempDirWithFiles } from "harness";
 import { join } from "node:path";
 
@@ -233,12 +233,12 @@ describe.concurrent("bun info", () => {
         "error: No version of "is-number" satisfying "999.0.0" found
 
         Recent versions:
+        - 3.0.0
         - 4.0.0
         - 5.0.0
         - 6.0.0
         - 7.0.0
-        - 7.0.0
-          ... and 11 more
+          ... and 10 more
         "
       `);
       expect(code).toBe(1);
@@ -369,6 +369,172 @@ describe.concurrent("bun info", () => {
         "
       `);
     });
+  });
+});
+
+// The version part of `name@spec` is classified the way `bun add` classifies it: a dist-tag only ever
+// matches `dist-tags` (an unknown tag is an error, never `latest`), a range picks the best published match.
+describe.concurrent("bun info version spec", () => {
+  const packument = (name: string, tags: Record<string, string>, published: string[]) => ({
+    name,
+    "dist-tags": tags,
+    versions: Object.fromEntries(
+      published.map(v => [
+        v,
+        { name, version: v, dist: { tarball: `http://localhost/${name}/-/${name}-${v}.tgz`, shasum: "0".repeat(40) } },
+      ]),
+    ),
+  });
+  const packuments: Record<string, object> = {
+    "zz-tags": packument("zz-tags", { latest: "2.0.0", next: "3.0.0", beta: "2.5.0" }, [
+      "1.0.0",
+      "2.0.0",
+      "2.5.0",
+      "3.0.0",
+    ]),
+    "zz-case": packument("zz-case", { latest: "1.0.0", Next: "2.0.0" }, ["1.0.0", "2.0.0"]),
+    "zz-dangling": packument("zz-dangling", { latest: "9.9.9" }, ["1.0.0"]),
+    "zz-onlypre": packument("zz-onlypre", { latest: "1.0.0-beta.2" }, ["1.0.0-beta.1", "1.0.0-beta.2"]),
+  };
+  let server: ReturnType<typeof Bun.serve>;
+  let dir: string;
+  beforeAll(() => {
+    server = Bun.serve({
+      port: 0,
+      fetch(req) {
+        const body = packuments[decodeURIComponent(new URL(req.url).pathname).replace(/^\/+|\/+$/g, "")];
+        return body ? Response.json(body) : Response.json({ error: "Not found" }, { status: 404 });
+      },
+    });
+    dir = tempDirWithFiles("view-spec", { "package.json": JSON.stringify({ name: "app", version: "0.0.0" }) });
+  });
+  afterAll(() => server?.stop(true));
+
+  async function info(...args: string[]) {
+    await using proc = spawn({
+      cmd: [bunExe(), "info", ...args],
+      cwd: dir,
+      env: { ...bunEnv, BUN_CONFIG_REGISTRY: server.url.origin, NPM_CONFIG_REGISTRY: server.url.origin, NO_COLOR: "1" },
+      stdout: "pipe",
+      stderr: "pipe",
+      stdin: "ignore",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+
+  test("an unknown dist-tag is an error and lists the tags that exist", async () => {
+    for (const args of [
+      ["zz-tags@nosuchtag"],
+      ["zz-tags@nosuchtag", "version"],
+      ["zz-tags@nosuchtag", "dist.tarball"],
+    ]) {
+      const { stdout, stderr, exitCode } = await info(...args);
+      expect(stdout).toBe("");
+      expect(stderr).toMatchInlineSnapshot(`
+        "error: Package "zz-tags" with tag "nosuchtag" not found, but package exists
+
+        Tags:
+        - latest: 2.0.0
+        - next: 3.0.0
+        - beta: 2.5.0
+        "
+      `);
+      expect(exitCode).toBe(1);
+    }
+  });
+
+  test("an unknown dist-tag is an error with --json", async () => {
+    const { stdout, stderr, exitCode } = await info("zz-tags@nosuchtag", "version", "--json");
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({ error: "Dist-tag not found", version: "zz-tags@nosuchtag" });
+    expect(exitCode).toBe(1);
+  });
+
+  test("dist-tags are case-sensitive", async () => {
+    const lower = await info("zz-case@next", "version");
+    expect(lower.stdout).toBe("");
+    expect(lower.stderr).toStartWith(`error: Package "zz-case" with tag "next" not found, but package exists\n`);
+    expect(lower.exitCode).toBe(1);
+    const exact = await info("zz-case@Next", "version");
+    expect(exact.stderr).toBe("");
+    expect(exact.stdout).toBe("2.0.0\n");
+    expect(exact.exitCode).toBe(0);
+  });
+
+  test("a `latest` tag that points at an unpublished version is an error", async () => {
+    for (const args of [["zz-dangling"], ["zz-dangling@latest"], ["zz-dangling", "version"]]) {
+      const { stdout, stderr, exitCode } = await info(...args);
+      expect(stdout).toBe("");
+      expect(stderr).toStartWith(`error: Package "zz-dangling" with tag "latest" not found, but package exists\n`);
+      expect(exitCode).toBe(1);
+    }
+  });
+
+  test("known dist-tags, exact versions and ranges resolve", async () => {
+    const resolved: Record<string, string> = {};
+    for (const spec of [
+      "zz-tags",
+      "zz-tags@next",
+      "zz-tags@beta",
+      "zz-tags@3.0.0",
+      "zz-tags@v3.0.0",
+      "zz-tags@^1",
+      "zz-onlypre",
+    ]) {
+      const { stdout, stderr, exitCode } = await info(spec, "version");
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+      resolved[spec] = stdout.trim();
+    }
+    expect(resolved).toEqual({
+      "zz-tags": "2.0.0",
+      "zz-tags@next": "3.0.0",
+      "zz-tags@beta": "2.5.0",
+      "zz-tags@3.0.0": "3.0.0",
+      "zz-tags@v3.0.0": "3.0.0",
+      "zz-tags@^1": "1.0.0",
+      "zz-onlypre": "1.0.0-beta.2",
+    });
+  });
+
+  test("a spec that is neither a tag nor a range matches nothing", async () => {
+    for (const spec of ["zz-tags@github:a/b", "zz-tags@npm:other@1.0.0", "zz-tags@1.0.0.tgz"]) {
+      const { stdout, stderr, exitCode } = await info(spec, "version");
+      expect(stdout).toBe("");
+      expect(stderr).toStartWith(
+        `error: No version of "zz-tags" satisfying "${spec.slice("zz-tags@".length)}" found\n`,
+      );
+      expect(exitCode).toBe(1);
+    }
+  });
+
+  test("`Recent versions:` lists each published version once, newest last", async () => {
+    const release = await info("zz-tags@9.9.9", "version");
+    expect(release.stdout).toBe("");
+    expect(release.stderr).toMatchInlineSnapshot(`
+      "error: No version of "zz-tags" satisfying "9.9.9" found
+
+      Recent versions:
+      - 1.0.0
+      - 2.0.0
+      - 2.5.0
+      - 3.0.0
+      "
+    `);
+    expect(release.exitCode).toBe(1);
+    // Prereleases are listed only when nothing else was ever published.
+    const pre = await info("zz-onlypre@9.9.9", "version");
+    expect(pre.stdout).toBe("");
+    expect(pre.stderr).toMatchInlineSnapshot(`
+      "error: No version of "zz-onlypre" satisfying "9.9.9" found
+
+      Recent versions:
+      - 1.0.0-beta.1
+      - 1.0.0-beta.2
+      "
+    `);
+    expect(pre.exitCode).toBe(1);
   });
 });
 

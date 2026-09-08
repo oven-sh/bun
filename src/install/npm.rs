@@ -1527,6 +1527,41 @@ impl PackageManifest {
         self.pkg.releases.keys.get(&self.versions)
     }
 
+    /// Published prerelease versions, oldest first, as sorted at serialization time.
+    pub fn prerelease_versions(&self) -> &[Semver::Version] {
+        self.pkg.prereleases.keys.get(&self.versions)
+    }
+
+    /// Resolves the version part of a `name@spec` CLI argument against this manifest, classified the way
+    /// `bun add` classifies it: a dist-tag only ever matches `dist-tags`, a semver range picks the best
+    /// published match, and any other kind of spec (git, tarball, folder, ...) matches nothing here.
+    pub fn find_by_spec(&self, spec: &[u8]) -> Result<FindResult<'_>, Error> {
+        use crate::dependency::{Tag, TagExt as _};
+        match Tag::infer(spec) {
+            Tag::DistTag => {
+                let tag = if spec.is_empty() { b"latest" } else { spec };
+                self.find_by_dist_tag(tag).ok_or(Error::DistTagNotFound)
+            }
+            Tag::Npm => {
+                // `v1.2.3` -> `1.2.3`, as `dependency::parse_with_tag` does.
+                let range = if spec.len() > 1 && spec[0] == b'v' {
+                    &spec[1..]
+                } else {
+                    spec
+                };
+                let query = Semver::query::parse(range, SlicedString::init(range, range))?;
+                // The range parser skips words it does not understand, so junk parses to an empty
+                // (match-anything) group. Nothing was asked for, so nothing matches.
+                if query.is_empty() {
+                    return Err(Error::NoMatchingVersion);
+                }
+                self.find_best_version(&query, range)
+                    .ok_or(Error::NoMatchingVersion)
+            }
+            _ => Err(Error::NoMatchingVersion),
+        }
+    }
+
     /// `(tag, version)` pairs of the dist-tags.
     pub fn dist_tags(&self) -> impl Iterator<Item = (&[u8], Semver::Version)> + '_ {
         let versions = self.pkg.dist_tags.versions.get(&self.versions);

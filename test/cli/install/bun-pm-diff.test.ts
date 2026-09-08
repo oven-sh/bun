@@ -468,7 +468,7 @@ diffme@1.0.0 → diffme@2.0.0
     expect(hits.some(h => h.endsWith(" /@priv/diffme"))).toBe(true);
   });
 
-  test("errors: unknown package, no matching version; a third argument is a file filter", async () => {
+  test("errors: unknown package, no matching version or tag; a third argument is a file filter", async () => {
     const unknown = await diff(["nope-nope@1.0.0", "2.0.0"]);
     expect(unknown.exitCode).toBe(1);
     expect(unknown.stderr).toContain("404");
@@ -478,6 +478,11 @@ diffme@1.0.0 → diffme@2.0.0
     // …and what exists instead, newest first, plus the tags.
     expect(nover.stderr).toContain("recent versions: 2.0.0, 1.0.0");
     expect(nover.stderr).toMatch(/tags: .*latest: 2\.0\.0/);
+    // An unknown dist-tag is looked up only in `dist-tags`; it never falls back to `latest`.
+    const notag = await diff(["diffme@nosuchtag", "2.0.0", "--name-only"]);
+    expect(notag.stdout).toBe("");
+    expect(notag.stderr).toContain("no version of diffme matches nosuchtag");
+    expect(notag.exitCode).toBe(1);
     const many = await diff(["diffme@1", "diffme@2", "diffme@3"]);
     expect(many.stderr).toContain("no file in either side matches diffme@3");
     expect(many.exitCode).toBe(1);

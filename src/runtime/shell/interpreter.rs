@@ -2293,19 +2293,20 @@ fn shell_get_path<'a>(
     >(&mut buf[..], &[&dirpath, to.as_bytes()]))
 }
 
-/// Operand `path` for a path-only syscall: prefixed with the shell `cwd` when relative, never normalized (`a/link/../b` is not `a/b` to the kernel).
+/// Operand `path` for a path-only syscall: prefixed with the shell `cwd` when relative, not normalized on POSIX (`a/link/../b` is not `a/b` to the kernel).
 pub(crate) fn shell_join_cwd(cwd: &[u8], path: &[u8]) -> bun_core::ZBox {
-    if path.is_empty() || bun_paths::Platform::AUTO.is_absolute(path) {
+    let absolute = bun_paths::Platform::AUTO.is_absolute(path);
+    if path.is_empty() || (absolute && cfg!(not(windows))) {
         return bun_core::ZBox::from_bytes(path);
     }
     #[cfg(windows)]
     {
-        // Win32 resolves `.`/`..` textually itself, and the NT calls below it reject them.
+        // Win32 resolves `.`/`..` textually itself, and the NT calls below it reject them, so normalize here.
+        let (with_cwd, alone) = ([cwd, path], [path]);
+        let parts: &[&[u8]] = if absolute { &alone } else { &with_cwd };
         let mut spill = Vec::new();
-        let joined = bun_paths::resolve_path::join_z_spill::<bun_paths::platform::Auto>(
-            &mut spill,
-            &[cwd, path],
-        );
+        let joined =
+            bun_paths::resolve_path::join_z_spill::<bun_paths::platform::Auto>(&mut spill, parts);
         bun_core::ZBox::from_bytes(joined.as_bytes())
     }
     #[cfg(not(windows))]

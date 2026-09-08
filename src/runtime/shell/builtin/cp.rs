@@ -414,7 +414,7 @@ pub struct ShellCpTask {
 /// What `lstat` (file attributes on Windows) says about a `cp` operand.
 struct PathInfo {
     is_dir: bool,
-    /// `(st_dev, st_ino)`: the same-file check compares files, not spellings of their paths.
+    /// `(st_dev, st_ino)` of the file the operand leads to (through a symlink if it is one), for the same-file check.
     #[cfg(not(windows))]
     id: (u64, u64),
 }
@@ -610,9 +610,16 @@ impl ShellCpTask {
         #[cfg(not(windows))]
         {
             let st = bun_sys::lstat(path)?;
+            let id_of = |st: &bun_sys::Stat| (st.st_dev as u64, st.st_ino as u64);
+            // A symlink operand is the file it points at, as far as "same file" goes; a dangling one is itself.
+            let id = if bun_sys::S::ISLNK(st.st_mode as _) {
+                bun_sys::stat(path).map_or(id_of(&st), |target| id_of(&target))
+            } else {
+                id_of(&st)
+            };
             Ok(PathInfo {
                 is_dir: bun_sys::S::ISDIR(st.st_mode as _),
-                id: (st.st_dev as u64, st.st_ino as u64),
+                id,
             })
         }
     }

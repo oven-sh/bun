@@ -2,7 +2,7 @@ import { $ } from "bun";
 import { shellInternals } from "bun:internal-for-testing";
 import { describe, expect, test } from "bun:test";
 import { bunEnv, isWindows, tempDir, tempDirWithFiles } from "harness";
-import { linkSync, readFileSync, readdirSync, realpathSync, symlinkSync } from "node:fs";
+import { linkSync, readFileSync, readdirSync, readlinkSync, realpathSync, symlinkSync } from "node:fs";
 import { join } from "node:path";
 import { bunExe, createTestBuilder } from "../test_builder";
 import { sortedShellOutput } from "../util";
@@ -233,7 +233,8 @@ test.skipIf(isWindows)("operands are copied from and to where the kernel resolve
 // The builtin refuses to copy a file onto itself. With operands no longer
 // normalized, two spellings of one path differ as strings, so the check
 // compares the files (device and inode) the way BSD and GNU cp do, which also
-// covers hard links and a directory reached through a symlink.
+// covers hard links, a symlink to the file as either operand, and a directory
+// reached through a symlink.
 test.skipIf(isWindows)("a file is not copied onto itself however the operands spell it", async () => {
   using dir = tempDir("cp-same-file", {
     "d/c.txt": "content",
@@ -243,6 +244,7 @@ test.skipIf(isWindows)("a file is not copied onto itself however the operands sp
   });
   const base = String(dir);
   symlinkSync("../other/sub", join(base, "d", "link"));
+  symlinkSync("d/c.txt", join(base, "soft.txt"));
   linkSync(join(base, "d", "c.txt"), join(base, "hard.txt"));
   const fixture = /* ts */ `
     import { $ } from "bun";
@@ -256,6 +258,8 @@ test.skipIf(isWindows)("a file is not copied onto itself however the operands sp
       intoOwnDir: await run("d/c.txt", "d"),
       throughLink: await run("other/sub/s.txt", "d/link/s.txt"),
       hardLink: await run("d/c.txt", "hard.txt"),
+      ontoSymlink: await run("d/c.txt", "soft.txt"),
+      fromSymlink: await run("soft.txt", "d/c.txt"),
       big: await run("big.bin", "./big.bin"),
       absolute: await run("big.bin", process.cwd() + "/big.bin"),
     }));
@@ -278,14 +282,17 @@ test.skipIf(isWindows)("a file is not copied onto itself however the operands sp
     intoOwnDir: refused("d/c.txt", "d/c.txt"),
     throughLink: refused("d/link/s.txt", "other/sub/s.txt"),
     hardLink: refused("hard.txt", "d/c.txt"),
+    ontoSymlink: refused("soft.txt", "d/c.txt"),
+    fromSymlink: refused("d/c.txt", "soft.txt"),
     big: refused("./big.bin", "big.bin"),
     absolute: refused(`${realpathSync(base)}/big.bin`, "big.bin"),
   });
   expect({
     c: readFileSync(join(base, "d", "c.txt"), "utf8"),
+    soft: readlinkSync(join(base, "soft.txt")),
     s: readFileSync(join(base, "other", "sub", "s.txt"), "utf8"),
     big: readFileSync(join(base, "big.bin"), "utf8").length,
-  }).toEqual({ c: "content", s: "sub content", big: 200 * 1024 });
+  }).toEqual({ c: "content", soft: "d/c.txt", s: "sub content", big: 200 * 1024 });
   expect(exitCode).toBe(0);
 });
 

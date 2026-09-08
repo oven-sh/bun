@@ -2187,8 +2187,7 @@ Socket.prototype._destroy = function _destroy(err, callback) {
     const sink = this[kSyncWriteSink];
     if (sink !== undefined) {
       this[kSyncWriteSink] = undefined;
-      // The sink works on its own dup of the fd. The tail of a write that is
-      // still in flight keeps draining and settles that write's callback.
+      // Closes the sink's dup of the fd once an in-flight tail has drained.
       try {
         sink.end();
       } catch (e) {
@@ -2544,56 +2543,65 @@ Object.defineProperty(Socket.prototype, "remoteFamily", {
 });
 
 function fdSyncWrite(chunk, encoding, callback) {
-  const buf = typeof chunk === "string" ? Buffer.from(chunk, encoding) : chunk;
-  const sink = this[kSyncWriteSink];
+  let buf;
+  try {
+    buf = typeof chunk === "string" ? Buffer.from(chunk, encoding) : chunk;
+  } catch (err) {
+    callback(err);
+    return;
+  }
+  fdWrite(this, buf, callback);
+}
+
+function fdSyncWritev(data, callback) {
+  let buf;
+  try {
+    const n = data.length;
+    const bufs = $newArrayWithSize(n);
+    for (let i = 0; i < n; i++) {
+      const { chunk, encoding } = data[i];
+      bufs[i] = typeof chunk === "string" ? Buffer.from(chunk, encoding) : chunk;
+    }
+    buf = Buffer.concat(bufs);
+  } catch (err) {
+    callback(err);
+    return;
+  }
+  fdWrite(this, buf, callback);
+}
+
+function fdWrite(self, buf, callback) {
+  const sink = self[kSyncWriteSink];
   if (sink !== undefined) {
-    fdSinkWrite(this, sink, buf, callback);
+    fdSinkWrite(self, sink, buf, callback);
     return;
   }
   const fs = require("node:fs");
   let offset = 0;
   try {
     while (offset < buf.length) {
-      offset += fs.writeSync(this[kSyncWriteFd], buf, offset);
+      offset += fs.writeSync(self[kSyncWriteFd], buf, offset);
     }
   } catch (err) {
     if (process.platform === "win32" || err?.code !== "EAGAIN") {
       callback(err);
       return;
     }
-    // The fd is O_NONBLOCK and the kernel buffer is full. Node's pipe handle
-    // polls for writability here, so hand the tail to a FileSink, which does
-    // the same on its own dup of the fd. Every later write goes through the
-    // sink, behind this tail.
-    let sink;
+    // Full O_NONBLOCK pipe: a FileSink polls the fd and drains the tail, as node's pipe handle does.
+    let newSink;
     try {
-      sink = this[kSyncWriteSink] = Bun.file(this[kSyncWriteFd]).writer();
+      newSink = self[kSyncWriteSink] = Bun.file(self[kSyncWriteFd]).writer();
     } catch (e) {
       callback(e);
       return;
     }
-    this[kBytesWritten] = (this[kBytesWritten] || 0) + offset;
-    fdSinkWrite(this, sink, offset === 0 ? buf : buf.subarray(offset), callback);
+    self[kBytesWritten] = (self[kBytesWritten] || 0) + offset;
+    fdSinkWrite(self, newSink, offset === 0 ? buf : buf.subarray(offset), callback);
     return;
   }
-  // No native handle on this path, so feed bytesWritten/_bytesDispatched
-  // directly (node accounts these via the libuv handle).
-  this[kBytesWritten] = (this[kBytesWritten] || 0) + offset;
+  // No native handle on this path, so account bytesWritten/_bytesDispatched here.
+  self[kBytesWritten] = (self[kBytesWritten] || 0) + offset;
   callback();
-}
-
-function fdSyncWritev(data, callback) {
-  const n = data.length;
-  if (n === 1) {
-    fdSyncWrite.$call(this, data[0].chunk, data[0].encoding, callback);
-    return;
-  }
-  const bufs = $newArrayWithSize(n);
-  for (let i = 0; i < n; i++) {
-    const { chunk, encoding } = data[i];
-    bufs[i] = typeof chunk === "string" ? Buffer.from(chunk, encoding) : chunk;
-  }
-  fdSyncWrite.$call(this, Buffer.concat(bufs), undefined, callback);
 }
 
 // The callback runs once every byte reached the fd, like a libuv write request.

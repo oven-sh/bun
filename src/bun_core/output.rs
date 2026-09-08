@@ -514,6 +514,8 @@ pub mod windows_stdio {
     }
 
     pub(crate) fn restore() {
+        crate::tty::reset_active_dec_modes();
+
         // SAFETY: PEB access is sound on Windows; handles are valid for process
         // lifetime. `peb()` returns a raw pointer because the OS/CRT mutate the
         // PEB out-of-band (`SetStdHandle`, …), so we must not materialize a
@@ -2831,23 +2833,21 @@ pub fn synchronized() -> Synchronized {
     Synchronized::begin()
 }
 
-pub struct Synchronized;
+/// Writes `SYNCHRONIZED_START` on `begin` and `SYNCHRONIZED_END` (plus a
+/// flush) on `end`/drop.
+pub struct Synchronized {
+    _mode: Option<crate::tty::DecModesGuard>,
+}
 
 impl Synchronized {
     pub(crate) fn begin() -> Synchronized {
-        #[cfg(unix)]
-        {
-            print(format_args!("{}", SYNCHRONIZED_START));
+        Synchronized {
+            _mode: cfg!(unix)
+                .then(|| crate::tty::DecModesGuard::set(crate::tty::dec::SYNCHRONIZED_OUTPUT)),
         }
-        Synchronized
     }
 
-    pub fn end(self) {
-        #[cfg(unix)]
-        {
-            print(format_args!("{}", SYNCHRONIZED_END));
-        }
-    }
+    pub fn end(self) {}
 }
 
 #[cfg(test)]

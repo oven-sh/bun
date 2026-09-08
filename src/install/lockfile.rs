@@ -116,7 +116,7 @@ pub(crate) type NameHashMap = ArrayHashMap<PackageNameHash, SemverString, ArrayI
 /// Value is the exact byte string the key hash was computed from; lookups must
 /// compare it since truncated hashes can collide. An empty value is the legacy
 /// `bun.lockb` sentinel ("name unknown, hash-only match").
-pub(crate) type TrustedDependenciesSet =
+pub type TrustedDependenciesSet =
     ArrayHashMap<TruncatedPackageNameHash, Box<[u8]>, ArrayIdentityContext>;
 pub(crate) type VersionHashMap =
     ArrayHashMap<PackageNameHash, Semver::Version, ArrayIdentityContextU64>;

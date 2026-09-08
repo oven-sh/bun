@@ -810,10 +810,13 @@ describe.concurrent("bun pm reads trustedDependencies from package.json, not a s
     });
   }
 
-  // The reverse: package.json trusts a name that bun.lock does not list.
+  // The reverse: package.json trusts a name by hand after an install that blocked
+  // its scripts. bun.lock has not recorded the trust, so the scripts still count
+  // as blocked until `bun pm trust` (or an install) runs them.
   test("trust added to package.json after install", async () => {
     using ctx = await setupTest();
     const { packageDir, packageJson } = ctx;
+    const marker = join(packageDir, "node_modules", "uses-what-bin", "what-bin.txt");
     const dependencies = { "uses-what-bin": "1.0.0" };
 
     await writeFile(packageJson, JSON.stringify({ name: "foo", dependencies }));
@@ -826,14 +829,27 @@ describe.concurrent("bun pm reads trustedDependencies from package.json, not a s
     await writeFile(packageJson, JSON.stringify({ name: "foo", dependencies, trustedDependencies: ["uses-what-bin"] }));
     expect(await file(join(packageDir, "bun.lock")).text()).not.toContain('"trustedDependencies"');
 
-    ({ out, err, exitCode } = await run(ctx, ["pm", "untrusted"]));
-    expect(err).not.toContain("error:");
-    expect(out).toContain("Found 0 untrusted dependencies with scripts");
-    expect(exitCode).toBe(0);
-
     ({ out, err, exitCode } = await run(ctx, ["pm", "ls", "--trusted"]));
     expect(err).not.toContain("error:");
     expect(out).toContain("uses-what-bin@1.0.0");
+    expect(exitCode).toBe(0);
+
+    ({ out, err, exitCode } = await run(ctx, ["pm", "untrusted"]));
+    expect(err).not.toContain("error:");
+    expect(out).toContain("uses-what-bin @1.0.0\n");
+    expect(exitCode).toBe(0);
+    expect(await exists(marker)).toBeFalse();
+
+    ({ out, err, exitCode } = await run(ctx, ["pm", "trust", "uses-what-bin"]));
+    expect(err).not.toContain("error:");
+    expect(out).toContain("1 script ran across 1 package");
+    expect(exitCode).toBe(0);
+    expect(await exists(marker)).toBeTrue();
+    expect(await file(join(packageDir, "bun.lock")).text()).toContain('"trustedDependencies"');
+
+    ({ out, err, exitCode } = await run(ctx, ["pm", "untrusted"]));
+    expect(err).not.toContain("error:");
+    expect(out).toContain("Found 0 untrusted dependencies with scripts");
     expect(exitCode).toBe(0);
   });
 

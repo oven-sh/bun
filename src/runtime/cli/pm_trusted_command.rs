@@ -6,7 +6,7 @@ use bun_collections::{ArrayHashMap, ArrayIdentityContext, StringArrayHashMap};
 use bun_core::strings;
 use bun_core::{Global, Output, Progress};
 use bun_install::lockfile::{
-    LoadResult, Lockfile,
+    LoadResult, Lockfile, TrustedDependenciesSet,
     package::PackageColumns as _,
     package::scripts::{List as ScriptsList, PrintFormat, Scripts},
     tree,
@@ -16,7 +16,7 @@ use bun_install::package_manager_real::{
 };
 use bun_install::{
     self as install, DEFAULT_TRUSTED_DEPENDENCIES_LIST, DependencyID, LifecycleScriptSubprocess,
-    PackageID, PackageManager, Resolution,
+    PackageID, PackageManager, Resolution, ResolutionTag,
 };
 use bun_paths::AutoAbsPath;
 
@@ -24,6 +24,31 @@ use crate::cli::Command;
 use crate::package_manager_command::PackageManagerCommand;
 
 type DepIdSet = ArrayHashMap<DependencyID, (), ArrayIdentityContext>;
+
+/// A dependency's scripts count as blocked when package.json does not trust it, or
+/// trusts it by name but no saved install has recorded that in `bun.lock` yet.
+fn scripts_blocked(
+    lockfile: &Lockfile,
+    recorded: &Option<TrustedDependenciesSet>,
+    alias: &[u8],
+    pkg_name: &[u8],
+    resolution: &Resolution,
+) -> bool {
+    if !lockfile.has_trusted_dependency(alias, pkg_name, resolution) {
+        return true;
+    }
+    if lockfile.trusted_dependencies.is_none() {
+        // Trusted through the default list, which never reaches the lockfile.
+        return false;
+    }
+    let name = if resolution.tag == ResolutionTag::Npm {
+        pkg_name
+    } else {
+        alias
+    };
+    let hash = bun_semver::string::Builder::string_hash(name) as install::TruncatedPackageNameHash;
+    !recorded.as_ref().is_some_and(|set| set.contains(&hash))
+}
 
 pub(crate) struct DefaultTrustedCommand;
 
@@ -75,7 +100,7 @@ impl UntrustedCommand {
         // only path to the singleton for the rest of this fn (same as the
         // original `pm`).
         let pm: &mut PackageManager = unsafe { &mut *pm_raw };
-        pm.load_trusted_dependencies_from_package_json()?;
+        let recorded = pm.load_trusted_dependencies_from_package_json()?;
         let log: &mut bun_ast::Log = pm.log_mut();
         let lockfile: &Lockfile = &pm.lockfile;
 
@@ -98,7 +123,7 @@ impl UntrustedCommand {
             let alias = dep.name.slice(buf);
             let pkg_name = packages.items_name()[package_id as usize].slice(buf);
             let resolution = &resolutions[package_id as usize];
-            if !lockfile.has_trusted_dependency(alias, pkg_name, resolution) {
+            if scripts_blocked(lockfile, &recorded, alias, pkg_name, resolution) {
                 untrusted_dep_ids.put(dep_id, ())?;
             }
         }
@@ -275,7 +300,7 @@ impl TrustCommand {
         }
         // SAFETY: `pm_raw` singleton; `load_lockfile` is not dereferenced
         // while this runs.
-        unsafe { (*pm_raw).load_trusted_dependencies_from_package_json()? };
+        let recorded = unsafe { (*pm_raw).load_trusted_dependencies_from_package_json()? };
 
         let mut packages_to_trust: Vec<&[u8]> = Vec::with_capacity(args[2..].len());
         for arg in &args[2..] {
@@ -322,7 +347,7 @@ impl TrustCommand {
             let alias = dep.name.slice(buf);
             let pkg_name = packages.items_name()[package_id as usize].slice(buf);
             let resolution = &resolutions[package_id as usize];
-            if !lockfile.has_trusted_dependency(alias, pkg_name, resolution) {
+            if scripts_blocked(lockfile, &recorded, alias, pkg_name, resolution) {
                 untrusted_dep_ids.put(dep_id, ())?;
             }
         }
@@ -403,7 +428,9 @@ impl TrustCommand {
 
                         for package_name_from_cli in &packages_to_trust {
                             if strings::eql_long(package_name_from_cli, alias, true)
-                                && !lockfile.has_trusted_dependency(
+                                && scripts_blocked(
+                                    lockfile,
+                                    &recorded,
                                     alias,
                                     packages.items_name()[package_id as usize].slice(buf),
                                     resolution,

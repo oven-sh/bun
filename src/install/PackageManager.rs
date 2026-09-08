@@ -844,8 +844,10 @@ impl PackageManager {
         }
     }
 
-    /// Trust comes from package.json (root and workspaces), not from what `bun.lock` last saved.
-    pub fn load_trusted_dependencies_from_package_json(&mut self) -> Result<(), Error> {
+    /// Trust comes from package.json (root and workspaces). Returns the set `bun.lock` last saved.
+    pub fn load_trusted_dependencies_from_package_json(
+        &mut self,
+    ) -> Result<Option<lockfile::TrustedDependenciesSet>, Error> {
         use self::workspace_package_json_cache::{GetJSONOptions, GetResult};
 
         let mut paths: Vec<Box<[u8]>> =
@@ -865,7 +867,7 @@ impl PackageManager {
 
         let log = self.log_mut();
         let bump = bun_alloc::Arena::new();
-        let mut trusted: Option<crate::lockfile_real::TrustedDependenciesSet> = None;
+        let mut trusted: Option<lockfile::TrustedDependenciesSet> = None;
         for (i, path) in paths.iter().enumerate() {
             let failed = match self.workspace_package_json_cache.get_with_path(
                 log,
@@ -897,8 +899,10 @@ impl PackageManager {
             Global::exit(1);
         }
 
-        self.lockfile.trusted_dependencies = trusted;
-        Ok(())
+        Ok(core::mem::replace(
+            &mut self.lockfile.trusted_dependencies,
+            trusted,
+        ))
     }
 
     pub(crate) fn crash(&mut self) -> ! {

@@ -595,14 +595,17 @@ impl Loader {
         }
     }
 
-    /// A `Worker`'s loader: the map, with the explicit entries marked loaded so a pipe is not read twice.
+    /// A `Worker`'s loader: a copy of the map. Whatever this loader already read
+    /// (the process environment, `.env` files, explicit `--env-file` entries) counts
+    /// as loaded in the copy too, so the worker thread neither reads a pipe twice
+    /// nor overlays the copied map with `environ` again.
     pub fn clone_for_worker(&self) -> Result<Loader, AllocError> {
         Ok(Loader {
             map: self.map.clone_with_allocator()?,
-            default_files_loaded: EnumSet::empty(),
+            default_files_loaded: self.default_files_loaded,
             custom_files_loaded: self.custom_files_loaded.clone()?,
             quiet: false,
-            did_load_process: false,
+            did_load_process: self.did_load_process,
             reject_unauthorized: Cell::new(None),
             aws_credentials: None,
         })

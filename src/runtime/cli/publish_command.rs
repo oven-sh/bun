@@ -2109,7 +2109,8 @@ impl PublishError {
     }
 }
 
-/// `url.href` with every `user:password@` before the path cut out, and with one trailing slash.
+/// `url.href` for an error message: nothing before the last `@` (so no userinfo, whatever the
+/// password holds), no `?query` or `#fragment`, one trailing slash. A clean `scheme://` is kept.
 fn redacted_registry_href(url: &URL<'_>) -> Box<[u8]> {
     fn after_last_at(s: &[u8]) -> &[u8] {
         strings::last_index_of_char(s, b'@').map_or(s, |at| &s[at + 1..])
@@ -2123,19 +2124,21 @@ fn redacted_registry_href(url: &URL<'_>) -> Box<[u8]> {
     } else {
         0
     };
-    let path_start = authority_start
-        + strings::index_of_any(&href[authority_start..], b"/?#")
-            .unwrap_or(href.len() - authority_start);
-    // `URL::parse` does not validate the scheme, so it can hold a `user:password@` too.
-    let scheme = after_last_at(&href[..authority_start]);
-    let host = after_last_at(&href[authority_start..path_start]);
-    let host_and_path = &href[path_start - host.len()..];
-    let trimmed = strings::without_trailing_slash(host_and_path);
+    let rest = after_last_at(href);
+    // `URL::parse` does not validate the scheme, so the last `@` can sit inside it;
+    // `rest` then already starts at the real `scheme://`.
+    let scheme = if rest.len() < href.len() - authority_start {
+        after_last_at(&href[..authority_start])
+    } else {
+        b""
+    };
+    let rest = &rest[..strings::index_of_any(rest, b"?#").unwrap_or(rest.len())];
+    let trimmed = strings::without_trailing_slash(rest);
 
     let mut out = Vec::with_capacity(scheme.len() + trimmed.len() + 1);
     out.extend_from_slice(scheme);
     out.extend_from_slice(trimmed);
-    if trimmed.len() < host_and_path.len() {
+    if trimmed.len() < rest.len() {
         out.push(b'/');
     }
     out.into_boxed_slice()

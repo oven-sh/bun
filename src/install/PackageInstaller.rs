@@ -1789,7 +1789,21 @@ impl<'a> PackageInstaller<'a> {
             let destination_dir = match self
                 .node_modules
                 .make_and_open_dir(&self.root_node_modules_folder)
-            {
+                .and_then(|dir| {
+                    // A scoped alias installs one level deeper (`@scope/name`),
+                    // and each install method resolves that subpath by path.
+                    // The install creates the scope directory, so open it the
+                    // way `.bin` is opened: a symlink there would send the
+                    // package, and the `delete_tree` of the destination that
+                    // runs first, into the symlink's target directory.
+                    #[cfg(not(windows))]
+                    if let Some((scope, _)) =
+                        strings::split_once_char(alias.slice(string_buf!()), b'/')
+                    {
+                        crate::make_open_real_dir(&dir, scope)?;
+                    }
+                    Ok(dir)
+                }) {
                 Ok(d) => d,
                 Err(err) => {
                     if log_level != Options::LogLevel::Silent {
@@ -1814,17 +1828,6 @@ impl<'a> PackageInstaller<'a> {
                     return;
                 }
             };
-
-            // A scoped alias installs one level deeper (`@scope/name`), and
-            // each install method resolves that subpath by path. The install
-            // creates the scope directory, so open it the way `.bin` is
-            // opened: a symlink there would send the package, and the
-            // `delete_tree` of the destination that runs first, into the
-            // symlink's target directory, outside the tree.
-            #[cfg(not(windows))]
-            if let Some((scope, _)) = strings::split_once_char(alias.slice(string_buf!()), b'/') {
-                let _ = crate::make_open_real_dir(&destination_dir, scope);
-            }
 
             let install_result: package_install::InstallResult = match resolution.tag {
                 resolution::Tag::Symlink | resolution::Tag::Workspace => {

@@ -6728,9 +6728,7 @@ CPP_DECL [[ZIG_EXPORT(check_slow)]] void Bun__JSValue__setPrototypeDirect(JSC::E
     return;
 }
 
-/// 1-based line of the innermost frame whose source is `preferredSourceURL` (the test file), so
-/// that a `test()` call made through a helper in another module reports the line in the test
-/// file. Falls back to the innermost frame that is not a builtin when no frame is in that file.
+/// 1-based line of the innermost frame in `preferredSourceURL` (the test file), else of the innermost non-builtin frame.
 CPP_DECL [[ZIG_EXPORT(nothrow)]] unsigned int Bun__CallFrame__getLineNumber(JSC::CallFrame* callFrame, JSC::JSGlobalObject* globalObject, const BunString* preferredSourceURL)
 {
     auto& vm = JSC::getVM(globalObject);

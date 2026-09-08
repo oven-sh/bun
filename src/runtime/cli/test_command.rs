@@ -1205,10 +1205,7 @@ impl CommandLineReporter {
         }
     }
 
-    /// GitHub Actions `::error` command for a test that failed without a thrown
-    /// error, anchored at the `test()` call. A thrown error gets its annotation
-    /// where it is printed (`VirtualMachine::print_github_annotation`), so each
-    /// failed test ends up with one.
+    /// GitHub Actions `::error` command at the `test()` call for a failure with no thrown error (a thrown error is annotated by `VirtualMachine::print_github_annotation`).
     #[cold]
     fn print_github_annotation(
         status: bun_test::Execution::Result,
@@ -1241,8 +1238,7 @@ impl CommandLineReporter {
                 name.extend_from_slice(b" > ");
             }
         }
-        // A beforeAll/afterAll hook runs in a sequence with no test, so on timeout the
-        // reported entry is the hook; a beforeEach/afterEach timeout reports its test.
+        // A sequence with no test is a beforeAll/afterAll hook; a beforeEach/afterEach timeout reports its test.
         let all_hook = sequence.test_entry.is_none()
             && matches!(
                 status,

@@ -1675,8 +1675,7 @@ pub struct BaseScope {
     pub(crate) has_callback: bool,
     /// this value is 0 unless the debugger is active and the scope has a debugger id
     pub(crate) test_id_for_debugger: i32,
-    /// 1-based line of the `test()` / `describe()` / hook call in the test file;
-    /// 0 unless the JUnit reporter or GitHub Actions annotations need it
+    /// 1-based line of the `test()` / `describe()` / hook call in the test file; 0 unless JUnit or GitHub Actions annotations need it
     pub(crate) line_no: u32,
 }
 impl BaseScope {

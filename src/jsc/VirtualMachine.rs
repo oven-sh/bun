@@ -6731,9 +6731,7 @@ impl VirtualMachine {
         let name = &exception.name;
         let message = &exception.message;
         let frames = exception.stack.frames();
-        // GitHub places the annotation only on a file in the checkout, so anchor it
-        // at the first located frame outside node_modules (as jest-message-util's
-        // `getTopFrame` does) and fall back to the top frame.
+        // Anchor at the first located frame outside node_modules (GitHub only places files in the checkout), else the top frame.
         let top_frame = frames
             .iter()
             .find(|frame| {

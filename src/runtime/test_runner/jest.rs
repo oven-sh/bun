@@ -829,9 +829,7 @@ pub(crate) fn format_label(
     Ok(list.into_boxed_slice())
 }
 
-/// The line in test file `file_id` of the `test()` / `describe()` / hook call
-/// on the stack of `callframe`, for the reporters that print it: JUnit and
-/// the GitHub Actions annotation. 0 when neither is on.
+/// Line in test file `file_id` of the `test()` / `describe()` / hook call on `callframe`'s stack, for JUnit and GitHub Actions annotations; 0 when neither is on.
 pub(crate) fn capture_test_line_number(
     callframe: &CallFrame,
     global_this: &JSGlobalObject,

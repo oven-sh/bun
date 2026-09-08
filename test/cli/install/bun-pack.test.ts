@@ -1942,6 +1942,23 @@ describe.concurrent("bins", () => {
     expect(tarball.entries[2].perm & 0o755).toBe(0o755);
   });
 
+  // The package root as the bin directory does not pack its files a second time.
+  test.each(["", ".", "./"])("directory %p packs each file once", async binDir => {
+    using dir = tempDir("pack-bins-dir-root", {
+      "package.json": JSON.stringify({ name: "pack-bins-dir-root", version: "1.2.3", directories: { bin: binDir } }),
+      "bin1.js": "#!/usr/bin/env bun\n",
+    });
+
+    const { err, exitCode } = await runPack(dir);
+    expect(err).toBe("");
+    expect(exitCode).toBe(0);
+
+    expect(tarballEntries(join(dir, "pack-bins-dir-root-1.2.3.tgz"))).toEqual([
+      "package/package.json",
+      "package/bin1.js",
+    ]);
+  });
+
   test('are included even if not included in "files"', async () => {
     using dir = tempDir("pack-bins-and-files-1", {
       "package.json": JSON.stringify({

@@ -841,6 +841,7 @@ pub(crate) fn open_walk_dir_beneath(root: &Dir, sub_path: &[u8]) -> bun_sys::May
             .open_dir(component, WALK_DIR_OPTIONS)?;
         dir = Some(next);
     }
+    // `.` or empty names the root itself, which the tree walk covers: report it absent, not twice.
     dir.ok_or_else(|| bun_sys::Error::from_code(bun_sys::E::ENOENT, bun_sys::Tag::open))
 }
 
@@ -853,9 +854,11 @@ pub(crate) struct PackFileOpener {
 }
 
 impl PackFileOpener {
-    /// `O_PATH` where it exists: passing through a directory needs search permission, not read.
-    const DIR_FLAGS: i32 =
-        bun_sys::O::PATH | bun_sys::O::DIRECTORY | bun_sys::O::NOFOLLOW | bun_sys::O::CLOEXEC;
+    /// Passed through, not listed.
+    const DIR_OPTIONS: bun_sys::OpenDirOptions = bun_sys::OpenDirOptions {
+        iterate: false,
+        no_follow: true,
+    };
 
     /// `O_NONBLOCK` so a FIFO fails the type check in `open()` below instead of blocking.
     #[cfg(not(windows))]
@@ -864,17 +867,19 @@ impl PackFileOpener {
     #[cfg(windows)]
     const FILE_FLAGS: i32 = bun_sys::O::RDONLY | bun_sys::O::NOFOLLOW;
 
-    /// Windows `O_NOFOLLOW` opens the link itself and resolves through it, so ask the handle.
-    fn check_not_a_link(fd: Fd, path: &[u8]) -> bun_sys::Maybe<()> {
+    /// `openat(O_NOFOLLOW)`; Windows opens a link itself under that flag, so it is refused after.
+    fn open_file_no_follow(dir: Fd, name: &[u8]) -> bun_sys::Maybe<File> {
+        let file = File::openat(dir, name, Self::FILE_FLAGS, 0)?;
         #[cfg(windows)]
-        if bun_sys::is_link_reparse_point(fd)? {
-            return Err(
-                bun_sys::Error::from_code(bun_sys::E::ELOOP, bun_sys::Tag::open).with_path(path),
-            );
-        }
-        #[cfg(not(windows))]
-        let _ = (fd, path);
-        Ok(())
+        let file = File::from_fd(bun_sys::finish_no_follow_open(
+            file.into_raw(),
+            name,
+            || {
+                File::openat(dir, name, Self::FILE_FLAGS & !bun_sys::O::NOFOLLOW, 0)
+                    .map(File::into_raw)
+            },
+        )?);
+        Ok(file)
     }
 
     pub(crate) fn new() -> PackFileOpener {
@@ -896,9 +901,7 @@ impl PackFileOpener {
             None => (&b""[..], bytes),
         };
         let dir = self.open_dir(root, dirname)?;
-        let file =
-            File::openat(dir, basename, Self::FILE_FLAGS, 0).map_err(|err| err.with_path(bytes))?;
-        Self::check_not_a_link(file.handle, bytes)?;
+        let file = Self::open_file_no_follow(dir, basename).map_err(|err| err.with_path(bytes))?;
         let stat = file.stat().map_err(|err| err.with_path(bytes))?;
         match bun_sys::kind_from_mode(stat.st_mode as bun_sys::Mode) {
             bun_sys::FileKind::File => Ok((file, stat)),
@@ -940,8 +943,7 @@ impl PackFileOpener {
         };
         for component in path_components(dirname).skip(reused) {
             check_path_component(component)?;
-            let dir = Dir::borrow(&current).open_at_with(component, Self::DIR_FLAGS)?;
-            Self::check_not_a_link(dir.fd(), component)?;
+            let dir = Dir::borrow(&current).open_dir(component, Self::DIR_OPTIONS)?;
             current = dir.fd();
             if !self.dir_path.is_empty() {
                 self.dir_path.push(b'/');

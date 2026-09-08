@@ -436,21 +436,23 @@ impl Dir {
     pub fn open_dir(&self, sub_path: &[u8], opts: OpenDirOptions) -> Maybe<Dir> {
         #[cfg(windows)]
         {
-            let dir = open_dir_at_windows_a(
-                self.fd,
-                sub_path,
-                WindowsOpenDirOptions {
-                    iterable: opts.iterate,
-                    no_follow: opts.no_follow,
-                    ..Default::default()
-                },
-            )
-            .map(Dir::from_fd)?;
-            // `no_follow` opened the link itself; refuse it with `ELOOP` like POSIX `O_NOFOLLOW`.
-            if opts.no_follow && is_link_reparse_point(dir.fd)? {
-                return Err(Error::from_code(E::ELOOP, Tag::open).with_path(sub_path));
+            let open = |no_follow: bool| {
+                open_dir_at_windows_a(
+                    self.fd,
+                    sub_path,
+                    WindowsOpenDirOptions {
+                        iterable: opts.iterate,
+                        no_follow,
+                        ..Default::default()
+                    },
+                )
+            };
+            let fd = open(opts.no_follow)?;
+            if !opts.no_follow {
+                return Ok(Dir::from_fd(fd));
             }
-            return Ok(dir);
+            // `no_follow` opened a link itself instead of failing; refuse it as POSIX does.
+            return finish_no_follow_open(fd, sub_path, || open(false)).map(Dir::from_fd);
         }
         #[cfg(not(windows))]
         {

@@ -159,13 +159,13 @@ pub mod ssl_wrapper {
     mod boring_sys {
         pub(super) use bun_boringssl::c::{
             BIO_ctrl_pending, BIO_free, BIO_new, BIO_read, BIO_reset, BIO_s_mem,
-            BIO_set_mem_eof_return, BIO_write, ERR_clear_error, OwnedSslCtx, SSL,
-            SSL_CTX_get_verify_mode, SSL_ERROR_SSL, SSL_ERROR_SYSCALL, SSL_ERROR_WANT_READ,
-            SSL_ERROR_WANT_RENEGOTIATE, SSL_ERROR_WANT_WRITE, SSL_ERROR_ZERO_RETURN,
-            SSL_RECEIVED_SHUTDOWN, SSL_SESSION, SSL_SESSION_free, SSL_VERIFY_FAIL_IF_NO_PEER_CERT,
-            SSL_VERIFY_NONE, SSL_VERIFY_PEER, SSL_do_handshake, SSL_free, SSL_get_error,
-            SSL_get_rbio, SSL_get_shutdown, SSL_get_verify_result, SSL_get_wbio,
-            SSL_is_init_finished, SSL_new, SSL_pending, SSL_read, SSL_renegotiate,
+            BIO_set_mem_eof_return, BIO_write, ERR_clear_error, ERR_error_string_n, ERR_peek_error,
+            OwnedSslCtx, SSL, SSL_CTX_get_verify_mode, SSL_ERROR_SSL, SSL_ERROR_SYSCALL,
+            SSL_ERROR_WANT_READ, SSL_ERROR_WANT_RENEGOTIATE, SSL_ERROR_WANT_WRITE,
+            SSL_ERROR_ZERO_RETURN, SSL_RECEIVED_SHUTDOWN, SSL_SESSION, SSL_SESSION_free,
+            SSL_VERIFY_FAIL_IF_NO_PEER_CERT, SSL_VERIFY_NONE, SSL_VERIFY_PEER, SSL_do_handshake,
+            SSL_free, SSL_get_error, SSL_get_rbio, SSL_get_shutdown, SSL_get_verify_result,
+            SSL_get_wbio, SSL_is_init_finished, SSL_new, SSL_pending, SSL_read, SSL_renegotiate,
             SSL_set_accept_state, SSL_set_bio, SSL_set_connect_state, SSL_set_renegotiate_mode,
             SSL_set_session_id_context, SSL_set_verify, SSL_set0_verify_cert_store, SSL_shutdown,
             SSL_write, X509_STORE, X509_STORE_CTX, ssl_renegotiate_explicit, ssl_renegotiate_never,
@@ -391,8 +391,8 @@ pub mod ssl_wrapper {
         Established,
         /// `set_inline_reject` stopped the handshake on the peer's chain.
         InlineRejected,
-        /// `SSL_do_handshake` failed.
-        HandshakeError,
+        /// `SSL_do_handshake` failed. Carries the queued reason of a fatal failure.
+        HandshakeError(Option<us_bun_verify_error_t>),
         /// Closed before the handshake finished, or a renegotiation was refused.
         Aborted,
     }
@@ -936,8 +936,9 @@ pub mod ssl_wrapper {
             }
             let (success, result) = match outcome {
                 HandshakeOutcome::Established => (true, self.verify_error()),
-                HandshakeOutcome::InlineRejected | HandshakeOutcome::HandshakeError => {
-                    (false, self.verify_error())
+                HandshakeOutcome::InlineRejected => (false, self.verify_error()),
+                HandshakeOutcome::HandshakeError(reason) => {
+                    (false, reason.unwrap_or_else(|| self.verify_error()))
                 }
                 // node:tls reads a failure with no error after end() as its own close.
                 HandshakeOutcome::Aborted if self.is_shutdown() => {
@@ -986,6 +987,23 @@ pub mod ssl_wrapper {
             };
             // SAFETY: ssl is a live SSL*; uSockets helper reads the verify result off it.
             unsafe { us_ssl_socket_verify_error_from_ssl(ssl.as_ptr()) }
+        }
+
+        /// Mirrors `ssl_park_fatal_reason` in openssl.c.
+        fn peek_fatal_ssl_error(buf: &mut [u8; 256]) -> Option<us_bun_verify_error_t> {
+            let packed = boring_sys::ERR_peek_error();
+            if packed == 0 {
+                return None;
+            }
+            // SAFETY: buf is a valid mutable buffer for `buf.len()` bytes.
+            unsafe {
+                boring_sys::ERR_error_string_n(packed, buf.as_mut_ptr().cast(), buf.len());
+            }
+            Some(us_bun_verify_error_t {
+                error_no: -71,
+                code: c"EPROTO".as_ptr(),
+                reason: buf.as_ptr().cast(),
+            })
         }
 
         /// Update the handshake state. Returns true if we can call handle_reading.
@@ -1057,6 +1075,14 @@ pub mod ssl_wrapper {
             if result <= 0 {
                 // SAFETY: ssl is still valid.
                 let err = unsafe { boring_sys::SSL_get_error(ssl.as_ptr(), result) };
+                let is_fatal =
+                    err == boring_sys::SSL_ERROR_SSL || err == boring_sys::SSL_ERROR_SYSCALL;
+                let mut reason_buf = [0u8; 256];
+                let fatal_reason = if is_fatal {
+                    Self::peek_fatal_ssl_error(&mut reason_buf)
+                } else {
+                    None
+                };
                 boring_sys::ERR_clear_error();
                 if err == boring_sys::SSL_ERROR_ZERO_RETURN {
                     // Remotely-Initiated Shutdown
@@ -1070,14 +1096,11 @@ pub mod ssl_wrapper {
                 // as far as I know these are the only errors we want to handle
                 if err != boring_sys::SSL_ERROR_WANT_READ && err != boring_sys::SSL_ERROR_WANT_WRITE
                 {
-                    // clear per thread error queue if it may contain something
-                    self.flags.set_fatal_error(
-                        err == boring_sys::SSL_ERROR_SSL || err == boring_sys::SSL_ERROR_SYSCALL,
-                    );
+                    self.flags.set_fatal_error(is_fatal);
 
                     self.flags
                         .set_handshake_state(HandshakeState::HandshakeCompleted);
-                    self.trigger_handshake_callback(HandshakeOutcome::HandshakeError);
+                    self.trigger_handshake_callback(HandshakeOutcome::HandshakeError(fatal_reason));
 
                     if self.flags.fatal_error() {
                         self.trigger_close_callback();

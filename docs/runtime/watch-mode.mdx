@@ -188,7 +188,10 @@ A `--preload` script is evaluated once per process rather than once per reload, 
 `Bun.serve()` is reused across reloads: calling it again during a reload hands the new handlers to the server that is already listening, so open connections survive and no dispose callback is needed. To get a fresh server on every reload instead, stop the old one from `dispose()`; that releases the port immediately and the next version's `Bun.serve()` binds it again. Passing `id: null` on its own is not enough: it only stops the reload from reusing the server, so the old one keeps listening.
 
 ```ts title="server.ts" icon="/icons/typescript.svg"
-const server = Bun.serve({ port: 3000, fetch: handler });
+const server = Bun.serve({
+  port: 3000,
+  fetch: () => new Response("a new server on every reload"),
+});
 
 import.meta.hot.dispose(() => {
   server.stop();

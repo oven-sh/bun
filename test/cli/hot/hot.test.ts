@@ -1144,6 +1144,7 @@ describe("import.meta.hot", () => {
       const source = `
         const gen = (globalThis.__gen = (globalThis.__gen ?? 0) + 1);
         const server = Bun.serve({
+          hostname: "127.0.0.1",
           port: import.meta.hot.data.port ?? 0,
           fetch: () => new Response("generation " + gen),
         });
@@ -1161,7 +1162,7 @@ describe("import.meta.hot", () => {
         3,
         {
           async afterGeneration(line) {
-            const response = await fetch(`http://localhost:${line.port}/`, { headers: { connection: "close" } });
+            const response = await fetch(`http://127.0.0.1:${line.port}/`, { headers: { connection: "close" } });
             responses.push(await response.text());
           },
         },

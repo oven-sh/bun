@@ -5602,6 +5602,64 @@ describe("css tests", () => {
         chrome: 50 << 16,
       },
     );
+    // When one `:is()` in the rule has to stay `:is()`, a prefixed copy of the
+    // rule would still contain it and be dropped by the browsers it is for, so
+    // no copy is emitted.
+    prefix_test(
+      ":is(header, main) :is(h1, .title) {color:red}",
+      `
+      :is(header, main) :is(h1, .title) {
+        color: red;
+      }
+      `,
+      {
+        safari: 11 << 16,
+        firefox: 50 << 16,
+      },
+    );
+    prefix_test(
+      ":is(.a .b) :is(.c, .d) {color:red}",
+      `
+      :is(.a .b) :is(.c, .d) {
+        color: red;
+      }
+      `,
+      {
+        safari: 11 << 16,
+        firefox: 50 << 16,
+      },
+    );
+    prefix_test(
+      ".x:not(.a, :is(span, p)) {color:red}",
+      `
+      .x:not(:is(.a, :is(span, p))) {
+        color: red;
+      }
+      `,
+      {
+        safari: 8 << 16,
+      },
+    );
+    prefix_test(
+      ":is(header, .main) :is(h1, .title) {color:red}",
+      `
+      :-webkit-any(header, .main) :-webkit-any(h1, .title) {
+        color: red;
+      }
+
+      :-moz-any(header, .main) :-moz-any(h1, .title) {
+        color: red;
+      }
+
+      :is(header, .main) :is(h1, .title) {
+        color: red;
+      }
+      `,
+      {
+        safari: 11 << 16,
+        firefox: 50 << 16,
+      },
+    );
 
     prefix_test(
       "a:lang(en, fr) {color:red}",

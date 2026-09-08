@@ -83,13 +83,12 @@ function expected(method: string, receiver: number[], otherSize: number) {
       return thisSize <= otherSize
         ? { result: receiver.filter(v => v !== 1), log: ["size", ...hasCalls] }
         : { result: receiver.filter(v => v !== 1), log: ["size", "keys", "next", "next"] };
-    case "isSubsetOf":
+    case "isSubsetOf": {
       if (thisSize > otherSize) return { result: false, log: ["size"] };
       // Stops at the first element other.has() rejects.
-      return {
-        result: receiver.every(v => v === 1),
-        log: ["size", ...hasCalls.slice(0, receiver.findIndex(v => v !== 1) + 1 || receiver.length)],
-      };
+      const i = receiver.findIndex(v => v !== 1);
+      return { result: i === -1, log: ["size", ...hasCalls.slice(0, i === -1 ? receiver.length : i + 1)] };
+    }
     case "isSupersetOf":
       if (thisSize < otherSize) return { result: false, log: ["size"] };
       // keys() yields 1; if the receiver lacks it the iterator is closed early.
@@ -139,8 +138,9 @@ describe.each(methods)("Set.prototype.%s", method => {
     }
   });
 
-  test("sizes that coerce to NaN throw TypeError", () => {
-    for (const size of [NaN, undefined, "x", {}]) {
+  test("sizes that coerce to NaN or cannot coerce throw TypeError", () => {
+    // NaN after ToNumber, or ToNumber itself throws (BigInt, Symbol).
+    for (const size of [NaN, undefined, "x", {}, 1n, Symbol("size")]) {
       const { setLike, log } = makeSetLike(size as number);
       expect(() => (new Set([1]) as any)[method](setLike)).toThrow(TypeError);
       expect(log).toEqual(["size"]);

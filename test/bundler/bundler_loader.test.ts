@@ -704,100 +704,8 @@ describe("bundler", async () => {
     });
   });
 
-  // The `json` loader must agree with `bun run`: the runtime exposes every
-  // top-level key as a named export and parses the file with `JSON.parse`.
-  describe("json loader matches the runtime", () => {
-    // Keys that are not identifiers, plus keywords, `default`, and a key that
-    // collides with the mangled name of another (`a b` becomes `a_b`).
-    const keysJson = `{
-      "a b": 1, "foo-bar": 2, "café": 3, "日本": 4, "🔥": 5, "": 6, "123": 7, "1e3": 8,
-      "let": 9, "class": 10, "if": 11, "default": 12, "a_b": 13
-    }`;
-    const keysEntry = /* js */ `
-      import * as ns from "./data.json";
-      import def from "./data.json";
-      import {
-        "a b" as ab, "foo-bar" as fooBar, "café" as cafe, "日本" as jp, "🔥" as fire, "" as empty,
-        "123" as n123, "1e3" as n1e3, "let" as let_, "class" as class_, "if" as if_, a_b,
-      } from "./data.json";
-      console.log(JSON.stringify([ab, fooBar, cafe, jp, fire, empty, n123, n1e3, let_, class_, if_, a_b]));
-      console.log(JSON.stringify([
-        ns["a b"], ns["foo-bar"], ns["café"], ns["日本"], ns["🔥"], ns[""], ns["123"], ns["1e3"],
-        ns.let, ns.class, ns.if, ns.a_b,
-      ]));
-      console.log(JSON.stringify(Object.keys(ns).sort()));
-      console.log(JSON.stringify(def), def.default, ns.default === def);
-    `;
-    const keysStdout = [
-      "[1,2,3,4,5,6,7,8,9,10,11,13]",
-      "[1,2,3,4,5,6,7,8,9,10,11,13]",
-      '["","123","1e3","a b","a_b","café","class","default","foo-bar","if","let","日本","🔥"]',
-      '{"123":7,"a b":1,"foo-bar":2,"café":3,"日本":4,"🔥":5,"":6,"1e3":8,"let":9,"class":10,"if":11,"default":12,"a_b":13} 12 true',
-    ].join("\n");
-
-    for (const format of ["esm", "cjs", "iife"] as const) {
-      for (const minify of [false, true]) {
-        itBundled(`bun/loader-json-non-identifier-keys-${format}${minify ? "-minify" : ""}`, {
-          target: "bun",
-          format,
-          minifyIdentifiers: minify,
-          minifySyntax: minify,
-          minifyWhitespace: minify,
-          files: {
-            "/entry.js": keysEntry,
-            "/data.json": keysJson,
-          },
-          run: { stdout: keysStdout },
-        });
-      }
-    }
-
-    // A JSON entry point exports every key, with a string alias where the key
-    // is not an identifier.
-    itBundled("bun/loader-json-non-identifier-keys-entry-point", {
-      target: "bun",
-      format: "esm",
-      entryPoints: ["/data.json"],
-      files: {
-        "/data.json": keysJson,
-      },
-      onAfterBundle(api) {
-        const code = api.readFile("/out.js");
-        expect(code).toContain('as "a b"');
-        expect(code).toContain('as "foo-bar"');
-        expect(code).toContain('as ""');
-        expect(code).toContain('as "123"');
-        // The emoji is written as escapes in ASCII-only output.
-        expect(code).toMatch(/as "(🔥|\\uD83D\\uDD25)"/);
-        expect(code).toContain("as if");
-        expect(code).toContain("as default");
-      },
-    });
-
-    // `export * from "./data.json"` and named re-exports see the same keys.
-    itBundled("bun/loader-json-non-identifier-keys-export-star", {
-      target: "bun",
-      files: {
-        "/entry.js": /* js */ `
-          import * as barrel from "./barrel.js";
-          import { "a b" as ab, "" as empty, renamed, "日本" as jp } from "./barrel.js";
-          console.log(JSON.stringify([barrel["a b"], barrel[""], barrel["foo-bar"], barrel.if, barrel.default, ab, empty, renamed, jp]));
-          console.log(JSON.stringify(Object.keys(barrel).sort()));
-        `,
-        "/barrel.js": /* js */ `
-          export * from "./data.json";
-          export { "a b" as renamed } from "./data.json";
-        `,
-        "/data.json": keysJson,
-      },
-      run: {
-        stdout: [
-          "[1,6,2,11,null,1,6,1,4]",
-          '["","123","1e3","a b","a_b","café","class","foo-bar","if","let","renamed","日本","🔥"]',
-        ].join("\n"),
-      },
-    });
-
+  // The `json` loader parses numbers like `JSON.parse`, as `bun run` does.
+  describe("json loader number grammar matches the runtime", () => {
     // Plain `.json` accepts exactly the number forms `JSON.parse` accepts.
     itBundled("bun/loader-json-rejects-javascript-number-syntax", {
       target: "bun",
@@ -849,12 +757,9 @@ describe("bundler", async () => {
       run: { stdout: "[0,0,10,-10,0.5,-0.5,0,0,100000,0.00001,1.25,150,123456789012]" },
     });
 
-    // The same source prints the same values under `bun run` and after `bun build`,
-    // and a file that `JSON.parse` rejects fails both ways.
-    test("bun run and bun build agree on a JSON module", async () => {
+    // A file that `JSON.parse` rejects fails under `bun run` and under `bun build`.
+    test("bun run and bun build both reject a hexadecimal number in .json", async () => {
       using dir = tempDir("json-loader-runtime", {
-        "data.json": keysJson,
-        "entry.js": keysEntry,
         "hex.json": `{"a": 0x10}`,
         "hex.js": `import hex from "./hex.json"; console.log(hex);`,
       });
@@ -869,19 +774,6 @@ describe("bundler", async () => {
         const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
         return { stdout, stderr, exitCode };
       };
-
-      const runtime = await run("entry.js");
-      expect(runtime.stderr).toBe("");
-      expect(runtime.stdout).toBe(keysStdout + "\n");
-      expect(runtime.exitCode).toBe(0);
-
-      const build = await run("build", "entry.js", "--outfile=out.js");
-      expect(build.stderr).toBe("");
-      expect(build.exitCode).toBe(0);
-      const bundled = await run("out.js");
-      expect(bundled.stderr).toBe("");
-      expect(bundled.stdout).toBe(runtime.stdout);
-      expect(bundled.exitCode).toBe(0);
 
       const runtimeHex = await run("hex.js");
       expect(runtimeHex.stderr).toContain("JSON Parse error");

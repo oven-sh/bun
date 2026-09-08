@@ -713,17 +713,6 @@ const TEST_WORKER_FORWARDED_FLAGS: &[&[u8]] = &[
     b"--trace-env-native-stack",
     b"--trace-exit",
     b"--stack-trace-limit",
-    // Profilers are per process; default profile names carry the pid.
-    b"--cpu-prof",
-    b"--cpu-prof-name",
-    b"--cpu-prof-dir",
-    b"--cpu-prof-md",
-    b"--cpu-prof-interval",
-    b"--heap-prof",
-    b"--heap-prof-name",
-    b"--heap-prof-dir",
-    b"--heap-prof-md",
-    b"--heap-prof-interval",
 ];
 
 /// Every other named flag `bun test` accepts.
@@ -800,6 +789,19 @@ const TEST_WORKER_UNFORWARDED_FLAGS: &[&[u8]] = &[
     b"--inspect",
     b"--inspect-wait",
     b"--inspect-brk",
+    // `bun test` does not start the profilers (#40184). An explicit
+    // `--cpu-prof-name`/`--heap-prof-name` would also name one file for N
+    // workers, so per-worker profiling needs its own naming rule first.
+    b"--cpu-prof",
+    b"--cpu-prof-name",
+    b"--cpu-prof-dir",
+    b"--cpu-prof-md",
+    b"--cpu-prof-interval",
+    b"--heap-prof",
+    b"--heap-prof-name",
+    b"--heap-prof-dir",
+    b"--heap-prof-md",
+    b"--heap-prof-interval",
     // No meaning for `bun test`.
     b"--help",
     b"--interactive",
@@ -810,32 +812,18 @@ const TEST_WORKER_UNFORWARDED_FLAGS: &[&[u8]] = &[
     b"--cron-period",
 ];
 
-const fn const_bytes_eq(a: &[u8], b: &[u8]) -> bool {
-    if a.len() != b.len() {
-        return false;
-    }
-    let mut i = 0;
-    while i < a.len() {
-        if a[i] != b[i] {
-            return false;
-        }
-        i += 1;
-    }
-    true
-}
-
 /// Does `dashed` (`--long` or `-s`) name `param`?
 const fn param_has_name(param: &ParamType, dashed: &[u8]) -> bool {
     if dashed.len() > 2 && dashed[0] == b'-' && dashed[1] == b'-' {
         let (_, key) = dashed.split_at(2);
         if let Some(long) = param.names.long {
-            if const_bytes_eq(long, key) {
+            if strings::const_bytes_eq(long, key) {
                 return true;
             }
         }
         let mut i = 0;
         while i < param.names.long_aliases.len() {
-            if const_bytes_eq(param.names.long_aliases[i], key) {
+            if strings::const_bytes_eq(param.names.long_aliases[i], key) {
                 return true;
             }
             i += 1;

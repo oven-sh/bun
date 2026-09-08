@@ -132,9 +132,7 @@ impl PercentEncoding {
 /// TAB, LF, FF, CR, SPACE (https://infra.spec.whatwg.org/#ascii-whitespace)
 const ASCII_WHITESPACE: &[u8] = b"\t\n\x0C\r ";
 
-/// Step 11 of the data: URL processor: `mime_type` ends with `;`, zero or
-/// more U+0020 SPACE, then an ASCII case-insensitive `base64`. Returns the
-/// MIME type with that marker removed.
+/// Data: URL processor step 11: `;`, optional spaces, case-insensitive `base64`.
 fn strip_base64_marker(mime_type: &[u8]) -> Option<&[u8]> {
     const MARKER: &[u8] = b"base64";
     let (rest, marker) = mime_type.split_at(mime_type.len().checked_sub(MARKER.len())?);

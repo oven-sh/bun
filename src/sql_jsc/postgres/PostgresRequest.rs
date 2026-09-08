@@ -216,11 +216,8 @@ pub(crate) fn write_bind<Context: WriterContext>(
             }
 
             _ => {
-                // Text format. A `Date` goes out as `toISOString()` (what
-                // postgres.js and pg send): valid input for date, timestamp,
-                // timestamptz and text parameters, unlike its `toString()`
-                // form. An invalid Date has no ISO form and is sent as
-                // "Invalid Date" for the server to reject.
+                // Text format: the server parses the string as the parameter's
+                // type. A valid `Date` goes out as `toISOString()`, not `toString()`.
                 let mut iso_buf = [0u8; 64];
                 let str;
                 let utf8;

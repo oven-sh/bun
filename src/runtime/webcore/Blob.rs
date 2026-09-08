@@ -1582,75 +1582,63 @@ impl BlobExt for Blob {
 
         assignment_result.ensure_still_alive();
 
-        // A settled pump ends the sink and breaks out to the detach below; only a pending one returns, handing both to `FileStreamWrapper`.
-        let outcome: JsResult<JSValue> = 'piped: {
-            if let Some(err) = assignment_result.to_error() {
-                file_sink.end_js_pump(None);
-                break 'piped Ok(JSPromise::rejected_promise(global_this, err).to_js());
-            }
+        if let Some(err) = assignment_result.to_error() {
+            file_sink.end_js_pump(None);
+            return Ok(JSPromise::rejected_promise(global_this, err).to_js());
+        }
 
-            if !assignment_result.is_empty_or_undefined_or_null() {
-                global_this.bun_vm().as_mut().drain_microtasks();
+        if !assignment_result.is_empty_or_undefined_or_null() {
+            global_this.bun_vm().as_mut().drain_microtasks();
 
-                assignment_result.ensure_still_alive();
-                // it returns a Promise when it goes through ReadableStreamDefaultReader
-                if let Some(promise) = assignment_result.as_any_promise() {
-                    match promise.status() {
-                        jsc::js_promise::Status::Pending => {
-                            let wrapper = bun_core::heap::into_raw(Box::new(FileStreamWrapper {
-                                promise: jsc::JSPromiseStrong::init(global_this),
-                                readable_stream_ref:
-                                    webcore::readable_stream::ReadableStreamStrong::init(
-                                        readable_stream,
-                                        global_this,
-                                    ),
-                                sink: file_sink,
-                            }));
-                            // SAFETY: wrapper was just produced by heap::alloc; sole owner here.
-                            let promise_value = unsafe { (*wrapper).promise.value() };
-                            assignment_result.then(
-                                global_this,
-                                wrapper.cast::<c_void>(),
-                                on_file_stream_resolve_request_stream_shim,
-                                on_file_stream_reject_request_stream_shim,
-                            );
-                            return Ok(promise_value);
-                        }
-                        jsc::js_promise::Status::Fulfilled => {}
-                        jsc::js_promise::Status::Rejected => {
-                            file_sink.end_js_pump(None);
-                            if let Err(err) = readable_stream.cancel(global_this) {
-                                break 'piped Err(err);
-                            }
-                            promise.set_handled(global_this.vm());
-                            break 'piped Ok(JSPromise::rejected_promise(
-                                global_this,
-                                promise.result(global_this.vm()),
-                            )
-                            .to_js());
-                        }
+            assignment_result.ensure_still_alive();
+            // it returns a Promise when it goes through ReadableStreamDefaultReader
+            if let Some(promise) = assignment_result.as_any_promise() {
+                match promise.status() {
+                    jsc::js_promise::Status::Pending => {
+                        let wrapper = bun_core::heap::into_raw(Box::new(FileStreamWrapper {
+                            promise: jsc::JSPromiseStrong::init(global_this),
+                            readable_stream_ref:
+                                webcore::readable_stream::ReadableStreamStrong::init(
+                                    readable_stream,
+                                    global_this,
+                                ),
+                            sink: file_sink,
+                        }));
+                        // SAFETY: wrapper was just produced by heap::alloc; sole owner here.
+                        let promise_value = unsafe { (*wrapper).promise.value() };
+                        assignment_result.then(
+                            global_this,
+                            wrapper.cast::<c_void>(),
+                            on_file_stream_resolve_request_stream_shim,
+                            on_file_stream_reject_request_stream_shim,
+                        );
+                        return Ok(promise_value);
                     }
-                } else {
-                    file_sink.end_js_pump(None);
-                    if let Err(err) = readable_stream.cancel(global_this) {
-                        break 'piped Err(err);
+                    jsc::js_promise::Status::Fulfilled => {}
+                    jsc::js_promise::Status::Rejected => {
+                        file_sink.end_js_pump(None);
+                        readable_stream.cancel(global_this)?;
+                        promise.set_handled(global_this.vm());
+                        return Ok(JSPromise::rejected_promise(
+                            global_this,
+                            promise.result(global_this.vm()),
+                        )
+                        .to_js());
                     }
-                    break 'piped Ok(
-                        JSPromise::rejected_promise(global_this, assignment_result).to_js()
-                    );
                 }
+            } else {
+                file_sink.end_js_pump(None);
+                readable_stream.cancel(global_this)?;
+                return Ok(JSPromise::rejected_promise(global_this, assignment_result).to_js());
             }
+        }
 
-            // The pump already finished; the promise carries the byte count once the file is closed.
-            readable_stream.done();
-            let promise = jsc::JSPromiseStrong::init(global_this);
-            let promise_value = promise.value();
-            file_sink.end_js_pump(Some(promise));
-            Ok(promise_value)
-        };
-
-        file_sink.detach_js_controller();
-        outcome
+        // The pump already finished; the promise carries the byte count once the file is closed.
+        readable_stream.done();
+        let promise = jsc::JSPromiseStrong::init(global_this);
+        let promise_value = promise.value();
+        file_sink.end_js_pump(Some(promise));
+        Ok(promise_value)
     }
 
     fn get_writer(&self, global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
@@ -5736,14 +5724,8 @@ impl Drop for S3BlobDownloadTask {
 struct FileStreamWrapper {
     pub(crate) promise: jsc::JSPromiseStrong,
     pub(crate) readable_stream_ref: webcore::readable_stream::ReadableStreamStrong,
-    /// The last reference on the sink; `Drop` detaches the JS controller before releasing it.
+    /// The last reference on the sink: `end_js_pump` it before the drop.
     pub sink: RefPtr<webcore::FileSink>,
-}
-
-impl Drop for FileStreamWrapper {
-    fn drop(&mut self) {
-        self.sink.detach_js_controller();
-    }
 }
 
 pub(crate) fn on_file_stream_resolve_request_stream(

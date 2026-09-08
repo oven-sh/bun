@@ -540,25 +540,33 @@ impl FileSink {
         self.writer.with_mut(|w| w.end());
     }
 
-    /// `Bun.write(file, body)`'s JS pump settled: end the writer (flush, close; `on_close` ends an attached controller) and settle `promise` once it closed.
+    /// `Bun.write(file, body)`'s JS pump settled: end the writer, close a still-attached sink controller, then settle `promise` once the file is closed.
     pub(crate) fn end_js_pump(&self, promise: Option<bun_jsc::JSPromiseStrong>) {
+        // Closed after the writer below, not from `on_close`, which runs under the writer borrow.
+        let mut controller = match *self.source.get() {
+            streams::SourceHandle::JSController(_) => {
+                self.source.replace(streams::SourceHandle::None)
+            }
+            _ => streams::SourceHandle::None,
+        };
+        // A flush error is recorded and still closes the writer; the controller and the promise get it below.
+        let _ = self.end(None);
+        if let streams::SourceHandle::JSController(cell) = controller {
+            let err = match self.stream_error.get() {
+                Some(streams::StreamError::Error(err)) => Some(err.clone()),
+                _ => None,
+            };
+            // `onClose`: closes the stream, whose `end()` detaches the controller, then runs the source's `cancel()`.
+            controller.close(err);
+            // `onClose` does not run over a pending exception or a terminating worker; `m_sinkPtr` must go either way.
+            streams::controller_abi::detach_sink_ptr(cell);
+        }
         if let Some(promise) = promise {
             self.stream_done.set(promise);
-        }
-        // A flush error is recorded and still closes the writer; `settle_stream_done` rejects with it.
-        let _ = self.end(None);
-        // Otherwise a flush is still draining: it holds the keep-alive ref and its `on_close` settles.
-        if !self.must_be_kept_alive_until_eof.get() {
-            self.settle_stream_done();
-        }
-    }
-
-    /// The owner is dropping the last reference: null a still-attached controller's `m_sinkPtr` (its late writes and destructor use it). No JS runs.
-    pub(crate) fn detach_js_controller(&self) {
-        if let streams::SourceHandle::JSController(controller) =
-            self.source.replace(streams::SourceHandle::None)
-        {
-            streams::controller_abi::detach_sink_ptr(controller);
+            // Otherwise a flush is still draining: it holds the keep-alive ref and its `on_close` settles.
+            if !self.must_be_kept_alive_until_eof.get() {
+                self.settle_stream_done();
+            }
         }
     }
 

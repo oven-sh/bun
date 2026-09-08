@@ -1098,39 +1098,49 @@ describe("bundler", () => {
     // rows go through the arm of Arguments.rs that merges CLI flags into the
     // `jsx` options bunfig.toml already created.
     describe.each([
-      ["no bunfig", undefined, "react/jsx-dev-runtime"],
-      ["bunfig (no jsx keys)", 'logLevel = "error"\n', "react/jsx-dev-runtime"],
-      ['bunfig jsx = "react-jsx"', 'jsx = "react-jsx"\n', "react/jsx-runtime"],
-    ] as const)("cli: --jsx-side-effects alone [%s]", (_label, bunfig, expectedRuntime) => {
-      test.concurrent("drops the pure annotation without changing the runtime", async () => {
-        const files: Record<string, string> = {
-          "a.jsx": "export const a = <div />;\n",
-          "tsconfig.json": "{}",
-        };
-        if (bunfig !== undefined) files["bunfig.toml"] = bunfig;
-        using dir = tempDir("jsx-cli-side-effects", files);
-        const build = async (args: readonly string[]) => {
-          await using proc = Bun.spawn({
-            cmd: [bunExe(), "build", "--no-bundle", ...args, "a.jsx"],
-            env: bunEnv,
-            cwd: String(dir),
-            stdout: "pipe",
-            stderr: "pipe",
-          });
-          const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-          expect(stderr).toBe("");
-          expect(exitCode).toBe(0);
-          return stdout;
-        };
+      ["tsconfig {}", { "tsconfig.json": "{}" }, "react/jsx-dev-runtime"],
+      [
+        'tsconfig "react-jsx"',
+        { "tsconfig.json": JSON.stringify({ compilerOptions: { jsx: "react-jsx" } }) },
+        "react/jsx-runtime",
+      ],
+      [
+        "bunfig (no jsx keys)",
+        { "tsconfig.json": "{}", "bunfig.toml": 'logLevel = "error"\n' },
+        "react/jsx-dev-runtime",
+      ],
+      [
+        'bunfig jsx = "react-jsx"',
+        { "tsconfig.json": "{}", "bunfig.toml": 'jsx = "react-jsx"\n' },
+        "react/jsx-runtime",
+      ],
+    ] as const)("cli: --jsx-side-effects alone [%s]", (_label, config, expectedRuntime) => {
+      for (const mode of [["--no-bundle"], ["--external", "react"]]) {
+        test.concurrent(`${mode[0]}: drops the pure annotation without changing the runtime`, async () => {
+          using dir = tempDir("jsx-cli-side-effects", { "a.jsx": "export const a = <div />;\n", ...config });
+          const build = async (args: readonly string[]) => {
+            await using proc = Bun.spawn({
+              cmd: [bunExe(), "build", ...mode, ...args, "a.jsx"],
+              env: bunEnv,
+              cwd: String(dir),
+              stdout: "pipe",
+              stderr: "pipe",
+            });
+            const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+            expect(stderr).toBe("");
+            expect(exitCode).toBe(0);
+            return stdout;
+          };
 
-        const baseline = await build([]);
-        expect(baseline).toContain("/* @__PURE__ */");
-        expect(baseline).toContain(expectedRuntime);
+          const baseline = await build([]);
+          expect(baseline).toContain("/* @__PURE__ */");
+          expect(baseline).toContain(expectedRuntime);
 
-        const withFlag = await build(["--jsx-side-effects"]);
-        expect(withFlag).not.toContain("@__PURE__");
-        expect(withFlag).toContain(expectedRuntime);
-      });
+          const withFlag = await build(["--jsx-side-effects"]);
+          expect(withFlag).not.toContain("@__PURE__");
+          expect(withFlag).toContain(expectedRuntime);
+        });
+      }
     });
 
     test.concurrent("cli: --jsx-side-effects alone keeps an unused JSX element under --minify-syntax", async () => {

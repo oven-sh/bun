@@ -460,10 +460,10 @@ impl Route {
             config
                 .define
                 .put(b"process.env.NODE_ENV", b"\"production\"")?;
-            config.jsx.development = false;
+            config.jsx.development = Some(false);
         } else {
             config.force_node_env = bundler_options::ForceNodeEnv::Development;
-            config.jsx.development = true;
+            config.jsx.development = Some(true);
         }
         // Production defaults to no sourcemaps so original sources are not served publicly.
         config.source_map = if let Some(mode) = cli.args.serve_sourcemap {

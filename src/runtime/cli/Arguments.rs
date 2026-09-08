@@ -1608,7 +1608,8 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
                 } else {
                     api::JsxRuntime::Automatic
                 },
-                development: true,
+                // No --jsx-* flag picks dev/prod; tsconfig and NODE_ENV do.
+                development: None,
                 side_effects: jsx_side_effects,
             });
         } else {

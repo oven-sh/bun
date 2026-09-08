@@ -733,9 +733,18 @@ impl<'a> Transpiler<'a> {
             let top_level_dir = self.fs().top_level_dir;
             if let Ok(Some(root_dir)) = self.resolver.read_dir_info(top_level_dir) {
                 if let Some(tsconfig) = root_dir.tsconfig_json() {
-                    // If we don't explicitly pass JSX, try to get it from the root tsconfig
-                    if self.options.transform_options.jsx.is_none() {
-                        self.options.jsx = jsx_pragma_from_resolver(&tsconfig.jsx);
+                    match &self.options.transform_options.jsx {
+                        // If we don't explicitly pass JSX, try to get it from the root tsconfig
+                        None => self.options.jsx = jsx_pragma_from_resolver(&tsconfig.jsx),
+                        // JSX options that leave dev/prod open (`--jsx-*` flags, a
+                        // bunfig.toml without `jsx`) take it from the root tsconfig,
+                        // the same as the per-file tsconfig merge in the resolver.
+                        Some(jsx) if jsx.development.is_none() => {
+                            if let Some(development) = tsconfig.jsx_development() {
+                                self.options.jsx.development = development;
+                            }
+                        }
+                        Some(_) => {}
                     }
                     self.options.emit_decorator_metadata = tsconfig.emit_decorator_metadata;
                     self.options.experimental_decorators = tsconfig.experimental_decorators;

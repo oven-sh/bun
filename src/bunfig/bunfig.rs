@@ -948,7 +948,7 @@ impl<'a> Parser<'a> {
         let mut jsx_fragment: Box<[u8]> = Box::default();
         let mut jsx_import_source: Box<[u8]> = Box::default();
         let mut jsx_runtime = api::JsxRuntime::Automatic;
-        let mut jsx_dev = true;
+        let mut jsx_dev: Option<bool> = None;
 
         if let Some(expr) = json.get(b"jsx") {
             if let Some(value) = expr.as_string(self.bump) {
@@ -956,10 +956,10 @@ impl<'a> Parser<'a> {
                     jsx_runtime = api::JsxRuntime::Classic;
                 } else if value == b"react-jsx" {
                     jsx_runtime = api::JsxRuntime::Automatic;
-                    jsx_dev = false;
+                    jsx_dev = Some(false);
                 } else if value == b"react-jsxDEV" {
                     jsx_runtime = api::JsxRuntime::Automatic;
-                    jsx_dev = true;
+                    jsx_dev = Some(true);
                 } else {
                     self.add_error(
                         expr.loc,

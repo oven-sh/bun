@@ -226,6 +226,14 @@ impl TSConfigJSON {
         !self.base_url.is_empty()
     }
 
+    /// `Some` only when `compilerOptions.jsx` is `react-jsx` (false) or
+    /// `react-jsxdev` (true).
+    pub fn jsx_development(&self) -> Option<bool> {
+        self.jsx_flags
+            .contains(JsxField::Development)
+            .then(|| self.jsx.development)
+    }
+
     pub fn merge_jsx(&self, current: options::jsx::Pragma) -> options::jsx::Pragma {
         let mut out = current;
 

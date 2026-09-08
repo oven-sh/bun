@@ -928,7 +928,7 @@ impl CompletionStruct for JSBundleCompletionTask {
             )
             .unwrap_or(default_fragment),
             runtime: options::jsx::Runtime::from(config.jsx.runtime),
-            development: config.jsx.development,
+            development: config.jsx.development.unwrap_or(true),
             package_name: if !jsx_import.is_empty() {
                 std::borrow::Cow::Owned(jsx_import.to_vec())
             } else {

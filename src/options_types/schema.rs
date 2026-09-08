@@ -373,7 +373,10 @@ pub mod api {
         pub factory: Box<[u8]>,
         pub runtime: JsxRuntime,
         pub fragment: Box<[u8]>,
-        pub development: bool,
+        /// `None` when the producer (CLI flags, a bunfig.toml without `jsx`)
+        /// did not choose dev/prod: the root tsconfig.json and `NODE_ENV`
+        /// decide, exactly as when no JSX options are passed at all.
+        pub development: Option<bool>,
         pub import_source: Box<[u8]>,
         pub side_effects: bool,
     }

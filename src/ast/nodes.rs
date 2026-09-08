@@ -1207,10 +1207,9 @@ pub enum StrictModeKind {
 }
 
 impl StrictModeKind {
-    /// Strictness that is final. `ImplicitStrictModeModuleType` is provisional
-    /// until `exports_kind` is classified, so decisions that shape the output
-    /// before then (hoisting, mapped `arguments`, duplicate parameters) treat
-    /// it as sloppy; diagnostics go through the deferral queue instead.
+    /// Final strictness. `ImplicitStrictModeModuleType` is provisional until
+    /// `exports_kind` is classified, so structural decisions made before then
+    /// (Annex B hoisting, mapped `arguments`) treat it as sloppy.
     pub fn is_settled_strict(self) -> bool {
         !matches!(self, Self::SloppyMode | Self::ImplicitStrictModeModuleType)
     }

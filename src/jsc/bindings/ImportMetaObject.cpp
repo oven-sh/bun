@@ -40,6 +40,9 @@
 
 #include "JSDOMURL.h"
 #include <JavaScriptCore/JSNativeStdFunction.h>
+#include <JavaScriptCore/CustomGetterSetter.h>
+#include <JavaScriptCore/InternalFieldTuple.h>
+#include <JavaScriptCore/JSFunction.h>
 #include <JavaScriptCore/LazyProperty.h>
 #include <JavaScriptCore/LazyPropertyInlines.h>
 #include <JavaScriptCore/VMTrapsInlines.h>
@@ -533,6 +536,154 @@ JSC_DEFINE_CUSTOM_GETTER(jsImportMetaObjectGetter_main, (JSGlobalObject * lexica
     return JSValue::encode(jsBoolean(isMain));
 }
 
+// import.meta.hot (bun --hot): a per-module object holding only its URL under a
+// private name. `data` lives in GlobalObject::importMetaHotDataMap() keyed by URL;
+// dispose() queues (callback, URL) tuples on the global, drained on reload.
+
+extern "C" void Bun__logUnhandledException(JSC::EncodedJSValue exception);
+
+static JSString* importMetaHotThisURL(JSC::VM& vm, JSValue thisValue)
+{
+    auto* object = thisValue.getObject();
+    if (!object)
+        return nullptr;
+    JSValue url = object->getDirect(vm, WebCore::builtinNames(vm).urlPrivateName());
+    return url ? dynamicDowncast<JSString>(url) : nullptr;
+}
+
+// Creates the module's `data` object on first use.
+static JSValue importMetaHotDataForURL(Zig::GlobalObject* globalObject, JSString* url)
+{
+    auto& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto* map = globalObject->importMetaHotDataMap();
+    JSValue data = map->get(globalObject, url);
+    RETURN_IF_EXCEPTION(scope, {});
+    if (data.isUndefined()) {
+        data = JSC::constructEmptyObject(globalObject);
+        map->set(globalObject, url, data);
+        RETURN_IF_EXCEPTION(scope, {});
+    }
+    return data;
+}
+
+JSC_DEFINE_CUSTOM_GETTER(jsImportMetaHotGetter_data, (JSGlobalObject * jsGlobalObject, JSC::EncodedJSValue thisValue, PropertyName))
+{
+    auto& vm = jsGlobalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto* url = importMetaHotThisURL(vm, JSValue::decode(thisValue));
+    if (!url) [[unlikely]]
+        return Bun::ERR::INVALID_THIS(scope, jsGlobalObject, "ImportMetaHot"_s);
+    RELEASE_AND_RETURN(scope, JSValue::encode(importMetaHotDataForURL(defaultGlobalObject(jsGlobalObject), url)));
+}
+
+JSC_DEFINE_CUSTOM_SETTER(jsImportMetaHotSetter_data, (JSGlobalObject * jsGlobalObject, JSC::EncodedJSValue thisValue, JSC::EncodedJSValue encodedValue, PropertyName))
+{
+    auto& vm = jsGlobalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto* url = importMetaHotThisURL(vm, JSValue::decode(thisValue));
+    if (!url) [[unlikely]] {
+        Bun::ERR::INVALID_THIS(scope, jsGlobalObject, "ImportMetaHot"_s);
+        return false;
+    }
+    auto* globalObject = defaultGlobalObject(jsGlobalObject);
+    globalObject->importMetaHotDataMap()->set(globalObject, url, JSValue::decode(encodedValue));
+    RETURN_IF_EXCEPTION(scope, false);
+    return true;
+}
+
+JSC_DEFINE_HOST_FUNCTION(functionImportMetaHotDispose, (JSC::JSGlobalObject * jsGlobalObject, JSC::CallFrame* callFrame))
+{
+    auto& vm = jsGlobalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto* url = importMetaHotThisURL(vm, callFrame->thisValue());
+    if (!url) [[unlikely]]
+        return Bun::ERR::INVALID_THIS(scope, jsGlobalObject, "ImportMetaHot"_s);
+    JSValue callback = callFrame->argument(0);
+    if (!callback.isCallable()) [[unlikely]]
+        return Bun::ERR::INVALID_ARG_TYPE(scope, jsGlobalObject, "callback"_s, "function"_s, callback);
+
+    auto* globalObject = defaultGlobalObject(jsGlobalObject);
+    auto* entry = JSC::InternalFieldTuple::create(vm, globalObject->internalFieldTupleStructure(), callback, url);
+    globalObject->addImportMetaHotDisposeCallback(entry);
+    return JSValue::encode(jsUndefined());
+}
+
+// --hot re-evaluates every module, so the Vite accept/event API has nothing to
+// do; the methods exist so code written against it does not throw.
+JSC_DEFINE_HOST_FUNCTION(functionImportMetaHotNoop, (JSC::JSGlobalObject * jsGlobalObject, JSC::CallFrame* callFrame))
+{
+    auto& vm = jsGlobalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (!importMetaHotThisURL(vm, callFrame->thisValue())) [[unlikely]]
+        return Bun::ERR::INVALID_THIS(scope, jsGlobalObject, "ImportMetaHot"_s);
+    return JSValue::encode(jsUndefined());
+}
+
+static const HashTableValue ImportMetaHotPrototypeValues[] = {
+    { "accept"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, functionImportMetaHotNoop, 1 } },
+    { "data"_s, static_cast<unsigned>(JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, jsImportMetaHotGetter_data, jsImportMetaHotSetter_data } },
+    { "decline"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, functionImportMetaHotNoop, 0 } },
+    { "dispose"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, functionImportMetaHotDispose, 1 } },
+    { "invalidate"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, functionImportMetaHotNoop, 0 } },
+    { "off"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, functionImportMetaHotNoop, 2 } },
+    { "on"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, functionImportMetaHotNoop, 2 } },
+    { "prune"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, functionImportMetaHotNoop, 1 } },
+    { "send"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, functionImportMetaHotNoop, 2 } },
+};
+
+class ImportMetaHotPrototype final : public JSC::JSNonFinalObject {
+public:
+    DECLARE_INFO;
+    using Base = JSC::JSNonFinalObject;
+
+    static ImportMetaHotPrototype* create(JSC::VM& vm, JSC::JSGlobalObject* globalObject)
+    {
+        auto* structure = Bun::createClassStructure(vm, globalObject, globalObject->objectPrototype(), JSC::TypeInfo(ObjectType, StructureFlags), info());
+        auto* prototype = new (NotNull, Bun::allocatePlainObjectCell(vm, sizeof(ImportMetaHotPrototype))) ImportMetaHotPrototype(vm, structure);
+        prototype->finishCreation(vm);
+        return prototype;
+    }
+
+    template<typename CellType, JSC::SubspaceAccess>
+    static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
+    {
+        STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(ImportMetaHotPrototype, Base);
+        return &vm.plainObjectSpace();
+    }
+
+private:
+    ImportMetaHotPrototype(JSC::VM& vm, JSC::Structure* structure)
+        : Base(vm, structure)
+    {
+    }
+
+    void finishCreation(JSC::VM& vm)
+    {
+        Base::finishCreation(vm);
+        Bun::reifyStaticPropertyTable(vm, info(), ImportMetaHotPrototypeValues, *this);
+        Bun::putToStringTagWithoutTransition(vm, this, info());
+    }
+};
+
+const ClassInfo ImportMetaHotPrototype::s_info = { "ImportMetaHot"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(ImportMetaHotPrototype) };
+
+JSC::Structure* ImportMetaObject::createHotStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject)
+{
+    auto* prototype = ImportMetaHotPrototype::create(vm, globalObject);
+    // One inline slot: the private URL property put by hotProperty's initializer.
+    return JSC::JSFinalObject::createStructure(vm, globalObject, prototype, 1);
+}
+
+JSC_DEFINE_CUSTOM_GETTER(jsImportMetaObjectGetter_hot, (JSGlobalObject*, JSC::EncodedJSValue thisValue, PropertyName))
+{
+    ImportMetaObject* thisObject = dynamicDowncast<ImportMetaObject>(JSValue::decode(thisValue));
+    if (!thisObject) [[unlikely]]
+        return JSValue::encode(jsUndefined());
+    auto* nullable = thisObject->hotProperty.getInitializedOnMainThread(thisObject);
+    return JSValue::encode(nullable ? nullable : jsUndefined());
+}
+
 static const HashTableValue ImportMetaObjectPrototypeValues[] = {
     { "dir"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, jsImportMetaObjectGetter_dir, 0 } },
     { "dirname"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, jsImportMetaObjectGetter_dir, 0 } },
@@ -595,6 +746,13 @@ public:
             Bun::reifyStaticPropertyTable(vm, ImportMetaObject::info(), ImportMetaObjectBakePrototypeValues, *this);
         } else {
             Bun::reifyStaticPropertyTable(vm, ImportMetaObject::info(), ImportMetaObjectPrototypeValues, *this);
+            // Outside --hot the property does not exist at all, matching what the
+            // transpiler folds `import.meta.hot` to.
+            if (Bun__VirtualMachine__isHotReloadEnabled(defaultGlobalObject(this->globalObject())->bunVM())) {
+                this->putDirectCustomAccessor(vm, Identifier::fromString(vm, "hot"_s),
+                    JSC::CustomGetterSetter::create(vm, jsImportMetaObjectGetter_hot, nullptr),
+                    JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontDelete);
+            }
         }
         Bun::putToStringTagWithoutTransition(vm, this, info());
     }
@@ -702,6 +860,15 @@ void ImportMetaObject::finishCreation(VM& vm)
             init.set(jsString(init.vm, url.path()));
         }
     });
+    this->hotProperty.initLater([](const JSC::LazyProperty<JSC::JSObject, JSC::JSObject>::Initializer& init) {
+        auto& vm = init.vm;
+        ImportMetaObject* meta = uncheckedDowncast<ImportMetaObject>(init.owner);
+        auto* globalObject = defaultGlobalObject(meta->globalObject());
+        auto* hot = JSC::constructEmptyObject(vm, globalObject->importMetaHotStructure());
+        hot->putDirect(vm, WebCore::builtinNames(vm).urlPrivateName(), meta->urlProperty.getInitializedOnMainThread(meta),
+            JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::DontDelete);
+        init.set(hot);
+    });
 }
 
 template<typename Visitor>
@@ -716,6 +883,7 @@ void ImportMetaObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     fn->dirProperty.visit(visitor);
     fn->fileProperty.visit(visitor);
     fn->pathProperty.visit(visitor);
+    fn->hotProperty.visit(visitor);
 }
 
 DEFINE_VISIT_CHILDREN(ImportMetaObject);
@@ -733,4 +901,127 @@ JSValue ImportMetaObject::getPrototype(JSObject* object, JSC::JSGlobalObject* gl
 
 const JSC::ClassInfo ImportMetaObject::s_info = { "ImportMeta"_s, &Base::s_info, nullptr, nullptr,
     CREATE_METHOD_TABLE(ImportMetaObject) };
+
+void Zig::GlobalObject::addImportMetaHotDisposeCallback(JSC::InternalFieldTuple* callbackAndURL)
+{
+    m_importMetaHotDisposeCallbacks.append(vm(), this, callbackAndURL);
+}
+
+JSC::JSMap* Zig::GlobalObject::importMetaHotDataMap()
+{
+    auto* map = m_importMetaHotDataMap.get();
+    if (!map) [[unlikely]] {
+        map = JSC::JSMap::create(vm(), mapStructure());
+        m_importMetaHotDataMap.set(vm(), this, map);
+    }
+    return map;
+}
+
+// Shared reaction context: slot 0 = promise returned to VirtualMachine::reload(),
+// slot 1 = number of dispose promises still pending.
+static void importMetaHotDisposePromiseSettled(JSC::VM& vm, JSValue contextValue)
+{
+    auto* context = dynamicDowncast<JSC::InternalFieldTuple>(contextValue);
+    if (!context) [[unlikely]]
+        return;
+    int32_t remaining = context->getInternalField(1).asInt32() - 1;
+    context->putInternalField(vm, 1, jsNumber(remaining));
+    if (remaining == 0)
+        uncheckedDowncast<JSC::JSPromise>(context->getInternalField(0).asCell())->fulfill(vm, jsUndefined());
+}
+
+JSC_DEFINE_HOST_FUNCTION(functionImportMetaHotDisposeFulfilled, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    importMetaHotDisposePromiseSettled(globalObject->vm(), callFrame->argument(1));
+    return JSValue::encode(jsUndefined());
+}
+
+JSC_DEFINE_HOST_FUNCTION(functionImportMetaHotDisposeRejected, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    Bun__logUnhandledException(JSValue::encode(callFrame->argument(0)));
+    importMetaHotDisposePromiseSettled(globalObject->vm(), callFrame->argument(1));
+    return JSValue::encode(jsUndefined());
+}
+
+// Runs the queued dispose callbacks. Returns undefined, or a promise that
+// fulfills once every promise they returned has settled. Callback errors are
+// printed (never fatal) and never block the reload.
+extern "C" [[ZIG_EXPORT(nothrow)]] JSC::EncodedJSValue JSC__JSGlobalObject__runImportMetaHotDispose(JSC::JSGlobalObject* jsGlobalObject)
+{
+    auto* globalObject = static_cast<Zig::GlobalObject*>(jsGlobalObject);
+    if (globalObject->m_importMetaHotDisposeCallbacks.isEmpty())
+        return JSValue::encode(jsUndefined());
+
+    auto& vm = globalObject->vm();
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+
+    // Drain first: dispose() calls made while running belong to the next generation.
+    JSC::MarkedArgumentBuffer entries;
+    globalObject->m_importMetaHotDisposeCallbacks.drainTo(globalObject, entries);
+    RELEASE_ASSERT(!entries.hasOverflowed());
+
+    JSC::MarkedArgumentBuffer pending;
+    for (size_t i = 0, size = entries.size(); i < size; i++) {
+        auto* entry = uncheckedDowncast<JSC::InternalFieldTuple>(entries.at(i).asCell());
+        JSValue callback = entry->getInternalField(0);
+        auto* url = uncheckedDowncast<JSString>(entry->getInternalField(1).asCell());
+
+        JSValue data = importMetaHotDataForURL(globalObject, url);
+        if (auto* exception = scope.exception()) [[unlikely]] {
+            if (vm.isTerminationException(exception))
+                return JSValue::encode(jsUndefined());
+            scope.clearException();
+            Bun__logUnhandledException(JSValue::encode(JSValue(exception)));
+            continue;
+        }
+
+        JSC::MarkedArgumentBuffer args;
+        args.append(data);
+        NakedPtr<JSC::Exception> returnedException;
+        JSValue result = JSC::profiledCall(globalObject, ProfilingReason::API, callback, JSC::getCallData(callback), jsUndefined(), args, returnedException);
+        if (auto* exception = returnedException.get()) {
+            if (vm.isTerminationException(exception))
+                return JSValue::encode(jsUndefined());
+            Bun__logUnhandledException(JSValue::encode(JSValue(exception)));
+            continue;
+        }
+
+        // Like the bundler's HMR runtime, only a real Promise delays the reload.
+        auto* promise = dynamicDowncast<JSC::JSPromise>(result);
+        if (!promise)
+            continue;
+        switch (promise->status()) {
+        case JSC::JSPromise::Status::Pending:
+            pending.append(promise);
+            break;
+        case JSC::JSPromise::Status::Rejected:
+            promise->markAsHandled();
+            Bun__logUnhandledException(JSValue::encode(promise->result()));
+            break;
+        case JSC::JSPromise::Status::Fulfilled:
+            break;
+        }
+    }
+    RELEASE_ASSERT(!pending.hasOverflowed());
+    if (pending.isEmpty())
+        return JSValue::encode(jsUndefined());
+
+    auto* aggregate = JSC::JSPromise::create(vm, globalObject->promiseStructure());
+    auto* context = JSC::InternalFieldTuple::create(vm, globalObject->internalFieldTupleStructure(), aggregate, jsNumber(static_cast<int32_t>(pending.size())));
+    auto* onFulfilled = JSC::JSFunction::create(vm, globalObject, 2, String(), functionImportMetaHotDisposeFulfilled, ImplementationVisibility::Private);
+    auto* onRejected = JSC::JSFunction::create(vm, globalObject, 2, String(), functionImportMetaHotDisposeRejected, ImplementationVisibility::Private);
+    for (size_t i = 0, size = pending.size(); i < size; i++) {
+        uncheckedDowncast<JSC::JSPromise>(pending.at(i).asCell())->performPromiseThenWithContext(vm, globalObject, onFulfilled, onRejected, jsUndefined(), context);
+        if (auto* exception = scope.exception()) [[unlikely]] {
+            if (vm.isTerminationException(exception))
+                return JSValue::encode(jsUndefined());
+            scope.clearException();
+            Bun__logUnhandledException(JSValue::encode(JSValue(exception)));
+            // Count it as settled so the reload is not blocked on it.
+            importMetaHotDisposePromiseSettled(vm, context);
+        }
+    }
+    return JSValue::encode(aggregate);
+}
+
 }

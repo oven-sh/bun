@@ -5108,23 +5108,6 @@ pub mod c {
         dyld_get_image_header_raw(image_index).cast()
     }
 
-    /// Darwin `sendfile(fd, s, off, *len, *hdtr, flags)`.
-    /// NOTE: on `EINTR`/`EAGAIN` the kernel still writes the
-    /// bytes-sent count back through `*len` before returning -1 — callers MUST
-    /// advance their offset by `*len` even on error. This wrapper is raw (no
-    /// EINTR retry); the caller owns the offset bookkeeping.
-    #[cfg(target_os = "macos")]
-    pub unsafe fn sendfile(
-        fd: c_int,
-        s: c_int,
-        off: i64,
-        len: *mut i64,
-        hdtr: *mut c_void,
-        flags: c_int,
-    ) -> c_int {
-        // SAFETY: caller contract (`unsafe fn`) — all pointers forwarded verbatim.
-        unsafe { libc::sendfile(fd, s, off, len, hdtr.cast(), flags) }
-    }
     /// FreeBSD `sendfile(fd, s, off, nbytes, *hdtr, *sbytes, flags)`.
     #[cfg(target_os = "freebsd")]
     pub unsafe fn sendfile(

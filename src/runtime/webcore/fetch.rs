@@ -1458,7 +1458,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
 
                     #[cfg(target_os = "macos")]
                     {
-                        // macOS only supports regular files for sendfile()
+                        // macOS streams this with pread (`SendFile::write_copy`), which needs a regular file
                         if !bun_sys::S::ISREG(stat.st_mode as u32) {
                             break 'use_sendfile;
                         }

@@ -1384,12 +1384,13 @@ SSL_CTX *us_ssl_ctx_build_raw(struct us_bun_socket_context_options_t options,
                                     : SSL_VERIFY_PEER,
         us_verify_callback);
 
-  } else if (options.ca && options.ca_count > 0) {
+  } else if (options.ca) {
     us_ex_idx_ensure();
     SSL_CTX_set_ex_data(ssl_context, us_ctx_user_ca_ex_idx, (void *)1);
     /* As above: user CAs only, into the SSL_CTX's own initially-empty store —
      * otherwise a server doing mTLS with `ca: [internalCA]` would also accept
-     * any client certificate that chains to a public root. */
+     * any client certificate that chains to a public root. A `ca` list with
+     * no entries (node's `ca: []`) leaves the store empty: nothing is trusted. */
     X509_STORE *cert_store = SSL_CTX_get_cert_store(ssl_context);
     STACK_OF(CRYPTO_BUFFER) *ca_certs = sk_CRYPTO_BUFFER_new_null();
     for (unsigned int i = 0; ca_certs != NULL && i < options.ca_count; i++) {
@@ -1799,15 +1800,17 @@ void us_internal_ssl_attach(struct us_socket_t *s, SSL_CTX *ctx,
      * never aborts here — JS reads verify_error and decides. */
     if (SSL_CTX_get_verify_mode(ctx) == SSL_VERIFY_NONE) {
       SSL_set_verify(ssl, SSL_VERIFY_PEER, us_verify_callback);
-      us_ex_idx_ensure();
-      if (!SSL_CTX_get_ex_data(ctx, us_ctx_user_ca_ex_idx)) {
-        /* Default context: give this socket the process-shared root bundle.
-         * A context whose store holds user-provided CAs (ca/caFile options or
-         * addCACert) keeps using its own store - overriding it here would
-         * hide those CAs from chain verification. */
-        X509_STORE *roots = us_get_shared_default_ca_store();
-        if (roots) SSL_set0_verify_cert_store(ssl, roots);
-      }
+    }
+    us_ex_idx_ensure();
+    if (!SSL_CTX_get_ex_data(ctx, us_ctx_user_ca_ex_idx)) {
+      /* Default context: give this socket the process-shared root bundle as
+       * it is now, so a tls.setDefaultCACertificates() after the CTX was built
+       * (fetch's thread CTX, an interned SecureContext) still applies. A
+       * context whose store holds user-provided CAs (ca/caFile options or
+       * addCACert) keeps using its own store - overriding it here would hide
+       * those CAs from chain verification. */
+      X509_STORE *roots = us_get_shared_default_ca_store();
+      if (roots) SSL_set0_verify_cert_store(ssl, roots);
     }
   } else {
     SSL_set_accept_state(ssl);

@@ -203,6 +203,13 @@ impl SSLConfigFromJs for SSLConfig {
             || result.allow_partial_trust_chain;
 
         result.ca = handle_file_for_field(global, "ca", &generated.ca)?;
+        // `ca: []` is an explicitly empty trust set (node's configSecureContext
+        // adds no roots for it), not an absent `ca` that takes the defaults.
+        if result.ca.is_none()
+            && matches!(&generated.ca, jsc::generated::SSLConfigFile::Array(list) if list.items().is_empty())
+        {
+            result.ca = Some(Box::default());
+        }
         result.cert = handle_file_for_field(global, "cert", &generated.cert)?;
         result.key = handle_file_for_field(global, "key", &generated.key)?;
         result.crl = handle_file_for_field(global, "crl", &generated.crl)?;

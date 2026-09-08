@@ -3938,8 +3938,7 @@ JSC::JSObject* GlobalObject::moduleLoaderCreateImportMetaProperties(JSGlobalObje
     JSModuleRecord* record,
     RefPtr<JSC::ScriptFetcher>)
 {
-    // A vm.SourceTextModule with no context links through this global. Like Node, its
-    // import.meta starts empty and is filled only by the module's initializeImportMeta.
+    // A context-less vm.SourceTextModule links through this global; like Node, its import.meta starts empty.
     if (record) {
         if (auto* provider = record->sourceCode().provider()) {
             auto* fetcher = provider->sourceOrigin().fetcher();

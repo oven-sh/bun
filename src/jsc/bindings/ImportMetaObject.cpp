@@ -644,8 +644,7 @@ void ImportMetaObject::finishCreation(VM& vm)
         }
     });
 
-    // Per-entry reifyStaticProperty, not reifyStaticPropertyTable: the latter forces
-    // dictionary mode, which would give every import.meta its own structure.
+    // Per-entry reify keeps one shared structure; reifyStaticPropertyTable would force dictionary mode.
     auto reifyOwnProperties = [&](const auto& values) {
         for (auto& value : values) {
             if (value.m_key.isNull())

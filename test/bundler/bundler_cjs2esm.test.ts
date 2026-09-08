@@ -779,6 +779,38 @@ describe("bundler", () => {
       stdout: '[[{"xyz":456},456],[{"xyz":123},123],[{"xyz":456},456],[{"xyz":123},123]]',
     },
   });
+  itBundled("cjs2esm/ModuleExportsRenamingAssignAfterNamedExportsDeOpt", {
+    files: {
+      "/entry.js": /* js */ `
+        import lib from './lib.cjs';
+        lib.check();
+      `,
+      "/lib.cjs": /* js */ `
+        let w = () => [typeof module.exports, module.exports === exports]; // keep as is
+        this.xyz = 123; // deoptimizes named exports before the assignment below is visited
+        module.exports = function f() {};
+        module.exports.check = () => console.log(JSON.stringify(w()));
+      `,
+    },
+    run: {
+      stdout: '["function",false]',
+    },
+  });
+  itBundled("cjs2esm/ModuleExportsRenamingTypeScriptExportEquals", {
+    files: {
+      "/entry.js": /* js */ `
+        import lib from './lib.ts';
+        lib.check();
+      `,
+      "/lib.ts": /* ts */ `
+        let w = () => [typeof module.exports, module.exports === exports]; // keep as is
+        export = { check: () => console.log(JSON.stringify(w())) };
+      `,
+    },
+    run: {
+      stdout: '["object",false]',
+    },
+  });
   itBundled("cjs2esm/ModuleExportsRenamingAssignExportsDeOpt", {
     files: {
       "/entry.js": /* js */ `

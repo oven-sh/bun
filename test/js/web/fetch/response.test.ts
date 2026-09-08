@@ -50,7 +50,7 @@ describe("2-arg form", () => {
 test("print size", () => {
   expect(normalizeBunSnapshot(Bun.inspect(new Response(Bun.file(import.meta.filename)))), import.meta.dir)
     .toMatchInlineSnapshot(`
-    "Response (11.70 KB) {
+    "Response (13.37 KB) {
       ok: true,
       url: "",
       status: 200,
@@ -217,10 +217,10 @@ describe("clone()", () => {
   });
 });
 
-// The Content-Type that `new Response(body)` takes from a Blob/File body is
-// part of the response from construction on (fetch spec "initialize a
-// response"), so it must not depend on whether `.headers` is read before or
-// after something moves the body out of its Blob state.
+// The Content-Type that `new Response(body)` takes from its body is part of the
+// response from construction on (fetch spec "initialize a response"), so it
+// must not depend on whether `.headers` is read before or after something moves
+// the body out of its Blob state.
 describe("body-derived Content-Type does not depend on access order", () => {
   let dir: string;
   beforeAll(() => {
@@ -228,65 +228,100 @@ describe("body-derived Content-Type does not depend on access order", () => {
   });
   const file = () => Bun.file(join(dir, "page.html"), { type: "image/png" });
   const blob = () => new Blob(["<p>hi</p>"], { type: "text/x-custom" });
+  const formData = () => {
+    const fd = new FormData();
+    fd.append("field", "<p>hi</p>");
+    return fd;
+  };
+  const searchParams = () => new URLSearchParams({ p: "<p>hi</p>" });
 
-  for (const [name, body, expected] of [
+  const cases: [string, () => BodyInit, string | RegExp][] = [
     ["Blob", blob, "text/x-custom"],
     ["Bun.file with type override", file, "image/png"],
-  ] as const) {
+    ["FormData", formData, /^multipart\/form-data; boundary=.+/],
+    ["URLSearchParams", searchParams, "application/x-www-form-urlencoded;charset=UTF-8"],
+  ];
+  for (const [name, body, expected] of cases) {
+    const check = (contentType: string | null | undefined) =>
+      typeof expected === "string" ? expect(contentType).toBe(expected) : expect(contentType).toMatch(expected);
+
     describe(name, () => {
       test(".headers first", () => {
         const res = new Response(body());
-        expect(res.headers.get("content-type")).toBe(expected);
+        check(res.headers.get("content-type"));
       });
 
       test(".body first", () => {
         const res = new Response(body());
         expect(res.body).toBeInstanceOf(ReadableStream);
-        expect(res.headers.get("content-type")).toBe(expected);
+        check(res.headers.get("content-type"));
       });
 
       test.each(["text", "arrayBuffer", "bytes", "blob"] as const)(".%s() first", async method => {
         const res = new Response(body());
         await res[method]();
-        expect(res.headers.get("content-type")).toBe(expected);
+        check(res.headers.get("content-type"));
       });
 
       test("new Response(res.body, res)", () => {
         const res = new Response(body());
         const rewrapped = new Response(res.body, res);
-        expect(rewrapped.headers.get("content-type")).toBe(expected);
-        expect(res.headers.get("content-type")).toBe(expected);
+        check(rewrapped.headers.get("content-type"));
+        expect(res.headers.get("content-type")).toBe(rewrapped.headers.get("content-type"));
       });
 
       test("used as ResponseInit, its Content-Type wins over the new body's", () => {
         // Same as `{ headers: res.headers }`: the init's header list already
         // has a Content-Type, so the new body's is not appended.
         const res = new Response(body());
-        expect(new Response(new Blob(["x"], { type: "text/plain" }), res).headers.get("content-type")).toBe(expected);
-        expect(new Response("x", res).headers.get("content-type")).toBe(expected);
+        check(new Response(new Blob(["x"], { type: "text/plain" }), res).headers.get("content-type"));
+        check(new Response("x", res).headers.get("content-type"));
       });
 
       test("used as RequestInit", () => {
         const res = new Response(body());
-        expect(new Request("http://example.com/", res).headers.get("content-type")).toBe(expected);
+        check(new Request("http://example.com/", res).headers.get("content-type"));
       });
 
       test("clone() after .body", () => {
         const res = new Response(body());
         void res.body;
         const clone = res.clone();
-        expect(clone.headers.get("content-type")).toBe(expected);
-        expect(res.headers.get("content-type")).toBe(expected);
+        check(clone.headers.get("content-type"));
+        expect(res.headers.get("content-type")).toBe(clone.headers.get("content-type"));
       });
 
       test("HTMLRewriter output", async () => {
+        const rewriter = new HTMLRewriter().on("p", { element: e => void e.setInnerContent("yo") });
         const res = new Response(body());
-        const out = new HTMLRewriter().on("p", { element: e => void e.setInnerContent("yo") }).transform(res);
-        expect(out.headers.get("content-type")).toBe(expected);
-        expect(await out.text()).toBe("<p>yo</p>");
+        const input = await res.clone().text();
+        const out = rewriter.transform(res);
+        check(out.headers.get("content-type"));
+        expect(await out.text()).toBe(input.replaceAll("<p>hi</p>", "<p>yo</p>"));
+        // .blob() is typed from the same header, whether or not .headers was read.
+        check((await rewriter.transform(new Response(body())).blob()).type);
       });
     });
   }
+
+  test("a FormData boundary in the header is the one in the body", async () => {
+    const res = new Response(formData());
+    const text = await res.text();
+    const contentType = res.headers.get("content-type")!;
+    expect(contentType).toStartWith("multipart/form-data; boundary=");
+    expect(text).toStartWith("--" + contentType.slice("multipart/form-data; boundary=".length));
+  });
+
+  // These responses are built natively, not by the Response constructor.
+  test.each([
+    ["data:", () => "data:text/x-custom,hi", "text/x-custom"],
+    ["blob:", () => URL.createObjectURL(blob()), "text/x-custom"],
+    ["file:", () => Bun.pathToFileURL(join(dir, "page.html")).href, "text/html;charset=utf-8"],
+  ] as const)("fetch() of a %s URL, body read first", async (_, url, expected) => {
+    const res = await fetch(url());
+    await res.text();
+    expect(res.headers.get("content-type")).toBe(expected);
+  });
 
   test("a ReadableStream body contributes no Content-Type, the init still does", () => {
     const stream = () => new ReadableStream({ start: c => c.close() });

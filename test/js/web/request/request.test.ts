@@ -95,6 +95,16 @@ describe("body-derived Content-Type does not depend on access order", () => {
     expect(req.headers.get("content-type")).toBe("text/x-custom");
   });
 
+  test("the FormData boundary survives .arrayBuffer() first", async () => {
+    const fd = new FormData();
+    fd.append("field", "value");
+    const req = new Request("http://example.com/", { method: "POST", body: fd });
+    const body = new TextDecoder().decode(await req.arrayBuffer());
+    const contentType = req.headers.get("content-type")!;
+    expect(contentType).toStartWith("multipart/form-data; boundary=");
+    expect(body).toStartWith("--" + contentType.slice("multipart/form-data; boundary=".length));
+  });
+
   test("new Request(req, { body }) keeps the original Content-Type", () => {
     // Same as `{ headers: req.headers, body }`: the copied header list already
     // has a Content-Type, so the new body's is not appended.

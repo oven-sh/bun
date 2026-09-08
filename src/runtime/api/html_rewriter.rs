@@ -964,7 +964,11 @@ impl RewriterPipe {
         sync_only_noun: Option<&'static str>,
     ) -> JsResult<JSValue> {
         // The output inherits status and headers: https://github.com/oven-sh/bun/issues/3334
-        let init = original.clone_init(global)?;
+        // A Content-Type pending from the input's body becomes a real header:
+        // the output body is a stream, and `finalize_without_stream` types a
+        // waiting `.blob()` from `get_fetch_headers()`, which does not see it.
+        let mut init = original.clone_init(global)?;
+        init.materialize_headers(global)?;
 
         let pipe = bun_core::heap::alloc_nn(RewriterPipe {
             global: GlobalRef::from(global),

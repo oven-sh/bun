@@ -31,10 +31,12 @@ The output file contains the stylesheets in the order a depth-first walk of the 
 
 1. In each module, Bun follows the `import` and `export ... from` declarations first, in source order, and then the `require()` and `import()` calls, in source order. ES imports are hoisted, so they run before any other statement in the module.
 2. Bun walks each imported module completely before it moves on to the next import of the current module.
-3. Bun visits each JavaScript module once. A CSS file that several modules import appears once, at the **first** place the walk reaches it.
-4. Bun then expands the `@import` rules inside those CSS files with CSS semantics: when the same file is imported more than once this way, the **last** occurrence is the one that stays.
+3. Bun visits each JavaScript module once and collects each CSS file once, at the **first** place the walk reaches it from JavaScript.
+4. Bun then treats the collected list as a stylesheet made of `@import` rules, one per file in that order, and bundles it with CSS semantics. Each `@import` inside a collected file expands in place, ahead of that file's own rules. When a file occurs more than once in the expanded result, only the **last** occurrence stays.
 
 In the example above the order is `reset.css`, `Button.css`, `app.css`. A rule in `app.css` overrides a rule of equal specificity in `Button.css`. esbuild produces the same order.
+
+Because of step 4, a stylesheet that JavaScript imports early moves later when a later stylesheet `@import`s it. With `import "./a.css"; import "./b.css"; import "./c.css"` and `@import "./a.css"` at the top of `c.css`, the output order is `b.css`, `a.css`, `c.css`.
 
 ### CSS behind `import()`
 

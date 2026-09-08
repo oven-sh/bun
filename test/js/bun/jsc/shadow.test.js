@@ -79,7 +79,10 @@ describe("an exception that crosses the ShadowRealm boundary becomes a TypeError
     [`{ get message() { throw new Error("getter ran"); } }`, genericEvaluateMessage],
     [`{ message: { toString() { throw new Error("toString ran"); } } }`, genericEvaluateMessage],
     [`{ message: { toString() { return "toString ran"; } } }`, genericEvaluateMessage],
-    [`new Proxy(new Error("proxy"), { getOwnPropertyDescriptor() { throw new Error("trap ran"); } })`, genericEvaluateMessage],
+    [
+      `new Proxy(new Error("proxy"), { getOwnPropertyDescriptor() { throw new Error("trap ran"); } })`,
+      genericEvaluateMessage,
+    ],
   ];
   it.each(evaluateCases)("evaluate() of a script that throws %s", (thrown, message) => {
     const realm = new ShadowRealm();

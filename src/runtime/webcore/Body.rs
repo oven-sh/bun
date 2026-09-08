@@ -40,8 +40,7 @@ pub(super) fn wtf_impl(s: &WTFStringImpl) -> &WTFStringImplStruct {
     unsafe { &**s }
 }
 
-/// The owner's `Content-Type` value, which types a `blob()` read (Fetch "MIME type" of a
-/// body). `None` only when the header is absent: a present, even empty, value wins.
+/// The owner's `Content-Type` value that types a `blob()` read; `None` only without the header.
 pub(crate) fn content_type_from_headers(headers: Option<NonNull<FetchHeaders>>) -> Option<Vec<u8>> {
     // `FetchHeaders` is an opaque ZST FFI handle (S008) — safe deref.
     let fetch_headers = bun_opaque::opaque_deref_mut(headers?.as_ptr());
@@ -55,8 +54,7 @@ pub(crate) fn content_type_from_headers(headers: Option<NonNull<FetchHeaders>>) 
     )
 }
 
-/// Blob type for a `Content-Type` value: `MimeType::init`-canonicalized, or `""` when it
-/// cannot be a MIME type (empty, or bytes other than HTAB and 0x20-0x7E).
+/// `MimeType::init`-canonicalized Blob type for a header value; `""` if it cannot be a MIME type.
 pub(crate) fn blob_content_type_from_header(value: &[u8]) -> blob::BlobContentType {
     let parseable = !value.is_empty()
         && value
@@ -68,8 +66,7 @@ pub(crate) fn blob_content_type_from_header(value: &[u8]) -> blob::BlobContentTy
     blob::BlobContentType::from(MimeType::init(value, true, None))
 }
 
-/// Types a `blob()` result: the owner's header, else the body's own type, else `text/plain`
-/// for a body with bytes. Writes the Blob only, never its (possibly shared) `Store`.
+/// The owner's header, else the body's own type, else `text/plain`. Never writes the `Store`.
 fn apply_blob_content_type(blob: &Blob, from_headers: Option<&[u8]>) {
     let content_type = match from_headers {
         // Equal to the body's own type: keep that verbatim rather than re-canonicalize it.

@@ -44,18 +44,14 @@ pub enum CloseCode {
     fast_shutdown = 2,
 }
 
-/// `us_socket_queued_input` return codes, mirroring the `LIBUS_QUEUED_INPUT_*`
-/// defines in libusockets.h by name.
+/// `LIBUS_QUEUED_INPUT_*` in libusockets.h, mirrored by name.
 pub const LIBUS_QUEUED_INPUT_NONE: c_int = 0;
 pub const LIBUS_QUEUED_INPUT_DATA: c_int = 1;
 pub const LIBUS_QUEUED_INPUT_EOF: c_int = 2;
 pub const LIBUS_QUEUED_INPUT_ERROR: c_int = 3;
 
-/// What the read side of a socket holds right now, read with a peek instead of
-/// a trip through the event loop.
-///
-/// The peek consumes nothing, so a socket that reports `Data` still delivers
-/// the same bytes to the normal read path on the next poll.
+/// What a socket's read side holds right now. The peek behind it consumes
+/// nothing, so the normal read path still gets the same bytes.
 #[repr(i32)]
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]
 pub enum QueuedInput {

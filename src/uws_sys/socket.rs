@@ -302,8 +302,7 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
     }
 
     /// What the read side holds right now, without waiting for the loop to
-    /// poll. Transports that the loop does not read with `recv()` (an upgraded
-    /// duplex, a Windows named pipe) report [`QueuedInput::None`].
+    /// poll. Transports the loop does not `recv()` report nothing queued.
     pub fn queued_input(&self) -> QueuedInput {
         on_socket!(self.socket;
             connected s => s.queued_input(),

@@ -876,20 +876,13 @@ impl<const SSL: bool> HTTPContext<SSL> {
                     continue;
                 }
 
-                // The pool hands sockets out from `HTTPThread::drain_events`,
-                // which runs before the loop polls. So input the origin already
-                // wrote on this idle connection is still in the kernel, and
-                // none of the checks above can see it: an unsolicited response,
-                // a `408 Request Timeout` that retires the connection, a FIN.
-                // Writing the next request onto such a socket attributes those
-                // bytes to it. The peek below reaches the same verdict the
-                // idle-socket handlers reach once the loop does poll
-                // (`Handler::on_data` terminates, `Handler::on_end` closes),
-                // only before the request goes out instead of after.
-                //
-                // An HTTP/2 session is exempt: idle frames (PING, SETTINGS,
-                // WINDOW_UPDATE) are part of a healthy connection, so
-                // `on_idle_data` decides for those.
+                // `HTTPThread::drain_events` hands a socket out before the loop
+                // polls it, so input the origin already wrote is unread in the
+                // kernel and invisible to the checks above; reuse answers this
+                // request with it. Same verdicts the idle handlers reach after
+                // a poll: `Handler::on_data` terminates, `Handler::on_end`
+                // closes. HTTP/2 idle frames are healthy, so `on_idle_data`
+                // keeps deciding for those.
                 if socket.h2_session.is_none() {
                     match http_socket.queued_input() {
                         uws::QueuedInput::None => {}

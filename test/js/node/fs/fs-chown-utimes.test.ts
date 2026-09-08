@@ -22,18 +22,18 @@ describe.concurrent("chown/fchown/lchown argument validation", () => {
         // -1 ("leave unchanged") and the u32 maximum are both in range.
         expect(() => call(-1, -1)).not.toThrow();
         expect(() => call(2 ** 32 - 1, 2 ** 32 - 1)).not.toThrow();
-        expect(() => call(-2, 0)).toThrow(
-          RangeError('The value of "uid" is out of range. It must be >= -1 && <= 4294967295. Received -2'),
-        );
-        expect(() => call(0, 2 ** 32)).toThrow(
-          RangeError('The value of "gid" is out of range. It must be >= -1 && <= 4294967295. Received 4294967296'),
-        );
-        expect(() => call(1.5, 0)).toThrow(
-          RangeError('The value of "uid" is out of range. It must be an integer. Received 1.5'),
-        );
-        expect(() => call(0, "a")).toThrow(
-          TypeError("The \"gid\" argument must be of type number. Received type string ('a')"),
-        );
+        // .toThrow(err) compares only the message, so class and code are
+        // asserted separately with toThrowWithCode.
+        const rangeCases: [uid: number, gid: number, message: string][] = [
+          [-2, 0, 'The value of "uid" is out of range. It must be >= -1 && <= 4294967295. Received -2'],
+          [0, 2 ** 32, 'The value of "gid" is out of range. It must be >= -1 && <= 4294967295. Received 4294967296'],
+          [1.5, 0, 'The value of "uid" is out of range. It must be an integer. Received 1.5'],
+        ];
+        for (const [uid, gid, message] of rangeCases) {
+          expect(() => call(uid, gid)).toThrow(message);
+          expect(() => call(uid, gid)).toThrowWithCode(RangeError, "ERR_OUT_OF_RANGE");
+        }
+        expect(() => call(0, "a")).toThrow("The \"gid\" argument must be of type number. Received type string ('a')");
         expect(() => call(0, "a")).toThrowWithCode(TypeError, "ERR_INVALID_ARG_TYPE");
       }
     } finally {
@@ -57,10 +57,11 @@ describe.concurrent("utimes/futimes/lutimes argument validation", () => {
         expect(() => call(0, 0)).not.toThrow();
         expect(() => call(new Date(), new Date())).not.toThrow();
         for (const bad of [{}, NaN, Infinity, -Infinity]) {
-          expect(() => call(bad, 0)).toThrow(TypeError("atime must be a number or a Date"));
-          expect(() => call(0, bad)).toThrow(TypeError("mtime must be a number or a Date"));
+          expect(() => call(bad, 0)).toThrow("atime must be a number or a Date");
+          expect(() => call(bad, 0)).toThrowWithCode(TypeError, "ERR_INVALID_ARG_TYPE");
+          expect(() => call(0, bad)).toThrow("mtime must be a number or a Date");
+          expect(() => call(0, bad)).toThrowWithCode(TypeError, "ERR_INVALID_ARG_TYPE");
         }
-        expect(() => call({}, 0)).toThrowWithCode(TypeError, "ERR_INVALID_ARG_TYPE");
       }
     } finally {
       fs.closeSync(fd);

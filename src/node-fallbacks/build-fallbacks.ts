@@ -31,8 +31,8 @@ for (let fileIndex = 0; fileIndex < allFiles.length; fileIndex++) {
     .flatMap(b => [`--external:node:${b}`, `--external:${b}`])
     .join(" ");
 
-  // `module.exports` is the API itself for these two; keep it callable from `require()`.
-  const format = name === "stream.js" || name === "assert.js" ? "cjs" : "esm";
+  // `module.exports` is the API itself for these; keep it callable from `require()`.
+  const format = ["stream.js", "assert.js", "events.js"].includes(name) ? "cjs" : "esm";
 
   const injectedGlobals = [
     {

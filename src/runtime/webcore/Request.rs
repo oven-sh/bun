@@ -1088,13 +1088,9 @@ impl Request {
                 if let Some(request) = value.as_direct::<Request>() {
                     // SAFETY: as_direct returns a live *mut Request payload (m_ctx)
                     let request = unsafe { &*request };
-                    if values_to_try.len() == 1 {
-                        match Request::clone_into(
-                            request,
-                            &mut req,
-                            global_this,
-                            fields.contains(Fields::Url),
-                        ) {
+                    // Wholesale clone for `new Request(request)` only; a Request `init` takes the per-field path.
+                    if is_input && values_to_try.len() == 1 {
+                        match Request::clone_into(request, &mut req, global_this) {
                             Ok(()) => {}
                             Err(e) => bail!(Err(e)),
                         }
@@ -1454,7 +1450,6 @@ impl Request {
         &self,
         req: &mut Request,
         global_this: &JSGlobalObject,
-        preserve_url: bool,
     ) -> JsResult<()> {
         // allocator param dropped (global mimalloc)
         let _ = self.ensure_url();
@@ -1464,11 +1459,7 @@ impl Request {
         // Last fallible call; an early return here leaves `req.url` untouched.
         // `body` (a `BodyHiveHandle`) drops on the `?` error path, releasing its +1.
         let headers = self.clone_headers(global_this)?;
-        let url = if preserve_url {
-            req.url.take()
-        } else {
-            self.url.get().clone()
-        };
+        debug_assert!(req.url.get().is_empty());
 
         // `ptr::write` is a raw bit-overwrite — no destructors run on the old
         // `*req`, so the Drop impl on `JsRef` doesn't fire on the caller's
@@ -1476,15 +1467,14 @@ impl Request {
         // The old `req.body` hive ref is intentionally NOT unref'd here:
         // `clone()` seeds it with a dangling sentinel, and `construct_into`
         // releases its seed via the ptr-equality arm of its `cleanup`.
-        // `url` was taken above (preserve_url) or is the empty
-        // sentinel; remaining incoming fields are None/weak/Copy by contract.
+        // `req.url` is empty (asserted above); the other incoming fields are None/weak/Copy by contract.
         // SAFETY: `req` is a valid &mut, fully initialized by the caller;
         // nothing between here and the write can panic.
         unsafe {
             core::ptr::write(
                 req,
                 Request {
-                    url: JsCell::new(url),
+                    url: JsCell::new(self.url.get().clone()),
                     headers: JsCell::new(headers),
                     signal: JsCell::new(None),
                     body: ManuallyDrop::new(body),
@@ -1528,7 +1518,7 @@ impl Request {
             reported_estimated_size: Cell::new(0),
         });
         // Box<Request> drops on the error path automatically
-        self.clone_into(&mut req, global_this, false)?;
+        self.clone_into(&mut req, global_this)?;
         Ok(req)
     }
 }

@@ -135,6 +135,18 @@ describe("RequestInit has no url member", () => {
     expect(new Request(base, res).url).toBe("http://a.example/x");
   });
 
+  test("a Request passed as init does not contribute its url", async () => {
+    const other = new Request("http://b.example/y", { method: "DELETE", headers: { foo: "bar" }, body: "hi" });
+    // The string input is still parsed and validated, and init's other fields still apply.
+    const r = new Request("http://A.example/a/../x", other);
+    expect(r.url).toBe("http://a.example/x");
+    expect(r.method).toBe("DELETE");
+    expect(r.headers.get("foo")).toBe("bar");
+    expect(await r.text()).toBe("hi");
+    expect(() => new Request("", other)).toThrow("url is required");
+    expect(() => new Request("not a url", other)).toThrow('Invalid URL "not a url"');
+  });
+
   test("fetch(new Request(request, { url })) goes to the input Request's url", async () => {
     await using a = Bun.serve({ port: 0, fetch: () => new Response("a") });
     await using b = Bun.serve({ port: 0, fetch: () => new Response("b") });

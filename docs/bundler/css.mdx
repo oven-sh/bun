@@ -278,7 +278,7 @@ Bun's CSS bundler converts these formats for older browsers:
 
 ### light-dark() color function
 
-The `light-dark()` function takes two colors and applies one based on the current color scheme, so styles respect the user's system preference without media queries.
+The `light-dark()` function takes two colors and applies one based on the used color scheme of the element. A page opts in to dark mode with the `color-scheme` property or with `<meta name="color-scheme">`, so styles respect the user's system preference without media queries.
 
 ```css title="styles.css" icon="file-code"
 :root {
@@ -303,40 +303,7 @@ The `light-dark()` function takes two colors and applies one based on the curren
 }
 ```
 
-For browsers that don't support `light-dark()`, Bun's CSS bundler converts it to CSS variables with fallbacks:
-
-```css title="styles.css" icon="file-code"
-:root {
-  --buncss-light: initial;
-  --buncss-dark: ;
-  color-scheme: light dark;
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --buncss-light: ;
-    --buncss-dark: initial;
-  }
-}
-
-.light-theme {
-  --buncss-light: initial;
-  --buncss-dark: ;
-  color-scheme: light;
-}
-
-.dark-theme {
-  --buncss-light: ;
-  --buncss-dark: initial;
-  color-scheme: dark;
-}
-
-.themed-component {
-  background-color: var(--buncss-light, #ffffff) var(--buncss-dark, #121212);
-  color: var(--buncss-light, #333333) var(--buncss-dark, #eeeeee);
-  border-color: var(--buncss-light, #dddddd) var(--buncss-dark, #555555);
-}
-```
+Under the default browser targets, Bun's CSS bundler keeps `light-dark()` and `color-scheme` as written. All major browsers support `light-dark()` natively since Chrome 123, Firefox 120, and Safari 17.5. The lowering for older browsers rewrites each call into `var(--buncss-light, <light>) var(--buncss-dark, <dark>)` and defines those two variables next to every `color-scheme` declaration in the compiled CSS. It only resolves when such a declaration applies to an ancestor element, and it produces an invalid value when the color scheme comes from `<meta name="color-scheme">`, from a stylesheet Bun did not compile, or from an inline style. For that reason the default targets leave it out.
 
 ### Logical properties
 

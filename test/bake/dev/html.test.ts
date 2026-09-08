@@ -96,6 +96,35 @@ devTest("image tag", {
     await dev.fetch(url).expect404(); // TODO
   },
 });
+devTest("srcset candidates and #fragments on asset URLs", {
+  files: {
+    "index.html": `
+      <!DOCTYPE html><html><head></head><body>
+      <img srcset="./a.png 1x, ./b.png 2x">
+      <svg><use href="./sprite.svg#icon"></use><use href="#local"></use></svg>
+      <object data="./other.html"></object>
+      </body></html>
+    `,
+    "a.png": "A",
+    "b.png": "B",
+    "sprite.svg": `<svg xmlns="http://www.w3.org/2000/svg"><symbol id="icon"/></svg>`,
+    // Only linked to from index.html, never a route: it must not be bundled,
+    // so its missing script is not an error.
+    "other.html": `<!DOCTYPE html><script src="./does-not-exist.js"></script>`,
+  },
+  htmlFiles: ["index.html"],
+  async test(dev) {
+    const html = await dev.fetch("/").text();
+    const [, a, b] = html.match(/srcset="(\/_bun\/asset\/[0-9a-f]+\.png) 1x, (\/_bun\/asset\/[0-9a-f]+\.png) 2x"/)!;
+    await dev.fetch(a).expect.toBe("A");
+    await dev.fetch(b).expect.toBe("B");
+    const [, sprite] = html.match(/<use href="(\/_bun\/asset\/[0-9a-f]+\.svg)#icon">/)!;
+    await dev.fetch(sprite).expect.toInclude(`<symbol id="icon"/>`);
+    expect(html).toInclude(`<use href="#local">`);
+    // A page that another page points at is a link: it is neither bundled nor rewritten.
+    expect(html).toInclude(`<object data="./other.html">`);
+  },
+});
 devTest("image import in JS", {
   files: {
     "index.html": `

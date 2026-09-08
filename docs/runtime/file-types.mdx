@@ -445,21 +445,30 @@ The loader uses [`lol-html`](https://github.com/cloudflare/lol-html) to extract 
 The list of selectors is:
 
 - `audio[src]`
+- `embed[src]`
+- `image[href], image[xlink:href]` (SVG)
 - `img[src]`
-- `img[srcset]`
+- `img[srcset]` (each candidate)
+- `input[src]`
 - `link[as='font'][href], link[type^='font/'][href]`
-- `link[as='image'][href]`
+- `link[as='image'][href]`, `link[imagesrcset]` (each candidate)
 - `link[as='style'][href]`
 - `link[as='video'][href], link[as='audio'][href]`
 - `link[as='worker'][href]`
-- `link[rel='icon'][href], link[rel='apple-touch-icon'][href]`
+- `link[rel~='icon'][href], link[rel^='apple-touch-'][href], link[rel='mask-icon'][href]`
 - `link[rel='manifest'][href]`
 - `link[rel='stylesheet'][href]`
+- `meta[content]` for `property="og:image|og:image:url|og:image:secure_url|og:audio|og:audio:secure_url|og:video|og:video:secure_url"` and `name="twitter:image|msapplication-tileimage|msapplication-config|msapplication-*logo"`
+- `object[data]`
 - `script[src]`
 - `source[src]`
-- `source[srcset]`
+- `source[srcset]` (each candidate)
+- `track[src]`
+- `use[href], use[xlink:href]` (SVG)
 - `video[poster]`
 - `video[src]`
+
+A `?query` or `#fragment` is kept on the rewritten URL. URLs with a scheme, `//host` URLs, same-document `#references`, and references from one HTML page to another are left as written.
 
 <Note>
 

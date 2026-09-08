@@ -185,6 +185,9 @@ describe("bundler", () => {
     <video src="./clip.mp4#t=1,2"></video>
     <img src="//cdn.example.com/x.png">
     <script src="//cdn.example.com/lib.js"></script>
+    <img src="https://cdn.example.com/y.png?v=1#f">
+    <svg><symbol id="local"></symbol><use href="#local"></use><use xlink:href="#local"></use></svg>
+    <img src="#">
   </body>
 </html>`,
       "/app.js": "console.log('app')",
@@ -208,6 +211,11 @@ describe("bundler", () => {
         `./${clip}#t=1,2`,
         `//cdn.example.com/x.png`,
         `//cdn.example.com/lib.js`,
+        `https://cdn.example.com/y.png?v=1#f`,
+        // Same-document references are not files.
+        `#local`,
+        `#local`,
+        `#`,
       ]);
       api.expectFile(`out/${html.match(/index-[a-z0-9]+\.js/)![0]}`).toContain("app");
     },

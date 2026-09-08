@@ -79,9 +79,14 @@ pub(crate) fn is_external_url(url: &[u8]) -> bool {
             .is_some_and(|len| len >= 2 && url[len] == b':' && url[0].is_ascii_alphabetic())
 }
 
-/// Splits `./sprite.svg?v=2#icon` into `./sprite.svg` and `?v=2#icon`.
+/// Splits `./sprite.svg?v=2#icon` into `./sprite.svg` and `?v=2#icon`. A URL
+/// that does not name a local file (`https://...`, `data:...`, a bare `#icon`)
+/// comes back whole with an empty suffix, so nothing is appended to it later.
 pub(crate) fn split_url_suffix(url: &[u8]) -> (&[u8], &[u8]) {
-    url.split_at(strings::index_of_any(url, b"?#").unwrap_or(url.len()))
+    match strings::index_of_any(url, b"?#") {
+        Some(i) if i > 0 && !is_external_url(url) => url.split_at(i),
+        _ => (url, b""),
+    }
 }
 
 const HTML_WHITESPACE: &[u8] = b" \t\n\r\x0c";
@@ -120,17 +125,13 @@ impl<'a> Iterator for SrcsetCandidates<'a> {
 
 impl<'a> HTMLScanner<'a> {
     fn create_import_record(&mut self, url: &[u8], kind: ImportKind) -> Result<(), Error> {
-        let external = is_external_url(url);
         // The browser requests the file without `?query#fragment`; the
         // rewrite pass appends it back from the attribute text.
-        let input_path = if external {
-            url
-        } else {
-            split_url_suffix(url).0
-        };
+        let (input_path, _suffix) = split_url_suffix(url);
         // In HTML, sometimes people do /src/index.js
         // In that case, we don't want to use the absolute filesystem path, we want to use the path relative to the project root
-        let path_to_use: &[u8] = if external {
+        let path_to_use: &[u8] = if is_external_url(url) {
+            // `//cdn.example.com/x.png` is a host, not a project-root path.
             url
         } else if input_path.len() > 1 && input_path[0] == b'/' {
             resolve_path::join_abs_string::<platform::Auto>(
@@ -275,8 +276,9 @@ impl TagHandler {
     }
 }
 
-/// Keep `docs/bundler/html-static.mdx` and `docs/bundler/standalone-html.mdx`
-/// in sync with this list.
+/// Keep the selector lists in `docs/bundler/loaders.mdx`,
+/// `docs/runtime/file-types.mdx`, `docs/bundler/html-static.mdx` and
+/// `docs/bundler/standalone-html.mdx` in sync with this list.
 const TAG_HANDLERS: &[TagHandler] = &[
     // Module scripts with src
     TagHandler::new("script[src]", "src", ImportKind::Stmt),

@@ -372,6 +372,7 @@ body { color: blue; }`,
 <object data="./doc.pdf" type="application/pdf"><embed src="./doc.pdf"></object>
 <input type="image" src="./i.png">
 <svg><use href="./sprite.svg#icon"></use><use xlink:href="./sprite.svg#icon"></use><image href="./i.png"/></svg>
+<svg><symbol id="local"></symbol><use href="#local"></use></svg>
 <img src="//cdn.example.com/x.png"> <img src="https://cdn.example.com/y.png"> <a href="./doc.pdf">pdf</a>
 </body></html>`,
       "app.js": `console.log("app");`,
@@ -426,8 +427,9 @@ body { color: blue; }`,
     expect(html).not.toContain("prefetch");
     expect(html).toContain('<link rel="preload" as="font" href="https://cdn.example.com/font.woff2" crossorigin>');
 
-    // External URLs are untouched.
+    // External URLs and same-document references are untouched.
     expect(html).toContain('<img src="//cdn.example.com/x.png"> <img src="https://cdn.example.com/y.png">');
+    expect(html).toContain('<use href="#local"></use>');
     expect(html).toContain('<script type="module">');
     expect(html).toContain('console.log("app")');
   });

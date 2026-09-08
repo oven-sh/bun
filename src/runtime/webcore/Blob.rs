@@ -1592,14 +1592,7 @@ impl BlobExt for Blob {
             assignment_result.ensure_still_alive();
             // it returns a Promise when it goes through ReadableStreamDefaultReader
             if let Some(promise) = assignment_result.as_any_promise() {
-                let status = promise.status();
-                if status != jsc::js_promise::Status::Pending {
-                    // The pump is over and `file_sink`'s reference goes away
-                    // when this function returns, so the controller cell must
-                    // not keep pointing at the sink.
-                    file_sink.detach_js_controller(global_this);
-                }
-                match status {
+                match promise.status() {
                     jsc::js_promise::Status::Pending => {
                         let wrapper = bun_core::heap::into_raw(Box::new(FileStreamWrapper {
                             promise: jsc::JSPromiseStrong::init(global_this),
@@ -1621,6 +1614,14 @@ impl BlobExt for Blob {
                         return Ok(promise_value);
                     }
                     jsc::js_promise::Status::Fulfilled => {
+                        // `file_sink`'s reference goes away when this returns.
+                        if let bun_sys::Result::Err(err) = file_sink.end_js_pump(global_this) {
+                            return Ok(JSPromise::rejected_promise(
+                                global_this,
+                                err.to_js(global_this),
+                            )
+                            .to_js());
+                        }
                         let written = file_sink.stream_bytes.get().unwrap_or(0);
                         readable_stream.done();
                         return Ok(JSPromise::resolved_promise_value(
@@ -1629,6 +1630,8 @@ impl BlobExt for Blob {
                         ));
                     }
                     jsc::js_promise::Status::Rejected => {
+                        // The pump's error is the one reported.
+                        let _ = file_sink.end_js_pump(global_this);
                         readable_stream.cancel(global_this)?;
                         promise.set_handled(global_this.vm());
                         return Ok(JSPromise::rejected_promise(
@@ -1639,12 +1642,14 @@ impl BlobExt for Blob {
                     }
                 }
             } else {
-                file_sink.detach_js_controller(global_this);
+                let _ = file_sink.end_js_pump(global_this);
                 readable_stream.cancel(global_this)?;
                 return Ok(JSPromise::rejected_promise(global_this, assignment_result).to_js());
             }
         }
-        file_sink.detach_js_controller(global_this);
+        if let bun_sys::Result::Err(err) = file_sink.end_js_pump(global_this) {
+            return Ok(JSPromise::rejected_promise(global_this, err.to_js(global_this)).to_js());
+        }
         let written = file_sink.stream_bytes.get().unwrap_or(0);
 
         Ok(JSPromise::resolved_promise_value(
@@ -5748,12 +5753,16 @@ pub(crate) fn on_file_stream_resolve_request_stream(
     let mut this: Box<FileStreamWrapper> = unsafe {
         bun_core::heap::take(args[args.len() - 1].as_number() as usize as *mut FileStreamWrapper)
     };
-    // This call owns the last reference the pump held; the controller cell must
-    // not outlive it still pointing at the sink.
-    this.sink.detach_js_controller(global_this);
+    // `this` holds the last reference the pump had on the sink.
+    let ended = this.sink.end_js_pump(global_this);
     let strong = core::mem::take(&mut this.readable_stream_ref);
     if let Some(stream) = strong.get() {
         stream.done();
+    }
+    if let bun_sys::Result::Err(err) = ended {
+        this.promise
+            .reject(global_this, Ok(err.to_js(global_this)))?;
+        return Ok(JSValue::UNDEFINED);
     }
     let written = this.sink.stream_bytes.get().unwrap_or(0);
     this.promise
@@ -5775,10 +5784,9 @@ pub(crate) fn on_file_stream_reject_request_stream(
     };
     let err = args[0];
 
-    // A direct stream's pump fails without an `end()`/`close()` on the
-    // controller, so the cell may still point at the sink whose last reference
-    // this call owns.
-    this.sink.detach_js_controller(global_this);
+    // `this` holds the last reference the pump had on the sink. The pump's
+    // error is the one reported.
+    let _ = this.sink.end_js_pump(global_this);
 
     let strong = core::mem::take(&mut this.readable_stream_ref);
 

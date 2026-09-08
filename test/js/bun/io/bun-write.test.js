@@ -1146,6 +1146,8 @@ int posix_fadvise(int fd, off_t offset, off_t len, int advice) {
     // left the controller cell pointing at the FileSink. When the cell was collected it
     // released a reference it never took: that freed the sink under the flush task the sink
     // had queued on the event loop, or under a later write through the same controller.
+    // `await 1` settles while Bun.write drains microtasks (the synchronous arms); `tick`
+    // settles on a later event-loop turn (the promise reaction handlers).
     it.each([
       [
         "an async generator that throws right after a yield",
@@ -1160,6 +1162,12 @@ int posix_fadvise(int fd, off_t offset, off_t len, int advice) {
         "",
       ],
       [
+        "an async generator that throws on a later tick",
+        `async function* () { yield "first"; await tick(); throw new Error("boom"); }`,
+        "rejected: boom",
+        "first",
+      ],
+      [
         "a direct ReadableStream whose pull rejects",
         `() => new ReadableStream({ type: "direct", async pull(ctrl) { ctrl.write("first"); await 1; throw new Error("boom"); } })`,
         "rejected: boom",
@@ -1168,6 +1176,12 @@ int posix_fadvise(int fd, off_t offset, off_t len, int advice) {
       [
         "a direct ReadableStream whose pull resolves without closing it",
         `() => new ReadableStream({ type: "direct", async pull(ctrl) { ctrl.write("first"); await 1; } })`,
+        "resolved: 5",
+        "first",
+      ],
+      [
+        "a direct ReadableStream whose pull resolves on a later tick without closing it",
+        `() => new ReadableStream({ type: "direct", async pull(ctrl) { ctrl.write("first"); await tick(); } })`,
         "resolved: 5",
         "first",
       ],
@@ -1182,6 +1196,7 @@ int posix_fadvise(int fd, off_t offset, off_t len, int advice) {
           "-e",
           `const { readFileSync } = require("fs");
            const dest = ${JSON.stringify(join(String(dir), "out.txt"))};
+           const tick = () => new Promise(resolve => setImmediate(resolve));
            const body = ${body};
            const outcomes = new Set();
            for (let i = 0; i < 5; i++) {

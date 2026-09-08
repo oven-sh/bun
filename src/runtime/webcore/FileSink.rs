@@ -1017,26 +1017,30 @@ impl FileSink {
         }
     }
 
-    /// Take the JS pump controller's pointer to this sink away from it.
+    /// The JS pump that `JSSink::assign_to_stream` started into this sink has
+    /// settled. If it did so without `controller.end()`/`.close()` (a direct
+    /// stream whose `pull()` settled without closing it), do here what those
+    /// would have done: detach the controller cell and end the sink.
     ///
-    /// `JSSink::assign_to_stream` hands the `JSReadableFileSinkController` cell
-    /// a raw `*FileSink` and takes no refcount claim for it, while the cell's
-    /// destructor releases one (`FileSink__finalize`). A pump that closes the
-    /// controller (`controller.end()`/`.close()`) nulls the cell's sink
-    /// pointer first, so the destructor releases nothing and a later
-    /// `controller.write()` is a no-op. A direct stream whose `pull()` settles
-    /// without closing the controller never does. So the owner of the sink
-    /// detaches the cell here, on every path that gives up its own reference.
-    /// A no-op once the controller is detached.
-    pub(crate) fn detach_js_controller(&self, global_this: &JSGlobalObject) {
-        if !matches!(self.source.get(), streams::SourceHandle::JSController(_)) {
-            return;
-        }
-        // Take the handle out of the cell before the call: `detach_ptr` runs
-        // the controller's `onClose`, which reaches `js_controller_detached` on
-        // this sink and borrows `source` again.
-        let mut source = self.source.replace(streams::SourceHandle::default());
-        JSSink::detach(&mut source, global_this);
+    /// The cell holds a raw `*FileSink` with no refcount claim, and its
+    /// destructor releases one (`FileSink__finalize`) while it is attached.
+    /// Once detached, it neither finalizes nor writes to the sink. Ending the
+    /// sink flushes what it buffered and closes it, which releases the
+    /// keep-alive reference a pending write took. Returns the flush error, if
+    /// any. A no-op once the controller is detached.
+    pub(crate) fn end_js_pump(&self, global_this: &JSGlobalObject) -> sys::Result<()> {
+        let streams::SourceHandle::JSController(controller) = *self.source.get() else {
+            return sys::Result::Ok(());
+        };
+        // Cleared first: detaching runs the controller's `onClose`, which
+        // reaches `js_controller_detached` on this sink and borrows `source`.
+        self.source.take();
+        // `onClose` runs the direct stream's close steps, `underlyingSource.cancel()`
+        // included. A throw from that user hook is reported, not left pending.
+        crate::dispatch::fold(bun_jsc::call_check_slow(global_this, || {
+            streams::controller_abi::detach_ptr(controller)
+        }));
+        self.end(None)
     }
 
     /// Protect the JS wrapper object from GC collection while an async operation is pending.

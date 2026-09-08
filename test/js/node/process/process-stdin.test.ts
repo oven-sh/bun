@@ -533,6 +533,199 @@ describe.skipIf(isWindows)("pipe backpressure", () => {
   });
 });
 
+// Once a consumer stops pulling, the native reader stops at its highwater mark
+// and no longer waits on the fd. Nothing can wake it except the next pull, so it
+// must not hold the event loop open: with nothing else pending the process
+// exits, as Node does once a paused pipe handle stops reading. The writer here
+// outlives the reader and keeps the pipe full, so EOF never rescues a reader
+// that wrongly stays alive.
+describe("an idle stdin consumer does not keep the process alive", () => {
+  // Keeps the pipe full until the reader goes away, then exits quietly.
+  const writer = `
+    const chunk = Buffer.alloc(65536, 0x78);
+    process.stdout.on("error", () => process.exit(0));
+    (function pump() {
+      while (process.stdout.write(chunk)) {}
+      process.stdout.once("drain", pump);
+    })();
+  `;
+
+  // Runs `writer.js | reader.js` over a real pipe. `onStderr` sees both
+  // processes' stderr as it arrives and may write to the writer's stdin.
+  async function runPipeline(
+    files: Record<string, string>,
+    onStderr?: (seen: string, stdin: NodeJS.WritableStream) => void,
+  ) {
+    using dir = tempDir("stdin-idle-consumer", { "writer.js": writer, ...files });
+    const { promise, resolve } = Promise.withResolvers<{ err: Error | null; stdout: string; stderr: string }>();
+    const child = exec(
+      `"${bunExe()}" writer.js | "${bunExe()}" reader.js`,
+      { cwd: String(dir), env: bunEnv },
+      (err, stdout, stderr) => resolve({ err, stdout, stderr }),
+    );
+    if (onStderr) {
+      let seen = "";
+      child.stderr!.on("data", chunk => onStderr((seen += chunk), child.stdin!));
+    }
+    const { err, stdout, stderr } = await promise;
+    return { stdout: stdout.replaceAll("\r\n", "\n"), err, ...(err ? { stderr } : {}) };
+  }
+
+  test.concurrent("Bun.stdin.stream() reader that read one chunk and keeps the lock", async () => {
+    const result = await runPipeline({
+      "reader.js": `
+        const reader = Bun.stdin.stream().getReader();
+        const { value } = await reader.read();
+        process.on("exit", () => console.log("EXIT"));
+        console.log("FIRST " + (value.byteLength > 0));
+      `,
+    });
+    expect(result).toEqual({ stdout: "FIRST true\nEXIT\n", err: null });
+  });
+
+  test.concurrent("process.stdin 'readable' listener that stops draining", async () => {
+    const result = await runPipeline({
+      "reader.js": `
+        process.stdin.once("readable", () => {
+          const chunk = process.stdin.read();
+          console.log("FIRST " + (chunk.length > 0));
+        });
+        process.on("exit", () => console.log("EXIT"));
+      `,
+    });
+    expect(result).toEqual({ stdout: "FIRST true\nEXIT\n", err: null });
+  });
+
+  // The same reader over the socketpair Bun.spawn uses for stdio on POSIX.
+  test.concurrent("Bun.stdin.stream() reader over a Bun.spawn stdin pipe", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        const reader = Bun.stdin.stream().getReader();
+        const { value } = await reader.read();
+        process.on("exit", () => console.log("EXIT"));
+        console.log("FIRST " + (value.byteLength > 0));
+        `,
+      ],
+      stdin: "pipe",
+      stdout: "pipe",
+      stderr: "pipe",
+      env: bunEnv,
+    });
+    // Far more than the reader takes before it stops; the rest fails with
+    // EPIPE once the child has exited, which is the expected outcome.
+    const chunk = Buffer.alloc(1024 * 1024, 0x78);
+    const ignoreEpipe = (e: any) => {
+      if (e?.code !== "EPIPE") throw e;
+    };
+    for (let i = 0; i < 8; i++) {
+      const r = proc.stdin.write(chunk);
+      if (r && typeof (r as any).then === "function") (r as Promise<number>).catch(ignoreEpipe);
+    }
+    Promise.resolve(proc.stdin.flush()).catch(ignoreEpipe);
+    Promise.resolve(proc.stdin.end()).catch(ignoreEpipe);
+    expect(await stdioResult(proc)).toEqual({ stdout: "FIRST true\nEXIT\n", exitCode: 0 });
+  });
+
+  test.concurrent("process.stdin.ref() while the reader is stopped does not pin it either", async () => {
+    const result = await runPipeline({
+      "reader.js": `
+        process.stdin.once("readable", () => {
+          const chunk = process.stdin.read();
+          console.log("FIRST " + (chunk.length > 0));
+          // No signal exists for "the reader stopped at its highwater mark";
+          // the flooding writer gets it there long before this fires.
+          setTimeout(() => {
+            process.stdin.ref();
+            console.log("REF");
+          }, 200);
+        });
+        process.on("exit", () => console.log("EXIT"));
+      `,
+    });
+    expect(result).toEqual({ stdout: "FIRST true\nREF\nEXIT\n", err: null });
+  });
+
+  // Cancelling a stopped reader must take its registration out of the kernel
+  // too: fd 0 stays open, and a second poll on it would otherwise hit EEXIST.
+  test.concurrent("a stopped reader that is cancelled frees fd 0 for the next one", async () => {
+    const result = await runPipeline({
+      "reader.js": `
+        (async () => {
+          const reader = Bun.stdin.stream().getReader();
+          const first = await reader.read();
+          console.log("FIRST " + (first.value.byteLength > 0));
+          // No signal exists for "the reader stopped at its highwater mark";
+          // the flooding writer gets it there long before this fires.
+          await Bun.sleep(200);
+          await reader.cancel();
+          const second = await Bun.file(0).stream().getReader().read();
+          console.log("SECOND " + (second.value.byteLength > 0));
+          process.exit(0);
+        })();
+      `,
+    });
+    expect(result).toEqual({ stdout: "FIRST true\nSECOND true\n", err: null });
+  });
+
+  // The other direction: a read() issued after the reader stopped arms it
+  // again, and that read keeps the process alive however long the writer takes.
+  test.concurrent("a later read() waits for the writer again", async () => {
+    const burst = 200 * 1024;
+    const result = await runPipeline(
+      {
+        "writer.js": `
+          // The test says when: after the reader reported a read() that has to
+          // wait. Nothing observable says the reader has since returned to its
+          // event loop, so give it time to get there (and, if that waiting read
+          // did not keep it alive, to exit) before the last byte arrives.
+          process.stdin.once("data", () => {
+            setTimeout(() => process.stdout.write("Z", () => process.exit(0)), 250);
+          });
+          process.stdout.write("A");
+          process.stdout.write(Buffer.alloc(${burst}, 0x78));
+        `,
+        // Not top-level await: an unsettled entry-module promise keeps the
+        // process running on its own and would hide a reader that does not.
+        "reader.js": `
+          const { getEventLoopStats } = require("bun:internal-for-testing");
+          (async () => {
+            const reader = Bun.stdin.stream().getReader();
+            let total = (await reader.read()).value.byteLength;
+            // Stay idle until the source has stopped at its highwater mark and let
+            // go of the loop (the writer keeps the pipe full, so that is quick),
+            // yielding by immediates so the fd is still serviced meanwhile. Bounded:
+            // the reads below are the real check.
+            const deadline = performance.now() + 2000;
+            while (getEventLoopStats().loopActive && performance.now() < deadline) {
+              await new Promise(resolve => setImmediate(resolve));
+            }
+            while (true) {
+              const read = reader.read();
+              // A read the native source cannot satisfy yet stays unsettled
+              // past a microtask turn; report it so the test releases the writer.
+              let settled = false;
+              read.then(() => (settled = true), () => {});
+              await Promise.resolve();
+              if (!settled) console.error("WAITING " + total);
+              const { value, done } = await read;
+              if (done) break;
+              total += value.byteLength;
+            }
+            console.log("TOTAL " + total);
+          })();
+        `,
+      },
+      (seen, writerStdin) => {
+        if (writerStdin.writable && seen.includes("WAITING " + (burst + 1) + "\n")) writerStdin.end("go\n");
+      },
+    );
+    expect(result).toEqual({ stdout: "TOTAL " + (burst + 2) + "\n", err: null });
+  });
+});
+
 test("process.stdin over an anonymous pipe delivers each byte exactly once", async () => {
   const total = 10 * 1024 * 1024;
   using dir = tempDir("stdin-pipe-exactly-once", {

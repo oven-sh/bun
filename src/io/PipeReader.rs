@@ -4,7 +4,7 @@ use core::ptr::NonNull;
 
 use bun_sys::{self as sys, Fd};
 
-use crate::{EventLoopHandle, FilePollFlag, FilePollKind, FilePollRef, Owner, PollTag};
+use crate::{EventLoopHandle, FilePollKind, FilePollRef, Owner, PollTag};
 // `bun.Async.Loop` — on POSIX the uws `us_loop_t`, on Windows the embedded
 // `uv_loop_t` (`bun_io::Loop` is the cfg-aliased nominal that picks the
 // right one). `BufferedReaderParent::loop_` returns this so callers in T3+
@@ -233,12 +233,16 @@ impl PosixBufferedReader {
     }
 
     pub fn update_ref(&mut self, value: bool) {
-        // Remember the ref state so a poll created later (lazy start) honours
-        // an unref() that preceded the first registration.
+        // `KEEP_ALIVE` is the wish; `try_register_poll` applies it each time the
+        // poll is armed and unregistering drops it, so the loop is only held
+        // open while a wakeup can actually arrive (libuv: ref'd *and* active).
         self.flags.set(PosixFlags::KEEP_ALIVE, value);
         let Some(poll) = self.handle.get_poll() else {
             return;
         };
+        if value && !poll.is_watching() {
+            return;
+        }
         poll.set_keeping_process_alive(self.vtable.event_loop(), value);
     }
 
@@ -346,13 +350,7 @@ impl PosixBufferedReader {
             return;
         }
         self.flags.insert(PosixFlags::IS_PAUSED);
-
-        // Unregister the FilePoll if it's registered
-        if let PollOrFd::Poll(poll) = &mut self.handle {
-            if poll.is_registered() {
-                let _ = poll.unregister(self.vtable.loop_().cast(), false);
-            }
-        }
+        self.unregister_poll();
     }
 
     pub fn unpause(&mut self) {
@@ -361,6 +359,16 @@ impl PosixBufferedReader {
         }
         self.flags.remove(PosixFlags::IS_PAUSED);
         // The next read() call will re-register the poll if needed
+    }
+
+    /// Stops waiting on the fd and drops the poll's hold on the event loop until
+    /// the next `register_poll`. A fired one-shot poll costs no syscall here.
+    fn unregister_poll(&mut self) {
+        if let PollOrFd::Poll(poll) = &mut self.handle {
+            if poll.is_registered() {
+                let _ = poll.unregister(self.vtable.loop_().cast(), false);
+            }
+        }
     }
 
     pub fn take_buffer(&mut self) -> Vec<u8> {
@@ -529,9 +537,9 @@ impl PosixBufferedReader {
         };
         poll.set_owner(Owner::new(PollTag::BufferedReader, owner_ptr.cast()));
 
-        if !poll.has_flag(FilePollFlag::WasEverRegistered)
-            && self.flags.contains(PosixFlags::KEEP_ALIVE)
-        {
+        // Every arm re-applies the ref: unregistering (pause, or a parent that
+        // stopped the read loop) released it.
+        if self.flags.contains(PosixFlags::KEEP_ALIVE) {
             poll.enable_keeping_process_alive(ev);
         }
 
@@ -853,6 +861,11 @@ impl PosixBufferedReader {
                 return;
             }
             if streaming && !keep_going && !received_hup {
+                // The parent wants no more until it calls read()/read_into(),
+                // which re-arms the poll; until then no wakeup can arrive, so
+                // the reader must not hold the loop open either.
+                // SAFETY: caller contract; `unregister_poll` dispatches nothing.
+                unsafe { (*this).unregister_poll() };
                 return;
             }
             if file_type != FileType::Pipe {

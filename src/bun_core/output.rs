@@ -1331,22 +1331,6 @@ pub fn print_to(dest: Destination, args: fmt::Arguments<'_>) {
     });
 }
 
-/// Print to stdout
-/// This will appear in the terminal, including in production.
-/// Text automatically buffers
-#[macro_export]
-macro_rules! println {
-    ($fmt:expr $(, $arg:expr)* $(,)?) => {{
-        // `:expr` (not `:literal`) so `concat!(..)` templates compile.
-        // `concat!` accepts a nested `concat!`, so the trailing-`{}` join works.
-        const __NL: &str = $crate::output::_needs_nl($fmt);
-        $crate::output::print_to(
-            $crate::output::Destination::Stdout,
-            ::core::format_args!(concat!($fmt, "{}"), $($arg,)* __NL),
-        )
-    }};
-}
-
 /// Print to stdout, but only in debug builds.
 /// Text automatically buffers
 #[macro_export]

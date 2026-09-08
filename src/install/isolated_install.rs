@@ -2247,24 +2247,6 @@ pub(crate) fn install_isolated_packages(
                             }
                             let exists = sys::exists_z(store_path.slice_z());
 
-                            // An earlier install stopped before this entry's scripts
-                            // finished. Only a trusted package can have had scripts
-                            // enqueued, so untrusted entries skip the extra stat.
-                            if exists
-                                && (installer.trusted_dependencies_from_update_requests.contains(&pkg_id)
-                                    || lockfile_ro.has_trusted_dependency(
-                                        lockfile_ro.buffers.dependencies[dep_id as usize].name.slice(string_buf),
-                                        pkg_name.slice(string_buf),
-                                        &pkg_res,
-                                    ))
-                            {
-                                store_path.set_length(scope_for_patch_tag_path);
-                                store_path.append(install::SCRIPTS_PENDING_FILE.as_bytes()).assume_ok();
-                                if sys::exists_z(store_path.slice_z()) {
-                                    break 'needs_install true;
-                                }
-                            }
-
                             break 'needs_install match &patch_info {
                                 installer::PatchInfo::None => !exists,
                                 // checked above
@@ -2312,7 +2294,24 @@ pub(crate) fn install_isolated_packages(
                                     false
                                 }
                             }
-                        });
+                        })
+                        // An earlier install stopped before this entry's lifecycle
+                        // scripts finished (`SCRIPTS_PENDING_FILE`). Only a trusted,
+                        // project-local entry can have had scripts enqueued, so every
+                        // other entry skips the extra stat.
+                        || (!uses_global_store
+                            && (installer.trusted_dependencies_from_update_requests.contains(&pkg_id)
+                                || lockfile_ro.has_trusted_dependency(
+                                    lockfile_ro.buffers.dependencies[dep_id as usize].name.slice(string_buf),
+                                    pkg_name.slice(string_buf),
+                                    &pkg_res,
+                                ))
+                            && {
+                                let mut marker: paths::AutoAbsPath = paths::AutoAbsPath::init_top_level_dir();
+                                installer.append_store_path(&mut marker, entry_id);
+                                marker.append(install::SCRIPTS_PENDING_FILE.as_bytes()).assume_ok();
+                                sys::exists_z(marker.slice_z())
+                            });
 
                     if !needs_install {
                         if uses_global_store {

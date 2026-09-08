@@ -743,10 +743,7 @@ pub(super) fn remove_leftover_node_modules(
                 },
                 None => (None, request.name),
             };
-            let _ = scope_dir
-                .as_ref()
-                .unwrap_or(node_modules)
-                .delete_tree(name);
+            let _ = scope_dir.as_ref().unwrap_or(node_modules).delete_tree(name);
         }
     }
 

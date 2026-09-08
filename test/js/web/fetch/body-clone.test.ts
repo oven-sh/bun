@@ -1089,9 +1089,9 @@ describe("clone() of a body over an unread native stream keeps the Blob behind i
   });
 
   test("Request over Bun.file().stream()", async () => {
-    expect(
-      await typesAndText(new Request("http://example.com/", { method: "POST", body: file().stream() })),
-    ).toEqual(expected);
+    expect(await typesAndText(new Request("http://example.com/", { method: "POST", body: file().stream() }))).toEqual(
+      expected,
+    );
   });
 
   test("Response over Bun.file() after .body was observed", async () => {
@@ -1130,6 +1130,36 @@ describe("clone() of a body over an unread native stream keeps the Blob behind i
     expect(results).toEqual({
       "/direct": ["text/html;charset=utf-8", "<p>hi</p>"],
       "/clone": ["text/html;charset=utf-8", "<p>hi</p>"],
+    });
+  });
+
+  // A file descriptor yields its bytes once. Two Blobs over stdin would
+  // compete for them, so an fd-backed stream is still teed and both bodies
+  // see the whole input.
+  test("a body over Bun.stdin.stream() is still teed", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const r = new Response(Bun.stdin.stream());
+         const c = r.clone();
+         const [a, b] = await Promise.all([r.text(), c.text()]);
+         console.log(JSON.stringify([a, b]));`,
+      ],
+      env: bunEnv,
+      stdin: "pipe",
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    proc.stdin.write("hello ");
+    await proc.stdin.flush();
+    proc.stdin.write("world");
+    await proc.stdin.end();
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+      stdout: `["hello world","hello world"]`,
+      stderr: "",
+      exitCode: 0,
     });
   });
 });

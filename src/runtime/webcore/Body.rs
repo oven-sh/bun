@@ -17,6 +17,7 @@ use bun_http_types::MimeType::MimeType;
 use crate::jsc::HTTPHeaderName;
 pub use crate::webcore::InternalBlob;
 use crate::webcore::form_data::AsyncFormDataExt as _;
+use crate::webcore::node_types::PathOrFileDescriptor;
 use bun_core::String as BunString;
 use bun_core::{Utf8Bytes, WTFStringImpl, WTFStringImplExt as _, WTFStringImplStruct};
 use bun_jsc::JsCell;
@@ -382,6 +383,19 @@ impl PendingValue {
             return None;
         }
         let mut stream = cached.or_else(|| self.readable.get())?;
+        // Two Blobs over one file descriptor (a pipe, a socket, stdin) would
+        // compete for its bytes, so an fd-backed stream stays teed. A path is
+        // opened again for every read, as for a cloned `Bun.file()` body.
+        if let Some(reader) = stream.ptr.file() {
+            let webcore::file_reader::Lazy::Blob(store) = reader.lazy.get() else {
+                return None;
+            };
+            if let blob::store::Data::File(file) = &store.data {
+                if let PathOrFileDescriptor::Fd(_) = file.pathlike {
+                    return None;
+                }
+            }
+        }
         let blob = stream.to_any_blob(global)?;
         stream.force_detach(global);
         self.readable.deinit();

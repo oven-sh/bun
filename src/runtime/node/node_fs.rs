@@ -456,10 +456,7 @@ fn directory_exists_at_os_path(dir: FD, path: &OSPathSliceZ) -> Maybe<bool> {
     }
 }
 
-/// Makes the destination directory for one level of a recursive copy. Returns
-/// whether this copy made it, here or at a level above (`in_fresh_dir`): files
-/// below such a directory are created exclusively. An existing directory is
-/// merged into; a file or a link at the name is EEXIST, as in GNU `cp -r`.
+/// One level's destination directory. `Ok(fresh)`: this copy made it, here or above, so creates below it are exclusive.
 fn cp_mkdir_dest(nodefs: &mut NodeFS, dest: &OSPathSliceZ, in_fresh_dir: bool) -> Maybe<bool> {
     let err = match mkdir_os_path(dest, args::Mkdir::DEFAULT_MODE) {
         Ok(()) => return Ok(true),
@@ -4189,9 +4186,7 @@ pub mod args {
     }
 
     impl CpFlags {
-        /// The mode for one file of the copy. Below a directory this copy made
-        /// (`in_fresh_dir`) the create is exclusive: only a racing writer can
-        /// have put an entry there, and it must not be written through.
+        /// Exclusive create for `errorOnExist`, `force: false`, and any file below a directory this copy made.
         pub(crate) fn copyfile_mode(self, in_fresh_dir: bool) -> constants::Copyfile {
             constants::Copyfile::from_raw(if self.error_on_exist || !self.force || in_fresh_dir {
                 constants::COPYFILE_EXCL

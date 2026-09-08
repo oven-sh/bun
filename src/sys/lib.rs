@@ -7047,9 +7047,7 @@ pub fn get_file_attributes(path: &ZStr) -> Option<WindowsFileAttributes> {
     })
 }
 
-/// The kind of entry at `path`, without following a link at the name itself.
-/// On Windows a `SymLink` is a name-surrogate reparse point (a symlink or a
-/// junction); other reparse points report as the directory or file they are on.
+/// The kind of entry at `path`, not following a final link (Windows: a symlink or junction is `SymLink`).
 pub fn lstat_kind_os_path(path: &bun_paths::OSPathSliceZ) -> Maybe<FileKind> {
     #[cfg(not(windows))]
     {

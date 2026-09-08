@@ -1771,6 +1771,14 @@ impl Task {
                         self.entry_id,
                         Which::Staging,
                     );
+                    // `.bin` is the installer's directory. Open the entry's
+                    // `node_modules` and the `.bin` below it without following
+                    // symlinks before `bin::Linker` writes there by absolute path.
+                    if let Ok(dir) =
+                        crate::isolated_install::make_store_path(node_modules_path.slice())
+                    {
+                        let _ = dir.make_open_real_dir(b".bin");
+                    }
 
                     let mut target_node_modules_path: Option<DefaultAbsPath> = None;
 

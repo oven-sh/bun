@@ -1099,7 +1099,9 @@ describe.skipIf(isWindows)("node_modules destination symlinks", () => {
     expect(exitCode).toBe(0);
   });
 
-  it("does not install through a symlinked node_modules root", async () => {
+  // Hoisted wrote the whole tree into the target. Isolated moved the link
+  // aside, but only after a `mkdir node_modules/.bun` went through it.
+  it.each(["hoisted", "isolated"])("does not install through a symlinked node_modules root (%s)", async linker => {
     using root = tempDir("nm-root", {});
     const victim = await plantVictim(String(root));
     const repo = join(String(root), "repo");
@@ -1111,7 +1113,7 @@ describe.skipIf(isWindows)("node_modules destination symlinks", () => {
     );
     await symlink("../victim", join(repo, "node_modules"));
 
-    const { exitCode } = await install(repo);
+    const { exitCode } = await install(repo, "--linker", linker);
 
     await expectVictimUntouched(victim);
     expect((await lstat(join(repo, "node_modules"))).isSymbolicLink()).toBe(false);

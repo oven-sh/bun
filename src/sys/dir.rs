@@ -205,8 +205,9 @@ impl Dir {
         }
     }
 
-    /// Unlink `name` when it is a symlink. `true` when it is gone.
-    fn remove_symlink(&self, name: &[u8]) -> bool {
+    /// Unlink `name` when it is a symlink (or a junction). The link target is
+    /// not touched. `true` when a link was there and is gone now.
+    pub fn remove_symlink(&self, name: &[u8]) -> bool {
         if !self.entry_is_symlink(name) {
             return false;
         }

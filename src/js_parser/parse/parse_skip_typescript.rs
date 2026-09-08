@@ -1409,6 +1409,46 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
         }
 
+        // Memoize failures of the type-context variant while speculating (the
+        // log is disabled, so a caller above restores the lexer and discards the
+        // error, and failing early loses no diagnostic). The expression variant
+        // stays out: the expression parser retries it at one offset only a
+        // bounded number of times, it accepts fewer closing tokens than this
+        // variant so the two could not share entries, and leaving it out keeps
+        // the set empty for ordinary comparisons like `a < b`. The JSX element
+        // variant lexes the closing `>` differently and stays out too.
+        // `expect_less_than` bumps `lexer.start` when it splits a compound
+        // token like `<<`, so the offset alone identifies the scan.
+        let memoize = !IS_INSIDE_JSX_ELEMENT
+            && !IS_PARSE_TYPE_ARGUMENTS_IN_EXPRESSION
+            && self.lexer.is_log_disabled;
+        debug_assert!(self.lexer.start <= u32::MAX as usize);
+        let offset = self.lexer.start as u32;
+        if memoize && self.ts_type_args_backtracks.contains(&offset) {
+            return Err(Error::Backtrack);
+        }
+
+        let result = self.skip_type_script_type_arguments_inner::<
+            IS_INSIDE_JSX_ELEMENT,
+            IS_PARSE_TYPE_ARGUMENTS_IN_EXPRESSION,
+        >();
+        match result {
+            // Stack and memory exhaustion are not properties of the offset
+            Ok(_) | Err(Error::StackOverflow | Error::Alloc(_)) => {}
+            Err(_) if memoize => {
+                self.ts_type_args_backtracks.insert(offset);
+            }
+            Err(_) => {}
+        }
+        result
+    }
+
+    fn skip_type_script_type_arguments_inner<
+        const IS_INSIDE_JSX_ELEMENT: bool,
+        const IS_PARSE_TYPE_ARGUMENTS_IN_EXPRESSION: bool,
+    >(
+        &mut self,
+    ) -> Result<bool, Error> {
         self.lexer.expect_less_than::<false>()?;
 
         loop {

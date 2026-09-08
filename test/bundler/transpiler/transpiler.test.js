@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, hideFromStackTrace, tempDir } from "harness";
+import { bunEnv, bunExe, hideFromStackTrace, isASAN, isDebug, tempDir } from "harness";
 import { join } from "path";
 
 describe("Bun.Transpiler", () => {
@@ -842,6 +842,70 @@ describe("Bun.Transpiler", () => {
       expect(stdout).toContain("DONE");
       expect(exitCode).toBe(0);
     }, 90_000);
+
+    it("speculative type argument scans over an unclosed `<` chain take linear time", async () => {
+      // In expression position, every `<` after an identifier starts a speculative
+      // "is this a type argument list?" scan. In `A<Promise<T<T<T...` every scan
+      // consumed the whole rest of the chain before it failed, so the parse was
+      // quadratic in the chain length (found by fuzzing). Failed scans are now
+      // memoized by the offset of their `<`. Both synthetic inputs hold the same
+      // number of `<T` units, so with the memo they take the same time, and without
+      // it the 4x longer chains take ~4x as long. The ratio does not depend on
+      // machine or build speed. These chains stay far below the parser's stack
+      // check, whose failures the memo does not record. The exact fuzz input (one
+      // chain, ~10,500 levels deep) nests past that check on debug and ASAN builds,
+      // so only release builds parse it here.
+      using dir = tempDir("ts-type-args-speculation", {
+        "fuzz-input.gz.b64":
+          "H4sIAAAAAAACA+3QwQnAIBAAwbepSQ6ugzxswUceIsT+IWVEkmELWJis5z3HtXptf6q8ND6SN2/evHnz5s2bN2/evHnz5s2bN2/evHnz5s2bN2/evHnz5s2bN2/evHnz5s2bN2/evHnz5s2bN2/evHnz5s2bN2/evHnz5s2bN2/evHnz5s2bN2/evHnz5v157+0kIh4umLOXg1IAAA==",
+        "check.ts": `
+          const fill = (n: number, unit: string) => Buffer.alloc(n * unit.length, unit).toString();
+          const source = (chains: number, units: number) => fill(chains, "A<Promise" + fill(units, "<T") + ">>;\\n");
+          // Only the innermost "T<T<T>>" of a chain is a valid type argument list (and
+          // is erased). Every "<" before it fails the scan and prints as a comparison.
+          const expected = (chains: number, units: number) => fill(chains, "A < Promise" + fill(units - 2, " < T") + ";\\n");
+
+          const transpiler = new Bun.Transpiler({ loader: "tsx" });
+          const inputs = { short: [24, 250], long: [6, 1000] };
+          const best = { short: Infinity, long: Infinity };
+          for (let run = 0; run < 5; run++) {
+            for (const [name, [chains, units]] of Object.entries(inputs)) {
+              const input = source(chains, units);
+              const start = performance.now();
+              const output = transpiler.transformSync(input);
+              best[name] = Math.min(best[name], performance.now() - start);
+              if (output !== expected(chains, units)) throw new Error(name + ": unexpected output: " + output.slice(0, 100));
+            }
+          }
+
+          if (process.argv[2] === "with-fuzz-input") {
+            const b64 = await Bun.file("fuzz-input.gz.b64").text();
+            const input = Buffer.from(Bun.gunzipSync(Buffer.from(b64, "base64"))).toString("latin1");
+            // 57 lines of "A<Promise<T...<T<", then "T<T...<T>>": one expression.
+            if (!input.endsWith("<T<T>>")) throw new Error("unexpected fuzz input");
+            const expected = input.slice(0, -"<T<T>>".length).replace(/[\\t\\n]/g, "").replaceAll("<", " < ") + ";\\n";
+            if (transpiler.transformSync(input) !== expected) throw new Error("fuzz input: unexpected output");
+          }
+          console.log(JSON.stringify(best));
+        `,
+      });
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "check.ts", isDebug || isASAN ? "synthetic-only" : "with-fuzz-input"],
+        cwd: String(dir),
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+        timeout: 30_000,
+        killSignal: "SIGKILL",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      const best = JSON.parse(stdout || "{}");
+      // ~1 when linear, ~4 when quadratic.
+      expect(best.long / best.short).toBeLessThan(2.5);
+      expect(exitCode).toBe(0);
+    });
 
     it("type arguments in expression require a bare '>' closer", () => {
       // TypeScript's "parseTypeArgumentsInExpression" only accepts a bare ">"

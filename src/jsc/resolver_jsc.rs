@@ -29,9 +29,8 @@ extern "C" fn Resolver__propForRequireMainPaths(global: &JSGlobalObject) -> JSVa
     node_module_paths_js_value(&BunString::static_("."), global, false)
 }
 
-/// The `<path>` of a module key, which is `<path>?query` when the module was
-/// imported with a query. A Windows `\\?\` or `\\.\` device prefix is path.
-/// Keep in sync with `moduleKeyPathLength` (PathInlines.h).
+/// The `<path>` of a `<path>?query` module key. A Windows `\\?\` or `\\.\` device
+/// prefix is path. Keep in sync with `moduleKeyPathLength` (PathInlines.h).
 pub fn module_key_without_query(key: &[u8]) -> &[u8] {
     let start = if cfg!(windows)
         && key.len() >= 4

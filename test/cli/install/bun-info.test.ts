@@ -376,10 +376,9 @@ describe.concurrent("bun info", () => {
 // output is exact and nothing touches the network.
 describe.concurrent("bun pm view (local registry)", () => {
   const tgz = (name: string, v: string) => `http://127.0.0.1/${name}/-/${name}-${v}.tgz`;
+  const shasum = "0123456789abcdef0123456789abcdef01234567";
   const byPublishOrder = (name: string, order: string[]) =>
-    Object.fromEntries(
-      order.map(v => [v, { name, version: v, dist: { tarball: tgz(name, v), shasum: "4".repeat(40) } }]),
-    );
+    Object.fromEntries(order.map(v => [v, { name, version: v, dist: { tarball: tgz(name, v), shasum } }]));
   const packuments: Record<string, unknown> = {
     "zz-basic": {
       name: "zz-basic",
@@ -407,7 +406,7 @@ describe.concurrent("bun pm view (local registry)", () => {
           version: "1.0.0",
           description: "basic v1",
           license: "MIT",
-          dist: { tarball: tgz("zz-basic", "1.0.0"), shasum: "1".repeat(40) },
+          dist: { tarball: tgz("zz-basic", "1.0.0"), shasum },
         },
         "2.0.0": {
           name: "zz-basic",
@@ -427,7 +426,7 @@ describe.concurrent("bun pm view (local registry)", () => {
           dependencies: { "left-pad": "^1.0.0" },
           // Verdaccio-style packuments keep a readme on each version too.
           readme: "# the version readme",
-          dist: { tarball: tgz("zz-basic", "2.0.0"), shasum: "0".repeat(40) },
+          dist: { tarball: tgz("zz-basic", "2.0.0"), shasum },
         },
       },
     },
@@ -449,7 +448,7 @@ describe.concurrent("bun pm view (local registry)", () => {
           keywords: ["verkw"],
           bin: { conflict: "cli.js" },
           deprecated: "use something else",
-          dist: { tarball: tgz("zz-conflict", "1.0.0"), shasum: "2".repeat(40) },
+          dist: { tarball: tgz("zz-conflict", "1.0.0"), shasum },
         },
       },
     },
@@ -477,7 +476,7 @@ describe.concurrent("bun pm view (local registry)", () => {
           name: "zz-notags",
           version: "1.1.0",
           readme: "# only on the version",
-          dist: { tarball: tgz("zz-notags", "1.1.0"), shasum: "4".repeat(40) },
+          dist: { tarball: tgz("zz-notags", "1.1.0"), shasum },
         },
       },
     },
@@ -605,6 +604,7 @@ describe.concurrent("bun pm view (local registry)", () => {
     expect(await view(["zz-basic", "readme"])).toEqual({ out: "# the readme\n", err: "", code: 0 });
     expect(await view(["zz-notags", "readme"])).toEqual({ out: "# only on the version\n", err: "", code: 0 });
     const bare = await view(["zz-basic", "--json"]);
+    expect({ err: bare.err, code: bare.code }).toEqual({ err: "", code: 0 });
     expect(JSON.parse(bare.out)).not.toHaveProperty("readme");
     const json = await view(["zz-basic@1.0.0", "--json"]);
     expect(json.err).toBe("");
@@ -646,7 +646,7 @@ DEPRECATED ⚠️  - use something else
 
 dist
  .tarball: http://127.0.0.1/zz-conflict/-/zz-conflict-1.0.0.tgz
- .shasum: ${"2".repeat(40)}
+ .shasum: ${shasum}
 
 dist-tags:
 latest: 1.0.0

@@ -1235,11 +1235,8 @@ mod draft {
     // loadNpmrcConfig / loadNpmrc
     // ──────────────────────────────────────────────────────────────────────────
 
-    /// A Boolean `.npmrc` option gets the value npm gives it (`@npmcli/config`
-    /// parse-field, then nopt's `validateBoolean`): a bare key or an empty
-    /// value is true, `false`, `null` and a numeric zero are false,
-    /// `undefined` keeps the default, and every other string (`1`, `True`,
-    /// `yes`, even `no`) is true.
+    /// npm's Boolean coercion (`@npmcli/config` parse-field + nopt `validateBoolean`):
+    /// only `false`, `null` and a numeric zero are false; `undefined` keeps the default.
     fn npmrc_bool(expr: &Expr) -> Option<bool> {
         match &expr.data {
             ExprData::EBoolean(b) => Some(b.value),

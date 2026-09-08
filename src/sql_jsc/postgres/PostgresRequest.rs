@@ -124,9 +124,6 @@ pub(crate) fn write_bind<Context: WriterContext>(
             writer.write(str.to_utf8().slice())?;
         } else {
             // Text format: the server's input parser for the type accepts or rejects it.
-            // A Date goes as ISO 8601, which the date/time types parse; `String(date)` is
-            // locale-dependent text that PostgreSQL rejects. An Invalid Date has no ISO form
-            // and goes as "Invalid Date", which the server rejects like any other bad literal.
             let mut iso_buf = [0u8; 64];
             let iso = if value.is_date() {
                 value.to_iso_string(global, &mut iso_buf)
@@ -134,6 +131,7 @@ pub(crate) fn write_bind<Context: WriterContext>(
                 None
             };
             if let Some(iso) = iso {
+                // A valid Date: ISO 8601 parses as date/timestamp(tz); `String(date)` never does.
                 writer.write(iso)?;
             } else {
                 let str = BunString::from_js(value, global).map_err(js_error_to_postgres)?;

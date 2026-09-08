@@ -37,8 +37,7 @@ static thread_local MonotonicTime s_profilingStartMonotonicTime;
 static thread_local int s_samplingInterval = 1000;
 static thread_local bool s_isProfilerRunning = false;
 
-// Microseconds since the Unix epoch, like s_profilingStartTime. Not read off the wall clock per sample:
-// that clock can be set while the profile runs.
+// A sample's place on the profile's timeline, in microseconds since the Unix epoch.
 static double profileTimestamp(MonotonicTime timestamp)
 {
     return s_profilingStartTime + (timestamp - s_profilingStartMonotonicTime).microseconds();

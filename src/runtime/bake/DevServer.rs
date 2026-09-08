@@ -1388,7 +1388,7 @@ impl<const SSL: bool> bun_uws_sys::web_socket::WebSocketUpgradeServer<SSL> for D
             socket,
             req.header(b"sec-websocket-key").unwrap_or(b""),
             req.header(b"sec-websocket-protocol").unwrap_or(b""),
-            req.header(b"sec-websocket-extension").unwrap_or(b""),
+            req.header(b"sec-websocket-extensions").unwrap_or(b""),
             Some(upgrade_ctx),
         );
     }

@@ -519,8 +519,7 @@ impl CopyFile {
         }
     }
 
-    /// Returns the number of bytes copied. `fcopyfile` copies the whole
-    /// source, so on that path the count is `source_size`.
+    /// Returns the number of bytes copied.
     #[cfg(target_os = "macos")]
     pub(crate) fn do_fcopy_file_with_read_write_loop_fallback(
         &mut self,
@@ -1870,8 +1869,7 @@ extern "C" fn on_copy_file(req: *mut libuv::fs_t) {
         return;
     }
 
-    // uv_fs_copyfile does not fill `statbuf`. Stat the destination to get
-    // the number of bytes written.
+    // uv_fs_copyfile leaves `statbuf` empty.
     let size = match &this.destination_file_store.data.as_file().pathlike {
         PathOrFileDescriptor::Path(p) => {
             let mut buf = bun_paths::path_buffer_pool::get();

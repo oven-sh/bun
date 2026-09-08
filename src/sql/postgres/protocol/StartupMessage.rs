@@ -26,6 +26,7 @@ impl StartupMessage {
             + z_field_count(b"database", database)
             + z_field_count(b"client_encoding", b"UTF8")
             + z_field_count(b"DateStyle", b"ISO, MDY")
+            + z_field_count(b"extra_float_digits", b"3")
             + options.len()
             + 1;
 
@@ -56,6 +57,11 @@ impl StartupMessage {
         // emit `03/04/2026`, which JS Date.parse reads as 4 March.
         writer.string(b"DateStyle")?;
         writer.string(b"ISO, MDY")?;
+        // `real` columns are read as text; keep that text round-trip exact
+        // (shortest-precise on 12+, 9/17 digits before) whatever the server,
+        // database or role default is.
+        writer.string(b"extra_float_digits")?;
+        writer.string(b"3")?;
         if !options.is_empty() {
             writer.write(options)?;
         }

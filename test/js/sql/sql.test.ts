@@ -1052,6 +1052,21 @@ if (isDockerEnabled()) {
       for (let i = 0; i < 3; i++) {
         expect((await sql`select 0.1::real as x, 61885352::real as y`)[0]).toEqual({ x: 0.1, y: 61885352 });
       }
+      // real arrives as text, so the startup packet pins extra_float_digits;
+      // a database default of fewer digits must not truncate it.
+      await sql.unsafe(`ALTER DATABASE bun_sql_test SET extra_float_digits = -4`);
+      try {
+        await using pinned = postgres({ ...options, max: 1 });
+        expect(
+          await pinned.unsafe(
+            "select current_setting('extra_float_digits') as d, 123456.789::real as t, 123456.789::real as b where $1 = 1",
+            [1],
+          ),
+        ).toEqual([{ d: "3", t: 123456.79, b: 123456.79 }]);
+        expect((await pinned.unsafe("select 123456.789::real as t"))[0].t).toBe(123456.79);
+      } finally {
+        await sql.unsafe(`ALTER DATABASE bun_sql_test RESET extra_float_digits`);
+      }
       // real[] is unchanged: a Float32Array of the stored values on the binary
       // path, a plain Array of the printed decimals on the text path.
       const array = "select array[0.1, 0.3333333, 1.5]::real[] as x";

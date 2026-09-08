@@ -174,6 +174,107 @@ describe("runAllTimers", () => {
     expect(order.takeOrderMessages()).toEqual(["9", "10", "14", "20"]);
   });
 });
+// A timer callback that moves the fake clock itself. The expected values are
+// what @sinonjs/fake-timers (Jest's modern timers, vitest) produces: the clock
+// never runs backwards, and the outer call still advances by the time it was
+// asked for, counted from wherever the callback left the clock.
+describe("timer controls called from a timer callback", () => {
+  test("advanceTimersByTime inside advanceTimersByTime", () => {
+    vi.useFakeTimers({ now: 0 });
+    const seen: (string | number)[] = [];
+    setTimeout(() => {
+      seen.push(Date.now());
+      vi.advanceTimersByTime(1000);
+      seen.push(Date.now());
+      setTimeout(() => seen.push("late " + Date.now()), 10);
+    }, 50);
+    vi.advanceTimersByTime(100);
+    seen.push(Date.now(), performance.now());
+    expect(seen).toEqual([50, 1050, "late 1060", 1100, 1100]);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  test("a short advanceTimersByTime inside advanceTimersByTime", () => {
+    vi.useFakeTimers({ now: 0 });
+    const seen: string[] = [];
+    setTimeout(() => {
+      seen.push("a " + Date.now());
+      vi.advanceTimersByTime(10);
+      seen.push("b " + Date.now());
+    }, 50);
+    setTimeout(() => seen.push("c " + Date.now()), 80);
+    setTimeout(() => seen.push("d " + Date.now()), 105);
+    setTimeout(() => seen.push("e " + Date.now()), 111);
+    vi.advanceTimersByTime(100);
+    seen.push("end " + Date.now());
+    expect(seen).toEqual(["a 50", "b 60", "c 80", "d 105", "end 110"]);
+    expect(vi.getTimerCount()).toBe(1);
+  });
+
+  test("runOnlyPendingTimers inside advanceTimersByTime", () => {
+    vi.useFakeTimers({ now: 0 });
+    const seen: (string | number)[] = [];
+    setTimeout(() => seen.push("far " + Date.now()), 5000);
+    setTimeout(() => {
+      seen.push(Date.now());
+      vi.runOnlyPendingTimers();
+      seen.push(Date.now());
+    }, 50);
+    vi.advanceTimersByTime(100);
+    seen.push(Date.now(), performance.now());
+    expect(seen).toEqual([50, "far 5000", 5000, 5050, 5050]);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  test("advanceTimersByTime inside runOnlyPendingTimers", () => {
+    vi.useFakeTimers({ now: 0 });
+    const seen: string[] = [];
+    setTimeout(() => seen.push("b " + Date.now()), 100);
+    setTimeout(() => {
+      seen.push("a " + Date.now());
+      vi.advanceTimersByTime(1000);
+      seen.push("a2 " + Date.now());
+      setTimeout(() => seen.push("c " + Date.now()), 10);
+    }, 50);
+    vi.runOnlyPendingTimers();
+    seen.push("end " + Date.now());
+    expect(seen).toEqual(["a 50", "b 100", "a2 1050", "c 1060", "end 1100"]);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  test("an interval whose callback advanced the clock fires late, not in the past", () => {
+    vi.useFakeTimers({ now: 0 });
+    const seen: number[] = [];
+    let ticks = 0;
+    const interval = setInterval(() => {
+      seen.push(Date.now());
+      if (++ticks === 1) {
+        // The interval is out of the heap while its callback runs, so this
+        // fires nothing. It is then re-armed for 40, which is already behind
+        // the clock, and fires as soon as the outer advance goes on.
+        vi.advanceTimersByTime(35);
+        seen.push(Date.now());
+      }
+    }, 20);
+    vi.advanceTimersByTime(50);
+    seen.push(Date.now());
+    clearInterval(interval);
+    expect(seen).toEqual([20, 55, 55, 75, 85]);
+  });
+
+  test("useRealTimers inside a timer callback ends the advance with real timers", () => {
+    const realDateNow = Date.now();
+    vi.useFakeTimers({ now: 0 });
+    let late = false;
+    setTimeout(() => vi.useRealTimers(), 50);
+    setTimeout(() => (late = true), 80);
+    vi.advanceTimersByTime(100);
+    expect(vi.isFakeTimers()).toBe(false);
+    // The fake clock would read 100 here.
+    expect(Date.now()).toBeGreaterThanOrEqual(realDateNow);
+    expect(late).toBe(false);
+  });
+});
 describe("getTimerCount", () => {
   test("returns correct count of pending timers", () => {
     vi.useFakeTimers();

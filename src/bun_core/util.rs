@@ -4850,6 +4850,17 @@ impl Timespec {
         Timespec { sec, nsec }
     }
 
+    /// `self + other`. Mimics C wrapping behaviour.
+    pub fn add(&self, other: &Timespec) -> Timespec {
+        let mut sec = self.sec.wrapping_add(other.sec);
+        let mut nsec = self.nsec.wrapping_add(other.nsec);
+        if nsec >= Self::NS_PER_S {
+            sec = sec.wrapping_add(1);
+            nsec = nsec.wrapping_sub(Self::NS_PER_S);
+        }
+        Timespec { sec, nsec }
+    }
+
     pub fn order(&self, other: &Timespec) -> core::cmp::Ordering {
         match self.sec.cmp(&other.sec) {
             core::cmp::Ordering::Equal => self.nsec.cmp(&other.nsec),

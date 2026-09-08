@@ -2,7 +2,6 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use bun_threading::RwLock;
 
-use bun_core::Environment;
 use bun_core::Timespec;
 use bun_jsc::{CallFrame, JSFunction, JSGlobalObject, JSHostFn, JSValue, JsResult};
 use crate::api::cron::CronJob;
@@ -125,6 +124,15 @@ use crate::jsc_hooks::timer_all;
 #[inline]
 fn from_el_timespec(t: &ElTimespec) -> Timespec {
     Timespec { sec: t.sec, nsec: t.nsec }
+}
+
+/// The time left until `deadline`, or zero once it has passed.
+fn time_until(deadline: &Timespec, now: &Timespec) -> Timespec {
+    if deadline.greater(now) {
+        deadline.duration(now)
+    } else {
+        Timespec::EPOCH
+    }
 }
 
 /// Owners of the nodes [`FakeTimers::clear`] popped, still to be told their
@@ -253,17 +261,19 @@ impl FakeTimers {
         let _vm = global.bun_vm();
 
         // SAFETY: `next` was just popped from our heap; live until callback completes.
-        let now_el = unsafe { (*next).next };
-        let now = from_el_timespec(&now_el);
-        if Environment::CI_ASSERT {
-            let prev = CURRENT_TIME.get_timespec_now();
-            debug_assert!(prev.is_some());
-            debug_assert!(now.eql(&prev.unwrap()) || now.greater(&prev.unwrap()));
-        }
+        let deadline = from_el_timespec(unsafe { &(*next).next });
+        // A `setInterval` is re-armed relative to the time it fired at, before
+        // its callback runs, so one whose callback advanced the clock comes
+        // back already overdue. It fires late, at the current time, as it
+        // would on a real loop. The clock never runs backwards.
+        let now = match CURRENT_TIME.get_timespec_now() {
+            Some(current) if current.greater(&deadline) => current,
+            _ => deadline,
+        };
         CURRENT_TIME.set(global, &now, None);
         // SAFETY: `next` is live; `fire` takes `*mut Self` (noalias re-entrancy)
         // and an erased `*mut ()` for the VM.
-        let fired = unsafe { EventLoopTimer::fire(next, &now_el, bun_jsc::virtual_machine::VirtualMachine::get_mut_ptr().cast()) };
+        let fired = unsafe { EventLoopTimer::fire(next, &now, bun_jsc::virtual_machine::VirtualMachine::get_mut_ptr().cast()) };
         match fired {
             Ok(()) => Ok(()),
             Err(err) => bun_jsc::task::report_error_or_terminate(global, err)
@@ -271,39 +281,53 @@ impl FakeTimers {
         }
     }
 
-    fn execute_until(global: &JSGlobalObject, until: Timespec) -> JsResult<()> {
+    /// Move the fake clock forward by `duration`. Each timer the clock reaches
+    /// on the way fires, in deadline order, and then the clock parks at the
+    /// end of the span. The clock is read again after every callback: when a
+    /// callback moved it itself (a nested `advanceTimersByTime`, or
+    /// `useFakeTimers()` again), the rest of the span runs from wherever the
+    /// callback left it, as in `@sinonjs/fake-timers`. A callback that
+    /// restores real timers ends the advance there.
+    fn advance_by(global: &JSGlobalObject, duration: Timespec) -> JsResult<()> {
         let all = timer_all();
-        'outer: loop {
-            let next = 'blk: {
-                // SAFETY: `all` is the live per-thread `All`; each borrow
-                // lasts one statement and none spans `fire`.
-                let Some(peek) = (unsafe { (*all).fake_timers.timers.peek() }) else {
-                    break 'outer;
-                };
-                // SAFETY: `peek` is the heap root; live while linked.
-                if from_el_timespec(unsafe { &(*peek).next }).greater(&until) {
-                    break 'outer;
-                }
-                // bun.assert always evaluates its arg; debug_assert! does NOT in release.
-                // Hoist the side-effecting delete_min() out so the timer is removed in all builds.
-                // SAFETY: as above.
-                let min = unsafe { (*all).fake_timers.timers.delete_min() }.expect("unreachable");
-                debug_assert!(core::ptr::eq(min, peek));
-                break 'blk min;
+        let mut remaining = duration;
+        loop {
+            let Some(now) = CURRENT_TIME.get_timespec_now() else {
+                return Ok(());
             };
-            Self::fire(global, next)?;
+            // SAFETY: `all` is the live per-thread `All`; each borrow lasts
+            // one statement and none spans `fire`.
+            let Some(peek) = (unsafe { (*all).fake_timers.timers.peek() }) else {
+                break;
+            };
+            // SAFETY: `peek` is the heap root; live while linked.
+            let wait = time_until(&from_el_timespec(unsafe { &(*peek).next }), &now);
+            if wait.greater(&remaining) {
+                break;
+            }
+            remaining = remaining.duration(&wait);
+            // SAFETY: as above.
+            let min = unsafe { (*all).fake_timers.timers.delete_min() }.expect("peeked");
+            debug_assert!(core::ptr::eq(min, peek));
+            Self::fire(global, min)?;
+        }
+        if let Some(now) = CURRENT_TIME.get_timespec_now() {
+            CURRENT_TIME.set(global, &now.add(&remaining), None);
         }
         Ok(())
     }
 
     fn execute_only_pending_timers(global: &JSGlobalObject) -> JsResult<()> {
+        let Some(now) = CURRENT_TIME.get_timespec_now() else {
+            return Ok(());
+        };
         // SAFETY: `timer_all()` is the live per-thread `All`.
-        let until = match unsafe { (*timer_all()).fake_timers.timers.find_max() } {
+        let last = match unsafe { (*timer_all()).fake_timers.timers.find_max() } {
             // SAFETY: `t` is reachable in the heap and live while linked.
             Some(t) => from_el_timespec(unsafe { &(*t).next }),
             None => return Ok(()),
         };
-        Self::execute_until(global, until)
+        Self::advance_by(global, time_until(&last, &now))
     }
 
     fn execute_all_timers(global: &JSGlobalObject) -> JsResult<()> {
@@ -425,11 +449,6 @@ fn advance_timers_by_time(global: &JSGlobalObject, frame: &CallFrame) -> JsResul
             "advanceTimersByTime() expects a number of milliseconds"
         )));
     }
-    let Some(current) = CURRENT_TIME.get_timespec_now() else {
-        return Err(global.throw_invalid_arguments(format_args!(
-            "Fake timers not initialized. Initialize with useFakeTimers() first."
-        )));
-    };
     let arg_number = arg.as_number();
     let max_advance = u32::MAX;
     if arg_number.is_nan() || arg_number < 0.0 || arg_number > max_advance as f64 {
@@ -442,11 +461,8 @@ fn advance_timers_by_time(global: &JSGlobalObject, frame: &CallFrame) -> JsResul
     // This is because setTimeout(fn, 0) is internally scheduled with a 1ms delay per HTML spec,
     // and Jest/testing-library expect advanceTimersByTime(0) to fire such "immediate" timers.
     let effective_advance = if arg_number == 0.0 { 1.0 } else { arg_number };
-    let target = current.add_ms_float(effective_advance);
 
-    let advanced = FakeTimers::execute_until(global, target);
-    CURRENT_TIME.set(global, &target, None);
-    advanced?;
+    FakeTimers::advance_by(global, Timespec::EPOCH.add_ms_float(effective_advance))?;
 
     Ok(frame.this())
 }

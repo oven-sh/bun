@@ -98,21 +98,14 @@ mod reprl {
         vm.is_main_thread = true;
         VirtualMachine::set_is_main_thread_vm(true);
 
-        // Programs are separated by the `bun test --isolate` reset.
-        vm.test_isolation_enabled = true;
-        vm.auto_killer.enable();
         let time_zone: &[u8] = vm.env_loader().get(b"TZ").unwrap_or(b"");
         if !time_zone.is_empty() {
             let _ = vm
                 .global()
                 .set_time_zone(&EncodedSlice::from_bytes(time_zone));
         }
-        vm.test_isolation_state.time_zone = Some(Box::from(time_zone));
-        vm.test_isolation_state.proxy_env = Some(bun_jsc::rare_data::ProxyEnvSnapshot::capture(
-            &vm.env_loader().map,
-        ));
-        vm.test_isolation_state.synthetic_allocation_limit =
-            Some(bun_jsc::virtual_machine::synthetic_allocation_limit());
+        // Programs are separated by the `bun test --isolate` reset.
+        vm.enable_test_isolation(time_zone);
 
         let _api_lock = vm.global().vm().get_api_lock();
         serve(vm)

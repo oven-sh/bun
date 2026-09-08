@@ -5066,6 +5066,17 @@ impl VirtualMachine {
             .remove_listening_socket_for_watch_mode(socket);
     }
 
+    /// Arms [`Self::swap_global_for_test_isolation`] and records the VM-level state it puts back.
+    pub fn enable_test_isolation(&mut self, time_zone: &[u8]) {
+        self.test_isolation_enabled = true;
+        self.auto_killer.enable();
+        self.test_isolation_state.time_zone = Some(Box::from(time_zone));
+        self.test_isolation_state.proxy_env = Some(crate::rare_data::ProxyEnvSnapshot::capture(
+            &self.env_loader().map,
+        ));
+        self.test_isolation_state.synthetic_allocation_limit = Some(synthetic_allocation_limit());
+    }
+
     pub fn test_isolation_scope<R>(
         &mut self,
         f: impl FnOnce(&mut TestIsolationState) -> R,

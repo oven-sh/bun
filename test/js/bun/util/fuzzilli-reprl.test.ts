@@ -185,10 +185,19 @@ describe.skipIf(!enabled)("bun fuzzilli", () => {
           () => console.log("server alive: false"),
         );
       `,
+      // A Worker that is busy in JIT code when the reset terminates it. JSC
+      // stops it with a signal-based VM trap, so nothing may take SIGSEGV away
+      // from JSC in the REPRL child.
+      `
+        new Worker("data:text/javascript,let x = 0; while (true) x += Math.random();");
+        Bun.sleepSync(500);
+        console.log("worker left running");
+      `,
+      `console.log("after the worker");`,
     ]);
 
-    expect(result.stdout).toEqual(["serving", "server alive: false"]);
-    expect(result.statuses).toEqual([0, 0]);
+    expect(result.stdout).toEqual(["serving", "server alive: false", "worker left running", "after the worker"]);
+    expect(result.statuses).toEqual([0, 0, 0, 0]);
     expect(result.exitCode).toBe(0);
   });
 
@@ -201,5 +210,37 @@ describe.skipIf(!enabled)("bun fuzzilli", () => {
     expect(result.stdout).toEqual(["still here", "next program"]);
     expect(result.statuses).toEqual([0, 0]);
     expect(result.exitCode).toBe(0);
+  });
+});
+
+declare const fuzzilli: unknown;
+// Only the fuzzilli build (bun run build:debug:fuzzilli) has a fuzzilli() global.
+const isFuzzilliBuild = typeof fuzzilli === "function";
+
+// A crash in the REPRL child must leave an ASAN report on stderr and die from
+// a signal, which is what Fuzzilli counts as a crash. symbolize=0 keeps ASAN
+// from running llvm-symbolizer over the whole binary; the header is enough.
+describe.skipIf(!isFuzzilliBuild)("fuzzilli crash reporting", () => {
+  // FUZZILLI_CRASH types: 0 is std::abort(), 1 is __builtin_trap() (SIGILL on
+  // x64, SIGTRAP on arm64), 5 writes through a null pointer.
+  describe.each([
+    [0, /AddressSanitizer: ABRT/],
+    [1, /AddressSanitizer: (ILL|TRAP)/],
+    [5, /AddressSanitizer: SEGV/],
+  ])("FUZZILLI_CRASH %d", (type, report) => {
+    test.concurrent("dies with an ASAN report", async () => {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", `fuzzilli("FUZZILLI_CRASH", ${type})`],
+        env: { ...bunEnv, ASAN_OPTIONS: "symbolize=0" },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+
+      const [stdout, stderr] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      expect(stdout).toContain(`FUZZILLI_CRASH: ${type}`);
+      expect(stderr).toMatch(report);
+      expect(proc.signalCode).toBe("SIGABRT");
+    });
   });
 });

@@ -12,11 +12,9 @@
 
 #ifdef FUZZILLI_ENABLED
 #include <cerrno>
-#include <csignal>
 #include <cstdlib>
 #include <cstring>
 #include <fcntl.h>
-#include <mutex>
 #include <sanitizer/asan_interface.h>
 #include <sys/mman.h>
 #include <sys/stat.h>
@@ -26,19 +24,16 @@
 
 extern "C" {
 
-// Signal handler to ensure output is flushed before crash
-static void fuzzilliSignalHandler(int sig)
+#if ASAN_ENABLED
+// Runs right before ASAN terminates the process, after it printed its report.
+static void fuzzilliFlushOutputBeforeDeath()
 {
-    // Flush all output
     fflush(stdout);
     fflush(stderr);
     fsync(STDOUT_FILENO);
     fsync(STDERR_FILENO);
-
-    // Re-raise the signal with default handler
-    signal(sig, SIG_DFL);
-    raise(sig);
 }
+#endif
 
 // Implementation of the global fuzzilli() function for Bun
 // This function is used by Fuzzilli to:
@@ -258,15 +253,10 @@ void Bun__REPRL__registerFuzzilliFunctions(Zig::GlobalObject* globalObject)
 {
     JSC::VM& vm = globalObject->vm();
 
-    // Install signal handlers to ensure output is flushed before crashes
-    // This is important for ASAN output to be captured
-    static std::once_flag installSignalHandlers;
-    std::call_once(installSignalHandlers, [] {
-        signal(SIGABRT, fuzzilliSignalHandler);
-        signal(SIGSEGV, fuzzilliSignalHandler);
-        signal(SIGILL, fuzzilliSignalHandler);
-        signal(SIGFPE, fuzzilliSignalHandler);
-    });
+#if ASAN_ENABLED
+    // ASAN reports the fatal signals; JSC's own SIGSEGV handler (VM traps) must stay in place too.
+    __sanitizer_set_death_callback(fuzzilliFlushOutputBeforeDeath);
+#endif
 
     globalObject->putDirectNativeFunction(
         vm,

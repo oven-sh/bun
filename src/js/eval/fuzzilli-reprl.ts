@@ -17,6 +17,20 @@ globalThis.__filename = "/fuzzilli.js";
 // child, so fuzzed scripts must not be able to reach the real implementation.
 process.execve = () => {};
 
+// The loop below yields to the event loop after every script, so promise
+// reactions and timer callbacks from fuzzed code do run. Without these
+// handlers the first unhandled rejection or async throw would exit the REPRL
+// child. Record it as a failed execution instead.
+let asyncFailure = false;
+const onAsyncFailure = err => {
+  console.log(`uncaught:${err}`);
+  asyncFailure = true;
+};
+process.on("uncaughtException", onAsyncFailure);
+process.on("unhandledRejection", onAsyncFailure);
+
+const { setImmediate } = globalThis;
+
 // ============================================================================
 // REPRL Protocol Loop
 // ============================================================================
@@ -81,6 +95,16 @@ while (true) {
   } catch (_e) {
     // Print uncaught exception like workerd does
     console.log(`uncaught:${_e}`);
+    exit_code = 1;
+  }
+
+  // One non-blocking turn of the event loop before reporting: drains the
+  // microtasks the script queued (otherwise they, and everything they
+  // capture, stay in the queue for the lifetime of this process) and reaps
+  // subprocesses that have exited.
+  await new Promise(resolve => setImmediate(resolve));
+  if (asyncFailure) {
+    asyncFailure = false;
     exit_code = 1;
   }
 

@@ -1,9 +1,12 @@
 // Drives the fuzzilli REPRL loop with in-process mocks for the control/data
 // FDs so the real src/js/eval/fuzzilli-reprl.ts source can be exercised in a
-// normal (non-fuzzilli) build. Feeds a payload that calls process.execve with
-// a nonexistent path: the real implementation prints an error and aborts the
-// process (SIGABRT) when exec fails, so the REPRL wrapper must stub it out
-// before running fuzzed scripts.
+// normal (non-fuzzilli) build.
+//
+// argv[2] is a JSON array of payload scripts. Each one is fed to the loop as
+// one exec cycle, then the control pipe reports EOF. When the loop finishes,
+// the fixture prints one `REPRL_FIXTURE_RESULT=` line with the status the
+// loop wrote for each payload and the value of `globalThis.probe` at the time
+// of each status write.
 
 import fs from "node:fs";
 import path from "node:path";
@@ -12,10 +15,7 @@ const REPRL_CRFD = 100;
 const REPRL_CWFD = 101;
 const REPRL_DRFD = 102;
 
-const payloads = [
-  Buffer.from(`process.execve("fuzzilli-reprl-execve-does-not-exist", []);`, "utf8"),
-  Buffer.from(`globalThis.stillAlive = true;`, "utf8"),
-];
+const payloads = (JSON.parse(process.argv[2]) as string[]).map(source => Buffer.from(source, "utf8"));
 
 // Script the control-read pipe (fd 100): HELO handshake, then one exec cycle
 // per payload (each followed by the 8-byte length), then EOF.
@@ -31,7 +31,8 @@ let controlStream = Buffer.concat(controlChunks);
 // Data-read pipe (fd 102): the payload for each exec cycle.
 let dataStream = Buffer.concat(payloads);
 
-let statusWrites = 0;
+const statuses: number[] = [];
+const probes: unknown[] = [];
 
 const realFstatSync = fs.fstatSync;
 const realReadSync = fs.readSync;
@@ -61,7 +62,8 @@ const realWriteSync = fs.writeSync;
 (fs as any).writeSync = function (fd: any, buffer: any, ...rest: any[]) {
   if (fd === REPRL_CWFD) {
     if (Buffer.isBuffer(buffer) && buffer.length === 4 && buffer.toString() !== "HELO") {
-      statusWrites++;
+      statuses.push(buffer.readUInt32LE(0));
+      probes.push((globalThis as any).probe ?? null);
     }
     return Buffer.isBuffer(buffer) ? buffer.length : String(buffer).length;
   }
@@ -71,12 +73,9 @@ const realWriteSync = fs.writeSync;
 (globalThis as any).resetCoverage = () => {};
 (globalThis as any).require = require;
 
-const reprlSource = fs.readFileSync(
-  path.join(import.meta.dir, "..", "..", "..", "..", "src", "js", "eval", "fuzzilli-reprl.ts"),
-  "utf8",
-);
-(0, eval)(reprlSource);
+// The loop runs until the control pipe reports EOF. The source uses top-level
+// await, so importing it waits for the loop to finish.
+await import(path.join(import.meta.dir, "..", "..", "..", "..", "src", "js", "eval", "fuzzilli-reprl.ts"));
 
-const liveAfterExecve = (globalThis as any).stillAlive === true;
-realWriteSync.call(fs, 1, `STATUS_WRITES=${statusWrites} LIVE=${liveAfterExecve}\n`);
-process.exit(statusWrites === 2 && liveAfterExecve ? 0 : 1);
+realWriteSync.call(fs, 1, `REPRL_FIXTURE_RESULT=${JSON.stringify({ statuses, probes })}\n`);
+process.exit(0);

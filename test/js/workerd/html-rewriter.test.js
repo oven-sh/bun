@@ -1789,8 +1789,9 @@ it("#3334 regression", async () => {
 });
 
 // A Response built without a `headers` init only reports its body's
-// Content-Type once `.headers` is read. The transformed Response's body is a
-// stream, so transform() has to carry that header over itself.
+// Content-Type once `.headers` is read, and a string body's `text/plain` only
+// when Bun.serve sends it. The transformed Response's body is a stream, so
+// transform() has to carry that header over itself.
 describe("transform() carries the input Response's Content-Type", () => {
   const rewrite = input =>
     new HTMLRewriter()
@@ -1862,16 +1863,62 @@ describe("transform() carries the input Response's Content-Type", () => {
     expect(await contentTypeAndBody(response)).toEqual({ contentType: null, body: "<p>rewritten</p>" });
   });
 
+  it("a string body is text/plain, as Bun.serve sends it", async () => {
+    expect(await contentTypeAndBody(rewrite(new Response("<p>original</p>")))).toEqual({
+      contentType: "text/plain;charset=utf-8",
+      body: "<p>rewritten</p>",
+    });
+    // Non-ASCII takes the UTF-8 re-encode path for the input.
+    expect(await contentTypeAndBody(rewrite(new Response("<p>original ☃</p>")))).toEqual({
+      contentType: "text/plain;charset=utf-8",
+      body: "<p>rewritten</p>",
+    });
+  });
+
+  it("a string body keeps the Content-Type of its headers init", async () => {
+    const response = rewrite(new Response("<p>original</p>", { headers: { "Content-Type": "text/html" } }));
+    expect([...response.headers]).toEqual([["content-type", "text/html"]]);
+  });
+
+  it("the string and ArrayBuffer overloads still return the body alone", () => {
+    expect(rewrite("<p>original</p>")).toBe("<p>rewritten</p>");
+    const output = rewrite(new TextEncoder().encode("<p>original</p>").buffer);
+    expect(output).toBeInstanceOf(ArrayBuffer);
+    expect(new TextDecoder().decode(output)).toBe("<p>rewritten</p>");
+  });
+
   it("Bun.serve sends the carried Content-Type", async () => {
-    using dir = tempDir("html-rewriter-served-content-type", { "index.html": "<p>original</p>" });
+    // `big.html` takes more than one file read, so its output is still
+    // streaming (chunked) when the server writes the headers.
+    const filler = Buffer.alloc(512 * 1024, "x").toString();
+    const big = `<html><body><p>original</p>${filler}<p>original</p></body></html>`;
+    const bigRewritten = `<html><body><p>rewritten</p>${filler}<p>rewritten</p></body></html>`;
+    using dir = tempDir("html-rewriter-served-content-type", { "index.html": "<p>original</p>", "big.html": big });
+    const inputs = {
+      "/file": () => new Response(Bun.file(join(String(dir), "index.html"))),
+      "/big-file": () => new Response(Bun.file(join(String(dir), "big.html"))),
+      "/blob": () => new Response(new Blob(["<p>original</p>"], { type: "text/html" })),
+      "/string": () => new Response("<p>original</p>"),
+      "/header": () => new Response("<p>original</p>", { headers: { "content-type": "text/html" } }),
+    };
     await using server = Bun.serve({
       port: 0,
-      fetch: () => rewrite(new Response(Bun.file(join(String(dir), "index.html")))),
+      fetch: req => rewrite(inputs[new URL(req.url).pathname]()),
     });
-    const response = await fetch(`http://localhost:${server.port}/`);
-    expect(await contentTypeAndBody(response)).toEqual({
-      contentType: "text/html;charset=utf-8",
-      body: "<p>rewritten</p>",
+    const served = {};
+    for (const path of Object.keys(inputs)) {
+      const response = await fetch(new URL(path, server.url));
+      let body = await response.text();
+      if (path === "/big-file")
+        body = body === bigRewritten ? "(big.html rewritten)" : `unexpected ${body.length} bytes`;
+      served[path] = { contentType: response.headers.get("content-type"), body };
+    }
+    expect(served).toEqual({
+      "/file": { contentType: "text/html;charset=utf-8", body: "<p>rewritten</p>" },
+      "/big-file": { contentType: "text/html;charset=utf-8", body: "(big.html rewritten)" },
+      "/blob": { contentType: "text/html;charset=utf-8", body: "<p>rewritten</p>" },
+      "/string": { contentType: "text/plain;charset=utf-8", body: "<p>rewritten</p>" },
+      "/header": { contentType: "text/html", body: "<p>rewritten</p>" },
     });
   });
 });

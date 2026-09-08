@@ -342,6 +342,7 @@ rewriter.onDocument({
 When transforming a Response, HTMLRewriter:
 
 - Preserves the status code, headers, and other response properties
+- Sets `Content-Type` from the input body when no header gives one: the `type` of a `Bun.file()` or `Blob` body, or `text/plain;charset=utf-8` for a string body
 - Transforms the body while maintaining streaming capabilities
 - Handles content-encoding (like gzip) automatically
 - Marks the original response body as used after transformation

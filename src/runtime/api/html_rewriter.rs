@@ -22,6 +22,7 @@ use bun_sys::Error as SysError;
 use crate::api::native_promise_context;
 use crate::generated_classes::{js_HTMLRewriterTransform, js_Response};
 use crate::webcore::blob::SizeType as BlobSizeType;
+use crate::webcore::response::HeadersRef;
 use crate::webcore::sink::JSSink;
 use crate::webcore::streams::{
     self, SourceHandle, Start, StartTag, StreamError, StreamResult, Writable, WritablePending,
@@ -963,9 +964,18 @@ impl RewriterPipe {
         original: &Response,
         sync_only_noun: Option<&'static str>,
     ) -> JsResult<JSValue> {
-        // https://github.com/oven-sh/bun/issues/3334
-        // Before `wire_input` consumes the body the Content-Type is derived from.
-        let headers = original.clone_headers(global)?;
+        // Taken before `wire_input` consumes the body the Content-Type derives from (#3334).
+        let mut headers = original.clone_headers(global)?;
+        // A string body is `text/plain` by itself; the Response overload's output body is not.
+        if sync_only_noun.is_none() && original.get_body_value().was_string() {
+            headers
+                .get_or_insert_with(HeadersRef::create_empty)
+                .put_default(
+                    jsc::HTTPHeaderName::ContentType,
+                    &BunString::ascii(&bun_http_types::MimeType::TEXT.value),
+                    global,
+                )?;
+        }
 
         let pipe = bun_core::heap::alloc_nn(RewriterPipe {
             global: GlobalRef::from(global),

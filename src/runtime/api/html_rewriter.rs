@@ -964,8 +964,7 @@ impl RewriterPipe {
         original: &Response,
         sync_only_noun: Option<&'static str>,
     ) -> JsResult<JSValue> {
-        // Status and headers (#3334), taken before `wire_input` consumes the body a
-        // Content-Type may derive from.
+        // Taken before `wire_input` consumes the body its Content-Type may derive from (#3334).
         let mut init = original.clone_init(global)?;
         // A string body is `text/plain` by itself; the Response overload's output body is not.
         if sync_only_noun.is_none() && original.get_body_value().was_string() {

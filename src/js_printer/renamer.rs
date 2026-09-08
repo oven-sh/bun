@@ -730,8 +730,8 @@ trait NameScopes {
     }
 }
 
-/// `name` made a valid identifier (`let` → `_let`, `if` → `_if`, non-ASCII
-/// escapes), or `None` when it already is one.
+/// `name` made a valid identifier (`let` → `_let`, non-ASCII escapes), or
+/// `None` when it already is one.
 fn valid_identifier_for(name: &[u8]) -> Option<Box<[u8]>> {
     // `MutableString::ensure_valid_identifier` always heap-allocates, even
     // when the input is already a valid ASCII identifier; the binding

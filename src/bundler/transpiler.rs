@@ -2021,11 +2021,8 @@ fn parse_data_loader<'a>(
                     // actually-populated entries.
                     *visited.value_ptr = count as u32;
 
-                    // Mangle the key into a valid binding identifier, then
-                    // suffix on collision with an earlier mangled name so
-                    // e.g. `{"if":1,"_if":2}` or `{"b c":1,"b_c":2}` get
-                    // distinct `var` bindings instead of re-declaring the
-                    // same one.
+                    // Two keys can mangle to one identifier (`{"if":1,"_if":2}`);
+                    // suffix the later one so each key gets its own binding.
                     let ident = match bun_core::MutableString::ensure_valid_identifier(name) {
                         Ok(boxed) => boxed,
                         Err(_) => return None,
@@ -2038,12 +2035,9 @@ fn parse_data_loader<'a>(
                         Ok(e) => Some(*e.value_ptr),
                         Err(_) => return None,
                     };
-                    // The identifier lives in the per-parse arena. Arena-copy
-                    // the owned bytes so they are freed with the arena instead
-                    // of leaking (PORTING.md §Forbidden patterns bars
-                    // `heap::alloc` for `&'static`).
                     // SAFETY: ARENA — `arena` outlives the returned
-                    // `ParseResult.ast`.
+                    // `ParseResult.ast`, so the copied name lives as long as
+                    // the symbol that points at it.
                     let arena_ident: &[u8] = if let Some(mut tries) = start_tries {
                         let mut buf: Vec<u8> = Vec::with_capacity(ident.len() + 4);
                         buf.extend_from_slice(&ident);

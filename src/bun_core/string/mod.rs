@@ -1757,13 +1757,9 @@ pub mod lexer_tables {
     }
 
     crate::comptime_string_map! {
-        /// Every identifier-shaped name that is invalid as a `BindingIdentifier`
-        /// in module (strict-mode) code, mapped to an underscore-prefixed
-        /// replacement. Superset of [`STRICT_MODE_RESERVED_WORD_REMAP`]; also
-        /// covers the ES keywords (`if`, `class`, `var`, ...), module-reserved
-        /// `await`, and the strict-mode binding restrictions `arguments`/`eval`.
-        /// Used by `MutableString::ensure_valid_identifier` so that JSON/TOML
-        /// top-level keys (and path-derived names) never emit `var if = ...`.
+        /// Identifier-shaped names that cannot be a binding in module code,
+        /// mapped to an underscore-prefixed replacement. Superset of
+        /// [`STRICT_MODE_RESERVED_WORD_REMAP`].
         static BINDING_RESERVED_WORD_REMAP: &'static [u8] = {
             // ES keywords (ES2015 §11.6.2.1)
             b"break" => b"_break",
@@ -1826,9 +1822,8 @@ pub mod lexer_tables {
         BINDING_RESERVED_WORD_REMAP.contains_key(s)
     }
 
-    /// Underscore-prefixed replacement for any name that cannot be a
-    /// `BindingIdentifier` in module code (`b"if"` → `b"_if"`); `None` for
-    /// any other input.
+    /// Underscore-prefixed replacement for a binding reserved word
+    /// (`b"if"` → `b"_if"`); `None` for any other input.
     #[inline]
     pub fn binding_reserved_word_remap(s: &[u8]) -> Option<&'static [u8]> {
         BINDING_RESERVED_WORD_REMAP.get(s).copied()

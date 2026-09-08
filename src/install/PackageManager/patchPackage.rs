@@ -984,27 +984,22 @@ pub fn prepare_patch(manager: &mut PackageManager) -> Result<(), crate::Error> {
     }
 
     if not_in_workspace_root {
-        let mut bufn = bun_paths::path_buffer_pool::get();
+        let mut spill = Vec::new();
+        let abs_module_folder = resolve_path::join_spill::<platform::Posix>(
+            &mut spill,
+            &[
+                FileSystem::instance().top_level_dir_without_trailing_slash(),
+                module_folder,
+            ],
+        );
         bun_core::pretty!(
             "\nTo patch <b>{}<r>, edit the following folder:\n\n  <cyan>{}<r>\n",
             bstr::BStr::new(pkg_name),
-            bstr::BStr::new(resolve_path::join_string_buf::<platform::Posix>(
-                &mut bufn[..],
-                &[
-                    FileSystem::instance().top_level_dir_without_trailing_slash(),
-                    module_folder
-                ]
-            )),
+            bstr::BStr::new(abs_module_folder),
         );
         bun_core::pretty!(
             "\nOnce you're done with your changes, run:\n\n  <cyan>bun patch --commit '{}'<r>\n",
-            bstr::BStr::new(resolve_path::join_string_buf::<platform::Posix>(
-                &mut bufn[..],
-                &[
-                    FileSystem::instance().top_level_dir_without_trailing_slash(),
-                    module_folder
-                ]
-            )),
+            bstr::BStr::new(abs_module_folder),
         );
     } else {
         bun_core::pretty!(
@@ -1442,9 +1437,10 @@ fn path_argument_relative_to_root_workspace_package(
     let workspace_res = &lockfile.packages.items_resolution()[workspace_package_id as usize];
     let workspace_str = *workspace_res.workspace();
     let rel_path: &[u8] = workspace_str.slice(lockfile.buffers.string_bytes.as_slice());
-    Some(Box::<[u8]>::from(resolve_path::join::<platform::Posix>(&[
-        rel_path, argument,
-    ])))
+    let mut spill = Vec::new();
+    Some(Box::<[u8]>::from(
+        resolve_path::join_spill::<platform::Posix>(&mut spill, &[rel_path, argument]),
+    ))
 }
 
 #[derive(Copy, Clone, PartialEq, Eq)]

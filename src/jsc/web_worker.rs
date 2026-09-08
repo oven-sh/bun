@@ -1291,7 +1291,7 @@ unsafe fn resolve_entry_point_specifier<'s>(
     // A `data:` URL is the module itself (the loader decodes it); it never names
     // a path, so it must not go through path resolution (long ones would fail
     // with ENAMETOOLONG there).
-    if str.starts_with(b"data:") {
+    if bun_resolver::data_url::DataURL::has_scheme(str) {
         return Some(str);
     }
 

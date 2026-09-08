@@ -1532,11 +1532,8 @@ impl PackageManifest {
         self.pkg.prereleases.keys.get(&self.versions)
     }
 
-    /// Resolves the version part of a `name@spec` CLI argument against this manifest the way `npm view`
-    /// does: a dist-tag with exactly that name wins, otherwise a semver range picks the best published
-    /// match. A miss is classified with the `Tag::infer` that `bun add` uses, so an unknown tag is
-    /// `DistTagNotFound` and never reaches the range parser, and any other kind of spec (git, tarball,
-    /// folder, ...) matches nothing here.
+    /// Resolves the version part of `name@spec` as `npm view` does: a dist-tag with exactly that name
+    /// wins, otherwise a semver range picks the best published match. Other kinds of spec match nothing.
     pub fn find_by_spec(&self, spec: &[u8]) -> Result<FindResult<'_>, Error> {
         use crate::dependency::{Tag, TagExt as _};
         let spec = if spec.is_empty() { b"latest" } else { spec };
@@ -1554,8 +1551,7 @@ impl PackageManifest {
                     spec
                 };
                 let query = Semver::query::parse(range, SlicedString::init(range, range))?;
-                // The range parser skips words it does not understand, so junk parses to an empty
-                // (match-anything) group. Nothing was asked for, so nothing matches.
+                // Only unknown words (e.g. `npm:x@1`): the lenient parser produced a match-all group.
                 if query.is_empty() {
                     return Err(Error::NoMatchingVersion);
                 }

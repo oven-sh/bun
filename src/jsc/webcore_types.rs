@@ -382,11 +382,14 @@ impl Blob {
     // pulling the whole `BlobExt` trait into scope.
     // ────────────────────────────────────────────────────────────────────
 
-    /// `Blob.hasContentTypeFromUser()` — `true` when the user set a type
-    /// explicitly *or* the store is file/S3-backed (whose mime is sniffed).
+    /// `Blob.hasContentTypeFromUser()` — `true` when the user set a non-empty
+    /// type explicitly *or* the store is file/S3-backed (whose mime is sniffed).
+    /// Callers forward `content_type` as a `Content-Type` header on `true`; a
+    /// type that was set to empty (a typed blob's `slice()`, a body owner's
+    /// empty `Content-Type` header) is no header, not an empty one.
     #[inline]
     pub fn has_content_type_from_user(&self) -> bool {
-        self.content_type_was_set.get()
+        (self.content_type_was_set.get() && !self.content_type_slice().is_empty())
             || self
                 .store()
                 .map(|s| matches!(s.data, store::Data::File(_) | store::Data::S3(_)))

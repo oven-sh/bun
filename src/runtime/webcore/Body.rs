@@ -40,31 +40,44 @@ pub(super) fn wtf_impl(s: &WTFStringImpl) -> &WTFStringImplStruct {
     unsafe { &**s }
 }
 
-/// Mutable view of a [`Blob`]'s backing `Store` through its
-/// `JsCell<Option<RefPtr<Store>>>` field. Centralises the per-site raw
-/// `(*blob.store.get()…as_ptr()).mime_type = …` deref under the same
-/// invariant `Store::data_mut` already documents:
-/// shared-mutable interior, single-threaded JS event-loop, no concurrent
-/// `&Store` outstanding for the borrow's duration.
-#[inline]
-#[allow(clippy::mut_from_ref)]
-fn blob_store_mut(blob: &Blob) -> Option<&mut blob::Store> {
-    blob.store
-        .get()
-        .as_ref()
-        // SAFETY: `RefPtr<Store>` invariant — pointee is a live heap `Store` while
-        // any `RefPtr<Store>` exists; single-threaded JS event-loop discipline
-        // guarantees no other `&`/`&mut Store` is live for this borrow.
-        .map(|s| unsafe { &mut *s.as_ptr() })
+/// https://fetch.spec.whatwg.org/#concept-body-mime-type: the `Content-Type`
+/// header of a body's owner, as the type a `blob()` read reports. `None` only
+/// when there is no such header: a header that is present wins over the body's
+/// own type even when its value is empty.
+pub(crate) fn content_type_from_headers(
+    headers: Option<NonNull<FetchHeaders>>,
+) -> Option<blob::BlobContentType> {
+    // `FetchHeaders` is an opaque ZST FFI handle (S008) — safe deref.
+    let fetch_headers = bun_opaque::opaque_deref_mut(headers?.as_ptr());
+    if !fetch_headers.fast_has(HTTPHeaderName::ContentType) {
+        return None;
+    }
+    Some(match fetch_headers.fast_get(HTTPHeaderName::ContentType) {
+        Some(value) => {
+            let value = value.to_utf8();
+            blob::BlobContentType::from(MimeType::init(value.slice(), true, None))
+        }
+        None => blob::BlobContentType::default(),
+    })
 }
 
-fn set_blob_content_type(blob: &Blob, mime_type: MimeType) {
+/// Types the Blob a `blob()` read produced: the owner's `Content-Type` header
+/// if it had one, else the body's own type, else `text/plain` for a body with
+/// bytes. Only the Blob is written, never its `Store`: the store can be shared
+/// with the caller's own Blob (`new Response(blob)`).
+fn apply_blob_content_type(blob: &Blob, from_headers: Option<blob::BlobContentType>) {
+    let content_type = match from_headers {
+        Some(content_type) => content_type,
+        None if blob.content_type().is_empty()
+            && !blob.content_type_was_set.get()
+            && blob.store.get().is_some() =>
+        {
+            blob::BlobContentType::from(bun_http_types::MimeType::TEXT)
+        }
+        None => return,
+    };
     blob.content_type_was_set.set(true);
-    if let Some(store) = blob_store_mut(blob) {
-        store.mime_type = mime_type.clone();
-    }
-    blob.content_type
-        .set(blob::BlobContentType::from(mime_type));
+    blob.content_type.set(content_type);
 }
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -382,7 +395,7 @@ impl PendingValue {
                 Action::GetFormData(_)
                 | Action::GetText
                 | Action::GetJSON
-                | Action::GetBlob
+                | Action::GetBlob(_)
                 | Action::GetArrayBuffer
                 | Action::GetBytes => {
                     let promise = match &mut self.action {
@@ -392,7 +405,16 @@ impl PendingValue {
                         }
                         Action::GetBytes => global_this.readable_stream_to_bytes(readable.value),
                         Action::GetText => global_this.readable_stream_to_text(readable.value),
-                        Action::GetBlob => global_this.readable_stream_to_blob(readable.value),
+                        Action::GetBlob(content_type) => {
+                            let content_type = match content_type.take() {
+                                Some(content_type) => bun_string_jsc::create_utf8_for_js(
+                                    global_this,
+                                    content_type.as_slice(),
+                                )?,
+                                None => JSValue::UNDEFINED,
+                            };
+                            global_this.readable_stream_to_blob(readable.value, content_type)
+                        }
                         Action::GetFormData(form_data) => 'brk: {
                             let fd = form_data.take().unwrap();
                             let encoding_js = match &fd.encoding {
@@ -440,7 +462,9 @@ pub enum Action {
     GetJSON,
     GetArrayBuffer,
     GetBytes,
-    GetBlob,
+    /// The owner's `Content-Type` header when `blob()` was called
+    /// ([`content_type_from_headers`]).
+    GetBlob(Option<blob::BlobContentType>),
     GetFormData(Option<Box<bun_core::form_data::AsyncFormData>>),
 }
 
@@ -1041,9 +1065,6 @@ impl Value {
         &mut self,
         new: &mut Value,
         global: &JSGlobalObject,
-        // Opaque C++ handle, mutated via FFI. Taking
-        // `NonNull` (not `&`/`&mut`) avoids manufacturing aliased Rust borrows.
-        headers: Option<NonNull<FetchHeaders>>,
     ) -> jsc::JsResult<()> {
         bun_core::scoped_log!(BodyValue, "resolve");
         if let Value::Locked(locked) = self {
@@ -1134,26 +1155,15 @@ impl Value {
                         // async_form_data dropped (Box<AsyncFormData> -> Drop replaces deinit)
                         result?;
                     }
-                    Action::None | Action::GetBlob => {
+                    action @ (Action::None | Action::GetBlob(_)) => {
+                        let content_type = match action {
+                            Action::GetBlob(content_type) => content_type.take(),
+                            _ => None,
+                        };
                         let blob_ptr = Blob::new(new.use_());
                         // SAFETY: `Blob::new` returns a freshly heap-allocated *mut Blob.
                         let blob = unsafe { &mut *blob_ptr };
-                        if let Some(fetch_headers) = headers {
-                            // `headers` is a live C++ FetchHeaders handle;
-                            // `FetchHeaders` is an opaque ZST FFI handle (S008) — safe deref.
-                            let fetch_headers =
-                                bun_opaque::opaque_deref_mut(fetch_headers.as_ptr());
-                            if let Some(content_type) =
-                                fetch_headers.fast_get(HTTPHeaderName::ContentType)
-                            {
-                                let content_slice = content_type.to_utf8();
-                                let mime_type = MimeType::init(content_slice.slice(), true, None);
-                                set_blob_content_type(blob, mime_type);
-                            }
-                        }
-                        if !blob.content_type_was_set.get() && blob.store.get().is_some() {
-                            set_blob_content_type(blob, bun_http_types::MimeType::TEXT);
-                        }
+                        apply_blob_content_type(blob, content_type);
                         promise.resolve(global, blob.to_js(global))?;
                     }
                 }
@@ -1600,6 +1610,10 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
     /// (FFI signature is `*mut`). Returning `NonNull` instead of `&FetchHeaders`
     /// avoids deriving `&mut T` from `&T` at the call sites (UB).
     fn get_fetch_headers(&self) -> Option<NonNull<FetchHeaders>>;
+    /// The type a `blob()` read reports; see [`content_type_from_headers`].
+    fn get_blob_content_type(&self) -> Option<blob::BlobContentType> {
+        content_type_from_headers(self.get_fetch_headers())
+    }
     fn get_form_data_encoding(&self) -> JsResult<Option<Box<bun_core::form_data::AsyncFormData>>>;
 
     // ────────────────────────────────────────────────────────────────────
@@ -2111,7 +2125,11 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
                 }
                 value.to_blob_if_possible();
                 if let Value::Locked(locked) = value {
-                    return locked.set_promise(global_object, Action::GetBlob, Some(readable));
+                    return locked.set_promise(
+                        global_object,
+                        Action::GetBlob(self.get_blob_content_type()),
+                        Some(readable),
+                    );
                 }
             }
             let value = self.get_body_value();
@@ -2127,7 +2145,11 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
                 let value = self.get_body_value();
                 value.to_blob_if_possible();
                 if let Value::Locked(locked) = value {
-                    return locked.set_promise(global_object, Action::GetBlob, None);
+                    return locked.set_promise(
+                        global_object,
+                        Action::GetBlob(self.get_blob_content_type()),
+                        None,
+                    );
                 }
             }
         }
@@ -2136,21 +2158,7 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
         let blob_ptr = Blob::new(value.use_());
         // SAFETY: `Blob::new` returns a freshly heap-allocated, ref-counted Blob.
         let blob = unsafe { &mut *blob_ptr };
-        if blob.content_type().is_empty() {
-            if let Some(fetch_headers) = BodyMixin::get_fetch_headers(self) {
-                // `fetch_headers` is a live C++ FetchHeaders handle;
-                // `FetchHeaders` is an opaque ZST FFI handle (S008) — safe deref.
-                let fetch_headers = bun_opaque::opaque_deref_mut(fetch_headers.as_ptr());
-                if let Some(content_type) = fetch_headers.fast_get(HTTPHeaderName::ContentType) {
-                    let content_slice = content_type.to_utf8();
-                    let mime_type = MimeType::init(content_slice.slice(), true, None);
-                    set_blob_content_type(blob, mime_type);
-                }
-            }
-            if !blob.content_type_was_set.get() && blob.store.get().is_some() {
-                set_blob_content_type(blob, bun_http_types::MimeType::TEXT);
-            }
-        }
+        apply_blob_content_type(blob, self.get_blob_content_type());
         Ok(JSPromise::resolved_promise_value(
             global_object,
             blob.to_js(global_object),

@@ -1987,8 +1987,13 @@ impl BlobExt for Blob {
         if !ct.is_empty() {
             return EncodedSlice::latin1(ct).to_js(global_this);
         }
-        if let Some(store) = self.store.get() {
-            return EncodedSlice::latin1(&store.mime_type.value).to_js(global_this);
+        // A type that was set and is empty (an empty `Content-Type` header on a
+        // body's owner, a typed blob's `slice()`) is authoritative: do not fall
+        // back to the store's sniffed type.
+        if !self.content_type_was_set.get() {
+            if let Some(store) = self.store.get() {
+                return EncodedSlice::latin1(&store.mime_type.value).to_js(global_this);
+            }
         }
         JSValue::js_empty_string(global_this)
     }
@@ -5886,6 +5891,25 @@ pub(crate) unsafe extern "C" fn Blob__fromBytesWithType(
         }
     }
     blob
+}
+
+/// Types the Blob a body reader built from a `ReadableStream` body with its
+/// owner's `Content-Type` header (`Body::content_type_from_headers`), the way
+/// `Body::apply_blob_content_type` does for every other kind of body.
+#[unsafe(no_mangle)]
+pub(crate) extern "C" fn Blob__setContentTypeFromHeader(value: JSValue, content_type: &BunString) {
+    let Some(blob) = Blob::from_js(value) else {
+        return;
+    };
+    // SAFETY: `from_js` returns a non-null pointer to a live JSC-owned Blob.
+    let blob = unsafe { &*blob };
+    let content_type = content_type.to_utf8();
+    blob.content_type_was_set.set(true);
+    blob.content_type.set(if content_type.is_empty() {
+        BlobContentType::default()
+    } else {
+        BlobContentType::Owned(std::sync::Arc::from(&*content_type))
+    });
 }
 
 /// Adopts an mmap'd region — no copy. The Blob's store holds the mapping;

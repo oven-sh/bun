@@ -350,6 +350,85 @@ for (const { body, fn } of bodyTypes) {
         });
       });
     });
+    // https://fetch.spec.whatwg.org/#concept-body-mime-type: blob() types its
+    // result from the Content-Type header alone. A body's own type matters
+    // only through the header the constructor derives from it, so an explicit
+    // header wins over it for every kind of body.
+    describe("blob().type comes from the Content-Type header", () => {
+      const bodies: Record<string, () => BodyInit> = {
+        string: () => "a=1",
+        Uint8Array: () => new TextEncoder().encode("a=1"),
+        "typed Blob": () => new Blob(["a=1"], { type: "text/html" }),
+        URLSearchParams: () => new URLSearchParams("a=1"),
+        FormData: () => {
+          const form = new FormData();
+          form.append("a", "1");
+          return form;
+        },
+        ReadableStream: () =>
+          new ReadableStream({
+            start(controller) {
+              controller.enqueue(new TextEncoder().encode("a=1"));
+              controller.close();
+            },
+          }),
+        "typed Blob's stream": () => new Blob(["a=1"], { type: "text/html" }).stream(),
+      };
+      const expectAll = (type: string) => Object.fromEntries(Object.keys(bodies).map(label => [label, type]));
+      const typesWith = async (headers: HeadersInit, touch = (subject: Request | Response) => {}) => {
+        const types: Record<string, string> = {};
+        for (const [label, body] of Object.entries(bodies)) {
+          const subject = fn(body(), headers);
+          touch(subject);
+          types[label] = (await subject.blob()).type;
+        }
+        return types;
+      };
+
+      test("an explicit header wins over the body's own type", async () => {
+        expect(await typesWith({ "content-type": "text/x-custom" })).toEqual(expectAll("text/x-custom"));
+      });
+
+      test("also once the body getter has made a stream of the body", async () => {
+        const types = await typesWith({ "content-type": "text/x-custom" }, subject => {
+          expect(subject.body).toBeInstanceOf(ReadableStream);
+        });
+        expect(types).toEqual(expectAll("text/x-custom"));
+      });
+
+      test("an empty header value gives an empty type", async () => {
+        expect(await typesWith({ "content-type": "" })).toEqual(expectAll(""));
+      });
+
+      test("a result with an empty type is sent on with no Content-Type header", async () => {
+        const blob = await fn("a=1", { "content-type": "" }).blob();
+        await using server = Bun.serve({
+          port: 0,
+          fetch: request => new Response(JSON.stringify(request.headers.get("content-type"))),
+        });
+        const response = await fetch(server.url, { method: "POST", body: blob });
+        expect([blob.type, await response.text()]).toEqual(["", "null"]);
+      });
+
+      test("the header is read when blob() is called, not at construction", async () => {
+        const subject = fn(new Blob(["a=1"], { type: "text/html" }));
+        subject.headers.set("content-type", "text/x-later");
+        expect((await subject.blob()).type).toBe("text/x-later");
+      });
+
+      test("a Bun.file() stream body takes the header too", async () => {
+        using dir = tempDir("body-blob-type-file-stream", { "data.txt": "a=1" });
+        const blob = await fn(Bun.file(`${dir}/data.txt`).stream(), { "content-type": "text/x-custom" }).blob();
+        expect([blob.type, await blob.text()]).toEqual(["text/x-custom", "a=1"]);
+      });
+
+      test("typing the result leaves the Blob the body was made from alone", async () => {
+        const original = new Blob(["a=1"]);
+        const slice = original.slice(0, 1);
+        const result = await fn(original, { "content-type": "text/x-custom" }).blob();
+        expect([result.type, original.type, slice.type]).toEqual(["text/x-custom", "", ""]);
+      });
+    });
     for (const { string, buffer } of utf8) {
       describe("arrayBuffer()", () => {
         test("undefined", async () => {
@@ -1532,5 +1611,64 @@ describe.concurrent("a fetch() Response that cannot have a body", () => {
     expect(stderr).toBe("");
     expect(JSON.parse(stdout)).toEqual({ status: 205, body: null, text: "" });
     expect(exitCode).toBe(0);
+  });
+});
+
+// A request that Bun.serve received is the other owner of a body with a
+// Content-Type header. Its headers stay on the uws request until something asks
+// for them, and its body is usually still pending when the handler calls blob().
+describe("Bun.serve request.blob().type comes from the Content-Type header", () => {
+  test("for a pending body, before and after request.headers is read, and through new Response(request.body)", async () => {
+    const asked: Record<string, PromiseWithResolvers<void>> = {
+      "/direct": Promise.withResolvers(),
+      "/after-headers": Promise.withResolvers(),
+      "/wrapped": Promise.withResolvers(),
+    };
+    await using server = Bun.serve({
+      port: 0,
+      async fetch(request) {
+        const path = new URL(request.url).pathname;
+        let blobPromise: Promise<Blob>;
+        if (path === "/wrapped") {
+          // A native byte stream that is still filling: read through the
+          // stream, then typed with the wrapping Response's header.
+          blobPromise = new Response(request.body, { headers: { "content-type": "text/x-wrapped" } }).blob();
+        } else {
+          if (path === "/after-headers") expect(request.headers.get("content-type")).toBe("text/x-request");
+          blobPromise = request.blob();
+        }
+        asked[path].resolve();
+        const blob = await blobPromise;
+        return new Response(`${blob.type}|${await blob.text()}`);
+      },
+    });
+    // Hold the body back until the handler has asked for the blob, so the read
+    // is the pending kind on every run.
+    const post = async (path: string) => {
+      const socket = net.connect(server.port, "127.0.0.1");
+      await new Promise<void>((resolve, reject) => {
+        socket.once("connect", resolve);
+        socket.once("error", reject);
+      });
+      socket.write(
+        `POST ${path} HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n` +
+          `Content-Type: text/x-request\r\nContent-Length: 3\r\n\r\n`,
+      );
+      await asked[path].promise;
+      socket.write("a=1");
+      const chunks: Buffer[] = [];
+      for await (const chunk of socket) chunks.push(chunk);
+      const response = Buffer.concat(chunks).toString("latin1");
+      return response.slice(response.indexOf("\r\n\r\n") + 4);
+    };
+    expect({
+      "/direct": await post("/direct"),
+      "/after-headers": await post("/after-headers"),
+      "/wrapped": await post("/wrapped"),
+    }).toEqual({
+      "/direct": "text/x-request|a=1",
+      "/after-headers": "text/x-request|a=1",
+      "/wrapped": "text/x-wrapped|a=1",
+    });
   });
 });

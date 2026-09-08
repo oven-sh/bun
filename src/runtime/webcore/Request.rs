@@ -180,6 +180,12 @@ impl BodyMixin for Request {
                 .expect("HeadersRef wraps a non-null *mut FetchHeaders")
         })
     }
+    fn get_blob_content_type(&self) -> Option<crate::webcore::blob::BlobContentType> {
+        // `blob()` can run inside a `Bun.serve` handler before anything has read
+        // `request.headers`; until then the headers exist only on the uws request.
+        self.load_headers_from_request_context();
+        body::content_type_from_headers(BodyMixin::get_fetch_headers(self))
+    }
     #[inline]
     fn get_form_data_encoding(
         &self,
@@ -249,12 +255,8 @@ impl Request {
             return Ok(self.headers_mut().as_mut().unwrap());
         }
 
-        if let Some(req) = self.request_context.get_request() {
-            // we have a request context, so we can get the headers from it
-            self.headers.set(Some(HeadersRef::create_from_uws(
-                req.cast::<core::ffi::c_void>(),
-            )));
-        } else {
+        self.load_headers_from_request_context();
+        if self.headers.get().is_none() {
             // we don't have a request context, so we need to create an empty headers object
             self.headers.set(Some(HeadersRef::create_empty()));
             // Snapshot the pointer first; it stays valid across the field borrow.
@@ -295,17 +297,22 @@ impl Request {
         Ok(self.headers_mut().as_mut().unwrap())
     }
 
+    /// Creates `headers` from the uws request when a `Bun.serve` handler is
+    /// still on the stack and nothing has created them yet; no-op otherwise.
+    fn load_headers_from_request_context(&self) {
+        if self.headers.get().is_some() {
+            return;
+        }
+        if let Some(req) = self.request_context.get_request() {
+            self.headers.set(Some(HeadersRef::create_from_uws(
+                req.cast::<core::ffi::c_void>(),
+            )));
+        }
+    }
+
     #[allow(clippy::mut_from_ref)]
     pub(crate) fn get_fetch_headers_unless_empty(&self) -> Option<&mut HeadersRef> {
-        if self.headers.get().is_none() {
-            if let Some(req) = self.request_context.get_request() {
-                // we have a request context, so we can get the headers from it
-                self.headers.set(Some(HeadersRef::create_from_uws(
-                    req.cast::<core::ffi::c_void>(),
-                )));
-            }
-        }
-
+        self.load_headers_from_request_context();
         let headers = self.headers_mut().as_mut()?;
         if headers.is_empty() {
             return None;
@@ -322,14 +329,7 @@ impl Request {
         &self,
         global_this: &JSGlobalObject,
     ) -> JsResult<Option<HeadersRef>> {
-        if self.headers.get().is_none() {
-            if let Some(uws_req) = self.request_context.get_request() {
-                self.headers.set(Some(HeadersRef::create_from_uws(
-                    uws_req.cast::<core::ffi::c_void>(),
-                )));
-            }
-        }
-
+        self.load_headers_from_request_context();
         if let Some(head) = self.headers_mut().as_mut() {
             if head.is_empty() {
                 return Ok(None);

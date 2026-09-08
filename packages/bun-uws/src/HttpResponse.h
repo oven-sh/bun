@@ -630,6 +630,11 @@ public:
         /* This will be sent always when state is HTTP_WRITE_CALLED inside internalEnd, so no need to write the terminating 0 chunk here */
         /* Super::write("\r\n0\r\n\r\n", 7); */
 
+        /* As in end(): the close is what terminates a close-delimited body. */
+        if (httpResponseData->state & HttpResponseData<SSL>::HTTP_CLOSE_DELIMITED) {
+            httpResponseData->state |= HttpResponseData<SSL>::HTTP_CONNECTION_CLOSE;
+        }
+
         return internalEnd({nullptr, 0}, 0, false, false, closeConnection);
     }
 

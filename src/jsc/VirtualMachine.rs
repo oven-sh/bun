@@ -5127,7 +5127,11 @@ impl VirtualMachine {
     /// and cannot be called from here. It also retires the outgoing global.
     pub fn swap_global_for_test_isolation(&mut self) {
         debug_assert!(self.test_isolation_enabled);
-        debug_assert!(self.global().to_js_value().is_from_retired_test_isolation_realm());
+        debug_assert!(
+            self.global()
+                .to_js_value()
+                .is_from_retired_test_isolation_realm()
+        );
 
         // The finished file's workers, ports, channels and sockets are stopped
         // first (no events dispatched), before its socket groups and timers are

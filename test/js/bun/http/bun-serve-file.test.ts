@@ -1101,9 +1101,8 @@ if (then === "resume") {
   socket.resume();
   await waitForRead("resumed");
 
-  // Stop reading again before the disconnect. A stream that waits for pipe
-  // data when its client disconnects stays allocated while the pipe is open,
-  // and the leak check at exit reports it. A paused stream is freed.
+  // Stop reading again before the disconnect, so the pause after a resume is
+  // covered too and the abort lands on a paused reader as in the other cases.
   socket.pause();
   await waitForStall();
   socket.destroy();
@@ -1253,16 +1252,20 @@ test.concurrent.skipIf(isWindows)(
     using dir = tempDir("serve-fifo-abort-steal", {
       "fixture.ts": `
 import { connect } from "node:net";
-import { openSync, writeSync } from "node:fs";
+import { constants, openSync, readSync, writeSync } from "node:fs";
 
 const [fifoPath] = process.argv.slice(2);
-const writerFd = openSync(fifoPath, "r+");
+// Read+write and non-blocking: this fd is the idle producer, and a read from it
+// shows what is still in the pipe (EAGAIN when the pipe is empty).
+const writerFd = openSync(fifoPath, constants.O_RDWR | constants.O_NONBLOCK);
+const LINES = "line-1\\nline-2\\nline-3\\nline-4\\nline-5\\n";
 
 const server = Bun.serve({
   port: 0,
   hostname: "127.0.0.1",
   idleTimeout: 0,
-  fetch() {
+  fetch(req) {
+    if (new URL(req.url).pathname === "/alive") return new Response("alive");
     return new Response(Bun.file(fifoPath));
   },
 });
@@ -1287,11 +1290,34 @@ async function request(until, marker) {
   return out;
 }
 
-for (let i = 0; i < 3; i++) await request(/dead-\\d/, "dead-" + i);
+// A request to this same server makes its event loop poll for I/O, so an
+// aborted stream whose poll is still armed reads the pipe during it.
+async function poll() {
+  const res = await fetch("http://127.0.0.1:" + server.port + "/alive");
+  await res.text();
+}
 
-// The producer writes after the dead clients left. Only the live client may
-// see these bytes.
-writeSync(writerFd, "line-1\\nline-2\\nline-3\\nline-4\\nline-5\\n");
+for (let i = 0; i < 3; i++) await request(/dead-\\d/, "dead-" + i);
+for (let i = 0; i < 3; i++) await poll();
+
+// The producer writes after the dead clients left. Nothing may read the pipe
+// now, so the bytes are still there when this process looks. A broken build
+// fails here with a message instead of a live client that waits forever.
+writeSync(writerFd, LINES);
+for (let i = 0; i < 3; i++) await poll();
+let pending = 0;
+try {
+  pending = readSync(writerFd, Buffer.alloc(256), 0, 256, null);
+} catch (err) {
+  if (err.code !== "EAGAIN") throw err;
+}
+if (pending !== LINES.length) {
+  console.log("aborted streams consumed the pipe: " + pending + " of " + LINES.length + " bytes left");
+  process.exit(1);
+}
+
+// End to end: a live client gets what the producer writes.
+writeSync(writerFd, LINES);
 const body = (await request(/line-5\\n/)).split("\\r\\n\\r\\n")[1];
 console.log(body.match(/line-\\d/g).join(" "));
 

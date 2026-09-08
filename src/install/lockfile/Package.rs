@@ -982,10 +982,10 @@ impl Diff {
         )
     }
 
-    /// The package.json of a `file:` directory dependency declared by the root package or a
-    /// workspace package is read when the dependency is first resolved. Read it again and diff it
-    /// against the lockfile entry, like a workspace, so that edits to it are picked up. Returns
-    /// `None` for every other dependency.
+    /// The package.json of a `file:` directory package that the root package or a workspace
+    /// package depends on (directly, or through an override or catalog) is read when the
+    /// dependency is first resolved. Read it again and diff it against the lockfile entry, like a
+    /// workspace, so that edits to it are picked up. Returns `None` for every other dependency.
     fn generate_folder_dependency(
         pm: &mut PackageManager,
         log: &mut bun_ast::Log,
@@ -993,7 +993,6 @@ impl Diff {
         to_lockfile: &mut Lockfile,
         from: &Package,
         from_package_id: PackageID,
-        folder_path: &[u8],
         update_requests: Option<&[UpdateRequest]>,
         removed_names: &mut Vec<PackageNameHash>,
     ) -> crate::Result<Option<DiffSummary>> {
@@ -1001,17 +1000,25 @@ impl Diff {
             from.resolution.tag,
             ResolutionTag::Root | ResolutionTag::Workspace
         ) || from_package_id as usize >= from_lockfile.packages.len()
-            || from_lockfile.packages.items_resolution()[from_package_id as usize].tag
-                != ResolutionTag::Folder
         {
             return Ok(None);
         }
+        let resolution = from_lockfile.packages.items_resolution()[from_package_id as usize];
+        if resolution.tag != ResolutionTag::Folder {
+            return Ok(None);
+        }
+        // Relative to the top level directory, or absolute.
+        let folder_path: Box<[u8]> = Box::from(
+            resolution
+                .folder()
+                .slice(from_lockfile.buffers.string_bytes.as_slice()),
+        );
 
         let Ok(folder_pkg) = crate::_folder_resolver::parse_folder_dependency_package_json(
             to_lockfile,
             pm,
             log,
-            folder_path,
+            &folder_path,
         ) else {
             // Resolving the dependency again reports the unreadable package.json.
             return Ok(Some(DiffSummary {
@@ -1036,7 +1043,7 @@ impl Diff {
         if pm.options.log_level.is_verbose() && (diff.add + diff.remove + diff.update) > 0 {
             bun_core::pretty_errorln!(
                 "Package \"file:{}\" has added <green>{}<r> dependencies, removed <red>{}<r> dependencies, and updated <cyan>{}<r> dependencies",
-                bstr::BStr::new(folder_path),
+                bstr::BStr::new(&folder_path),
                 diff.add,
                 diff.remove,
                 diff.update,
@@ -1529,37 +1536,24 @@ impl Diff {
                     }
                 }
 
-                let folder_diff = if from_dep.version.tag == dependency::version::Tag::Folder {
-                    // `parse` may grow `to_lockfile.buffers.string_bytes`; copy the path out first.
-                    let folder_path: Box<[u8]> = Box::from(
-                        to_deps!()[cur_to_i]
-                            .version
-                            .folder()
-                            .slice(to_lockfile.buffers.string_bytes.as_slice()),
-                    );
-                    let diff = Self::generate_folder_dependency(
-                        pm,
-                        log,
-                        from_lockfile,
-                        to_lockfile,
-                        from,
-                        from_resolutions[i],
-                        &folder_path,
-                        update_requests,
-                        removed_names,
-                    )?;
+                let folder_diff = Self::generate_folder_dependency(
+                    pm,
+                    log,
+                    from_lockfile,
+                    to_lockfile,
+                    from,
+                    from_resolutions[i],
+                    update_requests,
+                    removed_names,
+                )?;
+                if let Some(diff) = &folder_diff {
                     // re-derive the slice, `to_lockfile.buffers.dependencies` may have grown.
                     to_deps = to
                         .dependencies
                         .get(to_lockfile.buffers.dependencies.as_slice())
                         .into();
-                    if let Some(diff) = &diff {
-                        summary.bins_changed |= diff.bins_changed;
-                    }
-                    diff
-                } else {
-                    None
-                };
+                    summary.bins_changed |= diff.bins_changed;
+                }
 
                 if let Some(mapping) = id_mapping.as_deref_mut() {
                     let mut workspace_hooks_only = false;
@@ -1775,7 +1769,16 @@ impl Diff {
             );
         }
 
-        if from.resolution.tag != ResolutionTag::Root {
+        // bun.lock does not record lifecycle scripts. The installer reads the scripts of a `file:`
+        // package from its package.json when the lockfile did not fill them, so only compare filled
+        // ones for it; an unconditional compare would re-resolve a `file:` package with scripts on
+        // every install.
+        let compare_scripts = match from.resolution.tag {
+            ResolutionTag::Root => false,
+            ResolutionTag::Folder => from.scripts.filled,
+            _ => true,
+        };
+        if compare_scripts {
             for (to_hook, from_hook) in to.scripts.hooks().iter().zip(from.scripts.hooks().iter()) {
                 if !String::eql(
                     **to_hook,

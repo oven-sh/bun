@@ -1843,11 +1843,14 @@ describe.each(["hoisted", "isolated"] as const)(
     }
   }));`;
 
-    async function createProject(declaredBy: "root" | "workspace") {
+    async function createProject(
+      declaredBy: "root" | "workspace" | "override",
+      vdirExtra: Record<string, unknown> = {},
+    ) {
       const { packageDir, packageJson } = await registry.createTestDir({
         bunfigOpts: { saveTextLockfile: true, linker },
         files: {
-          "vendor/vdir/package.json": vdir({ dependencies: { "no-deps": "1.0.0" } }),
+          "vendor/vdir/package.json": vdir({ dependencies: { "no-deps": "1.0.0" }, ...vdirExtra }),
           "vendor/vdir/index.js": vdirIndexJs,
           ...(declaredBy === "workspace"
             ? {
@@ -1862,9 +1865,11 @@ describe.each(["hoisted", "isolated"] as const)(
       await write(
         packageJson,
         JSON.stringify(
-          declaredBy === "workspace"
-            ? { name: "root", workspaces: ["packages/*"] }
-            : { name: "root", dependencies: { vdir: "file:./vendor/vdir" } },
+          {
+            root: { name: "root", dependencies: { vdir: "file:./vendor/vdir" } },
+            workspace: { name: "root", workspaces: ["packages/*"] },
+            override: { name: "root", dependencies: { vdir: "1.0.0" }, overrides: { vdir: "file:./vendor/vdir" } },
+          }[declaredBy],
         ),
       );
       const lock = () => file(join(packageDir, "bun.lock")).text();
@@ -1882,6 +1887,7 @@ describe.each(["hoisted", "isolated"] as const)(
       };
       const project = {
         packageDir,
+        bun,
         lock,
         editVdir: (extra: Record<string, unknown>) =>
           write(join(packageDir, "vendor", "vdir", "package.json"), vdir(extra)),
@@ -2028,6 +2034,34 @@ describe.each(["hoisted", "isolated"] as const)(
       ];
       expect(Bun.which("vdir", { PATH: binDirs.join(delimiter) })).not.toBeNull();
       await expectInstallToBeANoop();
+    });
+
+    it.concurrent("when an override routes a registry dependency to the directory", async () => {
+      const { lock, editVdir, expectFrozenLockfileToFail, expectInstallToSaveLockfile, expectInstallToBeANoop } =
+        await createProject("override");
+
+      await editVdir({ dependencies: { "no-deps": "1.0.0", "a-dep": "1.0.2" } });
+      await expectFrozenLockfileToFail();
+      await expectInstallToSaveLockfile();
+
+      expect(await lock()).toContain(
+        `"vdir@file:vendor/vdir", { "dependencies": { "a-dep": "1.0.2", "no-deps": "1.0.0" } }`,
+      );
+      expect(await lock()).toContain(`"a-dep@1.0.2"`);
+      await expectInstallToBeANoop();
+    });
+
+    // bun.lock does not record lifecycle scripts, so they must not count as a difference.
+    it.concurrent("an unchanged package.json with a lifecycle script is not resolved again", async () => {
+      const { bun, expectInstallToBeANoop } = await createProject("root", {
+        scripts: { postinstall: "echo postinstall" },
+      });
+
+      await expectInstallToBeANoop();
+      const { err, code } = await bun("install", "--verbose");
+      expect(err).not.toContain(`"file:vendor/vdir" has added`);
+      expect(err).not.toContain("Saved lockfile");
+      expect(code).toBe(0);
     });
   },
 );

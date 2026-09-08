@@ -2989,7 +2989,7 @@ describe("binaries", () => {
     expect(join(packageDir, "node_modules", ".bin", "map-bin-2")).toBeValidBin(join("..", "map-bin", "map-bin-2.js"));
   });
 
-  test.todo("text lockfile updates with new bin entry for folder dependencies", async () => {
+  test("text lockfile updates with new bin entry for folder dependencies", async () => {
     await Promise.all([
       write(
         packageJson,

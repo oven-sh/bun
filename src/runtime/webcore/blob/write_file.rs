@@ -177,7 +177,10 @@ crate::webcore::blob::impl_file_closer!(WriteFile);
 
 /// The pool re-enters a `WriteFile` through `task` after the io loop reports
 /// its fd writable (or errored).
-impl bun_threading::WorkTaskHandler for WriteFile {
+// SAFETY: `task` is scheduled only from `on_ready`, `on_io_error` and the
+// poll-closed hook, each the last thing the io thread does with
+// the request after its wait completed or its poll closed.
+unsafe impl bun_threading::WorkTaskHandler for WriteFile {
     fn run_work_task(&mut self) {
         // On kqueue platforms we use one-shot mode, so we don't need to unregister.
         if bun_core::Environment::IS_KQUEUE {

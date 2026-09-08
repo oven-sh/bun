@@ -40,16 +40,17 @@ pub unsafe trait IntrusiveWorkTask: bun_core::IntrusiveField<Task> {
 
 /// An [`IntrusiveWorkTask`] the pool re-enters through its embedded [`Task`]
 /// while something else owns the allocation. [`work_task_for`] builds the
-/// `Task` whose callback recovers the owner and calls this.
+/// `Task` whose callback recovers the owner as `&mut Self` on a pool thread
+/// and calls this — a move in all but name, hence `Send`.
 ///
-/// `Send`: the owner is handed to a pool thread by address and re-entered
-/// there as `&mut Self`, which is a move in all but name. Whoever passes the
-/// embedded task to [`WorkPool::schedule`] gives up every other access to the
-/// owner until [`run_work_task`](Self::run_work_task) has returned (the same
-/// contract as [`OwnedTask`], minus the `Box`).
-pub trait WorkTaskHandler: IntrusiveWorkTask + Send {
-    /// Pool thread. Whoever scheduled the embedded task left the owner alone
-    /// until this runs, so `self` is the only access to it.
+/// # Safety
+/// From the moment the embedded task built by [`work_task_for`] is passed to
+/// [`WorkPool::schedule`] until [`run_work_task`](Self::run_work_task)
+/// returns, nothing else accesses the value (the same contract as
+/// [`OwnedTask`], minus the `Box`): the implementor only schedules it from a
+/// state in which every other holder has parked.
+pub unsafe trait WorkTaskHandler: IntrusiveWorkTask + Send {
+    /// Pool thread; `self` is the only access to the value (trait contract).
     fn run_work_task(&mut self);
 }
 

@@ -297,7 +297,10 @@ bun_io::poll_owner!(ReadFile, io_poll, ReadFile);
 
 /// The pool re-enters a `ReadFile` through `task` after the io loop reports
 /// its fd readable (or errored), and after its poll is closed.
-impl bun_threading::WorkTaskHandler for ReadFile {
+// SAFETY: `task` is scheduled only from `on_ready`, `on_io_error` and the
+// poll-closed hook, each the last thing the io thread does with
+// the request after its wait completed or its poll closed.
+unsafe impl bun_threading::WorkTaskHandler for ReadFile {
     fn run_work_task(&mut self) {
         self.update();
     }

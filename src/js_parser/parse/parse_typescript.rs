@@ -407,54 +407,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         let mut arg_ref = Ref::NONE;
         if !opts.is_typescript_declare {
-            // Avoid a collision with the namespace closure argument variable if the
-            // namespace exports a symbol with the same name as the namespace itself:
-            //
-            //   namespace foo {
-            //     export let foo = 123
-            //     console.log(foo)
-            //   }
-            //
-            // TypeScript generates the following code in this case:
-            //
-            //   var foo;
-            //   (function (foo_1) {
-            //     foo_1.foo = 123;
-            //     console.log(foo_1.foo);
-            //   })(foo || (foo = {}));
-            //
-            // SAFETY: current_scope is an arena-owned Scope pointer valid for 'a.
-            if p.current_scope().members.contains_key(name_text) {
-                // Add a "_" to make tests easier to read, since non-bundler tests don't
-                // run the renamer. Keep adding "_" until the argument does not collide
-                // with a symbol declared in the namespace body: paths that skip the
-                // renamer (runtime transpiler, Bun.Transpiler, `bun build --no-bundle`)
-                // print symbols by their original name, so a colliding argument would
-                // re-declare a block-scoped member:
-                //
-                //   namespace m { class m {} class _m {} }
-                //
-                // Candidates are built in the parse arena; the
-                // chosen one becomes the symbol's original name and is freed together
-                // with the rest of the AST arena.
-                let mut underscores: usize = 1;
-                let prefixed: &'a [u8] = loop {
-                    let candidate = p
-                        .arena
-                        .alloc_slice_fill_copy(underscores + name_text.len(), b'_');
-                    candidate[underscores..].copy_from_slice(name_text);
-                    if !p.current_scope().members.contains_key(candidate) {
-                        break candidate;
-                    }
-                    underscores += 1;
-                };
-                arg_ref = p.new_symbol(SymbolKind::Hoisted, prefixed);
-            } else {
-                // Not a member: a reference to the name inside the namespace
-                // resolves to a merged sibling's export of that name first.
-                arg_ref = p.new_symbol(SymbolKind::Hoisted, name_text);
-            }
-            // Named in this scope so that no binding inside shadows it.
+            // The closure argument is not a member of the namespace scope: a
+            // reference to the name inside the namespace resolves to a merged
+            // sibling's export of that name first. It is in `generated` so the
+            // renamer sees it; `rename_namespace_arg_to_avoid_collisions` (visit
+            // pass) renames it if a binding inside the body has the same name.
+            arg_ref = p.new_symbol(SymbolKind::Hoisted, name_text);
             VecExt::append(&mut p.current_scope_mut().generated, arg_ref);
             ts_namespace.arg_ref = arg_ref;
         }

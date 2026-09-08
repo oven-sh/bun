@@ -2106,6 +2106,92 @@ export default class {
       ts.expectPrinted_(input6, output6);
     });
 
+    it("namespace argument renamed when a binding in a nested scope shadows it", () => {
+      // `v` inside `f` prints as a property access on the closure argument,
+      // which the parameter `N` would otherwise capture (tsc emits `N_1`).
+      ts.expectPrinted_(
+        `namespace N {
+  export let v = 1;
+  export function f(N) { return v }
+}`,
+        `var N;
+((_N) => {
+  _N.v = 1;
+  function f(N) {
+    return _N.v;
+  }
+  _N.f = f;
+})(N ||= {})`,
+      );
+
+      // The new name must not capture a reference made inside the body.
+      ts.expectPrinted_(
+        `namespace N {
+  export let v = 1;
+  export const f = (N) => v + _N;
+}`,
+        `var N;
+((__N) => {
+  __N.v = 1;
+  __N.f = (N) => __N.v + _N;
+})(N ||= {})`,
+      );
+
+      ts.expectPrinted_(
+        `enum E { A = a, B = ((E) => A)(0) }`,
+        `var E;
+((_E) => {
+  _E[_E["A"] = a] = "A";
+  _E[_E["B"] = ((E) => _E.A)(0)] = "B";
+})(E ||= {})`,
+      );
+
+      // No shadowing binding: the argument keeps the namespace's name.
+      ts.expectPrinted_(
+        `namespace N {
+  export let v = 1;
+  export function f(M) { return v + N.v }
+}`,
+        `var N;
+((N) => {
+  N.v = 1;
+  function f(M) {
+    return N.v + N.v;
+  }
+  N.f = f;
+})(N ||= {})`,
+      );
+    });
+
+    it("namespace closure argument is not captured by a nested binding at runtime", async () => {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `function one() { return 1; }
+          namespace N {
+            export let v = one();
+            export function param(N: any) { return v; }
+            export function local() { let N: any = { v: 9 }; return v; }
+            export function caught() { try { throw { v: 8 }; } catch (N) { return v; } }
+            export function klass() { class N { static v = 7; } return v; }
+            export const arrow = (N: any) => v;
+          }
+          enum E { A = one(), B = ((E: any) => A + 1)({ A: 100 }) }
+          console.log(JSON.stringify([N.param({ v: 9 }), N.local(), N.caught(), N.klass(), N.arrow({ v: 6 }), E.B]));`,
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      expect(stderr).toBe("");
+      expect(stdout).toBe("[1,1,1,1,1,2]\n");
+      expect(exitCode).toBe(0);
+    });
+
     // The runtime transpiler does not run a renamer, so the generated closure
     // argument must not shadow declarations inside the namespace body.
     it("namespace closure argument does not redeclare members at runtime", async () => {

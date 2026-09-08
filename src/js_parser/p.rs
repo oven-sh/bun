@@ -6899,6 +6899,78 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
+    /// Paths without a symbol renamer print the closure argument of a
+    /// TypeScript namespace or enum by its original name. A binding with that
+    /// name inside the body would capture the member references that were
+    /// rewritten to property accesses on the argument:
+    ///
+    ///   namespace N { export let v = 1; export function f(N) { return v } }
+    ///
+    /// must not print `function f(N) { return N.v; }` (tsc prints `N_1.v`).
+    /// Call this once `body` is visited. It renames the argument when a scope
+    /// in `body` declares its name. No scope inside or around `body` declares
+    /// the new name, so the new name captures no reference made inside
+    /// `body`: those are all resolved by now, the unbound ones to members of
+    /// the module scope.
+    #[cold]
+    #[inline(never)]
+    pub(crate) fn rename_namespace_arg_to_avoid_collisions(
+        &mut self,
+        arg_ref: Ref,
+        body: js_ast::StoreRef<Scope>,
+    ) {
+        fn declares(symbols: &[Symbol], scope: &Scope, name: &[u8], except: Ref) -> bool {
+            scope
+                .members
+                .get(name)
+                .is_some_and(|member| !member.ref_.eql(except))
+                || scope.generated.slice().iter().any(|ref_| {
+                    !ref_.eql(except)
+                        && symbols[ref_.inner_index() as usize].original_name.slice() == name
+                })
+        }
+        fn declared_inside(symbols: &[Symbol], scope: &Scope, name: &[u8], except: Ref) -> bool {
+            declares(symbols, scope, name, except)
+                || scope
+                    .children
+                    .slice()
+                    .iter()
+                    .any(|child| declared_inside(symbols, child, name, except))
+        }
+        fn declared_outside(symbols: &[Symbol], body: &Scope, name: &[u8]) -> bool {
+            let mut next = body.parent;
+            while let Some(scope) = next {
+                if declares(symbols, &scope, name, Ref::NONE) {
+                    return true;
+                }
+                next = scope.parent;
+            }
+            false
+        }
+
+        let symbols = self.symbols.as_slice();
+        let name: &'a [u8] = symbols[arg_ref.inner_index() as usize]
+            .original_name
+            .slice();
+        if !declared_inside(symbols, &body, name, arg_ref) {
+            return;
+        }
+        let mut underscores: usize = 1;
+        let renamed: &'a [u8] = loop {
+            let candidate = self
+                .arena
+                .alloc_slice_fill_copy(underscores + name.len(), b'_');
+            candidate[underscores..].copy_from_slice(name);
+            if !declared_inside(symbols, &body, candidate, Ref::NONE)
+                && !declared_outside(symbols, &body, candidate)
+            {
+                break candidate;
+            }
+            underscores += 1;
+        };
+        self.symbols[arg_ref.inner_index() as usize].original_name = js_ast::StoreStr::new(renamed);
+    }
+
     // Large TS namespace/enum lowering body — cold for already-transpiled JS.
     #[cold]
     #[inline(never)]

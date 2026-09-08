@@ -5923,8 +5923,6 @@ impl H2FrameParser {
             stream_arg,
             "Expected stream to be a number",
         )?;
-        // ToBoolean is side-effect free, so reading `close` after the stream
-        // lookup is observably identical to the previous ordering.
         let close = close_arg.to_boolean();
         // Coercing `data_arg` (a String subclass's toString) can run user JS while `stream`
         // is borrowed.

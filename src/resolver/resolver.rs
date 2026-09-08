@@ -1831,9 +1831,7 @@ impl<'a> Resolver<'a> {
                 let mut custom_abs_buf = bun_paths::path_buffer_pool::get();
                 for custom_path in custom_paths {
                     let custom_utf8 = custom_path.to_utf8();
-                    // As in the package-path loop below, anchor a relative entry
-                    // at cwd so `check_relative_path` joins against an absolute
-                    // source dir (matching Node's `path.resolve`).
+                    // Relative entries are anchored at cwd, like Node's `path.resolve`.
                     let source_dir: &[u8] = if bun_paths::is_absolute(custom_utf8.slice()) {
                         custom_utf8.slice()
                     } else {
@@ -1982,8 +1980,7 @@ impl<'a> Resolver<'a> {
                 let mut custom_abs_buf = bun_paths::path_buffer_pool::get();
                 for custom_path in custom_paths {
                     let custom_utf8 = custom_path.to_utf8();
-                    // Node resolves relative `paths` entries against the cwd; do
-                    // the same so `check_package_path` gets an absolute source dir.
+                    // Relative entries are anchored at cwd, like Node's `path.resolve`.
                     let source_dir: &[u8] = if bun_paths::is_absolute(custom_utf8.slice()) {
                         custom_utf8.slice()
                     } else {

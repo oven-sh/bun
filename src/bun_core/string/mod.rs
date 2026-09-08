@@ -1169,9 +1169,8 @@ impl core::fmt::Display for EncodedSlice<'_> {
 }
 
 // `EncodedSlice` pointer-tag scheme. Flag bits live in the pointer's high
-// byte; untagging truncates to 53 bits. Bit 62 was the "globally allocated"
-// tag; nothing in Rust sets it anymore, and C++ (`Zig::isTaggedExternalPtr`)
-// still reads it as clear.
+// byte; untagging truncates to 53 bits. Bit 62 is reserved: C++
+// `Zig::isTaggedExternalPtr` frees the buffer when it is set.
 const TAG_UTF8_BIT: usize = 1usize << 61;
 const TAG_UTF16_BIT: usize = 1usize << 63;
 const UNTAG_MASK: usize = (1usize << 53) - 1;

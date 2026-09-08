@@ -1369,8 +1369,7 @@ mod draft {
 
         let ca = out.as_property(b"ca");
         let cafile = out.as_property(b"cafile");
-        // `ca` and `cafile` are one setting (only `cafile` is used when both are set),
-        // so a project .npmrc that sets either replaces both from the user .npmrc.
+        // `ca` + `cafile` are one setting: a file that sets either replaces both.
         if ca.is_some() || cafile.is_some() {
             install.ca = None;
             install.cafile = None;

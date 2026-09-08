@@ -1431,8 +1431,7 @@ fn overlay_bunfig_install(install: &mut Api::BunInstall, bunfig: Api::BunInstall
         }
     }
 
-    // `ca` and `cafile` are one setting: the TLS layer uses only `cafile` when both
-    // are set, so bunfig replaces both or neither rather than mixing with .npmrc.
+    // `ca` + `cafile` are one setting: bunfig replaces both or neither.
     if ca.is_some() || cafile.is_some() {
         install.ca = ca;
         install.cafile = cafile;

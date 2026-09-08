@@ -898,9 +898,7 @@ impl Options {
             }
             self.publish_config.tolerate_republish = cli.tolerate_republish;
 
-            // `--ca` / `--cafile` replace the CA configuration from bunfig and .npmrc as a
-            // whole; the TLS layer uses only `cafile` when both are set, so a per-field
-            // overlay would let a config file's `cafile` shadow a `--ca` flag.
+            // `--ca` / `--cafile` replace the config file's `ca` + `cafile` as a whole.
             if !cli.ca.is_empty() || !cli.ca_file_name.is_empty() {
                 self.ca = cli.ca.iter().map(|s| Box::<[u8]>::from(*s)).collect();
                 self.ca_file_name = cli.ca_file_name;

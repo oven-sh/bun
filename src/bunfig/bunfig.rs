@@ -1274,8 +1274,7 @@ impl<'a> Parser<'a> {
     ) -> crate::Result<()> {
         let cafile = install_obj.get(b"cafile");
         let ca = install_obj.get(b"ca");
-        // `ca` and `cafile` are one setting (only `cafile` is used when both are set),
-        // so a local bunfig that sets either replaces both from the global bunfig.
+        // `ca` + `cafile` are one setting: a file that sets either replaces both.
         if cafile.is_some() || ca.is_some() {
             install.cafile = None;
             install.ca = None;

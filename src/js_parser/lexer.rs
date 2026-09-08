@@ -2129,8 +2129,7 @@ impl<'a> Lexer<'a> {
     }
 
     /// Scans the string for a pragma.
-    /// `chunk_start` is the offset of `chunk` in the file; the spans recorded
-    /// here carry it so a later diagnostic about the pragma points at it.
+    /// `chunk_start` is the file offset of `chunk`, for the spans recorded here.
     /// Returns the byte length to advance by if found, otherwise 0.
     fn scan_pragma(
         &mut self,

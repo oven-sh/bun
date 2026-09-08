@@ -54,8 +54,7 @@ pub struct Ast<'a> {
     // them under the same lifetime-erased contract as `StoreRef`.
     pub hashbang: StoreStr,
     pub directive: Option<StoreStr>,
-    /// The last `//# sourceMappingURL=` (or `//@`, `/*# */`) comment in the
-    /// file: the URL text and where it is.
+    /// URL text and location of the file's last `sourceMappingURL` comment.
     pub source_mapping_url: Option<crate::Span>,
     /// `export default X` where `X` is an import binding in this file. When
     /// `X` resolves to a module namespace the linker binds importers of

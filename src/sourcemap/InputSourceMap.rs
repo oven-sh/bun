@@ -1,7 +1,4 @@
-//! A source map that an input file points at through its `sourceMappingURL`
-//! comment: the map a previous tool (tsc, esbuild, a Svelte compiler) emitted
-//! for that file. The printer translates every output position through it, so
-//! the emitted map names the files this map names instead of the input file.
+//! The source map an input file's `sourceMappingURL` names; output maps are composed through it.
 
 use std::borrow::Cow;
 
@@ -14,23 +11,19 @@ use crate::{LineColumnOffset, Ordinal};
 
 pub struct InputSourceMap {
     mappings: mapping::List,
-    /// The map's `sources`, with `sourceRoot` applied and relative entries
-    /// resolved against the map's directory.
+    /// `sources` with `sourceRoot` applied and relative entries resolved against the map's directory.
     pub sources: Box<[InputSource]>,
-    /// The `sourcesContent` entry for each of `sources`, as JSON (`"..."` or
-    /// `null`), joined with `",\n    "`: ready to splice into an output map.
+    /// `sourcesContent` per source as JSON (`"..."` or `null`), joined with `",\n    "`.
     pub quoted_sources_content: Box<[u8]>,
 }
 
 pub struct InputSource {
     pub path: Box<[u8]>,
-    /// `path` is an absolute file-system path. Otherwise it is a URL or an
-    /// opaque name and is emitted as written.
+    /// `path` is an absolute file-system path, as opposed to a URL or opaque name kept as written.
     pub is_file: bool,
 }
 
-/// Why an input source map was rejected (UTF-8 text). The input file is still
-/// bundled; its output map then points at the input file itself.
+/// Why an input source map was rejected, as UTF-8 text.
 pub struct ParseError(pub Cow<'static, [u8]>);
 
 impl ParseError {
@@ -40,14 +33,7 @@ impl ParseError {
 }
 
 impl InputSourceMap {
-    /// Parses source-map `json` (ECMA-426, including `sections` index maps).
-    ///
-    /// `map_dir` is the directory relative `sources` entries resolve against:
-    /// the `.map` file's directory, or the input file's directory for a `data:`
-    /// URL. `None` leaves them as written. `read_file` supplies the text of a
-    /// file source whose `sourcesContent` entry is missing or `null`.
-    ///
-    /// `Ok(None)`: the map is well-formed but maps nothing.
+    /// `map_dir`: base for relative `sources`; `read_file`: fills a missing `sourcesContent`; `Ok(None)`: maps nothing.
     pub fn parse(
         json: &[u8],
         map_dir: Option<&[u8]>,
@@ -136,8 +122,7 @@ impl InputSourceMap {
         for section in &sections {
             match section.map.get(b"version") {
                 Some(JsonValue::Number(n)) if n.value() == 3.0 => {}
-                // Silently skip a section with a missing or unknown version,
-                // like esbuild does.
+                // A missing or unknown version skips the section silently, as in esbuild.
                 _ => continue,
             }
             let vlq: &[u8] = match section.map.get(b"mappings") {
@@ -288,8 +273,7 @@ impl InputSourceMap {
         }))
     }
 
-    /// The mapping that covers `line`:`column` (zero-based, columns in UTF-16
-    /// code units) of the file this map was emitted for, if any.
+    /// The mapping covering zero-based `line`:`column` (UTF-16 columns) of the generated file.
     #[inline]
     pub fn find(&self, line: i32, column: i32) -> Option<Mapping> {
         self.mappings.find(
@@ -299,10 +283,7 @@ impl InputSourceMap {
     }
 }
 
-/// Applies `sourceRoot` to one `sources` entry and resolves the result the way
-/// ECMA-426 "Resolving Sources" does: a URL with a scheme other than `file:`
-/// stays as written, a `file:` URL becomes a path, and anything else is a path
-/// relative to `map_dir`.
+/// ECMA-426 "Resolving Sources": non-`file:` URLs stay as written, the rest become paths under `map_dir`.
 fn resolve_source(name: &[u8], source_root: &[u8], map_dir: Option<&[u8]>) -> InputSource {
     let name: Cow<'_, [u8]> = if source_root.is_empty() || url_scheme(name).is_some() {
         Cow::Borrowed(name)
@@ -345,17 +326,14 @@ fn resolve_source(name: &[u8], source_root: &[u8], map_dir: Option<&[u8]>) -> In
     }
 }
 
-/// `path` resolved against the absolute directory `base` and normalized (an
-/// absolute `path` is only normalized). `None` when the result does not fit a
-/// path buffer.
+/// `path` resolved against `base` and normalized; `None` if it does not fit a path buffer.
 fn join_path(base: &[u8], path: &[u8]) -> Option<Box<[u8]>> {
     use bun_paths::resolve_path::{join_abs_string_buf_checked, platform};
     let mut buf = bun_paths::path_buffer_pool::get();
     join_abs_string_buf_checked::<platform::Auto>(base, &mut buf[..], &[path]).map(Box::from)
 }
 
-/// The scheme of `url` (`file` for `file:///a.js`), if it has one. A single
-/// ASCII letter before `:\` or `:/` is a Windows drive letter, not a scheme.
+/// The scheme of `url`, if any. One ASCII letter before `:/` or `:\` is a drive letter, not a scheme.
 pub fn url_scheme(url: &[u8]) -> Option<&[u8]> {
     let (&first, rest) = url.split_first()?;
     if !first.is_ascii_alphabetic() {
@@ -377,8 +355,7 @@ pub fn url_scheme(url: &[u8]) -> Option<&[u8]> {
     None
 }
 
-/// The file-system path a `file:` URL names, percent-decoded. `None` when
-/// `url` is not a `file:` URL or names a remote host.
+/// The percent-decoded path of a `file:` URL; `None` for other URLs or a remote host.
 pub fn path_from_file_url(url: &[u8]) -> Option<Box<[u8]>> {
     let scheme = url_scheme(url)?;
     if !scheme.eq_ignore_ascii_case(b"file") {

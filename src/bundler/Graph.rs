@@ -112,9 +112,7 @@ pub struct InputFile {
     pub unique_key_for_additional_file: Box<[u8], AstAlloc>,
     pub content_hash_for_additional_file: u64,
     pub flags: InputFileFlags,
-    /// The source map the file names in its `sourceMappingURL` comment, when
-    /// source maps are on and it could be loaded. Global-heap; drained in
-    /// `BundleV2::deinit_without_freeing_arena`.
+    /// From the file's `sourceMappingURL` comment. Global heap: drained in `deinit_without_freeing_arena`.
     pub input_source_map: Option<Box<bun_sourcemap::InputSourceMap>>,
 }
 

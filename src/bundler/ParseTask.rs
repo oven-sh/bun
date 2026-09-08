@@ -2670,8 +2670,7 @@ pub mod parse_worker {
         // SAFETY: task.ctx backref valid for the bundle pass (outlives `'r`).
         let task_ctx = unsafe { task.ctx() };
         let module_type = opts.module_type;
-        // The dev server joins per-file maps itself (`SourceMapStore`) and
-        // assumes one `sources` entry per file, so it gets no input maps.
+        // The dev server's `SourceMapStore` assumes one `sources` entry per file: no input maps there.
         let use_input_source_maps =
             topts.source_map != options::SourceMapOption::None && !topts.has_dev_server();
         // `topts` (a `&BundleOptions`) is dead past this point; the callees take

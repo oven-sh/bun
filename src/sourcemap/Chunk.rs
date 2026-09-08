@@ -369,15 +369,10 @@ pub struct NewBuilder<'a, T: SourceMapFormatCtx> {
     /// `line_offset_table_byte_offset_list`.
     pub line_offset_table_first_non_ascii: RawSlice<u32>,
 
-    /// The input file's own source map (from its `sourceMappingURL` comment).
-    /// When set, every mapping is translated through it and a position it does
-    /// not cover gets no mapping, so `source_index` and `original_*` in the
-    /// chunk refer to `input_source_map.sources`, not to the input file.
+    /// When set, mappings are translated through it (uncovered positions get none) and index its `sources`.
     pub input_source_map: Option<&'a crate::InputSourceMap>,
 
-    /// Line in the input file of the previous `add_source_mapping` call, the
-    /// seed for `find_line_with_hint`. (`prev_state.original_line` is a line in
-    /// some other file once an input source map has rewritten it.)
+    /// Input-file line of the previous mapping (`prev_state.original_line` may be post-remap).
     pub prev_input_line: u32,
 
     // This is a workaround for a bug in the popular "source-map" library:
@@ -620,8 +615,7 @@ impl NewBuilder<'_, VLQSourceMap> {
         self.last_generated_update = output.len() as u32;
     }
 
-    /// Returns `false` when the input source map does not cover the position,
-    /// in which case nothing was appended.
+    /// `false`: the input source map does not cover the position; nothing was appended.
     #[inline(always)]
     pub(crate) fn append_mapping(&mut self, mut current_state: SourceMapState) -> bool {
         if let Some(input_source_map) = self.input_source_map {
@@ -695,9 +689,9 @@ impl NewBuilder<'_, VLQSourceMap> {
         let byte_offsets = self.line_offset_table_byte_offset_list.slice();
 
         // The printer emits mappings in (mostly) source order, so the previous
-        // call's line is the right answer or one/two lines before it >95% of
-        // the time. Seed `find_line_with_hint` with it; the fallback is the
-        // same binary search as before.
+        // call's `original_line` is the right answer or one/two lines before
+        // it >95% of the time. Seed `find_line_with_hint` with it; the
+        // fallback is the same binary search as before.
         let original_line =
             LineOffsetTable::find_line_with_hint(byte_offsets, loc, self.prev_input_line);
         let idx = original_line.max(0) as usize;

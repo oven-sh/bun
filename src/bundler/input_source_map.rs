@@ -1,13 +1,10 @@
-//! Loads the source map an input file names in its `sourceMappingURL`
-//! comment, so the output map can point through it at the original sources.
+//! Loads the source map an input file's `sourceMappingURL` comment names.
 
 use bun_ast::{Log, Source, Span};
 use bun_sourcemap::InputSourceMap;
 use bun_sourcemap::input_source_map::{path_from_file_url, url_scheme};
 
-/// `comment` is the URL of the file's last `sourceMappingURL` comment. A map
-/// that cannot be loaded is reported as a warning on `log` and skipped: the
-/// file then maps to itself, as if it had no comment.
+/// A map that cannot be loaded is a warning on `log`; the file then maps to itself.
 pub(crate) fn load(log: &mut Log, source: &Source, comment: Span) -> Option<Box<InputSourceMap>> {
     let url: &[u8] = comment.text.slice();
     if url.is_empty() {
@@ -43,12 +40,10 @@ pub(crate) fn load(log: &mut Log, source: &Source, comment: Span) -> Option<Box<
             let map_path: Box<[u8]> = if let Some(path) = path_from_file_url(url) {
                 path
             } else if url_scheme(url).is_some() || url.starts_with(b"//") {
-                // `https://…` and the like: nothing a build can read, and not
-                // something the author of this build can fix, so stay quiet.
+                // `https://…` and the like: unreadable here and not the user's to fix, so no warning.
                 return None;
             } else {
-                // A virtual module (plugin namespace) has no directory to
-                // resolve a relative URL against.
+                // A virtual module (plugin namespace) has no directory to resolve against.
                 let source_dir = source_dir?;
                 let url = strip_query_and_fragment(url);
                 let decoded;

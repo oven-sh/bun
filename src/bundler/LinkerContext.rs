@@ -1188,8 +1188,7 @@ impl<'a> LinkerContext<'a> {
         //   -->
         //    Which source index in the generated sourcemap, referred to
         //    as the "mapping source index" within this function to be distinct.
-        //    A file with an input source map takes one slot per source of that
-        //    map, starting here; its chunks carry slot offsets relative to it.
+        //    A file with an input source map takes one slot per source of that map.
         let mut source_id_map: ArrayHashMap<u32, i32> = ArrayHashMap::new();
 
         let source_indices = results.items_source_index();
@@ -1289,8 +1288,7 @@ impl<'a> LinkerContext<'a> {
             )?;
 
             prev_end_state = chunk.end_state;
-            // A chunk's own source indices count from 0 (and stay 0 unless the
-            // file had an input source map with several sources).
+            // Chunk-local source indices count from 0: rebase onto the file's first slot.
             prev_end_state.source_index += mapping_source_index;
             prev_column_offset = chunk.final_generated_column;
 

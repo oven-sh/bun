@@ -311,4 +311,6 @@ Bun replaces references to `process.env.API_URL` in your JavaScript with the lit
 
 - **Code splitting** is not supported — `--splitting` cannot be used with `--compile --target=browser`
 - **Large assets** increase file size since they're base64-encoded (33% overhead vs the raw binary)
+- **Repeated references** are inlined once per reference. An image used in five `<img>` tags is embedded five times, so reference large assets once (for example through a CSS class) rather than repeating the path
 - **External URLs** (CDN links, absolute URLs) stay as-is: Bun inlines only relative paths
+- **Content Security Policy**: the output uses inline `<script>` and `<style>` tags and `data:` URLs. A `<meta http-equiv="Content-Security-Policy">` tag in the source HTML is copied through unchanged, so a policy without `'unsafe-inline'` (or matching hashes) and `data:` sources blocks the inlined code and assets. `nonce` and other attributes on the original `<script>` and `<link>` tags are not carried over to the generated tags

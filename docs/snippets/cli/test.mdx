@@ -48,6 +48,11 @@ bun test <patterns>
   Run only tests with a name that matches the given regex. Alias: <code>-t</code>
 </ParamField>
 
+<ParamField path="--pass-with-no-tests" type="boolean">
+  Exit with code 0 when no test files are found or when <code>--test-name-pattern</code> matches no test. Without this
+  flag both cases exit with code 1
+</ParamField>
+
 ### Reporting
 
 <ParamField path="--reporter" type="string">

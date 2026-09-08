@@ -15,7 +15,8 @@ bun build <entry points>
 </ParamField>
 
 <ParamField path="--bytecode-depth" type="number">
-  How many levels of nested functions to compile to bytecode ahead of time (a non-negative integer). Defaults to all
+  How many levels of nested functions to compile to bytecode ahead of time (a non-negative integer). Defaults to all.
+  Only has an effect together with <code>--bytecode</code>
 </ParamField>
 
 <ParamField path="--target" type="string" default="browser">
@@ -122,7 +123,11 @@ bun build <entry points>
 </ParamField>
 
 <ParamField path="--no-bundle" type="boolean">
-  Transpile only — do not bundle
+  Transpile only — do not bundle. Each entry point is transpiled on its own and its imports are left as written.
+  Transpiler options (`--define`, `--env`, `--drop`, `--loader`, the `--jsx-*` flags, `--minify`, `--tsconfig-override`)
+  and output options (`--outdir`, `--outfile`, `--root`, `--entry-naming`, `--watch`) apply. Options that describe a
+  bundle (`--splitting`, `--external`, `--packages`, `--banner`, `--footer`, `--metafile`, `--metafile-md`,
+  `--bytecode`) are accepted but have no effect in this mode. `--compile` cannot be combined with `--no-bundle`
 </ParamField>
 
 <ParamField path="--css-chunking" type="boolean">

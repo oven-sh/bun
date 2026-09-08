@@ -73,6 +73,14 @@ describe("Math", () => {
 
 For this test, `bun test` matches the pattern against the string "Math operations should add correctly".
 
+### When Nothing Matches
+
+If no test file is found, or a filter or `--test-name-pattern` matches nothing, `bun test` reports it and exits with code 1. Pass `--pass-with-no-tests` to exit with code 0 instead, for example in a shared CI step that runs before a package has any tests:
+
+```bash terminal icon="terminal"
+bun test --pass-with-no-tests
+```
+
 ### Changing the Root Directory
 
 By default, Bun looks for test files starting from the current working directory. Change this with the `root` option in `bunfig.toml`:

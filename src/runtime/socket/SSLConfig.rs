@@ -132,8 +132,7 @@ fn read_from_blob(
         StoreData::File(f) => f,
         _ => return Err(ReadFromBlobError::NotAFile),
     };
-    // The read below is on the JS thread, and `open(2)` on a FIFO with no
-    // writer never returns. A `stat` failure is left to the read's own errno.
+    // The read below is on the JS thread, and `open(2)` on a writerless FIFO never returns.
     if let PathOrFileDescriptor::Path(path) = &file.pathlike {
         let mut buffer = bun_paths::path_buffer_pool::get();
         if let Ok(stat) = bun_sys::stat(path.slice_z(&mut buffer))

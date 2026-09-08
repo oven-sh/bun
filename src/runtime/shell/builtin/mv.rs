@@ -329,10 +329,8 @@ impl Mv {
                     MvState::Executing { err, .. } => err.take().unwrap(),
                     _ => unreachable!(),
                 };
-                // The failing rename's errno becomes the shell exit code.
-                let exit_code = e.errno as ExitCode;
                 let buf = Builtin::task_error_to_string(interp, cmd, Kind::Mv, &e).to_vec();
-                Self::write_failing_error(interp, cmd, &buf, exit_code).run(interp);
+                Self::write_failing_error(interp, cmd, &buf, 1).run(interp);
                 return;
             }
             Self::state_mut(interp, cmd).state = MvState::Done;

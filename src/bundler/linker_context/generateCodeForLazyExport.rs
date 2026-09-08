@@ -366,22 +366,14 @@ pub(crate) fn generate_code_for_lazy_export(
 
     // A CSS module script exports `__cssModule("<css>")`, a constructed
     // `CSSStyleSheet`. The CSS text is only known once chunks are generated, so
-    // the string literal starts empty and `LinkerContext::css_module_scripts`
-    // remembers it.
-    let css_module_script = maybe_css_ast.is_some() && this.is_css_module_script(source_index);
-    if css_module_script {
+    // the argument starts empty and `LinkerContext::css_module_scripts`
+    // remembers the call.
+    let mut css_module_script: Option<crate::linker_context_mod::CssModuleScript> = None;
+    if maybe_css_ast.is_some() && this.is_css_module_script(source_index) {
         let stmt: Stmt = part.stmts[0];
         let StmtData::SLazyExport(mut slot) = stmt.data else {
             panic!("Internal error: expected top-level lazy export statement");
         };
-        let css_text = Expr::init(E::EString::init(b""), stmt.loc);
-        let ExprData::EString(css_text_string) = css_text.data else {
-            unreachable!();
-        };
-        *this
-            .css_module_scripts
-            .get_ptr_mut(&source_index)
-            .expect("checked by is_css_module_script") = Some(css_text_string);
         let call = Expr::init(
             E::Call {
                 target: Expr::init(
@@ -391,12 +383,28 @@ pub(crate) fn generate_code_for_lazy_export(
                     },
                     stmt.loc,
                 ),
-                args: bun_ast::ExprNodeList::from_slice(&[css_text]),
+                args: bun_ast::ExprNodeList::from_slice(&[Expr::init(
+                    E::EString::init(b""),
+                    stmt.loc,
+                )]),
                 can_be_unwrapped_if_unused: E::CallUnwrap::IfUnused,
                 ..Default::default()
             },
             stmt.loc,
         );
+        let ExprData::ECall(call_ref) = call.data else {
+            unreachable!();
+        };
+        let entry = crate::linker_context_mod::CssModuleScript {
+            call: Some(call_ref),
+            resolve_asset_urls: this.options.output_format == crate::options::OutputFormat::Esm
+                && css_references_copied_assets(this, source_index),
+        };
+        *this
+            .css_module_scripts
+            .get_ptr_mut(&source_index)
+            .expect("checked by is_css_module_script") = entry;
+        css_module_script = Some(entry);
         // `StoreRef<ExprData>` is a Copy `NonNull` — write through the pointer.
         *slot = call.data;
     }
@@ -415,12 +423,16 @@ pub(crate) fn generate_code_for_lazy_export(
     let calls_runtime_require = matches!(expr.data, ExprData::ECall(ref c)
         if matches!(c.target.data, ExprData::ERequireCallTarget))
         && this.options.output_format != crate::options::OutputFormat::Cjs;
-    let runtime_function_called: Option<&[u8]> = if calls_runtime_require {
-        Some(b"__require")
-    } else if css_module_script {
-        Some(b"__cssModule")
+    let runtime_functions_called: &[&[u8]] = if calls_runtime_require {
+        &[b"__require"]
+    } else if let Some(script) = css_module_script {
+        if script.resolve_asset_urls {
+            &[b"__cssModule", b"__cssUrl"]
+        } else {
+            &[b"__cssModule"]
+        }
     } else {
-        None
+        &[]
     };
 
     match exports_kind {
@@ -445,7 +457,7 @@ pub(crate) fn generate_code_for_lazy_export(
                 Index::init(source_index),
             )?;
 
-            if let Some(name) = runtime_function_called {
+            for name in runtime_functions_called {
                 this.graph.generate_runtime_symbol_import_and_use(
                     source_index,
                     Index::part(1u32),
@@ -553,7 +565,7 @@ pub(crate) fn generate_code_for_lazy_export(
                 let parts = this.graph.ast.items_parts_mut()[source_index as usize].as_mut_slice();
                 parts[generated.1 as usize].stmts = bun_ast::StoreSlice::new_mut(new_stmts);
 
-                if let Some(name) = runtime_function_called {
+                for name in runtime_functions_called {
                     this.graph.generate_runtime_symbol_import_and_use(
                         source_index,
                         Index::part(generated.1),
@@ -566,4 +578,39 @@ pub(crate) fn generate_code_for_lazy_export(
     }
 
     Ok(())
+}
+
+/// Whether printing the CSS file `source_index`, with the CSS files it
+/// `@import`s inlined, emits a `url()` that points at a copied asset rather
+/// than a `data:` URL or an external URL.
+fn css_references_copied_assets(this: &LinkerContext, source_index: IndexInt) -> bool {
+    let import_records = this.graph.ast.items_import_records();
+    let css_asts = this.graph.ast.items_css();
+    let parse_graph = this.parse_graph();
+    let urls_for_css = parse_graph.ast.items_url_for_css();
+    let unique_keys = parse_graph
+        .input_files
+        .items_unique_key_for_additional_file();
+
+    let mut visited: Vec<IndexInt> = vec![source_index];
+    let mut stack: Vec<IndexInt> = vec![source_index];
+    while let Some(index) = stack.pop() {
+        for record in import_records[index as usize].as_slice() {
+            if !record.source_index.is_valid() {
+                continue;
+            }
+            let other = record.source_index.get();
+            if css_asts[other as usize].is_some() {
+                if !visited.contains(&other) {
+                    visited.push(other);
+                    stack.push(other);
+                }
+            } else if urls_for_css[other as usize].is_empty()
+                && !unique_keys[other as usize].is_empty()
+            {
+                return true;
+            }
+        }
+    }
+    false
 }

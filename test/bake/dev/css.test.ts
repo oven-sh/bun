@@ -711,7 +711,7 @@ devTest("css module script import is reported as unsupported", {
       import sheet from "./widget.css" with { type: "css" };
       console.log(sheet);
     `,
-    "widget.css": `p { color: red; }`,
+    "widget.css": `body { color: red; }`,
   },
   async test(dev) {
     await using c = await dev.client("/", {
@@ -723,6 +723,7 @@ devTest("css module script import is reported as unsupported", {
       await dev.write("index.ts", `import "./widget.css"; console.log("plain");`);
     });
     await c.expectMessage("plain");
+    await c.style("body").color.expect.toBe("red");
   },
 });
 

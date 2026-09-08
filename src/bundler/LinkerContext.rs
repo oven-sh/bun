@@ -142,11 +142,22 @@ pub struct LinkerContext<'a> {
     /// CSS files that browser code imports with `with { type: "css" }` (CSS
     /// module scripts), by source index. Their JS stub exports a constructed
     /// `CSSStyleSheet` instead of `{}`, the importing chunk's CSS leaves them
-    /// out, and chunk assignment treats them as JS files. The value is the
-    /// string literal argument of the stub's `__cssModule()` call:
-    /// `generate_code_for_lazy_export` creates it empty and
-    /// `generate_chunks_in_parallel` fills in the printed CSS.
-    pub(crate) css_module_scripts: ArrayHashMap<u32, Option<bun_ast::StoreRef<E::EString>>>,
+    /// out, and chunk assignment treats them as JS files.
+    pub(crate) css_module_scripts: ArrayHashMap<u32, CssModuleScript>,
+}
+
+/// See [`LinkerContext::css_module_scripts`].
+#[derive(Clone, Copy, Default)]
+pub(crate) struct CssModuleScript {
+    /// The stub's `__cssModule("")` call. `generate_code_for_lazy_export`
+    /// creates it and `generate_chunks_in_parallel` replaces the argument with
+    /// the printed CSS.
+    pub(crate) call: Option<bun_ast::StoreRef<E::Call>>,
+    /// The CSS references copied assets and the output is ESM: each such
+    /// `url()` prints as `${__cssUrl(path, import.meta.url)}`, so it resolves
+    /// against the chunk like it would in a `.css` file next to it, not
+    /// against the page.
+    pub(crate) resolve_asset_urls: bool,
 }
 
 // SAFETY: `LinkerContext` is shared across the worker pool via `each_ptr` /

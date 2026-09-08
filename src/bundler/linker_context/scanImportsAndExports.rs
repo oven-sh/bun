@@ -248,7 +248,8 @@ pub(crate) fn scan_imports_and_exports(
                             ),
                         );
                     } else {
-                        this.css_module_scripts.put(other_file as u32, None)?;
+                        this.css_module_scripts
+                            .put(other_file as u32, Default::default())?;
                     }
                 }
 

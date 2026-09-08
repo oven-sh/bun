@@ -56,6 +56,11 @@ test("resolve and reject still settle the promise they came with", async () => {
     const { promise, resolve, reject } = Promise.withResolvers<number>();
     reject(42);
     resolve(7);
-    expect(await promise.then(() => "fulfilled", (reason: unknown) => ["rejected", reason])).toEqual(["rejected", 42]);
+    expect(
+      await promise.then(
+        () => "fulfilled",
+        (reason: unknown) => ["rejected", reason],
+      ),
+    ).toEqual(["rejected", 42]);
   }
 });

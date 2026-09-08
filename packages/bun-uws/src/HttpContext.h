@@ -381,7 +381,7 @@ private:
             }
             /* Same for bytes that arrive behind a finished response that closes the
              * connection while its body is still draining (onWritable closes then). */
-            if (httpResponseData->isDrainingBeforeClose() && !httpResponseData->isConnectRequest) {
+            if (httpResponseData->isDrainingBeforeClose() && !httpResponseData->isConnectRequest) [[unlikely]] {
                 us_socket_unref(s);
                 return s;
             }
@@ -429,7 +429,7 @@ private:
              * the uncork after this parse). Dispatching it would reset the
              * response state, drop HTTP_CONNECTION_CLOSE and answer it behind a
              * body the peer reads up to the FIN. */
-            if (IsNodeHttp && httpResponseData->isDrainingBeforeClose()) {
+            if (IsNodeHttp && httpResponseData->isDrainingBeforeClose()) [[unlikely]] {
                 stoppedBehindClosingResponse = true;
                 return nullptr;
             }

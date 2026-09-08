@@ -119,7 +119,9 @@ pub struct Progress {
     /// because other terminals exist like MSYS/git-bash)
     pub is_windows_terminal: bool,
 
-    /// Whether the terminal supports ANSI escape codes.
+    /// Whether the terminal supports ANSI escape codes. Set by `start()` from
+    /// what stderr is, never from the color preference: `FORCE_COLOR` does not
+    /// make a pipe take cursor movement.
     pub supports_ansi_escape_codes: bool,
 
     /// If the terminal is "dumb", don't print output.
@@ -350,6 +352,8 @@ impl Progress {
     pub fn start(&mut self, name: &'static [u8], estimated_total_items: usize) -> &mut Node {
         let stderr = File::stderr();
         self.terminal = None;
+        self.supports_ansi_escape_codes = false;
+        self.is_windows_terminal = false;
         if stderr.supports_ansi_escape_codes() {
             self.terminal = Some(stderr);
             self.supports_ansi_escape_codes = true;

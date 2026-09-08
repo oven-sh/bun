@@ -11380,3 +11380,27 @@ it.each([
     expect(exitCode).not.toBe(0);
   });
 });
+
+// BUN_INSTALL_PROGRESS=1 asks for the progress bar even when stderr is not a
+// terminal. It then prints plain lines: FORCE_COLOR forces colors, not the
+// cursor-left / erase-line redraw, which only a terminal takes.
+it("progress bar writes no cursor sequences into a piped stderr, even with FORCE_COLOR=1", async () => {
+  using dir = tempDir("install-progress-pipe", {
+    "package.json": JSON.stringify({ name: "root", dependencies: { dep: "file:./dep" } }),
+    dep: { "package.json": JSON.stringify({ name: "dep", version: "1.0.0" }) },
+  });
+  await using proc = spawn({
+    cmd: [bunExe(), "install"],
+    cwd: String(dir),
+    env: { ...bunEnv, NO_COLOR: undefined, FORCE_COLOR: "1", BUN_INSTALL_PROGRESS: "1" },
+    stdin: "ignore",
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  // The progress bar ran (its "Saving lockfile" node is refreshed explicitly)...
+  expect(stderr).toContain("Saving lockfile");
+  // ...with SGR colors at most, and no cursor movement or erase sequences.
+  expect(stdout + stderr).not.toMatch(/\x1b\[\d*[ABCDGHJK]/);
+  expect(exitCode).toBe(0);
+});

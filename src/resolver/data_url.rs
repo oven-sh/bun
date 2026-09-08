@@ -194,12 +194,8 @@ impl<'a> DataURL<'a> {
         let percent_decoded: &[u8] = percent_decoded_owned.as_deref().unwrap_or(self.data);
 
         if self.is_base64 {
-            let decoded = bun_base64::decode_alloc(percent_decoded)
-                .map_err(|_| DecodeDataError::Base64DecodeError)?;
-            if decoded.len() != bun_base64::decode_len(percent_decoded) {
-                return Err(DecodeDataError::Base64DecodeError);
-            }
-            return Ok(decoded);
+            return bun_base64::decode_forgiving_alloc(percent_decoded)
+                .map_err(|_| DecodeDataError::Base64DecodeError);
         }
 
         Ok(percent_decoded.to_vec())

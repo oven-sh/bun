@@ -718,6 +718,16 @@ describe("hostile option objects", () => {
     expect(meta).toEqual({ width: 2, height: 2, format: "png" });
   });
 
+  // MIME-wrapped base64 (e.g. `base64` CLI output: 76-column lines, trailing
+  // newline) decodes: forgiving-base64 strips ASCII whitespace first.
+  test("data: URL input with line-wrapped base64", async () => {
+    const b64 = Buffer.from(tinyPng).toString("base64");
+    const wrapped = b64.replace(/(.{20})/g, "$1\r\n") + "\n";
+    expect(wrapped).toContain("\r\n");
+    const meta = await new Bun.Image("data:image/png;base64," + wrapped).metadata();
+    expect(meta).toEqual({ width: 2, height: 2, format: "png" });
+  });
+
   test("data: URL with bad base64 throws", () => {
     expect(() => new Bun.Image("data:image/png;base64,!!!not base64!!!")).toThrow(/base64/);
   });

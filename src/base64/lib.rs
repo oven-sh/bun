@@ -119,6 +119,19 @@ pub fn decode_alloc(input: &[u8]) -> Result<Vec<u8>, DecodeAllocError> {
     Ok(dest)
 }
 
+/// WHATWG forgiving-base64 decode (https://infra.spec.whatwg.org/#forgiving-base64-decode):
+/// ASCII whitespace is skipped and `=` padding is optional. Any other byte
+/// outside the standard alphabet fails, with no garbage-skipping fallback.
+pub fn decode_forgiving_alloc(input: &[u8]) -> Result<Vec<u8>, DecodeAllocError> {
+    let mut dest = vec![0u8; decode_lenient_len(input.len())];
+    let result = simdutf::base64::decode(input, &mut dest, false);
+    if !result.is_successful() {
+        return Err(DecodeAllocError::DecodingFailed);
+    }
+    dest.truncate(result.count);
+    Ok(dest)
+}
+
 pub use bun_core::base64::encode;
 
 /// [`encode`] appended to `out` (reserving the room itself); returns the number of bytes appended.

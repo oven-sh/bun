@@ -1801,14 +1801,21 @@ ${yarnLockEntries}`,
   });
 
   test("a git dependency hosted on github.com is still migrated as git", async () => {
+    // A repository is `owner/repo` whatever the repo is called, including names that end like a
+    // tarball.
     const bunLock = await migrate(
-      { abbrev: "https://github.com/isaacs/abbrev-js.git" },
+      { abbrev: "https://github.com/isaacs/abbrev-js.git", dottar: "https://github.com/isaacs/dot.tar" },
       `"abbrev@https://github.com/isaacs/abbrev-js.git":
   version "1.1.1"
   resolved "https://github.com/isaacs/abbrev-js.git#3f9802e56ff878761a338e43ecacbfed39d2181d"
+
+"dottar@https://github.com/isaacs/dot.tar":
+  version "1.0.0"
+  resolved "https://github.com/isaacs/dot.tar#8f2e5c1d9a7b3f4e6d0c2b1a9e8d7c6b5a4f3e2d"
 `,
     );
 
     expect(bunLock).toContain(`"abbrev": ["abbrev-js@github:isaacs/abbrev-js#3f9802e", {}, ""]`);
+    expect(bunLock).toContain(`"dottar": ["dot.tar@github:isaacs/dot.tar#8f2e5c1", {}, ""]`);
   });
 });

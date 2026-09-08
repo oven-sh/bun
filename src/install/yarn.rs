@@ -129,8 +129,10 @@ impl<'a> Entry<'a> {
 
     pub(crate) fn is_git_dependency(version: &[u8]) -> bool {
         if let Some(github_path) = version.strip_prefix(b"https://github.com/") {
-            // An archive download's `#` is yarn's tarball hash, not a commit.
-            return !dependency::is_github_tarball_path(Entry::without_hash_fragment(github_path));
+            // `owner/repo` is a repository; archive downloads have more segments and `#<sha1>`.
+            let path = strings::without_trailing_slash(Entry::without_hash_fragment(github_path));
+            return strings::count_char(path, b'/') < 2
+                || !dependency::is_github_tarball_path(path);
         }
         version.starts_with(b"git+")
             || version.starts_with(b"git://")

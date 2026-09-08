@@ -1035,7 +1035,7 @@ impl Diff {
 
         if pm.options.log_level.is_verbose() && (diff.add + diff.remove + diff.update) > 0 {
             bun_core::pretty_errorln!(
-                "Local package \"{}\" has added <green>{}<r> dependencies, removed <red>{}<r> dependencies, and updated <cyan>{}<r> dependencies",
+                "Package \"file:{}\" has added <green>{}<r> dependencies, removed <red>{}<r> dependencies, and updated <cyan>{}<r> dependencies",
                 bstr::BStr::new(folder_path),
                 diff.add,
                 diff.remove,

@@ -131,6 +131,7 @@ pub mod js_bundler {
         pub(crate) allow_unresolved: Option<StringSet>,
         pub(crate) source_map: options::SourceMapOption,
         pub(crate) public_path: OwnedString,
+        pub(crate) asset_inline_limit: u32,
         pub(crate) conditions: StringSet,
         pub(crate) packages: options::PackagesOption,
         pub(crate) format: options::Format,
@@ -199,6 +200,7 @@ pub mod js_bundler {
                 allow_unresolved: None,
                 source_map: options::SourceMapOption::None,
                 public_path: OwnedString::default(),
+                asset_inline_limit: options::DEFAULT_ASSET_INLINE_LIMIT,
                 conditions: StringSet::default(),
                 packages: options::PackagesOption::Bundle,
                 format: options::Format::Esm,
@@ -1038,6 +1040,10 @@ pub mod js_bundler {
                 drop(slice);
             }
 
+            if let Some(limit) = config.get_optional_int::<u32>(global_this, "assetInlineLimit")? {
+                this.asset_inline_limit = limit;
+            }
+
             if let Some(naming) = config.get_truthy(global_this, "naming")? {
                 let with_dot_slash = |s: &[u8]| -> Box<[u8]> {
                     if s.starts_with(b"./") {
@@ -1168,7 +1174,7 @@ pub mod js_bundler {
                         global_this,
                         "loader",
                         &options::LOADER_API_NAMES,
-                        "\"js\", \"jsx\", \"ts\", \"tsx\", \"css\", \"file\", \"json\", \"toml\", \"wasm\", \"napi\", \"base64\", \"dataurl\", \"text\", \"html\"",
+                        "\"js\", \"jsx\", \"ts\", \"tsx\", \"css\", \"file\", \"url\", \"json\", \"toml\", \"wasm\", \"napi\", \"base64\", \"dataurl\", \"text\", \"html\"",
                     )?);
                     loader_names.push(prop.to_owned_slice().into_boxed_slice());
                 }

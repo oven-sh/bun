@@ -1021,6 +1021,7 @@ impl CompletionStruct for JSBundleCompletionTask {
         transpiler.options.css_chunking = config.css_chunking;
         transpiler.options.min_chunk_size = config.min_chunk_size;
         transpiler.options.module_preload = config.module_preload;
+        transpiler.options.asset_inline_limit = config.asset_inline_limit;
         let compile_to_standalone_html = 'brk: {
             if config.compile.is_none() || config.target != bun_ast::Target::Browser {
                 break 'brk false;

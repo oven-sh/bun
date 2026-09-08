@@ -3286,6 +3286,21 @@ declare module "bun" {
     define?: Record<string, string>;
     // origin?: string; // e.g. http://mydomain.com
     loader?: { [k in string]: Loader };
+
+    /**
+     * Assets referenced from a CSS `url(...)` are inlined as `data:` URIs
+     * when their size is strictly below this threshold, in bytes. Files at
+     * or above the threshold are emitted as separate hashed files.
+     *
+     * Only applies to the `url` loader (the default for extensions not
+     * otherwise configured). Extensions that use the explicit `file` loader
+     * are always emitted as physical files.
+     *
+     * Set to `0` to disable inlining entirely.
+     *
+     * @default 131072 // 128 KB
+     */
+    assetInlineLimit?: number;
     /**
      * Specifies if and how to generate source maps.
      *
@@ -6034,6 +6049,7 @@ declare module "bun" {
     | "yaml"
     | "xml"
     | "file"
+    | "url"
     | "napi"
     | "wasm"
     | "text"

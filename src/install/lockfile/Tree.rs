@@ -658,18 +658,19 @@ pub(crate) fn is_filtered_dependency_or_workspace(
     if dep.behavior.is_optional_peer() {
         let siblings = pkgs.items_dependencies()[parent_pkg_id as usize]
             .get(lockfile.buffers.dependencies.as_slice());
+        // The omitted group resolved this package. Drop the peer too unless the install still reaches it.
         if optional_peer_group_enabled(dep, siblings, |behavior| behavior.is_enabled(dep_features))
             == Some(false)
-        {
-            // The omitted group resolved this package. Keep the peer only if the install still reaches it.
-            return !reached.contains(
+            && !reached.contains(
                 lockfile,
                 resolutions,
                 manager,
                 workspace_filters,
                 install_root_dependencies,
                 pkg_id,
-            );
+            )
+        {
+            return true;
         }
     }
 

@@ -815,7 +815,7 @@ describe("text lockfile", () => {
       await using proc = spawn({
         cmd: [bunExe(), "install", `--linker=${linker}`, ...args],
         cwd: packageDir,
-        stdout: "pipe",
+        stdout: "ignore",
         stderr: "pipe",
         env,
       });
@@ -883,18 +883,17 @@ describe("text lockfile", () => {
     });
 
     test("--omit=dev keeps an optional peer + devDependency that the install still reaches", async () => {
-      // lib tests against both peers; only "no-deps" is also brought by its consumer
+      // root and lib test against their peers; only "no-deps" is also brought by a consumer (app)
+      const devAndOptionalPeer = {
+        devDependencies: { "no-deps": "1.0.0", "a-dep": "1.0.1" },
+        peerDependencies: { "no-deps": "^1.0.0", "a-dep": "^1.0.1" },
+        peerDependenciesMeta: { "no-deps": { optional: true }, "a-dep": { optional: true } },
+      };
       await Promise.all([
-        write(packageJson, JSON.stringify({ name: "foo", workspaces: ["packages/*"] })),
+        write(packageJson, JSON.stringify({ name: "foo", workspaces: ["packages/*"], ...devAndOptionalPeer })),
         write(
           join(packageDir, "packages", "lib", "package.json"),
-          JSON.stringify({
-            name: "lib",
-            version: "1.0.0",
-            devDependencies: { "no-deps": "1.0.0", "a-dep": "1.0.1" },
-            peerDependencies: { "no-deps": "^1.0.0", "a-dep": "^1.0.1" },
-            peerDependenciesMeta: { "no-deps": { optional: true }, "a-dep": { optional: true } },
-          }),
+          JSON.stringify({ name: "lib", version: "1.0.0", ...devAndOptionalPeer }),
         ),
         write(
           join(packageDir, "packages", "app", "package.json"),
@@ -905,21 +904,34 @@ describe("text lockfile", () => {
           }),
         ),
       ]);
+      const rmNodeModules = async () => {
+        for (const dir of ["", join("packages", "lib"), join("packages", "app")]) {
+          await rm(join(packageDir, dir, "node_modules"), { recursive: true, force: true });
+        }
+      };
 
       expect(await install("--save-text-lockfile")).toContain("Saved lockfile");
       expect(await Promise.all([installed("no-deps", "1.0.0"), installed("a-dep", "1.0.1")])).toEqual([true, true]);
       const fullLockfile = await lockfileText();
 
-      for (const dir of ["", join("packages", "lib"), join("packages", "app")]) {
-        await rm(join(packageDir, dir, "node_modules"), { recursive: true, force: true });
-      }
+      await rmNodeModules();
       await install("--frozen-lockfile", "--omit=dev");
       expect(await Promise.all([installed("no-deps", "1.0.0"), installed("a-dep", "1.0.1")])).toEqual([true, false]);
       if (linker === "isolated") {
-        // lib still gets the peer its consumer provides, as it would without the devDependency
+        // root and lib still get the peer that app provides, as they would without the devDependency
         expect(await readdirSorted(join(packageDir, "packages", "lib", "node_modules"))).toEqual(["no-deps"]);
+        expect(await exists(join(packageDir, "node_modules", "no-deps"))).toBeTrue();
       }
       expect(await lockfileText()).toBe(fullLockfile);
+
+      // `--filter` leaves the root out: being reached through app must not link the peer into root
+      await rmNodeModules();
+      await install("--frozen-lockfile", "--omit=dev", "--filter", "app");
+      expect(await installed("no-deps", "1.0.0")).toBeTrue();
+      if (linker === "isolated") {
+        expect(await exists(join(packageDir, "packages", "app", "node_modules", "no-deps"))).toBeTrue();
+        expect(await exists(join(packageDir, "node_modules", "no-deps"))).toBeFalse();
+      }
     });
   });
 

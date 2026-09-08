@@ -37,6 +37,20 @@ pub struct S3StatSuccess<'a> {
     pub(crate) content_type: &'a [u8],
 }
 
+impl<'a> S3StatSuccess<'a> {
+    fn from_headers(headers: &picohttp::HeaderList<'a>) -> Self {
+        Self {
+            etag: headers.get(b"etag").unwrap_or(b""),
+            last_modified: headers.get(b"last-modified").unwrap_or(b""),
+            content_type: headers.get(b"content-type").unwrap_or(b""),
+            size: headers
+                .get(b"content-length")
+                .map(bun_http_types::parse_content_length)
+                .unwrap_or(0),
+        }
+    }
+}
+
 pub enum S3StatResult<'a> {
     Success(S3StatSuccess<'a>),
     NotFound(S3Error<'a>),
@@ -151,6 +165,8 @@ impl Taskable for S3HttpSimpleTask {
 
 pub enum Callback {
     Stat(fn(S3StatResult<'_>, *mut c_void) -> bun_jsc::JsResult<()>),
+    /// A `Bun.serve` HEAD response sizing its S3 body; ignores `context`.
+    StatRequestContext(crate::server::AnyRequestContext),
     Download(fn(S3DownloadResult<'_>, *mut c_void) -> bun_jsc::JsResult<()>),
     Upload(fn(S3UploadResult<'_>, *mut c_void) -> bun_jsc::JsResult<()>),
     Delete(fn(S3DeleteResult<'_>, *mut c_void) -> bun_jsc::JsResult<()>),
@@ -166,6 +182,9 @@ impl Callback {
             Callback::Upload(callback) => callback(S3UploadResult::Failure(err), context)?,
             Callback::Download(callback) => callback(S3DownloadResult::Failure(err), context)?,
             Callback::Stat(callback) => callback(S3StatResult::Failure(err), context)?,
+            Callback::StatRequestContext(ctx) => {
+                ctx.on_s3_size_resolved(S3StatResult::Failure(err))
+            }
             Callback::Delete(callback) => callback(S3DeleteResult::Failure(err), context)?,
             Callback::ListObjects(callback) => {
                 callback(S3ListObjectsResult::Failure(err), context)?
@@ -186,6 +205,9 @@ impl Callback {
         match self {
             Callback::Download(callback) => callback(S3DownloadResult::NotFound(err), context)?,
             Callback::Stat(callback) => callback(S3StatResult::NotFound(err), context)?,
+            Callback::StatRequestContext(ctx) => {
+                ctx.on_s3_size_resolved(S3StatResult::NotFound(err))
+            }
             Callback::Delete(callback) => callback(S3DeleteResult::NotFound(err), context)?,
             Callback::ListObjects(callback) => {
                 callback(S3ListObjectsResult::NotFound(err), context)?
@@ -303,19 +325,17 @@ impl S3HttpSimpleTask {
             Callback::Stat(callback) => match response.status_code {
                 200 => {
                     callback(
-                        S3StatResult::Success(S3StatSuccess {
-                            etag: response.headers.get(b"etag").unwrap_or(b""),
-                            last_modified: response.headers.get(b"last-modified").unwrap_or(b""),
-                            content_type: response.headers.get(b"content-type").unwrap_or(b""),
-                            size: response
-                                .headers
-                                .get(b"content-length")
-                                .map(bun_http_types::parse_content_length)
-                                .unwrap_or(0),
-                        }),
+                        S3StatResult::Success(S3StatSuccess::from_headers(&response.headers)),
                         this.callback_context,
                     )?;
                 }
+                404 => this.error_with_body(ErrorType::NotFound)?,
+                _ => this.error_with_body(ErrorType::Failure)?,
+            },
+            Callback::StatRequestContext(ctx) => match response.status_code {
+                200 => ctx.on_s3_size_resolved(S3StatResult::Success(S3StatSuccess::from_headers(
+                    &response.headers,
+                ))),
                 404 => this.error_with_body(ErrorType::NotFound)?,
                 _ => this.error_with_body(ErrorType::Failure)?,
             },

@@ -5,6 +5,7 @@ use crate::h3::Request as H3Request;
 /// Transport-agnostic request handle. Static/file routes (and RangeRequest)
 /// take this so the same handler body serves HTTP/1.1 and HTTP/3 without
 /// `anytype` — `inline else` keeps dispatch monomorphic.
+#[derive(Clone, Copy)]
 pub enum AnyRequest {
     H1(*mut Request),
     H3(*mut H3Request),

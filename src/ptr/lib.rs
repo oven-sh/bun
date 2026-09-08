@@ -42,7 +42,7 @@ pub use tagged_pointer::TaggedPtr;
 pub mod ref_count;
 pub use ref_count::{
     AnyRefCounted, CellRefCounted, RefCount, RefCounted, RefPtr, ThreadSafeRefCount,
-    ThreadSafeRefCounted,
+    ThreadSafeRefCounted, destroy_with,
 };
 // Derive macros — same names as the traits (separate namespace). The derives
 // expand to `::bun_ptr::…` paths, so this crate is the canonical re-export
@@ -232,6 +232,13 @@ impl<T> From<ThisPtr<T>> for BackRef<T, Root> {
     #[inline]
     fn from(p: ThisPtr<T>) -> Self {
         BackRef(p.0, core::marker::PhantomData)
+    }
+}
+
+impl<T> From<ThisPtr<T>> for core::ptr::NonNull<T> {
+    #[inline]
+    fn from(p: ThisPtr<T>) -> Self {
+        p.0
     }
 }
 

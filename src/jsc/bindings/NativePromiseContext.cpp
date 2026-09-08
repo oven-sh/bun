@@ -66,8 +66,18 @@ extern "C" JSC::EncodedJSValue Bun__NativePromiseContext__create(Zig::GlobalObje
     return JSC::JSValue::encode(cell);
 }
 
-extern "C" void* Bun__NativePromiseContext__take(JSC::EncodedJSValue encodedValue)
+// Returns null (leaving the cell to its destructor) unless `encodedValue` is a
+// NativePromiseContext created with `expectedTag`, so the Rust side can hand
+// the pointer back as the type that tag names.
+extern "C" void* Bun__NativePromiseContext__take(JSC::EncodedJSValue encodedValue, uint8_t expectedTag)
 {
-    auto* cell = uncheckedDowncast<Bun::NativePromiseContext>(JSC::JSValue::decode(encodedValue));
+    JSC::JSValue value = JSC::JSValue::decode(encodedValue);
+    auto* cell = value ? dynamicDowncast<Bun::NativePromiseContext>(value) : nullptr;
+    ASSERT_WITH_MESSAGE(cell, "NativePromiseContext::take on a foreign cell");
+    if (!cell) [[unlikely]]
+        return nullptr;
+    ASSERT_WITH_MESSAGE(cell->tag() == static_cast<Bun::NativePromiseContext::Tag>(expectedTag), "NativePromiseContext::take with the wrong tag");
+    if (cell->tag() != static_cast<Bun::NativePromiseContext::Tag>(expectedTag)) [[unlikely]]
+        return nullptr;
     return cell->take();
 }

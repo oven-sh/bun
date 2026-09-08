@@ -5804,10 +5804,8 @@ impl VirtualMachine {
             return;
         }
 
-        // Pick the top-most non-builtin frame for source preview. When every
-        // frame is a builtin, `top` stays 0 and `top_frame_is_builtin` stays
-        // set: frame 0's source is then bun's bundled module text or a JSC
-        // builtin, and nothing below may excerpt it.
+        // Pick the top-most non-builtin frame for source preview. If there is
+        // none, `top_frame_is_builtin` stays set and no source is excerpted.
         let mut top: usize = 0;
         let mut top_frame_is_builtin = false;
         if self.hide_bun_stackframes {
@@ -6898,11 +6896,8 @@ impl VirtualMachine {
     }
 }
 
-/// Whether a stack frame's source URL names one of bun's bundled JS modules
-/// (`node:fs`, `bun:sqlite`, `internal:streams/from`): the names
-/// `src/codegen/bundle-modules.ts` gives the sources in `src/js/`. Such a
-/// frame has no file on disk, and its JSC source is the bundled module text,
-/// so the error printer neither picks it for the code frame nor excerpts it.
+/// Whether a frame's source URL names one of bun's bundled `src/js` modules
+/// (named in `src/codegen/bundle-modules.ts`), whose source is not user code.
 fn is_bun_module_url(url: &bun_core::String) -> bool {
     url.starts_with_ascii(b"bun:")
         || url.starts_with_ascii(b"node:")

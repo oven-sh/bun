@@ -3318,6 +3318,46 @@ describe("bundler", () => {
     target: "bun",
     run: { stdout: '[true,true,null,"{\\"__proto__\\":{\\"x\\":1},\\"a\\":2}"]' },
   });
+  // A macro result or a folded constant that is NaN, ±Infinity or undefined
+  // prints as the bare global name. The renamer reserves those names, so a
+  // user binding called NaN, Infinity or undefined is renamed instead of
+  // capturing the printed value.
+  for (const minify of [false, true]) {
+    itBundled(`edgecase/MacroNaNInfinityUndefinedShadowed${minify ? "Minified" : ""}`, {
+      files: {
+        "/entry.ts": /* js */ `
+          import { nan, inf, ninf, undef } from "./macro.ts" with { type: "macro" };
+          import * as top from "./top-level.ts";
+          function f(NaN, Infinity, undefined) {
+            return [
+              typeof nan(), typeof undef(),
+              String(nan()), String(inf()), String(ninf()), String(undef()),
+              String(+"x"), String(void 0),
+              NaN, Infinity, undefined,
+            ];
+          }
+          console.write(JSON.stringify([f("n", "i", "u"), top.NaN, top.Infinity, top.undefined, String(nan()), String(inf())]));
+        `,
+        "/macro.ts": /* js */ `
+          export function nan() { return NaN; }
+          export function inf() { return Infinity; }
+          export function ninf() { return -Infinity; }
+          export function undef() { return undefined; }
+        `,
+        "/top-level.ts": /* js */ `
+          export const NaN = "N", Infinity = "I";
+          export var undefined = "U";
+        `,
+      },
+      target: "bun",
+      minifySyntax: minify,
+      minifyIdentifiers: minify,
+      run: {
+        stdout:
+          '[["number","undefined","NaN","Infinity","-Infinity","undefined","NaN","undefined","n","i","u"],"N","I","U","NaN","Infinity"]',
+      },
+    });
+  }
   // The macro module is transpiled by the macro VM, not by the bundler. That
   // VM has to be created from the build's transform options, or the macro
   // module does not see `--define` and `--loader`. The `Bun.build()` variant

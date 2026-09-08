@@ -309,7 +309,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             p.ignore_usage(p.module_ref);
                             return Some(p.value_for_require(name_loc));
                         } else if !p.commonjs_named_exports_deoptimized && name == b"exports" {
-
                             // Detect if we are doing
                             //
                             //  module.exports = {

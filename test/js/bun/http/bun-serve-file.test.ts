@@ -116,6 +116,11 @@ describe("Bun.file in serve routes", () => {
         const res = new Response(Bun.file(join(tempDir, "hello.txt"), { type: "image/png" }));
         return new Response(res.body, res);
       },
+      // The same rewrapped response registered as a file route, not a handler.
+      "/type-override-rewrap-route": (() => {
+        const res = new Response(Bun.file(join(tempDir, "hello.txt"), { type: "image/png" }));
+        return new Response(res.body, res);
+      })(),
     } as const;
 
     server = Bun.serve({
@@ -892,7 +897,7 @@ describe("Bun.file in serve routes", () => {
       expect(res.headers.get("Content-Type")).toMatch(/application\/octet-stream/);
     });
 
-    it.each(["/type-override", "/type-override-body-read", "/type-override-rewrap"])(
+    it.each(["/type-override", "/type-override-body-read", "/type-override-rewrap", "/type-override-rewrap-route"])(
       "a Bun.file() type override wins over the extension (%s)",
       async path => {
         const res = await fetch(new URL(path, server.url));

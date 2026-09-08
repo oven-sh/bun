@@ -165,6 +165,11 @@ impl FileRoute {
                     "expected blob not to be heap-allocated"
                 );
                 *body_value = BodyValue::Blob(blob.dupe());
+                // A Content-Type the Response has not put in a header list yet
+                // (`Init::pending_content_type`) belongs in the route's headers too.
+                if !response.pending_content_type().is_empty() {
+                    response.get_or_create_headers(global)?;
+                }
                 let headers = headers_from(response.get_init_headers(), &blob);
                 let status_code = response.status_code();
 

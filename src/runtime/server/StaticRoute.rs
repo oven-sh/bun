@@ -221,6 +221,10 @@ impl StaticRoute {
                     &bun_core::String::ascii(text_mime.value.as_ref()),
                     global_this,
                 )?;
+            } else if !response.pending_content_type().is_empty() {
+                // A Content-Type the Response has not put in a header list yet
+                // (`Init::pending_content_type`) belongs in the route's headers too.
+                response.get_or_create_headers(global_this)?;
             }
 
             let mut headers: Headers = bun_http_jsc::headers_jsc::from_fetch_headers(

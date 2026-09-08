@@ -4788,12 +4788,7 @@ impl<const DEBUG_MODE: bool> Flags<DEBUG_MODE> {
     }
 }
 
-/// `(content_type, needs_content_type, content_type_needs_free)` for framing
-/// `blob`, the body already moved out of `response`. `needs_content_type` is
-/// `false` when `do_write_headers` sends the handler's own Content-Type, and
-/// when the handler deleted it ([`Response::headers_own_content_type`]): then
-/// none is sent, but `content_type` still describes the body for
-/// `autoset_filename`.
+/// `needs_content_type` is false when the headers carry one or the handler deleted it; the `MimeType` always describes `blob`.
 fn get_content_type(response: &Response, blob: &AnyBlob) -> (MimeType, bool, bool) {
     let mut needs_content_type = true;
     let mut content_type_needs_free = false;

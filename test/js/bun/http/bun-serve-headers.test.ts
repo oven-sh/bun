@@ -467,21 +467,20 @@ describe("Bun.serve does not re-derive a Content-Type the handler deleted", () =
     return value?.startsWith("multipart/form-data;") ? "multipart/form-data" : value;
   };
 
-  for (const [name, c] of Object.entries(cases)) {
-    test(name, async () => {
-      const path = encodeURIComponent(name);
-      const expected: Record<string, unknown> = { inProcess: c.inProcess, "GET dynamic": c.wire };
-      const actual: Record<string, unknown> = {
-        inProcess: inProcess(c.make()),
-        "GET dynamic": await contentTypes("GET", "/dynamic/" + path),
-      };
-      if (c.static) {
-        expected["GET static"] = c.wire;
-        expected["HEAD static"] = c.wire;
-        actual["GET static"] = await contentTypes("GET", "/static/" + path);
-        actual["HEAD static"] = await contentTypes("HEAD", "/static/" + path);
-      }
-      expect(actual).toEqual(expected);
-    });
-  }
+  test.each(Object.keys(cases))("%s", async name => {
+    const c = cases[name];
+    const path = encodeURIComponent(name);
+    const expected: Record<string, unknown> = { inProcess: c.inProcess, "GET dynamic": c.wire };
+    const actual: Record<string, unknown> = {
+      inProcess: inProcess(c.make()),
+      "GET dynamic": await contentTypes("GET", "/dynamic/" + path),
+    };
+    if (c.static) {
+      expected["GET static"] = c.wire;
+      expected["HEAD static"] = c.wire;
+      actual["GET static"] = await contentTypes("GET", "/static/" + path);
+      actual["HEAD static"] = await contentTypes("HEAD", "/static/" + path);
+    }
+    expect(actual).toEqual(expected);
+  });
 });

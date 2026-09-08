@@ -367,9 +367,8 @@ impl Response {
     }
 
     /// R-2 `JsCell` escape hatch — single-JS-thread invariant. Centralises the
-    /// `unsafe { self.init.get_mut() }` deref so the call sites
-    /// ([`get_init_headers_mut`], [`clone_init_headers`],
-    /// [`get_or_create_headers`], [`put_default_content_type`],
+    /// `unsafe { self.init.get_mut() }` deref so the four call sites
+    /// ([`get_init_headers_mut`], [`header`], [`get_or_create_headers`],
     /// [`get_content_type`]) read it as a plain `&mut Init`.
     ///
     /// # Safety (encapsulated)
@@ -613,8 +612,7 @@ impl Response {
         Ok(init.headers.as_mut().unwrap())
     }
 
-    /// `put_default` a Content-Type on the (created if needed) header list and
-    /// hand ownership of the Content-Type to it.
+    /// `put_default` a Content-Type, after which the header list owns the Content-Type.
     pub(crate) fn put_default_content_type(
         &self,
         global_this: &JSGlobalObject,
@@ -629,24 +627,13 @@ impl Response {
         Ok(())
     }
 
-    /// Whether this response's Content-Type comes from the header list alone.
-    /// `true` once the list has held one: supplied in the init, copied from a
-    /// typed body (`Blob` with a `type`, `FormData`, `URLSearchParams`,
-    /// `Bun.file()`), or set by `Response.json()`. If the list then has no
-    /// Content-Type the user deleted it, and deriving one from the body again
-    /// would undo that. While `false` (a string or untyped body, or headers
-    /// never materialized) the body may still supply one. Every reader of the
-    /// Content-Type (the `Bun.serve` send paths, `formData()`,
-    /// `WebAssembly.compileStreaming`) goes through [`body_content_type`] or
-    /// [`get_content_type`] so they agree.
+    /// See [`Init::headers_own_content_type`]: when `true`, a missing Content-Type header was deleted by the user.
     #[inline]
     pub(crate) fn headers_own_content_type(&self) -> bool {
         self.init.get().headers_own_content_type
     }
 
-    /// The Content-Type that `body` (this response's body, which a server may
-    /// already have moved out) still contributes: `None` once the header list
-    /// owns the Content-Type, else `body_content_type` unless it is empty.
+    /// `body_content_type` (the body may already be moved out) unless the header list owns the Content-Type.
     #[inline]
     pub(crate) fn body_content_type<'b>(
         &self,
@@ -1239,11 +1226,7 @@ pub struct Init {
     pub(crate) status_code: u16,
     pub(crate) status_text: BunString,
     pub method: Method,
-    /// `headers` held a Content-Type when it was attached (the init supplied
-    /// one) or Bun has since put the body's type into it. From then on the
-    /// header list is the only source of this response's Content-Type: when a
-    /// server finds none there the user removed it, and the body's type must
-    /// not be derived again. See [`Response::headers_own_content_type`].
+    /// `headers` has held a Content-Type (init, typed body, `Response.json`): never derive one from the body again.
     pub(crate) headers_own_content_type: bool,
 }
 
@@ -1318,8 +1301,7 @@ impl Init {
                 // JS wrapper cell; rooted by `response_init` for this call.
                 let resp = unsafe { &*resp };
                 let mut init = resp.init.get().clone(global_this)?;
-                // The donor's flag describes the donor's body, not the one this
-                // init is about to be paired with.
+                // The donor's flag describes the donor's body; the constructor recomputes it.
                 init.headers_own_content_type = false;
                 return Ok(Some(init));
             }

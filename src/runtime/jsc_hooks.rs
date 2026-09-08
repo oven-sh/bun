@@ -1129,6 +1129,20 @@ unsafe fn auto_tick(vm: *mut VirtualMachine) {
 /// # Safety
 /// `vm` is the live per-thread VM.
 unsafe fn auto_tick_active(vm: *mut VirtualMachine) {
+    // SAFETY: per fn contract.
+    unsafe { auto_tick_active_with_max_wait(vm, None) }
+}
+
+/// [`auto_tick_active`] with an upper bound on how long the I/O poll may
+/// block, as a duration. `None` is [`auto_tick_active`] itself: the poll
+/// blocks until the next timer is due, or forever while a handle is open.
+///
+/// # Safety
+/// `vm` is the live per-thread VM.
+pub(crate) unsafe fn auto_tick_active_with_max_wait(
+    vm: *mut VirtualMachine,
+    max_wait: Option<&bun_core::Timespec>,
+) {
     // Note: reshaped for borrowck — see `auto_tick` above.
     // SAFETY: per fn contract — `vm` is the live per-thread VM.
     let el: *mut bun_jsc::event_loop::EventLoop = unsafe { &*vm }.event_loop;
@@ -1205,7 +1219,7 @@ unsafe fn auto_tick_active(vm: *mut VirtualMachine) {
             let mut now: Option<bun_core::Timespec> = None;
             // SAFETY: `state` is the live per-thread `RuntimeState`; see
             // Note on `auto_tick` re: aliased-&mut across `fire()`.
-            let have_timeout = unsafe {
+            let mut have_timeout = unsafe {
                 timer::All::get_timeout(
                     &mut (*state).timer,
                     &mut timespec,
@@ -1215,6 +1229,12 @@ unsafe fn auto_tick_active(vm: *mut VirtualMachine) {
                     &mut now,
                 )
             };
+            if let Some(max_wait) = max_wait {
+                if !have_timeout || max_wait.order(&timespec).is_lt() {
+                    timespec = *max_wait;
+                    have_timeout = true;
+                }
+            }
             let now_ns = now.map_or(bun_uws::NOW_NS_UNKNOWN, |t| t.ns());
             // SAFETY: `loop_` is the live per-thread uws loop.
             unsafe {

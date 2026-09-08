@@ -1,15 +1,22 @@
-#ifdef FUZZILLI_ENABLED
+#include "root.h"
+
 #include "JavaScriptCore/CallFrame.h"
+#include "JavaScriptCore/Completion.h"
+#include "JavaScriptCore/Exception.h"
 #include "JavaScriptCore/Identifier.h"
 #include "JavaScriptCore/JSGlobalObject.h"
+#include "JavaScriptCore/SourceCode.h"
+#include "JavaScriptCore/TopExceptionScope.h"
 #include "ZigGlobalObject.h"
-#include "root.h"
 #include "wtf/text/WTFString.h"
+
+#ifdef FUZZILLI_ENABLED
 #include <cerrno>
 #include <csignal>
 #include <cstdlib>
 #include <cstring>
 #include <fcntl.h>
+#include <mutex>
 #include <sanitizer/asan_interface.h>
 #include <sys/mman.h>
 #include <sys/stat.h>
@@ -246,25 +253,21 @@ extern "C" void __sanitizer_cov_trace_pc_guard(uint32_t* guard)
     *guard = 0;
 }
 
-// Function to reset coverage for next REPRL iteration
-// This should be called after each script execution
-JSC_DEFINE_HOST_FUNCTION(jsResetCoverage, (JSC::JSGlobalObject * globalObject, JSC::CallFrame*))
-{
-    __sanitizer_cov_reset_edgeguards();
-    return JSC::JSValue::encode(JSC::jsUndefined());
-}
-
-// Register the fuzzilli() function on a Bun global object
+// Register the fuzzilli() function on a Bun global object. Called for the
+// initial global and for every global the REPRL loop swaps in after it.
 void Bun__REPRL__registerFuzzilliFunctions(Zig::GlobalObject* globalObject)
 {
     JSC::VM& vm = globalObject->vm();
 
     // Install signal handlers to ensure output is flushed before crashes
     // This is important for ASAN output to be captured
-    signal(SIGABRT, fuzzilliSignalHandler);
-    signal(SIGSEGV, fuzzilliSignalHandler);
-    signal(SIGILL, fuzzilliSignalHandler);
-    signal(SIGFPE, fuzzilliSignalHandler);
+    static std::once_flag installSignalHandlers;
+    std::call_once(installSignalHandlers, [] {
+        signal(SIGABRT, fuzzilliSignalHandler);
+        signal(SIGSEGV, fuzzilliSignalHandler);
+        signal(SIGILL, fuzzilliSignalHandler);
+        signal(SIGFPE, fuzzilliSignalHandler);
+    });
 
     globalObject->putDirectNativeFunction(
         vm,
@@ -275,18 +278,51 @@ void Bun__REPRL__registerFuzzilliFunctions(Zig::GlobalObject* globalObject)
         JSC::ImplementationVisibility::Public,
         JSC::NoIntrinsic,
         JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::DontDelete);
-
-    globalObject->putDirectNativeFunction(
-        vm,
-        globalObject,
-        JSC::Identifier::fromString(vm, "resetCoverage"_s),
-        0,
-        jsResetCoverage,
-        JSC::ImplementationVisibility::Public,
-        JSC::NoIntrinsic,
-        JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::DontDelete);
 }
 
 } // extern "C"
 
 #endif // FUZZILLI_ENABLED
+
+// ============================================================================
+// REPRL loop support. The loop itself is src/runtime/cli/fuzzilli_command.rs.
+// These are compiled into every build so that `bun fuzzilli` can be driven by
+// the test suite in debug/ASAN builds; only the coverage reset needs the
+// -fsanitize-coverage instrumentation that FUZZILLI_ENABLED builds carry.
+// ============================================================================
+
+// Evaluates one REPRL program as sloppy-mode global code on `globalObject`,
+// the way jsc.cpp and d8 run Fuzzilli programs. Returns false and stores the
+// JSC::Exception in *exception when evaluation throws.
+extern "C" [[ZIG_EXPORT(nothrow)]] bool Bun__REPRL__evaluate(Zig::GlobalObject* globalObject, const unsigned char* source, size_t sourceLen, JSC::EncodedJSValue* exception)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+
+    JSC::SourceCode code = JSC::makeSource(
+        WTF::String::fromUTF8ReplacingInvalidSequences(std::span { source, sourceLen }),
+        JSC::SourceOrigin {},
+        JSC::SourceTaintedOrigin::Untainted,
+        "[REPRL]"_s,
+        WTF::TextPosition(),
+        JSC::SourceProviderSourceType::Program);
+
+    WTF::NakedPtr<JSC::Exception> thrown;
+    JSC::evaluate(globalObject, code, globalObject->globalThis(), thrown);
+
+    JSC::Exception* error = thrown.get();
+    if (!error)
+        error = scope.exception();
+    if (!error)
+        return true;
+    *exception = JSC::JSValue::encode(JSC::JSValue(error));
+    scope.clearException();
+    return false;
+}
+
+extern "C" [[ZIG_EXPORT(nothrow)]] void Bun__REPRL__resetCoverage()
+{
+#ifdef FUZZILLI_ENABLED
+    __sanitizer_cov_reset_edgeguards();
+#endif
+}

@@ -679,6 +679,10 @@ extern "C" JSC::JSGlobalObject* Zig__GlobalObject__createForTestIsolation(Zig::G
     Bun__setDefaultGlobalObject(globalObject);
     JSC::gcProtect(globalObject);
 
+#ifdef FUZZILLI_ENABLED
+    Bun__REPRL__registerFuzzilliFunctions(globalObject);
+#endif
+
     // NapiEnv holds a raw Zig::GlobalObject*; deferred napi finalizers for
     // the old global's objects run on the next event-loop tick — after this
     // function returns and the old global is collectable — and would write

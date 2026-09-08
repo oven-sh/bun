@@ -336,7 +336,7 @@ where
         delimiters |= css::Delimiters::CURLY_BRACKET;
     }
     let source_location = input.current_source_location();
-    let mut property = input.parse_until_before(delimiters, |input2: &mut css::Parser| {
+    let property = input.parse_until_before(delimiters, |input2: &mut css::Parser| {
         css::Property::parse(property_id, input2, options)
     })?;
     let important = input
@@ -348,11 +348,11 @@ where
     input.expect_exhausted()?;
 
     if input.flags.css_modules() {
-        if let css::Property::Composes(composes) = &mut property {
+        if let css::Property::Composes(composes) = &property {
             match composes_ctx.composes_state() {
                 css::ComposesState::DisallowEntirely => {}
-                css::ComposesState::Allow(_) => {
-                    composes_ctx.record_composes(composes);
+                css::ComposesState::Allow { class, .. } => {
+                    composes_ctx.record_composes(class, composes);
                 }
                 css::ComposesState::DisallowNested(info) => {
                     options.warn_fmt(

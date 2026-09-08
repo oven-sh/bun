@@ -958,7 +958,6 @@ pub struct TopLevelRuleParser<'a, AtRuleParserT: CustomAtRuleParser> {
     // TODO: think about memory management
     pub(crate) rules: &'a mut CssRuleList<AtRuleParserT::AtRule>,
     pub(crate) composes: &'a mut ComposesMap,
-    pub(crate) composes_refs: SmallList<ast::Ref, 2>,
     pub(crate) local_properties: &'a mut LocalPropertyUsage,
 }
 
@@ -978,7 +977,6 @@ impl<'a, AtRuleParserT: CustomAtRuleParser> TopLevelRuleParser<'a, AtRuleParserT
             at_rule_parser,
             rules,
             composes,
-            composes_refs: SmallList::default(),
             local_properties,
         }
     }
@@ -998,7 +996,6 @@ impl<'a, AtRuleParserT: CustomAtRuleParser> TopLevelRuleParser<'a, AtRuleParserT
             allow_declarations: false,
             composes_state: ComposesState::DisallowEntirely,
             composes: &mut *self.composes,
-            composes_refs: &mut self.composes_refs,
             local_properties: &mut *self.local_properties,
         }
     }
@@ -1006,18 +1003,33 @@ impl<'a, AtRuleParserT: CustomAtRuleParser> TopLevelRuleParser<'a, AtRuleParserT
 
 // ───────────────────────────── NestedRuleParser ─────────────────────────────
 
+/// Whether the declarations of one block may use `composes`; fixed when the block is opened.
 #[derive(Clone, Copy)]
 pub enum ComposesState {
-    Allow(SourceLocation),
+    /// `composes` declarations in the block are recorded against `class`.
+    Allow {
+        loc: SourceLocation,
+        class: ast::Ref,
+    },
     DisallowNested(SourceLocation),
     DisallowNotSingleClass(SourceLocation),
     DisallowEntirely,
 }
 
+impl ComposesState {
+    /// The state for a block nested inside a block with this state.
+    pub(crate) fn nested(self) -> ComposesState {
+        match self {
+            ComposesState::Allow { loc, .. } => ComposesState::DisallowNested(loc),
+            state => state,
+        }
+    }
+}
+
 /// Dispatch trait for `parse_declaration_impl`. Implemented by `NestedRuleParser`.
 pub trait ComposesCtx {
     fn composes_state(&self) -> ComposesState;
-    fn record_composes(&mut self, composes: &mut Composes);
+    fn record_composes(&mut self, class: ast::Ref, composes: &Composes);
 }
 /// Unit `ComposesCtx` for callers that don't track `composes:`.
 pub struct NoComposesCtx;
@@ -1027,7 +1039,7 @@ impl ComposesCtx for NoComposesCtx {
         ComposesState::DisallowEntirely
     }
     #[inline]
-    fn record_composes(&mut self, _: &mut Composes) {}
+    fn record_composes(&mut self, _: ast::Ref, _: &Composes) {}
 }
 
 pub struct NestedRuleParser<'a, T: CustomAtRuleParser> {
@@ -1047,7 +1059,6 @@ pub struct NestedRuleParser<'a, T: CustomAtRuleParser> {
     pub(crate) allow_declarations: bool,
 
     pub(crate) composes_state: ComposesState,
-    pub(crate) composes_refs: &'a mut SmallList<ast::Ref, 2>,
     pub(crate) composes: &'a mut ComposesMap,
     pub(crate) local_properties: &'a mut LocalPropertyUsage,
 }
@@ -1157,24 +1168,21 @@ mod rule_parsers {
 
     // The borrow checker forbids passing `&mut *this` while also borrowing
     // `this.declarations` / `this.important_declarations`, so split-borrow the
-    // three composes fields into a small adaptor that implements the
+    // two composes fields into a small adaptor that implements the
     // `ComposesCtx` dispatch trait.
     struct NestedComposesCtx<'a> {
         state: ComposesState,
         arena: &'a Bump,
         composes: &'a mut ComposesMap,
-        composes_refs: &'a mut SmallList<ast::Ref, 2>,
     }
     impl<'a> ComposesCtx for NestedComposesCtx<'a> {
         #[inline]
         fn composes_state(&self) -> ComposesState {
             self.state
         }
-        fn record_composes(&mut self, composes: &mut Composes) {
-            for ref_ in self.composes_refs.slice() {
-                let entry = self.composes.entry(*ref_).or_default();
-                entry.composes.push(composes.deep_clone(self.arena));
-            }
+        fn record_composes(&mut self, class: ast::Ref, composes: &Composes) {
+            let entry = self.composes.entry(class).or_default();
+            entry.composes.push(composes.deep_clone(self.arena));
         }
     }
 
@@ -1417,24 +1425,15 @@ mod rule_parsers {
     // ── NestedRuleParser behavior (struct hoisted above) ─────────────────────────
 
     impl<'a, T: CustomAtRuleParser> NestedRuleParser<'a, T> {
+        /// `composes_state` applies to the declarations of the block being parsed.
         pub(crate) fn parse_nested(
             &mut self,
             input: &mut Parser,
             is_style_rule: bool,
+            composes_state: ComposesState,
         ) -> CssResult<(DeclarationBlock<'static>, CssRuleList<T::AtRule>)> {
             // TODO: think about memory management in error cases
             let mut rules = CssRuleList::<T::AtRule>::default();
-            let composes_state = if self.is_in_style_rule
-                && matches!(self.composes_state, ComposesState::Allow(_))
-            {
-                let ComposesState::Allow(l) = self.composes_state else {
-                    unreachable!()
-                };
-                ComposesState::DisallowNested(l)
-            } else {
-                // ComposesState is Copy.
-                self.composes_state
-            };
             // SAFETY: see `TopLevelRuleParser::nested` — `'static` erasure of the
             // parser arena.
             let bump: &'static Bump = unsafe { bun_ptr::detach_lifetime_ref(self.arena) };
@@ -1451,7 +1450,6 @@ mod rule_parsers {
                     || is_style_rule,
                 composes_state,
                 composes: &mut *self.composes,
-                composes_refs: &mut *self.composes_refs,
                 local_properties: &mut *self.local_properties,
             };
             // Spell out the impl with a fresh lifetime so `nested_parser` isn't
@@ -1513,7 +1511,8 @@ mod rule_parsers {
             // Declarations can be immediately within @media and @supports blocks
             // that are nested within a parent style rule. These act the same way
             // as if they were nested within a `& { ... }` block.
-            let (declarations, mut rules) = self.parse_nested(input, false)?;
+            let (declarations, mut rules) =
+                self.parse_nested(input, false, self.composes_state.nested())?;
 
             if declarations.len() > 0 {
                 rules.v.insert(
@@ -1533,6 +1532,34 @@ mod rule_parsers {
             }
 
             Ok(rules)
+        }
+
+        fn composes_state_for_body(
+            &self,
+            selectors: &SelectorList,
+            loc: Location,
+        ) -> ComposesState {
+            let loc = SourceLocation {
+                line: loc.line,
+                column: loc.column,
+            };
+            if self.is_in_style_rule {
+                return ComposesState::DisallowNested(loc);
+            }
+            let [selector] = selectors.v.slice() else {
+                return ComposesState::DisallowNotSingleClass(loc);
+            };
+            let [component] = selector.components.as_slice() else {
+                return ComposesState::DisallowNotSingleClass(loc);
+            };
+            match component.as_class() {
+                // Always a ref with css modules on, see `new_local_identifier`.
+                Some(class) => ComposesState::Allow {
+                    loc,
+                    class: class.as_ref().unwrap(),
+                },
+                None => ComposesState::DisallowNotSingleClass(loc),
+            }
         }
     }
 
@@ -1879,7 +1906,8 @@ mod rule_parsers {
                     Ok(())
                 }
                 AtRulePrelude::Nest(selectors) => {
-                    let (declarations, rules) = this.parse_nested(input, true)?;
+                    let (declarations, rules) =
+                        this.parse_nested(input, true, this.composes_state.nested())?;
                     this.rules
                         .v
                         .push(CssRule::Nesting(css_rules::nesting::NestingRule {
@@ -1996,92 +2024,33 @@ mod rule_parsers {
             input: &mut Parser,
         ) -> CssResult<()> {
             let loc = this.get_loc(start);
-            // `composes_refs` is `&mut SmallList<..>` borrowed from the parent
-            // `TopLevelRuleParser`, so dropping `NestedRuleParser` on an error path
-            // does NOT clear the underlying storage. A safe `scopeguard::guard`
-            // over `&mut *this.composes_refs` would hold that borrow across
-            // `this.parse_nested(&mut self, …)` and trip borrowck, so capture the
-            // raw pointer instead — the guard fires at scope exit after all body
-            // borrows of `this` are released, and the pointee (owned by the parent
-            // `TopLevelRuleParser`) strictly outlives this frame.
-            let composes_refs_ptr: *mut SmallList<ast::Ref, 2> = &raw mut *this.composes_refs;
-            scopeguard::defer! {
-                // SAFETY: see the note above — no aliasing borrow live at drop.
-                unsafe { (*composes_refs_ptr).clear_retaining_capacity(); }
-            }
-            // allow composes if:
-            // - NOT in nested style rules
-            // - AND there is only one class selector
-            if input.flags.css_modules() {
-                'out: {
-                    if this.is_in_style_rule {
-                        this.composes_state = ComposesState::DisallowNested(SourceLocation {
-                            line: loc.line,
-                            column: loc.column,
-                        });
-                        break 'out;
-                    }
-                    if selectors.v.len() != 1 {
-                        this.composes_state =
-                            ComposesState::DisallowNotSingleClass(SourceLocation {
-                                line: loc.line,
-                                column: loc.column,
-                            });
-                        break 'out;
-                    }
-                    let sel = &selectors.v.slice()[0];
-                    if sel.components.len() != 1 {
-                        this.composes_state =
-                            ComposesState::DisallowNotSingleClass(SourceLocation {
-                                line: loc.line,
-                                column: loc.column,
-                            });
-                        break 'out;
-                    }
-                    let comp = &sel.components[0];
-                    if let Some(r) = comp.as_class() {
-                        let ref_ = r.as_ref().unwrap();
-                        this.composes_refs.append(ref_);
-                        this.composes_state = ComposesState::Allow(SourceLocation {
-                            line: loc.line,
-                            column: loc.column,
-                        });
-                        break 'out;
-                    }
-                    this.composes_state = ComposesState::DisallowNotSingleClass(SourceLocation {
-                        line: loc.line,
-                        column: loc.column,
-                    });
-                }
-            }
+            let composes_state = if input.flags.css_modules() {
+                this.composes_state_for_body(&selectors, loc)
+            } else {
+                ComposesState::DisallowEntirely
+            };
             let location = input.position();
-            let (declarations, rules) = this.parse_nested(input, true)?;
+            let (declarations, rules) = this.parse_nested(input, true, composes_state)?;
 
-            // We parsed a style rule with the `composes` property. Track which
-            // properties it used so we can validate it later.
-            if matches!(this.composes_state, ComposesState::Allow(_)) {
+            // See `LocalPropertyUsage`.
+            if let ComposesState::Allow { class, .. } = composes_state {
                 let len = input.position() - location;
                 let mut usage = PropertyBitset::init_empty();
                 let mut custom_properties: Vec<&'static [u8]> = Vec::new();
                 fill_property_bit_set(&mut usage, &declarations, &mut custom_properties);
 
-                let custom_properties_slice = custom_properties.slice();
-
-                for ref_ in this.composes_refs.slice() {
-                    let entry =
-                        this.local_properties
-                            .entry(*ref_)
-                            .or_insert_with(|| PropertyUsage {
-                                range: bun_ast::Range {
-                                    loc: bun_ast::Loc {
-                                        start: i32::try_from(location).expect("int cast"),
-                                    },
-                                    len: i32::try_from(len).expect("int cast"),
-                                },
-                                ..Default::default()
-                            });
-                    entry.fill(&usage, custom_properties_slice);
-                }
+                this.local_properties
+                    .entry(class)
+                    .or_insert_with(|| PropertyUsage {
+                        range: bun_ast::Range {
+                            loc: bun_ast::Loc {
+                                start: i32::try_from(location).expect("int cast"),
+                            },
+                            len: i32::try_from(len).expect("int cast"),
+                        },
+                        ..Default::default()
+                    })
+                    .fill(&usage, custom_properties.slice());
             }
 
             this.rules.v.push(CssRule::Style(StyleRule {
@@ -2118,7 +2087,6 @@ mod rule_parsers {
                 state: this.composes_state,
                 arena,
                 composes: &mut *this.composes,
-                composes_refs: &mut *this.composes_refs,
             };
             declaration::parse_declaration_impl(
                 name,

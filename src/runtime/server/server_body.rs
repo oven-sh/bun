@@ -1830,15 +1830,16 @@ where
         let mut sec_websocket_version = Utf8Bytes::EMPTY;
         let mut upgrade_header = Utf8Bytes::EMPTY;
 
-        // NOTE: `FetchHeaders::fast_get` takes `&mut self` (FFI signature
-        // is `*mut`), so go through the `BodyMixin` accessor which yields a
-        // `NonNull` instead of the inherent `&FetchHeaders` getter.
-        if let Some(head) = crate::webcore::body::BodyMixin::get_fetch_headers(request) {
+        // Every handshake header is read from `request.headers`, the view the
+        // handler reads and edits, materialized here if the handler never
+        // touched it. The raw uws request sees only the first field of a
+        // repeated name and still sees a name the handler deleted, so reading
+        // it too would answer a different request than the handler saw.
+        let Some(head) = request.get_fetch_headers_unless_empty() else {
+            return Ok(JSValue::FALSE);
+        };
+        {
             use jsc::HTTPHeaderName;
-            // `head` is a live, intrusively-refcounted C++ handle owned by
-            // `request.headers`. `FetchHeaders` is an opaque ZST FFI handle
-            // (S008) — safe `*mut → &mut` via `opaque_deref_mut`.
-            let head = bun_opaque::opaque_deref_mut(head.as_ptr());
             if let Some(key) = head.fast_get(HTTPHeaderName::SecWebSocketKey) {
                 sec_websocket_key = key.to_utf8().into_owned();
             }
@@ -1853,30 +1854,6 @@ where
             }
             if let Some(up) = head.fast_get(HTTPHeaderName::Upgrade) {
                 upgrade_header = up.to_utf8().into_owned();
-            }
-        }
-
-        // SAFETY: upgrader_ptr is live (ref_() above)
-        let upgrader = unsafe { &*upgrader_ptr };
-        if let Some(req_ptr) = upgrader.req.get() {
-            // NOTE: `RequestContext.req` is type-erased to `*mut c_void`
-            // (RequestContext.rs:82). `server.upgrade()` is HTTP/1-only — H3
-            // contexts have a distinct generic param and `request_context.get`
-            // above would have returned None — so the concrete `Req` is always
-            // `uws_sys::Request` here.
-            // S008: `uws::Request` is an `opaque_ffi!` ZST — safe deref
-            // (BACKREF; live while RequestContext.req is Some).
-            let r = bun_opaque::opaque_deref(req_ptr.cast::<uws_sys::Request>().cast_const());
-            for (value, name) in [
-                (&mut sec_websocket_key, b"sec-websocket-key".as_slice()),
-                (&mut sec_websocket_protocol, b"sec-websocket-protocol"),
-                (&mut sec_websocket_extensions, b"sec-websocket-extensions"),
-                (&mut sec_websocket_version, b"sec-websocket-version"),
-                (&mut upgrade_header, b"upgrade"),
-            ] {
-                if value.is_empty() {
-                    *value = Utf8Bytes::Borrowed(r.header(name).unwrap_or(b""));
-                }
             }
         }
 
@@ -2011,17 +1988,14 @@ where
         let signal = upgrader.signal.take();
         upgrader.resp.set(None);
 
-        // Snapshot lazy url/headers before detaching (mirrors to_async_without_abort_handler).
+        // Snapshot the lazy url before detaching (mirrors
+        // to_async_without_abort_handler). The headers need no snapshot: the
+        // key this upgrade accepted came from them, so they are materialized.
         // SAFETY: re-derived after the JS-running option getters above; still
         // the live JsClass payload for `object`.
         let request = unsafe { &*request_ptr };
         if request.ensure_url().is_err() {
             request.url.set(BunString::EMPTY);
-        }
-        if !request.has_fetch_headers() {
-            if let Some(req_ptr) = upgrader.req.get() {
-                request.set_fetch_headers(Some(HeadersRef::create_from_uws(req_ptr)));
-            }
         }
 
         // SAFETY: plain-field detach through the root pointer; the shared

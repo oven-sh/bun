@@ -1409,6 +1409,10 @@ impl Expect {
             matcher_name,
             result.to_fmt(&mut formatter),
         ));
+        // Empty means formatting `result` ran user JS that threw; that exception is pending.
+        if err.is_empty() {
+            return JsError::Thrown;
+        }
         match bun_core::String::static_("InvalidMatcherError").to_js(global_this) {
             Ok(name) => err.put(global_this, b"name", name),
             // An exception (e.g. OOM) is already pending from to_js; propagate it

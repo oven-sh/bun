@@ -761,13 +761,25 @@ pub(super) fn remove_leftover_node_modules(
     let mut name_buf = bun_paths::path_buffer_pool::get();
     let mut iter = bun_sys::iterate_dir(bin_dir.fd());
     while let Ok(Some(entry)) = iter.next() {
-        if entry.kind != bun_sys::EntryKind::SymLink {
+        if !matches!(
+            entry.kind,
+            bun_sys::EntryKind::SymLink | bun_sys::EntryKind::Unknown
+        ) {
             continue;
         }
         let name = entry.name.slice_u8();
         name_buf[..name.len()].copy_from_slice(name);
         name_buf[name.len()] = 0;
         let name: &ZStr = ZStr::from_buf(&name_buf, name.len());
+        // A filesystem without `d_type` reports every entry as unknown, so ask.
+        if entry.kind == bun_sys::EntryKind::Unknown {
+            match bun_sys::lstatat(bin_dir.fd(), name) {
+                Ok(st)
+                    if bun_sys::kind_from_mode(st.st_mode as bun_sys::Mode)
+                        == bun_sys::EntryKind::SymLink => {}
+                _ => continue,
+            }
+        }
         // `fstatat` follows the link, so a missing target is a dangling bin.
         if let Err(err) = bun_sys::fstatat(bin_dir.fd(), name) {
             if matches!(err.get_errno(), bun_sys::E::ENOENT | bun_sys::E::ENOTDIR) {

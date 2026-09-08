@@ -1198,9 +1198,8 @@ describe("node_modules destination symlinks", () => {
   // End to end: released bun installs the package into the link target, and
   // the `bun remove` that follows deletes `<target>/name` with it. With the fix
   // the install has already replaced `@x`, so the target is never in reach.
-  // The `remove_leftover_node_modules` guard is belt and braces on top: it only
-  // runs for a name the lockfile no longer has, and no state reaches it with a
-  // symlink still at `@x`, so it has no test of its own.
+  // The `remove_leftover_node_modules` guard itself is isolated further down,
+  // by the case that plants the links after the install.
   it("does not delete through a symlinked node_modules/@scope on remove", async () => {
     using root = tempDir("nm-remove", {});
     const victim = await plantVictim(String(root), "name");
@@ -1340,6 +1339,9 @@ describe("node_modules destination symlinks", () => {
 
     const { stderr, exitCode } = await install(repo);
 
+    // The installer's diagnostic first: a failed install would otherwise
+    // surface as an ENOENT from one of the reads below.
+    expect(stderr).not.toContain("error:");
     expect((await readdir(victim)).sort()).toEqual(["dep", "notes.txt"]);
     expect((await lstat(join(victim, "dep"))).isFile()).toBe(true);
     expect((await lstat(join(victim, "notes.txt"))).isFile()).toBe(true);
@@ -1349,7 +1351,6 @@ describe("node_modules destination symlinks", () => {
     expect((await lstat(binDir)).isDirectory()).toBe(true);
     expect((await readdir(binDir)).sort()).toEqual(["dep", "notes.txt"]);
     expect(await readlink(join(binDir, "dep"))).toBe("../dep/bin/cli.js");
-    expect(stderr).not.toContain("error:");
     expect(exitCode).toBe(0);
   });
 

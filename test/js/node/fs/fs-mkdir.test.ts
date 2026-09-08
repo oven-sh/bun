@@ -418,28 +418,26 @@ describe("fs.mkdir - recursive on an existing directory spelled with . or ..", (
 
   it("returns undefined from mkdirSync, mkdir and promises.mkdir", async () => {
     using root = tempDir("mkdir-dot-components", {
-      "fixture.js": `
-        const fs = require("fs");
-        const { promisify } = require("util");
+      "fixture.mjs": `
+        import fs from "node:fs";
+        import { promisify } from "node:util";
         const cases = ${JSON.stringify(cases)};
         const apis = {
           mkdirSync: async p => fs.mkdirSync(p, { recursive: true }),
           mkdir: p => promisify(fs.mkdir)(p, { recursive: true }),
           "promises.mkdir": p => fs.promises.mkdir(p, { recursive: true }),
         };
-        (async () => {
-          const results = {};
-          for (const [api, mkdir] of Object.entries(apis)) {
-            results[api] = {};
-            for (const p of cases) {
-              results[api][p] = await mkdir(p).then(
-                returned => (returned === undefined ? "undefined" : { created: returned }),
-                err => ({ code: err.code, syscall: err.syscall }),
-              );
-            }
+        const results = {};
+        for (const [api, mkdir] of Object.entries(apis)) {
+          results[api] = {};
+          for (const p of cases) {
+            results[api][p] = await mkdir(p).then(
+              returned => (returned === undefined ? "undefined" : { created: returned }),
+              err => ({ code: err.code, syscall: err.syscall }),
+            );
           }
-          process.stdout.write(JSON.stringify(results));
-        })();
+        }
+        process.stdout.write(JSON.stringify(results));
       `,
       cwd: {
         sub: {},
@@ -448,7 +446,7 @@ describe("fs.mkdir - recursive on an existing directory spelled with . or ..", (
     });
 
     await using proc = Bun.spawn({
-      cmd: [bunExe(), path.join(String(root), "fixture.js")],
+      cmd: [bunExe(), path.join(String(root), "fixture.mjs")],
       cwd: path.join(String(root), "cwd"),
       env: bunEnv,
       stdout: "pipe",
@@ -464,6 +462,6 @@ describe("fs.mkdir - recursive on an existing directory spelled with . or ..", (
     expect(exitCode).toBe(0);
     // The entries the cases name were there all along, and none of the calls created anything.
     expect(fs.readdirSync(path.join(String(root), "cwd")).sort()).toEqual(["file.txt", "sub"]);
-    expect(fs.readdirSync(String(root)).sort()).toEqual(["cwd", "fixture.js"]);
+    expect(fs.readdirSync(String(root)).sort()).toEqual(["cwd", "fixture.mjs"]);
   });
 });

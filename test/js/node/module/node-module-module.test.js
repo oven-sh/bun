@@ -587,10 +587,10 @@ console.log("survived", require("./late.js"));`,
       cmd: [
         bunExe(),
         "-e",
-        `const { _stat } = require("module");
+        `import Module from "node:module";
          const results = {};
          for (const c of ${JSON.stringify(cases)}) {
-           const rc = _stat(c.replace("<cwd>", process.cwd()));
+           const rc = Module._stat(c.replace("<cwd>", process.cwd()));
            results[c] = rc < 0 ? "negative" : rc;
          }
          process.stdout.write(JSON.stringify(results));`,

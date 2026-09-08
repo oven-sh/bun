@@ -3563,10 +3563,11 @@ describe("rm", () => {
       cmd: [
         bunExe(),
         "-e",
-        `const fs = require("node:fs");
+        `import fs from "node:fs";
+         import path from "node:path";
          fs.rmSync("../file.txt", { recursive: true, force: true });
          fs.rmSync("../tree", { recursive: true });
-         await fs.promises.rm(require("node:path").join("..", "tree2"), { recursive: true });
+         await fs.promises.rm(path.join("..", "tree2"), { recursive: true });
          console.log(JSON.stringify(fs.readdirSync("..")));`,
       ],
       env: bunEnv,

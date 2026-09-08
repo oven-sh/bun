@@ -410,6 +410,7 @@ describe.skipIf(!isWindows).concurrent("Windows compile metadata", () => {
         proj: {
           "app.js": `console.log("Relative icon test");`,
           "build.js": `
+            import { basename } from "node:path";
             const result = await Bun.build({
               entrypoints: ["./app.js"],
               outdir: "./out",
@@ -421,7 +422,7 @@ describe.skipIf(!isWindows).concurrent("Windows compile metadata", () => {
             });
             console.log(JSON.stringify({
               success: result.success,
-              outputs: result.outputs.map(output => require("path").basename(output.path)),
+              outputs: result.outputs.map(output => basename(output.path)),
             }));
           `,
         },

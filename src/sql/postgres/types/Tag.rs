@@ -179,6 +179,9 @@ pg_tags! {
 }
 
 impl Tag {
+    /// Types whose binary wire format `DataCell` can decode, so result columns
+    /// of these types are requested in binary. Bind parameters are encoded by
+    /// a shorter list, `ParamEncoding` in `bun_sql_jsc`.
     pub fn is_binary_format_supported(self) -> bool {
         match self {
             // TODO: .int2_array, .float8_array,

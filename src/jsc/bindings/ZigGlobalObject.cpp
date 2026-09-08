@@ -3202,6 +3202,17 @@ void GlobalObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     thisObject->visitAdditionalChildrenInGCThread<Visitor>(visitor);
 }
 
+// The live `process.env` object (also `Bun.env` and `import.meta.env`), as
+// opposed to the env loader map, which is a snapshot taken at startup.
+extern "C" [[ZIG_EXPORT(zero_is_throw)]] JSC::EncodedJSValue JSGlobalObject__processEnv(JSC::JSGlobalObject* globalObject)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSObject* env = defaultGlobalObject(globalObject)->processEnvObject();
+    RETURN_IF_EXCEPTION(scope, {});
+    return JSValue::encode(env);
+}
+
 extern "C" bool JSGlobalObject__setTimeZone(JSC::JSGlobalObject* globalObject, const EncodedSlice* timeZone)
 {
     auto& vm = JSC::getVM(globalObject);

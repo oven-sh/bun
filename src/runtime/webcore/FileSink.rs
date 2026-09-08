@@ -704,8 +704,8 @@ impl FileSink {
         if self.run_pending_later_wanted.get() {
             return;
         }
-        self.run_pending_later_wanted.set(true);
         if let EventLoopHandle::Js { owner } = self.event_loop() {
+            self.run_pending_later_wanted.set(true);
             if self.flush_task_ref.get().is_some() {
                 // Already queued; it will see `run_pending_later_wanted`.
                 return;

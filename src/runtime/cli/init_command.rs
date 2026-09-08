@@ -824,9 +824,10 @@ impl InitCommand {
         }
 
         if steps.write_gitignore {
-            if let Err(err) = Assets::create(b".gitignore", Assets::GITIGNORE, &[]) {
-                Assets::failed(err, b".gitignore");
-            }
+            Assets::check(
+                Assets::create(b".gitignore", Assets::GITIGNORE, &[]),
+                b".gitignore",
+            );
         }
 
         match template {
@@ -850,11 +851,13 @@ impl InitCommand {
                         }
                     }
 
-                    if let Err(err) =
-                        Assets::create_new(&fields.entry_point, b"console.log(\"Hello via Bun!\");")
-                    {
-                        Assets::failed(err, &fields.entry_point);
-                    }
+                    Assets::check(
+                        Assets::create_new(
+                            &fields.entry_point,
+                            b"console.log(\"Hello via Bun!\");",
+                        ),
+                        &fields.entry_point,
+                    );
                 }
 
                 if steps.write_tsconfig {
@@ -868,28 +871,30 @@ impl InitCommand {
                     } else {
                         b"jsconfig.json"
                     };
-                    if let Err(err) = Assets::create_full(
-                        Assets::TSCONFIG_JSON,
+                    Assets::check(
+                        Assets::create_full(
+                            Assets::TSCONFIG_JSON,
+                            filename,
+                            " (for editor autocomplete)",
+                            &[],
+                        ),
                         filename,
-                        " (for editor autocomplete)",
-                        &[],
-                    ) {
-                        Assets::failed(err, filename);
-                    }
+                    );
                 }
 
                 if steps.write_readme {
-                    if let Err(err) = Assets::create(
+                    Assets::check(
+                        Assets::create(
+                            b"README.md",
+                            Assets::README_MD,
+                            &[
+                                (b"name", fields.name.as_slice()),
+                                (b"bunVersion", Environment::VERSION_STRING.as_bytes()),
+                                (b"entryPoint", fields.entry_point.as_slice()),
+                            ],
+                        ),
                         b"README.md",
-                        Assets::README_MD,
-                        &[
-                            (b"name", fields.name.as_slice()),
-                            (b"bunVersion", Environment::VERSION_STRING.as_bytes()),
-                            (b"entryPoint", fields.entry_point.as_slice()),
-                        ],
-                    ) {
-                        Assets::failed(err, b"README.md");
-                    }
+                    );
                 }
 
                 if !fields.entry_point.is_empty() && !did_load_package_json {
@@ -936,12 +941,12 @@ impl Assets {
     pub(crate) const README_MD: &'static [u8] = include_bytes!("init/README.default.md");
     pub(crate) const README2_MD: &'static [u8] = include_bytes!("init/README2.default.md");
 
-    /// Create or replace an asset file. With `args`, `{[name]s}` placeholders in `asset` are substituted.
+    /// Create an asset file (`EEXIST` if it exists). With `args`, `{[name]s}` placeholders are substituted.
     fn create(filename: &[u8], asset: &[u8], args: &[(&[u8], &[u8])]) -> bun_sys::Result<()> {
         Self::create_full(asset, filename, "", args)
     }
 
-    /// Like [`create`](Self::create), but fails with `EEXIST` for an existing file; creates parent dirs.
+    /// Like [`create`](Self::create) without substitution; creates missing parent directories.
     fn create_new(filename: &[u8], contents: &[u8]) -> bun_sys::Result<()> {
         if let Some(dir) = bun_core::dirname(filename) {
             if !dir.is_empty() && dir != b"." {
@@ -966,7 +971,7 @@ impl Assets {
         message_suffix: &'static str,
         args: &[(&[u8], &[u8])],
     ) -> bun_sys::Result<()> {
-        let flags = bun_sys::O::WRONLY | bun_sys::O::CREAT | bun_sys::O::TRUNC;
+        let flags = bun_sys::O::WRONLY | bun_sys::O::CREAT | bun_sys::O::EXCL;
         if args.is_empty() {
             Self::write_new_file(filename, flags, asset)?;
         } else {
@@ -993,6 +998,16 @@ impl Assets {
             let _ = bun_sys::unlinkat(Fd::cwd(), ZStr::from_slice_with_nul(&filename_z));
         }
         result.map_err(|err| err.with_path(filename))
+    }
+
+    /// Whether the file was created. One that already exists is left as it is; any other
+    /// failure is reported and exits.
+    fn check(result: bun_sys::Result<()>, filename: &[u8]) -> bool {
+        match result {
+            Ok(()) => true,
+            Err(err) if err.get_errno() == bun_sys::E::EEXIST => false,
+            Err(err) => Self::failed(err, filename),
+        }
     }
 
     /// Report a scaffold file that could not be written and exit(1).
@@ -1394,13 +1409,8 @@ impl Template {
     }
 
     fn create_agent_rule() {
-        /// Whether the rule was created. One that already exists is left alone.
         fn create_rule(path: &[u8], contents: &[u8]) -> bool {
-            match Assets::create_new(path, contents) {
-                Ok(()) => true,
-                Err(err) if err.get_errno() == bun_sys::E::EEXIST => false,
-                Err(err) => Assets::failed(err, path),
-            }
+            Assets::check(Assets::create_new(path, contents), path)
         }
 
         let mut create_claude_md = Self::is_claude_code_installed()

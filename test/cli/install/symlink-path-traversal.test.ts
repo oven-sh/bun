@@ -1010,3 +1010,242 @@ it.skipIf(isWindows)(
   },
   60000,
 );
+
+// A second, separate mechanism: the directories the linker creates under
+// `node_modules` are attacker-controlled input, because `node_modules` comes
+// from whoever checked out the repository. git restores a committed
+// `node_modules/@scope` symlink (mode 120000), a CI cache restores one, and a
+// trusted dependency's postinstall script can leave one behind.
+//
+// The linker used to name a package destination as a multi-component path
+// (`mkdirat(nm_fd, "@x/cron.d")`, `openat(nm_fd, "@x/cron.d", O_DIRECTORY)`),
+// so a symlink at `@x` redirected every write, and the rename-aside that
+// clears an existing destination deleted through it too. The same hole existed
+// at the `node_modules` root, at a nested `<pkg>/node_modules`, at a workspace
+// member's `node_modules`, and inside the isolated linker's `.bun` store.
+//
+// The fix opens each directory the installer creates with `O_NOFOLLOW`, one
+// component at a time, and replaces a symlink found there with a real
+// directory. The link target is never touched.
+//
+// Not `describe.concurrent`: every test here runs a whole `bun install`, and
+// seven at once starve a box with few cores.
+describe.skipIf(isWindows)("node_modules destination symlinks", () => {
+  setDefaultTimeout(60000);
+
+  const KEEP = "do-not-touch\n";
+
+  // `<root>/victim` stands for any directory outside the project: /etc/cron.d
+  // for a root install, ~/.config for a developer install.
+  async function plantVictim(root: string, ...subdirs: string[]) {
+    const victim = join(root, "victim");
+    await mkdir(join(victim, ...subdirs), { recursive: true });
+    await writeFile(join(victim, ...subdirs, "keep.txt"), KEEP);
+    return victim;
+  }
+
+  async function expectVictimUntouched(victim: string, ...subdirs: string[]) {
+    const dir = join(victim, ...subdirs);
+    expect(await readdir(dir)).toEqual(["keep.txt"]);
+    expect(await Bun.file(join(dir, "keep.txt")).text()).toBe(KEEP);
+  }
+
+  // A `file:` tarball dependency, so no test reaches the network.
+  async function writeTarball(path: string, name: string, version: string, content: string) {
+    await writeFile(
+      path,
+      createTarball([
+        { name: "package/package.json", type: "file", content: JSON.stringify({ name, version }) },
+        { name: "package/index.js", type: "file", content },
+      ]),
+    );
+  }
+
+  async function install(cwd: string, ...args: string[]) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "install", "--ignore-scripts", ...args],
+      cwd,
+      stdout: "pipe",
+      stderr: "pipe",
+      env: { ...env, BUN_INSTALL_CACHE_DIR: join(cwd, ".bun-cache") },
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+
+  it("does not install a scoped package through a symlinked node_modules/@scope", async () => {
+    using root = tempDir("nm-scope", {});
+    const victim = await plantVictim(String(root), "cron.d");
+    const repo = join(String(root), "repo");
+    await mkdir(join(repo, "node_modules"), { recursive: true });
+    await writeTarball(join(repo, "pkg.tgz"), "@x/cron.d", "1.0.0", "module.exports = 'evil'");
+    await writeFile(
+      join(repo, "package.json"),
+      JSON.stringify({ name: "coolproject", dependencies: { "@x/cron.d": "file:./pkg.tgz" } }),
+    );
+    // Exactly what `git checkout` restores from a committed mode-120000 entry.
+    await symlink("../../victim", join(repo, "node_modules", "@x"));
+
+    const { stdout, stderr, exitCode } = await install(repo);
+
+    await expectVictimUntouched(victim, "cron.d");
+    // The scope directory is a real directory now, and the package is in it.
+    expect((await lstat(join(repo, "node_modules", "@x"))).isSymbolicLink()).toBe(false);
+    expect(await Bun.file(join(repo, "node_modules", "@x", "cron.d", "index.js")).text()).toBe(
+      "module.exports = 'evil'",
+    );
+    expect(stderr).not.toContain("error:");
+    expect(stdout).toContain("1 package installed");
+    expect(exitCode).toBe(0);
+  });
+
+  it("does not install through a symlinked node_modules root", async () => {
+    using root = tempDir("nm-root", {});
+    const victim = await plantVictim(String(root));
+    const repo = join(String(root), "repo");
+    await mkdir(repo, { recursive: true });
+    await writeTarball(join(repo, "pkg.tgz"), "lodash", "1.0.0", "module.exports = 1");
+    await writeFile(
+      join(repo, "package.json"),
+      JSON.stringify({ name: "coolproject", dependencies: { lodash: "file:./pkg.tgz" } }),
+    );
+    await symlink("../victim", join(repo, "node_modules"));
+
+    const { exitCode } = await install(repo);
+
+    await expectVictimUntouched(victim);
+    expect((await lstat(join(repo, "node_modules"))).isSymbolicLink()).toBe(false);
+    expect(await Bun.file(join(repo, "node_modules", "lodash", "index.js")).text()).toBe("module.exports = 1");
+    expect(exitCode).toBe(0);
+  });
+
+  // A hostile package directory inside an otherwise trusted monorepo commits
+  // the symlinks in its own `packages/evil/node_modules`. `lodash` has to nest
+  // there because the sibling member pins an incompatible version.
+  async function workspaceWithNestedDep(root: string) {
+    const repo = join(root, "repo");
+    await mkdir(join(repo, "packages", "app"), { recursive: true });
+    await mkdir(join(repo, "packages", "evil"), { recursive: true });
+    await writeTarball(join(repo, "l3.tgz"), "lodash", "3.10.1", "module.exports = 3");
+    await writeTarball(join(repo, "l4.tgz"), "lodash", "4.17.21", "module.exports = 4");
+    await writeFile(join(repo, "package.json"), JSON.stringify({ name: "root", private: true, workspaces: ["packages/*"] }));
+    await writeFile(
+      join(repo, "packages", "app", "package.json"),
+      JSON.stringify({ name: "app", version: "1.0.0", dependencies: { lodash: "file:../../l4.tgz" } }),
+    );
+    await writeFile(
+      join(repo, "packages", "evil", "package.json"),
+      JSON.stringify({ name: "evil", version: "1.0.0", dependencies: { lodash: "file:../../l3.tgz" } }),
+    );
+    return repo;
+  }
+
+  it("does not install through a symlinked workspace member node_modules", async () => {
+    using root = tempDir("nm-member", {});
+    const victim = await plantVictim(String(root));
+    const repo = await workspaceWithNestedDep(String(root));
+    await symlink("../../../victim", join(repo, "packages", "evil", "node_modules"));
+
+    const { exitCode } = await install(repo, "--linker", "hoisted");
+
+    await expectVictimUntouched(victim);
+    expect((await lstat(join(repo, "packages", "evil", "node_modules"))).isSymbolicLink()).toBe(false);
+    expect(exitCode).toBe(0);
+  });
+
+  // The root `node_modules` is absent, so the installer takes its fresh-install
+  // path and skips the rename-aside that clears an existing destination. The
+  // member's nested destination is still a pre-existing symlink.
+  it("does not install through a symlinked package directory on a fresh install", async () => {
+    using root = tempDir("nm-fresh", {});
+    const victim = await plantVictim(String(root));
+    await writeFile(join(victim, "package.json"), JSON.stringify({ name: "victim-project", version: "7.7.7" }));
+    const repo = await workspaceWithNestedDep(String(root));
+    await mkdir(join(repo, "packages", "evil", "node_modules"), { recursive: true });
+    await symlink("../../../../victim", join(repo, "packages", "evil", "node_modules", "lodash"));
+
+    const { exitCode } = await install(repo, "--linker", "hoisted");
+
+    // The victim's own package.json used to be replaced by lodash's.
+    expect(await Bun.file(join(victim, "package.json")).json()).toEqual({ name: "victim-project", version: "7.7.7" });
+    expect(await Bun.file(join(victim, "keep.txt")).text()).toBe(KEEP);
+    expect((await readdir(victim)).sort()).toEqual(["keep.txt", "package.json"]);
+    const dest = join(repo, "packages", "evil", "node_modules", "lodash");
+    expect((await lstat(dest)).isSymbolicLink()).toBe(false);
+    expect(await Bun.file(join(dest, "index.js")).text()).toBe("module.exports = 3");
+    expect(exitCode).toBe(0);
+  });
+
+  it("does not delete through a symlinked node_modules/@scope on remove", async () => {
+    using root = tempDir("nm-remove", {});
+    const victim = await plantVictim(String(root), "name");
+    const repo = join(String(root), "repo");
+    await mkdir(join(repo, "node_modules"), { recursive: true });
+    await writeTarball(join(repo, "pkg.tgz"), "@x/name", "1.0.0", "module.exports = 'evil'");
+    await writeFile(
+      join(repo, "package.json"),
+      JSON.stringify({ name: "coolproject", dependencies: { "@x/name": "file:./pkg.tgz" } }),
+    );
+    await symlink("../../victim", join(repo, "node_modules", "@x"));
+
+    expect((await install(repo)).exitCode).toBe(0);
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "remove", "@x/name"],
+      cwd: repo,
+      stdout: "pipe",
+      stderr: "pipe",
+      env: { ...env, BUN_INSTALL_CACHE_DIR: join(repo, ".bun-cache") },
+    });
+    const [, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    // `bun remove @x/name` used to recursively delete `<link target>/name`.
+    await expectVictimUntouched(victim, "name");
+    expect(exitCode).toBe(0);
+  });
+
+  it("does not install through a symlinked .bun/node_modules with the isolated linker", async () => {
+    using root = tempDir("nm-store", {});
+    const victim = await plantVictim(String(root));
+    const repo = join(String(root), "repo");
+    await mkdir(join(repo, "node_modules", ".bun"), { recursive: true });
+    await writeTarball(join(repo, "pkg.tgz"), "lodash", "1.0.0", "module.exports = 1");
+    await writeFile(
+      join(repo, "package.json"),
+      JSON.stringify({ name: "coolproject", dependencies: { lodash: "file:./pkg.tgz" } }),
+    );
+    await symlink("../../../victim", join(repo, "node_modules", ".bun", "node_modules"));
+
+    const { exitCode } = await install(repo, "--linker", "isolated");
+
+    await expectVictimUntouched(victim);
+    expect((await lstat(join(repo, "node_modules", ".bun", "node_modules"))).isSymbolicLink()).toBe(false);
+    expect(exitCode).toBe(0);
+  });
+
+  it("does not install through a symlinked store entry node_modules with the isolated linker", async () => {
+    using root = tempDir("nm-entry", {});
+    const victim = await plantVictim(String(root));
+    const repo = join(String(root), "repo");
+    await mkdir(repo, { recursive: true });
+    await writeTarball(join(repo, "pkg.tgz"), "lodash", "1.0.0", "module.exports = 1");
+    await writeFile(
+      join(repo, "package.json"),
+      JSON.stringify({ name: "coolproject", dependencies: { lodash: "file:./pkg.tgz" } }),
+    );
+    expect((await install(repo, "--linker", "isolated")).exitCode).toBe(0);
+
+    // Plant the link inside the store entry a CI cache would restore.
+    const entry = (await readdir(join(repo, "node_modules", ".bun"))).find(name => name.startsWith("lodash@"))!;
+    expect(entry).toBeString();
+    const planted = join(repo, "node_modules", ".bun", entry, "node_modules");
+    await rm(planted, { recursive: true, force: true });
+    await symlink("../../../../victim", planted);
+
+    const { exitCode } = await install(repo, "--linker", "isolated");
+
+    await expectVictimUntouched(victim);
+    expect((await lstat(planted)).isSymbolicLink()).toBe(false);
+    expect(exitCode).toBe(0);
+  });
+});

@@ -2178,6 +2178,13 @@ impl<'a> Installer<'a> {
             symlinker::Strategy::ExpectExisting
         };
 
+        // `symlink(2)` writes straight through a symlink planted at
+        // `.bun/node_modules`, so open the directories the installer owns on
+        // the way to `dest` without following one first.
+        if let Some(dest_parent) = symlinker.dest.dirname() {
+            let _ = crate::isolated_install::make_store_path(dest_parent);
+        }
+
         let _ = symlinker.ensure_symlink(link_strategy);
     }
 
@@ -2259,16 +2266,31 @@ impl<'a> Installer<'a> {
         self.append_real_store_node_modules_path(&mut dest, entry_id, Which::Staging);
         let base_len = dest.len();
 
+        // `symlink(2)` writes straight through a symlink planted at this
+        // entry's `node_modules`, so open the directories the installer owns on
+        // the way there without following one. Once per entry, not per
+        // dependency: the base is the same for every link below.
+        let _ = crate::isolated_install::make_store_path(dest.slice());
+
         let mut changed = false;
         for dep in self.store.entries.items_dependencies()[entry_id.get() as usize].slice() {
             let dep_name = dependencies[dep.dep_id as usize].name.slice(string_buf);
 
             dest.set_length(base_len);
             let _ = dest.append(dep_name); // OOM/capacity: fire-and-forget
-            if entry_node_modules_name.is_some_and(|name| strings::eql_long(dep_name, name, true)) {
+            let nested =
+                entry_node_modules_name.is_some_and(|name| strings::eql_long(dep_name, name, true));
+            if nested {
                 // same name as the entry itself: nest one node_modules deeper to avoid the collision
                 let _ = dest.append(b"node_modules"); // OOM/capacity: fire-and-forget
                 let _ = dest.append(dep_name); // OOM/capacity: fire-and-forget
+            }
+            // A scoped name adds an `@scope` directory below the base, and the
+            // collision case adds two more. Those are the installer's too.
+            if nested || strings::contains_char(dep_name, b'/') {
+                if let Some(dest_parent) = dest.dirname() {
+                    let _ = crate::isolated_install::make_store_path(dest_parent);
+                }
             }
 
             let mut dep_store_path = AutoAbsPath::init_top_level_dir();

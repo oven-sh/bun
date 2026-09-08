@@ -1,6 +1,5 @@
 use bun_alloc::AllocError;
 #[cfg(not(windows))]
-use bun_sys::FdDirExt;
 use bun_sys::walker_skippable::Walker;
 use bun_sys::{self as sys, EntryKind, Fd, FdExt};
 // OS-unit paths are u8 on POSIX, u16
@@ -55,6 +54,21 @@ impl Hardlinker {
                 bun_core::fmt::fmt_os_path(self.dest.slice(), Default::default()),
             );
             bun_core::output::flush();
+        }
+
+        // `linkat(2)` writes straight through a symlink planted at this store
+        // entry's `node_modules`, so open the directories the installer owns on
+        // the way to `dest` without following one. Once per package, before any
+        // file lands.
+        #[cfg(not(windows))]
+        let _ = crate::isolated_install::make_store_path(self.dest.slice());
+        #[cfg(windows)]
+        {
+            let mut dest_u8_buf = bun_paths::path_buffer_pool::get();
+            let _ = crate::isolated_install::make_store_path(
+                bun_paths::string_paths::from_w_path(&mut dest_u8_buf[..], self.dest.slice())
+                    .as_bytes(),
+            );
         }
 
         #[cfg(windows)]
@@ -251,7 +265,7 @@ impl Hardlinker {
                 let err: Option<sys::Error> = 'body: {
                     match entry.kind {
                         EntryKind::Directory => {
-                            let _ = Fd::cwd().make_path(self.dest.slice());
+                            let _ = crate::isolated_install::make_store_path(self.dest.slice());
                         }
                         EntryKind::File => {
                             match sys::linkat(
@@ -281,7 +295,7 @@ impl Hardlinker {
                                             break 'body Some(link_err1);
                                         };
 
-                                        let _ = Fd::cwd().make_path(dest_parent);
+                                        let _ = crate::isolated_install::make_store_path(dest_parent);
                                         match sys::linkat(
                                             entry.dir,
                                             entry.basename,

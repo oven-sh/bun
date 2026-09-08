@@ -21,6 +21,68 @@ pub use store::Store;
 /// `TaskCallbackContext` in lib.rs) resolves to the real `entry::Id` newtype.
 pub use store::entry::Id as EntryId;
 
+/// `mkdir -p` and open a directory that the isolated linker is about to write
+/// into.
+///
+/// Inside the project, the installer creates every component at and below the
+/// first `node_modules` component of `path`, so a symlink there is unlinked
+/// and replaced with a real directory. Otherwise the symlink redirects the
+/// install out of the project. The components above it are the project's own
+/// directories (a workspace member can be a symlink), and a path outside the
+/// project is the global store, so those are followed as before.
+pub(crate) fn make_store_path(path: &[u8]) -> sys::Maybe<sys::Dir> {
+    let cwd = sys::Dir::cwd();
+    let Some(offset) = project_node_modules_offset(path) else {
+        return cwd.make_open_path(path, Default::default());
+    };
+    let (above, below) = path.split_at(offset);
+    let above = strip_trailing_separators(above);
+    if above.is_empty() {
+        return cwd.make_open_real_path(below);
+    }
+    cwd.make_open_path(above, Default::default())?
+        .make_open_real_path(below)
+}
+
+/// Byte offset of the first `node_modules` component of `path` inside the
+/// project, or `None` when there is none. `path` is relative to the top level
+/// directory or absolute.
+fn project_node_modules_offset(path: &[u8]) -> Option<usize> {
+    let top = strip_trailing_separators(crate::bun_fs::FileSystem::instance().top_level_dir());
+    let mut offset = if path.len() > top.len()
+        && path[..top.len()] == *top
+        && is_separator(path[top.len()])
+    {
+        top.len() + 1
+    } else if paths::is_absolute(path) {
+        return None;
+    } else {
+        0
+    };
+    for component in paths::strings::split_any(&path[offset..], b"/\\") {
+        if component == b"node_modules" {
+            return Some(offset);
+        }
+        // Every component but the last is followed by one separator.
+        offset += component.len() + 1;
+    }
+    None
+}
+
+fn is_separator(byte: u8) -> bool {
+    byte == b'/' || (cfg!(windows) && byte == b'\\')
+}
+
+fn strip_trailing_separators(mut path: &[u8]) -> &[u8] {
+    while let [rest @ .., last] = path {
+        if !is_separator(*last) {
+            break;
+        }
+        path = rest;
+    }
+    path
+}
+
 use crate::lockfile::package::PackageColumns as _;
 use std::io::Write as _;
 use std::sync::atomic::Ordering;

@@ -5,7 +5,7 @@ use bun_alloc::AllocError;
 #[cfg(not(windows))]
 use bun_core::{Global, fmt as bun_fmt};
 use bun_paths::{self, OSPathChar, OSPathSlice};
-use bun_sys::{self as sys, Dir, E, EntryKind, Fd, walker_skippable, walker_skippable::Walker};
+use bun_sys::{self as sys, E, EntryKind, Fd, walker_skippable, walker_skippable::Walker};
 
 // The path-builder types here use the OS path unit: u8 on POSIX,
 // u16 on Windows — encoded via `OSPathChar` so `slice()`/`slice_z()` produce
@@ -66,11 +66,7 @@ impl FileCopier {
                 .as_bytes();
         #[cfg(not(windows))]
         let dest_subpath_u8: &[u8] = self.dest_subpath.slice_z().as_bytes();
-        let dest_dir = match bun_sys::make_path::make_open_path(
-            &Dir::cwd(),
-            dest_subpath_u8,
-            Default::default(),
-        ) {
+        let dest_dir = match crate::isolated_install::make_store_path(dest_subpath_u8) {
             Ok(d) => d,
             Err(e) => {
                 // TODO: remove the need for this and implement openDir makePath makeOpenPath in bun

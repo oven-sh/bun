@@ -1,6 +1,6 @@
 use bun_paths::path_options::{Kind, PathSeparators};
 use bun_paths::{AutoRelPath, Path};
-use bun_sys::{self as sys, Errno, Fd, FdDirExt, FdExt};
+use bun_sys::{self as sys, Errno, Fd, FdExt};
 
 // macOS clonefileat only
 
@@ -32,6 +32,12 @@ impl FileCloner<'_> {
 
     #[allow(dead_code)]
     pub(crate) fn clone(&mut self) -> sys::Result<()> {
+        // `clonefileat(2)` writes straight through a symlink planted at this
+        // store entry's `node_modules`, so open the directories the installer
+        // owns on the way to `dest` without following one first.
+        if let Some(parent_dest_dir) = self.dest_subpath.dirname() {
+            let _ = crate::isolated_install::make_store_path(parent_dest_dir);
+        }
         match self.clonefileat() {
             Ok(()) => Ok(()),
             Err(err) => match err.get_errno() {
@@ -51,7 +57,7 @@ impl FileCloner<'_> {
                     let Some(parent_dest_dir) = self.dest_subpath.dirname() else {
                         return Err(err);
                     };
-                    let _ = Fd::cwd().make_path(parent_dest_dir);
+                    let _ = crate::isolated_install::make_store_path(parent_dest_dir);
                     self.clonefileat()
                 }
                 _ => Err(err),

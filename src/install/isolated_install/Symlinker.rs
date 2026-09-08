@@ -1,6 +1,6 @@
 use bun_core::strings;
 use bun_paths;
-use bun_sys::{self, Errno, Fd, FdDirExt, FdExt};
+use bun_sys::{self, Errno, Fd, FdExt};
 
 pub(crate) struct Symlinker {
     pub(crate) dest: bun_paths::Path,
@@ -43,7 +43,7 @@ impl Symlinker {
                                 return Err(symlink_err1);
                             };
 
-                            let _ = Fd::cwd().make_path(dest_parent);
+                            let _ = crate::isolated_install::make_store_path(dest_parent);
                             return self.symlink().map(|()| true);
                         }
                         Errno::EEXIST => {
@@ -69,7 +69,7 @@ impl Symlinker {
                                                 return Err(symlink_err);
                                             };
 
-                                            let _ = Fd::cwd().make_path(dest_parent);
+                                            let _ = crate::isolated_install::make_store_path(dest_parent);
                                             return self.symlink().map(|()| true);
                                         }
                                         _ => Err(symlink_err),

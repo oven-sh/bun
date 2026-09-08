@@ -742,9 +742,6 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
                 Global::exit(1);
             }
             Self::handle_load_lockfile_errors(&load_lockfile, log_level);
-            // Same choice `bun install` makes when it migrates: npm and yarn keep the hoisted
-            // linker (configVersion 0), pnpm gets isolated installs (configVersion 1).
-            let config_version = load_lockfile.choose_config_version().0;
             // Reshaped for borrowck — `save_to_disk` needs
             // `&mut Lockfile` (self) and `&LoadResult` simultaneously, but
             // `LoadResultOk.lockfile` already holds the only `&mut` into the
@@ -756,9 +753,8 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
             // for `save_format()` / `loaded_from_binary_lockfile()` (scalar
             // `format`/`migrated` fields) and never dereferences `ok.lockfile`,
             // so `&mut *lf` remains the sole live mutable view of the heap
-            // lockfile. `options` is accessed via `pm_raw` (disjoint allocation).
+            // lockfile. `options` is read via `pm_raw` (disjoint allocation).
             unsafe {
-                (*pm_raw).options.config_version = Some(config_version);
                 (*lf).save_to_disk(&load_lockfile, &(*pm_raw).options);
             }
             Global::exit(0);

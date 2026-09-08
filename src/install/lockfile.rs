@@ -439,7 +439,7 @@ impl<'a> LoadResult<'a> {
     }
 
     /// configVersion and boolean for if the configVersion previously existed/needs to be saved to lockfile
-    pub fn choose_config_version(&self) -> (ConfigVersion, bool) {
+    pub(crate) fn choose_config_version(&self) -> (ConfigVersion, bool) {
         match self {
             LoadResult::NotFound | LoadResult::Err(_) => (ConfigVersion::CURRENT, true),
             LoadResult::Ok(ok) => match ok.migrated {
@@ -631,10 +631,14 @@ impl Lockfile {
                     lockfile_path: zstr!("bun.lockb"),
                     format: LockfileFormat::Binary,
                 });
+                let config_version = ok
+                    .lockfile
+                    .saved_config_version
+                    .unwrap_or(ConfigVersion::CURRENT);
                 if let Err(e) = TextLockfile::Stringifier::save_from_binary(
                     &mut *ok.lockfile,
                     &binary_origin,
-                    &manager.options,
+                    config_version,
                     &mut writer_buf,
                 ) {
                     Output::panic(format_args!(
@@ -1844,6 +1848,11 @@ impl Lockfile {
         options: &PackageManagerOptions,
     ) -> bool {
         let save_format = load_result.save_format(options);
+        // `bun install` decides this up front; every other command that saves (`bun pm migrate`,
+        // `bun pm trust`) keeps what the lockfile had, or what an install would have picked for it.
+        let config_version = options
+            .config_version
+            .unwrap_or_else(|| load_result.choose_config_version().0);
         if cfg!(debug_assertions) {
             if let Err(e) = self.verify_data() {
                 bun_core::pretty_errorln!(
@@ -1862,7 +1871,7 @@ impl Lockfile {
                 if let Err(_e) = TextLockfile::Stringifier::save_from_binary(
                     self,
                     load_result,
-                    options,
+                    config_version,
                     &mut writer_buf,
                 ) {
                     // The only write failure on an allocating writer is OOM.
@@ -1879,9 +1888,14 @@ impl Lockfile {
 
             let mut total_size: usize = 0;
             let mut end_pos: usize = 0;
-            if let Err(e) =
-                Serializer::save(self, options, &mut bytes, &mut total_size, &mut end_pos)
-            {
+            if let Err(e) = Serializer::save(
+                self,
+                options,
+                config_version,
+                &mut bytes,
+                &mut total_size,
+                &mut end_pos,
+            ) {
                 Output::err(e, "failed to serialize lockfile", format_args!(""));
                 Global::crash();
             }

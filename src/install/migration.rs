@@ -438,52 +438,44 @@ pub(crate) fn clear_non_registry_platform_constraints(lockfile: &mut Lockfile) {
 }
 
 /// `trustedDependencies` and `patchedDependencies` exist only in package.json and bun.lock, so no
-/// other lockfile carries them. `bun install` copies them from the root package.json into the
-/// lockfile it saves; a migrated lockfile gets the same copy so it matches that install.
+/// other lockfile carries them. `bun install` copies them from package.json into the lockfile it
+/// saves (`Package::parse` with `Features::MAIN` for the root, `Features::WORKSPACE` for each
+/// workspace); a migrated lockfile gets the same copy so it matches that install.
 pub(crate) fn copy_trusted_and_patched_dependencies(
     this: &mut Lockfile,
     log: &mut bun_ast::Log,
     dir: Fd,
 ) -> Result<(), Error> {
+    let arena = bun_alloc::Arena::new();
     let Ok(contents) = File::read_from(dir, b"package.json") else {
         return Ok(());
     };
-    let source = bun_ast::Source::init_path_string(b"package.json", contents.as_slice());
-    let arena = bun_alloc::Arena::new();
-    let Ok(parsed) = crate::bun_json::parse_package_json_utf8_with_opts(
-        crate::bun_json::JSONOptions {
-            json_warn_duplicate_keys: false,
-            ..crate::bun_json::PACKAGE_JSON_OPTS
-        },
-        &source,
-        log,
-        &arena,
-    ) else {
+    let Some(root) = parse_package_json(b"package.json", &contents, log, &arena) else {
         return Err(Error::InvalidPackageJSON);
     };
-    let json = parsed.root;
 
-    if this.trusted_dependencies.is_none() {
-        if let Some(q) = json.as_property(b"trustedDependencies") {
-            if q.expr.is_array() {
-                let mut trusted = crate::lockfile::TrustedDependenciesSet::default();
-                if let Some(mut items) = q.expr.as_array() {
-                    while let Some(item) = items.next() {
-                        let Some(name) = item.as_string(&arena) else {
-                            continue;
-                        };
-                        trusted.put(
-                            string_hash(name) as crate::TruncatedPackageNameHash,
-                            Box::<[u8]>::from(name),
-                        )?;
-                    }
-                }
-                this.trusted_dependencies = Some(trusted);
-            }
+    let mut trusted = this.trusted_dependencies.take();
+    add_trusted_dependencies(&mut trusted, &root, &arena)?;
+    let workspace_package_jsons: Vec<Vec<u8>> = this
+        .workspace_paths
+        .values()
+        .iter()
+        .map(|path| [path.slice(&this.buffers.string_bytes), b"/package.json"].concat())
+        .collect();
+    for path in &workspace_package_jsons {
+        // A workspace package.json that is missing or broken fails the install itself; here it
+        // only means there is nothing to copy.
+        let mut scratch = bun_ast::Log::init();
+        let Ok(contents) = File::read_from(dir, path) else {
+            continue;
+        };
+        if let Some(json) = parse_package_json(path, &contents, &mut scratch, &arena) {
+            add_trusted_dependencies(&mut trusted, &json, &arena)?;
         }
     }
+    this.trusted_dependencies = trusted;
 
-    if let Some(q) = json.as_property(b"patchedDependencies") {
+    if let Some(q) = root.as_property(b"patchedDependencies") {
         if let ExprData::EObject(obj) = &q.expr.data {
             for prop in obj.properties.iter() {
                 let (Some(key), Some(value)) = (&prop.key, &prop.value) else {
@@ -493,17 +485,61 @@ pub(crate) fn copy_trusted_and_patched_dependencies(
                 else {
                     continue;
                 };
-                let key_hash = string_hash(key);
-                if this.patched_dependencies.contains(&key_hash) {
-                    continue;
-                }
                 let path = this.string_buf().append(path)?;
                 this.patched_dependencies
-                    .put(key_hash, crate::PatchedDep::with_path(path))?;
+                    .put(string_hash(key), crate::PatchedDep::with_path(path))?;
             }
         }
     }
 
+    Ok(())
+}
+
+fn parse_package_json(
+    path: &[u8],
+    contents: &[u8],
+    log: &mut bun_ast::Log,
+    arena: &bun_alloc::Arena,
+) -> Option<bun_ast::Expr> {
+    let source = bun_ast::Source::init_path_string(path, contents);
+    crate::bun_json::parse_package_json_utf8_with_opts(
+        crate::bun_json::JSONOptions {
+            json_warn_duplicate_keys: false,
+            ..crate::bun_json::PACKAGE_JSON_OPTS
+        },
+        &source,
+        log,
+        arena,
+    )
+    .ok()
+    .map(|parsed| parsed.root)
+}
+
+/// Same rules as `Package::parse`: any `trustedDependencies` array, even an empty one, replaces the
+/// default trusted list, and every package.json that has one adds to the same set.
+fn add_trusted_dependencies(
+    trusted: &mut Option<crate::lockfile::TrustedDependenciesSet>,
+    json: &bun_ast::Expr,
+    arena: &bun_alloc::Arena,
+) -> Result<(), bun_alloc::AllocError> {
+    let Some(q) = json.as_property(b"trustedDependencies") else {
+        return Ok(());
+    };
+    if !q.expr.is_array() {
+        return Ok(());
+    }
+    let set = trusted.get_or_insert_default();
+    if let Some(mut items) = q.expr.as_array() {
+        while let Some(item) = items.next() {
+            let Some(name) = item.as_string(arena) else {
+                continue;
+            };
+            set.put(
+                string_hash(name) as crate::TruncatedPackageNameHash,
+                Box::<[u8]>::from(name),
+            )?;
+        }
+    }
     Ok(())
 }
 

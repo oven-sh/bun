@@ -17,7 +17,6 @@ use crate::config_version::ConfigVersion;
 use crate::extract_tarball as ExtractTarball;
 use crate::integrity::Integrity;
 use crate::npm::Negatable;
-use crate::package_manager_real::Options as PackageManagerOptions;
 use crate::repository::RepositoryExt as _;
 use crate::{
     DependencyID, Npm, Origin, PackageID, PackageManager, PackageNameHash, Repository, Resolution,
@@ -301,7 +300,7 @@ impl Stringifier {
     pub(crate) fn save_from_binary(
         lockfile: &mut BinaryLockfile,
         load_result: &LoadResult,
-        options: &PackageManagerOptions,
+        config_version: ConfigVersion,
         writer: &mut Writer,
     ) -> Result<(), WriteError> {
         let buf = lockfile.buffers.string_bytes.as_slice();
@@ -380,8 +379,6 @@ impl Stringifier {
             writeln!(writer, "\"lockfileVersion\": {},", lockfile_version as u32)?;
             Self::write_indent(writer, *indent)?;
 
-            let config_version: ConfigVersion =
-                options.config_version.unwrap_or(ConfigVersion::CURRENT);
             writeln!(writer, "\"configVersion\": {},", config_version as u32)?;
             Self::write_indent(writer, *indent)?;
 

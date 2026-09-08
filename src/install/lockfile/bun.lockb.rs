@@ -169,6 +169,7 @@ impl<'a, 'b> bun_collections::array_hash_map::ArrayHashAdapter<SemverString, Sem
 pub(crate) fn save(
     this: &mut Lockfile,
     options: &PackageManagerOptions,
+    config_version: ConfigVersion,
     bytes: &mut Vec<u8>,
     total_size: &mut usize,
     end_pos: &mut usize,
@@ -341,7 +342,6 @@ pub(crate) fn save(
     }
 
     stream.write_all(&HAS_CONFIG_VERSION_TAG.to_ne_bytes())?;
-    let config_version: ConfigVersion = options.config_version.unwrap_or(ConfigVersion::CURRENT);
     stream.write_int_le::<u64>(config_version as u64)?;
 
     if this.overrides.has_scoped() {

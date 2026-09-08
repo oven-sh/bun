@@ -111,7 +111,7 @@ pub struct Options {
     /// Override OS for optional dependencies filtering
     pub os: Npm::OperatingSystem,
 
-    pub config_version: Option<ConfigVersion>,
+    pub(crate) config_version: Option<ConfigVersion>,
 }
 
 impl Default for Options {

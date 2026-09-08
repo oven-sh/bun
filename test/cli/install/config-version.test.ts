@@ -131,6 +131,46 @@ describe.concurrent("configVersion", () => {
     `);
   });
 
+  test("bun pm trust keeps the lockfile's configVersion", async () => {
+    using dir = tempDir("config-version-pm-trust", {
+      "package.json": JSON.stringify({
+        name: "root-1",
+        dependencies: { dep: "file:./dep" },
+      }),
+      "dep/package.json": JSON.stringify({
+        name: "dep",
+        version: "1.0.0",
+        scripts: { postinstall: "echo postinstall" },
+      }),
+    });
+    const packageDir = String(dir);
+
+    const { out, err, exitCode } = await install(packageDir);
+    expect(err).toContain("Saved lockfile");
+    expect(out).toContain("Blocked 1 postinstall");
+    expect(exitCode).toBe(0);
+
+    // A project that predates configVersion 1, or one migrated from npm or yarn.
+    const lockfile = join(packageDir, "bun.lock");
+    const v0 = (await file(lockfile).text()).replace(`"configVersion": 1,`, `"configVersion": 0,`);
+    await Bun.write(lockfile, v0);
+
+    await using trust = spawn({
+      cmd: [bunExe(), "pm", "trust", "dep"],
+      cwd: packageDir,
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [trustErr, trustExitCode] = await Promise.all([trust.stderr.text(), trust.exited]);
+    expect(trustErr).not.toContain("error:");
+    expect(trustExitCode).toBe(0);
+
+    expect(await file(lockfile).text()).toBe(
+      v0.replace(`  "packages": {`, `  "trustedDependencies": [\n    "dep",\n  ],\n  "packages": {`),
+    );
+  });
+
   test("should add configVersion@v0 to an existing lockfile", async () => {
     using dir = tempDir("config-version-existing-lockfile", {
       "package.json": JSON.stringify({

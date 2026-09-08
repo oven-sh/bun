@@ -1719,6 +1719,342 @@ describe("css tests", () => {
     );
   });
 
+  describe("border-image", () => {
+    cssTest(
+      `
+      .foo {
+        border-image: url(test.png) 60;
+      }
+    `,
+      `
+      .foo {
+        border-image: url("test.png") 60;
+      }
+    `,
+    );
+
+    cssTest(
+      `
+      .foo {
+        border-image: url(test.png) 60;
+        border-image-source: url(foo.png);
+      }
+    `,
+      `
+      .foo {
+        border-image: url("foo.png") 60;
+      }
+    `,
+    );
+
+    cssTest(
+      `
+      .foo {
+        border-image-source: url(foo.png);
+        border-image-slice: 10 40 10 40 fill;
+        border-image-width: 10px;
+        border-image-outset: 0;
+        border-image-repeat: round round;
+      }
+    `,
+      `
+      .foo {
+        border-image: url("foo.png") 10 40 fill / 10px round;
+      }
+    `,
+    );
+
+    cssTest(
+      `
+      .foo {
+        border-image: url(foo.png) 60;
+        border-image-source: var(--test);
+      }
+    `,
+      `
+      .foo {
+        border-image: url("foo.png") 60;
+        border-image-source: var(--test);
+      }
+    `,
+    );
+
+    cssTest(
+      `
+      .foo {
+        -webkit-border-image: url("test.png") 60;
+      }
+    `,
+      `
+      .foo {
+        -webkit-border-image: url("test.png") 60;
+      }
+    `,
+    );
+
+    cssTest(
+      `
+      .foo {
+        -webkit-border-image: url("test.png") 60;
+        border-image: url("test.png") 60;
+      }
+    `,
+      `
+      .foo {
+        -webkit-border-image: url("test.png") 60;
+        border-image: url("test.png") 60;
+      }
+    `,
+    );
+
+    cssTest(
+      `
+      .foo {
+        -webkit-border-image: url("test.png") 60;
+        border-image-source: url(foo.png);
+      }
+    `,
+      `
+      .foo {
+        -webkit-border-image: url("test.png") 60;
+        border-image-source: url("foo.png");
+      }
+    `,
+    );
+
+    cssTest(
+      `
+      .foo {
+        border: 1px solid red;
+        border-image: url(test.png) 60;
+      }
+    `,
+      `
+      .foo {
+        border: 1px solid red;
+        border-image: url("test.png") 60;
+      }
+    `,
+    );
+
+    cssTest(
+      `
+      .foo {
+        border-image: url(test.png) 60;
+        border: 1px solid red;
+      }
+    `,
+      `
+      .foo {
+        border: 1px solid red;
+      }
+    `,
+    );
+
+    cssTest(
+      `
+      .foo {
+        border: 1px solid red;
+        border-image: var(--border-image);
+      }
+    `,
+      `
+      .foo {
+        border: 1px solid red;
+        border-image: var(--border-image);
+      }
+    `,
+    );
+
+    prefix_test(
+      `
+      .foo {
+        border-image: url("test.png") 60;
+      }
+    `,
+      `
+      .foo {
+        -webkit-border-image: url("test.png") 60;
+        -moz-border-image: url("test.png") 60;
+        -o-border-image: url("test.png") 60;
+        border-image: url("test.png") 60;
+      }
+    `,
+      {
+        safari: 4 << 16,
+        firefox: 4 << 16,
+        opera: 12 << 16,
+      },
+    );
+
+    prefix_test(
+      `
+      .foo {
+        border-image: url(foo.png) 10 40 fill / 10px round;
+      }
+    `,
+      `
+      .foo {
+        border-image: url("foo.png") 10 40 fill / 10px round;
+      }
+    `,
+      {
+        safari: 4 << 16,
+        firefox: 4 << 16,
+        opera: 12 << 16,
+      },
+    );
+
+    prefix_test(
+      `
+      .foo {
+        border-image: var(--test) 60;
+      }
+    `,
+      `
+      .foo {
+        -webkit-border-image: var(--test) 60;
+        -moz-border-image: var(--test) 60;
+        -o-border-image: var(--test) 60;
+        border-image: var(--test) 60;
+      }
+    `,
+      {
+        safari: 4 << 16,
+        firefox: 4 << 16,
+        opera: 12 << 16,
+      },
+    );
+
+    prefix_test(
+      `
+      .foo {
+        border-image: linear-gradient(lch(56.208% 136.76 46.312), lch(51% 135.366 301.364)) var(--foo);
+      }
+    `,
+      `
+      .foo {
+        border-image: linear-gradient(#ff0f0e, #7773ff) var(--foo);
+      }
+
+      @supports (color: lab(0% 0 0)) {
+        .foo {
+          border-image: linear-gradient(lab(56.208% 94.4644 98.8928), lab(51% 70.4544 -115.586)) var(--foo);
+        }
+      }
+    `,
+      {
+        chrome: 90 << 16,
+      },
+    );
+
+    prefix_test(
+      `
+      .foo {
+        border-image-source: linear-gradient(red, green);
+        border-image-source: linear-gradient(lch(56.208% 136.76 46.312), lch(51% 135.366 301.364));
+      }
+    `,
+      `
+      .foo {
+        border-image-source: linear-gradient(red, green);
+        border-image-source: linear-gradient(lch(56.208% 136.76 46.312), lch(51% 135.366 301.364));
+      }
+    `,
+      {
+        chrome: 95 << 16,
+      },
+    );
+
+    prefix_test(
+      `
+      .foo {
+        border-image-source: linear-gradient(red, green);
+        border-image-source: linear-gradient(lch(56.208% 136.76 46.312), lch(51% 135.366 301.364));
+      }
+    `,
+      `
+      .foo {
+        border-image-source: linear-gradient(lch(56.208% 136.76 46.312), lch(51% 135.366 301.364));
+      }
+    `,
+      {
+        chrome: 112 << 16,
+      },
+    );
+
+    prefix_test(
+      `
+      .foo {
+        border-image: linear-gradient(red, green);
+        border-image: linear-gradient(lch(56.208% 136.76 46.312), lch(51% 135.366 301.364));
+      }
+    `,
+      `
+      .foo {
+        border-image: linear-gradient(red, green);
+        border-image: linear-gradient(lch(56.208% 136.76 46.312), lch(51% 135.366 301.364));
+      }
+    `,
+      {
+        chrome: 95 << 16,
+      },
+    );
+
+    prefix_test(
+      `
+      .foo {
+        border-image: var(--fallback);
+        border-image: linear-gradient(lch(56.208% 136.76 46.312), lch(51% 135.366 301.364));
+      }
+    `,
+      `
+      .foo {
+        border-image: var(--fallback);
+        border-image: linear-gradient(lch(56.208% 136.76 46.312), lch(51% 135.366 301.364));
+      }
+    `,
+      {
+        chrome: 95 << 16,
+      },
+    );
+
+    prefix_test(
+      `
+      .foo {
+        border-image: url("fallback.png") 10 40 fill / 10px;
+        border-image: url("main.png") 10 40 fill / 10px space;
+      }
+    `,
+      `
+      .foo {
+        border-image: url("fallback.png") 10 40 fill / 10px;
+        border-image: url("main.png") 10 40 fill / 10px space;
+      }
+    `,
+      {
+        chrome: 50 << 16,
+      },
+    );
+
+    prefix_test(
+      `
+      .foo {
+        border-image: url("fallback.png") 10 40 fill / 10px;
+        border-image: url("main.png") 10 40 fill / 10px space;
+      }
+    `,
+      `
+      .foo {
+        border-image: url("main.png") 10 40 fill / 10px space;
+      }
+    `,
+      {
+        chrome: 56 << 16,
+      },
+    );
+  });
+
   describe("box-shadow", () => {
     minify_test(
       ".foo { box-shadow: 64px 64px 12px 40px rgba(0,0,0,0.4) }",

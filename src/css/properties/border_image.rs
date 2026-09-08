@@ -488,7 +488,7 @@ impl BorderImageHandler {
                 if $self.$name.is_some()
                     && !$self.$name.as_ref().unwrap().eql($val)
                     && $ctx.targets.browsers.is_some()
-                    && $val.is_compatible(&$ctx.targets.browsers.unwrap())
+                    && !$val.is_compatible(&$ctx.targets.browsers.unwrap())
                 {
                     $self.flush($d, $ctx);
                 }

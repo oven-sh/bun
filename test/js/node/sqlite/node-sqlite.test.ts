@@ -106,6 +106,35 @@ describe("DatabaseSync", () => {
     db.close();
   });
 
+  test.each([
+    ["close", "unused"],
+    ["close", "get"],
+    ["close", "all"],
+    ["dispose", "unused"],
+    ["dispose", "get"],
+    ["dispose", "all"],
+  ] as const)("%s releases WAL sidecars with a retained %s statement", (closeMethod, method) => {
+    using dir = tempDir("node-sqlite-close-statement", {});
+    const file = path.join(String(dir), "db.sqlite");
+    using db = new DatabaseSync(file);
+    db.exec("PRAGMA journal_mode = WAL; CREATE TABLE t (n INTEGER); INSERT INTO t VALUES (1), (2)");
+    const stmt = db.prepare("SELECT n FROM t ORDER BY n");
+    if (method === "get") {
+      expect(stmt.get()).toEqual({ n: 1 });
+    } else if (method === "all") {
+      expect(stmt.all()).toEqual([{ n: 1 }, { n: 2 }]);
+    }
+    expect([existsSync(`${file}-wal`), existsSync(`${file}-shm`)]).toEqual([true, true]);
+
+    if (closeMethod === "close") db.close();
+    else db[Symbol.dispose]();
+
+    expect([existsSync(`${file}-wal`), existsSync(`${file}-shm`)]).toEqual([false, false]);
+    expect(() => stmt.get()).toThrow(
+      expect.objectContaining({ code: "ERR_INVALID_STATE", message: "statement has been finalized" }),
+    );
+  });
+
   test("close() finalizes outstanding prepared statements and releases the file", () => {
     using dir = tempDir("node-sqlite-close-finalize", {});
     const dbPath = path.join(String(dir), "x.db");

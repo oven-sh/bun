@@ -1144,8 +1144,7 @@ impl JSGlobalObject {
         crate::call_zero_is_throw(self, || ZigGlobalObject__readableStreamToJSON(self, value))
     }
 
-    /// `content_type`: a JS string to type the resulting Blob with (a body
-    /// owner's `Content-Type` header), or `undefined` to leave it untyped.
+    /// `content_type`: a JS string for the resulting Blob's `type`, or `undefined`.
     pub fn readable_stream_to_blob(
         &self,
         value: JSValue,

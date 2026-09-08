@@ -200,8 +200,7 @@ namespace WebCore {
 //     (toArrayBuffer/toBytes/toBlob: value = the chunk array; toJSON: value = the text;
 //      toBlob: context = the contentType JSString or undefined;
 //      toFormData: value = the Blob, context = the contentType JSString).
-//   onReadableStreamToBlobSetContentType: toBlob's buffered fast path when a contentType was
-//     given: value = the native source's Blob, context = the contentType JSString.
+//   onReadableStreamToBlobSetContentType: value = the fast path's Blob, context = the contentType JSString.
 //   onIntoArrayReadMany*: readableStreamIntoArray's readMany() continuation (readMany may
 //     return a Promise); context = an InternalFieldTuple{reader, resultArray}.
 //   onDirectConsumeLoopRead*: the readableStreamTo{Text,Array}Direct read loop;

@@ -653,8 +653,7 @@ JSC::JSValue readableStreamToArray(JSC::JSGlobalObject*, JSReadableStream*); // 
 JSC::JSValue readableStreamToArrayBuffer(JSC::JSGlobalObject*, JSReadableStream*); // userJS: yes — BunStreamConsumers.cpp
 JSC::JSValue readableStreamToBytes(JSC::JSGlobalObject*, JSReadableStream*); // userJS: yes — BunStreamConsumers.cpp
 JSC::JSValue readableStreamToJSON(JSC::JSGlobalObject*, JSReadableStream*); // userJS: yes — BunStreamConsumers.cpp
-// `contentType`: a JSString to type the resulting Blob with (a body owner's Content-Type
-// header, see Body.rs `content_type_from_headers`), or undefined to leave it as read.
+// contentType: a JSString for the resulting Blob's type (Body.rs content_type_from_headers), or undefined.
 JSC::JSValue readableStreamToBlob(JSC::JSGlobalObject*, JSReadableStream*, JSC::JSValue contentType = JSC::jsUndefined()); // userJS: yes — BunStreamConsumers.cpp
 JSC::JSValue readableStreamToFormData(JSC::JSGlobalObject*, JSReadableStream*, JSC::JSValue contentType); // userJS: yes — BunStreamConsumers.cpp
 

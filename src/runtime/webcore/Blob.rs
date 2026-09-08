@@ -1987,9 +1987,7 @@ impl BlobExt for Blob {
         if !ct.is_empty() {
             return EncodedSlice::latin1(ct).to_js(global_this);
         }
-        // A type that was set and is empty (an empty `Content-Type` header on a
-        // body's owner, a typed blob's `slice()`) is authoritative: do not fall
-        // back to the store's sniffed type.
+        // A set-but-empty type (a typed blob's `slice()`, an empty `Content-Type`) stays `""`.
         if !self.content_type_was_set.get() {
             if let Some(store) = self.store.get() {
                 return EncodedSlice::latin1(&store.mime_type.value).to_js(global_this);
@@ -5893,9 +5891,7 @@ pub(crate) unsafe extern "C" fn Blob__fromBytesWithType(
     blob
 }
 
-/// Types the Blob a body reader built from a `ReadableStream` body with its
-/// owner's `Content-Type` header (`Body::content_type_from_headers`), the way
-/// `Body::apply_blob_content_type` does for every other kind of body.
+/// C++ `readableStreamToBlob` types the Blob it built with the body owner's `Content-Type`.
 #[unsafe(no_mangle)]
 pub(crate) extern "C" fn Blob__setContentTypeFromHeader(value: JSValue, content_type: &BunString) {
     let Some(blob) = Blob::from_js(value) else {

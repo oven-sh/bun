@@ -1279,8 +1279,6 @@ JSValue readableStreamToBlob(JSGlobalObject* globalObject, WebCore::JSReadableSt
     if (fastPath) {
         if (contentType.isUndefined())
             return fastPath;
-        // The native source built the Blob with its own idea of a type; the body owner's
-        // Content-Type header wins over it.
         auto* blobPromise = dynamicDowncast<JSPromise>(fastPath);
         if (!blobPromise) [[unlikely]] {
             blobPromise = promiseFulfilledWith(globalObject, fastPath);

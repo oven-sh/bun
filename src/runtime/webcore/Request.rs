@@ -181,8 +181,7 @@ impl BodyMixin for Request {
         })
     }
     fn get_blob_content_type(&self) -> Option<Vec<u8>> {
-        // `blob()` can run inside a `Bun.serve` handler before anything has read
-        // `request.headers`; until then the headers exist only on the uws request.
+        // Inside a `Bun.serve` handler the headers may still exist only on the uws request.
         self.load_headers_from_request_context();
         body::content_type_from_headers(BodyMixin::get_fetch_headers(self))
     }
@@ -297,8 +296,7 @@ impl Request {
         Ok(self.headers_mut().as_mut().unwrap())
     }
 
-    /// Creates `headers` from the uws request when a `Bun.serve` handler is
-    /// still on the stack and nothing has created them yet; no-op otherwise.
+    /// Creates `headers` from the live uws request if nothing has yet; no-op otherwise.
     fn load_headers_from_request_context(&self) {
         if self.headers.get().is_some() {
             return;

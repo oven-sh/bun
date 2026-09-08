@@ -554,10 +554,7 @@ impl IntermediateOutput {
         &()
     }
 
-    /// Calls `emit` with consecutive pieces of `content` as it must appear
-    /// inside an inline `<script>`/`<style>` element: each `</` that starts
-    /// `close_tag` (e.g. `</script`, `</style`) becomes `<\/` so it cannot
-    /// end the element early.
+    /// Streams `content` as it must appear inside an inline `<script>`/`<style>`: each `</` that starts `close_tag` becomes `<\/`.
     fn for_each_escaping_closing_tags(
         content: &[u8],
         close_tag: &[u8],
@@ -603,8 +600,7 @@ impl IntermediateOutput {
         dst
     }
 
-    /// SHA-256 of `content` as [`memcpy_escaping_closing_tags`] writes it,
-    /// which is what a browser hashes for the inline element's CSP check.
+    /// SHA-256 of `content` as [`memcpy_escaping_closing_tags`] writes it (what a browser hashes for CSP).
     pub(crate) fn sha256_escaping_closing_tags(content: &[u8], close_tag: &[u8]) -> [u8; 32] {
         let mut hasher = bun_sha_hmac::sha::SHA256::init();
         Self::for_each_escaping_closing_tags(content, close_tag, |bytes| hasher.update(bytes));
@@ -782,8 +778,7 @@ impl IntermediateOutput {
                     &[]
                 };
 
-                // Standalone HTML: the `content` of each
-                // `<meta http-equiv="Content-Security-Policy">`, by placeholder index.
+                // Standalone HTML: each CSP `<meta>`'s `content`, by placeholder index.
                 let content_security_policies: &[Box<[u8]>] =
                     match chunk.compile_results_for_chunk.iter().next() {
                         Some(CompileResult::Html {
@@ -1288,9 +1283,7 @@ pub enum QueryKind {
     HtmlImport = 4,
     /// Given a chunk index, print the chunk's content hash as `[hash]` prints it
     ChunkId = 5,
-    /// Given the ordinal of a `<meta http-equiv="Content-Security-Policy">`
-    /// in a standalone HTML document, print its policy rewritten to allow
-    /// the blocks and data: URLs inlined into that document
+    /// Given its ordinal in a standalone HTML document, print a CSP `<meta>`'s rewritten `content`
     ContentSecurityPolicy = 6,
 }
 

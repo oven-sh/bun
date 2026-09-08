@@ -5110,8 +5110,7 @@ impl<'a> LinkerContext<'a> {
                         break;
                     }
                 }
-                // Bounded by the number of CSP `<meta>` tags in the HTML
-                // document, which only its `CompileResult::Html` knows.
+                // Bounded by the document's CSP `<meta>` count, which only its `CompileResult::Html` knows.
                 crate::chunk::QueryKind::ContentSecurityPolicy => {}
                 crate::chunk::QueryKind::None => unreachable!(),
             }

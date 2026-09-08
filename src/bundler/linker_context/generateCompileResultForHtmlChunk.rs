@@ -88,8 +88,7 @@ struct HTMLLoader<'a> {
     end_tag_indices: EndTagIndices,
     added_head_tags: bool,
     added_body_script: bool,
-    /// Standalone mode: the `content` of each
-    /// `<meta http-equiv="Content-Security-Policy">`, in document order.
+    /// Standalone mode: the `content` of each CSP `<meta>`, in document order.
     content_security_policies: Vec<Box<[u8]>>,
 }
 
@@ -231,12 +230,7 @@ impl<'a> HTMLProcessorHandler for HTMLLoader<'a> {
         let Some(policy) = element.get_attribute("content") else {
             return;
         };
-        // A policy written for the multi-file site blocks the inline blocks
-        // and data: URLs this mode emits. The sources that allow them (a hash
-        // per block) depend on the final bytes of sibling chunks, so leave a
-        // placeholder that `generate_chunks_in_parallel` resolves. The value
-        // is kept ready to splice into the double-quoted attribute lol-html
-        // writes: character references as written, `"` escaped.
+        // The hashes that allow the inlined blocks need the sibling chunks' final bytes: leave a placeholder for `generate_chunks_in_parallel`.
         let index = u32::try_from(self.content_security_policies.len()).expect("int cast");
         let mut value = Vec::with_capacity(policy.len());
         for byte in policy.into_bytes() {

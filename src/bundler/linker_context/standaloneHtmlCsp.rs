@@ -1,11 +1,4 @@
-//! `<meta http-equiv="Content-Security-Policy">` in standalone HTML.
-//!
-//! A policy written for the multi-file site (`default-src 'self'`) blocks the
-//! single-file output: the bundle becomes an inline `<script>`, the
-//! stylesheet an inline `<style>`, and every asset a `data:` URL, and none of
-//! those match `'self'`. The policy is rewritten with the narrowest
-//! additions that let the inlined content load: one `'sha256-…'` source per
-//! inline block, and `data:` for each kind of asset that became a data: URL.
+//! Rewrites a standalone HTML document's CSP `<meta>` so its inline `<script>`/`<style>` (by hash) and `data:` assets are allowed.
 
 use crate::mal_prelude::*;
 use std::borrow::Cow;
@@ -20,11 +13,7 @@ use crate::{Chunk, CompileResult, LinkerContext};
 /// ASCII whitespace as CSP defines it (https://w3c.github.io/webappsec-csp/#grammardef-optional-ascii-whitespace).
 const WHITESPACE: &[u8] = b" \t\n\x0c\r";
 
-/// Rewrites the `content` of every `<meta http-equiv="Content-Security-Policy">`
-/// that `HTMLLoader` recorded for the standalone HTML document `chunks[html]`,
-/// now that the contents of the chunks inlined into it are final, and adds
-/// a note to the log for each policy that changed. Returns `None` when the
-/// document has no such tag.
+/// The rewritten `content` of each CSP `<meta>` in `chunks[html]`, with a note logged per change; `None` if it has none.
 pub(crate) fn resolve_for_html_chunk(
     c: &LinkerContext<'_>,
     html: usize,
@@ -46,9 +35,7 @@ pub(crate) fn resolve_for_html_chunk(
     let js_chunk = chunk.get_js_chunk_index_for_html(chunks);
     let css_chunk = chunk.get_css_chunk_index_for_html(chunks);
 
-    // The inline `<script>` / `<style>` this document gets for each chunk
-    // (see `HTMLLoader::standalone_body_script` / `get_head_tags`). A browser
-    // returns before the CSP check for an empty script, so that needs no hash.
+    // One inline block per chunk (`HTMLLoader::standalone_body_script` / `get_head_tags`); an empty one is never CSP-checked.
     let inline_block_hash = |index: Option<usize>| -> Option<HashSource> {
         let index = index?;
         let content = standalone_chunk_contents[index].as_deref()?;
@@ -65,8 +52,7 @@ pub(crate) fn resolve_for_html_chunk(
     let scripts: Vec<HashSource> = inline_block_hash(js_chunk).into_iter().collect();
     let styles: Vec<HashSource> = inline_block_hash(css_chunk).into_iter().collect();
 
-    // Every reference this document, its bundle and its stylesheet make to a
-    // file that standalone mode turns into a data: URL.
+    // Every file this document, its bundle and its stylesheet reference that became a data: URL.
     let parse_graph = c.parse_graph();
     let loaders = parse_graph.input_files.items_loader();
     let urls_for_css = parse_graph.ast.items_url_for_css();
@@ -86,8 +72,7 @@ pub(crate) fn resolve_for_html_chunk(
                 continue;
             }
             let loader = loaders[target];
-            // JS only sees a URL for file-loader imports; HTML attributes and
-            // CSS `url()` take the data: URL of anything that is not code.
+            // JS gets a URL only from file-loader imports; HTML and CSS inline anything that is not code.
             let becomes_data_url = if importer_is_js {
                 loader.should_copy_for_bundling()
             } else {
@@ -124,8 +109,7 @@ pub(crate) fn resolve_for_html_chunk(
     let resolved = content_security_policies
         .iter()
         .map(|value| {
-            // `value` is the attribute as written, character references
-            // included. The browser parses the decoded text.
+            // `value` is the attribute as written; the browser parses it with character references decoded.
             let Some(rewrite) = rewrite(&decode_character_references(value), &inlined) else {
                 return value.clone();
             };
@@ -328,8 +312,7 @@ struct Rewrite {
     summary: Vec<u8>,
 }
 
-/// Returns the rewritten policy, or `None` when `policy` already allows
-/// everything in `inlined` (or blocks it on purpose with `'none'`).
+/// `None` when `policy` already allows everything in `inlined`, or blocks it on purpose with `'none'`.
 fn rewrite(policy: &[u8], inlined: &InlinedContent<'_>) -> Option<Rewrite> {
     if inlined.scripts.is_empty() && inlined.styles.is_empty() && !inlined.data_urls.any() {
         return None;
@@ -351,10 +334,7 @@ fn rewrite(policy: &[u8], inlined: &InlinedContent<'_>) -> Option<Rewrite> {
     let mut appended: Vec<u8> = Vec::new();
     let mut summary: Vec<u8> = Vec::new();
 
-    // (directive, its fallbacks, what it must allow). `*-src-elem` (CSP3)
-    // takes precedence over `*-src` in browsers that know it, so when a page
-    // uses it the hash goes there too, but it is never introduced.
-    // https://w3c.github.io/webappsec-csp/#directive-fallback-list
+    // (directive, fallbacks, need); `*-src-elem` (CSP3) wins over `*-src` where supported, so it gets the hash too but is never introduced.
     const DEFAULT_SRC: &[&[u8]] = &[b"default-src"];
     let kinds = inlined.data_urls;
     let needs: [(&[u8], &[&[u8]], Need<'_>, bool); 8] = [
@@ -427,13 +407,11 @@ fn rewrite(policy: &[u8], inlined: &InlinedContent<'_>) -> Option<Rewrite> {
             additions[index].extend_from_slice(&sources);
             continue;
         }
-        // Split a dedicated directive off the fallback so the fallback, and
-        // everything else that inherits it, stays as written.
+        // Split a directive off the fallback so the fallback and what else inherits it stay as written.
         appended.extend_from_slice(b"; ");
         appended.extend_from_slice(name);
         for source in effective.sources() {
-            // Keywords other than 'self', nonces and hashes only mean
-            // something to scripts and styles.
+            // Keywords other than 'self', nonces and hashes only apply to scripts and styles.
             if matches!(need, Need::Data)
                 && source.starts_with(b"'")
                 && !strings::eql_case_insensitive_ascii_check_length(source, b"'self'")
@@ -458,8 +436,7 @@ fn rewrite(policy: &[u8], inlined: &InlinedContent<'_>) -> Option<Rewrite> {
         out.extend_from_slice(directive.raw);
         out.extend_from_slice(&additions[i]);
     }
-    // Something was restricted, so there is at least one directive for
-    // `appended`'s leading "; " to follow.
+    // Something was restricted, so `directives` is non-empty and `appended`'s "; " has a predecessor.
     out.extend_from_slice(&appended);
     Some(Rewrite {
         policy: out,

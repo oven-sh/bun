@@ -820,9 +820,7 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
             scc[ci] = Some(buffer);
         }
 
-        // A `<meta http-equiv="Content-Security-Policy">` written for the
-        // multi-file site blocks what this mode inlines. Now that the inlined
-        // chunks are final, rewrite each HTML document's policies for them.
+        // The inlined chunks are final: rewrite each HTML document's CSP `<meta>` to allow them.
         for ci in 0..chunks.len() {
             if !matches!(chunks[ci].content, crate::chunk::Content::Html) {
                 continue;

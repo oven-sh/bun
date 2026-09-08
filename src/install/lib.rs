@@ -862,8 +862,7 @@ impl RunCommand {
 
 const BUN_HASH_TAG: &[u8] = b".bun-tag-";
 
-/// Empty file in an installed package's directory from when its lifecycle scripts are
-/// enqueued until the last one exits 0. A package that still has it is installed again.
+/// In a package directory from when its lifecycle scripts are enqueued until the last one exits 0.
 pub(crate) const SCRIPTS_PENDING_FILE: &str = ".bun-scripts-pending";
 
 /// Length of `u64::MAX` formatted as lowercase hex (`ffffffffffffffff`).

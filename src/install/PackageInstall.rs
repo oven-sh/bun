@@ -816,7 +816,10 @@ impl<'a> PackageInstall<'a> {
         let mut buf = bun_paths::path_buffer_pool::get();
         let marker_path = path::resolve_path::join_z_buf::<path::platform::Auto>(
             buf.as_mut_slice(),
-            &[self.destination_dir_subpath.as_bytes(), SCRIPTS_PENDING_FILE.as_bytes()],
+            &[
+                self.destination_dir_subpath.as_bytes(),
+                SCRIPTS_PENDING_FILE.as_bytes(),
+            ],
         );
         self.node_modules
             .file_exists_at(root_node_modules_dir, marker_path)

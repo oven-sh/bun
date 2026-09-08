@@ -1501,8 +1501,7 @@ impl Task {
                     let current_step = Step::SymlinkDependencies;
                     let relinking = self.relink != Relink::Off;
 
-                    // Mark a fresh entry right after `LinkPackage`: it may wait in `CheckIfBlocked`
-                    // long before `RunPreinstall`, which clears the mark if nothing runs.
+                    // right after `LinkPackage`, since `CheckIfBlocked` can hold the entry long before `RunPreinstall`
                     if !relinking
                         && pkg_res.tag.can_enqueue_install_task()
                         && manager_ref.options.do_.contains(Do::RUN_SCRIPTS)

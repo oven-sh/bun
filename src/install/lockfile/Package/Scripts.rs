@@ -418,8 +418,7 @@ pub struct List {
     // Owned NUL-terminated heap string, not a borrow.
     pub(crate) cwd: ZBox,
     pub(crate) package_name: Box<[u8]>,
-    /// `cwd` is bun's copy of an npm/git/tarball package out of the cache, not the user's own
-    /// directory (root, workspace, `link:`, folder). Only such a copy is marked or deleted.
+    /// `cwd` is bun's copy out of the cache (npm/git/tarball), not a user directory (root, workspace, `link:`, folder).
     pub(crate) cwd_is_from_cache: bool,
 }
 

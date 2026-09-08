@@ -214,8 +214,10 @@ impl ReadableStream {
                     if let Some(offset) = blobby.start_offset {
                         blob.offset.set(offset as webcore::blob::SizeType);
                     }
+                    // The stream reads only `max_size` bytes, so that size is a window.
                     if let Some(size) = blobby.max_size {
                         blob.size.set(size as webcore::blob::SizeType);
+                        blob.size_is_explicit.set(true);
                     }
                     // it should be lazy, file shouldn't have opened yet.
                     debug_assert!(!blobby.started.get());

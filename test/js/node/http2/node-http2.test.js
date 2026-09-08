@@ -1799,6 +1799,39 @@ it("sensitive headers should work", async () => {
   }
 });
 
+// The never-index list lives under a Symbol key of the headers object. The
+// native header walk must skip Symbol keys. It used to send them as headers
+// named by the symbol description ("nodejs.http2.sensitiveheaders: cookie").
+it("Symbol keys of the headers object are not sent as headers", async () => {
+  const server = http2.createServer((req, res) => {
+    res.end(JSON.stringify(Object.keys(req.headers).filter(name => !name.startsWith(":"))));
+  });
+  let client;
+  try {
+    const { promise, resolve, reject } = Promise.withResolvers();
+    server.listen(0, () => {
+      client = http2.connect(`http://localhost:${server.address().port}`);
+      client.on("error", reject);
+      const req = client.request({
+        ":path": "/",
+        cookie: "a=b",
+        [http2.sensitiveHeaders]: ["cookie"],
+        [Symbol("local")]: "v",
+      });
+      let body = "";
+      req.setEncoding("utf8");
+      req.on("data", chunk => (body += chunk));
+      req.on("end", () => resolve(body));
+      req.on("error", reject);
+      req.end();
+    });
+    expect(JSON.parse(await promise)).toEqual(["cookie"]);
+  } finally {
+    server.close();
+    client?.close?.();
+  }
+});
+
 it("http2 session.goaway() validates input types", async done => {
   const { mustCall } = createCallCheckCtx(done);
   const server = http2.createServer((req, res) => {

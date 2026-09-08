@@ -733,6 +733,8 @@ impl Interpreter {
 
         // ── run ────────────────────────────────────────────────────────────
         interp.exit_code.set(Some(1));
+        // Armed before `run()`: it spawns the first command before it returns.
+        crate::shell::forward_signals::install(mini.loop_ptr());
         if let Err(e) = interp.run() {
             let name = e.name();
             interp.deinit_from_exec();
@@ -748,7 +750,6 @@ impl Interpreter {
         // The closure captures a raw pointer so borrowck doesn't see an
         // overlap with `tick`'s `&mut self` on `mini`.
         let interp_ptr: *const Interpreter = &raw const *interp;
-        crate::shell::forward_signals::install(mini.loop_ptr());
         mini.tick(core::ptr::null_mut(), |_ctx| {
             // SAFETY: `interp` lives in this stack frame for the whole tick
             // loop; `flags` is `Cell<InterpreterFlags>` (interior-mutable), so

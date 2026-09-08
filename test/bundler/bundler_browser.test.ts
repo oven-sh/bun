@@ -617,6 +617,20 @@ describe("bundler", () => {
       expect(contents).toBe("");
     },
   });
+  // The diagnostic names the build's actual target, not "Browser".
+  itBundled("browser/TargetNodeImportBunError", {
+    skipOnEsbuild: true,
+    files: {
+      "/entry.js": `
+        import { version } from "bun";
+        console.log(version);
+      `,
+    },
+    target: "node",
+    bundleErrors: {
+      "/entry.js": [`Node.js build cannot import Bun builtin: "bun". When bundling for Bun, set target to 'bun'`],
+    },
+  });
 
   itBundled("browser/AwaitUsingStatement", {
     files: {

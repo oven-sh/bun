@@ -3607,13 +3607,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     let original_member_ref = value.ref_;
 
                     if self.symbols[symbol_idx].kind == js_ast::symbol::Kind::HoistedFunction {
-                        // Block-level function declarations behave like "let" in strict
-                        // mode. Hoisting runs before `exports_kind` classification, so
-                        // `ImplicitStrictModeModuleType` keeps the sloppy Annex B behavior.
-                        if scope_strict_mode != js_ast::StrictModeKind::SloppyMode
-                            && scope_strict_mode
-                                != js_ast::StrictModeKind::ImplicitStrictModeModuleType
-                        {
+                        // Block-level function declarations behave like "let" in strict mode
+                        if scope_strict_mode.is_settled_strict() {
                             continue;
                         }
 
@@ -5105,6 +5100,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     #[inline]
     pub(crate) fn is_strict_mode(&self) -> bool {
         self.current_scope().strict_mode != js_ast::StrictModeKind::SloppyMode
+    }
+
+    /// See `StrictModeKind::is_settled_strict`.
+    #[inline]
+    pub(crate) fn is_settled_strict_mode(&self) -> bool {
+        self.current_scope().strict_mode.is_settled_strict()
     }
 
     #[inline]

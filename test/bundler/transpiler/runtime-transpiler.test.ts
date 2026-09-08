@@ -635,4 +635,40 @@ describe.concurrent("implicit strict mode for files forced to ESM", () => {
     expect({ stdout, stderr }).toEqual({ stdout: "ran as cjs 42\n", stderr: "" });
     expect(exitCode).toBe(0);
   });
+
+  test("mapped arguments in a CommonJS-classified .mjs file still pin parameters when bundled", async () => {
+    // In a sloppy function with simple parameters, `arguments[0] = v` rebinds
+    // the first parameter. The visit pass records that as an assignment so the
+    // printer does not merge `a = t.foo, b = t.bar` into one read of `t`; the
+    // provisional strict kind must not skip that record, or the cjs bundle
+    // reads the stale object.
+    using dir = tempDir("forced-esm-cjs-mapped-arguments", {
+      "args.mjs": [
+        "exports.f = function (t) {",
+        '  globalThis.hook = () => { arguments[0] = { foo: 0, bar: "changed" }; };',
+        "  const a = t.foo, b = t.bar;",
+        "  return b;",
+        "};",
+        'console.log(exports.f({ get foo() { globalThis.hook(); return 0; }, bar: "original" }));',
+        "",
+      ].join("\n"),
+    });
+    await using build = Bun.spawn({
+      cmd: [bunExe(), "build", "args.mjs", "--format=cjs", "--outfile=out.cjs"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [buildStdout, buildStderr, buildExit] = await Promise.all([
+      build.stdout.text(),
+      build.stderr.text(),
+      build.exited,
+    ]);
+    expect({ buildStdout, buildStderr }).toMatchObject({ buildStderr: "" });
+    expect(buildExit).toBe(0);
+    const { stdout, stderr, exitCode } = await run(dir, "out.cjs");
+    expect({ stdout, stderr }).toEqual({ stdout: "changed\n", stderr: "" });
+    expect(exitCode).toBe(0);
+  });
 });

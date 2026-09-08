@@ -1206,6 +1206,16 @@ pub enum StrictModeKind {
     ImplicitStrictModeModuleType,
 }
 
+impl StrictModeKind {
+    /// Strictness that is final. `ImplicitStrictModeModuleType` is provisional
+    /// until `exports_kind` is classified, so decisions that shape the output
+    /// before then (hoisting, mapped `arguments`, duplicate parameters) treat
+    /// it as sloppy; diagnostics go through the deferral queue instead.
+    pub fn is_settled_strict(self) -> bool {
+        !matches!(self, Self::SloppyMode | Self::ImplicitStrictModeModuleType)
+    }
+}
+
 #[derive(Debug, Copy, Clone, PartialEq, Eq, strum::IntoStaticStr)]
 pub enum ToJSError {
     #[strum(serialize = "Cannot convert argument type to JS")]

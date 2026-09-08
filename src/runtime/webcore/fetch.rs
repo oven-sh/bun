@@ -511,8 +511,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
         return Ok(JSPromise::rejected_promise(global_this, err).to_js());
     }
 
-    // Nothing in a fetch reads the fragment, and `Response.url` is serialized
-    // without it. https://fetch.spec.whatwg.org/#dom-response-url
+    // A fetch never uses the fragment, and `Response.url` excludes it: https://fetch.spec.whatwg.org/#dom-response-url
     let href = bun_url::href_from_string_without_fragment(&url_str);
     drop(url_str);
     if href.tag() == BunStringTag::Dead {

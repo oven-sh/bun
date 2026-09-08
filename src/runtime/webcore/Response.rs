@@ -248,15 +248,11 @@ impl Default for Response {
     }
 }
 
-/// <https://fetch.spec.whatwg.org/#concept-response-type>
-///
-/// Bun has no notion of an origin, so response tainting is always "basic" and
-/// the filtered types ("cors", "opaque", "opaqueredirect") are unreachable.
+/// <https://fetch.spec.whatwg.org/#concept-response-type>. Bun has no origin, so the filtered types never apply.
 #[repr(u8)]
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum ResponseType {
-    /// `new Response()`, `Response.json()`, `Response.redirect()`, and the
-    /// responses Bun's servers construct.
+    /// Constructed responses: `new Response()`, `Response.json()`, `Response.redirect()`, server-built ones.
     Default = 0,
     /// Anything `fetch()` resolves with.
     Basic = 1,
@@ -585,8 +581,7 @@ impl Response {
 
     // JS getter; codegen calls this exact name.
     pub(crate) fn get_url(this: &Self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
-        // https://fetch.spec.whatwg.org/#dom-response-url
-        // fetch() stores the url with the fragment already excluded.
+        // https://fetch.spec.whatwg.org/#dom-response-url (fetch() stores it without the fragment)
         this.url.get().to_js(global_this)
     }
 

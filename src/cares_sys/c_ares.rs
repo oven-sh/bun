@@ -1845,9 +1845,6 @@ impl Error {
             (1..=ARES_ENOSERVER as u32).contains(&n),
             "c-ares status {rc} out of range",
         );
-        // Every value in the asserted range is a declared discriminant, so the
-        // checked `from_repr` (strum::FromRepr) always returns `Some` here and
-        // never yields `EAI_AGAIN`, which lies outside the range.
         Error::from_repr(n as i32)
     }
 }

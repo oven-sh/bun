@@ -19,10 +19,7 @@ pub struct ByteBlobLoader {
     /// Necessary for converting a ByteBlobLoader from a Blob -> back into a Blob
     /// Especially for DOMFormData, where the specific content-type might've been serialized into the data.
     pub(crate) content_type: blob::BlobContentType,
-    /// Same round trip for a string body (`Body::Value::WTFStringImpl` /
-    /// `InternalBlob { was_string }`), which `.body` wraps in an untyped Blob: lets
-    /// `to_any_blob` hand back `InternalBlob { was_string: true }`, the form Bun.serve
-    /// derives `text/plain` from, instead of anonymous bytes.
+    /// Same round trip for a string body: `to_any_blob` returns `InternalBlob { was_string }`.
     pub(crate) was_string: bool,
 }
 

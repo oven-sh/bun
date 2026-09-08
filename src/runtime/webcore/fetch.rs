@@ -161,8 +161,10 @@ fn data_url_response(url: BunString, global_this: &JSGlobalObject) -> JSValue {
             }) {
             Some(blob) => blob,
             None => {
-                let err =
-                    global_this.create_error_instance(format_args!("failed to fetch the data URL"));
+                let err = global_this.to_type_error(
+                    jsc::ErrorCode::INVALID_URL,
+                    format_args!("failed to fetch the data URL"),
+                );
                 return JSPromise::rejected_promise(global_this, err).to_js();
             }
         }

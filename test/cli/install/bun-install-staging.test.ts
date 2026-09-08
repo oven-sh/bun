@@ -5,8 +5,8 @@
 // directory that already received its package.json would be reported as up to
 // date by every later `bun install`. The rename must also cope with the final
 // path being occupied already, which the hoisted linker does to itself.
-import { expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { describe, expect, test } from "bun:test";
+import { bunEnv, bunExe, isLinux, isMusl, tempDir } from "harness";
 import { existsSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 
@@ -15,14 +15,17 @@ import { join } from "node:path";
 const DIR_COUNT = 32;
 const FILES_PER_DIR = 64;
 
-const archiveEntries: Record<string, string> = {
-  "package/package.json": JSON.stringify({ name: "many-files", version: "1.0.0" }),
-};
+// package.json is the last member (Bun.Archive keeps insertion order), the
+// opposite of `npm pack`: the cache entry is linked in directory order, and a
+// filesystem that lists newest first (tmpfs) then links package.json first,
+// which is the order an in-place link needs to leave an accepted partial copy.
+const archiveEntries: Record<string, string> = {};
 for (let dir = 0; dir < DIR_COUNT; dir++) {
   for (let file = 0; file < FILES_PER_DIR; file++) {
     archiveEntries[`package/d${dir}/f${file}.js`] = `module.exports = ${dir * FILES_PER_DIR + file};\n`;
   }
 }
+archiveEntries["package/package.json"] = JSON.stringify({ name: "many-files", version: "1.0.0" });
 
 const expectedTree = new Set<string>();
 for (const entry of Object.keys(archiveEntries)) {
@@ -235,3 +238,90 @@ for (const linker of ["hoisted", "isolated"]) {
     expect(readdirSync(join(root, "node_modules")).filter(name => name !== ".bun")).toEqual([alias]);
   });
 }
+
+// When linking fails midway (a full disk), bun sees the error itself instead of
+// being killed, and the failure path must not leave a partial copy at the final
+// path or a staging directory behind either. linkat() is failed with ENOSPC by
+// an LD_PRELOAD shim after some files went through, so this needs Linux, a
+// dynamically linked bun (not musl) and a C compiler.
+const cc = Bun.which("cc") || Bun.which("gcc") || Bun.which("clang");
+
+const failingLinkatShim = /* c */ `
+#define _GNU_SOURCE
+#include <dlfcn.h>
+#include <errno.h>
+#include <stdlib.h>
+
+static int calls;
+
+int linkat(int olddirfd, const char *oldpath, int newdirfd, const char *newpath, int flags) {
+  static int (*real_linkat)(int, const char *, int, const char *, int);
+  if (!real_linkat) real_linkat = dlsym(RTLD_NEXT, "linkat");
+  const char *limit = getenv("FAIL_LINKAT_AFTER");
+  if (limit && ++calls > atoi(limit)) {
+    errno = ENOSPC;
+    return -1;
+  }
+  return real_linkat(olddirfd, oldpath, newdirfd, newpath, flags);
+}
+`;
+
+describe.skipIf(!isLinux || isMusl || !cc)("a link that runs out of space midway", () => {
+  for (const [linker, packageDir] of Object.entries(packageDirs)) {
+    test(`${linker} linker: leaves nothing at the package's path and the next install succeeds`, async () => {
+      const tgz = await new Bun.Archive(archiveEntries, { compress: "gzip" }).bytes();
+      using registry = serveRegistry(tgz);
+      using dir = tempDir(`staging-enospc-${linker}`, {
+        "shim.c": failingLinkatShim,
+        "package.json": JSON.stringify({ name: "app", dependencies: { "many-files": "1.0.0" } }),
+        "bunfig.toml": ({ root }) =>
+          Bun.TOML.stringify({ install: { registry: registry.url.href, cache: join(root, ".bun-cache"), linker } }),
+      });
+      const root = String(dir);
+      const installed = packageDir(root);
+      const installedParent = join(installed, "..");
+
+      {
+        await using compile = Bun.spawn({
+          cmd: [cc!, "-shared", "-fPIC", "-o", "shim.so", "shim.c", "-ldl"],
+          cwd: root,
+          env: bunEnv,
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [out, err, exitCode] = await Promise.all([compile.stdout.text(), compile.stderr.text(), compile.exited]);
+        if (exitCode !== 0) throw new Error(`shim compile failed: ${out}${err}`);
+      }
+
+      // Warm the cache so the next install only links.
+      const warm = await install(root);
+      expect(warm.stderr).not.toContain("error");
+      expect(warm.exitCode).toBe(0);
+      rmSync(join(root, "node_modules"), { recursive: true });
+
+      await using failing = Bun.spawn({
+        cmd: [bunExe(), "install"],
+        cwd: root,
+        env: { ...bunEnv, LD_PRELOAD: join(root, "shim.so"), FAIL_LINKAT_AFTER: "300" },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [, failingStderr, failingExitCode] = await Promise.all([
+        failing.stdout.text(),
+        failing.stderr.text(),
+        failing.exited,
+      ]);
+      expect(failingStderr).toContain("ENOSPC");
+      expect(failingExitCode).toBe(1);
+      expect({
+        installed: existsSync(installed),
+        leftInParent: existsSync(installedParent) ? readdirSync(installedParent) : [],
+      }).toEqual({ installed: false, leftInParent: [] });
+
+      const repaired = await install(root);
+      expect(repaired.stderr).not.toContain("error");
+      expect(repaired.exitCode).toBe(0);
+      expect(compareWithExpectedTree(installed)).toEqual(completeTree);
+    });
+  }
+});

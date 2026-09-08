@@ -178,16 +178,29 @@ test("serve html", async () => {
         .replace(/# debugId=[a-z0-9A-Z]+/g, "# debugId=<debug-id>")
         .replace(/# sourceMappingURL=[^"]+/g, "# sourceMappingURL=<source-mapping-url>"),
     ).toMatchInlineSnapshot(`
-"// script.js
-var count = 0;
-var button = document.getElementById("counter");
-button.addEventListener("click", () => {
-  count++;
-  button.textContent = \`Click me: \${count}\`;
+"var __reportError = (e) => typeof reportError === "function" ? reportError(e) : console.error(e);
+var __script = (init) => {
+  try {
+    init();
+  } catch (e) {
+    __reportError(e);
+  }
+};
+
+// script.js
+var count = 0, button;
+__script(() => {
+  button = document.getElementById("counter");
+  button.addEventListener("click", () => {
+    count++;
+    button.textContent = \`Click me: \${count}\`;
+  });
 });
 
 // dashboard.js
-console.log("How...dashing?");
+__script(() => {
+  console.log("How...dashing?");
+});
 
 //# debugId=<debug-id>
 //# sourceMappingURL=<source-mapping-url>"
@@ -211,7 +224,7 @@ console.log("How...dashing?");
           "let count = 0;\\n      const button = document.getElementById('counter');\\n      button.addEventListener('click', () => {\\n        count++;\\n        button.textContent = \`Click me: \${count}\`;\\n      });",
           "import './script.js';\\n      // Additional dashboard-specific code could go here\\n      console.log(\\"How...dashing?\\")"
         ],
-        "mappings": ";AACM,IAAI,QAAQ;AACZ,IAAM,SAAS,SAAS,eAAe,SAAS;AAChD,OAAO,iBAAiB,SAAS,MAAM;AAAA,EACrC;AAAA,EACA,OAAO,cAAc,aAAa;AAAA,CACnC;;;ACHD,QAAQ,IAAI,gBAAgB;",
+        "mappings": ";;;;;;;;;;IACU,QAAQ,GACN;AAAA;AAAA,WAAS,SAAS,eAAe,SAAS;AAAA,EAChD,OAAO,iBAAiB,SAAS,MAAM;AAAA,IACrC;AAAA,IACA,OAAO,cAAc,aAAa;AAAA,GACnC;AAAA;;;;ECHD,QAAQ,IAAI,gBAAgB;AAAA;",
         "debugId": "<debug-id>",
         "names": []
       }"
@@ -221,10 +234,10 @@ console.log("How...dashing?");
     headers.sourcemap = headers.sourcemap.replace(/chunk-[a-z0-9]+\.js.map/g, "chunk-HASH.js.map");
     expect(headers).toMatchInlineSnapshot(`
 {
-  "content-length": "316",
+  "content-length": "565",
   "content-type": "text/javascript;charset=utf-8",
   "date": "<date>",
-  "etag": ""c2050d7cfe555369"",
+  "etag": ""5e7bc7bee4407d10"",
   "sourcemap": "/chunk-HASH.js.map",
 }
 `);

@@ -150,6 +150,15 @@ pub mod js_meta {
         pub(crate) needs_export_symbol_from_runtime: bool,
         pub(crate) did_wrap_dependencies: bool,
         pub(crate) needs_synthetic_default_export: bool,
+        /// In the browser each `<script>` element is its own error boundary: an
+        /// uncaught error is reported and the page's next script still runs. An
+        /// unwrapped `<script src>` target of a page that bundles two or more
+        /// scripts keeps that by printing its top-level statements inside
+        /// `__script(() => { ... })` (runtime.js) where they stand, declarations
+        /// hoisted out as for a lazily initialized module, so importers and
+        /// dependencies link to it unchanged. (A wrapped target is called through
+        /// `__script` from the HTML file's part instead.)
+        pub(crate) html_script_inline: bool,
         pub(crate) wrap: WrapKind,
     }
     pub use crate::WrapKind as Wrap;

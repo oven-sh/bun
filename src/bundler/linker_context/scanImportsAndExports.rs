@@ -208,6 +208,13 @@ pub(crate) fn scan_imports_and_exports(
                 }
             }
 
+            let isolate_html_scripts = output_format != Format::InternalBakeDev
+                && col_ref!(loaders)[id] == Loader::Html
+                && LinkerContext::html_isolates_scripts(
+                    col_ref!(import_records_list)[id].as_slice(),
+                    col_ref!(loaders),
+                );
+
             for (import_record_index, record) in col_ref!(import_records_list)[id]
                 .as_slice()
                 .iter()
@@ -332,6 +339,18 @@ pub(crate) fn scan_imports_and_exports(
                         {
                             col!(exports_kind)[other_file] = ExportsKind::Cjs;
                             col!(flags)[other_file].wrap = WrapKind::Cjs;
+                        }
+
+                        // On a page that isolates its scripts, one with top-level await
+                        // starts at its tag without holding up the next script, and a
+                        // later script that imports it awaits `init_x()`. That takes a
+                        // real lazy-init wrapper (see `Flags::html_script_inline`).
+                        if isolate_html_scripts
+                            && col_ref!(flags)[other_file].is_async_or_has_async_dependency
+                            && col_ref!(flags)[other_file].wrap == WrapKind::None
+                            && LinkerContext::is_html_script_record(record, col_ref!(loaders))
+                        {
+                            col!(flags)[other_file].wrap = WrapKind::Esm;
                         }
                     }
                     ImportKind::Require =>
@@ -472,6 +491,61 @@ pub(crate) fn scan_imports_and_exports(
                         let si = record.source_index.get();
                         if dependency_wrapper.exports_kind[si as usize] == ExportsKind::Cjs {
                             dependency_wrapper.wrap(si);
+                        }
+                    }
+                }
+            }
+
+            // A page that bundles two or more scripts runs each `<script src>` as its
+            // own error boundary (see `Flags::html_script_inline`). A target that the
+            // steps above wrapped is called through `__script` / `__scriptAsync` from
+            // the HTML file's part for that tag (`append_html_script_wrapper_calls`);
+            // every other target prints its top-level statements inside
+            // `__script(() => { ... })` where they stand. Register the helper uses on
+            // the parts that print them. The dev server's module loader does this on
+            // its own.
+            if output_format != Format::InternalBakeDev {
+                for source_index_ in &reachable {
+                    let id = source_index_.get() as usize;
+                    if id >= dependency_wrapper.import_records.len()
+                        || col_ref!(loaders)[id] != Loader::Html
+                    {
+                        continue;
+                    }
+                    let records = dependency_wrapper.import_records[id].as_slice();
+                    if !LinkerContext::html_isolates_scripts(records, col_ref!(loaders)) {
+                        continue;
+                    }
+                    for (import_record_index, record) in records.iter().enumerate() {
+                        if !LinkerContext::is_html_script_record(record, col_ref!(loaders)) {
+                            continue;
+                        }
+                        let other = record.source_index.get();
+                        let flag = dependency_wrapper.flags[other as usize];
+                        if flag.wrap != WrapKind::None {
+                            // `ParseTask` (`Loader::Html`): part `1 + i` holds import record `i`.
+                            let helper: &[u8] = if flag.wrap == WrapKind::Esm
+                                && flag.is_async_or_has_async_dependency
+                            {
+                                b"__scriptAsync"
+                            } else {
+                                b"__script"
+                            };
+                            this.graph.generate_runtime_symbol_import_and_use(
+                                id as u32,
+                                Index::part(1 + import_record_index as u32),
+                                helper,
+                                1,
+                            )?;
+                        } else if !flag.html_script_inline {
+                            dependency_wrapper.flags[other as usize].html_script_inline = true;
+                            let part_index = this.graph.add_part_to_file(other, Part::default())?;
+                            this.graph.generate_runtime_symbol_import_and_use(
+                                other,
+                                Index::part(part_index),
+                                b"__script",
+                                1,
+                            )?;
                         }
                     }
                 }

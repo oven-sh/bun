@@ -1235,9 +1235,9 @@ pub mod parse_worker {
                 // The linker prints a part after the files it imports, so a
                 // `<script src>` that resolves to a wrapped module gets its
                 // `require_foo()` / `init_foo()` call at the tag's position
-                // (see `append_html_script_wrapper_calls`). Liveness for these
-                // parts is seeded in `tree_shaking_and_code_splitting` (the
-                // per-part bitset does not exist at parse time).
+                // (see `append_html_script_wrapper_calls`). `mark_file_live_step`
+                // marks these parts live (the per-part bitset does not exist at
+                // parse time).
                 ast.parts.truncate(1);
                 ast.parts.reserve(import_records_len);
                 for import_record_index in 0..u32::try_from(import_records_len).expect("int cast") {

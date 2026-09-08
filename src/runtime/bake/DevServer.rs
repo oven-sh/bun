@@ -2812,6 +2812,10 @@ impl DevServer {
         Ok(array)
     }
 
+    /// The HTML file's pseudo-module imports nothing itself. Its load function
+    /// hands the page's `<script src>` ids, in document order, to
+    /// `hmr.loadScripts` (hmr-module.ts), which runs each one as its own error
+    /// boundary the way the browser runs separate `<script>` elements.
     fn generate_javascript_code_for_html_file(
         &mut self,
         index: bun_ast::Index,
@@ -2827,7 +2831,7 @@ impl DevServer {
             input_file_sources[index.get() as usize].path.pretty,
             w,
         )?;
-        w.extend_from_slice(b": [ [");
+        w.extend_from_slice(b": [ [], [], [], (hmr) => hmr.loadScripts([");
         let mut any = false;
         for import in import_records[index.get() as usize].as_slice() {
             if import.source_index.is_valid() {
@@ -2852,12 +2856,12 @@ impl DevServer {
                 import.path.pretty,
                 w,
             )?;
-            w.extend_from_slice(b", 0,\n");
+            w.extend_from_slice(b",\n");
         }
         if any {
             w.extend_from_slice(b"  ");
         }
-        w.extend_from_slice(b"], [], [], () => {}, false],\n");
+        w.extend_from_slice(b"]), true],\n");
 
         // Avoid-recloning if it is was moved to the heap
         Ok(array.into_boxed_slice())

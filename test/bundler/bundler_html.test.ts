@@ -311,8 +311,9 @@ console.log("requires " + dep);`,
   });
 
   // Same, when the script resolved to a lazily-initialized ES module (here
-  // because another script also `import()`s it): the page calls `init_foo()`,
-  // with `await` when the module uses top-level await.
+  // because another script also `import()`s it): the page calls `init_foo()`.
+  // A script with top-level await is started at its tag and not awaited, so
+  // the next script runs before it settles, as in the browser.
   itBundled("html/script-src-lazy-esm", {
     outdir: "out/",
     files: {
@@ -340,10 +341,10 @@ console.log("lazy " + sync + " " + tla);`,
     entryPoints: ["/index.html"],
     onAfterBundle(api) {
       const js = api.readFile("out/index.html").match(/src="\.\/([^"]+\.js)"/)![1];
-      api.expectFile("out/" + js).toMatch(/init_sync\(\);\s*await init_tla\(\);/);
+      api.expectFile("out/" + js).toMatch(/__script\(init_sync\);\s*__scriptAsync\(init_tla\);/);
       api.writeFile("out/run.mjs", `import "./${js}";`);
     },
-    run: { file: "out/run.mjs", stdout: "sync\ntla\nmain\nlazy sync tla" },
+    run: { file: "out/run.mjs", stdout: "sync\nmain\ntla\nlazy sync tla" },
   });
 
   // With code splitting the CommonJS script shared by two pages moves to its
@@ -376,6 +377,160 @@ console.log("two", ns.default.lib);`,
       { file: "out/run-one.mjs", stdout: "lib\none" },
       { file: "out/run-two.mjs", stdout: "lib\ntwo true" },
     ],
+  });
+
+  // In the browser each <script> element is its own error boundary: an
+  // uncaught error is reported and the next script still runs. The page's
+  // scripts share one output chunk, so each one's top-level statements run
+  // inside `__script(() => { ... })` (runtime.js), which reports and goes on.
+  const runHtmlChunk = /* js */ `
+    import { readdirSync } from "node:fs";
+    globalThis.trace = [];
+    const reported = [];
+    globalThis.reportError = e => reported.push(String(e?.message ?? e));
+    const chunk = readdirSync(import.meta.dir + "/out").find(f => f.endsWith(".js"));
+    await import("./out/" + chunk);
+    // A script with top-level await keeps running after the chunk has evaluated.
+    // Its continuations are microtasks, so they have all settled by the next macrotask.
+    await new Promise(done => setImmediate(done));
+    console.log(JSON.stringify({ trace, reported }));
+  `;
+  for (const minify of [false, true]) {
+    itBundled("html/script-error-boundary" + (minify ? "-minify" : ""), {
+      outdir: "out/",
+      files: {
+        "/index.html": `
+<!DOCTYPE html>
+<html>
+  <head>
+    <script src="./widget.js"></script>
+    <script src="./app.js"></script>
+    <script type="module" src="./mod.js"></script>
+  </head>
+</html>`,
+        "/widget.js": `
+trace.push("widget");
+globalThis.widgetSlot.appendChild({});
+trace.push("unreachable");`,
+        "/app.js": `trace.push("app");`,
+        "/mod.js": `
+import { value } from "./dep.js";
+trace.push("mod " + value);`,
+        "/dep.js": `export const value = 42;`,
+      },
+      entryPoints: ["/index.html"],
+      minifySyntax: minify,
+      minifyIdentifiers: minify,
+      minifyWhitespace: minify,
+      runtimeFiles: { "/test.mjs": runHtmlChunk },
+      run: {
+        file: "/test.mjs",
+        stdout: `{"trace":["widget","app","mod 42"],"reported":["undefined is not an object (evaluating 'globalThis.widgetSlot.appendChild')"]}`,
+      },
+    });
+  }
+
+  // A script with top-level await does not hold up the page's next script,
+  // and when it rejects, the error is reported once for itself and once for
+  // each later script that imports it, like the browser does. Scripts that do
+  // not depend on it still run.
+  itBundled("html/script-error-boundary-top-level-await", {
+    outdir: "out/",
+    files: {
+      "/index.html": `
+<!DOCTYPE html>
+<html>
+  <head>
+    <script type="module" src="./a.js"></script>
+    <script type="module" src="./b.js"></script>
+    <script src="./c.js"></script>
+  </head>
+</html>`,
+      "/a.js": `
+trace.push("a");
+await Promise.resolve();
+trace.push("a resumed");
+throw new Error("a failed");`,
+      "/b.js": `
+import "./a.js";
+trace.push("unreachable");`,
+      "/c.js": `trace.push("c");`,
+    },
+    entryPoints: ["/index.html"],
+    runtimeFiles: { "/test.mjs": runHtmlChunk },
+    run: {
+      file: "/test.mjs",
+      stdout: `{"trace":["a","c","a resumed"],"reported":["a failed","a failed"]}`,
+    },
+  });
+
+  // One closure per script, also when tree shaking drops a statement from the
+  // middle of the file (which splits a flat file's part range in two) and when
+  // a wrapped script sits between flat ones (wrappers print ahead of flat code,
+  // the call stays at the tag's position).
+  itBundled("html/script-error-boundary-one-unit-per-script", {
+    outdir: "out/",
+    files: {
+      "/index.html": `
+<!DOCTYPE html>
+<html>
+  <head>
+    <script src="./a.js"></script>
+    <script src="./umd.js"></script>
+    <script src="./b.js"></script>
+  </head>
+</html>`,
+      "/a.js": `
+trace.push("a1");
+globalThis.widgetSlot.mount();
+function unused() {}
+trace.push("unreachable");`,
+      "/umd.js": `
+(function (root, factory) {
+  if (typeof module === "object" && module.exports) module.exports = factory();
+  else root.lib = factory();
+})(globalThis, function () {
+  trace.push("umd");
+  return {};
+});`,
+      "/b.js": `trace.push("b");`,
+    },
+    entryPoints: ["/index.html"],
+    runtimeFiles: { "/test.mjs": runHtmlChunk },
+    onAfterBundle(api) {
+      const chunk = api.readFile("out/" + api.readFile("out/index.html").match(/src="\.\/(.*\.js)"/)![1]);
+      expect(chunk.match(/__script\(/g)).toHaveLength(3); // one call per tag
+    },
+    run: {
+      file: "/test.mjs",
+      stdout: `{"trace":["a1","umd","b"],"reported":["undefined is not an object (evaluating 'globalThis.widgetSlot.mount')"]}`,
+    },
+  });
+
+  // A page with one script has nothing to isolate it from, so its chunk stays
+  // flat: no lazy-init wrappers, no runtime helpers.
+  itBundled("html/single-script-stays-flat", {
+    outdir: "out/",
+    files: {
+      "/index.html": `<!DOCTYPE html><html><head><script type="module" src="./app.js"></script></head></html>`,
+      "/app.js": `
+import { value } from "./dep.js";
+trace.push("app " + value);`,
+      "/dep.js": `
+export const value = 42;
+trace.push("dep");`,
+    },
+    entryPoints: ["/index.html"],
+    runtimeFiles: { "/test.mjs": runHtmlChunk },
+    onAfterBundle(api) {
+      const chunk = api.readFile("out/" + api.readFile("out/index.html").match(/src="\.\/(.*\.js)"/)![1]);
+      expect(chunk).not.toContain("__esm");
+      expect(chunk).not.toContain("__script");
+    },
+    run: {
+      file: "/test.mjs",
+      stdout: `{"trace":["dep","app 42"],"reported":[]}`,
+    },
   });
 
   // Test CSS imports

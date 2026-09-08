@@ -354,11 +354,18 @@ impl<'a, 'ctx> FindImportedPartsVisitor<'a, 'ctx> {
 
                         // CommonJS files are all-or-nothing so all parts must be contiguous
                         if !can_be_split {
-                            self.parts_prefix.push(PartRange {
+                            let range = PartRange {
                                 source_index: Index::init(source_index),
                                 part_index_begin: 0,
                                 part_index_end: self.parts[source_index as usize].len() as u32,
-                            });
+                            };
+                            if self.flags[source_index as usize].html_script_inline {
+                                // Not wrapped: it runs here, after the files it imports,
+                                // as one `__script(() => {})` closure.
+                                self.part_ranges.push(range);
+                            } else {
+                                self.parts_prefix.push(range);
+                            }
                         }
                     } else {
                         // Post-order, like the files above: another chunk's
@@ -397,8 +404,10 @@ impl<'a, 'ctx> FindImportedPartsVisitor<'a, 'ctx> {
                         )
                     };
 
-                    // Wrapped files can't be split because they are all inside the wrapper
-                    let can_be_split = self.flags[source_index as usize].wrap == Wrap::None;
+                    // Wrapped files can't be split because they are all inside the wrapper,
+                    // and neither can an inline HTML script (one `__script` closure).
+                    let can_be_split = self.flags[source_index as usize].wrap == Wrap::None
+                        && !self.flags[source_index as usize].html_script_inline;
 
                     let parts = self.parts[source_index as usize].as_slice();
                     let parts_live = &self.c.graph.parts_live[source_index as usize];

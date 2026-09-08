@@ -65,6 +65,18 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
     // stays scoped to this read view.
     let mut ast = c.graph.ast.get(source_index);
 
+    // An inline HTML script (`Flags::html_script_inline`) is unwrapped for the
+    // rest of the linker. Its statements convert the way a lazily initialized
+    // module's do (imports and declarations hoisted out, the rest inside a
+    // closure), except that the closure runs right where it stands:
+    // `__script(() => { ... })`.
+    let inline_script = flags.html_script_inline;
+    let wrap = if inline_script {
+        WrapKind::Esm
+    } else {
+        flags.wrap
+    };
+
     // For HMR, part generation is entirely special cased.
     // - export wrapping is already done.
     // - imports are split from the main code.
@@ -238,6 +250,11 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
     let namespace_export_part_index = bun_ast::NAMESPACE_EXPORT_PART_INDEX;
 
     let is_html = c.parse_graph().input_files.items_loader()[source_index] == Loader::Html;
+    let isolate_html_scripts = is_html
+        && LinkerContext::html_isolates_scripts(
+            ast.import_records.as_slice(),
+            c.parse_graph().input_files.items_loader(),
+        );
 
     stmts.reset();
 
@@ -258,7 +275,7 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
 
     // The top-level directive must come first (the non-wrapped case is handled
     // by the chunk generation code, although only for the entry point)
-    if flags.wrap != WrapKind::None
+    if wrap != WrapKind::None
         && ast
             .flags
             .contains(AstFlags::HAS_EXPLICIT_USE_STRICT_DIRECTIVE)
@@ -306,13 +323,13 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
             ns_part_stmts,
             chunk,
             temp_arena,
-            flags.wrap,
+            wrap,
             &ast,
         ) {
             return PrintResult::Err(err.into());
         }
 
-        match flags.wrap {
+        match wrap {
             WrapKind::Esm => {
                 // Borrowck: `append_slice` borrows `stmts` mutably while
                 // also reading from a sibling field.
@@ -357,7 +374,9 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
         }
 
         if is_html {
-            if let Err(err) = c.append_html_script_wrapper_calls(stmts, part, &ast) {
+            if let Err(err) =
+                c.append_html_script_wrapper_calls(stmts, part, &ast, isolate_html_scripts)
+            {
                 return PrintResult::Err(err.into());
             }
             continue;
@@ -516,11 +535,16 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
             part_stmts,
             chunk,
             temp_arena,
-            flags.wrap,
+            wrap,
             &ast,
         ) {
             return PrintResult::Err(err.into());
         }
+    }
+
+    // There is no wrapper part to come across: the closure is emitted below.
+    if inline_script {
+        needs_wrapper = true;
     }
 
     // Hoist all import statements before any normal statements. ES6 imports
@@ -549,7 +573,7 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
 
     // Optionally wrap all statements in a closure
     if needs_wrapper {
-        match flags.wrap {
+        match wrap {
             WrapKind::Cjs => {
                 // Only include the arguments that are actually used
                 let mut args: bun_alloc::ArenaVec<'_, G::Arg> =
@@ -863,7 +887,26 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
                 }
 
                 let inner_len = inner_stmts.len();
-                if inner_len > 0 {
+                if inline_script {
+                    // "__script(() => { ... });"
+                    debug_assert!(!is_async); // a script with top-level await is `CallWrapper`
+                    if inner_len > 0 {
+                        let closure = Expr::init(
+                            E::Arrow {
+                                body: G::FnBody {
+                                    stmts: inner_stmts,
+                                    loc: bun_ast::Loc::EMPTY,
+                                },
+                                ..Default::default()
+                            },
+                            bun_ast::Loc::EMPTY,
+                        );
+                        stmts.append(
+                            StmtListWhich::OutsideWrapperPrefix,
+                            html_script_call(c, b"__script", closure),
+                        );
+                    }
+                } else if inner_len > 0 {
                     // See the comment in needsWrapperRef for why the symbol
                     // is sometimes not generated.
                     debug_assert!(!ast.wrapper_ref.is_empty()); // js_parser's needsWrapperRef thought wrapper was not needed
@@ -999,6 +1042,28 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
         part_range.source_index,
         source,
         module_info,
+    )
+}
+
+/// `__script(arg);`: runs one `<script src>` of an HTML page as its own error
+/// boundary (see `Flags::html_script_inline`).
+fn html_script_call(c: &LinkerContext, helper: &[u8], arg: Expr) -> Stmt {
+    let loc = bun_ast::Loc::EMPTY;
+    let mut args = bun_ast::ExprNodeList::init_capacity(1);
+    args.append_assume_capacity(arg);
+    Stmt::alloc(
+        S::SExpr {
+            value: Expr::init(
+                E::Call {
+                    target: Expr::init_identifier(c.runtime_function(helper), loc),
+                    args,
+                    ..Default::default()
+                },
+                loc,
+            ),
+            ..Default::default()
+        },
+        loc,
     )
 }
 

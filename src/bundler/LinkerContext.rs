@@ -928,23 +928,11 @@ impl<'a> LinkerContext<'a> {
         // Size the per-file part-liveness bitsets now that `scan_imports_and_exports`
         // has finished pushing wrapper / entry-point parts.
         {
-            let loaders = self.parse_graph().input_files.items_loader();
             let parts_col = self.graph.ast.items_parts();
             let mut parts_live: Vec<bun_collections::AutoBitSet> =
                 Vec::with_capacity(parts_col.len());
-            for (i, parts) in parts_col.iter().enumerate() {
-                let mut bits = bun_collections::AutoBitSet::init_empty(parts.len())?;
-                // `mark_file_live_for_tree_shaking` short-circuits for HTML and never
-                // walks its parts. The HTML loader's `ParseTask` builds one
-                // statement-less part per import record (so the JS-chunk visitor
-                // follows every embedded `<script src>` in document order), and all
-                // of them are live.
-                if loaders.get(i).is_some_and(|l| *l == Loader::Html) {
-                    for part_index in 1..parts.len() {
-                        bits.set(part_index);
-                    }
-                }
-                parts_live.push(bits);
+            for parts in parts_col.iter() {
+                parts_live.push(bun_collections::AutoBitSet::init_empty(parts.len())?);
             }
             self.graph.parts_live = parts_live;
         }
@@ -2321,11 +2309,16 @@ impl<'a> LinkerContext<'a> {
     /// the tag was, like `should_remove_import_export_stmt` does for a bare
     /// `import "./script"`: `require_foo()`, `init_foo()`, or `await init_foo()`.
     /// Nothing observes the namespace, so the result is not passed to `__toESM`.
+    /// On a page that isolates its scripts (`html_isolates_scripts`) the call
+    /// goes through `__script` / `__scriptAsync` instead, and a script with
+    /// top-level await is started without `await` so that it does not hold up
+    /// the next one, as in the browser.
     pub(crate) fn append_html_script_wrapper_calls(
         &self,
         stmts: &mut StmtList,
         part: &Part,
         ast: &JSAst<'_>,
+        isolate: bool,
     ) -> Result<(), AllocError> {
         for &import_record_index in part.import_record_indices.slice() {
             let record = &ast.import_records[import_record_index as usize];
@@ -2351,16 +2344,41 @@ impl<'a> LinkerContext<'a> {
                 continue;
             }
 
-            let mut call = Expr::init(
-                E::Call {
-                    target: Expr::init_identifier(wrapper_ref, Loc::EMPTY),
-                    ..Default::default()
-                },
-                Loc::EMPTY,
-            );
-            if other_flags.wrap == WrapKind::Esm && other_flags.is_async_or_has_async_dependency {
-                call = Expr::init(E::Await { value: call }, Loc::EMPTY);
-            }
+            let is_async =
+                other_flags.wrap == WrapKind::Esm && other_flags.is_async_or_has_async_dependency;
+            let wrapper = Expr::init_identifier(wrapper_ref, Loc::EMPTY);
+            let loaders = self.parse_graph().input_files.items_loader();
+            let call = if isolate && Self::is_html_script_record(record, loaders) {
+                // "__script(require_foo)" / "__scriptAsync(init_foo)"
+                let helper: &[u8] = if is_async {
+                    b"__scriptAsync"
+                } else {
+                    b"__script"
+                };
+                let mut args = bun_ast::ExprNodeList::init_capacity(1);
+                args.append_assume_capacity(wrapper);
+                Expr::init(
+                    E::Call {
+                        target: Expr::init_identifier(self.runtime_function(helper), Loc::EMPTY),
+                        args,
+                        ..Default::default()
+                    },
+                    Loc::EMPTY,
+                )
+            } else {
+                let call = Expr::init(
+                    E::Call {
+                        target: wrapper,
+                        ..Default::default()
+                    },
+                    Loc::EMPTY,
+                );
+                if is_async {
+                    Expr::init(E::Await { value: call }, Loc::EMPTY)
+                } else {
+                    call
+                }
+            };
             stmts
                 .inside_wrapper_prefix
                 .append_non_dependency(Stmt::alloc(
@@ -2372,6 +2390,26 @@ impl<'a> LinkerContext<'a> {
                 ))?;
         }
         Ok(())
+    }
+
+    /// A `<script src>` of an HTML file that the page's JS chunk bundles.
+    pub(crate) fn is_html_script_record(record: &ImportRecord, loaders: &[Loader]) -> bool {
+        record
+            .flags
+            .contains(bun_ast::ImportRecordFlags::HTML_SCRIPT_SRC)
+            && record.source_index.is_valid()
+            && loaders[record.source_index.get() as usize].is_javascript_like()
+    }
+
+    /// A page that bundles two or more scripts runs each one as its own error
+    /// boundary (see `Flags::html_script_inline`). A page with one script has
+    /// nothing after it to protect, so its output stays as it was.
+    pub(crate) fn html_isolates_scripts(records: &[ImportRecord], loaders: &[Loader]) -> bool {
+        records
+            .iter()
+            .filter(|record| Self::is_html_script_record(record, loaders))
+            .nth(1)
+            .is_some()
     }
 
     pub(crate) fn print_code_for_file_in_chunk_js(
@@ -3164,6 +3202,15 @@ impl<'a> LinkerContext<'a> {
                         ctx.worklist.push(TreeShakeWork::File(other));
                     }
                 }
+            }
+            // The HTML loader's `ParseTask` builds one statement-less part per
+            // import record. All of them are live, and their dependencies are the
+            // wrappers and runtime helpers `append_html_script_wrapper_calls` uses.
+            for part_index in 1..ctx.parts[source_index as usize].len() {
+                ctx.worklist.push(TreeShakeWork::Part {
+                    part_index: part_index as u32,
+                    source_index,
+                });
             }
             return;
         }

@@ -783,7 +783,10 @@ test("my-test", () => {
       stderr: "pipe",
       env: bunEnv,
     });
-    const [output, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    const [output, exitCode] = await Promise.all([
+      proc.stderr.text().then(s => s.replaceAll("\r\n", "\n")),
+      proc.exited,
+    ]);
 
     expect(output.match(/^error: ## late throw from a ##$/gm)).toHaveLength(1);
     expect(output).toContain("Unhandled error between tests");
@@ -835,7 +838,10 @@ test("my-test", () => {
       stderr: "pipe",
       env: bunEnv,
     });
-    const [output, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    const [output, exitCode] = await Promise.all([
+      proc.stderr.text().then(s => s.replaceAll("\r\n", "\n")),
+      proc.exited,
+    ]);
 
     expect(output.match(/^error: ## late throw from a ##$/gm)).toHaveLength(1);
     expect(output).not.toContain("Cannot call test()");
@@ -869,7 +875,10 @@ test("my-test", () => {
       stderr: "pipe",
       env: bunEnv,
     });
-    const [output, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    const [output, exitCode] = await Promise.all([
+      proc.stderr.text().then(s => s.replaceAll("\r\n", "\n")),
+      proc.exited,
+    ]);
 
     expect(output.match(/^error: ## stray top-level rejection ##$/gm)).toHaveLength(1);
     expect(output).toContain("Unhandled error between tests");

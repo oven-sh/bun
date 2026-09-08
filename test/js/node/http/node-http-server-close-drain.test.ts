@@ -35,7 +35,6 @@ test("server.close(cb) does not fire while a keep-alive connection is still open
     socket.on("data", chunk => (body += chunk));
     socket.on("error", () => {});
 
-    // First request: handler is entered but response held until after close().
     socket.write("GET /first HTTP/1.1\r\nHost: x\r\n\r\n");
     await inHandler.promise;
 
@@ -48,7 +47,6 @@ test("server.close(cb) does not fire while a keep-alive connection is still open
       closed.resolve();
     });
 
-    // Handler finishes: response is delivered, connection stays open.
     // Yield a few event-loop turns after the bytes arrive so the server's
     // "all requests done" task chain has run before the callback is checked.
     releaseResponse();
@@ -57,8 +55,6 @@ test("server.close(cb) does not fire while a keep-alive connection is still open
     expect(closeCbFired).toBe(false);
     expect(closeEventFired).toBe(false);
 
-    // A second request on the same connection is still served (matching Node),
-    // and the close callback must still be withheld afterwards.
     socket.write("GET /second HTTP/1.1\r\nHost: x\r\n\r\n");
     while (!body.includes("resp:/second")) await once(socket, "data");
     for (let i = 0; i < 4; i++) await new Promise<void>(r => setImmediate(r));
@@ -66,7 +62,6 @@ test("server.close(cb) does not fire while a keep-alive connection is still open
     expect(closeEventFired).toBe(false);
     expect(paths).toEqual(["/first", "/second"]);
 
-    // Closing the connection drains the server and releases the callback.
     socket.destroy();
     await closed.promise;
     expect(closeCbFired).toBe(true);
@@ -121,20 +116,17 @@ test("https server.close(cb) does not fire while a keep-alive TLS connection is 
       closed.resolve();
     });
 
-    // The in-flight response is delivered, and the TLS connection stays open.
     releaseResponse();
     expect(await first).toBe(200);
     for (let i = 0; i < 4; i++) await new Promise<void>(r => setImmediate(r));
     expect(closeCbFired).toBe(false);
 
-    // The agent reuses that same connection for a second request.
     expect(await get("/second")).toBe(200);
     for (let i = 0; i < 4; i++) await new Promise<void>(r => setImmediate(r));
     expect(paths).toEqual(["/first", "/second"]);
     expect(clientPorts[1]).toBe(clientPorts[0]);
     expect(closeCbFired).toBe(false);
 
-    // Closing the client side drains the server and releases the callback.
     agent.destroy();
     await closed.promise;
     expect(closeCbFired).toBe(true);
@@ -251,23 +243,20 @@ test("no 'close' is emitted on a re-listened server when an earlier connection e
     while (!body.includes("ok")) await once(socket, "data");
     for (let i = 0; i < 4; i++) await new Promise<void>(r => setImmediate(r));
 
-    // Re-listen while the old connection is still open.
     server.listen(0, "127.0.0.1");
     await once(server, "listening");
 
     let closeEmitted = 0;
     server.on("close", () => closeEmitted++);
 
-    // Old connection ends. No 'close' must fire on the listening server.
     socket.destroy();
     for (let i = 0; i < 4; i++) await new Promise<void>(r => setImmediate(r));
     expect(closeEmitted).toBe(0);
     expect(cb1Fired).toBe(false);
     expect(server.listening).toBe(true);
 
-    // Closing the new server then emits 'close' exactly once. The first
-    // cycle's callback was registered via once('close') and fires now too,
-    // like Node (and passing a second callback does not throw).
+    // Like Node, the first cycle's callback is a once('close') listener: it
+    // fires here too, and passing a second callback does not throw.
     const closed = Promise.withResolvers<void>();
     server.close(() => closed.resolve());
     await closed.promise;

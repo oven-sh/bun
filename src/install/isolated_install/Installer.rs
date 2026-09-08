@@ -2333,8 +2333,7 @@ impl<'a> Installer<'a> {
             Which::Staging,
         );
 
-        // `deps` is in dependency name order. Link in `LinkOrder` groups, each
-        // group in that order.
+        // `deps` is sorted by name, which is the order within each `LinkOrder`.
         let deps = entry_deps[parent_entry_id.get() as usize].slice();
         let pkg_resolutions = pkgs.items_resolution();
         let link_order_of = |dep: &store::entry::DependenciesItem| {

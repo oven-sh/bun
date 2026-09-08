@@ -696,12 +696,10 @@ impl<'a> NamesIterator<'a> {
     }
 }
 
-/// The order in which the packages of one `node_modules` folder link their bins
-/// into its `.bin` folder. The first package to link a bin name keeps it
-/// (`Linker::seen`), so when two packages declare the same bin name, the one in
-/// the earlier group wins. Within a group, packages link in dependency name
-/// order. npm uses the same two groups: it links the bins of every extracted
-/// package before the bins of linked local directories.
+/// Packages that share a `node_modules/.bin` link their bins in this order, then
+/// in dependency name order. The first link for a bin name wins (`Linker::seen`),
+/// so an extracted package keeps its bin over a local directory that declares the
+/// same name. npm links in the same order.
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) enum LinkOrder {
     /// Registry, tarball and git packages.
@@ -722,22 +720,16 @@ impl LinkOrder {
     }
 }
 
-// BACKREF — `PackageInstaller` holds a `&mut Lockfile` alongside a
-// `Box<[TreeContext]>` whose `binaries` queues read the same `Lockfile`; a
-// `&'a Lockfile` borrow here would force the `TreeContext.binaries` field to
-// carry an unsatisfiable `'static` (the installer outlives no concrete lifetime
-// for its own self-borrowed lockfile).
+// BACKREF — the `PackageInstaller` that owns these queues also borrows the
+// `Lockfile` mutably, so this cannot be a `&'a Lockfile`.
 pub struct PriorityQueueContext {
     pub(crate) lockfile: bun_ptr::BackRef<Lockfile>,
 }
 
 impl PriorityQueueContext {
     fn order(&self, a: DependencyID, b: DependencyID) -> core::cmp::Ordering {
-        // The `Lockfile` is kept alive for the entire install (the
-        // `PackageInstaller` that owns this queue borrows the same one). Its
-        // buffers and its package list can grow during the install (see
-        // `fix_cached_lockfile_package_slices`), which is why the slices are
-        // re-read on every compare instead of cached.
+        // Re-read the slices on every compare: the buffers and the package list
+        // can grow during the install (`fix_cached_lockfile_package_slices`).
         let lockfile = &*self.lockfile;
         let deps = lockfile.buffers.dependencies.as_slice();
         let string_buf = lockfile.buffers.string_bytes.as_slice();

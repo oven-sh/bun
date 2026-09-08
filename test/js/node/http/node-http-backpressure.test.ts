@@ -325,19 +325,19 @@ describe("backpressure", () => {
     const FIRST = 1024 * 1024;
 
     // The body goes out as write(1 MB) + end(31 MB) to a client that is not
-    // reading yet. A kernel takes at most a few MB of that (Windows takes a
-    // first send of any size whole, but not the one after it), so the rest
-    // waits in the server process until the client reads.
+    // reading yet. Most kernels take only a few MB of that from a socket
+    // nobody reads, so the rest waits in the server process until the client
+    // reads, and res.writableLength says so right after end(). Some do take it
+    // all (Windows can buffer any amount, libuv's WSASend always lets it):
+    // nothing waits then, so each test checks the "not finished yet" state
+    // only when writableLength showed a backlog, and checks the delivered
+    // bytes and the event order either way.
     function writeBody(res: http.ServerResponse, endCallback?: () => void) {
       res.setHeader("Content-Length", BODY);
       res.write(Buffer.alloc(FIRST, "a"));
       res.end(Buffer.alloc(BODY - FIRST, "a"), endCallback);
+      return res.writableLength > 0;
     }
-    // Except under Node on Windows: libuv hands the kernel any amount in one
-    // WSASend, so nothing ever waits in the process there and the "not
-    // finished yet" expectations below do not apply.
-    const bodyWaitsInProcess = !(process.platform === "win32" && !process.versions.bun);
-    const nextTurn = () => new Promise<void>(resolve => setImmediate(resolve));
 
     // A raw client that sends `request` but reads nothing until resume().
     function pausedClient(port: number, request: string) {
@@ -368,6 +368,7 @@ describe("backpressure", () => {
 
     it("the events wait for the reader, so server.close() from 'close' delivers the whole body", async () => {
       const events: string[] = [];
+      let backlog = false;
       let stateAfterEnd: unknown, stateAtFinish: unknown;
       const handled = Promise.withResolvers<void>();
       const server = http.createServer((req, res) => {
@@ -381,12 +382,8 @@ describe("backpressure", () => {
           // must not cut the body short.
           server.close();
         });
-        writeBody(res, () => events.push("end callback"));
-        stateAfterEnd = {
-          writableEnded: res.writableEnded,
-          writableFinished: res.writableFinished,
-          bodyInProcess: res.writableLength > 0,
-        };
+        backlog = writeBody(res, () => events.push("end callback"));
+        stateAfterEnd = { writableEnded: res.writableEnded, writableFinished: res.writableFinished };
         handled.resolve();
       });
       try {
@@ -396,11 +393,10 @@ describe("backpressure", () => {
           "GET / HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n",
         );
         await Promise.race([handled.promise, client.done]);
-        await nextTurn();
-        if (bodyWaitsInProcess) {
+        if (backlog) {
           // The client has not read anything yet.
           expect(events).toEqual([]);
-          expect(stateAfterEnd).toEqual({ writableEnded: true, writableFinished: false, bodyInProcess: true });
+          expect(stateAfterEnd).toEqual({ writableEnded: true, writableFinished: false });
         }
         client.resume();
         const { bytes, ended } = await client.done;
@@ -416,6 +412,7 @@ describe("backpressure", () => {
 
     it("a request pipelined behind the unfinished response is answered after it, intact", async () => {
       const events: string[] = [];
+      let backlog = false;
       const handled = { first: Promise.withResolvers<void>(), second: Promise.withResolvers<void>() };
       await using server = http.createServer((req, res) => {
         const name = req.url!.slice(1) as "first" | "second";
@@ -423,7 +420,7 @@ describe("backpressure", () => {
         res.on("finish", () => events.push(`finish ${name}`));
         res.on("close", () => events.push(`close ${name}`));
         if (name === "first") {
-          writeBody(res);
+          backlog = writeBody(res);
         } else {
           res.end("second");
         }
@@ -437,8 +434,7 @@ describe("backpressure", () => {
       await Promise.race([handled.first.promise, client.done]);
       client.send("GET /second HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n");
       await Promise.race([handled.second.promise, client.done]);
-      await nextTurn();
-      if (bodyWaitsInProcess) {
+      if (backlog) {
         // The client has not read anything yet: the first response still owns
         // the connection and the second is queued behind it.
         expect(events).toEqual(["request first", "request second"]);
@@ -459,7 +455,7 @@ describe("backpressure", () => {
         "finish second",
         "close second",
       ]);
-      if (bodyWaitsInProcess) {
+      if (backlog) {
         expect(events.indexOf("request second")).toBeLessThan(events.indexOf("finish first"));
       }
     });

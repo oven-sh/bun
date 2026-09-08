@@ -821,9 +821,8 @@ impl<'a> PackageInstall<'a> {
         self.destination_dir_subpath_buf[dest_len + SEP_STR.len()..path_len].copy_from_slice(name);
         self.destination_dir_subpath_buf[path_len] = 0;
         // SAFETY: NUL written above.
-        let marker_path = unsafe {
-            ZStr::from_raw_mut(self.destination_dir_subpath_buf.as_mut_ptr(), path_len)
-        };
+        let marker_path =
+            unsafe { ZStr::from_raw_mut(self.destination_dir_subpath_buf.as_mut_ptr(), path_len) };
         let _restore = scopeguard::guard(
             self.destination_dir_subpath_buf.as_mut_ptr(),
             // SAFETY: p points into destination_dir_subpath_buf which outlives this scope;

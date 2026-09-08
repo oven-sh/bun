@@ -1557,9 +1557,10 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
           expect(err).toContain('error: postinstall script from "lifecycle-postinstall-needs-toolchain" exited with 7');
           expect(err).not.toContain("Saved lockfile");
           expect(out).not.toContain("(no changes)");
-          expect(
-            await Promise.all([exists(join(pkgDir, "built.txt")), exists(join(packageDir, "bun.lock"))]),
-          ).toEqual([false, false]);
+          expect(await Promise.all([exists(join(pkgDir, "built.txt")), exists(join(packageDir, "bun.lock"))])).toEqual([
+            false,
+            false,
+          ]);
           expect(exitCode).toBe(7);
         }
 
@@ -1604,7 +1605,9 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
               if (await exists(pidFile)) {
                 scriptPid = Number(await file(pidFile).text());
               } else if (proc.exitCode !== null) {
-                throw new Error(`bun install exited before the postinstall script started:\n${await proc.stderr.text()}`);
+                throw new Error(
+                  `bun install exited before the postinstall script started:\n${await proc.stderr.text()}`,
+                );
               } else {
                 await Bun.sleep(20);
               }
@@ -1613,9 +1616,10 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
             await proc.exited;
             process.kill(scriptPid, "SIGKILL");
           }
-          expect(
-            await Promise.all([exists(join(pkgDir, "built.txt")), exists(join(packageDir, "bun.lock"))]),
-          ).toEqual([false, false]);
+          expect(await Promise.all([exists(join(pkgDir, "built.txt")), exists(join(packageDir, "bun.lock"))])).toEqual([
+            false,
+            false,
+          ]);
 
           // The package is fully linked, but its script never finished, so this must
           // not be a "no changes" install.

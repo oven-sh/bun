@@ -554,7 +554,8 @@ it("process.env.TZ", () => {
 // empty / unresolvable TZ selects UTC instead of leaving the previous zone.
 it("process.env.TZ from the launch environment reverts on delete, and empty / invalid select UTC", async () => {
   const probe = `({ zone: new Intl.DateTimeFormat().resolvedOptions().timeZone, offset: new Date("2018-07-14T12:34:56Z").getTimezoneOffset() })`;
-  const { TZ: _, ...envWithoutTZ } = bunEnv;
+  // Case-insensitive so a Windows `tz` does not survive into the child.
+  const envWithoutTZ = Object.fromEntries(Object.entries(bunEnv).filter(([k]) => k.toUpperCase() !== "TZ"));
   await using hostProc = Bun.spawn({
     cmd: [bunExe(), "-p", `JSON.stringify(${probe})`],
     env: envWithoutTZ,
@@ -2402,7 +2403,7 @@ setImmediate(() => parentPort.postMessage("worker-warned:" + warned));`,
 it("delete process.env.TZ invalidates existing Date instances", async () => {
   // TZ is unset at launch so `delete` reverts to the host zone whatever the
   // host is; the target zone is picked to differ from it.
-  const { TZ: _, ...envWithoutTZ } = bunEnv;
+  const envWithoutTZ = Object.fromEntries(Object.entries(bunEnv).filter(([k]) => k.toUpperCase() !== "TZ"));
   await using proc = Bun.spawn({
     cmd: [
       bunExe(),

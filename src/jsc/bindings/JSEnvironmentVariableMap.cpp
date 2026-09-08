@@ -410,7 +410,8 @@ static void storeNativeBackedEnvKey(VM& vm, JSGlobalObject* globalObject, JSObje
     if (existing) {
         // putDirectCustomAccessor asserts NewProperty. Static call: not the env map's delete hook.
         DeletePropertySlot slot;
-        JSObject::deleteProperty(object, globalObject, propertyName, slot);
+        if (!JSObject::deleteProperty(object, globalObject, propertyName, slot))
+            return;
     }
     object->putDirectCustomAccessor(vm, propertyName, accessor, nativeBackedEnvKeyAttributes);
 }

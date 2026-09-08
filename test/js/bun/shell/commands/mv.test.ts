@@ -67,6 +67,17 @@ describe("mv", async () => {
     .stderr("mv: a: Not a directory\n")
     .runAsTest("move dir -> file fails");
 
+  // On Windows the destination name goes to NT as given, and NT takes a `.` or
+  // `..` component as a literal name ("mv: Invalid argument").
+  TestBuilder.command`mkdir work; echo hi > work/a.txt; cd work; mv a.txt ../b.txt; mv ../b.txt ./c.txt; cat c.txt`
+    .ensureTempDir()
+    .stdout("hi\n")
+    .stderr("")
+    .doesNotExist("work/a.txt")
+    .doesNotExist("b.txt")
+    .fileEquals("work/c.txt", "hi\n")
+    .runAsTest("destination spelled with . or .. components");
+
   // POSIX `mv` must fall back to copy+unlink when `rename()` returns EXDEV
   // (source and destination on different filesystems). Requires a writable
   // mount on a different device from the harness temp dir.

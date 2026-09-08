@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
-import { isLinux, isWindows, tmpdirSync } from "harness";
+import { bunEnv, bunExe, isLinux, isWindows, tempDir, tmpdirSync } from "harness";
 import { execSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
@@ -397,5 +397,73 @@ describe("fs.promises.mkdir", () => {
     expect(fs.existsSync(pathname)).toBe(true);
     expect(fs.statSync(pathname).isDirectory()).toBe(true);
     expect(result).toBeUndefined();
+  });
+});
+
+describe("fs.mkdir - recursive on an existing directory spelled with . or ..", () => {
+  // The paths are relative, so the calls run in a child process whose cwd is
+  // <root>/cwd. On Windows, bun used to throw EEXIST for every directory case
+  // here that is spelled with a "." or ".." component: the probe that checks
+  // whether the EEXIST came from a directory handed that spelling to NT, which
+  // rejects it. Node returns undefined for all of them on every platform.
+  const cases = [".", "..", "../cwd", "../cwd/sub", "./sub", "../cwd/file.txt"];
+  const expected = {
+    ".": "undefined",
+    "..": "undefined",
+    "../cwd": "undefined",
+    "../cwd/sub": "undefined",
+    "./sub": "undefined",
+    "../cwd/file.txt": { code: "EEXIST", syscall: "mkdir" },
+  };
+
+  it("returns undefined from mkdirSync, mkdir and promises.mkdir", async () => {
+    using root = tempDir("mkdir-dot-components", {
+      "fixture.js": `
+        const fs = require("fs");
+        const { promisify } = require("util");
+        const cases = ${JSON.stringify(cases)};
+        const apis = {
+          mkdirSync: async p => fs.mkdirSync(p, { recursive: true }),
+          mkdir: p => promisify(fs.mkdir)(p, { recursive: true }),
+          "promises.mkdir": p => fs.promises.mkdir(p, { recursive: true }),
+        };
+        (async () => {
+          const results = {};
+          for (const [api, mkdir] of Object.entries(apis)) {
+            results[api] = {};
+            for (const p of cases) {
+              results[api][p] = await mkdir(p).then(
+                returned => (returned === undefined ? "undefined" : { created: returned }),
+                err => ({ code: err.code, syscall: err.syscall }),
+              );
+            }
+          }
+          process.stdout.write(JSON.stringify(results));
+        })();
+      `,
+      cwd: {
+        sub: {},
+        "file.txt": "",
+      },
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), path.join(String(root), "fixture.js")],
+      cwd: path.join(String(root), "cwd"),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({
+      mkdirSync: expected,
+      mkdir: expected,
+      "promises.mkdir": expected,
+    });
+    expect(exitCode).toBe(0);
+    // The entries the cases name were there all along, and none of the calls created anything.
+    expect(fs.readdirSync(path.join(String(root), "cwd")).sort()).toEqual(["file.txt", "sub"]);
+    expect(fs.readdirSync(String(root)).sort()).toEqual(["cwd", "fixture.js"]);
   });
 });

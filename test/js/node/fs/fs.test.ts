@@ -3548,6 +3548,38 @@ describe("rm", () => {
     expect(existsSync(path)).toBe(false);
   });
 
+  // A relative path that starts with `..` resolves against the cwd. On Windows
+  // the recursive walk's `unlinkat` used to hand NtCreateFile the `..`
+  // component as a literal name and fail with EINVAL.
+  it("recursively removes a file and a directory tree named through a leading ..", async () => {
+    using dir = tempDir("rm-dotdot", {
+      "work/.gitkeep": "",
+      "file.txt": "x",
+      "tree/top.txt": "y",
+      "tree/sub/deep.txt": "z",
+      "tree2/sub/deep.txt": "w",
+    });
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const fs = require("node:fs");
+         fs.rmSync("../file.txt", { recursive: true, force: true });
+         fs.rmSync("../tree", { recursive: true });
+         await fs.promises.rm(require("node:path").join("..", "tree2"), { recursive: true });
+         console.log(JSON.stringify(fs.readdirSync("..")));`,
+      ],
+      env: bunEnv,
+      cwd: path.join(String(dir), "work"),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual(["work"]);
+    expect(exitCode).toBe(0);
+  });
+
   // On Windows a leading-separator, drive-less path like "/foo/bar" is
   // "rooted" and must be resolved against the cwd's drive. existsSync/
   // statSync/unlinkSync all do this; recursive rmSync must agree

@@ -3933,7 +3933,7 @@ mod windows_impl {
         // Open with `op = OnlyCreate`, then close the resulting handle on
         // success.
         let mut wbuf = bun_paths::w_path_buffer_pool::get();
-        let wpath = bun_paths::string_paths::to_nt_path(&mut wbuf, path.as_bytes());
+        let wpath = super::nt_object_name_at(dir, path.as_bytes(), &mut wbuf.0[..])?;
         let made = super::open_dir_at_windows_nt_path(
             dir,
             wpath,
@@ -3952,8 +3952,10 @@ mod windows_impl {
         let to_dir = to_dir.as_fd();
         let mut wf = bun_paths::w_path_buffer_pool::get();
         let mut wt = bun_paths::w_path_buffer_pool::get();
+        // `rename_at_w` opens `from` through `normalize_path_windows` itself;
+        // `to` goes into `FILE_RENAME_INFORMATION` as given, so resolve it here.
         let from_w = bun_paths::string_paths::to_nt_path(&mut wf, from.as_bytes());
-        let to_w = bun_paths::string_paths::to_nt_path(&mut wt, to.as_bytes());
+        let to_w = super::nt_object_name_at(to_dir, to.as_bytes(), &mut wt.0[..])?;
         super::windows::rename_at_w(from_dir, from_w, to_dir, to_w, true)
     }
     pub(crate) fn renameat2(
@@ -3974,7 +3976,7 @@ mod windows_impl {
         // AT_REMOVEDIR on Windows = 0x200.
         const AT_REMOVEDIR: i32 = 0x200;
         let mut wbuf = bun_paths::w_path_buffer_pool::get();
-        let wpath = bun_paths::string_paths::to_nt_path(&mut wbuf, path.as_bytes());
+        let wpath = super::nt_object_name_at(dir, path.as_bytes(), &mut wbuf.0[..])?;
         super::windows::DeleteFileBun(
             wpath,
             super::windows::DeleteFileOptions {
@@ -4006,14 +4008,13 @@ mod windows_impl {
         // broke the old forward-split impl for absolute paths fed by
         // `bin::Linker::create_windows_shim`).
         //
-        // What stays here is a `.`/`..` *pre-normalize* pass: our `mkdirat` below routes
-        // through bun's `to_nt_path` which only flips slashes, so a literal
-        // `"."`/`".."` ObjectName reaches `NtCreateFile` un-normalized — `.`
-        // → `OBJECT_NAME_NOT_FOUND` (ENOENT, not the EEXIST the walk expects)
-        // and `a\..\b` live-locks the walk. Normalizing here preserves the
-        // expected behavior (compile-outfile-subdirs.test.ts
-        // "works with . and .. in paths", outfile
-        // `./output/../output/./app.exe`).
+        // What stays here is a lexical `.`/`..` pre-collapse: it keeps every
+        // walk step on `mkdirat`'s verbatim route (a `.`/`..` component makes
+        // `mkdirat` resolve `dir`'s path first) and keeps the walk off
+        // prefixes like `a\..` (compile-outfile-subdirs.test.ts "works with .
+        // and .. in paths", outfile `./output/../output/./app.exe`). Leading
+        // `..` of a relative path cannot collapse without `dir`'s path; they
+        // stay, and `mkdirat` resolves them against `dir`.
         use bun_paths::{ComponentIterator, MakePathStep, PathFormat, is_sep_any as is_sep};
         if sub.is_empty() {
             return Ok(());
@@ -4076,8 +4077,8 @@ mod windows_impl {
                     if root_end > 0 {
                         continue;
                     } // absolute: `..` at root is root
-                    // Relative with nothing to pop: keep `..` literally so
-                    // `mkdirat(dir, "..\foo")` still targets `dir`'s parent.
+                    // Relative with nothing to pop: keep `..` literally;
+                    // `mkdirat(dir, "..\foo")` resolves it to `dir`'s parent.
                     if w > root_end {
                         buf.0[w] = b'\\';
                         w += 1;
@@ -7013,6 +7014,40 @@ pub fn openat_windows_a(dir: impl AsFd, path: &[u8], flags: i32, perm: Mode) -> 
     openat_windows_impl(dir, norm, flags, perm)
 }
 
+/// The NT object name for `path` relative to `dir`, for the wrappers that hand
+/// a dirfd-relative path straight to NT (`mkdirat`, `unlinkat`, the
+/// destination of `renameat`, `exists_at_type`). NT takes a `.` or `..`
+/// component as a literal name, neither resolved against `RootDirectory` nor
+/// collapsed inside a `\??\` name, so a path that has one goes through
+/// [`normalize_path_windows`] as in `openat`. Every other path keeps
+/// `to_nt_path16` (a separator flip, no syscall), which is what the per-entry
+/// callers (extraction, recursive rm, the install linkers) always hit.
+#[cfg(windows)]
+pub(crate) fn nt_object_name_at_w<'a>(
+    dir: Fd,
+    path: &[u16],
+    buf: &'a mut [u16],
+) -> Maybe<&'a bun_core::WStr> {
+    if bun_paths::classify_rel_t(path, bun_paths::PathFormat::Windows).has_dot_component {
+        return normalize_path_windows(dir, path, buf);
+    }
+    Ok(bun_paths::string_paths::to_nt_path16(buf, path))
+}
+/// UTF-8 input form of [`nt_object_name_at_w`].
+#[cfg(windows)]
+pub(crate) fn nt_object_name_at<'a>(
+    dir: Fd,
+    path: &[u8],
+    buf: &'a mut [u16],
+) -> Maybe<&'a bun_core::WStr> {
+    if bun_paths::classify_rel_t(path, bun_paths::PathFormat::Windows).has_dot_component {
+        let mut wide_buf = bun_paths::w_path_buffer_pool::get();
+        let wide = convert_path_u8_to_u16(&mut wide_buf.0[..], path)?;
+        return normalize_path_windows(dir, wide, buf);
+    }
+    Ok(bun_paths::string_paths::to_nt_path(buf, path))
+}
+
 // ── existence checks ──
 
 /// `WindowsFileAttributes` — view over the `DWORD` returned
@@ -7114,19 +7149,14 @@ pub enum ExistsAtType {
     File,
     Directory,
 }
-/// Windows tail — `NtQueryAttributesFile` against an
-/// OBJECT_ATTRIBUTES built from an already NT-prefixed wide path. Shared by the
-/// UTF-8 (`exists_at_type`) and UTF-16 (`exists_at_type_w`) entry points so the
-/// width dispatch does not
-/// duplicate the syscall body.
+/// Windows tail: `NtQueryAttributesFile` against an OBJECT_ATTRIBUTES built
+/// from an NT object name from [`nt_object_name_at`], either absolute
+/// (`\??\…`, `\Device\…`) or relative to `dir` with no `.`/`..` component.
+/// Shared by the UTF-8 (`exists_at_type`) and UTF-16 (`exists_at_type_w`)
+/// entry points so the width dispatch does not duplicate the syscall body.
 #[cfg(windows)]
-fn exists_at_type_nt(dir: Fd, mut path: &[u16]) -> Maybe<ExistsAtType> {
+fn exists_at_type_nt(dir: Fd, path: &[u16]) -> Maybe<ExistsAtType> {
     use bun_windows_sys::externs as w;
-    // Trim leading `.\` — NtQueryAttributesFile expects relative paths
-    // without it.
-    if path.len() > 2 && path[0] == b'.' as u16 && path[1] == b'\\' as u16 {
-        path = &path[2..];
-    }
     let path_len_bytes = (path.len() * 2) as u16;
     let mut nt_name = w::UNICODE_STRING {
         Length: path_len_bytes,
@@ -7180,21 +7210,18 @@ pub fn exists_at_type(dir: Fd, sub: &ZStr) -> Maybe<ExistsAtType> {
     }
     #[cfg(windows)]
     {
-        // `NtQueryAttributesFile` against an OBJECT_ATTRIBUTES
-        // built from the (optionally NT-prefixed) wide path.
         let mut wbuf = bun_paths::w_path_buffer_pool::get();
-        let path = bun_paths::string_paths::to_nt_path(&mut wbuf.0[..], sub.as_bytes()).as_slice();
-        exists_at_type_nt(dir, path)
+        let path = nt_object_name_at(dir, sub.as_bytes(), &mut wbuf.0[..])?;
+        exists_at_type_nt(dir, path.as_slice())
     }
 }
 /// Wide-path arm of `exists_at_type`. Takes an already-wide path (Windows
-/// `OSPathSliceZ`) and routes through
-/// `toNTPath16` instead of re-widening from UTF-8.
+/// `OSPathSliceZ`) instead of re-widening from UTF-8.
 #[cfg(windows)]
 pub(crate) fn exists_at_type_w(dir: Fd, sub: &[u16]) -> Maybe<ExistsAtType> {
     let mut wbuf = bun_paths::w_path_buffer_pool::get();
-    let path = bun_paths::string_paths::to_nt_path16(&mut wbuf.0[..], sub).as_slice();
-    exists_at_type_nt(dir, path)
+    let path = nt_object_name_at_w(dir, sub, &mut wbuf.0[..])?;
+    exists_at_type_nt(dir, path.as_slice())
 }
 /// `directoryExistsAt(dir, sub)`. ENOENT → `Ok(false)`.
 pub fn directory_exists_at(dir: impl AsFd, sub: &ZStr) -> Maybe<bool> {

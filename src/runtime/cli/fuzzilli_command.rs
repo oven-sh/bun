@@ -1,18 +1,8 @@
-//! `bun fuzzilli`: the REPRL (read-eval-print-reset-loop) child process that
-//! the Fuzzilli fuzzer drives (https://github.com/googleprojectzero/fuzzilli,
-//! Targets/README.md). The fuzzer passes four descriptors:
-//!
-//! - 100: control, fuzzer → child. `"HELO"` once, then per program `"exec"`
-//!   followed by the program length as a little-endian u64.
-//! - 101: control, child → fuzzer. `"HELO"` once, then per program a
-//!   little-endian u32 status (`exit_code << 8`, the low byte is a signal).
-//! - 102: program source, fuzzer → child.
-//! - 103: `fuzzilli('FUZZILLI_PRINT', value)` output, child → fuzzer.
-//!
-//! Every program runs on a fresh global object on the same `JSC::VM`, the way
-//! JavaScriptCore's `jsc` shell and V8's `d8` run Fuzzilli programs, so that
-//! nothing a program does to its globals or builtins can change how a later
-//! program behaves.
+//! `bun fuzzilli`: the REPRL child the Fuzzilli fuzzer drives (protocol:
+//! googleprojectzero/fuzzilli Targets/README.md). fd 100 in: `HELO`, then per
+//! program `exec` + u64 length. fd 101 out: `HELO`, then per program a u32
+//! status (`exit_code << 8`). fd 102 in: program source. fd 103 out:
+//! `FUZZILLI_PRINT`. Every program runs on a fresh global, as in jsc and d8.
 
 use bun_core::{Environment, Global};
 
@@ -23,8 +13,6 @@ pub(crate) struct FuzzilliCommand;
 impl FuzzilliCommand {
     #[cold]
     pub(crate) fn exec(ctx: Command::Context) -> Result<(), crate::Error> {
-        // The dispatch site (`cli/mod.rs`) already gates on
-        // `ENABLE_FUZZILLI_REPRL`; bail loudly if a caller ever invokes it anyway.
         if !Environment::ENABLE_FUZZILLI_REPRL {
             bun_core::pretty_errorln!(
                 "<r><red>error<r>: Fuzzilli mode is not enabled in this build"
@@ -66,12 +54,10 @@ mod reprl {
     /// libreprl's `REPRL_MAX_DATA_SIZE`.
     const MAX_PROGRAM_SIZE: u64 = 16 << 20;
 
-    /// How long the event loop of one program may run. Fuzzilli's own timeout
-    /// for a whole program is 2500 ms (`Sources/Fuzzilli/Profiles/BunProfile.swift`).
+    /// Per program. Fuzzilli's timeout for a whole program is 2500 ms.
     const EVENT_LOOP_BUDGET_MS: i64 = 250;
 
-    /// Evaluated on every fresh global before its program. `process.execve`
-    /// replaces the process image on success, which would end the REPRL child.
+    /// Runs first on every global. A real `process.execve` replaces the child.
     const PRELUDE: &[u8] = b"process.execve = () => {};";
 
     pub(super) fn run(ctx: &mut ContextData) -> Result<(), crate::Error> {
@@ -116,9 +102,7 @@ mod reprl {
         vm.is_main_thread = true;
         VirtualMachine::set_is_main_thread_vm(true);
 
-        // The reset between programs is the `bun test --isolate` file-boundary
-        // reset: stop the program's handles and subprocesses, swap in a fresh
-        // global, and put VM-level state a program can reach back to startup.
+        // Programs are separated by the `bun test --isolate` reset.
         vm.test_isolation_enabled = true;
         vm.auto_killer.enable();
         let time_zone: &[u8] = vm.env_loader().get(b"TZ").unwrap_or(b"");
@@ -138,8 +122,7 @@ mod reprl {
         serve(vm)
     }
 
-    /// The REPRL session: handshake, then one program per `exec` until the
-    /// fuzzer closes the control pipe.
+    /// Handshake, then one program per `exec` until the control pipe closes.
     fn serve(vm: &mut VirtualMachine) -> ! {
         prepare_global(vm);
 
@@ -186,8 +169,7 @@ mod reprl {
 
             let ok = execute(vm, &program);
 
-            // stdout and stderr are regular files under Fuzzilli; everything the
-            // program printed has to land before the fuzzer reads the status.
+            // The fuzzer reads the program's output once it has the status.
             Output::flush();
             let status: u32 = if ok { 0 } else { 1 << 8 };
             if control_out.write_all(&status.to_le_bytes()).is_err() {
@@ -201,9 +183,7 @@ mod reprl {
         vm.global_exit();
     }
 
-    /// Runs one program, gives its asynchronous work a bounded amount of
-    /// time, then resets the VM for the next program. Returns whether the
-    /// program succeeded.
+    /// Runs one program, then resets the VM for the next. Returns success.
     fn execute(vm: &mut VirtualMachine, source: &[u8]) -> bool {
         let mut exception = JSValue::ZERO;
         // SAFETY: `vm.global` is the live global; `source` outlives the call.
@@ -222,8 +202,7 @@ mod reprl {
         run_event_loop(vm);
         let _ = vm.global().handle_rejected_promises();
         crate::jsc_hooks::stop_active_handles_for_test_isolation(vm);
-        // An uncaught exception or unhandled rejection outside the
-        // synchronous part fails the program too, as it would fail `bun <file>`.
+        // Uncaught errors and unhandled rejections fail it too, like `bun <file>`.
         if vm.unhandled_error_counter > 0 {
             ok = false;
         }
@@ -235,16 +214,9 @@ mod reprl {
         ok
     }
 
-    /// Runs the program's microtasks, timers and I/O, for at most
-    /// `EVENT_LOOP_BUDGET_MS`.
-    ///
-    /// The budget exists because the loop of a fuzzed program need not
-    /// ever end: a program that leaves a server, a listener or an interval
-    /// behind keeps it alive, and `bun <file>` would not exit either. The
-    /// fuzzer's own timeout would then kill the child, which costs its
-    /// whole timeout and a respawn. So give the program's asynchronous
-    /// work a fixed slice instead, then report the status and reset. The
-    /// reset stops whatever is still running.
+    /// Microtasks, timers and I/O, for at most `EVENT_LOOP_BUDGET_MS`: a server
+    /// or interval the program leaves behind would keep the loop alive forever,
+    /// and the reset that follows stops those anyway.
     fn run_event_loop(vm: &mut VirtualMachine) {
         let deadline = bun_core::Timespec::now(bun_core::TimespecMockMode::ForceRealTime)
             .add_ms(EVENT_LOOP_BUDGET_MS);
@@ -256,8 +228,7 @@ mod reprl {
                 return;
             }
             let remaining = deadline.duration(&now);
-            // SAFETY: `vm` is the live main-thread VM; `remaining` is a stack
-            // local that outlives the call.
+            // SAFETY: `vm` is the live main-thread VM.
             unsafe {
                 crate::jsc_hooks::auto_tick_active_with_max_wait(
                     core::ptr::from_mut(vm),
@@ -268,12 +239,11 @@ mod reprl {
         }
     }
 
-    /// `require`, `module`, `__filename`, `__dirname` and the prelude, on
-    /// the global the next program will run on.
+    /// `require`, `module`, `__filename`, `__dirname` and the prelude.
     fn prepare_global(vm: &mut VirtualMachine) {
         let global = vm.global();
         let cwd = bun_resolver::fs::FileSystem::get().top_level_dir_without_trailing_slash();
-        // SAFETY: `cwd` is valid for the call; the wrapper opens its own exception scope.
+        // SAFETY: `cwd` outlives the call.
         if unsafe { bun_jsc::cpp::Bun__REPL__setupGlobalRequire(global, cwd.as_ptr(), cwd.len()) }
             .is_err()
         {

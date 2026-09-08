@@ -1133,9 +1133,7 @@ unsafe fn auto_tick_active(vm: *mut VirtualMachine) {
     unsafe { auto_tick_active_with_max_wait(vm, None) }
 }
 
-/// [`auto_tick_active`] with an upper bound on how long the I/O poll may
-/// block, as a duration. `None` is [`auto_tick_active`] itself: the poll
-/// blocks until the next timer is due, or forever while a handle is open.
+/// [`auto_tick_active`], but the I/O poll blocks for at most `max_wait`.
 ///
 /// # Safety
 /// `vm` is the live per-thread VM.

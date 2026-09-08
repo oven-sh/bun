@@ -784,8 +784,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
             .copied()
     }
 
-    /// Shared ctx→transpiler/resolver option projection used by [`boot`],
-    /// [`boot_standalone`] and `bun fuzzilli`.
+    /// Shared ctx→transpiler/resolver option projection for every VM boot path.
     pub(crate) fn wire_transpiler_from_ctx(b: &mut Transpiler<'_>, ctx: &mut ContextData) {
         use bun_options_types::context::MacroOptions;
         use bun_options_types::offline_mode::OfflineMode;

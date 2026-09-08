@@ -253,8 +253,7 @@ extern "C" void __sanitizer_cov_trace_pc_guard(uint32_t* guard)
     *guard = 0;
 }
 
-// Register the fuzzilli() function on a Bun global object. Called for the
-// initial global and for every global the REPRL loop swaps in after it.
+// Register the fuzzilli() function on every global a REPRL program runs on.
 void Bun__REPRL__registerFuzzilliFunctions(Zig::GlobalObject* globalObject)
 {
     JSC::VM& vm = globalObject->vm();
@@ -284,16 +283,9 @@ void Bun__REPRL__registerFuzzilliFunctions(Zig::GlobalObject* globalObject)
 
 #endif // FUZZILLI_ENABLED
 
-// ============================================================================
-// REPRL loop support. The loop itself is src/runtime/cli/fuzzilli_command.rs.
-// These are compiled into every build so that `bun fuzzilli` can be driven by
-// the test suite in debug/ASAN builds; only the coverage reset needs the
-// -fsanitize-coverage instrumentation that FUZZILLI_ENABLED builds carry.
-// ============================================================================
+// For the REPRL loop in src/runtime/cli/fuzzilli_command.rs, in every build.
 
-// Evaluates one REPRL program as sloppy-mode global code on `globalObject`,
-// the way jsc.cpp and d8 run Fuzzilli programs. Returns false and stores the
-// JSC::Exception in *exception when evaluation throws.
+// Runs one program as global code. On a throw: false, with the JSC::Exception in *exception.
 extern "C" [[ZIG_EXPORT(nothrow)]] bool Bun__REPRL__evaluate(Zig::GlobalObject* globalObject, const unsigned char* source, size_t sourceLen, JSC::EncodedJSValue* exception)
 {
     auto& vm = JSC::getVM(globalObject);

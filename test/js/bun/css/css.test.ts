@@ -4912,8 +4912,66 @@ describe("css tests", () => {
         line-height: 1.2em;
       }
     `,
-      indoc`.foo{font:italic small-caps 700 125% 12px/1.2em Helvetica,Times New Roman,sans-serif}`,
+      // The `font` shorthand only accepts `<font-width-css3>` keywords for font-stretch,
+      // so `expanded` must not be minified to `125%` there (CSS Fonts 4 §4.7).
+      indoc`.foo{font:italic small-caps 700 expanded 12px/1.2em Helvetica,Times New Roman,sans-serif}`,
     );
+
+    // https://github.com/parcel-bundler/lightningcss/issues/1140
+    for (const keyword of [
+      "ultra-condensed",
+      "extra-condensed",
+      "condensed",
+      "semi-condensed",
+      "semi-expanded",
+      "expanded",
+      "extra-expanded",
+      "ultra-expanded",
+    ]) {
+      minify_test(`.foo { font: ${keyword} 12px Arial; }`, `.foo{font:${keyword} 12px Arial}`);
+    }
+    minify_test(".foo { font: normal 12px Arial; }", ".foo{font:12px Arial}");
+    minify_test(".foo { font: italic 300 condensed 50%/1.2 Arial; }", ".foo{font:italic 300 condensed 50%/1.2 Arial}");
+    // The longhand and the @font-face descriptor do accept a percentage, so the shorter form is still used there.
+    minify_test(".foo { font-stretch: condensed; }", ".foo{font-stretch:75%}");
+    minify_test("@font-face { font-stretch: condensed expanded; }", "@font-face{font-stretch:75% 125%}");
+    // A percentage font-stretch cannot go in the shorthand at all, so it follows it as a longhand.
+    minify_test(
+      `
+      .foo {
+        font-family: Arial;
+        font-size: 12px;
+        font-weight: normal;
+        font-style: normal;
+        font-stretch: 80%;
+        font-variant-caps: normal;
+        line-height: normal;
+      }
+    `,
+      ".foo{font:12px Arial;font-stretch:80%}",
+    );
+    cssTest(
+      `
+      .foo {
+        font-family: Arial;
+        font-size: 12px;
+        font-weight: bold;
+        font-style: normal;
+        font-stretch: 80%;
+        font-variant-caps: all-small-caps;
+        line-height: 1.5;
+      }
+    `,
+      indoc`
+      .foo {
+        font: bold 12px / 1.5 Arial;
+        font-variant-caps: all-small-caps;
+        font-stretch: 80%;
+      }
+`,
+    );
+    minify_test(".foo { font: condensed 12px Arial; font-stretch: 80%; }", ".foo{font:12px Arial;font-stretch:80%}");
+    minify_test(".foo { font-stretch: 80%; font: condensed 12px Arial; }", ".foo{font:condensed 12px Arial}");
 
     cssTest(
       `

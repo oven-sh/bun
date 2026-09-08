@@ -6032,7 +6032,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 // compile time using expression substitution here.
                 return Some(Expr {
                     loc,
-                    data: null_value_expr(),
+                    data: js_ast::ExprData::EUndefined(E::Undefined {}),
                 });
             } else {
                 // In a CommonJS module, "this" is supposed to be the same as "exports".
@@ -10274,10 +10274,6 @@ pub(crate) fn null_expr_data() -> js_ast::ExprData {
 #[inline]
 pub(crate) fn null_stmt_data() -> js_ast::StmtData {
     js_ast::StmtData::SEmpty(S::Empty {})
-}
-#[inline]
-pub(crate) fn null_value_expr() -> js_ast::ExprData {
-    js_ast::ExprData::ENull(E::Null {})
 }
 
 /// `require()` of an ES module returns a copy of the namespace with

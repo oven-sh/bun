@@ -265,6 +265,9 @@ impl<'a> Options<'a> {
             hasher.update(b"udfcf=0");
         }
 
+        // `exports_kind` falls back to `module_type` when the content does not decide.
+        hasher.update(&[self.module_type as u8]);
+
         self.features.hash_for_runtime_transpiler(hasher);
     }
 

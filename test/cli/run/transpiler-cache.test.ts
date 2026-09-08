@@ -123,6 +123,27 @@ describe("transpiler cache", () => {
     expect(await bunRun(join(temp_dir, "main.js"), env)).toSpawn(expected);
     expect(!existsSync(cache_dir)).toBeTrue();
   });
+  test("byte-identical files with different package.json types do not share entries", async () => {
+    // A file with no import/export and no module/exports references is an ES
+    // module (strict) under "type": "module" and CommonJS (sloppy) under
+    // "type": "commonjs", so the package.json "type" must be part of the cache key.
+    const data = dummyFile(50 * 1024, "1", {
+      code: `(() => { try { undeclaredVariable = 1; return "sloppy"; } catch { return "strict"; } })()`,
+    });
+    mkdirSync(join(temp_dir, "esm"));
+    mkdirSync(join(temp_dir, "cjs"));
+    writeFileSync(join(temp_dir, "esm", "package.json"), '{ "type": "module" }');
+    writeFileSync(join(temp_dir, "cjs", "package.json"), '{ "type": "commonjs" }');
+    writeFileSync(join(temp_dir, "esm", "a.js"), data);
+    writeFileSync(join(temp_dir, "cjs", "a.js"), data);
+
+    expect(await bunRun(join(temp_dir, "esm", "a.js"), env)).toSpawn("strict");
+    expect(newCacheCount()).toBe(1);
+    // Same bytes in a CommonJS package must not be served the cached ES module entry.
+    expect(await bunRun(join(temp_dir, "cjs", "a.js"), env)).toSpawn("sloppy");
+    // And the reverse direction, now that the CommonJS entry was written last.
+    expect(await bunRun(join(temp_dir, "esm", "a.js"), env)).toSpawn("strict");
+  });
   test("it is indeed content addressable", async () => {
     writeFileSync(join(temp_dir, "a.js"), dummyFile(50 * 1024, "1", "b"));
     expect(await bunRun(join(temp_dir, "a.js"), env)).toSpawn("b");

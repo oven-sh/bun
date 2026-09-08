@@ -1791,8 +1791,7 @@ impl<'a> PackageInstaller<'a> {
                 .node_modules
                 .make_and_open_dir(&self.root_node_modules_folder)
                 .and_then(|dir| {
-                    // `@scope/name` is installed by path below, so the scope level
-                    // must be a real directory, not a planted symlink.
+                    // `@scope` must be a real directory here, not a planted symlink.
                     #[cfg(not(windows))]
                     if let Some((scope, _)) =
                         strings::split_once_char(alias.slice(string_buf!()), b'/')

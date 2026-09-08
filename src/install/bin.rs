@@ -945,8 +945,7 @@ impl<'a> Linker<'a> {
         }
 
         if self.err.is_some() {
-            // Remove a half-written shim pair. POSIX made one `symlinkat` on the
-            // `.bin` fd and does not touch `abs_dest` by path.
+            // Remove a half-written shim pair. POSIX has nothing to undo.
             #[cfg(windows)]
             Self::unlink_bin_or_shim(abs_dest);
             return;
@@ -1257,8 +1256,7 @@ impl<'a> Linker<'a> {
         }
     }
 
-    /// `node_modules/.bin` without following a symlink planted at `.bin` (see
-    /// `crate::make_open_real_dir`), or the user's global bin directory as configured.
+    /// `node_modules/.bin` opened without following a planted symlink, or the global bin dir.
     #[cfg(not(windows))]
     fn open_bin_dir(
         node_modules_path: &AbsPath,

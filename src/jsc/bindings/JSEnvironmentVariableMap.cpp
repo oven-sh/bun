@@ -781,8 +781,7 @@ bool JSSharedEnvMap::deleteProperty(JSCell* cell, JSGlobalObject* globalObject, 
         return Base::deleteProperty(cell, globalObject, propertyName, slot);
     }
 
-    // Drop any own property the Base fallback installed first; if it is non-configurable the
-    // value stays visible, so leave the store entry and native state alone too.
+    // A non-configurable Base fallback property stays visible, so leave the native state alone too.
     if (!Base::deleteProperty(cell, globalObject, propertyName, slot))
         return false;
     String key(uid);

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, isDebug, isWindows, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, isLinux, isWindows, tempDirWithFiles } from "harness";
 import { join } from "node:path";
 
 test("Request with streaming body can be cloned", async () => {
@@ -1181,6 +1181,50 @@ describe("clone() of a body over an unread native stream keeps the Blob behind i
     });
     expect(await cloneInChild("Bun.file(process.argv.at(-1)).stream()", [fifo])).toEqual(bothBodiesReadStdin);
     expect(await writer.exited).toBe(0);
+  });
+
+  // clone() stats a path to tell a regular file from a pipe. procfs reports
+  // `st_size == 0` for files that have content, so that stat must not end up
+  // as the size either body, or the Bun.file() they share, is read with.
+  describe.skipIf(!isLinux)("a procfs file is read whole by both bodies", () => {
+    // A procfs file with fixed content: "Linux\n", st_size 0.
+    const path = "/proc/sys/kernel/ostype";
+    const both = ["Linux\n", "Linux\n"];
+    async function texts(original: Request | Response) {
+      const clone = original.clone();
+      return await Promise.all([clone.text(), original.text()]);
+    }
+
+    test("Response over Bun.file()", async () => {
+      expect(await texts(new Response(Bun.file(path)))).toEqual(both);
+    });
+
+    test("Response over Bun.file().stream()", async () => {
+      expect(await texts(new Response(Bun.file(path).stream()))).toEqual(both);
+    });
+
+    test("Request over Bun.file()", async () => {
+      expect(await texts(new Request("http://example.com/", { method: "POST", body: Bun.file(path) }))).toEqual(both);
+    });
+
+    test("the Bun.file() given to the constructor still reads the whole file", async () => {
+      const file = Bun.file(path);
+      new Response(file).clone();
+      expect(await file.text()).toBe("Linux\n");
+    });
+  });
+
+  // A path that can never be read is duped like a regular file: clone() does
+  // not throw, and both bodies reject the same way when read.
+  test("a body over a directory clones and both bodies reject with EISDIR", async () => {
+    const response = new Response(Bun.file(tempDirWithFiles("body-clone-dir", {})));
+    let clone: Response;
+    expect(() => (clone = response.clone())).not.toThrow();
+    const results = await Promise.allSettled([clone!.text(), response.text()]);
+    expect(results.map(r => (r.status === "rejected" ? `rejected ${r.reason?.code}` : r.status))).toEqual([
+      "rejected EISDIR",
+      "rejected EISDIR",
+    ]);
   });
 });
 

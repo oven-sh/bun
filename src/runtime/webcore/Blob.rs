@@ -5998,22 +5998,31 @@ fn resolve_file_stat(store: &RefPtr<Store>) {
 }
 
 /// Whether a second Blob over `store` reads the same bytes from the start.
-/// Memory and S3 do. A path does when it names a regular file (each read
-/// opens it again); it is stat'd here if that is not yet known. A file
-/// descriptor never does: its offset, and for a pipe its bytes, are shared.
+/// Memory and S3 do. A file descriptor never does: its offset, and for a pipe
+/// its bytes, are shared. A path does (each read opens it again) unless it
+/// names a FIFO or a character device, whose bytes are gone once read. A path
+/// that cannot be stat'd or read (missing, a directory) counts as repeatable:
+/// both readers fail the same way.
+///
+/// The `stat` made here is not cached on the store. The read paths trust a
+/// cached size, and procfs reports `st_size == 0` for files that have content.
 pub(crate) fn store_reads_repeatably(store: &RefPtr<Store>) -> bool {
-    match Store::data_mut(store).tag() {
-        store::DataTag::Bytes | store::DataTag::S3 => true,
-        store::DataTag::File => {
-            if let PathOrFileDescriptor::Fd(_) = Store::data_mut(store).as_file().pathlike {
-                return false;
+    let mode = match &store.data {
+        store::Data::Bytes(_) | store::Data::S3(_) => return true,
+        store::Data::File(file) => match &file.pathlike {
+            PathOrFileDescriptor::Fd(_) => return false,
+            // If seekable was set, then so was mode.
+            PathOrFileDescriptor::Path(_) if file.seekable.is_some() => file.mode,
+            PathOrFileDescriptor::Path(path) => {
+                let mut buffer = bun_paths::path_buffer_pool::get();
+                match bun_sys::stat(path.slice_z(&mut buffer)) {
+                    bun_sys::Result::Ok(stat) => stat.st_mode as bun_sys::Mode,
+                    _ => return true,
+                }
             }
-            if Store::data_mut(store).as_file().seekable.is_none() {
-                resolve_file_stat(store);
-            }
-            Store::data_mut(store).as_file().seekable != Some(false)
-        }
-    }
+        },
+    };
+    !(bun_sys::S::ISFIFO(mode) || bun_sys::S::ISCHR(mode))
 }
 
 // ──────────────────────────────────────────────────────────────────────────

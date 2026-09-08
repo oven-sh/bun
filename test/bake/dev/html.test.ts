@@ -99,8 +99,10 @@ devTest("image tag", {
 devTest("srcset candidates and #fragments on asset URLs", {
   files: {
     "index.html": `
-      <!DOCTYPE html><html><head></head><body>
-      <img srcset="./a.png 1x, ./b.png 2x">
+      <!DOCTYPE html><html><head>
+      <link rel="preload" as="image" href="a.png" imagesrcset="a.png 1x, b.png 2x" imagesizes="100vw">
+      </head><body>
+      <img srcset="./a.png 1x, ./b.png 2x, https://example.com/c.png 3x" sizes="50vw">
       <svg><use href="./sprite.svg#icon"></use><use href="#local"></use></svg>
       <object data="./other.html"></object>
       </body></html>
@@ -115,9 +117,13 @@ devTest("srcset candidates and #fragments on asset URLs", {
   htmlFiles: ["index.html"],
   async test(dev) {
     const html = await dev.fetch("/").text();
-    const [, a, b] = html.match(/srcset="(\/_bun\/asset\/[0-9a-f]+\.png) 1x, (\/_bun\/asset\/[0-9a-f]+\.png) 2x"/)!;
+    const [, a, b] = html.match(
+      / srcset="(\/_bun\/asset\/[0-9a-f]+\.png) 1x, (\/_bun\/asset\/[0-9a-f]+\.png) 2x, https:\/\/example\.com\/c\.png 3x" sizes="50vw"/,
+    )!;
     await dev.fetch(a).expect.toBe("A");
     await dev.fetch(b).expect.toBe("B");
+    // `imagesrcset` candidates resolve like `srcset` ones, next to the legacy `href`.
+    expect(html).toInclude(`href="${a}" imagesrcset="${a} 1x, ${b} 2x" imagesizes="100vw"`);
     const [, sprite] = html.match(/<use href="(\/_bun\/asset\/[0-9a-f]+\.svg)#icon">/)!;
     await dev.fetch(sprite).expect.toInclude(`<symbol id="icon"/>`);
     expect(html).toInclude(`<use href="#local">`);

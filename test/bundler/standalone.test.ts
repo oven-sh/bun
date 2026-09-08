@@ -367,6 +367,7 @@ body { color: blue; }`,
 <meta name="twitter:image" content="./og.png">
 <script type="module" src="./app.js"></script></head><body>
 <img src="./i.png"> <img src="./sprite.svg#icon"> <img srcset="./h1.png 1x, ./h2.png 2x">
+<picture><source srcset="./h1.png, ./h2.png 600w"></picture>
 <video src="./clip.mp4#t=1,2"></video>
 <video poster="./i.png"><track src="./subs.vtt" kind="subtitles" srclang="en" default></video>
 <object data="./doc.pdf" type="application/pdf"><embed src="./doc.pdf"></object>
@@ -409,6 +410,9 @@ body { color: blue; }`,
     expect(attr(/<use xlink:href="([^"]*)">/)).toMatch(svgData);
     expect(attr(/<video src="([^"]*)">/)).toMatch(/^data:video\/mp4;base64,[A-Za-z0-9+/=]+#t=1,2$/);
     expect(attr(/<img srcset="([^"]*)">/)).toBe(`${pngData} 1x, ${pngData} 2x`);
+    // A descriptor-less candidate ends at "<data: URI>,", which the srcset
+    // grammar still reads back as one URL followed by a separator.
+    expect(attr(/<source srcset="([^"]*)">/)).toBe(`${pngData}, ${pngData} 600w`);
     expect(attr(/<track src="([^"]*)"/)).toStartWith("data:text/vtt");
     expect(attr(/<object data="([^"]*)"/)).toStartWith("data:application/pdf;base64,");
     expect(attr(/<embed src="([^"]*)"/)).toStartWith("data:application/pdf;base64,");

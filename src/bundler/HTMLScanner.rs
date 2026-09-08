@@ -111,9 +111,19 @@ impl<'a> Iterator for SrcsetCandidates<'a> {
         let desc_end = if url.len() < url_end {
             url_end
         } else {
-            url_end
-                + strings::index_of_char_usize(&rest[url_end..], b',')
-                    .unwrap_or(rest.len() - url_end)
+            // A comma inside `( )` is descriptor text (the tokenizer's "in parens" state).
+            let desc = &rest[url_end..];
+            let mut i = 0;
+            loop {
+                match strings::index_of_any(&desc[i..], b",(") {
+                    None => break rest.len(),
+                    Some(j) if desc[i + j] == b',' => break url_end + i + j,
+                    Some(j) => match strings::index_of_char_usize(&desc[i + j..], b')') {
+                        Some(k) => i += j + k + 1,
+                        None => break rest.len(),
+                    },
+                }
+            }
         };
         self.0 = &rest[desc_end..];
         Some((

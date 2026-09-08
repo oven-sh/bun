@@ -781,12 +781,15 @@ bool JSSharedEnvMap::deleteProperty(JSCell* cell, JSGlobalObject* globalObject, 
         return Base::deleteProperty(cell, globalObject, propertyName, slot);
     }
 
+    // Drop any own property the Base fallback installed first; if it is non-configurable the
+    // value stays visible, so leave the store entry and native state alone too.
+    if (!Base::deleteProperty(cell, globalObject, propertyName, slot))
+        return false;
     String key(uid);
     applyEnvDeleteSideEffects(globalObject, key);
     syncWindowsEnv(store, key, nullptr);
     store->remove(key);
-    // Also drop any own property the Base fallback installed (accessor descriptors).
-    return Base::deleteProperty(cell, globalObject, propertyName, slot);
+    return true;
 }
 
 void JSSharedEnvMap::getOwnPropertyNames(JSObject* object, JSGlobalObject* globalObject, PropertyNameArrayBuilder& propertyNames, DontEnumPropertiesMode mode)

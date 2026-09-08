@@ -708,7 +708,8 @@ it("native-backed process.env keys still reach fetch() and the time zone from an
     setProxy("http://127.0.0.1:" + proxy.port);
     setTZ("Asia/Kolkata");
     const via = await (await fetch("http://127.0.0.1:" + target.port + "/", { headers: { connection: "close" } })).text();
-    console.log(JSON.stringify({ readback, via, zone: new Intl.DateTimeFormat().resolvedOptions().timeZone }));
+    // Offset, not the zone name: older ICU (macOS) canonicalizes Asia/Kolkata to Asia/Calcutta.
+    console.log(JSON.stringify({ readback, via, offset: new Date("2024-01-15T00:00:00Z").getTimezoneOffset() }));
   `;
   const env = { ...bunEnv, BUN_JSC_useConcurrentJIT: "0" };
   for (const k of Object.keys(env)) {
@@ -719,7 +720,8 @@ it("native-backed process.env keys still reach fetch() and the time zone from an
   expect({ ...(stdout ? JSON.parse(stdout) : { stderr }), exitCode }).toEqual({
     readback: true,
     via: "via-proxy",
-    zone: "Asia/Kolkata",
+    // Asia/Kolkata is UTC+5:30 year-round.
+    offset: -330,
     exitCode: 0,
   });
 });

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, isWindows } from "harness";
 import { join } from "node:path";
 
 describe.concurrent("spawnSync isolated event loop", () => {
@@ -133,6 +133,31 @@ describe.concurrent("spawnSync isolated event loop", () => {
     expect(stdout).toBe("OK\n");
     expect(exitCode).toBe(0);
   });
+
+  // "forced": the collection that spawnSync's result buffers start sweeps and
+  // finalizes on the spot, so every dead sink is finalized inside a call.
+  // "default": GC timing left alone; some finalizers still land inside a call.
+  // POSIX only: the fixture's garbage is FileSinks that poll a dup() of a piped
+  // stderr, which is what process.stdout/stderr are there.
+  for (const [variant, gcEnv] of [
+    ["forced", { BUN_JSC_useConcurrentGC: "0", BUN_JSC_sweepSynchronously: "1" }],
+    ["default", {}],
+  ] as const) {
+    test.skipIf(isWindows)(`finalizers that run inside spawnSync release their polls on the main loop (${variant} GC timing)`, async () => {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), join(import.meta.dir, "spawnSync-finalizer-poll-fixture.js")],
+        env: { ...bunEnv, ...gcEnv },
+        stdin: "ignore",
+        stdout: "pipe",
+        // A pipe, so that the fixture's sinks on fd 2 take a poll.
+        stderr: "pipe",
+      });
+
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      expect({ stdout, stderr, exitCode }).toEqual({ stdout: "OK\n", stderr: "", exitCode: 0 });
+    });
+  }
 
   test("spawnSync under GC pressure with a worker and a server keeps the main loop balanced and exits", async () => {
     await using proc = Bun.spawn({

@@ -9,7 +9,11 @@
 //! Implementation approach:
 //! - Creates a separate uws.Loop instance with its own kqueue/epoll fd (POSIX) or libuv loop (Windows)
 //! - Wraps it in a full jsc.EventLoop instance whose `uws_loop` is the isolated loop
-//! - Temporarily overrides vm.event_loop_handle to point to the isolated loop
+//! - Temporarily overrides vm.event_loop_handle to point to the isolated loop.
+//!   Poll and keep-alive accounting resolves its loop through that handle, so
+//!   the override must end before anything that can run GC finalizers of
+//!   main-loop objects (any JS allocation); `spawnSync` calls `cleanup` as soon
+//!   as its wait is over.
 //! - Minimal handler callbacks (wakeup/pre/post are no-ops)
 //!
 //! Similar to Node.js's approach in vendor/node/src/spawn_sync.cc but adapted for Bun's architecture.
@@ -100,6 +104,8 @@ pub struct SpawnSyncEventLoop {
     /// `prepare` overrides the VM's event_loop_handle; the original, restored
     /// by `cleanup`.
     original_event_loop_handle: VmEventLoopHandle,
+    /// Between `prepare` and `cleanup`: the VM's handle names this loop.
+    attached: bool,
 
     #[cfg(windows)]
     uv_timer: Option<NonNull<libuv::Timer>>,
@@ -159,6 +165,7 @@ impl SpawnSyncEventLoop {
         this.write(Self {
             uws_loop: loop_,
             original_event_loop_handle: None, // overwritten in `prepare`
+            attached: false,
             #[cfg(windows)]
             uv_timer: None,
             did_timeout: Cell::new(false),
@@ -288,6 +295,8 @@ impl SpawnSyncEventLoop {
         self.did_timeout.set(false);
         self.vm = vm;
 
+        debug_assert!(!self.attached, "spawnSync loop prepared twice");
+        self.attached = true;
         self.original_event_loop_handle = __bun_spawn_sync_vm_get_event_loop_handle(vm);
         #[cfg(unix)]
         let new_handle: VmEventLoopHandle = Some(self.uws_loop);
@@ -299,8 +308,13 @@ impl SpawnSyncEventLoop {
         __bun_spawn_sync_vm_set_event_loop_handle(vm, new_handle);
     }
 
-    /// Restore the original event loop handle after spawnSync completes
+    /// Restore the original event loop handle. Idempotent: `spawnSync` calls it
+    /// as soon as its wait is over, and again on every exit path.
     pub fn cleanup(&mut self, vm: *mut () /* SAFETY: erased *mut VirtualMachine */) {
+        if !self.attached {
+            return;
+        }
+        self.attached = false;
         __bun_spawn_sync_vm_set_event_loop_handle(vm, self.original_event_loop_handle);
 
         #[cfg(windows)]

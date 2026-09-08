@@ -1068,6 +1068,8 @@ fn spawn_maybe_sync(
     // local so the closure's captured place is disjoint.
     let jsc_vm_ptr_cleanup = jsc_vm_ptr;
     scopeguard::defer! {
+        // Early returns before the wait; after the wait `cleanup` already ran
+        // and this is a no-op.
         if is_sync {
             // SAFETY: defer runs while `jsc_vm` (the thread VM) is still live.
             unsafe {
@@ -1967,6 +1969,11 @@ fn spawn_maybe_sync(
                 subprocess.close_readable_pipes();
             }
         }
+
+        // Restore the VM's loop before the JS allocations below: they can run
+        // finalizers, and a finalizer that releases a main-loop poll resolves
+        // `vm.event_loop_handle`. It must not debit this private loop.
+        sync_loop.cleanup(jsc_vm_ptr.cast());
     }
     if global_this.has_exception() {
         // e.g. a termination exception.

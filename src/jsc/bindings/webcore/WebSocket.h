@@ -34,6 +34,7 @@
 #include "ActiveDOMObject.h"
 #include "EventTarget.h"
 #include "ExceptionOr.h"
+#include "JSValueInWrappedObject.h"
 #include <wtf/URL.h>
 #include <wtf/HashSet.h>
 #include <wtf/Lock.h>
@@ -287,6 +288,8 @@ public:
 
     size_t memoryCost() const;
 
+    const JSValueInWrappedObject& creationAsyncContext() const { return m_creationAsyncContext; }
+
 private:
     typedef union AnyWebSocket {
         WebSocketClient* client;
@@ -312,6 +315,10 @@ private:
 
     void didReceiveClose(CleanStatus wasClean, unsigned short code, WTF::String reason, bool isConnectionError = false);
     void failConnectingWebSocket();
+
+    // All open/message/error/close events originate from the network, not from a
+    // JS caller: dispatch them in the async context captured at construction.
+    void dispatchEventInCreationContext(Event&);
 
     void sendWebSocketString(const String& message, const Opcode opcode);
     void sendWebSocketData(const char* data, size_t length, const Opcode opcode);
@@ -351,6 +358,11 @@ private:
     // TLS options (native heap SSLConfig — ownership is released to the
     // upgrade client in connect(); freed by ~WebSocketSSLConfigPtr otherwise).
     WebSocketSSLConfigPtr m_sslConfig;
+
+    // The async context active when the WebSocket was constructed, restored
+    // around event dispatch. Visited by JSWebSocket::visitChildrenImpl and
+    // released once the close event (the last one possible) has fired.
+    JSValueInWrappedObject m_creationAsyncContext;
 
     NativeCallbacks m_native;
 };

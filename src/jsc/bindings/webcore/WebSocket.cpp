@@ -31,6 +31,7 @@
 
 #include "config.h"
 #include "WebSocket.h"
+#include "AsyncContextFrame.h"
 #include "WebSocketDeflate.h"
 #include "headers.h"
 #include "blob.h"
@@ -179,6 +180,19 @@ WebSocket::WebSocket(ScriptExecutionContext& context)
     , m_extensions(emptyString())
 {
     m_rejectUnauthorized = Bun__getTLSRejectUnauthorizedValue() != 0;
+    // Events are dispatched from the network, not from a JS caller, so snapshot
+    // the creator's async context now (Node's AsyncWrap does the same).
+    if (auto* globalObject = context.jsGlobalObject())
+        AsyncContextFrame::captureCurrentContext(globalObject, m_creationAsyncContext);
+}
+
+// Listeners observe the async context that was active when the WebSocket was
+// constructed, matching Node.js.
+void WebSocket::dispatchEventInCreationContext(Event& event)
+{
+    auto* context = scriptExecutionContext();
+    AsyncContextFrameScope asyncContextScope(context ? context->jsGlobalObject() : nullptr, m_creationAsyncContext.getValue());
+    dispatchEvent(event);
 }
 
 WebSocket::~WebSocket()
@@ -652,8 +666,9 @@ __attribute__((minsize)) ExceptionOr<void> WebSocket::connect(const String& url,
             queueTaskKeepingObjectAlive(*this, TaskSource::WebSocket, [](WebSocket& ws) {
                 auto eventInit = createErrorEventInit(ws, "Failed to connect"_s, ws.scriptExecutionContext()->jsGlobalObject());
                 auto message = eventInit.message;
-                ws.dispatchEvent(ErrorEvent::create(eventNames().errorEvent, WTF::move(eventInit), EventIsTrusted::Yes));
-                ws.dispatchEvent(CloseEvent::create(false, 1006, WTF::move(message)));
+                ws.dispatchEventInCreationContext(ErrorEvent::create(eventNames().errorEvent, WTF::move(eventInit), EventIsTrusted::Yes));
+                ws.dispatchEventInCreationContext(CloseEvent::create(false, 1006, WTF::move(message)));
+                ws.m_creationAsyncContext.clear();
             });
         }
         // create() still holds a Ref, so releasing connect()'s claim here cannot destroy `this`.
@@ -818,8 +833,9 @@ void WebSocket::failConnectingWebSocket()
         // an error event before the close event. Matches Chrome/Firefox and npm ws.
         auto reason = "WebSocket is closed before the connection is established"_s;
         auto eventInit = createErrorEventInit(ws, reason, ws.scriptExecutionContext()->jsGlobalObject());
-        ws.dispatchEvent(ErrorEvent::create(eventNames().errorEvent, WTF::move(eventInit), EventIsTrusted::Yes));
-        ws.dispatchEvent(CloseEvent::create(false, 1006, reason));
+        ws.dispatchEventInCreationContext(ErrorEvent::create(eventNames().errorEvent, WTF::move(eventInit), EventIsTrusted::Yes));
+        ws.dispatchEventInCreationContext(CloseEvent::create(false, 1006, reason));
+        ws.m_creationAsyncContext.clear();
     });
     // The queued task now holds its own claim; connect()'s is over.
     m_pendingActivity = nullptr;
@@ -958,6 +974,7 @@ void WebSocket::stop()
     case ConnectedWebSocketKind::None:
         break;
     }
+    m_creationAsyncContext.clear();
     m_pendingActivity = nullptr;
 }
 
@@ -1228,10 +1245,10 @@ void WebSocket::didConnect()
 
         if (this->hasEventListeners("open"_s)) {
             // the main reason for dispatching on a separate tick is to handle when you haven't yet attached an event listener
-            dispatchEvent(Event::create(eventNames().openEvent, Event::CanBubble::No, Event::IsCancelable::No));
+            dispatchEventInCreationContext(Event::create(eventNames().openEvent, Event::CanBubble::No, Event::IsCancelable::No));
         } else {
             queueTaskKeepingObjectAlive(*this, TaskSource::WebSocket, [](WebSocket& ws) mutable {
-                ws.dispatchEvent(Event::create(eventNames().openEvent, Event::CanBubble::No, Event::IsCancelable::No));
+                ws.dispatchEventInCreationContext(Event::create(eventNames().openEvent, Event::CanBubble::No, Event::IsCancelable::No));
             });
         }
     }
@@ -1258,13 +1275,13 @@ void WebSocket::didReceiveMessage(String&& message)
 
     if (this->hasEventListeners("message"_s)) {
         // the main reason for dispatching on a separate tick is to handle when you haven't yet attached an event listener
-        dispatchEvent(MessageEvent::create(WTF::move(message), m_url.string()));
+        dispatchEventInCreationContext(MessageEvent::create(WTF::move(message), m_url.string()));
         return;
     }
 
     if (scriptExecutionContext()) {
         queueTaskKeepingObjectAlive(*this, TaskSource::WebSocket, [message_ = WTF::move(message)](WebSocket& ws) mutable {
-            ws.dispatchEvent(MessageEvent::create(message_, ws.m_url.string()));
+            ws.dispatchEventInCreationContext(MessageEvent::create(message_, ws.m_url.string()));
         });
     }
 
@@ -1283,14 +1300,14 @@ void WebSocket::didReceiveBinaryData(const AtomString& eventName, const std::spa
         if (this->hasEventListeners(eventName)) {
             // the main reason for dispatching on a separate tick is to handle when you haven't yet attached an event listener
             RefPtr<Blob> blob = Blob::create(binaryData, scriptExecutionContext()->jsGlobalObject());
-            dispatchEvent(MessageEvent::create(eventName, blob.releaseNonNull(), m_url.string()));
+            dispatchEventInCreationContext(MessageEvent::create(eventName, blob.releaseNonNull(), m_url.string()));
             return;
         }
 
         if (auto* context = scriptExecutionContext()) {
             RefPtr<Blob> blob = Blob::create(binaryData, context->jsGlobalObject());
             queueTaskKeepingObjectAlive(*this, TaskSource::WebSocket, [name = eventName, blob = blob.releaseNonNull()](WebSocket& ws) mutable {
-                ws.dispatchEvent(MessageEvent::create(name, blob, ws.m_url.string()));
+                ws.dispatchEventInCreationContext(MessageEvent::create(name, blob, ws.m_url.string()));
             });
         }
 
@@ -1298,14 +1315,14 @@ void WebSocket::didReceiveBinaryData(const AtomString& eventName, const std::spa
     case BinaryType::ArrayBuffer: {
         if (this->hasEventListeners(eventName)) {
             // the main reason for dispatching on a separate tick is to handle when you haven't yet attached an event listener
-            dispatchEvent(MessageEvent::create(eventName, ArrayBuffer::create(binaryData), m_url.string()));
+            dispatchEventInCreationContext(MessageEvent::create(eventName, ArrayBuffer::create(binaryData), m_url.string()));
             return;
         }
 
         if (scriptExecutionContext()) {
             auto arrayBuffer = JSC::ArrayBuffer::create(binaryData);
             queueTaskKeepingObjectAlive(*this, TaskSource::WebSocket, [name = eventName, buffer = WTF::move(arrayBuffer)](WebSocket& ws) mutable {
-                ws.dispatchEvent(MessageEvent::create(name, buffer, ws.m_url.string()));
+                ws.dispatchEventInCreationContext(MessageEvent::create(name, buffer, ws.m_url.string()));
             });
         }
 
@@ -1322,7 +1339,7 @@ void WebSocket::didReceiveBinaryData(const AtomString& eventName, const std::spa
 
                 ErrorEvent::Init errorInit;
                 errorInit.message = "Failed to allocate memory for binary data"_s;
-                dispatchEvent(ErrorEvent::create(eventNames().errorEvent, errorInit));
+                dispatchEventInCreationContext(ErrorEvent::create(eventNames().errorEvent, errorInit));
                 return;
             }
 
@@ -1331,7 +1348,7 @@ void WebSocket::didReceiveBinaryData(const AtomString& eventName, const std::spa
             init.data = buffer;
             init.origin = this->m_url.string();
 
-            dispatchEvent(MessageEvent::create(eventName, WTF::move(init), EventIsTrusted::Yes));
+            dispatchEventInCreationContext(MessageEvent::create(eventName, WTF::move(init), EventIsTrusted::Yes));
             return;
         }
 
@@ -1346,7 +1363,7 @@ void WebSocket::didReceiveBinaryData(const AtomString& eventName, const std::spa
                 MessageEvent::Init init;
                 init.data = uint8array;
                 init.origin = ws.m_url.string();
-                ws.dispatchEvent(MessageEvent::create(name, WTF::move(init), EventIsTrusted::Yes));
+                ws.dispatchEventInCreationContext(MessageEvent::create(name, WTF::move(init), EventIsTrusted::Yes));
             });
         }
 
@@ -1403,7 +1420,7 @@ void WebSocket::didReceiveHandshakeResponse(uint16_t statusCode, std::span<const
     init.data = obj;
     init.origin = m_url.string();
 
-    dispatchEvent(MessageEvent::create(eventNames().handshakeEvent, WTF::move(init), EventIsTrusted::Yes));
+    dispatchEventInCreationContext(MessageEvent::create(eventNames().handshakeEvent, WTF::move(init), EventIsTrusted::Yes));
 }
 
 void WebSocket::didReceiveClose(CleanStatus wasClean, unsigned short code, WTF::String reason, bool isConnectionError)
@@ -1437,9 +1454,11 @@ void WebSocket::didReceiveClose(CleanStatus wasClean, unsigned short code, WTF::
             ws.m_state = CLOSED;
             if (dispatchError) {
                 auto eventInit = createErrorEventInit(ws, reason, ws.scriptExecutionContext()->jsGlobalObject());
-                ws.dispatchEvent(ErrorEvent::create(eventNames().errorEvent, WTF::move(eventInit), EventIsTrusted::Yes));
+                ws.dispatchEventInCreationContext(ErrorEvent::create(eventNames().errorEvent, WTF::move(eventInit), EventIsTrusted::Yes));
             }
-            ws.dispatchEvent(CloseEvent::create(clean, code, reason));
+            ws.dispatchEventInCreationContext(CloseEvent::create(clean, code, reason));
+            // The close event is the last one this socket can dispatch.
+            ws.m_creationAsyncContext.clear();
         });
     } else {
         m_state = CLOSED;
@@ -1492,7 +1511,9 @@ void WebSocket::didClose(unsigned unhandledBufferedAmount, unsigned short code, 
                 return;
             }
             protectedThis->m_state = CLOSED;
-            protectedThis->dispatchEvent(CloseEvent::create(wasClean, code, reason));
+            protectedThis->dispatchEventInCreationContext(CloseEvent::create(wasClean, code, reason));
+            // The close event is the last one this socket can dispatch.
+            protectedThis->m_creationAsyncContext.clear();
             protectedThis->m_pendingActivity = nullptr;
         });
         return;

@@ -1208,6 +1208,19 @@ impl<const SSL: bool> HTTPServerWritable<SSL> {
         self.has_backpressure && self.end_len > 0
     }
 
+    /// `res.end()` or a completed `res.try_end()` just wrote the last chunk
+    /// (or the whole Content-Length body) and `markDone()`d the response. The
+    /// one place `ended_response` is set, so every path that reaches uWS's end
+    /// through `send`/`send_readable` (endFromJS, auto-flush, on_writable,
+    /// `finalize()`'s flush) agrees the response is over and nothing ends it a
+    /// second time. Also the last point `res` is known live on HTTP/1 (see
+    /// `ended_response`), so release any request-body pause here.
+    fn mark_response_ended(&mut self, res: uws::AnyResponse) {
+        self.has_backpressure = false;
+        self.ended_response = true;
+        res.resume();
+    }
+
     /// `len` bytes were accepted by `send`/`send_readable`. When uWS reports
     /// the socket is now backed up, return a pending Promise for JS-controller
     /// sources (direct-stream `pull` can `await controller.write()`; the
@@ -1254,7 +1267,7 @@ impl<const SSL: bool> HTTPServerWritable<SSL> {
             self.handle_first_write_if_necessary();
             let success = res.try_end(buf, self.end_len, false);
             if success {
-                self.has_backpressure = false;
+                self.mark_response_ended(res);
                 self.handle_wrote(self.end_len);
             } else if self.res.is_some() {
                 self.has_backpressure = true;
@@ -1277,7 +1290,7 @@ impl<const SSL: bool> HTTPServerWritable<SSL> {
         // `on_writable()` below.
         if self.requested_end {
             res.end(buf, false);
-            self.has_backpressure = false;
+            self.mark_response_ended(res);
         } else {
             self.has_backpressure = matches!(res.write(buf), uws::WriteResult::Backpressure(_));
         }
@@ -1329,7 +1342,7 @@ impl<const SSL: bool> HTTPServerWritable<SSL> {
             let end_len = self.end_len;
             let success = res.try_end(&self.buffer[base..], end_len, false);
             if success {
-                self.has_backpressure = false;
+                self.mark_response_ended(res);
                 self.handle_wrote(end_len);
             } else if self.res.is_some() {
                 self.has_backpressure = true;
@@ -1349,7 +1362,7 @@ impl<const SSL: bool> HTTPServerWritable<SSL> {
         // See `send_without_auto_flusher`.
         if self.requested_end {
             res.end(&self.buffer[base..], false);
-            self.has_backpressure = false;
+            self.mark_response_ended(res);
         } else {
             self.has_backpressure = matches!(
                 res.write(&self.buffer[base..]),
@@ -1451,14 +1464,12 @@ impl<const SSL: bool> HTTPServerWritable<SSL> {
             total_written = chunk_len as u64;
 
             if self.requested_end {
+                // `send_readable` drained the parked `try_end`/`end` and marked
+                // the response ended.
+                debug_assert!(self.ended_response);
                 if let Some(res) = self.any_res() {
                     res.clear_on_writable();
-                    // Release any request-body pause while `res` is live (see `end_already_responded_stream`).
-                    res.resume();
                 }
-                // `send_readable` drained the parked `try_end`, so uWS has
-                // `markDone()`d the response and dropped its `onAborted`.
-                self.ended_response = true;
                 self.source.close(None);
                 self.flush_promise();
                 self.finalize();
@@ -1822,19 +1833,12 @@ impl<const SSL: bool> HTTPServerWritable<SSL> {
                 value.protect();
                 return bun_sys::Result::Ok(value);
             }
-        } else {
-            if let Some(res) = self.any_res() {
-                res.end(b"", false);
-            }
+        } else if let Some(res) = self.any_res() {
+            res.end(b"", false);
+            self.mark_response_ended(res);
         }
 
-        if let Some(res) = self.any_res() {
-            // Release any request-body pause while `res` is live (see `end_already_responded_stream`).
-            res.resume();
-        }
-        // Both branches above fully ended the response through uWS, which
-        // `markDone()`s it and drops its `onAborted`.
-        self.ended_response = true;
+        debug_assert!(self.ended_response);
         self.mark_done();
         self.flush_promise();
         self.source.close(None);
@@ -1912,14 +1916,12 @@ impl<const SSL: bool> HTTPServerWritable<SSL> {
         self.auto_flusher.registered.set(false);
 
         if self.requested_end {
+            // `send_readable` drained the parked `try_end`/`end` and marked the
+            // response ended.
+            debug_assert!(self.ended_response);
             if let Some(res) = self.any_res() {
                 res.clear_on_writable();
-                // Release any request-body pause while `res` is live (see `end_already_responded_stream`).
-                res.resume();
             }
-            // `send_readable` drained the parked `try_end`/`end`, so uWS has
-            // `markDone()`d the response and dropped its `onAborted`.
-            self.ended_response = true;
             self.source.close(None);
             self.flush_promise();
             self.finalize();
@@ -1967,6 +1969,8 @@ impl<const SSL: bool> HTTPServerWritable<SSL> {
                 // stream is freed after FIN, leave it dangling).
                 res.clear_on_writable();
             }
+            // After `end()` parked buffered bytes (`requested_end`), this flush
+            // is itself the `res.end()` that writes them plus the last chunk.
             let _ = self.flush_no_wait();
             self.set_done();
 

@@ -1033,64 +1033,164 @@ test("sync pull() under AsyncLocalStorage releases the request on end()", async 
 });
 
 // https://github.com/oven-sh/bun/issues/36940
-// close() while the sink still holds unflushed bytes deferred the final send
-// to the auto-flusher, which ended the response through uWS (writing the
-// terminating 0\r\n\r\n chunk) and then finalize() ended the stream a second
-// time, writing another terminator. On a keep-alive connection the stray
-// terminator is parsed as the start of the next response.
-test("close() with unflushed data writes the chunked terminator exactly once", async () => {
-  using server = Bun.serve({
-    port: 0,
-    fetch(req) {
-      if (new URL(req.url).pathname === "/plain") {
-        return new Response("ok");
-      }
-      return new Response(
-        new ReadableStream({
-          type: "direct",
-          async pull(c) {
-            // Write enough for chunked encoding, in pieces small enough that
-            // bytes are still buffered below the high-water mark when close()
-            // runs.
-            for (let i = 0; i < 8; i++) {
-              await c.write(new Uint8Array(100).fill(0x78));
-            }
-            c.close();
-          },
-        }),
-        { headers: { "content-type": "text/plain" } },
-      );
+// close() while the sink still holds unflushed bytes must put exactly one
+// chunked last-chunk (0\r\n\r\n) on the wire, whichever path performs the
+// final send: the auto-flusher (pull() settles in the same task it started
+// in) or finalize() (pull() resumed from a later task, so its settle reaction
+// runs before the auto-flusher). Both end the response through uWS `end()`,
+// which already writes the terminator; a second `end_stream()` after that
+// wrote another one. On a keep-alive connection the stray terminator is
+// parsed as the start of the next response (node: HPE_INVALID_CONSTANT,
+// curl: "Leftovers after chunking").
+describe("close() with unflushed data writes the chunked terminator exactly once", () => {
+  // An event-loop turn, so pull() settles from a later task than the one that
+  // attached the stream. Not a time wait.
+  const nextTask = () => new Promise<void>(resolve => setImmediate(() => resolve()));
+  const x800 = Buffer.alloc(800, "x").toString();
+
+  const shapes: Record<string, { body: string; pull: (c: any) => unknown }> = {
+    // #36940: every await is a microtask, so pull() settles inside the
+    // attach-time drain and the auto-flusher performs the end.
+    "await write() x8, close()": {
+      body: x800,
+      async pull(c) {
+        for (let i = 0; i < 8; i++) {
+          await c.write(new Uint8Array(100).fill(0x78));
+        }
+        c.close();
+      },
     },
-  });
+    // The rest settle pull() from a later task with an earlier chunk already
+    // on the wire, so finalize()'s flush performs the end.
+    "write, await flush(), task, write, close()": {
+      body: "hello-world",
+      async pull(c) {
+        c.write("hello");
+        await c.flush();
+        await nextTask();
+        c.write("-world");
+        c.close();
+      },
+    },
+    "write, task, write, close() (no flush)": {
+      body: "hello-world",
+      async pull(c) {
+        c.write("hello");
+        await nextTask();
+        c.write("-world");
+        c.close();
+      },
+    },
+    "write, flush() not awaited, task, write, close()": {
+      body: "hello-world",
+      async pull(c) {
+        c.write("hello");
+        c.flush();
+        await nextTask();
+        c.write("-world");
+        c.close();
+      },
+    },
+    "write, await flush(), task, write, microtask, close()": {
+      body: "hello-world",
+      async pull(c) {
+        c.write("hello");
+        await c.flush();
+        await nextTask();
+        c.write("-world");
+        await Promise.resolve();
+        c.close();
+      },
+    },
+    "SSE loop: (write, await flush(), task) x3, write, close()": {
+      body: "ev0\nev1\nev2\nbye",
+      async pull(c) {
+        for (let i = 0; i < 3; i++) {
+          c.write("ev" + i + "\n");
+          await c.flush();
+          await nextTask();
+        }
+        c.write("bye");
+        c.close();
+      },
+    },
+    "sync pull(), then write + close() from a later task": {
+      body: "hello-late",
+      pull(c) {
+        c.write("hello");
+        setImmediate(() => {
+          c.write("-late");
+          c.close();
+        });
+      },
+    },
+  };
 
-  const { promise, resolve, reject } = Promise.withResolvers<string>();
-  const sock = net.connect(server.port, "127.0.0.1");
-  let raw = "";
-  let sentSecond = false;
-  sock.setNoDelay(true);
-  sock.on("connect", () => {
-    sock.write("GET / HTTP/1.1\r\nHost: localhost\r\nConnection: keep-alive\r\n\r\n");
-  });
-  sock.on("data", d => {
-    raw += d.toString("latin1");
-    // Once the first (chunked) response has terminated, reuse the connection.
-    // The stray terminator was flushed together with the real one, so it is
-    // already in `raw` by the time the second response arrives.
-    if (!sentSecond && raw.includes("0\r\n\r\n")) {
-      sentSecond = true;
-      sock.write("GET /plain HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n");
+  test.concurrent.each(Object.keys(shapes))("%s", async name => {
+    const { body, pull } = shapes[name];
+    using server = Bun.serve({
+      port: 0,
+      fetch(req) {
+        if (new URL(req.url).pathname === "/plain") {
+          return new Response("ok");
+        }
+        return new Response(new ReadableStream({ type: "direct", pull } as any), {
+          headers: { "content-type": "text/plain" },
+        });
+      },
+    });
+
+    const { promise, resolve, reject } = Promise.withResolvers<string>();
+    const sock = net.connect(server.port, "127.0.0.1");
+    let raw = "";
+    let sentSecond = false;
+    sock.setNoDelay(true);
+    sock.on("connect", () => {
+      sock.write("GET / HTTP/1.1\r\nHost: localhost\r\nConnection: keep-alive\r\n\r\n");
+    });
+    sock.on("data", d => {
+      raw += d.toString("latin1");
+      // Once the first (chunked) response has terminated, reuse the connection.
+      if (!sentSecond && raw.includes("\r\n0\r\n\r\n")) {
+        sentSecond = true;
+        sock.write("GET /plain HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n");
+      }
+    });
+    sock.on("close", () => resolve(raw));
+    sock.on("error", reject);
+    const data = await promise;
+
+    const headerEnd = data.indexOf("\r\n\r\n");
+    expect(data.slice(0, headerEnd).toLowerCase()).toContain("transfer-encoding: chunked");
+
+    // Decode the first response's chunked body strictly (RFC 9112 §7.1): the
+    // body ends at the first last-chunk, and whatever follows belongs to the
+    // next message.
+    let offset = headerEnd + 4;
+    let decoded = "";
+    while (true) {
+      const lineEnd = data.indexOf("\r\n", offset);
+      expect(lineEnd).toBeGreaterThan(-1);
+      const size = parseInt(data.slice(offset, lineEnd), 16);
+      expect(size).not.toBeNaN();
+      offset = lineEnd + 2;
+      if (size === 0) {
+        // No trailer section: the last-chunk is followed by the final CRLF.
+        expect(data.slice(offset, offset + 2)).toBe("\r\n");
+        offset += 2;
+        break;
+      }
+      decoded += data.slice(offset, offset + size);
+      expect(data.slice(offset + size, offset + size + 2)).toBe("\r\n");
+      offset += size + 2;
     }
-  });
-  sock.on("close", () => resolve(raw));
-  sock.on("error", reject);
-  const data = await promise;
+    expect(decoded).toBe(body);
 
-  // The chunked body is all "x"; the second response is framed by
-  // Content-Length. Exactly one terminating chunk must appear in the stream.
-  expect(data.split("0\r\n\r\n").length - 1).toBe(1);
-  // The bytes right after the terminator are the next response, not another
-  // terminator.
-  const afterTerminator = data.slice(data.indexOf("0\r\n\r\n") + 5);
-  expect(afterTerminator.slice(0, 12)).toBe("HTTP/1.1 200");
-  expect(afterTerminator).toEndWith("ok");
+    // The very next bytes are the second response, framed by Content-Length,
+    // and nothing else is on the connection.
+    const second = data.slice(offset);
+    expect(second.slice(0, 15)).toBe("HTTP/1.1 200 OK");
+    expect(second).toEndWith("\r\n\r\nok");
+    expect(second.split("\r\n0\r\n\r\n").length - 1).toBe(0);
+  });
 });

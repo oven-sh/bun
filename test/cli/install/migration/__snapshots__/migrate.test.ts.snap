@@ -293,7 +293,7 @@ bun install --frozen-lockfile exit code: 0
 
     "fs.realpath": ["fs.realpath@1.0.0", "", {}, "sha1-FQStJSMVjKpA20onh8sBQRmU6k8="],
 
-    "fsevents": ["fsevents@1.2.8", "", { "dependencies": { "nan": "^2.12.1", "node-pre-gyp": "^0.12.0" }, "os": "darwin" }, "sha512-tPvHgPGB7m40CZ68xqFGkKuzN+RnpGmSV+hgeKxhRpbxdqKXUFJGC3yonBOLzQBcJyGpdZFDfCsdOC2KFsXzeA=="],
+    "fsevents": ["fsevents@1.2.8", "", { "dependencies": { "nan": "^2.12.1", "node-pre-gyp": "^0.12.0" }, "os": "darwin", "hasInstallScript": true }, "sha512-tPvHgPGB7m40CZ68xqFGkKuzN+RnpGmSV+hgeKxhRpbxdqKXUFJGC3yonBOLzQBcJyGpdZFDfCsdOC2KFsXzeA=="],
 
     "function-loop": ["function-loop@1.0.2", "", {}, "sha512-Iw4MzMfS3udk/rqxTiDDCllhGwlOrsr50zViTOO/W6lS/9y6B1J0BD2VZzrnWUYBJsl3aeqjgR5v7bWWhZSYbA=="],
 
@@ -1381,7 +1381,7 @@ bun install --frozen-lockfile exit code: 0
 
     "convert-source-map": ["convert-source-map@1.7.0", "", { "dependencies": { "safe-buffer": "~5.1.1" } }, "sha512-4FJkXzKXEDB1snCFZlLP4gpC3JILicCpGbzG9f9G7tGqGCzETQ2hWPrcinA9oU4wtf2biUaEH5065UnMeR33oA=="],
 
-    "core-js": ["core-js@2.6.11", "", {}, "sha512-5wjnpaT/3dV+XB4borEsnAYQchn00XSgTAWKDkEqv+K8KevjbzmofK6hfJ9TZIlpj2N0xQpazy7PiRQiWHqzWg=="],
+    "core-js": ["core-js@2.6.11", "", { "hasInstallScript": true }, "sha512-5wjnpaT/3dV+XB4borEsnAYQchn00XSgTAWKDkEqv+K8KevjbzmofK6hfJ9TZIlpj2N0xQpazy7PiRQiWHqzWg=="],
 
     "core-util-is": ["core-util-is@1.0.2", "", {}, "sha1-tf1UIgqivFq1eqtxQMlAdUUDwac="],
 
@@ -1453,7 +1453,7 @@ bun install --frozen-lockfile exit code: 0
 
     "fs.realpath": ["fs.realpath@1.0.0", "", {}, "sha1-FQStJSMVjKpA20onh8sBQRmU6k8="],
 
-    "fsevents": ["fsevents@2.1.3", "", { "os": "darwin" }, "sha512-Auw9a4AxqWpa9GUfj370BMPzzyncfBABW8Mab7BGWBYDj4Isgq+cDKtx0i6u9jcX9pQDnswsaaOTgTmA5pEjuQ=="],
+    "fsevents": ["fsevents@2.1.3", "", { "os": "darwin", "hasInstallScript": true }, "sha512-Auw9a4AxqWpa9GUfj370BMPzzyncfBABW8Mab7BGWBYDj4Isgq+cDKtx0i6u9jcX9pQDnswsaaOTgTmA5pEjuQ=="],
 
     "function-loop": ["function-loop@1.0.2", "", {}, "sha512-Iw4MzMfS3udk/rqxTiDDCllhGwlOrsr50zViTOO/W6lS/9y6B1J0BD2VZzrnWUYBJsl3aeqjgR5v7bWWhZSYbA=="],
 
@@ -4245,9 +4245,9 @@ bun install --frozen-lockfile exit code: 0
     },
   },
   "packages": {
-    "a": ["a@1.2.3", "http://localhost:1/a/-/a-1.2.3.tgz", {}, ""],
+    "a": ["a@1.2.3", "http://localhost:1/a/-/a-1.2.3.tgz", { "hasInstallScript": true }, ""],
 
-    "b": ["b@1.2.3", "http://localhost:1/b/-/b-1.2.3.tgz", {}, ""],
+    "b": ["b@1.2.3", "http://localhost:1/b/-/b-1.2.3.tgz", { "hasInstallScript": true }, ""],
   }
 }
 "
@@ -4397,7 +4397,7 @@ bun install --frozen-lockfile exit code: 0
 
     "@isaacs/testing-rebuild-bundle-parent": ["@isaacs/testing-rebuild-bundle-parent@1.0.0", "", { "dependencies": { "@isaacs/testing-rebuild-bundle-a": "" } }, "sha512-fa+mV2K+BDLzuxfI1LUWNmii92sylksrtaUITSO74ylcdWslvTFyr+REJfwdH5fDOxGqBH6kbVcDvWY8WqhgXg=="],
 
-    "@isaacs/testing-rebuild-bundle-a/@isaacs/testing-rebuild-bundle-b": ["@isaacs/testing-rebuild-bundle-b@1.0.1", "http://localhost:1/@isaacs/testing-rebuild-bundle-b/-/testing-rebuild-bundle-b-1.0.1.tgz", { "bundled": true }, ""],
+    "@isaacs/testing-rebuild-bundle-a/@isaacs/testing-rebuild-bundle-b": ["@isaacs/testing-rebuild-bundle-b@1.0.1", "http://localhost:1/@isaacs/testing-rebuild-bundle-b/-/testing-rebuild-bundle-b-1.0.1.tgz", { "bundled": true, "hasInstallScript": true }, ""],
   }
 }
 "
@@ -4420,7 +4420,7 @@ bun install --frozen-lockfile exit code: 0
     },
   },
   "packages": {
-    "@isaacs/testing-rebuild-bundle-b": ["@isaacs/testing-rebuild-bundle-b@1.0.1", "", {}, "sha512-Uk8u/2pQYJ2LRdm0bZB6k2MTxwtLJyZVfTHTFNR2pxirl9TPCLoRkGozbzwDV7n2V9pMwC26Oy230NoAml9tQg=="],
+    "@isaacs/testing-rebuild-bundle-b": ["@isaacs/testing-rebuild-bundle-b@1.0.1", "", { "hasInstallScript": true }, "sha512-Uk8u/2pQYJ2LRdm0bZB6k2MTxwtLJyZVfTHTFNR2pxirl9TPCLoRkGozbzwDV7n2V9pMwC26Oy230NoAml9tQg=="],
   }
 }
 "
@@ -4447,7 +4447,7 @@ bun install --frozen-lockfile exit code: 0
 
     "@isaacs/testing-rebuild-bundle-parent": ["@isaacs/testing-rebuild-bundle-parent@1.0.1", "", { "dependencies": { "@isaacs/testing-rebuild-bundle-a": "" } }, "sha512-PM20bXdRox3OOUEC7m0oYrpW3qZIYN+fh+/9TazZrWkfIggkHNnB91mROyPwlc/HvfPYoYHp1CMGPlgUSl3FDQ=="],
 
-    "@isaacs/testing-rebuild-bundle-a/@isaacs/testing-rebuild-bundle-b": ["@isaacs/testing-rebuild-bundle-b@1.0.1", "http://localhost:1/@isaacs/testing-rebuild-bundle-b/-/testing-rebuild-bundle-b-1.0.1.tgz", { "bundled": true }, ""],
+    "@isaacs/testing-rebuild-bundle-a/@isaacs/testing-rebuild-bundle-b": ["@isaacs/testing-rebuild-bundle-b@1.0.1", "http://localhost:1/@isaacs/testing-rebuild-bundle-b/-/testing-rebuild-bundle-b-1.0.1.tgz", { "bundled": true, "hasInstallScript": true }, ""],
   }
 }
 "
@@ -4472,7 +4472,7 @@ bun install --frozen-lockfile exit code: 0
   "packages": {
     "@isaacs/testing-rebuild-bundle-a": ["@isaacs/testing-rebuild-bundle-a@1.0.2", "", { "dependencies": { "@isaacs/testing-rebuild-bundle-b": "" } }, "sha512-iMx/CGv5Z5dHRdeuYDoaCy0Nfgg0ih9G23C4bwoYPbkdXemc8ahbE9AFJ7jCP0u0hm5ZoZiP11FLN1i7ADhRbA=="],
 
-    "@isaacs/testing-rebuild-bundle-a/@isaacs/testing-rebuild-bundle-b": ["@isaacs/testing-rebuild-bundle-b@1.0.1", "http://localhost:1/@isaacs/testing-rebuild-bundle-b/-/testing-rebuild-bundle-b-1.0.1.tgz", { "bundled": true }, ""],
+    "@isaacs/testing-rebuild-bundle-a/@isaacs/testing-rebuild-bundle-b": ["@isaacs/testing-rebuild-bundle-b@1.0.1", "http://localhost:1/@isaacs/testing-rebuild-bundle-b/-/testing-rebuild-bundle-b-1.0.1.tgz", { "bundled": true, "hasInstallScript": true }, ""],
   }
 }
 "
@@ -4497,13 +4497,13 @@ bun install --frozen-lockfile exit code: 0
     },
   },
   "packages": {
-    "devdep": ["devdep@1.0.0", "http://localhost:1/devdep/-/devdep-1.0.0.tgz", { "dependencies": { "devopt": "" }, "optionalDependencies": { "opt-and-dev": "" } }, ""],
+    "devdep": ["devdep@1.0.0", "http://localhost:1/devdep/-/devdep-1.0.0.tgz", { "dependencies": { "devopt": "" }, "optionalDependencies": { "opt-and-dev": "" }, "hasInstallScript": true }, ""],
 
-    "devopt": ["devopt@1.0.0", "http://localhost:1/devopt/-/devopt-1.0.0.tgz", {}, ""],
+    "devopt": ["devopt@1.0.0", "http://localhost:1/devopt/-/devopt-1.0.0.tgz", { "hasInstallScript": true }, ""],
 
-    "opt-and-dev": ["opt-and-dev@1.0.0", "http://localhost:1/opt-and-dev/-/opt-and-dev-1.0.0.tgz", {}, ""],
+    "opt-and-dev": ["opt-and-dev@1.0.0", "http://localhost:1/opt-and-dev/-/opt-and-dev-1.0.0.tgz", { "hasInstallScript": true }, ""],
 
-    "optdep": ["optdep@1.0.0", "http://localhost:1/optdep/-/optdep-1.0.0.tgz", { "dependencies": { "devopt": "" } }, ""],
+    "optdep": ["optdep@1.0.0", "http://localhost:1/optdep/-/optdep-1.0.0.tgz", { "dependencies": { "devopt": "" }, "hasInstallScript": true }, ""],
   }
 }
 "

@@ -407,14 +407,8 @@ impl BuildCommand {
             && !ctx.bundler_options.compile
             && !ctx.bundler_options.transform_only
         {
-            let mut entry_naming = Vec::<u8>::new();
-            write!(
-                &mut entry_naming,
-                "./{}",
-                bstr::BStr::new(bun_paths::basename(outfile))
-            )
-            .expect("unreachable");
-            this_transpiler.options.entry_naming = entry_naming.into_boxed_slice();
+            this_transpiler.options.entry_naming =
+                strings::concat(&[b"./", bun_paths::basename(outfile)]);
             this_transpiler.options.output_dir = bun_core::dirname(outfile).unwrap_or(b".").into();
         }
 

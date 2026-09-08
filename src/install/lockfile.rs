@@ -3354,8 +3354,7 @@ impl Lockfile {
         ) else {
             return false;
         };
-        // Older yarn.lock migrations kept yarn's `#<sha1>` on this URL. A fragment is never
-        // part of the request, so it cannot change which tarball is downloaded.
+        // Lockfiles migrated from yarn.lock by older versions keep yarn's `#<sha1>` on the URL.
         crate::yarn::Entry::without_hash_fragment(url) == canonical_url.as_slice()
     }
 

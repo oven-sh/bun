@@ -426,12 +426,9 @@ describe.concurrent("bun info version spec", () => {
     return { stdout, stderr, exitCode };
   }
 
-  test("an unknown dist-tag is an error and lists the tags that exist", async () => {
-    for (const args of [
-      ["zz-tags@nosuchtag"],
-      ["zz-tags@nosuchtag", "version"],
-      ["zz-tags@nosuchtag", "dist.tarball"],
-    ]) {
+  test.each([[["zz-tags@nosuchtag"]], [["zz-tags@nosuchtag", "version"]], [["zz-tags@nosuchtag", "dist.tarball"]]])(
+    "an unknown dist-tag is an error and lists the tags that exist: %p",
+    async args => {
       const { stdout, stderr, exitCode } = await info(...args);
       expect(stdout).toBe("");
       expect(stderr).toMatchInlineSnapshot(`
@@ -445,8 +442,8 @@ describe.concurrent("bun info version spec", () => {
         "
       `);
       expect(exitCode).toBe(1);
-    }
-  });
+    },
+  );
 
   test("an unknown dist-tag is an error with --json", async () => {
     const { stdout, stderr, exitCode } = await info("zz-tags@nosuchtag", "version", "--json");
@@ -466,18 +463,17 @@ describe.concurrent("bun info version spec", () => {
     expect(exact.exitCode).toBe(0);
   });
 
-  test("a tag that points at an unpublished version is an error", async () => {
-    for (const [args, tag] of [
-      [["zz-dangling"], "latest"],
-      [["zz-dangling@latest"], "latest"],
-      [["zz-dangling", "version"], "latest"],
-      [["zz-dangling@v0-legacy", "version"], "v0-legacy"],
-    ] as const) {
-      const { stdout, stderr, exitCode } = await info(...args);
-      expect(stdout).toBe("");
-      expect(stderr).toStartWith(`error: Package "zz-dangling" with tag "${tag}" not found, but package exists\n`);
-      expect(exitCode).toBe(1);
-    }
+  // Same message as `bun add pkg@<tag>` for this state; the `Tags:` list under it shows where the tag points.
+  test.each([
+    [["zz-dangling"], "latest"],
+    [["zz-dangling@latest"], "latest"],
+    [["zz-dangling", "version"], "latest"],
+    [["zz-dangling@v0-legacy", "version"], "v0-legacy"],
+  ] as const)("a tag that points at an unpublished version is an error: %p", async (args, tag) => {
+    const { stdout, stderr, exitCode } = await info(...args);
+    expect(stdout).toBe("");
+    expect(stderr).toStartWith(`error: Package "zz-dangling" with tag "${tag}" not found, but package exists\n`);
+    expect(exitCode).toBe(1);
   });
 
   test("known dist-tags, exact versions and ranges resolve", async () => {
@@ -510,16 +506,15 @@ describe.concurrent("bun info version spec", () => {
     });
   });
 
-  test("a spec that is neither a tag nor a range matches nothing", async () => {
-    for (const spec of ["zz-tags@github:a/b", "zz-tags@npm:other@1.0.0", "zz-tags@1.0.0.tgz"]) {
-      const { stdout, stderr, exitCode } = await info(spec, "version");
+  test.each(["github:a/b", "npm:other@1.0.0", "1.0.0.tgz"])(
+    "a spec that is neither a tag nor a range matches nothing: %s",
+    async spec => {
+      const { stdout, stderr, exitCode } = await info(`zz-tags@${spec}`, "version");
       expect(stdout).toBe("");
-      expect(stderr).toStartWith(
-        `error: No version of "zz-tags" satisfying "${spec.slice("zz-tags@".length)}" found\n`,
-      );
+      expect(stderr).toStartWith(`error: No version of "zz-tags" satisfying "${spec}" found\n`);
       expect(exitCode).toBe(1);
-    }
-  });
+    },
+  );
 
   test("`Recent versions:` lists each published version once, newest last", async () => {
     const release = await info("zz-tags@9.9.9", "version");

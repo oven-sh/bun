@@ -1010,3 +1010,206 @@ it.skipIf(isWindows)(
   },
   60000,
 );
+
+// `bun install` in `cwd`, for the isolated-linker tests below that install twice.
+async function runInstallIn(cwd: string, installEnv: Record<string, string | undefined> = env) {
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "install"],
+    cwd,
+    stdout: "pipe",
+    stderr: "pipe",
+    env: installEnv,
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  if (exitCode !== 0) {
+    console.error("stdout:", stdout);
+    console.error("stderr:", stderr);
+  }
+  return { stdout, stderr, exitCode };
+}
+
+it.skipIf(isWindows)(
+  "isolated linker does not link a scoped dependency through a symlinked scope directory",
+  async () => {
+    // The isolated linker links `node_modules/@scope/dep` into the store and
+    // checks that link again on every install. With a symlink planted at
+    // `node_modules/@scope`, the check ran in the symlink's target: a file there
+    // with the dependency's name was unlinked and replaced by a dangling link.
+    using dir = tempDir("isolated-scope-dir-symlink-test", {
+      "bunfig.toml": `[install]\nlinker = "isolated"\n`,
+      "package.json": JSON.stringify({
+        name: "isolated-scope-dir-symlink-app",
+        version: "1.0.0",
+        dependencies: { "@scope/dep": "file:./dep", plain: "file:./plain" },
+      }),
+      "dep/package.json": JSON.stringify({ name: "@scope/dep", version: "1.0.0" }),
+      "dep/index.js": `module.exports = 1;\n`,
+      "plain/package.json": JSON.stringify({ name: "plain", version: "1.0.0" }),
+      "plain/index.js": `module.exports = 2;\n`,
+      "victim/dep": "keep me\n",
+    });
+    const installDir = await realpath(String(dir));
+    expect((await runInstallIn(installDir)).exitCode).toBe(0);
+
+    const scopeDir = join(installDir, "node_modules", "@scope");
+    const victim = join(installDir, "victim");
+    await rm(scopeDir, { recursive: true });
+    await symlink(victim, scopeDir);
+
+    const { exitCode } = await runInstallIn(installDir);
+
+    expect(await readdir(victim)).toEqual(["dep"]);
+    expect((await lstat(join(victim, "dep"))).isFile()).toBe(true);
+    expect(await Bun.file(join(victim, "dep")).text()).toBe("keep me\n");
+
+    // the symlink is replaced by the directory the link belongs in
+    expect((await lstat(scopeDir)).isDirectory()).toBe(true);
+    expect(await readlink(join(scopeDir, "dep"))).toBe(
+      join("..", ".bun", "@scope+dep@file+dep", "node_modules", "@scope", "dep"),
+    );
+    expect(await Bun.file(join(scopeDir, "dep", "package.json")).json()).toEqual({
+      name: "@scope/dep",
+      version: "1.0.0",
+    });
+
+    expect(exitCode).toBe(0);
+  },
+  60000,
+);
+
+it.skipIf(isWindows)(
+  "isolated linker does not build the store through a symlinked node_modules/.bun",
+  async () => {
+    // `node_modules/.bun` holds the store. With a symlink planted there, every
+    // store entry was created, and same-named entries deleted, in the symlink's
+    // target directory.
+    using dir = tempDir("isolated-store-dir-symlink-test", {
+      "bunfig.toml": `[install]\nlinker = "isolated"\n`,
+      "package.json": JSON.stringify({
+        name: "isolated-store-dir-symlink-app",
+        version: "1.0.0",
+        dependencies: { "@scope/dep": "file:./dep", plain: "file:./plain" },
+      }),
+      "dep/package.json": JSON.stringify({ name: "@scope/dep", version: "1.0.0" }),
+      "dep/index.js": `module.exports = 1;\n`,
+      "plain/package.json": JSON.stringify({ name: "plain", version: "1.0.0" }),
+      "plain/index.js": `module.exports = 2;\n`,
+      "victim/plain@file+plain/notes.txt": "keep me\n",
+    });
+    const installDir = await realpath(String(dir));
+    expect((await runInstallIn(installDir)).exitCode).toBe(0);
+
+    const storeDir = join(installDir, "node_modules", ".bun");
+    const victim = join(installDir, "victim");
+    await rm(storeDir, { recursive: true });
+    await symlink(victim, storeDir);
+
+    const { exitCode } = await runInstallIn(installDir);
+
+    expect(await readdir(victim)).toEqual(["plain@file+plain"]);
+    expect(await readdir(join(victim, "plain@file+plain"))).toEqual(["notes.txt"]);
+    expect(await Bun.file(join(victim, "plain@file+plain", "notes.txt")).text()).toBe("keep me\n");
+
+    // the symlink is replaced by a real store directory
+    expect((await lstat(storeDir)).isDirectory()).toBe(true);
+    expect((await readdir(storeDir)).sort()).toEqual(["@scope+dep@file+dep", "plain@file+plain"]);
+    expect(await Bun.file(join(installDir, "node_modules", "plain", "package.json")).json()).toEqual({
+      name: "plain",
+      version: "1.0.0",
+    });
+    expect(await Bun.file(join(installDir, "node_modules", "@scope", "dep", "package.json")).json()).toEqual({
+      name: "@scope/dep",
+      version: "1.0.0",
+    });
+
+    expect(exitCode).toBe(0);
+  },
+  60000,
+);
+
+it.skipIf(isWindows)(
+  "isolated linker does not link through a symlinked scope directory inside the store",
+  async () => {
+    // The same plant one level down: the `@scope` directory inside a store
+    // entry's `node_modules`, and inside the hidden `node_modules/.bun/node_modules`
+    // that hoists one version of every package. Relinking a folder dependency
+    // deleted a same-named directory in the first target recursively, and the
+    // hoisted link check unlinked a same-named file in the second.
+    const tarball = createTarball([
+      {
+        name: "package/package.json",
+        type: "file",
+        content: JSON.stringify({ name: "@scope/hoisted", version: "1.0.0" }),
+      },
+      { name: "package/index.js", type: "file", content: "module.exports = 3;\n" },
+    ]);
+    using dir = tempDir("isolated-store-scope-symlink-test", {
+      "bunfig.toml": `[install]\nlinker = "isolated"\n`,
+      "package.json": JSON.stringify({
+        name: "isolated-store-scope-symlink-app",
+        version: "1.0.0",
+        dependencies: {
+          "@scope/hoisted": "file:./scope-hoisted-1.0.0.tgz",
+          plain: "file:./plain",
+        },
+      }),
+      "scope-hoisted-1.0.0.tgz": Buffer.from(tarball),
+      "dep/package.json": JSON.stringify({ name: "@scope/dep", version: "1.0.0" }),
+      "dep/index.js": `module.exports = 1;\n`,
+      // a folder dependency is relinked on every install, and its own scoped
+      // dependency is linked inside its store entry
+      "plain/package.json": JSON.stringify({
+        name: "plain",
+        version: "1.0.0",
+        dependencies: { "@scope/dep": "file:../dep" },
+      }),
+      "plain/index.js": `module.exports = require("@scope/dep") + 1;\n`,
+      "victim-entry/dep/notes.txt": "keep me\n",
+      "victim-hidden/hoisted": "keep me\n",
+    });
+    const installDir = await realpath(String(dir));
+    const installEnv = { ...env, BUN_INSTALL_CACHE_DIR: join(installDir, ".bun-cache") };
+    expect((await runInstallIn(installDir, installEnv)).exitCode).toBe(0);
+
+    const entryScopeDir = join(installDir, "node_modules", ".bun", "plain@file+plain", "node_modules", "@scope");
+    const hiddenScopeDir = join(installDir, "node_modules", ".bun", "node_modules", "@scope");
+    const entryLink = await readlink(join(entryScopeDir, "dep"));
+    const hiddenLink = await readlink(join(hiddenScopeDir, "hoisted"));
+
+    const victimEntry = join(installDir, "victim-entry");
+    const victimHidden = join(installDir, "victim-hidden");
+    await rm(entryScopeDir, { recursive: true });
+    await symlink(victimEntry, entryScopeDir);
+    await rm(hiddenScopeDir, { recursive: true });
+    await symlink(victimHidden, hiddenScopeDir);
+
+    const { exitCode } = await runInstallIn(installDir, installEnv);
+
+    expect(await readdir(victimEntry)).toEqual(["dep"]);
+    expect(await readdir(join(victimEntry, "dep"))).toEqual(["notes.txt"]);
+    expect(await Bun.file(join(victimEntry, "dep", "notes.txt")).text()).toBe("keep me\n");
+    expect(await readdir(victimHidden)).toEqual(["hoisted"]);
+    expect((await lstat(join(victimHidden, "hoisted"))).isFile()).toBe(true);
+    expect(await Bun.file(join(victimHidden, "hoisted")).text()).toBe("keep me\n");
+
+    // both symlinks are replaced by real directories that hold the links again
+    expect((await lstat(entryScopeDir)).isDirectory()).toBe(true);
+    expect(await readlink(join(entryScopeDir, "dep"))).toBe(entryLink);
+    expect((await lstat(hiddenScopeDir)).isDirectory()).toBe(true);
+    expect(await readlink(join(hiddenScopeDir, "hoisted"))).toBe(hiddenLink);
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", `console.log(require("plain"), require("@scope/hoisted"))`],
+      cwd: installDir,
+      stdout: "pipe",
+      stderr: "pipe",
+      env,
+    });
+    const [stdout, stderr] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe("2 3\n");
+
+    expect(exitCode).toBe(0);
+  },
+  60000,
+);

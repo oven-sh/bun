@@ -1686,6 +1686,14 @@ pub(crate) fn install_isolated_packages(
                 // fallthrough to creating bun_modules below
             }
             Err(_) => {
+                // A symlink at `.bun` counts as a missing store: the tree is moved aside below and rebuilt in a real directory.
+                #[cfg(not(windows))]
+                if sys::lstat(bun_modules_path)
+                    .is_ok_and(|st| sys::posix::s_islnk(st.st_mode as u32))
+                {
+                    let _ = sys::unlink(bun_modules_path);
+                }
+
                 match sys::mkdirat(Fd::cwd(), bun_modules_path, 0o755) {
                     Err(_) => break 'is_new_bun_modules false,
                     Ok(()) => {}
@@ -2065,6 +2073,8 @@ pub(crate) fn install_isolated_packages(
             global_store_tmp_suffix: fast_random(),
             summary: Default::default(),
             task_queue: Default::default(),
+            #[cfg(not(windows))]
+            hidden_node_modules: std::sync::OnceLock::new(),
         };
         // No long-lived `&mut PackageManager` reborrow here — `installer.start_task()`,
         // `on_task_complete()`, and `on_task_fail()` below all reach the manager through

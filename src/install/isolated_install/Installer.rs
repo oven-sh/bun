@@ -117,6 +117,10 @@ pub struct Installer<'a> {
     /// Main-thread only: `waiters_head[dep]` starts the intrusive list of blocked entries waiting on `dep`, linked through `next_waiter`.
     pub(crate) waiters_head: Box<[StoreEntryId]>,
     pub(crate) next_waiter: Box<[StoreEntryId]>,
+
+    /// `node_modules/.bun/node_modules`, opened by the first hoisted entry (see `hidden_node_modules()`).
+    #[cfg(not(windows))]
+    pub(crate) hidden_node_modules: std::sync::OnceLock<Option<sys::Dir>>,
 }
 
 impl<'a> Installer<'a> {
@@ -2164,7 +2168,28 @@ impl<'a> Installer<'a> {
         #[cfg(windows)]
         self.append_store_path(&mut full_target, entry_id);
 
+        #[cfg(not(windows))]
+        let scope_dir: sys::Dir;
+        #[cfg(not(windows))]
+        let link_dir: &sys::Dir = {
+            let Some(hidden_node_modules) = self.hidden_node_modules() else {
+                return;
+            };
+            match strings::split_once_char(pkg_name.slice(string_buf), b'/') {
+                Some((scope, _)) => {
+                    let Ok(dir) = install::make_open_real_dir(hidden_node_modules, scope) else {
+                        return;
+                    };
+                    scope_dir = dir;
+                    &scope_dir
+                }
+                None => hidden_node_modules,
+            }
+        };
+
         let mut symlinker = Symlinker {
+            #[cfg(not(windows))]
+            dir: link_dir.fd(),
             dest: hidden_hoisted_node_modules.into_sep::<{ PathSeparators::ANY }>(),
             target: target.into_sep::<{ PathSeparators::ANY }>(),
             #[cfg(windows)]
@@ -2179,6 +2204,22 @@ impl<'a> Installer<'a> {
         };
 
         let _ = symlinker.ensure_symlink(link_strategy);
+    }
+
+    /// `node_modules/.bun/node_modules`, opened once, without following a symlink at `.bun` or at `node_modules`.
+    #[cfg(not(windows))]
+    fn hidden_node_modules(&self) -> Option<&sys::Dir> {
+        self.hidden_node_modules
+            .get_or_init(|| {
+                let store = sys::Dir::cwd()
+                    .open_at_with(
+                        NODE_MODULES_BUN.as_bytes(),
+                        sys::O::RDONLY | sys::O::CLOEXEC | sys::O::NOFOLLOW,
+                    )
+                    .ok()?;
+                install::make_open_real_dir(&store, b"node_modules").ok()
+            })
+            .as_ref()
     }
 
     fn maybe_replace_node_modules_path(
@@ -2255,17 +2296,31 @@ impl<'a> Installer<'a> {
             self.entry_store_node_modules_package_name(dep_id, pkg_id, pkg_res, pkg_names);
         let uses_global_store = self.entry_uses_global_store(entry_id);
 
+        let entry_dependencies =
+            self.store.entries.items_dependencies()[entry_id.get() as usize].slice();
+        if entry_dependencies.is_empty() {
+            return Ok(false);
+        }
+
         let mut dest = AutoPath::init_top_level_dir();
         self.append_real_store_node_modules_path(&mut dest, entry_id, Which::Staging);
         let base_len = dest.len();
 
+        // The entry's `node_modules` is opened once. The `@scope` level inside it is the install's, so a symlink there is not followed.
+        #[cfg(not(windows))]
+        let node_modules = Fd::cwd().make_open_path(dest.slice())?;
+        #[cfg(not(windows))]
+        let mut scope_dir: Option<(&[u8], sys::Dir)> = None;
+
         let mut changed = false;
-        for dep in self.store.entries.items_dependencies()[entry_id.get() as usize].slice() {
+        for dep in entry_dependencies {
             let dep_name = dependencies[dep.dep_id as usize].name.slice(string_buf);
 
             dest.set_length(base_len);
             let _ = dest.append(dep_name); // OOM/capacity: fire-and-forget
-            if entry_node_modules_name.is_some_and(|name| strings::eql_long(dep_name, name, true)) {
+            let nested =
+                entry_node_modules_name.is_some_and(|name| strings::eql_long(dep_name, name, true));
+            if nested {
                 // same name as the entry itself: nest one node_modules deeper to avoid the collision
                 let _ = dest.append(b"node_modules"); // OOM/capacity: fire-and-forget
                 let _ = dest.append(dep_name); // OOM/capacity: fire-and-forget
@@ -2284,7 +2339,32 @@ impl<'a> Installer<'a> {
             let target = dest.relative(&dep_store_path);
             dest.set_length(dest_len);
 
+            #[cfg(not(windows))]
+            let nested_dir: sys::Dir;
+            #[cfg(not(windows))]
+            let link_dir: &sys::Dir = {
+                let scope = strings::split_once_char(dep_name, b'/').map(|(scope, _)| scope);
+                if nested {
+                    nested_dir = open_nested_node_modules(&node_modules, dep_name, scope)?;
+                    &nested_dir
+                } else if let Some(scope) = scope {
+                    // Dependencies are sorted by name, so one open scope directory at a time is enough.
+                    if !scope_dir
+                        .as_ref()
+                        .is_some_and(|(name, _)| strings::eql_long(name, scope, true))
+                    {
+                        scope_dir =
+                            Some((scope, install::make_open_real_dir(&node_modules, scope)?));
+                    }
+                    &scope_dir.as_ref().unwrap().1
+                } else {
+                    &node_modules
+                }
+            };
+
             let mut symlinker = Symlinker {
+                #[cfg(not(windows))]
+                dir: link_dir.fd(),
                 dest: dest.into_sep::<{ PathSeparators::ANY }>(),
                 target: target.into_sep::<{ PathSeparators::ANY }>(),
                 #[cfg(windows)]
@@ -2828,6 +2908,22 @@ pub enum Which {
     /// steps write into. Use for *destinations* of clonefile/hardlink/
     /// dep-symlink/bin-link when building this entry.
     Staging,
+}
+
+/// `<node_modules>/<pkg_name>/node_modules[/<scope>]`: where the link for a
+/// dependency with the entry package's own name goes.
+#[cfg(not(windows))]
+fn open_nested_node_modules(
+    node_modules: &sys::Dir,
+    pkg_name: &[u8],
+    scope: Option<&[u8]>,
+) -> sys::Result<sys::Dir> {
+    let pkg_dir = node_modules.fd().make_open_path(pkg_name)?;
+    let nested = install::make_open_real_dir(&pkg_dir, b"node_modules")?;
+    match scope {
+        Some(scope) => install::make_open_real_dir(&nested, scope),
+        None => Ok(nested),
+    }
 }
 
 fn is_rename_collision(err: &sys::Error) -> bool {

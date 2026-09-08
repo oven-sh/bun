@@ -678,8 +678,9 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
     };
 
     // For standalone mode, resolve JS/CSS chunks so we can inline their content into HTML.
-    // Closing tag escaping (</script → <\\/script, </style → <\\/style) is handled during
-    // the HTML assembly step in codeWithSourceMapShifts, not here.
+    // `code_standalone` escapes each for its <script>/<style> element (</script → <\/script,
+    // <!-- → <!-\x2D, </style → <\/style) and the shifts it returns account for that, so
+    // the source map finalized below matches the inlined text.
     //
     // Buffers are freed via `Drop` (global mimalloc); if
     // `Chunk::allocator_for_size` ever becomes size-dependent, matched-arena

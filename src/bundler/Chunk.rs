@@ -318,12 +318,11 @@ impl Chunk {
         Ok(order)
     }
 
-    /// Returns the HTML closing tag that must be escaped when this chunk's content
-    /// is inlined into a standalone HTML file (e.g. "</script" for JS, "</style" for CSS).
-    pub(crate) fn closing_tag_for_content(&self) -> &'static [u8] {
+    /// The element this chunk's content is inlined into in a standalone HTML file.
+    pub(crate) fn html_inline_context(&self) -> HtmlInlineContext {
         match self.content {
-            Content::Javascript(_) => b"</script",
-            Content::Css(_) => b"</style",
+            Content::Javascript(_) => HtmlInlineContext::Script,
+            Content::Css(_) => HtmlInlineContext::Style,
             Content::Html => unreachable!(),
         }
     }
@@ -546,65 +545,142 @@ fn additional_output_file_index(f: &AdditionalFile) -> usize {
     }
 }
 
+/// The element a chunk's text is inlined into when compiling to a standalone
+/// HTML file. Decides which byte sequences the HTML tokenizer would act on
+/// inside that element, and so must be rewritten before inlining.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum HtmlInlineContext {
+    /// `</script` closes the element. `<!--` moves the tokenizer into the
+    /// "script data escaped" state, where a later `<script` makes the real
+    /// `</script>` no longer close the element (the script then never runs).
+    Script,
+    /// `</style` closes the element. `<style>` is raw text, so nothing else matters.
+    Style,
+}
+
+enum HtmlInlineEscape {
+    /// `</script` or `</style`, ASCII case-insensitive. `</` becomes `<\/`.
+    CloseTag,
+    /// `<!--` becomes `<!-\x2D`. The second dash is the byte to escape because
+    /// it is the only one of the four that is never JS syntax: `<!` is part of
+    /// a regex lookbehind `(?<!--`, and the first dash can be a character class
+    /// range operator `[<!--x]`. `\x2D` is valid in strings, templates and
+    /// every regex mode, so the rewrite needs no knowledge of JS context.
+    CommentOpen,
+}
+
+impl HtmlInlineEscape {
+    /// How many bytes of the input the escape replaces, and with what.
+    fn rewrite(&self) -> (usize, &'static [u8]) {
+        match self {
+            HtmlInlineEscape::CloseTag => (2, b"<\\/"),
+            HtmlInlineEscape::CommentOpen => (4, b"<!-\\x2D"),
+        }
+    }
+}
+
+/// `current` is how far `code()` has come in the printed text (`before`) and in
+/// the text it writes (`after`). Each time the two diverge, a copy goes onto
+/// `list`, which later corrects the chunk's source map (`SourceMapPieces::finalize`).
+pub(crate) struct ShiftTracker<'a> {
+    pub current: &'a mut source_map::SourceMapShifts,
+    pub list: &'a mut Vec<source_map::SourceMapShifts>,
+}
+
+impl HtmlInlineContext {
+    fn tag_name(self) -> &'static [u8] {
+        match self {
+            HtmlInlineContext::Script => b"script",
+            HtmlInlineContext::Style => b"style",
+        }
+    }
+
+    /// Finds the next sequence in `text` that must be escaped. Returns the
+    /// offset of its leading `<` and the escape that applies.
+    fn next_escape(self, text: &[u8]) -> Option<(usize, HtmlInlineEscape)> {
+        let tag = self.tag_name();
+        let mut from: usize = 0;
+        while let Some(i) = strings::index_of_char_usize(&text[from..], b'<') {
+            let at = from + i;
+            let rest = &text[at + 1..];
+            match rest.first() {
+                Some(b'/') if strings::starts_with_case_insensitive_ascii(&rest[1..], tag) => {
+                    return Some((at, HtmlInlineEscape::CloseTag));
+                }
+                Some(b'!') if self == HtmlInlineContext::Script && rest.starts_with(b"!--") => {
+                    return Some((at, HtmlInlineEscape::CommentOpen));
+                }
+                _ => {}
+            }
+            from = at + 1;
+        }
+        None
+    }
+
+    pub(crate) fn needs_escape(self, text: &[u8]) -> bool {
+        self.next_escape(text).is_some()
+    }
+
+    /// `text.len()` plus the bytes `write_escaped` adds.
+    pub(crate) fn escaped_len(self, text: &[u8]) -> usize {
+        let mut len = text.len();
+        let mut remaining = text;
+        while let Some((at, escape)) = self.next_escape(remaining) {
+            let (consumed, replacement) = escape.rewrite();
+            len += replacement.len() - consumed;
+            remaining = &remaining[at + consumed..];
+        }
+        len
+    }
+
+    /// Copies `text` into `dest` with every `</tag` and (for scripts) `<!--`
+    /// rewritten. `dest` must hold `escaped_len(text)` bytes. Returns the
+    /// number of bytes written. With `shifts`, advances it through the text
+    /// and records a shift after each rewrite.
+    pub(crate) fn write_escaped(
+        self,
+        dest: &mut [u8],
+        text: &[u8],
+        mut shifts: Option<ShiftTracker<'_>>,
+    ) -> usize {
+        let mut remaining = text;
+        let mut dst: usize = 0;
+        loop {
+            let found = self.next_escape(remaining);
+            let upto = found.as_ref().map_or(remaining.len(), |(at, _)| *at);
+            let unchanged = &remaining[..upto];
+            dest[dst..][..upto].copy_from_slice(unchanged);
+            dst += upto;
+            if let Some(tracker) = &mut shifts {
+                let mut offset = source_map::LineColumnOffset::default();
+                offset.advance(unchanged);
+                tracker.current.before.add(offset);
+                tracker.current.after.add(offset);
+            }
+            let Some((_, escape)) = found else {
+                return dst;
+            };
+            let (consumed, replacement) = escape.rewrite();
+            dest[dst..][..replacement.len()].copy_from_slice(replacement);
+            dst += replacement.len();
+            if let Some(tracker) = &mut shifts {
+                tracker
+                    .current
+                    .before
+                    .advance(&remaining[upto..upto + consumed]);
+                tracker.current.after.advance(replacement);
+                tracker.list.push(*tracker.current);
+            }
+            remaining = &remaining[upto + consumed..];
+        }
+    }
+}
+
 impl IntermediateOutput {
     pub(crate) fn allocator_for_size(_size: usize) -> &'static DynAlloc {
         // mimalloc serves large allocations via mmap already, so the global
         // allocator suffices (see `alloc_buf`).
         &()
-    }
-
-    /// Count occurrences of a closing HTML tag (e.g. `</script`, `</style`) in content.
-    /// Used to calculate the extra bytes needed when escaping `</` → `<\/`.
-    fn count_closing_tags(content: &[u8], close_tag: &[u8]) -> usize {
-        let tag_suffix = &close_tag[2..];
-        let mut count: usize = 0;
-        let mut remaining = content;
-        while let Some(idx) = strings::index_of(remaining, b"</") {
-            remaining = &remaining[idx + 2..];
-            if remaining.len() >= tag_suffix.len()
-                && strings::eql_case_insensitive_ascii_ignore_length(
-                    &remaining[..tag_suffix.len()],
-                    tag_suffix,
-                )
-            {
-                count += 1;
-                remaining = &remaining[tag_suffix.len()..];
-            }
-        }
-        count
-    }
-
-    /// Copy `content` into `dest`, escaping occurrences of `close_tag` by
-    /// replacing `</` with `<\/`. Returns the number of bytes written.
-    /// Caller must ensure `dest` has room for `content.len + countClosingTags(...)` bytes.
-    fn memcpy_escaping_closing_tags(dest: &mut [u8], content: &[u8], close_tag: &[u8]) -> usize {
-        let tag_suffix = &close_tag[2..];
-        let mut remaining = content;
-        let mut dst: usize = 0;
-        while let Some(idx) = strings::index_of(remaining, b"</") {
-            dest[dst..][..idx].copy_from_slice(&remaining[..idx]);
-            dst += idx;
-            remaining = &remaining[idx + 2..];
-
-            if remaining.len() >= tag_suffix.len()
-                && strings::eql_case_insensitive_ascii_ignore_length(
-                    &remaining[..tag_suffix.len()],
-                    tag_suffix,
-                )
-            {
-                dest[dst] = b'<';
-                dest[dst + 1] = b'\\';
-                dest[dst + 2] = b'/';
-                dst += 3;
-            } else {
-                dest[dst] = b'<';
-                dest[dst + 1] = b'/';
-                dst += 2;
-            }
-        }
-        dest[dst..][..remaining.len()].copy_from_slice(remaining);
-        dst += remaining.len();
-        dst
     }
 
     pub(crate) fn get_size(&self) -> usize {
@@ -737,6 +813,16 @@ impl IntermediateOutput {
             graph.input_files.items_unique_key_for_additional_file();
         let mut relative_platform_buf = bun_paths::path_buffer_pool::get();
         let mut file_path_buf = bun_paths::path_buffer_pool::get();
+        // A script or stylesheet chunk resolved in standalone mode is headed into a
+        // `<script>`/`<style>` element of the HTML document, so its own text is escaped
+        // for that element here, where the chunk's source map can account for it.
+        let inline_escape: Option<HtmlInlineContext> =
+            match (standalone_chunk_contents, &chunk.content) {
+                (Some(_), Content::Javascript(_) | Content::Css(_)) => {
+                    Some(chunk.html_inline_context())
+                }
+                _ => None,
+            };
         match self {
             IntermediateOutput::Pieces(pieces) => {
                 let entry_point_chunks_for_scb = linker_graph.files.items_entry_point_chunk_index();
@@ -777,7 +863,10 @@ impl IntermediateOutput {
                 };
 
                 for piece in pieces.slice() {
-                    count += piece.data.len();
+                    count += match inline_escape {
+                        Some(ctx) => ctx.escaped_len(piece.data()),
+                        None => piece.data.len(),
+                    };
 
                     match piece.query.kind() {
                         QueryKind::ChunkId => {
@@ -794,13 +883,7 @@ impl IntermediateOutput {
                                 match piece.query.kind() {
                                     QueryKind::Chunk => {
                                         if let Some(content) = scc[index].as_deref() {
-                                            // Account for escaping </script or </style inside inline content.
-                                            // Each occurrence of the closing tag adds 1 byte (`</` → `<\/`).
-                                            count += content.len()
-                                                + Self::count_closing_tags(
-                                                    content,
-                                                    chunks[index].closing_tag_for_content(),
-                                                );
+                                            count += content.len();
                                             continue;
                                         }
                                     }
@@ -897,18 +980,32 @@ impl IntermediateOutput {
                 for piece in pieces.slice() {
                     let data = piece.data();
 
-                    if ENABLE_SOURCE_MAP_SHIFTS {
-                        let mut data_offset = source_map::LineColumnOffset::default();
-                        data_offset.advance(data);
-                        shift.before.add(data_offset);
-                        shift.after.add(data_offset);
-                    }
+                    let written = match inline_escape {
+                        Some(ctx) => ctx.write_escaped(
+                            remain,
+                            data,
+                            if ENABLE_SOURCE_MAP_SHIFTS {
+                                Some(ShiftTracker {
+                                    current: &mut shift,
+                                    list: &mut shifts,
+                                })
+                            } else {
+                                None
+                            },
+                        ),
+                        None => {
+                            if ENABLE_SOURCE_MAP_SHIFTS {
+                                let mut data_offset = source_map::LineColumnOffset::default();
+                                data_offset.advance(data);
+                                shift.before.add(data_offset);
+                                shift.after.add(data_offset);
+                            }
+                            remain[..data.len()].copy_from_slice(data);
+                            data.len()
+                        }
+                    };
 
-                    if !data.is_empty() {
-                        remain[..data.len()].copy_from_slice(data);
-                    }
-
-                    remain = &mut remain[data.len()..];
+                    remain = &mut remain[written..];
 
                     match piece.query.kind() {
                         QueryKind::ChunkId => {
@@ -957,19 +1054,10 @@ impl IntermediateOutput {
                                         shift.after.advance(content);
                                         shifts.push(shift);
                                     }
-                                    // For chunk content, escape closing tags (</script, </style)
-                                    // that would prematurely terminate the inline tag.
-                                    if piece.query.kind() == QueryKind::Chunk {
-                                        let written = Self::memcpy_escaping_closing_tags(
-                                            remain,
-                                            content,
-                                            chunks[index].closing_tag_for_content(),
-                                        );
-                                        remain = &mut remain[written..];
-                                    } else {
-                                        remain[..content.len()].copy_from_slice(content);
-                                        remain = &mut remain[content.len()..];
-                                    }
+                                    // Chunk content was already escaped for its <script>/<style>
+                                    // element when that chunk was resolved (`inline_escape`).
+                                    remain[..content.len()].copy_from_slice(content);
+                                    remain = &mut remain[content.len()..];
                                     continue;
                                 }
                             }
@@ -1125,9 +1213,7 @@ impl IntermediateOutput {
                 let arena =
                     allocator_to_use.unwrap_or_else(|| Self::allocator_for_size(joiner.len));
 
-                if let Some(amt) = display_size {
-                    *amt = joiner.len;
-                }
+                let mut size_for_display = joiner.len;
 
                 let buffer = 'brk: {
                     if ENABLE_SOURCE_MAP_SHIFTS && FeatureFlags::SOURCE_MAP_DEBUG_ID {
@@ -1149,10 +1235,55 @@ impl IntermediateOutput {
                     break 'brk joiner.done()?;
                 };
 
-                Ok(CodeResult {
-                    buffer,
-                    shifts: Vec::new(),
-                })
+                let result = match inline_escape.filter(|ctx| ctx.needs_escape(&buffer)) {
+                    None => CodeResult {
+                        buffer,
+                        shifts: Vec::new(),
+                    },
+                    // Same escaping as the `Pieces` path, over the one piece this chunk is.
+                    Some(ctx) => {
+                        let escaped_len = ctx.escaped_len(&buffer);
+                        size_for_display += escaped_len - buffer.len();
+                        let mut escaped = alloc_buf(*arena, escaped_len)?;
+                        let mut shift = source_map::SourceMapShifts {
+                            after: Default::default(),
+                            before: Default::default(),
+                        };
+                        let mut shifts: Vec<source_map::SourceMapShifts> = Vec::new();
+                        if ENABLE_SOURCE_MAP_SHIFTS {
+                            shifts.push(shift);
+                        }
+                        // SAFETY: `write_escaped` fills exactly `escaped_len` bytes; only those are committed.
+                        let dest: &mut [u8] = unsafe {
+                            &mut bun_core::vec::spare_bytes_mut(&mut escaped)[..escaped_len]
+                        };
+                        let written = ctx.write_escaped(
+                            dest,
+                            &buffer,
+                            if ENABLE_SOURCE_MAP_SHIFTS {
+                                Some(ShiftTracker {
+                                    current: &mut shift,
+                                    list: &mut shifts,
+                                })
+                            } else {
+                                None
+                            },
+                        );
+                        debug_assert!(written == escaped_len);
+                        // SAFETY: `write_escaped` initialized the first `written` bytes.
+                        unsafe { bun_core::vec::commit_spare(&mut escaped, written) };
+                        CodeResult {
+                            buffer: escaped.into_boxed_slice(),
+                            shifts,
+                        }
+                    }
+                };
+
+                if let Some(amt) = display_size {
+                    *amt = size_for_display;
+                }
+
+                Ok(result)
             }
             IntermediateOutput::Empty => Ok(CodeResult {
                 buffer: Box::default(),

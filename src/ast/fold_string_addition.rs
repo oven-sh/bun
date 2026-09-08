@@ -2,11 +2,8 @@ use crate::expr::{Data, PrimitiveType, data};
 use crate::{E, Expr, e};
 use bun_alloc::Arena; // bumpalo::Bump re-export
 
-/// Concatenate two `E::String`s. Both inputs' rope chains end up in the result
-/// (see `EString::push` for the ownership rule this relies on); a string that
-/// several expressions share is always flat (`can_be_const_value` rejects
-/// ropes, the enum visitor flattens member values), and its one node is copied
-/// here rather than linked in.
+/// Concatenate two `E::String`s. Only the root nodes are copied; the rope
+/// chains behind them are linked into the result (see `EString::push`).
 fn join_strings(left: &E::EString, right: &E::EString) -> E::EString {
     let mut new = left.shallow_clone();
     let mut rhs = data::Store::append(right.shallow_clone());

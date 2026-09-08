@@ -1067,18 +1067,12 @@ static SHARED_RESPONSE_HEADERS_BUF: bun_core::RacyCell<[picohttp::Header; 256]> 
 static SINGLE_PACKET_SMALL_BUFFER: bun_core::RacyCell<[u8; 16 * 1024]> =
     bun_core::RacyCell::new([0; 16 * 1024]);
 
-// macOS copies file request bodies through userspace instead of sendfile(2)
-// (see `SendFile`); each chunk is pread into this and written out before the
-// next pread, so one buffer serves every in-flight upload.
-#[cfg(all(
-    unix,
-    not(any(target_os = "linux", target_os = "android", target_os = "freebsd"))
-))]
+// `SendFile::write_copy` preads each chunk of a file request body into this and
+// writes it out before the next pread, so one buffer serves every in-flight
+// upload.
+#[cfg(unix)]
 const FILE_BODY_COPY_BUFFER_SIZE: usize = 256 * 1024;
-#[cfg(all(
-    unix,
-    not(any(target_os = "linux", target_os = "android", target_os = "freebsd"))
-))]
+#[cfg(unix)]
 static FILE_BODY_COPY_BUFFER: bun_core::RacyCell<[u8; FILE_BODY_COPY_BUFFER_SIZE]> =
     bun_core::RacyCell::new([0; FILE_BODY_COPY_BUFFER_SIZE]);
 
@@ -1111,10 +1105,7 @@ mod scratch {
         // SAFETY: see module-level INVARIANT.
         unsafe { &mut *TEMP_HOSTNAME.get() }
     }
-    #[cfg(all(
-        unix,
-        not(any(target_os = "linux", target_os = "android", target_os = "freebsd"))
-    ))]
+    #[cfg(unix)]
     #[inline]
     pub(crate) fn file_body_copy_buffer() -> &'static mut [u8; FILE_BODY_COPY_BUFFER_SIZE] {
         // SAFETY: see module-level INVARIANT.

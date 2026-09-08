@@ -11,6 +11,8 @@ use bun_url::URL;
 /// before it checks for socket space, so under mbuf pressure the HTTP thread
 /// sleeps in the kernel and the process cannot be killed (the server side
 /// avoids it for the same reason, see `can_sendfile` in FileResponseStream.rs).
+/// `BUN_FEATURE_FLAG_DISABLE_FETCH_SENDFILE=1` selects the userspace copy on
+/// the other platforms too.
 #[derive(Copy, Clone)]
 pub struct SendFile {
     pub fd: Fd,
@@ -31,15 +33,30 @@ impl SendFile {
     // Takes the resolved fd directly rather than the socket; callers pass
     // `socket.fd()`.
     pub(crate) fn write(&mut self, socket_fd: Fd) -> Status {
-        // Clamp `remain` so the signed sendfile count cannot overflow.
-        let adjusted_count_temporary: u64 = (self.remain as u64).min(i64::MAX as u64);
-        let adjusted_count: u64 = adjusted_count_temporary;
+        #[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
+        if !bun_core::env_var::feature_flag::BUN_FEATURE_FLAG_DISABLE_FETCH_SENDFILE
+            .get()
+            .unwrap_or(false)
+        {
+            return self.write_sendfile(socket_fd);
+        }
 
+        #[cfg(unix)]
+        return self.write_copy(socket_fd);
+
+        #[cfg(windows)]
+        {
+            let _ = socket_fd;
+            Status::Again
+        }
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
+    fn write_sendfile(&mut self, socket_fd: Fd) -> Status {
         // Android: same kernel `sendfile(2)` ABI, dispatched via `bun_sys::linux`'s
         // raw-syscall thunk (no libc difference matters here).
         #[cfg(any(target_os = "linux", target_os = "android"))]
         {
-            let _ = adjusted_count; // unused on Linux path
             let mut signed_offset: i64 = i64::try_from(self.offset).expect("int cast");
             let begin = self.offset;
             // this does the syscall directly, without libc
@@ -72,6 +89,8 @@ impl SendFile {
 
         #[cfg(target_os = "freebsd")]
         {
+            // Clamp `remain` so the signed sendfile count cannot overflow.
+            let adjusted_count: u64 = (self.remain as u64).min(i64::MAX as u64);
             let mut sbytes: i64 = 0; // C off_t
             // Same-width signedness flip; `as` is a bit-reinterpret here.
             let signed_offset: i64 = self.offset as u64 as i64;
@@ -99,55 +118,52 @@ impl SendFile {
             }
         }
 
-        #[cfg(all(
-            unix,
-            not(any(target_os = "linux", target_os = "android")),
-            not(target_os = "freebsd")
-        ))]
-        {
-            let _ = adjusted_count;
-            let buf = crate::scratch::file_body_copy_buffer();
-            // A writable event can mean as little as the low-water mark of
-            // socket space. Start small and double while the socket keeps
-            // taking whole chunks, so a slow link does not pread 256 KiB to
-            // send 2 KiB on every wake.
-            let mut chunk: usize = 16 * 1024;
-            loop {
-                let want = chunk.min(buf.len()).min(self.remain);
-                if want == 0 {
-                    return Status::Done;
-                }
-                let read = match bun_sys::pread(self.fd, &mut buf[..want], self.offset as i64) {
-                    // The file shrank after it was measured; nothing more to send.
-                    Ok(0) => return Status::Done,
-                    Ok(n) => n,
-                    Err(err) => return Status::Err(bun_errno::SystemErrno::from(err).into()),
-                };
-                let wrote = match bun_sys::send_non_block(socket_fd, &buf[..read]) {
-                    Ok(n) => n,
-                    // ENOBUFS is the mbuf pool running dry: transient, like the
-                    // other usockets write paths treat it. Wait for writable.
-                    Err(err)
-                        if matches!(err.get_errno(), bun_sys::E::EAGAIN | bun_sys::E::ENOBUFS) =>
-                    {
-                        break;
-                    }
-                    Err(err) => return Status::Err(bun_errno::SystemErrno::from(err).into()),
-                };
-                self.offset += wrote;
-                self.remain -= wrote;
-                if wrote < read {
+        Status::Again
+    }
+
+    /// `pread` into the HTTP thread's scratch buffer, non-blocking `send`, and
+    /// leave `offset`/`remain` at the first byte the socket did not take so the
+    /// next writable event resumes there.
+    #[cfg(unix)]
+    fn write_copy(&mut self, socket_fd: Fd) -> Status {
+        bun_core::scoped_log!(
+            crate::fetch,
+            "copy file body offset={} remain={}",
+            self.offset,
+            self.remain
+        );
+        let buf = crate::scratch::file_body_copy_buffer();
+        // A writable event can mean as little as the low-water mark of socket
+        // space. Start small and double while the socket keeps taking whole
+        // chunks, so a slow link does not pread 256 KiB to send 2 KiB per wake.
+        let mut chunk: usize = 16 * 1024;
+        loop {
+            let want = chunk.min(buf.len()).min(self.remain);
+            if want == 0 {
+                return Status::Done;
+            }
+            let read = match bun_sys::pread(self.fd, &mut buf[..want], self.offset as i64) {
+                // The file shrank after it was measured; nothing more to send.
+                Ok(0) => return Status::Done,
+                Ok(n) => n,
+                Err(err) => return Status::Err(bun_errno::SystemErrno::from(err).into()),
+            };
+            let wrote = match bun_sys::send_non_block(socket_fd, &buf[..read]) {
+                Ok(n) => n,
+                // ENOBUFS is the kernel's network buffer pool running dry:
+                // transient, like the other usockets write paths treat it.
+                Err(err) if matches!(err.get_errno(), bun_sys::E::EAGAIN | bun_sys::E::ENOBUFS) => {
                     break;
                 }
-                chunk = chunk.saturating_mul(2);
+                Err(err) => return Status::Err(bun_errno::SystemErrno::from(err).into()),
+            };
+            self.offset += wrote;
+            self.remain -= wrote;
+            if wrote < read {
+                break;
             }
+            chunk = chunk.saturating_mul(2);
         }
-
-        #[cfg(windows)]
-        {
-            let _ = (socket_fd, adjusted_count);
-        }
-
         Status::Again
     }
 }

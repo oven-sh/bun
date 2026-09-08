@@ -2363,6 +2363,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
         }
 
+        p.rename_namespace_arg_to_avoid_collisions(data.arg, p.current_scope_ref());
         p.pop_scope();
         p.should_fold_typescript_constant_expressions =
             old_should_fold_typescript_constant_expressions;
@@ -2425,6 +2426,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             .expect("unreachable");
         p.record_declared_symbol(data.arg);
         p.visit_stmts_and_prepend_temp_refs(&mut prepend_list, &mut prepend_temp_refs)?;
+        p.rename_namespace_arg_to_avoid_collisions(data.arg, p.current_scope_ref());
         p.pop_scope();
         p.enclosing_namespace_arg_ref = old_enclosing_namespace_arg_ref;
 

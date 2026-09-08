@@ -16,7 +16,6 @@ use bun_ast::{
     self as js_ast, B, E, EnumValue, Expr, ExprNodeIndex, ExprNodeList, G, LocRef, S, Stmt,
     StmtData, TSNamespaceMember, TSNamespaceMemberMap,
 };
-use bun_core::strings;
 
 // `ts::Data` carries only Copy payloads but lacks a `derive(Clone)` upstream;
 // local helper so we can re-insert values fetched from `ref_to_ts_namespace_member`.
@@ -407,54 +406,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         let mut arg_ref = Ref::NONE;
         if !opts.is_typescript_declare {
-            // Avoid a collision with the namespace closure argument variable if the
-            // namespace exports a symbol with the same name as the namespace itself:
-            //
-            //   namespace foo {
-            //     export let foo = 123
-            //     console.log(foo)
-            //   }
-            //
-            // TypeScript generates the following code in this case:
-            //
-            //   var foo;
-            //   (function (foo_1) {
-            //     foo_1.foo = 123;
-            //     console.log(foo_1.foo);
-            //   })(foo || (foo = {}));
-            //
-            // SAFETY: current_scope is an arena-owned Scope pointer valid for 'a.
-            if p.current_scope().members.contains_key(name_text) {
-                // Add a "_" to make tests easier to read, since non-bundler tests don't
-                // run the renamer. Keep adding "_" until the argument does not collide
-                // with a symbol declared in the namespace body: paths that skip the
-                // renamer (runtime transpiler, Bun.Transpiler, `bun build --no-bundle`)
-                // print symbols by their original name, so a colliding argument would
-                // re-declare a block-scoped member:
-                //
-                //   namespace m { class m {} class _m {} }
-                //
-                // Candidates are built in the parse arena; the
-                // chosen one becomes the symbol's original name and is freed together
-                // with the rest of the AST arena.
-                let mut underscores: usize = 1;
-                let prefixed: &'a [u8] = loop {
-                    let candidate = p
-                        .arena
-                        .alloc_slice_fill_copy(underscores + name_text.len(), b'_');
-                    candidate[underscores..].copy_from_slice(name_text);
-                    if !p.current_scope().members.contains_key(candidate) {
-                        break candidate;
-                    }
-                    underscores += 1;
-                };
-                arg_ref = p.new_symbol(SymbolKind::Hoisted, prefixed);
-            } else {
-                // Not a member: a reference to the name inside the namespace
-                // resolves to a merged sibling's export of that name first.
-                arg_ref = p.new_symbol(SymbolKind::Hoisted, name_text);
-            }
-            // Named in this scope so that no binding inside shadows it.
+            // The closure argument; not a scope member so that a merged sibling's export of the name wins.
+            arg_ref = p.new_symbol(SymbolKind::Hoisted, name_text);
             VecExt::append(&mut p.current_scope_mut().generated, arg_ref);
             ts_namespace.arg_ref = arg_ref;
         }
@@ -681,50 +634,15 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         p.fn_or_arrow_data_parse = old_fn_or_arrow_data;
 
         if !opts.is_typescript_declare {
-            // Avoid a collision with the enum closure argument variable if the
-            // enum exports a symbol with the same name as the enum itself:
-            //
-            //   enum foo {
-            //     foo = 123,
-            //     bar = foo,
-            //   }
-            //
-            // TypeScript generates the following code in this case:
-            //
-            //   var foo;
-            //   (function (foo) {
-            //     foo[foo["foo"] = 123] = "foo";
-            //     foo[foo["bar"] = 123] = "bar";
-            //   })(foo || (foo = {}));
-            //
-            // Whereas in this case:
-            //
-            //   enum foo {
-            //     bar = foo as any,
-            //   }
-            //
-            // TypeScript generates the following code:
-            //
-            //   var foo;
-            //   (function (foo) {
-            //     foo[foo["bar"] = foo] = "bar";
-            //   })(foo || (foo = {}));
-            // SAFETY: current_scope is an arena-owned Scope pointer valid for 'a.
-            if p.current_scope().members.contains_key(name_text) {
-                // Add a "_" to make tests easier to read, since non-bundler tests don't
-                // run the renamer. For external-facing things the renamer will avoid
-                // collisions automatically so this isn't important for correctness.
-                // PERF: strings::cat heap-allocates — could allocate into p.arena.
-                let prefixed = strings::cat(b"_", name_text).expect("unreachable");
-                let prefixed: &'a [u8] = p.arena.alloc_slice_copy(&prefixed);
-                arg_ref = p.new_symbol(SymbolKind::Hoisted, prefixed);
-                // SAFETY: see above.
-                VecExt::append(&mut p.current_scope_mut().generated, arg_ref);
+            // The closure argument; `enum foo { bar = foo }` binds `foo` to it unless a value has that name.
+            arg_ref = if p.current_scope().members.contains_key(name_text) {
+                p.new_symbol(SymbolKind::Hoisted, name_text)
             } else {
-                arg_ref = p
-                    .declare_symbol(SymbolKind::Hoisted, name_loc, name_text)
-                    .expect("unreachable");
-            }
+                p.declare_symbol(SymbolKind::Hoisted, name_loc, name_text)
+                    .expect("unreachable")
+            };
+            // In `generated` so the visit pass finds it by its current name.
+            VecExt::append(&mut p.current_scope_mut().generated, arg_ref);
             p.ref_to_ts_namespace_member
                 .insert(arg_ref, TSNamespaceMemberData::Namespace(exported_members));
             ts_namespace.arg_ref = arg_ref;

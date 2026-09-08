@@ -1528,9 +1528,7 @@ where
                     sink_ptr.as_ptr().cast::<ResponseStream<SSL_ENABLED>>(),
                 );
             }
-            // Reject a parked request-body read now, while this abort still
-            // drains microtasks (any_js_calls is already set), rather than from
-            // finalize_without_deinit whenever the last ref happens to drop.
+            // Reject a parked request-body read while this abort still drains microtasks.
             let _ = this.end_request_streaming();
             this.reclaim_promise_cell();
             return;
@@ -1565,8 +1563,7 @@ where
 
         // Reclaim only after the block above: the claim's ref must still
         // count in `is_dead_request`, so a parked request-body read goes
-        // through `end_request_streaming` here, where `any_js_calls` gets its
-        // rejection drained, instead of in `finalize_without_deinit`.
+        // through `end_request_streaming` here and its rejection is drained.
         this.reclaim_promise_cell();
     }
 
@@ -1605,10 +1602,7 @@ where
         }
         self.response_weakref.set(response::WeakRef::EMPTY);
 
-        // `end_request_streaming()` below errors and releases
-        // `request_body_readable_stream_ref`; only cut the producer backref
-        // here so the abort listeners fired first cannot reach this context
-        // through the stream.
+        // The stream ref itself is errored and released by `end_request_streaming()` below.
         self.detach_request_body_producer();
 
         // Releases the ref taken in `set_cookies` (via `CookieMapRef::drop`).
@@ -2412,8 +2406,7 @@ where
 
         let mut any_js_calls = false;
 
-        // User called .blob(), .json(), text(), or .arrayBuffer() on the Request object
-        // but we received nothing or the connection was aborted: reject that promise.
+        // Reject a pending .text()/.json()/.blob()/... whose body never fully arrived.
         if let Some(body) = self.request_body_mut() {
             if matches!(body, Body::Value::Locked(_)) {
                 let global_this = self.server().global_this();
@@ -2425,13 +2418,7 @@ where
             }
         }
 
-        // This context is the producer of the body's ByteStream and nothing
-        // feeds it after this point, so settle it here whatever the body
-        // `Value` looks like. The `Value` alone does not reach it once
-        // `req.clone()` re-pointed `Locked.readable` at a tee branch, or
-        // `req.textStream()` made the body `Used`; an unsettled pull keeps its
-        // promise protected (and every tee branch alive) forever. Erroring the
-        // source rejects a pending read on any branch instead of hanging it.
+        // Nothing feeds our ByteStream from here on; after `req.clone()`/`textStream()` only this ref reaches it.
         let strong = self
             .request_body_readable_stream_ref
             .replace(readable_stream::Strong::default());
@@ -2442,8 +2429,7 @@ where
                     .parent_const()
                     .producer
                     .set(WebCore::streams::SourceHandle::None);
-                // `to_error_instance` above already delivered the terminal
-                // error when the body still pointed at this same stream.
+                // False unless `to_error_instance` above reached this same stream through the body.
                 if !bytes.has_received_last_chunk.get() {
                     let global_this = self.server().global_this();
                     let mut err =

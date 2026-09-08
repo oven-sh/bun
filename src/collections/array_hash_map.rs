@@ -1735,11 +1735,6 @@ impl<V, A: Allocator + HashbrownAllocator + Clone + Default> StringHashMap<V, A>
         self.inner.values()
     }
 
-    #[inline]
-    pub fn values_mut(&mut self) -> hashbrown::hash_map::ValuesMut<'_, StringHashMapKey<A>, V> {
-        self.inner.values_mut()
-    }
-
     pub fn ensure_total_capacity(&mut self, n: usize) -> Result<(), AllocError> {
         let need = n.saturating_sub(self.inner.len());
         self.inner.reserve(need);

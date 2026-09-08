@@ -3511,14 +3511,43 @@ declare module "bun" {
     };
 
     /**
-     * Enable React Fast Refresh transform.
+     * Enable the React Fast Refresh transform for `.jsx` and `.tsx` files.
      *
-     * This adds the necessary code transformations for React Fast Refresh (hot module
-     * replacement for React components), but does not emit hot-module code itself.
+     * Each component gets a `$RefreshReg$(Component, "file.tsx:Component")`
+     * call and each function that calls hooks gets a `$RefreshSig$()`
+     * signature, the same output as `react-refresh/babel`. This does not emit
+     * hot-module-reloading code: the host that reloads modules provides the
+     * runtime.
+     *
+     * With `true`, `$RefreshReg$` and `$RefreshSig$` are left as globals for
+     * the host to define before the module runs, for example:
+     *
+     * ```ts
+     * import * as RefreshRuntime from "react-refresh/runtime";
+     * globalThis.$RefreshReg$ = RefreshRuntime.register;
+     * globalThis.$RefreshSig$ = RefreshRuntime.createSignatureFunctionForTransform;
+     * ```
+     *
+     * With `{ importSource }`, every transformed file instead imports them:
+     * `import { register as $RefreshReg$, createSignatureFunctionForTransform as $RefreshSig$ } from "<importSource>"`.
+     * The specifier resolves like any other import, so `external` and plugins
+     * apply to it. It must resolve to the same runtime instance that the host
+     * calls `performReactRefresh()` on.
+     *
+     * CLI: `--react-fast-refresh`, `--react-fast-refresh-import-source <specifier>`
      *
      * @default false
      */
-    reactFastRefresh?: boolean;
+    reactFastRefresh?:
+      | boolean
+      | {
+          /**
+           * Module to import `register` (as `$RefreshReg$`) and
+           * `createSignatureFunctionForTransform` (as `$RefreshSig$`) from,
+           * for example `"react-refresh/runtime"`.
+           */
+          importSource?: string;
+        };
 
     /**
      * Run the React Compiler over `.jsx`/`.tsx` source files, automatically

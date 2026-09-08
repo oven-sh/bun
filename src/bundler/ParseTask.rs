@@ -2547,6 +2547,16 @@ pub mod parse_worker {
             output_format == options::Format::Esm && !opts.features.hot_module_reloading;
         opts.features.react_fast_refresh =
             topts.react_fast_refresh && loader.is_jsx() && !source.path.is_node_module();
+        if opts.features.react_fast_refresh {
+            let import_source: Option<&[u8]> =
+                match topts.framework.and_then(|f| f.react_fast_refresh.as_ref()) {
+                    Some(rfr) => Some(&rfr.import_source),
+                    None => topts.react_fast_refresh_import_source.as_deref(),
+                };
+            // SAFETY: ARENA — `topts` outlives `opts` (worker-owned for the bundle pass).
+            opts.react_fast_refresh_import_source =
+                import_source.map(|s| unsafe { bun_collections::detach_ref(s) });
+        }
         opts.features.react_compiler = if topts.react_compiler.is_enabled()
             && loader.is_jsx()
             && !source.path.is_node_module()
@@ -2609,13 +2619,6 @@ pub mod parse_worker {
                         ),
                         client_register_server_reference: std::borrow::Cow::Borrowed(
                             bump.alloc_slice_copy(&sc.client_register_server_reference),
-                        ),
-                    }
-                }),
-                react_fast_refresh: f.react_fast_refresh.as_ref().map(|rfr| {
-                    js_parser::options::ReactFastRefresh {
-                        import_source: std::borrow::Cow::Borrowed(
-                            bump.alloc_slice_copy(&rfr.import_source),
                         ),
                     }
                 }),

@@ -196,6 +196,10 @@ impl BuildCommand {
             .clone_from(&ctx.bundler_options.asset_naming);
         this_transpiler.options.server_components = ctx.bundler_options.server_components;
         this_transpiler.options.react_fast_refresh = ctx.bundler_options.react_fast_refresh;
+        this_transpiler
+            .options
+            .react_fast_refresh_import_source
+            .clone_from(&ctx.bundler_options.react_fast_refresh_import_source);
         this_transpiler.options.react_compiler = if ctx.bundler_options.react_compiler {
             if this_transpiler.options.target.is_server_side() {
                 bun_ast::runtime::ReactCompilerMode::Ssr

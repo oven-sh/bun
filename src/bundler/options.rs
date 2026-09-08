@@ -1219,6 +1219,10 @@ pub struct BundleOptions<'a> {
     pub server_components: bool,
     pub hot_module_reloading: bool,
     pub react_fast_refresh: bool,
+    /// `--react-fast-refresh-import-source`. Read only when `react_fast_refresh`
+    /// is on and no `framework` supplies one: the module that `$RefreshReg$` /
+    /// `$RefreshSig$` are imported from. `None` leaves them as free identifiers.
+    pub react_fast_refresh_import_source: Option<Box<[u8]>>,
     pub react_compiler: bun_ast::runtime::ReactCompilerMode,
     pub react_compiler_parse_test_pragmas: bool,
     pub(crate) inject: Option<Box<[Box<[u8]>]>>,
@@ -1462,6 +1466,7 @@ impl<'a> BundleOptions<'a> {
             server_components: self.server_components,
             hot_module_reloading: self.hot_module_reloading,
             react_fast_refresh: self.react_fast_refresh,
+            react_fast_refresh_import_source: self.react_fast_refresh_import_source.clone(),
             react_compiler: self.react_compiler,
             react_compiler_parse_test_pragmas: self.react_compiler_parse_test_pragmas,
             inject: self.inject.clone(),
@@ -1723,6 +1728,7 @@ impl<'a> BundleOptions<'a> {
             server_components: false,
             hot_module_reloading: false,
             react_fast_refresh: false,
+            react_fast_refresh_import_source: None,
             react_compiler: bun_ast::runtime::ReactCompilerMode::Disabled,
             react_compiler_parse_test_pragmas: false,
             inject: None,

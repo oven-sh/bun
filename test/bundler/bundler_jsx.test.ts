@@ -1362,4 +1362,151 @@ describe("bundler", () => {
       },
     });
   });
+
+  describe("reactFastRefresh", () => {
+    // A `react` with a hook, and a `react-refresh/runtime` that logs what the
+    // transform registered. The runtime has the CommonJS layout of the real
+    // package, so bundling it binds the imports through its exports object.
+    const refreshFiles = {
+      "/node_modules/react/index.js": /* js */ `
+        export const useState = (v) => [v, () => {}];
+      `,
+      "/node_modules/react/jsx-dev-runtime.js": helpers["/node_modules/react/jsx-dev-runtime.js"],
+      "/node_modules/react-refresh/runtime.js": /* js */ `
+        if (process.env.NODE_ENV === "production") {
+          module.exports = require("./cjs/react-refresh-runtime.production.js");
+        } else {
+          module.exports = require("./cjs/react-refresh-runtime.development.js");
+        }
+      `,
+      "/node_modules/react-refresh/cjs/react-refresh-runtime.production.js": /* js */ `
+        throw new Error("React Refresh runtime should not be included in the production bundle.");
+      `,
+      "/node_modules/react-refresh/cjs/react-refresh-runtime.development.js": /* js */ `
+        exports.register = function (type, id) {
+          console.log("register " + id.slice(id.indexOf(":") + 1) + " " + type.name);
+        };
+        exports.createSignatureFunctionForTransform = function () {
+          return function (type) {
+            if (type) console.log("signature " + type.name);
+            return type;
+          };
+        };
+      `,
+      // What a host does for the default (globals) contract.
+      "/host.js": /* js */ `
+        const RefreshRuntime = require("react-refresh/runtime");
+        globalThis.$RefreshReg$ = RefreshRuntime.register;
+        globalThis.$RefreshSig$ = RefreshRuntime.createSignatureFunctionForTransform;
+        await import("./out.js");
+      `,
+    };
+    const component = /* tsx */ `
+      import { useState } from "react";
+      export function Counter() {
+        const [count] = useState(0);
+        return <b>{count}</b>;
+      }
+      export default function App() {
+        return <Counter />;
+      }
+    `;
+    const stdout = `
+      signature Counter
+      register Counter Counter
+      register default App
+    `;
+
+    for (const ext of ["tsx", "jsx"]) {
+      // Default contract, the same as `react-refresh/babel`: `$RefreshReg$` /
+      // `$RefreshSig$` are globals that the host defines. No import is
+      // generated, so nothing has to resolve at build time.
+      itBundled(`jsx/ReactFastRefreshGlobals_${ext}`, {
+        files: {
+          [`/index.${ext}`]: component,
+          ...refreshFiles,
+        },
+        reactFastRefresh: true,
+        external: ["react", "react/*"],
+        onAfterBundle(api) {
+          const file = api.readFile("out.js");
+          expect(file).not.toContain("react-refresh");
+          expect(file).toContain("= $RefreshSig$();");
+          expect(file).toContain(`$RefreshReg$(Counter, "index.${ext}:Counter");`);
+        },
+        run: { file: "/host.js", stdout },
+      });
+
+      // `importSource` binds them with a generated import instead. TypeScript
+      // files trim unused imports, so the generated import must count as used
+      // or it is dropped and the calls hit an undefined global.
+      itBundled(`jsx/ReactFastRefreshImportSource_${ext}`, {
+        files: {
+          [`/index.${ext}`]: component,
+          ...refreshFiles,
+        },
+        reactFastRefresh: { importSource: "react-refresh/runtime" },
+        external: ["react", "react/*", "react-refresh/runtime"],
+        onAfterBundle(api) {
+          const file = api.readFile("out.js");
+          expect(file).toMatch(
+            /import\s*\{\s*register as \$RefreshReg\$,\s*createSignatureFunctionForTransform as \$RefreshSig\$\s*\}\s*from\s*"react-refresh\/runtime"/,
+          );
+          expect(file).toContain("= $RefreshSig$();");
+          expect(file).toContain(`$RefreshReg$(Counter, "index.${ext}:Counter");`);
+        },
+        run: { stdout },
+      });
+
+      // With the import source bundled instead of external, the generated
+      // identifiers must be bound like written imports are: to the bundled
+      // module's exports, not left as the free names.
+      itBundled(`jsx/ReactFastRefreshImportSourceBundled_${ext}`, {
+        files: {
+          [`/index.${ext}`]: component,
+          ...refreshFiles,
+        },
+        reactFastRefresh: { importSource: "react-refresh/runtime" },
+        external: ["react", "react/*"],
+        onAfterBundle(api) {
+          const file = api.readFile("out.js");
+          expect(file).not.toContain("$RefreshSig$");
+          expect(file).not.toContain("$RefreshReg$");
+          expect(file).toMatch(new RegExp(String.raw`\bregister\(Counter, "index\.${ext}:Counter"\);`));
+        },
+        run: { stdout },
+      });
+    }
+
+    // `--react-fast-refresh-import-source` with a specifier other than the
+    // React runtime: a host can point it at a module of its own.
+    itBundled("jsx/ReactFastRefreshImportSourceCustomCLI", {
+      files: {
+        "/index.tsx": component,
+        "/node_modules/refresh-shim/index.js": /* js */ `
+          export function register(type, id) {
+            console.log("shim register " + id.slice(id.indexOf(":") + 1));
+          }
+          export function createSignatureFunctionForTransform() {
+            return type => type;
+          }
+        `,
+        ...refreshFiles,
+      },
+      backend: "cli",
+      reactFastRefresh: { importSource: "refresh-shim" },
+      external: ["react", "react/*"],
+      onAfterBundle(api) {
+        const file = api.readFile("out.js");
+        expect(file).not.toContain("$RefreshReg$");
+        expect(file).toContain('register(Counter, "index.tsx:Counter");');
+      },
+      run: {
+        stdout: `
+          shim register Counter
+          shim register default
+        `,
+      },
+    });
+  });
 });

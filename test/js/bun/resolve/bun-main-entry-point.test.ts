@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, isDebug, tempDir } from "harness";
-import { writeFileSync } from "node:fs";
+import { bunEnv, bunExe, isDebug, isLinux, isWindows, tempDir } from "harness";
+import { chmodSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 // `bun:main` is backed by ServerEntryPoint.contents — a slice that is
@@ -15,6 +15,98 @@ import { join } from "node:path";
 function stripAsanWarning(stderr: string): string[] {
   return stderr.split("\n").filter(l => l.length > 0 && !l.startsWith("WARNING: ASAN interferes"));
 }
+
+const NOBODY = "65534";
+const canDropPrivs =
+  isLinux && typeof process.getuid === "function" && process.getuid() === 0 && Bun.which("setpriv") != null;
+
+async function runAsNobody(scriptPath: string) {
+  using childHome = tempDir("bun-main-nobody-home", {});
+  chmodSync(String(childHome), 0o777);
+  await using proc = Bun.spawn({
+    cmd: ["setpriv", `--reuid=${NOBODY}`, `--regid=${NOBODY}`, "--clear-groups", bunExe(), scriptPath],
+    cwd: String(childHome),
+    env: { ...bunEnv, HOME: String(childHome) },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  return await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+}
+
+test.skipIf(!canDropPrivs).concurrent("runs an entry point in a searchable-but-not-listable directory", async () => {
+  using dir = tempDir("bun-main-nolist", {
+    "sub/entry.js": `console.log("RAN_OK");`,
+  });
+  const root = String(dir);
+  chmodSync(root, 0o755);
+  // 0711: nobody can traverse sub and open entry.js by name, but not readdir it.
+  chmodSync(join(root, "sub"), 0o711);
+  chmodSync(join(root, "sub", "entry.js"), 0o644);
+
+  const [stdout, _stderr, exitCode] = await runAsNobody(join(root, "sub", "entry.js"));
+  expect(stdout).toBe("RAN_OK\n");
+  if (exitCode !== 0) expect(_stderr).toBe("");
+  expect(exitCode).toBe(0);
+});
+
+test.skipIf(!canDropPrivs).concurrent("control: runs an entry point in a listable directory as nobody", async () => {
+  using dir = tempDir("bun-main-list", {
+    "sub/entry.js": `console.log("RAN_OK");`,
+  });
+  const root = String(dir);
+  chmodSync(root, 0o755);
+  chmodSync(join(root, "sub"), 0o755);
+  chmodSync(join(root, "sub", "entry.js"), 0o644);
+
+  const [stdout, _stderr, exitCode] = await runAsNobody(join(root, "sub", "entry.js"));
+  expect(stdout).toBe("RAN_OK\n");
+  if (exitCode !== 0) expect(_stderr).toBe("");
+  expect(exitCode).toBe(0);
+});
+
+test.skipIf(isWindows).concurrent("resolves a symlinked entry point relative to its real directory", async () => {
+  using dir = tempDir("bun-main-symlink", {
+    "real/main.js": `import { dep } from "./dep.js";\nconsole.log("SYM_OK", dep);`,
+    "real/dep.js": `export const dep = "from-real";`,
+  });
+  const root = String(dir);
+  symlinkSync(join(root, "real", "main.js"), join(root, "link.js"));
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), join(root, "link.js")],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr: stripAsanWarning(stderr), exitCode }).toEqual({
+    stdout: "SYM_OK from-real\n",
+    stderr: [],
+    exitCode: 0,
+  });
+});
+
+test.concurrent("imports the entry point's own directory (incomplete-cache upgrade)", async () => {
+  using dir = tempDir("bun-main-dirimport", {
+    "pkg/package.json": `{"type":"commonjs"}`,
+    "pkg/index.js": `module.exports = "PKG_INDEX";`,
+    "pkg/entry.js": `require("../consumer/consume.js");`,
+    "consumer/consume.js": `console.log("RESOLVED:", require("../pkg"));`,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), join(String(dir), "pkg", "entry.js")],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr: stripAsanWarning(stderr), exitCode }).toEqual({
+    stdout: "RESOLVED: PKG_INDEX\n",
+    stderr: [],
+    exitCode: 0,
+  });
+});
 
 test.concurrent("dynamic import('bun:main') returns the wrapper module", async () => {
   using dir = tempDir("bun-main-dyn", {

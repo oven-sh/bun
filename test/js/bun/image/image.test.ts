@@ -224,10 +224,24 @@ describe("Bun.Image", () => {
     for (const k of proxyKeys) process.env[k] = "";
     try {
       const fromS3 = new Bun.Image(client.file("src.png"));
-      expect(await fromS3.metadata()).toEqual({ width: 4, height: 3, format: "png" });
+      expect(await fromS3.metadata()).toEqual({
+        width: 4,
+        height: 3,
+        format: "png",
+        space: "srgb",
+        channels: 4,
+        hasAlpha: true,
+      });
       // Second terminal reuses the downloaded bytes.
       expect((await fromS3.png().bytes())[0]).toBe(0x89);
-      expect(await client.file("src.png").image().metadata()).toEqual({ width: 4, height: 3, format: "png" });
+      expect(await client.file("src.png").image().metadata()).toEqual({
+        width: 4,
+        height: 3,
+        format: "png",
+        space: "srgb",
+        channels: 4,
+        hasAlpha: true,
+      });
 
       // Download failure rejects the terminal with the S3 error.
       expect(
@@ -947,7 +961,14 @@ describe("Bun.Image", () => {
       ["CMYK (Adobe transform=0)", cmykJpeg],
       ["YCCK (Adobe transform=2)", ycckJpeg],
     ])("%s decodes to sRGB", async (_name, fixture) => {
-      expect(await new Bun.Image(fixture).metadata()).toEqual({ width: 64, height: 64, format: "jpeg" });
+      expect(await new Bun.Image(fixture).metadata()).toEqual({
+        width: 64,
+        height: 64,
+        format: "jpeg",
+        space: "cmyk",
+        channels: 4,
+        hasAlpha: false,
+      });
       const { w, h, data } = decodePngRaw(await new Bun.Image(fixture).png().bytes());
       expect([w, h]).toEqual([64, 64]);
       expectQuadrants(data, w);

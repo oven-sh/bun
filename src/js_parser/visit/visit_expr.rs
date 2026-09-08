@@ -1354,8 +1354,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // while iterating without laundering.
         let defines = p.define;
         if let Some(parts) = defines.dots_for(e_.name.slice()) {
-            // `globalThis.X.Y` matches both `X.Y` and `globalThis.X.Y` defines, so
-            // one expression can hit several entries. The longest `parts` wins.
             let mut best_value: Option<&crate::DefineData> = None;
             let mut best_value_len: usize = 0;
             let mut best_drop_len: usize = 0;

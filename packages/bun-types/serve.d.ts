@@ -1038,9 +1038,10 @@ declare module "bun" {
                * Send any additional headers while upgrading, like cookies.
                *
                * `Sec-WebSocket-Protocol` selects the subprotocol the handshake
-               * announces. The handshake's own fields (`Upgrade`, `Connection`,
-               * `Sec-WebSocket-Accept`) and `Content-Length` / `Transfer-Encoding`
-               * are written by the server and ignored here.
+               * announces. The server writes the handshake's own fields
+               * (`Upgrade`, `Connection`, `Sec-WebSocket-Accept`) itself, so
+               * those names are ignored here, as are `Sec-WebSocket-Key`,
+               * `Sec-WebSocket-Version`, `Content-Length` and `Transfer-Encoding`.
                */
               headers?: HeadersInit;
 
@@ -1072,9 +1073,10 @@ declare module "bun" {
                * Send any additional headers while upgrading, like cookies.
                *
                * `Sec-WebSocket-Protocol` selects the subprotocol the handshake
-               * announces. The handshake's own fields (`Upgrade`, `Connection`,
-               * `Sec-WebSocket-Accept`) and `Content-Length` / `Transfer-Encoding`
-               * are written by the server and ignored here.
+               * announces. The server writes the handshake's own fields
+               * (`Upgrade`, `Connection`, `Sec-WebSocket-Accept`) itself, so
+               * those names are ignored here, as are `Sec-WebSocket-Key`,
+               * `Sec-WebSocket-Version`, `Content-Length` and `Transfer-Encoding`.
                */
               headers?: HeadersInit;
 

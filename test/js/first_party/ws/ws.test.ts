@@ -335,6 +335,49 @@ describe("WebSocketServer", () => {
     await promise;
   });
 
+  // The subprotocol handleProtocols picks goes to server.upgrade() in
+  // options.headers; the 101 must carry it exactly once.
+  it("handleProtocols selects the subprotocol announced in the 101", async () => {
+    const wss = new WebSocketServer({
+      port: 0,
+      handleProtocols: protocols => (protocols.has("chat") ? "chat" : false),
+    });
+    try {
+      await once(wss, "listening");
+      const port = (wss.address() as AddressInfo).port;
+
+      const { promise: raw, resolve } = Promise.withResolvers<string[]>();
+      let buf = "";
+      const sock = connect(port, "127.0.0.1", () => {
+        sock.write(
+          "GET / HTTP/1.1\r\nHost: x\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n" +
+            "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Version: 13\r\n" +
+            "Sec-WebSocket-Protocol: superchat, chat\r\n\r\n",
+        );
+      });
+      sock.on("data", d => {
+        buf += d.toString("latin1");
+        if (buf.includes("\r\n\r\n")) {
+          sock.destroy();
+          resolve(buf.split("\r\n\r\n", 1)[0].split("\r\n"));
+        }
+      });
+      sock.on("error", () => resolve(buf.split("\r\n")));
+      const lines = await raw;
+      expect(lines[0]).toBe("HTTP/1.1 101 Switching Protocols");
+      expect(lines.filter(l => l.toLowerCase().startsWith("sec-websocket-protocol:"))).toEqual([
+        "Sec-WebSocket-Protocol: chat",
+      ]);
+
+      const client = new WebSocket("ws://127.0.0.1:" + port, ["superchat", "chat"]);
+      await once(client, "open");
+      expect(client.protocol).toBe("chat");
+      client.close();
+    } finally {
+      wss.close();
+    }
+  });
+
   describe("binaryType", () => {
     type Received = { event: string; shape: string; bytes: number[]; isBinary?: boolean };
 

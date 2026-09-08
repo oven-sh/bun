@@ -787,9 +787,9 @@ mod inherent_bridge {
     bridge_clone_partialeq!(PositionProp);
 
     // ── properties/text ──
-    use crate::properties::text::{Direction as TextDirection, TextShadow};
-    bridge_clone_partialeq!(TextDirection);
-    // CssHash for TextDirection — via #[derive(CssHash)] on the enum (properties/text.rs).
+    use crate::properties::text::{Direction as TextDirection, TextShadow, UnicodeBidi};
+    bridge_clone_partialeq!(TextDirection, UnicodeBidi);
+    // CssHash for TextDirection/UnicodeBidi — via #[derive(CssHash)] on the enum (properties/text.rs).
     bridge_deep_clone!(TextShadow);
     bridge_eql_partialeq!(TextShadow);
 

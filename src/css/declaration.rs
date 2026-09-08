@@ -15,7 +15,7 @@ use crate::css_properties::margin_padding::{
 };
 use crate::css_properties::prefix_handler::FallbackHandler;
 use crate::css_properties::size::SizeHandler;
-use crate::css_properties::text::Direction;
+use crate::css_properties::text::{Direction, UnicodeBidi};
 use crate::css_properties::transform::TransformHandler;
 use crate::css_properties::transition::TransitionHandler;
 use crate::css_properties::ui::ColorSchemeHandler;
@@ -404,6 +404,7 @@ pub struct DeclarationHandler<'bump> {
     pub(crate) color_scheme: ColorSchemeHandler,
     pub fallback: FallbackHandler,
     pub(crate) direction: Option<Direction>,
+    pub(crate) unicode_bidi: Option<UnicodeBidi>,
     pub(crate) decls: DeclarationList<'bump>,
 }
 
@@ -411,6 +412,9 @@ impl<'bump> DeclarationHandler<'bump> {
     pub(crate) fn finalize(&mut self, context: &mut css::PropertyHandlerContext) {
         if let Some(direction) = self.direction.take() {
             self.decls.push(css::Property::Direction(direction));
+        }
+        if let Some(unicode_bidi) = self.unicode_bidi.take() {
+            self.decls.push(css::Property::UnicodeBidi(unicode_bidi));
         }
 
         self.background.finalize(&mut self.decls, context);
@@ -435,7 +439,6 @@ impl<'bump> DeclarationHandler<'bump> {
         property: &css::Property,
         context: &mut css::PropertyHandlerContext,
     ) -> bool {
-        // return this.background.handleProperty(property, &this.decls, context);
         self.background
             .handle_property(property, &mut self.decls, context)
             || self
@@ -480,6 +483,77 @@ impl<'bump> DeclarationHandler<'bump> {
             || self
                 .fallback
                 .handle_property(property, &mut self.decls, context)
+            || self.handle_all(property)
+    }
+
+    /// The `all` shorthand resets every property except `direction`,
+    /// `unicode-bidi` and custom properties.
+    /// https://drafts.csswg.org/css-cascade-5/#all-shorthand
+    fn handle_all(&mut self, property: &css::Property) -> bool {
+        match property {
+            css::Property::Direction(direction) => {
+                self.direction = Some(*direction);
+                true
+            }
+            css::Property::UnicodeBidi(unicode_bidi) => {
+                self.unicode_bidi = Some(*unicode_bidi);
+                true
+            }
+            css::Property::All(keyword) => {
+                self.reset_for_all();
+                self.decls.push(css::Property::All(*keyword));
+                true
+            }
+            css::Property::Unparsed(unparsed) => match unparsed.property_id {
+                css::PropertyId::All => {
+                    self.reset_for_all();
+                    let bump = self.decls.bump();
+                    self.decls
+                        .push(css::Property::Unparsed(unparsed.deep_clone(bump)));
+                    true
+                }
+                // An unparsed `direction`/`unicode-bidi` is pushed in place by the
+                // caller, so emit the typed value seen before it first.
+                css::PropertyId::Direction => {
+                    if let Some(direction) = self.direction.take() {
+                        self.decls.push(css::Property::Direction(direction));
+                    }
+                    false
+                }
+                css::PropertyId::UnicodeBidi => {
+                    if let Some(unicode_bidi) = self.unicode_bidi.take() {
+                        self.decls.push(css::Property::UnicodeBidi(unicode_bidi));
+                    }
+                    false
+                }
+                _ => false,
+            },
+            _ => false,
+        }
+    }
+
+    /// Drops what the block declared so far, except the declarations that
+    /// `all` does not reset.
+    fn reset_for_all(&mut self) {
+        let bump: &'bump Bump = self.decls.bump();
+        let previous = core::mem::replace(self, DeclarationHandler::new(bump));
+        self.direction = previous.direction;
+        self.unicode_bidi = previous.unicode_bidi;
+        for decl in previous.decls {
+            let survives = match &decl {
+                css::Property::Custom(custom) => {
+                    matches!(custom.name, CustomPropertyName::Custom(..))
+                }
+                css::Property::Unparsed(unparsed) => matches!(
+                    unparsed.property_id,
+                    css::PropertyId::Direction | css::PropertyId::UnicodeBidi
+                ),
+                _ => false,
+            };
+            if survives {
+                self.decls.push(decl);
+            }
+        }
     }
 
     pub(crate) fn new(bump: &'bump Bump) -> Self {
@@ -500,6 +574,7 @@ impl<'bump> DeclarationHandler<'bump> {
             color_scheme: Default::default(),
             fallback: Default::default(),
             direction: None,
+            unicode_bidi: None,
             decls: DeclarationList::new_in(bump),
         }
     }

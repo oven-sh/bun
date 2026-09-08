@@ -262,6 +262,7 @@ pub enum PropertyIdTag {
     TextEmphasisColor,
     TextShadow,
     Direction,
+    UnicodeBidi,
     Composes,
     MaskImage,
     MaskMode,
@@ -577,6 +578,7 @@ impl PropertyIdTag {
             PropertyIdTag::TextEmphasisColor => b"text-emphasis-color",
             PropertyIdTag::TextShadow => b"text-shadow",
             PropertyIdTag::Direction => b"direction",
+            PropertyIdTag::UnicodeBidi => b"unicode-bidi",
             PropertyIdTag::Composes => b"composes",
             PropertyIdTag::MaskImage => b"mask-image",
             PropertyIdTag::MaskMode => b"mask-mode",
@@ -845,6 +847,7 @@ pub enum PropertyId {
     TextEmphasisColor(VendorPrefix),
     TextShadow,
     Direction,
+    UnicodeBidi,
     Composes,
     MaskImage(VendorPrefix),
     MaskMode,
@@ -1130,6 +1133,7 @@ impl PropertyId {
             PropertyId::TextEmphasisColor(..) => PropertyIdTag::TextEmphasisColor,
             PropertyId::TextShadow => PropertyIdTag::TextShadow,
             PropertyId::Direction => PropertyIdTag::Direction,
+            PropertyId::UnicodeBidi => PropertyIdTag::UnicodeBidi,
             PropertyId::Composes => PropertyIdTag::Composes,
             PropertyId::MaskImage(..) => PropertyIdTag::MaskImage,
             PropertyId::MaskMode => PropertyIdTag::MaskMode,
@@ -1512,6 +1516,7 @@ impl PropertyId {
                 b"text-emphasis-color" => (VendorPrefix::NONE.union(VendorPrefix::WEBKIT), PropertyId::TextEmphasisColor),
                 b"text-shadow" => (VendorPrefix::NONE, |_| PropertyId::TextShadow),
                 b"direction" => (VendorPrefix::NONE, |_| PropertyId::Direction),
+                b"unicode-bidi" => (VendorPrefix::NONE, |_| PropertyId::UnicodeBidi),
                 b"composes" => (VendorPrefix::NONE, |_| PropertyId::Composes),
                 b"mask-image" => (VendorPrefix::NONE.union(VendorPrefix::WEBKIT), PropertyId::MaskImage),
                 b"mask-mode" => (VendorPrefix::NONE, |_| PropertyId::MaskMode),
@@ -1544,6 +1549,7 @@ impl PropertyId {
                 b"view-transition-name" => (VendorPrefix::NONE, |_| PropertyId::ViewTransitionName),
                 b"view-transition-class" => (VendorPrefix::NONE, |_| PropertyId::ViewTransitionClass),
                 b"view-transition-group" => (VendorPrefix::NONE, |_| PropertyId::ViewTransitionGroup),
+                b"all" => (VendorPrefix::NONE, |_| PropertyId::All),
             };
         }
         let &(allowed, make) = KNOWN.get_ascii_case_insensitive(name)?;
@@ -1835,6 +1841,7 @@ pub enum Property {
     TextEmphasisColor((css::css_values::color::CssColor, VendorPrefix)),
     TextShadow(SmallList<text::TextShadow, 1>),
     Direction(text::Direction),
+    UnicodeBidi(text::UnicodeBidi),
     Composes(css_modules::Composes),
     MaskImage((SmallList<css::css_values::image::Image, 1>, VendorPrefix)),
     MaskMode(SmallList<masking::MaskMode, 1>),
@@ -2115,6 +2122,7 @@ impl Property {
             Property::TextEmphasisColor(v) => PropertyId::TextEmphasisColor(v.1),
             Property::TextShadow(..) => PropertyId::TextShadow,
             Property::Direction(..) => PropertyId::Direction,
+            Property::UnicodeBidi(..) => PropertyId::UnicodeBidi,
             Property::Composes(..) => PropertyId::Composes,
             Property::MaskImage(v) => PropertyId::MaskImage(v.1),
             Property::MaskMode(..) => PropertyId::MaskMode,
@@ -2387,6 +2395,7 @@ impl Property {
             Property::TextEmphasisColor(v) => css::generic::to_css(&v.0, dest),
             Property::TextShadow(v) => css::generic::to_css(v, dest),
             Property::Direction(v) => css::generic::to_css(v, dest),
+            Property::UnicodeBidi(v) => css::generic::to_css(v, dest),
             Property::Composes(v) => css::generic::to_css(v, dest),
             Property::MaskImage(v) => css::generic::to_css(&v.0, dest),
             Property::MaskMode(v) => css::generic::to_css(v, dest),
@@ -3684,6 +3693,11 @@ impl Property {
                     return Ok(Property::Direction(c));
                 }
             }
+            PropertyId::UnicodeBidi => {
+                if let Some(c) = parse_value::<text::UnicodeBidi>(input, options) {
+                    return Ok(Property::UnicodeBidi(c));
+                }
+            }
             PropertyId::Composes => {
                 return css::generic::parse_with_options::<css_modules::Composes>(input, options)
                     .map(Property::Composes);
@@ -3874,7 +3888,11 @@ impl Property {
                     return Ok(Property::ViewTransitionGroup(c));
                 }
             }
-            PropertyId::All => return CSSWideKeyword::parse(input).map(Property::All),
+            PropertyId::All => {
+                if let Some(c) = parse_value::<CSSWideKeyword>(input, options) {
+                    return Ok(Property::All(c));
+                }
+            }
             PropertyId::Custom(name) => {
                 return CustomProperty::parse(name, input, options).map(Property::Custom);
             }
@@ -4394,6 +4412,7 @@ impl Property {
             }
             Property::TextShadow(v) => Property::TextShadow(css::generic::deep_clone(v, arena)),
             Property::Direction(v) => Property::Direction(css::generic::deep_clone(v, arena)),
+            Property::UnicodeBidi(v) => Property::UnicodeBidi(css::generic::deep_clone(v, arena)),
             Property::Composes(v) => Property::Composes(css::generic::deep_clone(v, arena)),
             Property::MaskImage(v) => {
                 Property::MaskImage((css::generic::deep_clone(&v.0, arena), v.1))
@@ -4939,6 +4958,7 @@ impl Property {
             }
             (Property::TextShadow(a), Property::TextShadow(b)) => css::generic::eql(a, b),
             (Property::Direction(a), Property::Direction(b)) => css::generic::eql(a, b),
+            (Property::UnicodeBidi(a), Property::UnicodeBidi(b)) => css::generic::eql(a, b),
             (Property::Composes(a), Property::Composes(b)) => css::generic::eql(a, b),
             (Property::MaskImage(a), Property::MaskImage(b)) => {
                 css::generic::eql(&a.0, &b.0) && a.1 == b.1
@@ -5011,7 +5031,7 @@ impl Property {
             (Property::ViewTransitionGroup(a), Property::ViewTransitionGroup(b)) => {
                 css::generic::eql(a, b)
             }
-            (Property::All(_), Property::All(_)) => true,
+            (Property::All(a), Property::All(b)) => a == b,
             (Property::Unparsed(a), Property::Unparsed(b)) => a.eql(b),
             (Property::Custom(a), Property::Custom(b)) => a.eql(b),
             _ => false,

@@ -20,7 +20,7 @@ public:
     static constexpr JSC::DestructionMode needsDestruction = JSC::DoesNotNeedDestruction;
 
     enum class Field : uint32_t {
-        // The user's underlyingSource object; `undefined` for Bun's internal sources.
+        // The user's underlyingSource object, or an internal source's context cell.
         UnderlyingSource = 0,
         // Each is a callable or null.
         Pull,

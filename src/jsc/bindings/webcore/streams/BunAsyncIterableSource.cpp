@@ -425,19 +425,19 @@ JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_onAsyncIterableSourceCancelRejected
     return {};
 }
 
-// -- [bound-convention] direct-source methods: (opCell, ...callArgs) --
+// -- [method-convention] direct-source methods: this = the op, (...callArgs) --
 
 // pull(controller): one drive of the iterator runs at a time; every pull while it runs gets
 // the same promise. pull() answers with that promise, so a throw from the drive is the stream's
 // error (enterStreams) rather than a synchronous throw into the direct controller.
-JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_boundAsyncIterableSourcePull, (JSGlobalObject * globalObject, CallFrame* callFrame))
+JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_asyncIterableSourcePull, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
     auto& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    auto* op = uncheckedDowncast<JSAsyncIteratorSourceOperation>(callFrame->uncheckedArgument(0));
+    auto* op = uncheckedDowncast<JSAsyncIteratorSourceOperation>(callFrame->thisValue());
     if (op->m_done || op->m_cancelled)
         return JSValue::encode(jsUndefined());
-    if (JSObject* controller = callFrame->argument(1).getObject())
+    if (JSObject* controller = callFrame->argument(0).getObject())
         op->setController(vm, controller);
     if (op->m_running) {
         if (auto* pullPromise = op->pullPromise())
@@ -456,11 +456,11 @@ JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_boundAsyncIterableSourcePull, (JSGl
 // returned so the stream's cancel promise chains onto it, and a throw propagates to the caller.
 // The iterator letting the injected reason itself escape (a rejection or a synchronous rethrow
 // of that same value) is a normal cancel and resolves.
-JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_boundAsyncIterableSourceCancel, (JSGlobalObject * globalObject, CallFrame* callFrame))
+JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_asyncIterableSourceCancel, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
     auto& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    auto* op = uncheckedDowncast<JSAsyncIteratorSourceOperation>(callFrame->uncheckedArgument(0));
+    auto* op = uncheckedDowncast<JSAsyncIteratorSourceOperation>(callFrame->thisValue());
     op->m_cancelled = true;
     JSObject* iterator = op->iterator();
     op->clearIterator();
@@ -468,7 +468,7 @@ JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_boundAsyncIterableSourceCancel, (JS
     settlePullPromiseResolved(globalObject, op);
     if (!iterator)
         return JSValue::encode(jsUndefined());
-    JSValue reason = callFrame->argument(1);
+    JSValue reason = callFrame->argument(0);
     MarkedArgumentBuffer args;
     JSValue result;
     // Truthiness, not definedness: an absent/falsy reason means a graceful return(), never
@@ -504,10 +504,10 @@ JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_boundAsyncIterableSourceCancel, (JS
 
 // close(): the consumer is gone; the iterator's finally still runs via return(), and a throw from
 // it propagates to whoever closed the source.
-JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_boundAsyncIterableSourceClose, (JSGlobalObject * globalObject, CallFrame* callFrame))
+JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_asyncIterableSourceClose, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
     auto scope = DECLARE_THROW_SCOPE(getVM(globalObject));
-    auto* op = uncheckedDowncast<JSAsyncIteratorSourceOperation>(callFrame->uncheckedArgument(0));
+    auto* op = uncheckedDowncast<JSAsyncIteratorSourceOperation>(callFrame->thisValue());
     op->m_cancelled = true;
     asyncIterReturnIteratorAndSettle(globalObject, op);
     RETURN_IF_EXCEPTION(scope, {});
@@ -569,13 +569,8 @@ JSReadableStream* readableStreamFromAsyncIterator(JSGlobalObject* globalObject, 
     auto* op = JSAsyncIteratorSourceOperation::create(vm, runtime->asyncIteratorSourceOperationStructure(zigGlobalObject));
     op->setIterator(vm, iterator);
 
-    auto* pullFunction = createStreamsBoundHandler(globalObject, runtime->boundAsyncIterableSourcePull(), op);
-    RETURN_IF_EXCEPTION(scope, nullptr);
-    auto* cancelFunction = createStreamsBoundHandler(globalObject, runtime->boundAsyncIterableSourceCancel(), op);
-    RETURN_IF_EXCEPTION(scope, nullptr);
-    auto* closeFunction = createStreamsBoundHandler(globalObject, runtime->boundAsyncIterableSourceClose(), op);
-    RETURN_IF_EXCEPTION(scope, nullptr);
-    auto* source = WebCore::JSDirectStreamSource::create(vm, runtime->directStreamSourceStructure(zigGlobalObject), jsUndefined(), pullFunction, cancelFunction, closeFunction);
+    // The op is the source's `this`; its methods are the shared [method-convention] functions.
+    auto* source = WebCore::JSDirectStreamSource::create(vm, runtime->directStreamSourceStructure(zigGlobalObject), op, runtime->asyncIterableSourcePull(), runtime->asyncIterableSourceCancel(), runtime->asyncIterableSourceClose());
 
     auto* stream = JSReadableStream::create(vm, WebCore::getDOMStructure<JSReadableStream>(vm, *zigGlobalObject));
     initializeReadableStream(stream);

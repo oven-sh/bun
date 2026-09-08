@@ -66,10 +66,7 @@ fn set_blob_content_type(blob: &Blob, mime_type: MimeType) {
         .set(blob::BlobContentType::from(mime_type));
 }
 
-/// For `readableStreamToBlob` (C++): type the Blob it built like the other body readers do.
-///
-/// # Safety
-/// `content_type` must point to `length` readable bytes for the duration of the call.
+/// For `readableStreamToBlob` (C++). Safety: `content_type` is `length` readable bytes for the call.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn Body__setBlobContentType(
     blob: JSValue,

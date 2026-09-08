@@ -1,7 +1,7 @@
 use bun_alloc::AllocError;
-use bun_sys::walker_skippable::Walker;
 #[cfg(not(windows))]
 use bun_sys::FdDirExt;
+use bun_sys::walker_skippable::Walker;
 use bun_sys::{self as sys, EntryKind, Fd, FdExt};
 // OS-unit paths are u8 on POSIX, u16
 // on Windows — encoded here via the `OSPathChar` type alias so the struct's

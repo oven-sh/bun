@@ -1144,7 +1144,10 @@ describe("node_modules destination symlinks", () => {
     await mkdir(join(repo, "packages", "evil"), { recursive: true });
     await writeTarball(join(repo, "l3.tgz"), "lodash", "3.10.1", "module.exports = 3");
     await writeTarball(join(repo, "l4.tgz"), "lodash", "4.17.21", "module.exports = 4");
-    await writeFile(join(repo, "package.json"), JSON.stringify({ name: "root", private: true, workspaces: ["packages/*"] }));
+    await writeFile(
+      join(repo, "package.json"),
+      JSON.stringify({ name: "root", private: true, workspaces: ["packages/*"] }),
+    );
     await writeFile(
       join(repo, "packages", "app", "package.json"),
       JSON.stringify({ name: "app", version: "1.0.0", dependencies: { lodash: "file:../../l4.tgz" } }),

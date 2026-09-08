@@ -49,16 +49,14 @@ pub(crate) fn make_store_path(path: &[u8]) -> sys::Maybe<sys::Dir> {
 /// directory or absolute.
 fn project_node_modules_offset(path: &[u8]) -> Option<usize> {
     let top = strip_trailing_separators(crate::bun_fs::FileSystem::instance().top_level_dir());
-    let mut offset = if path.len() > top.len()
-        && path[..top.len()] == *top
-        && is_separator(path[top.len()])
-    {
-        top.len() + 1
-    } else if paths::is_absolute(path) {
-        return None;
-    } else {
-        0
-    };
+    let mut offset =
+        if path.len() > top.len() && path[..top.len()] == *top && is_separator(path[top.len()]) {
+            top.len() + 1
+        } else if paths::is_absolute(path) {
+            return None;
+        } else {
+            0
+        };
     let separators: &[u8] = if cfg!(windows) { b"/\\" } else { b"/" };
     for component in paths::strings::split_any(&path[offset..], separators) {
         if component == b"node_modules" {

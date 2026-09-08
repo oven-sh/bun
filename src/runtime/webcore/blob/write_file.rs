@@ -593,6 +593,18 @@ mod windows_impl {
 
     bun_io::intrusive_uv_fs!(WriteFileWindows, io_request);
 
+    impl Drop for WriteFileWindows {
+        fn drop(&mut self) {
+            if self.fd > 0 && self.owned_fd {
+                aio::Closer::close(Fd::from_uv(self.fd), self.io_request.loop_);
+            }
+            self.poll_ref.disable();
+            // SAFETY: `io_request` is a valid `uv_fs_t`; `uv_fs_req_cleanup` is
+            // safe on a zeroed or previously-used req.
+            unsafe { uv::uv_fs_req_cleanup(&mut self.io_request) };
+        }
+    }
+
     #[derive(thiserror::Error, Debug)]
     pub(crate) enum WriteFileWindowsError {
         #[error("WriteFileWindowsDeinitialized")]
@@ -649,7 +661,7 @@ mod windows_impl {
             // `open`/`do_write_loop` may free `*write_file` on the `Err` path,
             // so we operate through the raw `write_file` pointer rather than
             // holding a `&mut` across those calls (Stacked Borrows: a `&mut`
-            // local would dangle once `deinit` reclaims the Box).
+            // local would dangle once `run_from_js_thread` reclaims the Box).
             unsafe {
                 (*write_file).io_request.loop_ = (*event_loop).uv_loop();
                 (*write_file).io_request.data = write_file.cast::<c_void>();
@@ -724,7 +736,7 @@ mod windows_impl {
 
         /// # Safety
         /// `this` must point to a live `WriteFileWindows` allocated via [`Self::new`].
-        /// On `Err` return, `*this` has been freed (via [`Self::throw`] → [`Self::deinit`])
+        /// On `Err` return, `*this` has been freed (via [`Self::throw`])
         /// and must not be accessed again.
         pub(crate) unsafe fn open(this: *mut Self) -> Result<(), WriteFileWindowsError> {
             // SAFETY: caller contract — `this` is live.
@@ -790,7 +802,7 @@ mod windows_impl {
         pub(crate) extern "C" fn on_open(req: *mut uv::fs_t) {
             // SAFETY: req points to WriteFileWindows.io_request. Kept as a raw
             // pointer (NOT `&mut`) because the paths below may free `*this`
-            // (`throw`/`do_write_loop` → `deinit`), and a `&mut` argument/local
+            // (`throw`/`do_write_loop`), and a `&mut` argument/local
             // would be invalidated by that deallocation (Stacked Borrows).
             let this: *mut WriteFileWindows = unsafe { WriteFileWindows::from_uv_fs(req) };
             debug_assert!(core::ptr::eq(
@@ -901,7 +913,7 @@ mod windows_impl {
                 completion_ctx: ctx,
                 // BORROW: AsyncMkdirp.path is `*const [u8]` (not owned); `path`
                 // points into `self.file_blob.store`, which outlives the mkdirp
-                // task (it's released only in `deinit()`).
+                // task (it's released only when `self` drops).
                 path: bun_core::dirname(path)
                     // this shouldn't happen
                     .unwrap_or(path) as *const [u8],
@@ -912,7 +924,7 @@ mod windows_impl {
 
         /// # Safety
         /// `this` must point to a live `WriteFileWindows` allocated via [`Self::new`].
-        /// `*this` may be freed by the time this returns (via `throw`/`open` → `deinit`).
+        /// `*this` may be freed by the time this returns (via `throw`/`open`).
         unsafe fn on_mkdirp_complete(this: *mut Self) {
             // SAFETY: caller contract — `this` is live.
             let err = unsafe { (*this).err.take() };
@@ -970,7 +982,7 @@ mod windows_impl {
         extern "C" fn on_write_complete(req: *mut uv::fs_t) {
             // SAFETY: req points to WriteFileWindows.io_request. Kept as a raw
             // pointer (NOT `&mut`) because the paths below may free `*this`
-            // (`throw`/`do_write_loop` → `deinit`), and a `&mut` would be
+            // (`throw`/`do_write_loop`), and a `&mut` would be
             // invalidated by that deallocation (Stacked Borrows).
             let this: *mut WriteFileWindows = unsafe { WriteFileWindows::from_uv_fs(req) };
             debug_assert!(core::ptr::eq(
@@ -1018,22 +1030,19 @@ mod windows_impl {
         /// `this` must point to a live `WriteFileWindows` allocated via [`Self::new`].
         /// On return, `*this` has been freed and must not be accessed again.
         pub(crate) unsafe fn run_from_js_thread(this: *mut Self) -> WriteFileWindowsError {
-            // SAFETY: caller contract — `this` is live; copy out everything we
-            // need before `deinit` frees the allocation.
-            let (cb, cb_ctx) = unsafe { ((*this).on_complete_callback, (*this).on_complete_ctx) };
+            // SAFETY: caller contract — `this` is the live allocation from
+            // `Self::new`; reclaimed here and dropped before the callback runs.
+            let this = unsafe { bun_core::heap::take(this) };
+            let (cb, cb_ctx) = (this.on_complete_callback, this.on_complete_ctx);
 
-            // SAFETY: caller contract — `this` is live.
-            if let Some(err) = unsafe { (*this).to_system_error() } {
-                // SAFETY: caller contract — `this` is live; consumed here.
-                unsafe { Self::deinit(this) };
+            if let Some(err) = this.to_system_error() {
+                drop(this);
                 if let Err(e) = cb(cb_ctx, WriteFileResultType::Err(Box::new(err))) {
                     return e.into();
                 }
             } else {
-                // SAFETY: caller contract — `this` is live.
-                let wrote = unsafe { (*this).total_written };
-                // SAFETY: caller contract — `this` is live; consumed here.
-                unsafe { Self::deinit(this) };
+                let wrote = this.total_written;
+                drop(this);
                 if let Err(e) = cb(cb_ctx, WriteFileResultType::Result(wrote as SizeType)) {
                     return e.into();
                 }
@@ -1078,7 +1087,7 @@ mod windows_impl {
 
         /// # Safety
         /// `this` must point to a live `WriteFileWindows` allocated via [`Self::new`].
-        /// On `Err` return, `*this` has been freed (via `on_finish`/`throw` → `deinit`)
+        /// On `Err` return, `*this` has been freed (via `on_finish`/`throw`)
         /// and must not be accessed again. On `Ok`, `*this` remains live.
         pub(crate) unsafe fn do_write_loop(
             this: *mut Self,
@@ -1141,31 +1150,6 @@ mod windows_impl {
 
         pub(crate) fn new(init: WriteFileWindows) -> *mut WriteFileWindows {
             bun_core::heap::into_raw(Box::new(init))
-        }
-
-        /// # Safety
-        /// `this` must be the unique live pointer to a `WriteFileWindows`
-        /// allocated via [`Self::new`]. Consumes the allocation; `*this` is
-        /// freed and must not be accessed after this returns.
-        ///
-        /// Takes a raw pointer (not `&mut self`) because reclaiming the `Box`
-        /// while a `&mut self` argument is on the stack is a Stacked Borrows
-        /// protector violation (deallocating memory a protected reference
-        /// points into is UB even if the reference is never used again).
-        pub(crate) unsafe fn deinit(this: *mut Self) {
-            // SAFETY: caller contract — `this` is live.
-            unsafe {
-                let fd = (*this).fd;
-                if fd > 0 && (*this).owned_fd {
-                    aio::Closer::close(Fd::from_uv(fd), (*this).io_request.loop_);
-                }
-                (*this).poll_ref.disable();
-                // (*this).io_request is a valid uv_fs_t embedded in this struct; uv_fs_req_cleanup
-                // is safe on a zeroed or previously-used req.
-                uv::uv_fs_req_cleanup(&mut (*this).io_request);
-                // `this` was allocated via Self::new (heap::into_raw); reclaim and drop here.
-                drop(bun_core::heap::take(this));
-            }
         }
 
         pub(crate) fn create<C>(

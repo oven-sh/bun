@@ -184,7 +184,7 @@
 "unused_pub:src/runtime/api/bun/h2/connection.rs" = 5
 "unused_pub:src/runtime/api/bun/h2/wire.rs" = 2
 "unused_pub:src/runtime/ipc.rs" = 3
-"unused_pub:src/runtime/node.rs" = 2
+"unused_pub:src/runtime/node.rs" = 1
 "unused_pub:src/runtime/node/node_fs.rs" = 2
 "unused_pub:src/runtime/node/types.rs" = 1
 "unused_pub:src/runtime/webcore/Blob.rs" = 1

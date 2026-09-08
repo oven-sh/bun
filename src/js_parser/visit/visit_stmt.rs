@@ -35,6 +35,99 @@ fn list_to_stmts<'a>(list: StmtList<'a>) -> StmtNodeList {
     StmtNodeList::from_bump(list)
 }
 
+// ─── TypeScript constant expressions (see `P::eval_ts_constant_expression`) ─────
+// The parts that do not need the parser are free functions so they are compiled once.
+
+fn ts_constant_string(str_: js_ast::StoreRef<E::EString>) -> TSConstantValue {
+    debug_assert!(
+        str_.next.is_none(),
+        "each substitution copies this node, and copies of a rope would share its tail"
+    );
+    TSConstantValue::String(str_)
+}
+
+fn new_ts_constant_string(bytes: &[u8]) -> TSConstantValue {
+    let expr = Expr::init(E::EString::init(bytes), bun_ast::Loc::EMPTY);
+    ts_constant_string(expr.data.e_string().expect("infallible: just created"))
+}
+
+fn ts_namespace_member_value(data: js_ast::ts::Data) -> Option<TSConstantValue> {
+    match data {
+        js_ast::ts::Data::EnumNumber(num) => Some(TSConstantValue::Number(num)),
+        // `s_enum` stores string members flat.
+        js_ast::ts::Data::EnumString(str_) => Some(ts_constant_string(str_)),
+        _ => None,
+    }
+}
+
+/// An unbound `Infinity` or `NaN`, which tsc folds too.
+fn ts_global_constant(name: &[u8]) -> Option<TSConstantValue> {
+    match name {
+        b"Infinity" => Some(TSConstantValue::Number(f64::INFINITY)),
+        b"NaN" => Some(TSConstantValue::Number(f64::NAN)),
+        _ => None,
+    }
+}
+
+fn fold_ts_constant_unary(op: js_ast::OpCode, value: TSConstantValue) -> Option<TSConstantValue> {
+    let TSConstantValue::Number(value) = value else {
+        return None;
+    };
+    match op {
+        js_ast::OpCode::UnPos => Some(TSConstantValue::Number(value)),
+        js_ast::OpCode::UnNeg => Some(TSConstantValue::Number(-value)),
+        js_ast::OpCode::UnCpl => Some(TSConstantValue::Number(f64::from(!float_to_int32(value)))),
+        _ => None,
+    }
+}
+
+fn fold_ts_constant_binary(
+    op: js_ast::OpCode,
+    left: TSConstantValue,
+    right: TSConstantValue,
+    arena: &bun_alloc::Arena,
+) -> Option<TSConstantValue> {
+    match (left, right) {
+        (TSConstantValue::Number(left), TSConstantValue::Number(right)) => {
+            fold_numeric_binary_operator(op, left, right).map(TSConstantValue::Number)
+        }
+        _ if op == js_ast::OpCode::BinAdd => {
+            let mut bytes: BumpVec<'_, u8> = BumpVec::new_in(arena);
+            append_ts_constant_value(&mut bytes, left, arena)?;
+            append_ts_constant_value(&mut bytes, right, arena)?;
+            Some(new_ts_constant_string(bytes.into_bump_slice()))
+        }
+        _ => None,
+    }
+}
+
+/// An untagged template whose parts evaluated to `values`.
+fn fold_ts_constant_template(
+    template: &E::Template,
+    values: &[TSConstantValue],
+    arena: &bun_alloc::Arena,
+) -> Option<TSConstantValue> {
+    let E::TemplateContents::Cooked(head) = &template.head else {
+        return None;
+    };
+    if !head.is_utf8() {
+        return None;
+    }
+    let mut bytes: BumpVec<'_, u8> = BumpVec::new_in(arena);
+    bytes.extend_from_slice(head.slice8());
+    for (part, value) in template.parts().iter().zip(values) {
+        append_ts_constant_value(&mut bytes, *value, arena)?;
+        let E::TemplateContents::Cooked(tail) = &part.tail else {
+            return None;
+        };
+        if !tail.is_utf8() {
+            return None;
+        }
+        bytes.extend_from_slice(tail.slice8());
+    }
+    Some(new_ts_constant_string(bytes.into_bump_slice()))
+}
+
 /// JavaScript string concatenation onto `bytes`. 8-bit strings only, like the parser's other folds.
 fn append_ts_constant_value(
     bytes: &mut BumpVec<'_, u8>,
@@ -2232,63 +2325,26 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         match expr.data {
             js_ast::ExprData::ENumber(num) => Some(TSConstantValue::Number(num.value())),
             // The parse pass builds no ropes.
-            js_ast::ExprData::EString(str_) => Some(Self::ts_constant_string(str_)),
+            js_ast::ExprData::EString(str_) => Some(ts_constant_string(str_)),
             js_ast::ExprData::EUnary(unary) => {
-                let TSConstantValue::Number(value) =
-                    self.eval_ts_constant_expression(&unary.value)?
-                else {
-                    return None;
-                };
-                match unary.op {
-                    js_ast::OpCode::UnPos => Some(TSConstantValue::Number(value)),
-                    js_ast::OpCode::UnNeg => Some(TSConstantValue::Number(-value)),
-                    js_ast::OpCode::UnCpl => {
-                        Some(TSConstantValue::Number(f64::from(!float_to_int32(value))))
-                    }
-                    _ => None,
-                }
+                let value = self.eval_ts_constant_expression(&unary.value)?;
+                fold_ts_constant_unary(unary.op, value)
             }
             js_ast::ExprData::EBinary(binary) => {
                 let left = self.eval_ts_constant_expression(&binary.left)?;
                 let right = self.eval_ts_constant_expression(&binary.right)?;
-                match (left, right) {
-                    (TSConstantValue::Number(left), TSConstantValue::Number(right)) => {
-                        fold_numeric_binary_operator(binary.op, left, right)
-                            .map(TSConstantValue::Number)
-                    }
-                    _ if binary.op == js_ast::OpCode::BinAdd => {
-                        let mut bytes: BumpVec<'a, u8> = BumpVec::new_in(self.arena);
-                        append_ts_constant_value(&mut bytes, left, self.arena)?;
-                        append_ts_constant_value(&mut bytes, right, self.arena)?;
-                        Some(self.new_ts_constant_string(E::EString::init(bytes.into_bump_slice())))
-                    }
-                    _ => None,
-                }
+                fold_ts_constant_binary(binary.op, left, right, self.arena)
             }
             js_ast::ExprData::ETemplate(template) => {
                 if template.tag.is_some() {
                     return None;
                 }
-                let E::TemplateContents::Cooked(head) = &template.head else {
-                    return None;
-                };
-                if !head.is_utf8() {
-                    return None;
-                }
-                let mut bytes: BumpVec<'a, u8> = BumpVec::new_in(self.arena);
-                bytes.extend_from_slice(head.slice8());
+                let mut values: smallvec::SmallVec<[TSConstantValue; 4]> =
+                    smallvec::SmallVec::new();
                 for part in template.parts() {
-                    let value = self.eval_ts_constant_expression(&part.value)?;
-                    append_ts_constant_value(&mut bytes, value, self.arena)?;
-                    let E::TemplateContents::Cooked(tail) = &part.tail else {
-                        return None;
-                    };
-                    if !tail.is_utf8() {
-                        return None;
-                    }
-                    bytes.extend_from_slice(tail.slice8());
+                    values.push(self.eval_ts_constant_expression(&part.value)?);
                 }
-                Some(self.new_ts_constant_string(E::EString::init(bytes.into_bump_slice())))
+                fold_ts_constant_template(&template, &values, self.arena)
             }
             js_ast::ExprData::EIdentifier(ident) => {
                 let name = self.load_name_from_ref(ident.ref_);
@@ -2306,25 +2362,19 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     || self.symbols[result.r#ref.inner_index() as usize].kind
                         == js_ast::symbol::Kind::Unbound
                 {
-                    return match name {
-                        b"Infinity" => Some(TSConstantValue::Number(f64::INFINITY)),
-                        b"NaN" => Some(TSConstantValue::Number(f64::NAN)),
-                        _ => None,
-                    };
+                    return ts_global_constant(name);
                 }
                 if let Some(&value) = self.ts_enum_constants.get(&result.r#ref) {
                     return Some(value);
                 }
-                Self::ts_namespace_member_value(
-                    *self.ref_to_ts_namespace_member.get(&result.r#ref)?,
-                )
+                ts_namespace_member_value(*self.ref_to_ts_namespace_member.get(&result.r#ref)?)
             }
             js_ast::ExprData::EDot(dot) => {
                 if dot.optional_chain.is_some() {
                     return None;
                 }
                 let map = self.eval_ts_namespace_chain(&dot.target)?;
-                Self::ts_namespace_member_value((*map).get(dot.name.slice())?.data)
+                ts_namespace_member_value((*map).get(dot.name.slice())?.data)
             }
             js_ast::ExprData::EIndex(index) => {
                 if index.optional_chain.is_some() {
@@ -2337,7 +2387,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     return None;
                 }
                 let map = self.eval_ts_namespace_chain(&index.target)?;
-                Self::ts_namespace_member_value((*map).get(name.slice8())?.data)
+                ts_namespace_member_value((*map).get(name.slice8())?.data)
             }
             _ => None,
         }
@@ -2386,28 +2436,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             js_ast::ts::Data::Namespace(map) => Some(map),
             _ => None,
         }
-    }
-
-    fn ts_namespace_member_value(data: js_ast::ts::Data) -> Option<TSConstantValue> {
-        match data {
-            js_ast::ts::Data::EnumNumber(num) => Some(TSConstantValue::Number(num)),
-            // `s_enum` stores string members flat.
-            js_ast::ts::Data::EnumString(str_) => Some(Self::ts_constant_string(str_)),
-            _ => None,
-        }
-    }
-
-    fn ts_constant_string(str_: js_ast::StoreRef<E::EString>) -> TSConstantValue {
-        debug_assert!(
-            str_.next.is_none(),
-            "each substitution copies this node, and copies of a rope would share its tail"
-        );
-        TSConstantValue::String(str_)
-    }
-
-    fn new_ts_constant_string(&mut self, string: E::EString) -> TSConstantValue {
-        let expr = self.new_expr(string, bun_ast::Loc::EMPTY);
-        Self::ts_constant_string(expr.data.e_string().expect("infallible: just created"))
     }
 
     fn s_enum(

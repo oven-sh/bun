@@ -1946,19 +1946,25 @@ function parseOptions(
   path ||= options.path || "";
 
   // libpq: a host that starts with "/" is a unix socket directory
-  if (!path && hostname.startsWith("/")) {
-    path = adapter === "postgres" ? `${hostname}/.s.PGSQL.${Number(port)}` : hostname;
+  const hostIsSocketDirectory = !path && hostname.startsWith("/");
+  if (hostIsSocketDirectory) {
+    path = hostname;
     hostname = "localhost";
   }
 
   if (path.includes("\0")) {
-    throw $ERR_INVALID_ARG_VALUE("options.path", path, "must not contain null bytes");
+    throw $ERR_INVALID_ARG_VALUE("path", path, "must not contain null bytes");
   }
 
   if (adapter === "postgres") {
-    // libpq: a directory is the socket dir, the socket file is .s.PGSQL.<port>
+    // libpq: the socket file in a socket directory is .s.PGSQL.<port>
     const portNumber = Number(port);
-    if (path && Number.isSafeInteger(portNumber) && path.indexOf("/.s.PGSQL.") === -1 && isDirectory(path)) {
+    if (
+      path &&
+      Number.isSafeInteger(portNumber) &&
+      path.indexOf("/.s.PGSQL.") === -1 &&
+      (hostIsSocketDirectory || isDirectory(path))
+    ) {
       path = `${path}/.s.PGSQL.${portNumber}`;
     }
   }

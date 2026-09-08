@@ -987,6 +987,12 @@ describe("SQL adapter environment variable precedence", () => {
         expect(options.hostname).toBe("localhost");
       });
 
+      test("a / host that already names the socket file is used as is", () => {
+        const options = new SQL({ adapter: "postgres", hostname: "/run/pg/.s.PGSQL.5433", port: 5433 }).options;
+        expect(options.path).toBe("/run/pg/.s.PGSQL.5433");
+        expect(options.hostname).toBe("localhost");
+      });
+
       test("a / host with a verify mode does not use the directory as the TLS server name", () => {
         const options = new SQL({ adapter: "postgres", hostname: "/run/pg", ssl: "verify-full" as any }).options;
         expect(options.path).toBe("/run/pg/.s.PGSQL.5432");

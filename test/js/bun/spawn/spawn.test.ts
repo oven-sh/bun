@@ -864,6 +864,8 @@ describe.skipIf(isWindows)("stdout reader of an unref'd child and process lifeti
 
   it.concurrent("a pending read keeps the process alive until the child writes", async () => {
     const child = `const fs = require("fs"); fs.readSync(0, Buffer.alloc(4)); fs.writeSync(1, "pong");`;
+    // Not top-level await: an unsettled entry-module promise keeps the process
+    // running on its own and would hide a read that does not.
     const stdout = await run(`
       const child = Bun.spawn({
         cmd: [process.execPath, "-e", ${JSON.stringify(child)}],
@@ -873,13 +875,63 @@ describe.skipIf(isWindows)("stdout reader of an unref'd child and process lifeti
       });
       const reader = child.stdout.getReader();
       child.unref();
-      child.stdin.write("ping");
-      child.stdin.end();
-      // Only this read is left to wait for. It must hold the process until "pong" arrives.
-      const { value } = await reader.read();
-      console.log(new TextDecoder().decode(value));
+      (async () => {
+        const pending = reader.read();
+        child.stdin.write("ping");
+        child.stdin.end();
+        // Only this read is left to wait for. It must hold the process until "pong" arrives.
+        const { value } = await pending;
+        console.log(new TextDecoder().decode(value));
+      })();
     `);
     expect(stdout).toBe("pong\n");
+  });
+
+  // node:child_process pause() stops the pipe reader (the poll is unregistered)
+  // and resume() arms it again; the re-armed poll must hold the loop like the
+  // first one did. The writer starts only once the parent is reading ("s"),
+  // overfills the paused Readable, and sends "END" after a pause the parent has
+  // to sit through idle on the pipe with nothing else pending.
+  it.concurrent("a child_process stdout resumed after pause() keeps the process alive again", async () => {
+    const writer = `
+      const fs = require("fs");
+      const chunk = Buffer.alloc(65536, "x");
+      const waitForParent = () => fs.readSync(0, Buffer.alloc(1), 0, 1, null);
+      waitForParent();
+      for (let i = 0; i < 16; i++) fs.writeSync(1, chunk);
+      waitForParent();
+      setTimeout(() => fs.writeSync(1, "END"), 100);
+    `;
+    const stdout = await run(`
+      const { spawn } = require("node:child_process");
+      const child = spawn(process.execPath, ["-e", ${JSON.stringify(writer)}], { stdio: ["pipe", "pipe", "inherit"] });
+      child.unref();
+      let received = 0;
+      let paused = false;
+      let drained = false;
+      child.stdout.on("data", chunk => {
+        received += chunk.length;
+        if (!paused) {
+          paused = true;
+          child.stdout.pause();
+          const resumeWhenFull = () => {
+            if (child.stdout.readableLength >= child.stdout.readableHighWaterMark) {
+              console.log("resume");
+              child.stdout.resume();
+            } else {
+              setImmediate(resumeWhenFull);
+            }
+          };
+          setImmediate(resumeWhenFull);
+        } else if (!drained && received >= 16 * 65536) {
+          drained = true;
+          child.stdin.end("g");
+        }
+      });
+      child.stdout.on("end", () => console.log("end " + received));
+      setImmediate(() => child.stdin.write("s"));
+    `);
+    expect(stdout).toBe("resume\nend " + (16 * 65536 + 3) + "\n");
   });
 });
 

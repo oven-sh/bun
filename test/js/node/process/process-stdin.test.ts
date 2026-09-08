@@ -564,6 +564,56 @@ describe.skipIf(isWindows)("pipe backpressure", () => {
     expect(first).toBe(true);
   });
 
+  // The same over an anonymous pipe (the blocking-pipe read path; Bun.spawn
+  // stdio above is a socketpair). The writer keeps the pipe full until the
+  // reader is gone, so EOF can never be what lets the reader exit.
+  test.concurrent("over a shell pipe, a reader stopped at the backstop does not keep the process alive", async () => {
+    using dir = tempDir("stdin-backstop-pipe", {
+      "writer.js": `
+        const chunk = Buffer.alloc(65536, 0x78);
+        process.stdout.on("error", () => process.exit(0));
+        (function pump() {
+          while (process.stdout.write(chunk)) {}
+          process.stdout.once("drain", pump);
+        })();
+      `,
+      "reader.js": `
+        const reader = Bun.stdin.stream().getReader();
+        const { value } = await reader.read();
+        process.on("exit", () => console.log("EXIT"));
+        console.log("FIRST " + (value.byteLength > 0));
+      `,
+    });
+    const { promise, resolve } = Promise.withResolvers<{ err: Error | null; stdout: string; stderr: string }>();
+    exec(
+      `"${bunExe()}" writer.js | "${bunExe()}" reader.js`,
+      { cwd: String(dir), env: bunEnv },
+      (err, stdout, stderr) => resolve({ err, stdout, stderr }),
+    );
+    expect(await promise).toEqual({ err: null, stdout: "FIRST true\nEXIT\n", stderr: "" });
+  });
+
+  // Stopping unregisters a fired one-shot poll without a syscall, which leaves
+  // its disarmed registration in the kernel. Cancelling the stream must still
+  // take it out: fd 0 stays open, and the next poll on it would hit EEXIST.
+  test.concurrent("a reader cancelled at the highwater backstop frees fd 0 for the next reader", async () => {
+    const { second } = await run(`
+      const { getEventLoopStats } = require("bun:internal-for-testing");
+      // Not top-level await: an unsettled entry-module promise would keep the process alive by itself.
+      (async () => {
+        const reader = Bun.stdin.stream().getReader();
+        await reader.read();
+        // The parent keeps the pipe full, so the reader soon stops and lets go of the loop.
+        while (getEventLoopStats().loopActive) await new Promise(resolve => setImmediate(resolve));
+        await reader.cancel();
+        const next = await Bun.file(0).stream().getReader().read();
+        process.stdout.write(JSON.stringify({ second: (next.value?.length ?? 0) > 0 }));
+        process.exit(0);
+      })();
+    `);
+    expect(second).toBe(true);
+  });
+
   test.concurrent("reading resumes after the highwater backstop", async () => {
     // Stop reading long enough for the backstop to engage, then drain to EOF
     // and make sure every byte written by the parent is delivered.

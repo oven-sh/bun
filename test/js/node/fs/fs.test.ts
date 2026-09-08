@@ -3197,6 +3197,8 @@ describe("fs options argument", () => {
       expect(() => mkdtempSync(file("mkdtemp-"), opts)).toThrow(expected);
       expect(() => fs.mkdtemp(file("mkdtemp-"), opts, cb)).toThrow(expected);
       expect(() => fs.watch(String(dir), opts)).toThrow(expected);
+      expect(() => fs.opendirSync(String(dir), opts)).toThrow(expected);
+      expect(() => fs.opendir(String(dir), opts, cb)).toThrow(expected);
     }
 
     // Nothing got written, and the valid forms still work.
@@ -3211,6 +3213,9 @@ describe("fs options argument", () => {
     if (!isWindows) {
       expect(statSync(file("object.txt")).mode & 0o777).toBe(0o600);
     }
+    // A function in the options slot means "no options", like in node's getOptions().
+    expect(readFileSync(file("string.txt"), cb as any)).toEqual(Buffer.from("c"));
+    fs.opendirSync(String(dir), cb as any).closeSync();
   });
 
   it("fs.promises and FileHandle forms reject with ERR_INVALID_ARG_TYPE", async () => {
@@ -3235,6 +3240,7 @@ describe("fs options argument", () => {
         await expect(fh.readFile(opts)).rejects.toThrow(expected);
         await expect(fh.writeFile("KEY", opts)).rejects.toThrow(expected);
         await expect(fh.appendFile("KEY", opts)).rejects.toThrow(expected);
+        await expect(_promises.opendir(String(dir), opts)).rejects.toThrow(expected);
       }
     } finally {
       await fh.close();

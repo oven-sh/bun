@@ -1079,11 +1079,10 @@ class Dir {
   constructor(handle, path: PathLike, options, validated?) {
     if ($isUndefinedOrNull(handle)) throw $ERR_MISSING_ARGS("handle");
     validateInteger(handle, "handle", 0);
-    if (options != null && typeof options !== "object" && typeof options !== "string") {
-      throw $ERR_INVALID_ARG_TYPE("options", "object", options);
-    }
-    // node's getOptions: a string is encoding shorthand
-    if (typeof options === "string") options = { encoding: options };
+    // node's getOptions: a string is encoding shorthand, a function means no options
+    if (options == null || typeof options === "function") options = undefined;
+    else if (typeof options === "string") options = { encoding: options };
+    else if (typeof options !== "object") throw $ERR_INVALID_ARG_TYPE("options", ["string", "Object"], options);
     const encoding = options?.encoding;
     if (encoding != null && encoding !== "buffer" && !Buffer.isEncoding(encoding)) {
       throw $ERR_INVALID_ARG_VALUE("encoding", encoding, "is invalid encoding");

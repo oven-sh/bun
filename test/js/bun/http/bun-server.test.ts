@@ -119,29 +119,34 @@ describe.concurrent("Server", () => {
       message() {},
     });
     using other = Bun.serve({ port: 0, fetch: () => new Response("other"), websocket: websocket("other") });
-    const { promise: results, resolve } = Promise.withResolvers<Record<string, string>>();
+    const { promise: results, resolve, reject } = Promise.withResolvers<Record<string, string>>();
     using server = Bun.serve({
       port: 0,
       websocket: websocket("server"),
       fetch(req, server) {
-        const result: Record<string, string> = {};
-        const calls = {
-          upgrade: (s: Server) => s.upgrade(req),
-          timeout: (s: Server) => s.timeout(req, 10),
-          requestIP: (s: Server) => s.requestIP(req),
-        };
-        for (const [name, call] of Object.entries(calls)) {
-          try {
-            call(other);
-            result[name] = "did not throw";
-          } catch (e) {
-            result[name] = (e as Error).message;
+        try {
+          const result: Record<string, string> = {};
+          const calls = {
+            upgrade: (s: Server) => s.upgrade(req),
+            timeout: (s: Server) => s.timeout(req, 10),
+            requestIP: (s: Server) => s.requestIP(req),
+          };
+          for (const [name, call] of Object.entries(calls)) {
+            try {
+              call(other);
+              result[name] = "did not throw";
+            } catch (e) {
+              result[name] = (e as Error).message;
+            }
           }
+          result.ownRequestIP = typeof server.requestIP(req)?.address;
+          server.timeout(req, 10);
+          result.ownUpgrade = String(server.upgrade(req));
+          resolve(result);
+        } catch (e) {
+          reject(e);
+          throw e;
         }
-        result.ownRequestIP = typeof server.requestIP(req)?.address;
-        server.timeout(req, 10);
-        result.ownUpgrade = String(server.upgrade(req));
-        resolve(result);
       },
     });
     const ws = new WebSocket(`ws://127.0.0.1:${server.port}/`);

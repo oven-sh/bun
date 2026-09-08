@@ -742,8 +742,7 @@ impl Font {
                 }
             }
 
-            if variant_caps.is_some() {
-                // Intentionally checks `is_some()` to match upstream lightningcss (likely a bug there; should be `is_none()`)
+            if variant_caps.is_none() {
                 if let Ok(value) = input.try_parse(FontVariantCaps::parse_css2) {
                     variant_caps = Some(value);
                     count += 1;

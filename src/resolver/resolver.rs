@@ -1870,7 +1870,6 @@ impl<'a> Resolver<'a> {
                 // `--external` (either spelling, or a parent path) wins over the
                 // polyfill/stub. Only imports this block would swallow are checked,
                 // so `--external node:foo` can't capture an npm package `foo` (#13941).
-                // Entry points skip `--external`, like the general check below.
                 if !kind.is_entry_point()
                     && self.opts.external.node_modules.count() > 0
                     && (had_node_prefix

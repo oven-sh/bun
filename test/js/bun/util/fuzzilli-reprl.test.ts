@@ -88,27 +88,39 @@ test.concurrent("REPRL loop reports async failures as a failed execution and kee
 });
 
 // Timers, intervals and immediates that a payload leaves behind must not fire
-// while later payloads run. A timer that is already due fires within its own
-// payload's turn; everything still pending when the status is written is
-// cleared.
+// while later payloads run. One that is already due runs within its own
+// payload's turn (the interval below is made due by the 5ms spin, and a throw
+// from it fails that payload); everything still pending when the status is
+// written is cleared, which the next payload observes through `_destroyed`.
 test.concurrent("REPRL loop clears timers a payload leaves behind", async () => {
   const { lines, stderr, exitCode, result } = await runReprl([
-    `globalThis.probe = { interval: 0, immediates: 0, late: false };
-     setInterval(() => { globalThis.probe.interval++; throw new Error("interval"); }, 0);
-     setTimeout(() => { globalThis.probe.late = true; }, 20);
-     setImmediate(function again() { globalThis.probe.immediates++; setImmediate(again); });
+    `globalThis.probe = { interval: 0, immediates: 0 };
+     const handles = globalThis.handles = {};
+     handles.interval = setInterval(() => { globalThis.probe.interval++; throw new Error("interval"); }, 0);
+     handles.timeout = setTimeout(() => { throw new Error("timeout"); }, 1000000);
+     handles.immediate = setImmediate(function again() {
+       globalThis.probe.immediates++;
+       handles.immediate = setImmediate(again);
+     });
      const start = performance.now();
      while (performance.now() - start < 5) {}`,
-    `const start = performance.now();
-     while (performance.now() - start < 40) {}`,
-    `globalThis.probe = "done";`,
+    `const { interval, timeout, immediate } = globalThis.handles;
+     globalThis.probe = {
+       ...globalThis.probe,
+       destroyed: { interval: interval._destroyed, timeout: timeout._destroyed, immediate: immediate._destroyed },
+     };`,
   ]);
   expect(stderr).toBe("");
-  const expected = {
-    statuses: [FAILED, 0, 0],
-    probes: [{ interval: 1, immediates: 1, late: false }, { interval: 1, immediates: 1, late: false }, "done"],
-  };
-  expect(lines).toEqual(["uncaught:Error: interval", `REPRL_FIXTURE_RESULT=${JSON.stringify(expected)}`]);
-  expect(result).toEqual(expected);
+  expect(result.statuses).toEqual([FAILED, 0]);
+  const [afterTimers, afterNext] = result.probes;
+  // The interval is due, so it fires before the status is written. How many
+  // timer phases fit in that turn is platform-specific: assert the lower bound.
+  expect(afterTimers.interval).toBeGreaterThanOrEqual(1);
+  expect(afterTimers.immediates).toBe(1);
+  expect(afterNext).toEqual({ ...afterTimers, destroyed: { interval: true, timeout: true, immediate: true } });
+  expect(lines).toEqual([
+    ...Array(afterTimers.interval).fill("uncaught:Error: interval"),
+    `REPRL_FIXTURE_RESULT=${JSON.stringify(result)}`,
+  ]);
   expect(exitCode).toBe(0);
 });

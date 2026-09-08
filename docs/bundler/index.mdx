@@ -893,7 +893,7 @@ To mark all imports as external, use the wildcard `*`:
   </Tab>
 </Tabs>
 
-An entry that starts with `./`, `../` or `/` names a single file instead of a package. It is resolved from the current working directory. A relative import of that file is rewritten to be relative to `outdir` (to the current working directory when there is no `outdir`), so that it still reaches the file from where the bundle is written. An import that spells out the absolute path is left as written.
+An entry that starts with `./`, `../` or `/` names a single file instead of a package. It is resolved from the current working directory. As in esbuild, a relative import of that file is rewritten to be relative to `outdir` (the directory of `outfile`, or the current working directory when the bundle is not written to disk). An import that spells out the absolute path is left as written.
 
 <Tabs>
   <Tab title="JavaScript">

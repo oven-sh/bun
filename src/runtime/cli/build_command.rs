@@ -394,6 +394,17 @@ impl BuildCommand {
             }
         }
 
+        // Bundle `--outfile dir/app.js` as `--outdir dir` with the entry named `app.js`.
+        if ctx.bundler_options.outdir.is_empty()
+            && !outfile.is_empty()
+            && !ctx.bundler_options.compile
+            && !ctx.bundler_options.transform_only
+        {
+            this_transpiler.options.entry_naming =
+                strings::concat(&[b"./", bun_paths::basename(outfile)]);
+            this_transpiler.options.output_dir = bun_core::dirname(outfile).unwrap_or(b".").into();
+        }
+
         let mut src_root_dir_buf = bun_paths::path_buffer_pool::get();
         let src_root_dir: &[u8] = 'brk1: {
             let path: &[u8] = 'brk2: {
@@ -640,25 +651,6 @@ impl BuildCommand {
                 }
 
                 break 'brk result.output_files.into_vec();
-            }
-
-            if ctx.bundler_options.outdir.is_empty()
-                && !outfile.is_empty()
-                && !ctx.bundler_options.compile
-            {
-                let mut entry_naming = Vec::<u8>::new();
-                write!(
-                    &mut entry_naming,
-                    "./{}",
-                    bstr::BStr::new(bun_paths::basename(outfile))
-                )
-                .expect("unreachable");
-                this_transpiler.options.entry_naming = entry_naming.into_boxed_slice();
-                if let Some(dir) = bun_core::dirname(outfile) {
-                    ctx.bundler_options.outdir = dir.into();
-                }
-                // resolver.opts.entry_naming — field does not exist on the
-                // resolver subset; bundler-side `entry_naming` is sufficient.
             }
 
             // Stack-owned Mini event loop so its tasks/concurrent_tasks queues

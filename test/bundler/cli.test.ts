@@ -351,6 +351,43 @@ test("you can use --outfile=... and --sourcemap", async () => {
   `);
 });
 
+// A file marked external is written relative to the directory of --outfile, like with --outdir.
+describe.concurrent("bun build --outfile with an external file", () => {
+  test.each([
+    ["dist/out.js", "../src/lib/a.js"],
+    ["src/out.js", "./lib/a.js"],
+    ["out.js", "./src/lib/a.js"],
+  ])("--outfile %s imports it as %s", async (outfile, specifier) => {
+    using dir = tempDir("build-outfile-external", {
+      "src/entry.js": `import { a } from "./lib/a.js";\nconsole.log(a);`,
+      "src/lib/a.js": `export const a = "a";`,
+    });
+    await using build = Bun.spawn({
+      cmd: [bunExe(), "build", "./src/entry.js", "--outfile", outfile, "--external", "./src/lib/a.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [, buildStderr, buildExitCode] = await Promise.all([build.stdout.text(), build.stderr.text(), build.exited]);
+    expect(buildStderr).toBe("");
+    expect(buildExitCode).toBe(0);
+    expect(await Bun.file(join(String(dir), outfile)).text()).toContain(`from "${specifier}";`);
+
+    await using run = Bun.spawn({
+      cmd: [bunExe(), outfile],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([run.stdout.text(), run.stderr.text(), run.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe("a\n");
+    expect(exitCode).toBe(0);
+  });
+});
+
 test("some log cases", async () => {
   const tmpdir = tmpdirSync();
   const inputFile = path.join(tmpdir, "input.js");

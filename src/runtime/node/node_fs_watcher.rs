@@ -32,14 +32,9 @@ use super::path_watcher;
 #[cfg(windows)]
 use super::win_watcher as path_watcher;
 
-/// The absolute, NUL-terminated form of a `fs.watch()` / `fs.watchFile()`
-/// path for the OS watcher, or `None` when it does not fit `buf`.
-///
-/// On POSIX the caller's bytes are kept as given: an absolute path verbatim,
-/// a relative one appended to `cwd`. The kernel resolves `.` and `..`
-/// through symlinks and `\` is an ordinary filename byte there, and a
-/// lexical join would rewrite both. Win32 resolves paths lexically itself,
-/// so Windows keeps the normalizing join.
+/// `cwd`-absolute, NUL-terminated copy of a `fs.watch()` / `fs.watchFile()`
+/// path, or `None` if it does not fit `buf`. POSIX keeps the caller's bytes
+/// (no `..` folding, `\` is a filename byte); Win32 is lexical anyway.
 pub(crate) fn absolute_watch_path_z<'a>(
     cwd: &[u8],
     path: &[u8],

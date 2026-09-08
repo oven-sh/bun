@@ -859,9 +859,7 @@ pub fn is_stderr_tty() -> bool {
     stdio_tty_flag(2)
 }
 
-/// Whether stdout takes terminal control sequences (cursor movement, line
-/// erase, screen clear). That needs a terminal with ANSI output enabled.
-/// `FORCE_COLOR` enables colors on a pipe; it does not make the pipe a terminal.
+/// A terminal with ANSI output enabled: what cursor, erase and clear sequences need (colors alone do not).
 #[inline]
 pub fn is_stdout_ansi_terminal() -> bool {
     is_stdout_tty() && enable_ansi_colors_stdout()
@@ -1036,8 +1034,7 @@ pub fn writer_buffered() -> &'static mut io::Writer {
 
 const CLEAR_SCREEN: &[u8] = b"\x1B[2J\x1B[3J\x1B[H";
 
-/// Clears one terminal: stderr if it is one, else stdout. No-op when neither
-/// stream is a terminal (see [`is_stdout_ansi_terminal`]).
+/// Clears stderr if it is an ANSI terminal, else stdout if it is one, else does nothing.
 pub fn reset_terminal() {
     let stderr = is_stderr_ansi_terminal();
     let stdout = is_stdout_ansi_terminal();
@@ -1053,8 +1050,7 @@ pub fn reset_terminal() {
     });
 }
 
-/// Clears every stream that is a terminal (see [`is_stdout_ansi_terminal`]).
-/// No-op for a stream that is a pipe or a file, whatever `FORCE_COLOR` says.
+/// Clears each of stdout and stderr that is an ANSI terminal. Never writes to a pipe or a file.
 pub fn reset_terminal_all() {
     // Reached from `reload_process`, which any thread may call. A thread that
     // never ran `Source::configure_thread` has zeroed writers, not stdio.

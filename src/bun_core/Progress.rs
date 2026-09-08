@@ -119,9 +119,7 @@ pub struct Progress {
     /// because other terminals exist like MSYS/git-bash)
     pub is_windows_terminal: bool,
 
-    /// Whether the terminal supports ANSI escape codes. Set by `start()` from
-    /// what stderr is, never from the color preference: `FORCE_COLOR` does not
-    /// make a pipe take cursor movement.
+    /// Whether stderr takes ANSI escape codes. `start()` sets it from the stream, not from color settings.
     pub supports_ansi_escape_codes: bool,
 
     /// If the terminal is "dumb", don't print output.

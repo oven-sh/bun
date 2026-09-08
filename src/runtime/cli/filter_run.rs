@@ -323,8 +323,7 @@ struct State<'a> {
     // buffer for batched output
     draw_buf: Vec<u8>,
     last_lines_written: usize,
-    /// Live pane-per-script redraw. Only when stdout is a terminal; a pipe or
-    /// file gets one `pkg script: line` record per output line instead.
+    /// Live pane-per-script redraw (stdout is a terminal), else one `pkg script: line` record per line.
     pretty_output: bool,
     shell_bin: &'static ZStr, // intentionally leaked (process exits)
     aborted: bool,

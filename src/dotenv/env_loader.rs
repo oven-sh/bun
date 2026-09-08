@@ -544,9 +544,7 @@ impl Loader {
         Some(true)
     }
 
-    /// Whether `--no-clear-screen` or a truthy `BUN_CONFIG_NO_CLEAR_TERMINAL_ON_RELOAD`
-    /// asks to keep the terminal on reload. Which streams can be cleared at all
-    /// is `Output::reset_terminal_all`'s decision, not this one's.
+    /// Whether `--no-clear-screen` or a truthy `BUN_CONFIG_NO_CLEAR_TERMINAL_ON_RELOAD` opts out of the clear.
     pub fn has_set_no_clear_terminal_on_reload(&self) -> bool {
         HAS_NO_CLEAR_SCREEN_CLI_FLAG
             .get()

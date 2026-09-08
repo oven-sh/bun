@@ -1911,15 +1911,17 @@ export function openPty(): {
     throw new Error("openPty: unsupported on Windows, use Bun.Terminal");
   }
   const { dlopen, FFIType } = require("bun:ffi") as typeof import("bun:ffi");
-  // glibc keeps openpty(3) in libutil; musl and macOS have it in libc.
+  // glibc keeps openpty(3) in libutil; musl, Bionic and macOS have it in libc.
   const lib = dlopen(
     isMacOS
       ? "libc.dylib"
-      : isMusl
-        ? process.arch === "arm64"
-          ? "libc.musl-aarch64.so.1"
-          : "libc.musl-x86_64.so.1"
-        : "libutil.so.1",
+      : isAndroid
+        ? "libc.so"
+        : isMusl
+          ? process.arch === "arm64"
+            ? "libc.musl-aarch64.so.1"
+            : "libc.musl-x86_64.so.1"
+          : "libutil.so.1",
     {
       openpty: {
         args: [FFIType.ptr, FFIType.ptr, FFIType.ptr, FFIType.ptr, FFIType.ptr],

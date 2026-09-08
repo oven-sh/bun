@@ -91,6 +91,17 @@ pub(crate) fn is_valid_blob_type(slice: &[u8]) -> bool {
     slice.iter().all(|&c| matches!(c, 0x20..=0x7E))
 }
 
+/// WebIDL `[Clamp] long long` for a value that is already a Number
+/// (https://webidl.spec.whatwg.org/#abstract-opdef-converttoint): NaN is 0,
+/// anything else clamps to ±(2⁵³ − 1) and rounds to nearest, ties to even.
+fn clamp_to_long_long(number: f64) -> i64 {
+    const MAX_SAFE_INTEGER: f64 = 9007199254740991.0;
+    if number.is_nan() {
+        return 0;
+    }
+    number.clamp(-MAX_SAFE_INTEGER, MAX_SAFE_INTEGER).round_ties_even() as i64
+}
+
 /// Result delivered to `ReadBytesHandler::on_read_bytes`.
 pub enum ReadBytesResult {
     /// global-allocator-owned by the callback.
@@ -1930,7 +1941,7 @@ impl BlobExt for Blob {
         let mut args_iter = jsc::ArgumentsSlice::init(global_this.bun_vm(), &arguments_[..3]);
         if let Some(start_) = args_iter.next_eat() {
             if start_.is_number() {
-                let start = start_.to_int64();
+                let start = clamp_to_long_long(start_.as_number());
                 if start < 0 {
                     relative_start = (start
                         .wrapping_add(i64::try_from(self.size.get()).expect("int cast")))
@@ -1943,7 +1954,7 @@ impl BlobExt for Blob {
 
         if let Some(end_) = args_iter.next_eat() {
             if end_.is_number() {
-                let end = end_.to_int64();
+                let end = clamp_to_long_long(end_.as_number());
                 if end < 0 {
                     relative_end = (end
                         .wrapping_add(i64::try_from(self.size.get()).expect("int cast")))

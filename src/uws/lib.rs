@@ -914,8 +914,7 @@ pub mod ssl_wrapper {
                 return true;
             }
 
-            // Per-thread queue: drop entries left by other sockets so a reason
-            // peeked below belongs to this handshake (as ssl_update_handshake does).
+            // Stale entries would be misattributed by peek_fatal_ssl_error below.
             boring_sys::ERR_clear_error();
             // SAFETY: ssl is a live SSL*.
             let result = unsafe { boring_sys::SSL_do_handshake(ssl.as_ptr()) };

@@ -7218,29 +7218,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     }
                 }
             }
-            js_ast::ExprData::EIdentifier(ex) => {
+            js_ast::ExprData::EIdentifier(_) => {
                 // The last expression must be an identifier
                 if parts.len() == 1 {
-                    let name = self.load_name_from_ref(ex.ref_);
-                    if !strings::eql(name, &parts[0]) {
-                        return false;
-                    }
-
-                    let Ok(result) = self.find_symbol_with_record_usage::<false>(expr.loc, name)
-                    else {
-                        return false;
-                    };
-
-                    // We must not be in a "with" statement scope
-                    if result.is_inside_with_scope {
-                        return false;
-                    }
-
-                    // when there's actually no symbol by that name, we return Ref.None
-                    // If a symbol had already existed by that name, we return .unbound
-                    return result.r#ref.is_empty()
-                        || self.symbols[result.r#ref.inner_index() as usize].kind
-                            == js_ast::symbol::Kind::Unbound;
+                    return self.is_unbound_identifier_named(expr, &parts[0]);
                 }
             }
             _ => {}
@@ -7248,24 +7229,33 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         false
     }
 
-    /// Returns true if the expression is an unbound reference to `globalThis`.
-    fn is_global_this(&mut self, expr: Expr) -> bool {
+    /// Returns true if `expr` is an identifier named `name` that resolves to the
+    /// global of that name: not shadowed by a binding, and not inside a `with`.
+    fn is_unbound_identifier_named(&mut self, expr: Expr, name: &[u8]) -> bool {
         let js_ast::ExprData::EIdentifier(ex) = expr.data else {
             return false;
         };
-        let name = self.load_name_from_ref(ex.ref_);
-        if name != b"globalThis" {
+        let ident_name = self.load_name_from_ref(ex.ref_);
+        if !strings::eql(ident_name, name) {
             return false;
         }
-        let Ok(result) = self.find_symbol_with_record_usage::<false>(expr.loc, name) else {
+
+        let Ok(result) = self.find_symbol_with_record_usage::<false>(expr.loc, ident_name) else {
             return false;
         };
+
         if result.is_inside_with_scope {
             return false;
         }
+
+        // No symbol by that name yields Ref::None; a pre-existing one is Unbound.
         result.r#ref.is_empty()
             || self.symbols[result.r#ref.inner_index() as usize].kind
                 == js_ast::symbol::Kind::Unbound
+    }
+
+    fn is_global_this(&mut self, expr: Expr) -> bool {
+        self.is_unbound_identifier_named(expr, b"globalThis")
     }
 }
 

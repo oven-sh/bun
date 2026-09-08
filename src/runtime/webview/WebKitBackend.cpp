@@ -40,7 +40,7 @@ using namespace JSC;
 using namespace WebViewProto;
 
 // Spawn + process-exit watch implemented in HostProcess.rs (EVFILT_PROC).
-extern "C" int32_t Bun__WebViewHost__ensure(Zig::GlobalObject*, bool stdoutInherit, bool stderrInherit);
+extern "C" int32_t Bun__WebViewHost__ensure(Zig::GlobalObject*, bool stdoutInherit, bool stderrInherit, bool detached);
 // Unpublishes and kills the host without reporting its exit back here.
 extern "C" void Bun__WebViewHost__retire();
 extern "C" void* Blob__fromMmapWithType(JSC::JSGlobalObject*, uint8_t* ptr, size_t len, const char* mime);
@@ -128,7 +128,7 @@ void HostClient::updateKeepAlive()
         WebCore::clientData(global->vm())->vmHandle, BunLoopKind::Regular, want ? 1 : -1);
 }
 
-bool HostClient::ensureSpawned(Zig::GlobalObject* zig, bool stdoutInherit, bool stderrInherit)
+bool HostClient::ensureSpawned(Zig::GlobalObject* zig, bool stdoutInherit, bool stderrInherit, bool detached)
 {
     if (sock && !dead) return true;
 
@@ -143,7 +143,7 @@ bool HostClient::ensureSpawned(Zig::GlobalObject* zig, bool stdoutInherit, bool 
         txQueue.clear();
     }
 
-    int fd = Bun__WebViewHost__ensure(zig, stdoutInherit, stderrInherit);
+    int fd = Bun__WebViewHost__ensure(zig, stdoutInherit, stderrInherit, detached);
     if (fd < 0) {
         dead = true;
         return false;

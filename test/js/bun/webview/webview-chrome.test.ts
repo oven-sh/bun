@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, isCI, isMacOS, isMacOSVersionAtLeast, tempDir } from "harness";
+import { bunEnv, bunExe, isCI, isMacOS, isMacOSVersionAtLeast, isWindows, tempDir } from "harness";
 
 // Chrome backend works on any platform with Chrome/Chromium installed.
 // Mark tests todo if no Chrome found (CI may not have it). Mirrors
@@ -7,7 +7,7 @@ import { bunEnv, bunExe, isCI, isMacOS, isMacOSVersionAtLeast, tempDir } from "h
 // paths, then the Playwright cache) so the test detects Chrome whenever the
 // runtime would. On Windows that is usually the preinstalled Edge.
 import { dlopen, FFIType, ptr } from "bun:ffi";
-import { accessSync, constants as fsConstants, readdirSync, rmSync } from "node:fs";
+import { accessSync, chmodSync, constants as fsConstants, readdirSync, rmSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
@@ -1255,4 +1255,86 @@ test("the chrome backend is refused off the main thread", async () => {
   } finally {
     worker.terminate();
   }
+});
+
+// backend.detached — doesn't need real Chrome; we point backend.path at a
+// shell script that reports its own PID/PGID. setsid() (POSIX_SPAWN_SETSID)
+// makes the child its own session + process-group leader, so PID == PGID.
+// Without it the child inherits the spawner's group, so PID != PGID.
+// POSIX-only: on Windows the option maps to libuv's DETACHED_PROCESS (as in
+// Bun.spawn), which a /bin/sh fixture can't observe.
+test.skipIf(isWindows)("chrome: backend.detached runs the subprocess in its own session", async () => {
+  using dir = tempDir("webview-detached", {
+    // Write "<pid>,<pgid>" atomically (tmp + mv) so the poll below never
+    // observes a half-written file. Then block on fd 3 (Chrome's CDP read
+    // pipe) until the parent kills us.
+    //
+    // pgid lookup: on Linux, read /proc/$$/stat (field 3 after the last ')'
+    // is pgrp) — BusyBox ps on Alpine/musl doesn't support `-o pgid= -p`.
+    // On macOS (no /proc), use ps(1) which does support it.
+    "fake-chrome": [
+      "#!/bin/sh",
+      "if [ -r /proc/$$/stat ]; then",
+      '  pgid=$(sed "s/.*) //" /proc/$$/stat | cut -d" " -f3)',
+      "else",
+      '  pgid=$(ps -o pgid= -p $$ | tr -d " ")',
+      "fi",
+      'echo "$$,$pgid" > "$OUT_FILE.tmp"',
+      'mv "$OUT_FILE.tmp" "$OUT_FILE"',
+      "exec cat <&3 >/dev/null 2>&1",
+      "",
+    ].join("\n"),
+  });
+  const fakeChrome = join(String(dir), "fake-chrome");
+  chmodSync(fakeChrome, 0o755);
+
+  async function spawnWith(detached: boolean) {
+    const outFile = join(String(dir), `out-${detached}`);
+    // Subprocess per case — the Chrome transport is a process-wide
+    // singleton; first spawn wins and later backend options are ignored.
+    const script = `
+      const fs = require("node:fs");
+      new Bun.WebView({
+        backend: { type: "chrome", path: ${JSON.stringify(fakeChrome)}, url: false, detached: ${detached} },
+      });
+      const out = ${JSON.stringify(outFile)};
+      while (!fs.existsSync(out)) await Bun.sleep(5);
+      process.stdout.write(fs.readFileSync(out, "utf8"));
+      Bun.WebView.closeAll();
+      process.exit(0);
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: { ...bunEnv, OUT_FILE: outFile },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    const [pid, pgid] = stdout.trim().split(",");
+    expect(pid).toMatch(/^\d+$/);
+    expect(pgid).toMatch(/^\d+$/);
+    expect(exitCode).toBe(0);
+    return { pid, pgid };
+  }
+
+  // detached: true → setsid() → child is its own process-group leader.
+  const d = await spawnWith(true);
+  expect(d.pgid).toBe(d.pid);
+
+  // detached: false (default) → child inherits the bun subprocess's group.
+  const nd = await spawnWith(false);
+  expect(nd.pgid).not.toBe(nd.pid);
+});
+
+test("chrome: backend.detached validates", () => {
+  // Type validation happens before any platform-specific spawn code — runs
+  // identically on Windows. Matches the sibling backend.stderr/option
+  // validation tests which also use plain test().
+  expect(() => new Bun.WebView({ backend: { type: "chrome", url: false, detached: "yes" } } as any)).toThrow(
+    /backend\.detached must be a boolean/,
+  );
+  expect(() => new Bun.WebView({ backend: { type: "chrome", url: false, detached: 1 } } as any)).toThrow(
+    /backend\.detached must be a boolean/,
+  );
 });

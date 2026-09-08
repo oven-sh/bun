@@ -129,6 +129,7 @@ unsafe extern "C" fn Bun__Chrome__ensure(
     extra_argv_len: u32,
     stdout_inherit: bool,
     stderr_inherit: bool,
+    detached: bool,
 ) -> i32 {
     {
         if !INSTANCE.load(Ordering::Relaxed).is_null() {
@@ -161,6 +162,7 @@ unsafe extern "C" fn Bun__Chrome__ensure(
             extra,
             stdout_inherit,
             stderr_inherit,
+            detached,
         ) {
             Ok(rc) => rc,
             Err(err) => {
@@ -484,6 +486,7 @@ fn spawn(
     extra_argv: &[*const c_char],
     stdout_inherit: bool,
     stderr_inherit: bool,
+    detached: bool,
 ) -> crate::Result<i32> {
     {
         let chrome = find_chrome(explicit_path).ok_or(crate::Error::ChromeNotFound)?;
@@ -590,6 +593,7 @@ fn spawn(
             },
             extra_fds: endpoints.child_fds(), // dup2'd to child fd 3 and 4, in order
             argv0: Some(chrome.as_ptr()),
+            detached,
             #[cfg(windows)]
             windows: bun_spawn::WindowsOptions {
                 loop_: event_loop,

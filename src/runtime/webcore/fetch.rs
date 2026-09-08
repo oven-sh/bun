@@ -1456,12 +1456,9 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                         Err(_) => break 'use_sendfile,
                     };
 
-                    #[cfg(target_os = "macos")]
-                    {
-                        // macOS streams this with pread (`SendFile::write_copy`), which needs a regular file
-                        if !bun_sys::S::ISREG(stat.st_mode as u32) {
-                            break 'use_sendfile;
-                        }
+                    // sendfile(2) and the pread copy loop both need a regular file. Anything else takes the read path.
+                    if !bun_sys::S::ISREG(stat.st_mode as u32) {
+                        break 'use_sendfile;
                     }
 
                     // if it's < 32 KB, it's not worth it
@@ -1482,18 +1479,15 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                         content_size: original_size.min(stat_size) as usize,
                     };
 
-                    if bun_sys::S::ISREG(stat.st_mode as u32) {
-                        let stat_size_usize = stat_size as usize;
-                        sf.offset = sf.offset.min(stat_size_usize);
-                        sf.remain = sf
-                            .remain
-                            .max(sf.offset)
-                            .min(stat_size_usize)
-                            .saturating_sub(sf.offset);
-                        // `remain` is now the exact byte count we will send (the slice
-                        // window clamped to the file); that is the Content-Length.
-                        sf.content_size = sf.remain;
-                    }
+                    let stat_size_usize = stat_size as usize;
+                    sf.offset = sf.offset.min(stat_size_usize);
+                    sf.remain = sf
+                        .remain
+                        .max(sf.offset)
+                        .min(stat_size_usize)
+                        .saturating_sub(sf.offset);
+                    // `remain` is now the exact byte count we send (the slice window clamped to the file): the Content-Length.
+                    sf.content_size = sf.remain;
                     body.detach();
                     body = HTTPRequestBody::Sendfile(sf);
 

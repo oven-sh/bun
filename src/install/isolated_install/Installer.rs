@@ -2428,12 +2428,7 @@ impl<'a> Installer<'a> {
         Ok(())
     }
 
-    /// For every project-local npm entry, whether the `package.json` in its
-    /// store directory names the package and version the lockfile expects: the
-    /// check `PackageInstall::verify` applies to `node_modules/<pkg>` under the
-    /// hoisted linker. A set bit means the entry's files can be reused. The
-    /// reads run on the thread pool because this is an open, a read and a parse
-    /// per entry, which is most of the work of an install with nothing to do.
+    /// Project-local npm entries whose store `package.json` names the expected name and version, read on the thread pool.
     pub(crate) fn verify_npm_store_entries(
         &self,
     ) -> core::result::Result<Bitset, bun_alloc::AllocError> {
@@ -2456,6 +2451,7 @@ impl<'a> Installer<'a> {
         let string_buf = lockfile.buffers.string_bytes.as_slice();
         let pkgs = lockfile.packages.slice();
         let pkg_names = pkgs.items_name();
+        let pkg_name_hashes = pkgs.items_name_hash();
         let pkg_resolutions = pkgs.items_resolution();
         let entry_node_ids = self.store.entries.items_node_id();
         let node_pkg_ids = self.store.nodes.items_pkg_id();
@@ -2471,6 +2467,12 @@ impl<'a> Installer<'a> {
             let pkg_id = node_pkg_ids[entry_node_ids[entry_index].get() as usize];
             let pkg_res = &pkg_resolutions[pkg_id as usize];
             if pkg_res.tag != ResolutionTag::Npm || self.entry_uses_global_store(entry_id) {
+                continue;
+            }
+            // a patched entry is vouched for by its `.bun-tag` instead (the patch may edit package.json)
+            let patch_info =
+                self.package_patch_info(pkg_names[pkg_id as usize], pkg_name_hashes[pkg_id as usize], pkg_res);
+            if !matches!(patch_info, Ok(PatchInfo::None)) {
                 continue;
             }
             path.set_length(top_level_dir_len);

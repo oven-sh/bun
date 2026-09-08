@@ -742,11 +742,7 @@ impl UninstallTask {
 
 // ─────────────────────── installed package.json verification ───────────────────────
 
-/// Whether an installed `package.json` still names the package the lockfile
-/// expects at its path. This is the "is it installed" test both linkers apply:
-/// hoisted to `node_modules/<pkg>`, isolated to a store entry. Build metadata
-/// is ignored on both sides (https://github.com/oven-sh/bun/issues/13563) and
-/// a leading `v`, `=` or whitespace on the installed version is tolerated.
+/// Both linkers' "is it installed" test: `source` (a `package.json`) names `name` at `version`. The caller sets up the AST store.
 pub(crate) fn installed_package_json_matches(
     source: &bun_ast::Source,
     name: &[u8],
@@ -754,9 +750,6 @@ pub(crate) fn installed_package_json_matches(
     version_required: bool,
 ) -> bool {
     let mut log = bun_ast::Log::init();
-
-    initialize_store();
-
     let mut package_json_checker = bun_json::PackageJSONVersionChecker::init(source, &mut log);
     if package_json_checker.parse().is_err() {
         return false;
@@ -770,12 +763,10 @@ pub(crate) fn installed_package_json_matches(
 
     let found_version = package_json_checker.found_version();
 
-    // exclude build tags from comparsion
-    // https://github.com/oven-sh/bun/issues/13563
+    // build metadata is not part of the comparison (https://github.com/oven-sh/bun/issues/13563)
     let found_version_end =
         strings::last_index_of_char(found_version, b'+').unwrap_or(found_version.len());
     let expected_version_end = strings::last_index_of_char(version, b'+').unwrap_or(version.len());
-    // Check if the version matches
     if found_version[..found_version_end] != version[..expected_version_end] {
         let offset = 'brk: {
             // ASCII only.
@@ -790,23 +781,19 @@ pub(crate) fn installed_package_json_matches(
                     _ => break 'brk c,
                 }
             }
-            // If we didn't find any of these characters, there's no point in checking the version again.
-            // it will never match.
+            // nothing but separators, so no version to compare
             return false;
         };
 
-        if found_version[offset..] != *version {
+        if found_version[offset..found_version_end] != version[..expected_version_end] {
             return false;
         }
     }
 
-    // lastly, check the name.
     package_json_checker.found_name() == name
 }
 
-/// Reads the `package.json` at `path` into `buf` and checks it with
-/// [`installed_package_json_matches`]. A missing or unreadable file is a
-/// mismatch. Safe to call from any thread.
+/// [`installed_package_json_matches`] on the file at `path`, for thread-pool callers. A missing, unreadable or non-regular file is a mismatch.
 pub(crate) fn installed_package_json_at_path_matches(
     path: &ZStr,
     buf: &mut Vec<u8>,
@@ -815,20 +802,30 @@ pub(crate) fn installed_package_json_at_path_matches(
 ) -> bool {
     buf.clear();
     {
-        // Closed on drop, before parsing: the longer the file stays open, the
-        // more likely it causes issues for other processes on Windows.
-        let Ok(fd) = sys::openat(Fd::cwd(), path, sys::O::RDONLY, 0) else {
+        // NOFOLLOW (and NONBLOCK on posix) so a symlink or fifo left where the file should be fails instead of hanging
+        #[cfg(windows)]
+        let flags = sys::O::RDONLY | sys::O::NOFOLLOW;
+        #[cfg(not(windows))]
+        let flags = sys::O::RDONLY | sys::O::NOFOLLOW | sys::O::NONBLOCK;
+        let Ok(fd) = sys::openat(Fd::cwd(), path, flags, 0) else {
             return false;
         };
-        if sys::File::from_fd(fd).read_to_end_into(buf).is_err() {
+        let file = sys::File::from_fd(fd);
+        if !matches!(file.kind(), Ok(sys::FileKind::File)) {
+            return false;
+        }
+        if file.read_to_end_into(buf).is_err() {
             return false;
         }
     }
 
-    // If it's not long enough to have {"name": "foo", "version": "1.2.0"}, there's no way it's valid
+    // too short to hold {"name":"<name>","version":"<version>"}
     if buf.len() < br#"{"name":"","version":""}"#.len() + name.len() + version.len() {
         return false;
     }
+
+    // the per-thread mini store, as for manifest parsing on the pool, instead of a full AST store per worker
+    crate::initialize_mini_store();
 
     let source = bun_ast::Source::init_path_string(path.as_bytes(), &buf[..]);
     installed_package_json_matches(&source, name, version, true)
@@ -1042,6 +1039,8 @@ impl<'a> PackageInstall<'a> {
         else {
             return false;
         };
+
+        initialize_store();
 
         installed_package_json_matches(
             &source,

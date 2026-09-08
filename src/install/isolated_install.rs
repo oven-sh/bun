@@ -2105,9 +2105,7 @@ pub(crate) fn install_isolated_packages(
             .manager_mut()
             .increment_pending_tasks(u32::try_from(store.entries.len()).expect("int cast"));
 
-        // npm entries whose existing store directory holds the package the
-        // lockfile expects. Left empty when every project-local entry is
-        // about to be (re)installed regardless.
+        // left empty when every project-local entry is about to be (re)installed anyway
         let verified_npm_entries =
             if installer.manager().options.enable.force_install() || is_new_bun_modules {
                 DynamicBitSet::init_empty(store.entries.len())?
@@ -2247,26 +2245,15 @@ pub(crate) fn install_isolated_packages(
                                     .ok()
                                     .unwrap_or(false);
                             }
-                            // An npm package always has a package.json, and
-                            // `verify_npm_store_entries` read its name and version
-                            // back above, as the hoisted linker does for
-                            // `node_modules/<pkg>`. An entry that holds some other
-                            // package's files (an interrupted or foreign write) is
-                            // rebuilt instead of trusted because it exists.
-                            if pkg_res_tag == ResolutionTag::Npm
-                                && !verified_npm_entries.is_set(entry_id.get() as usize)
-                            {
-                                break 'needs_install true;
-                            }
                             installer.append_real_store_path(&mut store_path, entry_id, installer::Which::Final);
 
                             break 'needs_install match &patch_info {
-                                // in other cases there is probably a package.json
-                                // too, but the directory is the safer signal.
-                                installer::PatchInfo::None => {
-                                    pkg_res_tag != ResolutionTag::Npm
-                                        && !sys::exists_z(store_path.slice_z())
+                                // an npm entry whose package.json names something else (an interrupted or foreign write) is rebuilt, as the hoisted linker does
+                                installer::PatchInfo::None if pkg_res_tag == ResolutionTag::Npm => {
+                                    !verified_npm_entries.is_set(entry_id.get() as usize)
                                 }
+                                // other resolutions probably have a package.json too, but the directory is the safer signal
+                                installer::PatchInfo::None => !sys::exists_z(store_path.slice_z()),
                                 // checked above
                                 installer::PatchInfo::Remove(_) => unreachable!(),
                                 installer::PatchInfo::Patch(patch) => {

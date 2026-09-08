@@ -397,16 +397,13 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     /// binary search.
     pub(crate) ts_conditional_arrow_attempts: Vec<u32>,
 
-    /// Byte offsets of `<` tokens where a type-context `skip_type_script_type_arguments`
-    /// scan failed during speculative parsing. The scan only consumes tokens, so its
-    /// outcome depends only on the offset, and a repeated scan can fail at once. In
-    /// `a<T<T<T<...` the expression parser asks "is this a type argument list?" at
-    /// each `<`; every attempt scans the rest of the chain as nested lists before it
-    /// fails, which is quadratic without the memo (found by fuzzing). A failing scan
-    /// records every nested level as it unwinds, in descending offset order, so this
-    /// is a hash set and not a sorted `Vec` like the two memos above. One `u32` per
-    /// failed nested list: it stays empty (no allocation) for ordinary comparisons
-    /// like `a < b`, and gets entries for shapes like `a < b < c`.
+    /// Offsets of `<` tokens where a type-context `skip_type_script_type_arguments` scan
+    /// failed while speculating (log disabled, so a caller restores the lexer and drops
+    /// the error). The outcome depends only on the offset, so a repeat fails at once.
+    /// Without it, each `<` in `a<T<T<T<...` re-scans the rest of the chain (quadratic,
+    /// found by fuzzing). A hash set, not a sorted `Vec`: a failing chain records its
+    /// offsets innermost first. Empty for plain `a < b`: the expression-level variant
+    /// (stricter closer, retried at most once per precedence level) is not recorded.
     pub(crate) ts_type_args_backtracks:
         bun_collections::hashbrown::HashSet<u32, bun_wyhash::BuildHasher>,
 

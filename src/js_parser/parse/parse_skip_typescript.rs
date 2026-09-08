@@ -1409,16 +1409,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
         }
 
-        // Memoize failures of the type-context variant while speculating (the
-        // log is disabled, so a caller above restores the lexer and discards the
-        // error, and failing early loses no diagnostic). The expression variant
-        // stays out: the expression parser retries it at one offset only a
-        // bounded number of times, it accepts fewer closing tokens than this
-        // variant so the two could not share entries, and leaving it out keeps
-        // the set empty for ordinary comparisons like `a < b`. The JSX element
-        // variant lexes the closing `>` differently and stays out too.
-        // `expect_less_than` bumps `lexer.start` when it splits a compound
-        // token like `<<`, so the offset alone identifies the scan.
+        // See `P::ts_type_args_backtracks`. The JSX element variant lexes its `>` differently.
         let memoize = !IS_INSIDE_JSX_ELEMENT
             && !IS_PARSE_TYPE_ARGUMENTS_IN_EXPRESSION
             && self.lexer.is_log_disabled;

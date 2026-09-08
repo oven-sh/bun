@@ -2,7 +2,7 @@ import { spawn } from "bun";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, setDefaultTimeout } from "bun:test";
 import { mkdir, rm, writeFile } from "fs/promises";
 import { bunEnv, bunExe, isWindows, readdirSorted, tmpdirSync } from "harness";
-import { chmodSync, copyFileSync, readdirSync, symlinkSync } from "node:fs";
+import { chmodSync, chownSync, copyFileSync, readdirSync, statSync, symlinkSync } from "node:fs";
 import { tmpdir } from "os";
 import { delimiter, join, resolve } from "path";
 import { dummyAfterAll, dummyBeforeAll, dummyBeforeEach, dummyRegistry, getPort, setHandler } from "./dummy.registry";
@@ -1326,6 +1326,131 @@ it.concurrent.skipIf(isWindows)(
     }
   },
 );
+
+// The cache root check above starts at the first path component below the
+// temp dir, so it says nothing about the temp dir itself or the directories
+// above it. The owner of a directory renames any entry in it whatever that
+// entry's own mode bits say, so a user who owns one of those directories can
+// swap the whole cache root for a tree of their own after bunx checked it.
+// bunx refuses such a temp dir before it reads or writes anything under it.
+// Making a directory that another user owns takes root.
+it.concurrent.skipIf(isWindows || process.getuid?.() !== 0)(
+  "refuses a temp directory that another local user owns",
+  async () => {
+    const { x_dir, env } = setup();
+    const pkg = "bunx-temp-dir-fixture";
+    const otherUser = 4242;
+
+    const run = (tmp: string) => {
+      const subprocess = spawn({
+        cmd: [bunExe(), "x", "--no-install", pkg],
+        cwd: x_dir,
+        stdout: "pipe",
+        stdin: "ignore",
+        stderr: "pipe",
+        env: { ...env, TEMP: tmp, TMPDIR: tmp, BUN_TMPDIR: tmp },
+      });
+      return Promise.all([subprocess.stderr.text(), subprocess.stdout.text(), subprocess.exited] as const);
+    };
+
+    const foreign = tmpdirSync();
+    chownSync(foreign, otherUser, otherUser);
+    await mkdir(join(foreign, "ours"));
+
+    // The foreign directory itself, a directory of ours below it, and one
+    // below it that does not exist yet (bunx creates it, then sees who owns
+    // what above it) are all refused, naming the directory and its owner.
+    for (const [tmp, culprit] of [
+      [foreign, "it"],
+      [join(foreign, "ours"), `"${foreign}" above it`],
+      [join(foreign, "missing", "temp"), `"${foreign}" above it`],
+    ]) {
+      const [err, out, exitCode] = await run(tmp);
+      expect(err).toContain(
+        `error: refusing to use temp directory "${tmp}": ${culprit} is owned by uid ${otherUser}, not by the current user or root`,
+      );
+      expect(err).not.toContain(`Could not find an existing '${pkg}' binary to run.`);
+      expect(out).toHaveLength(0);
+      expect(exitCode).toBe(1);
+    }
+
+    // Handed back to us, the same directories are accepted: bunx gets past
+    // the check and fails later with the normal --no-install message.
+    chownSync(foreign, 0, 0);
+    for (const tmp of [foreign, join(foreign, "ours"), join(foreign, "missing", "temp")]) {
+      const [err, out, exitCode] = await run(tmp);
+      expect(err).not.toContain("temp directory");
+      expect(err).toContain(`Could not find an existing '${pkg}' binary to run.`);
+      expect(out).toHaveLength(0);
+      expect(exitCode).toBe(1);
+    }
+  },
+);
+
+// Mode bits alone do not make bunx refuse a temp dir: a world-writable
+// directory without the sticky bit is what a disk-backed Kubernetes emptyDir
+// or a `chmod 777 /tmp` container image looks like, and the owner is still us
+// or root there. A temp dir that does not exist yet is created.
+it.concurrent.skipIf(isWindows)("accepts a temp directory of ours whatever its mode bits", async () => {
+  const { x_dir, env } = setup();
+  const pkg = "bunx-temp-dir-mode-fixture";
+
+  chmodSync(env.TMPDIR, 0o777);
+  for (const tmp of [env.TMPDIR, join(env.TMPDIR, "missing", "temp")]) {
+    await using subprocess = spawn({
+      cmd: [bunExe(), "x", "--no-install", pkg],
+      cwd: x_dir,
+      stdout: "pipe",
+      stdin: "ignore",
+      stderr: "pipe",
+      env: { ...env, TEMP: tmp, TMPDIR: tmp, BUN_TMPDIR: tmp },
+    });
+    const [err, out, exitCode] = await Promise.all([
+      subprocess.stderr.text(),
+      subprocess.stdout.text(),
+      subprocess.exited,
+    ]);
+    expect(err).not.toContain("temp directory");
+    expect(err).toContain(`Could not find an existing '${pkg}' binary to run.`);
+    expect(statSync(tmp).isDirectory()).toBe(true);
+    expect(out).toHaveLength(0);
+    expect(exitCode).toBe(1);
+  }
+});
+
+// A temp dir that is reached through a symlink is checked where it really
+// lives, and from then on bunx uses its real path: the symlink itself could
+// sit in a directory that someone else owns, who could point it elsewhere
+// between the check and the exec.
+it.concurrent.skipIf(isWindows)("runs a cached binary by the real path of a symlinked temp directory", async () => {
+  const { x_dir, env } = setup();
+  const pkg = "bunx-temp-dir-symlink-fixture";
+
+  // A cache entry made by hand, the way an earlier `bunx` run leaves it.
+  const bin = join(env.TMPDIR, `bunx-${process.getuid!()}-${pkg}@latest`, "node_modules", ".bin", pkg);
+  await mkdir(join(bin, ".."), { recursive: true });
+  await writeFile(bin, `#!/bin/sh\necho "ran $0"\n`, { mode: 0o755 });
+
+  const link = join(tmpdirSync(), "temp");
+  symlinkSync(env.TMPDIR, link);
+
+  await using subprocess = spawn({
+    cmd: [bunExe(), "x", "--no-install", pkg],
+    cwd: x_dir,
+    stdout: "pipe",
+    stdin: "ignore",
+    stderr: "pipe",
+    env: { ...env, TEMP: link, TMPDIR: link, BUN_TMPDIR: link },
+  });
+  const [err, out, exitCode] = await Promise.all([
+    subprocess.stderr.text(),
+    subprocess.stdout.text(),
+    subprocess.exited,
+  ]);
+  expect(err).not.toContain("refusing to use temp directory");
+  expect(out).toBe(`ran ${bin}\n`);
+  expect(exitCode).toBe(0);
+});
 
 it.concurrent.skipIf(isWindows)(
   "validates every path component of a scoped package's bunx cache directory",

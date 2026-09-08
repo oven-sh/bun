@@ -6,6 +6,9 @@ use std::io::Write as _;
 use bstr::BStr;
 
 use crate::cli::command::ContextData;
+use crate::cli::upgrade_command::TempDirRefusal;
+#[cfg(unix)]
+use crate::cli::upgrade_command::open_trusted_temp_dir;
 use crate::cli::{self, Command};
 use crate::run_command::{ConfigureEnvOptions, RunCommand as Run};
 
@@ -18,7 +21,7 @@ use bun_core::{ZStr, strings};
 use bun_install::dependency::VersionTag;
 use bun_install::update_request::{self, UpdateRequest};
 use bun_parsers::json;
-use bun_paths::{self, DELIMITER};
+use bun_paths::{self, DELIMITER, PathBuffer};
 use bun_resolver::fs::RealFS;
 #[cfg(windows)]
 use bun_sys::FdExt as _;
@@ -566,6 +569,38 @@ impl BunxCommand {
         true
     }
 
+    /// The cache root below the temp dir is only as private as the directories
+    /// above it: the owner of a directory renames any entry in it whatever
+    /// that entry's own mode bits say. `is_trusted_cache_root` starts at the
+    /// first component below the temp dir, so the temp dir and everything
+    /// above it go through `open_trusted_temp_dir` here, which also creates a
+    /// temp dir that does not exist yet so that its owner is known.
+    ///
+    /// Returns the path to use from then on: the real path of the directory
+    /// that was checked, since the install and the exec resolve the path
+    /// again and a symlink on the way there could live in a directory the
+    /// check never saw.
+    #[cfg(unix)]
+    fn trusted_temp_dir<'a>(
+        temp_dir: &'a [u8],
+        real_path_buf: &'a mut PathBuffer,
+    ) -> Result<&'a [u8], TempDirRefusal> {
+        let dir = open_trusted_temp_dir(temp_dir, true)?;
+        match bun_sys::get_fd_path(dir.fd(), real_path_buf) {
+            Ok(real_path) => Ok(&*real_path),
+            Err(_) => Ok(temp_dir),
+        }
+    }
+
+    #[cfg(not(unix))]
+    #[inline(always)]
+    fn trusted_temp_dir<'a>(
+        temp_dir: &'a [u8],
+        _real_path_buf: &'a mut PathBuffer,
+    ) -> Result<&'a [u8], TempDirRefusal> {
+        Ok(temp_dir)
+    }
+
     #[cfg(unix)]
     fn is_trusted_cache_root(cache_root: &[u8], temp_dir_len: usize, uid: libc::uid_t) -> bool {
         let mut buf = bun_paths::path_buffer_pool::get();
@@ -896,7 +931,15 @@ impl BunxCommand {
             BStr::new(result_package_name)
         );
 
-        let temp_dir = RealFS::platform_temp_dir();
+        let mut real_temp_dir_buf = bun_paths::path_buffer_pool::get();
+        let temp_dir: &[u8] =
+            match Self::trusted_temp_dir(RealFS::platform_temp_dir(), &mut real_temp_dir_buf) {
+                Ok(dir) => dir,
+                Err(refusal) => {
+                    refusal.print(RealFS::platform_temp_dir());
+                    Global::exit(1);
+                }
+            };
 
         let path_for_bin_dirs: Vec<u8> = 'brk: {
             if ignore_cwd.is_empty() {

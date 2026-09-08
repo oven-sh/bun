@@ -363,7 +363,7 @@ JSC_DEFINE_CUSTOM_SETTER(Process_defaultSetter, (JSC::JSGlobalObject * globalObj
     return true;
 }
 
-extern "C" BunString Bun__resolveEmbeddedNodeFile(const BunString*);
+extern "C" BunString Bun__resolveEmbeddedNodeFile(const BunString*, BunString* errorMessage);
 #if OS(WINDOWS)
 extern "C" HMODULE Bun__LoadLibraryBunString(BunString*);
 #endif
@@ -510,12 +510,16 @@ JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(Process_functionDlopen, __attribute__((
     [[maybe_unused]] bool fromEmbedded = false;
     if (filename.startsWith(StandaloneModuleGraph__base_path)) {
         BunString bunStr = Bun::toString(filename);
-        BunString resolved = Bun__resolveEmbeddedNodeFile(&bunStr);
+        BunString errorMessage = { BunStringTag::Dead, {} };
+        BunString resolved = Bun__resolveEmbeddedNodeFile(&bunStr, &errorMessage);
         if (!resolved.isDead()) {
             filename = resolved.transferToWTFString();
             // The extracted file is content-hashed and shared across dlopens
             // and restarts (#29587), so it is never deleted here.
             fromEmbedded = true;
+        } else if (!errorMessage.isDead()) {
+            // Embedded, but the temp directory it would be extracted to was refused.
+            return throwError(globalObject, scope, ErrorCode::ERR_DLOPEN_FAILED, errorMessage.transferToWTFString());
         }
     }
 

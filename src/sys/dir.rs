@@ -479,6 +479,135 @@ impl FdDirExt for Fd {
     }
 }
 
+/// A directory, at or above one that was checked, whose owner is neither the
+/// checking user nor root. `depth` 0 is the checked directory itself, 1 its
+/// parent, and so on up to the root.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ForeignOwner {
+    pub depth: usize,
+    pub uid: u32,
+}
+
+/// Finds the first directory, from `dir` up to the root, that a user other
+/// than `euid` and root owns.
+///
+/// The owner of a directory renames its entries whatever mode bits the entry
+/// itself has, so a file below `dir` that is found again by path is only as
+/// private as every directory above it. Walks `..` from `dir` instead of the
+/// components of a path, so the real parents of a symlinked directory are the
+/// ones checked, and the walk needs only search permission on them.
+#[cfg(all(unix, not(target_os = "android")))]
+pub fn foreign_owned_ancestor(dir: Fd, euid: u32) -> Maybe<Option<ForeignOwner>> {
+    let foreign = |uid: u32| uid != euid && uid != 0 && Some(uid) != unmapped_uid();
+    let mut st = fstat(dir)?;
+    if foreign(st.st_uid) {
+        return Ok(Some(ForeignOwner {
+            depth: 0,
+            uid: st.st_uid,
+        }));
+    }
+    let mut dots = bun_paths::path_buffer_pool::get();
+    let mut len = 0usize;
+    let mut depth = 0usize;
+    loop {
+        if len + b"/..".len() >= dots.len() {
+            return Err(Error::from_code_int(libc::ENAMETOOLONG, Tag::fstatat));
+        }
+        if len > 0 {
+            dots[len] = bun_paths::SEP;
+            len += 1;
+        }
+        dots[len..len + 2].copy_from_slice(b"..");
+        len += 2;
+        dots[len] = 0;
+        let up = fstatat(dir, ZStr::from_buf(&dots[..], len))?;
+        // ".." of the root is the root itself.
+        if up.st_dev == st.st_dev && up.st_ino == st.st_ino {
+            return Ok(None);
+        }
+        depth += 1;
+        if foreign(up.st_uid) {
+            return Ok(Some(ForeignOwner {
+                depth,
+                uid: up.st_uid,
+            }));
+        }
+        st = up;
+    }
+}
+
+/// Android gives every app its own uid and keeps apps out of each other's
+/// directories, and `/data` itself belongs to `system`, so the walk would
+/// refuse every temp directory there for a threat the platform already rules
+/// out.
+#[cfg(target_os = "android")]
+#[inline(always)]
+pub fn foreign_owned_ancestor(_dir: Fd, _euid: u32) -> Maybe<Option<ForeignOwner>> {
+    Ok(None)
+}
+
+#[cfg(not(unix))]
+#[inline(always)]
+pub fn foreign_owned_ancestor(_dir: Fd, _euid: u32) -> Maybe<Option<ForeignOwner>> {
+    Ok(None)
+}
+
+/// Inside a user namespace that does not map every uid (rootless containers,
+/// toolbox, flatpak, bubblewrap sandboxes), a file whose owner has no mapping
+/// reports the overflow uid. That is what everything the host's root owns
+/// looks like from inside, so such an owner counts as root. The namespace's
+/// own `nobody` reports the same uid; that is accepted, since it is the same
+/// host user's sandbox either way.
+#[cfg(target_os = "linux")]
+fn unmapped_uid() -> Option<u32> {
+    static UNMAPPED_UID: std::sync::OnceLock<Option<u32>> = std::sync::OnceLock::new();
+    *UNMAPPED_UID.get_or_init(|| {
+        let read = |path: &[u8]| {
+            File::openat(Fd::cwd(), path, O::RDONLY, 0)
+                .and_then(|file| file.read_to_end_small())
+                .ok()
+        };
+        let mut map = [0u64; 4];
+        // One line "0 0 4294967295": every uid maps onto itself, none is unmapped.
+        if decimal_fields(&read(b"/proc/self/uid_map")?, &mut map) == 3
+            && map[..3] == [0, 0, 4294967295]
+        {
+            return None;
+        }
+        let mut overflow = [65534u64; 1];
+        if let Some(bytes) = read(b"/proc/sys/kernel/overflowuid") {
+            decimal_fields(&bytes, &mut overflow);
+        }
+        u32::try_from(overflow[0]).ok()
+    })
+}
+
+#[cfg(all(unix, not(any(target_os = "linux", target_os = "android"))))]
+#[inline(always)]
+fn unmapped_uid() -> Option<u32> {
+    None
+}
+
+/// Parses whitespace-separated decimal numbers into `out` and returns how many
+/// there were, counting (but not storing) the ones past `out.len()`.
+#[cfg(target_os = "linux")]
+fn decimal_fields(bytes: &[u8], out: &mut [u64]) -> usize {
+    let mut count = 0usize;
+    let mut current: Option<u64> = None;
+    for &byte in bytes.iter().chain(core::iter::once(&b' ')) {
+        if byte.is_ascii_digit() {
+            let digit = u64::from(byte - b'0');
+            current = Some(current.unwrap_or(0).saturating_mul(10).saturating_add(digit));
+        } else if let Some(value) = current.take() {
+            if let Some(slot) = out.get_mut(count) {
+                *slot = value;
+            }
+            count += 1;
+        }
+    }
+    count
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

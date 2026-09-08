@@ -46,12 +46,112 @@ fn spawn_windows_options() -> crate::api::bun::process::WindowsOptions {
 // in `resolver/lib.rs`) does not yet expose `tmpdir()`; the full impl lives in
 // the un-exported `fs_full` module. Shim it locally — open
 // `RealFS::tmpdir_path()` as a `sys::Dir`, mirroring `RealFS::open_tmp_dir`.
+//
+// Every caller puts code there that bun runs or loads again by path: the
+// `bun upgrade` download, the addons embedded in a compiled executable, the
+// `bun:ffi` cc() headers. So the directory goes through
+// `open_trusted_temp_dir`.
 pub(crate) trait FileSystemTmpdirExt {
-    fn tmpdir(&mut self) -> crate::Result<sys::Dir>;
+    fn tmpdir(&mut self) -> Result<sys::Dir, TempDirRefusal>;
 }
 impl FileSystemTmpdirExt for fs::FileSystem {
-    fn tmpdir(&mut self) -> crate::Result<sys::Dir> {
-        sys::Dir::open(fs::RealFS::tmpdir_path()).map_err(Into::into)
+    fn tmpdir(&mut self) -> Result<sys::Dir, TempDirRefusal> {
+        open_trusted_temp_dir(fs::RealFS::tmpdir_path(), false)
+    }
+}
+
+/// Why `open_trusted_temp_dir` gave no directory back.
+pub(crate) enum TempDirRefusal {
+    /// The directory could not be opened, created, or inspected.
+    Open(sys::Error),
+    /// `dir`, the temp directory itself (`depth` 0) or a directory `depth`
+    /// levels above it, belongs to `uid`, which is neither the current user
+    /// nor root.
+    ForeignOwner {
+        dir: Box<[u8]>,
+        depth: usize,
+        uid: u32,
+    },
+}
+
+impl TempDirRefusal {
+    /// The sentence after "error: " (or inside a thrown JS error) for a
+    /// refusal of `temp_dir`.
+    pub(crate) fn message(&self, temp_dir: &[u8]) -> Vec<u8> {
+        let mut msg = Vec::new();
+        match self {
+            Self::Open(err) => {
+                let _ = write!(
+                    &mut msg,
+                    "cannot use temp directory \"{}\": {}",
+                    bstr::BStr::new(temp_dir),
+                    bstr::BStr::new(err.name()),
+                );
+            }
+            Self::ForeignOwner { dir, depth, uid } => {
+                let _ = write!(
+                    &mut msg,
+                    "refusing to use temp directory \"{}\": ",
+                    bstr::BStr::new(temp_dir)
+                );
+                if *depth > 0 {
+                    let _ = write!(&mut msg, "\"{}\" above it", bstr::BStr::new(dir));
+                } else {
+                    msg.extend_from_slice(b"it");
+                }
+                let _ = write!(
+                    &mut msg,
+                    " is owned by uid {uid}, not by the current user or root, so that user could replace the files bun puts there. Point TMPDIR (or BUN_TMPDIR) at a directory you own."
+                );
+            }
+        }
+        msg
+    }
+
+    pub(crate) fn print(&self, temp_dir: &[u8]) {
+        Output::err_generic("{}", (bstr::BStr::new(&self.message(temp_dir)),));
+    }
+}
+
+/// Opens the temp directory `path` for files that bun runs or loads again by
+/// path afterwards, creating it first when `create` is set and it does not
+/// exist. The owner of a directory renames any entry in it whatever that
+/// entry's own mode bits say, so the directory is refused when it, or any
+/// directory above it, belongs to a user other than the current one and root:
+/// that user could swap what bun put there for a file of their own between
+/// the write and the exec or dlopen.
+pub(crate) fn open_trusted_temp_dir(path: &[u8], create: bool) -> Result<sys::Dir, TempDirRefusal> {
+    let dir = match sys::Dir::open(path) {
+        Ok(dir) => dir,
+        Err(err) if create && err.get_errno() == sys::E::ENOENT => {
+            sys::mkdir_recursive(path).map_err(TempDirRefusal::Open)?;
+            sys::Dir::open(path).map_err(TempDirRefusal::Open)?
+        }
+        Err(err) => return Err(TempDirRefusal::Open(err)),
+    };
+    #[cfg(unix)]
+    // SAFETY: geteuid() takes no arguments and cannot fail.
+    let euid = unsafe { libc::geteuid() };
+    #[cfg(not(unix))]
+    let euid = 0;
+    match sys::foreign_owned_ancestor(dir.fd(), euid) {
+        Ok(None) => Ok(dir),
+        Ok(Some(owner)) => {
+            let mut real_path_buf = bun_paths::path_buffer_pool::get();
+            let mut foreign_dir: &[u8] = match sys::get_fd_path(dir.fd(), &mut real_path_buf) {
+                Ok(real_path) => real_path,
+                Err(_) => path,
+            };
+            for _ in 0..owner.depth {
+                foreign_dir = bun_paths::dirname(foreign_dir).unwrap_or(b"/");
+            }
+            Err(TempDirRefusal::ForeignOwner {
+                dir: Box::from(foreign_dir),
+                depth: owner.depth,
+                uid: owner.uid,
+            })
+        }
+        Err(err) => Err(TempDirRefusal::Open(err)),
     }
 }
 
@@ -728,8 +828,8 @@ impl UpgradeCommand {
 
             let save_dir_: sys::Dir = match filesystem.tmpdir() {
                 Ok(d) => d,
-                Err(err) => {
-                    Output::err_generic("Failed to open temporary directory: {}", (err.name(),));
+                Err(refusal) => {
+                    refusal.print(fs::RealFS::tmpdir_path());
                     Global::exit(1);
                 }
             };

@@ -1435,17 +1435,33 @@ impl FFI {
             // can't see the bunfs virtual FS. The helper lives in
             // `crate::jsc_hooks` — same crate, so a direct call.
             let _ = vm;
-            if let Some(len) = crate::jsc_hooks::resolve_embedded_file_to_buf(
+            match crate::jsc_hooks::resolve_embedded_file_to_buf(
                 name_slice.slice(),
                 ext,
                 &mut filepath_buf[..],
             ) {
-                // NUL-terminate in place so `DynLib::open`
-                // can pass the slice to libc without copying. `resolve_*_to_buf`
-                // is bounded by `Fs::FileSystem::tmpname` + a tmpdir join (both
-                // fit in `PATH_MAX`), so `filepath_buf[len]` is in bounds.
-                filepath_buf[len] = 0;
-                break 'brk &filepath_buf[0..len];
+                Ok(Some(len)) => {
+                    // NUL-terminate in place so `DynLib::open`
+                    // can pass the slice to libc without copying. `resolve_*_to_buf`
+                    // is bounded by `Fs::FileSystem::tmpname` + a tmpdir join (both
+                    // fit in `PATH_MAX`), so `filepath_buf[len]` is in bounds.
+                    filepath_buf[len] = 0;
+                    break 'brk &filepath_buf[0..len];
+                }
+                Ok(None) => {}
+                // Embedded, but the temp directory it would be extracted to
+                // was refused.
+                Err(refusal) => {
+                    let system_error = SystemError {
+                        code: bun_core::String::clone_utf8(b"ERR_DLOPEN_FAILED"),
+                        message: bun_core::String::clone_utf8(
+                            &refusal.message(Fs::RealFS::tmpdir_path()),
+                        ),
+                        syscall: bun_core::String::clone_utf8(b"dlopen"),
+                        ..Default::default()
+                    };
+                    return Ok(system_error.to_error_instance(global));
+                }
             }
 
             break 'brk name_slice.slice();

@@ -44,7 +44,7 @@ use bun_resolver::fs as Fs;
 use bun_resolver::node_fallbacks;
 use bun_resolver::{GlobalCache, ResultUnion as ResolveResultUnion};
 
-use crate::cli::upgrade_command::FileSystemTmpdirExt as _;
+use crate::cli::upgrade_command::{FileSystemTmpdirExt as _, TempDirRefusal};
 use crate::timer;
 use crate::webcore::blob::BlobExt as _;
 
@@ -4613,20 +4613,39 @@ pub extern "C" fn Bun__transpileVirtualModule(
 ///
 /// The filename is a hash of the contents, so every `dlopen()` of the same
 /// embedded library — across calls, Worker VMs, and restarts — shares one
-/// file instead of leaking a copy per call (#29585). Returns `None` when the
-/// input is empty, absent from the graph, or a filesystem step fails.
+/// file instead of leaking a copy per call (#29585). Returns `Ok(None)` when
+/// the input is empty, absent from the graph, or a filesystem step fails, and
+/// `Err` when the temp directory is one whose files another user could
+/// replace before they are loaded.
 pub(crate) fn resolve_embedded_file_to_buf(
     input_path: &[u8],
     extname: &[u8],
     out_buf: &mut [u8],
-) -> Option<usize> {
+) -> Result<Option<usize>, TempDirRefusal> {
     if input_path.is_empty() {
-        return None;
+        return Ok(None);
     }
+    let Some(graph) = bun_standalone_graph::Graph::get_ref() else {
+        return Ok(None);
+    };
+    let Some(file) = graph.find_ref(input_path) else {
+        return Ok(None);
+    };
+    let tmpdir = (*Fs::FileSystem::instance()).tmpdir()?;
+    Ok(extract_embedded_file(
+        &tmpdir,
+        file.contents.as_bytes(),
+        extname,
+        out_buf,
+    ))
+}
 
-    let file = bun_standalone_graph::Graph::get_ref()?.find_ref(input_path)?;
-    let file_contents: &[u8] = file.contents.as_bytes();
-
+fn extract_embedded_file(
+    tmpdir: &bun_sys::Dir,
+    file_contents: &[u8],
+    extname: &[u8],
+    out_buf: &mut [u8],
+) -> Option<usize> {
     // `.bun-{uid}-{wyhash(contents)}.{ext}`: the hash dedupes; the uid keeps
     // users on a shared `/tmp` from colliding.
     let content_hash = bun_wyhash::hash(file_contents);
@@ -4643,11 +4662,18 @@ pub(crate) fn resolve_embedded_file_to_buf(
     )
     .ok()?;
 
+    let tmpdir_fd: bun_sys::Fd = tmpdir.fd;
+    // `dlopen(2)` resolves the path again, so give it the real path of the
+    // directory `tmpdir()` checked instead of the `$TMPDIR` spelling: a
+    // symlink on the way there could live in a directory the check never saw.
+    let mut tmpdir_path_buf = bun_paths::path_buffer_pool::get();
+    let tmpdir_path: &[u8] = match bun_sys::get_fd_path(tmpdir_fd, &mut tmpdir_path_buf) {
+        Ok(real_path) => real_path,
+        Err(_) => Fs::RealFS::tmpdir_path(),
+    };
     // Reuse the canonical file from a previous run if it is still ours with
     // the right size. `lstatat` so a planted symlink fails the ISREG check
     // instead of being followed.
-    let tmpdir = (*Fs::FileSystem::instance()).tmpdir().ok()?;
-    let tmpdir_fd: bun_sys::Fd = tmpdir.fd;
     if let Ok(st) = bun_sys::lstatat(tmpdir_fd, canonical_name) {
         let size_ok = st.st_size as usize == file_contents.len();
         #[cfg(unix)]
@@ -4655,11 +4681,7 @@ pub(crate) fn resolve_embedded_file_to_buf(
         #[cfg(windows)]
         let ours = true;
         if size_ok && ours {
-            return write_absolute(
-                out_buf,
-                Fs::RealFS::tmpdir_path(),
-                canonical_name.as_bytes(),
-            );
+            return write_absolute(out_buf, tmpdir_path, canonical_name.as_bytes());
         }
     }
 
@@ -4689,7 +4711,7 @@ pub(crate) fn resolve_embedded_file_to_buf(
     } else {
         scratch_name
     };
-    write_absolute(out_buf, Fs::RealFS::tmpdir_path(), final_name.as_bytes())
+    write_absolute(out_buf, tmpdir_path, final_name.as_bytes())
 }
 
 /// Writes `{tmpdir}/{name}` into `out_buf` and returns the length.
@@ -4716,8 +4738,13 @@ fn extract_owner_uid() -> u32 {
 }
 
 /// Support embedded .node files. `Dead` when `path` is not an embedded file.
+/// When the file is embedded but the temp directory it would be extracted to
+/// is refused, `error_message` says why and the result is `Dead` too.
 #[unsafe(no_mangle)]
-pub extern "C" fn Bun__resolveEmbeddedNodeFile(path: &bun_core::String) -> bun_core::String {
+pub extern "C" fn Bun__resolveEmbeddedNodeFile(
+    path: &bun_core::String,
+    error_message: &mut bun_core::String,
+) -> bun_core::String {
     bun_jsc::mark_binding();
     if VirtualMachine::get().standalone_module_graph.is_none() {
         return bun_core::String::DEAD;
@@ -4725,8 +4752,13 @@ pub extern "C" fn Bun__resolveEmbeddedNodeFile(path: &bun_core::String) -> bun_c
     let input_path = path.to_utf8();
     let mut path_buf = bun_paths::path_buffer_pool::get();
     match resolve_embedded_file_to_buf(input_path.slice(), b"node", &mut path_buf[..]) {
-        Some(len) => bun_core::String::clone_utf8(&path_buf[..len]),
-        None => bun_core::String::DEAD,
+        Ok(Some(len)) => bun_core::String::clone_utf8(&path_buf[..len]),
+        Ok(None) => bun_core::String::DEAD,
+        Err(refusal) => {
+            *error_message =
+                bun_core::String::clone_utf8(&refusal.message(Fs::RealFS::tmpdir_path()));
+            bun_core::String::DEAD
+        }
     }
 }
 

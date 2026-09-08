@@ -671,8 +671,6 @@ function SecureContext(options): void {
 
 function createSecureContext(options) {
   if (options instanceof InternalSecureContext) return options;
-  // The setDefaultCACertificates() override is applied inside the
-  // InternalSecureContext constructor so every construction path honors it.
   // The native handle (SSL_CTX) is memoised inside `NativeSecureContext.intern`
   // by the per-VM `SSLContextCache`, so no JS-side hashing here. The JS wrapper
   // is built fresh because it carries the per-call `servername`.

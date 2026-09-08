@@ -1405,10 +1405,12 @@ SSL_CTX *us_ssl_ctx_build_raw(struct us_bun_socket_context_options_t options,
       return NULL;
     }
     ERR_clear_error();
-    SSL_CTX_set_verify(ssl_context,
-        options.reject_unauthorized ? (SSL_VERIFY_PEER | SSL_VERIFY_FAIL_IF_NO_PEER_CERT)
-                                    : SSL_VERIFY_PEER,
-        us_verify_callback);
+    if (options.ca_count > 0 || options.request_cert) {
+      SSL_CTX_set_verify(ssl_context,
+          options.reject_unauthorized ? (SSL_VERIFY_PEER | SSL_VERIFY_FAIL_IF_NO_PEER_CERT)
+                                      : SSL_VERIFY_PEER,
+          us_verify_callback);
+    }
   } else {
     /* No user CA: seed the shared default root store, like Node's
      * addRootCerts() when `ca` is absent - the handshake-time auto-chain and
@@ -1801,8 +1803,7 @@ void us_internal_ssl_attach(struct us_socket_t *s, SSL_CTX *ctx,
     if (SSL_CTX_get_verify_mode(ctx) == SSL_VERIFY_NONE) {
       SSL_set_verify(ssl, SSL_VERIFY_PEER, us_verify_callback);
     }
-    us_ex_idx_ensure();
-    if (!SSL_CTX_get_ex_data(ctx, us_ctx_user_ca_ex_idx)) {
+    if (!us_ssl_ctx_has_user_ca(ctx)) {
       /* Default context: give this socket the process-shared root bundle as
        * it is now, so a tls.setDefaultCACertificates() after the CTX was built
        * (fetch's thread CTX, an interned SecureContext) still applies. A

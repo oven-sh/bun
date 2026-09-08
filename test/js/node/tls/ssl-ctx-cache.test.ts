@@ -325,6 +325,32 @@ test("ca: [] is an empty trust set (distinct from ca: undefined)", async () => {
   }
 });
 
+test("ca: [] on a server does not ask clients for a certificate", async () => {
+  // Only `requestCert` makes a server request client certificates; an empty
+  // `ca` list is an empty trust set and nothing more.
+  const server = Bun.listen({
+    hostname: "127.0.0.1",
+    port: 0,
+    tls: { ...tlsCerts, ca: [] },
+    socket: {
+      open(socket) {
+        socket.end("hi");
+      },
+      data() {},
+    },
+  });
+  try {
+    const client = tls.connect({ port: server.port, host: "127.0.0.1", rejectUnauthorized: false });
+    let received = "";
+    client.setEncoding("utf8");
+    client.on("data", chunk => (received += chunk));
+    await once(client, "close");
+    expect(received).toBe("hi");
+  } finally {
+    server.stop(true);
+  }
+});
+
 test("setDefaultCACertificates() applies to a server's client-cert verification (no explicit ca)", async () => {
   // The server path (setSecureContext -> Bun.listen) does not go through
   // InternalSecureContext; the process-default override must still apply so

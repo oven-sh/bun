@@ -298,6 +298,7 @@ const us_system_certs_t &us_get_root_system_certs() {
 static std::mutex us_default_ca_mutex;
 static STACK_OF(X509) *us_root_certs_from_users = nullptr;
 static X509_STORE *us_shared_default_ca_store_cache = nullptr;
+static uint64_t us_default_ca_generation = 0;
 
 // https://github.com/nodejs/node/blob/v26.3.0/src/crypto/crypto_context.cc#L1261-L1310
 extern "C" int us_set_default_ca_certs(const char *const *pem, size_t count) {
@@ -325,6 +326,7 @@ extern "C" int us_set_default_ca_certs(const char *const *pem, size_t count) {
     sk_X509_pop_free(us_root_certs_from_users, X509_free);
   }
   us_root_certs_from_users = certs;
+  us_default_ca_generation++;
   if (us_shared_default_ca_store_cache != nullptr) {
     X509_STORE_free(us_shared_default_ca_store_cache);
     us_shared_default_ca_store_cache = nullptr;
@@ -402,27 +404,36 @@ extern "C" X509_STORE *us_get_default_ca_store() {
 // SSL_CTX's own private, initially-empty store instead), so roots parsed for
 // one connection's chain are already there for the next.
 extern "C" X509_STORE *us_get_shared_default_ca_store() {
-  {
-    std::lock_guard<std::mutex> lock(us_default_ca_mutex);
-    if (us_shared_default_ca_store_cache != nullptr) {
-      X509_STORE_up_ref(us_shared_default_ca_store_cache);
-      return us_shared_default_ca_store_cache;
+  for (;;) {
+    uint64_t generation;
+    {
+      std::lock_guard<std::mutex> lock(us_default_ca_mutex);
+      if (us_shared_default_ca_store_cache != nullptr) {
+        X509_STORE_up_ref(us_shared_default_ca_store_cache);
+        return us_shared_default_ca_store_cache;
+      }
+      generation = us_default_ca_generation;
     }
+    // Built outside the lock: us_get_default_ca_store() takes it to read the user set.
+    X509_STORE *built = us_get_default_ca_store();
+    if (built == nullptr) {
+      return nullptr;
+    }
+    std::lock_guard<std::mutex> lock(us_default_ca_mutex);
+    if (generation != us_default_ca_generation) {
+      // us_set_default_ca_certs() ran during the build: `built` holds the old roots.
+      X509_STORE_free(built);
+      continue;
+    }
+    if (us_shared_default_ca_store_cache == nullptr) {
+      us_shared_default_ca_store_cache = built;
+    } else {
+      // Another thread built it first: keep theirs.
+      X509_STORE_free(built);
+    }
+    X509_STORE_up_ref(us_shared_default_ca_store_cache);
+    return us_shared_default_ca_store_cache;
   }
-  // Built outside the lock: us_get_default_ca_store() takes it to read the user set.
-  X509_STORE *built = us_get_default_ca_store();
-  if (built == nullptr) {
-    return nullptr;
-  }
-  std::lock_guard<std::mutex> lock(us_default_ca_mutex);
-  if (us_shared_default_ca_store_cache == nullptr) {
-    us_shared_default_ca_store_cache = built;
-  } else {
-    // Another thread built it first (or a reset landed in between): keep theirs.
-    X509_STORE_free(built);
-  }
-  X509_STORE_up_ref(us_shared_default_ca_store_cache);
-  return us_shared_default_ca_store_cache;
 }
 
 extern "C" const char *us_get_default_ciphers() {

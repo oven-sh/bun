@@ -1041,6 +1041,29 @@ ${classes
   .join("\n")}
 }
 
+// Stop the controller pointing at its native sink, and nothing else. The owner
+// of a sink calls this when it gives up the last reference it holds: the
+// controller cell can outlive the sink, and both a late controller.write() and
+// ~controller (which calls finalize, releasing a reference the controller never
+// took) would then read freed memory. This is the same native-pointer pair the
+// end() and close() host fns run before they touch JS, so it cannot throw, run
+// user code, or change the piped stream's state. detach() is the variant that
+// also tells the stream the sink closed.
+extern "C" void JSSinkController__detachSinkPtr(JSC::EncodedJSValue controllerValue)
+{
+    JSC::JSValue value = JSC::JSValue::decode(controllerValue);
+${classes
+  .map(
+    name =>
+      `    if (auto* controller = dynamicDowncast<WebCore::${names(name).controller}>(value)) {
+        if (void* ptr = std::exchange(controller->m_sinkPtr, nullptr))
+            WebCore::${name}__controllerDetached(ptr, JSC::JSValue::encode(controller));
+        return;
+    }`,
+  )
+  .join("\n")}
+}
+
 namespace WebCore {
 
 void closeSinkControllerWithError(JSC::JSGlobalObject* globalObject, JSReadableSinkControllerBase* controller, JSC::JSValue error)

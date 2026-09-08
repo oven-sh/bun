@@ -1141,6 +1141,106 @@ int posix_fadvise(int fd, off_t offset, off_t len, int advice) {
         Bun.write(join(String(dir), "missing", "c"), await fetch(server.url), { createPath: false }),
       ).rejects.toThrow(expect.objectContaining({ code: "ENOENT" }));
     });
+
+    // A `type: "direct"` stream with an async `pull` is the one pump shape
+    // that never ends the sink controller itself. When `pull()` returns, the
+    // write has to end the sink: flush what the controller still buffers,
+    // close the file, close the stream, and detach the controller, which
+    // otherwise keeps pointing at a released FileSink.
+    it("ends a direct stream's sink when its pull() returns", async () => {
+      using dir = tempDir("bun-write-direct-pull-returns", {});
+      const dest = join(String(dir), "out.txt");
+      let ctrl;
+      const cancelled = [];
+      const stream = new ReadableStream({
+        type: "direct",
+        async pull(c) {
+          ctrl = c;
+          c.write("first ");
+          await c.flush();
+          // Buffered in the sink, never flushed by the stream itself.
+          c.write("second");
+        },
+        cancel(reason) {
+          cancelled.push(reason);
+        },
+      });
+      expect(await Bun.write(dest, new Response(stream))).toBe(12);
+      expect(await Bun.file(dest).text()).toBe("first second");
+      expect(cancelled).toEqual([undefined]);
+      expect(() => ctrl.write("late event")).toThrow(/already been closed/);
+      expect(() => ctrl.flush()).toThrow(/already been closed/);
+      expect(ctrl.end()).toBeUndefined();
+      Bun.gc(true);
+    });
+
+    // The same controller on the paths where the body fails. The sink is
+    // released when the pipe rejects, and the controller's own destructor
+    // reaches for it at the next GC. A subprocess, because that GC can be
+    // the one at process exit.
+    it("survives a GC after a direct stream or a generator body fails", async () => {
+      using dir = tempDir("bun-write-body-fails-gc", {});
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `
+            const dir = process.env.BUN_WRITE_DEST_DIR;
+            const lines = [];
+            const boom = () => new Error("boom");
+            try {
+              await Bun.write(
+                dir + "/gen.txt",
+                new Response(
+                  (async function* () {
+                    yield "a";
+                    throw boom();
+                  })(),
+                ),
+              );
+            } catch (e) {
+              lines.push("gen:" + e.message);
+            }
+            let ctrl;
+            try {
+              await Bun.write(
+                dir + "/direct.txt",
+                new Response(
+                  new ReadableStream({
+                    type: "direct",
+                    async pull(c) {
+                      ctrl = c;
+                      c.write("a");
+                      await c.flush();
+                      c.write("b");
+                      throw boom();
+                    },
+                  }),
+                ),
+              );
+            } catch (e) {
+              lines.push("direct:" + e.message);
+            }
+            lines.push("direct.txt:" + await Bun.file(dir + "/direct.txt").text());
+            try {
+              ctrl.write("late event");
+              lines.push("late:wrote");
+            } catch (e) {
+              lines.push("late:threw");
+            }
+            Bun.gc(true);
+            console.log(lines.join("\\n"));
+          `,
+        ],
+        env: { ...bunEnv, BUN_WRITE_DEST_DIR: String(dir) },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stdout.trim().split("\n")).toEqual(["gen:boom", "direct:boom", "direct.txt:ab", "late:threw"]);
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+    });
   });
 
   it("BunFile.name survives concurrent write() calls + GC", async () => {

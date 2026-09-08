@@ -540,6 +540,53 @@ impl FileSink {
         self.writer.with_mut(|w| w.end());
     }
 
+    /// `Bun.write(file, body)`: the JS pump that fed this sink has settled.
+    /// End the writer, so bytes it still buffers reach the file and the file
+    /// is closed. That close is also what reaches a sink controller still
+    /// attached as `source` (a direct stream whose `pull()` returned without
+    /// ending it): `on_close` closes the stream through the controller, and
+    /// the controller detaches itself from this sink.
+    ///
+    /// `promise` (the pump succeeded) settles once the writer has closed: with
+    /// the piped byte count, or with the write error if one happened.
+    pub(crate) fn end_js_pump(&self, promise: Option<bun_jsc::JSPromiseStrong>) {
+        if let Some(promise) = promise {
+            self.stream_done.set(promise);
+        }
+        // A failed flush is recorded and closes the writer too; `on_close`
+        // delivers the error.
+        let _ = self.end(None);
+        // The writer closed inside `end()` and `on_close` settled the promise,
+        // unless a flush is still draining. That drain holds the keep-alive
+        // ref and closes the writer when it completes.
+        if !self.must_be_kept_alive_until_eof.get() {
+            self.settle_stream_done();
+        }
+    }
+
+    /// The owner that piped a JS stream into this sink is dropping the last
+    /// reference on it, so the sink may be freed as soon as this returns.
+    ///
+    /// The pump writes through a JS sink controller cell that holds the sink as
+    /// a raw `m_sinkPtr` and calls back into it: from a late
+    /// `controller.write()`, and from the cell's own destructor
+    /// (`controllerDetached`, plus `finalize`, which releases a reference the
+    /// controller never took). The controller normally detached itself by now,
+    /// when the pump or `on_close` ended it, and cleared `source`. When it did
+    /// not (the close never reached it: a worker that is terminating, an
+    /// `onClose` that threw first, an fd the writer does not close), stop the
+    /// cell pointing here while the sink is still alive. Each of those calls
+    /// then finds a detached controller instead of freed memory.
+    ///
+    /// Runs no JS and cannot throw.
+    pub(crate) fn detach_js_controller(&self) {
+        if let streams::SourceHandle::JSController(controller) =
+            self.source.replace(streams::SourceHandle::None)
+        {
+            streams::controller_abi::detach_sink_ptr(controller);
+        }
+    }
+
     fn settle_stream_done(&self) {
         let mut promise = self.stream_done.replace(bun_jsc::JSPromiseStrong::empty());
         if !promise.has_value() {

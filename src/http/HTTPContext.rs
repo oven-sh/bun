@@ -305,6 +305,18 @@ fn ssl_config_hash(cfg: Option<&SSLConfig>) -> u64 {
     cfg.map_or(0, SSLConfig::content_hash)
 }
 
+/// What a pooled keep-alive socket holds in its receive queue, as reported by
+/// a peek that consumes nothing.
+enum ParkedInput {
+    /// Nothing: the peer wrote nothing that we have not read.
+    Empty,
+    /// Bytes that arrived while the socket sat in the pool. The client never
+    /// pipelines, so no request of ours asked for them.
+    Unsolicited,
+    /// The peer closed its side of the connection, or the socket is in error.
+    Closed,
+}
+
 struct ExistingSocket<const SSL: bool> {
     socket: HTTPSocket<SSL>,
     /// Present if the socket carries an established CONNECT tunnel.
@@ -782,6 +794,29 @@ impl<const SSL: bool> HTTPContext<SSL> {
         }
     }
 
+    /// Read a pooled socket's receive queue without consuming it.
+    ///
+    /// The HTTP thread starts queued requests in `drain_events`, which runs
+    /// before the loop polls its sockets again. So a pooled socket can hold
+    /// bytes that uSockets has not yet dispatched to [`Handler::on_data`],
+    /// where they would evict it. Writing a request onto such a socket makes
+    /// the response parser read those bytes as that request's response.
+    fn peek_parked_input(socket: HTTPSocket<SSL>) -> ParkedInput {
+        let fd = socket.fd();
+        if !fd.is_valid() {
+            // Not a uSockets socket (a JS duplex, or a named pipe on
+            // Windows): there is no descriptor to peek.
+            return ParkedInput::Empty;
+        }
+        let mut byte = [0u8; 1];
+        match bun_sys::peek_non_block(fd, &mut byte) {
+            Ok(0) => ParkedInput::Closed,
+            Ok(_) => ParkedInput::Unsolicited,
+            Err(err) if err.errno == bun_sys::E::EAGAIN as _ => ParkedInput::Empty,
+            Err(_) => ParkedInput::Closed,
+        }
+    }
+
     fn find_in<const N: usize>(
         pool: &HiveArray<PooledSocket<SSL>, N>,
         key: &PoolKey<'_>,
@@ -874,6 +909,27 @@ impl<const SSL: bool> HTTPContext<SSL> {
                 if http_socket.is_shutdown() || http_socket.get_error() != 0 {
                     Self::terminate_socket(http_socket);
                     continue;
+                }
+
+                // An HTTP/2 session binds every response to a stream id and
+                // feeds idle frames to `on_idle_data`, so bytes waiting on one
+                // cannot be taken for another stream's response.
+                if socket.h2_session.is_none() {
+                    match Self::peek_parked_input(http_socket) {
+                        ParkedInput::Empty => {}
+                        ParkedInput::Unsolicited => {
+                            bun_core::scoped_log!(
+                                HTTPContext,
+                                "Unread data on a pooled socket at checkout, evicting"
+                            );
+                            Self::terminate_socket(http_socket);
+                            continue;
+                        }
+                        ParkedInput::Closed => {
+                            Self::close_socket(http_socket);
+                            continue;
+                        }
+                    }
                 }
 
                 // Transfer tunnel ownership (the parked strong ref) to the caller.

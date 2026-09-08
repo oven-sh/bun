@@ -1148,6 +1148,9 @@ pub mod ws2_32 {
     pub const SOCKET_ERROR: c_int = -1;
     /// `POLLWRNORM` (`winsock2.h`).
     pub const POLLWRNORM: i16 = 0x0010;
+    /// `MSG_PEEK` (`winsock2.h`): copy the data out without removing it from
+    /// the receive queue.
+    pub const MSG_PEEK: c_int = 0x0002;
 }
 // ──────────────────────────────────────────────────────────────────────────
 // Win32Error — a transparent newtype with associated consts so unmapped

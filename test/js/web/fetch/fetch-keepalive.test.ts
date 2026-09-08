@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, isWindows, tls } from "harness";
+import { bunEnv, bunExe, isLinux, isWindows, tls } from "harness";
 import { once } from "node:events";
 import { createServer } from "node:net";
 
@@ -432,6 +432,176 @@ test("an early response to a streaming POST closes the socket instead of pooling
     exitCode: 0,
   });
 });
+
+// A response that the origin pushes onto an idle pooled connection must never
+// answer the next request. The HTTP thread starts a queued request before it
+// polls its sockets again, so those bytes can still be sitting unread in the
+// receive queue when the pool hands that connection out. The request goes out
+// on it and the parser reads the pushed response as the answer.
+//
+// Three surfaces, one pool. Through a plain-HTTP proxy a single pooled
+// connection serves every origin, so there the pushed response answers a
+// request to a DIFFERENT origin. `Bun.S3Client` runs on the same client, where
+// the same window returns one object's bytes for another object's key.
+//
+// The megabyte bodies are what makes this fire on nearly every iteration
+// instead of once in a while: the origin answers eight held requests and pushes
+// the unsolicited response in one JS turn, so the HTTP thread is inside one
+// long read dispatch and cannot poll the parked connection in between. They go
+// to a second origin, dialed directly, because a request to the first one would
+// take the poisoned connection out of the pool itself. Subprocess so the pool
+// starts empty.
+//
+// Linux only, because the staging needs the pushed bytes to be in the client's
+// receive queue before the next request goes out: a loopback write() there
+// hands them over before it returns. The Windows stack takes them over a
+// moment later, behind the megabytes of load above, so the push can land after
+// the request was already written, which is the in-flight case no client-side
+// check can cover (node and curl misattribute that one too). The fix itself is
+// platform-independent: on Windows this staging reproduces 3 to 8 of 16
+// without it and 0 to 1 of 16 with it.
+const unsolicitedResponse = (mode: "direct" | "proxy" | "s3") => `
+  const CRLF = "\\r\\n";
+  const head = (extra, len) => "HTTP/1.1 200 OK" + CRLF + extra + "Content-Length: " + len + CRLF + CRLF;
+  const short = extra => head(extra, 5);
+  const close = "Connection: close" + CRLF;
+  const bulk = new Uint8Array(1024 * 1024);
+  let idle = null;
+  let reusedPoisoned = 0;
+
+  const origin = handler =>
+    Bun.listen({
+      hostname: "127.0.0.1",
+      port: 0,
+      socket: {
+        open(socket) { socket.data = { buf: "" }; },
+        data(socket, chunk) {
+          socket.data.buf += chunk.toString("latin1");
+          let i;
+          while ((i = socket.data.buf.indexOf(CRLF + CRLF)) >= 0) {
+            const request = socket.data.buf.slice(0, i);
+            socket.data.buf = socket.data.buf.slice(i + 4);
+            handler(socket, request);
+          }
+        },
+        error() {}, close() {}, drain() {},
+      },
+    });
+
+  // Answers /r1 and /r2 as an origin, as a proxy and as an S3 endpoint: the
+  // request line carries the path in all three ("GET /r1", "GET
+  // http://a.test/r1", "GET /bucket/r1?X-Amz-...").
+  const target = origin((socket, request) => {
+    if (request.slice(0, request.indexOf(CRLF)).includes("/r1")) {
+      socket.write(short("") + "REAL1");
+      idle = socket;
+      return;
+    }
+    // A request on the connection we pushed the response onto means the pool
+    // handed that connection out.
+    if (socket.data.poisoned) reusedPoisoned++;
+    socket.write(short(close) + "REAL2");
+  });
+
+  // Holds every request until eight are in flight, then answers them together.
+  let held = [];
+  let onFull = null;
+  const busy = origin(socket => {
+    held.push(socket);
+    if (held.length === 8 && onFull) onFull();
+  });
+  const answer = socket => {
+    socket.write(head(close, bulk.byteLength));
+    socket.write(bulk);
+  };
+
+  const targetUrl = "http://127.0.0.1:" + target.port;
+  const busyUrl = "http://127.0.0.1:" + busy.port;
+  const mode = ${JSON.stringify(mode)};
+  let first, second;
+  if (mode === "s3") {
+    const s3 = new Bun.S3Client({
+      accessKeyId: "key",
+      secretAccessKey: "secret",
+      bucket: "bucket",
+      endpoint: targetUrl,
+    });
+    first = () => s3.file("r1").text();
+    second = () => s3.file("r2").text();
+  } else if (mode === "proxy") {
+    first = () => fetch("http://a.test/r1", { proxy: targetUrl }).then(r => r.text());
+    second = () => fetch("http://b.test/r2", { proxy: targetUrl }).then(r => r.text());
+  } else {
+    first = () => fetch(targetUrl + "/r1").then(r => r.text());
+    second = () => fetch(targetUrl + "/r2").then(r => r.text());
+  }
+
+  let poisoned = 0;
+  const bodies = new Set();
+  for (let i = 0; i < 16; i++) {
+    if ((await first()) !== "REAL1") throw new Error("request 1 lost REAL1");
+    held = [];
+    const full = new Promise(r => (onFull = r));
+    const load = Array.from({ length: 8 }, () => fetch(busyUrl + "/bulk").then(r => r.bytes()));
+    await full;
+    // The HTTP thread has megabytes to read now, and nothing it reads here
+    // makes it poll again.
+    held.forEach(answer);
+    // The connection that served /r1 is parked in the pool.
+    idle.data.poisoned = true;
+    const pushed = short("") + "PWNED";
+    if (idle.write(pushed) !== pushed.length) throw new Error("the pushed response was not written whole");
+    // Straight into the next request: a loopback write() above already put
+    // the bytes in the peer's receive queue, and this thread must not yield,
+    // because any turn of its loop hands the HTTP thread the time it needs to
+    // finish the load above and poll.
+    const body = await second();
+    bodies.add(body);
+    if (body !== "REAL2") poisoned++;
+    await Promise.all(load);
+  }
+  target.stop();
+  busy.stop();
+  console.log(JSON.stringify({ poisoned, reusedPoisoned, bodies: [...bodies] }));
+  process.exit(0);
+`;
+
+test.concurrent.skipIf(!isLinux).each([
+  ["a pooled connection", "direct"],
+  ["a pooled proxy connection that served another origin", "proxy"],
+  ["the S3 client's pooled connection", "s3"],
+] as [label: string, mode: "direct" | "proxy" | "s3"][])(
+  "an unsolicited response on %s does not answer the next request",
+  async (_, mode) => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", unsolicitedResponse(mode)],
+      // An explicit `proxy:` wins over the environment, and the S3 client does
+      // not honour NO_PROXY at all, so clear the lot: an inherited proxy would
+      // hijack the requests to these stub origins.
+      env: {
+        ...bunEnv,
+        NO_PROXY: undefined,
+        no_proxy: undefined,
+        HTTP_PROXY: undefined,
+        http_proxy: undefined,
+        HTTPS_PROXY: undefined,
+        https_proxy: undefined,
+      },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const result = stdout.startsWith("{") ? JSON.parse(stdout.trim()) : { stdout, stderr };
+    expect({ result, exitCode }).toEqual({
+      // Without the fix most iterations ride the poisoned connection and are
+      // answered with the pushed response: 4 to 13 of the 16, with
+      // reusedPoisoned the same and bodies ["PWNED", "REAL2"].
+      result: { poisoned: 0, reusedPoisoned: 0, bodies: ["REAL2"] },
+      exitCode: 0,
+    });
+  },
+);
 
 // Negative contract for the gate above: a streamed POST whose chunked body
 // completed (terminator written) before the response arrived must still hand

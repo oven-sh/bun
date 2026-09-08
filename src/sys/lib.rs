@@ -3072,6 +3072,11 @@ mod posix_impl {
     pub fn recv_non_block(fd: Fd, buf: &mut [u8]) -> Maybe<usize> {
         recv(fd, buf, MSG_DONTWAIT)
     }
+    /// Report what is in the socket's receive queue without consuming it.
+    /// `Ok(0)` means the peer closed its side, as it does for [`recv`].
+    pub fn peek_non_block(fd: Fd, buf: &mut [u8]) -> Maybe<usize> {
+        recv(fd, buf, libc::MSG_PEEK | MSG_DONTWAIT)
+    }
     /// `MSG_DONTWAIT | MSG_NOSIGNAL` so a broken-pipe write
     /// returns EPIPE instead of raising SIGPIPE.
     pub fn send_non_block(fd: Fd, buf: &[u8]) -> Maybe<usize> {
@@ -4361,6 +4366,15 @@ mod windows_impl {
     }
     pub fn recv_non_block(fd: Fd, buf: &mut [u8]) -> Maybe<usize> {
         recv(fd, buf, 0)
+    }
+    /// Report what is in the socket's receive queue without consuming it.
+    /// `Ok(0)` means the peer closed its side, as it does for [`recv`].
+    ///
+    /// Winsock has no `MSG_DONTWAIT`. uSockets keeps every socket
+    /// non-blocking (`ioctlsocket(FIONBIO)` in `win32_set_nonblocking`), so
+    /// the call returns `WSAEWOULDBLOCK` instead of waiting.
+    pub fn peek_non_block(fd: Fd, buf: &mut [u8]) -> Maybe<usize> {
+        recv(fd, buf, w::ws2_32::MSG_PEEK)
     }
     pub fn send_non_block(fd: Fd, buf: &[u8]) -> Maybe<usize> {
         send(fd, buf, 0)

@@ -1499,27 +1499,13 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
       expect(out).toEqual(expect.stringContaining("bun install v1."));
     });
 
-    // `lifecycle-postinstall-needs-toolchain` has a postinstall script that exits with 7
-    // unless LIFECYCLE_TOOLCHAIN is set, and writes built.txt into the package when it
-    // succeeds. With LIFECYCLE_BLOCK_PID_FILE set it writes its pid there instead and
-    // waits to be killed.
     for (const linker of ["hoisted", "isolated"] as const) {
-      async function setupNeedsToolchainTest() {
+      async function setupLinkerTest(packageJsonContents: object) {
         const ctx = await setupTest();
         const { packageDir, packageJson, env } = ctx;
         const testEnv = forceWaiterThread ? { ...env, BUN_FEATURE_FLAG_FORCE_WAITER_THREAD: "1" } : env;
 
-        await writeFile(
-          packageJson,
-          JSON.stringify({
-            name: "foo",
-            version: "1.0.0",
-            dependencies: {
-              "lifecycle-postinstall-needs-toolchain": "1.0.0",
-            },
-            trustedDependencies: ["lifecycle-postinstall-needs-toolchain"],
-          }),
-        );
+        await writeFile(packageJson, JSON.stringify(packageJsonContents));
 
         const spawnInstall = (extraEnv: Record<string, string> = {}) =>
           spawn({
@@ -1536,12 +1522,25 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
           return { out: await stdout.text(), err: await stderr.text(), exitCode: await exited };
         };
 
+        return { ctx, packageDir, spawnInstall, install };
+      }
+
+      // `lifecycle-postinstall-needs-toolchain` has a postinstall script that exits with 7
+      // unless LIFECYCLE_TOOLCHAIN is set, and writes built.txt into the package when it
+      // succeeds. With LIFECYCLE_BLOCK_PID_FILE set it writes its pid there instead and
+      // waits to be killed.
+      async function setupNeedsToolchainTest() {
+        const result = await setupLinkerTest({
+          name: "foo",
+          version: "1.0.0",
+          dependencies: {
+            "lifecycle-postinstall-needs-toolchain": "1.0.0",
+          },
+          trustedDependencies: ["lifecycle-postinstall-needs-toolchain"],
+        });
         return {
-          ctx,
-          packageDir,
-          pkgDir: join(packageDir, "node_modules", "lifecycle-postinstall-needs-toolchain"),
-          spawnInstall,
-          install,
+          ...result,
+          pkgDir: join(result.packageDir, "node_modules", "lifecycle-postinstall-needs-toolchain"),
         };
       }
 
@@ -1638,7 +1637,110 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
           }
         },
       );
+
+      // The retry above keys off a mark written before a trusted package's scripts
+      // run. A trusted package that has no scripts, or only a preinstall script (which
+      // the isolated linker finishes on a separate path), must not keep that mark,
+      // or every later install would reinstall it.
+      test(`trusted dependencies whose scripts finished are not installed again (${linker} linker)`, async () => {
+        const { ctx, packageDir, install } = await setupLinkerTest({
+          name: "foo",
+          version: "1.0.0",
+          dependencies: {
+            "no-deps": "1.0.0",
+            "lifecycle-preinstall": "1.0.0",
+          },
+          trustedDependencies: ["no-deps", "lifecycle-preinstall"],
+        });
+        using _ = ctx;
+        const preinstallTxt = join(packageDir, "node_modules", "lifecycle-preinstall", "preinstall.txt");
+
+        {
+          const { out, err, exitCode } = await install();
+          expect(err).not.toContain("error:");
+          expect(err).toContain("Saved lockfile");
+          expect(out).not.toContain("(no changes)");
+          expect(await file(preinstallTxt).text()).toBe("preinstall!");
+          expect(exitCode).toBe(0);
+        }
+        {
+          const { out, err, exitCode } = await install();
+          expect(err).not.toContain("error:");
+          expect(out).toContain("(no changes)");
+          // the preinstall script rewrites this file with other contents when it runs again
+          expect(await file(preinstallTxt).text()).toBe("preinstall!");
+          expect(exitCode).toBe(0);
+        }
+      });
     }
+
+    // When an optional dependency's lifecycle script fails, bun deletes the package so
+    // that it counts as absent. That is only right for a package bun copied out of its
+    // cache: a `link:` dependency's script runs in the linked package's own directory
+    // (`node_modules/<pkg>` is a symlink to it, and on Windows the script cwd resolves
+    // through it), so deleting there removes the user's source files.
+    test("a failing lifecycle script of an optional link: dependency leaves the linked package in place", async () => {
+      using ctx = await setupTest();
+      const { packageDir, packageJson, env } = ctx;
+      const testEnv = {
+        ...(forceWaiterThread ? { ...env, BUN_FEATURE_FLAG_FORCE_WAITER_THREAD: "1" } : env),
+        BUN_INSTALL_GLOBAL_DIR: join(packageDir, "global-dir"),
+      };
+
+      const linkedDir = join(packageDir, "linked-pkg");
+      await mkdir(linkedDir);
+      await Promise.all([
+        writeFile(
+          join(linkedDir, "package.json"),
+          JSON.stringify({ name: "linked-pkg", version: "1.0.0", scripts: { postinstall: "exit 1" } }),
+        ),
+        writeFile(join(linkedDir, "index.js"), "module.exports = 1;"),
+        writeFile(
+          packageJson,
+          JSON.stringify({
+            name: "foo",
+            version: "1.0.0",
+            optionalDependencies: { "linked-pkg": "link:linked-pkg" },
+            trustedDependencies: ["linked-pkg"],
+          }),
+        ),
+      ]);
+
+      {
+        await using proc = spawn({
+          cmd: [bunExe(), "link"],
+          cwd: linkedDir,
+          stdout: "pipe",
+          stdin: "ignore",
+          stderr: "pipe",
+          env: testEnv,
+        });
+        const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect(err).not.toContain("error:");
+        expect(out).toContain(`Success! Registered "linked-pkg"`);
+        expect(exitCode).toBe(0);
+      }
+
+      await using proc = spawn({
+        cmd: [bunExe(), "install"],
+        cwd: packageDir,
+        stdout: "pipe",
+        stdin: "ignore",
+        stderr: "pipe",
+        env: testEnv,
+      });
+      const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      // an optional dependency's failing script is not an install error
+      expect(err).not.toContain("error:");
+      expect(out).toContain("1 package installed");
+      expect(exitCode).toBe(0);
+      expect(
+        await Promise.all([
+          file(join(linkedDir, "index.js")).text(),
+          file(join(packageDir, "node_modules", "linked-pkg", "index.js")).text(),
+        ]),
+      ).toEqual(["module.exports = 1;", "module.exports = 1;"]);
+    });
 
     test("failing root lifecycle script should print output correctly", async () => {
       using ctx = await setupTest();

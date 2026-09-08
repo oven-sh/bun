@@ -632,8 +632,7 @@ mod draft {
                                 unesc.push(b'$');
                             }
                             b';' | b'#' => {
-                                // ini cuts an unquoted string at the first unescaped
-                                // comment char and trims what is left
+                                // the rest of the line is a comment (ini `unsafe()`)
                                 let kept = bun_core::trim_right(&unesc, b" \n\r\t").len();
                                 unesc.truncate(kept);
                                 did_any_escape = true;

@@ -697,6 +697,192 @@ devTest("css import before create project relative", {
     await dev.fetch("/").expect.toContain("HELLO");
   },
 });
+// https://github.com/oven-sh/bun/issues/18258
+devTest("css module exports its class names to the importer", {
+  files: {
+    "index.html": emptyHtmlFile({
+      scripts: ["index.ts"],
+      body: `<h1>Hello</h1>`,
+    }),
+    "styles.module.css": `
+      .title {
+        color: red;
+      }
+    `,
+    "index.ts": `
+      import styles from "./styles.module.css";
+      document.querySelector("h1").className = styles.title;
+      globalThis.evalCount = (globalThis.evalCount ?? 0) + 1;
+      globalThis.classKeys = Object.keys(styles).sort().join(",");
+      console.log("class:" + styles.title);
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    const msg = await c.getStringMessage();
+    assert(msg.startsWith("class:title_"), `expected a scoped class name, got ${JSON.stringify(msg)}`);
+    const className = msg.slice("class:".length);
+    await c.style("." + className).color.expect.toBe("red");
+
+    // The scoped name only depends on the file path, so a style edit keeps the
+    // class map. It must arrive as a CSS-only update: no reload, no re-evaluation.
+    await dev.patch("styles.module.css", { find: "red", replace: "blue" });
+    await c.style("." + className).color.expect.toBe("#00f");
+    expect(await c.js<[string, number]>`[document.querySelector("h1").className, globalThis.evalCount]`).toEqual([
+      className,
+      1,
+    ]);
+
+    // A new class changes the class map. The importer does not accept hot
+    // updates, so the page reloads and evaluates against the new map.
+    await c.expectReload(async () => {
+      await dev.write(
+        "styles.module.css",
+        `
+          .extra { font-weight: 700; }
+          .title { color: blue; }
+        `,
+      );
+    });
+    await c.expectMessage("class:" + className);
+    await c.style("." + className).color.expect.toBe("#00f");
+    expect(await c.js<string>`globalThis.classKeys`).toBe("extra,title");
+  },
+});
+devTest("css module import shapes", {
+  files: {
+    "index.html": emptyHtmlFile({
+      scripts: ["index.ts"],
+    }),
+    "shapes.module.css": `
+      .a { color: red; }
+      .b-c { color: blue; }
+    `,
+    "empty.module.css": `/* no local names */`,
+    "plain.css": `
+      body { background-color: green; }
+    `,
+    "index.ts": `
+      import styles, { a } from "./shapes.module.css";
+      import * as ns from "./shapes.module.css";
+      import empty from "./empty.module.css";
+      import "./plain.css";
+      const dyn = await import("./shapes.module.css");
+      const req = require("./shapes.module.css");
+      console.log(JSON.stringify({
+        named: a === styles.a,
+        ns: ns.default === styles && ns.a === a,
+        dyn: dyn.default === styles && dyn.a === a,
+        req: req === styles,
+        keys: Object.keys(styles).sort(),
+        scoped: styles.a.startsWith("a_") && styles["b-c"].startsWith("b-c_"),
+        empty,
+      }));
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage(
+      JSON.stringify({ named: true, ns: true, dyn: true, req: true, keys: ["a", "b-c"], scoped: true, empty: {} }),
+    );
+    await c.style("body").backgroundColor.expect.toBe("green");
+  },
+});
+devTest("css module class list edits reach an accepting importer", {
+  files: {
+    "index.html": emptyHtmlFile({
+      scripts: ["index.ts"],
+    }),
+    "styles.module.css": `
+      .a { color: red; }
+    `,
+    "index.ts": `
+      import styles from "./styles.module.css";
+      console.log("keys:" + Object.keys(styles).sort().join(","));
+      import.meta.hot.accept();
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage("keys:a");
+    await dev.write(
+      "styles.module.css",
+      `
+        .a { color: red; }
+        .b { color: blue; }
+      `,
+    );
+    await c.expectMessage("keys:a,b");
+    await dev.write("styles.module.css", ` `, { dedent: false });
+    await c.expectMessage("keys:");
+    await dev.write("styles.module.css", `.b { color: blue; }`);
+    await c.expectMessage("keys:b");
+  },
+});
+devTest("css module binding survives an edit of the importer", {
+  files: {
+    "index.html": emptyHtmlFile({
+      scripts: ["index.ts"],
+    }),
+    "styles.module.css": `
+      .a { color: red; }
+    `,
+    "index.ts": `
+      import styles from "./styles.module.css";
+      console.log("v1:" + Object.keys(styles).join(","));
+      import.meta.hot.accept();
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage("v1:a");
+    // The css module is cached in the incremental graph and is not parsed
+    // again here. The importer must still list it as a dependency.
+    await dev.patch("index.ts", { find: "v1", replace: "v2" });
+    await c.expectMessage("v2:a");
+    await dev.patch("index.ts", { find: "v2", replace: "v3" });
+    await c.expectMessage("v3:a");
+    await dev.patch("styles.module.css", { find: "red", replace: "blue" });
+    await dev.write(
+      "styles.module.css",
+      `
+        .a { color: red; }
+        .b { color: blue; }
+      `,
+    );
+    await c.expectMessage("v3:a,b");
+  },
+});
+devTest("css module composes from another file", {
+  files: {
+    "index.html": emptyHtmlFile({
+      scripts: ["index.ts"],
+      body: `<button>ok</button>`,
+    }),
+    "base.module.css": `
+      .base { font-weight: 700; }
+    `,
+    "button.module.css": `
+      .btn {
+        composes: base from "./base.module.css";
+        color: red;
+      }
+    `,
+    "index.ts": `
+      import styles from "./button.module.css";
+      document.querySelector("button").className = styles.btn;
+      console.log("btn:" + styles.btn);
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    const msg = await c.getStringMessage();
+    const classes = msg.slice("btn:".length).split(" ").sort();
+    expect(classes).toEqual([expect.stringMatching(/^base_/), expect.stringMatching(/^btn_/)]);
+    await c.style("." + classes[1]).color.expect.toBe("red");
+    await c.style("." + classes[0]).fontWeight.expect.toBe("700");
+  },
+});
 
 function extractCssUrl(backgroundImage: string): string {
   const url = backgroundImage.match(/url\((['"])(.*?)\1\)/);

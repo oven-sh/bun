@@ -18,24 +18,16 @@ use bun_collections::DynamicBitSetUnmanaged as BitSet;
 
 type SymbolList<'a> = bun_ast::symbol::List<'a>;
 
-pub(crate) fn generate_code_for_lazy_export(
+/// Fills the lazy-export object of a CSS file's JS stub with the file's
+/// class-name map (`local_scope` plus `composes`). A no-op for other
+/// lazy-export files. The dev server calls this on its own because it skips
+/// `generate_code_for_lazy_export` and prints the `SLazyExport` directly.
+pub(crate) fn populate_css_module_lazy_export(
     this: &mut LinkerContext,
     source_index: IndexInt,
 ) -> Result<(), AllocError> {
-    let mut exports_kind = this.graph.ast.items_exports_kind()[source_index as usize];
-    // The dev server's module format represents lazy-export modules (JSON,
-    // TOML, CSS modules, ...) as CommonJS modules evaluated by the HMR
-    // runtime, so always generate the `module.exports = ...` form below.
-    // The ESM form would synthesize `export` parts that
-    // `print_dev_server_module` cannot represent.
-    if this.options.output_format == crate::options::OutputFormat::InternalBakeDev
-        && exports_kind != bun_ast::ExportsKind::Cjs
-    {
-        exports_kind = bun_ast::ExportsKind::Cjs;
-        this.graph.ast.items_exports_kind_mut()[source_index as usize] = exports_kind;
-    }
     // Take `parts` as a raw pointer *before* the
-    // long-lived immutable `items_css()` borrow below; re-borrowed again later as needed.
+    // long-lived immutable `items_css()` borrow below.
     let parts: *mut [Part] = this.graph.ast.items_parts_mut()[source_index as usize].as_mut_slice();
     // SAFETY: parse_graph backref; raw deref because `all_sources` is held
     // across `&mut *this.log` below (split borrow).
@@ -44,19 +36,17 @@ pub(crate) fn generate_code_for_lazy_export(
     let maybe_css_ast: Option<&BundlerStyleSheet> = all_css_asts[source_index as usize].as_deref();
 
     // SAFETY: `parts` is a stable SoA column slice valid for the link pass.
-    if unsafe { (&*parts).len() } < 1 {
-        panic!("Internal error: expected at least one part for lazy export");
+    if unsafe { (&*parts).len() } < 2 {
+        panic!("Internal error: expected a lazy export part");
     }
 
-    // SAFETY: `parts.ptr[1]` — Vec raw indexing; using index 1 here.
+    // SAFETY: index 1 is in bounds (checked above).
     let part: &mut Part = unsafe { &mut (*parts)[1] };
 
     // `Part.stmts: StoreSlice<Stmt>` — safe `Deref` to `&[Stmt]`.
     if part.stmts.is_empty() {
         panic!("Internal error: expected at least one statement in the lazy export");
     }
-
-    let module_ref = this.graph.ast.items_module_ref()[source_index as usize];
 
     // Handle css modules
     //
@@ -363,6 +353,34 @@ pub(crate) fn generate_code_for_lazy_export(
             }
         }
     }
+    Ok(())
+}
+
+pub(crate) fn generate_code_for_lazy_export(
+    this: &mut LinkerContext,
+    source_index: IndexInt,
+) -> Result<(), AllocError> {
+    let mut exports_kind = this.graph.ast.items_exports_kind()[source_index as usize];
+    // The dev server's module format represents lazy-export modules (JSON,
+    // TOML, CSS modules, ...) as CommonJS modules evaluated by the HMR
+    // runtime, so always generate the `module.exports = ...` form below.
+    // The ESM form would synthesize `export` parts that
+    // `print_dev_server_module` cannot represent.
+    if this.options.output_format == crate::options::OutputFormat::InternalBakeDev
+        && exports_kind != bun_ast::ExportsKind::Cjs
+    {
+        exports_kind = bun_ast::ExportsKind::Cjs;
+        this.graph.ast.items_exports_kind_mut()[source_index as usize] = exports_kind;
+    }
+
+    populate_css_module_lazy_export(this, source_index)?;
+
+    let parts: *mut [Part] = this.graph.ast.items_parts_mut()[source_index as usize].as_mut_slice();
+    // SAFETY: stable SoA column slice valid for the link pass; index 1 was
+    // bounds-checked by `populate_css_module_lazy_export`.
+    let part: &mut Part = unsafe { &mut (*parts)[1] };
+
+    let module_ref = this.graph.ast.items_module_ref()[source_index as usize];
 
     let stmt: Stmt = part.stmts[0];
     let StmtData::SLazyExport(lazy) = stmt.data else {

@@ -87,6 +87,13 @@ pub enum Content {
     /// First file in a CSS bundle (the one HTML/JS points into). Re-bundles
     /// of any downstream `CssChild` re-queue the root.
     CssRoot(u64),
+    /// A `CssRoot` that is a client CSS module. Next to the stylesheet asset
+    /// it holds the module that exports the class-name map, so that
+    /// `import styles from "./x.module.css"` resolves in the HMR runtime.
+    CssModule {
+        css: u64,
+        code: Box<[u8]>,
+    },
     CssChild,
 }
 
@@ -95,6 +102,14 @@ impl Content {
     fn js_code(&self) -> Option<&[u8]> {
         match self {
             Content::Js(c) | Content::Asset(c) => Some(c),
+            Content::CssModule { code, .. } => Some(code),
+            _ => None,
+        }
+    }
+    #[inline]
+    fn css_root(&self) -> Option<u64> {
+        match self {
+            Content::CssRoot(css) | Content::CssModule { css, .. } => Some(*css),
             _ => None,
         }
     }
@@ -104,7 +119,7 @@ impl Content {
             Content::Unknown => FileKind::Unknown,
             Content::Js(_) => FileKind::Js,
             Content::Asset(_) => FileKind::Asset,
-            Content::CssRoot(_) | Content::CssChild => FileKind::Css,
+            Content::CssRoot(_) | Content::CssModule { .. } | Content::CssChild => FileKind::Css,
         }
     }
 }
@@ -134,6 +149,20 @@ impl File {
     #[inline]
     pub(crate) fn file_kind(&self) -> FileKind {
         self.kind
+    }
+
+    /// What the bundler may assume about this file when it skips parsing it.
+    pub(crate) fn cache_kind(&self) -> bun_bundler::bake_types::CacheKind {
+        use bun_bundler::bake_types::CacheKind;
+        match self.content {
+            Content::CssModule { .. } => CacheKind::CssModule,
+            _ => match self.kind {
+                FileKind::Unknown => CacheKind::Unknown,
+                FileKind::Js => CacheKind::Js,
+                FileKind::Asset => CacheKind::Asset,
+                FileKind::Css => CacheKind::Css,
+            },
+        }
     }
 
     /// `ServerFile.stopsDependencyTrace` / `ClientFile.stopsDependencyTrace`.
@@ -453,7 +482,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
             Content::Js(_) | Content::Asset(_) => {
                 // Box<[u8]> dropped here.
             }
-            Content::CssRoot(_) | Content::CssChild => {
+            Content::CssRoot(_) | Content::CssModule { .. } | Content::CssChild => {
                 if css == FreeCssMode::UnrefCss {
                     // SAFETY: see `owner()`; touches `assets` sibling only.
                     unsafe { (*self.owner()).assets.unref_by_path(key) };
@@ -604,6 +633,11 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
             Side::Client => {
                 let mut html_route_bundle_index: Option<route_bundle::Index> = None;
                 let mut is_special_framework_file = false;
+                // A client CSS module receives two chunks per bundle: the module
+                // with its class-name map in the JS pass, then its stylesheet in
+                // the CSS pass. Each pass keeps the half that the other one owns.
+                let mut css_module_code: Option<(Box<[u8]>, packed_map::Shared)> = None;
+                let mut css_root: Option<u64> = None;
 
                 if found_existing {
                     // Note: take the existing slot out so `free_file_content`
@@ -611,6 +645,13 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
                     let mut existing = core::mem::take(
                         &mut self.bundled_files.values_mut()[file_index.get() as usize],
                     );
+                    css_root = existing.content.css_root();
+                    if let Content::CssModule { code, .. } = &mut existing.content {
+                        css_module_code = Some((
+                            core::mem::take(code),
+                            core::mem::take(&mut existing.source_map),
+                        ));
+                    }
                     self.free_file_content(key, &mut existing, FreeCssMode::IgnoreCss);
 
                     if existing.failed {
@@ -630,13 +671,29 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
                 }
 
                 let (new_content, new_source_map, code_len) = match content {
-                    ReceiveChunkContent::Css(css) => {
-                        (Content::CssRoot(css), packed_map::Shared::None, None)
-                    }
+                    ReceiveChunkContent::Css(css) => match css_module_code {
+                        Some((code, source_map)) => {
+                            (Content::CssModule { css, code }, source_map, None)
+                        }
+                        None => (Content::CssRoot(css), packed_map::Shared::None, None),
+                    },
                     ReceiveChunkContent::Js { code, source_map } => {
                         let len = code.len();
-                        let kind = if ctx.loaders[index.get() as usize].is_javascript_like() {
+                        let loader = ctx.loaders[index.get() as usize];
+                        // An unchanged class-name map stays out of the hot
+                        // update, so that a style-only edit of a CSS module
+                        // swaps the stylesheet without re-evaluating importers.
+                        let unchanged = css_module_code
+                            .as_ref()
+                            .is_some_and(|(prior, _)| strings::eql(prior, &code));
+                        let kind = if loader.is_javascript_like() {
                             Content::Js(code)
+                        } else if loader.is_css() {
+                            // The CSS pass of this bundle delivers the stylesheet next.
+                            Content::CssModule {
+                                css: css_root.unwrap_or(0),
+                                code,
+                            }
                         } else {
                             Content::Asset(code)
                         };
@@ -653,16 +710,13 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
                             _ => {
                                 // Must precompute line count so source-map
                                 // concatenation knows how many newlines to skip.
-                                let count = match &kind {
-                                    Content::Js(c) | Content::Asset(c) => {
-                                        strings::count_char(&c[..], b'\n') as u32
-                                    }
-                                    _ => 0,
-                                };
+                                let count = kind
+                                    .js_code()
+                                    .map_or(0, |c| strings::count_char(c, b'\n') as u32);
                                 packed_map::Shared::LineCount(packed_map::LineCount::init(count))
                             }
                         };
-                        (kind, sm, Some(len))
+                        (kind, sm, if unchanged { None } else { Some(len) })
                     }
                 };
 
@@ -1242,6 +1296,20 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
                             // CSS can't import JS; trace is done.
                             return Ok(());
                         }
+                        Content::CssModule { css, code } => {
+                            match goal {
+                                TraceImportGoal::FindCss => self.current_css_files.push(*css),
+                                TraceImportGoal::FindClientModules => {
+                                    let len = code.len();
+                                    self.current_chunk_parts.push(file_index);
+                                    self.current_chunk_len += len;
+                                }
+                                _ => {}
+                            }
+                            // The edges of a CSS file lead to stylesheets and
+                            // assets, never to modules; trace is done.
+                            return Ok(());
+                        }
                         _ => {}
                     }
                 }
@@ -1625,11 +1693,12 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
             let owned_path = owned_path.slice();
             match SIDE {
                 Side::Client => match &self.bundled_files.values()[index].content {
-                    Content::CssRoot(_) | Content::CssChild => {
-                        if matches!(
-                            self.bundled_files.values()[index].content,
-                            Content::CssRoot(_),
-                        ) {
+                    Content::CssRoot(_) | Content::CssModule { .. } | Content::CssChild => {
+                        if self.bundled_files.values()[index]
+                            .content
+                            .css_root()
+                            .is_some()
+                        {
                             entry_points.append_css(owned_path)?;
                         }
                         let mut it = self.edge_lists[index].first_dep;
@@ -1637,10 +1706,11 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
                             let entry = self.edges[edge_index.get() as usize];
                             let dep = entry.dependency;
                             self.stale_files.set(dep.get() as usize);
-                            if matches!(
-                                self.bundled_files.values()[dep.get() as usize].content,
-                                Content::CssRoot(_),
-                            ) {
+                            if self.bundled_files.values()[dep.get() as usize]
+                                .content
+                                .css_root()
+                                .is_some()
+                            {
                                 let k = bun_ptr::RawSlice::new(
                                     &*self.bundled_files.keys()[dep.get() as usize],
                                 );
@@ -1659,10 +1729,11 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
                                 &*self.bundled_files.keys()[dep.get() as usize],
                             );
                             let k = k.slice();
-                            if matches!(
-                                self.bundled_files.values()[dep.get() as usize].content,
-                                Content::CssRoot(_),
-                            ) {
+                            if self.bundled_files.values()[dep.get() as usize]
+                                .content
+                                .css_root()
+                                .is_some()
+                            {
                                 entry_points.append_css(k)?;
                             } else {
                                 self.append_client_entry_point(entry_points, dep.get() as usize)?;

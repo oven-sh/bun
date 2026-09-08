@@ -539,9 +539,7 @@ impl<'a, const METHOD: BuilderMethod> Builder<'a, METHOD> {
 // is_filtered_dependency_or_workspace
 // ──────────────────────────────────────────────────────────────────────────
 
-/// The packages a `--production` / `--omit` install still reaches, computed the
-/// first time `is_filtered_dependency_or_workspace` needs it. One per pass over
-/// a fixed `resolutions` buffer.
+/// The packages a `--production` / `--omit` install still reaches. Computed on first use, one per `resolutions` buffer.
 #[derive(Default)]
 pub(crate) struct ReachedPackages(Option<DynamicBitSet>);
 
@@ -564,8 +562,7 @@ impl ReachedPackages {
                 {
                     return reachable::packages(lockfile, resolutions, options);
                 }
-                // `--filter` or a pruned checkout links only some importers: walk from
-                // those, the same ones the workspace checks below let through.
+                // `--filter` or a pruned checkout links only some importers, so walk from those.
                 let deps = lockfile.buffers.dependencies.as_slice();
                 let mut roots: Vec<PackageID> = Vec::new();
                 if install_root_dependencies {
@@ -664,8 +661,7 @@ pub(crate) fn is_filtered_dependency_or_workspace(
         if optional_peer_group_enabled(dep, siblings, |behavior| behavior.is_enabled(dep_features))
             == Some(false)
         {
-            // The omitted group is what resolved this package. Keep the optional peer
-            // only when the install still reaches the package through other edges.
+            // The omitted group resolved this package. Keep the peer only if the install still reaches it.
             return !reached.contains(
                 lockfile,
                 resolutions,
@@ -692,11 +688,7 @@ pub(crate) fn is_filtered_dependency_or_workspace(
     !WorkspaceFilter::is_selected(workspace_filters, pkg_id)
 }
 
-/// A package.json can list one name under `peerDependencies` and under another
-/// group, e.g. an optional peer that is also a devDependency. The optional peer
-/// row resolved only because the other row did, so it must not keep the package
-/// by itself once that group is omitted. `Some(false)` when every same-name row
-/// from another group is omitted, `None` when there is no such row.
+/// For an optional peer whose name the same package.json repeats in another group: is that group enabled? `None` if no such row.
 pub(crate) fn optional_peer_group_enabled(
     dep: &Dependency,
     siblings: &[Dependency],

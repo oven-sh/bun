@@ -458,6 +458,7 @@ Bun automatically handles all common web assets:
 - **Stylesheets** (`<link rel="stylesheet">`) are run through Bun's CSS parser & bundler
 - **Images** (`<img>`, `<picture>`) are copied and hashed
 - **Media** (`<video>`, `<audio>`, `<source>`) are copied and hashed
+- **SVG references** (`<use href="./sprite.svg#icon">`, `<image href>`, and their `xlink:href` forms) are copied and hashed, and keep their `#fragment`
 - Any `<link>` tag with an `href` attribute pointing to a local file is rewritten to the new path, and hashed
 
 Bun resolves all paths relative to your HTML file, so you can organize your project however you want.

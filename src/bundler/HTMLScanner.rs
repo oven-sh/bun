@@ -310,7 +310,7 @@ impl TagHandler {
     }
 }
 
-const TAG_HANDLERS: [TagHandler; 16] = [
+const TAG_HANDLERS: [TagHandler; 18] = [
     // Module scripts with src
     TagHandler::new("script[src]", "src", ImportKind::Stmt),
     // CSS Stylesheets
@@ -355,6 +355,14 @@ const TAG_HANDLERS: [TagHandler; 16] = [
     TagHandler::new("source[src]", "src", ImportKind::Url),
     // Source elements with srcset
     TagHandler::new("source[srcset]", "srcset", ImportKind::Url),
+    // SVG sprites (`<use href="sprite.svg#icon">`) and images, with the
+    // SVG 1.1 `xlink:href` spelling of the attribute
+    TagHandler::new("use[href], image[href]", "href", ImportKind::Url),
+    TagHandler::new(
+        "use[xlink\\:href], image[xlink\\:href]",
+        "xlink:href",
+        ImportKind::Url,
+    ),
     //     // Iframes
     //     TagHandler::new("iframe[src]", "src", ImportKind::Url),
 ];

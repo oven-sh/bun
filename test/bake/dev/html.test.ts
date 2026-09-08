@@ -121,6 +121,25 @@ devTest("image tag keeps ?query#fragment", {
     expect(await imgSrc()).toBe(url);
   },
 });
+devTest("svg use href is served as an asset and keeps its #fragment", {
+  files: {
+    "index.html": `
+      <!DOCTYPE html><html><head></head><body>
+      <svg><use href="./sprite.svg#icon"></use><use xlink:href="sprite.svg#icon"></use><use href="#inline"></use></svg>
+      </body></html>
+    `,
+    "sprite.svg": `<svg xmlns="http://www.w3.org/2000/svg"><symbol id="icon"/></svg>`,
+  },
+  async test(dev) {
+    const html = await (await dev.fetch("/")).text();
+    const hrefs = [...html.matchAll(/<use (?:xlink:)?href="([^"]*)"/g)].map(m => m[1]);
+    expect(hrefs).toHaveLength(3);
+    expect(hrefs[0]).toMatch(/^\/_bun\/asset\/[0-9a-f]{16}\.svg#icon$/);
+    expect(hrefs[1]).toBe(hrefs[0]);
+    expect(hrefs[2]).toBe("#inline");
+    await dev.fetch(hrefs[0]).expect.toInclude('<symbol id="icon"/>');
+  },
+});
 devTest("image import in JS", {
   files: {
     "index.html": `

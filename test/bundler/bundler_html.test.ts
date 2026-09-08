@@ -253,6 +253,49 @@ describe("bundler", () => {
     },
   });
 
+  // SVG `<use>` and `<image>` name a file in `href` (SVG 2) or `xlink:href`
+  // (SVG 1.1). The file is copied and hashed like an `<img src>`, and the
+  // `#fragment` that picks one symbol out of a sprite is kept. A same-document
+  // `#fragment` and an external URL are left as written.
+  itBundled("html/svg-use-image-href", {
+    outdir: "out/",
+    files: {
+      "/index.html": `
+<!DOCTYPE html>
+<html>
+  <body>
+    <svg><symbol id="local" viewBox="0 0 10 10"><circle cx="5" cy="5" r="4"/></symbol></svg>
+    <svg><use href="./sprite.svg#home"></use></svg>
+    <svg><use xlink:href="./sprite.svg#menu"></use></svg>
+    <svg><use href="#local"></use></svg>
+    <svg><use href="https://example.com/sprite.svg#ext"></use></svg>
+    <svg><image href="./photo.png" width="10" height="10"/></svg>
+    <svg><image xlink:href="./photo2.png" width="10" height="10"/></svg>
+  </body>
+</html>`,
+      "/sprite.svg": `<svg xmlns="http://www.w3.org/2000/svg"><symbol id="home"/><symbol id="menu"/></svg>`,
+      "/photo.png": "fake photo",
+      "/photo2.png": "fake photo 2",
+    },
+    entryPoints: ["/index.html"],
+    onAfterBundle(api) {
+      const html = api.readFile("out/index.html");
+      expect(html).toMatch(/<use href="\.\/sprite-[a-z0-9]+\.svg#home">/);
+      expect(html).toMatch(/<use xlink:href="\.\/sprite-[a-z0-9]+\.svg#menu">/);
+      expect(html).toContain('<use href="#local">');
+      expect(html).toContain('<use href="https://example.com/sprite.svg#ext">');
+      expect(html).toMatch(/<image href="\.\/photo-[a-z0-9]+\.png"/);
+      expect(html).toMatch(/<image xlink:href="\.\/photo2-[a-z0-9]+\.png"/);
+
+      // Both sprite references point at one emitted copy of sprite.svg.
+      const sprites = [...new Set(html.match(/sprite-[a-z0-9]+\.svg/g))];
+      expect(sprites).toHaveLength(1);
+      expect(api.readFile("out/" + sprites[0])).toBe(
+        `<svg xmlns="http://www.w3.org/2000/svg"><symbol id="home"/><symbol id="menu"/></svg>`,
+      );
+    },
+  });
+
   // Test mixed local and external assets
   itBundled("html/mixed-assets", {
     outdir: "out/",

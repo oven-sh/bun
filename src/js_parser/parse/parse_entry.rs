@@ -1014,7 +1014,6 @@ impl<'a> Parser<'a> {
             }
 
             // TypeScript emits "export = value;" as a trailing "module.exports = value;".
-            // Not `after`: the `module.exports = require()` redirect scan reads `parts`.
             let mut export_equals_parts = BumpVec::<js_ast::Part>::new_in(arena);
 
             // When tree shaking is enabled, each top-level statement is potentially a separate part.

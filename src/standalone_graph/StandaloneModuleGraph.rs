@@ -731,7 +731,7 @@ mod elf {
                 libc::SYS_ioctl,
                 fd.native() as libc::c_long,
                 UFFDIO_API,
-                &mut api as *mut UffdioApi,
+                &raw mut api,
             )
         };
         let wanted = UFFD_FEATURE_WP_ASYNC | UFFD_FEATURE_WP_UNPOPULATED;
@@ -760,7 +760,7 @@ mod elf {
                 libc::SYS_ioctl,
                 fd.native() as libc::c_long,
                 UFFDIO_REGISTER,
-                &mut reg as *mut UffdioRegister,
+                &raw mut reg,
             )
         };
         if rc != 0 {

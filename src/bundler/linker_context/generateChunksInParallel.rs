@@ -644,8 +644,7 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                 prelinked_graph = crate::prelinked_module_graph::build(
                     &inputs,
                     &mut module_info_strings,
-                    |s| external_string_table.slot(s),
-                    crate::bundle_v2::dispatch::wtf_string_hash,
+                    external_string_table,
                 )
                 .map(|bytes| (bytes, chunk_indices));
             }

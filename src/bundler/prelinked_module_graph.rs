@@ -117,16 +117,16 @@ pub struct ModuleInput<'a> {
     pub table_ids: &'a [u32],
 }
 
-/// Serializes the graph for `modules` (graph module `i` is `modules[i]`). `slot_for` / `hash_for` give a string's
-/// runtime slot (`EncoderStringTable::slotFor`) and `WTF::StringImpl::hash()`. Must run before `strings` is serialized
+/// Serializes the graph for `modules` (graph module `i` is `modules[i]`). `string_table` gives a string's runtime slot
+/// (`EncoderStringTable::slotFor`); name hashes are `WTF::StringImpl::hash()`. Must run before `strings` is serialized
 /// (module keys are interned into it). `None` if the graph does not fit the format; the caller then keeps per-module
 /// `module_info` bodies.
-pub fn build(
+pub(crate) fn build(
     modules: &[ModuleInput<'_>],
     strings: &mut ModuleInfoSlotTableBuilder,
-    slot_for: impl Fn(&[u8]) -> u32,
-    hash_for: impl Fn(&[u8]) -> u32,
+    string_table: &crate::bundle_v2::dispatch::EncoderStringTableHandle,
 ) -> Option<Vec<u8>> {
+    let slot_for = |s: &[u8]| string_table.slot(s);
     let mut path_to_module: bun_collections::HashMap<Vec<u8>, u32> = Default::default();
     for (index, module) in modules.iter().enumerate() {
         path_to_module.insert(module.path.to_vec(), index as u32);
@@ -134,27 +134,16 @@ pub fn build(
 
     // hash(shared sid), computed from whichever module's local copy of the string we meet first.
     let mut hashes: Vec<Option<u32>> = Vec::new();
-    let mut note_hash = |hashes: &mut Vec<Option<u32>>, sid: u32, bytes: &[u8]| {
-        if sid >= STAR_NAMESPACE {
-            return;
-        }
-        if hashes.len() <= sid as usize {
-            hashes.resize(sid as usize + 1, None);
-        }
-        if hashes[sid as usize].is_none() {
-            hashes[sid as usize] = Some(hash_for(bytes));
-        }
-    };
 
     // ResolveExport's export-star rule needs to recognise the name "default" by sid.
-    let default_sid = strings.intern(b"default", &slot_for);
+    let default_sid = strings.intern(b"default", slot_for);
     note_hash(&mut hashes, default_sid, b"default");
 
     let mut graph: Vec<Module> = Vec::with_capacity(modules.len());
     for input in modules {
-        let key = strings.intern(input.path, &slot_for);
+        let key = strings.intern(input.path, slot_for);
         note_hash(&mut hashes, key, input.path);
-        let module = parse_module(input, key, &path_to_module, &mut hashes, &mut note_hash);
+        let module = parse_module(input, key, &path_to_module, &mut hashes);
         if module.requests.len() > MAX_REQUESTS_PER_MODULE {
             return None;
         }
@@ -223,13 +212,7 @@ pub fn build(
     }
 
     // By-name lookups at runtime binary-search these by the name's hash (stored in the entry).
-    let hash = |sid: u32| -> u32 {
-        if sid >= STAR_NAMESPACE {
-            SENTINEL_HASH
-        } else {
-            hashes[sid as usize].expect("every named string was hashed when parsed")
-        }
-    };
+    let hash = |sid: u32| name_hash(&hashes, sid);
     for module in graph.iter_mut() {
         module
             .imports
@@ -239,7 +222,27 @@ pub fn build(
             .sort_by_key(|export| (hash(export.name), export.name));
     }
 
-    Some(serialize(&graph, strings.count(), hash))
+    Some(serialize(&graph, strings.count(), &hashes))
+}
+
+fn name_hash(hashes: &[Option<u32>], sid: u32) -> u32 {
+    if sid >= STAR_NAMESPACE {
+        SENTINEL_HASH
+    } else {
+        hashes[sid as usize].expect("every named string was hashed when parsed")
+    }
+}
+
+fn note_hash(hashes: &mut Vec<Option<u32>>, sid: u32, bytes: &[u8]) {
+    if sid >= STAR_NAMESPACE {
+        return;
+    }
+    if hashes.len() <= sid as usize {
+        hashes.resize(sid as usize + 1, None);
+    }
+    if hashes[sid as usize].is_none() {
+        hashes[sid as usize] = Some(crate::bundle_v2::dispatch::wtf_string_hash(bytes));
+    }
 }
 
 fn parse_module(
@@ -247,7 +250,6 @@ fn parse_module(
     key: u32,
     path_to_module: &bun_collections::HashMap<Vec<u8>, u32>,
     hashes: &mut Vec<Option<u32>>,
-    note_hash: &mut impl FnMut(&mut Vec<Option<u32>>, u32, &[u8]),
 ) -> Module {
     let info = input.info.as_deserialized();
     let (strings_buf, strings_lens) = input.info.strings();
@@ -521,7 +523,8 @@ impl Resolver<'_> {
     }
 }
 
-fn serialize(graph: &[Module], string_count: u32, hash: impl Fn(u32) -> u32) -> Vec<u8> {
+fn serialize(graph: &[Module], string_count: u32, hashes: &[Option<u32>]) -> Vec<u8> {
+    let hash = |sid: u32| name_hash(hashes, sid);
     let request_count: usize = graph.iter().map(|m| m.requests.len()).sum();
     let import_count: usize = graph.iter().map(|m| m.imports.len()).sum();
     let export_count: usize = graph.iter().map(|m| m.exports.len()).sum();

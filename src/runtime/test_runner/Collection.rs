@@ -16,10 +16,7 @@ use crate::test_runner::jest::Jest;
 pub struct Collection {
     /// set to true after collection phase ends
     pub(crate) locked: bool,
-    /// Set while an async describe() callback's promise is outstanding. An uncaught
-    /// error that lands then is charged to that describe and completes it. At module
-    /// or preload top level, and while a describe() body runs synchronously, no
-    /// callback is waiting and an uncaught error fails nothing.
+    /// an async describe() callback's promise is outstanding; an uncaught error now is charged to it
     pub(crate) describe_callback_pending: bool,
     pub(crate) describe_callback_queue: Vec<QueuedDescribe>,
     pub(crate) current_scope_callback_queue: Vec<QueuedDescribe>,
@@ -268,10 +265,7 @@ impl Collection {
     ) -> HandleUncaughtExceptionResult {
         let _g = group::begin();
 
-        // Only a describe() callback's own throw or rejection fails its scope. Any other
-        // error seen during collection (module or preload top level, a `.each` table, a
-        // timer) has no scope to fail, and failing the active scope for it would drop
-        // tests that registered fine.
+        // An error that no describe() callback owns has no scope to fail.
         let RefDataValue::Collection { .. } = data else {
             return HandleUncaughtExceptionResult::ShowUnhandledErrorBetweenTests;
         };

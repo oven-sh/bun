@@ -184,19 +184,22 @@ test("require.resolve with relative path and options.paths (Next.js use case)", 
 });
 
 test("Module._resolveFilename throws ERR_INVALID_ARG_TYPE if options.paths is not an array", () => {
+  // Use a non-builtin id: builtin ids resolve before `options.paths` is looked at.
+  const fakeParent = new Module("/some/dir/file.js");
+
   // Test with string (which is iterable but not an array)
   expect(() => {
-    Module._resolveFilename("path", __filename, false, { paths: "/some/path" });
+    Module._resolveFilename("this-pkg-does-not-exist-zzz", fakeParent, false, { paths: "/some/path" });
   }).toThrow();
 
   // Test with Set (which is iterable but not an array)
   expect(() => {
-    Module._resolveFilename("path", __filename, false, { paths: new Set(["/some/path"]) });
+    Module._resolveFilename("this-pkg-does-not-exist-zzz", fakeParent, false, { paths: new Set(["/some/path"]) });
   }).toThrow();
 
   // Test with object (not iterable)
   expect(() => {
-    Module._resolveFilename("path", __filename, false, { paths: { 0: "/some/path" } });
+    Module._resolveFilename("this-pkg-does-not-exist-zzz", fakeParent, false, { paths: { 0: "/some/path" } });
   }).toThrow();
 });
 
@@ -217,6 +220,12 @@ test("require.resolve throws ERR_INVALID_ARG_TYPE when options.paths contains a 
   expect(codeOf(() => require.resolve("this-pkg-does-not-exist-zzz", { paths: ["/abs", 512] }))).toBe(
     "ERR_INVALID_ARG_TYPE",
   );
+
+  // Builtin ids resolve before `options.paths` is validated, as in Node.
+  const fakeParent = new Module("/some/dir/file.js");
+  expect(require.resolve("node:fs", { paths: [0] })).toBe("node:fs");
+  expect(Module._resolveFilename("node:fs", fakeParent, false, { paths: [0] })).toBe("node:fs");
+  expect(Module._resolveFilename("node:fs", fakeParent, false, { paths: "notanarray" })).toBe("node:fs");
 });
 
 test("require.resolve does not crash when options.paths contains a non-absolute path", () => {

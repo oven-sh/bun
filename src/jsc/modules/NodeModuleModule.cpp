@@ -339,6 +339,14 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionResolveFileName,
 
         JSC::EncodedJSValue result;
 
+        // Node resolves builtin ids before it validates `options.paths`.
+        if (!pathsValue.isUndefinedOrNull() && moduleName.isString()) {
+            auto builtinCheckStr = moduleName.toWTFString(globalObject);
+            RETURN_IF_EXCEPTION(scope, {});
+            if (Bun::isBuiltinModule(builtinCheckStr))
+                pathsValue = JSC::jsUndefined();
+        }
+
         // If paths are provided, use Bun__resolveSyncWithPaths
         if (!pathsValue.isUndefinedOrNull()) {
             // Node.js requires options.paths to be an array

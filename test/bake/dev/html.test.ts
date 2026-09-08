@@ -1,5 +1,6 @@
 // HTML tests are tests relating to HTML files themselves.
-import { devTest, emptyHtmlFile } from "../bake-harness";
+import { expect } from "bun:test";
+import { type Dev, devTest, emptyHtmlFile } from "../bake-harness";
 
 devTest("html file is watched", {
   files: {
@@ -407,5 +408,149 @@ devTest("editing a file imported from outside the project root hot-reloads", {
       `,
     );
     await c.expectMessage("three");
+  },
+});
+
+// A page load is three steps: fetch the HTML, fetch the client bundle the HTML
+// names, then open `/_bun/hmr` and subscribe to hot updates. A rebuild that
+// lands between the last two steps publishes its hot update to nobody. The
+// page only finds out through the `i` (init) frame of its handshake, which
+// carries the generation of the bundle it loaded.
+const clientScriptSrc = (html: string) => html.match(/src="(\/_bun\/client\/[^"]+\.js)"/)![1];
+// The script URL ends in `{route bundle index}{generation}.js`, 8 hex digits each.
+const generationOfScript = (src: string) => src.slice(-11, -3);
+
+/**
+ * Opens an HMR socket and replays the handshake of `hmr-runtime-client.ts` for
+ * a page that loaded the bundle with `generation`. Returns the kind of every
+ * frame received up to the `n` (set_url) reply. The server handles the frames
+ * of one socket in order, so by then it has handled `i` too.
+ */
+async function hmrHandshake(dev: Dev, generation: string): Promise<string[]> {
+  const frames: string[] = [];
+  const done = Promise.withResolvers<string[]>();
+  const ws = new WebSocket(dev.baseUrl.replace(/^http/, "ws") + "/_bun/hmr");
+  ws.binaryType = "arraybuffer";
+  ws.onmessage = ({ data }) => {
+    const kind = String.fromCharCode(new Uint8Array(data as ArrayBuffer)[0]);
+    frames.push(kind);
+    if (kind === "V") {
+      ws.send("she"); // subscribe to hot_update and errors
+      ws.send("i" + generation); // init
+      ws.send("n/"); // set_url
+    } else if (kind === "n") {
+      done.resolve(frames);
+    }
+  };
+  ws.onclose = () => done.reject(new Error(`hmr socket closed after [${frames}]`));
+  try {
+    return await done.promise;
+  } finally {
+    ws.onclose = null;
+    ws.close();
+  }
+}
+
+devTest("hmr socket tells a page that loaded an outdated bundle to reload", {
+  files: {
+    "index.html": emptyHtmlFile({
+      scripts: ["index.ts"],
+    }),
+    "index.ts": `
+      import { value } from "./value";
+      console.log("value: " + value);
+    `,
+    "value.ts": `
+      export const value = 1;
+    `,
+  },
+  async test(dev) {
+    const staleSrc = clientScriptSrc(await dev.fetch("/").text());
+    const staleGeneration = generationOfScript(staleSrc);
+    expect(await dev.fetch(staleSrc).text()).toInclude(`generation: "${staleGeneration}"`);
+
+    // Rebuild the route while no page is subscribed to hot updates.
+    await dev.write("value.ts", `export const value = 2;`);
+    const currentSrc = clientScriptSrc(await dev.fetch("/").text());
+    expect(currentSrc).not.toBe(staleSrc);
+
+    expect(await hmrHandshake(dev, staleGeneration)).toEqual(["V", "R", "n"]);
+    expect(await hmrHandshake(dev, generationOfScript(currentSrc))).toEqual(["V", "n"]);
+  },
+});
+devTest("a page whose bundle went stale while it loaded reloads once its hmr socket connects", {
+  files: {
+    "index.html": emptyHtmlFile({
+      scripts: ["index.ts"],
+    }),
+    "index.ts": `
+      import { value } from "./value";
+      console.log("value: " + value);
+    `,
+    "value.ts": `
+      export const value = 1;
+    `,
+  },
+  async test(dev) {
+    // The page talks to the dev server through this proxy. The proxy parks the
+    // page's `/_bun/hmr` upgrade until `releaseSocket` resolves and passes
+    // everything else straight through.
+    const releaseSocket = Promise.withResolvers<void>();
+    const bundleServed = Promise.withResolvers<void>();
+    type Relay = { upstream: WebSocket | null; queued: (string | Buffer)[] };
+    await using proxy = Bun.serve<Relay>({
+      port: 0,
+      async fetch(req, server) {
+        const { pathname } = new URL(req.url);
+        if (pathname === "/_bun/hmr") {
+          await releaseSocket.promise;
+          if (server.upgrade(req, { data: { upstream: null, queued: [] } })) return;
+          return new Response(null, { status: 400 });
+        }
+        const res = await fetch(new URL(pathname, dev.baseUrl), { method: req.method, headers: req.headers });
+        const body = await res.arrayBuffer();
+        const headers = new Headers(res.headers);
+        headers.delete("content-encoding");
+        headers.delete("content-length");
+        if (pathname.startsWith("/_bun/client/")) bundleServed.resolve();
+        return new Response(body, { status: res.status, headers });
+      },
+      websocket: {
+        open(ws) {
+          const upstream = new WebSocket(dev.baseUrl.replace(/^http/, "ws") + "/_bun/hmr");
+          upstream.binaryType = "arraybuffer";
+          upstream.onopen = () => {
+            for (const message of ws.data.queued.splice(0)) upstream.send(message);
+          };
+          upstream.onmessage = ({ data }) => {
+            if (ws.readyState === WebSocket.OPEN) ws.send(data as ArrayBuffer);
+          };
+          upstream.onclose = () => ws.close();
+          ws.data.upstream = upstream;
+        },
+        message(ws, message) {
+          const { upstream, queued } = ws.data;
+          if (upstream?.readyState === WebSocket.OPEN) upstream.send(message);
+          else queued.push(message);
+        },
+        close(ws) {
+          const { upstream } = ws.data;
+          if (upstream) {
+            upstream.onclose = null;
+            upstream.close();
+          }
+        },
+      },
+    });
+
+    // The page loads `value: 1`. Its HMR socket is parked in the proxy.
+    const pageLoaded = dev.client(`http://localhost:${proxy.port}/`, { allowUnlimitedReloads: true });
+    await bundleServed.promise;
+    // The route is rebuilt. Its hot update reaches no page.
+    await dev.write("value.ts", `export const value = 2;`);
+    // Now the page's socket gets through, and the handshake tells it to reload.
+    releaseSocket.resolve();
+    await using c = await pageLoaded;
+    await c.expectMessage("value: 1", "value: 2");
   },
 });

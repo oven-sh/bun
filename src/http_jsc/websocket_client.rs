@@ -394,9 +394,6 @@ impl<const SSL: bool> WebSocket<SSL> {
                         return;
                     }
                 };
-                // `None` means all-ASCII, which C++ copies as Latin-1. A
-                // transcoded `Vec<u16>` moves into an external WTF string
-                // that frees it when the last ref drops.
                 let text = match utf16_bytes {
                     Some(utf16) => BunString::create_external_globally_allocated_utf16(utf16),
                     None => BunString::clone_latin1(data),

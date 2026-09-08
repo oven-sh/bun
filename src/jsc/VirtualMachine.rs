@@ -411,6 +411,7 @@ unsafe extern "C" {
     safe fn Zig__GlobalObject__prepareForDestruction(global: &JSGlobalObject);
     safe fn Zig__GlobalObject__forbidExecution(global: &JSGlobalObject);
     safe fn Zig__GlobalObject__stopActiveDOMObjectsForTestIsolation(global: &JSGlobalObject);
+    safe fn Zig__GlobalObject__retireForTestIsolation(global: &JSGlobalObject);
     safe fn Zig__GlobalObject__destructOnExit(global: &JSGlobalObject);
     safe fn WebWorker__teardownJSCVM(global: &JSGlobalObject);
 }
@@ -5177,6 +5178,9 @@ impl VirtualMachine {
         let _ = self.auto_killer.kill();
         self.auto_killer.clear();
 
+        // The outgoing file's exit: work it left in flight (thread-pool jobs,
+        // the children just killed) lands later and must not resume its script.
+        Zig__GlobalObject__retireForTestIsolation(self.global());
         self.test_isolation_generation = self.test_isolation_generation.wrapping_add(1);
 
         // Generation-stale JS timers would otherwise release their pins only
@@ -6445,6 +6449,7 @@ impl VirtualMachine {
                     own_properties_only: true,
                     observable: false,
                     only_non_index_properties: true,
+                    include_symbols: true,
                 },
             )?;
             let longest_name = iterator.get_longest_property_name().min(10);

@@ -943,14 +943,6 @@ impl MarkedArrayBuffer {
         Ok(MarkedArrayBuffer::from_bytes(bytes, JSType::Uint8Array))
     }
 
-    pub fn from_js(global: &JSGlobalObject, value: JSValue) -> Option<MarkedArrayBuffer> {
-        let array_buffer = value.as_array_buffer(global)?;
-        Some(MarkedArrayBuffer {
-            buffer: array_buffer,
-            owns_buffer: false,
-        })
-    }
-
     pub fn from_bytes(bytes: &mut [u8], typed_array_type: JSType) -> MarkedArrayBuffer {
         MarkedArrayBuffer {
             buffer: ArrayBuffer::from_bytes(bytes, typed_array_type),

@@ -299,7 +299,12 @@ pub(crate) unsafe fn rename_symbols_in_chunk(
         return Ok(ChunkRenamer::Minify(minify_renamer));
     }
 
-    let mut r = NumberRenamer::init(make_symbols_view(symbols), &reserved_names)?;
+    let symbols_view = make_symbols_view(symbols);
+    let symbols_in_chunk: usize = files_in_order
+        .iter()
+        .map(|&i| symbols_view.symbols_for_source[i as usize].len())
+        .sum();
+    let mut r = NumberRenamer::init(symbols_view, &reserved_names, symbols_in_chunk)?;
     // Bindings that cross chunks carry one bundle-wide name
     // (`assign_cross_chunk_names`); everything else is numbered around them.
     if let Content::Javascript(js) = &chunk.content {

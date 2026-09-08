@@ -544,6 +544,72 @@ describe("bundler", async () => {
     }
   });
 
+  // A file with no extension is source code (tsx), the same as `bun run` treats
+  // it. It used to go through the file loader: an entry point lost its program
+  // body and an import resolved to an asset path string.
+  describe("files without an extension", () => {
+    for (const target of ["bun", "node", "browser"] as const) {
+      itBundled(`${target}/loader-extensionless-entry-point`, {
+        target,
+        files: {
+          "/bin/mycli": [
+            `#!/usr/bin/env bun`,
+            `const args: string[] = process.argv.slice(2);`,
+            `console.log("cli ran", args.join(","));`,
+          ].join("\n"),
+        },
+        entryPoints: ["/bin/mycli"],
+        onAfterBundle(api) {
+          const out = api.readFile("/out.js");
+          expect(out).toStartWith("#!/usr/bin/env bun\n");
+          expect(out).toContain(`console.log("cli ran", args.join(","));`);
+        },
+        run: { args: ["a", "b"], stdout: "cli ran a,b" },
+      });
+    }
+
+    itBundled("bun/loader-extensionless-import", {
+      files: {
+        "/entry.ts": /* ts */ `
+          import tool, { kind } from "./tool";
+          console.log(JSON.stringify(tool), kind);
+        `,
+        "/tool": /* ts */ `
+          export const kind: string = "named";
+          export default "i-am-js" as string;
+        `,
+      },
+      run: { stdout: `"i-am-js" named` },
+    });
+
+    itBundled("bun/loader-extensionless-require", {
+      files: {
+        "/entry.cjs": /* js */ `
+          const tool = require("./tool");
+          console.log(tool.kind);
+        `,
+        "/tool": /* ts */ `
+          module.exports = { kind: "cjs" as string };
+        `,
+      },
+      run: { stdout: "cjs" },
+    });
+
+    // `--loader :<name>` maps the empty extension, which overrides the default.
+    itBundled("bun/loader-extensionless-override", {
+      backend: "cli",
+      loader: { "": "text" },
+      files: {
+        "/entry.ts": /* ts */ `
+          import license from "./LICENSE";
+          console.log(JSON.stringify(license));
+        `,
+        "/LICENSE": `not (valid) typescript: at all`,
+      },
+      run: { stdout: `"not (valid) typescript: at all"` },
+    });
+  });
+
   // Lazy-export modules (JSON, TOML, CSS modules, ...) used to crash the
   // printer when bundled with the dev server's module format.
   // https://github.com/oven-sh/bun/issues/31943

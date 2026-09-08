@@ -4354,10 +4354,6 @@ pub unsafe extern "C" fn Bun__transpileFile(
         let (has_loaded, is_in_preload) =
             unsafe { ((*jsc_vm).has_loaded, (*jsc_vm).is_in_preload) };
         if has_loaded || is_in_preload {
-            // Extensionless files in this context are treated as the JS loader.
-            if lr.path.name().ext.is_empty() {
-                break 'loader Loader::Tsx;
-            }
             // Unknown extensions are to be treated as file loader.
             if is_commonjs_require {
                 use bun_jsc::node_module_module::{

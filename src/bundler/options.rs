@@ -1053,7 +1053,8 @@ pub fn loaders_from_transform_options(
         } else {
             0
         }
-        + DEFAULT_LOADER_EXT.len();
+        + DEFAULT_LOADER_EXT.len()
+        + 1;
 
     let mut loaders = StringArrayHashMap::<Loader>::default();
     loaders.reserve(u32::try_from(total_capacity).expect("int cast") as usize);
@@ -1068,6 +1069,13 @@ pub fn loaders_from_transform_options(
         if !loaders.contains(*ext) {
             loaders.insert(*ext, *DEFAULT_LOADERS.get(*ext).unwrap());
         }
+    }
+
+    // A file with no extension (`bin/cli`, `./tool`) is source code, at runtime
+    // and in `bun build` alike. `PathName::ext` is `""` for such a file, so the
+    // empty key is its entry. `--loader :<name>` overrides it.
+    if !loaders.contains(b"") {
+        loaders.insert(b"", Loader::Tsx);
     }
 
     if target.is_bun() {

@@ -22,6 +22,21 @@ describe("bundler", () => {
     },
     run: { stdout: "Hello, world!", stderr: "" },
   });
+  // A `bin/cli` script with no extension is source code (tsx), as it is for
+  // `bun run`. It used to go through the file loader, so the executable ran an
+  // empty program.
+  itBundled("compile/ExtensionlessEntryPoint", {
+    compile: true,
+    files: {
+      "/bin/mycli": [
+        `#!/usr/bin/env bun`,
+        `const args: string[] = process.argv.slice(2);`,
+        `console.log("cli ran", args.join(","));`,
+      ].join("\n"),
+    },
+    entryPoints: ["/bin/mycli"],
+    run: { args: ["a", "b"], stdout: "cli ran a,b", stderr: "" },
+  });
   // --footer/--banner are concatenated verbatim (UTF-8). Guard against the
   // standalone module graph treating those bytes as Latin-1, which would
   // print "rÃ©sumÃ©" / "ã\x81\x93ã\x82\x93..." (one Latin-1 char per UTF-8

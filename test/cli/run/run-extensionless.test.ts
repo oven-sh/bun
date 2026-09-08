@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { mkdirSync, writeFileSync } from "fs";
-import { bunEnv, bunExe, isWindows, tmpdirSync } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir, tmpdirSync } from "harness";
 import { join } from "path";
 
 describe.concurrent("run-extensionless", () => {
@@ -31,5 +31,50 @@ describe.concurrent("run-extensionless", () => {
     });
     const stdout = await proc.stdout.text();
     expect(stdout).toEqual("hello world\n");
+  });
+
+  test("importing an extensionless file treats it as tsx", async () => {
+    using dir = tempDir("run-extensionless-import", {
+      "dep": `export const kind: string = "dep"; export default (<T,>(x: T) => x)("default");`,
+      "static.ts": `import def, { kind } from "./dep"; console.log("static", def, kind);`,
+      "dynamic.ts": `const m = await import("./dep"); console.log("dynamic", m.default, m.kind);`,
+      "require.cjs": `const m = require("./dep"); console.log("require", m.default, m.kind);`,
+    });
+    for (const [file, expected] of [
+      ["static.ts", "static default dep\n"],
+      ["dynamic.ts", "dynamic default dep\n"],
+      ["require.cjs", "require default dep\n"],
+    ] as const) {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), file],
+        cwd: String(dir),
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(stdout).toBe(expected);
+      expect(exitCode).toBe(0);
+    }
+  });
+
+  // `--loader :<name>` maps the empty extension, which overrides the tsx default.
+  test("--loader : overrides the loader for extensionless files", async () => {
+    using dir = tempDir("run-extensionless-override", {
+      "LICENSE": `not (valid) typescript: at all`,
+      "entry.ts": `import text from "./LICENSE"; console.log(JSON.stringify(text));`,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "--loader", ":text", "entry.ts"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe(`"not (valid) typescript: at all"\n`);
+    expect(exitCode).toBe(0);
   });
 });

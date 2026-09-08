@@ -1,7 +1,7 @@
 import { crash_handler } from "bun:internal-for-testing";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isDebug, isLinux, isPosix, isWindows, mergeWindowEnvs, tempDir } from "harness";
-import { linkSync, rmSync, symlinkSync } from "node:fs";
+import { linkSync, mkdirSync, rmSync, symlinkSync } from "node:fs";
 import { constants as osConstants } from "node:os";
 import path from "path";
 const { getMachOImageZeroOffset } = crash_handler;
@@ -221,12 +221,14 @@ describe.if(isPosix)("cwd deleted before startup", () => {
     });
     afterAll(() => planted?.[Symbol.dispose]());
 
-    // `cmd` is "bun ..." or "node ..."; it runs <planted>/bin/<argv0> from a
-    // directory that is removed right before the exec.
+    // `cmd` is "bun ..." or "node ..."; it runs <planted>/bin/<argv0> from
+    // <planted>/gone-N, which is removed right before the exec (so the kernel
+    // still resolves ".." from it to <planted>).
+    let goneCount = 0;
     async function runFromDeletedCwd(cmd: string, stdin?: string) {
       const [argv0, ...args] = cmd.split(" ");
-      using dir = tempDir("cwd-unlinked-gone", {});
-      const gone = String(dir);
+      const gone = path.join(String(planted), `gone-${goneCount++}`);
+      mkdirSync(gone);
       await using proc = Bun.spawn({
         cmd: [
           "/bin/sh",
@@ -249,6 +251,7 @@ describe.if(isPosix)("cwd deleted before startup", () => {
     test.concurrent.each([
       "bun x.cjs",
       "bun ./x.cjs",
+      "bun ./../bin/x.cjs",
       "bun run x.cjs",
       "bun run canary",
       "bun canary",

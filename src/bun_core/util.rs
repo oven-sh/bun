@@ -4063,11 +4063,7 @@ pub fn getcwd(buf: &mut PathBuffer) -> crate::CrateResult<&ZStr> {
     Ok(ZStr::from_buf(&buf.0, len))
 }
 
-/// The directory that holds the running executable, or the filesystem root if
-/// that is unavailable or longer than a `PathBuffer`. The runtime uses it as a
-/// stand-in working directory when the real one was deleted before startup
-/// (like Node's `Environment::GetCwd`), so `bun -e` and the REPL still boot
-/// and `process.cwd()` reports the error instead.
+/// The running executable's directory, or the filesystem root if that is unavailable or too long.
 pub fn self_exe_dir() -> &'static [u8] {
     self_exe_path()
         .ok()

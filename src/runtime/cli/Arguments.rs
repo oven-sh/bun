@@ -822,8 +822,7 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
     }
 
     // ── --cwd ────────────────────────────────────────────────────────────────
-    // `None` only when the process started inside a deleted directory and the
-    // command can still run code without one (see the `getcwd` arm below).
+    // `None` only when the process started inside a deleted directory (see the `getcwd` arm).
     let cwd: Option<Box<[u8]>> = if let Some(cwd_arg) = args.option(b"--cwd") {
         let mut outbuf = bun_paths::path_buffer_pool::get();
         // An absolute --cwd needs no base; a relative one still requires a
@@ -858,15 +857,7 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
         let mut temp = bun_paths::path_buffer_pool::get();
         match bun_core::getcwd(&mut temp) {
             Ok(cwd) => Some(Box::<[u8]>::from(cwd.as_bytes())),
-            // A deleted cwd must not abort the runtime itself: `bun -e`, the
-            // REPL, stdin and an absolute entry path need no working directory
-            // (Node boots too and lets `process.cwd()` throw). `RunCommand`
-            // seeds the executable's directory as a stand-in once it knows
-            // nothing is left to resolve against the cwd. A relative entry
-            // path, a package.json script and every other command
-            // (install/test/build/...) must not silently act on whatever
-            // project happens to live above the executable, so they keep the
-            // error: here, or in `FileSystem::init` when it asks again.
+            // These can still run code without a cwd, like Node; `RunCommand::cwd_or_exe_dir` decides.
             Err(bun_core::Error::CurrentWorkingDirectoryUnlinked)
                 if matches!(
                     cmd,
@@ -974,8 +965,7 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
     if let Some(ts) = args.option(b"--tsconfig-override") {
         let base: &[u8] = match ctx.args.absolute_working_dir.as_deref() {
             Some(cwd) => cwd,
-            // Like --cwd above: an absolute path needs no base, a relative one
-            // cannot be resolved once the cwd was deleted.
+            // As with --cwd: an absolute path needs no base.
             None if bun_paths::is_absolute(ts) => b"/",
             None => return Err(bun_core::Error::CurrentWorkingDirectoryUnlinked.into()),
         };

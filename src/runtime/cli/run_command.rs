@@ -921,19 +921,11 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         crate::shell::Interpreter::init_and_run_from_file(ctx, mini, entry_path, &src)
     }
 
-    /// The working directory the runtime starts from. `Arguments::parse`
-    /// records it for `bun run`, `bun <file>` and node mode; contexts built
-    /// without it (the Windows `.bunx` fast path) ask `getcwd` here. If the
-    /// process started inside a deleted directory, the executable's directory
-    /// stands in (what Node's `Environment::GetCwd` does), so `bun -e`, the
-    /// REPLs, stdin and an absolute entry path still boot while
-    /// `process.cwd()` reports ENOENT. Only for callers with nothing left to
-    /// resolve against the real cwd; a relative entry path or a package.json
-    /// script must fail with `CurrentWorkingDirectoryUnlinked` instead of
-    /// acting on whatever lives next to the executable.
+    /// The startup cwd, or the executable's directory if the cwd was deleted (as in Node); only once the entry is absolute or synthetic.
     pub(crate) fn cwd_or_exe_dir(ctx: &mut ContextData) -> crate::Result<&[u8]> {
         let cwd: &[u8] = match ctx.args.absolute_working_dir {
             Some(ref cwd) => cwd,
+            // Not recorded: `Arguments::parse` saw a deleted cwd, or did not run (Windows `.bunx` fast path).
             None => {
                 let mut buf = bun_paths::path_buffer_pool::get();
                 let dir: Box<[u8]> = match bun_core::getcwd(&mut buf) {
@@ -949,8 +941,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         Ok(cwd)
     }
 
-    /// `<cwd><trigger>` (e.g. `cwd/[eval]`): the key under which the module
-    /// loader serves `eval_source` instead of reading a file.
+    /// `<cwd><trigger>`, e.g. `cwd/[eval]`: the key the module loader serves `eval_source` under.
     fn synthetic_entry_path(ctx: &mut ContextData, trigger: &[u8]) -> crate::Result<Box<[u8]>> {
         let cwd = Self::cwd_or_exe_dir(ctx)?;
         let mut path: Vec<u8> = Vec::with_capacity(cwd.len() + trigger.len());
@@ -981,8 +972,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
             Global::exit(exit_code as u32);
         }
 
-        // `entry_path` is absolute or synthetic by now, so the VM may start
-        // from the stand-in directory if the real cwd was deleted.
+        // `entry_path` is absolute or synthetic here, so a deleted cwd may fall back to the exe dir.
         Self::cwd_or_exe_dir(ctx)?;
 
         // `bun_jsc::initialize`
@@ -2364,20 +2354,20 @@ impl RunCommand {
             );
         }
 
-        // ── try fast run (file exists & not a dir → boot VM) ────────────────
-        if try_fast_run && Self::maybe_open_with_bun_js(ctx, target_name) {
-            return Ok(true);
-        }
-
-        // Everything below resolves `target_name` against the working
-        // directory (package.json scripts, the module resolver,
-        // node_modules/.bin). A process started inside a deleted directory has
-        // none (`Arguments::parse`), and only stdin can run without one.
+        // ── no cwd (started inside a deleted directory): only stdin or an absolute file can run ──
         if ctx.args.absolute_working_dir.is_none() {
             if target_name == b"-" {
                 return Self::exec_stdin(ctx);
             }
+            if paths::is_absolute(target_name) && Self::maybe_open_with_bun_js(ctx, target_name) {
+                return Ok(true);
+            }
             return Err(bun_core::Error::CurrentWorkingDirectoryUnlinked.into());
+        }
+
+        // ── try fast run (file exists & not a dir → boot VM) ────────────────
+        if try_fast_run && Self::maybe_open_with_bun_js(ctx, target_name) {
+            return Ok(true);
         }
 
         // ── setup (unconditional) ────────────────────────────────────────────
@@ -2985,8 +2975,7 @@ impl RunCommand {
         let normalized: Box<[u8]> = if paths::is_absolute(&filename) {
             filename
         } else {
-            // A relative script needs the real cwd; Node fails here too when
-            // the directory was deleted (`path.resolve` → `process.cwd()`).
+            // A relative script needs the real cwd (Node fails here too when it was deleted).
             let Some(cwd) = ctx.args.absolute_working_dir.as_deref() else {
                 return Err(bun_core::Error::CurrentWorkingDirectoryUnlinked.into());
             };

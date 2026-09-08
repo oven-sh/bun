@@ -203,8 +203,7 @@ pub fn load_config(
             let mut secondbuf = bun_paths::path_buffer_pool::get();
             let cwd_len = match bun_sys::getcwd(&mut *secondbuf) {
                 Ok(n) => n,
-                // Nothing to auto-load without a working directory, but an
-                // explicit relative --config cannot be resolved either.
+                // No cwd (deleted): nothing to auto-load, but an explicit --config is an error.
                 Err(_) if auto_loaded => return Ok(()),
                 Err(err) => {
                     bun_core::pretty_errorln!(

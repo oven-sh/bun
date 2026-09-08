@@ -2487,7 +2487,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             p.visit_expr(arg);
         }
 
-        if p.options.features.minify_syntax {
+        // Bundle only, like the name drops below: `return Error()` is a tail
+        // call and loses the frame that `return new Error()` keeps.
+        if p.options.features.minify_syntax && p.options.bundle {
             if let Some(minified) = js_ast::known_global::KnownGlobal::minify_global_constructor(
                 p.arena,
                 &mut *e_,

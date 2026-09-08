@@ -462,6 +462,11 @@ void us_loop_run(struct us_loop_t *loop) {
 }
 
 extern void Bun__JSC_onBeforeWait(void * _Nonnull jsc_vm, uint64_t now_ns);
+extern void Bun__JSC_onLongIdleWait(void * _Nonnull jsc_vm);
+/* A poll that blocks at least this long with nothing runnable means the startup burst is over
+ * (Bun__JSC_onLongIdleWait -> VM::endStartupJITDeferral); sub-ms parks on a subprocess or
+ * threadpool completion during async init do not count. */
+#define BUN_LONG_IDLE_WAIT_NS (100 * 1000000ULL)
 
 void us_loop_run_bun_tick(struct us_loop_t *loop, const struct timespec* timeout, uint64_t now_ns) {
     if (loop->num_polls == 0)
@@ -514,6 +519,8 @@ void us_loop_run_bun_tick(struct us_loop_t *loop, const struct timespec* timeout
         }
     }
 
+    const uint64_t wait_start_ns = (will_idle_inside_event_loop && loop->data.jsc_vm) ? us_internal_monotonic_ns() : 0;
+
     /* Fetch ready polls */
 #ifdef LIBUS_USE_EPOLL
     /* A zero timespec already has a fast path in ep_poll (fs/eventpoll.c):
@@ -535,6 +542,9 @@ void us_loop_run_bun_tick(struct us_loop_t *loop, const struct timespec* timeout
     /* Before anything can allocate again. */
     if (handed_off)
         mi_on_thread_idle_end();
+
+    if (wait_start_ns && us_internal_monotonic_ns() - wait_start_ns >= BUN_LONG_IDLE_WAIT_NS)
+        Bun__JSC_onLongIdleWait(loop->data.jsc_vm);
 
     us_internal_dispatch_ready_polls(loop);
     us_internal_drain_ready_polls(loop);

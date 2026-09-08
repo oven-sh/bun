@@ -23,6 +23,12 @@ extern "C" uint64_t us_internal_monotonic_ns(void);
 // it as an atomic rather than through a plain `int`.
 extern "C" std::atomic<int32_t> Bun__defaultRemainingRunsUntilSkipReleaseAccess;
 
+// The event loop just blocked in the kernel for >=100ms with nothing runnable (epoll_kqueue.c).
+extern "C" void Bun__JSC_onLongIdleWait(JSC::VM* _Nonnull vm)
+{
+    vm->endStartupJITDeferral();
+}
+
 extern "C" void Bun__JSC_onBeforeWait(JSC::VM* _Nonnull vm, uint64_t nowNs)
 {
     ASSERT(vm);

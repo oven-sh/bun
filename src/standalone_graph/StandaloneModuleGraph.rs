@@ -49,6 +49,11 @@ pub struct StandaloneModuleGraph {
     pub bytecode_string_table: &'static [u8],
     /// The slot table every module's `module_info` body indexes (`ModuleInfoSlotTable`); empty when there is none.
     pub module_info_string_table: &'static [u8],
+    /// The pre-resolved ES module graph JSC's loader consumes (`JSC::PrelinkedModuleGraph`, built by
+    /// `bun_bundler::prelinked_module_graph`); empty when there is none. 128-byte aligned in the mapped section.
+    pub prelinked_module_graph: &'static [u8],
+    /// Graph module index → index into `files` (table order).
+    pub prelinked_module_files: Vec<u32>,
     /// The first `startup_module_count` of `files` (table order = load order) are the entry
     /// point's static import closure, i.e. what loads before the first `import()`.
     pub startup_module_count: u32,
@@ -323,7 +328,21 @@ unsafe impl Sync for StandaloneModuleGraph {}
 impl bun_resolver::StandaloneModuleGraph for StandaloneModuleGraph {
     fn has_module_info(&self, name: &[u8]) -> bool {
         self.find_ref(name)
-            .is_some_and(|file| !file.module_info.is_empty())
+            .is_some_and(|file| !file.module_info.is_empty() || file.prelinked_index != u32::MAX)
+    }
+    fn prelinked_module_graph(&self) -> (&'static [u8], &'static [u8]) {
+        (self.prelinked_module_graph, self.module_info_string_table)
+    }
+    fn prelinked_module_index(&self, name: &[u8]) -> u32 {
+        if self.prelinked_module_graph.is_empty() {
+            return u32::MAX;
+        }
+        self.find_ref(name)
+            .map_or(u32::MAX, |file| file.prelinked_index)
+    }
+    fn prelinked_module_name(&self, index: u32) -> Option<&'static [u8]> {
+        let &file = self.prelinked_module_files.get(index as usize)?;
+        self.files.values().get(file as usize).map(|file| file.name)
     }
     fn find_assume_standalone_path(&self, name: &[u8]) -> Option<&'static [u8]> {
         self.lookup_file(name).map(|f| f.name)
@@ -629,6 +648,8 @@ pub struct File {
     pub source_hash: u32,
     pub module_format: ModuleFormat,
     pub side: FileSide,
+    /// This file's module index in `prelinked_module_graph` (`u32::MAX`: not a module of it).
+    pub prelinked_index: u32,
 }
 
 impl File {
@@ -854,7 +875,10 @@ bitflags::bitflags! {
         /// Built with `--compile --bytecode --target=<a different os/arch/libc than the bun that built it>`: the embedded
         /// bytecode was written by another platform's JavaScriptCore. Reported with crash reports.
         const CROSS_COMPILED_BYTECODE       = 1 << 10;
-        // _padding: u21
+        /// After the module-info string table pointer: `StringPointer` to the pre-resolved module graph blob
+        /// (`JSC::PrelinkedModuleGraph` layout), then `u32 count` and `count` × `u32` file-table index per graph module.
+        const HAS_PRELINKED_MODULE_GRAPH    = 1 << 11;
+        // _padding: u20
     }
 }
 
@@ -887,6 +911,8 @@ impl StandaloneModuleGraph {
                 builtin_bytecode: Vec::new(),
                 bytecode_string_table: &[],
                 module_info_string_table: &[],
+                prelinked_module_graph: &[],
+                prelinked_module_files: Vec::new(),
                 startup_module_count: 0,
             });
         }
@@ -992,6 +1018,7 @@ impl StandaloneModuleGraph {
                     offset: read_u32(record_at),
                     length: read_u32(record_at + 4),
                 };
+                record_at += 2 * size_of::<u32>();
                 if (ptr.offset as usize).saturating_add(ptr.length as usize) > raw_len {
                     &[]
                 } else {
@@ -1002,6 +1029,41 @@ impl StandaloneModuleGraph {
             } else {
                 &[]
             };
+        let mut prelinked_module_graph: &'static [u8] = &[];
+        let mut prelinked_module_files: Vec<u32> = Vec::new();
+        if offsets.flags.contains(Flags::HAS_PRELINKED_MODULE_GRAPH)
+            && record_at + 3 * size_of::<u32>() <= raw_len
+        {
+            let ptr = StringPointer {
+                offset: read_u32(record_at),
+                length: read_u32(record_at + 4),
+            };
+            let count = read_u32(record_at + 8) as usize;
+            record_at += 3 * size_of::<u32>();
+            if (ptr.offset as usize).saturating_add(ptr.length as usize) <= raw_len
+                && count <= modules_list_count
+                && record_at + count * size_of::<u32>() <= raw_len
+            {
+                // SAFETY: bounds checked above; read-only subrange placed by `to_bytes`, disjoint from the writable regions.
+                prelinked_module_graph = unsafe { slice_to(raw_const, raw_len, ptr) };
+                prelinked_module_files = (0..count)
+                    .map(|i| read_u32(record_at + i * size_of::<u32>()))
+                    .collect();
+                record_at += count * size_of::<u32>();
+                if prelinked_module_files
+                    .iter()
+                    .any(|&file| file as usize >= modules_list_count)
+                {
+                    prelinked_module_graph = &[];
+                    prelinked_module_files = Vec::new();
+                }
+            }
+        }
+        let _ = record_at;
+        let mut file_prelinked_index = vec![u32::MAX; modules_list_count];
+        for (module_index, &file) in prelinked_module_files.iter().enumerate() {
+            file_prelinked_index[file as usize] = module_index as u32;
+        }
 
         let mut modules = StringArrayHashMap::<File>::new();
         modules.reserve(modules_list_count);
@@ -1071,6 +1133,7 @@ impl StandaloneModuleGraph {
                     encoding: module.encoding,
                     wtf_string: std::sync::OnceLock::new(),
                     utf8: std::sync::OnceLock::new(),
+                    prelinked_index: file_prelinked_index[i],
                 },
             );
         }
@@ -1108,6 +1171,8 @@ impl StandaloneModuleGraph {
             builtin_bytecode,
             bytecode_string_table,
             module_info_string_table,
+            prelinked_module_graph,
+            prelinked_module_files,
             startup_module_count: startup_module_count.min(module_count as u32),
         })
     }
@@ -1280,7 +1345,13 @@ pub(crate) fn to_bytes(
             } else if output_file.output_kind == options::OutputKind::ModuleInfo {
                 string_builder.cap += bytes.len();
             } else if output_file.output_kind == options::OutputKind::ModuleInfoStringTable {
-                string_builder.cap += bytes.len() + 2 * size_of::<u32>();
+                // 4-byte aligned (JSC reads the slots in place), then its record: pointer.
+                string_builder.cap += bytes.len() + 3 + 2 * size_of::<u32>();
+            } else if output_file.output_kind == options::OutputKind::PrelinkedModuleGraph {
+                // Aligned like bytecode (JSC reads it in place as u32 arrays), then its record: pointer, count,
+                // and one file index per graph module (at most one per output file).
+                string_builder.cap += bytes.len().div_ceil(256) * 256 + 256 + 16;
+                string_builder.cap += 3 * size_of::<u32>() + output_files.len() * size_of::<u32>();
             } else {
                 has_entry_point |= is_entry_point(output_file);
 
@@ -1352,12 +1423,45 @@ pub(crate) fn to_bytes(
         .iter()
         .take_while(|f| f.loads_at_startup)
         .count();
-    let mut shared_bytecode: Option<(Vec<u8>, StringPointer, StringPointer)> = None;
+    let mut shared_bytecode: Option<(Vec<u8>, StringPointer, StringPointer, StringPointer)> = None;
+
+    // `Flags::HAS_PRELINKED_MODULE_GRAPH`: graph module index -> file-table position, so the runtime registers a whole
+    // import closure by index without looking any path up. Empty (and the graph is not embedded) unless every graph
+    // module's chunk is in the executable.
+    let prelinked_module_to_file: Vec<u32> = {
+        let mut module_to_file: Vec<u32> = Vec::new();
+        for (position, output_file) in module_files.iter().enumerate() {
+            let module_index = output_file.prelinked_module_index;
+            if module_index == u32::MAX {
+                continue;
+            }
+            if module_to_file.len() <= module_index as usize {
+                module_to_file.resize(module_index as usize + 1, u32::MAX);
+            }
+            module_to_file[module_index as usize] = position as u32;
+        }
+        let graph_module_count = output_files
+            .iter()
+            .find(|f| f.output_kind == options::OutputKind::PrelinkedModuleGraph)
+            .and_then(|f| f.value.as_slice().get(12..16))
+            .map_or(0, |count| {
+                u32::from_le_bytes(count.try_into().unwrap()) as usize
+            });
+        if module_to_file.len() != graph_module_count || module_to_file.contains(&u32::MAX) {
+            module_to_file.clear();
+        }
+        module_to_file
+    };
+    let embed_prelinked_graph = !prelinked_module_to_file.is_empty();
 
     let mut modules: Vec<CompiledModuleGraphFile> = Vec::with_capacity(module_files.len());
     for (i, &output_file) in module_files.iter().enumerate() {
         if i == startup_module_count {
-            shared_bytecode = Some(append_shared_bytecode(&mut string_builder, output_files));
+            shared_bytecode = Some(append_shared_bytecode(
+                &mut string_builder,
+                output_files,
+                embed_prelinked_graph,
+            ));
         }
         let buf_bytes = output_file.value.as_slice();
 
@@ -1481,9 +1585,14 @@ pub(crate) fn to_bytes(
         });
     }
 
-    let (builtin_bytecode_table, bytecode_string_table_ptr, module_info_string_table_ptr) =
-        shared_bytecode
-            .unwrap_or_else(|| append_shared_bytecode(&mut string_builder, output_files));
+    let (
+        builtin_bytecode_table,
+        bytecode_string_table_ptr,
+        module_info_string_table_ptr,
+        prelinked_module_graph_ptr,
+    ) = shared_bytecode.unwrap_or_else(|| {
+        append_shared_bytecode(&mut string_builder, output_files, embed_prelinked_graph)
+    });
 
     // Region layout after the bytecode/module_info run above: source maps
     // (unread until an error prints), then every file's source text as one run
@@ -1574,6 +1683,19 @@ pub(crate) fn to_bytes(
         record[4..8].copy_from_slice(&module_info_string_table_ptr.length.to_le_bytes());
         let _ = string_builder.append_count(&record);
         flags |= Flags::HAS_MODULE_INFO_STRING_TABLE;
+    }
+    if prelinked_module_graph_ptr.length != 0 {
+        debug_assert!(embed_prelinked_graph);
+        let module_to_file = &prelinked_module_to_file;
+        let mut record: Vec<u8> = Vec::with_capacity(12 + module_to_file.len() * 4);
+        record.extend_from_slice(&prelinked_module_graph_ptr.offset.to_le_bytes());
+        record.extend_from_slice(&prelinked_module_graph_ptr.length.to_le_bytes());
+        record.extend_from_slice(&(module_to_file.len() as u32).to_le_bytes());
+        for file in module_to_file {
+            record.extend_from_slice(&file.to_le_bytes());
+        }
+        let _ = string_builder.append_count(&record);
+        flags |= Flags::HAS_PRELINKED_MODULE_GRAPH;
     }
     if !target.is_host_platform()
         && output_files
@@ -2889,7 +3011,8 @@ fn address_span(regions: impl Iterator<Item = (*const u8, usize)>) -> Option<(us
 fn append_shared_bytecode(
     string_builder: &mut bun_core::StringBuilder,
     output_files: &[OutputFile],
-) -> (Vec<u8>, StringPointer, StringPointer) {
+    embed_prelinked_graph: bool,
+) -> (Vec<u8>, StringPointer, StringPointer, StringPointer) {
     let mut builtin_bytecode_table: Vec<u8> = Vec::new();
     let mut count: u32 = 0;
     builtin_bytecode_table.extend_from_slice(&0u32.to_le_bytes());
@@ -2929,12 +3052,27 @@ fn append_shared_bytecode(
         .iter()
         .find(|f| f.output_kind == options::OutputKind::ModuleInfoStringTable)
     {
+        // 4-byte aligned at runtime (the section payload starts 8 bytes past a page boundary): JSC reads the slots in place.
+        let padding = (4 - string_builder.len % 4) % 4;
+        string_builder.writable()[0..padding].fill(0);
+        string_builder.len += padding;
         module_info_string_table_ptr = string_builder.append_count(table.value.as_slice());
+    }
+    let mut prelinked_module_graph_ptr = StringPointer::default();
+    if embed_prelinked_graph {
+        if let Some(graph) = output_files
+            .iter()
+            .find(|f| f.output_kind == options::OutputKind::PrelinkedModuleGraph)
+        {
+            prelinked_module_graph_ptr =
+                append_bytecode_aligned(string_builder, graph.value.as_slice());
+        }
     }
     (
         builtin_bytecode_table,
         bytecode_string_table_ptr,
         module_info_string_table_ptr,
+        prelinked_module_graph_ptr,
     )
 }
 

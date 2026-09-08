@@ -1445,6 +1445,14 @@ pub mod bv2_impl {
                 table: core::ptr::NonNull<EncoderStringTable>,
                 wtf8: &[u8],
             ) -> u32;
+            /// `WTF::StringImpl::hash()` of the string with these WTF-8 contents.
+            safe fn __bun_jsc_wtf_string_hash(wtf8: &[u8]) -> u32;
+        }
+
+        /// `WTF::StringImpl::hash()` of a WTF-8 string, as JSC hashes the atom it becomes at runtime.
+        #[inline]
+        pub(crate) fn wtf_string_hash(wtf8: &[u8]) -> u32 {
+            __bun_jsc_wtf_string_hash(wtf8)
         }
 
         unsafe extern "Rust" {

@@ -489,6 +489,9 @@ pub struct InitializeOptions {
     pub one_shot: bool,
     /// `bun test --isolate`/`--parallel`: each file gets a fresh global and per-global JIT code is discarded with it.
     pub short_lived_globals: bool,
+    /// `bun build --compile` executables: scale LLInt->Baseline->DFG tier-up thresholds during the startup window
+    /// (JSC `startupJITDeferralScale`/`startupJITDeferralMaxMs`), ended by the first idle event-loop park.
+    pub startup_jit_deferral: bool,
 }
 
 /// Binding for JSCInitialize in ZigGlobalObject.cpp
@@ -508,6 +511,7 @@ pub fn initialize(options: InitializeOptions) {
             options.eval_mode,
             options.one_shot,
             options.short_lived_globals,
+            options.startup_jit_deferral,
         )
     };
 }
@@ -1564,6 +1568,7 @@ unsafe extern "C" {
         eval_mode: bool,
         one_shot_startup: bool,
         short_lived_globals: bool,
+        startup_jit_deferral: bool,
     );
 }
 

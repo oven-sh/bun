@@ -91,6 +91,7 @@ pub mod thread_pool;
 
 pub(crate) mod AstBuilder;
 pub mod analyze_transpiled_module;
+pub mod prelinked_module_graph;
 pub mod bundled_ast;
 pub use bundled_ast::BundledAst;
 pub mod barrel_imports;
@@ -285,6 +286,10 @@ pub mod options {
         /// The string table every chunk's `ModuleInfo` body indexes (`ModuleInfoStringTable::serialize`).
         #[strum(serialize = "module-info-string-table")]
         ModuleInfoStringTable,
+        /// The pre-resolved ES module graph of a --compile executable (`prelinked_module_graph::build`), consumed by
+        /// JSC's module loader (`JSC::PrelinkedModuleGraph`).
+        #[strum(serialize = "prelinked-module-graph")]
+        PrelinkedModuleGraph,
         #[strum(serialize = "metafile-json")]
         MetafileJson,
         #[strum(serialize = "metafile-markdown")]
@@ -301,6 +306,7 @@ pub mod options {
                     | OutputKind::BuiltinBytecode
                     | OutputKind::BytecodeStringTable
                     | OutputKind::ModuleInfoStringTable
+                    | OutputKind::PrelinkedModuleGraph
                     | OutputKind::MetafileJson
                     | OutputKind::MetafileMarkdown
             )

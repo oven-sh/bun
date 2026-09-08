@@ -116,6 +116,9 @@ new!(pub BUN_POSTGRES_SOCKET_MONITOR: string, "BUN_POSTGRES_SOCKET_MONITOR", {})
 new!(pub BUN_POSTGRES_SOCKET_MONITOR_READER: string, "BUN_POSTGRES_SOCKET_MONITOR_READER", {});
 new!(pub BUN_RUNTIME_TRANSPILER_CACHE_PATH: string, "BUN_RUNTIME_TRANSPILER_CACHE_PATH", {});
 new!(pub BUN_SSG_DISABLE_STATIC_ROUTE_VISITOR: boolean, "BUN_SSG_DISABLE_STATIC_ROUTE_VISITOR", { default: false });
+// `bun build --compile` executables only: defer Baseline/DFG tier-up during startup (JSC startupJITDeferralScale=8 until first
+// >=100ms idle park or 3s); =0 opts out. Plain `bun run` opts in with BUN_JSC_startupJITDeferralScale=N instead.
+new!(pub BUN_STARTUP_JIT_DEFERRAL: boolean, "BUN_STARTUP_JIT_DEFERRAL", { default: true });
 new!(pub BUN_TCC_OPTIONS: string, "BUN_TCC_OPTIONS", {});
 // Standard C compiler environment variable for include paths (colon-separated).
 // Used by bun:ffi's TinyCC integration for systems like NixOS.

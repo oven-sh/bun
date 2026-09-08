@@ -253,6 +253,20 @@ pub(crate) fn __bun_jsc_encoder_string_table_slot(
 }
 
 #[unsafe(no_mangle)]
+pub(crate) fn __bun_jsc_wtf_string_hash(wtf8: &[u8]) -> u32 {
+    unsafe extern "C" {
+        fn Bun__WTFStringHashLatin1(ptr: *const u8, len: usize) -> u32;
+        fn Bun__WTFStringHashUTF16(ptr: *const u16, len: usize) -> u32;
+    }
+    match bun_core::strings::wtf8_to_utf16_alloc(wtf8) {
+        // SAFETY: pure functions reading `len` units from `ptr`.
+        None => unsafe { Bun__WTFStringHashLatin1(wtf8.as_ptr(), wtf8.len()) },
+        // SAFETY: as above.
+        Some(units) => unsafe { Bun__WTFStringHashUTF16(units.as_ptr(), units.len()) },
+    }
+}
+
+#[unsafe(no_mangle)]
 pub(crate) fn __bun_jsc_encoder_string_table_new() -> NonNull<EncoderStringTable> {
     crate::initialize(crate::InitializeOptions::default());
     EncoderStringTable::new()

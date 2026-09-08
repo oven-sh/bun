@@ -33,6 +33,9 @@ pub struct ResolvedSource {
     pub tag: Tag,
 
     pub already_bundled: bool,
+    /// An ES module of the executable's pre-resolved module graph: it carries no `module_info`; the loader builds its
+    /// record from the graph.
+    pub is_prelinked_module: bool,
 
     pub bytecode_cache: Bytecode,
     /// `Zig::SourceProvider` takes it (nulling the field).
@@ -42,7 +45,8 @@ pub struct ResolvedSource {
     pub origin_path: BunString,
 }
 
-/// `ResolvedSource.bytecode_cache`: C++ sees `{ uint8_t* ptr; size_t len; bool owned; }`.
+/// `ResolvedSource.bytecode_cache`: C++ sees `{ uint8_t* ptr; size_t len; bool owned; bool persistent; bool integrity_verified; }`
+/// (headers-handwritten.h flattens these into `ResolvedSource`; keep the two in step).
 /// When `owned`, `ptr` is a `heap::into_raw(Box<[u8]>)` freed on drop (or by
 /// the C++ consumer once it `std::exchange`s the pointer out); otherwise it is
 /// borrowed from the standalone module graph or the compile cache.
@@ -53,6 +57,10 @@ pub struct Bytecode {
     owned: bool,
     /// The bytes outlive every VM (executable section, retired compile-cache blob), so JSC may alias them instead of copying.
     persistent: bool,
+    /// The bytes are a section of the running executable, as trustworthy as its text: JSC skips the per-code-block
+    /// checksum and child-record walk (`CachedBytecode::setPayloadIntegrityIsPreVerified`); the version / boot-session
+    /// header check and the O(1) bounds checks still run.
+    integrity_verified: bool,
 }
 
 impl Default for Bytecode {
@@ -62,6 +70,7 @@ impl Default for Bytecode {
             len: 0,
             owned: false,
             persistent: false,
+            integrity_verified: false,
         }
     }
 }
@@ -76,6 +85,7 @@ impl Bytecode {
             len: bytes.len(),
             owned: false,
             persistent: false,
+            integrity_verified: false,
         }
     }
     /// Borrowed from memory the caller guarantees is never freed or unmapped for the rest of the process
@@ -84,6 +94,13 @@ impl Bytecode {
         Self {
             persistent: !bytes.is_empty(),
             ..Self::borrowed(bytes)
+        }
+    }
+    /// A section of the running executable (the standalone module graph): persistent, and exempt from per-code-block integrity checks.
+    pub fn embedded(bytes: &[u8]) -> Self {
+        Self {
+            integrity_verified: !bytes.is_empty(),
+            ..Self::persistent(bytes)
         }
     }
     pub fn owned(bytes: Box<[u8]>) -> Self {
@@ -96,6 +113,7 @@ impl Bytecode {
             len,
             owned: true,
             persistent: false,
+            integrity_verified: false,
         }
     }
 }

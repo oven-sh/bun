@@ -133,6 +133,9 @@ typedef struct ResolvedSource {
     JSC::EncodedJSValue jsvalue_for_export;
     uint32_t tag;
     bool already_bundled;
+    // An ES module of the executable's pre-resolved module graph: no module_info, its record comes from the graph
+    // (Zig::SourceProvider still gets SourceProviderSourceType::BunTranspiledModule).
+    bool is_prelinked_module;
     // -- Bytecode cache fields --
     // Owned (`ResolvedSource__freeBytecode`) iff `bytecode_cache_owned`; otherwise
     // borrowed from the standalone module graph / compile cache.
@@ -141,6 +144,8 @@ typedef struct ResolvedSource {
     bool bytecode_cache_owned;
     // The bytes outlive every VM (executable section / retired compile-cache blob): JSC may alias them.
     bool bytecode_cache_persistent;
+    // The bytes are part of this executable (standalone module graph): JSC skips per-code-block integrity checks.
+    bool bytecode_cache_integrity_verified;
     // Owned; Zig::SourceProvider takes it (nulling the field).
     bun_ModuleInfoDeserialized* module_info;
     // File path whose file:// URL is the source origin (what import() resolves against, what a bytecode cache is

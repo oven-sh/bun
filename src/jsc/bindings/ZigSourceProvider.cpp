@@ -70,7 +70,7 @@ Ref<SourceProvider> SourceProvider::create(
     // Use BunTranspiledModule when module_info is present.
     // This allows JSC to skip parsing during the analyze phase (uses pre-computed imports/exports).
     // Bytecode cache (if present) is used separately during the evaluate phase.
-    if (resolvedSource.module_info != nullptr) {
+    if (resolvedSource.module_info != nullptr || resolvedSource.is_prelinked_module) {
         ASSERT(!resolvedSource.isCommonJSModule);
         sourceType = JSC::SourceProviderSourceType::BunTranspiledModule;
     }
@@ -96,12 +96,15 @@ Ref<SourceProvider> SourceProvider::create(
     const auto getProvider = [&]() -> Ref<SourceProvider> {
         auto origin = getSourceOrigin();
         if (resolvedSource.bytecode_cache != nullptr) {
-            const auto destructorOwned = [](const void* ptr) {
-                ResolvedSource__freeBytecode(static_cast<uint8_t*>(const_cast<void*>(ptr)));
-            };
-            // Borrowed from the standalone module graph / compile cache.
-            const auto destructorNoOp = [](const void*) {};
-            Ref<JSC::CachedBytecode> bytecode = JSC::CachedBytecode::create(std::span<uint8_t>(std::exchange(resolvedSource.bytecode_cache, nullptr), resolvedSource.bytecode_cache_size), resolvedSource.bytecode_cache_owned ? destructorOwned : destructorNoOp, {});
+            // Not owned: borrowed from the standalone module graph / compile cache. No destructor then, so that JSC treats
+            // the bytes as outliving the CachedBytecode only when `bytecode_cache_persistent` says so (CachePayload::isOwnedOrPersistent).
+            JSC::CachePayload::Destructor destructor = nullptr;
+            if (resolvedSource.bytecode_cache_owned) {
+                destructor = [](const void* ptr) {
+                    ResolvedSource__freeBytecode(static_cast<uint8_t*>(const_cast<void*>(ptr)));
+                };
+            }
+            Ref<JSC::CachedBytecode> bytecode = JSC::CachedBytecode::create(std::span<uint8_t>(std::exchange(resolvedSource.bytecode_cache, nullptr), resolvedSource.bytecode_cache_size), WTF::move(destructor), {});
             if (resolvedSource.bytecode_cache_persistent)
                 bytecode->setPayloadIsPersistent();
             if (resolvedSource.bytecode_cache_integrity_verified)

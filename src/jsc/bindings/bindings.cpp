@@ -3192,6 +3192,12 @@ void JSC__VM__collectAsyncIdle(JSC::VM* vm)
     vm->heap.collectAsync(request);
 }
 
+// First idle park of the event loop: the startup burst is over, so stop scaling tier-up thresholds (Options::startupJITDeferralScale).
+void JSC__VM__endStartupJITDeferral(JSC::VM* vm)
+{
+    vm->endStartupJITDeferral();
+}
+
 size_t JSC__VM__heapSize(JSC::VM* arg0)
 {
     return arg0->heap.size();

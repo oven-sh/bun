@@ -44,21 +44,29 @@ pub enum CloseCode {
     fast_shutdown = 2,
 }
 
+/// `us_socket_queued_input` return codes, mirroring the `LIBUS_QUEUED_INPUT_*`
+/// defines in libusockets.h by name.
+pub const LIBUS_QUEUED_INPUT_NONE: c_int = 0;
+pub const LIBUS_QUEUED_INPUT_DATA: c_int = 1;
+pub const LIBUS_QUEUED_INPUT_EOF: c_int = 2;
+pub const LIBUS_QUEUED_INPUT_ERROR: c_int = 3;
+
 /// What the read side of a socket holds right now, read with a peek instead of
-/// a trip through the event loop. Mirrors the `LIBUS_QUEUED_INPUT_*` codes.
+/// a trip through the event loop.
 ///
 /// The peek consumes nothing, so a socket that reports `Data` still delivers
 /// the same bytes to the normal read path on the next poll.
+#[repr(i32)]
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]
 pub enum QueuedInput {
     /// A read would block: the peer has written nothing since the last read.
-    None,
+    None = LIBUS_QUEUED_INPUT_NONE,
     /// At least one byte is readable.
-    Data,
+    Data = LIBUS_QUEUED_INPUT_DATA,
     /// The peer sent a FIN.
-    Eof,
+    Eof = LIBUS_QUEUED_INPUT_EOF,
     /// The read side failed, for example a reset.
-    Error,
+    Error = LIBUS_QUEUED_INPUT_ERROR,
 }
 
 /// Layout-compatible with `struct us_iovec_t` in libusockets.h (== POSIX iovec).
@@ -484,9 +492,9 @@ impl us_socket_t {
 
     pub(crate) fn queued_input(&self) -> QueuedInput {
         match c::us_socket_queued_input(self) {
-            1 => QueuedInput::Data,
-            2 => QueuedInput::Eof,
-            3 => QueuedInput::Error,
+            LIBUS_QUEUED_INPUT_DATA => QueuedInput::Data,
+            LIBUS_QUEUED_INPUT_EOF => QueuedInput::Eof,
+            LIBUS_QUEUED_INPUT_ERROR => QueuedInput::Error,
             _ => QueuedInput::None,
         }
     }

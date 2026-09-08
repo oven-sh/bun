@@ -4631,8 +4631,19 @@ pub(crate) fn resolve_embedded_file_to_buf(
         return Ok(None);
     };
     let tmpdir = (*Fs::FileSystem::instance()).tmpdir()?;
+    // dlopen() gets the real path of the checked directory, so a symlink in the
+    // `$TMPDIR` spelling is not resolved a second time.
+    let mut tmpdir_path_buf = bun_paths::path_buffer_pool::get();
+    let tmpdir_path: &[u8] = match bun_sys::get_fd_path(tmpdir.fd, &mut tmpdir_path_buf) {
+        Ok(real_path) => real_path,
+        #[cfg(unix)]
+        Err(err) => return Err(TempDirRefusal::Open(err)),
+        #[cfg(not(unix))]
+        Err(_) => Fs::RealFS::tmpdir_path(),
+    };
     Ok(extract_embedded_file(
         &tmpdir,
+        tmpdir_path,
         file.contents.as_bytes(),
         extname,
         out_buf,
@@ -4641,6 +4652,7 @@ pub(crate) fn resolve_embedded_file_to_buf(
 
 fn extract_embedded_file(
     tmpdir: &bun_sys::Dir,
+    tmpdir_path: &[u8],
     file_contents: &[u8],
     extname: &[u8],
     out_buf: &mut [u8],
@@ -4662,13 +4674,6 @@ fn extract_embedded_file(
     .ok()?;
 
     let tmpdir_fd: bun_sys::Fd = tmpdir.fd;
-    // dlopen() gets the real path of the checked directory, not the `$TMPDIR`
-    // spelling, so a symlink on the way is not resolved a second time.
-    let mut tmpdir_path_buf = bun_paths::path_buffer_pool::get();
-    let tmpdir_path: &[u8] = match bun_sys::get_fd_path(tmpdir_fd, &mut tmpdir_path_buf) {
-        Ok(real_path) => real_path,
-        Err(_) => Fs::RealFS::tmpdir_path(),
-    };
     // Reuse the canonical file from a previous run if it is still ours with
     // the right size. `lstatat` so a planted symlink fails the ISREG check
     // instead of being followed.

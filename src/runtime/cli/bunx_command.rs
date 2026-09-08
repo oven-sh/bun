@@ -569,10 +569,8 @@ impl BunxCommand {
         true
     }
 
-    /// `is_trusted_cache_root` covers the components below the temp dir; this
-    /// covers the temp dir and everything above it. Returns the real path of
-    /// the checked directory so the install and exec do not re-resolve a
-    /// symlink through a directory the check never saw.
+    /// `is_trusted_cache_root` starts below the temp dir; this covers the temp dir and up.
+    /// Returns the checked directory's real path so later lookups by path hit what was checked.
     #[cfg(unix)]
     fn trusted_temp_dir<'a>(
         temp_dir: &'a [u8],
@@ -581,7 +579,7 @@ impl BunxCommand {
         let dir = open_trusted_temp_dir(temp_dir, true)?;
         match bun_sys::get_fd_path(dir.fd(), real_path_buf) {
             Ok(real_path) => Ok(&*real_path),
-            Err(_) => Ok(temp_dir),
+            Err(err) => Err(TempDirRefusal::Open(err)),
         }
     }
 

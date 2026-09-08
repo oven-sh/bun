@@ -624,6 +624,14 @@ impl CompileC {
             zstr!("-std=c11 -Wl,--export-all-symbols -g -O2")
         };
 
+        let compiler_rt_dir = CompilerRT::dir();
+        if compiler_rt_dir.is_none()
+            && let Some(refusal) = COMPILER_RT_DIR_REFUSAL.get()
+        {
+            global_this.throw(format_args!("{}", BStr::new(refusal)));
+            return Err(crate::Error::JSError);
+        }
+
         // TODO: correctly handle invalid user-provided options
         let state_ptr = match TCC::State::init::<CompileC, true>(&TCC::Config {
             options: Some(NonNull::from(compile_options)),
@@ -646,7 +654,7 @@ impl CompileC {
         // we hold the only reference for the rest of this function.
         let state: &mut TCC::State = unsafe { &mut *state_ptr.as_ptr() };
 
-        if let Some(compiler_rt_dir) = CompilerRT::dir() {
+        if let Some(compiler_rt_dir) = compiler_rt_dir {
             if state.add_sys_include_path(compiler_rt_dir).is_err() {
                 bun_output::scoped_log!(TCC, "TinyCC failed to add sysinclude path");
             }
@@ -2298,15 +2306,23 @@ impl CompilerRtSources {
 }
 
 static CREATE_COMPILER_RT_DIR_ONCE: Once = Once::new();
+/// Set when the temp dir was refused for its owner; `cc()` throws it.
+static COMPILER_RT_DIR_REFUSAL: OnceLock<Box<[u8]>> = OnceLock::new();
 
 impl CompilerRT {
     fn create_compiler_rt_dir() {
         // `bun_resolver::fs::FileSystem` (the inline canonical surface) doesn't
         // yet expose an inherent `tmpdir()`; reuse the crate-local
         // `FileSystemTmpdirExt` shim already in service for `jsc_hooks`.
-        use crate::cli::upgrade_command::FileSystemTmpdirExt as _;
-        let Ok(tmpdir) = Fs::FileSystem::instance().tmpdir() else {
-            return;
+        use crate::cli::upgrade_command::{FileSystemTmpdirExt as _, TempDirRefusal};
+        let tmpdir = match Fs::FileSystem::instance().tmpdir() {
+            Ok(tmpdir) => tmpdir,
+            Err(refusal @ TempDirRefusal::ForeignOwner { .. }) => {
+                let message = refusal.message(Fs::RealFS::tmpdir_path());
+                let _ = COMPILER_RT_DIR_REFUSAL.set(message.into_boxed_slice());
+                return;
+            }
+            Err(TempDirRefusal::Open(_)) => return,
         };
 
         // Prefer the reusable per-user directory; if it cannot be safely

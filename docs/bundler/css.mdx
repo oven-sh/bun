@@ -28,7 +28,7 @@ By default, Bun's CSS bundler targets the following browsers:
 - Safari 14+
 - Opera 67+
 
-Lowering is decided per rule and per selector. When one selector in a selector list needs a fallback that the others do not, or is a selector Bun does not recognize (a vendor-specific pseudo-class, for example), Bun splits the rule into one rule per selector (or, when the targets and the selectors allow it, wraps the list in `:is()`), so that the other selectors keep working everywhere. A rule that counted on one unrecognized selector to make other browsers drop the whole rule, a common form of browser hack, no longer does that after bundling:
+Lowering is decided per rule and per selector. When one selector in a selector list needs a fallback that the others do not, or is a selector Bun does not recognize (a vendor-specific pseudo-class or pseudo-element, for example), Bun splits the rule into one rule per selector (or, when the targets and the selectors allow it, wraps the list in `:is()`), so that the other selectors keep working everywhere. A rule that counted on one unrecognized selector to make other browsers drop the whole rule, a common form of browser hack, no longer does that after bundling:
 
 <CodeGroup>
 

@@ -196,8 +196,6 @@ JSC_DEFINE_HOST_FUNCTION(constructDirent, (JSC::JSGlobalObject * globalObject, J
     return JSValue::encode(object);
 }
 
-// A sloppy-mode host function sees the global object as `this` when the method is
-// called with no receiver. Strict-mode toThis() maps that back to undefined.
 static inline int32_t getType(JSC::ThrowScope& scope, JSC::VM& vm, JSValue thisValue, Zig::GlobalObject* globalObject)
 {
     JSValue value = thisValue.toThis(globalObject, JSC::ECMAMode::strict());

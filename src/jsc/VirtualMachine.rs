@@ -5753,9 +5753,6 @@ impl VirtualMachine {
         fn is_hidden_frame(f: &crate::ZigStackFrame) -> bool {
             f.source_url.eq_ascii(b"bun:wrap") || f.function_name.eq_ascii(b"::bunternal::")
         }
-        fn is_unknown_source(url: &bun_core::String) -> bool {
-            url.is_empty() || url.eq_ascii(b"[unknown]") || url.starts_with_ascii(b"[source:")
-        }
 
         let mut frames_len = exception.stack.frames_len as usize;
         // SAFETY: `frames_ptr[..frames_len]` is the caller-owned `Holder`
@@ -5772,7 +5769,7 @@ impl VirtualMachine {
                 }
                 // Workaround for being unable to hide that specific frame
                 // without also hiding the frame before it.
-                if is_unknown_source(&frame.source_url) && is_noisy_builtin(&frame.function_name) {
+                if frame.is_unknown_source() && is_noisy_builtin(&frame.function_name) {
                     start_index = Some(0);
                     break;
                 }
@@ -5784,9 +5781,7 @@ impl VirtualMachine {
                     if is_hidden_frame(frame) {
                         continue;
                     }
-                    if is_unknown_source(&frame.source_url)
-                        && is_noisy_builtin(&frame.function_name)
-                    {
+                    if frame.is_unknown_source() && is_noisy_builtin(&frame.function_name) {
                         continue;
                     }
                     // Swap rather than overwrite: the discarded tail past `j`
@@ -5825,8 +5820,9 @@ impl VirtualMachine {
             enable_source_code_preview.set(false);
         }
 
-        // `collect_source_lines` excerpts `frames[top]`'s JSC source: for a bun module, bundled text.
-        let top_frame_is_bun_module = self.hide_bun_stackframes && frames[top].is_bun_module();
+        // `collect_source_lines` excerpts `frames[top]`'s JSC source: for a builtin, its own or a
+        // bundled module's text. `top` is only a builtin when no frame is the user's.
+        let top_frame_is_builtin_code = self.hide_bun_stackframes && frames[top].is_builtin_code();
 
         let already_remapped = frames[top].remapped;
         let resolved = {
@@ -5913,7 +5909,7 @@ impl VirtualMachine {
             };
 
             if enable_source_code_preview.get()
-                && !top_frame_is_bun_module
+                && !top_frame_is_builtin_code
                 && code.slice().is_empty()
             {
                 exception.collect_source_lines(error_instance, global, top as u8);
@@ -5959,7 +5955,7 @@ impl VirtualMachine {
             if !code.slice().is_empty() {
                 *source_code_slice = Some(code);
             }
-        } else if enable_source_code_preview.get() && !top_frame_is_bun_module {
+        } else if enable_source_code_preview.get() && !top_frame_is_builtin_code {
             // Nothing to remap through (node:vm script, eval, new Function):
             // excerpt the picked frame straight from its JSC source.
             exception.collect_source_lines(error_instance, global, top as u8);

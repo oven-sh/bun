@@ -88,6 +88,9 @@ static void populateStackFrameMetadata(JSC::VM& vm, JSC::JSGlobalObject* globalO
     frame.source_url = Bun::toStringRef(sourceURL);
     auto m_codeBlock = stackFrame.codeBlock();
     if (m_codeBlock) {
+        // Bun's bundled modules are builtin executables too (createBuiltinExecutable), and
+        // functions nested in a builtin inherit the flag.
+        frame.is_builtin = m_codeBlock->unlinkedCodeBlock()->isBuiltinFunction();
         switch (m_codeBlock->codeType()) {
         case JSC::EvalCode: {
             frame.code_type = ZigStackFrameCodeEval;

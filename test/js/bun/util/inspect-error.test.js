@@ -458,10 +458,39 @@ describe.concurrent("AggregateError whose errors cannot be walked", () => {
 });
 
 describe.concurrent("code frame of an error thrown inside a bun builtin module", () => {
-  // Frames in bun's bundled modules (`node:*`, `bun:*`, `internal:*`) have no
+  // Frames in bun's bundled modules (`node:*`, `bun:*`, `internal:*`, and the
+  // `src/js/thirdparty` ones that run under a bare name such as `ws`) have no
   // file to excerpt: the code frame comes from the first user frame below them,
   // and when there is none, no code frame is printed at all.
   const codeFrameLines = text => text.split("\n").filter(line => /^\s*(?:\d+|-) \|/.test(line));
+
+  test("points at the caller when a bundled module with a bare name throws", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const { WebSocketServer } = require("ws");
+         try {
+           new WebSocketServer({});
+         } catch (e) {
+           console.log(Bun.inspect(e));
+         }`,
+      ],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    // The throwing frame is in bun's `ws` module; the excerpt and the caret are the caller's.
+    expect(stdout).toContain("at new WebSocketServer (ws:");
+    const frame = codeFrameLines(stdout);
+    expect(frame.at(-1)).toContain("new WebSocketServer({});");
+    const caret = stdout.split("\n")[stdout.split("\n").indexOf(frame.at(-1)) + 1];
+    expect(caret.trim()).toBe("^");
+    expect(caret.indexOf("^")).toBe(frame.at(-1).indexOf("new WebSocketServer"));
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+  });
 
   test("points at the caller when an internal: module throws", async () => {
     await using proc = Bun.spawn({

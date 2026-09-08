@@ -232,6 +232,9 @@ typedef struct ZigStackFrame {
     ZigStackFrameCode code_type;
     bool is_async;
     bool remapped;
+    /// The frame runs code JSC compiled as a builtin: JSC's own JS builtins and bun's bundled
+    /// `src/js` modules. Only known for frames taken from a JSC stack trace.
+    bool is_builtin;
     int32_t jsc_stack_frame_index;
 
     ZigStackFrame()
@@ -241,6 +244,7 @@ typedef struct ZigStackFrame {
         , code_type {}
         , is_async(false)
         , remapped(false)
+        , is_builtin(false)
         , jsc_stack_frame_index(-1)
     {
     }

@@ -16,7 +16,7 @@ use bun_install::package_manager_real::{
 };
 use bun_install::{
     self as install, DEFAULT_TRUSTED_DEPENDENCIES_LIST, DependencyID, LifecycleScriptSubprocess,
-    PackageID, PackageManager, Resolution, ResolutionTag,
+    PackageID, PackageManager, Resolution,
 };
 use bun_paths::AutoAbsPath;
 
@@ -25,7 +25,7 @@ use crate::package_manager_command::PackageManagerCommand;
 
 type DepIdSet = ArrayHashMap<DependencyID, (), ArrayIdentityContext>;
 
-/// Blocked: package.json does not trust it, or `bun.lock` has not recorded the trust yet.
+/// Blocked unless both package.json (now) and `bun.lock` (as of its last save) trust it.
 fn scripts_blocked(
     lockfile: &Lockfile,
     recorded: &Option<TrustedDependenciesSet>,
@@ -33,20 +33,8 @@ fn scripts_blocked(
     pkg_name: &[u8],
     resolution: &Resolution,
 ) -> bool {
-    if !lockfile.has_trusted_dependency(alias, pkg_name, resolution) {
-        return true;
-    }
-    if lockfile.trusted_dependencies.is_none() {
-        // Trusted through the default list, which never reaches the lockfile.
-        return false;
-    }
-    let name = if resolution.tag == ResolutionTag::Npm {
-        pkg_name
-    } else {
-        alias
-    };
-    let hash = bun_semver::string::Builder::string_hash(name) as install::TruncatedPackageNameHash;
-    !recorded.as_ref().is_some_and(|set| set.contains(&hash))
+    !lockfile.has_trusted_dependency(alias, pkg_name, resolution)
+        || !lockfile.has_trusted_dependency_in(recorded.as_ref(), alias, pkg_name, resolution)
 }
 
 pub(crate) struct DefaultTrustedCommand;

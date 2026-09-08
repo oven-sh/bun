@@ -3275,7 +3275,23 @@ impl Lockfile {
         pkg_name: &[u8],
         resolution: &Resolution,
     ) -> bool {
-        if let Some(trusted_dependencies) = &self.trusted_dependencies {
+        self.has_trusted_dependency_in(
+            self.trusted_dependencies.as_ref(),
+            alias,
+            pkg_name,
+            resolution,
+        )
+    }
+
+    /// `has_trusted_dependency`, but against `trusted_dependencies` instead of the lockfile's own set.
+    pub fn has_trusted_dependency_in(
+        &self,
+        trusted_dependencies: Option<&TrustedDependenciesSet>,
+        alias: &[u8],
+        pkg_name: &[u8],
+        resolution: &Resolution,
+    ) -> bool {
+        if let Some(trusted_dependencies) = trusted_dependencies {
             let trusted_name = if resolution.tag == ResolutionTag::Npm {
                 pkg_name
             } else {

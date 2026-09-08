@@ -853,6 +853,30 @@ describe.concurrent("bun pm reads trustedDependencies from package.json, not a s
     expect(exitCode).toBe(0);
   });
 
+  // A default-list package ran its scripts at install. Naming it in package.json
+  // afterwards does not make it blocked, even though bun.lock never listed it.
+  test("default trust made explicit after install", async () => {
+    using ctx = await setupTest();
+    const { packageDir, packageJson } = ctx;
+    const dependencies = { electron: "1.0.0" };
+
+    await writeFile(packageJson, JSON.stringify({ name: "foo", dependencies }));
+    let { out, err, exitCode } = await run(ctx, ["install"]);
+    expect(err).toContain("Saved lockfile");
+    expect(err).not.toContain("error:");
+    expect(out).not.toContain("Blocked");
+    expect(exitCode).toBe(0);
+    expect(await exists(join(packageDir, "node_modules", "electron", "preinstall.txt"))).toBeTrue();
+    expect(await file(join(packageDir, "bun.lock")).text()).not.toContain('"trustedDependencies"');
+
+    await writeFile(packageJson, JSON.stringify({ name: "foo", dependencies, trustedDependencies: ["electron"] }));
+
+    ({ out, err, exitCode } = await run(ctx, ["pm", "untrusted"]));
+    expect(err).not.toContain("error:");
+    expect(out).toContain("Found 0 untrusted dependencies with scripts");
+    expect(exitCode).toBe(0);
+  });
+
   // Workspace package.json files count too, like they do for `bun install`.
   test("trust declared by a workspace package.json", async () => {
     using ctx = await setupTest();

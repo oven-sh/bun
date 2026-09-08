@@ -456,24 +456,36 @@ fn directory_exists_at_os_path(dir: FD, path: &OSPathSliceZ) -> Maybe<bool> {
     }
 }
 
-/// The error a recursive copy of a directory onto `dest` fails with when `dest`
-/// is a link, or `None` when it is not one.
+/// Makes the destination directory for one level of a recursive copy and
+/// reports whether it is fresh: made by this copy, here or at a level above
+/// (`in_fresh_dir`). The copy creates every file below a fresh directory
+/// exclusively, so an entry that another writer races into the tree, or that a
+/// swapped ancestor now leads to, is never written through.
 ///
-/// `mkdir(2)` reports EEXIST for a name that another entry already holds, and
-/// the recursive mkdir accepts that name when the directory check above finds a
-/// directory. The check follows a link, so a link at `dest` made the walk write
-/// the whole source subtree through it. GNU `cp -r` and `fs.cp` both refuse to
-/// copy a directory onto anything that is not one.
-fn cp_dest_link_error(nodefs: &mut NodeFS, dest: &OSPathSliceZ) -> Option<sys::Error> {
-    if !sys::is_symlink_os_path(dest) {
-        return None;
+/// A directory that already holds the name is merged into. Any other entry
+/// there (a file, a symlink, a junction) fails with EEXIST: `mkdir(2)` reports
+/// EEXIST for all of them, and only a look at the name that does not follow a
+/// link tells a directory from a link to one. GNU `cp -r` and `fs.cp` refuse
+/// the same way.
+fn cp_mkdir_dest(nodefs: &mut NodeFS, dest: &OSPathSliceZ, in_fresh_dir: bool) -> Maybe<bool> {
+    let err = match mkdir_os_path(dest, args::Mkdir::DEFAULT_MODE) {
+        Ok(()) => return Ok(true),
+        Err(err) => err,
+    };
+    match err.get_errno() {
+        E::EEXIST | E::EISDIR => {
+            if matches!(sys::lstat_kind_os_path(dest), Ok(sys::FileKind::Directory)) {
+                return Ok(in_fresh_dir);
+            }
+        }
+        // Only the directory the whole copy targets can lack a parent.
+        E::ENOENT => {
+            nodefs.mkdir_recursive_os_path(dest, args::Mkdir::DEFAULT_MODE, false)?;
+            return Ok(true);
+        }
+        _ => {}
     }
-    Some(sys::Error {
-        errno: E::EEXIST as _,
-        syscall: sys::Tag::mkdir,
-        path: nodefs.os_path_into_sync_error_buf(dest).into(),
-        ..Default::default()
-    })
+    Err(err.with_path(nodefs.os_path_into_sync_error_buf(dest)))
 }
 
 type ReadPosition = i64;
@@ -1414,6 +1426,8 @@ mod _async_tasks {
         path_buf: Box<[OSPathChar]>,
         src_len: usize,
         dest_len: usize,
+        /// The directory that holds `dest` was made by this copy (see `cp_mkdir_dest`).
+        in_fresh_dir: bool,
         pub task: WorkPoolTask,
     }
 
@@ -1426,6 +1440,7 @@ mod _async_tasks {
             path_buf: Box<[OSPathChar]>,
             src_len: usize,
             dest_len: usize,
+            in_fresh_dir: bool,
         ) {
             debug_assert_eq!(path_buf.len(), src_len + 1 + dest_len + 1);
             debug_assert_eq!(path_buf[src_len], 0);
@@ -1439,6 +1454,7 @@ mod _async_tasks {
                 path_buf,
                 src_len,
                 dest_len,
+                in_fresh_dir,
                 task: WorkPoolTask::default(),
             });
         }
@@ -1473,11 +1489,7 @@ mod _async_tasks {
             let result = node_fs.copy_single_file_sync(
                 self.src(),
                 self.dest(),
-                constants::Copyfile::from_raw(if args.flags.error_on_exist || !args.flags.force {
-                    constants::COPYFILE_EXCL
-                } else {
-                    0i32
-                }),
+                args.flags.copyfile_mode(self.in_fresh_dir),
                 None,
                 &parent.args,
             );
@@ -1842,13 +1854,7 @@ mod _async_tasks {
                             // is false and `CopyFileW` overwrites.
                             constants::Copyfile::from_raw(0)
                         } else {
-                            constants::Copyfile::from_raw(
-                                if args.flags.error_on_exist || !args.flags.force {
-                                    constants::COPYFILE_EXCL
-                                } else {
-                                    0i32
-                                },
-                            )
+                            args.flags.copyfile_mode(false)
                         },
                         Some(attributes),
                         &this.args,
@@ -1882,13 +1888,7 @@ mod _async_tasks {
                     let r = nodefs.copy_single_file_sync(
                         src,
                         dest,
-                        constants::Copyfile::from_raw(
-                            if args.flags.error_on_exist || !args.flags.force {
-                                constants::COPYFILE_EXCL
-                            } else {
-                                0i32
-                            },
-                        ),
+                        args.flags.copyfile_mode(false),
                         Some(&stat_),
                         &this.args,
                     );
@@ -1929,6 +1929,7 @@ mod _async_tasks {
                 src_len,
                 &mut dest_buf,
                 dest_len,
+                false,
             );
         }
 
@@ -1941,6 +1942,7 @@ mod _async_tasks {
             src_dir_len: PathInt,
             dest_buf: &mut OSPathBuffer,
             dest_dir_len: PathInt,
+            in_fresh_dir: bool,
         ) -> bool {
             // SAFETY: `this` is the live Box-leaked task. Shared borrow only — spawned
             // `CpSingleTask`s on other workpool threads may concurrently hold `&Self`.
@@ -2015,21 +2017,16 @@ mod _async_tasks {
             #[cfg(not(windows))]
             let normdest: &OSPathSliceZ = dest;
 
-            if let Some(err) = cp_dest_link_error(nodefs, normdest) {
-                this_ref.finish_concurrently(Err(err));
-                return false;
-            }
-
-            let mkdir_ = nodefs.mkdir_recursive_os_path(normdest, args::Mkdir::DEFAULT_MODE, false);
-            match mkdir_ {
+            let fresh = match cp_mkdir_dest(nodefs, normdest, in_fresh_dir) {
                 Err(err) => {
                     this_ref.finish_concurrently(Err(err));
                     return false;
                 }
-                Ok(_) => {
+                Ok(fresh) => {
                     this_ref.on_copy(src, normdest);
+                    fresh
                 }
-            }
+            };
 
             // On POSIX directory entries are always UTF-8, so monomorphise the
             // const-generic path type on `U8` and let the Windows branch (gated
@@ -2090,6 +2087,7 @@ mod _async_tasks {
                             (sd + 1 + cname.len()) as PathInt,
                             dest_buf,
                             (dd + 1 + cname.len()) as PathInt,
+                            fresh,
                         );
                         if !should_continue {
                             return false;
@@ -2120,6 +2118,7 @@ mod _async_tasks {
                             path_buf,
                             sd + 1 + cname.len(),
                             dd + 1 + cname.len(),
+                            fresh,
                         );
                     }
                 }
@@ -4194,6 +4193,20 @@ pub mod args {
         pub(crate) recursive: bool,
         pub(crate) error_on_exist: bool,
         pub(crate) force: bool,
+    }
+
+    impl CpFlags {
+        /// The mode one file of the copy is created with. `in_fresh_dir`: the
+        /// directory that holds the file was made by this copy, so only another
+        /// writer racing the copy can have put something at the name, and an
+        /// exclusive create refuses to write through whatever that is.
+        pub(crate) fn copyfile_mode(self, in_fresh_dir: bool) -> constants::Copyfile {
+            constants::Copyfile::from_raw(if self.error_on_exist || !self.force || in_fresh_dir {
+                constants::COPYFILE_EXCL
+            } else {
+                0
+            })
+        }
     }
 
     pub struct Cp<'a> {
@@ -7926,6 +7939,7 @@ impl NodeFS {
             &mut dest_buf,
             PathInt::try_from(dest_len).expect("int cast"),
             args,
+            false,
         )
     }
 
@@ -7956,6 +7970,7 @@ impl NodeFS {
         dest_buf: &mut OSPathBuffer,
         dest_dir_len: PathInt,
         args: &args::Cp,
+        in_fresh_dir: bool,
     ) -> Maybe<ret::Cp> {
         let cp_flags = &args.flags;
         let sd = src_dir_len as usize;
@@ -7985,11 +8000,7 @@ impl NodeFS {
                 let r = self.copy_single_file_sync(
                     src,
                     dest,
-                    constants::Copyfile::from_raw(if cp_flags.error_on_exist || !cp_flags.force {
-                        constants::COPYFILE_EXCL
-                    } else {
-                        0i32
-                    }),
+                    cp_flags.copyfile_mode(in_fresh_dir),
                     Some(attributes),
                     args,
                 );
@@ -8014,11 +8025,7 @@ impl NodeFS {
                 let r = self.copy_single_file_sync(
                     src,
                     dest,
-                    constants::Copyfile::from_raw(if cp_flags.error_on_exist || !cp_flags.force {
-                        constants::COPYFILE_EXCL
-                    } else {
-                        0i32
-                    }),
+                    cp_flags.copyfile_mode(in_fresh_dir),
                     Some(&stat_),
                     args,
                 );
@@ -8078,14 +8085,7 @@ impl NodeFS {
         };
         let _close = scopeguard::guard(fd, |fd| fd.close());
 
-        if let Some(err) = cp_dest_link_error(self, dest) {
-            return Err(err);
-        }
-
-        match self.mkdir_recursive_os_path(dest, args::Mkdir::DEFAULT_MODE, false) {
-            Err(err) => return Err(err),
-            Ok(_) => {}
-        }
+        let fresh = cp_mkdir_dest(self, dest, in_fresh_dir)?;
 
         // The OSPathBuffer copy below is generic over `OSPathChar`, so on Windows
         // this needs the wide (u16) iterator; the u8 path is correct for POSIX.
@@ -8134,6 +8134,7 @@ impl NodeFS {
                         dest_buf,
                         (dd + 1 + name_slice.len()) as PathInt,
                         args,
+                        fresh,
                     );
                     r?;
                 }
@@ -8144,13 +8145,7 @@ impl NodeFS {
                     let r = self.copy_single_file_sync(
                         src_z,
                         dest_z,
-                        constants::Copyfile::from_raw(
-                            if cp_flags.error_on_exist || !cp_flags.force {
-                                constants::COPYFILE_EXCL
-                            } else {
-                                0i32
-                            },
-                        ),
+                        cp_flags.copyfile_mode(fresh),
                         None,
                         args,
                     );

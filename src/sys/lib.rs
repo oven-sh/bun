@@ -7047,41 +7047,43 @@ pub fn get_file_attributes(path: &ZStr) -> Option<WindowsFileAttributes> {
     })
 }
 
-/// Whether `path` names an entry that stands in for another path: a symbolic
-/// link on POSIX, a name-surrogate reparse point (a symlink or a junction) on
-/// Windows. `false` when nothing holds the name, and when the name cannot be
-/// read.
-pub fn is_symlink_os_path(path: &bun_paths::OSPathSliceZ) -> bool {
+/// The kind of entry that holds the name `path`. A link at the name itself is
+/// not followed and reports as `SymLink`. On Windows that means a
+/// name-surrogate reparse point (a symlink or a junction); any other reparse
+/// point reports as the directory or file that carries it.
+pub fn lstat_kind_os_path(path: &bun_paths::OSPathSliceZ) -> Maybe<FileKind> {
     #[cfg(not(windows))]
     {
-        match lstat(path) {
-            Ok(st) => S::ISLNK(st.st_mode as _),
-            Err(_) => false,
-        }
+        lstat(path).map(|st| kind_from_mode(st.st_mode as Mode))
     }
     #[cfg(windows)]
     {
         use bun_windows_sys::externs as w;
         // SAFETY: path is NUL-terminated UTF-16.
         let attrs = unsafe { w::GetFileAttributesW(path.as_ptr()) };
-        if attrs == windows::INVALID_FILE_ATTRIBUTES
-            || (attrs & w::FILE_ATTRIBUTE_REPARSE_POINT) == 0
-        {
-            return false;
+        if attrs == windows::INVALID_FILE_ATTRIBUTES {
+            return Err(Error::from_win32(windows::Win32Error::get(), Tag::lstat));
         }
-        // Only a name surrogate stands in for another path. An opaque tag such
-        // as IO_REPARSE_TAG_APPEXECLINK names the entry itself.
-        let mut found: w::WIN32_FIND_DATAW = bun_core::ffi::zeroed();
-        // SAFETY: path is NUL-terminated UTF-16; found is valid for write.
-        let find = unsafe { w::FindFirstFileW(path.as_ptr(), &mut found) };
-        if find == bun_windows_sys::INVALID_HANDLE_VALUE {
-            return false;
+        if (attrs & w::FILE_ATTRIBUTE_REPARSE_POINT) != 0 {
+            let mut found: w::WIN32_FIND_DATAW = bun_core::ffi::zeroed();
+            // SAFETY: path is NUL-terminated UTF-16; found is valid for write.
+            let find = unsafe { w::FindFirstFileW(path.as_ptr(), &mut found) };
+            if find == bun_windows_sys::INVALID_HANDLE_VALUE {
+                return Err(Error::from_win32(windows::Win32Error::get(), Tag::lstat));
+            }
+            // SAFETY: valid find handle from FindFirstFileW.
+            unsafe {
+                let _ = w::FindClose(find);
+            }
+            if w::is_reparse_tag_name_surrogate(found.dwReserved0) {
+                return Ok(FileKind::SymLink);
+            }
         }
-        // SAFETY: valid find handle from FindFirstFileW.
-        unsafe {
-            let _ = w::FindClose(find);
+        if (attrs & w::FILE_ATTRIBUTE_DIRECTORY) != 0 {
+            Ok(FileKind::Directory)
+        } else {
+            Ok(FileKind::File)
         }
-        w::is_reparse_tag_name_surrogate(found.dwReserved0)
     }
 }
 

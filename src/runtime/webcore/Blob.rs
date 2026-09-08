@@ -99,7 +99,9 @@ fn clamp_to_long_long(number: f64) -> i64 {
     if number.is_nan() {
         return 0;
     }
-    number.clamp(-MAX_SAFE_INTEGER, MAX_SAFE_INTEGER).round_ties_even() as i64
+    number
+        .clamp(-MAX_SAFE_INTEGER, MAX_SAFE_INTEGER)
+        .round_ties_even() as i64
 }
 
 /// Result delivered to `ReadBytesHandler::on_read_bytes`.

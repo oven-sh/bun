@@ -238,6 +238,7 @@ impl<'a> LinkerContext<'a> {
     /// reasons about which chunks load together must too.
     pub(crate) fn file_loaded_by_import(
         &self,
+        pg: &Graph<'a>,
         record: &ImportRecord,
         source_index: u32,
     ) -> Option<u32> {
@@ -246,7 +247,7 @@ impl<'a> LinkerContext<'a> {
             return None;
         }
         let other = record.source_index.get();
-        if record.kind == ImportKind::Stmt && self.file_has_no_side_effects(other) {
+        if record.kind == ImportKind::Stmt && self.file_has_no_side_effects(pg, other) {
             return None;
         }
         Some(other)
@@ -711,6 +712,8 @@ impl<'a> LinkerContext<'a> {
             self.graph.parts_live = parts_live;
         }
 
+        let module_preload = self.module_preload();
+
         // Every column the passes below touch, split out of `self.graph` so
         // the worklist steps can take `files_live` alongside.
         let LinkerGraph {
@@ -720,13 +723,18 @@ impl<'a> LinkerContext<'a> {
             entry_points,
             files_live,
             meta,
+            symbols,
             code_splitting,
             ..
         } = &mut self.graph;
-        let ast = ast.slice();
-        let parts: &[bun_ast::PartList<'a>] = ast.items_parts();
-        let import_records: &[bun_ast::import_record::List<'a>] = ast.items_import_records();
-        let css_reprs: &[crate::bundled_ast::CssCol] = ast.items_css();
+        let ast_cols = ast.split_mut();
+        let parts: &mut [bun_ast::PartList<'a>] = ast_cols.parts;
+        let ast_flags: &mut [AstFlags] = ast_cols.flags;
+        let import_records: &[bun_ast::import_record::List<'a>] = &*ast_cols.import_records;
+        let css_reprs: &[crate::bundled_ast::CssCol] = &*ast_cols.css;
+        let meta_cols = meta.split_mut();
+        let imports_to_bind: &mut [crate::RefImportData] = meta_cols.imports_to_bind;
+        let meta_flags: &[crate::js_meta::Flags] = &*meta_cols.flags;
         let parts_live: &mut [bun_collections::AutoBitSet] = parts_live.as_mut_slice();
         let side_effects: &[SideEffects] = pg.input_files.items_side_effects();
         let loaders: &[Loader] = pg.input_files.items_loader();
@@ -736,12 +744,12 @@ impl<'a> LinkerContext<'a> {
         let entry_point_kinds: &[EntryPoint::Kind] = file_cols.entry_point_kind;
         let distances: &mut [u32] = file_cols.distance_from_entry_point;
         let file_entry_bits: &mut [AutoBitSet] = file_cols.entry_bits;
-        let meta_flags: &[crate::js_meta::Flags] = meta.items_flags();
         let mut shake = TreeShaker {
             options: &self.options,
             files_live,
             code_splitting: *code_splitting,
             entry_point_kinds,
+            side_effects,
             ast_len: parts.len(),
         };
         let entry_points_len = entry_points.len();
@@ -757,11 +765,17 @@ impl<'a> LinkerContext<'a> {
                 sources: pg.input_files.items_source(),
                 #[cfg(debug_assertions)]
                 targets: pg.ast.items_target(),
-                parts,
+                parts: &*parts,
                 parts_live: &mut *parts_live,
                 import_records,
                 entry_point_kinds,
                 css_reprs,
+                module_scopes: &*ast_cols.module_scope,
+                named_imports: &*ast_cols.named_imports,
+                exports_ref: &*ast_cols.exports_ref,
+                exports_kind: &*ast_cols.exports_kind,
+                imports_to_bind: &*imports_to_bind,
+                symbols: &*symbols,
                 worklist: Vec::new(),
             };
 
@@ -778,10 +792,76 @@ impl<'a> LinkerContext<'a> {
                 }
                 shake.mark_file_live_for_tree_shaking(&mut ctx, entry_point);
             }
+        }
 
-            if self.module_preload() {
-                self.mark_preload_entries(&mut ctx, entry_points)?;
+        // Once liveness is known: each user entry point whose live code reaches a
+        // split `import()` uses `__chunks` from its entry point part (see
+        // `module_preload_registration`).
+        if module_preload {
+            let reaches = shake.files_reaching_split_import(&*parts, &*parts_live, import_records)?;
+            let mut preload_entries = AutoBitSet::init_empty(parts.len())?;
+            for &entry in entry_points {
+                let id = entry as usize;
+                if entry_point_kinds[id] != EntryPoint::Kind::UserSpecified || !reaches.is_set(id)
+                {
+                    continue;
+                }
+                preload_entries.set(id);
+                let part_index = self.entry_point_part_indices[id];
+                crate::linker_graph::generate_symbol_import_and_use(
+                    parts,
+                    ast_flags,
+                    &*ast_cols.exports_ref,
+                    &*ast_cols.module_ref,
+                    &*ast_cols.top_level_symbols_to_parts,
+                    imports_to_bind,
+                    &*meta_cols.top_level_symbol_to_parts_overlay,
+                    entry,
+                    part_index,
+                    self.chunks_runtime_ref,
+                    1,
+                    Index::RUNTIME,
+                )?;
+                let mut ctx = TreeShakeCtx {
+                    side_effects,
+                    loaders,
+                    meta_flags,
+                    #[cfg(debug_assertions)]
+                    sources: pg.input_files.items_source(),
+                    #[cfg(debug_assertions)]
+                    targets: pg.ast.items_target(),
+                    parts: &*parts,
+                    parts_live: &mut *parts_live,
+                    import_records,
+                    entry_point_kinds,
+                    css_reprs,
+                    module_scopes: &*ast_cols.module_scope,
+                    named_imports: &*ast_cols.named_imports,
+                    exports_ref: &*ast_cols.exports_ref,
+                    exports_kind: &*ast_cols.exports_kind,
+                    imports_to_bind: &*imports_to_bind,
+                    symbols: &*symbols,
+                    worklist: Vec::new(),
+                };
+                if ctx.parts_live[id].is_set(part_index as usize) {
+                    for dependency in ctx.parts[id].as_slice()[part_index as usize]
+                        .dependencies
+                        .iter()
+                    {
+                        ctx.worklist.push(TreeShakeWork::Part {
+                            part_index: dependency.part_index,
+                            source_index: dependency.source_index.get(),
+                        });
+                    }
+                } else {
+                    ctx.worklist.push(TreeShakeWork::Part {
+                        part_index,
+                        source_index: entry,
+                    });
+                }
+                shake.drain_tree_shake_worklist(&mut ctx);
             }
+            self.preload_entries = preload_entries;
         }
 
         {
@@ -799,7 +879,8 @@ impl<'a> LinkerContext<'a> {
 
             let mut ctx = CodeSplitCtx {
                 distances,
-                parts,
+                parts: &*parts,
+                parts_live: &*parts_live,
                 import_records,
                 file_entry_bits,
                 css_reprs,
@@ -2291,7 +2372,124 @@ pub(crate) struct TreeShakeCtx<'a, 'r> {
     pub(crate) import_records: &'r [bun_ast::import_record::List<'a>],
     pub(crate) entry_point_kinds: &'r [EntryPoint::Kind],
     pub(crate) css_reprs: &'r [crate::bundled_ast::CssCol],
+    /// Read-only columns for `part_is_removable_namespace_destructuring`.
+    pub(crate) module_scopes: &'r [bun_ast::Scope],
+    pub(crate) named_imports: &'r [crate::bundled_ast::NamedImports],
+    pub(crate) exports_ref: &'r [Ref],
+    pub(crate) exports_kind: &'r [ExportsKind],
+    pub(crate) imports_to_bind: &'r [crate::RefImportData],
+    pub(crate) symbols: &'r bun_ast::symbol::Map,
     pub(crate) worklist: Vec<TreeShakeWork>,
+}
+
+impl TreeShakeCtx<'_, '_> {
+    /// [`LinkerContext::is_esm_namespace_ref`] over the split columns.
+    fn is_esm_namespace_ref(&self, source_index: crate::IndexInt, ref_: Ref) -> bool {
+        let id = source_index as usize;
+        id < self.exports_ref.len()
+            && ref_ == self.exports_ref[id]
+            && matches!(
+                self.exports_kind[id],
+                ExportsKind::Esm
+                    | ExportsKind::EsmWithDynamicFallback
+                    | ExportsKind::EsmWithDynamicFallbackFromCjs
+            )
+            && self.meta_flags[id].wrap != WrapKind::Cjs
+    }
+
+    /// Does `value` (a declaration's initializer) hold an import namespace?
+    fn value_is_import_namespace(&self, source_index: crate::IndexInt, value: &Expr) -> bool {
+        let id = source_index as usize;
+        let ref_ = match &value.data {
+            bun_ast::ExprData::EIdentifier(identifier) => identifier.ref_,
+            // A named import that holds a namespace (`export * as`) prints as
+            // an import identifier.
+            bun_ast::ExprData::EImportIdentifier(identifier) => identifier.ref_,
+            bun_ast::ExprData::ERequireString(require) => {
+                return require.unwrapped_id.get().is_some();
+            }
+            _ => return false,
+        };
+        // A require() lifted into an import binds an ordinary local, so user
+        // code can rebind it to an object with getters. Only a binding that
+        // is never assigned still holds the namespace. A `var` can also be
+        // re-initialized by a duplicate declaration or a `for (var ns of ..)`
+        // head, which the parser does not record as an assignment, so a
+        // hoisted symbol is never trusted.
+        match self.symbols.get_const(ref_) {
+            Some(symbol)
+                if !symbol.has_been_assigned_to()
+                    && !matches!(
+                        symbol.kind,
+                        bun_ast::symbol::Kind::Hoisted | bun_ast::symbol::Kind::HoistedFunction
+                    ) => {}
+            _ => return false,
+        }
+        if let Some(named_import) = self.named_imports[id].get(&ref_) {
+            if named_import.alias_is_star {
+                return true;
+            }
+        }
+        if let Some(import_data) = self.imports_to_bind[id].get(&ref_) {
+            let target = import_data.data;
+            return self.is_esm_namespace_ref(target.source_index.get(), target.import_ref);
+        }
+        false
+    }
+
+    /// `const { a } = ns` where `ns` is an import namespace. The parser
+    /// keeps such a part because a pattern over an arbitrary object can run
+    /// getters, but the linker knows `ns` is a module namespace, so every
+    /// key reads like `ns.a` and is side-effect free. True when each
+    /// declaration destructures plain string keys into identifiers (no
+    /// computed key, no rest, no default, no nested pattern) out of an
+    /// import namespace.
+    fn part_is_removable_namespace_destructuring(
+        &self,
+        source_index: crate::IndexInt,
+        part: &Part,
+    ) -> bool {
+        // With a direct eval() in the file, the parser pins every
+        // symbol-declaring part: eval'd code can reference the bindings.
+        if self.module_scopes[source_index as usize].contains_direct_eval {
+            return false;
+        }
+        let stmts = part.stmts.slice();
+        if stmts.is_empty() {
+            return false;
+        }
+        stmts.iter().all(|stmt| {
+            let bun_ast::StmtData::SLocal(local) = &stmt.data else {
+                return false;
+            };
+            if matches!(
+                local.kind,
+                bun_ast::s::Kind::KUsing | bun_ast::s::Kind::KAwaitUsing
+            ) {
+                return false;
+            }
+            local.decls.slice().iter().all(|decl| {
+                let bun_ast::b::B::BObject(pattern) = decl.binding.data else {
+                    return false;
+                };
+                let Some(value) = &decl.value else {
+                    return false;
+                };
+                if !self.value_is_import_namespace(source_index, value) {
+                    return false;
+                }
+                pattern.properties().iter().all(|property| {
+                    !property.flags.contains(bun_ast::flags::Property::IsSpread)
+                        && !property
+                            .flags
+                            .contains(bun_ast::flags::Property::IsComputed)
+                        && property.default_value.is_none()
+                        && matches!(property.key.data, bun_ast::ExprData::EString(_))
+                        && matches!(property.value.data, bun_ast::b::B::BIdentifier(_))
+                })
+            })
+        })
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -2306,6 +2504,7 @@ pub enum TreeShakeWork {
 pub(crate) struct CodeSplitCtx<'a, 'r> {
     pub(crate) distances: &'r mut [u32],
     pub(crate) parts: &'r [bun_ast::PartList<'a>],
+    pub(crate) parts_live: &'r [bun_collections::AutoBitSet],
     pub(crate) import_records: &'r [bun_ast::import_record::List<'a>],
     pub(crate) file_entry_bits: &'r mut [AutoBitSet],
     pub(crate) css_reprs: &'r [crate::bundled_ast::CssCol],
@@ -2321,6 +2520,7 @@ pub(crate) struct TreeShaker<'r> {
     files_live: &'r mut bun_collections::DynamicBitSetUnmanaged,
     code_splitting: bool,
     entry_point_kinds: &'r [EntryPoint::Kind],
+    side_effects: &'r [SideEffects],
     ast_len: usize,
 }
 
@@ -2339,6 +2539,23 @@ impl<'r> TreeShaker<'r> {
             _ => false,
         };
         crosses_chunk && self.entry_point_kinds[record.source_index.get() as usize].is_entry_point()
+    }
+
+    /// [`LinkerContext::file_loaded_by_import`] over the split columns.
+    #[inline]
+    fn file_loaded_by_import(&self, record: &ImportRecord, source_index: u32) -> Option<u32> {
+        if !record.source_index.is_valid() || self.is_external_dynamic_import(record, source_index)
+        {
+            return None;
+        }
+        let other = record.source_index.get();
+        if record.kind == ImportKind::Stmt
+            && self.side_effects[other as usize] != SideEffects::HasSideEffects
+            && !self.options.ignore_dce_annotations
+        {
+            return None;
+        }
+        Some(other)
     }
 
     pub(crate) fn mark_file_reachable_for_code_splitting(
@@ -2397,7 +2614,7 @@ impl<'r> TreeShaker<'r> {
             }
 
             // A dead part prints nothing, so only live parts reach other files.
-            let parts_live = &self.graph.parts_live[source_index as usize];
+            let parts_live = &ctx.parts_live[source_index as usize];
             for (part_index, part) in ctx.parts[source_index as usize]
                 .as_slice()
                 .iter()
@@ -2430,26 +2647,26 @@ impl<'r> TreeShaker<'r> {
         }
     }
 
-    /// Once liveness is known: each user entry point whose live code reaches a split
-    /// `import()` uses `__chunks` from its entry point part (see `module_preload_registration`).
-    fn mark_preload_entries(
-        &mut self,
-        ctx: &mut TreeShakeCtx<'a, '_>,
-        entry_points: &[crate::IndexInt],
-    ) -> Result<(), AllocError> {
-        let files_len = ctx.parts.len();
+    /// The live files whose live code reaches a split `import()`, directly or
+    /// through the files they load.
+    fn files_reaching_split_import(
+        &self,
+        parts: &[bun_ast::PartList<'_>],
+        parts_live: &[bun_collections::AutoBitSet],
+        import_records: &[bun_ast::import_record::List<'_>],
+    ) -> Result<AutoBitSet, AllocError> {
+        let files_len = parts.len();
         let mut reaches = AutoBitSet::init_empty(files_len)?;
         loop {
             let mut changed = false;
             for source_index in 0..files_len {
-                if reaches.is_set(source_index) || !self.graph.files_live.is_set(source_index) {
+                if reaches.is_set(source_index) || !self.files_live.is_set(source_index) {
                     continue;
                 }
-                let records = ctx.import_records[source_index].as_slice();
-                'parts: for (part_index, part) in
-                    ctx.parts[source_index].as_slice().iter().enumerate()
+                let records = import_records[source_index].as_slice();
+                'parts: for (part_index, part) in parts[source_index].as_slice().iter().enumerate()
                 {
-                    if !ctx.parts_live[source_index].is_set(part_index) {
+                    if !parts_live[source_index].is_set(part_index) {
                         continue;
                     }
                     for &record_index in part.import_record_indices.iter() {
@@ -2472,65 +2689,7 @@ impl<'r> TreeShaker<'r> {
                 break;
             }
         }
-
-        let mut preload_entries = AutoBitSet::init_empty(files_len)?;
-        for &entry in entry_points {
-            let id = entry as usize;
-            if ctx.entry_point_kinds[id] != EntryPoint::Kind::UserSpecified || !reaches.is_set(id) {
-                continue;
-            }
-            preload_entries.set(id);
-            let part_index = self.entry_point_part_indices[id];
-            // Through `ctx.parts` (the tree shaker's view of the parts column), not a second `&mut` via `self.graph`.
-            {
-                let ast = self.graph.ast.split_raw();
-                let meta = self.graph.meta.split_raw();
-                // SAFETY: columns other than `parts`; stable for the link step and not otherwise borrowed here.
-                let (ast_flags, exports_ref, module_ref, top_level, imports_to_bind, overlay) = unsafe {
-                    (
-                        &mut *ast.flags,
-                        &*ast.exports_ref,
-                        &*ast.module_ref,
-                        &*ast.top_level_symbols_to_parts,
-                        &mut *meta.imports_to_bind,
-                        &*meta.top_level_symbol_to_parts_overlay,
-                    )
-                };
-                crate::linker_graph::generate_symbol_import_and_use(
-                    ctx.parts,
-                    ast_flags,
-                    exports_ref,
-                    module_ref,
-                    top_level,
-                    imports_to_bind,
-                    overlay,
-                    entry,
-                    part_index,
-                    self.chunks_runtime_ref,
-                    1,
-                    Index::RUNTIME,
-                )?;
-            }
-            if ctx.parts_live[id].is_set(part_index as usize) {
-                for dependency in ctx.parts[id].as_slice()[part_index as usize]
-                    .dependencies
-                    .iter()
-                {
-                    ctx.worklist.push(TreeShakeWork::Part {
-                        part_index: dependency.part_index,
-                        source_index: dependency.source_index.get(),
-                    });
-                }
-            } else {
-                ctx.worklist.push(TreeShakeWork::Part {
-                    part_index,
-                    source_index: entry,
-                });
-            }
-            self.drain_tree_shake_worklist(ctx);
-        }
-        self.preload_entries = preload_entries;
-        Ok(())
+        Ok(reaches)
     }
 
     pub(crate) fn mark_file_live_for_tree_shaking(
@@ -2543,7 +2702,7 @@ impl<'r> TreeShaker<'r> {
         self.drain_tree_shake_worklist(ctx);
     }
 
-    fn drain_tree_shake_worklist(&mut self, ctx: &mut TreeShakeCtx<'a, '_>) {
+    fn drain_tree_shake_worklist(&mut self, ctx: &mut TreeShakeCtx<'_, '_>) {
         while let Some(work) = ctx.worklist.pop() {
             match work {
                 TreeShakeWork::File(src) => self.mark_file_live_step(ctx, src),
@@ -2629,7 +2788,7 @@ impl<'r> TreeShaker<'r> {
             // access, which is side-effect free. The parser cannot see that
             // the initializer is a namespace, so refine its verdict here.
             if !can_be_removed_if_unused
-                && self.part_is_removable_namespace_destructuring(source_index, part)
+                && ctx.part_is_removable_namespace_destructuring(source_index, part)
             {
                 can_be_removed_if_unused = true;
             }
@@ -3892,102 +4051,6 @@ impl<'a> LinkerContext<'a> {
             && exports.contains(b"default")
     }
 
-    /// `const { a } = ns` where `ns` is an import namespace. The parser
-    /// keeps such a part because a pattern over an arbitrary object can run
-    /// getters, but the linker knows `ns` is a module namespace, so every
-    /// key reads like `ns.a` and is side-effect free. True when each
-    /// declaration destructures plain string keys into identifiers (no
-    /// computed key, no rest, no default, no nested pattern) out of an
-    /// import namespace.
-    fn part_is_removable_namespace_destructuring(
-        &self,
-        source_index: crate::IndexInt,
-        part: &Part,
-    ) -> bool {
-        // With a direct eval() in the file, the parser pins every
-        // symbol-declaring part: eval'd code can reference the bindings.
-        if self.graph.ast.items_module_scope()[source_index as usize].contains_direct_eval {
-            return false;
-        }
-        let stmts = part.stmts.slice();
-        if stmts.is_empty() {
-            return false;
-        }
-        stmts.iter().all(|stmt| {
-            let bun_ast::StmtData::SLocal(local) = &stmt.data else {
-                return false;
-            };
-            if matches!(
-                local.kind,
-                bun_ast::s::Kind::KUsing | bun_ast::s::Kind::KAwaitUsing
-            ) {
-                return false;
-            }
-            local.decls.slice().iter().all(|decl| {
-                let bun_ast::b::B::BObject(pattern) = decl.binding.data else {
-                    return false;
-                };
-                let Some(value) = &decl.value else {
-                    return false;
-                };
-                if !self.value_is_import_namespace(source_index, value) {
-                    return false;
-                }
-                pattern.properties().iter().all(|property| {
-                    !property.flags.contains(bun_ast::flags::Property::IsSpread)
-                        && !property
-                            .flags
-                            .contains(bun_ast::flags::Property::IsComputed)
-                        && property.default_value.is_none()
-                        && matches!(property.key.data, bun_ast::ExprData::EString(_))
-                        && matches!(property.value.data, bun_ast::b::B::BIdentifier(_))
-                })
-            })
-        })
-    }
-
-    /// Does `value` evaluate to a module namespace: a star import's binding,
-    /// an import that resolved to another module's namespace (`export * as`),
-    /// or a `require()` that `unwrap_commonjs_to_esm` turned into an import?
-    fn value_is_import_namespace(&self, source_index: crate::IndexInt, value: &Expr) -> bool {
-        let id = source_index as usize;
-        let ref_ = match &value.data {
-            bun_ast::ExprData::EIdentifier(identifier) => identifier.ref_,
-            // A named import that holds a namespace (`export * as`) prints as
-            // an import identifier.
-            bun_ast::ExprData::EImportIdentifier(identifier) => identifier.ref_,
-            bun_ast::ExprData::ERequireString(require) => {
-                return require.unwrapped_id.get().is_some();
-            }
-            _ => return false,
-        };
-        // A require() lifted into an import binds an ordinary local, so user
-        // code can rebind it to an object with getters. Only a binding that
-        // is never assigned still holds the namespace. A `var` can also be
-        // re-initialized by a duplicate declaration or a `for (var ns of ..)`
-        // head, which the parser does not record as an assignment, so a
-        // hoisted symbol is never trusted.
-        match self.graph.symbols.get_const(ref_) {
-            Some(symbol)
-                if !symbol.has_been_assigned_to()
-                    && !matches!(
-                        symbol.kind,
-                        bun_ast::symbol::Kind::Hoisted | bun_ast::symbol::Kind::HoistedFunction
-                    ) => {}
-            _ => return false,
-        }
-        if let Some(named_import) = self.graph.ast.items_named_imports()[id].get(&ref_) {
-            if named_import.alias_is_star {
-                return true;
-            }
-        }
-        if let Some(import_data) = self.graph.meta.items_imports_to_bind()[id].get(&ref_) {
-            let target = import_data.data;
-            return self.is_esm_namespace_ref(target.source_index.get(), target.import_ref);
-        }
-        false
-    }
-
     /// The chunk of a lifted CommonJS module exports its namespace object as `default`.
     pub(crate) fn chunk_default_export_is_namespace(
         meta_flags: crate::js_meta::Flags,
@@ -4023,13 +4086,17 @@ impl<'a> LinkerContext<'a> {
         // Items of `ns.name()` left unbound, each with its `ns`.
         let mut method_call_items: HashMap<Ref, Ref> = HashMap::default();
         for import_ref in refs {
-            let named_import = |this: &Self| -> &NamedImport {
+            fn named_import<'s>(
+                this: &'s LinkerContext<'_>,
+                source_index: crate::IndexInt,
+                import_ref: Ref,
+            ) -> &'s NamedImport {
                 this.graph.ast.items_named_imports()[source_index as usize]
                     .get(&import_ref)
                     .expect("infallible: key from this map")
-            };
+            }
             let (import_record_index, namespace_ref, alias_loc, alias) = {
-                let ni = named_import(self);
+                let ni = named_import(self, source_index, import_ref);
                 (
                     ni.import_record_index,
                     ni.namespace_ref,
@@ -4065,7 +4132,11 @@ impl<'a> LinkerContext<'a> {
 
             match result.kind {
                 MatchImportKind::Normal
-                    if self.method_call_item_needs_this(import_ref, named_import(self), &result) =>
+                    if self.method_call_item_needs_this(
+                        import_ref,
+                        named_import(self, source_index, import_ref),
+                        &result,
+                    ) =>
                 {
                     method_call_items.insert(import_ref, namespace_ref);
                 }

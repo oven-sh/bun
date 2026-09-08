@@ -992,7 +992,7 @@ pub(crate) fn merge_small_chunks<'a>(
             }
             for &record_index in part.import_record_indices.iter() {
                 let record = &import_records[source_index][record_index as usize];
-                if let Some(other) = this.file_loaded_by_import(record, source_index as u32) {
+                if let Some(other) = this.file_loaded_by_import(pg, record, source_index as u32) {
                     deps.push(group_of_file[other as usize]);
                 }
             }

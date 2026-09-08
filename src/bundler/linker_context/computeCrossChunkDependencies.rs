@@ -394,7 +394,7 @@ fn inert_chunks<'c>(
                     continue;
                 }
                 for &i in part.import_record_indices.iter() {
-                    if let Some(other) = c.file_loaded_by_import(&records[i as usize], source_index)
+                    if let Some(other) = c.file_loaded_by_import(pg, &records[i as usize], source_index)
                     {
                         add(other);
                     }

@@ -326,7 +326,6 @@ fn step5_for_file(c: &Step5Shared<'_, '_>, row: &mut Step5Row<'_, '_>) {
                 None => Vec::new(),
                 Some(m) => m.keys().to_vec(),
             };
-            let symbol_uses = &mut part.symbol_uses;
             for ref_ in &prop_use_refs {
                 // `import_symbol_property_uses` and `symbol_uses` are separate
                 // fields of the part.

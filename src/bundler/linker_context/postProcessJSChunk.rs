@@ -108,6 +108,7 @@ pub(crate) fn post_process_js_chunk(
 ) -> Result<(), crate::Error> {
     let _trace = perf::trace("Bundler.postProcessJSChunk");
 
+    let _ = chunk_index;
     let c: &LinkerContext = ctx.c;
     let pg: &Graph = ctx.graph;
     debug_assert!(matches!(

@@ -7,7 +7,7 @@ bun_runtime` (driven by `scripts/build/rust.ts`). Key crates:
 - `bun_core` (`src/bun_core/`) — strings, formatting, logging, env vars, allocator/heap helpers, the foundation everything else uses
 - `bun_sys` (`src/sys/`) — cross-platform syscall wrappers (`File`, `Fd`, `Dir`, `Error`)
 - `bun_paths` (`src/paths/`) — path joining/normalization, the path-buffer pool
-- `bun_jsc` (`src/jsc/`) — JSC value types, `Strong`/`Weak`, FFI imports, `URL`
+- `bun_jsc` (`src/jsc/`) — JSC value types, `Strong`/`Weak`, FFI imports
 - `bun_runtime` (`src/runtime/`) — JS-visible APIs (server, fetch, node compat, crypto)
 - `bun_js_parser`, `bun_js_printer`, `bun_resolver`, `bun_bundler`, `bun_install`, `bun_collections`, `bun_threading`, `bun_alloc` — the rest of the pipeline
 - `bun_runtime::bin_entry` (`src/runtime/bin_entry/`) — the process entry point (`main`) and the
@@ -77,30 +77,99 @@ match File::openat(Fd::cwd(), path, O::RDONLY, 0) {
 
 ## Strings (`bun_core::String` and `bun_core::strings`)
 
-`bun_core::String` is the FFI-compatible 5-variant tagged union shared with C++
+`bun_core::String` is the FFI-compatible 6-variant tagged union shared with C++
 (`BunString` in `BunString.cpp`). It bridges Rust and JSC and can hold a
 `WTFStringImpl` (Latin-1 or UTF-16). **Latin-1 is NOT UTF-8** — bytes 128–255
 are single chars in Latin-1 but invalid UTF-8 — so converting either direction
 requires a real encoder, not a cast.
 
+`String` owns one ref when WTF-backed: `Drop` derefs, `Clone` refs, it is
+not `Copy`. Borrow with `&String` (or `StringView<'_>` when a by-value borrow
+is needed). In an `extern "C"` signature a by-value `String` means ownership
+crosses the boundary (C++ `Bun::toStringRef` return / `transferToWTFString()`
+consumer); `&String` ⇔ `const BunString*`.
+
 ```rust
-use bun_core::String;
+use bun_core::{EncodedSlice, String, Utf8Bytes};   // the only import path for all three
 
 let s = String::clone_utf8(utf8_bytes);    // copies into a WTFStringImpl
 let s = String::borrow_utf8(utf8_bytes);   // no copy; caller keeps slice alive
-let s = String::static_(b"literal");       // 'static slice, never freed
+let s = String::static_("literal");        // 'static ASCII slice, never freed
+let s = String::from_bytes(bytes);         // borrow arbitrary bytes; tags UTF-8 if non-ASCII
+s.eq_ascii(b"lit") / s.starts_with_ascii(b"lit")  // encoding-aware ASCII compare without transcoding
 
-let utf8: ZigStringSlice = s.to_utf8();    // ref-holding view; falls back to allocating a copy
-let owned: Vec<u8>       = s.to_utf8_bytes();
+let utf8: Utf8Bytes<'_>      = s.to_utf8();             // borrows `s` (ASCII/UTF-8) or transcodes; for locals
+let utf8: Utf8Bytes<'static> = s.into_utf8();           // moves `s`'s ref in / copies; for storing in fields
+let utf8: Utf8Bytes<'static> = s.clone().into_utf8();   // from `&String`: shares the WTF ref when 8-bit ASCII, else transcodes
+let utf8: Utf8Bytes<'static> = x.to_utf8().into_owned(); // from a borrowed view: always an independent copy
+let owned: Vec<u8>           = s.to_owned_slice();
 ```
+
+Rule: a `Utf8Bytes<'static>` field/element must come from an owning producer
+(`into_utf8()`, `value.to_utf8(global)?`, `x.to_utf8().into_owned()`,
+`Utf8Bytes::Owned(..)`) — never from `to_utf8()` on a `&String`/`StringView`
+reached through a `&'static` accessor. Prefer `s.clone().into_utf8()` when
+you hold a `&String` (no copy for ASCII); use `.into_owned()` only when the
+source is a bare `&[u8]`/`EncodedSlice` view.
+
+`Utf8Bytes<'a>` is `Borrowed(&'a [u8]) | Owned(Vec<u8>) | Shared(String)`
+(`Shared` holds an 8-bit all-ASCII WTF-backed `String` and reads its buffer);
+it derefs to `[u8]`; `is_owned()` ⇔ the bytes were transcoded/copied.
+`Utf8WithString` (`String::into_utf8_with_string[_thread_isolated]()`) keeps the
+UTF-8 bytes _and_ the source `String` so the value can go back to JS without
+re-encoding; `Utf8WithString::js_only(string)` wraps an output-only string.
+`PathLike<'a>` / `StringOrBuffer<'a>` arms: `String`/`ThreadIsolatedString`
+(`Utf8WithString` from a JS string), `Utf8(Utf8Bytes<'a>)` (transcoded JS
+string, or Rust-side bytes: `PathLike::borrowed(bytes)` lends `&'a [u8]` to a
+synchronous call, `PathLike::owned(vec)` when the value must own them),
+`Buffer` (`PathLike`: a `PinnedArrayBuffer`, GC-rooted too when parsed for an
+async call; `StringOrBuffer`: borrowed for a sync call) and
+`StringOrBuffer::PinnedBuffer` (pinned and GC-rooted, parsed for an async
+call). Values parsed from JS for an async call, stored, or sent to another thread (the
+`from_js_async` parsers, which return `ThreadIsolated<T>`;
+`PathLike::thread_isolated_copy` for a `Blob` store) is `'static`.
+
+`EncodedSlice<'a>` is the `{ptr, len}` + encoding-bits (Latin-1/UTF-8/UTF-16)
+borrowed view handed to C++. Constructors name the encoding of the bytes:
+`utf8(bytes)` for Rust text (`&str`, `format!` output, anything known
+UTF-8); `from_bytes(bytes)` for arbitrary bytes (OS paths, env values, user
+buffers — scans and tags UTF-8 if non-ASCII); `latin1(bytes)` only for
+ASCII literals / `&'static` ASCII tables, bytes already validated as ASCII,
+or bytes that really are Latin-1; `utf16(units)`.
+`String::to_encoded_slice()` borrows any `String` as one;
+`EncodedSlice::to_utf8() -> Utf8Bytes<'a>`; `bun_jsc::EncodedSliceJsc` adds
+`to_js`, `to_{,type_,range_,syntax_}error_instance`, `to_json_object`, and
+`to_external_value` / `external` (hand a globally-allocated buffer to JSC).
+
+Bytes → JS string: `bun_string_jsc::create_utf8_for_js(global, bytes)?`
+(copies; ASCII stays 8-bit). An owned `Vec<u8>` that JS should adopt:
+`bun_string_jsc::owned_utf8_into_js(global, vec)?`; an owned `Vec<u16>`:
+`bun_string_jsc::owned_utf16_into_js(global, vec)?` (or `owned_latin1_into_js` for a
+known-Latin-1/ASCII `Vec<u8>`); all three hand the allocation to JSC in one call. An ASCII literal or
+`&'static` ASCII: `String::static_("lit").to_js(global)?`. → `Error` (each
+with `type_error`/`range_error`/`syntax_error` siblings, one C++ entry):
+`global.create_error_instance(format_args!(..))` (argument-free ASCII
+literal → atomized; formatted → copied once), `string.to_error_instance(global)`
+(WTF-backed shares the impl, static atomizes, borrowed `EncodedSlice`
+copies), `EncodedSlice::utf8(bytes).to_error_instance(global)` for raw UTF-8
+bytes (copied). The infallible
+`EncodedSlice::…(bytes).to_js(global)` is only for callbacks that cannot
+return `JsResult`, or for bytes already validated as ASCII where a rescan
+is unwanted (`EncodedSlice::latin1(bytes).to_js(global)`).
+
+JSValue → string: `value.to_bun_string(global)?` (owned `String`),
+`value.to_utf8(global)?` (owned UTF-8 `Utf8Bytes<'static>`), or
+`value.to_js_string_view(global)?` (borrowed `JSStringView` guard; derefs to
+`&String` and keeps the `JSString` cell alive while it is in scope; its
+`to_utf8()` is tied to the guard).
 
 To/from JS values, use the `bun_jsc::StringJsc` extension trait:
 
 ```rust
 use bun_jsc::StringJsc;
-let js: JSValue = s.to_js(global)?;
+let js: JSValue = s.to_js(global)?;        // JS takes its own ref; `s` still usable
+let js: JSValue = s.into_js(global)?;      // hands `s`'s ref to the JSString
 let s = bun_core::String::from_js(value, global)?;
-let err = s.to_error_instance(global);
 ```
 
 `bun_core::strings` is the SIMD-backed `&[u8]` toolkit (Google Highway kernels
@@ -157,28 +226,28 @@ let joined  = resolve_path::join_string_buf::<platform::Auto>(&mut *buf, &[a, b]
 `bun_paths::os_path_buffer_pool` selects the wide (`u16`) variant on Windows
 and the narrow (`u8`) variant on POSIX.
 
-## URL Parsing (`bun_jsc::URL`)
+## URL Parsing (`bun_url::whatwg`)
 
-WHATWG-compliant, backed by WebKit's URL parser. Returns `None` for invalid input.
+WHATWG-compliant, backed by WebKit's URL parser. `Parsed` owns the C++
+`WTF::URL` (freed on `Drop`) and derefs to `URL` for the getters; parsing
+returns `None` for invalid input. `bun_jsc::url` re-exports both; the
+JS-value entry points (`URL::from_js` → `Option<Parsed>`, `URL::href_from_js`)
+come from the `bun_jsc::URLJsc` trait.
 
 ```rust
-use bun_jsc::URL;
+use bun_url::whatwg::Parsed;
 
-let url = URL::from_utf8(href)?;                  // Option<NonNull<URL>>
-// caller owns the C++ object — destroy it when done:
-// unsafe { URL::destroy(url.as_ptr()) }
+let url: Parsed = Parsed::from_utf8(href)?;       // or Parsed::from_string(&bun_string)?
 
 url.protocol()   // bun_core::String
 url.pathname()   // bun_core::String
 url.host()       // bun_core::String — the hostname WITHOUT the port (opposite of JS `host`!)
+url.hostname()   // bun_core::String — the host WITH the port (opposite of JS `hostname`!)
 url.port()       // u32 (u32::MAX = unset; otherwise u16 range)
 ```
 
-`URL::href_from_js`, `URL::file_url_from_string`, `URL::path_from_file_url`
-do whole-string conversions. The JSC-free shim `bun_url::whatwg::URL` exposes
-`hostname()`, which returns the host WITH the port (also the opposite of JS
-`hostname`) — so `bun_jsc::URL::host` and `bun_url::whatwg::URL::hostname`
-are effectively swapped relative to their JS namesakes.
+`bun_url::href_from_string`, `file_url_from_string`, `path_from_file_url`,
+`join` do whole-string conversions.
 
 ## MIME Types (`bun_http_types::MimeType`)
 
@@ -189,7 +258,6 @@ let mime = mime_type::by_extension(b"html");            // MimeType
 let mime = mime_type::by_extension_no_default(b"xyz");  // Option<MimeType>
 
 mime.category   // Category::Javascript | Css | Html | Json | Image | Text | Wasm | ...
-mime.category.is_text_like()
 ```
 
 Common constants: `JAVASCRIPT`, `JSON`, `HTML`, `CSS`, `TEXT`, `WASM`, `ICO`, `OTHER`.
@@ -318,13 +386,24 @@ non-transferring path UAFs at GC.
 
 ### Cross-thread string hazards
 
-`AtomString`s live in a per-thread table. Never deref one from another thread —
-it trips `wasRemoved` in `AtomStringImpl::remove()`. If a `bun_core::String`
-may be dropped from a non-JS thread (HTTP worker, threadpool, dying VM), build
-it via `String::clone_utf8` (a plain `WTFStringImpl` with an atomic refcount),
-not from an interned/atomized JS string. See the comment in
-`src/runtime/webcore/fetch/FetchTasklet.rs` near `Response::init` for the
-canonical example of this bug class and its fix.
+`StringImpl` refcounts are atomic; two things are per-thread: using a string as
+a property key (`Identifier::fromString`) atomizes a non-atom impl _in place_
+into the current thread's atom table, and the last `deref()` of an atom removes
+it from the _current_ thread's table (`RELEASE_ASSERT(wasRemoved)`). The lazily
+computed hash/flags word is also unsynchronized. Rules:
+
+- Handing a value to one other thread (work pool, HTTP thread):
+  `String::thread_isolated_copy()`, `ThreadIsolated<T>`, or own bytes
+  (`Box<[u8]>`, `clone_utf8` on arrival).
+- Letting several VMs reach one impl (process-global registry, one
+  `SerializedScriptValue` with many receivers): `String::make_thread_shareable()`
+  (C++ `Bun::makeThreadShareable` / `threadShareableCopy` /
+  `toCrossThreadShareable`) once — pre-hashed, never atomized in place, so each
+  receiver's atom table takes its own copy — then hand out plain `clone()`s.
+  Static strings already qualify.
+
+Worked examples: `ObjectURLRegistry`, `StandaloneModuleGraph::File`, the
+structured-clone object fast paths.
 
 ## Common Patterns
 

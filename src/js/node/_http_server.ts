@@ -761,7 +761,7 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
             // The parser is detached: the socket is handed over with only
             // net.Socket's 'end' listener left, like Node.js.
             detachSocketListenersForHandoff(socket);
-            const { promise, resolve } = $newPromiseCapability(Promise);
+            const promise = $newPromise();
             // Pass the pipelined data (head buffer) if any was received with the CONNECT request
             const head = connectHead ? connectHead : kEmptyBuffer;
             // Node.js's parserOnIncoming: req.upgrade is true for CONNECT
@@ -773,7 +773,7 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
             // Attach the internal close listener after the user's "connect"
             // handler ran: Node.js hands the socket over with no listeners and
             // tests assert socket.listenerCount("close") === 0 there.
-            socket.once("close", resolve);
+            socket.once("close", resolveHandoffPromise.bind(undefined, promise));
             return promise;
           } else {
             // Node.js will close the socket and will NOT respond with 400 Bad Request
@@ -852,7 +852,7 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
         }
         drainMicrotasks();
 
-        let resolveFunction;
+        let pendingPromise: Promise<void> | undefined;
         let didFinish = false;
 
         const isRequestsLimitSet = typeof server.maxRequestsPerSocket === "number" && server.maxRequestsPerSocket > 0;
@@ -962,7 +962,7 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
         }
         function onClose() {
           didFinish = true;
-          if (resolveFunction) resolveFunction();
+          if (pendingPromise) $resolvePromiseWithFirstResolvingFunctionCallCheck(pendingPromise, undefined);
         }
 
         if (!isPipelined) {
@@ -1032,8 +1032,8 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
           // Like CONNECT: the connection is detached from the HTTP request
           // machinery; hold the native callback open until the raw socket
           // closes.
-          const { promise: upgradePromise, resolve: resolveUpgrade } = $newPromiseCapability(Promise);
-          socket.once("close", resolveUpgrade);
+          const upgradePromise = $newPromise();
+          socket.once("close", resolveHandoffPromise.bind(undefined, upgradePromise));
           return upgradePromise;
         } else if (
           server.requireHostHeader &&
@@ -1092,10 +1092,9 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
           return;
         }
 
-        const { resolve, promise } = $newPromiseCapability(Promise);
-        resolveFunction = resolve;
+        pendingPromise = $newPromise();
 
-        return promise;
+        return pendingPromise;
       },
     });
 
@@ -1373,6 +1372,9 @@ function detachSocketListenersForHandoff(socket) {
   socket.removeListener("error", socketOnError);
   socket.removeListener("timeout", onNodeHTTPServerSocketTimeout);
   socket.on("end", onReadableStreamEnd);
+}
+function resolveHandoffPromise(promise) {
+  $resolvePromise(promise, undefined);
 }
 const kSocketTimeoutTimer = Symbol("socketTimeoutTimer");
 const kStreamingEnabled = Symbol("kStreamingEnabled");

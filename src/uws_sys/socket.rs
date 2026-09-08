@@ -724,13 +724,6 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
             socket: InternalSocket::UpgradedDuplex(d),
         }
     }
-    #[cfg(windows)]
-    #[inline]
-    pub fn from_named_pipe(p: *mut WindowsNamedPipe) -> Self {
-        Self {
-            socket: InternalSocket::Pipe(p),
-        }
-    }
 
     /// Wrap an already-open fd. Ext stores `*mut This`; the socket is linked
     /// into `g` with kind `k`. Port of `NewSocketHandler.fromFd`.

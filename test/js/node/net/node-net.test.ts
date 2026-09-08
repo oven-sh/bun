@@ -1329,7 +1329,7 @@ describe.concurrent("net diagnostics channels and fd-attached sockets", () => {
     expect(result.stderr).toBe("");
     expect(JSON.parse(result.stdout)).toEqual({ stdioWrapped: true, afterChild: 0, afterConnect: 1 });
     expect(result.exitCode).toBe(0);
-  });
+  }, 30_000);
 
   it("cluster-worker listen and accepts publish the same net channels as Node", async () => {
     // Under the default round-robin policy the worker's listen() ends in
@@ -1379,7 +1379,8 @@ describe.concurrent("net diagnostics channels and fd-attached sockets", () => {
     expect(stderr.trim()).toBe("");
     expect(JSON.parse(stdout.trim())).toEqual({ listenStart: 1, listenEnd: 1, listenError: 0, server: 1, client: 0 });
     expect(exitCode).toBe(0);
-  });
+    // Three debug+ASAN processes (test, primary, forked worker) take ~4s locally.
+  }, 30_000);
 });
 
 describe.concurrent("socket that already sent FIN and is paused with unread data", () => {

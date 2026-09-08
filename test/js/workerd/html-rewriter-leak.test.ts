@@ -1,6 +1,6 @@
 import { heapStats } from "bun:jsc";
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, isDebug, tempDir } from "harness";
+import { bunEnv, bunExe, expectRssDeltaBelow, isASAN, isDebug, tempDir } from "harness";
 
 // `wire_input`'s materialized-body path transfers the body's `+1` (a
 // `WTFStringImpl` for an all-ASCII `new Response("...")`) into an `AnyBlob`
@@ -709,4 +709,25 @@ test("a direct-stream pull parked on flush(true) is released when the handler pr
     msg = await Promise.race([text, Promise.resolve(undefined)]);
   }
   expect(msg).toContain("will never settle");
+});
+
+test("element.attributes iterator does not leak names/values", async () => {
+  const code = /* js */ `
+    const big = Buffer.alloc(256 * 1024, "a").toString();
+    const html = '<a x="' + big + '"></a>';
+    async function once() {
+      let n = 0;
+      await new HTMLRewriter().on("a", { element(el) { for (const [k, v] of el.attributes) n += v.length; } }).transform(new Response(html)).text();
+      return n;
+    }
+    for (let i = 0; i < 20; i++) await once();
+    Bun.gc(true);
+    const before = process.memoryUsage.rss();
+    for (let i = 0; i < 400; i++) await once();
+    Bun.gc(true);
+    console.log(JSON.stringify({ deltaMiB: (process.memoryUsage.rss() - before) / 1024 / 1024 }));
+  `;
+
+  // Unfixed: ~120 MiB. Fixed: allocator slack only.
+  await expectRssDeltaBelow(["--smol", "-e", code], { release: 50, debug: 70 });
 });

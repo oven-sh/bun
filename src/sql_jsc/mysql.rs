@@ -86,7 +86,4 @@ pub mod protocol {
     pub mod result_set;
 }
 
-pub use my_sql_connection::MySQLConnection;
 pub use my_sql_context::MySQLContext;
-pub use my_sql_query::MySQLQuery;
-pub use my_sql_statement::MySQLStatement;

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { existsSync } from "node:fs";
 import { SourceMapConsumer } from "source-map";
 
@@ -382,15 +382,17 @@ body { color: blue; }`,
       "app.js": `console.log("no html");`,
     });
 
-    // compile: true + target: "browser" with non-HTML entrypoints should
+    // compile + target: "browser" with non-HTML entrypoints should
     // fall back to normal bun executable compile (not standalone HTML)
     const result = await Bun.build({
       entrypoints: [`${dir}/app.js`],
-      compile: true,
+      compile: { outfile: `${dir}/app` },
       target: "browser",
     });
 
     expect(result.success).toBe(true);
+    expect(result.outputs.length).toBe(1);
+    expect(existsSync(`${dir}/app${isWindows ? ".exe" : ""}`)).toBe(true);
   });
 
   test("CLI --compile --target=browser with non-HTML falls back to normal compile", async () => {
@@ -401,6 +403,7 @@ body { color: blue; }`,
     await using proc = Bun.spawn({
       cmd: [bunExe(), "build", "--compile", "--target=browser", `${dir}/app.js`],
       env: bunEnv,
+      cwd: String(dir),
       stderr: "pipe",
       stdout: "pipe",
     });
@@ -408,6 +411,7 @@ body { color: blue; }`,
     const [_stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     // Non-HTML entrypoints with --compile --target=browser should fall back to normal bun compile
     expect(exitCode).toBe(0);
+    expect(existsSync(`${dir}/app${isWindows ? ".exe" : ""}`)).toBe(true);
   });
 
   test("fails with splitting", async () => {

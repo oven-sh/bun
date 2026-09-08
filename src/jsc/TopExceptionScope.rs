@@ -418,7 +418,7 @@ macro_rules! validation_scope {
 /// Gated by `cfg(any(debug_assertions, bun_asan))` — the same predicate this file
 /// already uses for `SIZE`.
 /// Without this, debug builds left the scope as a no-op while `debug_assert!` callers (e.g.
-/// `bun_string_jsc::from_js`) still fired, panicking on every legitimate stringify exception.
+/// `String::from_js`) still fired, panicking on every legitimate stringify exception.
 ///
 /// Prefer the [`validation_scope!`](crate::validation_scope) macro over manual init/destroy.
 pub struct ExceptionValidationScope {

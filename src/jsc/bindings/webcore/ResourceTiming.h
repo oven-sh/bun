@@ -50,7 +50,6 @@ public:
     Vector<Ref<PerformanceServerTiming>> populateServerTiming() const;
     bool isSameOriginRequest() const { return m_isSameOriginRequest; }
 
-    void overrideInitiatorType(const String& type) { m_initiatorType = type; }
     bool isLoadedFromServiceWorker() const { return m_isLoadedFromServiceWorker; }
 
 private:

@@ -110,11 +110,6 @@ public:
         JSC::JSString* key,
         JSValue exportsObject, bool hasEvaluated, JSValue parent);
 
-    static JSCommonJSModule* create(
-        Zig::GlobalObject* globalObject,
-        const WTF::String& key,
-        ResolvedSource resolvedSource);
-
     static JSObject* createBoundRequireFunction(VM& vm, JSGlobalObject* lexicalGlobalObject, const WTF::String& pathString);
 
     void toSyntheticSource(JSC::JSGlobalObject* globalObject,

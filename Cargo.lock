@@ -138,7 +138,6 @@ name = "bun_alloc"
 version = "0.0.0"
 dependencies = [
  "allocator-api2",
- "bstr",
  "bun_mimalloc_sys",
  "bun_opaque",
  "bun_wyhash",
@@ -260,6 +259,7 @@ dependencies = [
  "bun_dotenv",
  "bun_errno",
  "bun_event_loop",
+ "bun_exe_format",
  "bun_hash",
  "bun_http_types",
  "bun_io",
@@ -301,7 +301,6 @@ dependencies = [
  "bun_jsc",
  "bun_opaque",
  "bun_options_types",
- "scopeguard",
 ]
 
 [[package]]
@@ -765,7 +764,6 @@ dependencies = [
  "bun_alloc",
  "bun_api",
  "bun_ast",
- "bun_ast_jsc",
  "bun_core",
  "bun_dotenv",
  "bun_ini",
@@ -916,6 +914,7 @@ dependencies = [
  "bun_js_parser",
  "bun_js_printer",
  "bun_jsc_macros",
+ "bun_libdeflate_sys",
  "bun_opaque",
  "bun_options_types",
  "bun_patch",
@@ -1405,17 +1404,11 @@ dependencies = [
  "bitflags",
  "bstr",
  "bun_alloc",
- "bun_collections",
  "bun_core",
- "const_format",
- "enum-map",
- "enumset",
  "libc",
- "scopeguard",
  "smallvec",
  "strum",
  "thiserror",
- "typed-arena",
 ]
 
 [[package]]
@@ -1468,6 +1461,7 @@ dependencies = [
  "bun_options_types",
  "bun_paths",
  "bun_sourcemap",
+ "bun_url",
  "bun_wyhash",
 ]
 
@@ -1489,7 +1483,6 @@ dependencies = [
  "bun_spawn_sys",
  "bun_sys",
  "bun_threading",
- "bun_which",
  "libc",
  "scopeguard",
  "thiserror",
@@ -1524,10 +1517,6 @@ dependencies = [
  "bun_ptr",
  "bun_sha_hmac",
  "bun_sys",
- "const_format",
- "enum-map",
- "enumset",
- "libc",
  "scopeguard",
  "strum",
  "thiserror",
@@ -1554,11 +1543,6 @@ dependencies = [
  "bun_sha_hmac",
  "bun_sql",
  "bun_uws",
- "bun_uws_sys",
- "const_format",
- "enum-map",
- "enumset",
- "libc",
  "scopeguard",
  "strum",
  "thiserror",
@@ -1674,6 +1658,7 @@ dependencies = [
  "bun_alloc",
  "bun_collections",
  "bun_core",
+ "bun_opaque",
  "bun_paths",
  "bun_wyhash",
  "thiserror",
@@ -1706,6 +1691,7 @@ dependencies = [
  "bun_libuv_sys",
  "bun_opaque",
  "bun_paths",
+ "bun_ptr",
  "bun_windows_sys",
  "libc",
  "strum",

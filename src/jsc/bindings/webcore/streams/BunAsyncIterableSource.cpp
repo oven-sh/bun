@@ -214,8 +214,9 @@ enum class NextStep : uint8_t {
     Finished,
 };
 
-// One iteration result: write the value (a final `return v` is still written), honor the
-// sink's backpressure protocol (`wrote < 0` -> await flush(true)), then finish when done.
+// One iteration result: write the value, honor the sink's backpressure protocol (`wrote < 0`
+// -> await flush(true)), then finish when done. IteratorStepValue semantics, like `for await`
+// and ReadableStream.from(): a done result's value (a generator's `return v`) is not a chunk.
 static NextStep asyncIterHandleNextResult(JSGlobalObject* globalObject, JSAsyncIteratorSourceOperation* op, JSValue result)
 {
     auto& vm = getVM(globalObject);
@@ -227,15 +228,17 @@ static NextStep asyncIterHandleNextResult(JSGlobalObject* globalObject, JSAsyncI
         throwTypeError(globalObject, scope, "Async iterator result is not an object"_s);
         return NextStep::Finished;
     }
-    auto [doneValue, value] = Bun::getIteratorResult(globalObject, asObject(result));
+    auto [doneValue, value] = Bun::getIteratorResult(globalObject, asObject(result), Bun::IteratorDoneValue::Skip);
     RETURN_IF_EXCEPTION(scope, NextStep::Finished);
-
-    if (doneValue.toBoolean(globalObject))
-        op->m_iteratorDone = true;
 
     // The done/value getters run user JS that can cancel the stream.
     if (op->m_cancelled) {
         asyncIterReturnIteratorAndSettle(globalObject, op);
+        RELEASE_AND_RETURN(scope, NextStep::Finished);
+    }
+
+    if (doneValue.toBoolean(globalObject)) {
+        asyncIterFinishSuccess(globalObject, op);
         RELEASE_AND_RETURN(scope, NextStep::Finished);
     }
 
@@ -271,11 +274,6 @@ static NextStep asyncIterHandleNextResult(JSGlobalObject* globalObject, JSAsyncI
             }
         }
     }
-
-    if (op->m_iteratorDone) {
-        asyncIterFinishSuccess(globalObject, op);
-        RELEASE_AND_RETURN(scope, NextStep::Finished);
-    }
     return NextStep::ContinueLoop;
 }
 
@@ -289,7 +287,7 @@ static void driveAsyncIterator(JSGlobalObject* globalObject, JSAsyncIteratorSour
     auto* runtime = JSStreamsRuntime::from(globalObject);
 
     while (true) {
-        if (op->m_done || op->m_iteratorDone) {
+        if (op->m_done) {
             op->m_running = false;
             return;
         }
@@ -365,8 +363,6 @@ JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_onAsyncIterableSourceFlushFulfilled
             return;
         if (op->m_cancelled)
             return asyncIterReturnIteratorAndSettle(globalObject, op);
-        if (op->m_iteratorDone) // The drained write may have been the iterator's final value.
-            return asyncIterFinishSuccess(globalObject, op);
         driveAsyncIterator(globalObject, op); }, [&](JSValue error) { asyncIterFinishWithError(globalObject, op, error); }, [&](JSValue error) { asyncIterAbandon(globalObject, op, error); });
 }
 

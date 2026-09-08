@@ -4,11 +4,11 @@
 use core::cell::Cell;
 use core::mem::size_of;
 
-use crate::Error;
 use bun_http::headers::api::StringPointer;
 use bun_http::headers::append_etag;
 use bun_http::{Headers, Method};
 use bun_http_types::ETag;
+use bun_ptr::{RefPtr, ThisPtr};
 
 use bun_http_types::MimeType::MimeType;
 use bun_jsc::HTTPHeaderName;
@@ -20,17 +20,16 @@ use crate::webcore::body::Value as BodyValue;
 use crate::webcore::headers_ref::any_blob_content_type;
 use crate::webcore::{AnyBlob, FetchHeaders, InternalBlob, Response};
 
-// bun.ptr.RefCount(@This(), "ref_count", deinit, .{}) — single-thread refcount.
-// `*StaticRoute` is also passed as uws onAborted/
-// onWritable userdata; the intrusive `ref_count` Cell + `*mut Self` receivers
-// preserve write provenance through the FFI userdata round-trip so the eventual
-// `heap::take` in `deref_` is sound.
 #[derive(bun_ptr::CellRefCounted)]
 pub struct StaticRoute {
+    ref_count: Cell<u32>,
+    /// The ref that in-flight responses (whose uws userdata is this route)
+    /// collectively hold: taken by the first, released with the last in
+    /// `on_response_complete`.
+    pending_ref: Cell<Option<RefPtr<StaticRoute>>>,
+    pending_responses: Cell<u32>,
     // TODO: Remove optional. StaticRoute requires a server object or else it will
     // not ensure it is alive while sending a large blob.
-    // `pub(super)` so sibling route modules (HTMLBundle) can construct directly.
-    pub(super) ref_count: Cell<u32>,
     pub(crate) server: Cell<Option<AnyServer>>,
     pub(crate) status_code: u16,
     pub(crate) blob: AnyBlob,
@@ -59,29 +58,30 @@ impl<'a> Default for InitFromBytesOptions<'a> {
 }
 
 impl StaticRoute {
-    // pub const ref / deref — intrusive refcount accessors.
-    // `ref_()`/`deref()` are provided by `#[derive(CellRefCounted)]`; `deref_`
-    // is kept as a thin alias so existing call sites keep
-    // working without renaming.
-    /// # Safety
-    /// `this` must have been produced by `heap::alloc` in one of the
-    /// constructors below (write provenance preserved through FFI userdata
-    /// round-trips). Caller must not hold any live `&`/`&mut` to `*this` across
-    /// this call when the refcount may reach zero.
-    #[inline]
-    pub(crate) unsafe fn deref_(this: *mut Self) {
-        // SAFETY: forwarded caller contract — see `CellRefCounted::deref`.
-        unsafe { <Self as bun_ptr::CellRefCounted>::deref(this) }
+    pub(crate) fn new(
+        blob: AnyBlob,
+        headers: Headers,
+        server: Option<AnyServer>,
+        status_code: u16,
+    ) -> StaticRoute {
+        StaticRoute {
+            ref_count: Cell::new(1),
+            pending_ref: Cell::new(None),
+            pending_responses: Cell::new(0),
+            cached_blob_size: blob.size(),
+            has_date: headers.get(b"date").is_some(),
+            blob,
+            headers,
+            server: Cell::new(server),
+            status_code,
+        }
     }
 
     /// Ownership of `blob` is transferred to this function.
-    // `AnyBlob` has drop glue (e.g.
-    // `InternalBlob.bytes: Vec<u8>`), so a `&AnyBlob` + `ptr::read` would alias
-    // and double-free when the caller's value drops. Take by value instead.
     pub(crate) fn init_from_any_blob(
         blob: AnyBlob,
         options: InitFromBytesOptions<'_>,
-    ) -> *mut StaticRoute {
+    ) -> RefPtr<StaticRoute> {
         let mut headers = bun_http_jsc::headers_jsc::from_fetch_headers(
             options.headers,
             any_blob_content_type(&blob),
@@ -101,17 +101,12 @@ impl StaticRoute {
             }
         }
 
-        let cached_blob_size = blob.size();
-        let has_date = headers.get(b"date").is_some();
-        bun_core::heap::into_raw(Box::new(StaticRoute {
-            ref_count: Cell::new(1),
+        RefPtr::new(StaticRoute::new(
             blob,
-            cached_blob_size,
-            has_date,
             headers,
-            server: Cell::new(options.server),
-            status_code: options.status_code,
-        }))
+            options.server,
+            options.status_code,
+        ))
     }
 
     /// Create a static route to be used on a single response, freeing the bytes once sent.
@@ -121,31 +116,25 @@ impl StaticRoute {
         options: InitFromBytesOptions<'_>,
     ) {
         let temp_route = StaticRoute::init_from_any_blob(blob, options);
-        // SAFETY: init_from_any_blob returns a freshly boxed StaticRoute (ref_count=1)
-        // with write provenance; on()/deref_() consume it via that same *mut.
-        unsafe {
-            StaticRoute::on(temp_route, resp);
-            StaticRoute::deref_(temp_route);
-        }
+        StaticRoute::on(temp_route.this_ptr(), resp);
     }
 
-    pub(crate) fn clone(
-        &mut self,
-        global_this: &JSGlobalObject,
-    ) -> Result<*mut StaticRoute, Error> {
+    pub(crate) fn clone(&mut self, global_this: &JSGlobalObject) -> RefPtr<StaticRoute> {
         let blob = self.blob.to_blob(global_this);
         let duped = blob.dupe();
         self.blob = AnyBlob::Blob(blob);
 
-        Ok(bun_core::heap::into_raw(Box::new(StaticRoute {
+        RefPtr::new(StaticRoute {
             ref_count: Cell::new(1),
+            pending_ref: Cell::new(None),
+            pending_responses: Cell::new(0),
             blob: AnyBlob::Blob(duped),
             cached_blob_size: self.cached_blob_size,
             has_date: self.has_date,
             headers: self.headers.clone(),
             server: Cell::new(self.server.get()),
             status_code: self.status_code,
-        })))
+        })
     }
 
     pub(crate) fn memory_cost(&self) -> usize {
@@ -155,7 +144,7 @@ impl StaticRoute {
     pub fn from_js(
         global_this: &JSGlobalObject,
         argument: JSValue,
-    ) -> JsResult<Option<*mut StaticRoute>> {
+    ) -> JsResult<Option<RefPtr<StaticRoute>>> {
         // `as_class_ref` is the safe shared-borrow downcast (one audited
         // unsafe in `JSValue`); every `Response` accessor used below takes
         // `&self` (interior mutability for `body`), so no `&mut` is needed.
@@ -246,56 +235,40 @@ impl StaticRoute {
                 }
             }
 
-            let cached_blob_size = blob.size();
-            let has_date = headers.get(b"date").is_some();
-            return Ok(Some(bun_core::heap::into_raw(Box::new(StaticRoute {
-                ref_count: Cell::new(1),
+            return Ok(Some(RefPtr::new(StaticRoute::new(
                 blob,
-                cached_blob_size,
-                has_date,
                 headers,
-                server: Cell::new(None),
-                status_code: response.status_code(),
-            }))));
+                None,
+                response.status_code(),
+            ))));
         }
 
         Ok(None)
     }
 
     // HEAD requests have no body.
-    /// # Safety
-    /// `this` must point to a live heap-allocated `StaticRoute` produced by one of
-    /// the constructors (write provenance intact).
-    pub(crate) unsafe fn on_head_request(this: *mut Self, mut req: AnyRequest, resp: AnyResponse) {
-        // SAFETY: caller contract.
-        unsafe {
-            // Evaluate conditional request preconditions for HEAD with 200 status
-            if (*this).status_code == 200 {
-                if Self::render_precondition(this, &mut req, resp) {
-                    return;
-                }
+    pub(crate) fn on_head_request(this: ThisPtr<Self>, mut req: AnyRequest, resp: AnyResponse) {
+        // Evaluate conditional request preconditions for HEAD with 200 status
+        if this.status_code == 200 {
+            if Self::render_precondition(this, &mut req, resp) {
+                return;
             }
-
-            // Continue with normal HEAD request handling
-            req.set_yield(false);
-            Self::on_head(this, resp);
         }
+
+        // Continue with normal HEAD request handling
+        req.set_yield(false);
+        Self::on_head(this, resp);
     }
 
-    /// # Safety
-    /// See [`on_head_request`].
-    pub(crate) unsafe fn on_head(this: *mut Self, resp: AnyResponse) {
-        // SAFETY: caller contract.
-        unsafe {
-            debug_assert!((*this).server.get().is_some());
-            (*this).ref_();
-            if let Some(mut server) = (*this).server.get() {
-                server.on_pending_request();
-                resp.timeout(server.config().idle_timeout);
-            }
-            resp.corked(|| (*this).render_metadata_and_end(resp));
-            Self::on_response_complete(this, resp);
+    pub(crate) fn on_head(this: ThisPtr<Self>, resp: AnyResponse) {
+        debug_assert!(this.server.get().is_some());
+        Self::retain_for_response(this);
+        if let Some(mut server) = this.server.get() {
+            server.on_pending_request();
+            resp.timeout(server.config().idle_timeout);
         }
+        resp.corked(|| this.render_metadata_and_end(resp));
+        Self::on_response_complete(this, resp);
     }
 
     fn render_metadata_and_end(&self, resp: AnyResponse) {
@@ -315,108 +288,81 @@ impl StaticRoute {
         resp.end_without_body(resp.should_close_connection());
     }
 
-    /// # Safety
-    /// See [`on_head_request`].
-    pub(crate) unsafe fn on_request(this: *mut Self, req: AnyRequest, resp: AnyResponse) {
-        // SAFETY: caller contract.
-        unsafe {
-            let method = Method::find(req.method()).unwrap_or(Method::GET);
-            if method == Method::GET {
-                Self::on_get(this, req, resp);
-            } else if method == Method::HEAD {
-                Self::on_head_request(this, req, resp);
-            } else {
-                // For other methods, use the original behavior
-                let mut req = req;
-                req.set_yield(false);
-                Self::on(this, resp);
-            }
-        }
-    }
-
-    /// # Safety
-    /// See [`on_head_request`].
-    pub(crate) unsafe fn on_get(this: *mut Self, mut req: AnyRequest, resp: AnyResponse) {
-        // SAFETY: caller contract.
-        unsafe {
-            // Evaluate conditional request preconditions for GET with 200 status
-            if (*this).status_code == 200 {
-                if Self::render_precondition(this, &mut req, resp) {
-                    return;
-                }
-            }
-
-            // Continue with normal GET request handling
+    pub(crate) fn on_request(this: ThisPtr<Self>, req: AnyRequest, resp: AnyResponse) {
+        let method = Method::find(req.method()).unwrap_or(Method::GET);
+        if method == Method::GET {
+            Self::on_get(this, req, resp);
+        } else if method == Method::HEAD {
+            Self::on_head_request(this, req, resp);
+        } else {
+            // For other methods, use the original behavior
+            let mut req = req;
             req.set_yield(false);
             Self::on(this, resp);
         }
     }
 
-    /// # Safety
-    /// See [`on_head_request`].
-    pub(crate) unsafe fn on(this: *mut Self, resp: AnyResponse) {
-        // SAFETY: caller contract.
-        unsafe {
-            debug_assert!((*this).server.get().is_some());
-            (*this).ref_();
-            if let Some(mut server) = (*this).server.get() {
-                server.on_pending_request();
-                resp.timeout(server.config().idle_timeout);
-            }
-            let mut finished = false;
-            (*this).do_render_blob(resp, &mut finished);
-            if finished {
-                Self::on_response_complete(this, resp);
+    pub(crate) fn on_get(this: ThisPtr<Self>, mut req: AnyRequest, resp: AnyResponse) {
+        // Evaluate conditional request preconditions for GET with 200 status
+        if this.status_code == 200 {
+            if Self::render_precondition(this, &mut req, resp) {
                 return;
             }
-
-            Self::to_async(this, resp);
         }
+
+        // Continue with normal GET request handling
+        req.set_yield(false);
+        Self::on(this, resp);
     }
 
-    /// # Safety
-    /// `this` has ref_count >= 1 held until `on_response_complete`; uws stores the
-    /// raw pointer and calls back on the same thread. Receiving `*mut Self` (rather
-    /// than `&self`) preserves write provenance through the FFI userdata round-trip
-    /// so the eventual `heap::take` in `deref_` is sound.
-    unsafe fn to_async(this: *mut Self, resp: AnyResponse) {
-        resp.on_aborted(
-            |this: *mut StaticRoute, resp| {
-                // SAFETY: uws invokes with the same userdata pointer registered
-                // below, on the same thread, while the route holds a ref.
-                unsafe { Self::on_aborted(this, resp) }
-            },
-            this,
-        );
-        resp.on_writable(
-            |this: *mut StaticRoute, off, resp| {
-                // SAFETY: see on_aborted closure above.
-                unsafe { Self::on_writable(this, off, resp) }
-            },
-            this,
-        );
+    pub(crate) fn on(this: ThisPtr<Self>, resp: AnyResponse) {
+        debug_assert!(this.server.get().is_some());
+        Self::retain_for_response(this);
+        if let Some(mut server) = this.server.get() {
+            server.on_pending_request();
+            resp.timeout(server.config().idle_timeout);
+        }
+        let mut finished = false;
+        this.do_render_blob(resp, &mut finished);
+        if finished {
+            Self::on_response_complete(this, resp);
+            return;
+        }
+
+        Self::to_async(this, resp);
     }
 
-    /// # Safety
-    /// uws callback: `this` is the userdata registered in `to_async`.
-    unsafe fn on_aborted(this: *mut Self, resp: AnyResponse) {
-        // SAFETY: caller contract.
-        unsafe { Self::on_response_complete(this, resp) };
+    fn to_async(this: ThisPtr<Self>, resp: AnyResponse) {
+        resp.on_aborted_this(Self::on_aborted, this);
+        resp.on_writable_this(Self::on_writable, this);
     }
 
-    /// # Safety
-    /// `this` must be a live heap-allocated route with write provenance; may free
-    /// `*this` via `deref_` when the refcount reaches zero.
-    unsafe fn on_response_complete(this: *mut Self, resp: AnyResponse) {
-        // SAFETY: caller contract.
-        unsafe {
-            resp.clear_aborted();
-            resp.clear_on_writable();
-            resp.clear_timeout();
-            if let Some(mut server) = (*this).server.get() {
-                server.on_static_request_complete();
-            }
-            Self::deref_(this);
+    fn on_aborted(this: ThisPtr<Self>, resp: AnyResponse) {
+        Self::on_response_complete(this, resp);
+    }
+
+    /// The response whose uws userdata is this route keeps it alive until
+    /// `on_response_complete`.
+    fn retain_for_response(this: ThisPtr<Self>) {
+        let n = this.pending_responses.get();
+        if n == 0 {
+            this.pending_ref.set(Some(RefPtr::from_this(this)));
+        }
+        this.pending_responses.set(n + 1);
+    }
+
+    /// May free `this`.
+    fn on_response_complete(this: ThisPtr<Self>, resp: AnyResponse) {
+        resp.clear_aborted();
+        resp.clear_on_writable();
+        resp.clear_timeout();
+        if let Some(mut server) = this.server.get() {
+            server.on_static_request_complete();
+        }
+        let n = this.pending_responses.get() - 1;
+        this.pending_responses.set(n);
+        if n == 0 {
+            this.pending_ref.set(None);
         }
     }
 
@@ -453,22 +399,17 @@ impl StaticRoute {
         self.render_bytes(resp, did_finish);
     }
 
-    /// # Safety
-    /// uws callback: `this` is the userdata registered in `to_async`.
-    unsafe fn on_writable(this: *mut Self, write_offset: u64, resp: AnyResponse) -> bool {
-        // SAFETY: caller contract.
-        unsafe {
-            if let Some(server) = (*this).server.get() {
-                resp.timeout(server.config().idle_timeout);
-            }
-
-            if !(*this).on_writable_bytes(write_offset, resp) {
-                return false;
-            }
-
-            Self::on_response_complete(this, resp);
-            true
+    fn on_writable(this: ThisPtr<Self>, write_offset: u64, resp: AnyResponse) -> bool {
+        if let Some(server) = this.server.get() {
+            resp.timeout(server.config().idle_timeout);
         }
+
+        if !this.on_writable_bytes(write_offset, resp) {
+            return false;
+        }
+
+        Self::on_response_complete(this, resp);
+        true
     }
 
     fn on_writable_bytes(&self, write_offset: u64, resp: AnyResponse) -> bool {
@@ -485,11 +426,9 @@ impl StaticRoute {
         match resp {
             AnyResponse::SSL(r) => write_status::<true>(r, status),
             AnyResponse::TCP(r) => write_status::<false>(r, status),
-            AnyResponse::H3(r) => {
+            AnyResponse::H3(_) | AnyResponse::H2(_) => {
                 let mut b = bun_core::fmt::ItoaBuf::new();
-                let s = bun_core::fmt::itoa(&mut b, status);
-                // S008: `h3::Response` is an `opaque_ffi!` ZST — safe deref.
-                bun_opaque::opaque_deref_mut(r).write_status(s);
+                resp.write_status(bun_core::fmt::itoa(&mut b, status));
             }
         }
     }
@@ -531,126 +470,102 @@ impl StaticRoute {
         self.do_write_headers(resp);
     }
 
-    /// # Safety
-    /// See [`on_head_request`].
-    pub(crate) unsafe fn on_with_method(this: *mut Self, method: Method, resp: AnyResponse) {
-        // SAFETY: caller contract.
-        unsafe {
-            match method {
-                Method::GET => Self::on(this, resp),
-                Method::HEAD => Self::on_head(this, resp),
-                _ => {
-                    (*this).do_write_status(405, resp); // Method not allowed
-                    resp.write_header(b"Allow", b"GET, HEAD");
-                    resp.write_header_int(b"Content-Length", 0);
-                    resp.end_without_body(resp.should_close_connection());
-                }
+    pub(crate) fn on_with_method(this: ThisPtr<Self>, method: Method, resp: AnyResponse) {
+        match method {
+            Method::GET => Self::on(this, resp),
+            Method::HEAD => Self::on_head(this, resp),
+            _ => {
+                this.do_write_status(405, resp); // Method not allowed
+                resp.write_header(b"Allow", b"GET, HEAD");
+                resp.write_header_int(b"Content-Length", 0);
+                resp.end_without_body(resp.should_close_connection());
             }
         }
     }
 
     /// RFC 9110 §13.2.2 precondition evaluation. Writes a 412 or 304 response
     /// and returns `true` when a precondition short-circuits the request.
-    ///
-    /// # Safety
-    /// See [`on_head_request`]. May free `*this` via `on_response_complete` when it
-    /// returns `true`.
-    unsafe fn render_precondition(
-        this: *mut Self,
-        req: &mut AnyRequest,
-        resp: AnyResponse,
-    ) -> bool {
-        // SAFETY: caller contract.
-        unsafe {
-            let etag = (*this).headers.get(b"etag").filter(|v| !v.is_empty());
-            // Deferred: `parse_http_date` allocates + calls into WTF; only run it
-            // when the client actually sent a date-based conditional header.
-            let last_modified = || {
-                (*this)
-                    .headers
-                    .get(b"last-modified")
-                    .and_then(crate::jsc_hooks::parse_http_date)
-            };
+    fn render_precondition(this: ThisPtr<Self>, req: &mut AnyRequest, resp: AnyResponse) -> bool {
+        let etag = this.headers.get(b"etag").filter(|v| !v.is_empty());
+        // Deferred: `parse_http_date` allocates + calls into WTF; only run it
+        // when the client actually sent a date-based conditional header.
+        let last_modified = || {
+            this.headers
+                .get(b"last-modified")
+                .and_then(crate::jsc_hooks::parse_http_date)
+        };
 
-            // Step 1: If-Match (strong comparison); step 2: If-Unmodified-Since
-            // (only when If-Match is absent).
-            let precondition_failed =
-                if let Some(im) = req.header(b"if-match").filter(|v| !v.is_empty()) {
-                    !ETag::if_match(etag, im)
-                } else if let Some(ius) = req
-                    .header(b"if-unmodified-since")
-                    .and_then(crate::jsc_hooks::parse_http_date)
-                {
-                    matches!(last_modified(), Some(lm) if lm / 1000 > ius / 1000)
-                } else {
-                    false
-                };
-            if precondition_failed {
-                return Self::render_bodiless(this, req, resp, 412);
-            }
-
-            // Step 3: If-None-Match (weak comparison). Presence suppresses step 4.
-            let not_modified = if let Some(if_none_match) = req.header(b"if-none-match") {
-                match etag {
-                    Some(etag) if !if_none_match.is_empty() => {
-                        ETag::if_none_match(etag, if_none_match)
-                    }
-                    _ => false,
-                }
-            // Step 4: If-Modified-Since (only when If-None-Match is absent).
-            } else if let Some(ims) = req
-                .header(b"if-modified-since")
+        // Step 1: If-Match (strong comparison); step 2: If-Unmodified-Since
+        // (only when If-Match is absent).
+        let precondition_failed =
+            if let Some(im) = req.header(b"if-match").filter(|v| !v.is_empty()) {
+                !ETag::if_match(etag, im)
+            } else if let Some(ius) = req
+                .header(b"if-unmodified-since")
                 .and_then(crate::jsc_hooks::parse_http_date)
             {
-                // §13.1.3: 304 when Last-Modified <= If-Modified-Since. HTTP-date
-                // is second-granular, so compare at second precision.
-                match last_modified() {
-                    Some(lm) => lm / 1000 <= ims / 1000,
-                    None => false,
-                }
+                matches!(last_modified(), Some(lm) if lm / 1000 > ius / 1000)
             } else {
                 false
             };
-
-            if !not_modified {
-                return false;
-            }
-
-            Self::render_bodiless(this, req, resp, 304)
+        if precondition_failed {
+            return Self::render_bodiless(this, req, resp, 412);
         }
+
+        // Step 3: If-None-Match (weak comparison). Presence suppresses step 4.
+        let not_modified = if let Some(if_none_match) = req.header(b"if-none-match") {
+            match etag {
+                Some(etag) if !if_none_match.is_empty() => ETag::if_none_match(etag, if_none_match),
+                _ => false,
+            }
+        // Step 4: If-Modified-Since (only when If-None-Match is absent).
+        } else if let Some(ims) = req
+            .header(b"if-modified-since")
+            .and_then(crate::jsc_hooks::parse_http_date)
+        {
+            // §13.1.3: 304 when Last-Modified <= If-Modified-Since. HTTP-date
+            // is second-granular, so compare at second precision.
+            match last_modified() {
+                Some(lm) => lm / 1000 <= ims / 1000,
+                None => false,
+            }
+        } else {
+            false
+        };
+
+        if !not_modified {
+            return false;
+        }
+
+        Self::render_bodiless(this, req, resp, 304)
     }
 
-    /// # Safety
-    /// See [`on_head_request`]. Frees `*this` via `on_response_complete`.
-    unsafe fn render_bodiless(
-        this: *mut Self,
+    /// May free `this`.
+    fn render_bodiless(
+        this: ThisPtr<Self>,
         req: &mut AnyRequest,
         resp: AnyResponse,
         status: u16,
     ) -> bool {
-        // SAFETY: caller contract.
-        unsafe {
-            req.set_yield(false);
-            (*this).ref_();
-            if let Some(mut server) = (*this).server.get() {
-                server.on_pending_request();
-                resp.timeout(server.config().idle_timeout);
-            }
-            (*this).do_write_status(status, resp);
-            (*this).do_write_headers(resp);
-            if !HTTPStatusText::is_null_body(status) {
-                resp.write_header_int(b"Content-Length", 0);
-            }
-            resp.end_without_body(resp.should_close_connection());
-            Self::on_response_complete(this, resp);
-            true
+        req.set_yield(false);
+        Self::retain_for_response(this);
+        if let Some(mut server) = this.server.get() {
+            server.on_pending_request();
+            resp.timeout(server.config().idle_timeout);
         }
+        this.do_write_status(status, resp);
+        this.do_write_headers(resp);
+        if !HTTPStatusText::is_null_body(status) {
+            resp.write_header_int(b"Content-Length", 0);
+        }
+        resp.end_without_body(resp.should_close_connection());
+        Self::on_response_complete(this, resp);
+        true
     }
 }
 
 impl Drop for StaticRoute {
     fn drop(&mut self) {
-        // Box drop handles the dealloc; Headers has its own Drop.
         self.blob.detach();
     }
 }

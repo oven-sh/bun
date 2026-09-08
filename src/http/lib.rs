@@ -55,7 +55,7 @@ pub use decompressor::Decompressor;
 pub use header_builder::HeaderBuilder;
 pub use headers::{Headers, HeadersExt};
 pub(crate) use http_cert_error::HTTPCertError;
-pub use http_context::{HTTPContext, HTTPSocket};
+pub use http_context::{HTTPContext, HTTPSocket, PeerVerification};
 pub use http_request_body::HTTPRequestBody;
 pub use http_thread::HttpThread as HTTPThread;
 pub use http_thread::shutdown_for_exit;
@@ -169,6 +169,7 @@ pub use bun_http_types::{ETag, MimeType};
 
 use bun_core::MutableString;
 use bun_http_types::FetchRedirect::CommonAbortReason;
+use bun_ptr::RefPtr;
 use core::sync::atomic::{AtomicBool, AtomicU32, AtomicUsize, Ordering};
 
 #[repr(u8)]
@@ -189,6 +190,9 @@ pub struct Flags {
     pub(crate) disable_keepalive: bool,
     pub(crate) disable_decompression: bool,
     pub(crate) did_have_handshaking_error: bool,
+    /// `PooledSocket::verification` of the socket this request took from the
+    /// pool, so a weaker request re-pooling it doesn't downgrade the record.
+    pub(crate) reused_socket_verification: PeerVerification,
     pub force_last_modified: bool,
     pub(crate) redirected: bool,
     pub(crate) proxy_tunneling: bool,
@@ -210,6 +214,7 @@ impl Default for Flags {
             disable_keepalive: false,
             disable_decompression: false,
             did_have_handshaking_error: false,
+            reused_socket_verification: PeerVerification::None,
             force_last_modified: false,
             redirected: false,
             proxy_tunneling: false,
@@ -352,27 +357,6 @@ pub(crate) fn h3_alt_svc_enabled() -> bool {
     cli || bun_core::env_var::feature_flag::BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP3_CLIENT
         .get()
         .unwrap_or(false)
-}
-
-/// Strips an optional port suffix from a host string (e.g. "example.com:443" -> "example.com").
-/// Handles IPv6 bracket notation correctly (e.g. "[::1]:443" -> "[::1]").
-pub(crate) fn strip_port_from_host(host: &[u8]) -> &[u8] {
-    if host.is_empty() {
-        return host;
-    }
-    // IPv6 with brackets: "[::1]:port"
-    if host[0] == b'[' {
-        if let Some(bracket) = strings::last_index_of_char(host, b']') {
-            // Return everything up to and including ']'
-            return &host[0..bracket + 1];
-        }
-        return host;
-    }
-    // IPv4 or hostname: find last colon
-    if let Some(colon) = strings::last_index_of_char(host, b':') {
-        return &host[0..colon];
-    }
-    host
 }
 
 #[derive(Copy, Clone, PartialEq, Eq)]
@@ -644,7 +628,6 @@ pub(crate) fn hash_header_name(name: &[u8]) -> u64 {
 // `bun_uws::NewSocketHandler` methods (`ext`/`timeout`/`raw_write`/`flush`/
 // `shutdown`/`connect_group`/…) land.
 
-use bun_core::ZigStringSlice;
 use bun_url::URL;
 use core::ptr::NonNull;
 
@@ -787,8 +770,8 @@ fn no_proxy_matches(no_proxy_text: &[u8], hostname: &[u8], host: &[u8]) -> bool 
 // Many of these fields can be moved to a packed struct and use less space
 //
 // Lifetime `'a` ties every borrowed input — `url`, `http_proxy`, `header_buf`,
-// `if_modified_since`, `hostname`, and the borrowed `HTTPRequestBody::Bytes`
-// payload — to the caller's storage. The original port erased these to `'static`
+// `if_modified_since`, `unix_socket_path`, and the borrowed
+// `HTTPRequestBody::Bytes` payload — to the caller's storage. The original port erased these to `'static`
 // and lifetime-erased at every call site; threading the lifetime removes that hazard.
 // Intrusive raw-pointer backrefs (socket ext, h2/h3 streams) store the
 // lifetime-erased `HTTPClient<'static>` form via [`HTTPClient::as_erased_ptr`].
@@ -828,10 +811,7 @@ pub struct HTTPClient<'a> {
     pub(crate) tls_props: Option<ssl_config::SharedPtr>,
     /// The custom SSL context used for this request (None = default context).
     /// Set by HTTPThread.connect() when using custom TLS configs.
-    /// Holds one owned strong ref (taken in `set_custom_ssl_ctx`, released on
-    /// drop). `HttpsContext` is intrusive-refcounted (also recovered from socket
-    /// ext), so this is an `IntrusiveRc`, not an `Arc`.
-    pub(crate) custom_ssl_ctx: Option<http_context::HTTPContextRc<true>>,
+    pub(crate) custom_ssl_ctx: Option<RefPtr<HttpsContext>>,
     pub(crate) result_callback: HTTPClientResultCallback,
 
     /// Some HTTP servers (such as npm) report Last-Modified times but ignore If-Modified-Since.
@@ -846,12 +826,10 @@ pub struct HTTPClient<'a> {
     pub(crate) proxy_settings: Option<Box<ProxySettings>>,
     pub(crate) proxy_headers: Option<Headers>,
     pub(crate) proxy_authorization: Option<Vec<u8>>,
-    /// Set while this request is tunneling through an HTTP proxy (CONNECT).
-    /// Holds one owned strong ref on the intrusive-refcounted `ProxyTunnel`
-    /// (taken by `ProxyTunnel::start` / `adopt`, released on drop / pool
-    /// hand-off), so this is an `IntrusiveRc`, not an `Arc`. The pointee is
-    /// also recovered raw from the SSLWrapper callback `ctx`, hence intrusive.
-    pub(crate) proxy_tunnel: Option<proxy_tunnel::RefPtr>,
+    /// Set while this request is tunneling through an HTTP proxy (CONNECT);
+    /// moved to the keep-alive pool with the socket. The pointee is also
+    /// recovered raw from the SSLWrapper callback `ctx`, hence intrusive.
+    pub(crate) proxy_tunnel: Option<RefPtr<ProxyTunnel>>,
     /// Set when this request is bound to a stream on an HTTP/2 session.
     /// Owned by the session; cleared by the session when the stream completes.
     pub(crate) h2: Option<NonNull<h2::Stream>>,
@@ -865,8 +843,7 @@ pub struct HTTPClient<'a> {
     pub(crate) pending_h2: Option<NonNull<h2::PendingConnect>>,
     pub(crate) signals: Signals,
     pub(crate) async_http_id: u32,
-    pub(crate) hostname: Option<&'a [u8]>,
-    pub(crate) unix_socket_path: ZigStringSlice,
+    pub(crate) unix_socket_path: &'a [u8],
     /// `fetch({ compress })` — when set, the body is compressed lazily at
     /// write time (h1: `send_initial_request_payload`; h2/h3: at attach) so
     /// the output can borrow `LibdeflateState::shared_buffer`. Persists across
@@ -918,22 +895,10 @@ impl<'a> HTTPClient<'a> {
 
 impl Drop for HTTPClient<'_> {
     fn drop(&mut self) {
-        // redirect / prev_redirect are Vec<u8> — dropped automatically.
-        // proxy_authorization: Option<Vec<u8>> — dropped automatically.
-        // proxy_headers: Option<Headers> — dropped automatically.
-        // tunnel was created by ProxyTunnel::new (heap::alloc) and refcounted;
-        // close_proxy_tunnel releases this client's strong ref (detach+deref
-        // only, no shutdown).
         self.close_proxy_tunnel(false);
         // The session detaches `h2` before any terminal callback, so this should
         // be None by the time the result callback's deinit path runs.
         debug_assert!(self.h2.is_none());
-        // tls_props: Option<SharedPtr> — Drop releases strong ref.
-        if let Some(ctx) = self.custom_ssl_ctx.take() {
-            // Release the strong ref taken in set_custom_ssl_ctx.
-            ctx.deref();
-        }
-        self.unix_socket_path = ZigStringSlice::EMPTY;
     }
 }
 
@@ -997,7 +962,7 @@ use bun_boringssl as boringssl;
 use bun_collections::{ArrayHashMap, VecExt};
 use bun_core::StringBuilder;
 use bun_core::{FeatureFlags, Global, Output};
-use bun_core::{OwnedString, String as BunString, Tag as BunStringTag, strings};
+use bun_core::{String as BunString, Tag as BunStringTag, strings};
 use bun_http_types::ETag::StringPointer;
 use bun_uws as uws;
 // the std Wyhash algorithm, not Wyhash11.
@@ -1230,10 +1195,9 @@ fn unregister_abort_tracker_for_socket(socket: uws::InternalSocket) {
 }
 
 /// Returns the hostname to use for TLS SNI and certificate verification.
-/// Priority: tls_props.server_name > client.hostname > client.url.hostname
-/// The Host header value (client.hostname) may contain a port suffix which
-/// must be stripped because it is not part of the DNS name in certificates.
-fn get_tls_hostname<'c>(client: &'c HTTPClient<'_>, allow_proxy_url: bool) -> &'c [u8] {
+/// Priority: tls_props.server_name > client.url.hostname. The Host request
+/// header is an HTTP field only and never selects the TLS peer identity.
+pub(crate) fn get_tls_hostname<'c>(client: &'c HTTPClient<'_>, allow_proxy_url: bool) -> &'c [u8] {
     if allow_proxy_url {
         if let Some(proxy) = &client.http_proxy {
             return proxy.hostname;
@@ -1252,10 +1216,6 @@ fn get_tls_hostname<'c>(client: &'c HTTPClient<'_>, allow_proxy_url: bool) -> &'
                 return sn_slice;
             }
         }
-    }
-    // client.hostname comes from the Host header and may include ":port"
-    if let Some(host) = &client.hostname {
-        return strip_port_from_host(host);
     }
     client.url.hostname
 }
@@ -1619,19 +1579,18 @@ impl<'a> HTTPClient<'a> {
     /// The tunnel handle's pointer, for the entry points that may release the
     /// handle while they run (`ProxyTunnel::on_writable` / `receive`).
     #[inline]
-    fn proxy_tunnel_ptr(&self) -> Option<NonNull<ProxyTunnel>> {
-        self.proxy_tunnel.as_ref().map(|p| p.data)
+    pub(crate) fn proxy_tunnel_ptr(&self) -> Option<NonNull<ProxyTunnel>> {
+        self.proxy_tunnel.as_ref().map(|p| p.as_non_null())
     }
-    /// Detach the proxy tunnel, if one is attached, and release this client's
-    /// ref on it through the handle that holds it.
+    /// Detach the proxy tunnel, if one is attached, and drop this client's ref
+    /// on it.
     #[inline]
-    fn close_proxy_tunnel(&mut self, shutdown: bool) {
+    pub(crate) fn close_proxy_tunnel(&mut self, shutdown: bool) {
         if let Some(t) = self.proxy_tunnel.take() {
             if shutdown {
-                proxy_tunnel::ProxyTunnel::shutdown(t.data);
+                proxy_tunnel::ProxyTunnel::shutdown(t.as_non_null());
             }
             proxy_tunnel::raw_as_mut(t.as_ptr()).detach_socket();
-            t.deref();
         }
     }
     /// Common tail of `fail` / `fail_from_h2` / `complete_connecting_process`:
@@ -1683,6 +1642,48 @@ impl<'a> HTTPClient<'a> {
 // ───────────────────────────── impl HTTPClient ─────────────────────────────
 
 impl<'a> HTTPClient<'a> {
+    /// How this request authenticates the target's TLS peer on a fresh handshake.
+    pub(crate) fn target_verification(&self) -> PeerVerification {
+        if !self.flags.reject_unauthorized {
+            PeerVerification::None
+        } else if self.signals.get(signals::Field::CertErrors) {
+            PeerVerification::Callback
+        } else {
+            PeerVerification::Native
+        }
+    }
+
+    /// How this request authenticates the peer of its outer socket on a fresh
+    /// handshake (an HTTPS proxy's own certificate always takes the native path).
+    pub(crate) fn socket_verification(&self) -> PeerVerification {
+        if self.http_proxy.is_some() {
+            if self.flags.reject_unauthorized {
+                PeerVerification::Native
+            } else {
+                PeerVerification::None
+            }
+        } else {
+            self.target_verification()
+        }
+    }
+
+    /// `PooledSocket::verification` to record when releasing the outer socket.
+    fn pooled_socket_verification(&self) -> PeerVerification {
+        self.flags
+            .reused_socket_verification
+            .max(self.socket_verification())
+    }
+
+    /// `PooledSocket::target_hostname` for a TLS unix entry. Read from
+    /// `connected_url`: `do_redirect` releases after `url` has moved on.
+    pub(crate) fn unix_tls_hostname<const IS_SSL: bool>(&self) -> &[u8] {
+        if IS_SSL && !self.unix_socket_path.is_empty() {
+            self.connected_url.hostname
+        } else {
+            b""
+        }
+    }
+
     pub(crate) fn check_server_identity<const IS_SSL: bool>(
         &mut self,
         socket: HttpSocket<IS_SSL>,
@@ -1866,11 +1867,12 @@ impl<'a> HTTPClient<'a> {
                             self.get_ssl_ctx::<true>(),
                             self.connected_url.hostname,
                             self.connected_url.get_port_auto(),
-                            if want_tunnel || self.http_proxy.is_none() {
+                            if want_tunnel {
                                 self.proxy_auth_hash()
                             } else {
                                 0
                             },
+                            self.unix_socket_path,
                         );
                     }
                 }
@@ -1908,7 +1910,7 @@ impl<'a> HTTPClient<'a> {
         // through a non-keepalive Agent or `agent: false` skip it, matching Node.
         //
         // TCP options do not apply to a unix socket.
-        if !self.flags.disable_keepalive && self.unix_socket_path.slice().is_empty() {
+        if !self.flags.disable_keepalive && self.unix_socket_path.is_empty() {
             let _ = socket.set_keep_alive(true, 60);
         }
 
@@ -1936,7 +1938,7 @@ impl<'a> HTTPClient<'a> {
         if self.flags.is_preconnect_only {
             return false;
         }
-        if self.unix_socket_path.slice().len() > 0 {
+        if !self.unix_socket_path.is_empty() {
             return false;
         }
         if matches!(
@@ -1985,7 +1987,7 @@ impl<'a> HTTPClient<'a> {
         if self.flags.is_preconnect_only {
             return false;
         }
-        if self.unix_socket_path.slice().len() > 0 {
+        if !self.unix_socket_path.is_empty() {
             return false;
         }
         if matches!(
@@ -2223,15 +2225,6 @@ impl<'a> HTTPClient<'a> {
 
     pub(crate) fn is_keep_alive_possible(&self) -> bool {
         if FeatureFlags::ENABLE_KEEPALIVE {
-            // TODO keepalive for unix sockets
-            if self.unix_socket_path.slice().len() > 0 {
-                return false;
-            }
-            // A peer accepted by a per-request JS `checkServerIdentity` callback must
-            // not enter or leave the shared pool (same exclusion as `can_offer_h2`).
-            if self.signals.get(signals::Field::CertErrors) {
-                return false;
-            }
             // check state
             if self.state.flags.allow_keepalive && !self.flags.disable_keepalive {
                 return true;
@@ -2242,17 +2235,9 @@ impl<'a> HTTPClient<'a> {
 
     /// Hash of the per-request tunnel discriminators beyond the (proxy, target
     /// url.hostname/port, ssl_config) tuple already covered by separate pool-key
-    /// fields. Covers the Host-header SNI override (hostname) plus everything
-    /// writeProxyConnect sends: all proxy_headers entries and the auto-generated
-    /// Proxy-Authorization (if not overridden by a user header). Returns 0 if
-    /// none apply.
-    ///
-    /// target_hostname in the pool stores url.hostname (the CONNECT TCP target
-    /// at writeProxyConnect line 346). But the inner TLS SNI/cert verification
-    /// uses `hostname`, falling back to url.hostname. If a Host header
-    /// override sets hostname != url.hostname, two requests to different IPs
-    /// with the same Host header must NOT share a tunnel — they're physically
-    /// connected to different servers. Hashing hostname here catches that.
+    /// fields. Covers everything writeProxyConnect sends: all proxy_headers
+    /// entries and the auto-generated Proxy-Authorization (if not overridden by
+    /// a user header). Returns 0 if none apply.
     ///
     /// Per-header hashes are combined with wrapping add so insertion order
     /// doesn't matter and duplicate headers don't cancel to zero.
@@ -2260,25 +2245,6 @@ impl<'a> HTTPClient<'a> {
         let mut combined: u64 = 0;
         let mut any = false;
         let mut name_lower_buf = [0u8; 256];
-
-        // SNI override — distinct from url.hostname which is stored separately
-        // as the CONNECT target. Normalize before hashing: strip port (Host
-        // header may include ":443"), lowercase (DNS is case-insensitive per
-        // RFC 1035), and skip if it matches url.hostname (no actual override —
-        // a request with an explicit but identical Host header should hit the
-        // same pool entry as one without).
-        if let Some(sni_raw) = &self.hostname {
-            let sni = strip_port_from_host(sni_raw);
-            if !strings::eql_case_insensitive_ascii(sni, self.url.hostname, true) {
-                let sni_lower: &[u8] = if sni.len() <= name_lower_buf.len() {
-                    strings::copy_lowercase(sni, &mut name_lower_buf[0..sni.len()])
-                } else {
-                    sni
-                };
-                combined = combined.wrapping_add(bun_wyhash::hash(sni_lower));
-                any = true;
-            }
-        }
 
         let mut user_provided_auth = false;
         if let Some(hdrs) = &self.proxy_headers {
@@ -2360,15 +2326,8 @@ impl<'a> HTTPClient<'a> {
         unsafe { &mut *ctx }
     }
 
-    pub(crate) fn set_custom_ssl_ctx(&mut self, ctx: NonNull<HttpsContext>) {
-        // Intrusive-refcounted: this fn takes ownership of one strong ref by
-        // bumping it here. Callers do NOT pre-bump.
-        // SAFETY: ctx points at a live HttpsContext.
-        let new_ref = unsafe { http_context::HTTPContextRc::<true>::init_ref(ctx.as_ptr()) };
-        if let Some(old) = self.custom_ssl_ctx.replace(new_ref) {
-            // Release the ref we previously held.
-            old.deref();
-        }
+    pub(crate) fn set_custom_ssl_ctx(&mut self, ctx: RefPtr<HttpsContext>) {
+        self.custom_ssl_ctx = Some(ctx);
     }
 
     pub(crate) fn header_str(&self, ptr: StringPointer) -> &'a [u8] {
@@ -2603,15 +2562,6 @@ impl<'a> HTTPClient<'a> {
             self.flags.is_streaming_request_body = false;
         }
 
-        // Decided before unix_socket_path is forgotten below: a unix-socket connection must not be pooled.
-        let keep_alive_possible = self.is_keep_alive_possible();
-        // There is no struct copy-back
-        // (`sync_progress_from` skips owned fields) and the original retains
-        // its own `Owned(Vec)` aliasing the same allocation (the HTTP-thread
-        // clone was created via `ptr::read`). Dropping it here would
-        // double-free when the original later runs `clear_data()`. Forget the
-        // clone's view; the original is the sole owner.
-        let _ = core::mem::ManuallyDrop::new(core::mem::take(&mut self.unix_socket_path));
         // TODO: what we do with stream body?
         let request_body: &[u8] = if self.state.flags.resend_request_body_on_redirect
             && matches!(self.state.original_request_body, HTTPRequestBody::Bytes(_))
@@ -2640,44 +2590,35 @@ impl<'a> HTTPClient<'a> {
             bun_core::scoped_log!(fetch, "close the tunnel");
             self.close_proxy_tunnel(true);
             GenHttpContext::<IS_SSL>::close_socket(socket);
-        } else if keep_alive_possible
+        } else if self.is_keep_alive_possible()
             && self.is_request_fully_sent()
             && !socket.is_closed_or_has_error()
-            // A direct TLS socket verified against a Host-header override
-            // (get_tls_hostname) must not be pooled here: this.url has already
-            // been repointed at the redirect destination, so proxy_auth_hash()
-            // can no longer compute the correct pool key. Close it instead.
-            && (!IS_SSL || self.http_proxy.is_some() || self.hostname.is_none())
         {
             bun_core::scoped_log!(fetch, "Keep-Alive release in redirect");
             debug_assert!(!self.connected_url.hostname.is_empty());
             Self::ssl_ctx_mut(ctx).release_socket(
                 socket,
                 self.flags.did_have_handshaking_error && !self.flags.reject_unauthorized,
-                self.flags.reject_unauthorized,
+                self.pooled_socket_verification(),
                 self.connected_url.hostname,
                 self.connected_url.get_port_auto(),
                 self.tls_props.as_ref(),
                 None,
-                b"",
+                self.unix_tls_hostname::<IS_SSL>(),
                 0,
                 0,
                 None,
+                self.unix_socket_path,
             );
         } else {
             GenHttpContext::<IS_SSL>::close_socket(socket);
         }
+        // Cleared after `release_socket` above, which keys the pool entry on it.
+        self.unix_socket_path = b"";
         self.connected_url = URL::default();
         // connected_url was the last borrower of the previous hop's URL buffer
         // (handleResponseMetadata already repointed this.url at the new one).
         self.prev_redirect = Vec::new();
-
-        // Deferred until after the pool/close decision above — see
-        // `InternalStateFlags::clear_hostname_on_redirect`.
-        if self.state.flags.clear_hostname_on_redirect {
-            self.state.flags.clear_hostname_on_redirect = false;
-            self.hostname = None;
-        }
 
         // TODO: should this check be before decrementing the redirect count?
         // the current logic will allow one less redirect than requested
@@ -2833,7 +2774,7 @@ impl<'a> HTTPClient<'a> {
                 self.complete_connecting_process();
                 return;
             }
-            if self.http_proxy.is_some() || self.unix_socket_path.slice().len() > 0 {
+            if self.http_proxy.is_some() || !self.unix_socket_path.is_empty() {
                 self.fail(crate::Error::HTTP3Unsupported);
                 self.complete_connecting_process();
                 return;
@@ -4210,33 +4151,32 @@ impl<'a> HTTPClient<'a> {
                 }
                 let had_tunnel = tunnel.is_some();
                 // target_hostname = url.hostname (the CONNECT TCP target at
-                // writeProxyConnect line 346). The SNI override (hostname) is
-                // hashed into proxyAuthHash separately — both must match, but
-                // they're distinct values when a Host header override is set.
+                // writeProxyConnect line 346).
                 Self::ssl_ctx_mut(ctx).release_socket(
                     socket,
                     self.flags.did_have_handshaking_error && !self.flags.reject_unauthorized,
-                    self.flags.reject_unauthorized,
+                    self.pooled_socket_verification(),
                     self.connected_url.hostname,
                     self.connected_url.get_port_auto(),
                     self.tls_props.as_ref(),
                     tunnel,
-                    if had_tunnel { self.url.hostname } else { b"" },
+                    if had_tunnel {
+                        self.url.hostname
+                    } else {
+                        self.unix_tls_hostname::<IS_SSL>()
+                    },
                     if had_tunnel {
                         self.url.get_port_auto()
                     } else {
                         0
                     },
-                    if had_tunnel || (IS_SSL && self.http_proxy.is_none()) {
-                        // Direct TLS: the handshake verified the peer against
-                        // the Host-header override (get_tls_hostname), so the
-                        // override hash must be part of the pool key. Matches
-                        // the lookup in HTTPContext::connect.
+                    if had_tunnel {
                         self.proxy_auth_hash()
                     } else {
                         0
                     },
                     None,
+                    self.unix_socket_path,
                 );
             } else {
                 if self.proxy_tunnel.is_some() {
@@ -4315,22 +4255,10 @@ impl<'a> HTTPClient<'a> {
     fn do_redirect_multiplexed(&mut self) {
         debug_assert!(self.flags.protocol != Protocol::Http1_1);
         bun_core::scoped_log!(fetch, "doRedirectMultiplexed");
-        // See `do_redirect`: the cross-origin redirect must drop the
-        // per-request Host override before the follow-up connection derives
-        // its SNI / certificate-verification hostname. The h2/h3 path never
-        // reaches `do_redirect`'s consume-and-clear, so mirror it here before
-        // `state.reset()` discards the flag.
-        if self.state.flags.clear_hostname_on_redirect {
-            self.state.flags.clear_hostname_on_redirect = false;
-            self.hostname = None;
-        }
         if matches!(self.state.original_request_body, HTTPRequestBody::Stream(_)) {
             self.flags.is_streaming_request_body = false;
         }
-        // See `do_redirect`: the HTTP-thread clone shares this allocation
-        // with the JS-thread original (created via `ptr::read`); dropping it
-        // here double-frees once the original runs `clear_data()`.
-        let _ = core::mem::ManuallyDrop::new(core::mem::take(&mut self.unix_socket_path));
+        self.unix_socket_path = b"";
         let request_body: &[u8] = if self.state.flags.resend_request_body_on_redirect
             && matches!(self.state.original_request_body, HTTPRequestBody::Bytes(_))
         {
@@ -4402,7 +4330,7 @@ impl<'a> HTTPClient<'a> {
         Self::ssl_ctx_mut(ctx).release_socket(
             socket,
             self.flags.did_have_handshaking_error && !self.flags.reject_unauthorized,
-            self.flags.reject_unauthorized,
+            self.pooled_socket_verification(),
             self.url.hostname,
             self.url.get_port_auto(),
             self.tls_props.as_ref(),
@@ -4411,6 +4339,7 @@ impl<'a> HTTPClient<'a> {
             0,
             0,
             None,
+            b"",
         );
 
         self.state.reset();
@@ -4923,7 +4852,7 @@ impl<'a> HTTPClient<'a> {
                     // request to the same origin may be h3-eligible even if this
                     // one was pinned/proxied/sendfile.
                     if self.is_https()
-                        && self.unix_socket_path.slice().len() == 0
+                        && self.unix_socket_path.is_empty()
                         && !(self.flags.proxy_tunneling && self.proxy_tunnel.is_none())
                         && h3_alt_svc_enabled()
                     {
@@ -5085,7 +5014,7 @@ impl<'a> HTTPClient<'a> {
                         debug_assert!(string_builder.cap == string_builder.len);
 
                         let input = BunString::borrow_utf8(string_builder.allocated_slice());
-                        let normalized_url = OwnedString::new(bun_url::href_from_string(&input));
+                        let normalized_url = bun_url::href_from_string(&input);
                         if normalized_url.tag() == BunStringTag::Dead {
                             // URL__getHref failed, dont pass dead tagged string to toOwnedSlice.
                             return Err(crate::Error::RedirectURLInvalid);
@@ -5141,7 +5070,7 @@ impl<'a> HTTPClient<'a> {
                         debug_assert!(string_builder.cap == string_builder.len);
 
                         let input = BunString::borrow_utf8(string_builder.allocated_slice());
-                        let normalized_url = OwnedString::new(bun_url::href_from_string(&input));
+                        let normalized_url = bun_url::href_from_string(&input);
                         if normalized_url.tag() == BunStringTag::Dead {
                             return Err(crate::Error::RedirectURLInvalid);
                         }
@@ -5165,7 +5094,7 @@ impl<'a> HTTPClient<'a> {
 
                         let base = BunString::borrow_utf8(original_url.href);
                         let rel = BunString::borrow_utf8(location);
-                        let new_url_ = OwnedString::new(bun_url::join(&base, &rel));
+                        let new_url_ = bun_url::join(&base, &rel);
 
                         if new_url_.is_empty() {
                             return Err(crate::Error::InvalidRedirectURL);
@@ -5218,13 +5147,6 @@ impl<'a> HTTPClient<'a> {
                             }
                         }
                     }
-                }
-
-                // Cross-origin redirect: re-derive SNI / cert
-                // verification / Host from the redirect target. See
-                // `InternalStateFlags::clear_hostname_on_redirect`.
-                if !is_same_origin {
-                    self.state.flags.clear_hostname_on_redirect = true;
                 }
 
                 // https://fetch.spec.whatwg.org/#concept-http-redirect-fetch

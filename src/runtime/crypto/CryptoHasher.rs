@@ -3,7 +3,7 @@ use core::cell::Cell;
 use core::ffi::c_char;
 
 use bun_boringssl_sys as boring_ssl;
-use bun_core::ZigString;
+use bun_jsc::bun_string_jsc;
 use bun_jsc::{
     ArrayBuffer, CallFrame, ErrorCode, JSGlobalObject, JSObject, JSValue, JsCell, JsClass as _,
     JsError, JsResult,
@@ -253,15 +253,16 @@ impl CryptoHasher {
             }
         };
 
-        let algorithm = {
+        let algorithm_view = {
             let Some(string_value) = next_eat() else {
                 return Err(global.throw_invalid_arguments(format_args!("Missing argument")));
             };
             if !string_value.is_string_literal() {
                 return Err(global.throw_invalid_arguments(format_args!("Expected string")));
             }
-            string_value.get_zig_string(global)?
+            string_value.to_js_string_view(global)?
         };
+        let algorithm = algorithm_view.to_utf8();
 
         // Node.BlobOrStringOrBuffer
         let Some(input_arg) = next_eat() else {
@@ -298,7 +299,7 @@ impl CryptoHasher {
             buffer.buffer = ArrayBuffer::from_typed_array(global, buffer.buffer.value);
         }
 
-        Self::hash_(global, algorithm, &input, output)
+        Self::hash_(global, algorithm.slice(), &input, output)
     }
 
     fn throw_hmac_consumed(global: &JSGlobalObject) -> JsError {
@@ -329,7 +330,7 @@ impl CryptoHasher {
                 None => return Err(Self::throw_hmac_consumed(global)),
             },
         };
-        bun_jsc::bun_string_jsc::create_utf8_for_js(global, tag)
+        bun_string_jsc::create_utf8_for_js(global, tag)
     }
 
     // `#[bun_jsc::host_fn]` (Free) emits a bare `fn_name(g, f)` call,
@@ -340,7 +341,7 @@ impl CryptoHasher {
         _: JSValue,
         _: PropertyName,
     ) -> JsResult<JSValue> {
-        bun_jsc::bun_string_jsc::to_js_array(global, evp::Algorithm::names())
+        bun_string_jsc::to_js_array(global, evp::Algorithm::names())
     }
 
     fn hash_to_encoding(
@@ -421,18 +422,18 @@ impl CryptoHasher {
 
     pub(crate) fn hash_(
         global: &JSGlobalObject,
-        algorithm: ZigString,
+        algorithm: &[u8],
         input: &BlobOrStringOrBuffer,
         output: Option<StringOrBuffer>,
     ) -> JsResult<JSValue> {
-        let mut evp = match EVP::by_name(&algorithm, global) {
+        let mut evp = match EVP::by_name(algorithm, global) {
             Some(e) => e,
-            None => match CryptoHasherZig::hash_by_name(global, &algorithm, input, output)? {
+            None => match CryptoHasherZig::hash_by_name(global, algorithm, input, output)? {
                 Some(v) => return Ok(v),
                 None => {
                     return Err(global.throw_invalid_arguments(format_args!(
                         "Unsupported algorithm \"{}\"",
-                        algorithm
+                        bstr::BStr::new(algorithm)
                     )));
                 }
             },
@@ -483,9 +484,9 @@ impl CryptoHasher {
             return Err(global.throw_invalid_arguments(format_args!("algorithm must be a string")));
         }
 
-        let algorithm = algorithm_name.get_zig_string(global)?;
-
-        if algorithm.len == 0 {
+        let algorithm_view = algorithm_name.to_js_string_view(global)?;
+        let algorithm = algorithm_view.to_utf8();
+        if algorithm.slice().is_empty() {
             return Err(global.throw_invalid_arguments(format_args!("Invalid algorithm name")));
         }
 
@@ -504,12 +505,8 @@ impl CryptoHasher {
 
         let init = 'brk: {
             if let Some(key) = &hmac_key {
-                // Inlined `JSValue::to_enum_from_map` (the `is_string` guard
-                // already ran above) so the lookup goes through the
-                // length-gated `evp::lookup_ignore_case` directly.
                 let chosen_algorithm: evp::Algorithm = {
-                    let slice = algorithm_name.to_slice(global)?;
-                    match evp::lookup_ignore_case(slice.slice()) {
+                    match evp::lookup_ignore_case(algorithm.slice()) {
                         Some(v) => v,
                         None => {
                             return Err(global.throw_invalid_arguments(format_args!(
@@ -524,33 +521,29 @@ impl CryptoHasher {
                     match HMAC::init(chosen_algorithm, key.slice()) {
                         Some(h) => h,
                         None => {
-                            if !global.has_exception() {
-                                let err = boring_ssl::ERR_get_error();
-                                if err != 0 {
-                                    let instance = create_crypto_error(global, err);
-                                    boring_ssl::ERR_clear_error();
-                                    return Err(global.throw_value(instance));
-                                } else {
-                                    return Err(global.throw_todo(
-                                        b"HMAC is not supported for this algorithm yet",
-                                    ));
-                                }
+                            let err = boring_ssl::ERR_get_error();
+                            if err != 0 {
+                                let instance = create_crypto_error(global, err);
+                                boring_ssl::ERR_clear_error();
+                                return Err(global.throw_value(instance));
+                            } else {
+                                return Err(global
+                                    .throw_todo(b"HMAC is not supported for this algorithm yet"));
                             }
-                            return Err(JsError::Thrown);
                         }
                     },
                 )));
             }
 
             break 'brk CryptoHasher::Evp(Box::new(JsCell::new(
-                match EVP::by_name(&algorithm, global) {
+                match EVP::by_name(algorithm.slice(), global) {
                     Some(e) => e,
-                    None => match CryptoHasherZig::constructor(&algorithm) {
+                    None => match CryptoHasherZig::constructor(algorithm.slice()) {
                         Some(h) => return Ok(h),
                         None => {
                             return Err(global.throw_invalid_arguments(format_args!(
                                 "Unsupported algorithm {}",
-                                algorithm
+                                bstr::BStr::new(algorithm.slice())
                             )));
                         }
                     },
@@ -599,15 +592,11 @@ impl CryptoHasher {
                     .throw());
             }
         }
-        let buffer = match BlobOrStringOrBuffer::from_js_with_encoding(global, input, encoding)? {
-            Some(b) => b,
-            None => {
-                if !global.has_exception() {
-                    return Err(global
-                        .throw_invalid_arguments(format_args!("expected blob, string or buffer")));
-                }
-                return Err(JsError::Thrown);
-            }
+        let Some(buffer) = BlobOrStringOrBuffer::from_js_with_encoding(global, input, encoding)?
+        else {
+            return Err(
+                global.throw_invalid_arguments(format_args!("expected blob, string or buffer"))
+            );
         };
         // `defer buffer.deinit()` — handled by Drop.
         if is_bun_file_blob(&buffer) {
@@ -739,13 +728,7 @@ impl CryptoHasher {
             output_digest_slice = &mut output_digest_buf;
         }
 
-        let result = match self.final_(global, output_digest_slice) {
-            Ok(r) => r,
-            Err(_) => return Ok(JSValue::ZERO),
-        };
-        if global.has_exception() {
-            return Err(JsError::Thrown);
-        }
+        let result = self.final_(global, output_digest_slice)?;
 
         if let Some(output_buf) = output {
             Ok(output_buf.value)
@@ -758,13 +741,7 @@ impl CryptoHasher {
     fn digest_to_encoding(&self, global: &JSGlobalObject, encoding: Encoding) -> JsResult<JSValue> {
         let mut output_digest_buf: evp::Digest = [0u8; EVP_MAX_MD_SIZE_USIZE];
         let output_digest_slice: &mut [u8] = &mut output_digest_buf;
-        let out = match self.final_(global, output_digest_slice) {
-            Ok(r) => r,
-            Err(_) => return Ok(JSValue::ZERO),
-        };
-        if global.has_exception() {
-            return Err(JsError::Thrown);
-        }
+        let out = self.final_(global, output_digest_slice)?;
         encoding.encode_with_max_size(global, EVP_MAX_MD_SIZE_USIZE, out)
     }
 
@@ -904,12 +881,11 @@ macro_rules! for_each_zig_algo {
 impl CryptoHasherZig {
     pub(crate) fn hash_by_name(
         global: &JSGlobalObject,
-        algorithm: &ZigString,
+        algorithm: &[u8],
         input: &BlobOrStringOrBuffer,
         output: Option<StringOrBuffer>,
     ) -> JsResult<Option<JSValue>> {
-        let name = algorithm.to_slice();
-        let Some(algo) = evp::lookup_ignore_case(name.slice()) else {
+        let Some(algo) = evp::lookup_ignore_case(algorithm) else {
             return Ok(None);
         };
         macro_rules! arm {
@@ -1024,10 +1000,8 @@ impl CryptoHasherZig {
         }
     }
 
-    fn constructor(algorithm: &ZigString) -> Option<Box<CryptoHasher>> {
-        let name = algorithm.to_slice();
-        Self::init(name.slice())
-            .map(|inner| CryptoHasher::new(CryptoHasher::Zig(JsCell::new(inner))))
+    fn constructor(algorithm: &[u8]) -> Option<Box<CryptoHasher>> {
+        Self::init(algorithm).map(|inner| CryptoHasher::new(CryptoHasher::Zig(JsCell::new(inner))))
     }
 
     pub(crate) fn init(name: &[u8]) -> Option<CryptoHasherZig> {

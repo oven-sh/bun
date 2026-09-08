@@ -574,7 +574,7 @@ pub mod cli {
             let _ = log.print(std::ptr::from_mut::<bun_core::io::Writer>(
                 bun_core::Output::error_writer(),
             ));
-            bun_crash_handler::handle_root_error(err, None);
+            bun_crash_handler::handle_root_error(err);
         }
     }
 }
@@ -1895,7 +1895,7 @@ To create a project with the official Next.js scaffolding tool, run\n\
 
         for arg in bun::argv() {
             if arg == b"--hash" {
-                let mut path_buf = bun_paths::PathBuffer::uninit();
+                let mut path_buf = bun_paths::path_buffer_pool::get();
                 let entry = &ctx.args.entry_points[0];
                 path_buf[..entry.len()].copy_from_slice(entry);
                 path_buf[entry.len()] = 0;

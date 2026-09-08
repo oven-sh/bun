@@ -1,4 +1,4 @@
-import { define } from "../../codegen/class-definitions";
+import { define } from "../../codegen/class-definitions.ts";
 
 const rustPaths = {
   Blob: "crate::webcore::byte_blob_loader::Source",

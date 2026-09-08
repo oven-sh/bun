@@ -2632,6 +2632,39 @@ describe.concurrent("bun-install", () => {
     });
   });
 
+  it("records an 8-byte non-ASCII version range from a manifest", async () => {
+    // 8 bytes whose last byte has the high bit set cannot be stored inline in
+    // the lockfile's small-string encoding; it has to be copied like a longer
+    // string. "1.0.0-é" is 6 ASCII bytes + 0xC3 0xA9.
+    await withContext(defaultOpts, async ctx => {
+      const urls: string[] = [];
+      setContextHandler(
+        ctx,
+        dummyRegistryForContext(ctx, urls, {
+          "0.0.2": { peerDependencies: { quux: "1.0.0-é" }, peerDependenciesMeta: { quux: { optional: true } } },
+        }),
+      );
+      await writeFile(
+        join(ctx.package_dir, "package.json"),
+        JSON.stringify({ name: "foo", version: "0.0.1", dependencies: { bar: "0.0.2" } }),
+      );
+      const { stdout, stderr, exited } = spawn({
+        cmd: [bunExe(), "install", "--save-text-lockfile"],
+        cwd: ctx.package_dir,
+        stdout: "pipe",
+        stdin: "pipe",
+        stderr: "pipe",
+        env,
+      });
+      const [, err] = await Promise.all([stdout.text(), stderr.text()]);
+      expect(err).toContain("Saved lockfile");
+      expect(err).not.toContain("error:");
+      const lock = await file(join(ctx.package_dir, "bun.lock")).text();
+      expect(lock).toContain(`"peerDependencies": { "quux": "1.0.0-é" }`);
+      expect(await exited).toBe(0);
+    });
+  });
+
   it("should handle ^0.0.2-alpha.3+b4d in dependencies", async () => {
     await withContext(defaultOpts, async ctx => {
       const urls: string[] = [];
@@ -7916,7 +7949,8 @@ describe.concurrent("bun-install", () => {
       ]);
       expect(await exited2).toBe(0);
       expect(ctx.requested).toBe(0);
-      expect(await readdirSorted(join(ctx.package_dir, "node_modules"))).toEqual([".cache", "bar"]);
+      // the lockfile matched, so nothing was resolved and no cache dir was created
+      expect(await readdirSorted(join(ctx.package_dir, "node_modules"))).toEqual(["bar"]);
       expect(await readlink(join(ctx.package_dir, "node_modules", "bar"))).toBeWorkspaceLink(join("..", "bar"));
       expect(await file(join(ctx.package_dir, "node_modules", "bar", "package.json")).text()).toEqual(bar_package);
       await access(join(ctx.package_dir, "bun.lockb"));
@@ -9410,7 +9444,8 @@ describe.concurrent("bun-install", () => {
       expect(await exited2).toBe(0);
       expect(urls.sort()).toBeEmpty();
       expect(ctx.requested).toBe(0);
-      expect(await readdirSorted(join(ctx.package_dir, "node_modules"))).toEqual([".cache", "bar", "baz"]);
+      // the lockfile matched, so nothing was resolved and no cache dir was created
+      expect(await readdirSorted(join(ctx.package_dir, "node_modules"))).toEqual(["bar", "baz"]);
       expect(await readlink(join(ctx.package_dir, "node_modules", "bar"))).toBeWorkspaceLink(
         join("..", "packages", "bar"),
       );

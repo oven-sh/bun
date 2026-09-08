@@ -878,9 +878,6 @@ impl ExportsKind {
             Self::EsmWithDynamicFallback | Self::EsmWithDynamicFallbackFromCjs
         )
     }
-
-    // `to_module_type()` lives in `bun_options_types` as
-    // `impl From<ExportsKind> for ModuleType` (would cycle here).
 }
 
 #[derive(Copy, Clone)]
@@ -1093,10 +1090,18 @@ pub enum PartTag {
 pub type PartSymbolUseMap = ArrayHashMap<Ref, symbol::Use, AutoContext, bun_alloc::AstAlloc>;
 pub type PartSymbolPropertyUseMap = ArrayHashMap<
     Ref,
-    StringHashMap<symbol::Use, bun_alloc::AstAlloc>,
+    StringHashMap<PropertyUse, bun_alloc::AstAlloc>,
     AutoContext,
     bun_alloc::AstAlloc,
 >;
+
+/// The reads of one `X.name` in `Part::import_symbol_property_uses`.
+#[derive(Default, Clone, Copy)]
+pub struct PropertyUse {
+    pub count_estimate: u32,
+    /// Some read is called, as `X.name()` or a template tag, with `X` as `this`.
+    pub is_call_target: bool,
+}
 
 impl Default for Part {
     fn default() -> Self {

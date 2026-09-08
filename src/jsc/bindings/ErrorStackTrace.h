@@ -56,7 +56,6 @@ private:
     // Lazy-initialized
     WTF::String m_sourceURL;
     WTF::String m_functionName;
-    WTF::String m_typeName;
 
     // m_wasmFunctionIndexOrName has meaning only when m_isWasmFrame is set
     JSC::Wasm::IndexOrName m_wasmFunctionIndexOrName;
@@ -84,7 +83,6 @@ public:
     intptr_t sourceID() const;
     JSC::JSString* sourceURL();
     JSC::JSString* functionName();
-    JSC::JSString* typeName();
 
     bool isFunctionOrEval() const { return m_isFunctionOrEval; }
     bool isAsync() const { return m_isAsync; }
@@ -150,8 +148,6 @@ private:
      * "display name" property -> "name" property -> JSFunction\InternalFunction "name" methods.
      */
     ALWAYS_INLINE String retrieveFunctionName();
-
-    ALWAYS_INLINE String retrieveTypeName();
 
     bool calculateSourcePositions();
 };

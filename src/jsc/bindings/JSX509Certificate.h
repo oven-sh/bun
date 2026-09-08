@@ -9,8 +9,7 @@
 #include <JavaScriptCore/JSDestructibleObject.h>
 #include <JavaScriptCore/JSGlobalObject.h>
 #include <JavaScriptCore/JSString.h>
-#include <JavaScriptCore/LazyProperty.h>
-#include <JavaScriptCore/LazyPropertyInlines.h>
+#include <JavaScriptCore/WriteBarrier.h>
 #include "KeyObject.h"
 
 namespace Zig {
@@ -37,30 +36,33 @@ public:
         return m_x509.view();
     }
 
-    // Lazily computed certificate data
-    LazyProperty<JSX509Certificate, JSString> m_subject;
-    LazyProperty<JSX509Certificate, JSString> m_issuer;
-    LazyProperty<JSX509Certificate, JSString> m_validFrom;
-    LazyProperty<JSX509Certificate, JSString> m_validTo;
-    LazyProperty<JSX509Certificate, JSString> m_serialNumber;
-    LazyProperty<JSX509Certificate, JSString> m_fingerprint;
-    LazyProperty<JSX509Certificate, JSString> m_fingerprint256;
-    LazyProperty<JSX509Certificate, JSString> m_fingerprint512;
-    LazyProperty<JSX509Certificate, JSUint8Array> m_raw;
-    LazyProperty<JSX509Certificate, JSString> m_subjectAltName;
-    LazyProperty<JSX509Certificate, JSCell> m_publicKey;
+    // Certificate data computed on first access. A getter that throws caches nothing, so the next access
+    // computes (and throws) again rather than handing out a stale placeholder. An absent subject / issuer is
+    // cached as the empty string; an absent subjectAltName as null.
+    WriteBarrier<JSString> m_subject;
+    WriteBarrier<JSString> m_issuer;
+    WriteBarrier<JSString> m_validFrom;
+    WriteBarrier<JSString> m_validTo;
+    WriteBarrier<JSString> m_serialNumber;
+    WriteBarrier<JSString> m_fingerprint;
+    WriteBarrier<JSString> m_fingerprint256;
+    WriteBarrier<JSString> m_fingerprint512;
+    WriteBarrier<JSUint8Array> m_raw;
+    WriteBarrier<Unknown> m_subjectAltName;
+    WriteBarrier<JSObject> m_publicKey;
 
-    JSString* subject();
-    JSString* issuer();
-    JSString* validFrom();
-    JSString* validTo();
-    JSString* serialNumber();
-    JSString* fingerprint();
-    JSString* fingerprint256();
-    JSString* fingerprint512();
-    JSUint8Array* raw();
-    JSString* subjectAltName();
-    JSValue publicKey();
+    JSString* subject(JSGlobalObject*);
+    JSString* issuer(JSGlobalObject*);
+    JSString* validFrom(JSGlobalObject*);
+    JSString* validTo(JSGlobalObject*);
+    JSString* serialNumber(JSGlobalObject*);
+    JSString* fingerprint(JSGlobalObject*);
+    JSString* fingerprint256(JSGlobalObject*);
+    JSString* fingerprint512(JSGlobalObject*);
+    JSUint8Array* raw(JSGlobalObject*);
+    // The string, or null when the certificate has no subjectAltName extension.
+    JSValue subjectAltName(JSGlobalObject*);
+    JSObject* publicKey(JSGlobalObject*);
 
     // Certificate validation methods
     // `peerName`, when provided, receives the subject name that matched, which
@@ -76,7 +78,6 @@ public:
 
     // Certificate data access methods
     static JSValue getKeyUsage(ncrypto::X509View view, JSGlobalObject*);
-    EVP_PKEY* getPublicKey(JSGlobalObject* globalObject);
     JSValue getKeyUsage(JSGlobalObject* globalObject) { return JSX509Certificate::getKeyUsage(view(), globalObject); }
 
     static size_t estimatedSize(JSC::JSCell* cell, JSC::VM& vm);
@@ -133,7 +134,7 @@ public:
     static bool computeIsCA(ncrypto::X509View view, JSGlobalObject*);
     static JSValue computeInfoAccess(ncrypto::X509View view, JSGlobalObject*);
     static JSString* computeSubjectAltName(ncrypto::X509View view, JSGlobalObject*);
-    static JSValue computePublicKey(ncrypto::X509View view, JSGlobalObject*);
+    static JSObject* computePublicKey(ncrypto::X509View view, JSGlobalObject*);
 
     JSX509Certificate(JSC::VM& vm, JSC::Structure* structure)
         : Base(vm, structure)

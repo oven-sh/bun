@@ -134,6 +134,11 @@ public:
         CLOSED = 3,
     };
 
+    enum class BinaryType { Blob,
+        ArrayBuffer,
+        // non-standard:
+        NodeBuffer };
+
     enum Opcode : unsigned char {
         Continue = 0x0,
         Text = 0x1,
@@ -180,6 +185,12 @@ public:
 
     ExceptionOr<void> close(std::optional<unsigned short> code, const String& reason);
     ExceptionOr<void> terminate();
+    // Receive-side flow control (non-standard; mirrors Bun.Socket). pause()
+    // stops kernel reads so TCP backpressure reaches the peer; frames already
+    // decoded still dispatch. Before OPEN it latches and applies on connect.
+    bool pause();
+    bool resume();
+    bool isPaused() const { return m_paused; }
 
     void setProtocol(const String& protocol);
 
@@ -190,7 +201,7 @@ public:
     String protocol() const;
     String extensions() const;
 
-    String binaryType() const;
+    BinaryType binaryType() const { return m_binaryType; }
     ExceptionOr<void> setBinaryType(const String&);
 
     ScriptExecutionContext* scriptExecutionContext() const final;
@@ -258,7 +269,6 @@ public:
         void (*onClose)(void* ctx, unsigned short code) = nullptr;
     };
     void setNativeCallbacks(NativeCallbacks cb) { m_native = cb; }
-    bool hasNativeCallbacks() const { return m_native.onMessage != nullptr; }
 
     // Public wrapper for the native-callback consumer to send text frames.
     // Bypasses the ExceptionOr<> wrapping — the caller has already checked
@@ -307,11 +317,6 @@ private:
     void sendWebSocketData(const char* data, size_t length, const Opcode opcode);
     void setExtensionsFromDeflateParams(const PerMessageDeflateParams* deflate_params);
 
-    enum class BinaryType { Blob,
-        ArrayBuffer,
-        // non-standard:
-        NodeBuffer };
-
     State m_state { CONNECTING };
     URL m_url;
     unsigned m_bufferedAmount { 0 };
@@ -329,8 +334,10 @@ private:
     // Drop the in-flight upgrade / the connected client without a closing handshake. Neither
     // dispatches anything itself; the native side may call back synchronously.
     void cancelUpgradeClient();
+    bool applyPauseToConnectedClient();
     void cancelConnectedClient();
     bool m_rejectUnauthorized { false };
+    bool m_paused { false };
     // Default matches pre-existing behavior: advertise permessage-deflate in the upgrade
     // request. Set to false by ws.WebSocket callers passing `perMessageDeflate: false`.
     bool m_offerPerMessageDeflate { true };

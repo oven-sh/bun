@@ -212,6 +212,46 @@ describe("HTTPParser.prototype.execute", () => {
   });
 });
 
+describe("a callback that throws stops the parse", () => {
+  const kOnMessageBegin = HTTPParser.kOnMessageBegin;
+  const kOnBody = HTTPParser.kOnBody;
+  const kOnMessageComplete = HTTPParser.kOnMessageComplete;
+  // Two pipelined requests so that a parser that kept going after the throw would reach the second one.
+  const input = Buffer.from(
+    "POST /a HTTP/1.1\r\nHost: x\r\nContent-Length: 1\r\n\r\nA" +
+      "POST /b HTTP/1.1\r\nHost: x\r\nContent-Length: 1\r\n\r\nB",
+  );
+  for (const throwing of ["begin", "headersComplete", "body", "complete"] as const) {
+    test(throwing, () => {
+      const parser = new HTTPParser();
+      parser.initialize(HTTPParser.REQUEST, {});
+      const calls: string[] = [];
+      const err = new Error(throwing + " threw");
+      const hook = (name: string) => () => {
+        calls.push(name);
+        if (name === throwing) throw err;
+        return 0;
+      };
+      parser[kOnMessageBegin] = hook("begin");
+      parser[kOnHeadersComplete] = hook("headersComplete");
+      parser[kOnBody] = hook("body");
+      parser[kOnMessageComplete] = hook("complete");
+      let caught;
+      try {
+        parser.execute(input);
+      } catch (e) {
+        caught = e;
+      }
+      expect(caught).toBe(err);
+      // Nothing ran after the callback that threw.
+      expect(calls.at(-1)).toBe(throwing);
+      expect(calls.filter(c => c === "begin").length).toBe(1);
+      // The parser is left in the errored state.
+      expect(parser.execute(Buffer.from("GET / HTTP/1.1\r\n\r\n"))).toBeInstanceOf(Error);
+    });
+  }
+});
+
 test("HTTPParser.prototype.getCurrentBuffer", async () => {
   const parser = new HTTPParser();
   parser.initialize(HTTPParser.REQUEST, {});

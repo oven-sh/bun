@@ -263,6 +263,7 @@ JSValue constructReportObjectWindows(VM& vm, Zig::GlobalObject* globalObject, Pr
             vm, globalObject, globalObject, name, message,
             line, column,
             sourceURL, stackFrames, nullptr);
+        RETURN_IF_EXCEPTION(scope, {});
 
         WTF::String stack;
         size_t firstLine = stackProperty.find('\n');

@@ -41,10 +41,21 @@ use crate::{JSCArrayBuffer, JSGlobalObject, JSValue, JsResult};
 #[derive(Debug, Default)]
 pub struct GenOpt<T>(Option<T>);
 
-impl<T: Clone> GenOpt<T> {
+impl<T> GenOpt<T> {
     #[inline]
-    pub fn get(&self) -> Option<T> {
-        self.0.clone()
+    pub fn get(&self) -> Option<T>
+    where
+        T: Copy,
+    {
+        self.0
+    }
+    #[inline]
+    pub fn as_ref(&self) -> Option<&T> {
+        self.0.as_ref()
+    }
+    #[inline]
+    pub fn into_inner(self) -> Option<T> {
+        self.0
     }
 }
 
@@ -52,10 +63,17 @@ impl<T: Clone> GenOpt<T> {
 #[derive(Debug)]
 pub struct GenVal<T>(T);
 
-impl<T: Clone> GenVal<T> {
+impl<T> GenVal<T> {
     #[inline]
-    pub fn get(&self) -> T {
-        self.0.clone()
+    pub fn get(&self) -> T
+    where
+        T: Copy,
+    {
+        self.0
+    }
+    #[inline]
+    pub fn as_ref(&self) -> &T {
+        &self.0
     }
 }
 
@@ -320,31 +338,11 @@ pub struct SSLConfig {
 // ── refcount release on drop ──────────────────────────────────────────────
 //
 // `adopt_string` adopts a +1 `WTF::StringImpl` ref into a `GenString`
-// (= `bun_core::String`), which is `Copy` and has no `Drop`. So the
-// container's `Drop` deref's every owned string field to release those refs.
+// (= `bun_core::String`), which releases it on drop.
 //
-// `GenArrayBuffer` / `GenBlob` raw-pointer payloads likewise carry an adopted
-// +1 ref (C++ `ExternTraits<RefPtr<T>>::convertToExtern` calls `leakRef()`);
+// `GenArrayBuffer` / `GenBlob` raw-pointer payloads carry an adopted +1 ref
+// (C++ `ExternTraits<RefPtr<T>>::convertToExtern` calls `leakRef()`);
 // released here via the matching `ExternalSharedDescriptor::ext_deref`.
-//
-// `.get()` on `GenOpt` / `GenVal` returns a *bitwise* `Clone` of the
-// `bun_core::String` (the derived `Clone`, not the inherent `clone()` which
-// bumps), so it does not take an additional ref — the single adopted ref stays
-// owned by the field and is released exactly once below.
-
-#[inline]
-fn release_gen_opt_string(s: &GenOpt<GenString>) {
-    if let Some(string) = &s.0 {
-        // Releases the +1 ref adopted by `adopt_opt_string` / `adopt_string`.
-        string.deref();
-    }
-}
-
-#[inline]
-fn release_gen_val_string(s: &GenVal<GenString>) {
-    // Releases the +1 ref adopted by `adopt_string`.
-    s.0.deref();
-}
 
 #[inline]
 fn release_gen_val_array_buffer(b: &GenVal<GenArrayBuffer>) {
@@ -371,8 +369,7 @@ fn release_gen_val_blob(b: &GenVal<GenBlob>) {
 impl Drop for SSLConfigAlpnProtocols {
     fn drop(&mut self) {
         match self {
-            SSLConfigAlpnProtocols::None => {}
-            SSLConfigAlpnProtocols::String(v) => release_gen_val_string(v),
+            SSLConfigAlpnProtocols::None | SSLConfigAlpnProtocols::String(_) => {}
             SSLConfigAlpnProtocols::Buffer(v) => release_gen_val_array_buffer(v),
         }
     }
@@ -381,7 +378,7 @@ impl Drop for SSLConfigAlpnProtocols {
 impl Drop for SSLConfigSingleFile {
     fn drop(&mut self) {
         match self {
-            SSLConfigSingleFile::String(v) => release_gen_val_string(v),
+            SSLConfigSingleFile::String(_) => {}
             SSLConfigSingleFile::Buffer(v) => release_gen_val_array_buffer(v),
             SSLConfigSingleFile::File(v) => release_gen_val_blob(v),
         }
@@ -392,27 +389,10 @@ impl Drop for SSLConfigFile {
     fn drop(&mut self) {
         // `Array` recursively drops each `SSLConfigSingleFile`.
         match self {
-            SSLConfigFile::None | SSLConfigFile::Array(_) => {}
-            SSLConfigFile::String(v) => release_gen_val_string(v),
+            SSLConfigFile::None | SSLConfigFile::Array(_) | SSLConfigFile::String(_) => {}
             SSLConfigFile::Buffer(v) => release_gen_val_array_buffer(v),
             SSLConfigFile::File(v) => release_gen_val_blob(v),
         }
-    }
-}
-
-impl Drop for SSLConfig {
-    fn drop(&mut self) {
-        release_gen_opt_string(&self.passphrase);
-        release_gen_opt_string(&self.dh_params_file);
-        release_gen_opt_string(&self.server_name);
-        // `ca` / `cert` / `key`: `SSLConfigFile` — released by its own `Drop`.
-        release_gen_opt_string(&self.key_file);
-        release_gen_opt_string(&self.cert_file);
-        release_gen_opt_string(&self.ca_file);
-        // `alpn_protocols`: `SSLConfigAlpnProtocols` — released by its own `Drop`.
-        release_gen_opt_string(&self.ciphers);
-        release_gen_opt_string(&self.sigalgs);
-        release_gen_opt_string(&self.ecdh_curve);
     }
 }
 
@@ -641,15 +621,7 @@ pub struct SocketConfig {
     pub allow_half_open: bool,
     pub reuse_port: bool,
     pub ipv6_only: bool,
-}
-
-impl Drop for SocketConfig {
-    fn drop(&mut self) {
-        // `tls`: `SocketConfigTls::Object` holds `SSLConfig`, released by its
-        // own `Drop`. `handlers`: only `JSValue`s — no owned refs.
-        release_gen_opt_string(&self.unix_);
-        release_gen_opt_string(&self.hostname);
-    }
+    pub pause_on_connect: bool,
 }
 
 /// `BindgenSocketConfigTLS.ExternType` =
@@ -698,6 +670,7 @@ struct ExternSocketConfig {
     exclusive: bool,
     reuse_port: bool,
     ipv6_only: bool,
+    pause_on_connect: bool,
     unix_: RawWTFStringImpl,
     fd: ExternOptional<i32>,
 }
@@ -724,6 +697,7 @@ impl SocketConfig {
             exclusive: ext.exclusive,
             reuse_port: ext.reuse_port,
             ipv6_only: ext.ipv6_only,
+            pause_on_connect: ext.pause_on_connect,
             unix_: adopt_opt_string(ext.unix_),
             fd: ext.fd.get(),
         }

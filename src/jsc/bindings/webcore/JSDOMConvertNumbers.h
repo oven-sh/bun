@@ -277,8 +277,10 @@ template<> struct Converter<IDLFloat> : DefaultConverter<IDLFloat> {
         auto scope = DECLARE_THROW_SCOPE(vm);
         double number = value.toNumber(&lexicalGlobalObject);
         RETURN_IF_EXCEPTION(scope, 0.0);
-        if (number < std::numeric_limits<float>::lowest() || number > std::numeric_limits<float>::max()) [[unlikely]]
+        if (number < std::numeric_limits<float>::lowest() || number > std::numeric_limits<float>::max()) [[unlikely]] {
             throwTypeError(&lexicalGlobalObject, scope, "The provided value is outside the range of a float"_s);
+            return 0.0;
+        }
         if (!std::isfinite(number)) [[unlikely]]
             throwNonFiniteTypeError(lexicalGlobalObject, scope);
         return static_cast<float>(number);

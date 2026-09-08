@@ -942,13 +942,6 @@ pub(crate) mod serialize {
                 serialize_selector(selector, dest, ctx, false)?;
                 dest.write_char(b')')?;
             }
-            // Component::Nth(nth_data) => {
-            //     nth_data.write_start(dest, nth_data.is_function())?;
-            //     if nth_data.is_function() {
-            //         nth_data.write_affine(dest)?;
-            //         dest.write_char(b')')?;
-            //     }
-            // }
             _ => {
                 tocss_servo::to_css_component(component, dest)?;
             }
@@ -1188,22 +1181,6 @@ pub(crate) mod serialize {
             d.write_str(val)
         }
 
-        // switch (pseudo_element.*) {
-        //     // CSS2 pseudo elements support a single colon syntax in addition
-        //     // to the more correct double colon for other pseudo elements.
-        //     // We use that here because it's supported everywhere and is shorter.
-        //     .after => try dest.writeStr(":after"),
-        //     .before => try dest.writeStr(":before"),
-        //     .marker => try dest.writeStr(":first-letter"),
-        //     .selection => |prefix| Helpers.writePrefixed(dest, prefix, "selection"),
-        //     .cue => dest.writeStr("::cue"),
-        //     .cue_region => dest.writeStr("::cue-region"),
-        //     .cue_function => |v| {
-        //         dest.writeStr("::cue(");
-        //         try serializeSelector(v.selector, dest, context, false);
-        //         try dest.writeChar(')');
-        //     },
-        // }
         match pseudo_element {
             // CSS2 pseudo elements support a single colon syntax in addition
             // to the more correct double colon for other pseudo elements.
@@ -1276,6 +1253,14 @@ pub(crate) mod serialize {
             PseudoElement::ViewTransitionNew { part_name } => {
                 dest.write_str(b"::view-transition-new(")?;
                 part_name.to_css(dest)?;
+                dest.write_char(b')')?;
+            }
+            PseudoElement::DetailsContent => dest.write_str(b"::details-content")?,
+            PseudoElement::PickerIcon => dest.write_str(b"::picker-icon")?,
+            PseudoElement::Checkmark => dest.write_str(b"::checkmark")?,
+            PseudoElement::PickerFunction { identifier } => {
+                dest.write_str(b"::picker(")?;
+                identifier.to_css(dest)?;
                 dest.write_char(b')')?;
             }
             PseudoElement::Custom { name } => {

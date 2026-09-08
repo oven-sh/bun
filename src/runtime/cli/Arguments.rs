@@ -651,8 +651,7 @@ const TEST_PARAMS: &[ParamType] = concat_params!(
 
 // ─── `bun test --parallel`: which flags reach the worker processes ──────────
 
-/// Re-serialized from the parsed command line as `--name[=value]` onto every
-/// worker's argv. bunfig settings need no entry: a worker loads bunfig itself.
+/// Re-serialized from the parsed command line onto every worker's argv.
 const TEST_WORKER_FORWARDED_FLAGS: &[&[u8]] = &[
     b"--no-orphans",
     // Module loading and transpilation.
@@ -709,8 +708,7 @@ const TEST_WORKER_FORWARDED_FLAGS: &[&[u8]] = &[
     b"--stack-trace-limit",
 ];
 
-/// Every other `bun test` flag. Each `TEST_PARAMS` flag is in exactly one of the
-/// two lists; the compile-time check below names any that is not.
+/// Every other `bun test` flag; the check below keeps the two lists exhaustive.
 const TEST_WORKER_UNFORWARDED_FLAGS: &[&[u8]] = &[
     // Forwarded by `build_worker_argv` from merged bunfig + command-line state.
     b"--timeout",

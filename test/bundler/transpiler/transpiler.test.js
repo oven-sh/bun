@@ -1163,7 +1163,10 @@ describe("Bun.Transpiler", () => {
       exp('namespace x { "use strict"; }', "var x;\n((x) => {})(x ||= {})");
       exp('namespace x { "use asm"; }', "var x;\n((x) => {\n  ;\n})(x ||= {})");
       exp("namespace x { ; interface I {} }", "var x;\n((x) => {\n  ;\n})(x ||= {})");
-      exp("namespace x.y { ; }", "var x;\n((x) => {\n  let y;\n  ((y) => {\n    ;\n  })(y = x.y ||= {});\n})(x ||= {})");
+      exp(
+        "namespace x.y { ; }",
+        "var x;\n((x) => {\n  let y;\n  ((y) => {\n    ;\n  })(y = x.y ||= {});\n})(x ||= {})",
+      );
       exp("declare namespace x { ; }", "");
     });
 

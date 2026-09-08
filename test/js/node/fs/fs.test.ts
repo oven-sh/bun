@@ -1008,13 +1008,16 @@ describe("copyFileSync", () => {
       );
       expect(readFileSync(dest).equals(content)).toBe(true);
 
-      // The same file as source and destination must not be deleted.
-      await expect(copy(dest, dest, force)).rejects.toThrow(expect.objectContaining({ code: "EINVAL" }));
+      // The same file as source and destination must keep its content.
+      await copy(dest, dest, force);
       expect(readFileSync(dest).equals(content)).toBe(true);
       const link = join(tempdir, `${name}.link`);
       symlinkSync(dest, link);
-      await expect(copy(link, dest, force)).rejects.toThrow(expect.objectContaining({ code: "EINVAL" }));
+      await copy(link, dest, force);
       expect(readFileSync(dest).equals(content)).toBe(true);
+
+      // No temporary file is left behind.
+      expect(readdirSync(tempdir).filter(f => f.startsWith(`${name}.bin.`))).toEqual([]);
     }
   });
 

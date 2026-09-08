@@ -412,7 +412,8 @@ const PREALLOCATE_LENGTH: usize = 2048 * 1024;
 #[cfg(target_os = "macos")]
 const CLONE_NOFOLLOW: u32 = 0x0001;
 
-/// `clonefile(2)` for `COPYFILE_FICLONE_FORCE`: on `EEXIST` unlink `dest` and retry, unless `src` is `dest`.
+/// `clonefile(2)` for `COPYFILE_FICLONE_FORCE`. `clonefile` refuses an existing `dest`, so
+/// without `COPYFILE_EXCL` clone to a temporary name next to `dest` and rename over it.
 #[cfg(target_os = "macos")]
 fn clonefile_force(
     src: &ZStr,
@@ -421,31 +422,44 @@ fn clonefile_force(
     syscall: sys::Tag,
 ) -> Maybe<ret::CopyFile> {
     // https://www.manpagez.com/man/2/clonefile/
-    let Some(result) =
-        Maybe::<ret::CopyFile>::errno_sys_p(bun_sys::c::clonefile_rc(src, dest, 0), syscall, src)
-    else {
-        return Ok(());
-    };
-    if mode.shouldnt_overwrite() || result.get_errno() != E::EEXIST {
-        return result;
+    if mode.shouldnt_overwrite() {
+        return Maybe::<ret::CopyFile>::errno_sys_p(
+            bun_sys::c::clonefile_rc(src, dest, 0),
+            syscall,
+            src,
+        )
+        .unwrap_or(Ok(()));
     }
-    let src_stat = match Syscall::stat(src) {
-        Ok(stat_) => stat_,
-        Err(err) => return Err(err.with_path(src)),
+
+    let name_too_long = || sys::Error {
+        errno: E::ENAMETOOLONG as _,
+        syscall,
+        path: dest.as_bytes().into(),
+        ..Default::default()
     };
-    if let Ok(dst_stat) = Syscall::stat(dest) {
-        if src_stat.st_ino == dst_stat.st_ino && src_stat.st_dev == dst_stat.st_dev {
-            return Err(sys::Error {
-                errno: SystemErrno::EINVAL as _,
-                syscall,
-                path: src.as_bytes().into(),
-                ..Default::default()
-            });
-        }
+    let mut name_buf = [0u8; 64];
+    let name = FileSystem::tmpname(b"tmp", &mut name_buf, bun_core::fast_random())
+        .map_err(|_| name_too_long())?;
+    let mut tmp_buf = bun_paths::path_buffer_pool::get();
+    let tmp_len = dest.len() + name.len();
+    if tmp_len >= tmp_buf.len() {
+        return Err(name_too_long());
     }
-    let _ = Syscall::unlink(dest);
-    Maybe::<ret::CopyFile>::errno_sys_p(bun_sys::c::clonefile_rc(src, dest, 0), syscall, src)
-        .unwrap_or(Ok(()))
+    tmp_buf[..dest.len()].copy_from_slice(dest.as_bytes());
+    tmp_buf[dest.len()..tmp_len].copy_from_slice(name.as_bytes());
+    tmp_buf[tmp_len] = 0;
+    let tmp = ZStr::from_buf(&tmp_buf[..], tmp_len);
+
+    if let Some(err) =
+        Maybe::<ret::CopyFile>::errno_sys_p(bun_sys::c::clonefile_rc(src, tmp, 0), syscall, src)
+    {
+        return err;
+    }
+    if let Err(err) = Syscall::rename(tmp, dest) {
+        let _ = Syscall::unlink(tmp);
+        return Err(err.with_path(dest));
+    }
+    Ok(())
 }
 
 /// Path-length field width.

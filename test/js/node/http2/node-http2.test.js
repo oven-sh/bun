@@ -6049,9 +6049,13 @@ describe("stream getters over the lifecycle", () => {
   it("server: endAfterHeaders stays true after the stream closes", async () => {
     const server = http2.createServer();
     const states = [];
+    const serverStreamClosed = Promise.withResolvers();
     server.on("stream", stream => {
       states.push(read(stream));
-      stream.on("close", () => states.push(read(stream)));
+      stream.on("close", () => {
+        states.push(read(stream));
+        serverStreamClosed.resolve();
+      });
       stream.respond({ ":status": 200 });
       stream.end("ok");
     });
@@ -6064,7 +6068,7 @@ describe("stream getters over the lifecycle", () => {
         req.on("error", reject);
         req.resume();
         req.on("close", resolve);
-        await promise;
+        await Promise.all([promise, serverStreamClosed.promise]);
         // The GET request block carried END_STREAM, so endAfterHeaders is true for its whole life.
         expect(states[0]).toEqual({ endAfterHeaders: true, rstCode: 0, headersSent: false });
         expect(states[1]).toEqual({ endAfterHeaders: true, rstCode: 0, headersSent: true });

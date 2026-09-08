@@ -244,7 +244,7 @@ impl FileRoute {
         // Held until `on_response_complete`; a reload can drop the route
         // table's ref while a `FileResponseStream` is still streaming.
         let route = RefPtr::from_this(this);
-        if let Some(mut server) = route.server.get() {
+        if let Some(server) = route.server.get() {
             server.on_pending_request();
             resp.timeout(server.config().idle_timeout);
         }
@@ -464,7 +464,7 @@ impl FileRoute {
         resp.clear_aborted();
         resp.clear_on_writable();
         resp.clear_timeout();
-        if let Some(mut server) = self.server.get() {
+        if let Some(server) = self.server.get() {
             server.on_static_request_complete();
         }
     }

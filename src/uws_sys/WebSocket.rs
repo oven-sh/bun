@@ -321,20 +321,13 @@ pub trait WebSocketHandler: Sized + 'static {
     unsafe fn on_close(this: *mut Self, ws: AnyWebSocket, code: i32, message: &[u8]);
 }
 
-/// Server type that handles the HTTP→WS upgrade.
+/// Server type that handles the HTTP→WS upgrade. `this` is the user-data
+/// registered with the `.ws()` route ([`crate::app::App::ws_this`] ties its
+/// type to `Self`; the raw [`crate::app::App::ws`] leaves that to its caller).
 pub trait WebSocketUpgradeServer<const SSL: bool>: Sized + 'static {
-    /// # Safety
-    /// `this` is the raw user-data pointer passed to `uws_ws()` at registration
-    /// time, cast to `*mut Self`. **Its actual pointee type is discriminated by
-    /// `id`** — `Bun.serve` registers `*mut UserRoute` for `id == 1` and
-    /// `*mut Self` for `id == 0` (see `runtime/server/mod.rs`). Implementers
-    /// MUST dispatch on `id` *before* dereferencing `this`; the trampoline
-    /// deliberately forwards the raw pointer (no `&mut Self` is ever
-    /// materialized) so that the wrong-typed reference is never created when
-    /// `id != 0`.
-    unsafe fn on_websocket_upgrade(
-        this: *mut Self,
-        res: *mut uws::NewAppResponse<SSL>,
+    fn on_websocket_upgrade(
+        this: bun_ptr::ThisPtr<Self>,
+        res: &mut uws::NewAppResponse<SSL>,
         req: &mut Request,
         context: &mut WebSocketUpgradeContext,
         id: usize,
@@ -445,16 +438,13 @@ where
         if ptr.is_null() {
             return;
         }
-        // SAFETY: `ptr` is the user-data passed to `uws_ws()` at registration
-        // time; uWS passes non-null req/context valid for the duration of the
-        // upgrade callback. We forward `ptr` as a *raw* `*mut Server` without
-        // creating a `&mut Server` — the actual pointee type is discriminated
-        // by `id` inside the implementer (see trait docs), and materializing a
-        // typed reference here would be UB when `id` selects a different type.
+        // SAFETY: `ptr` is the `Server` user-data registered with this
+        // behavior's `.ws()` route, kept alive by the registrant while the route
+        // exists; uWS passes non-null req/context valid for the callback.
         unsafe {
             Server::on_websocket_upgrade(
-                ptr.cast::<Server>(),
-                res.cast::<uws::NewAppResponse<SSL>>(),
+                bun_ptr::ThisPtr::new(ptr.cast::<Server>()),
+                thunk::handle_mut(res.cast::<uws::NewAppResponse<SSL>>()),
                 thunk::handle_mut(req),
                 thunk::handle_mut(context),
                 id,

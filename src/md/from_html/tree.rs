@@ -48,24 +48,35 @@ pub const MAX_TREE_DEPTH: usize = 512;
 /// are dropped.
 const MAX_HANDLES: usize = 2 * MAX_TREE_DEPTH;
 
+/// An entry on the stack of open elements. Identity is `tag` plus, only
+/// when `tag` is `Tag::Other` (custom elements, unknown or unhashable
+/// foreign names), the lowercased `name`; known names never touch a string.
+/// For a foreign element `tag` still carries the name's identity (an SVG
+/// `<title>` is `Tag::Title` here) while its DOM node is `Tag::Other`.
 #[derive(Clone, Copy)]
 struct Open<'a> {
     node: Ref<'a>,
     tag: Tag,
-    /// Lowercased local name (for `Tag::Other` comparisons).
     name: &'a str,
     html: bool,
 }
 
 impl Open<'_> {
+    /// Is the HTML element `tag`.
     #[inline]
     fn is(&self, tag: Tag) -> bool {
         self.html && self.tag == tag
     }
 
     #[inline]
+    fn same_name(&self, tag: Tag, name: &str) -> bool {
+        self.tag == tag && (tag != Tag::Other || self.name == name)
+    }
+
+    /// Is the HTML element with this name.
+    #[inline]
     fn named(&self, tag: Tag, name: &str) -> bool {
-        self.html && self.tag == tag && (tag != Tag::Other || self.name == name)
+        self.html && self.same_name(tag, name)
     }
 }
 
@@ -82,6 +93,43 @@ enum Then {
     Push,
     Leave,
 }
+
+/// A set of [`Tag`]s as a bitmask: membership is a shift and a mask, so the
+/// stack walks below test each open element in a couple of instructions.
+#[derive(Clone, Copy)]
+struct TagSet([u64; Tag::COUNT.div_ceil(64)]);
+
+impl TagSet {
+    const EMPTY: TagSet = TagSet([0; Tag::COUNT.div_ceil(64)]);
+
+    const fn of(tags: &[Tag]) -> TagSet {
+        let mut bits = [0u64; Tag::COUNT.div_ceil(64)];
+        let mut i = 0;
+        while i < tags.len() {
+            let t = tags[i] as usize;
+            bits[t / 64] |= 1 << (t % 64);
+            i += 1;
+        }
+        TagSet(bits)
+    }
+
+    #[inline]
+    const fn contains(&self, tag: Tag) -> bool {
+        let t = tag as usize;
+        self.0[t / 64] >> (t % 64) & 1 != 0
+    }
+}
+
+macro_rules! tags {
+    ($($t:ident),* $(,)?) => {{
+        const SET: TagSet = TagSet::of(&[$(Tag::$t),*]);
+        SET
+    }};
+}
+
+const SCOPE_BOUNDARY: TagSet = tags![
+    Applet, Caption, Html, Table, Td, Th, Marquee, Object, Template
+];
 
 /// Entry in the list of active formatting elements.
 #[derive(Clone, Copy)]
@@ -116,14 +164,18 @@ struct Builder<'a> {
     /// end tags are dropped too instead of closing something further out.
     dropped: [u32; Tag::COUNT],
     dropped_total: u32,
+    /// Number of open `<p>` elements, so the very frequent "close a p
+    /// element in button scope" step can skip its stack walk when there is
+    /// none.
+    open_p: u32,
 }
 
 impl<'a> Builder<'a> {
     fn new(arena: Arena<'a>, input_len: usize) -> Self {
         let document = arena.new_document();
-        let html = arena.new_element(Tag::Html, "html", true, &[]);
+        let html = arena.new_element(Tag::Html, true, &[]);
         document.append(html);
-        let body = arena.new_element(Tag::Body, "body", true, &[]);
+        let body = arena.new_element(Tag::Body, true, &[]);
         html.append(body);
         Builder {
             arena,
@@ -138,6 +190,7 @@ impl<'a> Builder<'a> {
             clone_budget: input_len / 8 + 1024,
             dropped: [0; Tag::COUNT],
             dropped_total: 0,
+            open_p: 0,
         }
     }
 
@@ -153,19 +206,40 @@ impl<'a> Builder<'a> {
 
     // ───────────────────────── text ─────────────────────────
 
+    /// Text arrives in chunks (lol-html splits a text node at its input
+    /// buffer boundaries and closes it with an empty `last` chunk). Each chunk
+    /// goes into the tree straight away — adjacent text merges there anyway —
+    /// except for a trailing piece that the next chunk could change the
+    /// meaning of: an unfinished character reference or a CR that may pair
+    /// with a following LF. Only that piece is staged.
     fn text_chunk(&mut self, chunk: &str, rules: entities::TextRules, last: bool) {
-        if last && self.text.is_empty() {
-            // The common case: a whole text node in one chunk.
-            self.text_rules = rules;
-            self.insert_text(chunk);
-            return;
-        }
         if self.text.is_empty() {
             self.text_rules = rules;
-        }
-        self.text.push_str(chunk);
-        if last {
-            self.flush_text();
+            let cut = if last {
+                chunk.len()
+            } else {
+                carry_start(chunk, rules)
+            };
+            if cut > 0 {
+                self.insert_text(&chunk[..cut]);
+            }
+            if cut < chunk.len() {
+                self.text.push_str(&chunk[cut..]);
+            }
+        } else {
+            self.text.push_str(chunk);
+            let staged = core::mem::take(&mut self.text);
+            let cut = if last {
+                staged.len()
+            } else {
+                carry_start(&staged, self.text_rules)
+            };
+            if cut > 0 {
+                self.insert_text(&staged[..cut]);
+            }
+            let mut rest = staged;
+            rest.drain(..cut);
+            self.text = rest;
         }
     }
 
@@ -265,14 +339,23 @@ impl<'a> Builder<'a> {
 
     fn insert(&mut self, tag: Tag, name: &str, ns: Ns, attrs: &[Attr<'a>], then: Then) -> Ref<'a> {
         let html = matches!(ns, Ns::Html);
-        let tag = if html { tag } else { Tag::Other };
-        let name = self.arena.alloc_str(name);
-        let node = self.arena.new_element(tag, name, html, attrs);
+        let node = self
+            .arena
+            .new_element(if html { tag } else { Tag::Other }, html, attrs);
+        // Only `Other` is told apart by name; everything else by `tag`.
+        let name = if tag == Tag::Other {
+            self.arena.alloc_str(name)
+        } else {
+            ""
+        };
         self.insert_node(node);
         if matches!(then, Then::Push) {
+            if html && tag == Tag::P {
+                self.open_p += 1;
+            }
             self.stack.push(Open {
                 node,
-                tag: node.tag(),
+                tag,
                 name,
                 html,
             });
@@ -296,15 +379,16 @@ impl<'a> Builder<'a> {
 
     /// Index of the topmost open HTML element that is one of `tags`, giving
     /// up at a scope boundary (`extra` widens the default set).
-    fn find_in_scope(&self, tags: &[Tag], extra: &[Tag]) -> Option<usize> {
+    #[inline]
+    fn find_in_scope(&self, tags: TagSet, extra: TagSet) -> Option<usize> {
         for (i, o) in self.stack.iter().enumerate().rev() {
             if !o.html {
                 return None;
             }
-            if tags.contains(&o.tag) {
+            if tags.contains(o.tag) {
                 return Some(i);
             }
-            if extra.contains(&o.tag) || is_scope_boundary(o.tag) {
+            if extra.contains(o.tag) || SCOPE_BOUNDARY.contains(o.tag) {
                 return None;
             }
         }
@@ -329,17 +413,21 @@ impl<'a> Builder<'a> {
     /// it, off again — however it came to be closed, so markers cannot
     /// accumulate.
     fn pop_to(&mut self, index: usize) {
-        let markers = self.stack[index..]
-            .iter()
-            .filter(|o| o.html && has_marker(o.tag))
-            .count();
+        let mut markers = 0;
+        for o in &self.stack[index..] {
+            if o.is(Tag::P) {
+                self.open_p -= 1;
+            } else if o.html && has_marker(o.tag) {
+                markers += 1;
+            }
+        }
         self.stack.truncate(index);
         for _ in 0..markers {
             self.clear_formatting_to_marker();
         }
     }
 
-    fn close_in_scope(&mut self, tags: &[Tag], extra: &[Tag]) -> bool {
+    fn close_in_scope(&mut self, tags: TagSet, extra: TagSet) -> bool {
         match self.find_in_scope(tags, extra) {
             Some(i) => {
                 self.pop_to(i);
@@ -350,15 +438,17 @@ impl<'a> Builder<'a> {
     }
 
     fn close_p(&mut self) {
-        self.close_in_scope(&[Tag::P], &[Tag::Button]);
+        if self.open_p > 0 {
+            self.close_in_scope(tags![P], tags![Button]);
+        }
     }
 
     /// Pops until the current node is one of `tags` (or the stack is empty).
-    fn clear_to(&mut self, tags: &[Tag]) {
+    fn clear_to(&mut self, tags: TagSet) {
         let keep = self
             .stack
             .iter()
-            .rposition(|o| o.html && tags.contains(&o.tag))
+            .rposition(|o| o.html && tags.contains(o.tag))
             .map_or(0, |i| i + 1);
         self.pop_to(keep);
     }
@@ -380,10 +470,10 @@ impl<'a> Builder<'a> {
 
     /// The `<li>` / `<dd>` / `<dt>` start-tag rule: close an open one of
     /// `tags` unless a special element other than address/div/p shields it.
-    fn close_list_item(&mut self, tags: &[Tag]) {
+    fn close_list_item(&mut self, tags: TagSet) {
         for i in (0..self.stack.len()).rev() {
             let o = self.stack[i];
-            if o.html && tags.contains(&o.tag) {
+            if o.html && tags.contains(o.tag) {
                 self.pop_to(i);
                 break;
             }
@@ -477,11 +567,23 @@ impl<'a> Builder<'a> {
     fn adoption_agency(&mut self, tag: Tag) -> bool {
         if let Some(cur) = self.stack.last()
             && cur.is(tag)
-            && self.afe_position(cur.node).is_none()
         {
-            let at = self.stack.len() - 1;
-            self.pop_to(at);
-            return true;
+            // By far the common case: `<b>…</b>` properly nested, the element
+            // both current and the latest formatting entry. The general
+            // algorithm below arrives at the same two pops.
+            if let Some(Afe::Element(n, _)) = self.afe.last()
+                && core::ptr::eq(*n, cur.node)
+            {
+                self.afe.pop();
+                let at = self.stack.len() - 1;
+                self.pop_to(at);
+                return true;
+            }
+            if self.afe_position(cur.node).is_none() {
+                let at = self.stack.len() - 1;
+                self.pop_to(at);
+                return true;
+            }
         }
         for _ in 0..8 {
             // Formatting element: the last one with this name after the
@@ -509,7 +611,7 @@ impl<'a> Builder<'a> {
             };
             if self.stack[fe_stack + 1..]
                 .iter()
-                .any(|o| !o.html || is_scope_boundary(o.tag))
+                .any(|o| !o.html || SCOPE_BOUNDARY.contains(o.tag))
             {
                 return true; // not in scope
             }
@@ -626,18 +728,7 @@ impl<'a> Builder<'a> {
         // elements themselves are foreign.
         let html = ns_html
             && !(self.stack.last().is_some_and(|o| !o.html)
-                && matches!(
-                    name,
-                    "title"
-                        | "desc"
-                        | "foreignobject"
-                        | "mi"
-                        | "mo"
-                        | "mn"
-                        | "ms"
-                        | "mtext"
-                        | "annotation-xml"
-                ));
+                && is_html_integration_point_name(tag, name));
 
         if self.stack.len() >= MAX_TREE_DEPTH
             && !(html && (tag.is_void() || is_ignored_start(tag)))
@@ -661,7 +752,7 @@ impl<'a> Builder<'a> {
             self.in_body = true;
             let attrs = self.take_attrs(token, tag, false);
             self.insert(
-                Tag::Other,
+                tag,
                 name,
                 Ns::Foreign,
                 &attrs,
@@ -761,10 +852,10 @@ impl<'a> Builder<'a> {
                 self.insert_leaf(tag, name, &[]);
                 return;
             }
-            Tag::Li => self.close_list_item(&[Tag::Li]),
-            Tag::Dd | Tag::Dt => self.close_list_item(&[Tag::Dd, Tag::Dt]),
+            Tag::Li => self.close_list_item(tags![Li]),
+            Tag::Dd | Tag::Dt => self.close_list_item(tags![Dd, Dt]),
             Tag::Button => {
-                if let Some(i) = self.find_in_scope(&[Tag::Button], &[]) {
+                if let Some(i) = self.find_in_scope(tags![Button], TagSet::EMPTY) {
                     self.pop_to(i);
                 }
             }
@@ -785,26 +876,26 @@ impl<'a> Builder<'a> {
                 }
             }
             Tag::Rb | Tag::Rtc => {
-                if self.find_in_scope(&[Tag::Ruby], &[]).is_some() {
-                    self.clear_to(&[Tag::Ruby]);
+                if self.find_in_scope(tags![Ruby], TagSet::EMPTY).is_some() {
+                    self.clear_to(tags![Ruby]);
                 }
             }
             Tag::Rp | Tag::Rt => {
-                if self.find_in_scope(&[Tag::Ruby], &[]).is_some() {
-                    self.clear_to(&[Tag::Ruby, Tag::Rtc]);
+                if self.find_in_scope(tags![Ruby], TagSet::EMPTY).is_some() {
+                    self.clear_to(tags![Ruby, Rtc]);
                 }
             }
             Tag::Caption | Tag::Colgroup | Tag::Tbody | Tag::Tfoot | Tag::Thead => {
                 if !self.in_table_scope(Tag::Table) {
                     return;
                 }
-                self.clear_to(&[Tag::Table]);
+                self.clear_to(tags![Table]);
             }
             Tag::Col => {
                 if !self.in_table_scope(Tag::Table) {
                     return;
                 }
-                self.clear_to(&[Tag::Table, Tag::Colgroup]);
+                self.clear_to(tags![Table, Colgroup]);
                 self.insert_leaf(tag, name, &[]);
                 return;
             }
@@ -812,13 +903,13 @@ impl<'a> Builder<'a> {
                 if !self.in_table_scope(Tag::Table) {
                     return;
                 }
-                self.clear_to(&[Tag::Table, Tag::Tbody, Tag::Thead, Tag::Tfoot]);
+                self.clear_to(tags![Table, Tbody, Thead, Tfoot]);
             }
             Tag::Td | Tag::Th => {
                 if !self.in_table_scope(Tag::Table) {
                     return;
                 }
-                self.clear_to(&[Tag::Table, Tag::Tbody, Tag::Thead, Tag::Tfoot, Tag::Tr]);
+                self.clear_to(tags![Table, Tbody, Thead, Tfoot, Tr]);
                 if !self.current_is(Tag::Tr) {
                     self.open(Tag::Tr, "tr", &[]);
                 }
@@ -849,7 +940,7 @@ impl<'a> Builder<'a> {
             }
             Tag::Nobr => {
                 self.reconstruct_formatting();
-                if self.find_in_scope(&[Tag::Nobr], &[]).is_some() {
+                if self.find_in_scope(tags![Nobr], TagSet::EMPTY).is_some() {
                     self.adoption_agency(Tag::Nobr);
                 }
             }
@@ -920,7 +1011,7 @@ impl<'a> Builder<'a> {
                 if o.html {
                     break;
                 }
-                if o.name == name {
+                if o.same_name(tag, name) {
                     self.pop_to(i);
                     return;
                 }
@@ -933,20 +1024,20 @@ impl<'a> Builder<'a> {
                 self.insert_leaf(Tag::Br, "br", &[]);
             }
             Tag::P => {
-                if !self.close_in_scope(&[Tag::P], &[Tag::Button]) {
+                if !self.close_in_scope(tags![P], tags![Button]) {
                     // `</p>` with no open <p> makes an empty paragraph.
                     self.close_p();
                     self.insert_leaf(Tag::P, "p", &[]);
                 }
             }
             Tag::Li => {
-                self.close_in_scope(&[Tag::Li], &[Tag::Ol, Tag::Ul]);
+                self.close_in_scope(tags![Li], tags![Ol, Ul]);
             }
             Tag::Dd | Tag::Dt => {
-                self.close_in_scope(&[tag], &[]);
+                self.close_in_scope(TagSet::of(&[tag]), TagSet::EMPTY);
             }
             Tag::H1 | Tag::H2 | Tag::H3 | Tag::H4 | Tag::H5 | Tag::H6 => {
-                self.close_in_scope(&[Tag::H1, Tag::H2, Tag::H3, Tag::H4, Tag::H5, Tag::H6], &[]);
+                self.close_in_scope(tags![H1, H2, H3, H4, H5, H6], TagSet::EMPTY);
             }
             Tag::Table
             | Tag::Tbody
@@ -995,10 +1086,10 @@ impl<'a> Builder<'a> {
             | Tag::Ul
             | Tag::Form
             | Tag::Xmp => {
-                self.close_in_scope(&[tag], &[]);
+                self.close_in_scope(TagSet::of(&[tag]), TagSet::EMPTY);
             }
             Tag::Applet | Tag::Marquee | Tag::Object => {
-                self.close_in_scope(&[tag], &[]);
+                self.close_in_scope(TagSet::of(&[tag]), TagSet::EMPTY);
             }
             _ if is_formatting(tag) => {
                 if !self.adoption_agency(tag) {
@@ -1024,24 +1115,29 @@ impl<'a> Builder<'a> {
             return out;
         }
         let all = wanted[0] == "*";
-        for a in token
-            .attributes()
-            .iter()
-            .take(if all { MAX_KEPT_ATTRS } else { usize::MAX })
-        {
-            let name = a.name();
+        let arena = self.arena;
+        // Straight from the input bytes: nothing is allocated for attributes
+        // that are not kept.
+        token.for_each_raw_attribute(|raw_name, raw_value| {
             let name: &'a str = if all {
-                self.arena.alloc_str(&name)
+                arena.alloc_ascii_lowercase(raw_name)
             } else {
-                match wanted.iter().find(|w| **w == name) {
+                match wanted
+                    .iter()
+                    .find(|w| w.as_bytes().eq_ignore_ascii_case(raw_name))
+                {
                     Some(w) => w,
-                    None => continue,
+                    None => return true,
                 }
             };
-            let value = a.value();
-            let value = self.arena.alloc_str(&entities::decode_attribute(&value));
+            let value = match core::str::from_utf8(raw_value) {
+                Ok(v) => arena.alloc_str(&entities::decode_attribute(v)),
+                // Sliced from input validated as UTF-8 up front: unreachable.
+                Err(_) => "",
+            };
             out.push(Attr { name, value });
-        }
+            !(all && out.len() >= MAX_KEPT_ATTRS)
+        });
         out
     }
 }
@@ -1075,6 +1171,35 @@ fn same_attrs(a: &[Attr<'_>], b: &[Attr<'_>]) -> bool {
         && a.iter()
             .zip(b)
             .all(|(x, y)| x.name == y.name && x.value == y.value)
+}
+
+/// Where the part of a non-final text chunk that is safe to insert now ends:
+/// before a trailing `&…` that could still become a character reference, or
+/// a trailing CR that could still pair with a LF.
+fn carry_start(chunk: &str, rules: entities::TextRules) -> usize {
+    let bytes = chunk.as_bytes();
+    let mut cut = bytes.len();
+    match bytes.last() {
+        Some(b'\r') => cut -= 1,
+        // Only a name/number character (or the `&`/`#` itself) can be the
+        // tail of an unfinished reference.
+        Some(b) if b.is_ascii_alphanumeric() || *b == b'&' || *b == b'#' => {}
+        _ => return cut,
+    }
+    if rules.decode_refs {
+        // Longest reference is 33 bytes (`&CounterClockwiseContourIntegral;`).
+        let from = bytes.len().saturating_sub(34);
+        if let Some(amp) = bytes[from..cut].iter().rposition(|&b| b == b'&') {
+            let amp = from + amp;
+            if bytes[amp + 1..cut]
+                .iter()
+                .all(|&b| b.is_ascii_alphanumeric() || b == b'#')
+            {
+                cut = amp;
+            }
+        }
+    }
+    cut
 }
 
 #[inline]
@@ -1115,21 +1240,6 @@ fn has_marker(tag: Tag) -> bool {
     )
 }
 
-fn is_scope_boundary(tag: Tag) -> bool {
-    matches!(
-        tag,
-        Tag::Applet
-            | Tag::Caption
-            | Tag::Html
-            | Tag::Table
-            | Tag::Td
-            | Tag::Th
-            | Tag::Marquee
-            | Tag::Object
-            | Tag::Template
-    )
-}
-
 fn is_formatting(tag: Tag) -> bool {
     matches!(
         tag,
@@ -1150,20 +1260,17 @@ fn is_formatting(tag: Tag) -> bool {
     )
 }
 
+/// SVG/MathML elements whose content is HTML again (lol-html reports that
+/// content, and the elements themselves, in the HTML namespace).
+fn is_html_integration_point_name(tag: Tag, name: &str) -> bool {
+    matches!(
+        tag,
+        Tag::Title | Tag::Desc | Tag::Mi | Tag::Mo | Tag::Mn | Tag::Ms | Tag::Mtext
+    ) || (tag == Tag::Other && matches!(name, "foreignobject" | "annotation-xml"))
+}
+
 fn is_html_integration_point(o: &Open<'_>) -> bool {
-    !o.html
-        && matches!(
-            o.name,
-            "foreignobject"
-                | "desc"
-                | "title"
-                | "mi"
-                | "mo"
-                | "mn"
-                | "ms"
-                | "mtext"
-                | "annotation-xml"
-        )
+    !o.html && is_html_integration_point_name(o.tag, o.name)
 }
 
 /// Start tags that go in without consulting the open-element depth.
@@ -1199,17 +1306,7 @@ fn reconstructs_formatting(tag: Tag) -> bool {
 
 fn is_special(o: &Open<'_>) -> bool {
     if !o.html {
-        return matches!(
-            o.name,
-            "mi" | "mo"
-                | "mn"
-                | "ms"
-                | "mtext"
-                | "annotation-xml"
-                | "foreignobject"
-                | "desc"
-                | "title"
-        );
+        return is_html_integration_point_name(o.tag, o.name);
     }
     matches!(
         o.tag,
@@ -1301,7 +1398,10 @@ fn is_special(o: &Open<'_>) -> bool {
 
 // ─────────────────────────── driver ───────────────────────────
 
-const CAPTURE: TokenCaptureFlags = TokenCaptureFlags::TEXT.union(TokenCaptureFlags::COMMENTS);
+/// Text as raw byte runs (no `TextChunk` tokens, no re-decoding — the input
+/// is already known to be UTF-8), comments as tokens (only their presence
+/// matters), start tags on request.
+const CAPTURE: TokenCaptureFlags = TokenCaptureFlags::RAW_TEXT.union(TokenCaptureFlags::COMMENTS);
 
 /// A tag name held between lol-html's name-only start tag callback and the
 /// token that follows when one was requested. Inline for anything up to 48
@@ -1321,10 +1421,14 @@ impl NameBuf {
         }
     }
 
-    /// Stores `name` ASCII-lowercased.
-    fn set(&mut self, name: &LocalName<'_>) {
+    fn clear(&mut self) {
         self.heap.clear();
         self.len = 0;
+    }
+
+    /// Stores `name` ASCII-lowercased.
+    fn set(&mut self, name: &LocalName<'_>) {
+        self.clear();
         match name {
             LocalName::Hash(h) => {
                 let mut tmp = [0u8; 12];
@@ -1386,13 +1490,25 @@ impl TransformController for Driver<'_> {
         name: LocalName<'_>,
         ns: Namespace,
     ) -> StartTagHandlingResult<Self> {
-        self.name.set(&name);
         self.tag = tag_of(&name);
+        // Known names are identified by `tag` alone; only the rest need the
+        // spelled-out name.
+        if self.tag == Tag::Other {
+            self.name.set(&name);
+        } else {
+            self.name.clear();
+        }
         let html = matches!(ns, Namespace::Html);
         // Only elements whose attributes are read (or foreign ones, whose
         // self-closing flag matters) need the full start tag token; for the
         // rest the name is all there is to know.
-        if !html || !wanted_attrs(self.tag).is_empty() {
+        let wants_attrs = match self.tag {
+            // `<code class="language-…">` only matters directly under `<pre>`;
+            // inline code spans (far more common) need no token.
+            Tag::Code => self.builder.current_is(Tag::Pre),
+            tag => !wanted_attrs(tag).is_empty(),
+        };
+        if !html || wants_attrs {
             self.pending_html = Some(html);
             return Ok(CAPTURE | TokenCaptureFlags::NEXT_START_TAG);
         }
@@ -1402,22 +1518,20 @@ impl TransformController for Driver<'_> {
     }
 
     fn handle_end_tag(&mut self, name: LocalName<'_>) -> TokenCaptureFlags {
-        self.name.set(&name);
-        self.builder.end_tag(tag_of(&name), self.name.get());
+        let tag = tag_of(&name);
+        if tag == Tag::Other {
+            self.name.set(&name);
+        } else {
+            self.name.clear();
+        }
+        self.builder.end_tag(tag, self.name.get());
         CAPTURE
     }
 
     fn handle_token(&mut self, token: &mut Token<'_>) -> Result<(), RewritingError> {
         match token {
-            Token::TextChunk(t) => {
-                let rules = match t.text_type() {
-                    TextType::Data => entities::DATA,
-                    TextType::RCData => entities::RCDATA,
-                    _ => entities::RAW,
-                };
-                self.builder
-                    .text_chunk(t.as_str(), rules, t.last_in_text_node());
-            }
+            // Text is taken raw (`handle_raw_text`); `TEXT` is never requested.
+            Token::TextChunk(_) => {}
             Token::StartTag(t) => {
                 if let Some(html) = self.pending_html.take() {
                     self.builder
@@ -1427,6 +1541,23 @@ impl TransformController for Driver<'_> {
             Token::Comment(_) => self.builder.comment(),
             Token::EndTag(_) | Token::Doctype(_) => {}
         }
+        Ok(())
+    }
+
+    fn handle_raw_text(&mut self, text: &[u8], text_type: TextType) -> Result<(), RewritingError> {
+        let rules = match text_type {
+            TextType::Data => entities::DATA,
+            TextType::RCData => entities::RCDATA,
+            _ => entities::RAW,
+        };
+        // SAFETY: `text` is a sub-slice of the `&str` given to `parse` (the
+        // stream is fed that one buffer), cut by the tokenizer at ASCII
+        // delimiters or at the ends of the input, so it is valid UTF-8 on
+        // char boundaries.
+        let text = unsafe { core::str::from_utf8_unchecked(text) };
+        // The end of the text node is implied by whatever comes next; every
+        // other event flushes what `text_chunk` may hold back.
+        self.builder.text_chunk(text, rules, false);
         Ok(())
     }
 
@@ -1442,9 +1573,11 @@ impl TransformController for Driver<'_> {
 }
 
 /// Parses `html` into `arena` and returns the `<body>` element to convert.
-pub(crate) fn parse<'a>(html: &[u8], arena: Arena<'a>) -> Ref<'a> {
+/// `html` must not be memory another thread can write to: text reaches the
+/// tree as unchecked sub-slices of it (see `handle_raw_text`).
+pub(crate) fn parse<'a>(html: &str, arena: Arena<'a>) -> Ref<'a> {
     // Input-stream preprocessing: a leading BOM is not content.
-    let html = html.strip_prefix(b"\xEF\xBB\xBF").unwrap_or(html);
+    let html = html.strip_prefix('\u{FEFF}').unwrap_or(html);
 
     let mut stream = TransformStream::new(TransformStreamSettings {
         transform_controller: Driver {
@@ -1462,7 +1595,7 @@ pub(crate) fn parse<'a>(html: &[u8], arena: Arena<'a>) -> Ref<'a> {
     // The input is one complete in-memory buffer and the controller never
     // fails, so neither call can error; were one to, the tree built so far
     // is used.
-    if stream.write(html).is_ok() {
+    if stream.write(html.as_bytes()).is_ok() {
         let _ = stream.end();
     }
     let driver = stream.controller();

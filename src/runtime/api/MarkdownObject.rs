@@ -187,9 +187,13 @@ fn from_html(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JS
             .throw_invalid_arguments(format_args!("Expected a string or buffer to convert")));
     };
     // Nothing from here on re-enters JS, so a buffer input needs no pinning.
-    // The bytes may still be shared memory (a view over a SharedArrayBuffer)
-    // that another thread is writing; `convert_utf8_bytes` snapshots them
-    // before validating, so that cannot break the UTF-8 invariant.
+    // A buffer may still be shared memory (a view over a SharedArrayBuffer)
+    // that another thread is writing; those bytes are snapshotted before
+    // they are validated and parsed. A string's UTF-8 bytes are ours alone.
+    let shared = matches!(
+        buffer,
+        StringOrBuffer::Buffer(_) | StringOrBuffer::PinnedBuffer(_)
+    );
     let bytes: &[u8] = buffer.slice();
     let too_long = || {
         global_this.throw_range_error(
@@ -201,7 +205,12 @@ fn from_html(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JS
             },
         )
     };
-    let Ok(markdown) = h::convert_utf8_bytes(bytes, &options) else {
+    let converted = if shared {
+        h::convert_shared_utf8_bytes(bytes, &options)
+    } else {
+        h::convert_utf8_bytes(bytes, &options)
+    };
+    let Ok(markdown) = converted else {
         return Err(too_long());
     };
 

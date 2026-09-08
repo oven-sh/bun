@@ -54,6 +54,26 @@ fn load(hay: &[u8], at: usize) -> u64 {
     u64::from_le_bytes(b)
 }
 
+/// The final `n - i < 8` bytes as one word, plus which result bits are
+/// theirs. With eight bytes available the word is an overlapping load ending
+/// at `n` (its low bytes were already examined and are masked off);
+/// otherwise the few bytes there are get assembled. Returns
+/// `(word, valid_mask, index_of_byte_0)`.
+#[inline(always)]
+fn load_tail(hay: &[u8], i: usize, n: usize) -> (u64, u64, usize) {
+    debug_assert!(i < n && n - i < 8 && n <= hay.len());
+    if n >= 8 {
+        let fresh = n - i; // 1..=7 new bytes at the top of the word
+        (load(hay, n - 8), !((1u64 << (8 * (8 - fresh))) - 1), n - 8)
+    } else {
+        let mut w = 0u64;
+        for (k, &b) in hay[i..n].iter().enumerate() {
+            w |= u64::from(b) << (8 * k);
+        }
+        (w, (1u64 << (8 * (n - i))) - 1, i)
+    }
+}
+
 /// Index of the first byte of `hay` that is in `set`.
 #[inline(always)]
 pub(crate) fn find_any<const N: usize>(hay: &[u8], set: &[u8; N]) -> Option<usize> {
@@ -70,11 +90,16 @@ pub(crate) fn find_any<const N: usize>(hay: &[u8], set: &[u8; N]) -> Option<usiz
         }
         i += 8;
     }
-    while i < n {
-        if set.contains(&hay[i]) {
-            return Some(i);
+    if i < n {
+        let (w, valid, base) = load_tail(hay, i, n);
+        let mut m = 0u64;
+        for &c in set {
+            m |= eq_mask(w, c);
         }
-        i += 1;
+        m &= valid;
+        if m != 0 {
+            return Some(base + (m.trailing_zeros() / 8) as usize);
+        }
     }
     if n == hay.len() {
         return None;
@@ -94,11 +119,12 @@ pub(crate) fn find_byte(hay: &[u8], c: u8) -> Option<usize> {
         }
         i += 8;
     }
-    while i < n {
-        if hay[i] == c {
-            return Some(i);
+    if i < n {
+        let (w, valid, base) = load_tail(hay, i, n);
+        let m = eq_mask(w, c) & valid;
+        if m != 0 {
+            return Some(base + (m.trailing_zeros() / 8) as usize);
         }
-        i += 1;
     }
     if n == hay.len() {
         return None;
@@ -137,13 +163,17 @@ pub(crate) fn first_uncollapsed(text: &[u8]) -> Option<usize> {
         carry = spaces >> 56;
         i += 8;
     }
-    while i < n {
-        match text[i] {
-            b'\t' | b'\n' | b'\r' => return Some(i),
-            b' ' if i > 0 && text[i - 1] == b' ' => return Some(i),
-            _ => {}
+    if i < n {
+        let (w, valid, base) = load_tail(text, i, n);
+        let spaces = eq_mask_exact(w, b' ');
+        // For an overlapping word the left neighbours are inside the word
+        // itself; only a word assembled at `i` needs the carried bit.
+        let carry = if base == i { carry } else { 0 };
+        let second_space = spaces & ((spaces << 8) | carry);
+        let m = (eq_mask(w, b'\t') | eq_mask(w, b'\n') | eq_mask(w, b'\r') | second_space) & valid;
+        if m != 0 {
+            return Some(base + (m.trailing_zeros() / 8) as usize);
         }
-        i += 1;
     }
     if n == text.len() {
         return None;

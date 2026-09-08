@@ -36,6 +36,20 @@ impl<'a> Arenas<'a> {
         unsafe { core::str::from_utf8_unchecked(buf) }
     }
 
+    /// `bytes` copied and ASCII-lowercased (`""` if not UTF-8, which input
+    /// validated up front never produces).
+    pub(crate) fn alloc_ascii_lowercase(&'a self, bytes: &[u8]) -> &'a str {
+        let Ok(s) = core::str::from_utf8(bytes) else {
+            return "";
+        };
+        let buf = self.strs.alloc(s.len());
+        for (d, b) in buf.iter_mut().zip(s.bytes()) {
+            *d = b.to_ascii_lowercase();
+        }
+        // SAFETY: ASCII-lowercasing valid UTF-8 keeps it valid.
+        unsafe { core::str::from_utf8_unchecked(buf) }
+    }
+
     pub(crate) fn new_document(&'a self) -> Ref<'a> {
         self.nodes
             .alloc(Node::new(NodeData::Document, Tag::NotAnElement))
@@ -46,15 +60,9 @@ impl<'a> Arenas<'a> {
             .alloc(Node::new(NodeData::Ignored, Tag::NotAnElement))
     }
 
-    /// `tag` is `Other` for foreign elements whatever their name; `name` is
-    /// ASCII-lowercase. `attrs` are copied into the attribute arena.
-    pub(crate) fn new_element(
-        &'a self,
-        tag: Tag,
-        name: &'a str,
-        html: bool,
-        attrs: &[Attr<'a>],
-    ) -> Ref<'a> {
+    /// `tag` is `Other` for foreign elements whatever their name. `attrs`
+    /// are copied into the attribute arena.
+    pub(crate) fn new_element(&'a self, tag: Tag, html: bool, attrs: &[Attr<'a>]) -> Ref<'a> {
         debug_assert!(html || tag == Tag::Other);
         let attrs: &'a [Attr<'a>] = if attrs.is_empty() {
             &[]
@@ -62,7 +70,7 @@ impl<'a> Arenas<'a> {
             self.attrs.alloc_extend(attrs.iter().copied())
         };
         self.nodes
-            .alloc(Node::new(NodeData::Element { name, html, attrs }, tag))
+            .alloc(Node::new(NodeData::Element { html, attrs }, tag))
     }
 
     /// A fresh element with the same name and attributes as `node` (the
@@ -70,9 +78,9 @@ impl<'a> Arenas<'a> {
     /// formatting element).
     pub(crate) fn clone_element(&'a self, node: Ref<'a>) -> Ref<'a> {
         match node.data {
-            NodeData::Element { name, html, attrs } => self
+            NodeData::Element { html, attrs } => self
                 .nodes
-                .alloc(Node::new(NodeData::Element { name, html, attrs }, node.tag)),
+                .alloc(Node::new(NodeData::Element { html, attrs }, node.tag)),
             _ => unreachable!("clone_element on a non-element"),
         }
     }
@@ -270,7 +278,6 @@ pub(crate) enum NodeData<'a> {
     Ignored,
     Text(Text<'a>),
     Element {
-        name: &'a str,
         /// In the HTML namespace (as opposed to SVG / MathML).
         html: bool,
         attrs: &'a [Attr<'a>],
@@ -552,7 +559,9 @@ macro_rules! html_tags {
 
 html_tags! {
     A = b"a",
+    Abbr = b"abbr",
     Address = b"address",
+    Annotation = b"annotation",
     Applet = b"applet",
     Area = b"area",
     Article = b"article",
@@ -561,6 +570,8 @@ html_tags! {
     B = b"b",
     Base = b"base",
     Basefont = b"basefont",
+    Bdi = b"bdi",
+    Bdo = b"bdo",
     Bgsound = b"bgsound",
     Big = b"big",
     Blockquote = b"blockquote",
@@ -570,28 +581,38 @@ html_tags! {
     Canvas = b"canvas",
     Caption = b"caption",
     Center = b"center",
+    Circle = b"circle",
+    Cite = b"cite",
+    Clippath = b"clippath",
     Code = b"code",
     Col = b"col",
     Colgroup = b"colgroup",
     Command = b"command",
+    Data = b"data",
     Dd = b"dd",
+    Defs = b"defs",
     Del = b"del",
+    Desc = b"desc",
     Details = b"details",
+    Dfn = b"dfn",
     Dialog = b"dialog",
     Dir = b"dir",
     Div = b"div",
     Dl = b"dl",
     Dt = b"dt",
+    Ellipse = b"ellipse",
     Em = b"em",
     Embed = b"embed",
     Fieldset = b"fieldset",
     Figcaption = b"figcaption",
     Figure = b"figure",
+    Filter = b"filter",
     Font = b"font",
     Footer = b"footer",
     Form = b"form",
     Frame = b"frame",
     Frameset = b"frameset",
+    G = b"g",
     H1 = b"h1",
     H2 = b"h2",
     H3 = b"h3",
@@ -608,16 +629,33 @@ html_tags! {
     Image = b"image",
     Img = b"img",
     Input = b"input",
+    Ins = b"ins",
     Isindex = b"isindex",
+    Kbd = b"kbd",
     Keygen = b"keygen",
+    Label = b"label",
+    Legend = b"legend",
     Li = b"li",
+    Line = b"line",
     Link = b"link",
     Listing = b"listing",
     Main = b"main",
+    Mark = b"mark",
     Marquee = b"marquee",
+    Mask = b"mask",
     Math = b"math",
     Menu = b"menu",
     Meta = b"meta",
+    Meter = b"meter",
+    Mfrac = b"mfrac",
+    Mi = b"mi",
+    Mn = b"mn",
+    Mo = b"mo",
+    Mrow = b"mrow",
+    Ms = b"ms",
+    Msub = b"msub",
+    Msup = b"msup",
+    Mtext = b"mtext",
     Nav = b"nav",
     Nobr = b"nobr",
     Noembed = b"noembed",
@@ -630,39 +668,60 @@ html_tags! {
     Output = b"output",
     P = b"p",
     Param = b"param",
+    Path = b"path",
+    Pattern = b"pattern",
+    Picture = b"picture",
     Plaintext = b"plaintext",
+    Polygon = b"polygon",
+    Polyline = b"polyline",
     Pre = b"pre",
+    Progress = b"progress",
+    Q = b"q",
     Rb = b"rb",
+    Rect = b"rect",
     Rp = b"rp",
     Rt = b"rt",
     Rtc = b"rtc",
     Ruby = b"ruby",
     S = b"s",
+    Samp = b"samp",
     Script = b"script",
     Search = b"search",
     Section = b"section",
     Select = b"select",
+    Semantics = b"semantics",
+    Slot = b"slot",
     Small = b"small",
     Source = b"source",
+    Span = b"span",
+    Stop = b"stop",
     Strike = b"strike",
     Strong = b"strong",
     Style = b"style",
+    Sub = b"sub",
     Summary = b"summary",
+    Sup = b"sup",
     Svg = b"svg",
+    Symbol = b"symbol",
     Table = b"table",
     Tbody = b"tbody",
     Td = b"td",
     Template = b"template",
+    SvgText = b"text",
     Textarea = b"textarea",
     Tfoot = b"tfoot",
     Th = b"th",
     Thead = b"thead",
+    Time = b"time",
     Title = b"title",
     Tr = b"tr",
     Track = b"track",
+    Tspan = b"tspan",
     Tt = b"tt",
     U = b"u",
     Ul = b"ul",
+    Use = b"use",
+    Var = b"var",
     Video = b"video",
     Wbr = b"wbr",
     Xmp = b"xmp",

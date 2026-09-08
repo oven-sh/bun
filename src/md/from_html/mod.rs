@@ -188,23 +188,30 @@ pub struct InputTooLong;
 /// Converts an HTML document (or fragment) to Markdown. Never fails: any
 /// input produces some Markdown, since HTML parsing accepts everything.
 pub fn convert(html: &str, options: &Options) -> String {
-    convert_bytes(html.as_bytes(), options)
+    let arena = dom::Arenas::with_capacity(html.len() / 32, html.len() / 2);
+    let root = tree::parse(html, &arena);
+    whitespace::collapse_whitespace(root, &arena);
+    let mut out = String::with_capacity(html.len() / 2);
+    emit::Converter::new(options).convert(root, &mut out);
+    out
 }
 
-/// [`convert`] for bytes that are supposed to be UTF-8 and may be backed
-/// by memory another thread can write (a `SharedArrayBuffer`). The bytes go
-/// to the parser as bytes — lol-html validates UTF-8 itself as it produces
-/// each text chunk, name and attribute value, substituting U+FFFD where it
-/// must — so no `&str` is ever formed over the shared memory and a racing
-/// writer can garble the content but nothing else. Input that is invalid to
-/// begin with is decoded lossily up front so the substitution matches what
-/// a browser decoding the same bytes would show.
+/// [`convert`] for bytes that are supposed to be UTF-8: valid input is used
+/// as is, invalid sequences become U+FFFD first (as a browser decoding the
+/// same bytes would show). `bytes` must not change during the call — for
+/// memory another thread may write (a `SharedArrayBuffer`), use
+/// [`convert_shared_utf8_bytes`].
 pub fn convert_utf8_bytes(bytes: &[u8], options: &Options) -> Result<String, InputTooLong> {
     if bytes.len() > MAX_INPUT_LEN {
         return Err(InputTooLong);
     }
     if strings::is_valid_utf8(bytes) {
-        return Ok(convert_bytes(bytes, options));
+        // SAFETY: validated on the line above, and the caller guarantees the
+        // bytes do not change under us.
+        return Ok(convert(
+            unsafe { core::str::from_utf8_unchecked(bytes) },
+            options,
+        ));
     }
     #[allow(clippy::disallowed_methods)] // U+FFFD substitution is the point here
     let lossy = String::from_utf8_lossy(bytes).into_owned();
@@ -212,14 +219,17 @@ pub fn convert_utf8_bytes(bytes: &[u8], options: &Options) -> Result<String, Inp
     if lossy.len() > MAX_INPUT_LEN {
         return Err(InputTooLong);
     }
-    Ok(convert_bytes(lossy.as_bytes(), options))
+    Ok(convert(&lossy, options))
 }
 
-fn convert_bytes(html: &[u8], options: &Options) -> String {
-    let arena = dom::Arenas::with_capacity(html.len() / 32, html.len() / 2);
-    let root = tree::parse(html, &arena);
-    whitespace::collapse_whitespace(root, &arena);
-    let mut out = String::with_capacity(html.len() / 2);
-    emit::Converter::new(options).convert(root, &mut out);
-    out
+/// [`convert_utf8_bytes`] for bytes another thread may be writing to: they
+/// are copied first, so validation and parsing see one consistent snapshot.
+pub fn convert_shared_utf8_bytes(bytes: &[u8], options: &Options) -> Result<String, InputTooLong> {
+    if bytes.len() > MAX_INPUT_LEN {
+        return Err(InputTooLong);
+    }
+    // The copy is the point: everything downstream then reads a private
+    // snapshot (about a millisecond per hundred megabytes).
+    let snapshot: Vec<u8> = bytes.to_vec();
+    convert_utf8_bytes(&snapshot, options)
 }

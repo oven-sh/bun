@@ -4619,6 +4619,20 @@ describe("hoisting", async () => {
       );
       expect(peerWarnings((await install(packageDir, "--omit=peer")).err)).toEqual([]);
     });
+
+    test("--lockfile-only lays nothing out, so no peer is served and none is reported", async () => {
+      const { packageDir, packageJson } = await registry.createTestDir({ bunfigOpts: { linker } });
+      await write(
+        packageJson,
+        JSON.stringify({ name: "foo", dependencies: { "no-deps": "2.0.0", "peer-deps-fixed": "1.0.0" } }),
+      );
+      expect(peerWarnings((await install(packageDir, "--lockfile-only")).err)).toEqual([]);
+      expect(await exists(join(packageDir, "node_modules"))).toBeFalse();
+      // The install that follows does lay it out, and reports it.
+      expect(peerWarnings((await install(packageDir)).err)).toEqual([
+        `warn: incorrect peer dependency "no-deps@2.0.0" (peer-deps-fixed@1.0.0 requires "^1.0.0")`,
+      ]);
+    });
   });
 
   describe("devDependencies", () => {

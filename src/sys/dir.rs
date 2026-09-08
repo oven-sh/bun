@@ -425,19 +425,20 @@ impl Dir {
 
     /// Open `sub_path` as a `Dir` handle with sub-path access.
     ///
-    /// `no_follow` refuses a symlink as the last component of `sub_path`
-    /// (`O_NOFOLLOW`: `ENOTDIR` on Linux, `ELOOP` elsewhere; on Windows the
-    /// reparse point itself is opened). On POSIX, `iterate` is advisory (the
-    /// handle is opened with `O_DIRECTORY | O_RDONLY | O_CLOEXEC` regardless).
-    /// On Windows the flags select the access mask: `iterate` adds
-    /// `FILE_LIST_DIRECTORY`, and the handle is opened **without** `read_only`
-    /// so the caller may create/rename children — unlike the read-only
-    /// `open_dir_*` iteration helpers.
+    /// `no_follow` refuses a link as the last component of `sub_path`:
+    /// `ENOTDIR` on Linux, `ELOOP` on the other POSIX targets and on Windows,
+    /// where the open itself takes the reparse point and this reports it. On
+    /// POSIX, `iterate` is advisory (the handle is opened with
+    /// `O_DIRECTORY | O_RDONLY | O_CLOEXEC` regardless). On Windows the flags
+    /// select the access mask: `iterate` adds `FILE_LIST_DIRECTORY`, and the
+    /// handle is opened **without** `read_only` so the caller may
+    /// create/rename children — unlike the read-only `open_dir_*` iteration
+    /// helpers.
     #[inline]
     pub fn open_dir(&self, sub_path: &[u8], opts: OpenDirOptions) -> Maybe<Dir> {
         #[cfg(windows)]
         {
-            return open_dir_at_windows_a(
+            let dir = open_dir_at_windows_a(
                 self.fd,
                 sub_path,
                 WindowsOpenDirOptions {
@@ -446,8 +447,11 @@ impl Dir {
                     ..Default::default()
                 },
             )
-            .map(Dir::from_fd)
-            .map_err(Into::into);
+            .map(Dir::from_fd)?;
+            if opts.no_follow && is_reparse_point(dir.fd)? {
+                return Err(Error::from_code(E::ELOOP, Tag::open).with_path(sub_path));
+            }
+            return Ok(dir);
         }
         #[cfg(not(windows))]
         {

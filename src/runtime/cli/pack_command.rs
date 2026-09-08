@@ -868,18 +868,27 @@ impl PackFileOpener {
         bun_sys::O::PATH | bun_sys::O::DIRECTORY | bun_sys::O::NOFOLLOW | bun_sys::O::CLOEXEC;
 
     /// `O_NONBLOCK` so that a FIFO fails the file type check below instead of
-    /// blocking in `open()`.
-    ///
-    /// Windows keeps the flags it had: there, no-follow opens the reparse point
-    /// itself, which reports a size and then fails the read. The directory
-    /// components above carry the no-follow, and a reparse point is not a
-    /// directory a relative open can pass through, so a swapped-in link still
-    /// cannot reach a file outside the package.
+    /// blocking in `open()`. Windows has neither flag.
     #[cfg(not(windows))]
     const FILE_FLAGS: i32 =
         bun_sys::O::RDONLY | bun_sys::O::NOFOLLOW | bun_sys::O::NONBLOCK | bun_sys::O::CLOEXEC;
     #[cfg(windows)]
-    const FILE_FLAGS: i32 = bun_sys::O::RDONLY;
+    const FILE_FLAGS: i32 = bun_sys::O::RDONLY | bun_sys::O::NOFOLLOW;
+
+    /// Fails when `fd` is a reparse point. `O_NOFOLLOW` refuses the open on
+    /// POSIX, so this only has work to do on Windows, where the same flag opens
+    /// the reparse point itself and a relative open still resolves through it.
+    fn check_not_a_link(fd: Fd, path: &[u8]) -> bun_sys::Maybe<()> {
+        #[cfg(windows)]
+        if bun_sys::is_reparse_point(fd)? {
+            return Err(
+                bun_sys::Error::from_code(bun_sys::E::ELOOP, bun_sys::Tag::open).with_path(path),
+            );
+        }
+        #[cfg(not(windows))]
+        let _ = (fd, path);
+        Ok(())
+    }
 
     pub(crate) fn new() -> PackFileOpener {
         PackFileOpener {
@@ -907,6 +916,7 @@ impl PackFileOpener {
         let dir = self.open_dir(root, dirname)?;
         let file =
             File::openat(dir, basename, Self::FILE_FLAGS, 0).map_err(|err| err.with_path(bytes))?;
+        Self::check_not_a_link(file.handle, bytes)?;
         let stat = file.stat().map_err(|err| err.with_path(bytes))?;
         match bun_sys::kind_from_mode(stat.st_mode as bun_sys::Mode) {
             bun_sys::FileKind::File => Ok((file, stat)),
@@ -949,6 +959,7 @@ impl PackFileOpener {
         for component in path_components(dirname).skip(reused) {
             check_path_component(component)?;
             let dir = Dir::borrow(&current).open_at_with(component, Self::DIR_FLAGS)?;
+            Self::check_not_a_link(dir.fd(), component)?;
             current = dir.fd();
             if !self.dir_path.is_empty() {
                 self.dir_path.push(b'/');

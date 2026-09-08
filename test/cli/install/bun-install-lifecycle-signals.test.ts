@@ -70,29 +70,35 @@ function killQuietly(pid: number) {
   } catch {}
 }
 
-function startInstall(dir: string) {
-  return Bun.spawn({
+// Spawns `bun install` in `dir` and waits until the hook runs. `stderr` is
+// drained from the start; it resolves once bun install and the hook (which
+// inherits it) are both gone.
+async function startInstall(dir: string) {
+  const proc = Bun.spawn({
     cmd: [bunExe(), "install"],
     env: bunEnv,
     cwd: dir,
-    stdout: "pipe",
+    stdout: "ignore",
     stderr: "pipe",
   });
-}
-
-async function readHookPid(dir: string): Promise<number> {
-  const pid = Number(await waitForFile(join(dir, "hook-pid")));
+  const stderr = proc.stderr.text();
+  const hookPid = await Promise.race([
+    waitForFile(join(dir, "hook-pid")).then(Number),
+    proc.exited.then(async code => {
+      throw new Error(`bun install exited with ${code} before the hook started: ${await stderr}`);
+    }),
+  ]);
   // Never hand 0 or NaN to kill(): pid 0 is the whole process group.
-  expect(pid).toBeGreaterThan(1);
-  return pid;
+  expect(hookPid).toBeGreaterThan(1);
+  return { proc, stderr, hookPid };
 }
 
 describe.skipIf(!isPosix).concurrent("bun install forwards signals to lifecycle scripts", () => {
   for (const signal of ["SIGTERM", "SIGINT", "SIGHUP"] as const) {
     test(`${signal} reaches the postinstall script and bun install waits for it`, async () => {
       using dir = tempDir("install-signal", files("exit"));
-      await using proc = startInstall(String(dir));
-      const hookPid = await readHookPid(String(dir));
+      const { proc, stderr, hookPid } = await startInstall(String(dir));
+      await using _ = proc;
       try {
         expect(isAlive(hookPid)).toBe(true);
 
@@ -100,10 +106,9 @@ describe.skipIf(!isPosix).concurrent("bun install forwards signals to lifecycle 
         await proc.exited;
 
         // bun install reaps the hook before it dies, so the hook is gone by now.
-        // (An orphaned hook also holds the inherited stderr pipe open.)
         expect(isAlive(hookPid)).toBe(false);
         expect(await waitForFile(join(String(dir), "got-signal"))).toBe(signal);
-        expect(await proc.stderr.text()).not.toContain("error:");
+        expect(await stderr).not.toContain("error:");
         expect(proc.signalCode).toBe(signal);
       } finally {
         killQuietly(hookPid);
@@ -113,8 +118,8 @@ describe.skipIf(!isPosix).concurrent("bun install forwards signals to lifecycle 
 
   test("bun install waits for a script that outlives the first signal, a second one ends it", async () => {
     using dir = tempDir("install-signal-twice", files("stay"));
-    await using proc = startInstall(String(dir));
-    const hookPid = await readHookPid(String(dir));
+    const { proc, hookPid } = await startInstall(String(dir));
+    await using _ = proc;
     try {
       proc.kill("SIGTERM");
       // bun install must still be alive once the hook has seen the signal.
@@ -140,8 +145,8 @@ describe.skipIf(!isPosix).concurrent("bun install forwards signals to lifecycle 
   // No signal to forward here: the kernel does it (PR_SET_PDEATHSIG).
   test.skipIf(!isLinux)("a script does not outlive a bun install that is SIGKILLed", async () => {
     using dir = tempDir("install-sigkill", files("stay"));
-    await using proc = startInstall(String(dir));
-    const hookPid = await readHookPid(String(dir));
+    const { proc, hookPid } = await startInstall(String(dir));
+    await using _ = proc;
     try {
       proc.kill("SIGKILL");
       await proc.exited;

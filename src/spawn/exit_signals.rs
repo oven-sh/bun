@@ -27,7 +27,9 @@ use bun_event_loop::MiniEventLoop::MiniEventLoop;
 
 pub const SIGNALS: [c_int; 3] = [libc::SIGINT, libc::SIGTERM, libc::SIGHUP];
 
-/// The last hooked signal received since `hook`, 0 when none.
+/// The last hooked signal received, 0 when none. Never cleared: a signal
+/// that lands while the supervisor swaps one child for the next (unhook,
+/// hook again) is still acted on by the task it queued.
 static RECEIVED: AtomicI32 = AtomicI32::new(0);
 /// Set while `TASK` sits in the event loop queue: a node must not be pushed
 /// twice. `RECEIVED` and `QUEUED` are `SeqCst`: a handler that finds
@@ -45,8 +47,9 @@ static PREVIOUS: Mutex<Option<[libc::sigaction; SIGNALS.len()]>> = Mutex::new(No
 /// Hooks SIGINT, SIGTERM and SIGHUP. From now until [`unhook`], a signal runs
 /// `on_signal(signal)` on the thread that ticks `event_loop`, at its next
 /// tick, and the loop is woken for it. Signals that arrive before the
-/// callback runs coalesce into one call with the latest. Call it from that
-/// thread.
+/// callback runs coalesce into one call with the latest. A callback queued
+/// under an earlier hook still runs, with this `on_signal`. Call it from the
+/// loop's thread.
 ///
 /// Returns `false` and hooks nothing for a JS event loop: the runtime owns
 /// the process signals there.
@@ -64,7 +67,6 @@ pub fn hook(event_loop: EventLoopHandle, on_signal: fn(c_int)) -> bool {
         let task = New::<(), ()>::init(NonNull::<()>::dangling().as_ptr(), run_task);
         TASK.store(bun_core::heap::into_raw(Box::new(task)), Ordering::Relaxed);
     }
-    RECEIVED.store(0, Ordering::SeqCst);
     // Before the dispositions: the handler never runs without a loop. The
     // loop outlives the hook (the `EventLoopHandle` invariant).
     EVENT_LOOP.store(mini.as_ptr(), Ordering::Release);
@@ -109,8 +111,8 @@ pub fn unhook() {
     EVENT_LOOP.store(core::ptr::null_mut(), Ordering::Release);
 }
 
-/// The last hooked signal received since [`hook`], if any. Still set after
-/// [`unhook`], for a supervisor that ends by it once its children are gone.
+/// The last hooked signal received, if any. Still set after [`unhook`], for
+/// a supervisor that ends by it once its children are gone.
 pub fn received() -> Option<c_int> {
     match RECEIVED.load(Ordering::SeqCst) {
         0 => None,
@@ -143,7 +145,8 @@ extern "C" fn handler(sig: c_int) {
     };
     // SAFETY: `EVENT_LOOP` is live while the dispositions are installed (see
     // `hook`/`unhook`), and `task` is not in the queue (`QUEUED` was false).
-    unsafe { (*event_loop).enqueue_task_concurrent(task) };
+    // The raw form: this may have interrupted the loop's thread inside `tick`.
+    unsafe { MiniEventLoop::enqueue_task_concurrent_raw(event_loop, task) };
 }
 
 fn run_task(_: *mut (), _: *mut ()) {

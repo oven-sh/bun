@@ -780,7 +780,14 @@ fn hoist_install_tree(
         unsafe {
             let lf: *mut Lockfile = &raw mut *(*pm).lockfile;
             let log: *mut bun_ast::Log = (*pm).log;
-            (*lf).hoist::<{ tree::BuilderMethod::Filter }>(&mut *log, Some(&*pm), true, &[], None)
+            (*lf).hoist::<{ tree::BuilderMethod::Filter }>(
+                &mut *log,
+                Some(&*pm),
+                true,
+                &[],
+                None,
+                false,
+            )
         }
     });
     match result {
@@ -1714,6 +1721,7 @@ fn build_store_with(manager: &mut PackageManager, features: InstallFeatures) -> 
             &[],
             None,
             Timings::Quiet,
+            None,
         ))
     })
 }

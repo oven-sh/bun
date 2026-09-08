@@ -1440,10 +1440,19 @@ impl<'a> Cloner<'a> {
 impl Lockfile {
     /// Re-hoists while a pass bound an optional peer late; a reload has that binding up front.
     pub(crate) fn resolve(&mut self, log: &mut bun_ast::Log) -> Result<(), tree::SubtreeError> {
-        while self.hoist::<{ tree::BuilderMethod::Resolvable }>(log, None, true, &[], None)? {}
+        while self.hoist::<{ tree::BuilderMethod::Resolvable }>(
+            log,
+            None,
+            true,
+            &[],
+            None,
+            false,
+        )? {}
         Ok(())
     }
 
+    /// The tree an install lays out on disk. Peers it serves out of range are reported to `log`,
+    /// except for the partial tree that installs a security scanner ahead of the real install.
     pub(crate) fn filter(
         &mut self,
         log: &mut bun_ast::Log,
@@ -1458,6 +1467,7 @@ impl Lockfile {
             install_root_dependencies,
             workspace_filters,
             packages_to_install,
+            packages_to_install.is_none(),
         )?;
         Ok(())
     }
@@ -1472,6 +1482,7 @@ impl Lockfile {
         install_root_dependencies: bool,
         workspace_filters: &[WorkspaceFilter],
         packages_to_install: Option<&[PackageID]>,
+        report_peers: bool,
     ) -> Result<bool, tree::SubtreeError> {
         let slice = self.packages.slice();
 
@@ -1503,6 +1514,7 @@ impl Lockfile {
             packages_to_install,
             pending_optional_peers: Default::default(),
             late_bound_optional_peer: false,
+            report_peers,
             reported_peers: Default::default(),
             list: Default::default(),
             sort_buf: Default::default(),

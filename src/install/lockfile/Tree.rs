@@ -437,6 +437,9 @@ pub struct Builder<'a, const METHOD: BuilderMethod> {
         ArrayHashMap<PackageNameHash, ArrayHashMap<DependencyID, ()>>,
     /// An optional peer got bound after its dependent was placed; see `Lockfile::resolve`.
     pub(crate) late_bound_optional_peer: bool,
+    /// Check the range of every peer this tree serves (`report_peer`). Only the tree an install
+    /// lays out on disk does; the saved (`Resolvable`) tree is also built on every load.
+    pub(crate) report_peers: bool,
     /// `(peer edge, package it is served by)` pairs already checked by `report_peer`, so a
     /// dependent placed at several paths is reported once per distinct outcome.
     pub(crate) reported_peers: HashMap<(DependencyID, PackageID), ()>,
@@ -487,12 +490,10 @@ impl<'a, const METHOD: BuilderMethod> Builder<'a, METHOD> {
         let _ = self.log.add_error_fmt(None, bun_ast::Loc::EMPTY, args);
     }
 
-    /// The tree being installed decided which package `dependent` resolves for its peer edge
-    /// `dep_id`; warn if that package is outside the peer's range. The saved (`Resolvable`) tree
-    /// is built on every load and is not what ends up on disk, so it stays quiet, as does the
-    /// partial tree built to install a security scanner ahead of the real install.
+    /// This tree decided which package `dependent` resolves for its peer edge `dep_id`; warn if
+    /// that package is outside the peer's range.
     fn report_peer(&mut self, dependent: PackageID, dep_id: DependencyID, served: PackageID) {
-        if METHOD != BuilderMethod::Filter || self.packages_to_install.is_some() {
+        if !self.report_peers {
             return;
         }
         if self.reported_peers.insert((dep_id, served), ()).is_some() {

@@ -220,6 +220,9 @@ pub(crate) fn build_store(
     workspace_filters: &[WorkspaceFilter],
     packages_to_install: Option<&[PackageID]>,
     timings: Timings,
+    // Where to report peers an entry resolves out of range; `None` for a store that is not
+    // about to be installed.
+    mut peer_warnings: Option<&mut bun_ast::Log>,
 ) -> Result<Store, AllocError> {
     let mut timer = std::time::Instant::now();
     let pkgs = lockfile.packages.slice();
@@ -813,7 +816,7 @@ pub(crate) fn build_store(
                 continue;
             }
 
-            if packages_to_install.is_none()
+            if let Some(log) = peer_warnings.as_deref_mut()
                 && !dependencies[peer_dep_id as usize]
                     .behavior
                     .is_optional_peer()
@@ -821,12 +824,7 @@ pub(crate) fn build_store(
                     .insert((peer_dep_id, resolved_pkg_id), ())
                     .is_none()
             {
-                lockfile.warn_if_peer_out_of_range(
-                    manager.log_mut(),
-                    entry.pkg_id,
-                    peer_dep_id,
-                    resolved_pkg_id,
-                );
+                lockfile.warn_if_peer_out_of_range(log, entry.pkg_id, peer_dep_id, resolved_pkg_id);
             }
 
             for &visited_parent_id in &visited_parent_node_ids {
@@ -1156,6 +1154,8 @@ pub(crate) fn install_isolated_packages(
     } else {
         Timings::Quiet
     };
+    // The partial store that installs a security scanner ahead of the real install stays quiet.
+    let peer_warnings = packages_to_install.is_none().then(|| manager.log_mut());
     let store: Store = build_store(
         &*manager,
         &*lockfile,
@@ -1163,6 +1163,7 @@ pub(crate) fn install_isolated_packages(
         workspace_filters,
         packages_to_install,
         timings,
+        peer_warnings,
     )?;
 
     let global_store_path: Option<Vec<u8>> = if manager.options.enable.global_virtual_store() {

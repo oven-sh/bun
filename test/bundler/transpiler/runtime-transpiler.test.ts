@@ -236,6 +236,22 @@ describe("folded NaN next to a binding of the same name", () => {
     ).toEqual({ stdout: "NaN true false NaN\nNaN\nNaN 6\n", stderr: "", exitCode: 0 });
   });
 
+  // The NaN sibling of #7263: the folded initializer read the binding in its own TDZ.
+  test.concurrent("module-level const NaN initialized from a folded NaN", async () => {
+    using dir = tempDir("runtime-transpiler-const-nan", {
+      "index.mjs": `export const NaN = 0 / 0;\nconst undefined = void 0;\nconsole.log(String(NaN), String(undefined), Number.isNaN(+"a"));`,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "index.mjs"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "NaN undefined true\n", stderr: "", exitCode: 0 });
+  });
+
   test.concurrent("with statement object", async () => {
     expect(
       await run(

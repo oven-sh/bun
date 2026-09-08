@@ -1842,6 +1842,10 @@ pub(crate) mod __gated_printer {
                         ExprData::EAwait(_) | ExprData::EUndefined(_) | ExprData::ENumber(_) => {
                             v.left_level = Level::Call;
                         }
+                        // A missing import item prints like `EUndefined`, possibly as "void 0"
+                        ExprData::EImportIdentifier(_) => {
+                            v.left_level = Level::Call;
+                        }
                         ExprData::EBoolean(_) | ExprData::EBranchBoolean(_) => {
                             // When minifying, booleans are printed as "!0 and "!1"
                             if self.options.minify_syntax {

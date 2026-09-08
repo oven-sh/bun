@@ -898,6 +898,28 @@ describe.concurrent("bundler", () => {
       "/entry.js": [`Import "foo" will always be undefined because there is no matching export in "foo.js"`],
     },
   });
+  // A missing import prints as `void 0` when minifying and inside a `with`
+  // body. That is not a valid left operand of `**` unless parenthesized.
+  for (const minifySyntax of [false, true]) {
+    itBundled(`importstar/NamespaceImportMissingES6ExponentiationLHS${minifySyntax ? "MinifySyntax" : ""}`, {
+      files: {
+        "/entry.js": /* js */ `
+          import * as ns from './foo'
+          console.log(ns.nope ** 2, 2 ** ns.nope, ns.x ** 2)
+          with ({}) console.log(ns.nope ** 2)
+        `,
+        "/foo.js": `export const x = 3`,
+      },
+      format: "cjs",
+      minifySyntax,
+      run: {
+        stdout: "NaN NaN 9\nNaN",
+      },
+      bundleWarnings: {
+        "/entry.js": [`Import "nope" will always be undefined because there is no matching export in "foo.js"`],
+      },
+    });
+  }
   itBundled("importstar/ExportOtherCommonJS", {
     files: {
       "/entry.js": `export {bar} from './foo'`,

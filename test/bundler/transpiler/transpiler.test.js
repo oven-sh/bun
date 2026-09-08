@@ -5743,6 +5743,7 @@ describe("synthesized undefined and NaN next to a binding of the same name", () 
     expect(plain.transformSync("class undefined {}\nexport let r = [void 0, undefined];")).toBe(
       "class undefined {\n}\nexport let r = [void 0, undefined];\n",
     );
+    expect(plain.transformSync("export let undefined = void 0;")).toBe("export let undefined = void 0;\n");
     expect(
       minifier.transformSync("export let r = (undefined => [(void 0) ** x, (void 0).x, x + void 0, -void 0])();"),
     ).toBe("export let r=((undefined)=>[(void 0)**x,(void 0).x,x+void 0,NaN])();");

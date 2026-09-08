@@ -343,6 +343,10 @@ pub struct Flags;
 impl Flags {
     pub const PRE: usize = 1;
     pub(crate) const BUILD: usize = 0;
+    /// The input was spelled `*` (or was empty). npm treats this spelling, and
+    /// only this spelling, as a request for the `latest` dist-tag instead of the
+    /// range `>=0.0.0`, so `x` or `>=0` do not set it.
+    pub const STAR: usize = 2;
 }
 
 pub struct Group {
@@ -841,6 +845,10 @@ pub fn parse(input: &[u8], sliced: SlicedString) -> Result<Group, AllocError> {
     let mut count: u32 = 0;
     let mut skip_round;
     let mut is_or = false;
+
+    if matches!(strings::trim(input, b" "), b"" | b"*") {
+        list.flags.set(Flags::STAR);
+    }
 
     while i < input.len() {
         skip_round = false;

@@ -464,7 +464,7 @@ Server.prototype.closeAllConnections = function () {
   // close() already dropped the native handle; destroy what is still tracked.
   const tracked = this[kTrackedConnections];
   if (tracked && tracked.size > 0) {
-    for (const socket of Array.from(tracked)) socket.destroy();
+    for (const socket of $Array.from(tracked)) socket.destroy();
   }
 };
 
@@ -487,7 +487,7 @@ Server.prototype.closeIdleConnections = function () {
   }
   const tracked = this[kTrackedConnections];
   if (tracked && tracked.size > 0) {
-    for (const socket of Array.from(tracked)) {
+    for (const socket of $Array.from(tracked)) {
       if (!socket._httpMessage) socket.destroy();
     }
   }

@@ -174,8 +174,7 @@ function emitUnhandledRejectionOrErr(emitter, err, type, args) {
   if (typeof emitter[kRejection] === "function") {
     emitter[kRejection](err, type, ...args);
   } else {
-    // Capture is off during the 'error' emit so a rejecting 'error' listener
-    // cannot loop; restored even if a listener throws (-> 'uncaughtException').
+    // Capture is off during the 'error' emit so a rejecting 'error' listener cannot loop.
     const prev = emitter[kCapture];
     try {
       emitter[kCapture] = false;
@@ -192,8 +191,7 @@ let captureRejectionsByDefault = false;
 const emitWithoutRejectionCapture = function emit(type, ...args) {
   $debug(`${this.constructor?.name || "EventEmitter"}.emit`, type);
 
-  // An emitter whose constructor never ran (util.inherits without the super
-  // call) has no own `emit`; it follows the global default like node.
+  // Constructor never ran (util.inherits without super call): follow the global default.
   if (captureRejectionsByDefault && this[kCapture]) {
     return emitWithRejectionCapture.$call(this, type, ...args);
   }

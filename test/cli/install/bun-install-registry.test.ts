@@ -3,7 +3,6 @@ import { install_test_helpers, npm_manifest_test_helpers } from "bun:internal-fo
 import { afterAll, beforeAll, beforeEach, describe, expect, setDefaultTimeout, test } from "bun:test";
 import { copyFileSync, mkdirSync, realpathSync } from "fs";
 import { cp, exists, lstat, mkdir, readlink, rename, rm, writeFile } from "fs/promises";
-import { createRequire } from "module";
 import {
   assertManifestsPopulated,
   bunExe,
@@ -26,6 +25,7 @@ import {
   VerdaccioRegistry,
   writeShebangScript,
 } from "harness";
+import { createRequire } from "module";
 import { join, resolve } from "path";
 const { parseLockfile } = install_test_helpers;
 

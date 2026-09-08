@@ -1421,12 +1421,9 @@ impl<'a> SpawnArgs<'a> {
     }
 }
 
-/// `$PATH` to search for a command when the shell environment has none, the
-/// same search `node:child_process` (libuv) does for an `env` without `PATH`:
-/// `_PATH_DEFPATH` on POSIX (Android often has no `PATH` at all), and on
-/// Windows the process's current `PATH`, which libuv also copies into such a
-/// child's environment block. An explicit `PATH=` is not this case: it stays
-/// empty and searches nothing. Deref the result.
+/// `$PATH` to search when the shell environment has none, as `node:child_process`
+/// does: `_PATH_DEFPATH` on POSIX, the process's current `PATH` on Windows.
+/// Deref the result.
 pub(crate) fn default_path_for_unset_env() -> sh::EnvStr {
     #[cfg(windows)]
     {

@@ -2082,12 +2082,8 @@ impl ShellExecEnv {
             })
     }
 
-    /// `$PATH` for resolving an external command name: a `PATH=... cmd`
-    /// prefix, else the exported env (what the child will see), else
-    /// [`default_path_for_unset_env`](crate::shell::subproc::default_path_for_unset_env).
-    /// The environment snapshot taken at startup is never consulted:
-    /// `export_env` was built from the live `process.env` (or from `.env()`),
-    /// so a `PATH` missing there is missing on purpose. Deref the result.
+    /// `$PATH` for resolving a command name: a `PATH=... cmd` prefix, else
+    /// `export_env`, else the platform default. Deref the result.
     pub(crate) fn command_path(&self) -> crate::shell::env_str::EnvStr {
         let key = crate::shell::env_str::EnvStr::init_slice(b"PATH");
         self.cmd_local_env

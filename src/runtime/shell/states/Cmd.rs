@@ -237,8 +237,7 @@ impl Cmd {
             );
             match interp.as_cmd(this).state {
                 CmdState::Idle => {
-                    // `VAR=value cmd` assignments belong to one command; drop
-                    // the ones an earlier command in this shell env left.
+                    // A `VAR=value cmd` prefix applies to one command only.
                     let shell_env = interp.as_cmd_mut(this).base.shell_mut();
                     shell_env.cmd_local_env.clear();
                     if !n.assigns.is_empty() {

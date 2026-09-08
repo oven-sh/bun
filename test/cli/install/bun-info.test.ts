@@ -1,7 +1,8 @@
 import { spawn } from "bun";
 import { afterAll, beforeAll, describe, expect, it, test } from "bun:test";
 import { bunEnv, bunExe, isASAN, tempDirWithFiles, tmpdirSync } from "harness";
-import { join } from "node:path";
+import { existsSync } from "node:fs";
+import { dirname, join } from "node:path";
 
 describe.concurrent("bun info", () => {
   let i = 0;
@@ -720,12 +721,20 @@ Recent versions:
       err: "",
       code: 0,
     });
-    // No spec and nothing to infer it from.
-    expect(await view([], { cwd, command: ["info"] })).toEqual({
-      out: "",
-      err: "error: No package name was given and no package.json was found\n",
-      code: 1,
-    });
+    // No spec and nothing to infer it from. Only meaningful when no ancestor of
+    // the temp directory happens to have a package.json.
+    let hasAncestorPackageJson = false;
+    for (let dir = cwd; ; dir = dirname(dir)) {
+      if (existsSync(join(dir, "package.json"))) hasAncestorPackageJson = true;
+      if (dirname(dir) === dir) break;
+    }
+    if (!hasAncestorPackageJson) {
+      expect(await view([], { cwd, command: ["info"] })).toEqual({
+        out: "",
+        err: "error: No package name was given and no package.json was found\n",
+        code: 1,
+      });
+    }
   });
 });
 

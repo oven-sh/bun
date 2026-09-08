@@ -275,10 +275,12 @@ test.concurrent("static imports inside a module imported with a ?query containin
 // Same for a CommonJS module: its key is the referrer for `require()`, and
 // `__dirname`, `module.paths` and `require.resolve.paths()` derive from it.
 for (const entry of ["entry.mjs", "entry.cjs"]) {
-  test.concurrent(`require() inside a CommonJS module loaded with a ?query containing / resolves (${entry})`, async () => {
-    using dir = tempDir("import-query-slash-referrer-cjs", {
-      "sub/b.cjs": `module.exports = { b: 42 };`,
-      "a.cjs": `
+  test.concurrent(
+    `require() inside a CommonJS module loaded with a ?query containing / resolves (${entry})`,
+    async () => {
+      using dir = tempDir("import-query-slash-referrer-cjs", {
+        "sub/b.cjs": `module.exports = { b: 42 };`,
+        "a.cjs": `
         const path = require("node:path");
         module.exports = {
           b: require("./sub/b.cjs").b,
@@ -289,27 +291,28 @@ for (const entry of ["entry.mjs", "entry.cjs"]) {
           lookupBare: path.basename(path.dirname(require.resolve.paths("pkg")[0])) + "/" + path.basename(require.resolve.paths("pkg")[0]),
         };
       `,
-      "entry.mjs": `console.log(JSON.stringify((await import("./a.cjs?path=/x/y")).default));`,
-      "entry.cjs": `console.log(JSON.stringify(require("./a.cjs?path=/x/y")));`,
-    });
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), entry],
-      env: bunEnv,
-      cwd: String(dir),
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stderr).toBe("");
-    const dirName = basename(String(dir));
-    expect(JSON.parse(stdout.trim())).toEqual({
-      b: 42,
-      resolved: "sub/b.cjs",
-      dirname: dirName,
-      paths0: dirName + "/node_modules",
-      lookupRelative: dirName,
-      lookupBare: dirName + "/node_modules",
-    });
-    expect(exitCode).toBe(0);
-  });
+        "entry.mjs": `console.log(JSON.stringify((await import("./a.cjs?path=/x/y")).default));`,
+        "entry.cjs": `console.log(JSON.stringify(require("./a.cjs?path=/x/y")));`,
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), entry],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      const dirName = basename(String(dir));
+      expect(JSON.parse(stdout.trim())).toEqual({
+        b: 42,
+        resolved: "sub/b.cjs",
+        dirname: dirName,
+        paths0: dirName + "/node_modules",
+        lookupRelative: dirName,
+        lookupBare: dirName + "/node_modules",
+      });
+      expect(exitCode).toBe(0);
+    },
+  );
 }

@@ -645,6 +645,7 @@ struct Http2Context {
     void *parent = nullptr;
     HttpFlags *parentFlags = nullptr;
     uint64_t *parentMaxHeaderSize = nullptr;
+    uint64_t *parentMaxRequestBodySize = nullptr;
     void (*notifyParentClosed)(void *parent, us_socket_t *s, bool filteredOpen, bool filteredAccept) = nullptr;
     void (*detachFromParent)(void *parent, Http2Context *ctx) = nullptr;
     /* Seconds without traffic in either direction before a connection is
@@ -698,6 +699,7 @@ struct Http2Context {
         parent = data;
         parentFlags = &data->flags;
         parentMaxHeaderSize = &data->maxHeaderSize;
+        parentMaxRequestBodySize = &data->maxRequestBodySize;
         data->http2Context = this;
         data->allowHttp1 = allowHttp1;
         detachFromParent = [](void *p, Http2Context *ctx) { ctx->detach((HttpContextData<SSL> *) p); };
@@ -727,6 +729,7 @@ struct Http2Context {
         parent = nullptr;
         parentFlags = nullptr;
         parentMaxHeaderSize = nullptr;
+        parentMaxRequestBodySize = nullptr;
         notifyParentClosed = nullptr;
         detachFromParent = nullptr;
     }
@@ -1726,7 +1729,12 @@ inline bool Http2Connection::handleHeaderBlock(uint32_t streamId, uint8_t flags,
 inline bool Http2Connection::dispatchRequest(Http2Response *stream, const us_quic_header_t *headers, unsigned count) {
     Http2Request req(headers, count);
     if (!(ctx->parentFlags && ctx->parentFlags->usingCustomExpectHandler) && req.getHeader("expect") == "100-continue") {
-        stream->writeContinue();
+        /* Same gate as HttpContext: no 100 for a content-length the handler
+         * will 413 from the head alone (RFC 9110 10.1.1). */
+        if (stream->declaredContentLength < 0 || !ctx->parentMaxRequestBodySize
+            || (uint64_t) stream->declaredContentLength <= *ctx->parentMaxRequestBodySize) {
+            stream->writeContinue();
+        }
     }
     ctx->dispatchDepth++;
     ctx->router.getUserData() = {stream, &req};

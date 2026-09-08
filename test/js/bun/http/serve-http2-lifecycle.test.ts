@@ -410,4 +410,57 @@ describe("Bun.serve http2 lifecycle", () => {
     proc.stdin.end();
     await proc.exited;
   });
+
+  test("expect: 100-continue gets the final 413, not 100, for an over-limit content-length", async () => {
+    using dir = tempDir("serve-http2-expect", {});
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const server = Bun.serve({
+          port: 0, http2: true, maxRequestBodySize: 100,
+          async fetch(req) { return new Response("len:" + (await req.arrayBuffer()).byteLength); },
+        });
+        console.log(server.port);
+        process.stdin.on("end", () => process.exit(0)); process.stdin.resume();`,
+      ],
+      env: bunEnv,
+      cwd: String(dir),
+      stdin: "pipe",
+      stdout: "pipe",
+      stderr: "inherit",
+    });
+    const reader = proc.stdout.getReader();
+    let line = "";
+    while (!line.includes("\n")) {
+      const { value, done } = await reader.read();
+      if (done) throw new Error("server exited before printing its port");
+      line += new TextDecoder().decode(value);
+    }
+    const port = Number(line.trim());
+    const firstStatus = async (contentLength: number, body?: Buffer) => {
+      const raw = await RawH2.connect(port, false);
+      await raw.waitFor(f => f.type === T.SETTINGS);
+      raw.headers(
+        1,
+        [...baseHeaders("/", "POST"), ["expect", "100-continue"], ["content-length", String(contentLength)]],
+        F.END_HEADERS,
+      );
+      const first = await raw.waitFor(f => f.type === T.HEADERS && f.streamId === 1);
+      const statuses = [decodeStatus(first.payload)];
+      if (body) {
+        raw.write(frame(T.DATA, F.END_STREAM, 1, body));
+        const final = await raw.waitFor(f => f.type === T.HEADERS && f.streamId === 1 && f !== first);
+        statuses.push(decodeStatus(final.payload));
+      }
+      raw.close();
+      return statuses;
+    };
+    // Over limit: the head alone decides the 413, so no 100 Continue first.
+    expect(await firstStatus(500)).toEqual([413]);
+    // Under limit: 100 Continue, then the real response once the body arrives.
+    expect(await firstStatus(10, Buffer.alloc(10, "x"))).toEqual([100, 200]);
+    proc.stdin.end();
+    await proc.exited;
+  });
 });

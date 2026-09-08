@@ -1178,7 +1178,12 @@ it("received text frames arrive intact for ASCII and for non-ASCII payloads", as
   // ASCII text is copied as Latin-1; non-ASCII text is transcoded to an
   // owned UTF-16 buffer that the JS string adopts and frees. Cover both
   // paths, including a payload long enough to cross a frame length boundary.
-  const payloads = ["plain ascii", "héllo wörld", "中文 😀 " + Buffer.alloc(200, "Ü").toString(), Buffer.alloc(70000, "x").toString()];
+  const payloads = [
+    "plain ascii",
+    "héllo wörld",
+    "中文 😀 " + Buffer.alloc(200, "Ü").toString(),
+    Buffer.alloc(70000, "x").toString(),
+  ];
   using server = Bun.serve({
     port: 0,
     fetch(req, server) {

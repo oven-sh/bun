@@ -9,8 +9,8 @@
 //! Note: This is specifically for WebSocket client implementations, not for server-side WebSockets.
 
 use bun_boringssl::c::OwnedSslCtx;
-use bun_core::ffi::FfiSlice;
 use bun_core::String as BunString;
+use bun_core::ffi::FfiSlice;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_ptr::ThisPtr;
 use bun_uws_sys::Socket;

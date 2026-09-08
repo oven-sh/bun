@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { existsSync } from "node:fs";
+import { join } from "node:path";
 import { SourceMapConsumer } from "source-map";
 
 describe("compile --target=browser", () => {
@@ -464,6 +465,91 @@ body { color: blue; }`,
 
     expect(stderr).toBe("");
     expect(exitCode).toBe(0);
+  });
+
+  describe.concurrent("CLI without --outdir or --outfile", () => {
+    const source = `<!DOCTYPE html><html><body># my source<script src="./app.js"></script></body></html>\n`;
+    const fixture = {
+      "src/index.html": source,
+      "src/app.js": `console.log("no outdir");`,
+    };
+    const listFiles = (cwd: string) =>
+      Array.from(new Bun.Glob("**/*").scanSync({ cwd }))
+        .map(f => f.replaceAll("\\", "/"))
+        .sort();
+
+    async function build(cwd: string, ...args: string[]) {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "build", "--compile", "--target=browser", ...args],
+        env: bunEnv,
+        cwd,
+        stderr: "pipe",
+        stdout: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { stdout, stderr, exitCode };
+    }
+
+    // Run from the source directory: this used to write ./index.html over the source.
+    test("prints the page to stdout and leaves the source file alone", async () => {
+      using dir = tempDir("compile-browser-cli-stdout", fixture);
+      const { stdout, stderr, exitCode } = await build(join(String(dir), "src"), "./index.html");
+
+      expect(stderr).toBe("");
+      expect(stdout).toStartWith('<!DOCTYPE html><html><body># my source<script type="module">');
+      expect(stdout).toContain('console.log("no outdir")');
+      expect(stdout).not.toContain("sourceMappingURL");
+      expect(await Bun.file(join(String(dir), "src", "index.html")).text()).toBe(source);
+      expect(listFiles(String(dir))).toEqual(["src/app.js", "src/index.html"]);
+      expect(exitCode).toBe(0);
+    });
+
+    test("--sourcemap=inline keeps it a single page on stdout", async () => {
+      using dir = tempDir("compile-browser-cli-stdout-inline", fixture);
+      const { stdout, stderr, exitCode } = await build(String(dir), "./src/index.html", "--sourcemap=inline");
+
+      expect(stderr).toBe("");
+      expect(stdout).toContain('console.log("no outdir")');
+      expect(stdout).toContain("//# sourceMappingURL=data:application/json;base64,");
+      expect(listFiles(String(dir))).toEqual(["src/app.js", "src/index.html"]);
+      expect(exitCode).toBe(0);
+    });
+
+    test.each(["linked", "external"])("--sourcemap=%s asks for an output location", async sourcemap => {
+      using dir = tempDir("compile-browser-cli-stdout-map-error", fixture);
+      const { stdout, stderr, exitCode } = await build(String(dir), "./src/index.html", `--sourcemap=${sourcemap}`);
+
+      expect(stderr).toBe(
+        `error: cannot use ${sourcemap === "external" ? "an external" : "a linked"} source map without --outdir or --outfile (use --sourcemap=inline to print it to stdout)\n`,
+      );
+      expect(stdout).toBe("");
+      expect(await Bun.file(join(String(dir), "src", "index.html")).text()).toBe(source);
+      expect(listFiles(String(dir))).toEqual(["src/app.js", "src/index.html"]);
+      expect(exitCode).toBe(1);
+    });
+
+    test("--outfile with --sourcemap=linked writes the page and the map next to the outfile", async () => {
+      using dir = tempDir("compile-browser-cli-outfile-sourcemap", fixture);
+      const { stdout, stderr, exitCode } = await build(
+        String(dir),
+        "./src/index.html",
+        "--outfile",
+        "out/page.html",
+        "--sourcemap=linked",
+      );
+
+      expect(stderr).toBe("");
+      expect(stdout).toContain("page.html");
+      const files = listFiles(String(dir));
+      const mapFile = files.find(f => f.endsWith(".js.map"));
+      expect(mapFile).toMatch(/^out\/index-[0-9a-z]+\.js\.map$/);
+      expect(files).toEqual([mapFile, "out/page.html", "src/app.js", "src/index.html"]);
+      expect(await Bun.file(join(String(dir), "src", "index.html")).text()).toBe(source);
+      const html = await Bun.file(join(String(dir), "out", "page.html")).text();
+      expect(html).toContain('console.log("no outdir")');
+      expect(html).toContain(`//# sourceMappingURL=./${mapFile!.slice("out/".length)}\n</script>`);
+      expect(exitCode).toBe(0);
+    });
   });
 
   test("malformed HTML without closing tags still inlines JS and CSS", async () => {

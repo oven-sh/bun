@@ -165,21 +165,6 @@ impl BuildCommand {
             && outfile.is_empty()
             && ctx.bundler_options.outdir.is_empty();
 
-        if output_to_stdout {
-            let kind = match this_transpiler.options.source_map {
-                options::SourceMapOption::External => Some("an external"),
-                options::SourceMapOption::Linked => Some("a linked"),
-                options::SourceMapOption::Inline | options::SourceMapOption::None => None,
-            };
-            if let Some(kind) = kind {
-                bun_core::pretty_errorln!(
-                    "<r><red>error<r><d>:<r> cannot use {} source map without --outdir or --outfile (use --sourcemap=inline to print it to stdout)",
-                    kind
-                );
-                Global::exit(1);
-            }
-        }
-
         this_transpiler.options.supports_multiple_outputs =
             !(output_to_stdout || !outfile.is_empty());
 
@@ -303,10 +288,6 @@ impl BuildCommand {
                 this_transpiler.options.compile_mode = options::CompileMode::StandaloneHtml;
                 ctx.bundler_options.compile = false;
 
-                if ctx.bundler_options.outdir.is_empty() && outfile.is_empty() {
-                    outfile = bun_paths::basename(&first_entry_point);
-                }
-
                 this_transpiler.options.supports_multiple_outputs =
                     !ctx.bundler_options.outdir.is_empty();
             } else {
@@ -396,6 +377,21 @@ impl BuildCommand {
                     "<r><red>error<r><d>:<r> Must use <b>--outdir<r> when code splitting is enabled"
                 );
                 Global::exit(1);
+            }
+            // No --outfile either: the single output goes to stdout.
+            if outfile.is_empty() {
+                let kind = match this_transpiler.options.source_map {
+                    options::SourceMapOption::External => Some("an external"),
+                    options::SourceMapOption::Linked => Some("a linked"),
+                    options::SourceMapOption::Inline | options::SourceMapOption::None => None,
+                };
+                if let Some(kind) = kind {
+                    bun_core::pretty_errorln!(
+                        "<r><red>error<r><d>:<r> cannot use {} source map without --outdir or --outfile (use --sourcemap=inline to print it to stdout)",
+                        kind
+                    );
+                    Global::exit(1);
+                }
             }
         }
 

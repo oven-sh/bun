@@ -75,6 +75,16 @@ bun build --compile --target=browser ./index.html --outdir=dist
 
 Open `dist/index.html` — the React app works with no server.
 
+## Output location
+
+`--outdir` writes one `.html` file per entrypoint into that directory. `--outfile` writes a single page to that path. With neither flag, Bun prints the page to stdout, the same as `bun build` does for a single JavaScript entrypoint:
+
+```bash terminal icon="terminal"
+bun build --compile --target=browser ./index.html > page.html
+```
+
+A page printed to stdout is one file, so `--sourcemap=linked` and `--sourcemap=external` need `--outdir` or `--outfile`. `--sourcemap=inline` works everywhere.
+
 ## Everything gets inlined
 
 Bun inlines every local asset it finds in your HTML: anything with a relative path, of any file type, is embedded into the output file.

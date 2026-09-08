@@ -510,6 +510,24 @@ describe("web worker", () => {
       w.terminate();
     });
 
+    // The 'close' code is what the worker passed to process.exit(), or 0. A worker stopped by its
+    // parent did not choose one, whether terminate() lands while the entry module is still
+    // evaluating or once its loop is idle.
+    test.each([
+      // The first message is posted from the entry's top-level code, which then never yields.
+      ["busy evaluating its entry module", "postMessage('up'); for (;;) {}"],
+      // A reply to a parent message comes from the worker's event loop, after the entry has loaded.
+      ["idle in its event loop", "self.onmessage = () => postMessage('up'); setInterval(() => {}, 1000)"],
+    ])("close code is 0 after terminate() of a worker that is %s", async (_, body) => {
+      const w = new Worker("data:text/javascript," + encodeURIComponent(body));
+      w.postMessage("ping");
+      await once(w, "message");
+      const closed = once(w, "close");
+      w.terminate();
+      const [event] = await closed;
+      expect({ code: event.code, wasClean: event.wasClean }).toEqual({ code: 0, wasClean: true });
+    });
+
     // As in browsers and Node: not an error, the message is dropped.
     test("postMessage() to a terminated worker is a no-op", async () => {
       const w = new Worker("data:text/javascript,postMessage('up')");

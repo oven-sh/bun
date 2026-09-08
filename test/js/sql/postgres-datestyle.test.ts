@@ -34,11 +34,9 @@ test("StartupMessage pins DateStyle=ISO so server-side datestyle defaults cannot
     const params: Record<string, string> = {};
     const parts = body.split("\0");
     for (let i = 0; i + 1 < parts.length && parts[i] !== ""; i += 2) params[parts[i]] = parts[i + 1];
-    // client_encoding was already pinned; DateStyle must be too, and
-    // extra_float_digits because `real` columns are read as text.
+    // client_encoding was already pinned; DateStyle must be too.
     expect(params.client_encoding).toBe("UTF8");
     expect(params.DateStyle).toMatch(/^ISO\b/);
-    expect(params.extra_float_digits).toBe("3");
   } finally {
     await new Promise<void>(r => server.close(() => r()));
   }

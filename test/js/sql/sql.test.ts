@@ -1052,26 +1052,21 @@ if (isDockerEnabled()) {
       for (let i = 0; i < 3; i++) {
         expect((await sql`select 0.1::real as x, 61885352::real as y`)[0]).toEqual({ x: 0.1, y: 61885352 });
       }
-      // real arrives as text, so the startup packet pins extra_float_digits;
-      // a database default of fewer digits must not truncate it.
-      await sql.unsafe(`ALTER DATABASE bun_sql_test SET extra_float_digits = -4`);
-      try {
-        await using pinned = postgres({ ...options, max: 1 });
-        expect(
-          await pinned.unsafe(
-            "select current_setting('extra_float_digits') as d, 123456.789::real as t, 123456.789::real as b where $1 = 1",
-            [1],
-          ),
-        ).toEqual([{ d: "3", t: 123456.79, b: 123456.79 }]);
-        expect((await pinned.unsafe("select 123456.789::real as t"))[0].t).toBe(123456.79);
-      } finally {
-        await sql.unsafe(`ALTER DATABASE bun_sql_test RESET extra_float_digits`);
+      // A wide deterministic sample of f32 bit patterns across every exponent:
+      // the binary decoder must produce exactly the number float4out prints.
+      const bits = new Uint32Array(512);
+      let seed = 0x9e3779b9;
+      for (let i = 0; i < bits.length; i++) {
+        seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0;
+        bits[i] = seed;
       }
-      // real[] is unchanged: a Float32Array of the stored values on the binary
-      // path, a plain Array of the printed decimals on the text path.
-      const array = "select array[0.1, 0.3333333, 1.5]::real[] as x";
-      expect((await sql.unsafe(`${array} where $1 = 1`, [1]))[0].x).toEqual(new Float32Array([0.1, 0.3333333, 1.5]));
-      expect((await sql.unsafe(array))[0].x).toEqual([0.1, 0.3333333, 1.5]);
+      const sample = Array.from(new Float32Array(bits.buffer)).filter(Number.isFinite);
+      // 9 significant digits always identify an f32, so these literals store
+      // exactly the sampled values.
+      const list = `unnest(array[${sample.map(v => v.toPrecision(9)).join(",")}]::real[])`;
+      const viaBinary = await sql.unsafe(`select x, x::text as t from ${list} as x where $1 = 1`, [1]);
+      expect(viaBinary.length).toBe(sample.length);
+      expect(viaBinary.map(row => row.x)).toEqual(viaBinary.map(row => Number(row.t)));
     });
 
     test("String", async () => {

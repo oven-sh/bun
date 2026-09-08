@@ -373,17 +373,6 @@ describe("web worker", () => {
       expect(order).toEqual(["open", "message:ready"]);
     });
 
-    // https://github.com/oven-sh/bun/issues/32060
-    test("accepts an uppercase data: scheme longer than the path-length limit", async () => {
-      const pad = "//" + Buffer.alloc(200000, "x").toString();
-      const worker = new Worker("DATA:text/javascript," + encodeURIComponent("postMessage('upper')" + pad));
-      const order: string[] = [];
-      worker.addEventListener("message", e => order.push(e.data));
-      worker.addEventListener("error", e => order.push("error:" + e.message));
-      await once(worker, "close");
-      expect(order).toEqual(["upper"]);
-    });
-
     test("is fired for a worker whose entry does not resolve", async () => {
       using dir = tempDir("worker-open-missing-entry", {});
       const worker = new Worker(path.join(String(dir), "missing.js"));

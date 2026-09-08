@@ -64,3 +64,16 @@ test("should keep '?' as part of the data in an uppercase-scheme data: URL", asy
   const mod = await import(`DATA:text/javascript,export default "a?b=c";`);
   expect(mod.default).toBe("a?b=c");
 });
+
+test("should start a Worker from an uppercase-scheme data: URL longer than the path-length limit", async () => {
+  const pad = "//" + Buffer.alloc(200000, "x").toString();
+  const worker = new Worker("DATA:text/javascript," + encodeURIComponent("postMessage('upper')" + pad));
+  const { promise, resolve, reject } = Promise.withResolvers();
+  worker.onmessage = e => resolve(e.data);
+  worker.onerror = e => reject(new Error(e.message));
+  try {
+    expect(await promise).toBe("upper");
+  } finally {
+    worker.terminate();
+  }
+});

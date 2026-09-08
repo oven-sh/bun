@@ -528,7 +528,16 @@ JSC::JSValue resolveLookupPaths(JSC::JSGlobalObject* globalObject, String reques
 
     JSValue dirname;
     if (parent.filename) {
-        EncodedJSValue encodedFilename = JSValue::encode(parent.filename);
+        JSString* filename = parent.filename;
+        // The filename is a module key, which may be `<path>?query`.
+        auto filenameView = filename->value(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+        auto queryStart = filenameView->find('?');
+        if (queryStart != WTF::notFound) {
+            filename = JSC::jsSubstring(globalObject, filename, 0, queryStart);
+            RETURN_IF_EXCEPTION(scope, {});
+        }
+        EncodedJSValue encodedFilename = JSValue::encode(filename);
 #if OS(WINDOWS)
         dirname = JSValue::decode(
             Bun__Path__dirname(globalObject, true, &encodedFilename, 1));

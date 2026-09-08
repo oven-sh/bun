@@ -273,7 +273,7 @@ test.concurrent("static imports inside a module imported with a ?query containin
 });
 
 // Same for a CommonJS module: its key is the referrer for `require()`, and
-// `__dirname` / `module.paths` derive from it.
+// `__dirname`, `module.paths` and `require.resolve.paths()` derive from it.
 test.concurrent("require() inside a CommonJS module loaded with a ?query containing / resolves", async () => {
   using dir = tempDir("import-query-slash-referrer-cjs", {
     "sub/b.cjs": `module.exports = { b: 42 };`,
@@ -283,7 +283,9 @@ test.concurrent("require() inside a CommonJS module loaded with a ?query contain
         b: require("./sub/b.cjs").b,
         resolved: path.relative(__dirname, require.resolve("./sub/b.cjs")).replaceAll(path.sep, "/"),
         dirname: path.basename(__dirname),
-        paths0: path.relative(__dirname, module.paths[0]),
+        paths0: path.basename(path.dirname(module.paths[0])) + "/" + path.basename(module.paths[0]),
+        lookupRelative: path.basename(require.resolve.paths("./sub/b.cjs")[0]),
+        lookupBare: path.basename(path.dirname(require.resolve.paths("pkg")[0])) + "/" + path.basename(require.resolve.paths("pkg")[0]),
       };
     `,
     "entry.mjs": `
@@ -295,7 +297,15 @@ test.concurrent("require() inside a CommonJS module loaded with a ?query contain
       console.log(JSON.stringify({ viaRequire }));
     `,
   });
-  const expected = { b: 42, resolved: "sub/b.cjs", dirname: basename(String(dir)), paths0: "node_modules" };
+  const dirName = basename(String(dir));
+  const expected = {
+    b: 42,
+    resolved: "sub/b.cjs",
+    dirname: dirName,
+    paths0: dirName + "/node_modules",
+    lookupRelative: dirName,
+    lookupBare: dirName + "/node_modules",
+  };
   for (const entry of ["entry.mjs", "entry.cjs"]) {
     await using proc = Bun.spawn({
       cmd: [bunExe(), entry],

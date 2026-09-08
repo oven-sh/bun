@@ -6009,3 +6009,92 @@ describe("frames issued from inside a user-supplied Duplex transport's _write", 
     },
   );
 });
+
+// Getters must be total over a stream's lifecycle: node answers the same way before the stream
+// has an id, while it is open, and after it closed. Bun used to throw or report undefined.
+describe("stream getters over the lifecycle", () => {
+  const read = stream => ({
+    endAfterHeaders: stream.endAfterHeaders,
+    rstCode: stream.rstCode,
+    headersSent: stream.headersSent,
+  });
+
+  it("client: a pending stream answers like node, and the values survive close", async () => {
+    const server = http2.createServer((req, res) => res.end("ok"));
+    await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
+    try {
+      const client = http2.connect(`http://127.0.0.1:${server.address().port}`);
+      try {
+        // Issued before 'connect', so the stream has no id yet.
+        const req = client.request({ ":path": "/" });
+        const pending = read(req);
+        const { promise, resolve, reject } = Promise.withResolvers();
+        let open;
+        req.on("response", () => (open = read(req)));
+        req.on("error", reject);
+        req.resume();
+        req.on("close", resolve);
+        await promise;
+        expect(pending).toEqual({ endAfterHeaders: false, rstCode: 0, headersSent: true });
+        expect(open).toEqual({ endAfterHeaders: false, rstCode: 0, headersSent: true });
+        expect(read(req)).toEqual({ endAfterHeaders: false, rstCode: 0, headersSent: true });
+      } finally {
+        client.destroy();
+      }
+    } finally {
+      server.close();
+    }
+  });
+
+  it("server: endAfterHeaders stays true after the stream closes", async () => {
+    const server = http2.createServer();
+    const states = [];
+    server.on("stream", stream => {
+      states.push(read(stream));
+      stream.on("close", () => states.push(read(stream)));
+      stream.respond({ ":status": 200 });
+      stream.end("ok");
+    });
+    await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
+    try {
+      const client = http2.connect(`http://127.0.0.1:${server.address().port}`);
+      try {
+        const req = client.request({ ":path": "/" });
+        const { promise, resolve, reject } = Promise.withResolvers();
+        req.on("error", reject);
+        req.resume();
+        req.on("close", resolve);
+        await promise;
+        // The GET request block carried END_STREAM, so endAfterHeaders is true for its whole life.
+        expect(states[0]).toEqual({ endAfterHeaders: true, rstCode: 0, headersSent: false });
+        expect(states[1]).toEqual({ endAfterHeaders: true, rstCode: 0, headersSent: true });
+      } finally {
+        client.destroy();
+      }
+    } finally {
+      server.close();
+    }
+  });
+
+  it("the http2.connect() listener receives the session and the socket", async () => {
+    const server = http2.createServer();
+    await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
+    try {
+      const { promise, resolve } = Promise.withResolvers();
+      const client = http2.connect(`http://127.0.0.1:${server.address().port}`, {}, (session, socket) =>
+        resolve({ sameSession: session === client, socket }),
+      );
+      try {
+        const args = await promise;
+        expect(args.sameSession).toBe(true);
+        // node hands over the raw socket, not the session's socket proxy.
+        expect(args.socket).toBeInstanceOf(net.Socket);
+        expect(args.socket.remotePort).toBe(server.address().port);
+      } finally {
+        client.destroy();
+      }
+    } finally {
+      server.close();
+    }
+  });
+});

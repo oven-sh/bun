@@ -1308,7 +1308,6 @@ pub struct Stream {
     state: StreamState,
     js_context: StrongOptional, // jsc.Strong.Optional
     wait_for_trailers: bool,
-    end_after_headers: bool,
     padding_strategy: PaddingStrategy,
     rst_code: u32,
     stream_dependency: u32,
@@ -1823,7 +1822,6 @@ impl Stream {
             state: StreamState::OPEN,
             js_context: StrongOptional::empty(),
             wait_for_trailers: false,
-            end_after_headers: false,
             padding_strategy,
             rst_code: 0,
             stream_dependency: 0,
@@ -4021,12 +4019,7 @@ impl crate::api::h2::connection::Sink for H2FrameParser {
         });
     }
 
-    fn on_headers_complete(&self, stream_id: u32, end_stream: bool, flags: u8) {
-        // Bridge: the JS endAfterHeaders getter reads the legacy stream's end_after_headers flag.
-        if let Some(stream) = self.streams.get().get(&stream_id).copied() {
-            // SAFETY: stream is *mut Stream from self.streams; valid while the map entry exists
-            unsafe { (*stream).end_after_headers = end_stream };
-        }
+    fn on_headers_complete(&self, stream_id: u32, _end_stream: bool, flags: u8) {
         // Materialize the accumulated block in a single native pass: the raw array, the
         // node-shaped headers object, and the sensitive list (a zero-field block yields an
         // empty array + object, matching the legacy decoder's upfront array).
@@ -4888,34 +4881,6 @@ impl H2FrameParser {
         // origin_slice/value_slice dropped here
         let _ = (origin_slice, value_slice);
         Ok(JSValue::UNDEFINED)
-    }
-
-    #[bun_jsc::host_fn(method)]
-    pub(crate) fn get_end_after_headers(
-        this: &Self,
-        global_object: &JSGlobalObject,
-        callframe: &CallFrame,
-    ) -> JsResult<JSValue> {
-        let [stream_arg] = callframe.arguments_as_array::<1>();
-        if callframe.arguments_count() < 1 {
-            return Err(global_object.throw(format_args!("Expected stream argument")));
-        }
-
-        if !stream_arg.is_number() {
-            return Err(global_object.throw(format_args!("Invalid stream id")));
-        }
-
-        let stream_id = stream_arg.to_u32();
-        if stream_id == 0 {
-            return Err(global_object.throw(format_args!("Invalid stream id")));
-        }
-
-        let Some(stream) = this.streams.get().get(&stream_id).copied() else {
-            return Err(global_object.throw(format_args!("Invalid stream id")));
-        };
-
-        // SAFETY: stream is *mut Stream from self.streams; valid while the map entry exists
-        Ok(JSValue::from(unsafe { (*stream).end_after_headers }))
     }
 
     #[bun_jsc::host_fn(method)]
@@ -7387,8 +7352,6 @@ impl H2FrameParser {
         }
 
         if end_stream {
-            stream.end_after_headers = true;
-
             if wait_for_trailers {
                 stream.state = StreamState::HALF_CLOSED_LOCAL;
                 this.dispatch(JSH2FrameParser::Gc::onWantTrailers, stream.get_identifier());

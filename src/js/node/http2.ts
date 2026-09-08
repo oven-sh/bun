@@ -372,6 +372,7 @@ const kSessionDestroyError = Symbol("sessionDestroyError");
 // responsible for closing it exactly once. respondWithFD() descriptors belong to the caller.
 const kOwnsFd = Symbol("ownsFd");
 const kRequestHeaders = Symbol("requestHeaders");
+const kEndAfterHeaders = Symbol("endAfterHeaders");
 // True only for the synchronous extent of Http2Stream#sendTrailers()'s native call. node submits
 // trailers on a later turn (finishSendTrailers via setImmediate), so a stream never observes its
 // own close from inside sendTrailers() — the streamEnd(closed) dispatch is re-queued when this is
@@ -1694,6 +1695,7 @@ const constants = {
 const {
   NGHTTP2_SESSION_SERVER,
   NGHTTP2_SESSION_CLIENT,
+  NGHTTP2_FLAG_END_STREAM,
   NGHTTP2_NO_ERROR,
   NGHTTP2_INTERNAL_ERROR,
   NGHTTP2_CANCEL,
@@ -2296,7 +2298,12 @@ class Http2Stream extends Duplex {
   // async-context tracking when no AsyncLocalStorage is in use.
   [bunHTTP2AsyncContextFrame] = $getInternalField($asyncContext, 0);
 
-  rstCode: number | undefined = undefined;
+  rstCode: number = 0;
+  // Set from the END_STREAM flag of the received header block, like node's
+  // onSessionHeaders. It outlives the native stream, so a closed stream keeps the value.
+  [kEndAfterHeaders]: boolean = false;
+  // The request (client) or the response (server) header block went out.
+  headersSent: boolean = false;
   [bunHTTP2Headers]: any;
   [kInfoHeaders]: any;
   #sentTrailers: any;
@@ -2495,11 +2502,7 @@ class Http2Stream extends Duplex {
   }
 
   get endAfterHeaders() {
-    const session = this[bunHTTP2Session];
-    if (session) {
-      return session[bunHTTP2Native]?.getEndAfterHeaders(this.#id) || false;
-    }
-    return false;
+    return this[kEndAfterHeaders];
   }
 
   get aborted() {
@@ -2941,7 +2944,11 @@ class Http2Stream extends Duplex {
     }
   }
 }
-class ClientHttp2Stream extends Http2Stream {}
+class ClientHttp2Stream extends Http2Stream {
+  // node sets STREAM_FLAGS_HEADERS_SENT in the ClientHttp2Stream constructor: a request's
+  // header block is built before the stream object exists, queued or not.
+  headersSent: boolean = true;
+}
 
 // Wrap a native→JS #Handlers callback so its body runs inside the target
 // stream's captured async-context frame — the JS-side equivalent of Node's
@@ -3183,7 +3190,6 @@ function callStreamClose(stream: ServerHttp2Stream) {
   if (!stream.destroyed && !stream.closed) stream.close();
 }
 class ServerHttp2Stream extends Http2Stream {
-  headersSent = false;
   constructor(streamId, session, headers) {
     super(streamId, session, headers);
   }
@@ -4164,6 +4170,7 @@ class ServerHttp2Session extends Http2Session {
         // user handler — in particular, losing WantTrailer/FinalCalled breaks
         // any later `sendTrailers()` with ERR_HTTP2_TRAILERS_NOT_READY.
         stream[bunHTTP2StreamStatus] |= StreamState.StreamResponded | StreamState.Delivered;
+        stream[kEndAfterHeaders] = (flags & NGHTTP2_FLAG_END_STREAM) !== 0;
         if (onServerStreamCreatedChannel.hasSubscribers) {
           onServerStreamCreatedChannel.publish({ stream, headers });
         }
@@ -5147,6 +5154,7 @@ class ClientHttp2Session extends Http2Session {
             // clobbered by a stale read-modify-write (see the server-side note
             // at the stream handler above).
             stream[bunHTTP2StreamStatus] |= StreamState.StreamResponded;
+            stream[kEndAfterHeaders] = (flags & NGHTTP2_FLAG_END_STREAM) !== 0;
             if (header_status === 421) {
               // 421 Misdirected Request
               removeOriginFromSet(self, stream);
@@ -5662,7 +5670,8 @@ class ClientHttp2Session extends Http2Session {
       }
       try {
         this.#onConnect(arguments);
-        listener?.$call(this, this);
+        // node passes the socket as the second argument, like the 'connect' event.
+        listener?.$call(this, this, this[bunHTTP2Socket]);
       } catch (e) {
         this.destroy(e);
       }

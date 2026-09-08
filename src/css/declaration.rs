@@ -486,8 +486,6 @@ impl<'bump> DeclarationHandler<'bump> {
             || self.handle_all(property)
     }
 
-    /// The `all` shorthand resets every property except `direction`,
-    /// `unicode-bidi` and custom properties.
     /// https://drafts.csswg.org/css-cascade-5/#all-shorthand
     fn handle_all(&mut self, property: &css::Property) -> bool {
         match property {
@@ -512,8 +510,7 @@ impl<'bump> DeclarationHandler<'bump> {
                         .push(css::Property::Unparsed(unparsed.deep_clone(bump)));
                     true
                 }
-                // An unparsed `direction`/`unicode-bidi` is pushed in place by the
-                // caller, so emit the typed value seen before it first.
+                // Keep a buffered typed value ahead of the unparsed one the caller pushes next.
                 css::PropertyId::Direction => {
                     if let Some(direction) = self.direction.take() {
                         self.decls.push(css::Property::Direction(direction));
@@ -532,8 +529,7 @@ impl<'bump> DeclarationHandler<'bump> {
         }
     }
 
-    /// Drops what the block declared so far, except the declarations that
-    /// `all` does not reset.
+    /// Drops everything the block declared so far that `all` resets.
     fn reset_for_all(&mut self) {
         let bump: &'bump Bump = self.decls.bump();
         let previous = core::mem::replace(self, DeclarationHandler::new(bump));

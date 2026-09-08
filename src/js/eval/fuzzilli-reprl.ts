@@ -17,8 +17,7 @@ globalThis.__filename = "/fuzzilli.js";
 // child, so fuzzed scripts must not be able to reach the real implementation.
 process.execve = () => {};
 
-// Everything the loop calls between scripts is captured here, because fuzzed
-// scripts overwrite globals and prototype methods.
+// Captured up front: fuzzed scripts overwrite globals and prototype methods.
 const { String, setTimeout, setInterval, setImmediate, clearTimeout, clearInterval, clearImmediate } = globalThis;
 const { apply } = Reflect;
 const { forEach: mapForEach, set: mapSet, clear: mapClear } = Map.prototype;
@@ -27,8 +26,7 @@ const addListener = process.on.bind(process);
 const removeListener = process.off.bind(process);
 const exit = process.exit.bind(process);
 
-// Print uncaught exception like workerd does. The thrown value comes from
-// fuzzed code, so converting it to a string can itself throw.
+// Print uncaught exception like workerd does. String(err) can throw.
 function reportUncaught(err) {
   try {
     print(`uncaught:${String(err)}`);
@@ -37,11 +35,8 @@ function reportUncaught(err) {
   }
 }
 
-// The loop gives the event loop a turn after every script, so promise
-// reactions and timer callbacks from fuzzed code do run. Without these
-// handlers the first unhandled rejection or async throw would exit the REPRL
-// child. Record it as a failed execution instead. A script can remove the
-// handlers, so they are installed again before every script.
+// An async throw or unhandled rejection fails the execution instead of
+// exiting the child. Installed before every script: scripts can remove them.
 let asyncFailure = false;
 const onAsyncFailure = err => {
   asyncFailure = true;
@@ -54,9 +49,8 @@ function installAsyncFailureHandlers() {
   addListener("unhandledRejection", onAsyncFailure);
 }
 
-// Timers that a script leaves behind would fire during later scripts. Track
-// the ones created through the globals and clear them once the script's
-// status is known.
+// Timers a script leaves behind are cleared so they do not fire during later
+// scripts.
 const pendingTimers = new Map();
 function tracked(set, clear) {
   return function () {
@@ -98,11 +92,8 @@ if (responseBytes !== 4) {
   throw new Error(`REPRL handshake failed: expected 4 bytes, got ${responseBytes}`);
 }
 
-// Main REPRL loop. Each iteration ends by scheduling the next one with
-// setImmediate, which gives the event loop one non-blocking turn per script:
-// it drains the microtasks the script queued (otherwise they, and everything
-// they capture, stay in the queue for the lifetime of this process), fires due
-// timers, and reaps subprocesses that have exited.
+// Main REPRL loop. setImmediate between scripts gives the event loop one
+// non-blocking turn: microtasks drain, due timers fire, exited children reap.
 function runNextScript() {
   // Read command
   const cmd = Buffer.alloc(4);

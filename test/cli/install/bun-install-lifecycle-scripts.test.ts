@@ -60,11 +60,11 @@ type TestCtx = {
   [Symbol.dispose](): void;
 };
 
-async function setupTest(): Promise<TestCtx> {
+async function setupTest(linker: "hoisted" | "isolated" = "hoisted"): Promise<TestCtx> {
   await acquireSlot();
   let released = false;
   try {
-    const { packageDir, packageJson } = await verdaccio.createTestDir({ bunfigOpts: { linker: "hoisted" } });
+    const { packageDir, packageJson } = await verdaccio.createTestDir({ bunfigOpts: { linker } });
     const env: Record<string, string> = {
       ...baseEnv,
       BUN_INSTALL_CACHE_DIR: join(packageDir, ".bun-cache"),
@@ -138,6 +138,137 @@ test.concurrent("ignore-scripts is read from npmrc", async () => {
   await runBunInstall(env, packageDir, { savesLockfile: false });
   expect(await checkScripts()).toEqual([true, true]);
 });
+
+for (const linker of ["hoisted", "isolated"] as const) {
+  // `lifecycle-blocking`'s postinstall appends a line to $LIFECYCLE_TEST_LOG, then with
+  // $LIFECYCLE_TEST_BLOCK set writes its pid there and never exits; without it, it writes
+  // `built.txt`. `lifecycle-blocking-parent` depends on it and writes its own `built.txt`.
+  test.concurrent(
+    `an install that stops before a dependency's lifecycle scripts finish runs them on the next install (${linker})`,
+    async () => {
+      using ctx = await setupTest(linker);
+      const { packageDir, packageJson, env } = ctx;
+      await write(
+        packageJson,
+        JSON.stringify({
+          name: "foo",
+          version: "1.0.0",
+          dependencies:
+            // With the isolated linker the parent stays blocked on `lifecycle-blocking` and
+            // never reaches its own postinstall before the install is killed. The hoisted
+            // linker would run both at once, so it installs the blocking package alone.
+            linker === "isolated" ? { "lifecycle-blocking-parent": "1.0.0" } : { "lifecycle-blocking": "1.0.0" },
+          trustedDependencies: ["lifecycle-blocking", "lifecycle-blocking-parent"],
+        }),
+      );
+
+      const log = join(packageDir, "runs.log");
+      const pidFile = join(packageDir, "lifecycle-blocking.pid");
+      const installedDir = (name: string) =>
+        linker === "isolated"
+          ? join(packageDir, "node_modules", ".bun", `${name}@1.0.0`, "node_modules", name)
+          : join(packageDir, "node_modules", name);
+      const state = async () => ({
+        runs: (await file(log).text()).split("\n").filter(Boolean).sort(),
+        blockingBuilt: await exists(join(installedDir("lifecycle-blocking"), "built.txt")),
+        blockingPending: await exists(join(installedDir("lifecycle-blocking"), ".bun-scripts-pending")),
+        parentBuilt: await exists(join(installedDir("lifecycle-blocking-parent"), "built.txt")),
+        parentPending: await exists(join(installedDir("lifecycle-blocking-parent"), ".bun-scripts-pending")),
+      });
+
+      // Kill `bun install` and the postinstall while the postinstall runs, the way an OOM
+      // kill or a cancelled CI job would.
+      {
+        await using install = spawn({
+          cmd: [bunExe(), "install"],
+          cwd: packageDir,
+          env: { ...env, LIFECYCLE_TEST_LOG: log, LIFECYCLE_TEST_BLOCK: pidFile },
+          stdin: "ignore",
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        let scriptPid: number | undefined;
+        while (scriptPid === undefined) {
+          if (await exists(pidFile)) {
+            scriptPid = Number(await file(pidFile).text());
+          } else if (install.exitCode !== null) {
+            throw new Error(
+              `bun install exited with ${install.exitCode} before the postinstall started:\n${await install.stderr.text()}`,
+            );
+          } else {
+            await Bun.sleep(10);
+          }
+        }
+        install.kill("SIGKILL");
+        await install.exited;
+        process.kill(scriptPid, "SIGKILL");
+        // On Windows a process keeps its working directory open, so wait until the script
+        // process is gone before the next install replaces that directory.
+        while (isWindows) {
+          try {
+            process.kill(scriptPid, 0);
+          } catch {
+            break;
+          }
+          await Bun.sleep(10);
+        }
+      }
+
+      expect(await state()).toEqual({
+        runs: ["lifecycle-blocking"],
+        blockingBuilt: false,
+        blockingPending: true,
+        parentBuilt: false,
+        parentPending: linker === "isolated",
+      });
+
+      // The next install sees the unfinished scripts, reinstalls those packages and runs them.
+      {
+        await using install = spawn({
+          cmd: [bunExe(), "install"],
+          cwd: packageDir,
+          env: { ...env, LIFECYCLE_TEST_LOG: log },
+          stdin: "ignore",
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [out, err, exitCode] = await Promise.all([install.stdout.text(), install.stderr.text(), install.exited]);
+        expect(err).not.toContain("error:");
+        expect(err).toContain("Saved lockfile");
+        expect(out).not.toContain("(no changes)");
+        expect(await state()).toEqual({
+          runs:
+            linker === "isolated"
+              ? ["lifecycle-blocking", "lifecycle-blocking", "lifecycle-blocking-parent"]
+              : ["lifecycle-blocking", "lifecycle-blocking"],
+          blockingBuilt: true,
+          blockingPending: false,
+          parentBuilt: linker === "isolated",
+          parentPending: false,
+        });
+        expect(exitCode).toBe(0);
+      }
+
+      // Once they have finished, a repeat install does not run them again.
+      {
+        const before = await state();
+        await using install = spawn({
+          cmd: [bunExe(), "install"],
+          cwd: packageDir,
+          env: { ...env, LIFECYCLE_TEST_LOG: log },
+          stdin: "ignore",
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [out, err, exitCode] = await Promise.all([install.stdout.text(), install.stderr.text(), install.exited]);
+        expect(err).not.toContain("error:");
+        expect(out).toContain("(no changes)");
+        expect(await state()).toEqual(before);
+        expect(exitCode).toBe(0);
+      }
+    },
+  );
+}
 
 test.concurrent("trustedDependencies matches the resolved package name, not the dependency alias", async () => {
   using ctx = await setupTest();

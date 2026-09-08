@@ -604,9 +604,7 @@ pub(crate) mod on_unhandled_rejection {
             // pending the BunTestPtr interior-mut reshape (see bun_test.rs).
             let buntest = unsafe { bun_test::buntest_as_mut(&buntest_strong) };
             if buntest.phase == bun_test::Phase::Collection {
-                // The file's top level or a describe() callback is still running. Report
-                // the error and keep collecting. Queueing a result here would drive the
-                // collector as if the describe() callback in flight had completed.
+                // Keep collecting: a queued result here would complete the describe() callback in flight.
                 buntest.on_uncaught_exception(global_object, Some(rejection), true, &RefDataValue::Start);
                 return;
             }

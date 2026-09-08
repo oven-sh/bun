@@ -1,4 +1,4 @@
-import { ClassDefinition, define } from "../../codegen/class-definitions";
+import { ClassDefinition, define } from "../../codegen/class-definitions.ts";
 
 const types = ["PostgresSQL", "MySQL"];
 const rustPaths = {

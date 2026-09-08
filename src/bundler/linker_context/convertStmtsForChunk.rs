@@ -62,15 +62,15 @@ pub(crate) fn convert_stmts_for_chunk(
 
     let output_format = c.options.output_format;
 
-    // If this file is a CommonJS entry point, double-write re-exports to the
-    // external CommonJS "module.exports" object in addition to our internal ESM
+    // If this file is the CommonJS entry point of this chunk, double-write re-exports
+    // to the external CommonJS "module.exports" object in addition to our internal ESM
     // export namespace object. The difference between these two objects is that
     // our internal one must not have the "__esModule" marker while the external
     // one must have the "__esModule" marker. This is done because an ES module
     // importing itself should not see the "__esModule" marker but a CommonJS module
     // importing us should see the "__esModule" marker.
     let mut module_exports_for_export: Option<Expr> = None;
-    if output_format == Format::Cjs && chunk.is_entry_point() {
+    if output_format == Format::Cjs && chunk.is_entry_point_file(source_index) {
         module_exports_for_export = Some(Expr::allocate(
             bump,
             E::Dot {

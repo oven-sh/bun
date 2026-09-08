@@ -380,6 +380,19 @@ const skipsForLeaksan = (() => {
     .filter(line => !line.startsWith("#") && line.length > 0);
 })();
 
+// Informational: a file that passes only on a retry and is not listed here is annotated as a new flake.
+const flakyTests = (() => {
+  const path = join(cwd, "test/flaky-tests.txt");
+  if (!existsSync(path)) return new Set();
+  return new Set(
+    readFileSync(path, "utf-8")
+      .split("\n")
+      .map(line => line.split("#")[0].trim())
+      .filter(line => line.length > 0),
+  );
+})();
+const isKnownFlakyTest = title => flakyTests.has(title.replaceAll("\\", "/"));
+
 const parallelAllowlist = (() => {
   try {
     const { dirs, excludeFiles } = JSON.parse(readFileSync(join(cwd, "test", "parallel-allowlist.json"), "utf-8"));
@@ -723,21 +736,17 @@ async function runTests() {
     }
 
     if (isBuildkite) {
-      // Group flaky tests together, regardless of the title
-      const context = flaky ? "flaky" : title;
+      // Group flaky tests together, regardless of the title; unlisted flakes get their own group above the known ones.
+      const newFlaky = flaky && !title.endsWith("package.json") && !isKnownFlakyTest(title);
+      const context = flaky ? (newFlaky ? "flaky-new" : "flaky") : title;
       const style = flaky ? "warning" : "error";
+      const priority = newFlaky ? 4 : 3;
       if (!flaky) attempt = 1; // no need to show the retries count on failures, we know it maxed out
 
-      if (title.startsWith("vendor")) {
-        const content = formatTestToMarkdown({ ...failure, testPath: title }, false, attempt - 1);
-        if (content) {
-          reportAnnotationToBuildKite({ context, label: title, content, style });
-        }
-      } else {
-        const content = formatTestToMarkdown(failure, false, attempt - 1);
-        if (content) {
-          reportAnnotationToBuildKite({ context, label: title, content, style });
-        }
+      const result = title.startsWith("vendor") ? { ...failure, testPath: title } : failure;
+      const content = formatTestToMarkdown(result, false, attempt - 1, newFlaky);
+      if (content) {
+        reportAnnotationToBuildKite({ context, label: title, content, style, priority });
       }
     }
 
@@ -1091,7 +1100,7 @@ async function runTests() {
       }
       if (rerun.length) {
         console.log(
-          `${getAnsi("yellow")}parallel bucket: ${evidence ? `retrying ${failed.size} failed and ${incomplete.size} unfinished file(s)${suites.size ? "" : " (from streamed output; no junit)"}` : `no junit and no streamed evidence, re-running all ${rerun.length} file(s)`} one at a time${getAnsi("reset")}`,
+          `${getAnsi("yellow")}parallel bucket: retrying ${failed.size} failed and ${rerun.length - failed.size} unfinished file(s) one at a time${getAnsi("reset")}`,
         );
         for (const testPath of rerun) {
           const result = await runOneTest(testPath, false);
@@ -1106,11 +1115,13 @@ async function runTests() {
             const detail = cases.length
               ? `\n\n\`\`\`terminal\n${cases.map(({ name, message }) => `✗ ${name}\n${message}`).join("\n\n")}\n\`\`\`\n\n`
               : "";
+            const unlisted = !isKnownFlakyTest(title);
             reportAnnotationToBuildKite({
-              context: "flaky",
+              context: unlisted ? "flaky-new" : "flaky",
               label: title,
               style: "warning",
-              content: `<details><summary><a href="${getFileUrl(title)}"><code>${title}</code></a> - ${reason} <i>(in the parallel batch on ${getBuildLabel()}; passed alone)</i></summary>${detail}</details>`,
+              priority: unlisted ? 4 : 3,
+              content: `<details><summary><a href="${getFileUrl(title)}"><code>${title}</code></a> - ${reason} <i>(in the parallel batch on ${getBuildLabel()}; passed alone)</i>${unlisted ? " <b>(not in test/flaky-tests.txt)</b>" : ""}</summary>${detail}</details>`,
             });
           }
         }
@@ -2822,9 +2833,10 @@ function getTestLabel() {
  * @param  {TestResult | TestResult[]} result
  * @param  {boolean} concise
  * @param  {number} retries
+ * @param  {boolean} [unlisted] passed on a retry but test/flaky-tests.txt does not list it
  * @returns {string}
  */
-function formatTestToMarkdown(result, concise, retries) {
+function formatTestToMarkdown(result, concise, retries, unlisted = false) {
   const results = Array.isArray(result) ? result : [result];
   const buildLabel = getTestLabel();
   const buildUrl = getBuildUrl();
@@ -2870,6 +2882,9 @@ function formatTestToMarkdown(result, concise, retries) {
     }
     if (retries > 0) {
       markdown += ` (${retries} ${retries === 1 ? "retry" : "retries"})`;
+    }
+    if (unlisted) {
+      markdown += ` <b>(not in test/flaky-tests.txt)</b>`;
     }
     if (newFiles.includes(testTitle)) {
       markdown += ` (new)`;

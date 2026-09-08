@@ -413,15 +413,14 @@ fn bufs_storage_get() -> *mut Bufs {
 
 #[cold]
 fn bufs_storage_init() -> *mut Bufs {
-    // SAFETY: every field of `Bufs` is a byte/integer array
-    // (`PathBuffer` = `[u8; N]`, `[FD; 256]` where `Fd` is a
-    // `#[repr(C)]` integer newtype, `[MaybeUninit<_>; 256]` which has
-    // no validity requirement, `()`), so EVERY bit-pattern — not just
-    // all-zero — is a valid `Bufs`. Each
-    // field is scratch (write-then-read within a single resolve call,
-    // including `open_dirs` which is bounded by `open_dir_count`), so
-    // there is no need to pay for zero-filling ~100 KiB on first use.
-    let p: *mut Bufs = Box::leak(unsafe { Box::<Bufs>::new_uninit().assume_init() });
+    // SAFETY: every field of `Bufs` is a byte/integer array (`PathBuffer` =
+    // `[u8; N]`, `[u8; 512]`, `[FD; 256]` where `Fd` is a `#[repr(transparent)]`
+    // integer newtype with no niche) or `[MaybeUninit<_>; 256]`, so the
+    // all-zero bit-pattern is a valid `Bufs`. `new_zeroed` (not `new_uninit`)
+    // because integers must be initialized: a never-written `[u8; N]` is UB
+    // even though every bit pattern is a valid `u8`. Runs once per thread;
+    // `alloc_zeroed` of ~100 KiB is usually fresh OS-zeroed pages.
+    let p: *mut Bufs = Box::leak(unsafe { Box::<Bufs>::new_zeroed().assume_init() });
     BUFS_PTR.with(|s| s.0.set(p));
     p
 }
@@ -1602,7 +1601,7 @@ impl<'a> Resolver<'a> {
                 } else if !dir.abs_real_path.is_empty() {
                     // When the directory is a symlink, we don't need to call getFdPath.
                     let parts = [dir.abs_real_path, query.entry().base()];
-                    let mut buf = bun_paths::PathBuffer::uninit();
+                    let mut buf = bun_paths::path_buffer_pool::get();
 
                     // NOTE: `abs_buf` returns a borrow of `buf`; capture only the
                     // length so `buf` can be re-borrowed for null-termination below.

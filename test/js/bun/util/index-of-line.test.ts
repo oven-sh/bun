@@ -1,5 +1,5 @@
 import { indexOfLine } from "bun";
-import { expect, test } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 
 test("indexOfLine handles non-number offset", () => {
@@ -126,4 +126,41 @@ test("indexOfLine skips multi-byte sequences correctly", () => {
   const buf3 = Buffer.from("é\nabc\néé\n");
   expect(indexOfLine(buf3, 3)).toBe(6);
   expect(indexOfLine(buf3, 7)).toBe(11);
+});
+
+// A lead byte whose continuation bytes are missing must not hide the newline
+// that follows it.
+describe.each([
+  { bytes: [0xf0, 0x0a], offset: 0, expected: 1 },
+  { bytes: [0xe2, 0x82, 0x0a], offset: 0, expected: 2 },
+  { bytes: [0xc3, 0x0a, 0x41, 0x0a], offset: 0, expected: 1 },
+  { bytes: [0x41, 0xf0, 0x0a, 0x0a], offset: 0, expected: 2 },
+  { bytes: [0x80, 0x0a], offset: 0, expected: 1 },
+  { bytes: [0xff, 0x0a], offset: 0, expected: 1 },
+  { bytes: [0xf0], offset: 0, expected: -1 },
+  { bytes: [0xf0, 0x90], offset: 0, expected: -1 },
+  // the offset lands on the lead byte
+  { bytes: [0x41, 0x42, 0xf0, 0x0a], offset: 2, expected: 3 },
+  // a valid sequence directly before the newline
+  { bytes: [0xf0, 0x9f, 0x98, 0x8b, 0x0a], offset: 0, expected: 4 },
+])("indexOfLine with invalid UTF-8 $bytes at offset $offset", ({ bytes, offset, expected }) => {
+  test(`returns ${expected}`, () => {
+    expect(indexOfLine(new Uint8Array(bytes), offset)).toBe(expected);
+  });
+});
+
+test("console async iterator splits lines after a truncated multi-byte lead byte", async () => {
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", "for await (const line of console) console.log(JSON.stringify(line))"],
+    env: bunEnv,
+    stdin: new Uint8Array([0xf0, 0x0a, 0x62, 0x0a]),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  // Only the split matters here. What the iterator yields after the last
+  // newline is a separate question.
+  expect(stdout).toStartWith('"\ufffd"\n"b"\n');
+  expect(stderr).toBe("");
+  expect(exitCode).toBe(0);
 });

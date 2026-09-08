@@ -76,6 +76,7 @@
     macro(binaryTypeNodeBuffer, "nodebuffer") \
     macro(binaryTypeUint8Array, "uint8array") \
     macro(buffer, "buffer") \
+    macro(fetchBasic, "basic") \
     macro(fetchCors, "cors") \
     macro(fetchFollow, "follow") \
     macro(fetchForceCache, "force-cache") \

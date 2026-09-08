@@ -213,6 +213,7 @@ pub struct Response {
     init: JsCell<Init>,
     url: JsCell<BunString>,
     redirected: Cell<bool>,
+    response_type: Cell<ResponseType>,
     /// The JS wrapper, fetch (so a discarded JS Response can still resolve
     /// its body) and HTMLRewriter each hold a ref.
     ref_count: Cell<u32>,
@@ -237,11 +238,39 @@ impl Default for Response {
             init: JsCell::new(Init::default()),
             url: JsCell::new(BunString::EMPTY),
             redirected: Cell::new(false),
+            response_type: Cell::new(ResponseType::Default),
             ref_count: Cell::new(1),
             weak_ptr_data: WeakPtrData::EMPTY,
             js_ref: JsCell::new(JsRef::empty()),
             reported_estimated_size: Cell::new(0),
             abort_listener: JsCell::new(None),
+        }
+    }
+}
+
+/// <https://fetch.spec.whatwg.org/#concept-response-type>
+///
+/// Bun has no notion of an origin, so response tainting is always "basic" and
+/// the filtered types ("cors", "opaque", "opaqueredirect") are unreachable.
+#[repr(u8)]
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub enum ResponseType {
+    /// `new Response()`, `Response.json()`, `Response.redirect()`, and the
+    /// responses Bun's servers construct.
+    Default = 0,
+    /// Anything `fetch()` resolves with.
+    Basic = 1,
+    /// `Response.error()`.
+    Error = 2,
+}
+
+impl ResponseType {
+    fn to_js(self, global_this: &JSGlobalObject) -> JSValue {
+        let common_strings = global_this.common_strings();
+        match self {
+            Self::Default => common_strings.default(),
+            Self::Basic => common_strings.basic(),
+            Self::Error => common_strings.error(),
         }
     }
 }
@@ -314,12 +343,14 @@ impl Response {
         body: Body,
         url: BunString,
         redirected: bool,
+        response_type: ResponseType,
     ) -> Response {
         Response {
             init: JsCell::new(response_init),
             body: JsCell::new(body),
             url: JsCell::new(url),
             redirected: Cell::new(redirected),
+            response_type: Cell::new(response_type),
             ..Default::default()
         }
     }
@@ -359,6 +390,11 @@ impl Response {
     #[inline]
     pub(crate) fn url(&self) -> &BunString {
         self.url.get()
+    }
+
+    #[inline]
+    pub(crate) fn response_type(&self) -> ResponseType {
+        self.response_type.get()
     }
 
     #[inline]
@@ -549,7 +585,8 @@ impl Response {
 
     // JS getter; codegen calls this exact name.
     pub(crate) fn get_url(this: &Self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
-        // https://developer.mozilla.org/en-US/docs/Web/API/Response/url
+        // https://fetch.spec.whatwg.org/#dom-response-url
+        // fetch() stores the url with the fragment already excluded.
         this.url.get().to_js(global_this)
     }
 
@@ -557,11 +594,8 @@ impl Response {
         this: &Self,
         global_this: &JSGlobalObject,
     ) -> JsResult<JSValue> {
-        if this.init.get().status_code < 200 {
-            return Ok(global_this.common_strings().error());
-        }
-
-        Ok(global_this.common_strings().default())
+        // https://fetch.spec.whatwg.org/#dom-response-type
+        Ok(this.response_type.get().to_js(global_this))
     }
 
     pub(crate) fn get_status_text(this: &Self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
@@ -805,6 +839,7 @@ impl Response {
             init: JsCell::new(init),
             url: JsCell::new(self.url.get().clone()),
             redirected: Cell::new(self.redirected.get()),
+            response_type: Cell::new(self.response_type.get()),
             ..Default::default()
         })
     }
@@ -1040,6 +1075,7 @@ impl Response {
                 ..Default::default()
             }),
             body: JsCell::new(Body::new(BodyValue::Empty)),
+            response_type: Cell::new(ResponseType::Error),
             ..Default::default()
         }));
 

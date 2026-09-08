@@ -5423,6 +5423,7 @@ impl DevServer {
                     )),
                     BunString::EMPTY,
                     false,
+                    crate::webcore::ResponseType::Default,
                 );
                 let vm = self.vm();
                 let _exit = vm.enter_event_loop_scope();

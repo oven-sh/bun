@@ -37,6 +37,7 @@ enum CommonStringsForRust {
     QuicDatagramLost = 22,
     Base64 = 23,
     Write = 24,
+    FetchBasic = 25,
 }
 
 unsafe extern "C" {
@@ -91,6 +92,11 @@ impl<'a> CommonStrings<'a> {
     #[inline]
     pub fn default(self) -> JSValue {
         CommonStringsForRust::FetchDefault.to_js(self.global_object)
+    }
+    /// `"basic"`
+    #[inline]
+    pub fn basic(self) -> JSValue {
+        CommonStringsForRust::FetchBasic.to_js(self.global_object)
     }
     /// `"error"`
     #[inline]

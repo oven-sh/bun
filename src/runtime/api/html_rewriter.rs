@@ -462,6 +462,7 @@ impl HTMLRewriter {
                 body_value,
                 BunString::EMPTY,
                 false,
+                webcore::ResponseType::Default,
             ));
 
             // Carries its own article: "an ArrayBuffer", not "a ArrayBuffer".
@@ -1038,6 +1039,7 @@ impl RewriterPipe {
             }),
             BunString::EMPTY,
             false,
+            original.response_type(),
         ));
         let result_ref = BackRef::from(result);
         // SAFETY: `result` is the live Response just allocated above.

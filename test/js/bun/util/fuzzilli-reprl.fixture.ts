@@ -32,7 +32,8 @@ const statuses: number[] = [];
 const realFstatSync = fs.fstatSync;
 const realReadSync = fs.readSync;
 const realWriteSync = fs.writeSync;
-const realExit = process.exit.bind(process);
+// process.exit goes through process.reallyExit, which the wrapper stubs.
+const realExit = process.reallyExit.bind(process);
 
 (fs as any).fstatSync = function (fd: any, ...rest: any[]) {
   if (fd === REPRL_CRFD) return {} as any;

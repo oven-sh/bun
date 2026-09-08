@@ -153,86 +153,40 @@ describe("Bun.serve SSL validations", () => {
   }
 });
 
-const tlsFixtures = join(import.meta.dir, "..", "..", "node", "tls", "fixtures");
-const serverKey = readFileSync(join(tlsFixtures, "agent10-key.pem"), "utf8");
-const serverCert = readFileSync(join(tlsFixtures, "agent10-cert.pem"), "utf8");
-// ec10 chains to ca5; agent1 chains to ca1 and is not trusted by ca5.
-const clientCa = readFileSync(join(tlsFixtures, "ca5-cert.pem"), "utf8");
-const trustedClient = {
-  key: readFileSync(join(tlsFixtures, "ec10-key.pem"), "utf8"),
-  cert: readFileSync(join(tlsFixtures, "ec10-cert.pem"), "utf8"),
-};
-const untrustedClient = {
-  key: readFileSync(join(tlsFixtures, "agent1-key.pem"), "utf8"),
-  cert: readFileSync(join(tlsFixtures, "agent1-cert.pem"), "utf8"),
-};
-
-type ClientOptions = { key?: string; cert?: string; session?: Buffer };
-function request(port: number, servername: string, clientTls: ClientOptions = {}) {
-  const { promise, resolve } = Promise.withResolvers<{ status: string; session: Buffer | undefined }>();
-  const socket = tls.connect({ host: "127.0.0.1", port, servername, rejectUnauthorized: false, ...clientTls });
-  let received = "";
-  let session: Buffer | undefined;
-  socket.on("secureConnect", () => {
-    socket.write(`GET / HTTP/1.1\r\nHost: ${servername}\r\nConnection: close\r\n\r\n`);
-  });
-  socket.on("session", buf => (session ??= buf));
-  socket.on("data", chunk => (received += chunk.toString()));
-  // A rejected client sees either a clean close or a reset; both mean no response.
-  socket.on("error", () => {});
-  socket.on("close", () =>
-    resolve({ status: received.split("\r\n")[0] || "connection closed without a response", session }),
-  );
-  return promise;
-}
-
-describe("Bun.serve tls material given both inline and as a *File path", () => {
-  // agent1 chains to ca1 (given inline), ec10 chains to ca5 (given as caFile).
-  const ca1 = readFileSync(join(tlsFixtures, "ca1-cert.pem"), "utf8");
-  const ca5File = join(tlsFixtures, "ca5-cert.pem");
-
-  test.each(["ca first", "caFile first"])("ca and caFile are one trust list (%s)", async order => {
-    const material = order === "ca first" ? { ca: ca1, caFile: ca5File } : { caFile: ca5File, ca: ca1 };
-    using server = Bun.serve({
-      port: 0,
-      tls: { key: serverKey, cert: serverCert, ...material, requestCert: true, rejectUnauthorized: true },
-      fetch: () => new Response("ok"),
-    });
-    const { status: viaInlineCa } = await request(server.port, "localhost", untrustedClient);
-    const { status: viaCaFile } = await request(server.port, "localhost", trustedClient);
-    const { status: noCert } = await request(server.port, "localhost");
-    expect({ viaInlineCa, viaCaFile, noCert }).toEqual({
-      viaInlineCa: "HTTP/1.1 200 OK",
-      viaCaFile: "HTTP/1.1 200 OK",
-      noCert: "connection closed without a response",
-    });
-  });
-
-  test("an invalid inline ca is still rejected when caFile is set", () => {
-    const tls = {
-      key: serverKey,
-      cert: serverCert,
-      ca: "-----BEGIN CERTIFICATE-----\nZ2FyYmFnZQ==\n-----END CERTIFICATE-----\n",
-      caFile: ca5File,
-    };
-    expect(() => Bun.serve({ port: 0, tls, fetch: () => new Response("ok") })).toThrow("Failed to create HTTP server");
-    // Bun.listen names the SSL context error.
-    expect(() => Bun.listen({ hostname: "127.0.0.1", port: 0, tls, socket: { data() {} } })).toThrow(/^Invalid CA$/);
-  });
-
-  test("cert + certFile and key + keyFile throw instead of serving one of them", () => {
-    const serve = (extra: object) =>
-      Bun.serve({ port: 0, tls: { key: serverKey, cert: serverCert, ...extra }, fetch: () => new Response("ok") });
-    expect(() => serve({ certFile: join(tlsFixtures, "agent10-cert.pem") })).toThrow(
-      "TLSOptions.cert and TLSOptions.certFile cannot both be set. Pass the file as cert: Bun.file(path) instead.",
-    );
-    expect(() => serve({ keyFile: join(tlsFixtures, "agent10-key.pem") })).toThrow(
-      "TLSOptions.key and TLSOptions.keyFile cannot both be set. Pass the file as key: Bun.file(path) instead.",
-    );
-  });
-});
-
 describe("Bun.serve per-serverName client certificate policy", () => {
+  const tlsFixtures = join(import.meta.dir, "..", "..", "node", "tls", "fixtures");
+  const serverKey = readFileSync(join(tlsFixtures, "agent10-key.pem"), "utf8");
+  const serverCert = readFileSync(join(tlsFixtures, "agent10-cert.pem"), "utf8");
+  // ec10 chains to ca5; agent1 chains to ca1 and is not trusted by ca5.
+  const clientCa = readFileSync(join(tlsFixtures, "ca5-cert.pem"), "utf8");
+  const trustedClient = {
+    key: readFileSync(join(tlsFixtures, "ec10-key.pem"), "utf8"),
+    cert: readFileSync(join(tlsFixtures, "ec10-cert.pem"), "utf8"),
+  };
+  const untrustedClient = {
+    key: readFileSync(join(tlsFixtures, "agent1-key.pem"), "utf8"),
+    cert: readFileSync(join(tlsFixtures, "agent1-cert.pem"), "utf8"),
+  };
+
+  type ClientOptions = { key?: string; cert?: string; session?: Buffer };
+  function request(port: number, servername: string, clientTls: ClientOptions = {}) {
+    const { promise, resolve } = Promise.withResolvers<{ status: string; session: Buffer | undefined }>();
+    const socket = tls.connect({ host: "127.0.0.1", port, servername, rejectUnauthorized: false, ...clientTls });
+    let received = "";
+    let session: Buffer | undefined;
+    socket.on("secureConnect", () => {
+      socket.write(`GET / HTTP/1.1\r\nHost: ${servername}\r\nConnection: close\r\n\r\n`);
+    });
+    socket.on("session", buf => (session ??= buf));
+    socket.on("data", chunk => (received += chunk.toString()));
+    // A rejected client sees either a clean close or a reset; both mean no response.
+    socket.on("error", () => {});
+    socket.on("close", () =>
+      resolve({ status: received.split("\r\n")[0] || "connection closed without a response", session }),
+    );
+    return promise;
+  }
+
   test("requestCert/rejectUnauthorized on a non-default serverName entry are enforced for that name only", async () => {
     using server = Bun.serve({
       port: 0,

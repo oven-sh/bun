@@ -1431,6 +1431,13 @@ fn overlay_bunfig_install(install: &mut Api::BunInstall, bunfig: Api::BunInstall
         }
     }
 
+    // `ca` and `cafile` are one setting: the TLS layer uses only `cafile` when both
+    // are set, so bunfig replaces both or neither rather than mixing with .npmrc.
+    if ca.is_some() || cafile.is_some() {
+        install.ca = ca;
+        install.cafile = cafile;
+    }
+
     macro_rules! overlay {
         ($($field:ident),* $(,)?) => {
             $( if $field.is_some() { install.$field = $field; } )*
@@ -1455,9 +1462,7 @@ fn overlay_bunfig_install(install: &mut Api::BunInstall, bunfig: Api::BunInstall
         frozen_lockfile,
         exact,
         concurrent_scripts,
-        cafile,
         save_text_lockfile,
-        ca,
         ignore_scripts,
         link_workspace_packages,
         node_linker,

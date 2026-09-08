@@ -188,6 +188,8 @@ ca[]="-----BEGIN CERTIFICATE-----\n...\n-----END CERTIFICATE-----"
 cafile=/path/to/ca-bundle.crt
 ```
 
+If both are set, only `cafile` is used. A `ca` or `cafile` in `bunfig.toml`, or `--ca` / `--cafile` on the command line, replaces both.
+
 ### `omit` and `include`: Control dependency types
 
 Control which dependency types Bun installs:

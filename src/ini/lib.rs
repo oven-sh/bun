@@ -1367,7 +1367,16 @@ mod draft {
             }
         }
 
-        if let Some(query) = out.as_property(b"ca") {
+        let ca = out.as_property(b"ca");
+        let cafile = out.as_property(b"cafile");
+        // `ca` and `cafile` are one setting (only `cafile` is used when both are set),
+        // so a project .npmrc that sets either replaces both from the user .npmrc.
+        if ca.is_some() || cafile.is_some() {
+            install.ca = None;
+            install.cafile = None;
+        }
+
+        if let Some(query) = ca {
             if let Some(str_) = query.expr.as_utf8_string_literal() {
                 install.ca = Some(bun_api::Ca::Str(Box::<[u8]>::from(str_)));
             } else if let ExprData::EArray(arr) = &query.expr.data {
@@ -1381,7 +1390,7 @@ mod draft {
             }
         }
 
-        if let Some(query) = out.as_property(b"cafile") {
+        if let Some(query) = cafile {
             if let Some(cafile) = query.expr.as_string_cloned(bump)? {
                 install.cafile = Some(Box::<[u8]>::from(cafile));
             }

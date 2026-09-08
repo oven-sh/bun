@@ -232,10 +232,10 @@ describe("certificate authority", () => {
     expect(err).not.toContain("error:");
     expect(await exited).toBe(0);
   });
-  test("--ca is trusted in addition to a cafile from bunfig", async () => {
+  test("--ca replaces a cafile from bunfig", async () => {
     // The registry's certificate is only in --ca; the bunfig cafile holds an
-    // unrelated CA. Both are one trust list, so the CLI flag is not shadowed
-    // by the config file.
+    // unrelated CA. The CLI flag replaces the config file's CA settings as a
+    // whole instead of being shadowed by its cafile.
     using server = Bun.serve({
       port: 0,
       fetch: mockRegistryFetch(),

@@ -992,11 +992,16 @@ static X509_STORE *us_ssl_ctx_get_own_cert_store(SSL_CTX *ctx) {
   return store;
 }
 
-/* Every CERTIFICATE block readable from `in` as DER into `certs`. User-supplied certificates are validated with a full
- * parse here so a bad one fails the context rather than a later handshake; the parsed object is dropped and the store
- * keeps the DER lazily. Returns the number appended, or -1 when the first certificate block does not decode or parse.
- * As with a PEM_read_bio_X509 loop, blocks after one that fails are ignored. */
-static int us_collect_ca_bio(SSL_CTX *ctx, BIO *in, STACK_OF(CRYPTO_BUFFER) *certs) {
+/* The `ca` option: every CERTIFICATE block of `content` as DER into `certs`. User-supplied certificates are validated
+ * with a full parse here so a bad one fails the context rather than a later handshake; the parsed object is dropped and
+ * the store keeps the DER lazily. Returns the number appended, or -1 for content that is not PEM or whose first
+ * certificate block does not decode or parse. As with a PEM_read_bio_X509 loop, a PEM document with no certificates
+ * (Node's tests pass a private key) counts as zero, and blocks after one that fails are ignored. */
+static int us_collect_ca_pem(SSL_CTX *ctx, const char *content, STACK_OF(CRYPTO_BUFFER) *certs) {
+  if (content == NULL) return 0;
+  ERR_clear_error();
+  BIO *in = BIO_new_mem_buf(content, strlen(content));
+  if (in == NULL) return -1;
   int count = 0;
   for (;;) {
     uint8_t *der = NULL;
@@ -1022,18 +1027,6 @@ static int us_collect_ca_bio(SSL_CTX *ctx, BIO *in, STACK_OF(CRYPTO_BUFFER) *cer
     }
     count++;
   }
-  return count;
-}
-
-/* The `ca` option: the CERTIFICATE blocks of `content` into `certs`. Returns the number appended, or -1 for content that
- * is not PEM or whose first certificate block does not decode or parse. A PEM document with no certificates (Node's
- * tests pass a private key) counts as zero. */
-static int us_collect_ca_pem(SSL_CTX *ctx, const char *content, STACK_OF(CRYPTO_BUFFER) *certs) {
-  if (content == NULL) return 0;
-  ERR_clear_error();
-  BIO *in = BIO_new_mem_buf(content, strlen(content));
-  if (in == NULL) return -1;
-  int count = us_collect_ca_bio(ctx, in, certs);
   BIO_free(in);
   if (count == 0) {
     unsigned long pem_err = ERR_peek_last_error();
@@ -1043,28 +1036,6 @@ static int us_collect_ca_pem(SSL_CTX *ctx, const char *content, STACK_OF(CRYPTO_
     }
   }
   ERR_clear_error();
-  return count;
-}
-
-/* The `caFile` option: the file's CERTIFICATE blocks into `certs`, as us_collect_ca_pem does for an inline `ca` entry,
- * except that a file holding no certificate is an error, as it was for SSL_load_client_CA_file. Returns the number
- * appended, or -1 with *err set: LOAD_CA_FILE when the file cannot be opened, INVALID_CA_FILE for its contents. */
-static int us_collect_ca_file(SSL_CTX *ctx, const char *path, STACK_OF(CRYPTO_BUFFER) *certs,
-                              enum create_bun_socket_error_t *err) {
-  ERR_clear_error();
-  BIO *in = BIO_new_file(path, "rb");
-  if (in == NULL) {
-    ERR_clear_error();
-    *err = CREATE_BUN_SOCKET_ERROR_LOAD_CA_FILE;
-    return -1;
-  }
-  int count = us_collect_ca_bio(ctx, in, certs);
-  BIO_free(in);
-  ERR_clear_error();
-  if (count <= 0) {
-    *err = CREATE_BUN_SOCKET_ERROR_INVALID_CA_FILE;
-    return -1;
-  }
   return count;
 }
 
@@ -1377,34 +1348,46 @@ SSL_CTX *us_ssl_ctx_build_raw(struct us_bun_socket_context_options_t options,
    * everywhere downstream — no special "owner" path. */
   ssl_ctx_drop_passphrase(ssl_context);
 
-  if (options.ca_file_name || (options.ca && options.ca_count > 0)) {
+  if (options.ca_file_name) {
     /* An explicit CA replaces the default trust store (Node.js semantics):
-     * chains must validate exclusively against the supplied CAs, so they go
-     * into the SSL_CTX's own, initially-empty X509_STORE from SSL_CTX_new() —
-     * otherwise a server doing mTLS with `ca: [internalCA]` would also accept
-     * any client certificate that chains to a public root. `caFile` and the
-     * inline `ca` entries are one trust list: both are collected here and
-     * installed together, rather than the file shadowing the inline CAs. */
+     * chains must validate exclusively against the supplied CAs. The SSL_CTX
+     * already owns a fresh, empty X509_STORE from SSL_CTX_new(), so
+     * SSL_CTX_load_verify_locations below populates only the user's CAs. */
+    STACK_OF(X509_NAME) *ca_list = SSL_load_client_CA_file(options.ca_file_name);
+    if (ca_list == NULL) {
+      *err = CREATE_BUN_SOCKET_ERROR_LOAD_CA_FILE;
+      ssl_ctx_build_fail(ssl_context);
+      return NULL;
+    }
+    SSL_CTX_set_client_CA_list(ssl_context, ca_list);
     us_ex_idx_ensure();
     SSL_CTX_set_ex_data(ssl_context, us_ctx_user_ca_ex_idx, (void *)1);
+    if (SSL_CTX_load_verify_locations(ssl_context, options.ca_file_name, NULL) != 1) {
+      *err = CREATE_BUN_SOCKET_ERROR_INVALID_CA_FILE;
+      ssl_ctx_build_fail(ssl_context);
+      return NULL;
+    }
+    SSL_CTX_set_verify(ssl_context,
+        options.reject_unauthorized ? (SSL_VERIFY_PEER | SSL_VERIFY_FAIL_IF_NO_PEER_CERT)
+                                    : SSL_VERIFY_PEER,
+        us_verify_callback);
+
+  } else if (options.ca && options.ca_count > 0) {
+    us_ex_idx_ensure();
+    SSL_CTX_set_ex_data(ssl_context, us_ctx_user_ca_ex_idx, (void *)1);
+    /* As above: user CAs only, into the SSL_CTX's own initially-empty store —
+     * otherwise a server doing mTLS with `ca: [internalCA]` would also accept
+     * any client certificate that chains to a public root. */
     X509_STORE *cert_store = SSL_CTX_get_cert_store(ssl_context);
     STACK_OF(CRYPTO_BUFFER) *ca_certs = sk_CRYPTO_BUFFER_new_null();
-    enum create_bun_socket_error_t ca_err = options.ca && options.ca_count > 0 ? CREATE_BUN_SOCKET_ERROR_INVALID_CA
-                                                                                 : CREATE_BUN_SOCKET_ERROR_INVALID_CA_FILE;
-    if (ca_certs != NULL && options.ca_file_name &&
-        us_collect_ca_file(ssl_context, options.ca_file_name, ca_certs, &ca_err) < 0) {
-      sk_CRYPTO_BUFFER_pop_free(ca_certs, CRYPTO_BUFFER_free);
-      ca_certs = NULL;
-    }
     for (unsigned int i = 0; ca_certs != NULL && i < options.ca_count; i++) {
       if (us_collect_ca_pem(ssl_context, options.ca[i], ca_certs) < 0) {
-        ca_err = CREATE_BUN_SOCKET_ERROR_INVALID_CA;
         sk_CRYPTO_BUFFER_pop_free(ca_certs, CRYPTO_BUFFER_free);
         ca_certs = NULL;
       }
     }
     if (ca_certs == NULL || !us_install_ca_buffers(ssl_context, cert_store, ca_certs)) {
-      *err = ca_err;
+      *err = CREATE_BUN_SOCKET_ERROR_INVALID_CA;
       ssl_ctx_build_fail(ssl_context);
       return NULL;
     }

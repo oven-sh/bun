@@ -227,6 +227,49 @@ describe("fs.watch", () => {
     });
   });
 
+  // On POSIX `a\b` is one filename, not `a/b`.
+  test.skipIf(isWindows)("a backslash in the path is not a separator", async () => {
+    const dir = tempDirWithFiles("watch-backslash", { "a/other.txt": "unrelated" });
+    const literal = path.join(dir, "a\\b");
+    fs.writeFileSync(literal, "literal");
+
+    // `a/b` does not exist, so a watcher that split on `\` throws ENOENT here.
+    const watcher = fs.watch(literal);
+    try {
+      const { promise, resolve } = Promise.withResolvers<[string, string | Buffer | null]>();
+      watcher.once("change", (event, filename) => resolve([event, filename]));
+      const interval = repeat(() => fs.writeFileSync(literal, "changed"));
+      const [event, filename] = await promise.finally(() => clearInterval(interval));
+      expect([event, filename]).toEqual(["change", "a\\b"]);
+    } finally {
+      watcher.close();
+    }
+  });
+
+  // The kernel resolves `link/..` to the parent of the link target. A lexical
+  // join folds it to the directory that holds the link instead.
+  test.skipIf(isWindows)("`symlink/..` in the path resolves through the symlink", async () => {
+    const dir = tempDirWithFiles("watch-dotdot", { "d/keep.txt": "", "other/sub/keep.txt": "" });
+    fs.symlinkSync(path.join(dir, "other", "sub"), path.join(dir, "d", "link"));
+
+    // d/link/.. is other/, not d/. (path.join would fold the `..` away.)
+    const watcher = fs.watch(`${dir}/d/link/..`);
+    try {
+      const { promise, resolve } = Promise.withResolvers<string | Buffer | null>();
+      watcher.on("change", (event, filename) => {
+        if (filename === "in-other.txt" || filename === "in-d.txt") resolve(filename);
+      });
+      const interval = repeat(() => {
+        fs.writeFileSync(path.join(dir, "other", "in-other.txt"), "x");
+        fs.writeFileSync(path.join(dir, "d", "in-d.txt"), "x");
+      });
+      const filename = await promise.finally(() => clearInterval(interval));
+      expect(filename).toBe("in-other.txt");
+    } finally {
+      watcher.close();
+    }
+  });
+
   test("should emit 'change' event when file is modified", done => {
     const filepath = path.join(testDir, "watch.txt");
 

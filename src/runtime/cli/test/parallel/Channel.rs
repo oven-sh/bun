@@ -271,13 +271,9 @@ impl<Owner: ChannelOwner> Channel<Owner> {
     /// `.ipc` extra-fd parent end, or the worker's just-opened pipe). Starts
     /// reading. On failure the caller still owns `pipe`.
     ///
-    /// We keep the pipe ref'd:
-    /// the worker (and the coordinator before workers register process exit
-    /// handles) has nothing else keeping `uv_loop_alive()` true, so unref'ing
-    /// here makes autoTick() take the tickWithoutIdle (NOWAIT) path and never
-    /// block for the peer's first frame. The pipe is closed explicitly in
-    /// `Drop`, and both sides exit via Global.exit / drive() returning, so
-    /// the extra ref never holds the process open.
+    /// The pipe stays ref'd: until the peer's first frame it is the only
+    /// handle keeping `uv_loop_alive()` true, so autoTick() would otherwise
+    /// take the NOWAIT path and never block. `Drop` closes it.
     #[cfg(windows)]
     pub(crate) fn adopt_pipe(
         this: *mut Self,

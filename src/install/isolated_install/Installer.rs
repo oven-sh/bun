@@ -2470,8 +2470,11 @@ impl<'a> Installer<'a> {
                 continue;
             }
             // a patched entry is vouched for by its `.bun-tag` instead (the patch may edit package.json)
-            let patch_info =
-                self.package_patch_info(pkg_names[pkg_id as usize], pkg_name_hashes[pkg_id as usize], pkg_res);
+            let patch_info = self.package_patch_info(
+                pkg_names[pkg_id as usize],
+                pkg_name_hashes[pkg_id as usize],
+                pkg_res,
+            );
             if !matches!(patch_info, Ok(PatchInfo::None)) {
                 continue;
             }

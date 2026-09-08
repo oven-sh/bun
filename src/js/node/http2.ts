@@ -5668,10 +5668,12 @@ class ClientHttp2Session extends Http2Session {
         process.nextTick(onConnect.bind(this));
         return;
       }
+      // Captured first: #onConnect() destroys the session (and drops the socket) when close()
+      // ran before the connection completed, and the 'connect' event still carries the socket.
+      const socket = this[bunHTTP2Socket];
       try {
         this.#onConnect(arguments);
-        // node passes the socket as the second argument, like the 'connect' event.
-        listener?.$call(this, this, this[bunHTTP2Socket]);
+        listener?.$call(this, this, socket);
       } catch (e) {
         this.destroy(e);
       }

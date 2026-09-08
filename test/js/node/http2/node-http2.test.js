@@ -6080,10 +6080,12 @@ describe("stream getters over the lifecycle", () => {
     const server = http2.createServer();
     await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
     try {
-      const { promise, resolve } = Promise.withResolvers();
+      const { promise, resolve, reject } = Promise.withResolvers();
       const client = http2.connect(`http://127.0.0.1:${server.address().port}`, {}, (session, socket) =>
         resolve({ sameSession: session === client, socket }),
       );
+      client.on("error", reject);
+      client.on("close", () => reject(new Error("session closed before the connect listener ran")));
       try {
         const args = await promise;
         expect(args.sameSession).toBe(true);

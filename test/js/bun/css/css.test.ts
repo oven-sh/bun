@@ -7026,7 +7026,10 @@ describe("css tests", () => {
       }
     `,
     );
-    minify_test(".foo { transition-behavior: Allow-Discrete , NORMAL }", ".foo{transition-behavior:allow-discrete,normal}");
+    minify_test(
+      ".foo { transition-behavior: Allow-Discrete , NORMAL }",
+      ".foo{transition-behavior:allow-discrete,normal}",
+    );
     // `allow-discrete` / `normal` inside the shorthand are its behavior value,
     // not property names; the typed shorthand does not model them, so these
     // pass through as written.

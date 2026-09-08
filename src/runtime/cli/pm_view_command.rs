@@ -20,9 +20,6 @@ use bun_url::URL;
 use super::npm_queryable::{self, FieldPathError, FieldResult};
 use bun_core::fmt::buf_print_infallible as buf_print;
 
-/// `bun pm view` / `bun info`: fetch the packument for `spec_`, pick the
-/// version the same way `bun add` would, then print either the whole
-/// manifest, or the requested `fields` (npm `view` field-path grammar).
 pub(crate) fn view(
     manager: &mut PackageManager,
     spec_: &[u8],
@@ -248,9 +245,7 @@ pub(crate) fn view(
         }
     };
 
-    // `versions` keys that parse as semver, oldest first. npm sorts and
-    // validates this list too, so publish order never leaks into `versions`,
-    // the `versions: N` header count, or the "Recent versions" hint.
+    // npm sorts and validates `versions` too; publish order is not semver order.
     let sorted_versions = SortedVersions::from_packument(&bump, &json);
 
     let selected: Option<(&[u8], Expr)> = 'select: {
@@ -263,10 +258,7 @@ pub(crate) fn view(
             } else {
                 let sliced_literal = Semver::SlicedString::init(version, version);
                 let query = Semver::query::parse(version, sliced_literal)?;
-                // A spec that is neither a dist-tag nor a range (`pkg@notatag`)
-                // parses to an empty group, which every version satisfies.
-                // `latest` is the default spec, so without that tag it still
-                // means the newest version.
+                // `pkg@notatag` parses to an empty range that every version satisfies.
                 if query.is_empty() && version != b"latest" {
                     break 'select None;
                 }
@@ -332,9 +324,6 @@ pub(crate) fn view(
         Global::exit(1);
     };
 
-    // What npm calls the manifest for `view`: the packument root with the
-    // selected version's fields laid over it, `versions` replaced by the
-    // sorted list, and `readme` dropped unless a field asks for it.
     let wants_readme = fields.iter().any(|f| {
         npm_queryable::parse(f).is_ok_and(|keys| keys.first().is_some_and(|k| *k == b"readme"))
     });
@@ -365,9 +354,7 @@ pub(crate) fn view(
 
 const MAX_RECENT_VERSIONS: usize = 5;
 
-/// Print an error and exit 1. Under `--json` every failure has this one
-/// shape on stdout (the same keys as `npm view --json`), so a consumer can
-/// always read `.error.code`.
+/// Exits 1. Under `--json` the error is the only output, on stdout, in `npm view --json`'s shape.
 #[cold]
 fn fail(json_output: bool, code: &[u8], summary: &[u8], detail: &[u8]) -> ! {
     if json_output {
@@ -489,9 +476,7 @@ fn new_object(properties: Vec<G::Property>) -> Expr {
     )
 }
 
-/// Root packument fields first (in registry order), then the selected
-/// version's fields override or append. This is the object every field path
-/// is resolved against and what bare `--json` prints, same as npm.
+/// npm view's manifest: root keys in registry order, the selected version's laid over, `readme` only on request.
 fn merge_manifest(root: Expr, version: Expr, versions_array: Expr, wants_readme: bool) -> Expr {
     let mut props: Vec<G::Property> =
         Vec::with_capacity(root.property_count() + version.property_count());
@@ -557,8 +542,7 @@ fn to_json_text(
     Ok(printer.ctx.get_written().to_vec())
 }
 
-/// One result prints bare (a string without quotes unless `--json`). Several
-/// results print as `label = <json>` lines, or as one JSON object.
+/// One result prints bare; several print as `label = <json>` lines or one JSON object.
 fn print_fields(
     results: &[FieldResult<'_>],
     source: &bun_ast::Source,
@@ -748,8 +732,7 @@ fn print_pretty(
         });
     }
 
-    // Current owners live on the packument root; the copy inside a version
-    // is frozen at publish time.
+    // Root `maintainers` is the current owner list; a version's copy is frozen at publish.
     if let Some(mut iter) = root
         .get_array(b"maintainers")
         .or_else(|| manifest.get_array(b"maintainers"))

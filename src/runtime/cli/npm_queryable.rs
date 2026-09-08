@@ -1,12 +1,4 @@
-//! The getter half of npm's `lib/utils/queryable.js`, over `bun_ast::Expr`.
-//! This is the property-path grammar of `npm view` and `npm pkg get`:
-//!
-//! - `a.b.c` steps into objects, `a.0` / `a[0]` into arrays (or an object key `0`)
-//! - text inside `[...]` is one key taken literally, so it may contain dots:
-//!   `exports[./package.json]`, `time[1.2.3]`
-//! - a property after an array reads that property from every element:
-//!   `maintainers.name` yields `maintainers[0].name`, `maintainers[1].name`, ...
-//! - `a[]` is append syntax for the setter and an error for a getter
+//! The getter of npm's `lib/utils/queryable.js` (the `npm view` / `npm pkg get` path grammar) over `Expr`.
 
 use std::io::Write as _;
 
@@ -27,8 +19,7 @@ pub(crate) enum FieldPathError {
     EmptyBrackets,
 }
 
-/// Split `path` into keys. Text inside `[...]` is one key; everything else
-/// splits on `.`.
+/// Keys of `path`: `[...]` contents are one literal key (dots allowed), the rest splits on `.`.
 pub(crate) fn parse(path: &[u8]) -> Result<Vec<&[u8]>, FieldPathError> {
     let mut keys: Vec<&[u8]> = Vec::new();
     let mut start = 0usize;
@@ -68,10 +59,7 @@ pub(crate) fn parse(path: &[u8]) -> Result<Vec<&[u8]>, FieldPathError> {
     Ok(keys)
 }
 
-/// Resolve `path` against `root` and append what it names to `out`: nothing
-/// when the path does not exist, one result, or one per array element.
-/// A result whose label is already in `out` replaces the earlier value.
-/// Expanded labels are allocated in `bump`; other labels borrow `path`.
+/// Appends what `path` names in `root`: nothing, one result, or one per element when a key meets an array.
 pub(crate) fn query<'a>(
     bump: &'a Bump,
     root: Expr,

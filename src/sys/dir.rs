@@ -479,23 +479,18 @@ impl FdDirExt for Fd {
     }
 }
 
-/// A directory, at or above one that was checked, whose owner is neither the
-/// checking user nor root. `depth` 0 is the checked directory itself, 1 its
-/// parent, and so on up to the root.
+/// Result of `foreign_owned_ancestor`: the directory `depth` levels above the
+/// checked one (0 = itself) is owned by `uid`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ForeignOwner {
     pub depth: usize,
     pub uid: u32,
 }
 
-/// Finds the first directory, from `dir` up to the root, that a user other
-/// than `euid` and root owns.
-///
-/// The owner of a directory renames its entries whatever mode bits the entry
-/// itself has, so a file below `dir` that is found again by path is only as
-/// private as every directory above it. Walks `..` from `dir` instead of the
-/// components of a path, so the real parents of a symlinked directory are the
-/// ones checked, and the walk needs only search permission on them.
+/// First directory from `dir` up to `/` owned by neither `euid` nor root. A
+/// directory's owner can rename its entries, so a file found again by path is
+/// only as private as every directory above it. Walks `..` through the fd so
+/// the real parents are checked and only search permission is needed.
 #[cfg(all(unix, not(target_os = "android")))]
 pub fn foreign_owned_ancestor(dir: Fd, euid: u32) -> Maybe<Option<ForeignOwner>> {
     let foreign = |uid: u32| uid != euid && uid != 0 && Some(uid) != unmapped_uid();
@@ -536,10 +531,8 @@ pub fn foreign_owned_ancestor(dir: Fd, euid: u32) -> Maybe<Option<ForeignOwner>>
     }
 }
 
-/// Android gives every app its own uid and keeps apps out of each other's
-/// directories, and `/data` itself belongs to `system`, so the walk would
-/// refuse every temp directory there for a threat the platform already rules
-/// out.
+/// No-op on Android: apps are sandboxed per uid and `/data` belongs to
+/// `system`, so the walk would flag every temp directory.
 #[cfg(target_os = "android")]
 #[inline(always)]
 pub fn foreign_owned_ancestor(_dir: Fd, _euid: u32) -> Maybe<Option<ForeignOwner>> {
@@ -552,12 +545,9 @@ pub fn foreign_owned_ancestor(_dir: Fd, _euid: u32) -> Maybe<Option<ForeignOwner
     Ok(None)
 }
 
-/// Inside a user namespace that does not map every uid (rootless containers,
-/// toolbox, flatpak, bubblewrap sandboxes), a file whose owner has no mapping
-/// reports the overflow uid. That is what everything the host's root owns
-/// looks like from inside, so such an owner counts as root. The namespace's
-/// own `nobody` reports the same uid; that is accepted, since it is the same
-/// host user's sandbox either way.
+/// The overflow uid when inside a user namespace, else `None`. Unmapped owners
+/// (the host's root in rootless containers, toolbox, flatpak, bubblewrap)
+/// report that uid, so `foreign_owned_ancestor` treats it like root.
 #[cfg(target_os = "linux")]
 fn unmapped_uid() -> Option<u32> {
     static UNMAPPED_UID: std::sync::OnceLock<Option<u32>> = std::sync::OnceLock::new();
@@ -588,8 +578,7 @@ fn unmapped_uid() -> Option<u32> {
     None
 }
 
-/// Parses whitespace-separated decimal numbers into `out` and returns how many
-/// there were, counting (but not storing) the ones past `out.len()`.
+/// Parses whitespace-separated decimals into `out`; returns the total count.
 #[cfg(target_os = "linux")]
 fn decimal_fields(bytes: &[u8], out: &mut [u64]) -> usize {
     let mut count = 0usize;

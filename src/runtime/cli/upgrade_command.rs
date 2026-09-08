@@ -46,11 +46,7 @@ fn spawn_windows_options() -> crate::api::bun::process::WindowsOptions {
 // in `resolver/lib.rs`) does not yet expose `tmpdir()`; the full impl lives in
 // the un-exported `fs_full` module. Shim it locally — open
 // `RealFS::tmpdir_path()` as a `sys::Dir`, mirroring `RealFS::open_tmp_dir`.
-//
-// Every caller puts code there that bun runs or loads again by path: the
-// `bun upgrade` download, the addons embedded in a compiled executable, the
-// `bun:ffi` cc() headers. So the directory goes through
-// `open_trusted_temp_dir`.
+// Every caller runs or loads what it puts there, hence `open_trusted_temp_dir`.
 pub(crate) trait FileSystemTmpdirExt {
     fn tmpdir(&mut self) -> Result<sys::Dir, TempDirRefusal>;
 }
@@ -60,13 +56,11 @@ impl FileSystemTmpdirExt for fs::FileSystem {
     }
 }
 
-/// Why `open_trusted_temp_dir` gave no directory back.
 pub(crate) enum TempDirRefusal {
     /// The directory could not be opened, created, or inspected.
     Open(sys::Error),
-    /// `dir`, the temp directory itself (`depth` 0) or a directory `depth`
-    /// levels above it, belongs to `uid`, which is neither the current user
-    /// nor root.
+    /// `dir`, `depth` levels above the temp dir (0 = the temp dir), is owned
+    /// by `uid`, which is neither the current user nor root.
     ForeignOwner {
         dir: Box<[u8]>,
         depth: usize,
@@ -75,8 +69,7 @@ pub(crate) enum TempDirRefusal {
 }
 
 impl TempDirRefusal {
-    /// The sentence after "error: " (or inside a thrown JS error) for a
-    /// refusal of `temp_dir`.
+    /// User-facing text, without the "error: " prefix.
     pub(crate) fn message(&self, temp_dir: &[u8]) -> Vec<u8> {
         let mut msg = Vec::new();
         match self {
@@ -113,13 +106,9 @@ impl TempDirRefusal {
     }
 }
 
-/// Opens the temp directory `path` for files that bun runs or loads again by
-/// path afterwards, creating it first when `create` is set and it does not
-/// exist. The owner of a directory renames any entry in it whatever that
-/// entry's own mode bits say, so the directory is refused when it, or any
-/// directory above it, belongs to a user other than the current one and root:
-/// that user could swap what bun put there for a file of their own between
-/// the write and the exec or dlopen.
+/// Opens (and with `create`, first makes) the temp dir `path` for files bun
+/// later runs or loads by path. Refused when it or a directory above it is
+/// owned by another non-root user, who could otherwise swap those files.
 pub(crate) fn open_trusted_temp_dir(path: &[u8], create: bool) -> Result<sys::Dir, TempDirRefusal> {
     let dir = match sys::Dir::open(path) {
         Ok(dir) => dir,

@@ -4613,10 +4613,9 @@ pub extern "C" fn Bun__transpileVirtualModule(
 ///
 /// The filename is a hash of the contents, so every `dlopen()` of the same
 /// embedded library — across calls, Worker VMs, and restarts — shares one
-/// file instead of leaking a copy per call (#29585). Returns `Ok(None)` when
-/// the input is empty, absent from the graph, or a filesystem step fails, and
-/// `Err` when the temp directory is one whose files another user could
-/// replace before they are loaded.
+/// file instead of leaking a copy per call (#29585). `Ok(None)` when the
+/// input is empty, absent from the graph, or a filesystem step fails; `Err`
+/// when the temp directory is refused (see `open_trusted_temp_dir`).
 pub(crate) fn resolve_embedded_file_to_buf(
     input_path: &[u8],
     extname: &[u8],
@@ -4663,9 +4662,8 @@ fn extract_embedded_file(
     .ok()?;
 
     let tmpdir_fd: bun_sys::Fd = tmpdir.fd;
-    // `dlopen(2)` resolves the path again, so give it the real path of the
-    // directory `tmpdir()` checked instead of the `$TMPDIR` spelling: a
-    // symlink on the way there could live in a directory the check never saw.
+    // dlopen() gets the real path of the checked directory, not the `$TMPDIR`
+    // spelling, so a symlink on the way is not resolved a second time.
     let mut tmpdir_path_buf = bun_paths::path_buffer_pool::get();
     let tmpdir_path: &[u8] = match bun_sys::get_fd_path(tmpdir_fd, &mut tmpdir_path_buf) {
         Ok(real_path) => real_path,
@@ -4737,9 +4735,8 @@ fn extract_owner_uid() -> u32 {
     bun_sys::windows::user_unique_id()
 }
 
-/// Support embedded .node files. `Dead` when `path` is not an embedded file.
-/// When the file is embedded but the temp directory it would be extracted to
-/// is refused, `error_message` says why and the result is `Dead` too.
+/// Support embedded .node files. `Dead` when `path` is not an embedded file,
+/// or, with `error_message` set, when the temp directory was refused.
 #[unsafe(no_mangle)]
 pub extern "C" fn Bun__resolveEmbeddedNodeFile(
     path: &bun_core::String,

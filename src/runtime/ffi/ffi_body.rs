@@ -1441,16 +1441,12 @@ impl FFI {
                 &mut filepath_buf[..],
             ) {
                 Ok(Some(len)) => {
-                    // NUL-terminate in place so `DynLib::open`
-                    // can pass the slice to libc without copying. `resolve_*_to_buf`
-                    // is bounded by `Fs::FileSystem::tmpname` + a tmpdir join (both
-                    // fit in `PATH_MAX`), so `filepath_buf[len]` is in bounds.
+                    // NUL-terminate in place for `DynLib::open`; the result is a
+                    // tmpdir join bounded by `PATH_MAX`, so `len` is in bounds.
                     filepath_buf[len] = 0;
                     break 'brk &filepath_buf[0..len];
                 }
                 Ok(None) => {}
-                // Embedded, but the temp directory it would be extracted to
-                // was refused.
                 Err(refusal) => {
                     let system_error = SystemError {
                         code: bun_core::String::clone_utf8(b"ERR_DLOPEN_FAILED"),

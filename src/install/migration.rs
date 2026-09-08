@@ -437,8 +437,7 @@ pub(crate) fn clear_non_registry_platform_constraints(lockfile: &mut Lockfile) {
     }
 }
 
-/// No other lockfile format carries these two fields; `bun install` takes them from package.json
-/// (`Package::parse`, root plus each workspace for trusted), so a migrated lockfile does the same.
+/// The fields `bun install` takes from package.json (`Package::parse`), not from any lockfile.
 pub(crate) fn copy_trusted_and_patched_dependencies(
     this: &mut Lockfile,
     log: &mut bun_ast::Log,

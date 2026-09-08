@@ -1860,8 +1860,7 @@ impl Lockfile {
         options: &PackageManagerOptions,
     ) -> bool {
         let save_format = load_result.save_format(options);
-        // Only `bun install` sets `options.config_version`; other commands keep the lockfile's own.
-        // `self` is `load_result`'s lockfile, so read it here, not through `load_result`.
+        // Only `bun install` sets `options.config_version`; `self` is `load_result`'s lockfile.
         let config_version = options.config_version.unwrap_or_else(|| {
             load_result
                 .choose_config_version_with_saved(self.saved_config_version)

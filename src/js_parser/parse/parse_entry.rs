@@ -1000,8 +1000,7 @@ impl<'a> Parser<'a> {
                                 .iter()
                                 .position(|k| *k == stmt.loc)
                                 .expect("enum scope-order entry recorded during parse");
-                            // Map stores `&'a [ScopeOrder]`; shared borrow may freely alias the inner
-                            // re-lookup performed by `append_part → visit_stmts`.
+                            // A shared `&'a [ScopeOrder]`: `append_part -> visit_stmts` may re-read it.
                             p.scope_order_to_visit = p.scopes_in_order_for_enum.values()[idx];
 
                             let mut enum_parts = BumpVec::<js_ast::Part>::new_in(arena);

@@ -1978,8 +1978,7 @@ pub(crate) fn float_to_int32(f: f64) -> i32 {
     if f < 0.0 { 0i32.wrapping_sub(int) } else { int }
 }
 
-/// The arithmetic and bitwise binary operators applied to two numbers with
-/// JavaScript semantics. `None` for any other operator.
+/// A JavaScript arithmetic or bitwise binary operator on two numbers, `None` for other operators.
 pub(crate) fn fold_numeric_binary_operator(
     op: js_ast::OpCode,
     left: f64,
@@ -1991,9 +1990,7 @@ pub(crate) fn fold_numeric_binary_operator(
         Op::BinSub => left - right,
         Op::BinMul => left * right,
         Op::BinDiv => left / right,
-        // Rust `%` on f64 has libc fmod semantics (LLVM frem),
-        // which matches what JavaScriptCore does:
-        // https://github.com/oven-sh/WebKit/blob/7a0b13626e5db69aa5a32d037431d381df5dfb61/Source/JavaScriptCore/runtime/MathCommon.cpp#L574-L597
+        // f64 `%` is fmod (LLVM frem), which is what JavaScriptCore does (`Math::fmodDouble`).
         Op::BinRem => left % right,
         Op::BinPow => js_ast::math::pow(left, right),
         Op::BinShl => {

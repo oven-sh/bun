@@ -701,11 +701,7 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     pub(crate) ts_namespace: RecentlyVisitedTSNamespace,
     pub(crate) top_level_enums: List<'a, Ref>,
 
-    /// Since TypeScript 5.0 an enum member initializer may reference a `const`
-    /// variable whose own initializer is a constant expression. Enums are
-    /// visited before the other statements of their list, so these values are
-    /// computed from the unvisited declarations (`record_ts_enum_constants`)
-    /// and substituted only while an enum member initializer is visited.
+    /// `const` values an enum initializer can fold (TS 5.0), see `record_ts_enum_constants`.
     pub(crate) ts_enum_constants: HashMap<Ref, TSConstantValue>,
     pub(crate) is_visiting_ts_enum_initializer: bool,
 

@@ -35,8 +35,7 @@ fn list_to_stmts<'a>(list: StmtList<'a>) -> StmtNodeList {
     StmtNodeList::from_bump(list)
 }
 
-/// Appends `value` the way JavaScript string concatenation would. Only 8-bit
-/// (ASCII) strings are folded, like the other string folding in the parser.
+/// JavaScript string concatenation onto `bytes`. 8-bit strings only, like the parser's other folds.
 fn append_ts_constant_value(
     bytes: &mut BumpVec<'_, u8>,
     value: TSConstantValue,
@@ -2202,9 +2201,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Ok(())
     }
 
-    /// Records the value of each `const` in `local` whose initializer is a
-    /// constant expression, so that enum member initializers can reference it
-    /// (see `P::ts_enum_constants`). `local` has not been visited yet.
+    /// Records the `const`s of the unvisited `local` whose initializers are constant expressions.
     pub(crate) fn record_ts_enum_constants(&mut self, local: &S::Local) {
         if local.kind != S::Kind::KConst {
             return;
@@ -2215,8 +2212,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             else {
                 continue;
             };
-            // With tree shaking, a top-level declaration comes through here once
-            // for the module and again as its own part.
+            // With tree shaking a top-level declaration comes through twice (module, own part).
             if self.ts_enum_constants.contains_key(&id.r#ref) {
                 continue;
             }
@@ -2226,9 +2222,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
-    /// Evaluates an unvisited expression by the rules the TypeScript compiler
-    /// uses for enum member initializers (`evaluate` in its checker):
-    /// https://github.com/microsoft/TypeScript/pull/50528
+    /// tsc's `evaluate` for enum member initializers (microsoft/TypeScript#50528), on an unvisited expression.
     fn eval_ts_constant_expression(&mut self, expr: &Expr) -> Option<TSConstantValue> {
         if !self.stack_check.is_safe_to_recurse() {
             return None;
@@ -2296,8 +2290,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
             js_ast::ExprData::EIdentifier(ident) => {
                 let name = self.load_name_from_ref(ident.ref_);
-                // Looking up "arguments" where it is forbidden logs an error,
-                // which the visit of this expression will do on its own.
+                // Where "arguments" is forbidden the lookup logs an error: leave that to the visit.
                 if name == b"arguments" {
                     return None;
                 }
@@ -2348,9 +2341,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
-    /// Resolves an unvisited `a.b.c` to the member map of the enum or namespace
-    /// it names. The parser builds a long chain as a deep `EDot` nest without
-    /// recursing, so this walks it without recursing too.
+    /// The member map of the enum or namespace that an unvisited, possibly deep, `a.b.c` names.
     fn eval_ts_namespace_chain(
         &mut self,
         expr: &Expr,

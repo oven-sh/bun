@@ -1522,8 +1522,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 for stmt in stmts.iter_mut() {
                     match stmt.data {
                         StmtData::SEnum(_) => {
-                            // `scope_order_to_visit: &'a [ScopeOrder<'a>]` is `Copy`;
-                            // plain save/restore.
+                            // `scope_order_to_visit` is a `Copy` slice: plain save/restore.
                             let old_scopes_in_order = p.scope_order_to_visit;
 
                             p.scope_order_to_visit =

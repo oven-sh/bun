@@ -996,6 +996,7 @@ declare module "bun" {
      * @param options Pass headers or attach data to the {@link ServerWebSocket}
      *
      * @returns `true` if the upgrade was successful and `false` if it failed
+     * @throws {TypeError} If `request` was received by a different server
      *
      * @example
      * ```js
@@ -1125,6 +1126,8 @@ declare module "bun" {
     /**
      * Returns the client IP address and port of the given Request. If the request was closed or is a unix socket, returns null.
      *
+     * @throws {TypeError} If `request` was received by a different server
+     *
      * @example
      * ```js
      * export default {
@@ -1138,6 +1141,8 @@ declare module "bun" {
 
     /**
      * Reset the idle timeout of the given Request to the given number of seconds. `0` means no timeout.
+     *
+     * @throws {TypeError} If `request` was received by a different server
      *
      * @example
      * ```js

@@ -3160,6 +3160,59 @@ it.concurrent(
   20_000,
 );
 
+it.concurrent("timeout(), requestIP() and upgrade() throw for a Request that a different server received", async () => {
+  const calls: Record<string, unknown> = {};
+  const capture = (label: string, fn: () => unknown) => {
+    try {
+      calls[label] = { returned: fn() };
+    } catch (e: any) {
+      calls[label] = { threw: { name: e?.name, code: e?.code, message: e?.message } };
+    }
+  };
+  const opened = Promise.withResolvers<string>();
+  using other = Bun.serve({
+    port: 0,
+    websocket: { open: () => opened.resolve("other"), message() {} },
+    fetch: () => new Response("other"),
+  });
+  using server = Bun.serve({
+    port: 0,
+    websocket: { open: () => opened.resolve("server"), message() {} },
+    fetch(req, server) {
+      capture("other.timeout", () => other.timeout(req, 0));
+      capture("other.requestIP", () => other.requestIP(req));
+      capture("other.upgrade", () => other.upgrade(req));
+      capture("server.timeout", () => server.timeout(req, 0));
+      capture("server.requestIP", () => server.requestIP(req)?.family);
+      capture("server.upgrade", () => server.upgrade(req));
+      if ((calls["server.upgrade"] as any)?.returned === true) return;
+      return new Response("not upgraded", { status: 400 });
+    },
+  });
+  const ws = new WebSocket(server.url.href.replace(/^http/, "ws"));
+  const clientOpened = Promise.withResolvers<void>();
+  ws.onopen = () => clientOpened.resolve();
+  ws.onerror = () => clientOpened.reject(new Error("handshake failed: " + JSON.stringify(calls)));
+  ws.onclose = e => clientOpened.reject(new Error(`closed ${e.code} before open: ` + JSON.stringify(calls)));
+  await clientOpened.promise;
+  ws.close();
+  const foreign = (method: string) => ({
+    name: "TypeError",
+    code: "ERR_INVALID_ARG_VALUE",
+    message: `server.${method}() was called with a Request that a different server received. Use the server passed to fetch() as the second argument.`,
+  });
+  expect(calls).toEqual({
+    "other.timeout": { threw: foreign("timeout") },
+    "other.requestIP": { threw: foreign("requestIP") },
+    "other.upgrade": { threw: foreign("upgrade") },
+    "server.timeout": { returned: undefined },
+    "server.requestIP": { returned: expect.stringMatching(/^IPv[46]$/) },
+    "server.upgrade": { returned: true },
+  });
+  // The socket was upgraded onto the server that received it, not `other`.
+  expect(await opened.promise).toBe("server");
+});
+
 it.concurrent("#6462", async () => {
   let headers: string[] = [];
   using server = Bun.serve({

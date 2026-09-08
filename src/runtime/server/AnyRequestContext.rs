@@ -177,6 +177,16 @@ impl AnyRequestContext {
         dispatch!(self, false, |_T, ctx| ctx.set_timeout(seconds))
     }
 
+    /// Type-erased pointer to the `NewServer` that received this request;
+    /// null when there is no context or it already detached from its server.
+    pub(crate) fn server_ptr(self) -> *const () {
+        dispatch!(self, core::ptr::null(), |_T, ctx| {
+            ctx.server
+                .get()
+                .map_or(core::ptr::null(), |s| s.as_ptr().cast_const().cast())
+        })
+    }
+
     pub(crate) fn set_cookies(self, cookie_map: Option<*mut CookieMap>) {
         dispatch!(self, (), |_T, ctx| ctx.set_cookies(cookie_map))
     }

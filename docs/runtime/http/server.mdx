@@ -384,6 +384,8 @@ Use this for development and hot reloading. You can update only `fetch`, `error`
 
 ## Per-Request Controls
 
+These methods act on a `Request` that this server received. When several servers share one handler, use the `server` argument that Bun passes to `fetch` and to route handlers: calling `timeout()`, `requestIP()`, or `upgrade()` on a different `Bun.serve()` instance with that request throws a `TypeError`.
+
 ### `server.timeout(Request, seconds)`
 
 Override the idle timeout for an individual request. Pass `0` to disable the timeout entirely for that request.

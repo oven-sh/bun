@@ -1526,10 +1526,30 @@ where
         self.timeout(global, callframe)
     }
 
+    /// A live `Request` (or node:http response) that another `Bun.serve()`
+    /// instance dispatched must not be acted on through this one. `owner` is
+    /// null once the request detached from its server; those calls keep their
+    /// no-op behavior.
+    fn check_request_owner(&self, owner: *const (), method: &str) -> JsResult<()> {
+        if owner.is_null() || core::ptr::eq(owner, core::ptr::from_ref(self).cast()) {
+            return Ok(());
+        }
+        Err(self
+            .global()
+            .err(
+                jsc::ErrorCode::INVALID_ARG_VALUE,
+                format_args!(
+                    "server.{method}() was called with a Request that a different server received. Use the server passed to fetch() as the second argument."
+                ),
+            )
+            .throw())
+    }
+
     pub(crate) fn request_ip(&self, request: &Request) -> JsResult<JSValue> {
         if matches!(self.config.address, server_config::Address::Unix(_)) {
             return Ok(JSValue::NULL);
         }
+        self.check_request_owner(request.request_context.server_ptr(), "requestIP")?;
         let Some(info) = request.request_context.get_remote_socket_info() else {
             return Ok(JSValue::NULL);
         };
@@ -1567,11 +1587,15 @@ where
 
         if let Some(request) = <Request as bun_jsc::JsClass>::from_js(arguments[0]) {
             // SAFETY: from_js returns a live *mut Request; shared access only.
-            let _ = unsafe { (*request).request_context.set_timeout(value) };
+            let request_context = unsafe { (*request).request_context };
+            self.check_request_owner(request_context.server_ptr(), "timeout")?;
+            let _ = request_context.set_timeout(value);
         } else if let Some(response) = <NodeHTTPResponse as bun_jsc::JsClass>::from_js(arguments[0])
         {
             // SAFETY: from_js returns a live *mut NodeHTTPResponse
-            unsafe { (*response).set_timeout((value % 255) as u8) };
+            let response = unsafe { &*response };
+            self.check_request_owner(response.server.ptr.cast_const(), "timeout")?;
+            response.set_timeout((value % 255) as u8);
         } else {
             return Err(self
                 .global()
@@ -1673,6 +1697,7 @@ where
             // SAFETY: from_js returns a live *mut NodeHTTPResponse; shared —
             // its mutable state is `Cell`/`JsCell` and `upgrade` takes `&self`.
             let node_http_response = unsafe { &*node_http_response };
+            self.check_request_owner(node_http_response.server.ptr.cast_const(), "upgrade")?;
             if node_http_response
                 .flags
                 .get()
@@ -1792,6 +1817,7 @@ where
         // argument). Shared, re-derived after each JS re-entry point below; the
         // one field write at the end goes through `request_ptr`.
         let request = unsafe { &*request_ptr };
+        self.check_request_owner(request.request_context.server_ptr(), "upgrade")?;
 
         let Some(upgrader_ptr) = request
             .request_context

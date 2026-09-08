@@ -98,10 +98,7 @@ impl Drop for Store {
     fn drop(&mut self) {
         use entry::EntryColumns as _;
         for slot in self.entries.items_scripts() {
-            if let Some(list) = slot.take() {
-                // SAFETY: the installer returned only after every task finished, so nothing else references the list boxed in Installer's RunPreinstall step.
-                unsafe { bun_core::heap::destroy(list) };
-            }
+            drop(slot.take());
         }
         self.entries.drop_elements();
         self.nodes.drop_elements();
@@ -187,13 +184,10 @@ impl<T> OrderedArraySet<T> {
     const EMPTY: Self = Self { list: Vec::new() };
 
     pub(crate) fn init_capacity(n: usize) -> Result<Self, AllocError> {
-        // allocator param dropped — global mimalloc
         Ok(Self {
             list: Vec::with_capacity(n),
         })
     }
-
-    // `deinit` → handled by `Drop` on `Vec<T>`; nothing to write.
 
     pub(crate) fn slice(&self) -> &[T] {
         &self.list
@@ -225,7 +219,6 @@ impl<T: Copy> OrderedArraySet<T> {
         new: T,
         ctx: &impl OrderedArraySetCtx<T>,
     ) -> Result<(), AllocError> {
-        // allocator param dropped — global mimalloc
         for i in 0..self.list.len() {
             let existing = self.list[i];
             if ctx.eql(new, existing) {
@@ -291,20 +284,17 @@ pub mod entry {
         /// Two projects that resolve the same package to the same dependency closure
         /// share one global-store entry; if a transitive dep version differs, the
         /// hash differs and a new global-store entry is created. Computed after the
-        /// store is built (see `computeEntryHashes`). 0 means "do not use global store"
+        /// store is built (in `build_store`). 0 means "do not use global store"
         /// (root, workspace, folder, symlink, patched).
         pub entry_hash: u64,
 
-        // `Cell` because `Installer::Task::run` writes this slot
-        // from a task thread through `&Store` (each Task is the sole writer for
-        // its own `entry_id`; see Installer.rs). Without interior
-        // mutability the only access path is `&Store → &[Option<_>]` and the
-        // per-entry write would mutate through shared-reference provenance.
-        // Raw `*mut` instead of `Box` so reads don't move out of the cell.
-        // `Cell` (not `UnsafeCell`): payload is `Copy`, so `.get()/.set()` are
-        // zero-unsafe; `Cell` and `UnsafeCell` have identical `Send`/`!Sync`
-        // auto-traits, so the per-entry single-writer discipline is unchanged.
-        pub scripts: core::cell::Cell<Option<*mut package::scripts::List>>,
+        // `Cell` because `Installer::Task::run` writes this slot from a task
+        // thread through `&Store` (each Task is the sole writer for its own
+        // `entry_id`; see Installer.rs).
+        // Reads `take()` the box and `set()` it back; each entry's slot has a
+        // single owner at a time (its task, or the main thread while that task
+        // is parked), so the slot is never observed empty by anyone else.
+        pub scripts: core::cell::Cell<Option<Box<package::scripts::List>>>,
     }
 
     bun_collections::multi_array_columns! {
@@ -316,7 +306,7 @@ pub mod entry {
             hoisted: bool,
             peer_hash: PeerHash,
             entry_hash: u64,
-            scripts: core::cell::Cell<Option<*mut package::scripts::List>>,
+            scripts: core::cell::Cell<Option<Box<package::scripts::List>>>,
         }
     }
 

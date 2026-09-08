@@ -582,8 +582,8 @@ impl PublishCommand {
                             );
                         }
                         FromTarballError::InvalidPackageJSON => {
-                            // SAFETY: `manager.log` is set once at init.
-                            let _ = unsafe { &mut *(*manager_ptr).log }
+                            // SAFETY: `manager_ptr` is the live manager.
+                            let _ = unsafe { &mut (*manager_ptr).log }
                                 .print(std::ptr::from_mut(Output::error_writer()));
                             Output::err_generic("failed to parse tarball package.json", ());
                         }
@@ -609,7 +609,7 @@ impl PublishCommand {
                 "\n<green> +<r> {}@{}{}",
                 bstr::BStr::new(&context.package_name),
                 bstr::BStr::new(dependency::without_build_tag(&context.package_version)),
-                if PackageManager::get().options.dry_run {
+                if context.manager.options.dry_run {
                     " (dry-run)"
                 } else {
                     ""
@@ -659,21 +659,22 @@ impl PublishCommand {
             "\n<green> +<r> {}@{}{}",
             bstr::BStr::new(&context.package_name),
             bstr::BStr::new(dependency::without_build_tag(&context.package_version)),
-            if PackageManager::get().options.dry_run {
+            if context.manager.options.dry_run {
                 " (dry-run)"
             } else {
                 ""
             },
         );
 
-        if PackageManager::get()
+        if context
+            .manager
             .options
             .do_
             .contains(install::PackageManagerDoStub::RUN_SCRIPTS)
         {
             let abs_workspace_path: Box<[u8]> =
                 strings::without_trailing_slash(strings::without_suffix_comptime(
-                    PackageManager::get().original_package_json_path.as_bytes(),
+                    context.manager.original_package_json_path.as_bytes(),
                     b"package.json",
                 ))
                 .into();
@@ -1104,10 +1105,11 @@ impl PublishCommand {
         print_buf: &mut Vec<u8>,
     ) -> Result<Box<[u8]>, GetOTPError> {
         let bump = bun_alloc::Arena::new();
-        let manager_log: &mut bun_ast::Log = ctx.manager.log_mut();
+        // invalid json is ignored (below), and so are its diagnostics
+        let mut parse_log = bun_ast::Log::init();
         let res_source = bun_ast::Source::init_path_string(b"???", response_buf.list.as_slice());
 
-        let res_json = match json_mod::parse_utf8(&res_source, manager_log, &bump) {
+        let res_json = match json_mod::parse_utf8(&res_source, &mut parse_log, &bump) {
             Ok(j) => Some(j),
             Err(e) => {
                 if e == bun_parsers::Error::Alloc(bun_alloc::AllocError) {
@@ -1307,7 +1309,7 @@ impl PublishCommand {
                             );
                             let otp_done_json = match json_mod::parse_utf8(
                                 &otp_done_source,
-                                manager_log,
+                                &mut parse_log,
                                 &done_bump,
                             ) {
                                 Ok(j) => j,

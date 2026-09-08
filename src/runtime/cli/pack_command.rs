@@ -74,9 +74,9 @@ fn file_to_source_at(dir: &Dir, path: &ZStr) -> bun_sys::Maybe<bun_ast::Source> 
 /// `&mut workspace_package_json_cache` borrow at the call site.
 #[inline]
 fn pm_log<'a>(m: *mut PackageManager) -> &'a mut bun_ast::Log {
-    // SAFETY: `m` came from `&mut PackageManager`; `log` is non-null after
-    // `PackageManager::init()`.
-    unsafe { &mut *(*m).log }
+    // SAFETY: `m` came from `&mut PackageManager`; `log` is a separate heap
+    // allocation from the fields borrowed alongside it.
+    unsafe { &mut (*m).log }
 }
 /// `manager.workspace_package_json_cache` field projection via raw pointer.
 #[inline]
@@ -87,11 +87,8 @@ fn pm_workspace_cache<'a>(
     unsafe { &mut (*m).workspace_package_json_cache }
 }
 #[inline]
-fn pm_env(m: &PackageManager) -> *mut bun_dotenv::Loader {
-    // Set during `PackageManager::init`.
-    m.env
-        .map(|p| p.as_ptr())
-        .expect("env set by PackageManager::init")
+fn pm_env(m: &mut PackageManager) -> *mut bun_dotenv::Loader {
+    m.env_mut()
 }
 #[inline]
 fn pm_run_scripts(m: &PackageManager) -> bool {
@@ -215,14 +212,10 @@ impl PackCommand {
         }
 
         let mut lockfile = Lockfile::default();
-        // `log` is non-null after `PackageManager::init()`.
-        let log_ptr: *mut bun_ast::Log = manager.log;
         let manager_ptr: *mut PackageManager = manager;
-        // SAFETY: `manager_ptr`/`log_ptr` came from live `&mut`; reborrowed
-        // disjointly (`log` is a separate allocation from the manager fields
-        // `load_from_cwd` touches).
-        let load_from_disk_result = lockfile
-            .load_from_cwd::<false>(Some(unsafe { &mut *manager_ptr }), unsafe { &mut *log_ptr });
+        let load_from_disk_result = manager
+            .with_log(|manager, log| lockfile.load_from_cwd::<false>(Some(manager), log).detach())
+            .attach(&mut lockfile);
 
         let lockfile_ref: Option<&Lockfile> = match load_from_disk_result {
             LoadResult::Ok(ok) => Some(&*ok.lockfile),
@@ -2009,6 +2002,7 @@ pub(crate) fn pack<const FOR_PUBLISH: bool>(
     // `Publish::Context`.
     let manager_ptr: *mut PackageManager = &raw mut *ctx.manager;
     let log_level = ctx.manager.options.log_level;
+    let silent = log_level == LogLevel::Silent;
     let bump = pack_bump();
     // Note: `workspace_package_json_cache` and `log` are disjoint fields on
     // `PackageManager`; route through raw-pointer field projections so the
@@ -2187,7 +2181,7 @@ pub(crate) fn pack<const FOR_PUBLISH: bool>(
                         b"prepublishOnly",
                         abs_workspace_path,
                         ctx.manager.env_mut(),
-                        ctx.manager.options.log_level == LogLevel::Silent,
+                        silent,
                     )?;
                 }
             }
@@ -2202,7 +2196,7 @@ pub(crate) fn pack<const FOR_PUBLISH: bool>(
                     b"prepack",
                     abs_workspace_path,
                     ctx.manager.env_mut(),
-                    ctx.manager.options.log_level == LogLevel::Silent,
+                    silent,
                 )?;
             }
         }
@@ -2216,7 +2210,7 @@ pub(crate) fn pack<const FOR_PUBLISH: bool>(
                     b"prepare",
                     abs_workspace_path,
                     ctx.manager.env_mut(),
-                    ctx.manager.options.log_level == LogLevel::Silent,
+                    silent,
                 )?;
             }
         }
@@ -2437,7 +2431,7 @@ pub(crate) fn pack<const FOR_PUBLISH: bool>(
                 b"postpack",
                 abs_workspace_path,
                 ctx.manager.env_mut(),
-                ctx.manager.options.log_level == LogLevel::Silent,
+                silent,
             )?;
         }
 
@@ -2922,7 +2916,7 @@ pub(crate) fn pack<const FOR_PUBLISH: bool>(
             b"postpack",
             abs_workspace_path,
             ctx.manager.env_mut(),
-            ctx.manager.options.log_level == LogLevel::Silent,
+            silent,
         )?;
     }
 

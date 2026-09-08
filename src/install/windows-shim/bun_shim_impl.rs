@@ -944,7 +944,7 @@ fn launcher<const MODE: LauncherMode, Ctx: BunCtx>(bun_ctx: Ctx) -> LauncherRet 
 
     if !flags.is_valid() {
         // We want to return control flow back into bun.exe's main code, so that it can fall
-        // back to the slow path. For more explanation, see the comment on top of `tryStartupFromBunJS`.
+        // back to the slow path. For more explanation, see the comment on top of `try_startup_from_bun_js`.
         if !IS_STANDALONE && MODE == LauncherMode::Launch {
             return LauncherRet::LaunchFellThrough;
         }

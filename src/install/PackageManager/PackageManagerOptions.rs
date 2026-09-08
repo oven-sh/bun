@@ -21,9 +21,8 @@ pub enum OfflineMode {
     Offline,
 }
 
-// `string` fields are `[]const u8` borrowed from CLI args / bunfig config,
-// which live for the process lifetime. There is no `deinit` on Options. Mapped to
-// `&'static [u8]` per PORTING.md (no lifetime params on structs).
+// The `&'static [u8]` fields borrow CLI args / bunfig config, which live for
+// the process lifetime.
 
 pub struct Options {
     pub log_level: LogLevel,
@@ -205,7 +204,6 @@ pub enum Access {
 }
 
 impl Access {
-    // was `bun.ComptimeEnumMap(Access)`; ≤8 entries → plain match on &[u8].
     pub fn from_str(str: &[u8]) -> Option<Access> {
         match str {
             b"public" => Some(Access::Public),
@@ -232,7 +230,6 @@ pub enum AuthType {
 }
 
 impl AuthType {
-    // was `bun.ComptimeEnumMap(AuthType)`; ≤8 entries → plain match on &[u8].
     pub(crate) fn from_str(str: &[u8]) -> Option<AuthType> {
         match str {
             b"legacy" => Some(AuthType::Legacy),
@@ -820,7 +817,6 @@ impl Options {
                 log.level = bun_ast::Level::Err;
                 bun_ast::DEFAULT_LOG_LEVEL.store(bun_ast::Level::Err);
             }
-            // SAFETY: main-thread CLI option load — single writer.
             super::PackageManager::set_verbose_install(cli.log_level.is_verbose());
 
             if cli.no_verify {
@@ -921,7 +917,6 @@ impl Options {
             } else {
                 LogLevel::Default
             };
-            // SAFETY: main-thread CLI option load — single writer.
             super::PackageManager::set_verbose_install(false);
         }
 
@@ -931,7 +926,6 @@ impl Options {
             self.enable.set(Enable::FORCE_SAVE_LOCKFILE, false);
         }
 
-        // moved from `defer { ... }` after scope assignment (see note above).
         self.did_override_default_scope = self.scope.url_hash != *Npm::registry::DEFAULT_URL_HASH;
 
         // The manifest cache is the data source for --prefer-offline/--offline; keep it on

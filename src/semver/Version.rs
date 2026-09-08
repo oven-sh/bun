@@ -15,19 +15,37 @@ pub type Version = VersionType<u64>;
 // from its integer parameter. Only u32 and u64 are instantiated.
 // ──────────────────────────────────────────────────────────────────────────
 
-pub trait VersionInt: Copy + Default + Eq + Ord + fmt::Display + 'static {
+/// The integer width of a [`VersionType`] (`u32` for old lockfiles, `u64`).
+///
+/// # Safety
+/// The layout promises `VersionType<Self>` and the lockfile types built on it
+/// are `Pod` under: `align_of::<Self>() <= 8`; `3 * size_of::<Self>() +
+/// size_of::<TagPadding>()` is a multiple of 8 (so `TagPadding` exactly fills
+/// the gap before the 8-aligned `tag`); and `ResolutionStorage` is an
+/// 8-aligned integer array of at least `8 + size_of::<VersionType<Self>>()`
+/// bytes.
+pub unsafe trait VersionInt:
+    bytemuck::Pod + Default + Eq + Ord + fmt::Display + 'static
+{
     const ZERO: Self;
     const MAX: Self;
     /// Explicit zeroed
     /// padding so lockfile byte-serialization is deterministic.
-    type TagPadding: Copy + Default + 'static;
+    type TagPadding: bytemuck::Pod + Default + 'static;
+    /// Raw storage for the largest lockfile resolution payload at this width
+    /// (a `VersionedURL`: `String` + `VersionType<Self>`), 8-byte aligned.
+    type ResolutionStorage: bytemuck::Pod + Default + PartialEq + Send + Sync + 'static;
+    const RESOLUTION_STORAGE_ZERO: Self::ResolutionStorage;
     fn parse_ascii(s: &[u8]) -> Option<Self>;
 }
 
-impl VersionInt for u64 {
+// SAFETY: layout asserted below (`VersionType<u64>` is 56 bytes, tag at 24).
+unsafe impl VersionInt for u64 {
     const ZERO: Self = 0;
     const MAX: Self = u64::MAX;
     type TagPadding = [u8; 0];
+    type ResolutionStorage = [u64; 8];
+    const RESOLUTION_STORAGE_ZERO: [u64; 8] = [0; 8];
     #[inline]
     fn parse_ascii(s: &[u8]) -> Option<Self> {
         // None for empty, any non-[0-9] byte, or overflow. Callers rely on
@@ -37,10 +55,13 @@ impl VersionInt for u64 {
     }
 }
 
-impl VersionInt for u32 {
+// SAFETY: layout asserted below (`VersionType<u32>` is 48 bytes, tag at 16).
+unsafe impl VersionInt for u32 {
     const ZERO: Self = 0;
     const MAX: Self = u32::MAX;
     type TagPadding = [u8; 4];
+    type ResolutionStorage = [u64; 7];
+    const RESOLUTION_STORAGE_ZERO: [u64; 7] = [0; 7];
     #[inline]
     fn parse_ascii(s: &[u8]) -> Option<Self> {
         bun_core::parse_unsigned::<u32>(s, 10).ok()
@@ -73,6 +94,13 @@ const _: () = {
     assert!(core::mem::offset_of!(VersionType<u64>, tag) == 24);
     assert!(core::mem::offset_of!(VersionType<u32>, tag) == 16);
 };
+
+// SAFETY: `repr(C)`, every field is `Pod` (`T`, `T::TagPadding`, `Tag`), and
+// `TagPadding` fills the only alignment gap (the `VersionInt` contract;
+// asserted above for both widths).
+unsafe impl<T: VersionInt> bytemuck::Zeroable for VersionType<T> {}
+// SAFETY: as above.
+unsafe impl<T: VersionInt> bytemuck::Pod for VersionType<T> {}
 
 impl<T: VersionInt> Default for VersionType<T> {
     fn default() -> Self {
@@ -925,7 +953,7 @@ impl<T: VersionInt> Partial<T> {
 // ──────────────────────────────────────────────────────────────────────────
 
 #[repr(C)]
-#[derive(Copy, Clone, Default)]
+#[derive(Copy, Clone, Default, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct Tag {
     pub pre: ExternalString,
     pub build: ExternalString,

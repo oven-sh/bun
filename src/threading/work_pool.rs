@@ -67,6 +67,67 @@ pub unsafe trait OwnedTask: IntrusiveWorkTask + Send + 'static {
     }
 }
 
+/// A value shared through [`Arc`](std::sync::Arc) that the pool runs:
+/// [`ThreadPool::schedule_arc`](crate::ThreadPool::schedule_arc) hands one
+/// reference to the pool and the callback turns it back into the `Arc` for
+/// [`run`](ArcTask::run). The embedded [`SharedTask`](crate::SharedTask) is
+/// a single queue node: scheduling a value that is already queued (not yet
+/// dequeued by a worker) is a no-op (the reference is dropped). The node is
+/// released before `run` is called, so a value scheduled again while its
+/// `run` is in progress runs again, possibly overlapping the first.
+///
+/// # Safety
+/// [`run`](ArcTask::run) executes on an arbitrary worker thread while other
+/// threads may hold the `Arc`, and may overlap another `run` of the same
+/// value: everything `run` touches must be synchronized with them, whether
+/// or not the type is `Send`/`Sync`. Prefer [`arc_task!`](crate::arc_task),
+/// which states that at the type.
+pub unsafe trait ArcTask: Sized + 'static {
+    fn run(self: std::sync::Arc<Self>);
+
+    /// The embedded queue node.
+    fn shared_task(&self) -> &crate::SharedTask;
+
+    /// Byte offset of the [`SharedTask`](crate::SharedTask) field.
+    const TASK_OFFSET: usize;
+
+    #[doc(hidden)]
+    unsafe fn __callback(task: *mut Task) {
+        // SAFETY: `task` is the `SharedTask` field (its first member) inside
+        // the allocation whose `Arc` `Batch::push_arc` turned into a raw
+        // pointer; the pool runs this callback exactly once for it.
+        let this = unsafe {
+            std::sync::Arc::from_raw(task.cast::<u8>().sub(Self::TASK_OFFSET).cast::<Self>())
+        };
+        this.shared_task().release();
+        this.run();
+    }
+}
+
+/// Implements [`ArcTask`] for a struct that embeds a `$field: SharedTask`
+/// and is scheduled via [`ThreadPool::schedule_arc`](crate::ThreadPool::schedule_arc);
+/// the implementor supplies an inherent `fn run_arc(self: Arc<Self>)`, the
+/// type's worker-thread entry point: it must only touch state synchronized
+/// with the other holders of the `Arc` and with an overlapping `run_arc` of the
+/// same value (it can be scheduled again as soon as a run starts).
+#[macro_export]
+macro_rules! arc_task {
+    ($ty:ty, $field:ident) => {
+        // SAFETY: see the macro doc — `run_arc` is the type's cross-thread entry point.
+        unsafe impl $crate::work_pool::ArcTask for $ty {
+            const TASK_OFFSET: usize = ::core::mem::offset_of!($ty, $field);
+            #[inline]
+            fn shared_task(&self) -> &$crate::SharedTask {
+                &self.$field
+            }
+            #[inline]
+            fn run(self: ::std::sync::Arc<Self>) {
+                <$ty>::run_arc(self)
+            }
+        }
+    };
+}
+
 /// Implements [`IntrusiveWorkTask`] for a struct that embeds an intrusive
 /// `task: Task` field. Expands to [`bun_core::intrusive_field!`] + a marker
 /// impl; brings [`IntrusiveWorkTask::from_task_ptr`] into scope for the
@@ -103,9 +164,8 @@ macro_rules! intrusive_work_task {
 /// The `Send` impl is part of the macro because every `OwnedTask` is *by
 /// construction* sent to a worker thread — the per-type fields (raw `*mut
 /// EventLoop`, `*const JSGlobalObject`) are auto-`!Send` only nominally. The
-/// safety obligation
-/// ("all fields are sound to move across threads") is restated once here
-/// rather than at every `WorkPool::schedule(addr_of_mut!((*p).task))` site.
+/// safety obligation ("all fields are sound to move across threads") is
+/// restated once here rather than at every `schedule_owned` site.
 #[macro_export]
 macro_rules! owned_task {
     ([$($gen:tt)*] $ty:ty, $field:ident) => {

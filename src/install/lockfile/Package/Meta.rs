@@ -11,7 +11,7 @@ use crate::lockfile_real::StringBuilder as LockfileStringBuilder;
 
 // TODO: remove origin. it doesnt do anything and can be inferred from the resolution
 #[repr(C)]
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, bytemuck::NoUninit, bytemuck::CheckedBitPattern)]
 pub struct Meta {
     pub(crate) origin: Origin,
     pub(crate) _padding_origin: u8,
@@ -37,7 +37,9 @@ pub struct Meta {
 }
 
 #[repr(u8)]
-#[derive(Copy, Clone, PartialEq, Eq, Default)]
+#[derive(
+    Copy, Clone, PartialEq, Eq, Default, Debug, bytemuck::NoUninit, bytemuck::CheckedBitPattern,
+)]
 pub enum HasInstallScript {
     Old = 0,
     #[default]

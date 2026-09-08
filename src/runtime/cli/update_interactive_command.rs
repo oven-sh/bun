@@ -335,13 +335,9 @@ impl UpdateInteractiveCommand {
                 Self::build_package_json_path(root_dir, workspace_path, &mut path_buf);
 
             // Load and parse the package.json
-            // Reshaped for borrowck — `log_mut()` returns a borrow
-            // decoupled from `&self`, so it can overlap the disjoint
-            // `workspace_package_json_cache` field borrow below.
-            let log = manager.log_mut();
             let package_json: &mut WorkspacePackageJsonCacheEntry =
                 match manager.workspace_package_json_cache.get_with_path(
-                    log,
+                    &mut manager.log,
                     package_json_path,
                     GetJsonOptions {
                         guess_indentation: true,
@@ -465,10 +461,9 @@ impl UpdateInteractiveCommand {
                 Self::build_package_json_path(root_dir, workspace_path, &mut path_buf);
 
             // Load and parse the package.json properly
-            let log = manager.log_mut();
             let package_json: &mut WorkspacePackageJsonCacheEntry =
                 match manager.workspace_package_json_cache.get_with_path(
-                    log,
+                    &mut manager.log,
                     package_json_path,
                     GetJsonOptions {
                         guess_indentation: true,

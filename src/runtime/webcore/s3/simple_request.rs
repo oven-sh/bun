@@ -389,10 +389,7 @@ impl S3HttpSimpleTask {
     ) {
         let previous_metadata = self.result.metadata.take();
         result.body_into(&mut self.response_buffer.list);
-        // SAFETY: `result.body` (the only borrowed field) points at `self.response_buffer`,
-        // which lives for the task's lifetime — extending to `'static` here is sound for
-        // self-reference.
-        self.result = unsafe { result.detach_lifetime() };
+        self.result = result.without_body();
         if self.result.metadata.is_none() {
             self.result.metadata = previous_metadata;
         }

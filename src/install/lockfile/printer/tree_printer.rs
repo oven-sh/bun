@@ -14,13 +14,20 @@ use bun_sys::Fd;
 
 type Bitset = DynamicBitSet;
 
+/// The package-manager state printing the tree updates.
+pub struct PrintState {
+    pub kept_patched_text: Vec<u8>,
+    pub track_installed_bin: TrackInstalledBin,
+}
+
 fn print_installed_workspace_section<
     W,
     const ENABLE_ANSI_COLORS: bool,
     const PRINT_SECTION_HEADER: bool,
 >(
     this: &Printer,
-    manager: &mut PackageManager,
+    manager: &PackageManager,
+    print_state: &mut PrintState,
     writer: &mut W,
     workspace_package_id: PackageID,
     installed: &Bitset,
@@ -53,7 +60,6 @@ where
     // `updating_packages` holds one original per name, so a name declared by several owners (or groups) is one row.
     let mut update_dedupe: HashMap<PackageNameHash, ()> = HashMap::new();
 
-    // Reshaped for borrowck — `id_map` is reborrowed per call below.
     let mut id_map = id_map;
 
     // find the updated packages
@@ -124,9 +130,9 @@ where
             *printed_new_install = true;
             printed_update = true;
         }
-        if manager.subcommand == Subcommand::Update && !manager.kept_patched_text.is_empty() {
-            writer.write_all(&manager.kept_patched_text)?;
-            manager.kept_patched_text.clear();
+        if manager.subcommand == Subcommand::Update && !print_state.kept_patched_text.is_empty() {
+            writer.write_all(&print_state.kept_patched_text)?;
+            print_state.kept_patched_text.clear();
             *printed_new_install = true;
             printed_update = true;
         }
@@ -284,7 +290,7 @@ fn should_print_package_install(
 
 fn print_updated_package<W, const ENABLE_ANSI_COLORS: bool>(
     this: &Printer,
-    manager: &mut PackageManager,
+    manager: &PackageManager,
     update_info: &PackageUpdatePrintInfo,
     writer: &mut W,
 ) -> Result<(), crate::Error>
@@ -318,7 +324,7 @@ where
 }
 
 fn later_version_text(
-    manager: &mut PackageManager,
+    manager: &PackageManager,
     package_name: &[u8],
     name_hash: PackageNameHash,
     resolution: &Resolution,
@@ -378,7 +384,7 @@ where
 /// Packages registered by the transitive half of `bun update` are not rows of the walked workspaces, so the walk above never reaches them; the walked workspaces' own targets stay with them.
 fn print_transitive_updates<W, const ENABLE_ANSI_COLORS: bool>(
     this: &Printer,
-    manager: &mut PackageManager,
+    manager: &PackageManager,
     update_owners: &[PackageID],
     installed: &Bitset,
     writer: &mut W,
@@ -455,7 +461,7 @@ where
 
 fn print_installed_package<W, const ENABLE_ANSI_COLORS: bool>(
     this: &Printer,
-    manager: &mut PackageManager,
+    manager: &PackageManager,
     dependency: &Dependency,
     package_id: PackageID,
     writer: &mut W,
@@ -560,7 +566,8 @@ where
 /// - Prints a leading and trailing blank newline with diffs
 pub(crate) fn print<W, const ENABLE_ANSI_COLORS: bool>(
     this: &Printer,
-    manager: &mut PackageManager,
+    manager: &PackageManager,
+    print_state: &mut PrintState,
     writer: &mut W,
     log_level: install::package_manager::Options::LogLevel,
 ) -> Result<(), crate::Error>
@@ -568,7 +575,6 @@ where
     W: Write,
 {
     writer.write_str("\n")?;
-    // `allocator` param dropped — global mimalloc.
     let slice = this.lockfile.packages.slice();
     let bins: &[Bin] = slice.items_bin();
     let resolved: &[Resolution] = slice.items_resolution();
@@ -623,6 +629,7 @@ where
             print_installed_workspace_section::<W, ENABLE_ANSI_COLORS, false>(
                 this,
                 manager,
+                print_state,
                 writer,
                 0,
                 installed,
@@ -636,6 +643,7 @@ where
                 print_installed_workspace_section::<W, ENABLE_ANSI_COLORS, true>(
                     this,
                     manager,
+                    print_state,
                     writer,
                     workspace_package_id,
                     installed,
@@ -687,6 +695,7 @@ where
             print_installed_workspace_section::<W, ENABLE_ANSI_COLORS, false>(
                 this,
                 manager,
+                print_state,
                 writer,
                 workspace_package_id,
                 installed,
@@ -788,7 +797,7 @@ where
                 )?;
 
                 {
-                    if matches!(manager.track_installed_bin, TrackInstalledBin::Pending) {
+                    if matches!(print_state.track_installed_bin, TrackInstalledBin::Pending) {
                         // `bin_name`'s borrow of `iterator.buf` must end before
                         // the loop's `iterator.next()`.
                         if let Some(bin_name) = iterator.next().unwrap_or(None) {
@@ -801,7 +810,7 @@ where
                                 bstr::BStr::new(&owned[..]),
                             )?;
 
-                            manager.track_installed_bin = TrackInstalledBin::Basename(owned);
+                            print_state.track_installed_bin = TrackInstalledBin::Basename(owned);
                         }
                     }
 

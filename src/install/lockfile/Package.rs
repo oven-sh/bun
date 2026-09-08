@@ -916,9 +916,8 @@ pub struct DiffSummary {
     /// A workspace's `version` changed. No edge changed with it (those count as updates), but the
     /// lockfile records the version, so it is rewritten.
     pub(crate) workspace_versions_changed: bool,
-    /// The `bin` of a `file:` directory package changed (also counted in `update`). Resolving the
-    /// package again overwrites its lockfile entry in place, which hides the change from
-    /// `Lockfile::eql`, so `--frozen-lockfile` checks this flag.
+    /// A `file:` directory package's `bin` changed. Its entry is overwritten in place, which
+    /// `Lockfile::eql` cannot see, so `--frozen-lockfile` checks this (also counted in `update`).
     pub(crate) bins_changed: bool,
 
     pub(crate) pruned_workspaces: Vec<PackageNameHash>,
@@ -982,10 +981,8 @@ impl Diff {
         )
     }
 
-    /// The package.json of a `file:` directory package that the root package or a workspace
-    /// package depends on (directly, or through an override or catalog) is read when the
-    /// dependency is first resolved. Read it again and diff it against the lockfile entry, like a
-    /// workspace, so that edits to it are picked up. Returns `None` for every other dependency.
+    /// Diffs the package.json of the `file:` directory package that a root or workspace dependency
+    /// is locked to against its lockfile entry, like a workspace. `None` for other dependencies.
     fn generate_folder_dependency(
         pm: &mut PackageManager,
         log: &mut bun_ast::Log,
@@ -1077,15 +1074,10 @@ impl Diff {
                 ),
             _ => true,
         };
-        // `parseWithJSON` may grow `to_lockfile.buffers.dependencies` and
-        // invalidate the old slice, so `to_deps` is re-derived after it. Held as raw fat
-        // pointers so the `&mut to_lockfile`/`&mut from_lockfile` reborrows below
-        // (sort, recursive `generate`) don't conflict with these read views. The
-        // recursive call parses workspace and `file:` package.json files into
-        // `to_lockfile` (growing its `buffers.dependencies`), so `to_deps` is also
-        // re-derived after every call that can recurse. Nothing ever grows
-        // `from_lockfile`'s `buffers.dependencies`/`resolutions`, so `from_deps` and
-        // `from_resolutions` remain valid for the loop body.
+        // Raw fat pointers so the `&mut` reborrows of both lockfiles below don't conflict with
+        // these read views. Every parse below (directly or in a recursive call) can grow
+        // `to_lockfile.buffers.dependencies`, so `to_deps` is re-derived after each; nothing grows
+        // `from_lockfile`'s buffers.
         let mut to_deps: bun_ptr::RawSlice<Dependency> = to
             .dependencies
             .get(to_lockfile.buffers.dependencies.as_slice())
@@ -1637,9 +1629,7 @@ impl Diff {
                             None,
                             removed_names,
                         )?;
-                        // `parse_with_json` above and the `file:` packages the recursive call
-                        // parses may have grown `to_lockfile.buffers.dependencies` — re-derive
-                        // the slice.
+                        // Both calls above may have grown `to_lockfile.buffers.dependencies`.
                         to_deps = to
                             .dependencies
                             .get(to_lockfile.buffers.dependencies.as_slice())
@@ -1772,10 +1762,7 @@ impl Diff {
             );
         }
 
-        // bun.lock does not record lifecycle scripts. The installer reads the scripts of a `file:`
-        // package from its package.json when the lockfile did not fill them, so only compare filled
-        // ones for it; an unconditional compare would re-resolve a `file:` package with scripts on
-        // every install.
+        // bun.lock records no scripts; a `file:` package's are read from its package.json at install.
         let compare_scripts = match from.resolution.tag {
             ResolutionTag::Root => false,
             ResolutionTag::Folder => from.scripts.filled,
@@ -1796,8 +1783,7 @@ impl Diff {
             }
         }
 
-        // Not workspaces: `turbo prune` drops their `bin` from bun.lock and that output must keep
-        // passing `--frozen-lockfile` (test/cli/install/frozen-lockfile-pruned.test.ts).
+        // Not workspaces: `turbo prune` writes bun.lock without their `bin` and must pass --frozen-lockfile.
         if from.resolution.tag == ResolutionTag::Folder
             && !Bin::eql(
                 &to.bin,

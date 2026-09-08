@@ -257,8 +257,7 @@ fn normalize_package_json_path<'a>(
     }
 }
 
-/// `normalize_package_json_path`, with both paths using posix separators on
-/// Windows. `abs` is returned out of `joined` and `rel` out of `rel_buf`.
+/// `normalize_package_json_path` with posix separators on Windows; `rel` is copied into `rel_buf`.
 fn package_json_paths<'a>(
     global_or_relative: GlobalOrRelative<'_>,
     joined: &'a mut PathBuffer,
@@ -266,13 +265,8 @@ fn package_json_paths<'a>(
     non_normalized_path: &[u8],
 ) -> (&'a ZStr, &'a [u8]) {
     let paths = normalize_package_json_path(global_or_relative, joined, non_normalized_path);
-    // Writing in place through `(&ZStr).as_ptr().cast_mut()` /
-    // `(&[u8]).as_ptr().cast_mut()` would be UB under Stacked/Tree Borrows:
-    // those pointers carry read-only provenance. Capture lengths, let the
-    // shared borrows of `joined` die, then take a fresh `&mut joined[..abs_len]`.
-    // `rel` points into FileSystem's thread-local relative buffer which we only
-    // ever see as `&[u8]`, so copy it into a buffer we own — same pattern as
-    // WorkspacePackageJSONCache::get_with_path.
+    // `paths` borrows `joined` read-only and `rel` is FileSystem's thread-local buffer: take the
+    // lengths, drop the borrows, then mutate `joined` and our own copy of `rel`.
     let abs_len = paths.abs.len();
     let rel_len = paths.rel.len();
     rel_buf[..rel_len].copy_from_slice(paths.rel);
@@ -281,16 +275,11 @@ fn package_json_paths<'a>(
         bun_paths::dangerously_convert_path_to_posix_in_place::<u8>(&mut joined[..abs_len]);
         bun_paths::dangerously_convert_path_to_posix_in_place::<u8>(&mut rel_buf[..rel_len]);
     }
-    (
-        // `normalize_package_json_path` wrote `joined[abs_len] = 0`; the
-        // separator rewrite above never touches the NUL.
-        ZStr::from_buf(&joined[..], abs_len),
-        &rel_buf[..rel_len],
-    )
+    // `joined[abs_len]` is still the NUL that `normalize_package_json_path` wrote.
+    (ZStr::from_buf(&joined[..], abs_len), &rel_buf[..rel_len])
 }
 
-/// Reads and parses the package.json at `abs` into `lockfile`, without adding
-/// the package to `lockfile.packages`.
+/// Reads and parses the package.json at `abs` into `lockfile` without appending the package.
 fn parse_package_json_file<R: ResolverContext>(
     lockfile: &mut Lockfile,
     manager: &mut PackageManager,
@@ -317,11 +306,8 @@ fn parse_package_json_file<R: ResolverContext>(
     Ok(package)
 }
 
-/// Parses the package.json of a `file:` directory dependency declared by the
-/// root package or a workspace package into `lockfile`, the way `get_or_put`
-/// parses it into the manager's lockfile. Nothing is cached and nothing is
-/// added to `lockfile.packages`. `folder_path` is the dependency's folder:
-/// absolute, or relative to the top level directory.
+/// Parses the package.json of the `file:` directory at `folder_path` (absolute, or relative to the
+/// top level directory) into `lockfile` the way `get_or_put` does, without caching or appending it.
 pub(crate) fn parse_folder_dependency_package_json(
     lockfile: &mut Lockfile,
     manager: &mut PackageManager,

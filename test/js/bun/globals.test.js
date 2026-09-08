@@ -2,57 +2,38 @@ import { describe, expect, it } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 import path from "path";
 
-// formData() returns a promise, so a wrong `this` rejects instead of throwing.
 it("ERR_INVALID_THIS", async () => {
-  try {
-    await Request.prototype.formData.call(undefined);
-    expect.unreachable();
-  } catch (e) {
-    expect(e.code).toBe("ERR_INVALID_THIS");
-    expect(e.name).toBe("TypeError");
-    expect(e.message).toBe("Expected this to be instanceof Request");
-  }
-
-  try {
-    await Request.prototype.formData.call(null);
-    expect.unreachable();
-  } catch (e) {
-    expect(e.code).toBe("ERR_INVALID_THIS");
-    expect(e.name).toBe("TypeError");
-    expect(e.message).toBe("Expected this to be instanceof Request, but received null");
-  }
-
-  try {
-    await Request.prototype.formData.call(new (class Boop {})());
-    expect.unreachable();
-  } catch (e) {
-    expect(e.code).toBe("ERR_INVALID_THIS");
-    expect(e.name).toBe("TypeError");
-    expect(e.message).toBe("Expected this to be instanceof Request, but received an instance of Boop");
-  }
-
-  try {
-    await Request.prototype.formData.call("hellooo");
-    expect.unreachable();
-  } catch (e) {
-    expect(e.code).toBe("ERR_INVALID_THIS");
-    expect(e.name).toBe("TypeError");
-    expect(e.message).toBe(`Expected this to be instanceof Request, but received type string ('hellooo')`);
-  }
-
-  // A bare call through a closure-captured binding hands the native function
-  // the scope object as `this`; it must be reported like an undefined receiver.
   const { formData } = Request.prototype;
   function keep() {
     return formData;
   }
-  try {
-    await formData();
-    expect.unreachable();
-  } catch (e) {
+  const cases = [
+    [() => Request.prototype.formData.call(undefined), "Expected this to be instanceof Request"],
+    [() => Request.prototype.formData.call(null), "Expected this to be instanceof Request, but received null"],
+    [
+      () => Request.prototype.formData.call(new (class Boop {})()),
+      "Expected this to be instanceof Request, but received an instance of Boop",
+    ],
+    [
+      () => Request.prototype.formData.call("hellooo"),
+      `Expected this to be instanceof Request, but received type string ('hellooo')`,
+    ],
+    // A bare call through a closure-captured binding hands the native function
+    // the scope object as `this`; it must be reported like an undefined receiver.
+    [() => formData(), "Expected this to be instanceof Request"],
+  ];
+
+  for (const [call, message] of cases) {
+    // formData() returns a promise, so a wrong `this` rejects instead of throwing.
+    const result = call();
+    expect(result).toBeInstanceOf(Promise);
+    const e = await result.then(
+      value => ({ resolved: value }),
+      error => error,
+    );
     expect(e.code).toBe("ERR_INVALID_THIS");
     expect(e.name).toBe("TypeError");
-    expect(e.message).toBe("Expected this to be instanceof Request");
+    expect(e.message).toBe(message);
   }
   expect(keep()).toBe(formData);
 });

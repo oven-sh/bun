@@ -1,6 +1,7 @@
 #include "config.h"
 #include "JSDirectStreamController.h"
 
+#include "BunClientData.h"
 #include "DOMClientIsoSubspaces.h"
 #include "DOMIsoSubspaces.h"
 #include "ErrorCode.h"
@@ -1181,23 +1182,25 @@ static void installDirectControllerMethods(JSC::VM& vm, JSGlobalObject* globalOb
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* runtime = JSStreamsRuntime::from(globalObject);
     auto& names = builtinNames(vm);
+    auto& strings = Bun::commonStrings(vm);
     struct Method {
         const Identifier& key;
+        JSString* name;
         JSFunction* target;
         double length;
     };
     const Method methods[] = {
-        { names.writePublicName(), runtime->boundDirectWrite(), 1 },
-        { names.endPublicName(), runtime->boundDirectClose(), 0 },
-        { names.closePublicName(), runtime->boundDirectClose(), 1 },
-        { names.flushPublicName(), runtime->boundDirectFlush(), 0 },
-        { vm.propertyNames->error, runtime->boundDirectError(), 1 },
+        { names.writePublicName(), strings.writeString(), runtime->boundDirectWrite(), 1 },
+        { names.endPublicName(), strings.endString(), runtime->boundDirectClose(), 0 },
+        { names.closePublicName(), strings.closeString(), runtime->boundDirectClose(), 1 },
+        { names.flushPublicName(), strings.flushString(), runtime->boundDirectFlush(), 0 },
+        { vm.propertyNames->error, strings.fetchErrorString(), runtime->boundDirectError(), 1 },
     };
+    SourceCode source = makeSource("DirectStreamController"_s, SourceOrigin(), SourceTaintedOrigin::Untainted);
     for (const auto& method : methods) {
         MarkedArgumentBuffer boundArgs;
         boundArgs.append(controller);
-        String name = method.key.string();
-        auto* boundFunction = JSBoundFunction::create(vm, globalObject, method.target, jsUndefined(), ArgList(boundArgs), method.length, jsString(vm, name), makeSource(name, SourceOrigin(), SourceTaintedOrigin::Untainted));
+        auto* boundFunction = JSBoundFunction::create(vm, globalObject, method.target, jsUndefined(), ArgList(boundArgs), method.length, method.name, source);
         RETURN_IF_EXCEPTION(scope, );
         controller->putDirect(vm, method.key, boundFunction, 0);
     }

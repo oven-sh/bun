@@ -154,6 +154,12 @@ describe("bundler", () => {
     <img srcset="https://example.com/a.png  1x ,  http://example.com/b.png 2x">
     <img srcset="">
     <img srcset=" , ">
+    <img srcset="data:image/gif;base64,R0lGODlhAQABAAAAACw= 1x, ./big.png 2x">
+    <img srcset="data:image/gif;base64,R0lGODlhAQABAAAAACw=">
+    <img srcset="https://example.com/upload/c_scale,w_300/x.jpg 300w, ./big.png 800w">
+    <img srcset="./small.png foo(1x, 2), ./big.png 2x">
+    <img srcset="./small.png,, ./big.png">
+    <img srcset="./small.png\t1x,\t./big.png\t2x">
   </body>
 </html>`,
       "/fallback.png": "fallback",
@@ -194,6 +200,18 @@ describe("bundler", () => {
         "https://example.com/a.png  1x ,  http://example.com/b.png 2x",
         "",
         " , ",
+        // The rest tell the HTML srcset grammar apart from a plain comma split.
+        // A URL runs to the next whitespace, so a comma inside it (data: URI,
+        // CDN transform path) does not start a new candidate...
+        expect.stringMatching(new RegExp(`^data:image/gif;base64,R0lGODlhAQABAAAAACw= 1x, ${big} 2x$`)),
+        "data:image/gif;base64,R0lGODlhAQABAAAAACw=",
+        expect.stringMatching(new RegExp(`^https://example\\.com/upload/c_scale,w_300/x\\.jpg 300w, ${big} 800w$`)),
+        // ...nor does a comma inside a parenthesized descriptor.
+        expect.stringMatching(new RegExp(`^${small} foo\\(1x, 2\\), ${big} 2x$`)),
+        // A run of commas after a URL ends that candidate with no descriptor.
+        expect.stringMatching(new RegExp(`^${small}, ${big}$`)),
+        // Any ASCII whitespace separates a URL from its descriptor.
+        expect.stringMatching(new RegExp(`^${small} 1x, ${big} 2x$`)),
       ]);
       api.expectFile("out/index.html").toContain(`media="(min-width: 800px)" type="image/png">`);
       api.expectFile("out/index.html").toContain(`" sizes="50vw">`);

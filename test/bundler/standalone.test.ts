@@ -356,7 +356,7 @@ body { color: blue; }`,
     using dir = tempDir("compile-browser-srcset", {
       "index.html": `<!DOCTYPE html>
 <html><head><link rel="preload" as="image" imagesrcset="./one.png 1x, ./two.png 2x" imagesizes="100vw"></head>
-<body><img src="./one.png" srcset="./one.png 300w, ./two.png 600w, https://example.com/three.png 900w" sizes="50vw"><script src="./app.js"></script></body></html>`,
+<body><img src="./one.png" srcset="./one.png 300w, ./two.png 600w, https://example.com/three.png 900w" sizes="50vw"><picture><source srcset="./one.png, ./two.png 2x"></picture><script src="./app.js"></script></body></html>`,
       "one.png": "one",
       "two.png": "two",
       "app.js": `console.log("with srcset");`,
@@ -378,6 +378,9 @@ body { color: blue; }`,
     expect(html).toContain(
       `src="${one}" srcset="${one} 300w, ${two} 600w, https://example.com/three.png 900w" sizes="50vw"`,
     );
+    // A descriptor-less candidate ends at "<data: URI>," which the srcset
+    // grammar still reads back as one URL followed by a separator.
+    expect(html).toContain(`<source srcset="${one}, ${two} 2x">`);
     expect(html).toContain('console.log("with srcset")');
   });
 

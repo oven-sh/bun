@@ -551,11 +551,39 @@ impl ReachedPackages {
         lockfile: &Lockfile,
         resolutions: &[PackageID],
         manager: &PackageManager,
+        workspace_filters: &[WorkspaceFilter],
+        install_root_dependencies: bool,
         pkg_id: PackageID,
     ) -> bool {
         self.0
             .get_or_insert_with(|| {
-                reachable::packages(lockfile, resolutions, reachable::Options::install(manager))
+                let options = reachable::Options::install(manager);
+                if workspace_filters.is_empty()
+                    && install_root_dependencies
+                    && manager.summary.pruned_workspaces.is_empty()
+                {
+                    return reachable::packages(lockfile, resolutions, options);
+                }
+                // `--filter` or a pruned checkout links only some importers: walk from
+                // those, the same ones the workspace checks below let through.
+                let deps = lockfile.buffers.dependencies.as_slice();
+                let mut roots: Vec<PackageID> = Vec::new();
+                if install_root_dependencies {
+                    roots.push(0);
+                }
+                let root_deps = lockfile.packages.items_dependencies()[0];
+                for dep_id in root_deps.begin()..root_deps.end() {
+                    let dep = &deps[dep_id as usize];
+                    let workspace = resolutions[dep_id as usize];
+                    if dep.behavior.is_workspace()
+                        && (workspace as usize) < lockfile.packages.len()
+                        && !manager.summary.pruned_workspaces.contains(&dep.name_hash)
+                        && WorkspaceFilter::is_selected(workspace_filters, workspace)
+                    {
+                        roots.push(workspace);
+                    }
+                }
+                reachable::packages_from(lockfile, resolutions, &roots, false, options)
             })
             .is_set(pkg_id as usize)
     }
@@ -638,7 +666,14 @@ pub(crate) fn is_filtered_dependency_or_workspace(
         {
             // The omitted group is what resolved this package. Keep the optional peer
             // only when the install still reaches the package through other edges.
-            return !reached.contains(lockfile, resolutions, manager, pkg_id);
+            return !reached.contains(
+                lockfile,
+                resolutions,
+                manager,
+                workspace_filters,
+                install_root_dependencies,
+                pkg_id,
+            );
         }
     }
 

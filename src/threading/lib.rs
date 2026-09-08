@@ -23,8 +23,8 @@ pub mod thread_slots;
 pub mod work_pool;
 
 pub mod guarded;
-pub mod signal_ring;
 pub mod job_batch;
+pub mod signal_ring;
 pub mod unbounded_queue;
 #[path = "WaitGroup.rs"]
 pub mod wait_group;

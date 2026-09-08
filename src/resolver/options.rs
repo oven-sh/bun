@@ -19,20 +19,17 @@ pub enum Packages {
     External,
 }
 
-/// A file-path external (`./x.js`, `/abs/x.js`, `./dir/*`) is matched twice,
-/// like esbuild: against the specifier as written (`exact`, `patterns`), which
-/// keeps the specifier as written, and against the resolved absolute path
-/// (`abs_paths`, `abs_patterns`), which prints the file relative to the output.
+/// Like esbuild, file-path externals match the specifier as written (`exact`,
+/// `patterns`) or the resolved absolute path (`abs_paths`, `abs_patterns`).
 #[derive(Default)]
 pub struct ExternalModules {
-    /// Wildcard patterns, matched against the import specifier as written.
+    /// Wildcard patterns, matched against the specifier as written.
     pub patterns: Vec<WildcardPattern>,
     /// File-path externals as written, matched against the specifier as written.
     pub exact: StringSet,
-    /// `./`, `../` and absolute wildcard patterns resolved against the working
-    /// directory; matched against the resolved absolute path like `abs_paths`.
+    /// `./`, `../` and absolute wildcards made absolute; matched like `abs_paths`.
     pub abs_patterns: Vec<WildcardPattern>,
-    /// File-path externals resolved against the working directory.
+    /// File-path externals made absolute, matched against the resolved path.
     pub abs_paths: StringSet,
     /// Package names; a name also covers its subpaths.
     pub node_modules: StringSet,
@@ -51,15 +48,13 @@ impl Clone for ExternalModules {
     }
 }
 impl ExternalModules {
-    /// Whether the specifier as written was marked external, by text or by a
-    /// wildcard pattern.
+    /// Whether the specifier as written is external (exact text or wildcard).
     pub fn matches_specifier(&self, import_path: &[u8]) -> bool {
         (self.exact.count() > 0 && self.exact.contains(import_path))
             || self.patterns.iter().any(|p| p.matches(import_path))
     }
 
-    /// Whether an absolute file path was marked external by path (`./file.js`,
-    /// `/abs/file.js`) or by a path wildcard (`./dir/*`).
+    /// Whether a resolved absolute path is external (file path or path wildcard).
     pub fn matches_abs_path(&self, abs_path: &[u8]) -> bool {
         (self.abs_paths.count() > 0 && self.abs_paths.contains(abs_path))
             || self.abs_patterns.iter().any(|p| p.matches(abs_path))

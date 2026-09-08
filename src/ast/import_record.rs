@@ -107,10 +107,8 @@ bitflags::bitflags! {
         /// reads `.default` to return `module.exports`.
         const CROSS_CHUNK_REQUIRE_DEFAULT = 1 << 18;
 
-        /// An external import written as `./x` or `../x` that matched an
-        /// `external` file: `path.text` is that file's absolute path (the
-        /// specifier was relative to the importer, not to the output). The
-        /// printer writes it relative to the output file's directory.
+        /// An external matched by resolved path: `path.text` is the file's
+        /// absolute path and prints relative to the output file's directory.
         const PRINT_PATH_RELATIVE_TO_OUTPUT = 1 << 19;
     }
 }

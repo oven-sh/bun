@@ -1380,9 +1380,8 @@ pub struct Options<'a> {
 
     pub mangled_props: Option<&'a crate::MangledProps>,
 
-    /// Absolute directory of the file being written. Import records flagged
-    /// `PRINT_PATH_RELATIVE_TO_OUTPUT` hold an absolute file path and print
-    /// relative to this; when empty they print as-is.
+    /// Absolute directory of the output file; `PRINT_PATH_RELATIVE_TO_OUTPUT`
+    /// records print relative to it (as-is when empty).
     pub output_dir: &'a [u8],
 }
 
@@ -6503,9 +6502,8 @@ pub(crate) mod __gated_printer {
             Ok(())
         }
 
-        /// The specifier written for `import_record`: `path.text`, except that a
-        /// `PRINT_PATH_RELATIVE_TO_OUTPUT` record (an absolute file path) becomes
-        /// relative to `options.output_dir`.
+        /// `path.text`, or for a `PRINT_PATH_RELATIVE_TO_OUTPUT` record that
+        /// absolute path made relative to `options.output_dir`.
         pub(crate) fn import_record_path_text(&self, import_record: &ImportRecord) -> &'a [u8] {
             let text: &'static [u8] = import_record.path.text;
             if !import_record

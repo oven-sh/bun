@@ -943,9 +943,8 @@ impl<'a> Resolver<'a> {
         self.matches_user_external_pattern(import_path)
     }
 
-    /// True iff `import_path` as written matches a user-supplied `--external`
-    /// file path or wildcard pattern. Does NOT consider `packages = external`;
-    /// use `isExternalPattern` for the combined check.
+    /// `import_path` as written matches a user `--external` file path or pattern.
+    /// Does NOT consider `packages = external`; see `is_external_pattern`.
     pub(crate) fn matches_user_external_pattern(&self, import_path: &[u8]) -> bool {
         self.opts.external.matches_specifier(import_path)
     }
@@ -2019,9 +2018,7 @@ impl<'a> Resolver<'a> {
         };
 
         if !kind.is_entry_point() && self.opts.external.matches_abs_path(abs_path) {
-            // Unlike the absolute-specifier case above, hand back the resolved
-            // absolute path: the specifier was relative to the importer, so the
-            // bundler prints it relative to the output file instead.
+            // Hand back the absolute path: the bundler prints it relative to the output.
             if let Some(debug) = self.debug_logs.as_mut() {
                 debug.add_note_fmt(format_args!(
                     "The path \"{}\" is marked as external by the user",

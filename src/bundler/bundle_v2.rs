@@ -6033,13 +6033,8 @@ pub mod bv2_impl {
             Ok(out)
         }
 
-        /// A `./` or `../` specifier that matched an `external` file is relative to the
-        /// importer, so it cannot be copied into the output. Returns the path to store on
-        /// the import record instead: the absolute `resolved` path (with a cwd-relative
-        /// `pretty`), which the JS printer rebases onto the output file
-        /// (`PRINT_PATH_RELATIVE_TO_OUTPUT`). `None` for any other external: bare and
-        /// absolute specifiers print as written, and CSS `@import`/`url()` print through
-        /// their own path.
+        /// For a relative JS specifier that matched an `external` file by path: the absolute
+        /// path to store on the record (`PRINT_PATH_RELATIVE_TO_OUTPUT`). `None` otherwise.
         fn external_file_path(
             &self,
             specifier: &[u8],

@@ -316,8 +316,7 @@ pub(crate) fn generate(c: &mut LinkerContext, chunks: &mut [Chunk]) -> crate::Re
                             }
                         }
                     }
-                    // An external file: `text` is absolute, `pretty` is cwd-relative
-                    // like the "inputs" keys.
+                    // External file: `pretty` is cwd-relative like the "inputs" keys.
                     if record
                         .flags
                         .contains(ImportRecordFlags::PRINT_PATH_RELATIVE_TO_OUTPUT)

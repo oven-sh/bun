@@ -18,10 +18,8 @@ pub type Map = StringHashMap<IndexInt>;
 pub(crate) type GetOrPutResult<'a> = bun_collections::string_hash_map::GetOrPutResult<'a, IndexInt>;
 
 impl PathToSourceIndexMap {
-    /// The source index of the file `record` points at, by path. An external
-    /// file record (`PRINT_PATH_RELATIVE_TO_OUTPUT`) carries that file's
-    /// absolute path but never has a source index, even when the same file is
-    /// also bundled (as an entry point, say).
+    /// Source index by `record`'s path. An external file record never has one,
+    /// even when its file is also bundled (e.g. as an entry point).
     pub(crate) fn get_record(&self, record: &ImportRecord) -> Option<IndexInt> {
         if record
             .flags

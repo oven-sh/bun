@@ -169,8 +169,7 @@ pub(crate) fn init_external_modules(
                 suffix: Box::from(&external[i + 1..]),
             });
 
-            // `./lib/*` names files, not specifiers: also match it against the
-            // resolved path so `../lib/x.js` from a subdirectory is covered.
+            // `./lib/*` also matches resolved paths (`../lib/x.js` from a subdirectory).
             if !bun_paths::is_package_path(external) {
                 let normalized = validate_path(log, fs, cwd, external, b"external path");
                 if let Some(star) = strings::index_of_char(&normalized, b'*') {
@@ -184,10 +183,7 @@ pub(crate) fn init_external_modules(
         } else if bun_paths::is_package_path(external) {
             result.node_modules.insert(external).expect("unreachable");
         } else {
-            // A specifier written exactly like the external stays as written
-            // (`--external ./config.js` + `import "./config.js"` prints
-            // `./config.js`); any other specifier that resolves to the file is
-            // matched by `abs_paths` and printed relative to the output.
+            // Matched as written (and then printed as written), or by resolved path below.
             result.exact.insert(external).expect("unreachable");
 
             let normalized = validate_path(log, fs, cwd, external, b"external path");
@@ -1248,9 +1244,8 @@ pub struct BundleOptions<'a> {
     pub(crate) output_dir_handle: Option<Dir>,
 
     pub output_dir: Box<[u8]>,
-    /// `bun build --outfile`. The CLI writes this file itself, so `output_dir`
-    /// stays empty; the linker only reads its directory as the place the output
-    /// lands (see `Chunk::output_dir_abs`).
+    /// `bun build --outfile`; the CLI writes it, the linker reads its directory
+    /// (`Chunk::output_dir_abs`).
     pub outfile: Box<[u8]>,
     pub root_dir: Box<[u8]>,
 
@@ -2487,11 +2482,8 @@ impl PathTemplate {
         )
     }
 
-    /// The directory part of the expanded template, `/`-separated, relative to
-    /// the outdir. Usable before the chunk's hash is known: a missing `[hash]`
-    /// takes a stand-in, and a hash never contains a separator, so the
-    /// directory has the right depth either way (its text is only exact when
-    /// no directory segment uses `[hash]`).
+    /// Directory part of the expanded template, `/`-separated. A `[hash]` not yet
+    /// known takes a stand-in; hashes have no separators, so the depth is right.
     pub(crate) fn rel_dir(&self, sanitize_parent_dirs: bool) -> Box<[u8]> {
         let mut rel = Vec::<u8>::new();
         path_template_print(

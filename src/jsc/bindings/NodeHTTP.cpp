@@ -396,11 +396,8 @@ static bool connectionValueHasClose(const WTF::String& value)
     return false;
 }
 
-// Field names that HttpResponse::upgrade() writes itself in the 101
-// (RFC 6455 §4.2.2), plus the two framing fields a 1xx response must not
-// carry (RFC 9110 §8.6, RFC 9112 §6.1). server.upgrade() reads the
-// Sec-WebSocket-Protocol and -Extensions values out of options.headers and
-// hands them to upgrade(); the rest have no valid user-supplied value.
+// Fields HttpResponse::upgrade() writes itself (RFC 6455 §4.2.2), plus the
+// framing fields a 1xx must not carry (RFC 9110 §8.6, RFC 9112 §6.1).
 static bool isWebSocketHandshakeOwnedHeader(WebCore::HTTPHeaderName name)
 {
     switch (name) {

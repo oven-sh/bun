@@ -1743,8 +1743,7 @@ where
                         let fetch_headers_to_use =
                             bun_opaque::opaque_deref_mut(fetch_headers_to_use);
 
-                        // `upgrade()` writes these two itself from the values
-                        // passed to it; the writer below skips them.
+                        // upgrade() writes these two itself; the writer below skips them.
                         if let Some(protocol) =
                             fetch_headers_to_use.fast_get(HTTPHeaderName::SecWebSocketProtocol)
                         {
@@ -1944,8 +1943,7 @@ where
 
                     // S008: `FetchHeaders` is an `opaque_ffi!` ZST — safe deref.
                     let fh = bun_opaque::opaque_deref_mut(fh);
-                    // `resp.upgrade()` writes these two itself from the values
-                    // passed to it; the writer below skips them.
+                    // resp.upgrade() writes these two itself; the writer below skips them.
                     if let Some(p) = fh.fast_get(HTTPHeaderName::SecWebSocketProtocol) {
                         sec_websocket_protocol = p.to_utf8().into_owned();
                     }

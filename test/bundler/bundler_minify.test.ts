@@ -138,6 +138,7 @@ describe("bundler", () => {
   }
   // A join with a non-ASCII (UTF-16) string literal copies both sides into one
   // UTF-16 string, so it is capped at 4096 code units; an ASCII join is a rope.
+  const eAcute = (count: number) => Buffer.alloc(count * Buffer.byteLength("é"), "é").toString();
   itBundled("minify/StringAdditionFoldingNonAscii", {
     files: {
       "/entry.js": /* js */ `
@@ -146,8 +147,8 @@ describe("bundler", () => {
           \`a\${"é"}b\${1}😀\` + "x",
           ("a" + "é" + "😀x").length,
           (/é/ + "x")[1],
-          ("${"é".repeat(4095)}" + "x").length,
-          ("${"é".repeat(4096)}" + "y").length,
+          ("${eAcute(4095)}" + "x").length,
+          ("${eAcute(4096)}" + "y").length,
         ]));
       `,
     },

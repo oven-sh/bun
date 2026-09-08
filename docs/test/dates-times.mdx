@@ -122,17 +122,17 @@ test("retries after one second", () => {
 });
 ```
 
-| Function                          | What it does                                                                                                                                                                                  |
-| --------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `jest.useFakeTimers({ now? })`    | Turns fake timers on. `now` (a number or a `Date`) sets what `Date.now()` returns and defaults to the real current time. `performance.now()` starts again from 0.                             |
-| `jest.useRealTimers()`            | Turns fake timers off and discards every pending fake timer without running it.                                                                                                               |
-| `jest.advanceTimersByTime(ms)`    | Moves the clock forward by `ms` milliseconds and runs each timer that comes due, in order. `advanceTimersByTime(0)` runs timers that were scheduled with a 0 ms delay.                        |
-| `jest.advanceTimersToNextTimer()` | Moves the clock to the earliest pending timer and runs it.                                                                                                                                    |
-| `jest.runOnlyPendingTimers()`     | Runs the timers that are pending at the time of the call. Timers that those callbacks schedule stay pending.                                                                                  |
-| `jest.runAllTimers()`             | Runs timers until none are pending, including timers scheduled along the way. An active `setInterval` always schedules another one, so clear intervals first or use `runOnlyPendingTimers()`. |
-| `jest.clearAllTimers()`           | Discards every pending fake timer without running it.                                                                                                                                         |
-| `jest.getTimerCount()`            | Returns the number of pending fake timers.                                                                                                                                                    |
-| `jest.isFakeTimers()`             | Returns `true` while fake timers are on.                                                                                                                                                      |
+| Function                          | What it does                                                                                                                                                                                                |
+| --------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `jest.useFakeTimers({ now? })`    | Turns fake timers on. `now` (a number or a `Date`) sets what `Date.now()` returns and defaults to the real current time. `performance.now()` starts again from 0.                                           |
+| `jest.useRealTimers()`            | Turns fake timers off and discards every pending fake timer without running it.                                                                                                                             |
+| `jest.advanceTimersByTime(ms)`    | Moves the clock forward by `ms` milliseconds and runs each timer that comes due, in order. `advanceTimersByTime(0)` runs timers that were scheduled with a 0 ms delay.                                      |
+| `jest.advanceTimersToNextTimer()` | Moves the clock to the earliest pending timer and runs it.                                                                                                                                                  |
+| `jest.runOnlyPendingTimers()`     | Moves the clock to the latest timer pending at the time of the call and runs every timer due by then. A timer that a callback schedules runs too if it comes due by that time; one due later stays pending. |
+| `jest.runAllTimers()`             | Runs timers until none are pending, including timers scheduled along the way. An active `setInterval` always schedules another one, so clear intervals first or use `runOnlyPendingTimers()`.               |
+| `jest.clearAllTimers()`           | Discards every pending fake timer without running it.                                                                                                                                                       |
+| `jest.getTimerCount()`            | Returns the number of pending fake timers.                                                                                                                                                                  |
+| `jest.isFakeTimers()`             | Returns `true` while fake timers are on.                                                                                                                                                                    |
 
 The functions that do not return a value return the `jest` object, so calls chain: `jest.useFakeTimers().advanceTimersByTime(100)`.
 

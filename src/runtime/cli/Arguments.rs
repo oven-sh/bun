@@ -19,8 +19,8 @@ use bun_jsc::regular_expression::Flags as RegexFlags;
 use bun_options_types::code_coverage_options::Reporters as CoverageReporters;
 use bun_options_types::context::{Debugger, DebuggerEnable, HotReload, MacroOptions, Shard};
 use bun_options_types::schema::api;
+use bun_paths::platform;
 use bun_paths::resolve_path;
-use bun_paths::{PathBuffer, platform};
 
 use crate::cli;
 use crate::cli::colon_list_type::ColonListType;
@@ -40,15 +40,17 @@ pub(crate) fn loader_resolver(input: &[u8]) -> crate::Result<api::Loader> {
     Ok(option_loader.to_api())
 }
 
-fn resolve_jsx_runtime(s: &[u8]) -> crate::Result<api::JsxRuntime> {
+fn resolve_jsx_runtime(s: &[u8]) -> api::JsxRuntime {
     if s == b"automatic" {
-        Ok(api::JsxRuntime::Automatic)
+        api::JsxRuntime::Automatic
     } else if s == b"fallback" || s == b"classic" {
-        Ok(api::JsxRuntime::Classic)
-    } else if s == b"solid" {
-        Ok(api::JsxRuntime::Solid)
+        api::JsxRuntime::Classic
     } else {
-        Err(crate::Error::InvalidJSXRuntime)
+        bun_core::pretty_errorln!(
+            "<r><red>error<r>: Invalid --jsx-runtime: \"{}\", expected \"automatic\" or \"classic\"",
+            BStr::new(s)
+        );
+        Global::exit(1);
     }
 }
 
@@ -825,7 +827,7 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
     // `api::TransformOptions.absolute_working_dir` is `Option<Box<[u8]>>`,
     // so we dupe into a plain `Box<[u8]>`.
     let cwd: Box<[u8]> = if let Some(cwd_arg) = args.option(b"--cwd") {
-        let mut outbuf = PathBuffer::uninit();
+        let mut outbuf = bun_paths::path_buffer_pool::get();
         // An absolute --cwd needs no base; a relative one still requires a
         // live cwd (an exe-dir base would silently chdir somewhere else).
         let base: &[u8] = if bun_paths::is_absolute(cwd_arg) {
@@ -849,7 +851,7 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
         }
         // Store the post-chdir physical path (mirrors process.chdir) so
         // process.cwd(), path.resolve, and the resolver agree on one form.
-        let mut phys = PathBuffer::uninit();
+        let mut phys = bun_paths::path_buffer_pool::get();
         match bun_core::getcwd(&mut phys) {
             Ok(p) => Box::<[u8]>::from(p.as_bytes()),
             Err(_) => Box::<[u8]>::from(out_z.as_bytes()),
@@ -860,12 +862,12 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
     ) {
         // A deleted cwd must not abort the runtime (Node boots and lets
         // `process.cwd()` throw later); fall back to the executable's dir.
-        let mut temp = PathBuffer::uninit();
+        let mut temp = bun_paths::path_buffer_pool::get();
         Box::<[u8]>::from(bun_core::getcwd_or_exe_dir(&mut temp).as_bytes())
     } else {
         // Everything else (install/test/build/...) must not silently act on
         // whatever project happens to live above the executable.
-        let mut temp = PathBuffer::uninit();
+        let mut temp = bun_paths::path_buffer_pool::get();
         Box::<[u8]>::from(bun_core::getcwd(&mut temp)?.as_bytes())
     };
 
@@ -1601,7 +1603,7 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
                 fragment: jsx_fragment.unwrap_or(default_fragment).into(),
                 import_source: jsx_import_source.unwrap_or(default_import_source).into(),
                 runtime: if let Some(runtime) = jsx_runtime {
-                    resolve_jsx_runtime(runtime)?
+                    resolve_jsx_runtime(runtime)
                 } else {
                     api::JsxRuntime::Automatic
                 },
@@ -1617,7 +1619,7 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
                     .map(Box::<[u8]>::from)
                     .unwrap_or(prev.import_source),
                 runtime: if let Some(runtime) = jsx_runtime {
-                    resolve_jsx_runtime(runtime)?
+                    resolve_jsx_runtime(runtime)
                 } else {
                     prev.runtime
                 },

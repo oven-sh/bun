@@ -411,6 +411,7 @@ unsafe extern "C" {
     safe fn Zig__GlobalObject__prepareForDestruction(global: &JSGlobalObject);
     safe fn Zig__GlobalObject__forbidExecution(global: &JSGlobalObject);
     safe fn Zig__GlobalObject__stopActiveDOMObjectsForTestIsolation(global: &JSGlobalObject);
+    safe fn Zig__GlobalObject__retireForTestIsolation(global: &JSGlobalObject);
     safe fn Zig__GlobalObject__destructOnExit(global: &JSGlobalObject);
     safe fn WebWorker__teardownJSCVM(global: &JSGlobalObject);
 }
@@ -5079,11 +5080,11 @@ impl VirtualMachine {
     pub fn set_process_cwd(&mut self, to: &bun_core::ZStr) -> bun_sys::Result<()> {
         let fs = self.transpiler.fs_mut();
         bun_sys::chdir(to)?;
-        let mut buf = bun_paths::PathBuffer::uninit();
+        let mut buf = bun_paths::path_buffer_pool::get();
         let into_cwd_len = match bun_sys::getcwd(&mut buf[..]) {
             bun_sys::Result::Ok(r) => r,
             bun_sys::Result::Err(err) => {
-                let mut rollback = bun_paths::PathBuffer::uninit();
+                let mut rollback = bun_paths::path_buffer_pool::get();
                 let _ = bun_sys::chdir(bun_paths::resolve_path::z(fs.top_level_dir, &mut rollback));
                 return bun_sys::Result::Err(err);
             }
@@ -5123,7 +5124,7 @@ impl VirtualMachine {
         Zig__GlobalObject__stopActiveDOMObjectsForTestIsolation(self.global());
 
         if let Some(cwd) = self.test_isolation_state.saved_cwd.take() {
-            let mut buf = bun_paths::PathBuffer::uninit();
+            let mut buf = bun_paths::path_buffer_pool::get();
             let z = bun_paths::resolve_path::z(&cwd, &mut buf);
             let _ = self.set_process_cwd(z);
         }
@@ -5177,6 +5178,9 @@ impl VirtualMachine {
         let _ = self.auto_killer.kill();
         self.auto_killer.clear();
 
+        // The outgoing file's exit: work it left in flight (thread-pool jobs,
+        // the children just killed) lands later and must not resume its script.
+        Zig__GlobalObject__retireForTestIsolation(self.global());
         self.test_isolation_generation = self.test_isolation_generation.wrapping_add(1);
 
         // Generation-stale JS timers would otherwise release their pins only
@@ -6445,6 +6449,7 @@ impl VirtualMachine {
                     own_properties_only: true,
                     observable: false,
                     only_non_index_properties: true,
+                    include_symbols: true,
                 },
             )?;
             let longest_name = iterator.get_longest_property_name().min(10);

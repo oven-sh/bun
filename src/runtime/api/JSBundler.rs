@@ -38,7 +38,6 @@ pub mod js_bundler {
             options::JSX::Runtime::_None => api::JsxRuntime::_none,
             options::JSX::Runtime::Automatic => api::JsxRuntime::Automatic,
             options::JSX::Runtime::Classic => api::JsxRuntime::Classic,
-            options::JSX::Runtime::Solid => api::JsxRuntime::Solid,
         }
     }
 
@@ -957,7 +956,7 @@ pub mod js_bundler {
                 };
                 let _close = scopeguard::guard(dir, |d| d.close());
 
-                let mut rootdir_buf = bun_paths::PathBuffer::uninit();
+                let mut rootdir_buf = bun_paths::path_buffer_pool::get();
                 let rootdir = match bun_sys::get_fd_path(*_close, &mut rootdir_buf) {
                     Ok(p) => p,
                     Err(err) => {

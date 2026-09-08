@@ -370,7 +370,7 @@ impl File {
         input_path: &[u8],
     ) -> Maybe<Vec<u8>> {
         let dir = dir.as_fd();
-        let mut buf = bun_paths::PathBuffer::default();
+        let mut buf = bun_paths::path_buffer_pool::get();
         let normalized = bun_paths::resolve_path::join_abs_string_buf_z::<bun_paths::platform::Loose>(
             top_level_dir,
             &mut buf.0,

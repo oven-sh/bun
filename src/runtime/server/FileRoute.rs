@@ -260,7 +260,7 @@ impl FileRoute {
         let fd_result: bun_sys::Result<Fd> = {
             #[cfg(windows)]
             {
-                let mut path_buffer = bun_paths::PathBuffer::uninit();
+                let mut path_buffer = bun_paths::path_buffer_pool::get();
                 path_buffer[..path.len()].copy_from_slice(path);
                 path_buffer[path.len()] = 0;
                 bun_sys::open(

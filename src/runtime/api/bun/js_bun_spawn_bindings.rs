@@ -105,9 +105,7 @@ fn get_argv0(
             )
             .throw());
     }
-    // Heap allocate it to ensure we don't run out of stack space.
-    let mut path_buf: Box<bun_core::PathBuffer> = Box::default();
-    // drops at scope exit (was `defer bun.default_allocator.destroy(path_buf)`).
+    let mut path_buf = bun_paths::path_buffer_pool::get();
 
     let argv0_to_use: &[u8] = arg0.slice();
 

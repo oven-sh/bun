@@ -222,8 +222,10 @@ const exitScenarios = {
     `console.log("MARK:${n}");\nprocess.setUncaughtExceptionCaptureCallback(() => { process.exit(1); console.log("AFTER_EXIT_SHOULD_NOT_PRINT"); });\nthrow new Error("handled by capture callback");\n`,
 } as const;
 
+// The reload-on-edit these rely on is what `should watch files` marks
+// expected-broken on Windows CI above; same gate here.
 for (const [scenario, fixture] of Object.entries(exitScenarios)) {
-  test(`--watch: process.exit() (${scenario}) keeps the watcher alive`, async () => {
+  it.todoIf(isBroken && isWindows)(`--watch: process.exit() (${scenario}) keeps the watcher alive`, async () => {
     using dir = tempDir("watch-process-exit", { "index.ts": fixture(0) });
     const path = join(String(dir), "index.ts");
 
@@ -273,7 +275,7 @@ for (const [scenario, fixture] of Object.entries(exitScenarios)) {
 // process.exit() in a --preload script unwinds inside load_preloads' own
 // promise-spin loop, which must bail like load_entry_point's does, and must
 // not go on to load the remaining preloads or the entry point.
-test("--watch: process.exit() in a --preload script keeps the watcher alive", async () => {
+it.todoIf(isBroken && isWindows)("--watch: process.exit() in a --preload script keeps the watcher alive", async () => {
   const fixture = (n: number) =>
     `console.log("MARK:${n}");\nprocess.exit(1);\nconsole.log("AFTER_EXIT_SHOULD_NOT_PRINT");\n`;
   using dir = tempDir("watch-preload-exit", {

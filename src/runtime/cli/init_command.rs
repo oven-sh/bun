@@ -1000,8 +1000,7 @@ impl Assets {
         result.map_err(|err| err.with_path(filename))
     }
 
-    /// Whether the file was created. One that already exists is left as it is; any other
-    /// failure is reported and exits.
+    /// Whether the file was created; an existing one is left alone, any other failure exits.
     fn check(result: bun_sys::Result<()>, filename: &[u8]) -> bool {
         match result {
             Ok(()) => true,

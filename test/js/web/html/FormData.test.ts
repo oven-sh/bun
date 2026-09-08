@@ -425,21 +425,28 @@ describe("FormData", () => {
     form.append("epoch", new File(["x"], "e.txt", { lastModified: 0 }));
     const after = now();
 
+    const first: Record<string, number> = {};
     for (const name of ["blob", "named", "set"]) {
-      expect(lastModified(form, name)).toBeWithin(before, after + 1);
-      // Fixed when the entry is created, not read on each get().
-      expect(lastModified(form, name)).toBe(lastModified(form, name));
+      first[name] = lastModified(form, name);
+      expect(first[name]).toBeWithin(before, after + 1);
     }
     expect(lastModified(form, "file")).toBe(12345);
     expect(lastModified(form, "renamed")).toBe(12345);
     expect(lastModified(form, "epoch")).toBe(0);
+
+    // The value is fixed when the entry is created, not read on each get():
+    // once the millisecond clock has moved on, get() still returns it.
+    while (now() <= after) {}
+    for (const name of ["blob", "named", "set"]) {
+      expect(lastModified(form, name)).toBe(first[name]);
+    }
 
     // Every File out of the multipart parser is new.
     const parsed = await new Response(form).formData();
     const afterParse = now();
     for (const name of ["blob", "named", "set", "file", "renamed", "epoch"]) {
       expect(parsed.get(name)).toBeInstanceOf(File);
-      expect(lastModified(parsed, name)).toBeWithin(before, afterParse + 1);
+      expect(lastModified(parsed, name)).toBeWithin(after + 1, afterParse + 1);
     }
   });
 

@@ -711,13 +711,17 @@ describe("bundler", () => {
         import './foo.file';
         import './1.embed';
         import './2.embed';
+        import './LICENSE' with { type: "file" };
         rmSync('./foo.file', {force: true});
         rmSync('./1.embed', {force: true});
         rmSync('./2.embed', {force: true});
+        rmSync('./LICENSE', {force: true});
         const names = {
           "1.embed": "1.embed",
           "2.embed": "2.embed",
           "foo.file": "foo.file",
+          // No extension: "[name].[ext]" keeps the name as is, with no trailing ".".
+          "LICENSE": "LICENSE",
         }
         // We want to verify it omits source code.
         for (let f of Bun.embeddedFiles) {
@@ -727,13 +731,15 @@ describe("bundler", () => {
           }
         }
 
-        if (Bun.embeddedFiles.length !== 3) throw "fail";
+        if (Bun.embeddedFiles.length !== 4) throw "fail";
         if ((await Bun.file(createRequire(import.meta.url).resolve('./1.embed')).text()).trim() !== "abcd") throw "fail";
         if ((await Bun.file(createRequire(import.meta.url).resolve('./2.embed')).text()).trim() !== "abcd") throw "fail";
         if ((await Bun.file(createRequire(import.meta.url).resolve('./foo.file')).text()).trim() !== "abcd") throw "fail";
+        if ((await Bun.file(createRequire(import.meta.url).resolve('./LICENSE')).text()).trim() !== "abcd") throw "fail";
         if ((await Bun.file(import.meta.require.resolve('./1.embed')).text()).trim() !== "abcd") throw "fail";
         if ((await Bun.file(import.meta.require.resolve('./2.embed')).text()).trim() !== "abcd") throw "fail";
         if ((await Bun.file(import.meta.require.resolve('./foo.file')).text()).trim() !== "abcd") throw "fail";
+        if ((await Bun.file(import.meta.require.resolve('./LICENSE')).text()).trim() !== "abcd") throw "fail";
         console.log("Hello, world!");
       `,
       "/1.embed": /* js */ `
@@ -743,6 +749,9 @@ describe("bundler", () => {
       abcd
     `.trim(),
       "/foo.file": /* js */ `
+      abcd
+    `.trim(),
+      "/LICENSE": /* js */ `
       abcd
     `.trim(),
     },

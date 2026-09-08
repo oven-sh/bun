@@ -345,6 +345,66 @@ describe("Bun.Transpiler", () => {
           exitCode: 0,
         });
       });
+
+      // The remaining cases hand out the stored member string through other
+      // paths than the `/* name */` wrapper and fold it through other consumers
+      // than a template literal. Same rules as above for staying sequential.
+      async function run(src) {
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), "-e", src],
+          env: bunEnv,
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        return { stdout, stderr, exitCode };
+      }
+
+      it("at runtime, .length, ===, computed keys and switch cases of the other uses", async () => {
+        const result = await run(`
+          enum T { C = "a" + "b" }
+          const x = \`\${T.C}c\`;
+          console.log(JSON.stringify([x, T.C, T.C.length, T.C === "ab", { [T.C]: 1 }]));
+          switch ("ab") {
+            case T.C:
+              console.log("matched");
+              break;
+            default:
+              console.log("unmatched");
+          }
+        `);
+        expect(result).toEqual({ stdout: '["abc","ab",2,true,{"ab":1}]\nmatched\n', stderr: "", exitCode: 0 });
+      });
+
+      it("at runtime, a member whose name contains */ and a member propagated through a const", async () => {
+        // A name containing "*/" is inlined without the comment wrapper, and a
+        // const initialized from a member is propagated to each of its uses.
+        const result = await run(`
+          enum E { "a*/b" = "v" + "w" }
+          console.log(E["a*/b"] + "x", E["a*/b"] + "y", E["a*/b"]);
+          enum G { A = "v" + "w" }
+          const k = G.A;
+          console.log(\`\${k}x\`, \`\${k}y\`, k + k, k);
+        `);
+        expect(result).toEqual({ stdout: "vwx vwy vw\nvwx vwy vwvw vw\n", stderr: "", exitCode: 0 });
+      });
+
+      it("Bun.Transpiler with inline: true prints every use with the member's own value", () => {
+        const transpiler = new Bun.Transpiler({ loader: "ts", inline: true });
+        const out = transpiler.transformSync(
+          'enum T { C = "a" + "b" }\nexport const x = `${T.C}c`;\nexport const y = [T.C, T.C.length, T.C === "ab"];',
+        );
+        expect(out.trim()).toBe(
+          [
+            `var T;`,
+            `((T) => {`,
+            `  T["C"] = "ab";`,
+            `})(T ||= {});`,
+            `export const x = "abc";`,
+            `export const y = ["ab" /* C */, "ab" /* C */.length, true];`,
+          ].join("\n"),
+        );
+      });
     });
   });
 

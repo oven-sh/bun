@@ -268,18 +268,22 @@ yourself with Bun.serve().
       if (error?.syscall !== "listen") throw error;
 
       let message: string = error.message;
-      if (error.code === "EADDRINUSE" && typeof error.port === "number" && !portIsPinned(error.port)) {
-        const refusedPort: number = error.port;
+      const { code, port: refusedPort } = error;
+      if (code === "EADDRINUSE" && typeof refusedPort === "number" && !portIsPinned(refusedPort)) {
         const lastCandidate = Math.min(refusedPort + 10, 65535);
         portInUse = refusedPort;
+        message = `Ports ${refusedPort} to ${lastCandidate} are all in use.`;
         for (let candidate = refusedPort + 1; candidate <= lastCandidate; candidate++) {
           try {
             return serve(candidate);
           } catch (error: any) {
-            if (error?.code !== "EADDRINUSE") throw error;
+            if (error?.syscall !== "listen") throw error;
+            if (error.code !== "EADDRINUSE") {
+              message = error.message;
+              break;
+            }
           }
         }
-        message = `Ports ${refusedPort} to ${lastCandidate} are all in use.`;
       }
 
       console.error(enableANSIColors ? `\x1b[31merror\x1b[0m\x1b[2m:\x1b[0m ${message}` : `error: ${message}`);

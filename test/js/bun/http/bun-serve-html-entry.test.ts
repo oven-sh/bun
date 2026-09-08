@@ -1,6 +1,6 @@
 import type { Subprocess } from "bun";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "node:path";
 
 async function getServerUrl(process: Subprocess) {
@@ -741,7 +741,8 @@ describe("when the port is in use", () => {
     let stdout = "";
     for await (const chunk of proc.stdout) {
       stdout += decoder.decode(chunk, { stream: true });
-      const match = stdout.match(/http:\/\/\S+/);
+      // only a whole line, so a chunk boundary cannot cut the port short
+      const match = stdout.match(/http:\/\/\S+(?=\n)/);
       if (match && URL.canParse(match[0])) return { stdout, url: new URL(match[0]) };
     }
     return { stdout, url: undefined };
@@ -806,9 +807,16 @@ describe("when the port is in use", () => {
     const { url, stdout } = await urlOrExit(proc);
     expect(url?.href, stdout).toBeDefined();
     try {
-      const response = await fetch(url!);
-      expect(response.status).toBe(200);
-      expect(await response.text()).toContain("<h1>Hello</h1>");
+      // Not on Windows: `taken` sits in the dynamic port range there, and Windows
+      // can hand the child's explicitly bound fallback port to a concurrent
+      // `port: 0` listener in another process as well (netstat then shows two
+      // LISTENING rows for 127.0.0.1:<port>), so a fetch may reach the wrong
+      // server. Real default ports (3000) are outside that range.
+      if (!isWindows) {
+        const response = await fetch(url!);
+        expect(response.status).toBe(200);
+        expect(await response.text()).toContain("<h1>Hello</h1>");
+      }
     } finally {
       proc.kill();
     }

@@ -1685,6 +1685,79 @@ describe.concurrent(() => {
     expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({ stdout: "ok", stderr: "", exitCode: 0 });
   });
 
+  it("emits rejectionHandled for a late catch no matter how the promise was rejected", async () => {
+    // A promise rejected by a reaction job (a throwing .then() handler, a
+    // .finally() passthrough, a native stream erroring, an aborted timer) used
+    // to get 'unhandledRejection' but never 'rejectionHandled', because reading
+    // the rejection reason in order to report it marked the promise as handled.
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          const { setTimeout: sleep } = require("node:timers/promises");
+          const events = [];
+          const names = new Map();
+          // timers/promises rejects with an AbortError whose cause is the signal's reason.
+          process.on("unhandledRejection", (reason, promise) => events.push("unhandledRejection:" + names.get(promise) + ":" + (reason.cause ?? reason).message));
+          process.on("rejectionHandled", promise => events.push("rejectionHandled:" + names.get(promise)));
+          const erroring = message => new ReadableStream({ start(c) { c.error(new Error(message)); } });
+          const kinds = {
+            direct: () => Promise.reject(new Error("direct")),
+            executor: () => new Promise((_, reject) => reject(new Error("executor"))),
+            asyncFn: () => (async () => { throw new Error("asyncFn"); })(),
+            thenThrows: () => Promise.resolve().then(() => { throw new Error("thenThrows"); }),
+            thenRejects: () => Promise.resolve().then(() => Promise.reject(new Error("thenRejects"))),
+            catchRethrows: () => Promise.reject(1).catch(() => { throw new Error("catchRethrows"); }),
+            finallyPassthrough: () => Promise.reject(new Error("finallyPassthrough")).finally(() => {}),
+            allSettledThen: () => Promise.allSettled([]).then(() => { throw new Error("allSettledThen"); }),
+            erroredBody: () => new Response(erroring("erroredBody")).text(),
+            readableStreamToText: () => Bun.readableStreamToText(erroring("readableStreamToText")),
+            abortedTimer: () => {
+              const controller = new AbortController();
+              const promise = sleep(60_000, undefined, { signal: controller.signal });
+              controller.abort(new Error("abortedTimer"));
+              return promise;
+            },
+          };
+          const turn = () => new Promise(r => setImmediate(r));
+          for (const [name, make] of Object.entries(kinds)) {
+            const promise = make();
+            names.set(promise, name);
+            while (Bun.peek.status(promise) === "pending") await turn();
+            await turn();
+            await turn();
+            promise.catch(() => {});
+            await turn();
+            await turn();
+          }
+          console.log(JSON.stringify(events));
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual(
+      [
+        "direct",
+        "executor",
+        "asyncFn",
+        "thenThrows",
+        "thenRejects",
+        "catchRethrows",
+        "finallyPassthrough",
+        "allSettledThen",
+        "erroredBody",
+        "readableStreamToText",
+        "abortedTimer",
+      ].flatMap(name => [`unhandledRejection:${name}:${name}`, `rejectionHandled:${name}`]),
+    );
+    expect(exitCode).toBe(0);
+  });
+
   it("aborts when the uncaughtException handler throws", async () => {
     const proc = Bun.spawn([bunExe(), join(import.meta.dir, "process-onUncaughtExceptionAbort.js")], {
       stderr: "pipe",

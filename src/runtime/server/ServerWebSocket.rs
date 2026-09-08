@@ -12,7 +12,7 @@ use bun_uws_sys::{Opcode, SendStatus};
 
 use crate::server::WebSocketServerHandler;
 use crate::server::jsc::{
-    self, AbortSignal, ArrayBuffer, CallFrame, CommonAbortReason, JSGlobalObject, JSType, JSValue,
+    AbortSignal, ArrayBuffer, CallFrame, CommonAbortReason, JSGlobalObject, JSType, JSValue,
     JsError, JsRef, JsResult,
 };
 use crate::server::web_socket_server_context::HandlerFlags;
@@ -533,28 +533,13 @@ impl ServerWebSocket {
         };
 
         ws.cork(&mut corker, Corker::run);
-        let result = match corker.result {
-            Ok(result) => result,
-            Err(e) => {
-                let err_value = global_object.take_error(e);
-                return self
-                    .handler()
-                    .run_error_callback(on_error, global_object, err_value);
-            }
-        };
-
-        if let Some(promise) = result.as_any_promise() {
-            match promise.status() {
-                jsc::js_promise::Status::Rejected => {
-                    // Value discarded; the side
-                    // effect (JSC__JSPromise__result) conditionally sets
-                    // `isHandledFlag` so this doesn't surface as an
-                    // unhandledRejection.
-                    let _ = promise.result(global_object.vm());
-                    return Ok(());
-                }
-                _ => {}
-            }
+        // A returned promise that rejects is left to unhandled-rejection
+        // tracking, like the other handlers' promises.
+        if let Err(e) = corker.result {
+            let err_value = global_object.take_error(e);
+            return self
+                .handler()
+                .run_error_callback(on_error, global_object, err_value);
         }
         Ok(())
     }

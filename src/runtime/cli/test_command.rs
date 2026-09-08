@@ -2924,6 +2924,8 @@ impl TestCommand {
                     // `unhandled_rejection(&mut self, ...)` can reborrow.
                     let global = vm.global();
                     let p = jsc::JSInternalPromise::opaque_mut(promise);
+                    // Reported right here; the tracker must not report it a second time.
+                    p.set_handled();
                     let (result, promise_js) = (p.result(global.vm()), p.to_js());
                     vm.unhandled_rejection(global, result, promise_js);
                     reporter.summary().fail += 1;

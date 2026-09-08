@@ -2470,7 +2470,7 @@ void GlobalObject::finishCreation(VM& vm)
              auto& global = *static_cast<Zig::GlobalObject*>(init.owner);
 
              if (!global.m_subtleCrypto) {
-                 global.m_subtleCrypto = &WebCore::SubtleCrypto::create(global.scriptExecutionContext()).leakRef();
+                 global.m_subtleCrypto = WebCore::SubtleCrypto::create(global.scriptExecutionContext());
              }
 
              init.set(toJS<IDLInterface<SubtleCrypto>>(*init.owner, global, global.m_subtleCrypto).getObject());

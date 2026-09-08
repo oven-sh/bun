@@ -1,7 +1,9 @@
 import { spawnSync } from "bun";
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, isASAN, tempDir } from "harness";
 import { createSecretKey } from "node:crypto";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 
 // This is consistent with what Node.js does, probably for polyfills to continue to work.
 it("crypto.subtle setter should not throw", () => {
@@ -1451,5 +1453,52 @@ describe("exception scope discipline", () => {
       uncheckedScopes: [],
       exitCode: 0,
     });
+  });
+});
+
+// Every global object creates its own native SubtleCrypto behind `crypto.subtle`. It must be
+// freed together with the global: at exit for the main global (BUN_DESTRUCT_VM_ON_EXIT), and on
+// a live VM when a ShadowRealm's global is collected. The object is fastMalloc'd, so LeakSanitizer
+// only sees it with Malloc=1.
+describe.skipIf(!isASAN)("SubtleCrypto is freed with its global", () => {
+  const repoSuppressions = join(import.meta.dirname, "../../../leaksan.supp");
+
+  async function expectNoLeak(script: string, suppressions = repoSuppressions) {
+    await using proc = Bun.spawn({
+      // From setImmediate: allocations made during module evaluation match blanket entries in
+      // leaksan.supp and would go unreported.
+      cmd: [bunExe(), "-e", `setImmediate(() => { ${script}; console.log("done"); });`],
+      env: {
+        ...bunEnv,
+        Malloc: "1",
+        BUN_DESTRUCT_VM_ON_EXIT: "1",
+        ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "detect_leaks=1"].filter(Boolean).join(":"),
+        LSAN_OPTIONS: `print_suppressions=0:suppressions=${suppressions}`,
+      },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "done\n", stderr: "", exitCode: 0 });
+  }
+
+  it.concurrent("main global", async () => {
+    await expectNoLeak(`globalThis.crypto.subtle`);
+  });
+
+  it.concurrent("ShadowRealm globals", async () => {
+    // A realm global's console client is a separate leak; suppress it here so that this test
+    // only covers SubtleCrypto.
+    using dir = tempDir("subtle-crypto-lsan", {
+      "leaksan.supp":
+        readFileSync(repoSuppressions, "utf8") + "\nleak:Zig::GlobalObject::deriveShadowRealmGlobalObject\n",
+    });
+    await expectNoLeak(
+      `for (let i = 0; i < 4; i++) {
+        if (new ShadowRealm().evaluate("typeof crypto.subtle") !== "object") throw new Error("no crypto.subtle");
+      }
+      Bun.gc(true)`,
+      join(String(dir), "leaksan.supp"),
+    );
   });
 });

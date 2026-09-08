@@ -888,6 +888,61 @@ pub(crate) fn buntaghashbuf_make(buf: &mut BuntagHashBuf, patch_hash: u64) -> &m
     &mut buf[..BUN_HASH_TAG.len() + digits_len]
 }
 
+/// Open `name` inside `parent` as a directory, without following a symlink at
+/// `name`. Creates the directory when it is missing, and replaces a symlink
+/// with an empty directory.
+///
+/// The install creates the directory levels of a `node_modules` tree (`.bin`,
+/// `@scope`), and the steps that write into them resolve those levels by path
+/// again. A symlink at one of the levels sends the write into the symlink's
+/// target directory, outside the tree, where it deletes and replaces files the
+/// user owns. `node_modules` belongs to the install, so a symlink at a level it
+/// creates is replaced.
+#[cfg(not(windows))]
+pub(crate) fn make_open_real_dir(
+    parent: &bun_sys::Dir,
+    name: &[u8],
+) -> bun_sys::Maybe<bun_sys::Dir> {
+    use bun_sys::{E, EntryKind, O};
+    const FLAGS: i32 = O::RDONLY | O::CLOEXEC | O::NOFOLLOW;
+
+    let mut buf = bun_paths::path_buffer_pool::get();
+    if name.len() >= buf.0.len() {
+        return Err(bun_sys::Error::from_code(
+            E::ENAMETOOLONG,
+            bun_sys::Tag::open,
+        ));
+    }
+    buf.0[..name.len()].copy_from_slice(name);
+    buf.0[name.len()] = 0;
+    let name_z = bun_core::ZStr::from_buf(&buf.0[..], name.len());
+
+    let err = match parent.open_at_with(name, FLAGS) {
+        Ok(dir) => return Ok(dir),
+        Err(err) => err,
+    };
+    match err.get_errno() {
+        E::ENOENT => {}
+        // `O_NOFOLLOW` refuses a symlink with `ELOOP`. Together with
+        // `O_DIRECTORY`, Linux reports `ENOTDIR` for it instead, the same as for
+        // a regular file, so `lstat` tells the two apart.
+        E::ELOOP | E::ENOTDIR
+            if bun_sys::lstatat(parent.fd(), name_z).is_ok_and(|stat| {
+                bun_sys::kind_from_mode(stat.st_mode as bun_sys::Mode) == EntryKind::SymLink
+            }) =>
+        {
+            bun_sys::unlinkat(parent.fd(), name_z)?;
+        }
+        _ => return Err(err),
+    }
+    if let Err(err) = bun_sys::mkdirat(parent.fd(), name_z, 0o755) {
+        if err.get_errno() != E::EEXIST {
+            return Err(err);
+        }
+    }
+    parent.open_at_with(name, FLAGS)
+}
+
 pub struct StorePathFormatter<'a> {
     str: &'a [u8],
 }

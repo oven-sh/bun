@@ -1557,7 +1557,8 @@ fn entry_kind_of(dir: &Dir, alias: &[u8]) -> EntryKind {
     }
 }
 
-fn open_real_subdir(dir: &Dir, name: &[u8]) -> Option<Dir> {
+/// Open `name` in `dir` when it is a directory, and not a symlink to one.
+pub(crate) fn open_real_subdir(dir: &Dir, name: &[u8]) -> Option<Dir> {
     if lstat_kind(dir, name) != EntryKind::Directory {
         return None;
     }

@@ -8,6 +8,7 @@ use bstr::BStr;
 use crate::Error;
 use crate::ShellCompletions;
 use crate::bun_fs::FileSystem;
+use crate::package_installer::alias_is_safe_install_target;
 use bun_core::{Global, Output};
 use bun_core::{ZStr, strings};
 use bun_js_printer as js_printer;
@@ -723,57 +724,60 @@ pub(super) fn remove_leftover_node_modules(
     updates: &[UpdateRequest],
 ) {
     let cwd = bun_sys::Dir::cwd();
-    let mut node_modules_buf = bun_paths::path_buffer_pool::get();
-    node_modules_buf[..b"node_modules".len()].copy_from_slice(b"node_modules");
-    node_modules_buf[b"node_modules".len()] = bun_paths::SEP;
+    // `node_modules` itself can be a symlink the user made. The levels inside
+    // it (`@scope`, `.bin`) are the install's, and a symlink at one of them is
+    // not followed: the package directory and the dangling bin links would be
+    // deleted from the symlink's target directory instead.
+    let node_modules = cwd.open_at(b"node_modules").ok();
     let name_hashes = manager.lockfile.packages.items_name_hash();
-    for request in updates.iter() {
-        // Only top-level folders are removed; nested copies are left alone.
-        let name_hash = bun_semver::semver_string::Builder::string_hash(request.name);
-        if !name_hashes.contains(&name_hash) {
-            let offset_buf = &mut node_modules_buf[b"node_modules/".len()..];
-            offset_buf[..request.name.len()].copy_from_slice(request.name);
-            let _ =
-                cwd.delete_tree(&node_modules_buf[..b"node_modules/".len() + request.name.len()]);
+    if let Some(node_modules) = &node_modules {
+        for request in updates.iter() {
+            // Only top-level folders are removed; nested copies are left alone.
+            let name_hash = bun_semver::semver_string::Builder::string_hash(request.name);
+            if name_hashes.contains(&name_hash) || !alias_is_safe_install_target(request.name) {
+                continue;
+            }
+            match strings::split_once_char(request.name, b'/') {
+                Some((scope, name)) => {
+                    if let Some(scope_dir) = crate::prune::open_real_subdir(node_modules, scope) {
+                        let _ = scope_dir.delete_tree(name);
+                    }
+                }
+                None => {
+                    let _ = node_modules.delete_tree(request.name);
+                }
+            }
         }
     }
 
-    match bun_sys::open_dir_for_iteration(cwd.fd(), manager.options.bin_path.as_bytes()) {
-        Ok(node_modules_bin) => {
-            let mut iter = bun_sys::iterate_dir(node_modules_bin);
-            'iterator: loop {
-                let Ok(Some(entry)) = iter.next() else { break };
-                match entry.kind {
-                    bun_sys::EntryKind::SymLink => {
-                        // access(2) does not follow symlinks, so open() is the dangling check.
-                        let name = entry.name.slice_u8();
-                        node_modules_buf[..name.len()].copy_from_slice(name);
-                        node_modules_buf[name.len()] = 0;
-                        let buf: &ZStr = ZStr::from_buf(&node_modules_buf, name.len());
-
-                        match bun_sys::File::openat(node_modules_bin, buf, bun_sys::O::RDONLY, 0) {
-                            Ok(file) => {
-                                let _ = file.close();
-                            }
-                            Err(_) => {
-                                let _ = bun_sys::unlinkat(node_modules_bin, buf);
-                                continue 'iterator;
-                            }
-                        }
-                    }
-                    _ => {}
-                }
-            }
-            let _ = bun_sys::close(node_modules_bin);
+    let bin_dir = if manager.options.global {
+        // The global bin directory is the user's own, opened the way it is configured.
+        bun_sys::Dir::open(manager.options.bin_path.as_bytes()).ok()
+    } else {
+        node_modules
+            .as_ref()
+            .and_then(|node_modules| crate::prune::open_real_subdir(node_modules, b".bin"))
+    };
+    let Some(bin_dir) = bin_dir else {
+        return;
+    };
+    let mut name_buf = bun_paths::path_buffer_pool::get();
+    let mut iter = bun_sys::iterate_dir(bin_dir.fd());
+    while let Ok(Some(entry)) = iter.next() {
+        if entry.kind != bun_sys::EntryKind::SymLink {
+            continue;
         }
-        Err(err) => {
-            if err.get_errno() != bun_sys::E::ENOENT {
-                Output::err(
-                    crate::Error::from(err),
-                    "while reading node_modules/.bin",
-                    (),
-                );
-                Global::crash();
+        // access(2) does not follow symlinks, so open() is the dangling check.
+        let name = entry.name.slice_u8();
+        name_buf[..name.len()].copy_from_slice(name);
+        name_buf[name.len()] = 0;
+        let name: &ZStr = ZStr::from_buf(&name_buf, name.len());
+        match bun_sys::File::openat(bin_dir.fd(), name, bun_sys::O::RDONLY, 0) {
+            Ok(file) => {
+                let _ = file.close();
+            }
+            Err(_) => {
+                let _ = bun_sys::unlinkat(bin_dir.fd(), name);
             }
         }
     }

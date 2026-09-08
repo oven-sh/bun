@@ -1010,3 +1010,183 @@ it.skipIf(isWindows)(
   },
   60000,
 );
+
+it.skipIf(isWindows)(
+  "does not write bin links through a symlinked node_modules/.bin",
+  async () => {
+    // `node_modules/.bin` is created by the install. The project's author, or a
+    // postinstall script of an earlier package, can leave a symlink there. Every
+    // bin link is then written into the symlink's target directory, outside the
+    // tree. A `bin` key is a free-form file name, so a file in that directory is
+    // deleted and replaced by a link that dangles.
+    using dir = tempDir("bin-dir-symlink-test", {
+      "bunfig.toml": `[install]\nlinker = "hoisted"\n`,
+      "package.json": JSON.stringify({
+        name: "bin-dir-symlink-app",
+        version: "1.0.0",
+        workspaces: ["packages/*"],
+        dependencies: { dep: "workspace:*" },
+      }),
+      "packages/dep/package.json": JSON.stringify({
+        name: "dep",
+        version: "1.0.0",
+        bin: { dep: "bin/cli.js", "notes.txt": "bin/cli.js" },
+      }),
+      "packages/dep/bin/cli.js": `#!/usr/bin/env node\nconsole.log("ok");\n`,
+      "victim/dep": "keep me\n",
+      "victim/notes.txt": "keep me\n",
+    });
+    const installDir = await realpath(String(dir));
+    await mkdir(join(installDir, "node_modules"));
+    await symlink(join(installDir, "victim"), join(installDir, "node_modules", ".bin"));
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "install"],
+      cwd: installDir,
+      stdout: "pipe",
+      stderr: "pipe",
+      env,
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    const victim = join(installDir, "victim");
+    expect((await lstat(join(victim, "dep"))).isFile()).toBe(true);
+    expect((await lstat(join(victim, "notes.txt"))).isFile()).toBe(true);
+    expect(await Bun.file(join(victim, "dep")).text()).toBe("keep me\n");
+    expect((await readdir(victim)).sort()).toEqual(["dep", "notes.txt"]);
+
+    // the symlink is replaced by the directory the links belong in
+    const binDir = join(installDir, "node_modules", ".bin");
+    expect((await lstat(binDir)).isDirectory()).toBe(true);
+    expect((await readdir(binDir)).sort()).toEqual(["dep", "notes.txt"]);
+    expect(await readlink(join(binDir, "dep"))).toBe("../dep/bin/cli.js");
+
+    if (exitCode !== 0) {
+      console.error("stdout:", stdout);
+      console.error("stderr:", stderr);
+    }
+    expect(exitCode).toBe(0);
+  },
+  60000,
+);
+
+it.skipIf(isWindows)(
+  "does not install a scoped package through a symlinked scope directory",
+  async () => {
+    // A scoped package installs at `node_modules/@scope/name`. With a symlink at
+    // `node_modules/@scope`, the install resolves that path through the link: it
+    // deletes the destination first, so an existing directory of the same name
+    // in the symlink's target is removed with everything in it.
+    using dir = tempDir("scope-dir-symlink-test", {
+      "bunfig.toml": `[install]\nlinker = "hoisted"\n`,
+      "package.json": JSON.stringify({
+        name: "scope-dir-symlink-app",
+        version: "1.0.0",
+        dependencies: { "@scope/dep": "file:./src" },
+      }),
+      "src/package.json": JSON.stringify({ name: "@scope/dep", version: "1.0.0" }),
+      "src/index.js": `module.exports = 1;\n`,
+      "victim/dep/notes.txt": "keep me\n",
+    });
+    const installDir = await realpath(String(dir));
+    await mkdir(join(installDir, "node_modules"));
+    await symlink(join(installDir, "victim"), join(installDir, "node_modules", "@scope"));
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "install"],
+      cwd: installDir,
+      stdout: "pipe",
+      stderr: "pipe",
+      env,
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    const victim = join(installDir, "victim");
+    expect(await readdir(join(victim, "dep"))).toEqual(["notes.txt"]);
+    expect(await Bun.file(join(victim, "dep", "notes.txt")).text()).toBe("keep me\n");
+    expect(await readdir(victim)).toEqual(["dep"]);
+
+    // the symlink is replaced by the directory the package belongs in
+    const scopeDir = join(installDir, "node_modules", "@scope");
+    expect((await lstat(scopeDir)).isDirectory()).toBe(true);
+    expect(await readdir(scopeDir)).toEqual(["dep"]);
+    expect(await readdir(join(scopeDir, "dep"))).toContain("index.js");
+
+    if (exitCode !== 0) {
+      console.error("stdout:", stdout);
+      console.error("stderr:", stderr);
+    }
+    expect(exitCode).toBe(0);
+  },
+  60000,
+);
+
+it.skipIf(isWindows)(
+  "bun remove does not delete through a symlinked scope directory or node_modules/.bin",
+  async () => {
+    // `bun remove @scope/dep` deletes `node_modules/@scope/dep`, and then the bin
+    // links that dangle. With a symlink at `node_modules/@scope` or at
+    // `node_modules/.bin`, both deletes would run in the symlink's target.
+    using dir = tempDir("remove-scope-symlink-test", {
+      "bunfig.toml": `[install]\nlinker = "hoisted"\n`,
+      "package.json": JSON.stringify({
+        name: "remove-scope-symlink-app",
+        version: "1.0.0",
+        dependencies: { "@scope/dep": "file:./dep", plain: "file:./plain" },
+      }),
+      "dep/package.json": JSON.stringify({ name: "@scope/dep", version: "1.0.0" }),
+      "dep/index.js": `module.exports = 1;\n`,
+      "plain/package.json": JSON.stringify({ name: "plain", version: "1.0.0" }),
+      "plain/index.js": `module.exports = 2;\n`,
+      "victim/dep/notes.txt": "keep me\n",
+    });
+    const installDir = await realpath(String(dir));
+    const victim = join(installDir, "victim");
+    // a dangling link of the user's own, which the `.bin` cleanup would take for a stale bin
+    await symlink("./moved-away", join(victim, "stale"));
+
+    {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "install"],
+        cwd: installDir,
+        stdout: "pipe",
+        stderr: "pipe",
+        env,
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      if (exitCode !== 0) {
+        console.error("stdout:", stdout);
+        console.error("stderr:", stderr);
+      }
+      expect(exitCode).toBe(0);
+    }
+    expect(await readdir(join(installDir, "node_modules", "@scope"))).toEqual(["dep"]);
+
+    await rm(join(installDir, "node_modules", "@scope"), { recursive: true });
+    await symlink(victim, join(installDir, "node_modules", "@scope"));
+    await symlink(victim, join(installDir, "node_modules", ".bin"));
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "remove", "@scope/dep"],
+      cwd: installDir,
+      stdout: "pipe",
+      stderr: "pipe",
+      env,
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect((await readdir(victim)).sort()).toEqual(["dep", "stale"]);
+    expect(await readdir(join(victim, "dep"))).toEqual(["notes.txt"]);
+    expect(await Bun.file(join(victim, "dep", "notes.txt")).text()).toBe("keep me\n");
+    expect(JSON.parse(await Bun.file(join(installDir, "package.json")).text()).dependencies).toEqual({
+      plain: "file:./plain",
+    });
+
+    if (exitCode !== 0) {
+      console.error("stdout:", stdout);
+      console.error("stderr:", stderr);
+    }
+    expect(exitCode).toBe(0);
+  },
+  60000,
+);

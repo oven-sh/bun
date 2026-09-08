@@ -326,8 +326,7 @@ impl Response {
         }
     }
 
-    /// Deep-copy `init` for a derived response: status, status text, method,
-    /// the header list, and a body `Content-Type` not yet in the header list.
+    /// Deep copy of `init`, including a pending body `Content-Type`.
     pub(crate) fn clone_init(&self, global: &JSGlobalObject) -> JsResult<Init> {
         self.init.get().clone(global)
     }
@@ -372,8 +371,7 @@ impl Response {
         self.init_mut().headers.as_deref_mut()
     }
 
-    /// Deep-copy the header list for another owner. A body `Content-Type` that
-    /// is not yet in `init.headers` goes into the copy, not into `self`.
+    /// Deep copy of the header list for another owner; a pending `Content-Type` goes into the copy only.
     pub(crate) fn clone_headers(&self, global: &JSGlobalObject) -> JsResult<Option<HeadersRef>> {
         let init = self.init.get();
         if let Some(headers) = init.headers.as_ref() {
@@ -589,8 +587,7 @@ impl Response {
         Ok(this.get_or_create_headers(global_this)?.to_js(global_this))
     }
 
-    /// The `Content-Type` that [`get_or_create_headers`] would report, without
-    /// allocating the header list.
+    /// See [`Init::pending_content_type`]. Empty once the header list exists.
     pub(crate) fn pending_content_type(&self) -> &[u8] {
         self.init.get().pending_content_type.as_slice()
     }
@@ -1182,12 +1179,7 @@ impl Response {
 // the fields' own drop glue releases `headers` and `status_text`.
 pub struct Init {
     pub(crate) headers: Option<HeadersRef>,
-    /// The `Content-Type` extracted from the body at construction
-    /// (<https://fetch.spec.whatwg.org/#concept-bodyinit-extract>). The spec
-    /// appends it to the header list right away; `headers` is allocated
-    /// lazily here, so until then the value waits in this field.
-    /// [`Response::get_or_create_headers`] folds it in and clears it, so it
-    /// is only ever non-empty while `headers` is `None`.
+    /// The body's `Content-Type`, owed to `headers` (allocated lazily); non-empty only while `headers` is `None`.
     pub(crate) pending_content_type: BlobContentType,
     pub(crate) status_code: u16,
     pub(crate) status_text: BunString,
@@ -1224,9 +1216,7 @@ impl Init {
         })
     }
 
-    /// With no header list to append a `Blob` body's `Content-Type` to, keep
-    /// it in `pending_content_type`. A value that is already pending (copied
-    /// from another `Response` used as the init) wins, as a header would.
+    /// Park a `Blob` body's `Content-Type` while there is no header list; an already pending value wins.
     pub(crate) fn capture_content_type(&mut self, body: &BodyValue) {
         if self.headers.is_some() || !self.pending_content_type.is_empty() {
             return;
@@ -1236,8 +1226,7 @@ impl Init {
         }
     }
 
-    /// Allocate `headers` if a `Content-Type` is pending, so that code which
-    /// hands the header list to another owner does not drop it.
+    /// Allocate `headers` now if a `Content-Type` is pending.
     pub(crate) fn materialize_headers(&mut self, global: &JSGlobalObject) -> JsResult<()> {
         if self.headers.is_some() || self.pending_content_type.is_empty() {
             return Ok(());

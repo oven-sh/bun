@@ -4791,10 +4791,7 @@ impl<const DEBUG_MODE: bool> Flags<DEBUG_MODE> {
     }
 }
 
-/// `pending_content_type` is the response's `Content-Type` header when its
-/// header list was never allocated (`Response::pending_content_type`). It was
-/// taken from the body at construction, so it survives the body being turned
-/// into a stream and back, which `blob` may not.
+/// Precedence: the header, `Response::pending_content_type`, then `blob` (which may be re-derived from a stream).
 fn get_content_type(
     headers: Option<&mut FetchHeaders>,
     pending_content_type: &[u8],

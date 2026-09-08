@@ -1393,11 +1393,7 @@ impl Request {
 
         req.url.set(href);
 
-        // https://fetch.spec.whatwg.org/#dom-request step 41: append the body's
-        // `Content-Type` unless the header list has one. `Response` defers this
-        // while it has no header list (`Init::pending_content_type`). `Request`
-        // allocates the list instead: `fetch()` builds one from it anyway, and
-        // nothing keys off its absence.
+        // Fetch: append the body's `Content-Type` unless the header list has one (allocating the list).
         if let BodyValue::Blob(blob) = req.body_value() {
             let content_type = blob.content_type_slice();
             if !content_type.is_empty() {

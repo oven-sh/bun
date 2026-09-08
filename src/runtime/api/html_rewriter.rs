@@ -963,10 +963,7 @@ impl RewriterPipe {
         original: &Response,
         sync_only_noun: Option<&'static str>,
     ) -> JsResult<JSValue> {
-        // The output inherits status and headers: https://github.com/oven-sh/bun/issues/3334
-        // A Content-Type pending from the input's body becomes a real header:
-        // the output body is a stream, and `finalize_without_stream` types a
-        // waiting `.blob()` from `get_fetch_headers()`, which does not see it.
+        // Inherit status and headers (#3334); `finalize_without_stream` reads `get_fetch_headers()`, so materialize.
         let mut init = original.clone_init(global)?;
         init.materialize_headers(global)?;
 

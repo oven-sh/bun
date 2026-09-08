@@ -222,8 +222,7 @@ impl StaticRoute {
                     global_this,
                 )?;
             } else if !response.pending_content_type().is_empty() {
-                // A Content-Type the Response has not put in a header list yet
-                // (`Init::pending_content_type`) belongs in the route's headers too.
+                // Folds it into the header list read below.
                 response.get_or_create_headers(global_this)?;
             }
 

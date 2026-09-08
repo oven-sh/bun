@@ -361,8 +361,7 @@ pub mod fs {
             join_abs_string_buf_checked::<platform::Loose>(self.top_level_dir, buf, parts)
         }
 
-        /// `abs_buf_checked` with host-native (`platform::Auto`) absolute-path
-        /// semantics, matching `bun_paths::is_absolute`.
+        /// `abs_buf_checked` with host-native (`platform::Auto`) absolute-path semantics.
         pub fn abs_buf_checked_native<'b>(
             &self,
             parts: &[&[u8]],

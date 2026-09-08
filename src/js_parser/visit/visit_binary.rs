@@ -3,7 +3,7 @@ use bun_collections::VecExt;
 use core::cmp::Ordering;
 
 use crate::p::P;
-use crate::parser::{ExprIn, float_to_int32, prefill};
+use crate::parser::{ExprIn, fold_numeric_binary_operator, prefill};
 use crate::scan::scan_side_effects::SideEffects;
 use bun_ast::fold_string_addition::{FoldStringAdditionKind, fold_string_addition};
 use bun_ast::{
@@ -456,123 +456,23 @@ impl BinaryExpressionVisitor {
                     }
                 }
             }
-            Op::Code::BinSub => {
+            Op::Code::BinSub
+            | Op::Code::BinMul
+            | Op::Code::BinDiv
+            | Op::Code::BinRem
+            | Op::Code::BinPow
+            | Op::Code::BinShl
+            | Op::Code::BinShr
+            | Op::Code::BinUShr
+            | Op::Code::BinBitwiseAnd
+            | Op::Code::BinBitwiseOr
+            | Op::Code::BinBitwiseXor => {
                 if p.should_fold_typescript_constant_expressions {
-                    if let Some(vals) = Expr::extract_numeric_values(&e_.left.data, &e_.right.data)
+                    if let Some([left, right]) =
+                        Expr::extract_numeric_values(&e_.left.data, &e_.right.data)
+                        && let Some(result) = fold_numeric_binary_operator(e_.op, left, right)
                     {
-                        return p.new_expr(E::Number::new(vals[0] - vals[1]), v.loc);
-                    }
-                }
-            }
-            Op::Code::BinMul => {
-                if p.should_fold_typescript_constant_expressions {
-                    if let Some(vals) = Expr::extract_numeric_values(&e_.left.data, &e_.right.data)
-                    {
-                        return p.new_expr(E::Number::new(vals[0] * vals[1]), v.loc);
-                    }
-                }
-            }
-            Op::Code::BinDiv => {
-                if p.should_fold_typescript_constant_expressions {
-                    if let Some(vals) = Expr::extract_numeric_values(&e_.left.data, &e_.right.data)
-                    {
-                        return p.new_expr(E::Number::new(vals[0] / vals[1]), v.loc);
-                    }
-                }
-            }
-            Op::Code::BinRem => {
-                if p.should_fold_typescript_constant_expressions {
-                    if let Some(vals) = Expr::extract_numeric_values(&e_.left.data, &e_.right.data)
-                    {
-                        return p.new_expr(
-                            // Rust `%` on f64 has libc fmod semantics (LLVM frem),
-                            // which matches what JavaScriptCore does:
-                            // https://github.com/oven-sh/WebKit/blob/7a0b13626e5db69aa5a32d037431d381df5dfb61/Source/JavaScriptCore/runtime/MathCommon.cpp#L574-L597
-                            E::Number::new(vals[0] % vals[1]),
-                            v.loc,
-                        );
-                    }
-                }
-            }
-            Op::Code::BinPow => {
-                if p.should_fold_typescript_constant_expressions {
-                    if let Some(vals) = Expr::extract_numeric_values(&e_.left.data, &e_.right.data)
-                    {
-                        return p
-                            .new_expr(E::Number::new(bun_ast::math::pow(vals[0], vals[1])), v.loc);
-                    }
-                }
-            }
-            Op::Code::BinShl => {
-                if p.should_fold_typescript_constant_expressions {
-                    if let Some(vals) = Expr::extract_numeric_values(&e_.left.data, &e_.right.data)
-                    {
-                        let left = float_to_int32(vals[0]);
-                        let right: u32 = (float_to_int32(vals[1]) as u32) % 32;
-                        let result: i32 = left.wrapping_shl(right);
-                        return p.new_expr(E::Number::new(result as f64), v.loc);
-                    }
-                }
-            }
-            Op::Code::BinShr => {
-                if p.should_fold_typescript_constant_expressions {
-                    if let Some(vals) = Expr::extract_numeric_values(&e_.left.data, &e_.right.data)
-                    {
-                        let left = float_to_int32(vals[0]);
-                        let right: u32 = (float_to_int32(vals[1]) as u32) % 32;
-                        // wrapping_shr on i32 is an arithmetic shift right
-                        let result: i32 = left.wrapping_shr(right);
-                        return p.new_expr(E::Number::new(result as f64), v.loc);
-                    }
-                }
-            }
-            Op::Code::BinUShr => {
-                if p.should_fold_typescript_constant_expressions {
-                    if let Some(vals) = Expr::extract_numeric_values(&e_.left.data, &e_.right.data)
-                    {
-                        let left: u32 = float_to_int32(vals[0]) as u32;
-                        let right: u32 = (float_to_int32(vals[1]) as u32) % 32;
-                        let result: u32 = left.wrapping_shr(right);
-                        return p.new_expr(E::Number::new(result as f64), v.loc);
-                    }
-                }
-            }
-            Op::Code::BinBitwiseAnd => {
-                if p.should_fold_typescript_constant_expressions {
-                    if let Some(vals) = Expr::extract_numeric_values(&e_.left.data, &e_.right.data)
-                    {
-                        return p.new_expr(
-                            E::Number::new(
-                                (float_to_int32(vals[0]) & float_to_int32(vals[1])) as f64,
-                            ),
-                            v.loc,
-                        );
-                    }
-                }
-            }
-            Op::Code::BinBitwiseOr => {
-                if p.should_fold_typescript_constant_expressions {
-                    if let Some(vals) = Expr::extract_numeric_values(&e_.left.data, &e_.right.data)
-                    {
-                        return p.new_expr(
-                            E::Number::new(
-                                (float_to_int32(vals[0]) | float_to_int32(vals[1])) as f64,
-                            ),
-                            v.loc,
-                        );
-                    }
-                }
-            }
-            Op::Code::BinBitwiseXor => {
-                if p.should_fold_typescript_constant_expressions {
-                    if let Some(vals) = Expr::extract_numeric_values(&e_.left.data, &e_.right.data)
-                    {
-                        return p.new_expr(
-                            E::Number::new(
-                                (float_to_int32(vals[0]) ^ float_to_int32(vals[1])) as f64,
-                            ),
-                            v.loc,
-                        );
+                        return p.new_expr(E::Number::new(result), v.loc);
                     }
                 }
             }

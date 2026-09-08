@@ -2356,7 +2356,7 @@ describe("bundler", () => {
 					X25 = (321),
 
 					// a dotted name (e.g. x.y.z) that references a const variable with a constant expression initializer and no type annotation,
-					/* (we don't implement this one) */
+					/* (a bare const identifier folds, see ts/EnumConstVariableReferences below; a namespace member such as ns.x does not) */
 
 					// a dotted name that references an enum member with an enum literal type, or
 					X26 = X0,
@@ -2512,6 +2512,54 @@ describe("bundler", () => {
         '"123"',
         '"4132879497321892437432187943789312894378237491578123414321431"',
       ]);
+    },
+  });
+  itBundled("ts/EnumConstVariableReferences", {
+    files: {
+      "/entry.ts": /* ts */ `
+        const base = 100;
+        const prefix = "app";
+        const chained = base + 1, mask = ~chained, route = \`\${prefix}/home\`, joined = prefix + base;
+        enum Status { Ok = base, Created, Accepted }
+        enum Tag { Home = prefix, Route = route, Joined = joined, Nested = \`\${route}/x\` }
+        enum Derived { A = chained, B, C = mask, D = Status.Accepted + 1, E }
+        const fromEnum = Derived.E * 2;
+        enum Again { X = fromEnum, Y }
+        function inner() {
+          enum Inner { A = declaredAfterInner, B }
+          return Inner;
+        }
+        const declaredAfterInner = 7;
+        let notConst = 1;
+        const notConstant = Math.min(4, 2);
+        enum Computed { A = notConst, B = notConstant }
+        console.log(JSON.stringify([Status, Tag, Derived, Again, inner(), Computed]));
+        export { Status, Tag };
+      `,
+      "/other.ts": /* ts */ `
+        import { Status, Tag } from "./entry";
+        console.log(JSON.stringify([Status.Created, Tag.Route]));
+      `,
+    },
+    entryPoints: ["/entry.ts", "/other.ts"],
+    run: [
+      {
+        file: "/out/entry.js",
+        stdout:
+          '[{"100":"Ok","101":"Created","102":"Accepted","Ok":100,"Created":101,"Accepted":102},{"Home":"app","Route":"app/home","Joined":"app100","Nested":"app/home/x"},{"101":"A","102":"B","103":"D","104":"E","A":101,"B":102,"C":-102,"-102":"C","D":103,"E":104},{"208":"X","209":"Y","X":208,"Y":209},{"7":"A","8":"B","A":7,"B":8},{"1":"A","2":"B","A":1,"B":2}]',
+      },
+      {
+        file: "/out/other.js",
+        stdout:
+          '[{"100":"Ok","101":"Created","102":"Accepted","Ok":100,"Created":101,"Accepted":102},{"Home":"app","Route":"app/home","Joined":"app100","Nested":"app/home/x"},{"101":"A","102":"B","103":"D","104":"E","A":101,"B":102,"C":-102,"-102":"C","D":103,"E":104},{"208":"X","209":"Y","X":208,"Y":209},{"7":"A","8":"B","A":7,"B":8},{"1":"A","2":"B","A":1,"B":2}]\n[101,"app/home"]',
+      },
+    ],
+    onAfterBundle(api) {
+      // The values are known at bundle time, so cross-module uses are inlined too.
+      const other = api.readFile("/out/other.js");
+      expect(other).toContain("101");
+      expect(other).toContain('"app/home"');
+      expect(other).not.toMatch(/Status\.Created|Tag\.Route/);
     },
   });
   itBundled("ts/EnumUseBeforeDeclare", {

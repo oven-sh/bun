@@ -1175,6 +1175,106 @@ function foo() {}
       `);
     });
 
+    // Since TypeScript 5.0, an enum member initializer may reference a `const`
+    // variable whose own initializer is a constant expression.
+    describe("enum initializers that reference const variables", () => {
+      const exp = ts.expectPrinted_;
+
+      it("numeric const continues auto-increment", () => {
+        exp(
+          "const base = 100;\nenum Status { Ok = base, Created, Accepted }",
+          'const base = 100;\nvar Status;\n((Status) => {\n  Status[Status["Ok"] = 100] = "Ok";\n  Status[Status["Created"] = 101] = "Created";\n  Status[Status["Accepted"] = 102] = "Accepted";\n})(Status ||= {})',
+        );
+      });
+
+      it("string const gets no reverse mapping", () => {
+        exp(
+          'const prefix = "app";\nenum Tag { Home = prefix, About = `${prefix}/about`, Upper = prefix + "!" }',
+          'const prefix = "app";\nvar Tag;\n((Tag) => {\n  Tag["Home"] = "app";\n  Tag["About"] = "app/about";\n  Tag["Upper"] = "app!";\n})(Tag ||= {})',
+        );
+      });
+
+      it("const initializers are evaluated as constant expressions", () => {
+        exp(
+          'enum Base { One = 1 }\nconst a = Base.One + 1, b = -a, c = ~a, d = `${a}${b}`, e = a + "x", f = Base["One"] << 3, inf = -Infinity;\nenum V { A = a, B, C = b, D = c, E = d, F = e, G = f, H = inf }',
+          'var Base;\n((Base) => {\n  Base[Base["One"] = 1] = "One";\n})(Base ||= {});\nconst a = 1 /* One */ + 1, b = -a, c = ~a, d = `${a}${b}`, e = a + "x", f = 1 /* One */ << 3, inf = -1 / 0;\nvar V;\n((V) => {\n  V[V["A"] = 2] = "A";\n  V[V["B"] = 3] = "B";\n  V[V["C"] = -2] = "C";\n  V[V["D"] = -3] = "D";\n  V["E"] = "2-2";\n  V["F"] = "2x";\n  V[V["G"] = 8] = "G";\n  V[V["H"] = -1 / 0] = "H";\n})(V ||= {})',
+        );
+      });
+
+      it("leaves alone what TypeScript does not fold", () => {
+        // declared after the enum, not const, not a constant expression, or declared with a type annotation
+        exp(
+          "let x = 1;\nconst y = Math.PI;\nconst z: number = 3;\nenum E { A = later, B = x, C = y, D = z, F }\nconst later = 5;",
+          'let x = 1;\nconst y = Math.PI;\nconst z = 3;\nvar E;\n((E) => {\n  E[E["A"] = later] = "A";\n  E[E["B"] = x] = "B";\n  E[E["C"] = y] = "C";\n  E[E["D"] = z] = "D";\n  E[E["F"] = undefined] = "F";\n})(E ||= {});\nconst later = 5',
+        );
+        // shadowed by a hoisted variable in the enum's scope
+        exp(
+          "const v = 1;\nfunction g() {\n  enum E { A = v }\n  var v = 2;\n  return E;\n}",
+          'const v = 1;\nfunction g() {\n  let E;\n  ((E) => {\n    E[E["A"] = v] = "A";\n  })(E ||= {});\n  var v = 2;\n  return E;\n}',
+        );
+        // the const is only substituted inside enum initializers
+        exp(
+          "const n = 5;\nenum E { A = n }\nconsole.log(n, E.A);",
+          'const n = 5;\nvar E;\n((E) => {\n  E[E["A"] = 5] = "A";\n})(E ||= {});\nconsole.log(n, 5 /* A */)',
+        );
+      });
+
+      it("a function body sees an outer const declared after it", () => {
+        exp(
+          "export function f() {\n  enum E { A = outer, B }\n  return E;\n}\nconst outer = 7;",
+          'export function f() {\n  let E;\n  ((E) => {\n    E[E["A"] = 7] = "A";\n    E[E["B"] = 8] = "B";\n  })(E ||= {});\n  return E;\n}\nconst outer = 7',
+        );
+      });
+
+      it("exported const inside a namespace", () => {
+        exp(
+          "namespace N {\n  export const a = 1;\n  export enum E { X = a, Y }\n}",
+          'var N;\n((N) => {\n  N.a = 1;\n  let E;\n  ((E) => {\n    E[E["X"] = 1] = "X";\n    E[E["Y"] = 2] = "Y";\n  })(E = N.E ||= {});\n})(N ||= {})',
+        );
+      });
+
+      it("enum nested in a namespace, read through a dotted name", () => {
+        // The namespace body is visited before the function body, so the member value is known there.
+        exp(
+          "namespace N { export enum E { A = 4 } }\nexport function f() {\n  const c = N.E.A + 1;\n  enum X { Q = c, R }\n  return X;\n}",
+          'var N;\n((N) => {\n  let E;\n  ((E) => {\n    E[E["A"] = 4] = "A";\n  })(E = N.E ||= {});\n})(N ||= {});\nexport function f() {\n  const c = 4 /* A */ + 1;\n  let X;\n  ((X) => {\n    X[X["Q"] = 5] = "Q";\n    X[X["R"] = 6] = "R";\n  })(X ||= {});\n  return X;\n}',
+        );
+      });
+
+      it("a long dotted name in a const initializer is walked without recursion", () => {
+        // The visitor still rejects the nesting depth; the const pre-pass must not overflow the stack first.
+        const code =
+          "declare const a: any;\nconst x = a" + Buffer.alloc(100_000, ".b").toString() + ";\nenum E { A = 1 }";
+        expect(() => ts.parsed(code, false, false)).toThrow("Maximum call stack size exceeded");
+      });
+
+      // tsc folds a dotted name to a namespace's exported const too. Not implemented:
+      // the namespace member map does not carry the value.
+      it.todo("const reached through a namespace", () => {
+        exp(
+          "namespace N { export const a = 1; }\nenum E { X = N.a, Y }",
+          'var N;\n((N) => {\n  N.a = 1;\n})(N ||= {});\nvar E;\n((E) => {\n  E[E["X"] = 1] = "X";\n  E[E["Y"] = 2] = "Y";\n})(E ||= {})',
+        );
+      });
+
+      it("folds through to uses of the member", () => {
+        // https://github.com/oven-sh/bun/issues/19581
+        const out = ts.parsedMin(
+          "const enum First { A = 1, B = 2, C = 3 }\nconst multiplier = 5;\nconst enum Second { D = First.A * multiplier, E = First.B * multiplier, F = First.C * multiplier }\nconsole.log(Second.E + Second.F);",
+        );
+        expect(out.split("\n").at(-1)).toBe("console.log(25)");
+      });
+
+      it("a folded string member can be read by more than one template literal", () => {
+        // The member is stored flat. A rope would be shared by every inlined copy,
+        // and folding the first template literal would append to it.
+        ts.expectPrintedMin_(
+          'const prefix = "app";\nenum Tag { Upper = prefix + "!" }\nconsole.log(`${Tag.Upper}x`, `${Tag.Upper}y`);',
+          'const prefix = "app";\nvar Tag;\n((Tag) => Tag.Upper = "app!")(Tag ||= {});\nconsole.log("app!x", "app!y")',
+        );
+      });
+    });
+
     // TODO: fix all the cases that report generic "Parse error"
     it("types", () => {
       const exp = ts.expectPrinted_;

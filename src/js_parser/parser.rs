@@ -1978,6 +1978,41 @@ pub(crate) fn float_to_int32(f: f64) -> i32 {
     if f < 0.0 { 0i32.wrapping_sub(int) } else { int }
 }
 
+/// A JavaScript arithmetic or bitwise binary operator on two numbers, `None` for other operators.
+pub(crate) fn fold_numeric_binary_operator(
+    op: js_ast::OpCode,
+    left: f64,
+    right: f64,
+) -> Option<f64> {
+    use js_ast::OpCode as Op;
+    Some(match op {
+        Op::BinAdd => left + right,
+        Op::BinSub => left - right,
+        Op::BinMul => left * right,
+        Op::BinDiv => left / right,
+        // f64 `%` is fmod (LLVM frem), which is what JavaScriptCore does (`Math::fmodDouble`).
+        Op::BinRem => left % right,
+        Op::BinPow => js_ast::math::pow(left, right),
+        Op::BinShl => {
+            let right: u32 = (float_to_int32(right) as u32) % 32;
+            float_to_int32(left).wrapping_shl(right) as f64
+        }
+        Op::BinShr => {
+            let right: u32 = (float_to_int32(right) as u32) % 32;
+            // wrapping_shr on i32 is an arithmetic shift right
+            float_to_int32(left).wrapping_shr(right) as f64
+        }
+        Op::BinUShr => {
+            let right: u32 = (float_to_int32(right) as u32) % 32;
+            (float_to_int32(left) as u32).wrapping_shr(right) as f64
+        }
+        Op::BinBitwiseAnd => (float_to_int32(left) & float_to_int32(right)) as f64,
+        Op::BinBitwiseOr => (float_to_int32(left) | float_to_int32(right)) as f64,
+        Op::BinBitwiseXor => (float_to_int32(left) ^ float_to_int32(right)) as f64,
+        _ => return None,
+    })
+}
+
 #[derive(Clone, Copy, Default)]
 pub struct ParseBindingOptions {
     /// This will prevent parsing of destructuring patterns, as using statement

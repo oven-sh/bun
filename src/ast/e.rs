@@ -734,7 +734,7 @@ impl Number {
         Self::to_string_from_f64(self.value(), bump)
     }
 
-    pub(crate) fn to_string_from_f64(value: f64, bump: &Bump) -> Option<Str> {
+    pub fn to_string_from_f64(value: f64, bump: &Bump) -> Option<Str> {
         if value == value.trunc() && (value < i32::MAX as f64 && value > i32::MIN as f64) {
             let int_value = value as i64;
             let abs = int_value.unsigned_abs();

@@ -472,6 +472,19 @@ pub(crate) struct BorderImageHandler {
     pub has_any: bool,
 }
 
+/// A new value normally replaces the buffered one. When the two differ and some
+/// target does not support the new value, the buffered one is a manual fallback
+/// and has to be flushed to the output first.
+macro_rules! keeps_fallback {
+    ($buffered:expr, $new:expr, $targets:expr) => {
+        matches!(
+            (&$buffered, $targets.browsers),
+            (Some(buffered), Some(browsers))
+                if !buffered.eql($new) && !$new.is_compatible(&browsers)
+        )
+    };
+}
+
 impl BorderImageHandler {
     pub(crate) fn handle_property(
         &mut self,
@@ -485,11 +498,7 @@ impl BorderImageHandler {
         // per-field name dispatch without reflection.
         macro_rules! flush_helper {
             ($self:expr, $d:expr, $ctx:expr, $name:ident, $val:expr) => {
-                if $self.$name.is_some()
-                    && !$self.$name.as_ref().unwrap().eql($val)
-                    && $ctx.targets.browsers.is_some()
-                    && !$val.is_compatible(&$ctx.targets.browsers.unwrap())
-                {
+                if keeps_fallback!($self.$name, $val, $ctx.targets) {
                     $self.flush($d, $ctx);
                 }
             };
@@ -583,13 +592,35 @@ impl BorderImageHandler {
         self.repeat = None;
     }
 
-    pub(crate) fn will_flush(&self, property: &Property) -> bool {
+    /// Whether `handle_property(property)` flushes the buffered declarations
+    /// before it records `property`. `BorderHandler` flushes itself first in
+    /// that case, so a buffered `border` stays ahead of what this handler emits.
+    pub(crate) fn will_flush(&self, property: &Property, targets: &css::targets::Targets) -> bool {
+        let prefixed = self.vendor_prefix != VendorPrefix::NONE;
         match property {
-            Property::BorderImageSource(_)
-            | Property::BorderImageSlice(_)
-            | Property::BorderImageWidth(_)
-            | Property::BorderImageOutset(_)
-            | Property::BorderImageRepeat(_) => self.vendor_prefix != VendorPrefix::NONE,
+            Property::BorderImageSource(val) => {
+                prefixed || keeps_fallback!(self.source, val, targets)
+            }
+            Property::BorderImageSlice(val) => {
+                prefixed || keeps_fallback!(self.slice, val, targets)
+            }
+            Property::BorderImageWidth(val) => {
+                prefixed || keeps_fallback!(self.width, val, targets)
+            }
+            Property::BorderImageOutset(val) => {
+                prefixed || keeps_fallback!(self.outset, val, targets)
+            }
+            Property::BorderImageRepeat(val) => {
+                prefixed || keeps_fallback!(self.repeat, val, targets)
+            }
+            Property::BorderImage(val) => {
+                let val = &val.0;
+                keeps_fallback!(self.source, &val.source, targets)
+                    || keeps_fallback!(self.slice, &val.slice, targets)
+                    || keeps_fallback!(self.width, &val.width, targets)
+                    || keeps_fallback!(self.outset, &val.outset, targets)
+                    || keeps_fallback!(self.repeat, &val.repeat, targets)
+            }
             Property::Unparsed(val) => is_border_image_property(val.property_id.tag()),
             _ => false,
         }

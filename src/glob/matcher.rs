@@ -208,9 +208,7 @@ fn glob_match_impl(
                             state.wildcard.glob_index = state.glob_index;
                             state.wildcard.path_index = state.path_index
                                 + if (state.path_index as usize) < path.len() {
-                                    u32::from(strings::wtf8_byte_sequence_length(
-                                        path[state.path_index as usize],
-                                    ))
+                                    u32::from(rune_len_at(path, state.path_index as usize))
                                 } else {
                                     1
                                 };
@@ -265,9 +263,7 @@ fn glob_match_impl(
                                 if !is_separator(path[state.path_index as usize]) {
                                     state.glob_index += 1;
                                     state.path_index +=
-                                        u32::from(strings::wtf8_byte_sequence_length(
-                                            path[state.path_index as usize],
-                                        ));
+                                        u32::from(rune_len_at(path, state.path_index as usize));
                                     continue 'main_loop;
                                 }
                                 break 'fallthrough;
@@ -619,14 +615,47 @@ fn unescape(c: &mut u8, glob: &[u8], glob_index: &mut u32) -> bool {
     true
 }
 
-/// Decodes the WTF-8 codepoint at `bytes[idx]`, returning `(codepoint, byte_len)`.
+const REPLACEMENT_CHAR: u32 = 0xFFFD;
+
+/// Byte length of the codepoint at `bytes[idx]`; see [`decode_wtf8_rune_at`].
 #[inline(always)]
+fn rune_len_at(bytes: &[u8], idx: usize) -> u8 {
+    decode_wtf8_rune_at(bytes, idx).1
+}
+
+/// Decodes the WTF-8 codepoint at `bytes[idx]`, returning `(codepoint, byte_len)`.
+/// `bytes` can be a directory entry that is not valid UTF-8: an ill-formed
+/// sequence is U+FFFD over its maximal subpart, as `readdir` decodes it, so
+/// `byte_len` never reaches into the next character or past the end.
+#[inline]
 fn decode_wtf8_rune_at(bytes: &[u8], idx: usize) -> (u32, u8) {
-    let len = strings::wtf8_byte_sequence_length(bytes[idx]);
-    let mut buf = [0u8; 4];
-    let n = (bytes.len() - idx).min(4);
-    buf[..n].copy_from_slice(&bytes[idx..idx + n]);
-    let cp = strings::decode_wtf8_rune_t::<u32>(buf, len, 0xFFFD);
+    let lead = bytes[idx];
+    if lead < 0x80 {
+        return (u32::from(lead), 1);
+    }
+    // (length, second-byte range): the ranges exclude overlong forms and
+    // codepoints above U+10FFFF, but keep surrogates (ED A0..BF) for WTF-8.
+    let (len, lo, hi): (u8, u8, u8) = match lead {
+        0xC2..=0xDF => (2, 0x80, 0xBF),
+        0xE0 => (3, 0xA0, 0xBF),
+        0xE1..=0xEF => (3, 0x80, 0xBF),
+        0xF0 => (4, 0x90, 0xBF),
+        0xF1..=0xF3 => (4, 0x80, 0xBF),
+        0xF4 => (4, 0x80, 0x8F),
+        _ => return (REPLACEMENT_CHAR, 1),
+    };
+    let tail = &bytes[idx + 1..];
+    match tail.first() {
+        Some(&b) if lo <= b && b <= hi => {}
+        _ => return (REPLACEMENT_CHAR, 1),
+    }
+    let mut cp = ((u32::from(lead) & (0x7F >> len)) << 6) | u32::from(tail[0] & 0x3F);
+    for i in 1..usize::from(len) - 1 {
+        match tail.get(i) {
+            Some(&b) if b & 0xC0 == 0x80 => cp = (cp << 6) | u32::from(b & 0x3F),
+            _ => return (REPLACEMENT_CHAR, (i + 1) as u8),
+        }
+    }
     (cp, len)
 }
 

@@ -1794,7 +1794,9 @@ pub(crate) mod __gated_printer {
                 }
                 // "**" can't contain certain unary expressions
                 Op::Code::BinPow => {
-                    match &e.left.data {
+                    // An inlined enum member prints as its value, which may be a negative number
+                    let left = e.left.unwrap_inlined();
+                    match &left.data {
                         ExprData::EUnary(left) => {
                             if Op::Code::unary_assign_target(left.op) == js_ast::AssignTarget::None
                             {
@@ -1807,6 +1809,12 @@ pub(crate) mod __gated_printer {
                         ExprData::EBoolean(_) | ExprData::EBranchBoolean(_) => {
                             // When minifying, booleans are printed as "!0 and "!1"
                             if self.options.minify_syntax {
+                                v.left_level = Level::Call;
+                            }
+                        }
+                        ExprData::EDot(_) | ExprData::EIndex(_) => {
+                            // Cross-module enum references also print as their value
+                            if self.imported_enum_member(left).is_some() {
                                 v.left_level = Level::Call;
                             }
                         }
@@ -3667,10 +3675,8 @@ pub(crate) mod __gated_printer {
                         flags.insert(ExprFlag::HasNonOptionalChainParent);
 
                         // Inline cross-module TypeScript enum references here
-                        if let Some(inlined) =
-                            self.try_to_get_imported_enum_value(e.target, &e.name)
-                        {
-                            self.print_inlined_enum(inlined, &e.name, level);
+                        if let Some((value, name)) = self.imported_enum_member(expr) {
+                            self.print_inlined_enum(value, name, level);
                             return;
                         }
                         if e.is_import_property_use
@@ -3722,16 +3728,10 @@ pub(crate) mod __gated_printer {
                     if e.optional_chain.is_none() {
                         flags.insert(ExprFlag::HasNonOptionalChainParent);
 
-                        if let Some(str) = e.index.data.as_e_string() {
-                            let str = str.flattened(self.bump);
-                            if str.is_utf8() {
-                                if let Some(value) =
-                                    self.try_to_get_imported_enum_value(e.target, str.slice8())
-                                {
-                                    self.print_inlined_enum(value, str.slice8(), level);
-                                    return;
-                                }
-                            }
+                        // Inline cross-module TypeScript enum references here
+                        if let Some((value, name)) = self.imported_enum_member(expr) {
+                            self.print_inlined_enum(value, name, level);
+                            return;
                         }
                         if e.is_import_property_use
                             && let Some(str) = e.index.unwrap_inlined().data.as_e_string()
@@ -6770,6 +6770,28 @@ pub(crate) mod __gated_printer {
                 }
             }
             None
+        }
+
+        /// A cross-module `Enum.member` / `Enum["member"]` access that
+        /// `print_expr` replaces with the member's value: that value and the
+        /// member name.
+        fn imported_enum_member(
+            &self,
+            expr: Expr,
+        ) -> Option<(js_ast::InlinedEnumValueDecoded, &'a [u8])> {
+            let (target, name) = match &expr.data {
+                ExprData::EDot(e) if e.optional_chain.is_none() => (e.target, e.name.slice()),
+                ExprData::EIndex(e) if e.optional_chain.is_none() => {
+                    let str = e.index.data.as_e_string()?;
+                    let str = str.flattened(self.bump);
+                    if !str.is_utf8() {
+                        return None;
+                    }
+                    (e.target, str.data.slice())
+                }
+                _ => return None,
+            };
+            Some((self.try_to_get_imported_enum_value(target, name)?, name))
         }
 
         pub(crate) fn print_inlined_enum(

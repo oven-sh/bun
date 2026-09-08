@@ -2160,6 +2160,36 @@ describe("bundler", () => {
       `,
     },
   });
+  // A negative enum member inlined as the base of "**" prints with a unary
+  // minus, which is a syntax error unless it is parenthesized. This covers both
+  // same-module inlining (parser) and cross-module inlining (printer).
+  for (const minify of [false, true]) {
+    itBundled(`edgecase/TsEnumNegativeMemberAsExponentiationBase${minify ? "Minified" : ""}`, {
+      files: {
+        "/entry.ts": `
+          import { X } from './enum';
+          enum L { Neg = -2, NegZero = -0, NegInf = -1 / 0 }
+          const n = Number(process.argv[2] ?? 3);
+          console.log([
+            L.Neg ** n, L['Neg'] ** n, 1 / L.NegZero ** n, L.NegInf ** n,
+            X.Neg ** n, X['Neg'] ** n, 1 / X.NegZero ** n, X.NegInf ** n, X.Pos ** n,
+            n ** X.Neg,
+          ].join(","));
+        `,
+        "/enum.ts": `
+          export enum X { Neg = -2, NegZero = -0, NegInf = -1 / 0, Pos = 2 }
+        `,
+      },
+      minifySyntax: minify,
+      minifyWhitespace: minify,
+      onAfterBundle(api) {
+        // All four "Neg ** n" accesses are inlined, and the literal is parenthesized
+        const inlinedBase = minify ? /\(-2\)\*\*/g : /\(-2\) \/\* Neg \*\/ \*\* /g;
+        expect(api.readFile("/out.js").match(inlinedBase) ?? []).toHaveLength(4);
+      },
+      run: { stdout: "-8,-8,-Infinity,-Infinity,-8,-8,-Infinity,-Infinity,8,0.1111111111111111" },
+    });
+  }
   // https://github.com/oven-sh/bun/issues/31755
   // An object literal whose computed keys are inlined enum members (e.g.
   // `{ [A.FOO]: ... }`) has no side effects, so when the binding is unused it

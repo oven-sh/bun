@@ -2937,6 +2937,23 @@ console.log(<div {...obj} key="after" />);`),
       expectParseError("await -x ** 0", "Unexpected **");
     });
 
+    it("exponentiation with an inlined enum member as the base", () => {
+      // A negative member is printed with a unary minus, which is a syntax
+      // error as the base of "**" unless it is parenthesized.
+      const pre = "enum E { Neg = -2, NegZero = -0, NegInf = -1 / 0, Not = ~1, Pos = 2, Str = 'x' }\n";
+      const lastLine = out => out.trimEnd().split("\n").at(-1);
+      const exp = (code, out) => expect(lastLine(ts.parsed(pre + code, false))).toBe(out);
+      exp("export let y = E.Neg ** n;", "export let y = (-2) /* Neg */ ** n;");
+      exp("export let y = E['Neg'] ** n;", "export let y = (-2) /* Neg */ ** n;");
+      exp("export let y = E.NegZero ** n;", "export let y = (-0) /* NegZero */ ** n;");
+      exp("export let y = E.NegInf ** n;", "export let y = (-1 / 0) /* NegInf */ ** n;");
+      exp("export let y = E.Not ** n;", "export let y = (-2) /* Not */ ** n;");
+      exp("export let y = E.Pos ** n;", "export let y = 2 /* Pos */ ** n;");
+      exp("export let y = E.Str ** n;", 'export let y = "x" /* Str */ ** n;');
+      // Only the base is restricted, the exponent may be a unary expression
+      exp("export let y = n ** E.Neg;", "export let y = n ** -2 /* Neg */;");
+    });
+
     it("for-of loop variable named async", () => {
       // "\u0061sync" is the identifier `async`, which is legal as a for-of loop
       // variable, but printing it as the raw token sequence `async of` is a

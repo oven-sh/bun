@@ -88,6 +88,8 @@ const stream = new ReadableStream({
 
 `await controller.flush(true)` is equivalent, and you can use it after a write returns a `Promise`.
 
+When the stream is read from JavaScript (`getReader()`, `pipeTo()`, `for await`), the buffer is full once `highWaterMark` bytes (default 64 KiB) are waiting for the reader. Pass `{ highWaterMark }` as the second `ReadableStream` constructor argument to change it. `reader.cancel(reason)` calls the source's `cancel(reason)`.
+
 For default (non-`direct`) `ReadableStream`s and async-generator response bodies, Bun applies this backpressure automatically: it pauses the producer while the destination is backed up.
 
 ---

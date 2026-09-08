@@ -145,10 +145,10 @@ ObjectDefineProperty(exports, "active", {
   },
 } as PropertyDescriptor);
 
-function domainWouldClaim(): boolean {
-  const s = currentStack();
-  const len = s.length;
-  for (let i = 0; i < len; i++) {
+// node installs its capture callback only while a domain on the stack has an
+// 'error' listener: https://github.com/nodejs/node/blob/v26.3.0/lib/domain.js#L158
+function stackClaims(s: any[]): boolean {
+  for (let i = 0; i < s.length; i++) {
     const d = s[i];
     if (
       d != null &&
@@ -162,6 +162,12 @@ function domainWouldClaim(): boolean {
   return false;
 }
 
+// atEntryPoint: the entry module's own synchronous throw; no callback boundary
+// preceded it, so its async-context box is not a restored pairing.
+function domainWouldClaim(atEntryPoint: boolean): boolean {
+  return stackClaims(atEntryPoint ? stack : currentStack());
+}
+
 function domainUncaughtExceptionClear() {
   adoptedDomain = null;
   adoptedIndex = -1;
@@ -169,25 +175,19 @@ function domainUncaughtExceptionClear() {
   setActive(null);
 }
 
-function fatalErrorDispatch(er: any) {
-  adopt();
-  let active = globalActive;
-  const stackLen = stack.length;
-  if ((active === null || active === undefined) && stackLen > 0) {
-    active = stack[stackLen - 1];
-    setActive(active);
-  }
-  if (active !== null && active !== undefined && typeof active._errorHandler === "function") {
-    if (stack.length === 0 || stack[stack.length - 1] !== active) {
-      ArrayPrototypePush.$call(stack, active);
+function fatalErrorDispatch(er: any, atEntryPoint: boolean) {
+  if (!atEntryPoint) adopt();
+  if (stackClaims(stack)) {
+    // node's callback is process.domain._errorHandler(er); fall back to the
+    // stack top where node would throw on a nulled process.domain.
+    let active = globalActive;
+    if (active === null || active === undefined) {
+      active = stack[stack.length - 1];
       setActive(active);
     }
-    for (let i = 0; i < stack.length; i++) {
-      const d = stack[i];
-      if (d != null && typeof d.listenerCount === "function" && d.listenerCount("error") > 0) {
-        active._errorHandler(er);
-        return true;
-      }
+    if (typeof active._errorHandler === "function") {
+      active._errorHandler(er);
+      return true;
     }
   }
   domainUncaughtExceptionClear();

@@ -392,6 +392,9 @@ pub enum UncaughtExceptionOrigin {
     /// Entry-point module promise rejected: aborts like `Exception`,
     /// listeners observe the 'unhandledRejection' origin string.
     EntryPointRejection = 2,
+    /// Synchronous throw out of a CommonJS entry: `Exception` semantics, but
+    /// like `EntryPointRejection` no async callback boundary preceded it.
+    EntryPointException = 3,
 }
 
 // ──────────────────────────────────────────────────────────────────────────

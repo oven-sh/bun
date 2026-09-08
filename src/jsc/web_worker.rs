@@ -900,7 +900,7 @@ impl WebWorker {
                 // entry's top-level throw is an uncaughtException; only an
                 // ESM entry rejection reports origin "unhandledRejection".
                 let origin = if vm.as_mut().entry_point_result.evaluated_as_cjs {
-                    crate::virtual_machine::UncaughtExceptionOrigin::Exception
+                    crate::virtual_machine::UncaughtExceptionOrigin::EntryPointException
                 } else {
                     crate::virtual_machine::UncaughtExceptionOrigin::EntryPointRejection
                 };

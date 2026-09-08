@@ -1433,7 +1433,7 @@ impl Run<'_> {
                     // throw is an uncaughtException; only an ESM entry
                     // rejection reports origin "unhandledRejection".
                     let origin = if vm.entry_point_result.evaluated_as_cjs {
-                        bun_jsc::virtual_machine::UncaughtExceptionOrigin::Exception
+                        bun_jsc::virtual_machine::UncaughtExceptionOrigin::EntryPointException
                     } else {
                         bun_jsc::virtual_machine::UncaughtExceptionOrigin::EntryPointRejection
                     };

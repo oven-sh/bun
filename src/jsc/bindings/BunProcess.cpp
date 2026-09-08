@@ -1355,6 +1355,7 @@ enum class UncaughtExceptionOrigin : int {
     Exception = 0,
     Rejection = 1,
     EntryPointRejection = 2,
+    EntryPointException = 3,
 };
 
 // substituteError out-param: a domain handler / capture callback throw in a
@@ -1375,14 +1376,19 @@ extern "C" int Bun__handleUncaughtException(JSC::JSGlobalObject* lexicalGlobalOb
     auto domainHandler = process->getDomainErrorHandler();
     const auto captureAtThrow = process->getUncaughtExceptionCaptureCallback();
     bool domainClaimsAtThrow = false;
+    // An entry-point throw is still the module's own synchronous execution:
+    // node:domain must not treat its async-context box as a restored pairing.
+    const bool atEntryPoint = origin == UncaughtExceptionOrigin::EntryPointRejection
+        || origin == UncaughtExceptionOrigin::EntryPointException;
 
     if (shouldAbortOnUncaughtException() && origin != UncaughtExceptionOrigin::Rejection
         && !domainHandler.isEmpty() && !domainHandler.isUndefinedOrNull()) {
         auto wouldClaim = process->getDomainWouldClaim();
         if (!wouldClaim.isEmpty() && !wouldClaim.isUndefinedOrNull()) {
             auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-            MarkedArgumentBuffer noArgs;
-            JSValue claims = call(lexicalGlobalObject, wouldClaim, noArgs, "domainWouldClaim"_s);
+            MarkedArgumentBuffer claimArgs;
+            claimArgs.append(jsBoolean(atEntryPoint));
+            JSValue claims = call(lexicalGlobalObject, wouldClaim, claimArgs, "domainWouldClaim"_s);
             if (auto ex = scope.exception()) {
                 (void)scope.tryClearException();
                 (void)ex;
@@ -1424,10 +1430,10 @@ extern "C" int Bun__handleUncaughtException(JSC::JSGlobalObject* lexicalGlobalOb
 
     MarkedArgumentBuffer args;
     args.append(exception);
-    if (origin != UncaughtExceptionOrigin::Exception) {
-        args.append(jsString(vm, String("unhandledRejection"_s)));
-    } else {
+    if (origin == UncaughtExceptionOrigin::Exception || origin == UncaughtExceptionOrigin::EntryPointException) {
         args.append(jsString(vm, String("uncaughtException"_s)));
+    } else {
+        args.append(jsString(vm, String("unhandledRejection"_s)));
     }
 
     auto uncaughtExceptionMonitor = Identifier::fromString(JSC::getVM(globalObject), "uncaughtExceptionMonitor"_s);
@@ -1442,7 +1448,10 @@ extern "C" int Bun__handleUncaughtException(JSC::JSGlobalObject* lexicalGlobalOb
     domainHandler = process->getDomainErrorHandler();
     if (!domainHandler.isEmpty() && !domainHandler.isUndefinedOrNull()) {
         auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-        JSValue handled = call(lexicalGlobalObject, domainHandler, args, "domainErrorHandler"_s);
+        MarkedArgumentBuffer domainArgs;
+        domainArgs.append(exception);
+        domainArgs.append(jsBoolean(atEntryPoint));
+        JSValue handled = call(lexicalGlobalObject, domainHandler, domainArgs, "domainErrorHandler"_s);
         if (auto ex = scope.exception()) {
             (void)scope.tryClearException();
             if (vm.hasPendingTerminationException()) [[unlikely]]

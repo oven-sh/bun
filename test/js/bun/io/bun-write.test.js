@@ -1174,6 +1174,101 @@ int posix_fadvise(int fd, off_t offset, off_t len, int advice) {
       expect(exitCode).toBe(0);
     });
 
+    // The implicit end closes the stream like controller.close(): the source's cancel() runs once
+    // with no reason, and the controller is detached from the sink it no longer owns.
+    it("ends a direct stream's sink when its pull() returns", async () => {
+      using dir = tempDir("bun-write-direct-pull-returns", {});
+      const dest = join(String(dir), "out.txt");
+      let ctrl;
+      const cancelled = [];
+      const stream = new ReadableStream({
+        type: "direct",
+        async pull(c) {
+          ctrl = c;
+          c.write("first ");
+          await c.flush();
+          // A later event loop turn: "second" is still buffered in the sink when pull() returns.
+          await new Promise(resolve => setImmediate(resolve));
+          c.write("second");
+        },
+        cancel(reason) {
+          cancelled.push(reason);
+        },
+      });
+      expect(await Bun.write(dest, new Response(stream))).toBe(12);
+      expect(await Bun.file(dest).text()).toBe("first second");
+      expect(cancelled).toEqual([undefined]);
+      expect(() => ctrl.write("late event")).toThrow(/already been closed/);
+      expect(() => ctrl.flush()).toThrow(/already been closed/);
+      expect(ctrl.end()).toBeUndefined();
+      Bun.gc(true);
+    });
+
+    // Every way the JS pump can settle without a controller.close(), each followed by a full GC
+    // with the controller cell unreferenced. Before, the cell kept a pointer to the freed FileSink
+    // and the collection (or the sink's queued flush task) was a use-after-free. `await 1` settles
+    // in the tick the write started in; `tick()` settles on a later event-loop turn.
+    it.each([
+      [
+        "an async generator that throws right after a yield",
+        `async function* () { yield "first"; throw new Error("boom"); }`,
+        "rejected: boom",
+      ],
+      [
+        "an async generator that throws before its first yield",
+        `async function* () { throw new Error("boom"); }`,
+        "rejected: boom",
+      ],
+      [
+        "an async generator that throws on a later tick",
+        `async function* () { yield "first"; await tick(); throw new Error("boom"); }`,
+        "rejected: boom",
+      ],
+      [
+        "a direct ReadableStream whose pull rejects",
+        `() => new ReadableStream({ type: "direct", async pull(ctrl) { ctrl.write("first"); await 1; throw new Error("boom"); } })`,
+        "rejected: boom",
+      ],
+      [
+        "a direct ReadableStream whose pull resolves without closing it",
+        `() => new ReadableStream({ type: "direct", async pull(ctrl) { ctrl.write("first"); await 1; } })`,
+        `resolved: 5, "first"`,
+      ],
+      [
+        "a direct ReadableStream whose pull resolves on a later tick without closing it",
+        `() => new ReadableStream({ type: "direct", async pull(ctrl) { ctrl.write("first"); await tick(); } })`,
+        `resolved: 5, "first"`,
+      ],
+    ])("the body's sink controller is collectable after %s", async (_label, body, outcome) => {
+      using dir = tempDir("bun-write-settled-controller", {});
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `const { readFileSync } = require("fs");
+           const dest = ${JSON.stringify(join(String(dir), "out.txt"))};
+           const tick = () => new Promise(resolve => setImmediate(resolve));
+           const body = ${body};
+           const outcomes = new Set();
+           for (let i = 0; i < 5; i++) {
+             outcomes.add(
+               await Bun.write(dest, new Response(body())).then(
+                 n => "resolved: " + n + ", " + JSON.stringify(readFileSync(dest, "utf8")),
+                 e => "rejected: " + e.message,
+               ),
+             );
+             Bun.gc(true);
+           }
+           console.log([...outcomes].join(" | "));`,
+        ],
+        env: bunEnv,
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout: stdout.trim(), stderr }).toEqual({ stdout: outcome, stderr: "" });
+      expect(exitCode).toBe(0);
+    });
+
     // /dev/full: every write fails with ENOSPC.
     it.skipIf(process.platform !== "linux")("rejects with the write error, for each kind of body", async () => {
       await using server = await origin();

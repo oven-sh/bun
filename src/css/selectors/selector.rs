@@ -156,6 +156,7 @@ fn downlevel_component<'bump>(
             // We need to use :is() / :-webkit-any() rather than :not(.a):not(.b) to ensure the specificity is equivalent.
             // https://drafts.csswg.org/selectors/#specificity-rules
             if selectors.len() > 1 && targets.should_compile_same(Feature::NotSelectorList) {
+                let has_combinator = selectors.iter().any(|sel| sel.has_combinator());
                 let is: Selector = Selector::from_component(Component::Is({
                     // `Component::Is` carries `Box<[Selector]>` (heap, not arena);
                     // could re-thread `&'bump [Selector]` once the arena lifetime is plumbed.
@@ -167,7 +168,8 @@ fn downlevel_component<'bump>(
                 }));
                 *component = Component::Negation(vec![is].into_boxed_slice());
 
-                if targets.should_compile_same(Feature::IsSelector) {
+                // As with :is() above, :-webkit-any() / :-moz-any() accept only compound selectors.
+                if targets.should_compile_same(Feature::IsSelector) && !has_combinator {
                     necessary_prefixes.insert(
                         targets.prefixes(VendorPrefix::NONE, css::prefixes::Feature::AnyPseudo),
                     );

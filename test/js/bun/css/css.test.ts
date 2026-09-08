@@ -5442,6 +5442,64 @@ describe("css tests", () => {
         safari: 11 << 16,
       },
     );
+    // :-webkit-any() and :-moz-any() accept only compound selectors, so a
+    // :not() list with a combinator is wrapped in :is() but never prefixed.
+    prefix_test(
+      ".test:not(.foo .bar, .baz) {color:red}",
+      `
+      .test:not(:is(.foo .bar, .baz)) {
+        color: red;
+      }
+      `,
+      {
+        safari: 8 << 16,
+      },
+    );
+    prefix_test(
+      "h2:not(.sidebar *, footer > *) {color:red}",
+      `
+      h2:not(:is(.sidebar *, footer > *)) {
+        color: red;
+      }
+      `,
+      {
+        chrome: 80 << 16,
+        firefox: 78 << 16,
+        safari: 14 << 16,
+      },
+    );
+    prefix_test(
+      "h2:not(.sidebar, footer) {color:red}",
+      `
+      h2:not(:-webkit-any(.sidebar, footer)) {
+        color: red;
+      }
+
+      h2:not(:-moz-any(.sidebar, footer)) {
+        color: red;
+      }
+
+      h2:not(:is(.sidebar, footer)) {
+        color: red;
+      }
+      `,
+      {
+        chrome: 80 << 16,
+        firefox: 78 << 16,
+        safari: 14 << 16,
+      },
+    );
+    prefix_test(
+      "h2:not(.sidebar *, footer > *) {color:red}",
+      `
+      h2:not(:is(.sidebar *, footer > *)) {
+        color: red;
+      }
+      `,
+      {
+        firefox: 80 << 16,
+      },
+    );
 
     minify_test("a:lang(en) {color:red}", "a:lang(en){color:red}");
     minify_test("a:lang(en, fr) {color:red}", "a:lang(en,fr){color:red}");

@@ -493,9 +493,8 @@ impl BytesExt for Bytes {
             // — same path `Bytes::drop` takes.
             let copy = self.slice().to_vec();
             if let Some(p) = self.ptr.take() {
-                // SAFETY: `ptr[..cap]` is the live allocation owned by
-                // `self.allocator` (`from_raw_parts` contract); `take()`
-                // cleared `self.ptr`, so nothing reads or frees it again.
+                // SAFETY: `ptr[..cap]` is owned by `self.allocator` (`from_raw_parts`
+                // contract); `take()` cleared `self.ptr`, so it is freed once.
                 unsafe { self.allocator.free(p.as_ptr(), self.cap as usize) };
             }
             copy

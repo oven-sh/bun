@@ -15,7 +15,7 @@ import { expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
-const ROOT = join(import.meta.dir, "..", "..");
+const ROOT = join(import.meta.dir, "..", "..", "..");
 
 function strippedSource(relative: string): string {
   const source = readFileSync(join(ROOT, relative), "utf-8");

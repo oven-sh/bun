@@ -771,11 +771,8 @@ pub mod store {
             // `stored_name` is a `Box<[u8]>`, so its field `Drop` frees it;
             // only the custom-allocator buffer needs an explicit free here.
             if let Some(p) = self.ptr {
-                // SAFETY: `ptr[..cap]` is the live allocation owned by
-                // `self.allocator` (`init`/`from_raw_parts` contract), freed
-                // exactly once here — `drop` runs once and nothing reads
-                // through `self.ptr` afterwards. A dangling `cap == 0`
-                // pointer (`Bytes::init(Vec::new())`) is a no-op in `free`.
+                // SAFETY: `ptr[..cap]` is owned by `self.allocator` (`init`/`from_raw_parts`
+                // contract) and `drop` runs once. A dangling `cap == 0` pointer is a no-op.
                 unsafe { self.allocator.free(p.as_ptr(), self.cap as usize) };
             }
         }

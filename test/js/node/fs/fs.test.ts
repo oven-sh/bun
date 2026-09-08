@@ -9,6 +9,7 @@ import {
   isGlibc,
   isIntelMacOS,
   isLinux,
+  isMacOS,
   isPosix,
   isWindows,
   tempDir,
@@ -967,6 +968,40 @@ describe("copyFileSync", () => {
     copyFileSync(import.meta.path, tempdir + "/copyFileSync.js", fs.constants.COPYFILE_FICLONE);
     copyFileSync(import.meta.path, tempdir + "/copyFileSync.js", fs.constants.COPYFILE_FICLONE);
     copyFileSync(import.meta.path, tempdir + "/copyFileSync.js", fs.constants.COPYFILE_FICLONE);
+  });
+
+  // clonefile(2) fails with EEXIST when the destination exists. Without
+  // COPYFILE_EXCL, copyFile must overwrite it anyway. A volume without clone
+  // support reports ENOTSUP or EXDEV. That is not the bug this test covers.
+  it.if(isMacOS)("COPYFILE_FICLONE_FORCE overwrites an existing destination", async () => {
+    const tempdir = tmpdirTestMkdir();
+    const src = join(tempdir, "src.bin");
+    const content = Buffer.alloc(1024 * 1024, "A");
+    writeFileSync(src, content);
+    const force = fs.constants.COPYFILE_FICLONE_FORCE;
+    const excl = fs.constants.COPYFILE_EXCL;
+    const eexist = expect.objectContaining({ code: "EEXIST" });
+
+    const variants: Record<string, (src: string, dest: string, mode: number) => Promise<void>> = {
+      sync: async (src, dest, mode) => copyFileSync(src, dest, mode),
+      callback: promisify(fs.copyFile),
+      promises: fs.promises.copyFile,
+    };
+
+    for (const [name, copy] of Object.entries(variants)) {
+      const dest = join(tempdir, `${name}.bin`);
+      writeFileSync(dest, "placeholder");
+      try {
+        await copy(src, dest, force);
+      } catch (e: any) {
+        if (e.code === "ENOTSUP" || e.code === "EXDEV") continue;
+        throw e;
+      }
+      expect(readFileSync(dest).equals(content)).toBe(true);
+
+      await expect(copy(src, dest, force | excl)).rejects.toThrow(eexist);
+      expect(readFileSync(dest).equals(content)).toBe(true);
+    }
   });
 
   it("COPYFILE_EXCL works", () => {

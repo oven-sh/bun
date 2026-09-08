@@ -1563,7 +1563,7 @@ impl FlushPendingTask {
 
 impl FileSink {
     /// The JS pump finished: flush what it wrote and end. Does not ref or unref.
-    fn handle_resolve_stream(&self) {
+    fn handle_resolve_stream(&self, global_this: &JSGlobalObject) {
         if let Some(stream) = self.readable_stream.get().get().as_mut() {
             stream.done();
         }
@@ -1572,6 +1572,7 @@ impl FileSink {
             // A flush error is recorded in `stream_error` and reaches `stream_done`.
             let _ = self.end(None);
         }
+        self.detach_js_controller(global_this);
     }
 
     /// Does not ref or unref.
@@ -1592,18 +1593,31 @@ impl FileSink {
             self.done.set(true);
             self.writer.with_mut(|w| w.close());
         }
+        self.detach_js_controller(global_this);
         aborted
+    }
+
+    /// The pump is over. `on_close` normally ran the controller's `end()`, which detached it; when
+    /// its `onClose` could not run (terminating worker, pending exception) detach it here, so the
+    /// cell never outlives this sink attached.
+    fn detach_js_controller(&self, global_this: &JSGlobalObject) {
+        if let streams::SourceHandle::JSController(cell) = *self.source.get() {
+            self.source.set(streams::SourceHandle::None);
+            crate::dispatch::fold(::bun_jsc::call_check_slow(global_this, || {
+                streams::controller_abi::detach_ptr(cell)
+            }));
+        }
     }
 }
 
-fn on_resolve_stream(_global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+fn on_resolve_stream(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
     bun_core::scoped_log!(FileSink, "onResolveStream");
     let args = callframe.arguments();
     let this: *mut FileSink = args[args.len() - 1].as_promise_ptr::<FileSink>();
     // SAFETY: `this` is kept alive by the ref taken in `assign_to_stream`; this guard balances it.
     let _guard = unsafe { RefPtr::from_raw(this) };
     // SAFETY: `as_promise_ptr` recovers the `*mut FileSink` stashed by `assign_to_stream`.
-    unsafe { (*this).handle_resolve_stream() };
+    unsafe { (*this).handle_resolve_stream(global_this) };
     Ok(JSValue::UNDEFINED)
 }
 
@@ -1746,7 +1760,7 @@ impl FileSink {
 
         let Some(promise) = promise_result.as_any_promise() else {
             // The pump ran to the end inside `assign_to_stream`.
-            self.handle_resolve_stream();
+            self.handle_resolve_stream(global_this);
             return promise_result;
         };
         match promise.status() {
@@ -1763,7 +1777,7 @@ impl FileSink {
             }
             bun_jsc::js_promise::Status::Fulfilled => {
                 // These don't ref().
-                self.handle_resolve_stream();
+                self.handle_resolve_stream(global_this);
             }
             bun_jsc::js_promise::Status::Rejected => {
                 // These don't ref().

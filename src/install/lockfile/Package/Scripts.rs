@@ -449,6 +449,26 @@ pub fn clear_scripts_pending(package_dir: &[u8]) {
     let _ = bun_sys::unlink(path.slice_z());
 }
 
+/// Whether `package_dir` has a [`SCRIPTS_PENDING_FILE`]: a regular file, not a directory or symlink a package shipped.
+pub fn has_scripts_pending_mark(package_dir: &[u8]) -> bool {
+    let Some(mut path) = scripts_pending_file_path(package_dir) else {
+        return false;
+    };
+    is_scripts_pending_mark(Fd::cwd(), path.slice_z())
+}
+
+/// `path` (relative to `dir`) is a regular file; the final component is not followed.
+pub fn is_scripts_pending_mark(dir: Fd, path: &bun_core::ZStr) -> bool {
+    #[cfg(windows)]
+    {
+        bun_sys::exists_at(dir, path)
+    }
+    #[cfg(not(windows))]
+    {
+        matches!(bun_sys::lstatat(dir, path), Ok(st) if bun_sys::S::ISREG(st.st_mode as _))
+    }
+}
+
 impl List {
     /// `cwd` is bun's copy of the package out of its cache (npm, git, tarball): only those are marked.
     pub fn cwd_is_from_cache(&self) -> bool {

@@ -822,7 +822,7 @@ impl<'a> PackageInstall<'a> {
             ],
         );
         self.node_modules
-            .file_exists_at(root_node_modules_dir, marker_path)
+            .has_scripts_pending_mark(root_node_modules_dir, marker_path)
     }
 
     pub(crate) fn verify(&mut self, resolution: &Resolution, root_node_modules_dir: &Dir) -> bool {

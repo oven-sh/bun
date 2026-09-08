@@ -157,11 +157,15 @@ impl NodeModulesFolder {
     }
 
     #[inline(never)]
-    pub(crate) fn file_exists_at(&self, root_node_modules_dir: &Dir, file_path: &ZStr) -> bool {
+    pub(crate) fn has_scripts_pending_mark(
+        &self,
+        root_node_modules_dir: &Dir,
+        file_path: &ZStr,
+    ) -> bool {
         if file_path.len() + self.path.len() * 2 < MAX_PATH_BYTES {
             let mut path_buf = bun_paths::path_buffer_pool::get();
             let parts: [&[u8]; 2] = [self.path.as_slice(), file_path.as_bytes()];
-            return bun_sys::exists_at(
+            return lockfile::package::scripts::is_scripts_pending_mark(
                 root_node_modules_dir.fd(),
                 join_z_buf::<platform::Auto>(path_buf.as_mut_slice(), &parts),
             );
@@ -171,7 +175,7 @@ impl NodeModulesFolder {
             Ok(d) => d,
             Err(_) => return false,
         };
-        bun_sys::exists_at(&dir, file_path)
+        lockfile::package::scripts::is_scripts_pending_mark(dir.fd(), file_path)
     }
 
     /// Since the stack size of these functions are rather large, let's not let them be inlined.

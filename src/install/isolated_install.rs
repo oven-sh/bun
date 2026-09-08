@@ -2308,10 +2308,9 @@ pub(crate) fn install_isolated_packages(
                                 )
                             })
                             && {
-                                let mut marker: paths::AutoAbsPath = paths::AutoAbsPath::init_top_level_dir();
-                                installer.append_store_path(&mut marker, entry_id);
-                                marker.append(install::SCRIPTS_PENDING_FILE.as_bytes()).assume_ok();
-                                sys::exists_z(marker.slice_z())
+                                let mut pkg_dir: paths::AutoAbsPath = paths::AutoAbsPath::init_top_level_dir();
+                                installer.append_store_path(&mut pkg_dir, entry_id);
+                                lockfile::package::scripts::has_scripts_pending_mark(pkg_dir.slice())
                             });
 
                     if !needs_install {

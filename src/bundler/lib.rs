@@ -91,8 +91,8 @@ pub mod thread_pool;
 
 pub(crate) mod AstBuilder;
 pub mod analyze_transpiled_module;
-pub mod prelinked_module_graph;
 pub mod bundled_ast;
+pub mod prelinked_module_graph;
 pub use bundled_ast::BundledAst;
 pub mod barrel_imports;
 #[path = "Chunk.rs"]

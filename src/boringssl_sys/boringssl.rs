@@ -970,6 +970,7 @@ unsafe extern "C" {
     // Thread-local error queue — no pointer args, no preconditions.
     pub safe fn ERR_clear_error();
     pub safe fn ERR_get_error() -> u32;
+    pub safe fn ERR_peek_error() -> u32;
     pub safe fn ERR_peek_last_error() -> u32;
     pub fn ERR_error_string(packed_error: u32, buf: *mut c_char) -> *mut c_char;
     // `ERR_error_string_n` declared once in the crypto/err block above.

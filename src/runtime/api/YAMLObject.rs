@@ -619,9 +619,7 @@ impl Stringifier {
         self.builder.append_string(str);
     }
 
-    /// Writes `key: `. A key that is too long to be implicit is written as an
-    /// explicit entry instead: `? key`, then `: ` on the next line (block) or
-    /// right after the key (flow).
+    /// Writes `key: `, or an explicit `? key` / `: ` entry when the key is too long to be implicit.
     fn append_key(&mut self, key: &BunString) {
         let quoted = string_needs_quotes(key);
         let explicit = key_needs_explicit_entry(key, quoted);
@@ -653,11 +651,7 @@ enum Escape {
 }
 
 impl Escape {
-    /// The escape for the UTF-16 code unit `c`, or `None` when `c` is written
-    /// as is. Output may only contain printable characters (§5.1 `c-printable`,
-    /// and `nb-char` also keeps a BOM out of content), so every other one is
-    /// escaped. NEL, NBSP, LS and PS are printable but keep their short escapes
-    /// for YAML 1.1 readers.
+    /// The escape for `c`, or `None` to write it as is. Covers all YAML may not hold raw (§5.1).
     fn of(c: u16) -> Option<Escape> {
         Some(match c {
             0x00 => Escape::Short(b'0'),
@@ -691,9 +685,7 @@ impl Escape {
     }
 }
 
-/// YAML 1.2 §7.4.2 limits an implicit key to 1024 characters so that a parser
-/// can find the `:` with bounded lookahead. libyaml and PyYAML apply the limit
-/// inside flow mappings too, so a longer key is rejected in either style.
+/// An implicit key is at most 1024 characters (YAML 1.2 §7.4.2; libyaml applies it in flow too).
 fn key_needs_explicit_entry(key: &BunString, quoted: bool) -> bool {
     const MAX_IMPLICIT_KEY_LEN: usize = 1024;
 

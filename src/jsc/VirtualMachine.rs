@@ -5831,6 +5831,10 @@ impl VirtualMachine {
             enable_source_code_preview.set(false);
         }
 
+        // `collect_source_lines` excerpts frame 0's JSC source: for a bun module, bundled text.
+        let first_frame_is_bun_module =
+            self.hide_bun_stackframes && is_bun_module_url(&frames[0].source_url);
+
         let already_remapped = frames[top].remapped;
         let resolved = {
             let top_source_url = frames[top].source_url.to_utf8();
@@ -5915,7 +5919,9 @@ impl VirtualMachine {
                 original_source.source_code.into_utf8()
             };
 
-            if enable_source_code_preview.get() && !top_frame_is_builtin && code.slice().is_empty()
+            if enable_source_code_preview.get()
+                && !first_frame_is_bun_module
+                && code.slice().is_empty()
             {
                 exception.collect_source_lines(error_instance, global);
             }
@@ -5960,7 +5966,7 @@ impl VirtualMachine {
             if !code.slice().is_empty() {
                 *source_code_slice = Some(code);
             }
-        } else if enable_source_code_preview.get() && !top_frame_is_builtin {
+        } else if enable_source_code_preview.get() && !first_frame_is_bun_module {
             exception.collect_source_lines(error_instance, global);
         }
 

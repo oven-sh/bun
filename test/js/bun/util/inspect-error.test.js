@@ -530,4 +530,25 @@ describe.concurrent("code frame of an error thrown inside a bun builtin module",
     expect(stderr).toBe("");
     expect(exitCode).toBe(0);
   });
+
+  // The other side of the line: code `eval` compiles when a timer calls it
+  // directly has no source URL and no user frame below it, but it is user code,
+  // so its excerpt (read from JSC, there is no file) stays.
+  test("still excerpts user code that has no source URL and no caller", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `process.on("uncaughtException", e => console.log(Bun.inspect(e)));
+         setTimeout(eval, 0, "\\nthrow new Error('from eval, called by a timer')");`,
+      ],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(codeFrameLines(stdout).at(-1)).toContain("throw new Error('from eval, called by a timer')");
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+  });
 });

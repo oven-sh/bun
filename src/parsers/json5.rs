@@ -1047,8 +1047,7 @@ impl<'a> JSON5Parser<'a> {
         Some(self.codepoint_at(self.pos))
     }
 
-    /// Decodes the code point at `pos` (in bounds). A byte that does not start
-    /// a well-formed WTF-8 sequence decodes as U+FFFD with `len == 1`.
+    /// `pos` must be in bounds. A byte that starts no well-formed sequence is U+FFFD, `len` 1.
     fn codepoint_at(&self, pos: usize) -> Codepoint {
         let rest = &self.source[pos..];
         let first = rest[0];

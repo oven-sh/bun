@@ -105,7 +105,10 @@ describe("Temporal spec conformance", () => {
     }
     // The bag is still read first, and PrepareCalendarFields errors still win.
     const reads: PropertyKey[] = [];
-    const bag = new Proxy({ year: -271821, month: 2, day: 31 }, { get: (t, k, r) => (reads.push(k), Reflect.get(t, k, r)) });
+    const bag = new Proxy(
+      { year: -271821, month: 2, day: 31 },
+      { get: (t, k, r) => (reads.push(k), Reflect.get(t, k, r)) },
+    );
     expect(() => Temporal.PlainDate.from(bag, null as any)).toThrow(TypeError);
     expect(reads).toEqual(["calendar", "day", "month", "monthCode", "year"]);
     expect(() => Temporal.PlainDate.from({ year: 2024, month: 0, day: 1 }, null as any)).toThrow(RangeError);
@@ -155,8 +158,8 @@ describe("Temporal spec conformance", () => {
       "0001-01-01[u-ca=gregory]",
     );
     expect(Temporal.PlainDate.from({ era: "ad", eraYear: 1, month: 1, day: 1, calendar: "gregory" }).era).toBe("ce");
-    expect(Temporal.PlainDate.from({ era: "reiwa", eraYear: 1, month: 5, day: 1, calendar: "japanese" }).toString()).toBe(
-      "2019-05-01[u-ca=japanese]",
-    );
+    expect(
+      Temporal.PlainDate.from({ era: "reiwa", eraYear: 1, month: 5, day: 1, calendar: "japanese" }).toString(),
+    ).toBe("2019-05-01[u-ca=japanese]");
   });
 });

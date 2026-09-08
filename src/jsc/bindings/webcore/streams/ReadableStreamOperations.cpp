@@ -467,6 +467,33 @@ JSPromise* readableStreamCancel(JSGlobalObject* globalObject, JSReadableStream* 
     return result;
 }
 
+// Bun: `updateRef(value)` on the native source handle, if any; returns the previous ref state.
+static bool updateNativeSourceRef(JSGlobalObject* globalObject, JSReadableStream* stream, bool value)
+{
+    auto& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (stream->m_controllerKind != ControllerKind::Default)
+        return false;
+    auto* controller = defaultControllerOf(stream);
+    if (controller->m_algorithms.kind != SourceKind::Native)
+        return false;
+    const auto* adapter = uncheckedDowncast<WebCore::JSNativeStreamSourceAdapter>(controller->m_algorithms.algorithmContext.get());
+    auto* handle = adapter->handle();
+    if (!handle)
+        return false;
+    JSValue updateRef = handle->getIfPropertyExists(globalObject, builtinNames(vm).updateRefPublicName());
+    RETURN_IF_EXCEPTION(scope, false);
+    if (!updateRef || !updateRef.isCallable())
+        return false;
+    auto callData = JSC::getCallData(updateRef);
+    MarkedArgumentBuffer args;
+    args.append(jsBoolean(value));
+    ASSERT(!args.hasOverflowed());
+    JSValue previous = JSC::call(globalObject, updateRef, callData, handle, args);
+    RETURN_IF_EXCEPTION(scope, false);
+    return previous.isTrue();
+}
+
 // ReadableStreamReaderGenericInitialize(reader, stream)
 void readableStreamReaderGenericInitialize(JSGlobalObject* globalObject, JSReadableStreamReaderBase* reader, JSReadableStream* stream)
 {
@@ -477,6 +504,12 @@ void readableStreamReaderGenericInitialize(JSGlobalObject* globalObject, JSReada
     switch (stream->m_state) {
     case ReadableStreamState::Readable:
         reader->m_closedPromise.set(vm, reader, JSPromise::create(vm, globalObject->promiseStructure()));
+        // Bun: restore the event-loop ref that the previous reader's release dropped.
+        if (stream->m_nativeRefDroppedOnRelease) {
+            stream->m_nativeRefDroppedOnRelease = false;
+            updateNativeSourceRef(globalObject, stream, true);
+            RETURN_IF_EXCEPTION(scope, void());
+        }
         return;
     case ReadableStreamState::Closed: {
         auto* closedPromise = promiseFulfilledWith(globalObject, JSC::jsUndefined());
@@ -536,20 +569,11 @@ void readableStreamReaderGenericRelease(JSGlobalObject* globalObject, JSReadable
         auto* controller = defaultControllerOf(stream);
         controller->releaseSteps();
         // Bun: drop the native handle's event-loop ref when its consumer releases the lock.
+        // A source the user already unref'd has nothing to drop, so nothing gets restored later.
         if (controller->m_algorithms.kind == SourceKind::Native) {
-            const auto* adapter = uncheckedDowncast<WebCore::JSNativeStreamSourceAdapter>(controller->m_algorithms.algorithmContext.get());
-            if (auto* handle = adapter->handle()) {
-                JSValue updateRef = handle->getIfPropertyExists(globalObject, builtinNames(vm).updateRefPublicName());
-                RETURN_IF_EXCEPTION(scope, void());
-                if (updateRef && updateRef.isCallable()) {
-                    auto callData = JSC::getCallData(updateRef);
-                    MarkedArgumentBuffer args;
-                    args.append(jsBoolean(false));
-                    ASSERT(!args.hasOverflowed());
-                    JSC::call(globalObject, updateRef, callData, handle, args);
-                    RETURN_IF_EXCEPTION(scope, void());
-                }
-            }
+            bool wasRef = updateNativeSourceRef(globalObject, stream, false);
+            RETURN_IF_EXCEPTION(scope, void());
+            stream->m_nativeRefDroppedOnRelease = wasRef;
         }
         break;
     }

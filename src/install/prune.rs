@@ -11,7 +11,7 @@ use bun_paths::SEP;
 use bun_sys::{self as sys, Dir, E, EntryKind, O};
 
 use crate::isolated_install::store::{EntryColumns as _, NodeColumns as _, entry as store_entry};
-use crate::isolated_install::{Store, Timings, build_store};
+use crate::isolated_install::{Store, StoreLog, build_store};
 use crate::lockfile::package::PackageColumns as _;
 use crate::lockfile::tree::is_filtered_dependency_or_workspace;
 use crate::lockfile::{LoadResult, Lockfile, reachable, tree};
@@ -1713,7 +1713,7 @@ fn build_store_with(manager: &mut PackageManager, features: InstallFeatures) -> 
             true,
             &[],
             None,
-            Timings::Quiet,
+            StoreLog::Quiet,
         ))
     })
 }
@@ -1780,6 +1780,7 @@ fn direct_aliases(manager: &PackageManager, pkg_id: PackageID) -> Vec<Box<[u8]>>
             manager,
             lockfile,
             resolutions,
+            false,
         ) {
             continue;
         }

@@ -206,11 +206,54 @@ impl<'a, 'b> Wait<'a, 'b> {
     }
 }
 
-/// Whether `build_store` reports how long each of its two passes took.
+/// Whether `build_store` prints an install's `--verbose` output: pass timings and skipped packages.
 #[derive(Clone, Copy)]
-pub(crate) enum Timings {
-    Print,
+pub(crate) enum StoreLog {
+    Verbose,
     Quiet,
+}
+
+/// Every `(peer edge, package)` pair the isolated store wires, one per peer context of the owner.
+pub fn served_peers(
+    manager: &PackageManager,
+    lockfile: &Lockfile,
+) -> Result<Vec<(DependencyID, PackageID)>, AllocError> {
+    let store = build_store(manager, lockfile, true, &[], None, StoreLog::Quiet)?;
+    let nodes = store.nodes.slice();
+    let node_pkg_ids = nodes.items_pkg_id();
+    let node_dependencies = nodes.items_dependencies();
+    let dependencies = lockfile.buffers.dependencies.as_slice();
+    let pkg_dependencies = lockfile.packages.items_dependencies();
+
+    let mut served: Vec<(DependencyID, PackageID)> = Vec::new();
+    let mut seen: HashMap<(DependencyID, PackageID), ()> = HashMap::default();
+    for node in 0..nodes.len() {
+        let wired = &node_dependencies[node];
+        let deps = pkg_dependencies[node_pkg_ids[node] as usize];
+        for dep_id in deps.begin()..deps.end() {
+            let dep = &dependencies[dep_id as usize];
+            if !dep.behavior.is_peer() {
+                continue;
+            }
+            // The edge itself when the store queued it, else the owner's own dependency of that name.
+            let target = wired
+                .iter()
+                .find(|ids| ids.dep_id == dep_id)
+                .or_else(|| {
+                    wired
+                        .iter()
+                        .find(|ids| dependencies[ids.dep_id as usize].name_hash == dep.name_hash)
+                })
+                .map(|ids| ids.pkg_id);
+            if let Some(target) = target
+                && target != invalid_package_id
+                && seen.insert((dep_id, target), ()).is_none()
+            {
+                served.push((dep_id, target));
+            }
+        }
+    }
+    Ok(served)
 }
 
 pub(crate) fn build_store(
@@ -219,9 +262,10 @@ pub(crate) fn build_store(
     install_root_dependencies: bool,
     workspace_filters: &[WorkspaceFilter],
     packages_to_install: Option<&[PackageID]>,
-    timings: Timings,
+    log: StoreLog,
 ) -> Result<Store, AllocError> {
     let mut timer = std::time::Instant::now();
+    let verbose = matches!(log, StoreLog::Verbose);
     let pkgs = lockfile.packages.slice();
     let pkg_dependency_slices = pkgs.items_dependencies();
     let pkg_resolutions = pkgs.items_resolution();
@@ -313,6 +357,7 @@ pub(crate) fn build_store(
                     manager,
                     lockfile,
                     resolutions,
+                    verbose,
                 ) {
                     provides.set(pkg_id as usize, bit);
                 }
@@ -383,6 +428,7 @@ pub(crate) fn build_store(
             manager,
             lockfile,
             resolutions,
+            verbose,
         ) {
             continue;
         }
@@ -694,6 +740,7 @@ pub(crate) fn build_store(
                     manager,
                     lockfile,
                     resolutions,
+                    verbose,
                 ) {
                     continue;
                 }
@@ -860,7 +907,7 @@ pub(crate) fn build_store(
         node_queue[queue_mark..].reverse();
     }
 
-    if matches!(timings, Timings::Print) {
+    if verbose {
         let full_tree_end = timer.elapsed();
         timer = std::time::Instant::now();
         bun_core::pretty_errorln!(
@@ -1117,7 +1164,7 @@ pub(crate) fn build_store(
         }
     }
 
-    if matches!(timings, Timings::Print) {
+    if verbose {
         let dedupe_end = timer.elapsed();
         bun_core::pretty_errorln!(
             "Created store [{}]",
@@ -1149,10 +1196,10 @@ pub(crate) fn install_isolated_packages(
     // while this reborrow is live (column slices below borrow through it).
     let lockfile: &mut Lockfile = unsafe { &mut *lockfile };
 
-    let timings = if manager.options.log_level.is_verbose() {
-        Timings::Print
+    let log = if manager.options.log_level.is_verbose() {
+        StoreLog::Verbose
     } else {
-        Timings::Quiet
+        StoreLog::Quiet
     };
     let store: Store = build_store(
         &*manager,
@@ -1160,7 +1207,7 @@ pub(crate) fn install_isolated_packages(
         install_root_dependencies,
         workspace_filters,
         packages_to_install,
-        timings,
+        log,
     )?;
 
     let global_store_path: Option<Vec<u8>> = if manager.options.enable.global_virtual_store() {

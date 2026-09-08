@@ -2,7 +2,7 @@ use core::marker::ConstParamTy;
 use core::mem::MaybeUninit;
 
 use bun_alloc::AllocError;
-use bun_collections::{ArrayHashMap, DynamicBitSet, MultiArrayList, index_sort};
+use bun_collections::{ArrayHashMap, DynamicBitSet, HashMap, MultiArrayList, index_sort};
 use bun_core::Output;
 use bun_core::ZStr;
 use bun_paths::{MAX_PATH_BYTES, PathBuffer, SEP};
@@ -548,6 +548,7 @@ pub(crate) fn is_filtered_dependency_or_workspace(
     manager: &PackageManager,
     lockfile: &Lockfile,
     resolutions: &[PackageID],
+    log_skipped: bool,
 ) -> bool {
     let pkg_id = resolutions[dep_id as usize];
     if (pkg_id as usize) >= lockfile.packages.len() {
@@ -567,7 +568,7 @@ pub(crate) fn is_filtered_dependency_or_workspace(
     let parent_res = &pkg_resolutions[parent_pkg_id as usize];
 
     if pkg_metas[pkg_id as usize].is_disabled(manager.options.cpu, manager.options.os) {
-        if manager.options.log_level.is_verbose() {
+        if log_skipped {
             let meta = &pkg_metas[pkg_id as usize];
             let name = lockfile.str(&pkg_names[pkg_id as usize]);
             if !meta.os.is_match(manager.options.os) && !meta.arch.is_match(manager.options.cpu) {
@@ -708,14 +709,16 @@ impl Tree {
 
             // filter out disabled dependencies
             if METHOD == BuilderMethod::Filter {
+                let manager = builder.manager.expect("manager set when METHOD == Filter");
                 if is_filtered_dependency_or_workspace(
                     dep_id,
                     parent_pkg_id,
                     builder.workspace_filters,
                     builder.install_root_dependencies,
-                    builder.manager.expect("manager set when METHOD == Filter"),
+                    manager,
                     lockfile,
                     &*builder.resolutions,
+                    manager.options.log_level.is_verbose(),
                 ) {
                     continue;
                 }
@@ -1110,3 +1113,71 @@ pub struct FillItem {
 // Dynamic, heap-backed ring buffer.
 pub(crate) type TreeFiller =
     bun_collections::LinearFifo<FillItem, bun_collections::linear_fifo::DynamicBuffer<FillItem>>;
+
+/// Each `(peer edge, package)` pair a placement of the owner resolves, nearest `node_modules` first.
+pub fn served_peers(lockfile: &Lockfile) -> Vec<(DependencyID, PackageID)> {
+    let trees = lockfile.buffers.trees.as_slice();
+    let hoisted = lockfile.buffers.hoisted_dependencies.as_slice();
+    let dependencies = lockfile.buffers.dependencies.as_slice();
+    let resolutions = lockfile.buffers.resolutions.as_slice();
+    let pkg_dependencies = lockfile.packages.items_dependencies();
+
+    let mut served: Vec<(DependencyID, PackageID)> = Vec::new();
+    if trees.is_empty() {
+        return served;
+    }
+    let mut seen: HashMap<(DependencyID, PackageID), ()> = HashMap::default();
+
+    // The `node_modules` folder of a package placed in `parent`, if it has one.
+    let mut own_folder: HashMap<(Id, PackageID), Id> = HashMap::default();
+    for tree in &trees[1..] {
+        if let Some(&pkg_id) = resolutions.get(tree.dependency_id as usize) {
+            own_folder.insert((tree.parent, pkg_id), tree.id);
+        }
+    }
+
+    let resolve_from = |mut tree_id: Id, name_hash: PackageNameHash| -> Option<PackageID> {
+        while let Some(tree) = trees.get(tree_id as usize) {
+            for &dep_id in tree.dependencies.get(hoisted) {
+                if dependencies[dep_id as usize].name_hash == name_hash {
+                    return Some(resolutions[dep_id as usize]);
+                }
+            }
+            tree_id = tree.parent;
+        }
+        None
+    };
+
+    let mut visit = |pkg_id: PackageID, from: Id| {
+        let deps = pkg_dependencies[pkg_id as usize];
+        for dep_id in deps.begin()..deps.end() {
+            let dep = &dependencies[dep_id as usize];
+            if !dep.behavior.is_peer() {
+                continue;
+            }
+            if let Some(target) = resolve_from(from, dep.name_hash)
+                && target != invalid_package_id
+                && seen.insert((dep_id, target), ()).is_none()
+            {
+                served.push((dep_id, target));
+            }
+        }
+    };
+
+    visit(0, 0);
+    for tree in trees {
+        for &dep_id in tree.dependencies.get(hoisted) {
+            let pkg_id = resolutions[dep_id as usize];
+            if pkg_id == invalid_package_id || pkg_dependencies[pkg_id as usize].len == 0 {
+                continue;
+            }
+            let from = own_folder
+                .get(&(tree.id, pkg_id))
+                .copied()
+                .unwrap_or(tree.id);
+            visit(pkg_id, from);
+        }
+    }
+
+    served
+}

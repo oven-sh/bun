@@ -1,6 +1,6 @@
-import { spawn } from "bun";
-import { afterAll, beforeAll, describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, tempDir, tempDirWithFiles } from "harness";
+import { spawn, write } from "bun";
+import { afterAll, beforeAll, describe, expect, it, test } from "bun:test";
+import { bunEnv, bunExe, tempDir, tempDirWithFiles, VerdaccioRegistry } from "harness";
 import { existsSync, mkdtempSync, realpathSync } from "node:fs";
 import { mkdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -578,5 +578,117 @@ describe.concurrent.each(["why", "pm why"])("bun %s", cmd => {
     expect(outputDepth2.split("\n").length).toBeLessThan(outputNoDepth.split("\n").length);
 
     expect(outputDepth2).toContain("mime-db@");
+  });
+});
+
+// A peer dependency points at the copy its owner actually resolves from where it is installed,
+// which need not be the package the resolver bound the edge to. `bun why` reads those edges from
+// the same layout the linker builds: the hoisted tree, or the isolated store's peer contexts.
+describe.concurrent("peer edges follow the installed layout", () => {
+  const registry = new VerdaccioRegistry();
+  beforeAll(async () => {
+    await registry.start();
+  });
+  afterAll(() => {
+    registry.stop();
+  });
+
+  async function run(cwd: string, ...cmd: string[]) {
+    await using proc = spawn({ cmd: [bunExe(), ...cmd], cwd, env: bunEnv, stdout: "pipe", stderr: "pipe" });
+    const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(err).not.toContain("error:");
+    return { out, exitCode };
+  }
+
+  async function install(cwd: string) {
+    expect((await run(cwd, "install")).exitCode).toBe(0);
+  }
+
+  async function why(cwd: string, pkg: string) {
+    return await run(cwd, "why", pkg);
+  }
+
+  // no-deps@1.0.0 nested under one-fixed-dep satisfies peer-deps-fixed's `^1.0.0`, and the
+  // resolver binds the peer there, but peer-deps-fixed is installed next to the root's 2.0.0 and
+  // that is what it loads, with either linker.
+  test.each(["hoisted", "isolated"] as const)("a peer shown under the copy its owner loads (%s)", async linker => {
+    const { packageDir, packageJson } = await registry.createTestDir({ bunfigOpts: { linker } });
+    await write(
+      packageJson,
+      JSON.stringify({
+        name: "app",
+        dependencies: { "no-deps": "2.0.0", "one-fixed-dep": "1.0.0", "peer-deps-fixed": "1.0.0" },
+      }),
+    );
+    await install(packageDir);
+
+    const { out, exitCode } = await why(packageDir, "no-deps");
+    expect(out).toMatchInlineSnapshot(`
+      "no-deps@2.0.0
+        ├─ app (requires 2.0.0)
+        └─ peer peer-deps-fixed@1.0.0 (requires ^1.0.0)
+           └─ app (requires 1.0.0)
+
+      no-deps@1.0.0
+        └─ one-fixed-dep@1.0.0 (requires 1.0.0)
+           └─ app (requires 1.0.0)
+
+      "
+    `);
+    expect(exitCode).toBe(0);
+  });
+
+  // peer-deps (peer `no-deps@*`) is reached from the root, next to no-deps@2.0.0, and from
+  // provides-peer-deps-1-0-0, which brings no-deps@1.0.0. The isolated linker gives it one store
+  // entry per context; the hoisted tree has a single copy at the root.
+  test("one edge per peer context with the isolated linker", async () => {
+    const manifest = JSON.stringify({
+      name: "app",
+      dependencies: { "no-deps": "2.0.0", "peer-deps": "1.0.0", "provides-peer-deps-1-0-0": "1.0.0" },
+    });
+
+    const isolated = await registry.createTestDir({ bunfigOpts: { linker: "isolated" } });
+    await write(isolated.packageJson, manifest);
+    await install(isolated.packageDir);
+    let { out, exitCode } = await why(isolated.packageDir, "no-deps");
+    expect(out).toMatchInlineSnapshot(`
+      "no-deps@2.0.0
+        ├─ app (requires 2.0.0)
+        └─ peer peer-deps@1.0.0 (requires *)
+           ├─ app (requires 1.0.0)
+           └─ provides-peer-deps-1-0-0@1.0.0 (requires 1.0.0)
+              └─ app (requires 1.0.0)
+
+      no-deps@1.0.0
+        ├─ provides-peer-deps-1-0-0@1.0.0 (requires 1.0.0)
+        │  └─ app (requires 1.0.0)
+        └─ peer peer-deps@1.0.0 (requires *)
+           ├─ app (requires 1.0.0)
+           └─ provides-peer-deps-1-0-0@1.0.0 (requires 1.0.0)
+              └─ app (requires 1.0.0)
+
+      "
+    `);
+    expect(exitCode).toBe(0);
+
+    const hoisted = await registry.createTestDir({ bunfigOpts: { linker: "hoisted" } });
+    await write(hoisted.packageJson, manifest);
+    await install(hoisted.packageDir);
+    ({ out, exitCode } = await why(hoisted.packageDir, "no-deps"));
+    expect(out).toMatchInlineSnapshot(`
+      "no-deps@2.0.0
+        ├─ app (requires 2.0.0)
+        └─ peer peer-deps@1.0.0 (requires *)
+           ├─ app (requires 1.0.0)
+           └─ provides-peer-deps-1-0-0@1.0.0 (requires 1.0.0)
+              └─ app (requires 1.0.0)
+
+      no-deps@1.0.0
+        └─ provides-peer-deps-1-0-0@1.0.0 (requires 1.0.0)
+           └─ app (requires 1.0.0)
+
+      "
+    `);
+    expect(exitCode).toBe(0);
   });
 });

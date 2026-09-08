@@ -1363,12 +1363,15 @@ describe.concurrent("importing .md modules", () => {
     expect(exitCode).toBe(0);
   });
 
-  test("empty .md file produces a module with no default export", async () => {
+  test("empty .md file default-exports an empty string", async () => {
     using dir = tempDir("md-import-empty", {
       "empty.md": "",
+      "blank.md": "\n\n  \n",
       "entry.ts": `
-        import html from "./empty.md";
-        console.log(html);
+        import empty from "./empty.md";
+        import blank from "./blank.md";
+        const required = require("./empty.md");
+        console.log(JSON.stringify([empty, blank, required.default]));
       `,
     });
     await using proc = Bun.spawn({
@@ -1377,8 +1380,9 @@ describe.concurrent("importing .md modules", () => {
       cwd: String(dir),
       stderr: "pipe",
     });
-    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
-    expect(stderr).toContain("Missing 'default' export");
-    expect(exitCode).not.toBe(0);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual(["", "", ""]);
+    expect(exitCode).toBe(0);
   });
 });

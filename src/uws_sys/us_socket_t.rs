@@ -44,6 +44,23 @@ pub enum CloseCode {
     fast_shutdown = 2,
 }
 
+/// What the read side of a socket holds right now, read with a peek instead of
+/// a trip through the event loop. Mirrors the `LIBUS_QUEUED_INPUT_*` codes.
+///
+/// The peek consumes nothing, so a socket that reports `Data` still delivers
+/// the same bytes to the normal read path on the next poll.
+#[derive(Copy, Clone, Eq, PartialEq, Debug)]
+pub enum QueuedInput {
+    /// A read would block: the peer has written nothing since the last read.
+    None,
+    /// At least one byte is readable.
+    Data,
+    /// The peer sent a FIN.
+    Eof,
+    /// The read side failed, for example a reset.
+    Error,
+}
+
 /// Layout-compatible with `struct us_iovec_t` in libusockets.h (== POSIX iovec).
 #[repr(C)]
 #[derive(Clone, Copy)]
@@ -464,6 +481,15 @@ impl us_socket_t {
     pub(crate) fn is_established(&self) -> bool {
         c::us_socket_is_established(self) > 0
     }
+
+    pub(crate) fn queued_input(&self) -> QueuedInput {
+        match c::us_socket_queued_input(self) {
+            1 => QueuedInput::Data,
+            2 => QueuedInput::Eof,
+            3 => QueuedInput::Error,
+            _ => QueuedInput::None,
+        }
+    }
 }
 
 /// Raw externs. Private — every operation has a typed method on `us_socket_t`.
@@ -576,6 +602,7 @@ mod c {
         pub(super) safe fn us_socket_verify_error(s: &us_socket_t) -> us_bun_verify_error_t;
         pub(super) safe fn us_socket_get_error(s: &us_socket_t) -> c_int;
         pub(super) safe fn us_socket_is_established(s: &us_socket_t) -> i32;
+        pub(super) safe fn us_socket_queued_input(s: &us_socket_t) -> c_int;
 
         /// ssl_ctx is required (the whole point); sni may be null.
         pub(super) fn us_socket_adopt_tls(

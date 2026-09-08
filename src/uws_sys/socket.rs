@@ -21,7 +21,7 @@ use bun_core::{Fd, ZStr};
 use crate::WindowsNamedPipe;
 use crate::{
     CloseCode, ConnectResult, ConnectingSocket, LIBUS_SOCKET_ALLOW_HALF_OPEN,
-    LIBUS_SOCKET_DESCRIPTOR, SocketGroup, SocketKind, SslCtx, UpgradedDuplex,
+    LIBUS_SOCKET_DESCRIPTOR, QueuedInput, SocketGroup, SocketKind, SslCtx, UpgradedDuplex,
     us_bun_verify_error_t, us_socket_t,
 };
 
@@ -299,6 +299,18 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
     #[inline]
     pub fn is_closed_or_has_error(&self) -> bool {
         self.is_closed() || self.is_shutdown() || self.get_error() != 0
+    }
+
+    /// What the read side holds right now, without waiting for the loop to
+    /// poll. Transports that the loop does not read with `recv()` (an upgraded
+    /// duplex, a Windows named pipe) report [`QueuedInput::None`].
+    pub fn queued_input(&self) -> QueuedInput {
+        on_socket!(self.socket;
+            connected s => s.queued_input(),
+            duplex _d => QueuedInput::None,
+            pipe _p => QueuedInput::None,
+            else => QueuedInput::None,
+        )
     }
 
     pub fn get_verify_error(&self) -> us_bun_verify_error_t {

@@ -700,6 +700,126 @@ for (const [label, earlyReply, body, first, onWindows] of earlyReplyCases) {
   });
 }
 
+// A connection parked in the keep-alive pool is handed to the next request by
+// `HTTPThread::drain_events`, which runs before the loop polls. So input the
+// origin wrote after its last response can still be sitting unread in the
+// kernel at that moment, and `is_closed`/`is_shutdown`/`get_error` cannot see
+// it. Writing the next request onto such a connection makes bun answer that
+// request with bytes that were already on the wire before it: an unsolicited
+// response, or the `HTTP/1.1 408 Request Timeout` + `Connection: close` that
+// many servers and load balancers use to retire an idle keep-alive connection.
+// The request was never processed, yet `fetch()` resolved with 408 and the
+// origin's timeout body.
+//
+// The origin below answers `/warm`, waits long enough for bun to read that
+// response and park the connection, then writes one unsolicited event on it.
+// bun must never answer `/next` on that connection: each round's second
+// response has to come from a connection the origin accepted later.
+const idleInjections: [label: string, bytes: string][] = [
+  [
+    "408 Request Timeout and Connection: close",
+    "HTTP/1.1 408 Request Timeout\r\nConnection: close\r\nContent-Length: 5\r\n\r\nT-OUT",
+  ],
+  ["a complete unsolicited response", "HTTP/1.1 200 OK\r\nContent-Length: 5\r\n\r\nPWNED"],
+  ["one stray CRLF", "\r\n"],
+  ["64 bytes of garbage", "!".repeat(64)],
+  ["a FIN", ""],
+];
+
+test("a pooled connection the origin already wrote to is not reused", async () => {
+  const rounds = 12;
+  // How long the origin waits between its response and the injected event. It
+  // has to outlast one read on the client (microseconds on loopback) and stay
+  // well inside one fetch() round trip through the JS thread, which is where
+  // the checkout happens.
+  const gapNs = 50_000;
+
+  const origins: { stop: () => void; port: number; label: string }[] = [];
+  for (const [label, bytes] of idleInjections) {
+    let accepted = 0;
+    const server = Bun.listen<{ id: number; buf: string }>({
+      hostname: "127.0.0.1",
+      port: 0,
+      socket: {
+        open(socket) {
+          socket.data = { id: ++accepted, buf: "" };
+        },
+        data(socket, chunk) {
+          socket.data.buf += chunk.toString("latin1");
+          let end: number;
+          while ((end = socket.data.buf.indexOf("\r\n\r\n")) >= 0) {
+            const path = socket.data.buf.slice(0, end).split(" ")[1];
+            socket.data.buf = socket.data.buf.slice(end + 4);
+            const body = `c${socket.data.id}`;
+            socket.write(`HTTP/1.1 200 OK\r\nX-Conn: ${body}\r\nContent-Length: ${body.length}\r\n\r\n${body}`);
+            if (path !== "/warm") continue;
+            const until = Bun.nanoseconds() + gapNs;
+            while (Bun.nanoseconds() < until) {}
+            if (bytes.length === 0) socket.end();
+            else socket.write(bytes);
+          }
+        },
+        close() {},
+        error() {},
+        drain() {},
+      },
+    });
+    origins.push({ stop: () => server.stop(true), port: server.port, label });
+  }
+
+  try {
+    // Subprocess so the keep-alive pool starts empty.
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        const ports = ${JSON.stringify(origins.map(o => o.port))};
+        const labels = ${JSON.stringify(origins.map(o => o.label))};
+        const misattributed = [];
+        for (let i = 0; i < ports.length; i++) {
+          const origin = "http://127.0.0.1:" + ports[i];
+          for (let round = 0; round < ${rounds}; round++) {
+            const warm = await fetch(origin + "/warm");
+            const warmConn = warm.headers.get("x-conn");
+            if ((await warm.text()) !== warmConn) throw new Error("warm body " + warmConn);
+            let got;
+            try {
+              const next = await fetch(origin + "/next");
+              got = next.status + ":" + (await next.text());
+            } catch (e) {
+              got = "ERR:" + (e.code ?? e.name);
+            }
+            // The parked connection was written to, so the answer to /next has
+            // to be an honest 200 from a connection the origin accepted after
+            // it. Anything else means bun read the injected bytes as the
+            // answer, or reused the connection they arrived on.
+            const honest = /^200:c\\d+$/.test(got) && got !== "200:" + warmConn;
+            if (!honest) misattributed.push(labels[i] + " round " + round + " -> " + got);
+          }
+        }
+        console.log(JSON.stringify({ misattributed }));
+        process.exit(0);
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const result = stdout.startsWith("{") ? JSON.parse(stdout.trim()) : { stdout, stderr };
+    expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
+    // The injected event can also land after bun has already written /next,
+    // which no client can tell from an answer, and the origin's own wait can
+    // be preempted into that window. One such round out of 60 is allowed.
+    // Without the checkout check nearly every round is misattributed.
+    expect(result.misattributed.length, result.misattributed.join("\n")).toBeLessThanOrEqual(1);
+  } finally {
+    for (const o of origins) o.stop();
+  }
+});
+
 test.skipIf(isWindows)("a full keep-alive pool evicts the longest-idle connection", async () => {
   function makeServer() {
     let connections = 0;

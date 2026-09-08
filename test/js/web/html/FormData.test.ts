@@ -66,7 +66,7 @@ describe("FormData", () => {
   // https://xhr.spec.whatwg.org/#create-an-entry — when `filename` is given,
   // the entry value is a new File named `filename` regardless of whether the
   // input is a Blob or already a File.
-  it("append/set honor the filename argument when value is already a File", () => {
+  it("append/set honor the filename argument when value is already a File", async () => {
     const origA = new File(["x"], "orig-a.txt", { type: "text/plain" });
     const origB = new File(["x"], "orig-b.txt");
     const origC = new File([], "orig-c.txt");
@@ -77,6 +77,7 @@ describe("FormData", () => {
     fd.append("c", origC, "over-c.txt");
     fd.append("shared1", origA, "shared-1.txt");
     fd.append("shared2", origA, "shared-2.txt");
+    fd.append("emptyblob", new Blob([]), "empty-blob.txt");
 
     expect({
       a: (fd.get("a") as File).name,
@@ -84,6 +85,7 @@ describe("FormData", () => {
       c: (fd.get("c") as File).name,
       shared1: (fd.get("shared1") as File).name,
       shared2: (fd.get("shared2") as File).name,
+      emptyblob: (fd.get("emptyblob") as File).name,
       getAllA: (fd.getAll("a") as File[]).map(f => f.name),
       iter: [...fd].map(([k, v]) => [k, (v as File).name]),
     }).toEqual({
@@ -92,6 +94,7 @@ describe("FormData", () => {
       c: "over-c.txt",
       shared1: "shared-1.txt",
       shared2: "shared-2.txt",
+      emptyblob: "empty-blob.txt",
       getAllA: ["over-a.txt"],
       iter: [
         ["a", "over-a.txt"],
@@ -99,6 +102,7 @@ describe("FormData", () => {
         ["c", "over-c.txt"],
         ["shared1", "shared-1.txt"],
         ["shared2", "shared-2.txt"],
+        ["emptyblob", "empty-blob.txt"],
       ],
     });
 
@@ -108,7 +112,18 @@ describe("FormData", () => {
     const a = fd.get("a") as File;
     expect(a).not.toBe(origA);
     expect(a instanceof File).toBe(true);
+    expect(fd.get("emptyblob") instanceof File).toBe(true);
     expect(a.type).toBe(origA.type);
+
+    const filenames = [...(await new Response(fd).text()).matchAll(/filename="([^"]*)"/g)].map(m => m[1]);
+    expect(filenames).toEqual([
+      "over-a.txt",
+      "over-b.txt",
+      "over-c.txt",
+      "shared-1.txt",
+      "shared-2.txt",
+      "empty-blob.txt",
+    ]);
   });
 
   // When no filename argument is given, the entry keeps the File's own

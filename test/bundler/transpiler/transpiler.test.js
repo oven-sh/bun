@@ -3071,7 +3071,10 @@ console.log(<div {...obj} key="after" />);`),
       expectPrinted_(`console.log("\\u{10334}" === "\\uD800\\uDF34")`, "console.log(true)");
       expectPrinted_(`console.log("\\u{10334}" === "\\uDF34\\uD800")`, "console.log(false)");
       expectPrintedMin_(`console.log("abc" + "def")`, 'console.log("abcdef")');
-      expectPrintedMin_(`console.log("\\uD800" + "\\uDF34")`, 'console.log("\\uD800" + "\\uDF34")');
+      // Two lone surrogates join into the code unit sequence of the pair, as at run time.
+      expectPrintedMin_(`console.log("\\uD800" + "\\uDF34")`, 'console.log("\\uD800\\uDF34")');
+      expectPrintedMin_(`console.log(("\\uD800" + "\\uDF34").length)`, "console.log(2)");
+      expectPrintedMin_(`console.log("a" + "é" + "😀")`, 'console.log("aé\\uD83D\\uDE00")');
     });
 
     it("fold string addition", () => {
@@ -3221,8 +3224,10 @@ export const { dead } = { dead: "hello world!" };
         `export const foo = "😋 Get Emoji — All Emojis to ✂️ Copy and 📋 Paste 👌".length;`,
         `export const foo = 52`,
       );
-      // no rope string for non-ascii
-      expectBunPrinted_(`export const foo = ("æ" + "™").length;`, `export const foo = ("æ" + "™").length`);
+      // non-ascii strings join into one UTF-16 string, whose length is its code unit count
+      expectBunPrinted_(`export const foo = ("æ" + "™").length;`, `export const foo = 2`);
+      expectBunPrinted_(`export const foo = ("a" + "é" + "😀").length;`, `export const foo = 4`);
+      expectBunPrinted_("export const foo = `a${'é'}b${1}😀`.length;", `export const foo = 6`);
     });
 
     describe("Bun.js", () => {

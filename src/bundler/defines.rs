@@ -55,11 +55,11 @@ fn env_string_store_put(
     // `Expr.Data.Store` — `configureDefines` resets that store on return, so
     // the env-define payloads must outlive it. Allocate from `bump` (the
     // transpiler arena) so the slab is bulk-freed with the `Define` table
-    // instead of leaking a `Box` per env var. ASCII value bytes alias the
-    // long-lived env-map storage; non-ASCII values are re-encoded into `bump`.
-    let value: ExprData = ExprData::EString(bun_ast::StoreRef::from_bump(
-        bump.alloc(bun_ast::E::EString::init_re_encode_utf8(value, bump)),
-    ));
+    // instead of leaking a `Box` per env var. The value bytes are copied too:
+    // the env map frees an entry that a later `process.env` write replaces.
+    let value: ExprData = ExprData::EString(bun_ast::StoreRef::from_bump(bump.alloc(
+        bun_ast::E::EString::init_re_encode_utf8(bump.alloc_slice_copy(value), bump),
+    )));
     let data = DefineData::init(Options {
         value,
         can_be_removed_if_unused: true,

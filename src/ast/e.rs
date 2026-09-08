@@ -2068,6 +2068,55 @@ impl EString {
             self.end = Some(other_ref);
         }
     }
+
+    /// Longest result, in UTF-16 code units, that [`EString::append`] builds
+    /// by copying. Two 8-bit strings join as a rope in O(1), but ropes are
+    /// 8-bit only, so a UTF-16 operand makes the join copy both sides. The
+    /// visit pass joins `a + b + c + ...` one literal at a time, so without
+    /// a bound a long chain of non-ASCII literals copies quadratically.
+    pub const MAX_COPIED_JOIN_LEN: usize = 4096;
+
+    /// Whether [`EString::append`] can join `strings`: always when all are
+    /// 8-bit (a rope), else only up to [`MAX_COPIED_JOIN_LEN`](Self::MAX_COPIED_JOIN_LEN).
+    pub fn can_join(strings: &[&EString]) -> bool {
+        strings.iter().all(|s| s.is_utf8())
+            || strings.iter().map(|s| s.len()).sum::<usize>() <= Self::MAX_COPIED_JOIN_LEN
+    }
+
+    /// Make `self` the string `self + other`. Two 8-bit strings link into a
+    /// rope, so `other` has the same Store/arena requirement as
+    /// [`EString::push`]. With a UTF-16 operand both sides are copied into
+    /// one flat UTF-16 buffer in `bump`; check [`EString::can_join`] first.
+    pub fn append(&mut self, other: &mut EString, bump: &Bump) {
+        if self.is_utf8() && other.is_utf8() {
+            self.push(other);
+            return;
+        }
+        let mut units: Vec<u16> = Vec::with_capacity(self.len() + other.len());
+        self.write_utf16(&mut units);
+        other.write_utf16(&mut units);
+        let joined = EString::init_utf16(bump.alloc_slice_copy(&units));
+        *self = EString {
+            prefer_template: self.prefer_template,
+            ..joined
+        };
+    }
+
+    /// Every segment as UTF-16 code units; 8-bit segments are WTF-8.
+    fn write_utf16(&self, out: &mut Vec<u16>) {
+        if self.is_utf16 {
+            out.extend_from_slice(self.slice16());
+            return;
+        }
+        let mut segment: Option<&EString> = Some(self);
+        while let Some(s) = segment {
+            match strings::wtf8_to_utf16_alloc(&s.data) {
+                Some(utf16) => out.extend_from_slice(&utf16),
+                None => out.extend(s.data.iter().map(|&b| u16::from(b))),
+            }
+            segment = s.next.as_deref();
+        }
+    }
 }
 
 fn array_sorter_is_less_than(lhs: &Expr, rhs: &Expr) -> Ordering {
@@ -2151,10 +2200,6 @@ pub enum TemplateContents {
     Raw(Str),
 }
 impl TemplateContents {
-    pub(crate) fn is_utf8(&self) -> bool {
-        matches!(self, TemplateContents::Cooked(c) if c.is_utf8())
-    }
-
     bun_core::enum_unwrap!(pub TemplateContents, Cooked => fn cooked / cooked_mut -> EString);
 }
 
@@ -2173,10 +2218,7 @@ impl TemplateContents {
 impl Template {
     /// "`a${'b'}c`" => "`abc`"
     pub fn fold(&mut self, bump: &Bump, loc: crate::Loc) -> Expr {
-        if self.tag.is_some()
-            || (matches!(self.head, TemplateContents::Cooked(_)) && !self.head.cooked().is_utf8())
-        {
-            // we only fold utf-8/ascii for now
+        if self.tag.is_some() {
             // `self` is Store/arena-allocated, so capturing its address as a
             // `StoreRef` is sound.
             return Expr {
@@ -2232,98 +2274,39 @@ impl Template {
                 _ => {}
             }
 
-            if matches!(part.value.data, crate::expr::Data::EString(_))
-                && part.tail.cooked().is_utf8()
-                && part
-                    .value
-                    .data
-                    .e_string()
-                    .expect("infallible: variant checked")
-                    .is_utf8()
-            {
-                if parts.is_empty() {
-                    if part
-                        .value
+            // "`${'b'}c`": append the value and then the tail to the string
+            // before them (the head, or the previous part's tail).
+            if let crate::expr::Data::EString(value) = part.value.data {
+                let prev: &mut EString = match parts.last_mut() {
+                    None => head
                         .data
-                        .e_string()
-                        .expect("infallible: variant checked")
-                        .len()
-                        > 0
-                    {
-                        head.data
-                            .e_string_mut()
-                            .expect("infallible: variant checked")
-                            .push(
-                                Expr::init(
-                                    part.value
-                                        .data
-                                        .e_string()
-                                        .expect("infallible: variant checked")
-                                        .shallow_clone(),
-                                    crate::Loc::EMPTY,
-                                )
+                        .e_string_mut()
+                        .expect("infallible: variant checked"),
+                    Some(prev_part) => prev_part.tail.cooked_mut(),
+                };
+                if EString::can_join(&[&*prev, value.get(), part.tail.cooked()]) {
+                    if value.len() > 0 {
+                        prev.append(
+                            Expr::init(value.shallow_clone(), crate::Loc::EMPTY)
                                 .data
                                 .e_string_mut()
                                 .unwrap(),
-                            );
+                            bump,
+                        );
                     }
-
                     if part.tail.cooked().len() > 0 {
-                        head.data
-                            .e_string_mut()
-                            .expect("infallible: variant checked")
-                            .push(
-                                Expr::init(core::mem::take(part.tail.cooked_mut()), part.tail_loc)
-                                    .data
-                                    .e_string_mut()
-                                    .unwrap(),
-                            );
-                    }
-
-                    continue;
-                } else {
-                    let prev_part = parts.last_mut().unwrap();
-                    debug_assert!(matches!(prev_part.tail, TemplateContents::Cooked(_)));
-
-                    if prev_part.tail.cooked().is_utf8() {
-                        if part
-                            .value
-                            .data
-                            .e_string()
-                            .expect("infallible: variant checked")
-                            .len()
-                            > 0
-                        {
-                            prev_part.tail.cooked_mut().push(
-                                Expr::init(
-                                    part.value
-                                        .data
-                                        .e_string()
-                                        .expect("infallible: variant checked")
-                                        .shallow_clone(),
-                                    crate::Loc::EMPTY,
-                                )
+                        prev.append(
+                            Expr::init(core::mem::take(part.tail.cooked_mut()), part.tail_loc)
                                 .data
                                 .e_string_mut()
                                 .unwrap(),
-                            );
-                        }
-
-                        if part.tail.cooked().len() > 0 {
-                            prev_part.tail.cooked_mut().push(
-                                Expr::init(core::mem::take(part.tail.cooked_mut()), part.tail_loc)
-                                    .data
-                                    .e_string_mut()
-                                    .unwrap(),
-                            );
-                        }
-                    } else {
-                        parts.push(part);
+                            bump,
+                        );
                     }
+                    continue;
                 }
-            } else {
-                parts.push(part);
             }
+            parts.push(part);
         }
 
         if parts.is_empty() {

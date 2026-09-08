@@ -136,18 +136,52 @@ describe("bundler", () => {
       },
     });
   }
+  // A join with a non-ASCII (UTF-16) string literal copies both sides into one
+  // UTF-16 string, so it is capped at 4096 code units; an ASCII join is a rope.
+  itBundled("minify/StringAdditionFoldingNonAscii", {
+    files: {
+      "/entry.js": /* js */ `
+        console.log(JSON.stringify([
+          "é" + "x",
+          \`a\${"é"}b\${1}😀\` + "x",
+          ("a" + "é" + "😀x").length,
+          (/é/ + "x")[1],
+          ("${"é".repeat(4095)}" + "x").length,
+          ("${"é".repeat(4096)}" + "y").length,
+        ]));
+      `,
+    },
+    minifySyntax: true,
+    onAfterBundle(api) {
+      const code = api.readFile("/out.js");
+      expect(code).not.toContain('"x"');
+      expect(code).toContain('+ "y"');
+      expect(code).toContain("4096,");
+    },
+    run: { stdout: '["éx","aéb1😀x",5,"é",4096,4097]' },
+  });
   // `import.meta.file`/`dir` (cjs output) and `module.filename` are inlined from the
-  // file path. A non-ASCII path must fold like a source literal, not per UTF-8 byte.
+  // file path. A non-ASCII path must fold like a source literal, not per UTF-8 byte,
+  // and still join with a literal so that `require(import.meta.dir + "/m.js")` resolves.
   itBundled("minify/InlinedImportMetaPathNonAscii", {
     files: {
       "/dér/filé.js": /* js */ `
-        console.log(JSON.stringify([import.meta.file, import.meta.file[3], import.meta.file[4], \`\${import.meta.file}\`.length, \`\${import.meta.dir}\`.length === import.meta.dir.length]));
+        const m = require(import.meta.dir + "/m.js");
+        const t = require(\`\${import.meta.dir}/t.js\`);
+        console.log(JSON.stringify([import.meta.file, import.meta.file[3], import.meta.file[4], \`\${import.meta.file}\`.length, \`\${import.meta.dir}\`.length === import.meta.dir.length, m.x, t.y]));
       `,
+      "/dér/m.js": `module.exports.x = "from m";`,
+      "/dér/t.js": `module.exports.y = "from t";`,
     },
     format: "cjs",
     target: "bun",
     minifySyntax: true,
-    run: { stdout: '["filé.js","é",".",7,true]' },
+    onAfterBundle(api) {
+      const code = api.readFile("/out.js");
+      expect(code).toContain("from m");
+      expect(code).toContain("from t");
+    },
+    run: { stdout: '["filé.js","é",".",7,true,"from m","from t"]' },
   });
   itBundled("minify/InlinedModuleFilenameNonAscii", {
     files: {

@@ -1379,15 +1379,8 @@ impl Expr {
             }
             _ => None,
         };
-        slice.map(|s| {
-            Expr::init(
-                E::String {
-                    data: s.into(),
-                    ..Default::default()
-                },
-                expr.loc,
-            )
-        })
+        // A regexp source can be non-ASCII.
+        slice.map(|s| Expr::init(E::EString::init_re_encode_utf8(s, bump), expr.loc))
     }
 
     #[inline]

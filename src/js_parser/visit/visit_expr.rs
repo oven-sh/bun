@@ -1069,14 +1069,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 {
                     // "foo"[2] -> "o"
                     if let Some(str_) = target.data.as_e_string() {
-                        if !str_.is_utf16 {
+                        // One byte is one character only in an ASCII string.
+                        if !str_.is_utf16 && strings::is_all_ascii(&str_.data) {
                             let literal = str_.data;
                             let num: usize = index
                                 .data
                                 .e_number()
                                 .expect("infallible: variant checked")
                                 .to_usize();
-                            debug_assert!(strings::is_all_ascii(&literal));
                             if num < literal.len() {
                                 *e = p.new_expr(
                                     E::String {
@@ -2458,7 +2458,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         if e_.args.len_u32() == 1 {
             if let Some(dot) = e_.target.data.e_dot() {
                 if let Some(target_str) = dot.target.data.e_string() {
-                    if !target_str.is_utf16 && dot.name == b"charCodeAt" {
+                    // Byte offsets are code unit offsets only in an ASCII string.
+                    if !target_str.is_utf16
+                        && dot.name == b"charCodeAt"
+                        && strings::is_all_ascii(&target_str.data)
+                    {
                         let str_ = target_str.data;
                         let arg1 = e_.args.at(0).unwrap_inlined();
                         if let Data::ENumber(n) = &arg1.data {

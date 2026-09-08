@@ -239,7 +239,8 @@ impl Cmd {
                 CmdState::Idle => {
                     // `VAR=value cmd` assignments belong to one command; drop
                     // the ones an earlier command in this shell env left.
-                    interp.as_cmd_mut(this).base.shell_mut().cmd_local_env.clear();
+                    let shell_env = interp.as_cmd_mut(this).base.shell_mut();
+                    shell_env.cmd_local_env.clear();
                     if !n.assigns.is_empty() {
                         interp.as_cmd_mut(this).state = CmdState::ExpandingAssigns;
                         let child = Assigns::init(interp, shell, n.assigns, this, AssignCtx::Cmd);

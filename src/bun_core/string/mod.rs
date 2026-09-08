@@ -1258,8 +1258,25 @@ impl<'a> EncodedSlice<'a> {
 
     /// Wrap a globally-allocated UTF-16 buffer whose ownership is being
     /// handed to C++: sets the 16-bit and global ptr-tags.
+    ///
+    /// # Safety
+    /// `s` must be a live allocation from the default (global) allocator, and
+    /// the global tag transfers ownership of it: the consumer of the tag
+    /// (`Zig::toString*` on the C++ side adopts the buffer into an external
+    /// `WTF::StringImpl` and frees it through the default allocator) becomes
+    /// the sole owner. The caller must neither free the buffer itself nor
+    /// use it after the hand-off. A `Vec`/`Box` that backs `s` must be
+    /// wrapped in `ManuallyDrop` before the call.
+    ///
+    /// This used to compile as safe Rust and tagged a `Vec`-owned buffer as
+    /// globally owned (oven-sh/bun#31968):
+    /// ```compile_fail
+    /// use bun_core::EncodedSlice;
+    /// let backing = vec![b'a' as u16];
+    /// let slice = EncodedSlice::utf16_global(&backing); // E0133: call to unsafe function
+    /// ```
     #[inline]
-    pub fn utf16_global(s: &'a [u16]) -> Self {
+    pub unsafe fn utf16_global(s: &'a [u16]) -> Self {
         let mut slice = Self::utf16(s);
         slice.mark(TAG_GLOBAL_BIT);
         slice

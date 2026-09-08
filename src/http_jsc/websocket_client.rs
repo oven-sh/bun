@@ -403,7 +403,11 @@ impl<const SSL: bool> WebSocket<SSL> {
                     // be a UAF + double-free, so `utf16` must never be freed
                     // locally.
                     let utf16 = core::mem::ManuallyDrop::new(utf16);
-                    outstring = EncodedSlice::utf16_global(&utf16);
+                    // SAFETY: the buffer is a live default-allocator
+                    // allocation from `to_utf16_alloc`, and `ManuallyDrop`
+                    // keeps this function from freeing it, so C++ is the sole
+                    // owner after `did_receive_text` returns.
+                    outstring = unsafe { EncodedSlice::utf16_global(&utf16) };
                     jsc::mark_binding!();
                     out.did_receive_text(false, &outstring);
                 } else {

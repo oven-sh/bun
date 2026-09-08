@@ -2171,6 +2171,111 @@ test("a top-level await rejecting while the loop is alive fails the worker then"
   expect(exitCode).toBe(0);
 });
 
+// An uncaught error in the worker's last loop turn (nothing keeps the loop alive
+// once the callback returns) is the worker's 'error' and exit code 1, whichever
+// phase dispatched the callback. Node processes ticks and rejections after every
+// callback; the worker used to decide "loop drained, exit 0" first and drop a
+// rejection raised from a timer, an immediate, a child 'exit' or a 'beforeExit'
+// listener without reporting it anywhere. An error while 'exit' listeners run
+// is reported too, and leaves the exit code as it stands (Node).
+// (Subprocess: inside `bun test` a worker's uncaught error counts as handled.)
+describe("an uncaught error at the end of a worker's life", () => {
+  test.concurrent.each([
+    ["rejection in the last timer", `setTimeout(() => Promise.reject(new Error("R")), 5)`, ["error:R"], 1],
+    ["rejection in the last immediate", `setImmediate(() => Promise.reject(new Error("R")))`, ["error:R"], 1],
+    [
+      "rejection in a nextTick queued by the last timer",
+      `setTimeout(() => process.nextTick(() => Promise.reject(new Error("R"))), 5)`,
+      ["error:R"],
+      1,
+    ],
+    [
+      "async function throwing after its last await",
+      `(async () => { await new Promise(r => setTimeout(r, 5)); throw new Error("R"); })()`,
+      ["error:R"],
+      1,
+    ],
+    ["Bun.sleep().then() throwing", `Bun.sleep(5).then(() => { throw new Error("R"); })`, ["error:R"], 1],
+    [
+      "rejection in a child process 'exit' listener",
+      `require("node:child_process").spawn(process.execPath, ["--version"]).on("exit", () => Promise.reject(new Error("R")))`,
+      ["error:R"],
+      1,
+    ],
+    [
+      "rejection in a 'beforeExit' listener",
+      `let n = 0; process.on("beforeExit", () => { if (!n++) Promise.reject(new Error("R")); })`,
+      ["error:R"],
+      1,
+    ],
+    [
+      "async 'beforeExit' listener throwing after an await",
+      `let n = 0; process.on("beforeExit", async () => { if (n++) return; await null; throw new Error("R"); })`,
+      ["error:R"],
+      1,
+    ],
+    [
+      "rejection in a timer while an interval keeps the loop alive",
+      `setInterval(() => {}, 1000); setTimeout(() => Promise.reject(new Error("R")), 5)`,
+      ["error:R"],
+      1,
+    ],
+    [
+      "the worker's 'exit' listeners see code 1",
+      `process.on("exit", c => parentPort.postMessage("exit:" + c + ":" + process.exitCode)); setTimeout(() => Promise.reject(new Error("R")), 5)`,
+      ["error:R", "message:exit:1:1"],
+      1,
+    ],
+    [
+      "the worker's own 'unhandledRejection' listener takes it",
+      `process.on("unhandledRejection", e => parentPort.postMessage("UR:" + e.message)); setTimeout(() => Promise.reject(new Error("R")), 5)`,
+      ["message:UR:R"],
+      0,
+    ],
+    [
+      "an 'exit' listener throwing on a natural exit",
+      `process.on("exit", () => { throw new Error("T"); })`,
+      ["error:T"],
+      0,
+    ],
+    [
+      "an 'exit' listener throwing under process.exit(4)",
+      `process.on("exit", () => { throw new Error("T"); }); process.exit(4)`,
+      ["error:T"],
+      4,
+    ],
+    [
+      "an 'uncaughtException' listener throwing for a throwing 'exit' listener",
+      `process.exitCode = 4; process.on("uncaughtException", () => { throw new Error("h"); }); process.on("exit", () => { throw new Error("T"); })`,
+      ["error:h"],
+      4,
+    ],
+  ])("%s", async (_label, body, events, code) => {
+    const workerSrc = `const { parentPort } = require("node:worker_threads"); ${body};`;
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const { Worker } = require("node:worker_threads");
+         const w = new Worker(${JSON.stringify(workerSrc)}, { eval: true });
+         const events = [];
+         w.on("message", m => events.push("message:" + m));
+         w.on("error", e => events.push("error:" + e.message));
+         w.on("exit", code => console.log(JSON.stringify({ events: events.sort(), code })));`,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({
+      stdout: JSON.stringify({ events, code }) + "\n",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+});
+
 // Static imports that are still being read/transpiled are loading, not a
 // top-level await: message delivery waits for the graph to execute.
 test("a file worker's static imports load before it counts as started", async () => {

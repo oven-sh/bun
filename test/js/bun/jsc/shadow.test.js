@@ -42,8 +42,11 @@ it("a returned wrapper does not expose the shadow realm's global object", () => 
 
   // The realm's global stays out of reach, so the two globals share no state.
   globalThis.injectedByShadowTest = { list: [] };
-  expect(realm.evaluate(`typeof globalThis.injectedByShadowTest`)).toBe("undefined");
-  delete globalThis.injectedByShadowTest;
+  try {
+    expect(realm.evaluate(`typeof globalThis.injectedByShadowTest`)).toBe("undefined");
+  } finally {
+    delete globalThis.injectedByShadowTest;
+  }
 });
 
 it("a callable returned to the shadow realm belongs to the shadow realm", () => {

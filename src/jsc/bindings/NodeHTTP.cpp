@@ -284,19 +284,16 @@ extern "C" void NodeHTTP_setUsingCustomExpectHandler(bool is_ssl, void* uws_app,
     }
 }
 
-extern "C" EncodedJSValue NodeHTTPResponse__createForJS(size_t any_server, JSC::JSGlobalObject* globalObject, bool* hasBody, uWS::HttpRequest* request, int isSSL, void* response_ptr, void* upgrade_ctx, void** nodeHttpResponsePtr);
-
 template<bool isSSL>
 static EncodedJSValue NodeHTTPServer__onRequest(
-    size_t any_server,
     Zig::GlobalObject* globalObject,
     JSValue thisValue,
     JSValue callback,
     JSValue methodString,
     uWS::HttpRequest* request,
     uWS::HttpResponse<isSSL>* response,
-    void* upgrade_ctx,
-    void** nodeHttpResponsePtr)
+    JSValue nodeResponseObject,
+    bool hasBody)
 {
     auto& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -310,10 +307,9 @@ static EncodedJSValue NodeHTTPServer__onRequest(
     WTF::Vector<uint8_t, 1024> flatHeaders;
     assignHeadersFromUWebSocketsForCall(request, methodString, args, flatHeaders, globalObject, vm);
 
-    bool hasBody = false;
-    WebCore::JSNodeHTTPResponse* nodeHTTPResponseObject = uncheckedDowncast<WebCore::JSNodeHTTPResponse>(JSValue::decode(NodeHTTPResponse__createForJS(any_server, globalObject, &hasBody, request, isSSL, response, upgrade_ctx, nodeHttpResponsePtr)));
+    WebCore::JSNodeHTTPResponse* nodeHTTPResponseObject = uncheckedDowncast<WebCore::JSNodeHTTPResponse>(nodeResponseObject);
     if (!flatHeaders.isEmpty()) {
-        NodeHTTPResponse__adoptRawRequestHeaders(*nodeHttpResponsePtr, flatHeaders.span().data(), flatHeaders.size());
+        NodeHTTPResponse__adoptRawRequestHeaders(nodeHTTPResponseObject->wrapped(), flatHeaders.span().data(), flatHeaders.size());
     }
 
     args.append(nodeHTTPResponseObject);
@@ -709,49 +705,45 @@ extern "C" void NodeHTTPServer__writeHead_https(
 }
 
 extern "C" EncodedJSValue NodeHTTPServer__onRequest_http(
-    size_t any_server,
     Zig::GlobalObject* globalObject,
     EncodedJSValue thisValue,
     EncodedJSValue callback,
     EncodedJSValue methodString,
     uWS::HttpRequest* request,
     uWS::HttpResponse<false>* response,
-    void* upgrade_ctx,
-    void** nodeHttpResponsePtr)
+    EncodedJSValue nodeResponseObject,
+    bool hasBody)
 {
     return NodeHTTPServer__onRequest<false>(
-        any_server,
         globalObject,
         JSValue::decode(thisValue),
         JSValue::decode(callback),
         JSValue::decode(methodString),
         request,
         response,
-        upgrade_ctx,
-        nodeHttpResponsePtr);
+        JSValue::decode(nodeResponseObject),
+        hasBody);
 }
 
 extern "C" EncodedJSValue NodeHTTPServer__onRequest_https(
-    size_t any_server,
     Zig::GlobalObject* globalObject,
     EncodedJSValue thisValue,
     EncodedJSValue callback,
     EncodedJSValue methodString,
     uWS::HttpRequest* request,
     uWS::HttpResponse<true>* response,
-    void* upgrade_ctx,
-    void** nodeHttpResponsePtr)
+    EncodedJSValue nodeResponseObject,
+    bool hasBody)
 {
     return NodeHTTPServer__onRequest<true>(
-        any_server,
         globalObject,
         JSValue::decode(thisValue),
         JSValue::decode(callback),
         JSValue::decode(methodString),
         request,
         response,
-        upgrade_ctx,
-        nodeHttpResponsePtr);
+        JSValue::decode(nodeResponseObject),
+        hasBody);
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsHTTPSetCustomOptions, (JSGlobalObject * globalObject, CallFrame* callFrame))

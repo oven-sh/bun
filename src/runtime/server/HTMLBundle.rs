@@ -221,7 +221,7 @@ impl Route {
         };
 
         if server.config().is_development() {
-            if let Some(dev) = server.dev_server_mut() {
+            let handled = server.with_dev_server_mut(|dev| {
                 // DevServer's HMR path is *uws.Request-typed; H3 isn't routed
                 // there (no h3_app on plain-HTTP debug servers in practice),
                 // but stay defensive.
@@ -239,6 +239,8 @@ impl Route {
                         resp.end(b"DevServer HMR is HTTP/1.1 only", true);
                     }
                 }
+            });
+            if handled.is_some() {
                 return;
             }
 
@@ -327,7 +329,7 @@ impl Route {
     /// on the route's behalf; the clients waiting in `pending_responses` only
     /// count as connections and can disconnect at any time. `finish_building`
     /// releases the pending request when the route leaves `State::Building`.
-    fn schedule_bundle(this: ThisPtr<Self>, mut server: AnyServer) -> Result<(), crate::Error> {
+    fn schedule_bundle(this: ThisPtr<Self>, server: AnyServer) -> Result<(), crate::Error> {
         match server.get_or_load_plugins(ServePluginsCallback::HtmlBundleRoute(this)) {
             GetOrStartLoadResult::Err => {
                 this.state.set(State::Err(Log::init()));

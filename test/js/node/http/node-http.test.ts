@@ -2708,34 +2708,142 @@ it("removing only Content-Length falls back to chunked encoding and keeps the co
   }
 });
 
-it("an explicit Connection: close response header closes the server-side socket after finish", async () => {
-  // Node.js's matchHeader sets _last for a user-set Connection: close, and
-  // resOnFinish then ends the socket; the transport must match the header.
-  const server = createServer((req, res) => {
-    res.setHeader("Connection", "close");
-    res.end("ok");
-  });
-  try {
+// Node.js's resOnFinish destroySoon()s the socket after a response that ends the
+// connection: the server sends its FIN and releases the socket right behind it
+// ('close' on the server-side socket, fd gone) without waiting for the peer to
+// close its side. A half-close that waits for the client's FIN lets a client
+// that never closes pin one socket per completed request.
+describe("a response that closes the connection releases the server-side socket without waiting for the peer", () => {
+  const cases = [
+    {
+      name: "Connection: close response header",
+      request: "GET / HTTP/1.1\r\nHost: localhost\r\n\r\n",
+      prepare: (res: ServerResponse) => res.setHeader("Connection", "close"),
+      expected: /^HTTP\/1\.1 200 OK\r\n[^]*ok$/,
+    },
+    {
+      name: "Connection: close request header",
+      request: "GET / HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n",
+      expected: /^HTTP\/1\.1 200 OK\r\n[^]*ok$/,
+    },
+    {
+      name: "HTTP/1.0 request",
+      request: "GET / HTTP/1.0\r\nHost: localhost\r\n\r\n",
+      expected: /^HTTP\/1\.1 200 OK\r\n[^]*ok$/,
+    },
+    {
+      // Node answers this itself with res.writeHead(400, ['Connection', 'close']).
+      name: "HTTP/1.1 request without a Host header",
+      request: "GET / HTTP/1.1\r\n\r\n",
+      expected: /^HTTP\/1\.1 400 Bad Request\r\n[^]*\r\n0\r\n\r\n$/,
+    },
+  ];
+  for (const { name, request, prepare, expected } of cases) {
+    it.concurrent(name, async () => {
+      const { promise: serverSocketClosed, resolve: onServerSocketClose } = Promise.withResolvers<void>();
+      const server = createServer((req, res) => {
+        prepare?.(res);
+        res.end("ok");
+      });
+      server.on("connection", socket => socket.on("close", onServerSocketClose));
+      server.listen(0, "127.0.0.1");
+      await once(server, "listening");
+      const { port } = server.address() as AddressInfo;
+      // allowHalfOpen: the client keeps its side open after the server's FIN, so
+      // only the server can release the server-side socket.
+      const client = connect({ port, host: "127.0.0.1", allowHalfOpen: true });
+      try {
+        const out = await new Promise<string>((resolve, reject) => {
+          let data = "";
+          client.setEncoding("latin1");
+          client.on("data", chunk => (data += chunk));
+          client.on("end", () => resolve(data));
+          client.on("error", reject);
+          client.write(request);
+        });
+        expect(out).toMatch(expected);
+        expect(out).toContain("\r\nConnection: close\r\n");
+        // The client has the whole response and the server's FIN, and has not
+        // sent its own. The server-side socket must close on its own now.
+        await serverSocketClosed;
+        expect(client.writableEnded).toBe(false);
+      } finally {
+        client.destroy();
+        server.close();
+      }
+    });
+  }
+
+  // net.Socket.destroySoon() is what Node's resOnFinish uses: end(), then
+  // destroy() once the write side is done, without waiting for the peer.
+  it.concurrent("socket.destroySoon() from a handler", async () => {
+    const { promise: serverSocketClosed, resolve: onServerSocketClose } = Promise.withResolvers<void>();
+    const server = createServer((req, res) => {
+      req.socket.write("raw bytes\r\n");
+      req.socket.destroySoon();
+    });
+    server.on("connection", socket => socket.on("close", onServerSocketClose));
     server.listen(0, "127.0.0.1");
     await once(server, "listening");
     const { port } = server.address() as AddressInfo;
+    const client = connect({ port, host: "127.0.0.1", allowHalfOpen: true });
+    try {
+      const out = await new Promise<string>((resolve, reject) => {
+        let data = "";
+        client.setEncoding("latin1");
+        client.on("data", chunk => (data += chunk));
+        client.on("end", () => resolve(data));
+        client.on("error", reject);
+        client.write("GET / HTTP/1.1\r\nHost: localhost\r\n\r\n");
+      });
+      expect(out).toBe("raw bytes\r\n");
+      await serverSocketClosed;
+      expect(client.writableEnded).toBe(false);
+    } finally {
+      client.destroy();
+      server.close();
+    }
+  });
 
-    const out = await new Promise<string>((resolve, reject) => {
-      const socket = connect(port, "127.0.0.1");
-      let data = "";
-      socket.on("data", chunk => (data += chunk));
-      // The server must send FIN on its own; the client never half-closes.
-      socket.on("end", () => resolve(data));
-      socket.on("error", reject);
-      socket.write("GET / HTTP/1.1\r\nHost: localhost\r\n\r\n");
+  // destroySoon() with response bytes still queued in the transport (the client
+  // is not reading yet) and no res.end(): the queued bytes are delivered first,
+  // then the connection closes, like Node's destroy() on the socket's 'finish'.
+  it.concurrent("socket.destroySoon() behind a backed-up response that never ends", async () => {
+    const CHUNK = Buffer.alloc(16 * 1024, "a");
+    const CHUNKS = 1024; // 16 MB: more than the loopback socket buffers absorb
+    const { promise: serverSocketClosed, resolve: onServerSocketClose } = Promise.withResolvers<void>();
+    const { promise: destroyed, resolve: onDestroySoonCalled } = Promise.withResolvers<void>();
+    const server = createServer((req, res) => {
+      res.on("error", () => {});
+      for (let i = 0; i < CHUNKS; i++) res.write(CHUNK);
+      req.socket.destroySoon();
+      onDestroySoonCalled();
     });
-
-    expect(out).toContain("HTTP/1.1 200");
-    expect(out).toContain("Connection: close");
-    expect(out).toEndWith("ok");
-  } finally {
-    server.close();
-  }
+    server.on("connection", socket => socket.on("close", onServerSocketClose));
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    const { port } = server.address() as AddressInfo;
+    const client = connect({ port, host: "127.0.0.1", allowHalfOpen: true });
+    try {
+      let received = 0;
+      const ended = new Promise<void>((resolve, reject) => {
+        client.on("data", chunk => (received += chunk.length));
+        client.on("end", resolve);
+        client.on("error", reject);
+      });
+      client.pause();
+      client.write("GET / HTTP/1.1\r\nHost: localhost\r\n\r\n");
+      await destroyed;
+      client.resume();
+      await ended;
+      expect(received).toBeGreaterThan(CHUNK.length * CHUNKS);
+      await serverSocketClosed;
+      expect(client.writableEnded).toBe(false);
+    } finally {
+      client.destroy();
+      server.close();
+    }
+  });
 });
 
 it("a pipelined request behind Connection: close is never dispatched (clientError HPE_CLOSED_CONNECTION)", async () => {

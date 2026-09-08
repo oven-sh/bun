@@ -1298,9 +1298,10 @@ function onServerClientError(ssl: boolean, socket: unknown, errorCode: number, r
 // reaches socketOnError and 'clientError' never fires for it.
 function replyMissingHostHeader(socket) {
   if (!socket.writable) return;
-  socket.end(
+  socket.write(
     `HTTP/1.1 400 Bad Request\r\nConnection: close\r\nDate: ${new Date().toUTCString()}\r\nTransfer-Encoding: chunked\r\n\r\n0\r\n\r\n`,
   );
+  socket.destroySoon();
 }
 
 const kBytesWritten = Symbol("kBytesWritten");
@@ -1333,6 +1334,8 @@ function resolveHandoffPromise(promise) {
 }
 const kSocketTimeoutTimer = Symbol("socketTimeoutTimer");
 const kStreamingEnabled = Symbol("kStreamingEnabled");
+// destroySoon() was called: _final closes the connection right behind the FIN.
+const kDestroySoon = Symbol("kDestroySoon");
 // Scratch options object for the builtin ServerResponse (see the dispatcher).
 const scratchResponseOptions = {
   [kHandle]: undefined,
@@ -1485,6 +1488,7 @@ function getNodeHTTPServerSocket() {
     [kBytesWritten] = 0;
     [kHandle];
     [kUpgradeIncoming] = undefined;
+    [kDestroySoon] = false;
     server: Server;
     _httpMessage;
     _secureEstablished = false;
@@ -1765,8 +1769,20 @@ function getNodeHTTPServerSocket() {
         callback();
         return;
       }
-      handle.end();
+      handle.end(this[kDestroySoon]);
       callback();
+    }
+
+    // Not destroy() on 'finish' like net.Socket: 'finish' does not wait for bytes uWS still queues.
+    destroySoon() {
+      if (this[kDestroySoon]) return;
+      const handle = this[kHandle];
+      if (this.writable && handle && !handle.closed) {
+        this[kDestroySoon] = true;
+        this.end();
+        return;
+      }
+      super.destroySoon();
     }
 
     get localAddress() {
@@ -2405,7 +2421,13 @@ function emitResponseFinish() {
 // is eventually closed.
 function onResponseFinishHandleSocket(server, socket, res) {
   if (res[kMustCloseConnection]) {
-    socket?.end();
+    if (socket != null) {
+      if (typeof socket.destroySoon === "function") {
+        socket.destroySoon();
+      } else {
+        socket.end();
+      }
+    }
     return;
   }
   if (!socket || socket.destroyed || typeof socket.setTimeout !== "function") {

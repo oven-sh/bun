@@ -13,6 +13,7 @@ extern "C" uint64_t uws_res_get_remote_address_info(void* res, const char** dest
 extern "C" uint64_t uws_res_get_local_address_info(void* res, const char** dest, int* port, bool* is_ipv6);
 extern "C" void us_socket_resume(us_socket_t*);
 extern "C" void us_socket_pause(us_socket_t*);
+extern "C" void us_socket_shutdown(us_socket_t*);
 
 namespace Bun {
 
@@ -216,12 +217,24 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionNodeHTTPServerSocketEnd, (JSC::JSGlobalObject
     }
 
     thisObject->ended = true;
+    // end(true) is Node's destroySoon(): close right behind the FIN instead of waiting for the peer's.
+    bool destroySoon = callFrame->argument(0).toBoolean(globalObject);
     // The response's buffered body must reach the kernel before the FIN; uWS
     // performs the shutdown after its send buffer drains.
-    if (thisObject->shutdownAfterResponseDrains()) {
+    if (thisObject->shutdownAfterResponseDrains(destroySoon)) {
         return JSValue::encode(JSC::jsUndefined());
     }
     auto bufferedSize = thisObject->streamBuffer.bufferedSize();
+    if (destroySoon) {
+        // One flush for raw socket.write() bytes; the close drops the rest, as destroy() did.
+        if (bufferedSize == 0) {
+            us_socket_shutdown(thisObject->socket);
+        } else {
+            us_socket_buffered_js_write(thisObject->socket, thisObject->is_ssl, thisObject->ended, &thisObject->streamBuffer, globalObject, JSValue::encode(JSC::jsUndefined()), JSValue::encode(JSC::jsUndefined()));
+        }
+        thisObject->close();
+        return JSValue::encode(JSC::jsUndefined());
+    }
     if (bufferedSize == 0) {
         // onNodeHTTPRequest no longer pauses at dispatch; pause here so the
         // shutdown+resume below still cycles kqueue's EVFILT_READ (delete then

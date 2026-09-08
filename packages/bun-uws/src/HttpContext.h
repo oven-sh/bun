@@ -844,6 +844,12 @@ private:
                     && httpResponseData->onWritable == nullptr) {
                     responseDone = true;
                 }
+                /* socket.destroySoon() issued while bytes were queued: Node's
+                 * destroy() on 'finish' closes once they are out, whether or
+                 * not the response in flight ever ends. */
+                if (httpResponseData->state & HttpResponseData<SSL>::HTTP_NODE_CLOSE_AFTER_DRAIN) {
+                    responseDone = true;
+                }
             }
             if (responseDone && asyncSocket->hasFullyDrained()) {
                 asyncSocket->shutdown();

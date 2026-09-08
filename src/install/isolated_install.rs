@@ -220,8 +220,7 @@ pub(crate) fn build_store(
     workspace_filters: &[WorkspaceFilter],
     packages_to_install: Option<&[PackageID]>,
     timings: Timings,
-    // Where to report peers an entry resolves out of range; `None` for a store that is not
-    // about to be installed.
+    // `Some` only for a store about to be installed: where its out-of-range peers are reported.
     mut peer_warnings: Option<&mut bun_ast::Log>,
 ) -> Result<Store, AllocError> {
     let mut timer = std::time::Instant::now();
@@ -401,8 +400,7 @@ pub(crate) fn build_store(
 
     let mut visited_parent_node_ids: Vec<store::node::Id> = Vec::new();
 
-    // A package is visited once per peer context, so the same edge can resolve the same way many
-    // times; each distinct `(peer edge, resolved package)` is range-checked once.
+    // A package is visited once per peer context; each `(peer edge, resolution)` is checked once.
     let mut reported_peers: HashMap<(DependencyID, PackageID), ()> = HashMap::default();
 
     // First pass: create full dependency tree with resolved peers
@@ -752,8 +750,7 @@ pub(crate) fn build_store(
                             continue;
                         }
 
-                        // The nearest ancestor that provides the name wins whether or not its
-                        // version is in range; the range is checked once the peer is resolved.
+                        // The nearest provider wins even out of range; the range is checked below.
                         break 'resolved_pkg_id (ids.pkg_id, false);
                     }
 

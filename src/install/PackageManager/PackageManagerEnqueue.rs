@@ -2538,9 +2538,7 @@ fn get_or_put_resolved_package(
                             }));
                         }
 
-                        // Nothing satisfies the range: bind the copy that exists anyway. The
-                        // linker reports the mismatch against the copy it actually serves
-                        // (`Lockfile::warn_if_peer_out_of_range`), which may be a different one.
+                        // The linker warns, against the copy it serves (`warn_if_peer_out_of_range`).
                         if peer_binds_out_of_range(
                             resolutions[existing_id as usize].tag,
                             version.tag,
@@ -3106,8 +3104,7 @@ fn resolution_satisfies_dependency(
     resolution.satisfies_dependency_version(dependency, buf, buf)
 }
 
-/// A peer nothing in the lockfile satisfies still binds to an existing copy of the same kind
-/// instead of pulling in its own version.
+/// A peer no lockfile package satisfies binds an existing copy of its kind rather than a new one.
 fn peer_binds_out_of_range(existing: ResolutionTag, range: dependency::version::Tag) -> bool {
     matches!(
         (existing, range),

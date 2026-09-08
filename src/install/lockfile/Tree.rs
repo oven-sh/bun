@@ -127,8 +127,7 @@ enum HoistDependencyResult {
     Resolve(PackageID),
     ResolveReplace(ResolveReplace),
     ResolveLater,
-    /// `Hoisted`, for a peer: nothing is placed and the dependent resolves this other package,
-    /// already on its path, instead of the one the edge is bound to.
+    /// `Hoisted`, for a peer served by this different package already on its path.
     Dedupe(PackageID),
     Placement(Placement),
 }
@@ -437,11 +436,9 @@ pub struct Builder<'a, const METHOD: BuilderMethod> {
         ArrayHashMap<PackageNameHash, ArrayHashMap<DependencyID, ()>>,
     /// An optional peer got bound after its dependent was placed; see `Lockfile::resolve`.
     pub(crate) late_bound_optional_peer: bool,
-    /// Check the range of every peer this tree serves (`report_peer`). Only the tree an install
-    /// lays out on disk does; the saved (`Resolvable`) tree is also built on every load.
+    /// Range-check the peers this tree serves (`report_peer`); only the tree an install writes does.
     pub(crate) report_peers: bool,
-    /// `(peer edge, package it is served by)` pairs already checked by `report_peer`, so a
-    /// dependent placed at several paths is reported once per distinct outcome.
+    /// `(peer edge, package serving it)` pairs already checked, one per distinct outcome.
     pub(crate) reported_peers: HashMap<(DependencyID, PackageID), ()>,
     pub(crate) manager: Option<&'a PackageManager>,
     pub(crate) sort_buf: Vec<DependencyID>,
@@ -490,8 +487,7 @@ impl<'a, const METHOD: BuilderMethod> Builder<'a, METHOD> {
         let _ = self.log.add_error_fmt(None, bun_ast::Loc::EMPTY, args);
     }
 
-    /// This tree decided which package `dependent` resolves for its peer edge `dep_id`; warn if
-    /// that package is outside the peer's range.
+    /// This tree serves `dependent`'s peer edge `dep_id` with `served`; warn if it is out of range.
     fn report_peer(&mut self, dependent: PackageID, dep_id: DependencyID, served: PackageID) {
         if !self.report_peers {
             return;
@@ -937,8 +933,7 @@ impl Tree {
                 HoistDependencyResult::Dedupe(res_id) => {
                     debug_assert!(dependency.behavior.is_peer());
                     if dependency.behavior.is_optional_peer() {
-                        // An optional peer's binding follows the dedupe, but only in the tree
-                        // being saved.
+                        // An optional peer's binding follows the dedupe, in the saved tree only.
                         if METHOD == BuilderMethod::Resolvable {
                             builder.resolutions[dep_id as usize] = res_id;
                         }
@@ -1092,8 +1087,7 @@ impl Tree {
                 }
 
                 // Root dependencies are manually chosen by the user. Allow them
-                // to hoist other peers even if they don't satisfy the version;
-                // the tree being installed reports the mismatch (`Builder::report_peer`).
+                // to hoist other peers even if they don't satisfy the version
                 if builder.lockfile().is_workspace_root_dependency(dep_id) {
                     return HoistDependencyResult::Dedupe(res_id); // 1
                 }

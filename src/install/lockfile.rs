@@ -756,9 +756,8 @@ impl Lockfile {
         Some(catalog_dep.version)
     }
 
-    /// The range the resolver resolves an edge against: an `overrides` rule replaces the declared
-    /// range, then a `catalog:` reference is looked up. Mirrors
-    /// `enqueue_dependency_with_main_and_success_fn`, minus its per-session npm alias redirects.
+    /// The range the resolver resolves an edge against: its `overrides` rule if any, else the
+    /// declared range, with `catalog:` references looked up either way.
     pub(crate) fn enforced_range(&self, dep_id: DependencyID) -> EnforcedRange<'_> {
         use dependency::DependencyExt as _;
 
@@ -800,10 +799,7 @@ impl Lockfile {
         }
     }
 
-    /// A linker calls this with the package it wires a peer edge of `dependent` to. Warns when
-    /// that package is outside the range the edge enforces. Only like kinds are compared (an npm
-    /// range against an npm version, a git range against a git resolution): a peer served by a
-    /// workspace, folder or tarball package has nothing to reject.
+    /// Called by a linker with the package it wires a required peer edge of `dependent` to.
     pub(crate) fn warn_if_peer_out_of_range(
         &self,
         log: &mut bun_ast::Log,
@@ -819,6 +815,7 @@ impl Lockfile {
         let pkg_resolutions = self.packages.items_resolution();
         let served_res = &pkg_resolutions[served as usize];
         let range = self.enforced_range(peer_dep_id);
+        // A workspace, folder or tarball copy has no version to reject.
         let comparable = matches!(
             (served_res.tag, range.version.tag),
             (ResolutionTag::Npm, dependency::Tag::Npm)
@@ -1451,8 +1448,7 @@ impl Lockfile {
         Ok(())
     }
 
-    /// The tree an install lays out on disk. Peers it serves out of range are reported to `log`,
-    /// except for the partial tree that installs a security scanner ahead of the real install.
+    /// The tree an install writes to disk. Reports the out-of-range peers of a full install.
     pub(crate) fn filter(
         &mut self,
         log: &mut bun_ast::Log,

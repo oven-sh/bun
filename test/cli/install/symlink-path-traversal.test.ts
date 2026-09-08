@@ -5,7 +5,7 @@ import { bunExe, bunEnv as env, tempDir } from "harness";
 import { createHash } from "node:crypto";
 import { createServer } from "node:http";
 import { tmpdir } from "os";
-import { basename, join } from "path";
+import { basename, dirname, join, resolve } from "path";
 
 // This test validates the fix for a symlink path traversal vulnerability in tarball extraction.
 // CVE: Path traversal via symlink when installing packages
@@ -1030,10 +1030,24 @@ it.skipIf(isWindows)(
 //
 // Not `describe.concurrent`: every test here runs a whole `bun install`, and
 // seven at once starve a box with few cores.
-describe.skipIf(isWindows)("node_modules destination symlinks", () => {
+describe("node_modules destination symlinks", () => {
   setDefaultTimeout(60000);
 
   const KEEP = "do-not-touch\n";
+
+  // Windows has its own arm of this code: `O_NOFOLLOW` maps to
+  // `FILE_OPEN_REPARSE_POINT`, which opens a junction as a directory, so the
+  // entry is inspected through `FILE_BASIC_INFORMATION` on the handle and
+  // removed with the rmdir flag. Cases that only need a DIRECTORY link run
+  // there too, as a junction: `mklink /J` needs no privilege, and git restores
+  // a committed link as one when the clone has no symlink permission. Cases
+  // that need a link to a FILE, or a link to a directory that does not exist
+  // yet, stay POSIX-only.
+  async function linkDir(target: string, path: string) {
+    if (!isWindows) return symlink(target, path);
+    // A junction needs an absolute, existing target.
+    await symlink(resolve(dirname(path), target), path, "junction");
+  }
 
   // `<root>/victim` stands for any directory outside the project: /etc/cron.d
   // for a root install, ~/.config for a developer install.
@@ -1084,7 +1098,7 @@ describe.skipIf(isWindows)("node_modules destination symlinks", () => {
       JSON.stringify({ name: "coolproject", dependencies: { "@x/cron.d": "file:./pkg.tgz" } }),
     );
     // Exactly what `git checkout` restores from a committed mode-120000 entry.
-    await symlink("../../victim", join(repo, "node_modules", "@x"));
+    await linkDir("../../victim", join(repo, "node_modules", "@x"));
 
     const { stdout, stderr, exitCode } = await install(repo);
 
@@ -1111,7 +1125,7 @@ describe.skipIf(isWindows)("node_modules destination symlinks", () => {
       join(repo, "package.json"),
       JSON.stringify({ name: "coolproject", dependencies: { lodash: "file:./pkg.tgz" } }),
     );
-    await symlink("../victim", join(repo, "node_modules"));
+    await linkDir("../victim", join(repo, "node_modules"));
 
     const { exitCode } = await install(repo, "--linker", linker);
 
@@ -1142,7 +1156,7 @@ describe.skipIf(isWindows)("node_modules destination symlinks", () => {
     return repo;
   }
 
-  it("does not install through a symlinked workspace member node_modules", async () => {
+  it.skipIf(isWindows)("does not install through a symlinked workspace member node_modules", async () => {
     using root = tempDir("nm-member", {});
     const victim = await plantVictim(String(root));
     const repo = await workspaceWithNestedDep(String(root));
@@ -1158,7 +1172,7 @@ describe.skipIf(isWindows)("node_modules destination symlinks", () => {
   // The root `node_modules` is absent, so the installer takes its fresh-install
   // path and skips the rename-aside that clears an existing destination. The
   // member's nested destination is still a pre-existing symlink.
-  it("does not install through a symlinked package directory on a fresh install", async () => {
+  it.skipIf(isWindows)("does not install through a symlinked package directory on a fresh install", async () => {
     using root = tempDir("nm-fresh", {});
     const victim = await plantVictim(String(root));
     await writeFile(join(victim, "package.json"), JSON.stringify({ name: "victim-project", version: "7.7.7" }));
@@ -1178,6 +1192,12 @@ describe.skipIf(isWindows)("node_modules destination symlinks", () => {
     expect(exitCode).toBe(0);
   });
 
+  // End to end: released bun installs the package into the link target, and
+  // the `bun remove` that follows deletes `<target>/name` with it. With the fix
+  // the install has already replaced `@x`, so the target is never in reach.
+  // The `remove_leftover_node_modules` guard is belt and braces on top: it only
+  // runs for a name the lockfile no longer has, and no state reaches it with a
+  // symlink still at `@x`, so it has no test of its own.
   it("does not delete through a symlinked node_modules/@scope on remove", async () => {
     using root = tempDir("nm-remove", {});
     const victim = await plantVictim(String(root), "name");
@@ -1188,7 +1208,7 @@ describe.skipIf(isWindows)("node_modules destination symlinks", () => {
       join(repo, "package.json"),
       JSON.stringify({ name: "coolproject", dependencies: { "@x/name": "file:./pkg.tgz" } }),
     );
-    await symlink("../../victim", join(repo, "node_modules", "@x"));
+    await linkDir("../../victim", join(repo, "node_modules", "@x"));
 
     expect((await install(repo)).exitCode).toBe(0);
 
@@ -1228,7 +1248,7 @@ describe.skipIf(isWindows)("node_modules destination symlinks", () => {
       expect((await install(repo, "--linker", linker)).exitCode).toBe(0);
       await rm(join(repo, "node_modules", ".bin"), { recursive: true, force: true });
     }
-    await symlink("../../victim", join(repo, "node_modules", ".bin"));
+    await linkDir("../../victim", join(repo, "node_modules", ".bin"));
 
     const { exitCode } = await install(repo, "--linker", linker);
 
@@ -1249,7 +1269,7 @@ describe.skipIf(isWindows)("node_modules destination symlinks", () => {
       join(repo, "package.json"),
       JSON.stringify({ name: "coolproject", dependencies: { lodash: "file:./pkg.tgz" } }),
     );
-    await symlink("../../../victim", join(repo, "node_modules", ".bun", "node_modules"));
+    await linkDir("../../../victim", join(repo, "node_modules", ".bun", "node_modules"));
 
     const { exitCode } = await install(repo, "--linker", "isolated");
 
@@ -1275,7 +1295,7 @@ describe.skipIf(isWindows)("node_modules destination symlinks", () => {
     expect(entry).toBeString();
     const planted = join(repo, "node_modules", ".bun", entry, "node_modules");
     await rm(planted, { recursive: true, force: true });
-    await symlink("../../../../victim", planted);
+    await linkDir("../../../../victim", planted);
 
     const { exitCode } = await install(repo, "--linker", "isolated");
 

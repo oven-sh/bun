@@ -182,10 +182,19 @@ pub(crate) fn install_hoisted_packages(
         // writes the tree into the link target. Say so, because a person can
         // have put it there on purpose, then replace the link with a real
         // directory. The link target itself is left alone.
-        if Dir::borrow(&cwd).remove_symlink(b"node_modules") {
-            bun_core::warn!(
+        match Dir::borrow(&cwd).remove_symlink(b"node_modules") {
+            Ok(false) => {}
+            Ok(true) => bun_core::warn!(
                 "replaced the <b>\"node_modules\"<r> symlink with a real directory: bun install writes inside the project"
-            );
+            ),
+            Err(err) => {
+                Output::err(
+                    err,
+                    "could not replace the <b>\"node_modules\"<r> symlink with a directory",
+                    (),
+                );
+                Global::crash();
+            }
         }
 
         // Attempt to create a new node_modules folder

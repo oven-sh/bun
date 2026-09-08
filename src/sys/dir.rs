@@ -118,9 +118,10 @@ impl Dir {
     pub fn open_real_dir(&self, name: &[u8]) -> Maybe<Dir> {
         // On Windows `no_follow` maps to `FILE_OPEN_REPARSE_POINT`, which
         // opens the reparse point itself and succeeds. So reject the entry
-        // first and open it normally.
+        // first and open it normally. A probe that cannot tell is an error,
+        // never a pass.
         #[cfg(windows)]
-        if self.entry_is_symlink(name) {
+        if self.entry_is_symlink(name)? {
             return Err(Error::from_code(E::ELOOP, Tag::open).with_path(name));
         }
         self.open_dir(
@@ -153,7 +154,7 @@ impl Dir {
             // before removing anything.
             E::ELOOP | E::EMLINK | E::ENOTDIR => {
                 // No syscall swaps a symlink for a directory in one step.
-                if !self.remove_symlink(name) {
+                if !self.remove_symlink(name)? {
                     return Err(err);
                 }
             }
@@ -180,7 +181,7 @@ impl Dir {
     /// symlink once this returns.
     pub fn make_open_real_path(&self, sub_path: &[u8]) -> Maybe<Dir> {
         let mut dir: Option<Dir> = None;
-        for component in bun_core::strings::split_any(sub_path, b"/\\") {
+        for component in bun_core::strings::split_any(sub_path, SEPARATORS) {
             if component.is_empty() || component == b"." {
                 continue;
             }
@@ -194,20 +195,33 @@ impl Dir {
     }
 
     /// Unlink `name` when it is a symlink (or a junction). The link target is
-    /// not touched. `true` when a link was there and is gone now.
-    pub fn remove_symlink(&self, name: &[u8]) -> bool {
-        if !self.entry_is_symlink(name) {
-            return false;
+    /// not touched. `Ok(true)` when a link was there and is gone now,
+    /// `Ok(false)` when `name` is missing or not a link, and an error when the
+    /// entry could not be inspected or the link could not be removed.
+    pub fn remove_symlink(&self, name: &[u8]) -> Maybe<bool> {
+        if !self.entry_is_symlink(name)? {
+            return Ok(false);
         }
-        if unlinkat_a(self.fd, name, 0).is_ok() {
-            return true;
-        }
+        let err = match unlinkat_a(self.fd, name, 0) {
+            Ok(()) => return Ok(true),
+            Err(err) => err,
+        };
         // A directory symlink and a junction need `rmdir` on Windows.
-        unlinkat_a(self.fd, name, AT_REMOVEDIR).is_ok()
+        if cfg!(windows) && unlinkat_a(self.fd, name, AT_REMOVEDIR).is_ok() {
+            return Ok(true);
+        }
+        match err.get_errno() {
+            // Raced with another remover. Gone is gone.
+            E::ENOENT => Ok(true),
+            _ => Err(err),
+        }
     }
 
     /// `true` when `name` is a symlink, a junction, or any other reparse point.
-    fn entry_is_symlink(&self, name: &[u8]) -> bool {
+    /// `false` when it is missing or anything else. An error when the entry
+    /// exists but could not be inspected: callers treat that as "do not
+    /// follow", never as "not a link".
+    fn entry_is_symlink(&self, name: &[u8]) -> Maybe<bool> {
         #[cfg(not(windows))]
         {
             let mut buf = bun_paths::path_buffer_pool::get();
@@ -217,8 +231,9 @@ impl Dir {
             // SAFETY: NUL-terminated above.
             let name_z = ZStr::from_buf(&buf.0[..], len);
             match lstatat(self.fd, name_z) {
-                Ok(st) => kind_from_mode(st.st_mode as Mode) == EntryKind::SymLink,
-                Err(_) => false,
+                Ok(st) => Ok(kind_from_mode(st.st_mode as Mode) == EntryKind::SymLink),
+                Err(err) if err.get_errno() == E::ENOENT => Ok(false),
+                Err(err) => Err(err),
             }
         }
         #[cfg(windows)]
@@ -230,11 +245,12 @@ impl Dir {
             // no path for `self`.
             let file = match openat_windows_a(self.fd, name, O::NOFOLLOW, 0) {
                 Ok(fd) => fd,
-                Err(_) => return false,
+                Err(err) if err.get_errno() == E::ENOENT => return Ok(false),
+                Err(err) => return Err(err),
             };
             let is_reparse_point = handle_is_reparse_point(file);
             let _ = close(file);
-            is_reparse_point
+            is_reparse_point.map_err(|err| err.with_path(name))
         }
     }
 
@@ -413,11 +429,15 @@ pub const AT_REMOVEDIR: i32 = libc::AT_REMOVEDIR;
 #[cfg(windows)]
 pub const AT_REMOVEDIR: i32 = 0x200;
 
+/// The bytes that separate path components on this platform. `\` is a legal
+/// file name byte on POSIX.
+const SEPARATORS: &[u8] = if cfg!(windows) { b"/\\" } else { b"/" };
+
 /// `true` when the open handle is a reparse point: a symlink, a junction, or
 /// any other tag. Reads `FILE_BASIC_INFORMATION` off the handle, so the caller
 /// needs no path for it.
 #[cfg(windows)]
-fn handle_is_reparse_point(fd: Fd) -> bool {
+fn handle_is_reparse_point(fd: Fd) -> Maybe<bool> {
     use bun_windows_sys::externs as w;
     let mut io: w::IO_STATUS_BLOCK = bun_core::ffi::zeroed();
     let mut info: w::FILE_BASIC_INFORMATION = bun_core::ffi::zeroed();
@@ -432,9 +452,9 @@ fn handle_is_reparse_point(fd: Fd) -> bool {
         )
     };
     if w::NT_ERROR(rc) {
-        return false;
+        return Err(Error::new(rc, Tag::fstat).with_fd(fd));
     }
-    (info.FileAttributes & w::FILE_ATTRIBUTE_REPARSE_POINT) != 0
+    Ok((info.FileAttributes & w::FILE_ATTRIBUTE_REPARSE_POINT) != 0)
 }
 
 /// `rmdirat` — `unlinkat(dir, path, AT_REMOVEDIR)`.

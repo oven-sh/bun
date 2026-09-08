@@ -36,7 +36,7 @@ impl FileCloner<'_> {
         // store entry's `node_modules`, so open the directories the installer
         // owns on the way to `dest` without following one first.
         if let Some(parent_dest_dir) = self.dest_subpath.dirname() {
-            let _ = crate::isolated_install::make_store_path(parent_dest_dir);
+            crate::isolated_install::make_store_path(parent_dest_dir)?;
         }
         match self.clonefileat() {
             Ok(()) => Ok(()),
@@ -57,7 +57,7 @@ impl FileCloner<'_> {
                     let Some(parent_dest_dir) = self.dest_subpath.dirname() else {
                         return Err(err);
                     };
-                    let _ = crate::isolated_install::make_store_path(parent_dest_dir);
+                    crate::isolated_install::make_store_path(parent_dest_dir)?;
                     self.clonefileat()
                 }
                 _ => Err(err),

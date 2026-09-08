@@ -43,7 +43,7 @@ impl Symlinker {
                                 return Err(symlink_err1);
                             };
 
-                            let _ = crate::isolated_install::make_store_path(dest_parent);
+                            crate::isolated_install::make_store_path(dest_parent)?;
                             return self.symlink().map(|()| true);
                         }
                         Errno::EEXIST => {
@@ -69,7 +69,7 @@ impl Symlinker {
                                                 return Err(symlink_err);
                                             };
 
-                                            let _ = crate::isolated_install::make_store_path(dest_parent);
+                                            crate::isolated_install::make_store_path(dest_parent)?;
                                             return self.symlink().map(|()| true);
                                         }
                                         _ => Err(symlink_err),

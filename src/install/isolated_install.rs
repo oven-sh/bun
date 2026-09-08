@@ -59,7 +59,8 @@ fn project_node_modules_offset(path: &[u8]) -> Option<usize> {
     } else {
         0
     };
-    for component in paths::strings::split_any(&path[offset..], b"/\\") {
+    let separators: &[u8] = if cfg!(windows) { b"/\\" } else { b"/" };
+    for component in paths::strings::split_any(&path[offset..], separators) {
         if component == b"node_modules" {
             return Some(offset);
         }
@@ -1747,10 +1748,19 @@ pub(crate) fn install_isolated_packages(
         // person can have put it there on purpose, then drop the link (never
         // its target) so the directory below is created fresh instead of the
         // old tree being moved aside through it.
-        if sys::Dir::cwd().remove_symlink(b"node_modules") {
-            bun_core::warn!(
+        match sys::Dir::cwd().remove_symlink(b"node_modules") {
+            Ok(false) => {}
+            Ok(true) => bun_core::warn!(
                 "replaced the <b>\"node_modules\"<r> symlink with a real directory: bun install writes inside the project"
-            );
+            ),
+            Err(err) => {
+                Output::err(
+                    err,
+                    "could not replace the <b>\"node_modules\"<r> symlink with a directory",
+                    (),
+                );
+                Global::crash();
+            }
         }
 
         match sys::mkdirat(Fd::cwd(), node_modules_path, 0o755) {

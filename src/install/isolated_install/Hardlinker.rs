@@ -60,16 +60,19 @@ impl Hardlinker {
         // `linkat(2)` writes straight through a symlink planted at this store
         // entry's `node_modules`, so open the directories the installer owns on
         // the way to `dest` without following one. Once per package, before any
-        // file lands.
+        // file lands, and no files land if it fails.
         #[cfg(not(windows))]
-        let _ = crate::isolated_install::make_store_path(self.dest.slice());
+        let prepared = crate::isolated_install::make_store_path(self.dest.slice());
         #[cfg(windows)]
-        {
+        let prepared = {
             let mut dest_u8_buf = bun_paths::path_buffer_pool::get();
-            let _ = crate::isolated_install::make_store_path(
+            crate::isolated_install::make_store_path(
                 bun_paths::string_paths::from_w_path(&mut dest_u8_buf[..], self.dest.slice())
                     .as_bytes(),
-            );
+            )
+        };
+        if let Err(err) = prepared {
+            return Ok(sys::Result::Err(err));
         }
 
         #[cfg(windows)]

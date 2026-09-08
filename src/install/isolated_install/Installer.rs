@@ -1774,10 +1774,12 @@ impl Task {
                     // `.bin` is the installer's directory. Open the entry's
                     // `node_modules` and the `.bin` below it without following
                     // symlinks before `bin::Linker` writes there by absolute path.
-                    if let Ok(dir) =
+                    // No real `.bin`, no bin links.
+                    if let Err(err) =
                         crate::isolated_install::make_store_path(node_modules_path.slice())
+                            .and_then(|dir| dir.make_open_real_dir(b".bin"))
                     {
-                        let _ = dir.make_open_real_dir(b".bin");
+                        return Ok(Yield::failure(TaskError::LinkPackage(err)));
                     }
 
                     let mut target_node_modules_path: Option<DefaultAbsPath> = None;
@@ -2188,9 +2190,12 @@ impl<'a> Installer<'a> {
 
         // `symlink(2)` writes straight through a symlink planted at
         // `.bun/node_modules`, so open the directories the installer owns on
-        // the way to `dest` without following one first.
+        // the way to `dest` without following one first. These links are
+        // best-effort, but a link that cannot be placed safely is not placed.
         if let Some(dest_parent) = symlinker.dest.dirname() {
-            let _ = crate::isolated_install::make_store_path(dest_parent);
+            if crate::isolated_install::make_store_path(dest_parent).is_err() {
+                return;
+            }
         }
 
         let _ = symlinker.ensure_symlink(link_strategy);
@@ -2286,7 +2291,7 @@ impl<'a> Installer<'a> {
                 // not per dependency, and only when there is a link to write:
                 // an entry with no dependencies must not get an empty
                 // `node_modules`.
-                let _ = crate::isolated_install::make_store_path(dest.slice());
+                crate::isolated_install::make_store_path(dest.slice())?;
                 base_is_real = true;
             }
 
@@ -2303,7 +2308,7 @@ impl<'a> Installer<'a> {
             // collision case adds two more. Those are the installer's too.
             if nested || strings::contains_char(dep_name, b'/') {
                 if let Some(dest_parent) = dest.dirname() {
-                    let _ = crate::isolated_install::make_store_path(dest_parent);
+                    crate::isolated_install::make_store_path(dest_parent)?;
                 }
             }
 
@@ -2382,9 +2387,9 @@ impl<'a> Installer<'a> {
                 // `.bin` is the installer's directory. Open the entry's
                 // `node_modules` and the `.bin` below it without following
                 // symlinks before `bin::Linker` writes there by absolute path.
-                if let Ok(dir) = crate::isolated_install::make_store_path(node_modules_path.slice()) {
-                    let _ = dir.make_open_real_dir(b".bin");
-                }
+                // No real `.bin`, no bin links.
+                crate::isolated_install::make_store_path(node_modules_path.slice())?
+                    .make_open_real_dir(b".bin")?;
                 bin_dir_is_real = true;
             }
             let alias = lockfile.buffers.dependencies[dep_id as usize].name;

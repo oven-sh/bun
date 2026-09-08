@@ -280,7 +280,8 @@ impl NodeModulesFolder {
         };
 
         let mut dir: Option<Dir> = None;
-        let mut components = strings::split_any(below_root, b"/\\")
+        let separators: &[u8] = if cfg!(windows) { b"/\\" } else { b"/" };
+        let mut components = strings::split_any(below_root, separators)
             .filter(|component| !component.is_empty())
             .peekable();
         while let Some(component) = components.next() {
@@ -590,12 +591,26 @@ impl<'a> PackageInstaller<'a> {
         // and the `.bin` below it without following symlinks before
         // `bin::Linker` writes there by absolute path: a symlink planted at
         // either one would redirect the links, and the delete-and-retry of an
-        // existing entry, out of the project.
-        if let Ok(tree_node_modules) = self
+        // existing entry, out of the project. No real `.bin`, no linking.
+        if let Err(err) = self
             .node_modules
             .make_and_open_dir(&self.root_node_modules_folder)
+            .and_then(|tree_node_modules| Ok(tree_node_modules.make_open_real_dir(b".bin")?))
         {
-            let _ = tree_node_modules.make_open_real_dir(b".bin");
+            if log_level != Options::LogLevel::Silent {
+                bun_core::pretty_errorln!(
+                    "<r><red>error<r>: could not create <b>{}{}.bin<r> to link binaries: {}",
+                    bstr::BStr::new(self.node_modules.path.as_slice()),
+                    SEP as char,
+                    err,
+                );
+            }
+            let tree = &mut self.trees[tree_id as usize];
+            while tree.binaries.remove_or_null().is_some() {}
+            if self.manager().options.enable.fail_early() {
+                Global::crash();
+            }
+            return;
         }
 
         let lockfile = self.lockfile();

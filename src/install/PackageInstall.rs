@@ -1091,8 +1091,13 @@ impl<'a> PackageInstall<'a> {
                 self.destination_dir_subpath_buf[slash] = 0;
                 // SAFETY: NUL written above.
                 let subdir = ZStr::from_buf(self.destination_dir_subpath_buf, slash);
-                let _ = destination_dir.make_open_real_dir(subdir.as_bytes());
+                let scope_dir = destination_dir.make_open_real_dir(subdir.as_bytes());
                 self.destination_dir_subpath_buf[slash] = SEP;
+                // `clonefileat` below names `@scope/<pkg>` by path, so without a
+                // real `@scope` directory there is nothing safe to clone into.
+                if let Err(err) = scope_dir {
+                    return Ok(InstallResult::fail(err.into(), Step::OpeningDestDir, None));
+                }
             }
         }
 
@@ -1232,8 +1237,10 @@ impl<'a> PackageInstall<'a> {
 
             // Replace a symlink at any of `destpath`'s components with a real
             // directory, so the absolute path above cannot resolve out of the
-            // tree.
-            let _ = destbase.make_open_real_path(destpath.as_bytes());
+            // tree. The copy below goes by that path, so stop if this fails.
+            if let Err(err) = destbase.make_open_real_path(destpath.as_bytes()) {
+                return Err(Failure::boxed(err.into(), Step::OpeningDestDir, None));
+            }
             let _ = mkdir_recursive_os_path(fullpath);
             let to_copy_buf_off = fullpath.len();
 
@@ -1938,7 +1945,7 @@ impl<'a> PackageInstall<'a> {
         // Otherwise a symlink there makes this rename pull a directory out of
         // the link target, and the task below deletes it.
         let subpath = self.destination_dir_subpath.as_bytes();
-        let slash = strings::index_of_any(subpath, b"/\\");
+        let slash = strings::index_of_char_usize(subpath, b'/');
         let scope_dir = match slash {
             Some(slash) => match destination_dir.make_open_real_dir(&subpath[..slash]) {
                 Ok(dir) => Some(dir),
@@ -2158,7 +2165,10 @@ impl<'a> PackageInstall<'a> {
 
                 // Replace a symlink at the `@scope` directory with a real one,
                 // so the absolute path above cannot resolve out of the tree.
-                let _ = destination_dir.make_open_real_path(dir);
+                // The link below is made by that path, so stop if this fails.
+                if let Err(err) = destination_dir.make_open_real_path(dir) {
+                    return InstallResult::fail(err.into(), Step::LinkingDependency, None);
+                }
                 let _ = mkdir_recursive_os_path(fullpath);
             }
 

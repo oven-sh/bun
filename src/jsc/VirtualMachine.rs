@@ -3805,9 +3805,7 @@ impl VirtualMachine {
         match self.unhandled_rejections_mode() {
             Mode::Bun => {
                 if handle_unhandled() {
-                    // What the listener queued runs now: Node's processTicksAndRejections
-                    // loops ticks and rejections until both are empty, and on the
-                    // loop's last turn no later checkpoint would pick it up.
+                    // Run what the listener queued; on the loop's last turn no later checkpoint would.
                     drain(self);
                     return;
                 }

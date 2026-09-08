@@ -154,9 +154,7 @@ function applyHandlers(handlers, emitter, args) {
   }
 }
 
-// `result` is whatever a listener returned (not undefined/null): a thenable is
-// followed, anything else ignored. Promises/A+: `then` may be a getter, so it
-// is read once, and a getter that throws is an 'error'.
+// Promises/A+: `then` is read once; a `then` getter that throws is an 'error'.
 function addCatch(emitter, result, type, args) {
   if (!emitter[kCapture]) return;
   try {
@@ -176,10 +174,8 @@ function emitUnhandledRejectionOrErr(emitter, err, type, args) {
   if (typeof emitter[kRejection] === "function") {
     emitter[kRejection](err, type, ...args);
   } else {
-    // Capture is off while 'error' is emitted so a rejecting 'error' listener
-    // cannot loop back here. If the error handler throws, it is not catchable
-    // and it will end up in 'uncaughtException'; the previous value is
-    // restored in case that is handled.
+    // Capture is off during the 'error' emit so a rejecting 'error' listener
+    // cannot loop; restored even if a listener throws (-> 'uncaughtException').
     const prev = emitter[kCapture];
     try {
       emitter[kCapture] = false;
@@ -190,17 +186,14 @@ function emitUnhandledRejectionOrErr(emitter, err, type, args) {
   }
 }
 
-// Mirrors EventEmitter.prototype[kCapture] (the `EventEmitter.captureRejections`
-// default) so the common emit path tests a closure variable, not a property.
+// Mirrors `EventEmitter.captureRejections` so the default emit tests a local, not a property.
 let captureRejectionsByDefault = false;
 
 const emitWithoutRejectionCapture = function emit(type, ...args) {
   $debug(`${this.constructor?.name || "EventEmitter"}.emit`, type);
 
-  // The constructor installs the capturing emit per instance; an emitter whose
-  // constructor never ran (util.inherits without the super call) lands here and
-  // follows the global default through the prototype's kCapture, as node's
-  // single emit does.
+  // An emitter whose constructor never ran (util.inherits without the super
+  // call) has no own `emit`; it follows the global default like node.
   if (captureRejectionsByDefault && this[kCapture]) {
     return emitWithRejectionCapture.$call(this, type, ...args);
   }

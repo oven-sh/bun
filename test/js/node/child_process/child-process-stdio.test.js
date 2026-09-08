@@ -187,4 +187,15 @@ describe("stream stdio entries", () => {
       exitCode: 0,
     });
   });
+
+  it.skipIf(isWindows)("leaves a shared stdout's bytes for the consumer when the producer exits first", async () => {
+    const { stdout, stderr, exitCode } = await bunRun(
+      path.join(import.meta.dir, "fixtures", "child-process-stdio-share-stdout-producer-exits.js"),
+    );
+    expect({ result: JSON.parse(stdout), stderr, exitCode }).toEqual({
+      result: { consumerRead: 4096 },
+      stderr: "",
+      exitCode: 0,
+    });
+  });
 });

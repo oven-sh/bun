@@ -1337,6 +1337,11 @@ impl<C: SourceContext> NewSource<C> {
         if self.is_closed.get() || !fd.is_valid() {
             return JSValue::js_number(-1.0);
         }
+        // A HANDLE has no number a child could inherit (see spawn/stdio.rs).
+        #[cfg(windows)]
+        if fd.kind() == bun_sys::FdKind::System {
+            return JSValue::js_number(-1.0);
+        }
         fd.to_js_without_making_lib_uv_owned()
     }
 

@@ -4,8 +4,6 @@ use bun_jsc::{self as jsc, JSGlobalObject, JSValue, JsResult};
 #[cfg(windows)]
 use bun_sys::windows::libuv as uv;
 use bun_sys::{self as sys, Fd, FdExt as _};
-#[cfg(windows)]
-use core::ffi::c_void;
 
 // `bun.jsc.WebCore` lives in this crate (not `bun_jsc`); alias so the body can
 // say `webcore::ReadableStream` / `webcore::body::Value`.
@@ -452,13 +450,6 @@ impl Stdio {
             }
             return Ok(());
         } else if value.is_number() {
-            // A Windows HANDLE (a socket or pipe `fd` getter) is a number past
-            // the CRT fd range; libuv inherits it as UV_INHERIT_STREAM does.
-            #[cfg(windows)]
-            if value.as_number() > i32::MAX as f64 {
-                *out_stdio = Stdio::Fd(Fd::from_system(value.to_int64() as usize as *mut c_void));
-                return Ok(());
-            }
             // `bun.FD.fromUV(this.toInt32())` inlined here since the
             // upstream `bun_jsc::JSValue` doesn't expose a wrapper.
             let fd = Fd::from_uv(value.to_int32());
@@ -516,6 +507,25 @@ impl Stdio {
             return Self::extract_body_value(out_stdio, global, i, req.get_body_value(), is_sync);
         } else if let Some(res) = value.as_class_ref::<webcore::Response>() {
             return Self::extract_body_value(out_stdio, global, i, res.get_body_value(), is_sync);
+        }
+
+        // A socket's handle or a subprocess stdin's FileSink, which
+        // node:child_process passes on Windows as node passes a handle wrap:
+        // the descriptor is a HANDLE, which a number cannot tell from a CRT fd.
+        let shared = if let Some(sock) = value.as_class_ref::<crate::socket::TCPSocket>() {
+            Some(sock.socket.get().fd())
+        } else if let Some(sock) = value.as_class_ref::<crate::socket::TLSSocket>() {
+            Some(sock.socket.get().fd())
+        } else {
+            webcore::file_sink::JSSink::from_js(value).map(|sink| {
+                // SAFETY: `from_js` returned the live sink behind `value`,
+                // kept alive by its JS wrapper for this call.
+                unsafe { &*sink }.sink.fd.get()
+            })
+        };
+        if let Some(fd) = shared.filter(|fd| fd.is_valid()) {
+            *out_stdio = Stdio::Fd(fd);
+            return Ok(());
         }
 
         if let Some(stream_) = webcore::ReadableStream::from_js(value, global)? {

@@ -207,6 +207,11 @@ impl<'a> Writable<'a> {
                     )));
                 }
                 Stdio::Fd(fd) => {
+                    // See `Readable::init`: a borrowed HANDLE stays with its owner.
+                    #[cfg(windows)]
+                    if fd.kind() == bun_sys::FdKind::System {
+                        return Ok(Writable::Ignore);
+                    }
                     return Ok(Writable::Fd(*fd));
                 }
                 Stdio::Dup2(dup2) => {

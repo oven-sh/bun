@@ -26,4 +26,5 @@ consumer.on("exit", () => {
   producer.stdout.setEncoding("utf8");
   producer.stdout.on("data", chunk => (result.parentGot += chunk));
   producer.stdout.on("end", () => console.log(JSON.stringify(result)));
+  producer.stdout.resume();
 });

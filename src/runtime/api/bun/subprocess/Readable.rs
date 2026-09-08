@@ -113,7 +113,13 @@ impl Readable {
                 }
                 #[cfg(not(unix))]
                 {
-                    Readable::Fd(*fd)
+                    // A borrowed HANDLE (a socket or pipe shared as stdio) is
+                    // not the parent's to expose: `Fd::to_js` takes ownership.
+                    if fd.kind() == bun_sys::FdKind::System {
+                        Readable::Ignore
+                    } else {
+                        Readable::Fd(*fd)
+                    }
                 }
             }
             Stdio::Memfd(_) => {

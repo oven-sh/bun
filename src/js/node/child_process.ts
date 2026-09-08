@@ -45,6 +45,7 @@ var Uint8ArrayPrototypeIncludes = Uint8Array.prototype.includes;
 
 const MAX_BUFFER = 1024 * 1024;
 const kFromNode = Symbol("kFromNode");
+const kIsUsedAsStdio = Symbol("kIsUsedAsStdio");
 
 // Pass DEBUG_CHILD_PROCESS=1 to enable debug output
 if ($debug) {
@@ -1146,13 +1147,25 @@ class ChildProcess extends EventEmitter {
 
       if (stdout === undefined) {
         this.#stdout = this.#getBunSpawnIo(1, true);
-      } else if (stdout && this.#stdioOptions[1] === "pipe" && !stdout.destroyed && stdout.readable) {
+      } else if (
+        stdout &&
+        this.#stdioOptions[1] === "pipe" &&
+        !stdout.destroyed &&
+        stdout.readable &&
+        !stdout[kIsUsedAsStdio]
+      ) {
         stdout.resume?.();
       }
 
       if (stderr === undefined) {
         this.#stderr = this.#getBunSpawnIo(2, true);
-      } else if (stderr && this.#stdioOptions[2] === "pipe" && !stderr.destroyed && stderr.readable) {
+      } else if (
+        stderr &&
+        this.#stdioOptions[2] === "pipe" &&
+        !stderr.destroyed &&
+        stderr.readable &&
+        !stderr[kIsUsedAsStdio]
+      ) {
         stderr.resume?.();
       }
     }
@@ -1711,13 +1724,17 @@ function isInternalIpcMessage(message) {
   return StringPrototypeStartsWith.$call(cmd, INTERNAL_IPC_PREFIX);
 }
 
-function streamFdOf(item): number | undefined {
+function streamFdOf(item): number | object | undefined {
   const itemFd = ObjectHasOwn(item, "fd") ? item.fd : undefined;
   if (typeof itemFd === "number" && itemFd >= 0) return itemFd;
 
+  // On Windows a socket's handle and a subprocess stdin's FileSink are passed
+  // as-is, like node's handle wrap: their descriptor is a HANDLE, which a
+  // number cannot tell from a CRT fd, so Bun.spawn reads it natively.
+  // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/child_process.js#L1064-L1074
   const handle = item._handle;
   const handleFd = handle ? handle.fd : undefined;
-  if (typeof handleFd === "number" && handleFd >= 0) return handleFd;
+  if (typeof handleFd === "number" && handleFd >= 0) return process.platform === "win32" ? handle : handleFd;
 
   if (item.destroyed) return undefined;
 
@@ -1728,6 +1745,7 @@ function streamFdOf(item): number | undefined {
 
   const sink = item[require("internal/fs/streams").kWriteStreamFastPath];
   if (sink && sink !== true) {
+    if (process.platform === "win32") return sink;
     const fd = sink._getFd();
     if (typeof fd === "number" && fd >= 0) return fd;
   }
@@ -1743,12 +1761,19 @@ function stopReadingSharedStdio(stdio) {
   for (let i = 0; i < stdio.length; i++) {
     const item = stdio[i];
     if (!isNodeStreamReadable(item) || !item.readable) continue;
+    // Only a handle-backed stream (node's 'wrap' entry); an fd-backed one
+    // (fs.ReadStream) keeps reading in the parent.
+    if (!item._handle && !item.$bunNativePtr) continue;
+    // flushStdio() skips it when this process exits: the bytes are the child's.
+    // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/child_process.js#L316-L332
+    item[kIsUsedAsStdio] = true;
     item.$bunNativePtr?.setFlowing?.(false);
+    item._handle?.pause?.();
     item.pause();
   }
 }
 
-function nodeToBun(item: string, index: number): string | number | null | NodeJS.TypedArray | ArrayBufferView {
+function nodeToBun(item: string, index: number): string | number | object | null | NodeJS.TypedArray | ArrayBufferView {
   // If not defined, use the default.
   // For stdin/stdout/stderr, it's pipe. For others, it's ignore.
   if (item == null) {

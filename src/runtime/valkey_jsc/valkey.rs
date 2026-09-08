@@ -30,7 +30,7 @@ bun_output::define_scoped_log!(debug, Redis, visible);
 /// Connection flags to track Valkey client state
 pub struct ConnectionFlags {
     pub(crate) is_manually_closed: bool,
-    /// HELLO was accepted and the reply to the handshake's `SELECT` is still
+    /// The handshake wrote a `SELECT` behind `HELLO` and its reply is still
     /// due. The client stays `Connecting` until it arrives.
     pub(crate) is_selecting_db_internal: bool,
     pub(crate) enable_offline_queue: bool,
@@ -263,7 +263,8 @@ pub struct ValkeyClient {
     pub(crate) username: Box<[u8]>,
     pub(crate) database: u32,
     /// The accepted HELLO reply, held while the handshake's SELECT reply is
-    /// due so that `on_valkey_connect` still receives it.
+    /// due so that `on_valkey_connect` still receives it. While it is held,
+    /// the next reply is the SELECT's.
     pub(crate) pending_hello: Option<RESPValue>,
     pub(crate) address: Address,
     pub(crate) protocol: Protocol,
@@ -1057,20 +1058,22 @@ impl ValkeyClient {
         }
     }
 
-    /// `authenticate()` writes `SELECT` right behind `HELLO`, so when the URL
-    /// names a database the handshake has one more reply to go.
+    /// When `authenticate()` wrote a `SELECT` behind `HELLO`, the handshake has
+    /// one more reply to go.
     fn hello_accepted(&mut self, value: &mut RESPValue) -> JsResult<()> {
-        if self.database > 0 {
-            self.flags.is_selecting_db_internal = true;
+        if self.flags.is_selecting_db_internal {
             self.pending_hello = Some(core::mem::replace(value, RESPValue::Null));
             return Ok(());
         }
         self.handshake_complete(value)
     }
 
-    fn handle_select_response(&mut self, value: &mut RESPValue) -> JsResult<()> {
+    fn handle_select_response(
+        &mut self,
+        mut hello: RESPValue,
+        value: &mut RESPValue,
+    ) -> JsResult<()> {
         self.flags.is_selecting_db_internal = false;
-        let mut hello = self.pending_hello.take().unwrap_or(RESPValue::Null);
         match value {
             RESPValue::Error(err) => self.fail(err, RedisError::ServerError),
             RESPValue::SimpleString(ok) if ok.as_ref() == b"OK" => {
@@ -1098,10 +1101,9 @@ impl ValkeyClient {
     fn handle_response(&mut self, value: &mut RESPValue) -> JsResult<()> {
         // Replies to the handshake are not paired with anything in the command queue.
         if self.status != Status::Connected {
-            if self.flags.is_selecting_db_internal {
-                self.handle_select_response(value)?;
-            } else {
-                self.handle_hello_response(value)?;
+            match self.pending_hello.take() {
+                Some(hello) => self.handle_select_response(hello, value)?,
+                None => self.handle_hello_response(value)?,
             }
             return Ok(());
         }
@@ -1285,6 +1287,7 @@ impl ValkeyClient {
                 self.fail(b"Failed to write SELECT command", RedisError::OutOfMemory)?;
                 return Ok(());
             }
+            self.flags.is_selecting_db_internal = true;
         }
         Ok(())
     }

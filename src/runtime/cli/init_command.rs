@@ -401,6 +401,7 @@ impl InitCommand {
 
         let mut package_json_file: Option<bun_sys::File> =
             bun_sys::File::openat(destination_dir, b"package.json", bun_sys::O::RDWR, 0).ok();
+        let package_json_existed = package_json_file.is_some();
         let mut package_json_contents: MutableString = MutableString::init_empty();
         bun_ast::initialize_store();
         // Arena for JSON parse / Expr building.
@@ -812,9 +813,18 @@ impl InitCommand {
                         i64::try_from(written.len()).expect("int cast"),
                     )
                 }),
+                // Exists but could not be read or is not a JSON object: start it over in place.
+                None if package_json_existed => bun_sys::File::openat(
+                    Fd::cwd(),
+                    b"package.json",
+                    bun_sys::O::WRONLY | bun_sys::O::TRUNC,
+                    0,
+                )
+                .and_then(|file| file.write_all(written))
+                .map_err(|err| err.with_path(b"package.json")),
                 None => Assets::write_new_file(
                     b"package.json",
-                    bun_sys::O::WRONLY | bun_sys::O::CREAT | bun_sys::O::TRUNC,
+                    bun_sys::O::WRONLY | bun_sys::O::CREAT | bun_sys::O::EXCL,
                     written,
                 ),
             };
@@ -986,7 +996,7 @@ impl Assets {
         Ok(())
     }
 
-    /// A file whose write fails is removed again, so a rerun (which skips existing files) creates it.
+    /// `flags` include `O_EXCL`; a file whose write fails is removed again so a rerun creates it.
     fn write_new_file(filename: &[u8], flags: i32, contents: &[u8]) -> bun_sys::Result<()> {
         let file = bun_sys::File::openat(Fd::cwd(), filename, flags, 0o666)
             .map_err(|err| err.with_path(filename))?;

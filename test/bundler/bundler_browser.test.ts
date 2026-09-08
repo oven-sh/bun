@@ -101,6 +101,100 @@ describe("bundler", () => {
       api.expectFile("out.js").not.toInclude("import ");
     },
   });
+  // A builtin without a browser polyfill is one shared empty module, whatever
+  // syntax reaches it: require(), import, import * as, and import().
+  for (const format of ["esm", "cjs", "iife"] as const) {
+    for (const minify of [false, true]) {
+      itBundled(`browser/NodeBuiltinDisabledShape${format.toUpperCase()}${minify ? "Minified" : ""}`, {
+        files: {
+          "/entry.js": /* js */ `
+            import c from "./c.cjs";
+            import d from "node:fs";
+            import * as ns from "node:fs";
+            import { readFileSync } from "node:fs";
+            import("node:fs").then(m => {
+              console.log(JSON.stringify({
+                requireTwiceIdentical: c.a === c.b,
+                typeofRequire: typeof c.a,
+                requireKeys: Object.keys(c.a).length,
+                requireIsDefault: c.a === d,
+                typeofDefault: typeof d,
+                typeofNamespace: typeof ns,
+                namespaceDefaultIsDefault: ns.default === d,
+                typeofNamed: typeof readFileSync,
+                dynamicDefaultIsDefault: m.default === d,
+                typeofDynamicNamed: typeof m.readFileSync,
+              }));
+            });
+          `,
+          "/c.cjs": /* js */ `
+            exports.a = require("node:fs");
+            exports.b = require("node:fs");
+          `,
+        },
+        target: "browser",
+        format,
+        minifySyntax: minify,
+        minifyIdentifiers: minify,
+        minifyWhitespace: minify,
+        onAfterBundle(api) {
+          api.expectFile("out.js").not.toInclude(`import("node:fs")`);
+          api.expectFile("out.js").not.toInclude(`import('node:fs')`);
+        },
+        run: {
+          stdout: JSON.stringify({
+            requireTwiceIdentical: true,
+            typeofRequire: "object",
+            requireKeys: 0,
+            requireIsDefault: true,
+            typeofDefault: "object",
+            typeofNamespace: "object",
+            namespaceDefaultIsDefault: true,
+            typeofNamed: "undefined",
+            dynamicDefaultIsDefault: true,
+            typeofDynamicNamed: "undefined",
+          }),
+        },
+      });
+    }
+  }
+  // import() of such a builtin resolves to the same empty module instead of
+  // staying in the output as a request the browser cannot serve.
+  itBundled("browser/NodeBuiltinDisabledDynamicImport", {
+    files: {
+      "/entry.js": /* js */ `
+        const specifiers = ["node:fs", "fs", "fs/promises", "node:fs/promises", "node:child_process", "node:vm"];
+        const results = await Promise.all([
+          import("node:fs"),
+          import("fs"),
+          import("fs/promises"),
+          import("node:fs/promises"),
+          import("node:child_process"),
+          import("node:vm"),
+        ]);
+        for (let i = 0; i < results.length; i++) {
+          const m = results[i];
+          console.log(specifiers[i], typeof m.default, Object.keys(m.default).length, Object.keys(m).join(","));
+        }
+        console.log(results[0].default === results[1].default, results[2].default === results[3].default);
+      `,
+    },
+    target: "browser",
+    onAfterBundle(api) {
+      api.expectFile("out.js").not.toInclude(`import("`);
+    },
+    run: {
+      stdout: `
+        node:fs object 0 default
+        fs object 0 default
+        fs/promises object 0 default
+        node:fs/promises object 0 default
+        node:child_process object 0 default
+        node:vm object 0 default
+        true true
+      `,
+    },
+  });
   itBundled("browser/NodeTTY", {
     files: {
       "/entry.js": /* js */ `

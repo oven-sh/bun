@@ -11,7 +11,8 @@
 
 import { spawn } from "bun";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, isLinux, isWindows } from "harness";
+import { readdirSync } from "node:fs";
 
 describe("spawn stdin ReadableStream edge cases", () => {
   test("ReadableStream with exception in pull", async () => {
@@ -331,6 +332,182 @@ describe("spawn stdin ReadableStream edge cases", () => {
     }).toThrow();
   });
 
+  test("ReadableStream errored in start() throws its reason from spawn", () => {
+    const reason = new Error("boom");
+    const stream = new ReadableStream({
+      start(controller) {
+        controller.error(reason);
+      },
+    });
+
+    expect(() => {
+      spawn({
+        cmd: [bunExe(), "-e", "process.stdin.pipe(process.stdout)"],
+        stdin: stream,
+        env: bunEnv,
+      });
+    }).toThrow(reason);
+  });
+
+  test("ReadableStream with a non-byte chunk throws from spawn", () => {
+    const stream = new ReadableStream({
+      start(controller) {
+        controller.enqueue(new Uint8Array(2));
+        controller.enqueue(42);
+        controller.close();
+      },
+    });
+
+    expect(() => {
+      spawn({
+        cmd: [bunExe(), "-e", "process.stdin.pipe(process.stdout)"],
+        stdin: stream,
+        env: bunEnv,
+      });
+    }).toThrow("write() expects a string, ArrayBufferView, or ArrayBuffer");
+  });
+
+  test("a stdin stream that fails before spawn returns never reaches the unhandled rejection handler", async () => {
+    const script = `
+      const makers = {
+        locked() {
+          const s = new ReadableStream({ start(c) { c.enqueue(new Uint8Array(3)); c.close(); } });
+          s.getReader();
+          return s;
+        },
+        errored() {
+          return new ReadableStream({ start(c) { c.error(new Error("boom")); } });
+        },
+        badChunk() {
+          return new ReadableStream({ start(c) { c.enqueue(new Uint8Array(2)); c.enqueue(42); c.close(); } });
+        },
+      };
+      for (const [name, make] of Object.entries(makers)) {
+        try {
+          Bun.spawn({ cmd: [process.execPath, "-e", "process.stdin.resume()"], stdin: make(), stdout: "ignore", stderr: "ignore" });
+          console.log(name, "did not throw");
+        } catch (e) {
+          console.log(name, "caught", e.message.includes("locked") ? "locked" : e.message);
+        }
+      }
+    `;
+    await using proc = spawn({
+      cmd: [bunExe(), "-e", script],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout).toBe(
+      [
+        "locked caught locked",
+        "errored caught boom",
+        "badChunk caught write() expects a string, ArrayBufferView, or ArrayBuffer",
+        "",
+      ].join("\n"),
+    );
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+  });
+
+  // A locked stream is rejected before the child is forked (covered in
+  // spawn-stdin-readable-stream.test.ts). These fail inside the pump, after the fork.
+  const failingStdinStreams = {
+    "errored in start()": {
+      make() {
+        return new ReadableStream({
+          start(controller) {
+            controller.error(new Error("start boom"));
+          },
+        });
+      },
+      message: "start boom",
+    },
+    "non-byte chunk": {
+      make() {
+        return new ReadableStream({
+          start(controller) {
+            controller.enqueue(new Uint8Array(2));
+            controller.enqueue(42);
+            controller.close();
+          },
+        });
+      },
+      message: "write() expects a string, ArrayBufferView, or ArrayBuffer",
+    },
+    "direct stream whose pull throws": {
+      make() {
+        return new ReadableStream({
+          type: "direct",
+          pull() {
+            throw new Error("direct boom");
+          },
+        });
+      },
+      message: "direct boom",
+    },
+  };
+
+  test.skipIf(isWindows).each(Object.entries(failingStdinStreams))(
+    "a spawn that throws on its stdin stream (%s) kills and reaps the child",
+    async (_name, { make, message }) => {
+      let onExitCalls = 0;
+
+      expect(() => {
+        spawn({
+          cmd: ["sleep", "5"],
+          stdin: make(),
+          stdout: "ignore",
+          stderr: "ignore",
+          onExit() {
+            onExitCalls++;
+          },
+        });
+      }).toThrow(message);
+
+      const listChildren = () =>
+        Bun.spawnSync(["ps", "-ax", "-o", "pid=,ppid=,stat=,comm="])
+          .stdout.toString()
+          .split("\n")
+          .map(line => line.trim().split(/\s+/))
+          // Linux prints the basename, macOS the executable path.
+          .filter(([, ppid, , comm]) => ppid === String(process.pid) && (comm === "sleep" || comm?.endsWith("/sleep")));
+
+      const deadline = Date.now() + 2000;
+      let children = listChildren();
+      while (children.length > 0 && Date.now() < deadline) {
+        await Bun.sleep(20);
+        children = listChildren();
+      }
+      expect(children).toEqual([]);
+      expect(onExitCalls).toBe(0);
+    },
+  );
+
+  test.skipIf(!isLinux)("a spawn that throws on its stdin stream does not leak 'socket-fd' descriptors", async () => {
+    const countFds = () => readdirSync("/proc/self/fd").length;
+    const before = countFds();
+
+    for (let i = 0; i < 8; i++) {
+      expect(() => {
+        spawn({
+          cmd: ["sleep", "5"],
+          stdio: [failingStdinStreams["non-byte chunk"].make(), "ignore", "ignore", "socket-fd"],
+        });
+      }).toThrow("write() expects a string, ArrayBufferView, or ArrayBuffer");
+    }
+
+    // The parent-side socket closes when the unreachable Subprocess is collected after the child exits.
+    const deadline = Date.now() + 5000;
+    let after = countFds();
+    while (after > before && Date.now() < deadline) {
+      Bun.gc(true);
+      await Bun.sleep(20);
+      after = countFds();
+    }
+    expect(after).toBeLessThanOrEqual(before);
+  });
+
   test("ReadableStream with byte stream", async () => {
     const data = new Uint8Array(256);
     for (let i = 0; i < 256; i++) {
@@ -455,25 +632,27 @@ describe("spawn stdin ReadableStream edge cases", () => {
       { stdout: "pipe", stderr: "inherit" },
     ];
 
-    for (const config of configs) {
-      const stream = new ReadableStream({
-        async pull(controller) {
-          await Bun.sleep(0);
-          controller.enqueue("test input");
-          controller.close();
-        },
-      });
+    // Run the configs at once: three sequential debug-build children do not fit the per-test budget.
+    const results = await Promise.all(
+      configs.map(async config => {
+        const stream = new ReadableStream({
+          async pull(controller) {
+            await Bun.sleep(0);
+            controller.enqueue("test input");
+            controller.close();
+          },
+        });
 
-      const proc = spawn({
-        cmd: [bunExe(), "-e", "process.stdin.pipe(process.stdout)"],
-        stdin: stream,
-        ...config,
-        env: bunEnv,
-      });
+        const proc = spawn({
+          cmd: [bunExe(), "-e", "process.stdin.pipe(process.stdout)"],
+          stdin: stream,
+          ...config,
+          env: bunEnv,
+        });
 
-      const stdout = await proc.stdout.text();
-      expect(stdout).toBe("test input");
-      expect(await proc.exited).toBe(0);
-    }
+        return [await proc.stdout.text(), await proc.exited];
+      }),
+    );
+    expect(results).toEqual(configs.map(() => ["test input", 0]));
   });
 });

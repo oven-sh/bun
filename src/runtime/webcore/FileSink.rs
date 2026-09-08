@@ -1654,7 +1654,7 @@ impl FileSink {
         &mut self,
         stream: &mut ReadableStream,
         global_this: &JSGlobalObject,
-    ) -> JSValue {
+    ) -> JsResult<JSValue> {
         // SAFETY: `&mut self` carries write+dealloc provenance over the allocation.
         let _guard = unsafe { RefPtr::init_ref(std::ptr::from_mut::<FileSink>(self)) };
 
@@ -1680,7 +1680,7 @@ impl FileSink {
                         self.ref_();
                     }
                 }
-                return JSValue::UNDEFINED;
+                return Ok(JSValue::UNDEFINED);
             }
             readable_stream::NativeWireResult::EndedInline(err) => {
                 self.source.set(streams::SourceHandle::None);
@@ -1690,7 +1690,7 @@ impl FileSink {
                         let _ = self.end(None);
                     }
                 }
-                return JSValue::UNDEFINED;
+                return Ok(JSValue::UNDEFINED);
             }
             readable_stream::NativeWireResult::NotNative => {}
         }
@@ -1706,8 +1706,11 @@ impl FileSink {
         );
 
         if let Some(err) = promise_result.to_error() {
-            self.readable_stream.set(readable_stream::Strong::default());
-            return err;
+            // Same outcome as a pump that rejected before returning: the caller rethrows `err`.
+            let promise = bun_jsc::JSPromise::rejected_promise(global_this, err);
+            promise.set_handled();
+            self.handle_reject_stream(global_this, err)?;
+            return Ok(promise.to_js());
         }
 
         if !promise_result.is_empty_or_undefined_or_null() {
@@ -1742,16 +1745,19 @@ impl FileSink {
                         self.handle_resolve_stream();
                     }
                     bun_jsc::js_promise::Status::Rejected => {
+                        // Nothing else holds this promise; the caller rethrows its reason.
                         // These don't ref().
                         // SAFETY: `js_promise` is non-null (`as_any_promise`).
                         let result = unsafe { (*js_promise).result(global_this.vm()) };
-                        crate::dispatch::fold(self.handle_reject_stream(global_this, result));
+                        // SAFETY: same cell as above.
+                        unsafe { (*js_promise).set_handled() };
+                        self.handle_reject_stream(global_this, result)?;
                     }
                 }
             }
         }
 
-        promise_result
+        Ok(promise_result)
     }
 }
 

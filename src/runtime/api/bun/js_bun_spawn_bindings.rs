@@ -1475,12 +1475,6 @@ fn spawn_maybe_sync(
         )
     });
 
-    if promise_for_stream != JSValue::ZERO && !global_this.has_exception() {
-        if let Some(err) = promise_for_stream.to_error() {
-            let _ = global_this.throw_value(err);
-        }
-    }
-
     if global_this.has_exception() {
         let err = global_this.take_exception(JsError::Thrown);
         // Ensure we kill the process so we don't leave things in an unexpected state.
@@ -1735,6 +1729,30 @@ fn spawn_maybe_sync(
     }
 
     **should_close_memfd = false;
+
+    // The stdin pump already failed: throw its reason. The child is watched, so the kill is reaped.
+    if let Some(promise) = promise_for_stream.as_promise() {
+        // SAFETY: `as_promise` returned a live cell held by `promise_for_stream`.
+        let promise = unsafe { &mut *promise };
+        if promise.status() == jsc::js_promise::Status::Rejected {
+            debug_assert!(!is_sync);
+            let reason = promise.result(global_this.vm());
+            // The caller never receives this Subprocess, so none of its callbacks may run.
+            let _ = Subprocess::js::on_exit_callback_take_cached(out, global_this);
+            let _ = Subprocess::js::on_disconnect_callback_take_cached(out, global_this);
+            let _ = Subprocess::js::ipc_callback_take_cached(out, global_this);
+            if !subprocess.has_exited() {
+                // SAFETY: jsc_vm_ptr points to the live thread VM; `subprocess.process`
+                // is a `BackRef` (wraps `NonNull`), so its pointer is non-null.
+                unsafe {
+                    (*jsc_vm_ptr)
+                        .on_subprocess_spawn(NonNull::new_unchecked(subprocess.process.as_ptr()))
+                };
+            }
+            let _ = subprocess.try_kill(subprocess.kill_signal);
+            return Err(global_this.throw_value(reason));
+        }
+    }
 
     // Every `return Err` above is past; the Subprocess will be returned to
     // JS. Downgrade 'socket-fd' slots from OwnedFd to UnownedFd so

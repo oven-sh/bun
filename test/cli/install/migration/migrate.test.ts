@@ -1111,6 +1111,7 @@ describe("package-lock.json migration fixes", () => {
       expect(lock.packages.devdep[2]).toStrictEqual({
         dependencies: { devopt: "" },
         optionalDependencies: { "opt-and-dev": "" },
+        hasInstallScript: true,
       });
       expect(Object.keys(lock.packages).sort()).toStrictEqual(["devdep", "devopt", "opt-and-dev", "optdep"]);
       expect(await pmHash(dir)).toBe(before);

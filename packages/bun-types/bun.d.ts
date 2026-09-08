@@ -10204,7 +10204,7 @@ declare module "bun" {
 
     /**
      * ```
-     * INFO = { prod/dev/optional/peer dependencies, os, cpu, libc (TODO), bin, binDir }
+     * INFO = { prod/dev/optional/peer dependencies, os, cpu, libc (TODO), hasInstallScript, bin, binDir }
      *
      * // first index is resolution for each type of package
      * npm         -> [ "name@version", registry (TODO: remove if default), INFO, integrity]
@@ -10241,6 +10241,8 @@ declare module "bun" {
     os?: string | string[];
     cpu?: string | string[];
     bundled?: true;
+    /** The package has a `preinstall`, `install`, or `postinstall` script */
+    hasInstallScript?: true;
   };
 
   /** @see {@link BunLockFile.packages} */

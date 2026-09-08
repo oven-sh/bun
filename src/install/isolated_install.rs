@@ -1269,14 +1269,13 @@ pub(crate) fn install_isolated_packages(
                                 // (a later install without `--ignore-scripts`
                                 // would run the postinstall through the project
                                 // symlink and mutate the shared directory) *or*
-                                // on `meta.hasInstallScript()` (that flag is not
-                                // serialised in `bun.lock`, so it reads `false`
-                                // on every install after the first; a trusted
-                                // scripted package would flip from project-local
-                                // on the cold install to global on the warm one).
-                                // Over-excludes the rare "trusted but actually no
-                                // scripts" case in exchange for not needing a
-                                // lockfile-format change.
+                                // on `meta.hasInstallScript()` (a `bun.lock`
+                                // written before that flag was recorded, or a
+                                // yarn/pnpm migration, reads `false` for every
+                                // package; a trusted scripted package would flip
+                                // from project-local on the cold install to
+                                // global on the warm one). Over-excludes the rare
+                                // "trusted but actually no scripts" case.
                                 let dep_name = if dep_id != invalid_dependency_id {
                                     dependencies[dep_id as usize].name.slice(string_buf)
                                 } else {

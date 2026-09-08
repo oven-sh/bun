@@ -139,6 +139,67 @@ test.concurrent("ignore-scripts is read from npmrc", async () => {
   expect(await checkScripts()).toEqual([true, true]);
 });
 
+test.concurrent("blocked scripts are reported when installing from an existing bun.lock", async () => {
+  using ctx = await setupTest();
+  const { packageDir, packageJson, env } = ctx;
+
+  await writeFile(
+    packageJson,
+    JSON.stringify({
+      name: "foo",
+      version: "1.0.0",
+      dependencies: {
+        "uses-what-bin": "1.0.0",
+      },
+    }),
+  );
+
+  async function install() {
+    await using proc = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: packageDir,
+      stdout: "pipe",
+      stdin: "ignore",
+      stderr: "pipe",
+      env,
+    });
+    const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { out: out.replace(/\s*\[[0-9\.]+m?s\]$/m, "").split(/\r?\n/), err, exitCode };
+  }
+
+  const expected = [
+    expect.stringContaining("bun install v1."),
+    "",
+    expect.stringContaining("+ uses-what-bin@1.0.0"),
+    "",
+    "2 packages installed",
+    "",
+    "Blocked 1 postinstall. Run `bun pm untrusted` for details.",
+    "",
+  ];
+
+  // The first install resolves from the registry manifest and writes bun.lock.
+  let { out, err, exitCode } = await install();
+  expect(err).toContain("Saved lockfile");
+  expect(err).not.toContain("error:");
+  expect(out).toEqual(expected);
+  expect(await exists(join(packageDir, "node_modules", "uses-what-bin", "what-bin.txt"))).toBeFalse();
+  expect(exitCode).toBe(0);
+
+  expect((await file(join(packageDir, "bun.lock")).text()).replaceAll(/localhost:\d+/g, "localhost:1234"))
+    .toMatchInlineSnapshot();
+
+  // The second install loads every package from bun.lock. The blocked
+  // script must still be reported.
+  await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
+  ({ out, err, exitCode } = await install());
+  expect(err).not.toContain("Saved lockfile");
+  expect(err).not.toContain("error:");
+  expect(out).toEqual(expected);
+  expect(await exists(join(packageDir, "node_modules", "uses-what-bin", "what-bin.txt"))).toBeFalse();
+  expect(exitCode).toBe(0);
+});
+
 test.concurrent("trustedDependencies matches the resolved package name, not the dependency alias", async () => {
   using ctx = await setupTest();
   const { packageDir, packageJson, env } = ctx;

@@ -773,7 +773,7 @@ impl Stringifier {
                     }
                     .sort(&mut pkg_deps_sort_buf);
 
-                    // INFO = { prod/dev/optional/peer dependencies, os, cpu, libc (TODO), bin, binDir }
+                    // INFO = { prod/dev/optional/peer dependencies, os, cpu, libc (TODO), hasInstallScript, bin, binDir }
 
                     // first index is resolution for each type of package
                     // npm         -> [ "name@version", registry (TODO: remove if default), INFO, integrity]
@@ -1050,7 +1050,7 @@ impl Stringifier {
         Ok(())
     }
 
-    /// Writes a single line object. Contains dependencies, os, cpu, libc (soon), and bin
+    /// Writes a single line object. Contains dependencies, os, cpu, libc (soon), hasInstallScript, and bin
     /// { "devDependencies": { "one": "1.1.1", "two": "2.2.2" }, "os": "none" }
     fn write_package_info_object(
         writer: &mut Writer,
@@ -1192,6 +1192,15 @@ impl Stringifier {
             }
             writer.write_all(b" \"cpu\": ")?;
             Negatable::<Npm::Architecture>::to_json(meta.arch, &mut AsFmt::new(writer))?;
+        }
+
+        if meta.has_install_script() {
+            if any {
+                writer.write_byte(b',')?;
+            } else {
+                any = true;
+            }
+            writer.write_all(b" \"hasInstallScript\": true")?;
         }
 
         if bin.tag != BinTag::None {
@@ -2846,6 +2855,21 @@ pub(crate) fn parse_into_binary_lockfile(
                             // if (os_cpu_libc_obj.get("libc")) |libc| {
                             //     pkg.meta.libc = Negatable(Npm.Libc).fromJson(allocator, libc);
                             // }
+                            if let Some(has_install_script) =
+                                deps_os_cpu_libc_bin_bundle_obj.get(b"hasInstallScript")
+                            {
+                                let &JSON::E::JsonValue::Boolean(has_install_script) =
+                                    has_install_script
+                                else {
+                                    log.add_error(
+                                        Some(source),
+                                        item_loc(source, key_loc, deps_idx),
+                                        b"Expected a boolean",
+                                    );
+                                    return Err(ParseError::InvalidPackageInfo);
+                                };
+                                pkg.meta.set_has_install_script(has_install_script);
+                            }
                         }
                     }
                     ResolutionTag::Root => {

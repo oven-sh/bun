@@ -160,7 +160,7 @@ impl PackageManager {
 
                 // The cache is keyed only on name@version; `--force` must
                 // re-fetch and re-verify instead of trusting a hit.
-                let trust_cache_hit = !self.options.enable.force_install();
+                let trust_cache_hit = !self.options.force_refetch_cache();
 
                 let in_cache = trust_cache_hit
                     && if patch_hash.is_some() {

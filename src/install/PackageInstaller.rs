@@ -1580,7 +1580,7 @@ impl<'a> PackageInstaller<'a> {
             // `--force` re-fetches on the first pass only; the post-download
             // re-entry has needs_verify=false and links the fresh entry.
             let force_cache_refetch = needs_verify
-                && self.force_install
+                && self.manager().options.force_refetch_cache()
                 && self.manager().get_preinstall_state(package_id) != crate::PreinstallState::Done;
             if resolution.tag.can_enqueue_install_task()
                 && (force_cache_refetch

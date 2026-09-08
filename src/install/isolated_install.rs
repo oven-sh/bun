@@ -2371,7 +2371,7 @@ pub(crate) fn install_isolated_packages(
                     let missing_from_cache = match installer.manager().get_preinstall_state(pkg_id)
                     {
                         install::PreinstallState::Done => false,
-                        _ if installer.manager().options.enable.force_install() => {
+                        _ if installer.manager().options.force_refetch_cache() => {
                             // Drop the derived `_patch_hash=` entry so
                             // `apply_package_patch` re-derives from the fresh base.
                             if let Some(patch_hash) = patch_info.contents_hash() {

@@ -22,19 +22,22 @@ async function sha512(path: string) {
 type Serve = {
   url: string;
   tarballHits: number;
+  /** Swap the bytes served for the tarball; the advertised integrity stays pinned to the original. */
+  serveTarball: (path: string) => void;
   stop: () => void;
 };
 
 async function startRegistry(): Promise<Serve> {
   const integrity = await sha512(TARBALL);
   let tarballHits = 0;
+  let tarballPath = TARBALL;
   const server = Bun.serve({
     port: 0,
     async fetch(req) {
       const url = new URL(req.url);
       if (url.pathname.endsWith(".tgz")) {
         tarballHits++;
-        return new Response(file(TARBALL));
+        return new Response(file(tarballPath));
       }
       if (url.pathname === "/baz" || url.pathname === "/baz/") {
         return Response.json({
@@ -59,6 +62,9 @@ async function startRegistry(): Promise<Serve> {
     url: `http://localhost:${server.port}/`,
     get tarballHits() {
       return tarballHits;
+    },
+    serveTarball: (path: string) => {
+      tarballPath = path;
     },
     stop: () => server.stop(true),
   };
@@ -132,6 +138,34 @@ describe.concurrent("install extraction cache trust", () => {
       }
     });
   }
+
+  test("--force rejects a re-fetched tarball that no longer matches the lockfile integrity", async () => {
+    const registry = await startRegistry();
+    try {
+      using scratch = tempDir("cache-trust-scratch", {});
+      const cacheDir = join(String(scratch), "cache");
+      const { dir, env, dispose } = await makeProject(registry.url, cacheDir);
+      using _ = dispose;
+
+      const r1 = await runInstall(dir, env);
+      expect(r1.stderr).toContain("Saved lockfile");
+      expect(r1.exitCode).toBe(0);
+      expect(registry.tarballHits).toBe(1);
+
+      // Registry now serves different bytes under the same URL; bun.lock still
+      // pins the original sha512. --force must re-verify, not just re-download.
+      registry.serveTarball(join(import.meta.dir, "baz-0.0.5.tgz"));
+      await rm(join(dir, "node_modules"), { recursive: true, force: true });
+
+      const r2 = await runInstall(dir, env, ["--force"]);
+      expect(r2.stderr).toContain("Integrity check failed");
+      expect(registry.tarballHits).toBe(2);
+      expect(await file(join(dir, "node_modules", "baz", "package.json")).exists()).toBe(false);
+      expect(r2.exitCode).not.toBe(0);
+    } finally {
+      registry.stop();
+    }
+  });
 
   test("linked cache entry is not trusted", async () => {
     const registry = await startRegistry();

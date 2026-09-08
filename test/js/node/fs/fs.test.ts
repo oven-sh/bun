@@ -6,6 +6,7 @@ import {
   getMaxFD,
   isASAN,
   isBroken,
+  isCI,
   isDebug,
   isFreeBSD,
   isGlibc,
@@ -975,8 +976,9 @@ describe("copyFileSync", () => {
   });
 
   // clonefile(2) fails with EEXIST when the destination exists. Without
-  // COPYFILE_EXCL, copyFile must overwrite it anyway. A volume without clone
-  // support reports ENOTSUP or EXDEV. That is not the bug this test covers.
+  // COPYFILE_EXCL, copyFile must overwrite it anyway. A local volume without
+  // clone support reports ENOTSUP or EXDEV. That is not the bug this test
+  // covers. The CI runners use APFS, so the checks must run there.
   it.if(isMacOS)("COPYFILE_FICLONE_FORCE overwrites an existing destination", async () => {
     const tempdir = tmpdirTestMkdir();
     const src = join(tempdir, "src.bin");
@@ -998,7 +1000,7 @@ describe("copyFileSync", () => {
       try {
         await copy(src, dest, force);
       } catch (e: any) {
-        if (e.code === "ENOTSUP" || e.code === "EXDEV") continue;
+        if (!isCI && (e.code === "ENOTSUP" || e.code === "EXDEV")) continue;
         throw e;
       }
       expect(readFileSync(dest).equals(content)).toBe(true);

@@ -1604,14 +1604,14 @@ impl<'a> BundleOptions<'a> {
         b"react-refresh",
     ];
 
-    /// `process_env`, when given, is the map `process.env.*` defines are
-    /// inlined from (for `env.behavior` `load_all` / `prefix`) instead of
-    /// `loader_`'s map: `Bun.build` passes the caller's live `process.env`.
+    /// `env_map` is the environment `process.env.*` defines are inlined from
+    /// (for `env.behavior` `load_all` / `prefix`), and `node_env` the value of
+    /// `BUN_ENV` / `NODE_ENV` in it, if any.
     pub(crate) fn load_defines(
         &mut self,
         arena: &bun_alloc::Arena,
-        loader_: Option<&DotEnv::Loader>,
-        process_env: Option<&DotEnv::Map>,
+        env_map: &DotEnv::Map,
+        node_env: Option<&[u8]>,
     ) -> Result<(), crate::Error> {
         // Forwarding the env as an `Option<&Env>` parameter forced the
         // caller into an aliased-`&mut` UB
@@ -1626,22 +1626,12 @@ impl<'a> BundleOptions<'a> {
         if self.defines_loaded {
             return Ok(());
         }
-        let node_env: Option<&[u8]> = 'node_env: {
-            if let Some(env_) = loader_.and_then(|e| e.get_node_env()) {
-                break 'node_env Some(env_);
-            }
-
-            if self.is_test() {
-                break 'node_env Some(b"\"test\"".as_slice());
-            }
-
-            if self.production {
-                break 'node_env Some(b"\"production\"".as_slice());
-            }
-
-            Some(b"\"development\"".as_slice())
+        let node_env: &[u8] = match node_env {
+            Some(node_env) => node_env,
+            None if self.is_test() => b"\"test\"",
+            None if self.production => b"\"production\"",
+            None => b"\"development\"",
         };
-        let env_map = process_env.or(loader_.map(|loader| &loader.map));
         // reshaped for borrowck — node_env computed before passing self.log
         self.define = defines_from_transform_options(
             // No other `&mut Log` is live across this call (see `log_mut`
@@ -1649,9 +1639,9 @@ impl<'a> BundleOptions<'a> {
             self.log_mut(),
             self.transform_options.define.as_ref(),
             self.target,
-            env_map,
+            Some(env_map),
             Some(&self.env),
-            node_env,
+            Some(node_env),
             // `&self.drop` is `Box<[Box<[u8]>]>`; the callee wants `&[&[u8]]`,
             // so re-borrow per call (cold path: once per options build).
             &self.drop.iter().map(|s| s.as_ref()).collect::<Vec<_>>(),

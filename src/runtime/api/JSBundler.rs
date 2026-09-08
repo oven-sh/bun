@@ -104,15 +104,11 @@ pub mod js_bundler {
         Ok(this)
     }
 
-    /// Copy the own enumerable entries of `process.env` as it is now (only
-    /// those whose key starts with `prefix`, when given). The VM's env loader
-    /// map is not the same thing: it is the environment the process started
-    /// with, so a key the script deleted is still in it and a key the script
-    /// set is not.
-    fn process_env_snapshot(
-        global_this: &JSGlobalObject,
-        prefix: Option<&[u8]>,
-    ) -> JsResult<bun_dotenv::Map> {
+    /// Copy the own enumerable entries of `process.env` as it is now. The VM's
+    /// env loader map is not the same thing: it is the environment the process
+    /// started with, so a key the script deleted is still in it and a key the
+    /// script set is not.
+    fn process_env_snapshot(global_this: &JSGlobalObject) -> JsResult<bun_dotenv::Map> {
         let mut map = bun_dotenv::Map::init();
         let Some(process_env) = global_this.process_env()?.get_object() else {
             return Ok(map);
@@ -134,12 +130,8 @@ pub mod js_bundler {
             if value.is_undefined_or_null() || value.is_callable() {
                 continue;
             }
-            let key = key.to_utf8();
-            if prefix.is_some_and(|prefix| !key.starts_with(prefix)) {
-                continue;
-            }
             let value = value.to_bun_string(global_this)?;
-            map.put(&key, &value.to_utf8())?;
+            map.put(&key.to_utf8(), &value.to_utf8())?;
         }
 
         Ok(map)
@@ -192,8 +184,9 @@ pub mod js_bundler {
         pub(crate) throw_on_error: bool,
         pub(crate) env_behavior: api::DotEnvBehavior,
         pub(crate) env_prefix: OwnedString,
-        /// `process.env` as it was when `Bun.build` was called. `env: "inline"`
-        /// and `env: "PREFIX_*"` inline these values, not the environment the
+        /// `process.env` as it was when `Bun.build` was called, taken for
+        /// `env: "inline"` and `env: "PREFIX_*"`. Those inline these values (and
+        /// read `NODE_ENV` / `BUN_ENV` from them), not the environment the
         /// process started with.
         pub(crate) process_env: Option<bun_dotenv::Map>,
         pub(crate) compile: Option<CompileOptions>,
@@ -740,46 +733,39 @@ pub mod js_bundler {
 
             if let Some(env) = config.get(global_this, "env")? {
                 if !env.is_undefined() {
-                    if env == JSValue::NULL
+                    let behavior = if env == JSValue::NULL
                         || env == JSValue::FALSE
                         || (env.is_number() && env.as_number() == 0.0)
                     {
-                        this.env_behavior = api::DotEnvBehavior::Disable;
+                        api::DotEnvBehavior::Disable
                     } else if env == JSValue::TRUE || (env.is_number() && env.as_number() == 1.0) {
-                        this.env_behavior = api::DotEnvBehavior::LoadAll;
+                        api::DotEnvBehavior::LoadAll
                     } else if env.is_string() {
                         let slice = env.to_utf8(global_this)?;
                         match api::DotEnvBehavior::parse_str(slice.slice()) {
                             Ok((behavior, prefix)) => {
-                                this.env_behavior = behavior;
                                 if let Some(prefix) = prefix {
                                     this.env_prefix.append_slice_exact(prefix)?;
                                 }
+                                behavior
                             }
                             Err(()) => {
                                 return Err(global_this.throw_invalid_arguments(format_args!("env must be 'inline', 'disable', or a string with a '*' character")));
                             }
                         }
-                        drop(slice);
                     } else {
                         return Err(global_this.throw_invalid_arguments(format_args!(
                             "env must be 'inline', 'disable', or a string with a '*' character"
                         )));
+                    };
+                    this.env_behavior = behavior;
+                    if matches!(
+                        behavior,
+                        api::DotEnvBehavior::LoadAll | api::DotEnvBehavior::Prefix
+                    ) {
+                        this.process_env = Some(process_env_snapshot(global_this)?);
                     }
                 }
-            }
-
-            match this.env_behavior {
-                api::DotEnvBehavior::LoadAll => {
-                    this.process_env = Some(process_env_snapshot(global_this, None)?);
-                }
-                api::DotEnvBehavior::Prefix => {
-                    this.process_env = Some(process_env_snapshot(
-                        global_this,
-                        Some(this.env_prefix.list.as_slice()),
-                    )?);
-                }
-                _ => {}
             }
 
             if let Some(packages) = config.get_optional_enum_from_map(

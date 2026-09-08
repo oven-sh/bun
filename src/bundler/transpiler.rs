@@ -583,10 +583,11 @@ impl<'a> Transpiler<'a> {
         self.configure_defines_with_process_env(None)
     }
 
-    /// [`Self::configure_defines`], but `process.env.*` defines (for
-    /// `env.behavior` `load_all` / `prefix`) are inlined from `process_env`
-    /// instead of the env loader's map, which holds the environment the
-    /// process started with. `Bun.build` passes the caller's live `process.env`.
+    /// [`Self::configure_defines`], but with `process_env` given, the
+    /// `process.env.*` defines (for `env.behavior` `load_all` / `prefix`) and
+    /// `NODE_ENV` / `BUN_ENV` are read from that map instead of the env loader,
+    /// which holds the environment the process started with. `Bun.build`
+    /// passes the caller's live `process.env`.
     pub fn configure_defines_with_process_env(
         &mut self,
         process_env: Option<&dot_env::Map>,
@@ -603,12 +604,16 @@ impl<'a> Transpiler<'a> {
         self.run_env_loader(self.options.env.disable_default_env_files)?;
 
         let env_loader = self.env();
-        let mut is_production = env_loader.is_production();
+        let (env_map, node_env) = match process_env {
+            Some(env) => (env, env.get(b"BUN_ENV").or_else(|| env.get(b"NODE_ENV"))),
+            None => (&env_loader.map, env_loader.get_node_env()),
+        };
+        let mut is_production = node_env == Some(b"production");
 
         // `load_defines` injects a default `process.env.NODE_ENV`; sample the
         // explicit sources first so that default isn't mistaken for user intent
         // and `force_node_env` stays `Unspecified` (tsconfig jsx stays in control).
-        let had_explicit_node_env = env_loader.get_node_env().is_some()
+        let had_explicit_node_env = node_env.is_some()
             || self
                 .options
                 .transform_options
@@ -632,8 +637,7 @@ impl<'a> Transpiler<'a> {
         // Spec passed `&this.options.env` as a separate arg; `load_defines` now
         // reads `&self.env` internally so the disjoint borrow is resolved
         // inside the `&mut self` scope without `unsafe`.
-        self.options
-            .load_defines(self.arena, Some(env_loader), process_env)?;
+        self.options.load_defines(self.arena, env_map, node_env)?;
 
         let mut is_development = false;
         if had_explicit_node_env {

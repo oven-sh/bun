@@ -124,15 +124,16 @@ for (let backend of ["api", "cli"] as const) {
 describe("Bun.build env", () => {
   // `env: "inline"` and `env: "PREFIX_*"` inline process.env as it is when Bun.build() is called, not the environment
   // the process started with: a variable the script deleted is not inlined, one it changed is inlined with the new
-  // value, and one it added is inlined.
+  // value, and one it added is inlined. The implicit `process.env.NODE_ENV` define reads the same environment.
   test("inlines the live process.env", async () => {
     using dir = tempDir("bun-build-live-env", {
-      "entry.ts": `console.log([process.env.BUN_TEST_ENV_SECRET, process.env.BUN_TEST_ENV_PUB, process.env.BUN_TEST_ENV_LATE, process.env.OTHER_TEST_ENV_LATE].join(","));`,
+      "entry.ts": `console.log([process.env.BUN_TEST_ENV_SECRET, process.env.BUN_TEST_ENV_PUB, process.env.BUN_TEST_ENV_LATE, process.env.OTHER_TEST_ENV_LATE, process.env.NODE_ENV].join(","));`,
       "build.ts": `
         delete process.env.BUN_TEST_ENV_SECRET;
         process.env.BUN_TEST_ENV_PUB = "changed-at-runtime";
         process.env.BUN_TEST_ENV_LATE = "set-at-runtime";
         process.env.OTHER_TEST_ENV_LATE = "other-set-at-runtime";
+        process.env.NODE_ENV = "production";
         const results: Record<string, string | undefined> = {};
         for (const env of ["inline", "BUN_TEST_ENV_*"] as const) {
           const build = await Bun.build({ entrypoints: ["./entry.ts"], env });
@@ -155,8 +156,8 @@ describe("Bun.build env", () => {
 
     expect(stderr).toBe("");
     expect(JSON.parse(stdout)).toEqual({
-      inline: `console.log([process.env.BUN_TEST_ENV_SECRET, "changed-at-runtime", "set-at-runtime", "other-set-at-runtime"].join(","));`,
-      "BUN_TEST_ENV_*": `console.log([process.env.BUN_TEST_ENV_SECRET, "changed-at-runtime", "set-at-runtime", process.env.OTHER_TEST_ENV_LATE].join(","));`,
+      inline: `console.log([process.env.BUN_TEST_ENV_SECRET, "changed-at-runtime", "set-at-runtime", "other-set-at-runtime", "production"].join(","));`,
+      "BUN_TEST_ENV_*": `console.log([process.env.BUN_TEST_ENV_SECRET, "changed-at-runtime", "set-at-runtime", process.env.OTHER_TEST_ENV_LATE, "production"].join(","));`,
     });
     expect(exitCode).toBe(0);
   });

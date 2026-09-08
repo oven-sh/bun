@@ -1152,6 +1152,21 @@ describe("Bun.Transpiler", () => {
       exp("namespace x { export const y = 1; } await 1;", "var x;\n((x) => {\n  x.y = 1;\n})(x ||= {});\nawait 1");
     });
 
+    it("instantiates a namespace whose body has only an empty statement or a directive", () => {
+      const exp = ts.expectPrinted_;
+
+      // tsc treats any non-type statement as instantiating, including `;` and
+      // "use strict". Only a body with no statements (or only types) is erased.
+      exp("namespace x {}", "");
+      exp("namespace x { interface I {} type T = I; }", "");
+      exp("namespace x { ; }", "var x;\n((x) => {\n  ;\n})(x ||= {})");
+      exp('namespace x { "use strict"; }', "var x;\n((x) => {})(x ||= {})");
+      exp('namespace x { "use asm"; }', "var x;\n((x) => {\n  ;\n})(x ||= {})");
+      exp("namespace x { ; interface I {} }", "var x;\n((x) => {\n  ;\n})(x ||= {})");
+      exp("namespace x.y { ; }", "var x;\n((x) => {\n  let y;\n  ((y) => {\n    ;\n  })(y = x.y ||= {});\n})(x ||= {})");
+      exp("declare namespace x { ; }", "");
+    });
+
     it("doesn't crash with functions assigned to enum values", () => {
       const exp = ts.expectPrinted_;
 

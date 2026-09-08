@@ -457,13 +457,40 @@ describe.concurrent("AggregateError whose errors cannot be walked", () => {
   });
 });
 
-describe.concurrent("an error a bun builtin created with no user frame below it", () => {
+describe.concurrent("code frame of an error thrown inside a bun builtin module", () => {
+  // Frames in bun's bundled modules (`node:*`, `bun:*`, `internal:*`) have no
+  // file to excerpt: the code frame comes from the first user frame below them,
+  // and when there is none, no code frame is printed at all.
+  const codeFrameLines = text => text.split("\n").filter(line => /^\s*(?:\d+|-) \|/.test(line));
+
+  test("points at the caller when an internal: module throws", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const { Readable } = require("node:stream");
+         try {
+           Readable.from(42);
+         } catch (e) {
+           console.log(Bun.inspect(e));
+         }`,
+      ],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    // The throwing frame is in `internal:streams/from`; the excerpt is the caller's line.
+    expect(stdout).toContain("internal:streams/from");
+    expect(codeFrameLines(stdout).at(-1)).toContain("Readable.from(42)");
+    expect(stdout).toContain("ERR_INVALID_ARG_TYPE");
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+  });
+
   // `node:worker_threads` builds the value it gives `worker.on("error")` inside
   // the builtin, from a native event dispatch, so every frame of that error is
-  // in `node:worker_threads`. The printer hides such frames from the code
-  // frame, so there is no source to excerpt and none may be printed.
-  const codeFrameLines = text => text.split("\n").filter(line => /^\s*\d+ \|/.test(line));
-
+  // in `node:worker_threads`.
   test("prints no code frame when the worker entry point does not resolve", async () => {
     await using proc = Bun.spawn({
       cmd: [

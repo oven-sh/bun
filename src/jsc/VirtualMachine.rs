@@ -5804,13 +5804,15 @@ impl VirtualMachine {
             return;
         }
 
-        // Pick the top-most non-builtin frame for source preview.
+        // Pick the top-most non-builtin frame for source preview. When every
+        // frame is a builtin, `top` stays 0 and `top_frame_is_builtin` stays
+        // set: frame 0's source is then bun's bundled module text or a JSC
+        // builtin, and nothing below may excerpt it.
         let mut top: usize = 0;
         let mut top_frame_is_builtin = false;
         if self.hide_bun_stackframes {
             for (i, frame) in frames.iter().enumerate() {
-                if frame.source_url.starts_with_ascii(b"bun:")
-                    || frame.source_url.starts_with_ascii(b"node:")
+                if is_bun_module_url(&frame.source_url)
                     || frame.source_url.is_empty()
                     || frame.source_url.eq_ascii(b"native")
                     || frame.source_url.eq_ascii(b"unknown")
@@ -5831,14 +5833,6 @@ impl VirtualMachine {
         if frames[top].source_url.eq_ascii(b"[repl]") {
             enable_source_code_preview.set(false);
         }
-
-        // Every frame is one of bun's own modules, so `top` is still frame 0 and
-        // names a builtin. `collect_source_lines` reads that frame's JSC source
-        // provider, which holds the bundled builtin text, so the fallback below
-        // has to skip it the way the `code` fetch already does.
-        let top_frame_is_bun_module = self.hide_bun_stackframes
-            && (frames[top].source_url.starts_with_ascii(b"bun:")
-                || frames[top].source_url.starts_with_ascii(b"node:"));
 
         let already_remapped = frames[top].remapped;
         let resolved = {
@@ -5924,9 +5918,7 @@ impl VirtualMachine {
                 original_source.source_code.into_utf8()
             };
 
-            if enable_source_code_preview.get()
-                && !top_frame_is_bun_module
-                && code.slice().is_empty()
+            if enable_source_code_preview.get() && !top_frame_is_builtin && code.slice().is_empty()
             {
                 exception.collect_source_lines(error_instance, global);
             }
@@ -5971,7 +5963,7 @@ impl VirtualMachine {
             if !code.slice().is_empty() {
                 *source_code_slice = Some(code);
             }
-        } else if enable_source_code_preview.get() && !top_frame_is_bun_module {
+        } else if enable_source_code_preview.get() && !top_frame_is_builtin {
             exception.collect_source_lines(error_instance, global);
         }
 
@@ -6312,10 +6304,7 @@ impl VirtualMachine {
                 let mut top_frame: Option<&crate::ZigStackFrame> = frames.first();
                 if self.hide_bun_stackframes {
                     for frame in frames {
-                        if frame.position.is_invalid()
-                            || frame.source_url.starts_with_ascii(b"bun:")
-                            || frame.source_url.starts_with_ascii(b"node:")
-                        {
+                        if frame.position.is_invalid() || is_bun_module_url(&frame.source_url) {
                             continue;
                         }
                         top_frame = Some(frame);
@@ -6907,6 +6896,17 @@ impl VirtualMachine {
     pub(crate) fn bust_dir_cache(&mut self, path: &[u8]) -> bool {
         self.transpiler.resolver.bust_dir_cache(path)
     }
+}
+
+/// Whether a stack frame's source URL names one of bun's bundled JS modules
+/// (`node:fs`, `bun:sqlite`, `internal:streams/from`): the names
+/// `src/codegen/bundle-modules.ts` gives the sources in `src/js/`. Such a
+/// frame has no file on disk, and its JSC source is the bundled module text,
+/// so the error printer neither picks it for the code frame nor excerpts it.
+fn is_bun_module_url(url: &bun_core::String) -> bool {
+    url.starts_with_ascii(b"bun:")
+        || url.starts_with_ascii(b"node:")
+        || url.starts_with_ascii(b"internal:")
 }
 
 fn is_error_like(global_object: &JSGlobalObject, reason: JSValue) -> JsResult<bool> {

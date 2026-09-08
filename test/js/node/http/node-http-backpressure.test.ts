@@ -477,17 +477,26 @@ describe("backpressure", () => {
         ],
         { stdio: ["ignore", "pipe", "inherit"] },
       );
-      const exited = once(child, "exit");
-      const [portLine] = await once(child.stdout!, "data");
-      const client = pausedClient(
-        Number(portLine.toString()),
-        "GET / HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n",
-      );
-      client.resume();
-      const { bytes, ended } = await client.done;
-      expect(bytes.length - bytes.indexOf("\r\n\r\n") - 4).toBe(BODY);
-      expect(ended).toBe(true);
-      expect(await exited).toEqual([0, null]);
+      try {
+        const exited = once(child, "exit");
+        const [portLine] = await Promise.race([
+          once(child.stdout!, "data"),
+          exited.then(([code, signal]) => {
+            throw new Error(`server exited before listening: code ${code}, signal ${signal}`);
+          }),
+        ]);
+        const client = pausedClient(
+          Number(portLine.toString()),
+          "GET / HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n",
+        );
+        client.resume();
+        const { bytes, ended } = await client.done;
+        expect(bytes.length - bytes.indexOf("\r\n\r\n") - 4).toBe(BODY);
+        expect(ended).toBe(true);
+        expect(await exited).toEqual([0, null]);
+      } finally {
+        child.kill();
+      }
     });
   });
 

@@ -2510,9 +2510,7 @@ function advanceResponsePipeline(server, socket) {
   if (!queue || queue.length === 0) {
     return;
   }
-  // The connection's current response has ended but its bytes are still being
-  // written out: it owns the connection until then (even if user code already
-  // detached it from the socket), and its 'finish' advances the pipeline.
+  // The current response has ended but is still draining; its 'finish' advances the pipeline.
   const current = socket[kHandle]?.response;
   if (
     current &&
@@ -2899,8 +2897,7 @@ ServerResponse.prototype._hasBody = true;
 
 ServerResponse.prototype._ended = false;
 
-// Set by end() only when it left body bytes in the socket buffer: the end()
-// callback (or null when there is none) until the bytes are written out.
+// The end() callback (or null) while the body end() buffered is still draining.
 const kPendingFinish = Symbol("kPendingFinish");
 ServerResponse.prototype[kPendingFinish] = undefined;
 
@@ -3141,10 +3138,8 @@ ServerResponse.prototype.end = function (chunk, encoding, callback) {
     return true;
   }
   const sentState = NodeHTTPHeaderState.sent;
-  // Native end()/writeHeadAndEnd() return the body length, or `-(length + 1)`
-  // when end() had to leave bytes in the socket's buffer (slow reader). Those
-  // bytes are still this response's: like Node.js, 'finish' waits until they
-  // have been written out (finishDrainingResponse) instead of firing next tick.
+  // Native end() returns the body length, or -(length + 1) when part of the
+  // body is still draining to a slow reader; 'finish' then waits for it.
   let draining = false;
   if (headerState !== sentState) {
     {
@@ -3210,31 +3205,25 @@ ServerResponse.prototype.end = function (chunk, encoding, callback) {
   this.finished = true;
   process.nextTick(markResponseEndedNT, this);
   this.emit("prefinish");
+  this._callPendingCallbacks();
 
   if (draining) {
-    // The response stays attached to its socket and the request stays in
-    // flight until native reports the buffer written out through `onwritable`.
-    // A connection that dies first flushes the same events from emit("close").
+    // Native calls back once the body is out; a dying connection emits from emit("close").
     this[kPendingFinish] = callback ?? null;
     handle.onwritable = flushPendingFinish.bind(this);
   } else {
-    // Deferring the emit to nextTick is load-bearing: the dispatcher sets
-    // kDispatcherDetached only after a sync-finished handler returns, so an
-    // emit before that would detach and advance the pipeline twice.
+    // Next tick, not now: the dispatcher sets kDispatcherDetached only after a
+    // sync-finished handler returns, and 'finish' must observe it.
     process.nextTick(emitResponseFinished, this, callback);
   }
 
   return this;
 };
 
-// Emits 'finish', then runs the end() callback, then emits 'close' on the next
-// tick. 'close' is queued before the 'finish' listeners run, like Node.js's
-// resOnFinish (the first of them) does, so it stays ahead of whatever they
-// queue: the next pipelined response can finish inside this emit, and its
-// events come after this response's 'close'.
+// 'close' is queued before the 'finish' listeners run, as Node.js's resOnFinish
+// does, so a pipelined response finished by those listeners reports after it.
 function emitResponseFinished(res, callback) {
   process.nextTick(emitCloseNT, res);
-  res._callPendingCallbacks();
   res.emit("finish");
   if (callback) {
     try {
@@ -3628,9 +3617,7 @@ ServerResponse.prototype.destroy = function (err?: Error) {
 
 ServerResponse.prototype.emit = function (event) {
   if (event === "close") {
-    // The connection died before the bytes end() buffered could be written
-    // out. Node.js fails the last write, which still emits 'finish' and runs
-    // the end() callback, before 'close'.
+    // The connection died mid-drain: Node.js still emits 'finish' before 'close'.
     if (this[kPendingFinish] !== undefined) flushPendingFinish.$call(this);
     callCloseCallback(this);
   }

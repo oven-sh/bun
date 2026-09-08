@@ -1932,12 +1932,13 @@ impl<'a> PackageInstall<'a> {
             ZStr::from_buf(&rand_path_buf, written)
         };
 
-        // `destination_dir_subpath` is `<pkg>` or `@scope/<pkg>`. The installer
+        // `destination_dir_subpath` is `<pkg>` or `@scope/<pkg>` (the alias,
+        // verbatim, so the separator is `/` on Windows too). The installer
         // creates the `@scope` directory, so open it as a real directory first.
         // Otherwise a symlink there makes this rename pull a directory out of
         // the link target, and the task below deletes it.
         let subpath = self.destination_dir_subpath.as_bytes();
-        let slash = strings::index_of_char_usize(subpath, SEP);
+        let slash = strings::index_of_any(subpath, b"/\\");
         let scope_dir = match slash {
             Some(slash) => match destination_dir.make_open_real_dir(&subpath[..slash]) {
                 Ok(dir) => Some(dir),

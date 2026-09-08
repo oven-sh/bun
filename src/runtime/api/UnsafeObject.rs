@@ -167,6 +167,11 @@ fn link_napi_module(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSVa
                 "linkNapiModule: executable was not produced by `bun build --compile`"
             )));
         }
+        Err(LinkError::ExecutableTooLarge) => {
+            return Err(global.throw(format_args!(
+                "linkNapiModule: linked executable would exceed 4 GiB, the Mach-O file offset limit"
+            )));
+        }
         Err(LinkError::NoFreeSlot) => {
             return Err(global.throw(format_args!(
                 "linkNapiModule: all {} NAPI link slots are in use",

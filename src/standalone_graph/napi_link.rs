@@ -207,6 +207,7 @@ pub unsafe extern "C" fn Bun__tryLoadNapiLinkSlot(
 pub enum LinkError {
     UnsupportedExecutableFormat,
     NotStandaloneExecutable,
+    ExecutableTooLarge,
     NoFreeSlot,
     PathTooLong,
     SlotTableMissing,
@@ -263,6 +264,7 @@ pub fn link_into_macho(
         .write_section_with_header(&new_payload, graph_len)
         .map_err(|e| match e {
             MachoError::InvalidObject => LinkError::NotStandaloneExecutable,
+            MachoError::ExecutableTooLarge => LinkError::ExecutableTooLarge,
             _ => LinkError::UnsupportedExecutableFormat,
         })?;
 

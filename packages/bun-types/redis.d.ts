@@ -50,7 +50,7 @@ declare module "bun" {
            * @param cert The server's certificate
            * @returns An `Error` to refuse the connection, or `undefined` to accept it
            */
-          checkServerIdentity?: NonNullable<import("node:tls").ConnectionOptions["checkServerIdentity"]>;
+          checkServerIdentity?: NonNullable<import("node:tls").ConnectionOptions["checkServerIdentity"]> | undefined;
         });
 
     /**

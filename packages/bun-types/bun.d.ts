@@ -4650,7 +4650,7 @@ declare module "bun" {
     /**
      * Alias of {@link serverName} (the `node:tls` spelling). `serverName` wins if both are set.
      */
-    servername?: string;
+    servername?: string | undefined;
 
     /**
      * Sets `OPENSSL_RELEASE_BUFFERS` to 1.

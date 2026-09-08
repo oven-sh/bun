@@ -128,10 +128,13 @@ impl<'a> Entry<'a> {
     }
 
     pub(crate) fn is_git_dependency(version: &[u8]) -> bool {
+        if let Some(github_path) = version.strip_prefix(b"https://github.com/") {
+            // An archive download's `#` is yarn's tarball hash, not a commit.
+            return !dependency::is_github_tarball_path(Entry::without_hash_fragment(github_path));
+        }
         version.starts_with(b"git+")
             || version.starts_with(b"git://")
             || version.starts_with(b"github:")
-            || version.starts_with(b"https://github.com/")
     }
 
     pub(crate) fn is_npm_alias(version: &[u8]) -> bool {

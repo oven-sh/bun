@@ -11382,8 +11382,9 @@ it.each([
 });
 
 // BUN_INSTALL_PROGRESS=1 asks for the progress bar even when stderr is not a
-// terminal. It then prints plain lines: FORCE_COLOR forces colors, not the
-// cursor-left / erase-line redraw, which only a terminal takes.
+// terminal. On POSIX it then prints plain lines (on Windows a pipe gets no bar
+// at all): FORCE_COLOR forces colors, not the cursor-left / erase-line redraw,
+// which only a terminal takes.
 it("progress bar writes no cursor sequences into a piped stderr, even with FORCE_COLOR=1", async () => {
   using dir = tempDir("install-progress-pipe", {
     "package.json": JSON.stringify({ name: "root", dependencies: { dep: "file:./dep" } }),
@@ -11398,9 +11399,11 @@ it("progress bar writes no cursor sequences into a piped stderr, even with FORCE
     stderr: "pipe",
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  // The progress bar ran (its "Saving lockfile" node is refreshed explicitly)...
-  expect(stderr).toContain("Saving lockfile");
-  // ...with SGR colors at most, and no cursor movement or erase sequences.
-  expect(stdout + stderr).not.toMatch(/\x1b\[\d*[ABCDGHJK]/);
+  if (!isWindows) {
+    // The progress bar ran (its "Saving lockfile" node is refreshed explicitly)...
+    expect(stderr).toContain("Saving lockfile");
+  }
+  // ...with SGR colors (`ESC[...m`) at most: no other CSI sequence anywhere.
+  expect(stdout + stderr).not.toMatch(/\x1b\[(?!\d*(?:;\d+)*m)/);
   expect(exitCode).toBe(0);
 });

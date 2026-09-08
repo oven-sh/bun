@@ -131,8 +131,6 @@ function runInCwdSuccess({
   antipattern,
   command = ["present"],
   auto = false,
-  env = {},
-  elideCount,
 }: {
   cwd: string;
   pattern: string | string[];
@@ -140,15 +138,8 @@ function runInCwdSuccess({
   antipattern?: RegExp | RegExp[];
   command?: string[];
   auto?: boolean;
-  env?: Record<string, string | undefined>;
-  elideCount?: number;
 }) {
   const cmd = auto ? [bunExe()] : [bunExe(), "run"];
-
-  // Add elide-lines first if specified
-  if (elideCount !== undefined) {
-    cmd.push("--elide-lines", elideCount.toString());
-  }
 
   if (Array.isArray(pattern)) {
     for (const p of pattern) {
@@ -165,7 +156,7 @@ function runInCwdSuccess({
   const { exitCode, stdout, stderr } = spawnSync({
     cwd,
     cmd,
-    env: { ...bunEnv, ...env },
+    env: bunEnv,
     stdout: "pipe",
     stderr: "pipe",
   });

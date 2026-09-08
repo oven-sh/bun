@@ -701,34 +701,31 @@ describe("web worker", () => {
 
     // fs completions racing terminate(): whatever completes on the worker
     // after the request must release, not build script values under it.
-    test(
-      "terminate() while fs.readFile completions keep arriving",
-      async () => {
-        using dir = tempDir("worker-readfile-churn", { "f.bin": Buffer.alloc(65536, 7) });
-        await using proc = Bun.spawn({
-          cmd: [
-            bunExe(),
-            "-e",
-            `const src = \`import { readFile } from "node:fs";
+    test("terminate() while fs.readFile completions keep arriving", async () => {
+      using dir = tempDir("worker-readfile-churn", { "f.bin": Buffer.alloc(65536, 7) });
+      // Each round boots 4 workers; a debug build spends ~0.5s per round, so it runs fewer.
+      const rounds = isDebug ? 4 : 12;
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `const src = \`import { readFile } from "node:fs";
              let n = 0; (function pump(){ while (n < 16) { n++; readFile(\${JSON.stringify(process.argv[1])}, () => { n--; setImmediate(pump) }) } })();
              postMessage("busy")\`;
            const url = URL.createObjectURL(new Blob([src]));
-           for (let r = 0; r < 12; r++) await Promise.all(Array.from({ length: 4 }, (_, i) => new Promise(res => {
+           for (let r = 0; r < ${rounds}; r++) await Promise.all(Array.from({ length: 4 }, (_, i) => new Promise(res => {
              const w = new Worker(url); w.addEventListener("close", res); w.onmessage = () => setTimeout(() => w.terminate(), (r + i) % 10) })));
            console.log("PASS");`,
-            path.join(String(dir), "f.bin"),
-          ],
-          env: bunEnv,
-          stdout: "pipe",
-          stderr: "inherit",
-        });
-        const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
-        expect(stdout).toBe("PASS\n");
-        expect(exitCode).toBe(0);
-      },
-      // 48 worker boots: a debug build on a loaded machine needs more than the default 5s.
-      isDebug ? 30_000 : 5_000,
-    );
+          path.join(String(dir), "f.bin"),
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "inherit",
+      });
+      const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+      expect(stdout).toBe("PASS\n");
+      expect(exitCode).toBe(0);
+    });
   });
 });
 

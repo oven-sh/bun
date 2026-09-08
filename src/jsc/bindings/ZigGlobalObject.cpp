@@ -4374,22 +4374,21 @@ extern "C" void Zig__GlobalObject__forbidExecution(Zig::GlobalObject* globalObje
 
 // `bun test --isolate`: the file that just finished is being retired on a live VM. Its context's
 // workers, ports, channels and sockets are stopped before anything else of the file is swept.
-//
-// The realm is also fenced for the rest of the run: JSC drops every microtask queued against it from
-// here on (the drain checks `microtaskRunnability()` per task; WebCore sets the same state for a
-// document whose event loop group stopped). Native work the file left in flight (a thread-pool job,
-// a killed child's exit, a stream read) settles promises of this realm when it lands, and without
-// the fence their reactions would run the finished file's script while the next file's global is the
-// live one, so whatever they create (timers, servers, subprocesses, a chdir) would be adopted by it.
 extern "C" void Zig__GlobalObject__stopActiveDOMObjectsForTestIsolation(Zig::GlobalObject* globalObject)
 {
-    globalObject->setMicrotaskRunnability(JSC::QueuedTaskResult::Discard);
     Bun::retireWebViewsForTestIsolation(globalObject);
     globalObject->scriptExecutionContext()->prepareForDestruction();
 }
 
-// Whether `value` is an object from a realm retired by the `--isolate` swap above. Native callers
-// that would enter such a function skip it: the event that fired belongs to no live file.
+// `bun test --isolate`: the swap has torn the outgoing file down. From here on JSC drops every
+// microtask queued against its realm (as WebCore does for a stopped document), so work the file left
+// in flight cannot resume its script under the next file's global when it lands.
+extern "C" void Zig__GlobalObject__retireForTestIsolation(Zig::GlobalObject* globalObject)
+{
+    globalObject->setMicrotaskRunnability(JSC::QueuedTaskResult::Discard);
+}
+
+// Whether `value` is an object of a realm retired above; native code does not call into one.
 extern "C" bool Bun__JSValue__isFromRetiredTestIsolationRealm(JSC::EncodedJSValue encodedValue)
 {
     JSC::JSObject* object = JSC::JSValue::decode(encodedValue).getObject();

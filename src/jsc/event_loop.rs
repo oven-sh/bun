@@ -465,11 +465,8 @@ impl EventLoop {
     /// has forbidden script (Node's `can_call_into_js`), not with an exception
     /// already pending — a prior callback's microtasks can request termination
     /// (worker.terminate()), and entering JS then would trip executeCallImpl's
-    /// `assertNoException` — and not into a realm `bun test --isolate` has
-    /// retired: an event a finished file's object outlived it to deliver (a
-    /// killed child's exit, a socket's close) belongs to no live file, and its
-    /// handler would otherwise run, and create handles, under the next file's
-    /// global.
+    /// `assertNoException` — and not into a realm that `bun test --isolate`
+    /// retired (a killed child's late `onExit`).
     #[inline]
     fn may_enter_js(callback: JSValue, global_object: &JSGlobalObject) -> bool {
         !global_object.has_exception()

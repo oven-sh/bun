@@ -1811,12 +1811,14 @@ impl NodeHTTPResponse {
         scoped_log!(NodeHTTPResponse, "onDrain({})", offset);
 
         let flags = self.flags.get();
-        if flags.contains(Flags::SOCKET_CLOSED)
-            || flags.contains(Flags::REQUEST_HAS_COMPLETED)
-            || flags.contains(Flags::UPGRADED)
-        {
+        if flags.contains(Flags::SOCKET_CLOSED) || flags.contains(Flags::UPGRADED) {
             // return false means we don't have anything to drain
             return false;
+        }
+        if flags.contains(Flags::REQUEST_HAS_COMPLETED) {
+            // A registration this response left behind: disarm it so the socket can flush and close.
+            response.clear_on_writable();
+            return true;
         }
 
         if flags.contains(Flags::ENDED) {

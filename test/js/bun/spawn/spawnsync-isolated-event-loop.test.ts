@@ -143,20 +143,23 @@ describe.concurrent("spawnSync isolated event loop", () => {
     ["forced", { BUN_JSC_useConcurrentGC: "0", BUN_JSC_sweepSynchronously: "1" }],
     ["default", {}],
   ] as const) {
-    test.skipIf(isWindows)(`finalizers that run inside spawnSync release their polls on the main loop (${variant} GC timing)`, async () => {
-      await using proc = Bun.spawn({
-        cmd: [bunExe(), join(import.meta.dir, "spawnSync-finalizer-poll-fixture.js")],
-        env: { ...bunEnv, ...gcEnv },
-        stdin: "ignore",
-        stdout: "pipe",
-        // A pipe, so that the fixture's sinks on fd 2 take a poll.
-        stderr: "pipe",
-      });
+    test.skipIf(isWindows)(
+      `finalizers that run inside spawnSync release their polls on the main loop (${variant} GC timing)`,
+      async () => {
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), join(import.meta.dir, "spawnSync-finalizer-poll-fixture.js")],
+          env: { ...bunEnv, ...gcEnv },
+          stdin: "ignore",
+          stdout: "pipe",
+          // A pipe, so that the fixture's sinks on fd 2 take a poll.
+          stderr: "pipe",
+        });
 
-      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-      expect({ stdout, stderr, exitCode }).toEqual({ stdout: "OK\n", stderr: "", exitCode: 0 });
-    });
+        expect({ stdout, stderr, exitCode }).toEqual({ stdout: "OK\n", stderr: "", exitCode: 0 });
+      },
+    );
   }
 
   test("spawnSync under GC pressure with a worker and a server keeps the main loop balanced and exits", async () => {

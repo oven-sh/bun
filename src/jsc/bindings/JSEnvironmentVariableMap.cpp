@@ -112,6 +112,8 @@ static bool applyEnvDeleteSideEffects(JSGlobalObject*, const String& key);
 
 static bool applyEnvWriteSideEffects(JSGlobalObject* globalObject, const String& key, JSC::JSString* string)
 {
+    if (!isNativeBackedEnvKey(SharedEnvStore::normalizeKey(key)))
+        return false;
     auto view = string->view(globalObject);
     if (view->isNull())
         return false;

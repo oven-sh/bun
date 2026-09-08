@@ -1145,3 +1145,144 @@ describe("Response.clone() of a stream body shares chunk references between tee 
     expect(exitCode).toBe(0);
   });
 });
+
+// A `Bun.serve` handler that calls `req.clone()` and responds without reading
+// either body. The server stops feeding the request body once the response
+// ends, so it must also settle the native byte stream behind the tee: an
+// unsettled pull kept its promise GC-protected, and with it both tee branches,
+// the reader, and the controllers of every such request, forever.
+describe("Bun.serve: clone() of an incoming request whose body nobody reads", () => {
+  test("does not leak the teed body streams", async () => {
+    const requests = 100;
+    const script = `
+      const { heapStats } = require("bun:jsc");
+      const body = Buffer.alloc(256, "a").toString();
+      using server = Bun.serve({
+        port: 0,
+        routes: {
+          // BunRequest has its own native clone entry point.
+          "/bun-request": req => {
+            req.clone();
+            return new Response("k");
+          },
+        },
+        fetch(req) {
+          // Tee through the stream that the body getter already materialized.
+          if (req.url.endsWith("/observed")) req.body;
+          req.clone();
+          return new Response("k");
+        },
+      });
+      const paths = ["/plain", "/observed", "/bun-request"];
+      const hit = async path => {
+        const res = await fetch(new URL(path, server.url), { method: "POST", body });
+        if ((await res.text()) !== "k") throw new Error("bad response for " + path);
+      };
+      const counts = () => {
+        Bun.gc(true);
+        Bun.gc(true);
+        const stats = heapStats();
+        return {
+          ReadableStream: stats.objectTypeCounts.ReadableStream ?? 0,
+          StreamTeeState: stats.objectTypeCounts.StreamTeeState ?? 0,
+          protectedPromise: stats.protectedObjectTypeCounts.Promise ?? 0,
+        };
+      };
+      for (const path of paths) await hit(path);
+      const before = counts();
+      for (const path of paths) for (let i = 0; i < ${requests}; i++) await hit(path);
+      const after = counts();
+      const delta = {};
+      for (const key in before) delta[key] = after[key] - before[key];
+      console.log(JSON.stringify(delta));
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    if (exitCode !== 0 || !stdout.startsWith("{")) {
+      throw new Error(`fixture failed (exit code ${exitCode}):\n${stderr}\n${stdout}`);
+    }
+    // Leaking retained 3 ReadableStream + 1 StreamTeeState + 1 protected Promise
+    // per request (x 3 paths x `requests`); a settled tee is collectable at once.
+    const delta = JSON.parse(stdout);
+    expect(delta.ReadableStream).toBeWithin(-10, 10);
+    expect(delta.StreamTeeState).toBeWithin(-4, 4);
+    expect(delta.protectedPromise).toBeWithin(-4, 4);
+  });
+
+  // The two ways the server stops feeding a body that has not arrived: the
+  // handler responds first, or the client goes away first. Either must reject
+  // a read parked on the clone's branch instead of leaving it pending forever.
+  async function serveCloneReader(park: boolean) {
+    let state = "handler not reached";
+    const server = Bun.serve({
+      hostname: "127.0.0.1",
+      port: 0,
+      fetch(req) {
+        if (new URL(req.url).pathname === "/state") return new Response(state);
+        state = "pending";
+        req
+          .clone()
+          .text()
+          .then(
+            text => (state = `resolved: ${JSON.stringify(text)}`),
+            e => (state = `rejected: ${e?.name}: ${e?.message}`),
+          );
+        return park ? new Promise<Response>(() => {}) : new Response("k");
+      },
+    });
+    const readState = async () => (await fetch(new URL("/state", server.url))).text();
+    // Announce a body but never send it.
+    const received = Promise.withResolvers<string>();
+    let data = "";
+    const socket = await Bun.connect({
+      hostname: "127.0.0.1",
+      port: server.port,
+      socket: {
+        data(_socket, chunk) {
+          data += chunk.toString();
+          const bodyAt = data.indexOf("\r\n\r\n");
+          if (bodyAt !== -1 && data.length > bodyAt + 4) received.resolve(data);
+        },
+        close() {
+          // The abort case ends the socket itself and never reads `response`.
+          received.resolve(data);
+        },
+        error(_socket, err) {
+          received.reject(err);
+        },
+      },
+    });
+    socket.write("POST /upload HTTP/1.1\r\nHost: example.com\r\nContent-Type: text/plain\r\nContent-Length: 5\r\n\r\n");
+    return { server, socket, response: received.promise, readState };
+  }
+
+  test("a read started on the clone rejects once the response ends ahead of the body", async () => {
+    const { server, socket, response, readState } = await serveCloneReader(false);
+    await using _server = server;
+    using _socket = socket;
+    expect(await response).toMatch(/^HTTP\/1\.1 200 OK\r\n[\s\S]*\r\n\r\nk$/);
+    // The server settled the stream before it returned to the event loop, so
+    // the very next request already observes the rejection.
+    expect(await readState()).toBe("rejected: AbortError: The connection was closed.");
+  });
+
+  test("a read started on the clone rejects when the client disconnects before sending the body", async () => {
+    const { server, socket, readState } = await serveCloneReader(true);
+    await using _server = server;
+    using _socket = socket;
+    // The handler is parked; wait until it has run, then drop the connection.
+    let state = await readState();
+    for (let i = 0; i < 200 && state === "handler not reached"; i++) state = await readState();
+    expect(state).toBe("pending");
+    socket.end();
+    // The abort is processed on the server's next loop turn; poll with a bound
+    // instead of sleeping. Unfixed builds never leave "pending".
+    for (let i = 0; i < 200 && state === "pending"; i++) state = await readState();
+    expect(state).toBe("rejected: AbortError: The connection was closed.");
+  });
+});

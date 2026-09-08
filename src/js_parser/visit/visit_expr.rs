@@ -1354,16 +1354,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // while iterating without laundering.
         let defines = p.define;
         if let Some(parts) = defines.dots_for(e_.name.slice()) {
-            // An expression like `globalThis.Math.PI` can match both the built-in
-            // valueless `["Math","PI"]` and a user `--define:globalThis.Math.PI`.
-            // Stopping on the first would shadow the user's value, and stopping on
-            // the first *valued* hit would make the result depend on hash iteration
-            // order when two valued defines both match (e.g. `--define:X.Y=a` and
-            // `--define:globalThis.X.Y=b` for a `globalThis.X.Y` expression). Scan
-            // all matches, accumulate side-effect flags, and pick the longest
-            // (most specific) match independently for substitution and the method-call
-            // drop flag — either can be more specific than the other depending on
-            // how the user wrote their `--define` and `--drop` CLI flags.
+            // `globalThis.X.Y` matches both `X.Y` and `globalThis.X.Y` defines, so
+            // one expression can hit several entries. The longest `parts` wins.
             let mut best_value: Option<&crate::DefineData> = None;
             let mut best_value_len: usize = 0;
             let mut best_drop_len: usize = 0;
@@ -1388,10 +1380,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     best_drop_len = define.parts.len();
                 }
 
-                // Copy the side-effect flags over in case this expression is unused.
-                // Skip this for optional chain expressions — `a?.b` has observable
-                // short-circuit semantics (checks whether `a` is nullish), so we
-                // can't treat `Symbol?.for(...)` as unconditionally pure.
+                // `a?.b` short-circuits observably, so `Symbol?.for(...)` is not pure.
                 if e_.optional_chain.is_none() {
                     if define.data.can_be_removed_if_unused() {
                         e_.can_be_removed_if_unused = true;
@@ -1406,9 +1395,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 }
             }
 
-            // Drop flag wins only when strictly more specific than the valued
-            // substitution; setting parser state and falling through so the enclosing
-            // call is replaced with undefined. Otherwise the substitution wins.
             if best_drop_len > best_value_len {
                 p.method_call_must_be_replaced_with_undefined = true;
             } else if let Some(data) = best_value {

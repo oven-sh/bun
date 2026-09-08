@@ -241,7 +241,8 @@ describe.concurrent("bunshell cp -R onto a link", () => {
 
     const result = await runCp(root, "cp -R src dest");
 
-    expect(result.stderr).toStartWith("cp: File exists: ");
+    // EEXIST; bun spells it "File or folder exists" on macOS.
+    expect(result.stderr).toMatch(/^cp: File( or folder)? exists: /);
     expect(result.stderr.trimEnd()).toEndWith(p("dest/src/a"));
     expect(result.exitCode).toBe(1);
     expect(existsSync(join(root, "missing"))).toBe(false);

@@ -26,9 +26,7 @@ export const InvalidThisBehavior = {
    */
   NoOp: 1,
   /**
-   * Default for `async: true` methods. Returns a promise rejected with the same `TypeError` that
-   * {@link InvalidThisBehavior.Throw} would throw, so the method never throws synchronously
-   * (WebIDL: an operation that returns a promise rejects instead of throwing).
+   * Default for `async: true` methods. Returns a promise rejected with the `TypeError` (WebIDL).
    */
   RejectPromise: 2,
 } as const;
@@ -50,9 +48,8 @@ export type Field =
       fn: string;
 
       /**
-       * The method returns a `Promise`. Types it as `Promise<unknown>` in the TypeScript definition
-       * and makes {@link InvalidThisBehavior.RejectPromise} the default `invalidThisBehavior`, so a
-       * call with the wrong `this` rejects instead of throwing synchronously.
+       * The method returns a `Promise`: typed `Promise<unknown>` in the `.d.ts`, and
+       * `invalidThisBehavior` defaults to {@link InvalidThisBehavior.RejectPromise}.
        */
       async?: boolean;
       /**

@@ -738,18 +738,14 @@ static bool isModuleEvaluating(JSC::AbstractModuleRecord* record)
     return cyclic && cyclic->status() == JSC::CyclicModuleRecord::Status::Evaluating;
 }
 
-// Once a cyclic record has left Status::New its LoadRequestedModules has
-// completed, so [[LoadedModules]] names every dependency transitively.
+// Past Status::New, LoadRequestedModules has completed: [[LoadedModules]] is complete, transitively.
 static bool isModuleGraphLoaded(JSC::AbstractModuleRecord* record)
 {
     auto* cyclic = dynamicDowncast<JSC::CyclicModuleRecord>(record);
     return cyclic && cyclic->status() != JSC::CyclicModuleRecord::Status::New;
 }
 
-// The first record in `root`'s loaded graph whose own body uses top-level
-// await, or null. This is the static [[HasTLA]] walk Node performs
-// (v8::Module::IsGraphAsync) before it lets require() evaluate an ES module,
-// and again when require() meets a graph that import() already evaluated.
+// Node's check before require(esm) may evaluate (v8::Module::IsGraphAsync): a [[HasTLA]] record anywhere in the loaded graph.
 static JSC::AbstractModuleRecord* findTopLevelAwaitInGraph(JSC::AbstractModuleRecord* root)
 {
     WTF::UncheckedKeyHashSet<JSC::AbstractModuleRecord*> visited;
@@ -839,9 +835,7 @@ JSC_DEFINE_HOST_FUNCTION(functionEsmLoadSync, (JSC::JSGlobalObject * lexicalGlob
     auto keyString = keyValue.toWTFString(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
     auto key = JSC::Identifier::fromString(vm, keyString);
-    // The filename of the CommonJS module whose require() this is. Only used
-    // for the "From" line of ERR_REQUIRE_ASYNC_MODULE, as in Node.
-    WTF::String parentFilename;
+    WTF::String parentFilename; // the requiring module, for the error message only
     if (JSValue parentValue = callFrame->argument(1); parentValue.isString()) {
         parentFilename = asString(parentValue)->value(globalObject);
         RETURN_IF_EXCEPTION(scope, {});
@@ -852,9 +846,7 @@ JSC_DEFINE_HOST_FUNCTION(functionEsmLoadSync, (JSC::JSGlobalObject * lexicalGlob
     if (auto* entry = loader->registryEntry(key)) {
         entryExistedBefore = true;
         auto* record = entry->record();
-        // Checked before the evaluated / evaluating fast paths: Node rejects
-        // require() of a top-level-await graph even after import() has fully
-        // evaluated it, so the answer does not depend on timing.
+        // First, so that a graph import() has already evaluated is rejected too, as in Node.
         if (isModuleGraphLoaded(record)) {
             if (auto* asyncRecord = findTopLevelAwaitInGraph(record))
                 return throwRequireAsyncModule(globalObject, scope, keyString, parentFilename, asyncRecord);
@@ -864,18 +856,12 @@ JSC_DEFINE_HOST_FUNCTION(functionEsmLoadSync, (JSC::JSGlobalObject * lexicalGlob
             RETURN_IF_EXCEPTION(scope, {});
             return JSValue::encode(ns);
         }
-        // Any other Evaluating record must not reach loadModule: Link() and
-        // Evaluate() reject that status.
+        // Any other Evaluating record must not reach loadModule: Link() and Evaluate() reject that status.
         if (isModuleEvaluating(record))
             return throwVMTypeError(globalObject, scope, makeString("require() async module \""_s, keyString, "\" is unsupported. use \"await import()\" instead."_s));
     }
 
-    // Load the graph (fetch, parse, LoadRequestedModules) without evaluating
-    // anything, so that top-level await anywhere in it is rejected before a
-    // single module body has run. The loader's internal reactions are diverted
-    // to a private queue and drained inline; Bun fetches synchronously while a
-    // queue is installed, so this completes here unless a fetch is genuinely
-    // asynchronous.
+    // Load the whole graph without evaluating it, so that top-level await is rejected before any module body runs.
     JSPromise* loadPromise;
     {
         JSC::VM::SynchronousModuleQueue queue;
@@ -903,11 +889,8 @@ JSC_DEFINE_HOST_FUNCTION(functionEsmLoadSync, (JSC::JSGlobalObject * lexicalGlob
     }
     case JSPromise::Status::Pending: {
         loadPromise->markAsHandled();
-        // A fetch in this graph did not complete synchronously: a plugin with
-        // an asynchronous onLoad, or a load that an outer import() still has
-        // in flight. Only drop the entry this call created; one that existed
-        // before belongs to that outer load, and removing it would make the
-        // module evaluate a second time once the outer load completes.
+        // A fetch is genuinely asynchronous (a plugin's async onLoad, or an outer import() still fetching).
+        // Keep an entry that outer load owns, or the module would evaluate twice once that load completes.
         if (!entryExistedBefore) {
             WTF::Locker locker { loader->cellLock() };
             loader->removeEntry(key);
@@ -916,8 +899,7 @@ JSC_DEFINE_HOST_FUNCTION(functionEsmLoadSync, (JSC::JSGlobalObject * lexicalGlob
     }
     }
 
-    // Link and evaluate. The graph is loaded and has no top-level await, so
-    // this settles synchronously except for the evaluation-cycle cases below.
+    // Link and evaluate. With the graph loaded and free of top-level await this settles synchronously.
     JSPromise* promise = loader->loadModuleSync(globalObject, key, nullptr, nullptr);
     RETURN_IF_EXCEPTION(scope, {});
 
@@ -932,12 +914,9 @@ JSC_DEFINE_HOST_FUNCTION(functionEsmLoadSync, (JSC::JSGlobalObject * lexicalGlob
     }
     case JSPromise::Status::Pending: {
         promise->markAsHandled();
-        // The promise stays Pending when this module shares an SCC with an
-        // outer module that is still Evaluating (e.g. ESM entry → CJS shim →
-        // require(esm) → imports something the entry already loaded). For a
-        // record whose status is exactly Evaluating, the body already ran
-        // synchronously; only the status flip waits on the SCC root. Treat
-        // that as success — the namespace is fully populated.
+        // Still Pending: this module shares an SCC with an outer module that is mid-evaluation (ESM entry →
+        // CJS shim → require(esm) → imports something the entry already loaded). Its body already ran; only
+        // the status flip waits on the SCC root, so the namespace is complete.
         if (auto* entry = loader->registryEntry(key)) {
             auto* record = entry->record();
             if (isModuleEvaluatingSync(record))

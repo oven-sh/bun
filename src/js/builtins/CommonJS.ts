@@ -172,14 +172,8 @@ export function internalRequire(id: string, parent: JSCommonJSModule) {
 
 $visibility = "Private";
 export function loadEsmIntoCjs(resolvedSpecifier: string, parentFilename?: string) {
-  // The JSC module loader pipeline is now pure C++. $esmLoadSync sets a VM
-  // flag that makes the loader's internal promise reactions run immediately
-  // (instead of queueing microtasks) whenever the upstream promise is already
-  // settled. Because Bun resolves and reads source code synchronously, the
-  // entire fetch → parse → link → evaluate chain completes within this call.
-  // A graph that contains top-level await is rejected with
-  // ERR_REQUIRE_ASYNC_MODULE after it is loaded and before any of it runs;
-  // `parentFilename` only feeds that error's message.
+  // Runs JSC's loader synchronously (fetch → parse → link → evaluate) in C++. A graph with
+  // top-level await throws ERR_REQUIRE_ASYNC_MODULE before any of it runs.
   return $esmLoadSync(resolvedSpecifier, parentFilename);
 }
 

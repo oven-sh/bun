@@ -1,4 +1,6 @@
-use bun_collections::array_hash_map::{self, ArrayHashContext, ArrayHashMap, Iter};
+use bun_collections::array_hash_map::{
+    self, ArrayHashAdapter, ArrayHashContext, ArrayHashMap, Iter,
+};
 
 use crate::shell::EnvStr;
 
@@ -15,34 +17,53 @@ type EnvMapInner = ArrayHashMap<EnvStr, EnvStr, EnvMapContext>;
 #[derive(Default)]
 struct EnvMapContext;
 
-impl ArrayHashContext<EnvStr> for EnvMapContext {
-    fn hash(&self, s: &EnvStr) -> u32 {
+impl EnvMapContext {
+    #[inline]
+    fn hash_bytes(s: &[u8]) -> u32 {
         #[cfg(windows)]
         {
             return <array_hash_map::CaseInsensitiveAsciiStringContext as ArrayHashContext<[u8]>>::hash(
                 &array_hash_map::CaseInsensitiveAsciiStringContext::default(),
-                s.slice(),
+                s,
             );
         }
         #[cfg(not(windows))]
         {
-            array_hash_map::hash_string(s.slice())
+            array_hash_map::hash_string(s)
         }
     }
 
-    fn eql(&self, a: &EnvStr, b: &EnvStr, _b_index: usize) -> bool {
+    #[inline]
+    fn eql_bytes(a: &[u8], b: &[u8]) -> bool {
         #[cfg(windows)]
         {
             // Must be length-checked: "PATH" must NOT match "PATHEXT".
-            return bun_core::strings::eql_case_insensitive_asciii_check_length(
-                a.slice(),
-                b.slice(),
-            );
+            return bun_core::strings::eql_case_insensitive_asciii_check_length(a, b);
         }
         #[cfg(not(windows))]
         {
-            a.slice() == b.slice()
+            a == b
         }
+    }
+}
+
+impl ArrayHashContext<EnvStr> for EnvMapContext {
+    fn hash(&self, s: &EnvStr) -> u32 {
+        Self::hash_bytes(s.slice())
+    }
+
+    fn eql(&self, a: &EnvStr, b: &EnvStr, _b_index: usize) -> bool {
+        Self::eql_bytes(a.slice(), b.slice())
+    }
+}
+
+impl ArrayHashAdapter<[u8], EnvStr> for EnvMapContext {
+    fn hash(&self, key: &[u8]) -> u32 {
+        Self::hash_bytes(key)
+    }
+
+    fn eql(&self, a: &[u8], b: &EnvStr, _b_index: usize) -> bool {
+        Self::eql_bytes(a, b.slice())
     }
 }
 
@@ -71,16 +92,8 @@ impl EnvMap {
         }
     }
 
-    /// NOTE: This will `.ref()` value, so you should `defer value.deref()` it
-    /// before handing it to this function!!!
     pub(crate) fn insert(&mut self, key: EnvStr, val: EnvStr) {
         let result = self.map.get_or_put(key).expect("OOM");
-        if !result.found_existing {
-            key.ref_();
-        } else {
-            result.value_ptr.deref();
-        }
-        val.ref_();
         *result.value_ptr = val;
     }
 
@@ -96,39 +109,14 @@ impl EnvMap {
         self.map.ensure_total_capacity(new_capacity).expect("OOM");
     }
 
-    /// NOTE: Make sure you deref the string when done!
-    pub fn get(&self, key: EnvStr) -> Option<EnvStr> {
-        let val = *self.map.get(&key)?;
-        val.ref_();
-        Some(val)
+    pub fn get(&self, key: &[u8]) -> Option<&EnvStr> {
+        let i = self.map.get_index_adapted(key, &EnvMapContext)?;
+        Some(&self.map.values()[i])
     }
 
     pub(crate) fn clone(&self) -> EnvMap {
-        let new = EnvMap {
+        EnvMap {
             map: self.map.clone().expect("OOM"),
-        };
-        new.ref_strings();
-        new
-    }
-
-    fn ref_strings(&self) {
-        for (key, value) in self.map.keys().iter().zip(self.map.values()) {
-            key.ref_();
-            value.ref_();
         }
-    }
-
-    fn deref_strings(&self) {
-        for (key, value) in self.map.keys().iter().zip(self.map.values()) {
-            key.deref();
-            value.deref();
-        }
-    }
-}
-
-impl Drop for EnvMap {
-    fn drop(&mut self) {
-        self.deref_strings();
-        // map storage freed by its own Drop
     }
 }

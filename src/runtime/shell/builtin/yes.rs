@@ -5,7 +5,7 @@ use crate::shell::io_writer::{ChildPtr, WriterTag};
 use crate::shell::states::cmd::Exec;
 use crate::shell::yield_::Yield;
 
-use bun_event_loop::{EventLoopTask, TaskTag, Taskable, task_tag};
+use bun_event_loop::AnyTaskWithExtraContext::{AnyTaskWithExtraContext, BoxedMiniTaskRunner};
 
 #[derive(Clone, Copy, PartialEq, Eq, Default)]
 pub enum State {
@@ -23,8 +23,9 @@ pub struct Yes {
     /// out to ~BUFSIZ.
     pub(crate) buffer: Vec<u8>,
     pub(crate) buffer_used: usize,
-    /// Populated in `start()`.
-    pub task: Option<YesTask>,
+    /// The bounce payload: created in `start()`, out on the event loop between
+    /// `write_no_io_loop` and `YesTask::run`.
+    pub task: Option<Box<YesTask>>,
 }
 
 impl Yes {
@@ -68,12 +69,12 @@ impl Yes {
             let mut me = Self::state_mut(interp, cmd);
             me.buffer = buf;
             me.buffer_used = filled;
-            me.task = Some(YesTask {
+            me.task = Some(Box::new(YesTask {
                 interp: bun_ptr::ParentRef::new(interp),
                 cmd,
                 evtloop,
-                concurrent_task: EventLoopTask::from_event_loop(evtloop),
-            });
+                concurrent_task: AnyTaskWithExtraContext::default(),
+            }));
         }
 
         let stdout_needs_io = Builtin::of(interp, cmd).stdout.needs_io();
@@ -118,16 +119,13 @@ impl Yes {
             return Self::write_failing_error(interp, cmd, &buf, 1);
         }
         // Bounce back via the event loop so we don't block the main thread.
-        let task: *mut YesTask = Self::state_mut(interp, cmd)
+        // `enqueue` ticks the event loop and may re-enter shell dispatch — no
+        // borrow of `interp` state is held across it.
+        let task = Self::state_mut(interp, cmd)
             .task
-            .as_mut()
+            .take()
             .expect("YesTask set in start()");
-        // SAFETY: `task` was set in `start()`; `Yes` lives in a `Box` inside
-        // the interpreter arena, so the address is stable across the enqueue
-        // and the later main-thread callback. `enqueue` ticks the event loop
-        // and may re-enter shell dispatch — we hold no `&mut` derived from
-        // `interp` across the call.
-        unsafe { YesTask::enqueue(task) };
+        YesTask::enqueue(task);
         Yield::suspended()
     }
 
@@ -170,8 +168,8 @@ impl Yes {
         Self::enqueue_chunk(interp, cmd, OutputNeedsIOSafeGuard::OutputNeedsIo)
     }
 
-    /// Split-borrow `&mut Builtin` into `(&mut stdout, &mut Yes)`; the fields
-    /// are disjoint so this is a sound reborrow without `unsafe`.
+    /// Split-borrow `&mut Builtin` into `(&mut stdout, &mut Yes)` (disjoint
+    /// fields).
     #[inline]
     fn split_stdout_state(me: &mut Builtin) -> (&mut BuiltinIO, &mut Yes) {
         let Impl::Yes(yes) = &mut me.impl_ else {
@@ -186,68 +184,36 @@ impl Yes {
 
 /// Re-queues `yes` onto the event loop after a burst of no-IO writes so we
 /// don't block the main thread forever.
-#[repr(C)]
 pub struct YesTask {
     /// Back-ref to the owning [`Interpreter`].
     pub(crate) interp: bun_ptr::ParentRef<Interpreter>,
     pub(crate) cmd: NodeId,
     pub(crate) evtloop: EventLoopHandle,
-    pub(crate) concurrent_task: EventLoopTask,
+    /// Intrusive node for the mini-loop post (the JS loop queues a `Task`).
+    pub(crate) concurrent_task: AnyTaskWithExtraContext,
 }
 
-impl Taskable for YesTask {
-    const TAG: TaskTag = task_tag::ShellYesTask;
-    /// Lives inside the builtin's `Box<Yes>` (freed with the interpreter) and
-    /// took nothing for the bounce; nothing to do.
-    unsafe fn release_unrun(_: *mut Self) {}
+// `runtime::dispatch::run_task`'s `task_tag::ShellYesTask` arm reboxes the
+// enqueued pointer as `YesTask`; both sides MUST agree.
+bun_event_loop::boxed_taskable!(YesTask, ShellYesTask);
+
+impl BoxedMiniTaskRunner<YesTask> for YesTask {
+    fn run_from_loop_thread(owner: Box<YesTask>) {
+        owner.run();
+    }
 }
 
 impl YesTask {
-    /// # Safety
-    /// `this` must point to a live `YesTask` whose storage is stable until the
-    /// enqueued task fires (it lives inside `Box<Yes>` in the interpreter
-    /// arena).
-    unsafe fn enqueue(this: *mut Self) {
-        // SAFETY: caller contract — `this` is live and stable; `evtloop` /
-        // `concurrent_task` were initialised together by `Yes::start` so the
-        // Js/Mini discriminants agree. `owner`/`mini` are live event-loop
-        // backrefs (single-threaded shell).
-        unsafe {
-            match (*this).evtloop {
-                // Next loop iteration, after I/O has had a turn.
-                EventLoopHandle::Js { owner } => {
-                    owner.enqueue_task_after_yield(bun_jsc::Task::init(this));
-                }
-                EventLoopHandle::Mini(mut mini) => {
-                    (*mini.loop_).tick();
-                    let at =
-                        core::ptr::NonNull::new_unchecked(match &mut (*this).concurrent_task {
-                            EventLoopTask::Mini(at) => {
-                                at.from(this, Self::run_from_main_thread_mini)
-                            }
-                            EventLoopTask::Js(_) => unreachable!(),
-                        });
-                    mini.get_mut().enqueue_task_concurrent(at);
-                }
-            }
-        }
+    /// Next loop iteration, after I/O has had a turn.
+    fn enqueue(self: Box<Self>) {
+        let evtloop = self.evtloop;
+        evtloop.enqueue_boxed_after_yield::<YesTask, YesTask>(self, |t| &mut t.concurrent_task);
     }
 
-    /// `this` must be a live `YesTask` whose storage is stable inside
-    /// `Box<Yes>` in the interpreter arena, with `interp` initialised by
-    /// [`Yes::start`]. Reached only via the concurrent-task dispatch installed
-    /// in [`enqueue`](Self::enqueue).
-    pub(crate) fn run_from_main_thread(this: &Self) {
-        let (interp, cmd) = (&*this.interp, this.cmd);
-        Yes::write_no_io_loop(interp, cmd).run(interp);
-    }
-
-    /// Signature matches
-    /// [`AnyTaskWithExtraContext::from`](bun_event_loop::AnyTaskWithExtraContext::AnyTaskWithExtraContext::from)'s
-    /// callback shape (`fn(*mut T, *mut ())`).
-    fn run_from_main_thread_mini(this: *mut Self, _: *mut ()) {
-        // SAFETY: dispatch contract — `this` is the live task previously passed
-        // to `enqueue`; see `run_from_main_thread`.
-        Self::run_from_main_thread(unsafe { &*this })
+    /// Main thread: park the payload back on its `Yes` and write the next burst.
+    pub(crate) fn run(self: Box<Self>) {
+        let (interp, cmd) = (self.interp, self.cmd);
+        Yes::state_mut(&interp, cmd).task = Some(self);
+        Yes::write_no_io_loop(&interp, cmd).run(&interp);
     }
 }

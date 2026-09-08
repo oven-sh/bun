@@ -2809,6 +2809,67 @@ describe("tagName, endTag.name, and comment.text setters", () => {
     expect(out).toBe("<section>hi</section>");
   });
 
+  it("element.tagName closes a void element renamed to a non-void name", () => {
+    const rename = (html, name, fn) =>
+      new HTMLRewriter()
+        .on("#v", {
+          element(el) {
+            expect(el.canHaveContent).toBe(false);
+            el.tagName = name;
+            fn?.(el);
+            // Still the same element: it can't grow content after the fact.
+            expect(el.canHaveContent).toBe(false);
+          },
+        })
+        .transform(html);
+
+    // A void element has no end tag in the input, so nothing would close the
+    // new name: the siblings that follow would re-parse as its children (or,
+    // for <textarea>, as its text). The end tag is written on the spot.
+    expect(rename("<img id=v src=a.png><p>next</p><p>last</p>", "picture")).toBe(
+      "<picture id=v src=a.png></picture><p>next</p><p>last</p>",
+    );
+    expect(rename("<br id=v><p>next</p></body></html>", "textarea")).toBe(
+      "<textarea id=v></textarea><p>next</p></body></html>",
+    );
+    expect(rename("<input id=v value=x><b>sib</b>", "a")).toBe("<a id=v value=x></a><b>sib</b>");
+    expect(rename("<hr id=v />tail", "amp-img")).toBe("<amp-img id=v></amp-img>tail");
+
+    // before()/after() still surround the whole element, in either call order,
+    // and content insertion stays a no-op on an element that can't have any.
+    expect(
+      rename("<img id=v>tail", "span", el => {
+        el.before("[b]");
+        el.after("[a]");
+        el.prepend("[p]");
+        el.append("[ap]");
+        el.setInnerContent("[i]");
+      }),
+    ).toBe("[b]<span id=v></span>[a]tail");
+    expect(
+      new HTMLRewriter()
+        .on("img", {
+          element(el) {
+            el.after("[a1]");
+            el.tagName = "span";
+            el.after("[a2]");
+          },
+        })
+        .transform("<img>tail"),
+    ).toBe("<span></span>[a2][a1]tail");
+
+    // Void to void: no end tag (a stray </br> would even parse as a second <br>).
+    expect(rename("<hr id=v>tail", "br")).toBe("<br id=v>tail");
+    expect(rename("<img id=v>tail", "WBR")).toBe("<WBR id=v>tail");
+
+    // Removing or replacing the renamed element leaves no stray end tag.
+    expect(rename("<img id=v>tail", "div", el => el.remove())).toBe("tail");
+    expect(rename("<img id=v>tail", "div", el => el.replace("r"))).toBe("rtail");
+
+    // In foreign content `/>` really closes the element, whatever its name.
+    expect(rename('<svg><circle id="v"/><g></g></svg>', "path")).toBe('<svg><path id="v" /><g></g></svg>');
+  });
+
   it("endTag.name renames only the closing tag", () => {
     const out = new HTMLRewriter()
       .on("p", {

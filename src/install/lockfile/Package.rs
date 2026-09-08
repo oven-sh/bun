@@ -1009,17 +1009,16 @@ impl Diff {
                 .slice(from_lockfile.buffers.string_bytes.as_slice()),
         );
 
-        let Ok(folder_pkg) = crate::_folder_resolver::parse_folder_dependency_package_json(
+        let folder_pkg = match crate::_folder_resolver::parse_folder_dependency_package_json(
             to_lockfile,
             pm,
             log,
             &folder_path,
-        ) else {
-            // Resolving the dependency again reports the unreadable package.json.
-            return Ok(Some(DiffSummary {
-                update: 1,
-                ..Default::default()
-            }));
+        ) {
+            Ok(pkg) => pkg,
+            // Not on disk (or unreadable): nothing to compare, the locked entry stands like any other.
+            Err(crate::Error::Sys(_)) => return Ok(None),
+            Err(err) => return Err(err),
         };
 
         let from_pkg = from_lockfile.packages.get(from_package_id as usize);

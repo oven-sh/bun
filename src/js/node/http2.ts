@@ -2299,10 +2299,8 @@ class Http2Stream extends Duplex {
   [bunHTTP2AsyncContextFrame] = $getInternalField($asyncContext, 0);
 
   rstCode: number = 0;
-  // Set from the END_STREAM flag of the received header block, like node's
-  // onSessionHeaders. It outlives the native stream, so a closed stream keeps the value.
+  // END_STREAM flag of the received header block (node's onSessionHeaders); kept after close.
   [kEndAfterHeaders]: boolean = false;
-  // The request (client) or the response (server) header block went out.
   headersSent: boolean = false;
   [bunHTTP2Headers]: any;
   [kInfoHeaders]: any;
@@ -2945,8 +2943,7 @@ class Http2Stream extends Duplex {
   }
 }
 class ClientHttp2Stream extends Http2Stream {
-  // node sets STREAM_FLAGS_HEADERS_SENT in the ClientHttp2Stream constructor: a request's
-  // header block is built before the stream object exists, queued or not.
+  // node sets STREAM_FLAGS_HEADERS_SENT in its ClientHttp2Stream constructor.
   headersSent: boolean = true;
 }
 
@@ -5668,8 +5665,7 @@ class ClientHttp2Session extends Http2Session {
         process.nextTick(onConnect.bind(this));
         return;
       }
-      // Captured first: #onConnect() destroys the session (and drops the socket) when close()
-      // ran before the connection completed, and the 'connect' event still carries the socket.
+      // Captured before #onConnect(), which drops the socket if close() already ran.
       const socket = this[bunHTTP2Socket];
       try {
         this.#onConnect(arguments);

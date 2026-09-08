@@ -183,6 +183,35 @@ template<> __attribute__((minsize)) JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES
             }
         }
 
+        if (options.kind == WorkerOptions::Kind::Web) {
+            // WebIDL: `type` is a WorkerType and `credentials` a RequestCredentials enumeration, so any
+            // other value is a TypeError. Every Bun worker runs as an ES module and nothing is fetched
+            // with credentials, so a valid value has no further effect. node:worker_threads has neither
+            // option and must keep ignoring them.
+            static constexpr ASCIILiteral workerTypes[] = { "classic"_s, "module"_s };
+            static constexpr ASCIILiteral requestCredentials[] = { "omit"_s, "same-origin"_s, "include"_s };
+            auto validateEnumeration = [&](JSValue value, ASCIILiteral name, std::span<const ASCIILiteral> allowed) -> bool {
+                if (!value || value.isUndefined())
+                    return true;
+                auto string = value.toWTFString(lexicalGlobalObject);
+                RETURN_IF_EXCEPTION(throwScope, false);
+                for (auto literal : allowed) {
+                    if (string == literal)
+                        return true;
+                }
+                Bun::ERR::INVALID_ARG_VALUE(throwScope, globalObject, name, "must be one of: "_s, value, allowed);
+                return false;
+            };
+            auto typeValue = optionsObject->getIfPropertyExists(lexicalGlobalObject, vm.propertyNames->type);
+            RETURN_IF_EXCEPTION(throwScope, {});
+            if (!validateEnumeration(typeValue, "options.type"_s, workerTypes))
+                return {};
+            auto credentialsValue = optionsObject->getIfPropertyExists(lexicalGlobalObject, Identifier::fromString(vm, "credentials"_s));
+            RETURN_IF_EXCEPTION(throwScope, {});
+            if (!validateEnumeration(credentialsValue, "options.credentials"_s, requestCredentials))
+                return {};
+        }
+
         auto miniModeValue = optionsObject->getIfPropertyExists(lexicalGlobalObject, Identifier::fromString(vm, "smol"_s));
         RETURN_IF_EXCEPTION(throwScope, {});
         if (miniModeValue) {

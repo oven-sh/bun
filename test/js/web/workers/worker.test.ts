@@ -384,6 +384,47 @@ describe("web worker", () => {
     });
   });
 
+  // WebIDL: WorkerOptions.type is a WorkerType and .credentials a RequestCredentials enumeration, so
+  // any other value is a TypeError at construction. Valid values have no further effect in Bun.
+  describe("type and credentials options", () => {
+    test.each([
+      [{ type: "zzz" }, "options.type"],
+      [{ type: null }, "options.type"],
+      [{ type: 1 }, "options.type"],
+      [{ credentials: "zzz" }, "options.credentials"],
+    ])("new Worker(url, %j) throws a TypeError", (options, name) => {
+      let error: any;
+      try {
+        new Worker("data:text/javascript,", options as any);
+      } catch (e) {
+        error = e;
+      }
+      expect(error).toBeInstanceOf(TypeError);
+      expect(error.message).toStartWith(`The property '${name}' must be one of:`);
+    });
+
+    test("valid or undefined values are accepted", async () => {
+      for (const options of [
+        { type: "module" },
+        { type: "classic" },
+        { type: undefined },
+        { credentials: "omit" },
+        { credentials: "same-origin" },
+        { credentials: "include" },
+      ] satisfies WorkerOptions[]) {
+        const worker = new Worker("data:text/javascript,", options);
+        await once(worker, "close");
+      }
+    });
+
+    // node:worker_threads has neither option. Unknown keys are ignored there, as in Node.
+    test("worker_threads.Worker does not validate them", async () => {
+      const worker = new wt.Worker(new URL("data:text/javascript,"), { type: "zzz", credentials: "zzz" } as any);
+      const [code] = await once(worker, "exit");
+      expect(code).toBe(0);
+    });
+  });
+
   describe("error event", () => {
     test("is fired with a string of the error", async () => {
       const worker = new Worker("data:text/javascript,throw 5");

@@ -5606,13 +5606,14 @@ it("transform() result is unaffected by detaching the input ArrayBuffer while th
 });
 
 // A numeric literal property name like `1e999` overflows to the number Infinity, which the
-// printer emits as "1/0" / "1 / 0". That is not valid syntax in property-name position, so such
-// keys must be printed as computed properties instead.
+// printer emits as "1/0" / "1 / 0" when minifying syntax (or when the file binds the name
+// `Infinity`). That is not valid syntax in property-name position, so such keys must be printed
+// as computed properties instead.
 describe("numeric property keys that overflow to Infinity", () => {
-  const minifier = new Bun.Transpiler({ loader: "ts", minifyWhitespace: true });
+  const minifier = new Bun.Transpiler({ loader: "ts", minify: { whitespace: true, syntax: true } });
   const plain = new Bun.Transpiler({ loader: "ts" });
 
-  it("are printed as computed properties when minifying whitespace", () => {
+  it("are printed as computed properties when minifying", () => {
     expect(minifier.transformSync("x = { 1e999: 1 };")).toBe("x={[1/0]:1};");
     expect(minifier.transformSync("x = { 1e999() {} };")).toBe("x={[1/0](){}};");
     expect(minifier.transformSync("x = { get 1e999() {} };")).toBe("x={get[1/0](){}};");
@@ -5625,10 +5626,20 @@ describe("numeric property keys that overflow to Infinity", () => {
     expect(minifier.transformSync("({ 1e999: x.y } = z);")).toBe("({[1/0]:x.y}=z);");
   });
 
-  it("are printed as computed properties without minification", () => {
-    expect(plain.transformSync("x = { 1e999: 1 };")).toBe("x = { [1 / 0]: 1 };\n");
-    expect(plain.transformSync("x = class { 1e999() {} };")).toBe("x = class {\n  [1 / 0]() {}\n};\n");
-    expect(plain.transformSync("const { 1e999: y } = x;")).toBe("const { [1 / 0]: y } = x;\n");
+  it("are printed by name without minification", () => {
+    expect(plain.transformSync("x = { 1e999: 1 };")).toBe("x = { Infinity: 1 };\n");
+    expect(plain.transformSync("x = class { 1e999() {} };")).toBe("x = class {\n  Infinity() {}\n};\n");
+    expect(plain.transformSync("const { 1e999: y } = x;")).toBe("const { Infinity: y } = x;\n");
+  });
+
+  it("are printed as computed properties when the file binds the name Infinity", () => {
+    expect(plain.transformSync("let Infinity; x = { 1e999: 1 };")).toBe("let Infinity;\nx = { [1 / 0]: 1 };\n");
+    expect(plain.transformSync("let Infinity; x = class { 1e999() {} };")).toBe(
+      "let Infinity;\nx = class {\n  [1 / 0]() {}\n};\n",
+    );
+    expect(plain.transformSync("let Infinity; const { 1e999: y } = x;")).toBe(
+      "let Infinity;\nconst { [1 / 0]: y } = x;\n",
+    );
   });
 
   it("handles a method name with hundreds of digits", () => {
@@ -6114,6 +6125,132 @@ describe("same-target destructuring with an unstable target", () => {
       directEval: "a1b2",
       stable: "a1b1",
     });
+    expect(exitCode).toBe(0);
+  });
+});
+
+// A folded constant (`+"abc"`, `0 / 0` with inlining, `void 0`, `1e999`) has
+// no symbol to bind, so printing it as the name `NaN`, `undefined` or
+// `Infinity` lets a binding with that name capture it. The bundler renames
+// such bindings; `bun run`, `bun build --no-bundle` and `Bun.Transpiler` do
+// not, so there the printer writes `0 / 0`, `void 0` and `1 / 0` in a file
+// that declares one of those names, and inside `with`.
+describe("NaN, undefined and Infinity next to a binding with that name", () => {
+  // Sloppy-mode script: evaluates to the `out` object. Every binding is kept
+  // alive (mutated or otherwise used) so dead code elimination cannot hide
+  // the capture.
+  const fixture = /* js */ `
+    var out = {};
+    for (let NaN = 0; NaN < 1; NaN++) out.forLet = [String(0 / 0), String(+"abc"), String(Math.min(0 / 0, 5))];
+    { class NaN {} out.classDecl = String(0 / 0).slice(0, 5); }
+    switch (1) { case 1: let NaN = "case"; NaN += "!"; out.switchCase = [String(0 / 0), NaN]; }
+    label: { let NaN = "label"; NaN += "!"; out.label = [(0 / 0).toFixed(1), String(2 ** (0 / 0)), String((0 / 0) ** 0), NaN]; }
+    { let undefined = "U"; undefined += "!"; out.undefinedLet = [String(void 0), typeof (void 0), undefined]; }
+    { let Infinity = "I"; Infinity += "!"; out.infinityLet = [String(+"1e999"), String(-1e999), (1e999).toFixed(1), { 1e999: "key" }[1 / 0], Infinity]; }
+    function f(NaN, Infinity, undefined) {
+      undefined += "!";
+      return [String(+"abc"), String(+"1e999"), String(void 0), typeof +"abc", NaN, Infinity, undefined];
+    }
+    out.params = f("n", "i", "u");
+    with ({ NaN: "W", Infinity: "WI", undefined: "WU" }) out.with = [String(+"abc"), String(0 / 0), String(1e999), String(void 0)];
+  `;
+  // What the source means (and what node prints for it).
+  const expected = {
+    forLet: ["NaN", "NaN", "NaN"],
+    classDecl: "NaN",
+    switchCase: ["NaN", "case!"],
+    label: ["NaN", "NaN", "1", "label!"],
+    undefinedLet: ["undefined", "undefined", "U!"],
+    infinityLet: ["Infinity", "-Infinity", "Infinity", "key", "I!"],
+    params: ["NaN", "Infinity", "undefined", "number", "n", "i", "u!"],
+    with: ["NaN", "NaN", "Infinity", "undefined"],
+  };
+  // `new Function` hands the printed code straight to JavaScriptCore, without
+  // a second pass through Bun's transpiler.
+  const evaluate = code => new Function(code + "\nreturn out;")();
+
+  it.each([
+    ["default", {}],
+    ["inline + minify syntax (like bun run)", { inline: true, minify: { syntax: true } }],
+    ["inline + minify whitespace", { inline: true, minifyWhitespace: true }],
+  ])("Bun.Transpiler (%s)", (_, options) => {
+    const code = new Bun.Transpiler({ loader: "js", ...options }).transformSync(fixture);
+    expect(evaluate(code)).toEqual(expected);
+  });
+
+  it("prints the names only where nothing can shadow them", () => {
+    const plain = new Bun.Transpiler({ loader: "js" });
+    expect(plain.transformSync(`console.log(+"abc", void 0, 1e999, -1e999);`)).toBe(
+      "console.log(NaN, undefined, Infinity, -Infinity);\n",
+    );
+    expect(
+      plain.transformSync(`let NaN = 1;\nconsole.log(+"abc", void 0, 1e999, -1e999, (0 / 0).x, 2 ** +"abc");`),
+    ).toBe("let NaN = 1;\nconsole.log(0 / 0, void 0, 1 / 0, -1 / 0, (0 / 0).x, 2 ** (0 / 0));\n");
+    expect(plain.transformSync(`with (x) y = [+"abc", void 0, 1e999];\nz = [+"abc", void 0, 1e999];`)).toBe(
+      "with (x)\n  y = [0 / 0, void 0, 1 / 0];\nz = [NaN, undefined, Infinity];\n",
+    );
+    // The name of a class expression is a binding inside the class.
+    expect(plain.transformSync(`x = class NaN {\n  static v = [+"abc", void 0, 1e999];\n};`)).toBe(
+      "x = class NaN {\n  static v = [0 / 0, void 0, 1 / 0];\n};\n",
+    );
+    const minify = new Bun.Transpiler({ loader: "js", inline: true, minifyWhitespace: true });
+    expect(minify.transformSync(`let NaN = 1; console.log(+"abc", (0 / 0).x, x ** (0 / 0), -(0 / 0));`)).toBe(
+      "let NaN=1;console.log(0/0,(0/0).x,x**(0/0),0/0);",
+    );
+    // Data loaders turn top-level keys into bindings without going through the parser.
+    expect(plain.transformSync(`NaN = "n"\nInfinity = "i"\nx = nan\ny = -inf\n`, "toml")).toBe(
+      'var NaN = "n", Infinity = "i", x = 0 / 0, y = -1 / 0;\n\n' +
+        "export {\n  NaN,\n  Infinity,\n  x,\n  y\n};\n" +
+        "export default {\n  NaN,\n  Infinity,\n  x,\n  y\n};\n",
+    );
+  });
+
+  // The NaN twin of https://github.com/oven-sh/bun/issues/7263: the module's
+  // own export used to print as `export const NaN = NaN`, a TDZ error.
+  it.concurrent("bun run, module-level export", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `export const NaN = 0 / 0, Infinity = 1e999, undefined = void 0; console.log(String(NaN), String(Infinity), String(undefined));`,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe("NaN Infinity undefined\n");
+    expect(exitCode).toBe(0);
+  });
+
+  it.concurrent("bun run", async () => {
+    using dir = tempDir("transpiler-nan-shadow", { "fixture.js": fixture + "\nconsole.log(JSON.stringify(out));" });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "fixture.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual(expected);
+    expect(exitCode).toBe(0);
+  });
+
+  it.concurrent("bun build --no-bundle", async () => {
+    using dir = tempDir("transpiler-nan-shadow", { "fixture.js": fixture });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", "--no-bundle", "fixture.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(evaluate(stdout)).toEqual(expected);
     expect(exitCode).toBe(0);
   });
 });

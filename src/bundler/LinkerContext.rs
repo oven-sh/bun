@@ -2390,7 +2390,7 @@ impl<'a> LinkerContext<'a> {
             input_module_type: ast.module_type,
             module_type: self.options.output_format,
             print_dce_annotations: self.options.emit_dce_annotations,
-            has_run_symbol_renamer: true,
+            global_value_properties_unshadowed: true,
 
             to_esm_ref,
             to_commonjs_ref,

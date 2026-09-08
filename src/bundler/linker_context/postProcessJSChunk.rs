@@ -199,7 +199,7 @@ pub(crate) fn post_process_js_chunk(
         let make_print_options = || js_printer::Options {
             bundling: true,
             indent: Default::default(),
-            has_run_symbol_renamer: true,
+            global_value_properties_unshadowed: true,
 
             require_ref: runtime_require_ref,
             minify_whitespace: c.options.minify_whitespace,
@@ -1271,7 +1271,7 @@ pub(crate) fn generate_entry_point_tail_js<'a>(
     let print_options = js_printer::Options {
         // TODO: IIFE indent
         indent: Default::default(),
-        has_run_symbol_renamer: true,
+        global_value_properties_unshadowed: true,
 
         to_esm_ref,
         to_commonjs_ref: to_common_js_ref,

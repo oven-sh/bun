@@ -1350,10 +1350,12 @@ pub struct Options<'a> {
     pub print_dce_annotations: bool,
 
     pub inline_require_and_import_errors: bool,
-    /// A bundler renamer named every symbol. Those renamers reserve `NaN`,
-    /// `Infinity` and `undefined`, so the printer may emit those globals as
-    /// bare identifiers without a user binding shadowing them.
-    pub has_run_symbol_renamer: bool,
+    /// No binding in the printed code is named `undefined`, `NaN` or
+    /// `Infinity` (the value properties of the global object): a bundler
+    /// renamer reserved those names, or `print_ast` found no such symbol in
+    /// the file. When false, the printer writes `void 0`, `0 / 0` and `1 / 0`
+    /// instead of the names.
+    pub global_value_properties_unshadowed: bool,
 
     pub require_or_import_meta_for_source_callback: RequireOrImportMetaCallback,
 
@@ -1428,7 +1430,7 @@ impl<'a> Default for Options<'a> {
             minify_syntax: false,
             print_dce_annotations: true,
             inline_require_and_import_errors: true,
-            has_run_symbol_renamer: false,
+            global_value_properties_unshadowed: false,
             require_or_import_meta_for_source_callback: RequireOrImportMetaCallback::default(),
             input_module_type: bundle_opts::ModuleType::Unknown,
             module_type: bundle_opts::Format::Esm,
@@ -1549,6 +1551,12 @@ fn is_identifier_or_numeric_constant_or_property_access(expr: &js_ast::Expr) -> 
         ExprData::ENumber(e) => e.value().is_infinite() || e.value().is_nan(),
         _ => false,
     }
+}
+
+/// The names `print_undefined` and `print_number` use for values that have no
+/// literal (see `Options::global_value_properties_unshadowed`).
+fn is_global_value_property(name: &[u8]) -> bool {
+    matches!(name, b"undefined" | b"NaN" | b"Infinity")
 }
 
 pub enum PrintResult {
@@ -1680,6 +1688,9 @@ pub(crate) mod __gated_printer {
         pub(crate) stack_overflowed: bool,
 
         pub(crate) was_lazy_export: bool,
+        /// Depth of `with` statement bodies around the current position; in
+        /// there any printed identifier may resolve to a property instead.
+        pub(crate) with_nesting: u32,
         // Always carried; gated at call sites with MAY_HAVE_MODULE_INFO.
         pub(crate) module_info: Option<&'a mut analyze_transpiled_module::ModuleInfo>,
 
@@ -2130,9 +2141,15 @@ pub(crate) mod __gated_printer {
             Level::Comma
         }
 
+        /// `undefined`, `NaN` and `Infinity` printed here resolve to the globals.
+        #[inline]
+        pub(crate) fn can_name_global_value_properties(&self) -> bool {
+            self.options.global_value_properties_unshadowed && self.with_nesting == 0
+        }
+
         #[inline]
         pub(crate) fn print_undefined(&mut self, loc: bun_ast::Loc, level: Level) {
-            if self.options.minify_syntax {
+            if self.options.minify_syntax || !self.can_name_global_value_properties() {
                 if level.gte(Level::Prefix) {
                     self.add_source_mapping(loc);
                     self.print(b"(void 0)");
@@ -4727,11 +4744,12 @@ pub(crate) mod __gated_printer {
 
         /// Whether a number used as a non-computed property name must be printed as a
         /// computed property instead, because `print_number` would render it as
-        /// something that is not a valid property name (e.g. "-1", "1/0", "1 / 0").
+        /// something that is not a valid property name (e.g. "-1", "0 / 0", "1 / 0").
         pub(crate) fn number_property_key_must_be_computed(&self, value: f64) -> bool {
             value.is_sign_negative()
+                || (value.is_nan() && !self.can_name_global_value_properties())
                 || (value == f64::INFINITY
-                    && (self.options.minify_syntax || !self.options.has_run_symbol_renamer))
+                    && (self.options.minify_syntax || !self.can_name_global_value_properties()))
         }
 
         /// `E::ObjectJSON` (JSON-only): always printed in JSON shape.
@@ -5936,7 +5954,9 @@ pub(crate) mod __gated_printer {
                     self.print(b"(");
                     self.print_expr(s.value, Level::Lowest, ExprFlag::none());
                     self.print(b")");
+                    self.with_nesting += 1;
                     self.print_body(s.body);
+                    self.with_nesting -= 1;
                 }
                 StmtData::SLabel(s) => {
                     if !self.options.minify_whitespace && self.options.indent.count > 0 {
@@ -6918,11 +6938,27 @@ pub(crate) mod __gated_printer {
             let abs_value = value.abs();
             if value.is_nan() {
                 self.print_space_before_identifier();
-                self.print(b"NaN");
+                if IS_JSON || self.can_name_global_value_properties() {
+                    self.print(b"NaN");
+                } else {
+                    let wrap = level.gte(Level::Multiply);
+                    if wrap {
+                        self.print(b"(");
+                    }
+                    if self.options.minify_whitespace {
+                        self.print(b"0/0");
+                    } else {
+                        self.print(b"0 / 0");
+                    }
+                    if wrap {
+                        self.print(b")");
+                    }
+                }
             } else if value.is_infinite() {
                 let is_neg_inf = value.is_sign_negative();
-                let wrap = ((!self.options.has_run_symbol_renamer || self.options.minify_syntax)
-                    && level.gte(Level::Multiply))
+                let by_name = IS_JSON
+                    || (!self.options.minify_syntax && self.can_name_global_value_properties());
+                let wrap = (!by_name && level.gte(Level::Multiply))
                     || (is_neg_inf && level.gte(Level::Prefix));
 
                 if wrap {
@@ -6936,8 +6972,7 @@ pub(crate) mod __gated_printer {
                     self.print_space_before_identifier();
                 }
 
-                // If we are not running the symbol renamer, we must not print "Infinity".
-                if IS_JSON || (!self.options.minify_syntax && self.options.has_run_symbol_renamer) {
+                if by_name {
                     self.print(b"Infinity");
                 } else if self.options.minify_whitespace {
                     self.print(b"1/0");
@@ -7029,6 +7064,7 @@ pub(crate) mod __gated_printer {
                 stack_check: bun_core::StackCheck::init(),
                 stack_overflowed: false,
                 was_lazy_export: false,
+                with_nesting: 0,
                 module_info: None,
             }
         }
@@ -7803,6 +7839,16 @@ pub fn print_ast<'a, W: WriterTrait, const ASCII_ONLY: bool, const GENERATE_SOUR
     let _restore =
         bun_crash_handler::scoped_action(bun_crash_handler::Action::Print(source.path.text));
 
+    // Neither renamer below renames a user binding called `undefined`, `NaN`
+    // or `Infinity` out of the way (`MinifyRenamer` keeps exported names), so
+    // the printer may only use those names when no bound symbol has one.
+    let mut opts = opts;
+    opts.global_value_properties_unshadowed =
+        !symbols.symbols_for_source.iter().flatten().any(|symbol| {
+            symbol.kind != js_ast::symbol::Kind::Unbound
+                && is_global_value_property(symbol.original_name.slice())
+        });
+
     // `Renamer<'r,'src>` is invariant in `'src` (it holds `&'r mut`
     // NoOpRenamer<'src>`), so the two arms must agree on `'src`; constructing the
     // `MinifyRenamer` variant inline (rather than via `to_renamer() ->
@@ -7911,7 +7957,6 @@ pub fn print_ast<'a, W: WriterTrait, const ASCII_ONLY: bool, const GENERATE_SOUR
     // backing `Vec`. Cheap no-op on a reused (already-grown) writer.
     let _ = writer.reserve(source.contents().len() as u64);
 
-    let mut opts = opts;
     let source_map_builder = get_source_map_builder::<ASCII_ONLY>(
         GenerateSourceMap::lazy_if(GENERATE_SOURCE_MAP),
         &mut opts,

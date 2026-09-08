@@ -643,10 +643,11 @@ impl Lockfile {
                     lockfile_path: zstr!("bun.lockb"),
                     format: LockfileFormat::Binary,
                 });
+                // What `choose_config_version` picks for a bun lockfile: its own, else V0.
                 let config_version = ok
                     .lockfile
                     .saved_config_version
-                    .unwrap_or(ConfigVersion::CURRENT);
+                    .unwrap_or(ConfigVersion::V0);
                 if let Err(e) = TextLockfile::Stringifier::save_from_binary(
                     &mut *ok.lockfile,
                     &binary_origin,

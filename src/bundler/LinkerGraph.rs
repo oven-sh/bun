@@ -154,14 +154,11 @@ pub mod js_meta {
     }
     pub use crate::WrapKind as Wrap;
 
-    /// The `import *` namespace of a CommonJS module whose exports were lifted
-    /// to ESM. `exports_foo` stands in for `module.exports`, so the namespace is
-    /// a second object, `var import_foo = __toESM(exports_foo, 1)`, whose
-    /// `default` is `exports_foo`. Unset (`ref_` is `Ref::NONE`) for other files.
+    /// The `import *` namespace of a lifted CommonJS module, `__toESM(exports_foo, 1)`.
     #[derive(Clone, Copy)]
     pub struct LiftedNamespace {
         pub ref_: Ref,
-        /// The part that declares `ref_`. It prints with the namespace export part.
+        /// Declares `ref_`; prints with the namespace export part. `u32::MAX` when unset.
         pub part_index: u32,
     }
     impl Default for LiftedNamespace {

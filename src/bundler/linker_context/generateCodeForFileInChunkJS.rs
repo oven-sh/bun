@@ -313,9 +313,7 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
             return PrintResult::Err(err.into());
         }
 
-        // `var import_foo = __toESM(exports_foo, 1)` of a lifted CommonJS module goes
-        // right after `__exportCjs(exports_foo, ...)`: outside the wrapper, and ahead
-        // of the module's dependencies, which may read it back in a cycle.
+        // Right after `__exportCjs(...)`: outside the wrapper, before dependencies in a cycle.
         if lifted_namespace_part_index != u32::MAX
             && parts_live.is_set(lifted_namespace_part_index as usize)
         {

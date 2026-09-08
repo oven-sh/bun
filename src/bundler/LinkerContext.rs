@@ -3766,11 +3766,7 @@ impl<'a> LinkerContext<'a> {
             };
         }
 
-        // The default import of a lifted CommonJS module is `module.exports`, which
-        // `exports_foo` stands in for. So are `ns.default` on `import * as ns` (a
-        // generated item) and a `require()` that `unwrap_commonjs_to_esm` turned
-        // into an import star: bind them to that object. A `.default` read off
-        // such a `require()` is `exports.default`, an ordinary export.
+        // A default import, `ns.default` and an unwrapped `require()` are `module.exports`.
         if is_import_stmt
             && flags.contains(AstFlags::COMMONJS_LIFTED_TO_ESM)
             && if alias_is_star {
@@ -4394,9 +4390,7 @@ impl<'a> LinkerContext<'a> {
         ref_.is_valid() && ref_ == self.lifted_namespace_ref(source_index)
     }
 
-    /// Is `namespace_ref` of file `source_index` the `import * as ns` that the
-    /// parser made out of a `require()` call (`unwrap_commonjs_to_esm`)? Such a
-    /// call returns `module.exports`, not the namespace.
+    /// An `import *` that `unwrap_commonjs_to_esm` made out of a `require()` call.
     fn import_star_was_require_call(
         &self,
         source_index: crate::IndexInt,
@@ -4407,6 +4401,23 @@ impl<'a> LinkerContext<'a> {
             .top_level_symbol_to_parts(source_index, namespace_ref)
             .iter()
             .any(|&part| parts[part as usize].tag == bun_ast::PartTag::ImportToConvertFromRequire)
+    }
+
+    /// A split `import()` whose chunk exports `module.exports` as `default`: unwrap `exports.default`.
+    pub(crate) fn split_import_of_lifted_module_needs_to_esm(
+        &self,
+        importer: crate::IndexInt,
+        source_index: crate::IndexInt,
+    ) -> bool {
+        let id = source_index as usize;
+        self.graph.ast.items_flags()[id].contains(AstFlags::COMMONJS_LIFTED_TO_ESM)
+            && self.graph.ast.items_exports_kind()[id] != ExportsKind::Cjs
+            && self.graph.files.items_entry_point_kind()[id]
+                != crate::EntryPoint::Kind::UserSpecified
+            && Self::lifted_default_import_needs_wrapper(
+                self.graph.ast.items_module_type()[importer as usize],
+                &self.graph.ast.items_named_exports()[id],
+            )
     }
 
     /// The default import of a lifted module that sets `__esModule` and exports
@@ -4736,8 +4747,7 @@ impl<'a> LinkerContext<'a> {
             name: bun_ast::StoreStr,
             count: u32,
             is_call_target: bool,
-            /// `X.default` where `X` is the `import *` namespace of a lifted CommonJS
-            /// module: `module.exports`, which `exports_foo` stands in for.
+            /// `X.default` on the `import *` namespace of a lifted CommonJS module.
             is_module_exports: bool,
         }
 
@@ -5053,11 +5063,7 @@ impl<'a> LinkerContext<'a> {
         }
     }
 
-    /// Declares that namespace, `var import_foo = __toESM(exports_foo, 1)`, in a
-    /// part of its own, so it is dropped unless an importer uses the namespace
-    /// as a value. Mode `1` makes `default` the `module.exports` object: an
-    /// importer that is not an ES module by type got a CommonJS wrapper instead
-    /// when `__esModule` would change that (`lifted_default_import_needs_wrapper`).
+    /// Declares `var import_foo = __toESM(exports_foo, 1)` in a removable part of its own.
     pub(crate) fn create_lifted_namespace_part(
         &mut self,
         source_index: crate::IndexInt,

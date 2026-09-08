@@ -306,8 +306,7 @@ impl<'a, 'ctx> FindImportedPartsVisitor<'a, 'ctx> {
                     can_be_split,
                 } => {
                     let part = &self.parts[source_index as usize].as_slice()[part_index as usize];
-                    // The namespace export part was added on `Enter`, and the lifted
-                    // namespace part prints with it.
+                    // Both were handled on `Enter`: the lifted namespace part prints with part 0.
                     if can_be_split
                         && part_index != bun_ast::NAMESPACE_EXPORT_PART_INDEX
                         && part_index

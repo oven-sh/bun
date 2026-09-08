@@ -1835,22 +1835,52 @@ describe("bundler", () => {
     },
     run: { file: "/out/entry.js", stdout: "true d d 1" },
   });
+  // With `exports.__esModule` set, the chunk still exports `module.exports` as
+  // `default`. An importer that is an ES module by type reads it as is, as Node
+  // does. Any other importer unwraps `exports.default` from it through `__toESM`,
+  // as `bun run` does. Both match the build without `--splitting`.
+  const esModuleLiftedLib = {
+    "/lib.cjs": /* js */ `
+      exports.__esModule = true;
+      exports.default = "d";
+      exports.x = 1;
+    `,
+  };
   itBundled("cjs2esm/SplitDynamicImportOfLiftedCommonJSWithEsModuleAndDefault", {
     files: {
       "/entry.mjs": /* js */ `
+        import lib from "./lib.cjs";
         const m = await import("./lib.cjs");
-        console.log(m.default, m.x);
+        console.log(typeof m.default, m.default === lib, m.default.default, m.x, m.__esModule, Object.keys(m).join(","));
       `,
-      "/lib.cjs": /* js */ `
-        exports.__esModule = true;
-        exports.default = "d";
-        exports.x = 1;
-      `,
+      ...esModuleLiftedLib,
     },
     outdir: "/out",
     outputPaths: ["/out/entry.js"],
     splitting: true,
-    run: { file: "/out/entry.js", stdout: "d 1" },
+    onAfterBundle(api) {
+      expect(splitChunk(api, "lib")).toContain("export default exports_lib;");
+      api.expectFile("/out/entry.js").not.toContain("__toESM");
+    },
+    run: { file: "/out/entry.js", stdout: "object true d 1 true __esModule,default,x" },
+  });
+  itBundled("cjs2esm/SplitDynamicImportOfLiftedCommonJSWithEsModuleAndDefaultFromCjsImporter", {
+    files: {
+      "/entry.js": /* js */ `
+        import { x } from "./lib.cjs";
+        const m = await import("./lib.cjs");
+        console.log(m.default, m.x, x, m.__esModule, Object.keys(m).join(","));
+      `,
+      ...esModuleLiftedLib,
+    },
+    outdir: "/out",
+    outputPaths: ["/out/entry.js"],
+    splitting: true,
+    onAfterBundle(api) {
+      expect(splitChunk(api, "lib")).toContain("export default exports_lib;");
+      api.expectFile("/out/entry.js").toContain(".then((m)=>__toESM(m.default))");
+    },
+    run: { file: "/out/entry.js", stdout: "d 1 1 true __esModule,default,x" },
   });
   // Static imports of a lifted module bind its exports directly, whether or
   // not a split `import()` of the module reads `default`. Only a read of

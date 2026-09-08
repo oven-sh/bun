@@ -1892,8 +1892,8 @@ export function libcPathForDlopen() {
  *
  * To read what the child writes to the TTY, call `closeSlave()` after the
  * spawn (the child keeps its own copy) and read `takeMaster()` with
- * `fs.createReadStream("", { fd })`. The stream then ends (macOS) or errors
- * with EIO (Linux) once the child exits, instead of blocking forever.
+ * `fs.createReadStream("", { fd })`. Once the child exits the stream then
+ * ends (macOS) or errors with EIO (Linux) instead of blocking forever.
  *
  * `close()` / `using` closes whichever of the two fds this object still owns.
  */

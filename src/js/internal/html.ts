@@ -281,8 +281,7 @@ yourself with Bun.serve().
     }
   }
   const elapsed = (performance.now() - initial).toFixed(2);
-  // Everything below goes to stdout via console.log, so key styling on stdout
-  // alone. `Bun.enableANSIColors` is stdout OR stderr.
+  // The banner goes to stdout. `Bun.enableANSIColors` would also count stderr.
   const enableANSIColors = $rust("BunObject.rs", "enableANSIColorsStdout") as boolean;
   function printInitialMessage(isFirst: boolean) {
     let pathnameToPrint;

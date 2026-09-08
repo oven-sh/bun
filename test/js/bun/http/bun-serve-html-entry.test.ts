@@ -786,21 +786,22 @@ test.concurrent.skipIf(isWindows)("startup banner on a TTY stdout is styled when
     stdout: pty.slave,
     stderr: "ignore",
   });
-  // The child holds its own copy. Dropping ours lets the master read end when
-  // the child exits instead of blocking.
+  // The child holds its own copy. Dropping ours makes the master read fail
+  // (Linux: EIO) or end (macOS) if the child dies early, instead of blocking.
   pty.closeSlave();
 
   let text = "";
-  const { promise: done, resolve } = Promise.withResolvers<void>();
+  const { promise: bannerDone, resolve } = Promise.withResolvers<void>();
   const master = fs.createReadStream("", { fd: pty.takeMaster() });
   master.on("data", (chunk: Buffer) => {
     text += chunk.toString("utf8");
     // The URL line is the last line of the banner when stdin is not a TTY.
-    if (/http:\/\/\S+\n/.test(Bun.stripANSI(text).replaceAll("\r\n", "\n"))) proc.kill();
+    if (/http:\/\/\S+\n/.test(Bun.stripANSI(text).replaceAll("\r\n", "\n"))) resolve();
   });
-  // Linux reports the hangup after the child exits as EIO, macOS as EOF.
   master.on("error", () => resolve()).on("close", resolve);
-  await done;
+  await bannerDone;
+  proc.kill();
+  master.destroy();
 
   expect(Bun.stripANSI(text).replaceAll("\r\n", "\n")).toMatch(
     /^ DEV  Bun v\S+ ready in \S+ ms\n\n➜ http:\/\/127\.0\.0\.1:\d+\/\n$/,

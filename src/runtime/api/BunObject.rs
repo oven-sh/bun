@@ -772,9 +772,7 @@ fn enable_ansi_colors(_global_this: &JSGlobalObject, _: &JSObject) -> JSValue {
     JSValue::from(Output::enable_ansi_colors_stdout() || Output::enable_ansi_colors_stderr())
 }
 
-/// `$rust("BunObject.rs", "enableANSIColorsStdout")`. `Bun.enableANSIColors`
-/// is the OR of both streams; built-in JS that writes to one known fd keys its
-/// styling on that fd alone.
+/// `$rust("BunObject.rs", "enableANSIColorsStdout")`: the per-stream half of `Bun.enableANSIColors`.
 pub(crate) fn enable_ansi_colors_stdout(_global_this: &JSGlobalObject) -> JSValue {
     JSValue::from(Output::enable_ansi_colors_stdout())
 }

@@ -1017,7 +1017,8 @@ impl WindowsNamedPipe {
 
     /// The pipe's HANDLE, for sharing with a child as stdio (libuv's
     /// UV_INHERIT_STREAM leeches the same handle); INVALID when not open.
-    pub(crate) fn fd(&self) -> Fd {
+    #[bun_uws::uws_callback(export = "WindowsNamedPipe__fd", no_catch)]
+    pub fn fd(&self) -> Fd {
         use bun_sys::windows::libuv::UvHandle as _;
         match self.uv_pipe() {
             // SAFETY: `uv_pipe()` is the live `uv_pipe_t` this socket drives.

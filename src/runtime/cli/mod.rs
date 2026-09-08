@@ -346,6 +346,7 @@ pub mod filter_run;
 pub mod link_command;
 #[path = "multi_run.rs"]
 pub mod multi_run;
+pub(crate) mod npm_queryable;
 #[path = "outdated_command.rs"]
 pub mod outdated_command;
 #[path = "pack_command.rs"]

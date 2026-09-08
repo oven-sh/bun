@@ -467,6 +467,10 @@ describe.concurrent("bun pm view (local registry)", () => {
       "dist-tags": { latest: "1.0.0-beta.1" },
       versions: byPublishOrder("zz-pre", ["1.0.0-alpha.1", "1.0.0-alpha.2", "1.0.0-beta.1"]),
     },
+    "zz-notags": {
+      name: "zz-notags",
+      versions: byPublishOrder("zz-notags", ["1.0.0", "1.1.0"]),
+    },
   };
 
   let server: ReturnType<typeof Bun.serve>;
@@ -663,6 +667,23 @@ Recent versions:
     });
   });
 
+  test("a spec that is neither a dist-tag nor a range matches nothing", async () => {
+    expect(await view(["zz-basic@notatag", "version"])).toEqual({
+      out: "",
+      err: `error: No version of "zz-basic" satisfying "notatag" found
+
+Recent versions:
+- 1.0.0
+- 2.0.0
+`,
+      code: 1,
+    });
+    // A dist-tag that exists still resolves, and `latest` is the default
+    // even for a packument that has no dist-tags at all.
+    expect(await view(["zz-basic@next", "version"])).toEqual({ out: "1.0.0\n", err: "", code: 0 });
+    expect(await view(["zz-notags", "version"])).toEqual({ out: "1.1.0\n", err: "", code: 0 });
+  });
+
   test("--json errors have one shape on stdout", async () => {
     const shape = async (args: string[]) => {
       const { out, err, code } = await view([...args, "--json"]);
@@ -673,6 +694,17 @@ Recent versions:
         error: {
           code: "E404",
           summary: `No version of "zz-basic" satisfying "9.9.9" found`,
+          detail: "Recent versions: 1.0.0, 2.0.0",
+        },
+      },
+      err: "",
+      code: 1,
+    });
+    expect(await shape(["zz-basic@notatag", "version"])).toEqual({
+      out: {
+        error: {
+          code: "E404",
+          summary: `No version of "zz-basic" satisfying "notatag" found`,
           detail: "Recent versions: 1.0.0, 2.0.0",
         },
       },

@@ -787,11 +787,6 @@ impl Number {
         self.to::<usize>()
     }
 
-    #[inline]
-    pub(crate) fn to_u32(self) -> u32 {
-        self.to::<u32>()
-    }
-
     pub(crate) fn to<T: NumberCast>(self) -> T {
         let clamped = self.value().trunc().max(0.0).min(T::MAX_AS_F64);
         T::from_f64(clamped)
@@ -816,7 +811,7 @@ macro_rules! impl_number_cast {
         }
     )*};
 }
-impl_number_cast!(u32, usize);
+impl_number_cast!(usize);
 
 pub struct BigInt {
     // Arena-owned slice (`StoreStr`: lifetime-erased arena ownership, bulk-freed

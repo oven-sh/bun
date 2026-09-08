@@ -17,6 +17,7 @@ use bun_parsers::json as JSON;
 use bun_semver as Semver;
 use bun_url::URL;
 
+use super::npm_queryable::{self, FieldPathError, FieldResult};
 use bun_core::fmt::buf_print_infallible as buf_print;
 
 /// `bun pm view` / `bun info`: fetch the packument for `spec_`, pick the
@@ -87,13 +88,8 @@ pub(crate) fn view(
     });
 
     for field in fields {
-        if strings::contains(field, b"[]") {
-            fail(
-                json_output,
-                b"EINVALIDSYNTAX",
-                b"Empty brackets are not valid syntax for retrieving values.",
-                b"",
-            );
+        if let Err(err) = npm_queryable::parse(field) {
+            fail_field_path(json_output, err);
         }
     }
 
@@ -267,6 +263,13 @@ pub(crate) fn view(
             } else {
                 let sliced_literal = Semver::SlicedString::init(version, version);
                 let query = Semver::query::parse(version, sliced_literal)?;
+                // A spec that is neither a dist-tag nor a range (`pkg@notatag`)
+                // parses to an empty group, which every version satisfies.
+                // `latest` is the default spec, so without that tag it still
+                // means the newest version.
+                if query.is_empty() && version != b"latest" {
+                    break 'select None;
+                }
                 match parsed_manifest.find_best_version(&query, version) {
                     Some(result) => result.version,
                     None => break 'select None,
@@ -332,15 +335,17 @@ pub(crate) fn view(
     // What npm calls the manifest for `view`: the packument root with the
     // selected version's fields laid over it, `versions` replaced by the
     // sorted list, and `readme` dropped unless a field asks for it.
-    let wants_readme = fields
-        .iter()
-        .any(|f| FieldPath::parse(f).first().is_some_and(|s| *s == b"readme"));
+    let wants_readme = fields.iter().any(|f| {
+        npm_queryable::parse(f).is_ok_and(|keys| keys.first().is_some_and(|k| *k == b"readme"))
+    });
     let merged = merge_manifest(json, manifest, sorted_versions.to_array(), wants_readme);
 
     if !fields.is_empty() {
         let mut results: Vec<FieldResult<'_>> = Vec::new();
         for field in fields {
-            FieldPath::collect(&bump, merged, field, &mut results);
+            if let Err(err) = npm_queryable::query(&bump, merged, field, &mut results) {
+                fail_field_path(json_output, err);
+            }
         }
         print_fields(&results, source, json_output)?;
         return Ok(());
@@ -381,6 +386,18 @@ fn fail(json_output: bool, code: &[u8], summary: &[u8], detail: &[u8]) -> ! {
         }
     }
     Global::exit(1);
+}
+
+#[cold]
+fn fail_field_path(json_output: bool, err: FieldPathError) -> ! {
+    match err {
+        FieldPathError::EmptyBrackets => fail(
+            json_output,
+            b"EINVALIDSYNTAX",
+            b"Empty brackets are not valid syntax for retrieving values.",
+            b"",
+        ),
+    }
 }
 
 struct SortedVersions<'a> {
@@ -516,147 +533,6 @@ fn merge_manifest(root: Expr, version: Expr, versions_array: Expr, wants_readme:
         }
     }
     new_object(props)
-}
-
-struct FieldResult<'a> {
-    /// The path as typed, or `a[0].b` style when an array was expanded.
-    label: &'a [u8],
-    value: Expr,
-}
-
-/// npm `view` field paths: `a.b`, `a[0]`, `a[0].b`, `a.0`, `a[key.with.dots]`,
-/// and `array.prop`, which expands to one result per element.
-struct FieldPath;
-
-impl FieldPath {
-    /// Split into keys. Text inside `[...]` is one key taken literally (it
-    /// may contain dots); everything else splits on `.`.
-    fn parse(path: &[u8]) -> Vec<&[u8]> {
-        let mut keys: Vec<&[u8]> = Vec::new();
-        let mut start = 0usize;
-        let mut i = 0usize;
-        while i < path.len() {
-            match path[i] {
-                b'.' => {
-                    keys.push(&path[start..i]);
-                    i += 1;
-                    start = i;
-                }
-                b'[' => {
-                    let Some(close) = strings::index_of_char_usize(&path[i + 1..], b']') else {
-                        i += 1;
-                        continue;
-                    };
-                    let close = i + 1 + close;
-                    if i > start {
-                        keys.push(&path[start..i]);
-                    }
-                    keys.push(&path[i + 1..close]);
-                    i = close + 1;
-                    if i < path.len() && path[i] == b'.' {
-                        i += 1;
-                    }
-                    start = i;
-                }
-                _ => i += 1,
-            }
-        }
-        if start < path.len() {
-            keys.push(&path[start..]);
-        }
-        keys
-    }
-
-    fn collect<'a>(bump: &'a Bump, root: Expr, path: &'a [u8], out: &mut Vec<FieldResult<'a>>) {
-        let keys = Self::parse(path);
-        if keys.is_empty() {
-            return;
-        }
-        let mut label: Vec<u8> = Vec::new();
-        Self::walk(bump, root, &keys, &mut label, false, path, out);
-    }
-
-    fn walk<'a>(
-        bump: &'a Bump,
-        mut value: Expr,
-        keys: &[&[u8]],
-        label: &mut Vec<u8>,
-        expanded: bool,
-        path: &'a [u8],
-        out: &mut Vec<FieldResult<'a>>,
-    ) {
-        for (i, key) in keys.iter().enumerate() {
-            let index = Self::array_index(key);
-            if value.is_array() && index.is_none() {
-                // `maintainers.name` → `maintainers[0].name`, `maintainers[1].name`, ...
-                let label_len = label.len();
-                let mut items = value.as_array();
-                let mut n = 0usize;
-                while let Some(item) = items.as_mut().and_then(|it| it.next()) {
-                    label.truncate(label_len);
-                    let _ = write!(label, "[{n}]");
-                    Self::walk(bump, item, &keys[i..], label, true, path, out);
-                    n += 1;
-                }
-                label.truncate(label_len);
-                return;
-            }
-            let next = match index {
-                Some(index) if value.is_array() => Self::nth(value, index),
-                _ if value.is_object() => value.get(key),
-                _ => None,
-            };
-            let Some(next) = next else {
-                return;
-            };
-            Self::append_key(label, key, index.is_some() && value.is_array());
-            value = next;
-        }
-        let label: &'a [u8] = if expanded {
-            bump.alloc_slice_copy(label)
-        } else {
-            path
-        };
-        for existing in out.iter_mut() {
-            if existing.label == label {
-                existing.value = value;
-                return;
-            }
-        }
-        out.push(FieldResult { label, value });
-    }
-
-    fn array_index(key: &[u8]) -> Option<usize> {
-        if key.is_empty() || !key.iter().all(u8::is_ascii_digit) {
-            return None;
-        }
-        bun_fmt::parse_decimal::<usize>(key)
-    }
-
-    fn nth(array: Expr, index: usize) -> Option<Expr> {
-        let mut iter = array.as_array()?;
-        let mut i = 0usize;
-        while let Some(item) = iter.next() {
-            if i == index {
-                return Some(item);
-            }
-            i += 1;
-        }
-        None
-    }
-
-    fn append_key(label: &mut Vec<u8>, key: &[u8], is_index: bool) {
-        if is_index || strings::index_of_any(key, b".[]").is_some() || key.is_empty() {
-            label.push(b'[');
-            label.extend_from_slice(key);
-            label.push(b']');
-        } else {
-            if !label.is_empty() {
-                label.push(b'.');
-            }
-            label.extend_from_slice(key);
-        }
-    }
 }
 
 fn to_json_text(

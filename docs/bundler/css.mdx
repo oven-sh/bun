@@ -303,7 +303,7 @@ The `light-dark()` function takes two colors and applies one based on the used c
 }
 ```
 
-Under the default browser targets, Bun's CSS bundler keeps `light-dark()` and `color-scheme` as written. All major browsers support `light-dark()` natively since Chrome 123, Firefox 120, and Safari 17.5. The lowering for older browsers rewrites each call into `var(--buncss-light, <light>) var(--buncss-dark, <dark>)` and defines those two variables next to every `color-scheme` declaration in the compiled CSS. It only resolves when such a declaration applies to an ancestor element, and it produces an invalid value when the color scheme comes from `<meta name="color-scheme">`, from a stylesheet Bun did not compile, or from an inline style. For that reason the default targets leave it out.
+Under the default browser targets, Bun's CSS bundler keeps `light-dark()` and `color-scheme` as written. All major browsers support `light-dark()` natively since Chrome 123, Firefox 120, and Safari 17.5. The lowering for older browsers rewrites each call into `var(--buncss-light, <light>) var(--buncss-dark, <dark>)` and defines those two variables next to each compiled `color-scheme` declaration that names `light` or `dark`. It only resolves when such a declaration applies to the element or one of its ancestors, and it produces an invalid value when the color scheme comes from `<meta name="color-scheme">`, from a stylesheet Bun did not compile, or from an inline style. For that reason the default targets leave it out.
 
 ### Logical properties
 

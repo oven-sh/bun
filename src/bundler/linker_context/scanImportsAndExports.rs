@@ -732,6 +732,9 @@ pub(crate) fn scan_imports_and_exports(
             let wrap = flag.wrap;
             let export_kind = col_ref!(exports_kind)[id];
             let source: &Source = &col_ref!(input_files)[id];
+            // An HTML file's `<script src>` records print as bare wrapper calls
+            // (`append_html_script_wrapper_calls`); nothing reads the namespace.
+            let is_html = col_ref!(loaders)[id] == Loader::Html;
 
             let exports_ref = col_ref!(exports_refs)[id];
             let module_ref = col_ref!(module_refs)[id];
@@ -1212,6 +1215,7 @@ pub(crate) fn scan_imports_and_exports(
                         // A same-chunk `import()` of a lifted CommonJS module needs it
                         // too, so that `default` is `module.exports` (the namespace).
                         if kind != ImportKind::Require
+                            && !is_html
                             && (other_export_kind == ExportsKind::Cjs
                                 || (kind == ImportKind::Dynamic
                                     && other_flags.wrap == WrapKind::Esm

@@ -680,7 +680,12 @@ pub(crate) fn post_process_js_chunk(
         }
 
         // TODO: metafile
-        newline_before_comment = !compile_result.code().is_empty();
+
+        // Put a newline before the next file path comment. An empty result (a
+        // part range that printed nothing) must not take it away again.
+        if !compile_result.code().is_empty() {
+            newline_before_comment = true;
+        }
     }
     // An entry chunk whose code all lives in shared chunks has no compile results of its own.
     if !preload_registration.is_empty() {

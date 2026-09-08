@@ -147,7 +147,13 @@ describe("Bun.build env", () => {
 
     await using proc = Bun.spawn({
       cmd: [bunExe(), "build.ts"],
-      env: { ...bunEnv, BUN_TEST_ENV_SECRET: "hunter2", BUN_TEST_ENV_PUB: "startup-value" },
+      env: {
+        ...bunEnv,
+        BUN_TEST_ENV_SECRET: "hunter2",
+        BUN_TEST_ENV_PUB: "startup-value",
+        NODE_ENV: undefined,
+        BUN_ENV: undefined,
+      },
       cwd: String(dir),
       stdout: "pipe",
       stderr: "pipe",

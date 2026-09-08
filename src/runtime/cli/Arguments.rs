@@ -793,6 +793,8 @@ const TEST_WORKER_UNFORWARDED_FLAGS: &[&[u8]] = &[
     b"--cwd",
     b"--env-file",
     b"--no-env-file",
+    // `DEBUG_PARAMS`: absent from release builds, where the forwarded list
+    // could not resolve it.
     b"--breakpoint-resolve",
     // One debugger endpoint cannot serve N workers.
     b"--inspect",

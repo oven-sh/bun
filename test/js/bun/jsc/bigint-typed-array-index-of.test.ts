@@ -122,6 +122,32 @@ describe.each([
       expect({ kind, ...search(view, needle) }).toEqual({ kind, ...expected(elements.length, index) });
     }
   });
+
+  // The rows above hold each value once, so indexOf and lastIndexOf agree there.
+  test("a repeated element: indexOf finds the first match, lastIndexOf the last, a wrapped needle neither", () => {
+    const wrapped = 7n + 2n ** 64n;
+    for (const [kind, view] of Object.entries(makeViews(constructor, [7n, 3n, 7n, 7n, 3n]))) {
+      expect({
+        kind,
+        indexOf: view.indexOf(7n),
+        lastIndexOf: view.lastIndexOf(7n),
+        indexOfFrom1: view.indexOf(7n, 1),
+        lastIndexOfFromMinus3: view.lastIndexOf(7n, -3),
+        wrappedIndexOf: view.indexOf(wrapped),
+        wrappedLastIndexOf: view.lastIndexOf(wrapped),
+        wrappedIncludes: view.includes(wrapped),
+      }).toEqual({
+        kind,
+        indexOf: 0,
+        lastIndexOf: 3,
+        indexOfFrom1: 2,
+        lastIndexOfFromMinus3: 2,
+        wrappedIndexOf: -1,
+        wrappedLastIndexOf: -1,
+        wrappedIncludes: false,
+      });
+    }
+  });
 });
 
 test("a Number needle never matches a BigInt element and a BigInt needle never matches a Number element", () => {

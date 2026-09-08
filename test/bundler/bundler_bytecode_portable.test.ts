@@ -451,17 +451,17 @@ describe("bytecode cache portability", () => {
           "sha256": "2a5d62fb4ca9d107e3a5bb2abe6a73f3c859a6f1a91c6c3d77653cb8c2053361",
         },
         "bun build --bytecode --minify all.js": {
-          "js": "50b3e5192dd86a205c73583d585884c1b414467b14db54d03c77d3026bf236ff",
+          "js": "2937248d36358716a09034348758a5934d049f654da8223dd47b69f181bf9838",
           "jsc": {
-            "bytes": 1997464,
-            "sha256": "cf47f5e069b3f20c112160c430a3b18c5ce2d501f1c52525d34dfbd054273cfb",
+            "bytes": 1997600,
+            "sha256": "4827b467caf47c9d2128c2805f855467649838278d87068ee03330f4a1ad121a",
           },
         },
         "bun build --bytecode --minify features.js": {
-          "js": "d30a5febed53e316cc2dd2b076502079e809bb0c201ef1671e9a190ecdcf093d",
+          "js": "9a9cfce86572d5074294bcdb9acb29b5c546f56b8ed14b849ecfbacc7a3556e8",
           "jsc": {
-            "bytes": 46152,
-            "sha256": "7dc5fe8fbfaed3c41d424d2f172efb0efa1be60524ecefcc9d77dfc8088b32af",
+            "bytes": 46136,
+            "sha256": "3360683eee77f9b0a9efb8cbb19e9ce517ee1c67efa1547041c4bf9f915b5862",
           },
         },
         "bun build --bytecode --minify records.js": {

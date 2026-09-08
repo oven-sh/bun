@@ -1404,12 +1404,11 @@ impl<const SSL: bool> Handler<SSL> {
                 return;
             }
 
-            // trailing zero is fine to ignore
-            if buf == http::END_OF_CHUNKED_HTTP1_1_ENCODING_RESPONSE_BODY {
-                return;
-            }
-
-            bun_core::scoped_log!(HTTPContext, "Unexpected data on socket");
+            // HTTP/1.1: no request is in flight on a pooled socket, so any byte
+            // here (a late `0\r\n\r\n` included) means the peer's framing no
+            // longer matches ours. Evict rather than let the next request
+            // read it as the start of its response.
+            bun_core::scoped_log!(HTTPContext, "Unexpected data on idle pooled socket, evicting");
             HTTPContext::<SSL>::terminate_socket(socket);
 
             return;

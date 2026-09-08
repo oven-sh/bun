@@ -998,6 +998,79 @@ describe.concurrent(() => {
       expect(exitCode).toBe(1);
     });
 
+    it("fires after the work an unhandledRejection listener scheduled from the last callback", async () => {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `process.on("unhandledRejection", e => {
+             console.log("unhandledRejection", e.message);
+             setTimeout(() => console.log("late work"), 1);
+           });
+           process.on("beforeExit", () => console.log("beforeExit"));
+           setImmediate(() => Promise.reject(new Error("boom")));`,
+        ],
+        env: bunEnv,
+        stdio: ["inherit", "pipe", "pipe"],
+      });
+      const [stderr, stdout, exitCode] = await Promise.all([proc.stderr.text(), proc.stdout.text(), proc.exited]);
+      expect(stdout).toBe("unhandledRejection boom\nlate work\nbeforeExit\n");
+      expect(stderr).not.toInclude("error: boom");
+      expect(exitCode).toBe(0);
+    });
+
+    it("a rejection from work scheduled inside beforeExit is reported before beforeExit is re-emitted", async () => {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `process.on("unhandledRejection", e => console.log("unhandledRejection", e.message));
+           let scheduled = false;
+           process.on("beforeExit", () => {
+             console.log("beforeExit");
+             if (scheduled) return;
+             scheduled = true;
+             setImmediate(() => Promise.reject(new Error("late")));
+           });`,
+        ],
+        env: bunEnv,
+        stdio: ["inherit", "pipe", "pipe"],
+      });
+      const [stderr, stdout, exitCode] = await Promise.all([proc.stderr.text(), proc.stdout.text(), proc.exited]);
+      expect(stdout).toBe("beforeExit\nunhandledRejection late\nbeforeExit\n");
+      expect(stderr).not.toInclude("error: late");
+      expect(exitCode).toBe(0);
+    });
+
+    it("a listener recovers from a rejection a beforeExit listener made, after a microtask hop", async () => {
+      // The 'unhandledRejection' listener reaches setTimeout only after a
+      // microtask (what an await compiles to); that checkpoint has to run before
+      // the loop is judged dead, and 'beforeExit' then fires a second time.
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `let n = 0;
+           process.on("beforeExit", () => {
+             console.log("beforeExit#" + ++n);
+             if (n === 1) Promise.reject(new Error("from beforeExit"));
+           });
+           process.on("unhandledRejection", () => {
+             console.log("handler");
+             Promise.resolve().then(() => setTimeout(() => console.log("recovered"), 1));
+           });`,
+        ],
+        env: bunEnv,
+        stdio: ["inherit", "pipe", "pipe"],
+      });
+      const [stderr, stdout, exitCode] = await Promise.all([proc.stderr.text(), proc.stdout.text(), proc.exited]);
+      expect({ stdout, stderr, exitCode }).toEqual({
+        stdout: "beforeExit#1\nhandler\nrecovered\nbeforeExit#2\n",
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+
     it("still fires when an uncaughtException listener handled the throw", async () => {
       await using proc = Bun.spawn({
         cmd: [

@@ -978,10 +978,11 @@ impl WebWorker {
             // TODO: is this able to allow the event loop to continue?
             vm.as_mut().on_before_exit();
             // Drained with the entry still pending: an unsettled top-level await,
-            // Node's exit 13 (unless the user chose a nonzero exit code).
+            // Node's exit 13, unless the user chose a code or stopped the worker from 'beforeExit'.
             // SAFETY: rooted by `entry_promise`.
             if unsafe { (*promise).status() } == jsc::js_promise::Status::Pending
                 && vm.exit_handler.exit_code == 0
+                && !self.has_requested_terminate()
             {
                 vm.as_mut().exit_handler.exit_code = 13;
             }

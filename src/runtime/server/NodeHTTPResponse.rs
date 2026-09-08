@@ -1820,8 +1820,7 @@ impl NodeHTTPResponse {
         }
 
         if flags.contains(Flags::ENDED) {
-            // Armed by end(): the buffer it left behind is now empty, so the
-            // response has finished. Complete the request, then tell JS.
+            // Armed by end(): the bytes it left buffered are out, so the response has finished.
             let _guard = self.ref_guard();
             response.clear_on_writable();
             self.on_request_complete();
@@ -2051,9 +2050,7 @@ impl NodeHTTPResponse {
                 raw_response.end_stream(state.is_http_connection_close());
             }
 
-            // Bytes left in the socket buffer keep the request in flight until
-            // on_drain sees them written out (Node.js emits 'finish' only then);
-            // `-(len + 1)` tells the caller. end() may have closed inline.
+            // Still-buffered bytes keep the request in flight until on_drain; `-(len + 1)` says so.
             if let Some(raw_response) = self.raw_response.get() {
                 if !self.flags.get().contains(Flags::SOCKET_CLOSED)
                     && !raw_response.is_closed()

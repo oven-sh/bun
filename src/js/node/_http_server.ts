@@ -3138,8 +3138,7 @@ ServerResponse.prototype.end = function (chunk, encoding, callback) {
     return true;
   }
   const sentState = NodeHTTPHeaderState.sent;
-  // Native end() returns the body length, or -(length + 1) when part of the
-  // body is still draining to a slow reader; 'finish' then waits for it.
+  // Native end() returns -(length + 1) while part of the body is still draining; 'finish' waits for it.
   let draining = false;
   if (headerState !== sentState) {
     {
@@ -3212,16 +3211,14 @@ ServerResponse.prototype.end = function (chunk, encoding, callback) {
     this[kPendingFinish] = callback ?? null;
     handle.onwritable = flushPendingFinish.bind(this);
   } else {
-    // Next tick, not now: the dispatcher sets kDispatcherDetached only after a
-    // sync-finished handler returns, and 'finish' must observe it.
+    // Next tick: the dispatcher sets kDispatcherDetached after a sync handler returns, and 'finish' reads it.
     process.nextTick(emitResponseFinished, this, callback);
   }
 
   return this;
 };
 
-// 'close' is queued before the 'finish' listeners run, as Node.js's resOnFinish
-// does, so a pipelined response finished by those listeners reports after it.
+// 'close' is queued before the 'finish' listeners run, like Node.js's resOnFinish does.
 function emitResponseFinished(res, callback) {
   process.nextTick(emitCloseNT, res);
   res.emit("finish");

@@ -2586,9 +2586,17 @@ impl<'a> HTTPClient<'a> {
         // store it under the WRONG target hostname — a follow-up request to the
         // redirect destination could then reuse a TLS session negotiated with the
         // original host. Close the tunnel on redirect; only pool the raw socket.
-        if self.proxy_tunnel.is_some() {
-            bun_core::scoped_log!(fetch, "close the tunnel");
-            self.close_proxy_tunnel(true);
+        //
+        // A plain-HTTP proxy connection has the same problem without a tunnel:
+        // the pool keys it by the origin it served, which is no longer readable
+        // here, so it would be parked under the redirect destination's origin
+        // and a later request to that origin could take a connection that
+        // answered for the original host. Close it too.
+        if self.proxy_tunnel.is_some() || self.http_proxy.is_some() {
+            if self.proxy_tunnel.is_some() {
+                bun_core::scoped_log!(fetch, "close the tunnel");
+                self.close_proxy_tunnel(true);
+            }
             GenHttpContext::<IS_SSL>::close_socket(socket);
         } else if self.is_keep_alive_possible()
             && self.is_request_fully_sent()
@@ -4150,8 +4158,14 @@ impl<'a> HTTPClient<'a> {
                     proxy_tunnel::raw_as_mut(t.as_ptr()).detach_owner(&*self);
                 }
                 let had_tunnel = tunnel.is_some();
-                // target_hostname = url.hostname (the CONNECT TCP target at
-                // writeProxyConnect line 346).
+                // A proxy connection is keyed by the origin it served, so the
+                // pool cannot hand it to a request for a different origin:
+                // `url.hostname` is the CONNECT TCP target (writeProxyConnect
+                // line 346) for a tunnel, and the absolute-form request's
+                // origin for plain HTTP through the proxy. A unix entry keeps
+                // its TLS hostname instead; unix and proxy never combine.
+                let keyed_by_origin =
+                    (had_tunnel || self.http_proxy.is_some()) && self.unix_socket_path.is_empty();
                 Self::ssl_ctx_mut(ctx).release_socket(
                     socket,
                     self.flags.did_have_handshaking_error && !self.flags.reject_unauthorized,
@@ -4160,12 +4174,12 @@ impl<'a> HTTPClient<'a> {
                     self.connected_url.get_port_auto(),
                     self.tls_props.as_ref(),
                     tunnel,
-                    if had_tunnel {
+                    if keyed_by_origin {
                         self.url.hostname
                     } else {
                         self.unix_tls_hostname::<IS_SSL>()
                     },
-                    if had_tunnel {
+                    if keyed_by_origin {
                         self.url.get_port_auto()
                     } else {
                         0

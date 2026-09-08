@@ -2395,3 +2395,79 @@ describe("http_proxy env var scheme is case-insensitive", () => {
     expect(exitCode).toBe(0);
   });
 });
+
+// A forward proxy answers for every origin, so bun pools one connection per
+// proxy address. Without the target origin in the pool key, one connection
+// carries requests for several origins, and a response the proxy writes for
+// origin A is read as the answer to the next request written onto that
+// connection, which can be a request for origin B. The proxy below answers a
+// request that arrives on a connection which already serves another origin
+// with that other origin's answer: the wire shape of the cross-origin case.
+// The https-through-a-proxy path already keys its CONNECT tunnel by target
+// origin, so it was never affected.
+test("a proxy connection is not reused for a different target origin", async () => {
+  using originA = Bun.serve({ port: 0, fetch: () => new Response("unused") });
+  using originB = Bun.serve({ port: 0, fetch: () => new Response("unused") });
+  const a = `http://127.0.0.1:${originA.port}`;
+  const b = `http://127.0.0.1:${originB.port}`;
+
+  const log: Array<string> = [];
+  let connections = 0;
+  const proxy = net.createServer(clientSocket => {
+    const id = ++connections;
+    const served: Array<string> = [];
+    let buffered = "";
+    clientSocket.on("error", () => {});
+    clientSocket.on("data", chunk => {
+      buffered += chunk.toString();
+      for (let end = buffered.indexOf("\r\n\r\n"); end !== -1; end = buffered.indexOf("\r\n\r\n")) {
+        const target = buffered.slice(0, end).split(" ")[1];
+        buffered = buffered.slice(end + 4);
+        const origin = new URL(target).origin;
+        log.push(`${id} ${origin}`);
+        const answerFor = served.length > 0 ? served[0] : origin;
+        served.push(origin);
+        const body = `answer-for-${answerFor}`;
+        clientSocket.write(`HTTP/1.1 200 OK\r\nContent-Length: ${body.length}\r\n\r\n${body}`);
+      }
+    });
+  });
+  proxy.listen(0, "127.0.0.1");
+  await once(proxy, "listening");
+  const proxyUrl = `http://127.0.0.1:${(proxy.address() as net.AddressInfo).port}`;
+
+  try {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `for (const url of ${JSON.stringify([`${a}/1`, `${b}/2`, `${a}/3`])}) {
+           const res = await fetch(url, { proxy: ${JSON.stringify(proxyUrl)} });
+           console.log(await res.text());
+         }`,
+      ],
+      env: {
+        ...bunEnv,
+        NO_PROXY: undefined,
+        no_proxy: undefined,
+        HTTP_PROXY: undefined,
+        http_proxy: undefined,
+        HTTPS_PROXY: undefined,
+        https_proxy: undefined,
+      },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    // Each response is the one the proxy wrote for the origin of that request.
+    expect(stdout.trim().split("\n")).toEqual([`answer-for-${a}`, `answer-for-${b}`, `answer-for-${a}`]);
+    // Origin B gets its own connection, and the second request to origin A
+    // still reuses the first connection: keep-alive is kept, not disabled.
+    expect(log).toEqual([`1 ${a}`, `2 ${b}`, `1 ${a}`]);
+    expect(exitCode).toBe(0);
+  } finally {
+    proxy.close();
+    await once(proxy, "close");
+  }
+});

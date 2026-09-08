@@ -227,8 +227,10 @@ pub struct PooledSocket<const SSL: bool> {
     /// strong ref while the socket is parked (the `RefPtr` *is* that ref).
     /// None for direct connections.
     pub(crate) proxy_tunnel: Option<RefPtr<ProxyTunnel>>,
-    /// Tunnel: the origin hostname (`hostname_buf` is the proxy). Unix TLS:
-    /// the hostname the handshake verified (`hostname_buf` is the path).
+    /// Proxy connection, tunneled or not: the target origin this connection
+    /// served (`hostname_buf` is the proxy). Unix TLS: the hostname the
+    /// handshake verified (`hostname_buf` is the path). Empty for a direct
+    /// connection, whose origin `hostname_buf` already names.
     pub(crate) target_hostname: Box<[u8]>,
     pub(crate) target_port: u16,
     /// Hash of the effective Proxy-Authorization value so that tunnels
@@ -667,12 +669,10 @@ impl<const SSL: bool> HTTPContext<SSL> {
                 owner,
                 // Pool owns the tunnel ref transferred by the caller.
                 proxy_tunnel: tunnel,
-                target_hostname: if (had_tunnel || transport == Transport::Unix)
-                    && !target_hostname.is_empty()
-                {
-                    Box::<[u8]>::from(target_hostname)
-                } else {
+                target_hostname: if target_hostname.is_empty() {
                     Box::default()
+                } else {
+                    Box::<[u8]>::from(target_hostname)
                 },
                 target_port,
                 proxy_auth_hash,
@@ -839,19 +839,21 @@ impl<const SSL: bool> HTTPContext<SSL> {
                 continue;
             }
 
-            if want_tunnel {
-                if socket.target_port != target_port {
-                    continue;
-                }
-                if !strings::eql_long(&socket.target_hostname, target_hostname, true) {
-                    continue;
-                }
-                // proxy_tunnel.is_some() guaranteed by want_tunnel match above.
-                if !required_for_target.admits(socket.proxy_tunnel.as_ref().unwrap().verification) {
-                    continue;
-                }
-            } else if transport == Transport::Unix
-                && !strings::eql_long(&socket.target_hostname, target_hostname, true)
+            // The target origin must match. A connection to a forward proxy
+            // carries the origin it served, tunneled or not: the proxy writes
+            // that origin's responses onto it, so another origin's request
+            // must not ride it. A TLS unix entry carries the hostname its
+            // handshake verified. Both sides are empty for a direct
+            // connection, whose origin `hostname` already names.
+            if socket.target_port != target_port
+                || !strings::eql_long(&socket.target_hostname, target_hostname, true)
+            {
+                continue;
+            }
+
+            // proxy_tunnel.is_some() guaranteed by want_tunnel match above.
+            if want_tunnel
+                && !required_for_target.admits(socket.proxy_tunnel.as_ref().unwrap().verification)
             {
                 continue;
             }
@@ -1036,14 +1038,14 @@ impl<const SSL: bool> HTTPContext<SSL> {
 
         client.flags.reused_socket_verification = PeerVerification::None;
         if client.is_keep_alive_possible() {
-            let want_tunnel = client.http_proxy.is_some() && client.url.is_https();
-            // CONNECT TCP target (writeProxyConnect line 346).
-            let target_hostname: &[u8] = if want_tunnel {
-                client.url.hostname
-            } else {
-                b""
-            };
-            let target_port: u16 = if want_tunnel {
+            let is_proxied = client.http_proxy.is_some();
+            let want_tunnel = is_proxied && client.url.is_https();
+            // The origin this connection talks to: the CONNECT TCP target
+            // (writeProxyConnect line 346) for a tunnel, the absolute-form
+            // request's origin for plain HTTP through the proxy. A proxy
+            // connection is keyed by it either way.
+            let target_hostname: &[u8] = if is_proxied { client.url.hostname } else { b"" };
+            let target_port: u16 = if is_proxied {
                 client.url.get_port_auto()
             } else {
                 0

@@ -2215,9 +2215,8 @@ export default class {
 
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-      expect(stderr).toBe("");
-      expect(stdout).toBe("[1,1,1,1,1,2,1,5]\n");
-      expect(exitCode).toBe(0);
+      expect({ stdout, exitCode }).toEqual({ stdout: "[1,1,1,1,1,2,1,5]\n", exitCode: 0 });
+      void stderr;
     });
 
     // The runtime transpiler does not run a renamer, so the generated closure

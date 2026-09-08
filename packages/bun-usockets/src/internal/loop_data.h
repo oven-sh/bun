@@ -64,6 +64,9 @@ struct us_internal_loop_data_t {
      * full process pass only when it flagged pending work -- one engine pass
      * per loop turn instead of one per native call. */
     struct us_nq_driver_s *nq_head;
+    /* The walk's next node, so unregistering it mid-walk advances the walk
+     * instead of leaving it a dangling successor. */
+    struct us_nq_driver_s *nq_cursor;
 #ifdef LIBUS_USE_LIBUV
     /* A fallthrough us_timer_t armed to quic_next_tick_us so the uv loop wakes
      * for lsquic's time-driven state. POSIX folds the deadline into the

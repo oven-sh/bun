@@ -5,8 +5,11 @@
 #include <stdlib.h>
 #include <string.h>
 
+/* One table of Rust thunks for the whole process (bun_lsquic_sys builds it
+ * per endpoint type; there is one). Engine-level callbacks get the endpoint
+ * as `owner` from the ea_*_ctx slots; conn- and stream-level callbacks get
+ * the ctx lsquic stores for them. */
 struct us_nq_vtable {
-    void *owner;
     void *(*on_new_conn)(void *owner, lsquic_conn_t *c);
     void (*on_hsk_done)(void *conn_ctx, int status);
     void (*on_hsk_confirmed)(void *conn_ctx);
@@ -18,7 +21,7 @@ struct us_nq_vtable {
                          size_t token_size);
     void (*on_sess_resume)(void *conn_ctx, const unsigned char *blob,
                            size_t blob_size);
-    void *(*on_new_stream)(void *owner, lsquic_stream_t *s);
+    void *(*on_new_stream)(lsquic_stream_t *s);
     void (*on_stream_read)(void *stream_ctx, lsquic_stream_t *s);
     void (*on_stream_write)(void *stream_ctx, lsquic_stream_t *s);
     void (*on_stream_close)(void *stream_ctx, lsquic_stream_t *s);
@@ -44,94 +47,92 @@ struct us_nq_vtable {
                                 uint64_t error_code);
 };
 
-static lsquic_conn_ctx_t *nq_on_new_conn(void *if_ctx, lsquic_conn_t *c) {
+static const struct us_nq_vtable *us_nq_vt;
+
+/* Idempotent; a second, different table is a programming error. */
+static void us_nq_install(const struct us_nq_vtable *vt) {
+    const struct us_nq_vtable *expected = NULL;
+    if (!__atomic_compare_exchange_n(&us_nq_vt, &expected, vt, 0,
+                                     __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE)
+            && expected != vt)
+        abort();
+}
+
+static lsquic_conn_ctx_t *nq_on_new_conn(void *owner, lsquic_conn_t *c) {
     void *existing = (void *) lsquic_conn_get_ctx(c);
     if (existing) return (lsquic_conn_ctx_t *) existing;
-    struct us_nq_vtable *vt = if_ctx;
-    return (lsquic_conn_ctx_t *) vt->on_new_conn(vt->owner, c);
+    return (lsquic_conn_ctx_t *) us_nq_vt->on_new_conn(owner, c);
 }
 static void nq_on_conn_closed(lsquic_conn_t *c) {
     void *ctx = (void *) lsquic_conn_get_ctx(c);
     lsquic_conn_set_ctx(c, NULL);
     if (ctx) {
-        struct us_nq_vtable *vt = *(struct us_nq_vtable **) ctx;
-        vt->on_conn_closed(ctx);
+        us_nq_vt->on_conn_closed(ctx);
     }
 }
 static void nq_on_hsk_done(lsquic_conn_t *c, enum lsquic_hsk_status s) {
     void *ctx = (void *) lsquic_conn_get_ctx(c);
     if (ctx) {
-        struct us_nq_vtable *vt = *(struct us_nq_vtable **) ctx;
-        vt->on_hsk_done(ctx, (int) s);
+        us_nq_vt->on_hsk_done(ctx, (int) s);
     }
 }
-static void nq_on_mini_conn_failed(void *if_ctx, const struct sockaddr *peer_sa,
+static void nq_on_mini_conn_failed(void *owner, const struct sockaddr *peer_sa,
                                    uint64_t error_code) {
-    struct us_nq_vtable *vt = if_ctx;
-    vt->on_mini_conn_failed(vt->owner, peer_sa, error_code);
+    us_nq_vt->on_mini_conn_failed(owner, peer_sa, error_code);
 }
 static void nq_on_hsk_confirmed(lsquic_conn_t *c) {
     void *ctx = (void *) lsquic_conn_get_ctx(c);
     if (ctx) {
-        struct us_nq_vtable *vt = *(struct us_nq_vtable **) ctx;
-        vt->on_hsk_confirmed(ctx);
+        us_nq_vt->on_hsk_confirmed(ctx);
     }
 }
 static void nq_on_goaway_received(lsquic_conn_t *c) {
     void *ctx = (void *) lsquic_conn_get_ctx(c);
     if (ctx) {
-        struct us_nq_vtable *vt = *(struct us_nq_vtable **) ctx;
-        vt->on_goaway_received(ctx);
+        us_nq_vt->on_goaway_received(ctx);
     }
 }
 static void nq_on_conncloseframe(lsquic_conn_t *c, int app_error, uint64_t code,
                                  const char *reason, int reason_len) {
     void *ctx = (void *) lsquic_conn_get_ctx(c);
     if (ctx) {
-        struct us_nq_vtable *vt = *(struct us_nq_vtable **) ctx;
-        vt->on_conncloseframe(ctx, app_error, code, reason, reason_len);
+        us_nq_vt->on_conncloseframe(ctx, app_error, code, reason, reason_len);
     }
 }
 static void nq_on_new_token(lsquic_conn_t *c, const unsigned char *t, size_t n) {
     void *ctx = (void *) lsquic_conn_get_ctx(c);
     if (ctx) {
-        struct us_nq_vtable *vt = *(struct us_nq_vtable **) ctx;
-        vt->on_new_token(ctx, t, n);
+        us_nq_vt->on_new_token(ctx, t, n);
     }
 }
 static void nq_on_sess_resume(lsquic_conn_t *c, const unsigned char *b, size_t n) {
     void *ctx = (void *) lsquic_conn_get_ctx(c);
     if (ctx) {
-        struct us_nq_vtable *vt = *(struct us_nq_vtable **) ctx;
-        vt->on_sess_resume(ctx, b, n);
+        us_nq_vt->on_sess_resume(ctx, b, n);
     }
 }
-static lsquic_stream_ctx_t *nq_on_new_stream(void *if_ctx, lsquic_stream_t *s) {
-    struct us_nq_vtable *vt = if_ctx;
-    return (lsquic_stream_ctx_t *) vt->on_new_stream(vt->owner, s);
+static lsquic_stream_ctx_t *nq_on_new_stream(void *owner, lsquic_stream_t *s) {
+    (void) owner;
+    return (lsquic_stream_ctx_t *) us_nq_vt->on_new_stream(s);
 }
 static void nq_on_read(lsquic_stream_t *s, lsquic_stream_ctx_t *h) {
     if (h) {
-        struct us_nq_vtable *vt = *(struct us_nq_vtable **) h;
-        vt->on_stream_read(h, s);
+        us_nq_vt->on_stream_read(h, s);
     }
 }
 static void nq_on_write(lsquic_stream_t *s, lsquic_stream_ctx_t *h) {
     if (h) {
-        struct us_nq_vtable *vt = *(struct us_nq_vtable **) h;
-        vt->on_stream_write(h, s);
+        us_nq_vt->on_stream_write(h, s);
     }
 }
 static void nq_on_stream_close(lsquic_stream_t *s, lsquic_stream_ctx_t *h) {
     if (h) {
-        struct us_nq_vtable *vt = *(struct us_nq_vtable **) h;
-        vt->on_stream_close(h, s);
+        us_nq_vt->on_stream_close(h, s);
     }
 }
 static void nq_on_reset(lsquic_stream_t *s, lsquic_stream_ctx_t *h, int how) {
     if (h) {
-        struct us_nq_vtable *vt = *(struct us_nq_vtable **) h;
-        vt->on_stream_reset(h, how, lsquic_stream_get_error_code(s));
+        us_nq_vt->on_stream_reset(h, how, lsquic_stream_get_error_code(s));
     }
 }
 static ssize_t nq_on_dg_write(lsquic_conn_t *c, void *buf, size_t sz) {
@@ -139,36 +140,31 @@ static ssize_t nq_on_dg_write(lsquic_conn_t *c, void *buf, size_t sz) {
     /* -1 is "nothing written": lsquic frames any return >= 0, so 0 would put
      * an empty DATAGRAM frame on the wire. */
     if (!ctx) return -1;
-    struct us_nq_vtable *vt = *(struct us_nq_vtable **) ctx;
-    return vt->on_dg_write(ctx, buf, sz);
+    return us_nq_vt->on_dg_write(ctx, buf, sz);
 }
 static void nq_on_datagram(lsquic_conn_t *c, const void *buf, size_t sz) {
     void *ctx = (void *) lsquic_conn_get_ctx(c);
     if (ctx) {
-        struct us_nq_vtable *vt = *(struct us_nq_vtable **) ctx;
-        vt->on_datagram(ctx, buf, sz);
+        us_nq_vt->on_datagram(ctx, buf, sz);
     }
 }
 static void nq_on_datagram_status(lsquic_conn_t *c, unsigned count, int acked) {
     void *ctx = (void *) lsquic_conn_get_ctx(c);
     if (ctx) {
-        struct us_nq_vtable *vt = *(struct us_nq_vtable **) ctx;
-        vt->on_datagram_status(ctx, count, acked);
+        us_nq_vt->on_datagram_status(ctx, count, acked);
     }
 }
 static void nq_on_early_data_failed(lsquic_conn_t *c) {
     void *ctx = (void *) lsquic_conn_get_ctx(c);
     if (ctx) {
-        struct us_nq_vtable *vt = *(struct us_nq_vtable **) ctx;
-        vt->on_early_data_failed(ctx);
+        us_nq_vt->on_early_data_failed(ctx);
     }
 }
 static void nq_on_origin(lsquic_conn_t *c, const unsigned char *chunk,
                          size_t len, int fin) {
     void *ctx = (void *) lsquic_conn_get_ctx(c);
     if (ctx) {
-        struct us_nq_vtable *vt = *(struct us_nq_vtable **) ctx;
-        vt->on_origin(ctx, chunk, len, fin);
+        us_nq_vt->on_origin(ctx, chunk, len, fin);
     }
 }
 static void nq_on_path_switch(lsquic_conn_t *c, int validated, int is_preferred,
@@ -178,8 +174,7 @@ static void nq_on_path_switch(lsquic_conn_t *c, int validated, int is_preferred,
                               const struct sockaddr *old_peer) {
     void *ctx = (void *) lsquic_conn_get_ctx(c);
     if (ctx) {
-        struct us_nq_vtable *vt = *(struct us_nq_vtable **) ctx;
-        vt->on_path_switch(ctx, validated, is_preferred, new_local, new_peer,
+        us_nq_vt->on_path_switch(ctx, validated, is_preferred, new_local, new_peer,
                            old_local, old_peer);
     }
 }
@@ -356,23 +351,20 @@ static const struct lsquic_stream_if nq_stream_if = {
     .on_origin = nq_on_origin,
 };
 
+/* peer_ctx is the owning endpoint for every packet the Rust side feeds. */
 static SSL_CTX *nq_get_ssl_ctx(void *peer_ctx, const struct sockaddr *local) {
-    struct us_nq_vtable *vt = *(struct us_nq_vtable **) peer_ctx;
-    return vt->get_ssl_ctx(vt->owner, local);
+    return us_nq_vt->get_ssl_ctx(peer_ctx, local);
 }
 static SSL_CTX *nq_get_client_ssl_ctx(void *peer_ctx, const struct sockaddr *local) {
-    struct us_nq_vtable *vt = *(struct us_nq_vtable **) peer_ctx;
-    return vt->get_client_ssl_ctx(vt->owner, local);
+    return us_nq_vt->get_client_ssl_ctx(peer_ctx, local);
 }
-static SSL_CTX *nq_lookup_cert(void *cert_ctx, const struct sockaddr *local,
+static SSL_CTX *nq_lookup_cert(void *owner, const struct sockaddr *local,
                                const char *sni) {
-    struct us_nq_vtable *vt = cert_ctx;
-    return vt->lookup_cert(vt->owner, local, sni);
+    return us_nq_vt->lookup_cert(owner, local, sni);
 }
-static int nq_packets_out(void *out_ctx, const struct lsquic_out_spec *specs,
+static int nq_packets_out(void *owner, const struct lsquic_out_spec *specs,
                           unsigned n) {
-    struct us_nq_vtable *vt = out_ctx;
-    return vt->packets_out(vt->owner, specs, n);
+    return us_nq_vt->packets_out(owner, specs, n);
 }
 
 static int nq_log_buf(void *ctx, const char *buf, size_t len) {
@@ -418,6 +410,8 @@ int us_nq_conn_transport_params(const lsquic_conn_t *c, int peer,
 }
 
 size_t us_nq_tp_size(void) { return sizeof(struct us_nq_tp); }
+
+size_t us_nq_conn_info_size(void) { return sizeof(struct lsquic_conn_info); }
 
 size_t us_nq_settings_size(void) { return sizeof(struct lsquic_engine_settings); }
 
@@ -496,22 +490,24 @@ NQ_GET(datagrams, int)
 NQ_GET(max_datagram_frame_size, unsigned short)
 #undef NQ_SET
 
-/* `vt` must outlive the engine; `settings` is copied by lsquic. */
+/* `vt` is static; `owner` must outlive the engine; `settings` is copied by
+ * lsquic. */
 lsquic_engine_t *us_nq_engine_new(int is_server, int is_http,
-                                  struct us_nq_vtable *vt,
+                                  const struct us_nq_vtable *vt, void *owner,
                                   const struct lsquic_engine_settings *settings,
                                   const char *alpn) {
+    us_nq_install(vt);
     struct lsquic_engine_api api;
     memset(&api, 0, sizeof(api));
     api.ea_settings = settings;
     api.ea_stream_if = &nq_stream_if;
-    api.ea_stream_if_ctx = vt;
+    api.ea_stream_if_ctx = owner;
     api.ea_packets_out = nq_packets_out;
-    api.ea_packets_out_ctx = vt;
+    api.ea_packets_out_ctx = owner;
     api.ea_get_ssl_ctx = is_server ? nq_get_ssl_ctx : nq_get_client_ssl_ctx;
     if (is_server) {
         api.ea_lookup_cert = nq_lookup_cert;
-        api.ea_cert_lu_ctx = vt;
+        api.ea_cert_lu_ctx = owner;
     }
     api.ea_alpn = alpn;
     unsigned flags = is_server ? LSENG_SERVER : 0;
@@ -526,7 +522,6 @@ lsquic_engine_t *us_nq_engine_new(int is_server, int is_http,
 
 const struct sockaddr *us_nq_spec_dest(const struct lsquic_out_spec *s) { return s->dest_sa; }
 const struct sockaddr *us_nq_spec_local(const struct lsquic_out_spec *s) { return s->local_sa; }
-void *us_nq_spec_peer_ctx(const struct lsquic_out_spec *s) { return s->peer_ctx; }
 const struct iovec *us_nq_spec_iov(const struct lsquic_out_spec *s, size_t *n) {
     *n = s->iovlen;
     return s->iov;
@@ -549,60 +544,67 @@ struct us_nq_driver_s {
     struct us_nq_driver_s *next;
     void *owner;
     int pending;
+    /* The full process pass (engines + event dispatch). */
+    void (*process)(void *owner);
+    /* Full pass, but session close events are held for the next loop point
+     * -- dispatching a close in the middle of a running microtask chain is
+     * an interleaving node never produces. */
+    void (*drain)(void *owner);
 };
 
-/* endpoint.rs: the full process pass (engines + event dispatch). */
-extern void Bun__nodeQuic__processEndpoint(void *owner);
+size_t us_nq_driver_size(void) { return sizeof(struct us_nq_driver_s); }
 
 void us_nq_loop_register(struct us_loop_t *loop, struct us_nq_driver_s *d,
-                         void *owner) {
+                         void *owner, void (*process)(void *),
+                         void (*drain)(void *)) {
     d->owner = owner;
+    d->process = process;
+    d->drain = drain;
     d->pending = 0;
     d->next = loop->data.nq_head;
     loop->data.nq_head = d;
 }
 
 void us_nq_loop_unregister(struct us_loop_t *loop, struct us_nq_driver_s *d) {
+    /* An in-progress walk holds `d` as its successor: step it past. */
+    if (loop->data.nq_cursor == d) loop->data.nq_cursor = d->next;
     struct us_nq_driver_s **pp = &loop->data.nq_head;
     while (*pp) {
-        /* Leave d->next intact: an in-progress walk holds it as its
-         * successor, and clearing it would end that pass early. Nothing else
-         * reads it, and register() overwrites it. */
         if (*pp == d) { *pp = d->next; return; }
         pp = &(*pp)->next;
     }
 }
 
-/* endpoint.rs: full pass, but session close events are held for the next
- * loop point -- dispatching a close in the middle of a running microtask
- * chain is an interleaving node never produces. */
-extern void Bun__nodeQuic__drainEndpoint(void *owner);
-
 /* Runs from the microtask drain: keeps the chain's packets and non-close
  * events moving without ending sessions mid-chain. */
+/* The pass runs JS, which can destroy any endpoint and unlink its node --
+ * `d` itself or its successor -- so the successor lives in the loop's cursor,
+ * which us_nq_loop_unregister advances. A nested walk (microtask drain inside
+ * a pass) leaves the cursor NULL, ending the outer walk early; the nested one
+ * already visited every node. */
 void us_nq_loop_drain(struct us_loop_t *loop) {
     struct us_nq_driver_s *d = loop->data.nq_head;
     while (d) {
-        struct us_nq_driver_s *next = d->next;
+        loop->data.nq_cursor = d->next;
         if (d->pending) {
             d->pending = 0;
-            if (d->owner) Bun__nodeQuic__drainEndpoint(d->owner);
+            if (d->owner) d->drain(d->owner);
         }
-        d = next;
+        d = loop->data.nq_cursor;
     }
+    loop->data.nq_cursor = NULL;
 }
 
 void us_nq_loop_flush_if_pending(struct us_loop_t *loop) {
     struct us_nq_driver_s *d = loop->data.nq_head;
     while (d) {
-        /* The pass runs JS, which can destroy the endpoint and unlink `d`;
-         * take the successor first. */
-        struct us_nq_driver_s *next = d->next;
+        loop->data.nq_cursor = d->next;
         if (d->pending) {
             d->pending = 0;
-            if (d->owner) Bun__nodeQuic__processEndpoint(d->owner);
+            if (d->owner) d->process(d->owner);
         }
-        d = next;
+        d = loop->data.nq_cursor;
     }
+    loop->data.nq_cursor = NULL;
 }
 

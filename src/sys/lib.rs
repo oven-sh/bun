@@ -1266,6 +1266,14 @@ pub fn last_errno() -> i32 {
     bun_core::ffi::errno()
 }
 
+/// Overwrite thread-local libc errno, for callers whose C caller reads it
+/// back as the error of the operation they were asked to perform.
+#[inline]
+pub fn set_last_errno(value: i32) {
+    // SAFETY: `errno_ptr()` is this thread's errno slot.
+    unsafe { *bun_core::ffi::errno_ptr() = value };
+}
+
 /// Copy `path` into a NUL-terminated buffer.
 /// Returns `ENAMETOOLONG` if `path` contains an interior NUL.
 #[inline]

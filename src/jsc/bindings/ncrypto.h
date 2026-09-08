@@ -1020,8 +1020,6 @@ public:
     X509View view() const;
     operator X509View() const { return view(); }
 
-    static WTF::ASCIILiteral ErrorCode(int32_t err);
-
 private:
     DeleteFnPtr<X509, X509_free> cert_;
 };

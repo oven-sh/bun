@@ -2183,21 +2183,6 @@ where
             return this.handle_reject(err_value);
         }
 
-        if resp.has_responded() {
-            stream_log!("done");
-            ResponseStreamJSSink::<SSL_ENABLED>::detach(
-                &mut response_stream.sink.source,
-                global_this,
-            );
-            this.sink.set(None);
-            Self::destroy_sink(response_stream_ptr);
-            stream.done();
-            this.response_body_readable_stream_ref
-                .with_mut(|s| s.deinit());
-            this.end_stream(this.should_close_connection());
-            return;
-        }
-
         // A fully-synchronous ReadableStream can drain through writeBytes
         // and reach endFromJS() inside assignToStream(). If tryEnd() then
         // hits transport backpressure (common on QUIC right after the
@@ -2212,11 +2197,39 @@ where
                 effective_result = jsc::JSPromise::opaque_ref(flush).to_js();
             }
         }
+        // it returns a Promise when it goes through ReadableStreamDefaultReader,
+        // or when a direct stream's pull() has not settled yet.
+        let promise = if effective_result.is_empty_or_undefined_or_null() {
+            None
+        } else {
+            effective_result.ensure_still_alive();
+            effective_result.as_any_promise()
+        };
+
+        // The sink can fully end the response inside assignToStream()
+        // (`controller.end()` / `close()` from a synchronous stretch of a
+        // direct stream's pull()). A pull() that is still running keeps the
+        // request until it settles: its rejection is then consumed by
+        // handle_reject_stream instead of reaching the unhandledRejection
+        // handler, and both settle paths know how to release a response the
+        // sink already ended (`ended_response`).
+        if promise.is_none() && resp.has_responded() {
+            stream_log!("done");
+            ResponseStreamJSSink::<SSL_ENABLED>::detach(
+                &mut response_stream.sink.source,
+                global_this,
+            );
+            this.sink.set(None);
+            Self::destroy_sink(response_stream_ptr);
+            stream.done();
+            this.response_body_readable_stream_ref
+                .with_mut(|s| s.deinit());
+            this.end_stream(this.should_close_connection());
+            return;
+        }
 
         if !effective_result.is_empty_or_undefined_or_null() {
-            effective_result.ensure_still_alive();
-            // it returns a Promise when it goes through ReadableStreamDefaultReader
-            if let Some(promise) = effective_result.as_any_promise() {
+            if let Some(promise) = promise {
                 stream_log!("returned a promise");
                 if this.drain_microtasks().is_err() {
                     return;

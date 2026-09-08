@@ -1019,11 +1019,14 @@ pub struct HTTPServerWritable<const SSL: bool> {
     /// `flush_promise()` → `pending.run()`.
     pub(crate) pending: WritablePending,
     pub(crate) wrote_at_start_of_flush: BlobSizeType,
-    // JSC_BORROW: process-lifetime VM global; `None` until `flush_from_js`/
-    // `end_from_js` install it. Safe `Deref` via `BackRef`.
+    // JSC_BORROW: process-lifetime VM global, installed by
+    // `RequestContext::do_render_stream` at construction. Safe `Deref` via `BackRef`.
     pub global_this: Option<BackRef<JSGlobalObject>>,
     pub(crate) high_water_mark: BlobSizeType,
 
+    /// `end()` / `end_from_js()` / `fail()` ran. All three hand the buffered
+    /// tail to uWS (or drop it) before they return, so once this is set the
+    /// buffer only ever holds the unsent rest of a partial `try_end`.
     pub(crate) requested_end: bool,
 
     pub(crate) has_backpressure: bool,
@@ -1033,6 +1036,11 @@ pub struct HTTPServerWritable<const SSL: bool> {
     /// re-invoke a direct-stream `pull`. Same pattern as
     /// `FileSink::source_pending_pull`.
     pub(crate) source_pending_pull: bool,
+    /// Bytes that were buffered when the end was requested: the `total_size`
+    /// for `try_end` (the Content-Length path, taken when nothing was written
+    /// before the end). A streaming send resets it to 0, so together with
+    /// `has_backpressure` it means a `try_end` took only part of the buffer
+    /// and `on_writable` resumes it from uWS's write offset.
     pub(crate) end_len: usize,
     /// This sink fully ended the uWS response (`res.end()` / a completed
     /// `res.try_end()`). On HTTP/1 uWS `markDone()` drops `onAborted` at that
@@ -1601,13 +1609,23 @@ impl<const SSL: bool> HTTPServerWritable<SSL> {
             }
         }
         self.wrote_at_start_of_flush = self.wrote;
-        self.pending_flush = Some(JSPromise::create(global_this));
+        bun_sys::Result::Ok(self.park_pending_flush(global_this))
+    }
+
+    /// uWS could not take everything it was handed. `on_writable` settles this
+    /// promise through `flush_promise()` once it has (resending the unsent
+    /// rest of a `try_end` first). For an ended sink the request waits on it
+    /// instead of tearing the sink down (`do_render_stream`,
+    /// `handle_resolve_stream`).
+    fn park_pending_flush(&mut self, global_this: &JSGlobalObject) -> JSValue {
+        debug_assert!(self.pending_flush.is_none());
+        let promise = JSPromise::create(global_this);
+        self.pending_flush = Some(promise);
         self.global_this = Some(BackRef::new(global_this));
         // S008: `JSPromise` is an `opaque_ffi!` ZST — safe `*const → &` deref.
-        let promise_value = JSPromise::opaque_ref(self.pending_flush.unwrap()).to_js();
-        promise_value.protect();
-
-        bun_sys::Result::Ok(promise_value)
+        let value = JSPromise::opaque_ref(promise).to_js();
+        value.protect();
+        value
     }
 
     pub fn flush(&mut self) -> bun_sys::Result<()> {
@@ -1764,13 +1782,18 @@ impl<const SSL: bool> HTTPServerWritable<SSL> {
         self.unregister_auto_flusher();
     }
 
-    /// In this case, it's always an error
+    /// Clean end of the body: the controller's `close()`. A buffered tail is
+    /// handed to uWS here, not left to the auto-flusher or `finalize()`: a
+    /// `pull()` that closes synchronously has its sink torn down as soon as it
+    /// returns, and under backpressure from an earlier write neither of those
+    /// would send it before the terminating chunk.
     pub(crate) fn end(&mut self, err: Option<SysError>) -> bun_sys::Result<()> {
         bun_core::scoped_log!(HTTPServerWritableLog, "end({:?})", err);
 
         if self.requested_end {
             return bun_sys::Result::Ok(());
         }
+        self.requested_end = true;
 
         if self.is_done() || self.res.is_none() || self.any_res().unwrap().has_responded() {
             self.source.close(err);
@@ -1779,19 +1802,45 @@ impl<const SSL: bool> HTTPServerWritable<SSL> {
             return bun_sys::Result::Ok(());
         }
 
-        self.requested_end = true;
         let readable_len = self.readable_slice().len();
         self.end_len = readable_len;
 
         if readable_len == 0 {
+            // Nothing of ours is outstanding; the owner ends the response.
             self.source.close(err);
             self.mark_done();
-            // we do not close the stream here
-            // this.res.endStream(false);
             self.finalize();
             return bun_sys::Result::Ok(());
         }
+
+        if !self.send_readable(0) {
+            let global_this = self
+                .global_this
+                .expect("HTTPServerWritable.global_this used before init");
+            self.park_pending_flush(&global_this);
+            return bun_sys::Result::Ok(());
+        }
+        self.handle_ended_response(err);
         bun_sys::Result::Ok(())
+    }
+
+    /// The source failed (`controller.close(error)`, or the pump closing for
+    /// an errored stream), so anything still buffered is the tail of a
+    /// truncated body. Drop it and leave the response pending: the owner
+    /// closes the connection instead of terminating the message
+    /// (`RequestContext::close_incomplete_stream`).
+    pub(crate) fn fail(&mut self) {
+        bun_core::scoped_log!(HTTPServerWritableLog, "fail()");
+
+        if self.requested_end {
+            return;
+        }
+        self.requested_end = true;
+        self.end_len = 0;
+        self.source.close(None);
+        self.mark_done();
+        self.flush_promise();
+        self.finalize();
     }
 
     pub(crate) fn end_from_js(&mut self, global_this: &JSGlobalObject) -> bun_sys::Result<JSValue> {
@@ -1800,27 +1849,21 @@ impl<const SSL: bool> HTTPServerWritable<SSL> {
         if self.requested_end {
             return bun_sys::Result::Ok(JSValue::from(0i32));
         }
+        self.requested_end = true;
 
         if self.is_done() || self.res.is_none() || self.any_res().unwrap().has_responded() {
-            self.requested_end = true;
             self.source.close(None);
             self.mark_done();
             self.finalize();
             return bun_sys::Result::Ok(JSValue::from(0i32));
         }
 
-        self.requested_end = true;
         let readable_len = self.readable_slice().len();
         self.end_len = readable_len;
 
         if readable_len > 0 {
             if !self.send_readable(0) {
-                self.pending_flush = Some(JSPromise::create(global_this));
-                self.global_this = Some(BackRef::new(global_this));
-                // S008: `JSPromise` is an `opaque_ffi!` ZST — safe `*const → &` deref.
-                let value = JSPromise::opaque_ref(self.pending_flush.unwrap()).to_js();
-                value.protect();
-                return bun_sys::Result::Ok(value);
+                return bun_sys::Result::Ok(self.park_pending_flush(global_this));
             }
         } else {
             if let Some(res) = self.any_res() {
@@ -1828,19 +1871,23 @@ impl<const SSL: bool> HTTPServerWritable<SSL> {
             }
         }
 
+        self.handle_ended_response(None);
+        bun_sys::Result::Ok(JSValue::from(self.wrote))
+    }
+
+    /// `end()` / `end_from_js()` fully ended the response through uWS
+    /// (`res.end()` or a completed `res.try_end()`), which `markDone()`s it
+    /// and drops its `onAborted` (see `ended_response`).
+    fn handle_ended_response(&mut self, err: Option<SysError>) {
         if let Some(res) = self.any_res() {
             // Release any request-body pause while `res` is live (see `end_already_responded_stream`).
             res.resume();
         }
-        // Both branches above fully ended the response through uWS, which
-        // `markDone()`s it and drops its `onAborted`.
         self.ended_response = true;
         self.mark_done();
         self.flush_promise();
-        self.source.close(None);
+        self.source.close(err);
         self.finalize();
-
-        bun_sys::Result::Ok(JSValue::from(self.wrote))
     }
 
     /// Takes `*mut Self`, not `&mut self`: closing the signal runs the controller's
@@ -1898,9 +1945,11 @@ impl<const SSL: bool> HTTPServerWritable<SSL> {
             return false;
         }
 
-        let readable_len = self.readable_slice().len();
+        // Every path that sets `requested_end` unregisters this flusher
+        // (`send_readable` / `mark_done`), and `write()` stops registering it.
+        debug_assert!(!self.requested_end);
 
-        if self.has_backpressure_and_is_try_end() || readable_len == 0 {
+        if self.readable_slice().is_empty() {
             self.auto_flusher.registered.set(false);
             return false;
         }
@@ -1910,20 +1959,6 @@ impl<const SSL: bool> HTTPServerWritable<SSL> {
             return true;
         }
         self.auto_flusher.registered.set(false);
-
-        if self.requested_end {
-            if let Some(res) = self.any_res() {
-                res.clear_on_writable();
-                // Release any request-body pause while `res` is live (see `end_already_responded_stream`).
-                res.resume();
-            }
-            // `send_readable` drained the parked `try_end`/`end`, so uWS has
-            // `markDone()`d the response and dropped its `onAborted`.
-            self.ended_response = true;
-            self.source.close(None);
-            self.flush_promise();
-            self.finalize();
-        }
         false
     }
 
@@ -2073,6 +2108,15 @@ impl<const SSL: bool> crate::webcore::sink::JsSinkType for HTTPServerWritable<SS
         // `destroy` frees it (never the inherent `finalize`), so the `&mut`
         // scoped to this call stays valid throughout.
         unsafe { (*this).finalize() }
+    }
+    unsafe fn close_with_error(
+        this: *mut Self,
+        _global: &JSGlobalObject,
+        _reason: JSValue,
+    ) -> bun_sys::Result<()> {
+        // SAFETY: as for `finalize` above; `fail` does not free the sink.
+        unsafe { (*this).fail() };
+        bun_sys::Result::Ok(())
     }
     fn end_from_js(&mut self, global: &JSGlobalObject) -> bun_sys::Result<JSValue> {
         Self::end_from_js(self, global)

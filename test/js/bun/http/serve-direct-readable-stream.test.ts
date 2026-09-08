@@ -4,6 +4,7 @@ import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isASAN, tls } from "harness";
 import { AsyncLocalStorage } from "node:async_hooks";
 import net from "node:net";
+import { baseHeaders, frame, RawH2, T } from "./serve-http2-helpers";
 
 test("HTTPResponseSink displays correct message", async () => {
   let leakedCtrl: any;
@@ -652,6 +653,57 @@ describe("direct stream whose pull() runs while its Response is being attached",
       });
     },
   );
+
+  // The response is complete once close()/end() returns, but a pull() that
+  // keeps running afterwards still owns the request until it settles, so a
+  // late throw is consumed by the request like any other body error. end()
+  // used to release the request on the spot, which left that rejection to
+  // the global unhandledRejection handler.
+  test.concurrent.each(["close", "end"])(
+    "a pull() that throws after %s() completed the response does not become an unhandledRejection",
+    async finish => {
+      const result = await run(`
+        let unhandled = 0;
+        process.on("unhandledRejection", () => unhandled++);
+        const gate = Promise.withResolvers();
+        const thrown = Promise.withResolvers();
+        const server = Bun.serve({
+          port: 0,
+          hostname: "127.0.0.1",
+          idleTimeout: 0,
+          development: false,
+          fetch() {
+            return new Response(
+              new ReadableStream({
+                type: "direct",
+                async pull(controller) {
+                  controller.write("seed");
+                  controller.${finish}();
+                  await gate.promise;
+                  queueMicrotask(() => thrown.resolve());
+                  throw new Error("late");
+                },
+              }),
+            );
+          },
+        });
+        const body = await (await fetch(server.url)).text();
+        const pendingWhileParked = server.pendingRequests;
+        gate.resolve();
+        await thrown.promise;
+        while (server.pendingRequests > 0) await Bun.sleep(0);
+        // One more turn for the rejection tracker to report anything left unhandled.
+        await Bun.sleep(0);
+        server.stop(true);
+        console.log(JSON.stringify({ body, pendingWhileParked, pendingRequests: server.pendingRequests, unhandled }));
+      `);
+      expect(result).toEqual({
+        stdout: JSON.stringify({ body: "seed", pendingWhileParked: 1, pendingRequests: 0, unhandled: 0 }) + "\n",
+        stderr: "",
+        exitCode: 0,
+      });
+    },
+  );
 });
 
 // The HTTP/3 sibling must NOT take the ended_response short-circuit.
@@ -981,6 +1033,231 @@ describe("end() under transport backpressure over h3", () => {
     );
     const res = await h3fetch(server);
     expect(await res.text()).toBe("hey");
+  });
+
+  // close() must park the same pending flush as end(). It used to leave the
+  // tail to the auto-flusher instead, and when that try_end hit backpressure
+  // nothing was parked for the request to wait on, so the sink was torn down
+  // and the body came back empty even from an async pull().
+  test("async pull() that closes synchronously", async () => {
+    using server = serveH3(
+      () =>
+        new ReadableStream({
+          type: "direct",
+          async pull(c: any) {
+            c.write("hey");
+            c.close();
+          },
+        } as any),
+    );
+    const res = await h3fetch(server);
+    expect(await res.text()).toBe("hey");
+  });
+
+  test("sync pull() that closes synchronously", async () => {
+    using server = serveH3(
+      () =>
+        new ReadableStream({
+          type: "direct",
+          pull(c: any) {
+            c.write("hey");
+            c.close();
+          },
+        } as any),
+    );
+    const res = await h3fetch(server);
+    expect(await res.text()).toBe("hey");
+  });
+});
+
+// close() with bytes still buffered below the high-water mark left them for
+// the auto-flusher. A pull() that closes synchronously never gets there: the
+// request finalizes the sink as soon as pull() returns, so the buffered tail
+// was dropped and the client got Content-Length: 0 (or, after a mid-stream
+// flush(), a chunked body missing its tail). end() in the same position sent
+// everything; close() must too.
+describe("buffered bytes are sent when the controller finishes", () => {
+  type Framing = { body: string; contentLength: string | null; transferEncoding: string | null };
+  const unflushed: Framing = { body: "helloworld", contentLength: "10", transferEncoding: null };
+  const flushedMidway: Framing = { body: "helloworld", contentLength: null, transferEncoding: "chunked" };
+  const nothingWritten: Framing = { body: "", contentLength: "0", transferEncoding: null };
+  // A write of at least the sink's high-water mark (2048 bytes by default)
+  // goes straight to the socket instead of the buffer, so close() finds
+  // nothing left to send and only has to terminate the chunked response.
+  const highWaterMarkBody = Buffer.alloc(2048, "x").toString();
+  const sentByWrite: Framing = { body: highWaterMarkBody, contentLength: null, transferEncoding: "chunked" };
+
+  // The writes stay below the sink's high-water mark, so whatever follows the
+  // last flush() is still buffered when the controller is finished.
+  const writeThen = (finish: "close" | "end", flushMidway: boolean) => (c: any) => {
+    c.write("hello");
+    if (flushMidway) c.flush();
+    c.write("world");
+    c[finish]();
+  };
+
+  const cases: [name: string, pull: (c: any) => unknown, expected: Framing][] = [
+    ["sync pull, close()", writeThen("close", false), unflushed],
+    ["sync pull, end()", writeThen("end", false), unflushed],
+    ["sync pull, flush() midway, close()", writeThen("close", true), flushedMidway],
+    ["sync pull, flush() midway, end()", writeThen("end", true), flushedMidway],
+    ["async pull, close()", async c => writeThen("close", false)(c), unflushed],
+    ["async pull, flush() midway, close()", async c => writeThen("close", true)(c), flushedMidway],
+    [
+      "sync pull, single write, close()",
+      c => {
+        c.write("helloworld");
+        c.close();
+      },
+      unflushed,
+    ],
+    // Nothing is buffered in these two, so close() takes its empty-buffer
+    // path; they pin down that it still ends the response.
+    ["sync pull, close() without writing", c => c.close(), nothingWritten],
+    [
+      "sync pull, write at the high-water mark, close()",
+      c => {
+        c.write(highWaterMarkBody);
+        c.close();
+      },
+      sentByWrite,
+    ],
+  ];
+
+  // The TLS server uses a separate instantiation of the sink, so the matrix
+  // runs over both.
+  describe.each([
+    ["http", {}, {}],
+    ["https", { tls }, { tls: { rejectUnauthorized: false } }],
+  ])("over %s", (_protocol, serveOptions, fetchOptions) => {
+    test.concurrent.each(cases)("%s", async (_name, pull, expected) => {
+      using server = Bun.serve({
+        port: 0,
+        ...serveOptions,
+        fetch: () => new Response(new ReadableStream({ type: "direct", pull } as any)),
+      });
+
+      const response = await fetch(server.url, fetchOptions);
+      expect({
+        body: await response.text(),
+        contentLength: response.headers.get("content-length"),
+        transferEncoding: response.headers.get("transfer-encoding"),
+      }).toEqual(expected);
+      expect(response.status).toBe(200);
+    });
+  });
+});
+
+// close() with a small tail still buffered while an earlier, larger write is
+// under transport backpressure. end() used to leave that tail buffered for the
+// auto-flusher or finalize(), and both refused to send it while the earlier
+// write's backpressure flag was up, so finalize() wrote the chunked terminator
+// (HTTP/1.1) or END_STREAM (h2) without it: a well formed body that is
+// silently missing its last bytes.
+describe("close() under transport backpressure sends the buffered tail", () => {
+  const big = Buffer.alloc(1024 * 1024, "x");
+  type State = { bigBytes: number; closed: PromiseWithResolvers<void> };
+  const newState = (): State => ({ bigBytes: 0, closed: Promise.withResolvers<void>() });
+
+  // Writes `big` until the sink reports backpressure (write() returns a
+  // promise instead of a byte count), then writes a small tail and closes
+  // without awaiting anything the sink handed back.
+  const body = (state: State, closeFromLaterTask: boolean) =>
+    new ReadableStream({
+      type: "direct",
+      async pull(c: any) {
+        for (;;) {
+          const wrote = c.write(big);
+          state.bigBytes += big.length;
+          if (wrote instanceof Promise) break;
+          if (state.bigBytes >= 512 * 1024 * 1024) throw new Error("no backpressure after 512 MB");
+        }
+        if (closeFromLaterTask) await new Promise<void>(done => setImmediate(done));
+        c.write("tail");
+        c.close();
+        state.closed.resolve();
+      },
+    } as any);
+
+  const modes = [
+    ["in the same tick", false],
+    ["from a later task", true],
+  ] as const;
+
+  test.each(modes)("over http/1.1, close() %s", async (_mode, later) => {
+    const state = newState();
+    using server = Bun.serve({ port: 0, idleTimeout: 0, fetch: () => new Response(body(state, later)) });
+
+    const socket = net.connect(server.port, "127.0.0.1");
+    const chunks: Buffer[] = [];
+    const done = Promise.withResolvers<void>();
+    socket.on("error", done.reject);
+    socket.on("data", chunk => chunks.push(chunk));
+    socket.on("close", () => done.resolve());
+    socket.on("connect", () => {
+      socket.write("GET / HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n");
+      // Stop reading so the response backs up into the server's socket.
+      socket.pause();
+    });
+    await state.closed.promise;
+    socket.resume();
+    await done.promise;
+
+    const raw = Buffer.concat(chunks);
+    const headEnd = raw.indexOf("\r\n\r\n");
+    expect(raw.subarray(0, headEnd).toString("latin1")).toContain("Transfer-Encoding: chunked");
+    // Decode the chunked framing: every byte of `big` plus the tail, then the
+    // terminating chunk and nothing else.
+    let rest = raw.subarray(headEnd + 4);
+    const payload: Buffer[] = [];
+    let terminated = false;
+    while (rest.length > 0 && !terminated) {
+      const lineEnd = rest.indexOf("\r\n");
+      expect(lineEnd).toBeGreaterThan(0);
+      const size = parseInt(rest.subarray(0, lineEnd).toString("latin1"), 16);
+      if (size === 0) {
+        terminated = true;
+        rest = rest.subarray(lineEnd + 4);
+        break;
+      }
+      payload.push(rest.subarray(lineEnd + 2, lineEnd + 2 + size));
+      rest = rest.subarray(lineEnd + 2 + size + 2);
+    }
+    const decoded = Buffer.concat(payload);
+    expect({
+      terminated,
+      trailing: rest.length,
+      length: decoded.length,
+      end: decoded.subarray(-8).toString("latin1"),
+    }).toEqual({ terminated: true, trailing: 0, length: state.bigBytes + 4, end: "xxxxtail" });
+  });
+
+  // Over h2 the backpressure is the stream's flow-control window: the client
+  // opens none beyond the initial 65535 bytes until close() has run. The old
+  // drain path also indexed the buffered tail with the transport's cumulative
+  // write offset here, which h2 (unlike chunked HTTP/1.1) advances on every
+  // write, and sent a 1-byte tail.
+  test.each(modes)("over h2, close() %s", async (_mode, later) => {
+    const state = newState();
+    // @ts-expect-error http2 is not in the public types yet
+    using server = Bun.serve({ port: 0, idleTimeout: 0, http2: true, fetch: () => new Response(body(state, later)) });
+
+    const client = await RawH2.connect(server.port, false);
+    try {
+      client.headers(1, baseHeaders("/"));
+      await state.closed.promise;
+      const increment = Buffer.alloc(4);
+      increment.writeUInt32BE(0x7fff0000);
+      client.write(frame(T.WINDOW_UPDATE, 0, 0, increment));
+      client.write(frame(T.WINDOW_UPDATE, 0, 1, increment));
+      const decoded = await client.body(1);
+      expect({ length: decoded.length, end: decoded.subarray(-8).toString("latin1") }).toEqual({
+        length: state.bigBytes + 4,
+        end: "xxxxtail",
+      });
+    } finally {
+      client.close();
+    }
   });
 });
 

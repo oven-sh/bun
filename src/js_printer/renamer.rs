@@ -734,10 +734,12 @@ trait NameScopes {
 /// `None` when it already is one.
 fn valid_identifier_for(name: &[u8]) -> Option<Box<[u8]>> {
     // `MutableString::ensure_valid_identifier` always heap-allocates, even
-    // when the input is already a valid ASCII identifier; the binding
-    // reserved-word remap is the only transform that fires for an
-    // otherwise-valid ASCII name.
-    if is_simple_ascii_identifier(name) && !bun_ast::lexer_tables::is_binding_reserved_word(name) {
+    // when the input is already a valid ASCII identifier. A parsed symbol
+    // name only needs it for a strict-mode reserved word (`let` in a sloppy
+    // file); `arguments`/`eval` stay as written for non-strict output.
+    if is_simple_ascii_identifier(name)
+        && !bun_ast::lexer_tables::is_strict_mode_reserved_word(name)
+    {
         debug_assert!(js_lexer::is_identifier(name));
         return None;
     }
@@ -1146,8 +1148,8 @@ impl<'r> NestedRenamer<'r> {
 
 /// Fast-path for `MutableString::ensure_valid_identifier`: returns `true` iff
 /// `s` is a non-empty ASCII identifier (`[A-Za-z_$][A-Za-z0-9_$]*`), for which
-/// that function returns the input unchanged (modulo the binding reserved
-/// word remap, handled by the caller) but still allocates.
+/// that function returns the input unchanged (modulo the unsafe binding
+/// name remap, handled by the caller) but still allocates.
 #[inline]
 fn is_simple_ascii_identifier(s: &[u8]) -> bool {
     let Some((&first, rest)) = s.split_first() else {

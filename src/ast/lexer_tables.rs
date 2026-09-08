@@ -157,8 +157,7 @@ pub fn keyword(s: &[u8]) -> Option<T> {
 // `STRICT_MODE_RESERVED_WORDS` is now `[&[u8]; 9]` — `.len()`/`.iter()`-
 // compatible with the former `phf::Set` callers (renamer.rs).
 pub use bun_core::lexer_tables::{
-    STRICT_MODE_RESERVED_WORDS, binding_reserved_word_remap, is_binding_reserved_word,
-    is_strict_mode_reserved_word, strict_mode_reserved_word_remap,
+    STRICT_MODE_RESERVED_WORDS, is_strict_mode_reserved_word, unsafe_binding_name_remap,
 };
 
 bun_core::comptime_string_map! {
@@ -734,7 +733,7 @@ mod tests {
     fn strict_mode_reserved_fn_matches_table() {
         for k in STRICT_MODE_RESERVED_WORDS.iter() {
             assert!(is_strict_mode_reserved_word(k), "{:?}", k);
-            assert!(strict_mode_reserved_word_remap(k).is_some(), "{:?}", k);
+            assert!(unsafe_binding_name_remap(k).is_some(), "{:?}", k);
         }
         for k in [
             b"" as &[u8],
@@ -748,7 +747,22 @@ mod tests {
             b"interfaces",
         ] {
             assert!(!is_strict_mode_reserved_word(k), "{:?}", k);
-            assert!(strict_mode_reserved_word_remap(k).is_none(), "{:?}", k);
+        }
+        for k in KEYWORDS.keys() {
+            assert!(unsafe_binding_name_remap(k).is_some(), "{:?}", k);
+        }
+        for k in [
+            b"NaN" as &[u8],
+            b"Infinity",
+            b"undefined",
+            b"await",
+            b"arguments",
+            b"eval",
+        ] {
+            assert!(unsafe_binding_name_remap(k).is_some(), "{:?}", k);
+        }
+        for k in [b"" as &[u8], b"foo", b"lett", b"async", b"of", b"nan"] {
+            assert!(unsafe_binding_name_remap(k).is_none(), "{:?}", k);
         }
     }
 

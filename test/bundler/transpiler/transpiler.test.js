@@ -6207,4 +6207,15 @@ describe("json/toml loader with reserved-word top-level keys", () => {
       for (const a of aliases) expect(out).toContain(a);
     }
   });
+
+  // `var NaN = NaN;` would shadow the global and export `undefined`.
+  it("does not shadow NaN / Infinity / undefined", () => {
+    const t = new Bun.Transpiler();
+    const out = t.transformSync("NaN = nan\nInfinity = inf\nundefined = 1\nx = nan", "toml");
+    expect(reparses(out)).toBe("ok");
+    expect(out.split("\n")[0]).toBe("var _NaN = NaN, _Infinity = 1 / 0, _undefined = 1, x = NaN;");
+    for (const a of ["_NaN as NaN", "_Infinity as Infinity", "_undefined as undefined"]) {
+      expect(out).toContain(a);
+    }
+  });
 });

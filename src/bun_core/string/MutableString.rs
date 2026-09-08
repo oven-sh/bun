@@ -113,9 +113,11 @@ impl MutableString {
         Ok(mutable)
     }
 
-    /// Convert `str` to a valid ES identifier, replacing any run of non
-    /// `ID_Continue` code points with a single `_`. Valid Unicode identifier
-    /// code points (including non-BMP) are preserved.
+    /// Convert `str` to an ES identifier that is safe to declare at the top
+    /// level of a module: any run of non `ID_Continue` code points becomes a
+    /// single `_`, and reserved words / global value properties (`if`,
+    /// `NaN`) get a `_` prefix. Valid Unicode identifier code points
+    /// (including non-BMP) are preserved.
     pub fn ensure_valid_identifier(str: &[u8]) -> Result<Box<[u8]>, AllocError> {
         // The result could be either the input borrow or a fresh allocation;
         // rather than a lifetime + Cow we always return owned `Box<[u8]>` and
@@ -152,7 +154,7 @@ impl MutableString {
         }
 
         if !needs_gap {
-            let remapped = js_lexer_tables::binding_reserved_word_remap(str).unwrap_or(str);
+            let remapped = js_lexer_tables::unsafe_binding_name_remap(str).unwrap_or(str);
             return Ok(Box::<[u8]>::from(remapped));
         }
 

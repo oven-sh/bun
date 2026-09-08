@@ -1708,36 +1708,30 @@ pub mod lexer {
 }
 
 pub mod lexer_tables {
-    crate::comptime_string_map! {
-        /// The 9 strict-mode reserved words (ES2015 §11.6.2.2) mapped to the
-        /// underscore-prefixed replacement used by
-        /// `MutableString::ensure_valid_identifier` to mangle a name that is
-        /// already a syntactically valid identifier but would collide with a
-        /// strict-mode reserved word. Single source of truth —
-        /// [`STRICT_MODE_RESERVED_WORDS`], [`is_strict_mode_reserved_word`],
-        /// and [`strict_mode_reserved_word_remap`] all derive from it.
-        static STRICT_MODE_RESERVED_WORD_REMAP: &'static [u8] = {
-            b"implements" => b"_implements",
-            b"interface" => b"_interface",
-            b"let" => b"_let",
-            b"package" => b"_package",
-            b"private" => b"_private",
-            b"protected" => b"_protected",
-            b"public" => b"_public",
-            b"static" => b"_static",
-            b"yield" => b"_yield",
+    crate::comptime_string_set! {
+        /// The 9 strict-mode future reserved words (ES2015 §11.6.2.2).
+        static STRICT_MODE_RESERVED_WORD_SET = {
+            b"implements",
+            b"interface",
+            b"let",
+            b"package",
+            b"private",
+            b"protected",
+            b"public",
+            b"static",
+            b"yield",
         };
     }
 
     /// The 9 strict-mode reserved words as a plain array, for callers that
     /// only need `.len()` / `.iter()`.
     pub const STRICT_MODE_RESERVED_WORDS: [&[u8]; 9] = {
-        let entries = __ComptimeStringMap_STRICT_MODE_RESERVED_WORD_REMAP::ENTRIES;
-        assert!(entries.len() == 9);
+        let keys = __ComptimeStringSet_STRICT_MODE_RESERVED_WORD_SET::KEYS;
+        assert!(keys.len() == 9);
         let mut out: [&[u8]; 9] = [&[]; 9];
         let mut i = 0;
         while i < out.len() {
-            out[i] = entries[i].0;
+            out[i] = keys[i];
             i += 1;
         }
         out
@@ -1746,21 +1740,15 @@ pub mod lexer_tables {
     /// Hot-path strict-mode reserved-word membership check.
     #[inline]
     pub fn is_strict_mode_reserved_word(s: &[u8]) -> bool {
-        STRICT_MODE_RESERVED_WORD_REMAP.contains_key(s)
-    }
-
-    /// Underscore-prefixed replacement for a strict-mode reserved word
-    /// (`b"let"` → `b"_let"`); `None` for any other input.
-    #[inline]
-    pub fn strict_mode_reserved_word_remap(s: &[u8]) -> Option<&'static [u8]> {
-        STRICT_MODE_RESERVED_WORD_REMAP.get(s).copied()
+        STRICT_MODE_RESERVED_WORD_SET.contains(s)
     }
 
     crate::comptime_string_map! {
-        /// Identifier-shaped names that cannot be a binding in module code,
-        /// mapped to an underscore-prefixed replacement. Superset of
-        /// [`STRICT_MODE_RESERVED_WORD_REMAP`].
-        static BINDING_RESERVED_WORD_REMAP: &'static [u8] = {
+        /// Identifier-shaped names that a generated top-level binding must not
+        /// use, mapped to an underscore-prefixed replacement: reserved words
+        /// (a syntax error) and the global value properties (`var NaN` would
+        /// shadow the `NaN` the printer emits for NaN literals).
+        static UNSAFE_BINDING_NAME_REMAP: &'static [u8] = {
             // ES keywords (ES2015 §11.6.2.1)
             b"break" => b"_break",
             b"case" => b"_case",
@@ -1813,20 +1801,18 @@ pub mod lexer_tables {
             // disallowed as a BindingIdentifier in strict mode
             b"arguments" => b"_arguments",
             b"eval" => b"_eval",
+            // global value properties
+            b"Infinity" => b"_Infinity",
+            b"NaN" => b"_NaN",
+            b"undefined" => b"_undefined",
         };
     }
 
-    /// Membership check for [`BINDING_RESERVED_WORD_REMAP`].
-    #[inline]
-    pub fn is_binding_reserved_word(s: &[u8]) -> bool {
-        BINDING_RESERVED_WORD_REMAP.contains_key(s)
-    }
-
-    /// Underscore-prefixed replacement for a binding reserved word
+    /// Underscore-prefixed replacement for an unsafe binding name
     /// (`b"if"` → `b"_if"`); `None` for any other input.
     #[inline]
-    pub fn binding_reserved_word_remap(s: &[u8]) -> Option<&'static [u8]> {
-        BINDING_RESERVED_WORD_REMAP.get(s).copied()
+    pub fn unsafe_binding_name_remap(s: &[u8]) -> Option<&'static [u8]> {
+        UNSAFE_BINDING_NAME_REMAP.get(s).copied()
     }
 }
 

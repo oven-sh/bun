@@ -107,8 +107,7 @@ static void applyVerboseFetchFromString(JSGlobalObject*, const String&);
 static bool isNativeBackedEnvKey(const String& key);
 static bool applyEnvWriteSideEffects(JSGlobalObject*, const String& key, const String& value);
 static bool applyEnvDeleteSideEffects(JSGlobalObject*, const String& key);
-// JS-side storage for a native-backed key: the value slot its getter reads, behind a
-// CustomAccessor that stays installed (see storeNativeBackedEnvKey).
+// JS-side storage for a native-backed key: the slot its getter reads, behind its accessor.
 static void storeNativeBackedEnvKey(VM&, JSGlobalObject*, JSObject*, PropertyName, const String& key, JSString*);
 static void clearNativeBackedEnvKey(VM&, JSGlobalObject*, JSObject*, const String& key);
 
@@ -235,8 +234,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsGetterProxyEnvironmentVariable, (JSGlobalObject * glo
     RELEASE_AND_RETURN(scope, JSValue::encode(jsString(vm, value.toWTFString())));
 }
 
-// Setter shared by every native-backed key. Store-only: the native side effect already ran
-// by name in put() (POSIX) or jsProcessEnvCoerceForWrite (the Windows Proxy's write path).
+// Store-only: the side effect already ran by name in put() or jsProcessEnvCoerceForWrite.
 JSC_DEFINE_CUSTOM_SETTER(jsNativeBackedEnvironmentVariableSetter, (JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::EncodedJSValue value, PropertyName propertyName))
 {
     VM& vm = globalObject->vm();
@@ -370,8 +368,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsBunConfigVerboseFetchGetter, (JSGlobalObject * global
     return JSValue::encode(jsString(vm, Zig::toStringCopy(value)));
 }
 
-// TZ / TLS / verbose-fetch getters read a private slot first (then the launch env map);
-// the proxy-var getter reads the env map itself, which Bun__setEnvValue already updated.
+// The proxy-var getter reads the env map itself; the other three read this slot first.
 static std::optional<Identifier> nativeBackedEnvValueSlot(VM& vm, const String& key)
 {
     if (key == "TZ"_s)
@@ -398,9 +395,7 @@ static CustomGetterSetter* createNativeBackedEnvAccessor(VM& vm, const String& k
 // CustomValue, so the property reads back as a data descriptor like the rest of process.env.
 static constexpr unsigned nativeBackedEnvKeyAttributes = static_cast<unsigned>(PropertyAttribute::CustomValue);
 
-// A native-backed key keeps its custom getter/setter (re-installed after a delete, DontEnum
-// cleared on first write) rather than becoming a data property: DFG's structure-based
-// PutByStatus ignores OverridesPut and would fold a hot write into a direct store past put().
+// Never a plain data property: DFG's PutByStatus ignores OverridesPut and would fold the put.
 static void storeNativeBackedEnvKey(VM& vm, JSGlobalObject* globalObject, JSObject* object, PropertyName propertyName, const String& key, JSString* value)
 {
     if (auto slot = nativeBackedEnvValueSlot(vm, key))

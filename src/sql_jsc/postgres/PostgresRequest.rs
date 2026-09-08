@@ -216,8 +216,7 @@ pub(crate) fn write_bind<Context: WriterContext>(
             }
 
             _ => {
-                // Text format: the server parses the string as the parameter's
-                // type. A valid `Date` goes out as `toISOString()`, not `toString()`.
+                // Text format: a valid `Date` as `toISOString()`, anything else as `toString()`.
                 let mut iso_buf = [0u8; 64];
                 let str;
                 let utf8;

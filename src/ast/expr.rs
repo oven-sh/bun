@@ -2151,8 +2151,7 @@ impl Data {
         }
     }
 
-    /// [`E::EString::init_re_encode_utf8`] over every string of a JSON-shaped
-    /// literal tree (object, array, string) before the visit pass sees it.
+    /// [`E::EString::init_re_encode_utf8`] over every string of a JSON-shaped literal tree.
     pub fn re_encode_utf8_strings(&mut self, bump: &Bump) {
         match self {
             Data::EString(s) => {

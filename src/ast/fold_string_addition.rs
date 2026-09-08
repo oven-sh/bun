@@ -28,8 +28,8 @@ fn clone_rope_nodes(s: &E::EString) -> E::EString {
     root
 }
 
-/// Concatenate two `E::String`s (`None` if [`E::EString::can_join`] refuses),
-/// mutating BOTH inputs unless `has_inlined_enum_poison` is set.
+/// Concatenate two `E::String`s, mutating BOTH inputs
+/// unless `has_inlined_enum_poison` is set.
 ///
 /// Currently inlined enum poison refers to where mutation would cause output
 /// bugs due to inlined enum values sharing `E::String`s. If a new use case
@@ -196,9 +196,7 @@ pub fn fold_string_addition(
                 rhs = str;
             }
 
-            // An untagged template only has cooked contents, and nothing else
-            // shares it (enums only inline templates that folded to a string),
-            // so `rhs` joins in place onto its last string: the tail, or the head.
+            // Untagged: every part is cooked and unshared, so `rhs` joins onto the last one in place.
             if left.tag.is_none() {
                 let last: &mut E::EString = match left.parts().len() {
                     0 => left.head.cooked_mut(),

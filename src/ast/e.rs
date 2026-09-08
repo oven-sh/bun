@@ -1807,8 +1807,7 @@ impl EString {
             ..Default::default()
         }
     }
-    /// For a string that enters the AST without the lexer: like the lexer, store
-    /// non-ASCII text as UTF-16, because folding reads 8-bit strings bytewise.
+    /// A non-lexer string, stored like the lexer would: UTF-16 unless ASCII (folds read 8-bit bytewise).
     pub fn init_re_encode_utf8(wtf8: &[u8], bump: &Bump) -> EString {
         match strings::wtf8_to_utf16_alloc(wtf8) {
             Some(utf16) => Self::init_utf16(bump.alloc_slice_copy(&utf16)),
@@ -2064,8 +2063,7 @@ impl EString {
         }
     }
 
-    /// A join with a UTF-16 operand copies (ropes are 8-bit only); the cap keeps
-    /// a long `a + b + ...` chain of non-ASCII literals from copying quadratically.
+    /// Cap on a join that copies (any UTF-16 operand, ropes are 8-bit only) so long chains stay linear.
     pub const MAX_COPIED_JOIN_LEN: usize = 4096;
 
     /// Always for 8-bit strings (a rope), else up to [`Self::MAX_COPIED_JOIN_LEN`] units.
@@ -2074,8 +2072,7 @@ impl EString {
             || strings.iter().map(|s| s.len()).sum::<usize>() <= Self::MAX_COPIED_JOIN_LEN
     }
 
-    /// `self += other`: a rope link for two 8-bit strings (`other` must live in
-    /// the Store, see [`Self::push`]), else one UTF-16 copy in `bump`. See [`Self::can_join`].
+    /// `self += other`: a rope link for two 8-bit strings (see [`Self::push`]), else one UTF-16 copy.
     pub fn append(&mut self, other: &mut EString, bump: &Bump) {
         if self.is_utf8() && other.is_utf8() {
             self.push(other);

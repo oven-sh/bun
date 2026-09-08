@@ -51,9 +51,7 @@ fn env_string_store_put(
     key: &[u8],
     value: &[u8],
 ) -> Result<(), crate::Error> {
-    // Node and bytes live in `bump` (freed with the `Define` table): the Expr
-    // store is reset after `configure_defines`, and the env map frees an entry
-    // that a later `process.env` write replaces.
+    // All in `bump`: the Expr store resets after `configure_defines`, and the env map can free `value`.
     let value: ExprData = ExprData::EString(bun_ast::StoreRef::from_bump(bump.alloc(
         bun_ast::E::EString::init_re_encode_utf8(bump.alloc_slice_copy(value), bump),
     )));

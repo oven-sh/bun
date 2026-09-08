@@ -407,31 +407,42 @@ describe.concurrent("--sourcemap never writes next to the entry point", () => {
     expect(exitCode).toBe(1);
   });
 
-  // https://github.com/oven-sh/bun/issues/19729
-  test.each(["linked", "external"])("--outfile in another directory with --sourcemap=%s writes there", async kind => {
-    using dir = tempDir("build-sourcemap-outfile-dir", fixture);
-    const { stdout, stderr, exitCode } = await build(
-      String(dir),
-      "../src/entry.js",
-      "--outfile=../dist/js/app.js",
-      `--sourcemap=${kind}`,
-    );
-    expect(stderr).toBe("");
-    expect(stdout).toContain("app.js.map");
+  // https://github.com/oven-sh/bun/issues/19729. The outfile has the entry's
+  // basename on purpose: that spelling used to replace src/entry.js with its
+  // own bundle.
+  test.each(["--sourcemap", "--sourcemap=linked", "--sourcemap=external", "--sourcemap=inline"])(
+    "--outfile in another directory with %s writes there",
+    async flag => {
+      using dir = tempDir("build-sourcemap-outfile-dir", fixture);
+      const { stdout, stderr, exitCode } = await build(
+        String(dir),
+        "../src/entry.js",
+        "--outfile=../dist/js/entry.js",
+        flag,
+      );
+      expect(stderr).toBe("");
+      expect(stdout).toContain("entry.js");
 
-    const after = tree(String(dir));
-    expect(Object.keys(after)).toEqual(["dist/js/app.js", "dist/js/app.js.map", ...Object.keys(fixture)]);
-    expect(after["dist/js/app.js"]).toContain("console.log(");
-    if (kind === "linked") {
-      expect(after["dist/js/app.js"]).toContain("//# sourceMappingURL=app.js.map");
-    } else {
-      expect(after["dist/js/app.js"]).not.toContain("sourceMappingURL");
-    }
-    // Relative to the map in dist/js/, not to the cwd.
-    expect(JSON.parse(after["dist/js/app.js.map"]).sources).toEqual(["../../src/dep.js", "../../src/entry.js"]);
-    for (const file of Object.keys(fixture)) expect(after[file]).toBe(fixture[file]);
-    expect(exitCode).toBe(0);
-  });
+      const after = tree(String(dir));
+      const bundle = after["dist/js/entry.js"];
+      expect(bundle).toContain("console.log(");
+      if (flag === "--sourcemap=inline") {
+        expect(Object.keys(after)).toEqual(["dist/js/entry.js", ...Object.keys(fixture)]);
+        expect(bundle).toContain("//# sourceMappingURL=data:application/json;base64,");
+      } else {
+        expect(Object.keys(after)).toEqual(["dist/js/entry.js", "dist/js/entry.js.map", ...Object.keys(fixture)]);
+        if (flag === "--sourcemap=external") {
+          expect(bundle).not.toContain("sourceMappingURL");
+        } else {
+          expect(bundle).toContain("//# sourceMappingURL=entry.js.map");
+        }
+        // Relative to the map in dist/js/, not to the cwd.
+        expect(JSON.parse(after["dist/js/entry.js.map"]).sources).toEqual(["../../src/dep.js", "../../src/entry.js"]);
+      }
+      for (const file of Object.keys(fixture)) expect(after[file]).toBe(fixture[file]);
+      expect(exitCode).toBe(0);
+    },
+  );
 
   test("a standalone html build with --sourcemap and no --outdir writes to the cwd", async () => {
     using dir = tempDir("build-sourcemap-standalone-html", fixture);

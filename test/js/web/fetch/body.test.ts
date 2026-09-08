@@ -350,6 +350,54 @@ for (const { body, fn } of bodyTypes) {
         });
       });
     });
+    // https://fetch.spec.whatwg.org/#dom-body-blob: the Blob's type is the
+    // body's MIME type (from Content-Type) no matter how the bytes are held.
+    // A body that is still a stream when blob() runs must not lose it.
+    describe("blob() on a stream body takes its type from Content-Type", () => {
+      const headers = { "content-type": "text/x-bun" };
+      const chunks = () =>
+        new ReadableStream({
+          start(controller) {
+            controller.enqueue(new TextEncoder().encode("bye"));
+            controller.close();
+          },
+        });
+      const describeBlob = async (blob: Blob) => [blob.type, await blob.text()];
+
+      test("a ReadableStream body", async () => {
+        expect(await describeBlob(await fn(chunks(), headers).blob())).toEqual(["text/x-bun", "bye"]);
+      });
+
+      test("both copies of a cloned ReadableStream body", async () => {
+        const subject = fn(chunks(), headers);
+        const clone = subject.clone();
+        expect([await describeBlob(await clone.blob()), await describeBlob(await subject.blob())]).toEqual([
+          ["text/x-bun", "bye"],
+          ["text/x-bun", "bye"],
+        ]);
+      });
+
+      test("both copies when clone() tees a body the getter already streamed", async () => {
+        const subject = fn(new TextEncoder().encode("bye"), headers);
+        expect(subject.body).toBeInstanceOf(ReadableStream);
+        const clone = subject.clone();
+        expect([await describeBlob(await clone.blob()), await describeBlob(await subject.blob())]).toEqual([
+          ["text/x-bun", "bye"],
+          ["text/x-bun", "bye"],
+        ]);
+      });
+
+      test("a native stream body", async () => {
+        await using proc = spawn({
+          cmd: [bunExe(), "-e", "process.stdout.write('bye')"],
+          env: bunEnv,
+          stdout: "pipe",
+          stderr: "inherit",
+        });
+        expect(await describeBlob(await fn(proc.stdout, headers).blob())).toEqual(["text/x-bun", "bye"]);
+        expect(await proc.exited).toBe(0);
+      });
+    });
     for (const { string, buffer } of utf8) {
       describe("arrayBuffer()", () => {
         test("undefined", async () => {

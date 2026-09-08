@@ -57,6 +57,7 @@ unsafe extern "C" {
     // safe: `FetchHeaders` is an `opaque_ffi!` ZST handle; `&mut` is ABI-identical
     // to a non-null `*mut` and the C++ refcount decrement is interior to the cell.
     safe fn WebCore__FetchHeaders__deref(arg0: &mut FetchHeaders);
+    safe fn WebCore__FetchHeaders__ref(arg0: &mut FetchHeaders);
     safe fn WebCore__FetchHeaders__fastGet_(arg0: &FetchHeaders, arg1: u8, arg2: &mut EncodedSlice);
     safe fn WebCore__FetchHeaders__fastHas_(arg0: &FetchHeaders, arg1: u8) -> bool;
     safe fn WebCore__FetchHeaders__fastRemove_(arg0: &FetchHeaders, arg1: u8);
@@ -291,6 +292,10 @@ impl FetchHeaders {
         host_fn::from_js_host_call_generic(global, || {
             NonNull::new(WebCore__FetchHeaders__cloneThis(self, global))
         })
+    }
+
+    pub fn ref_(&mut self) {
+        WebCore__FetchHeaders__ref(self)
     }
 
     pub fn deref(&mut self) {

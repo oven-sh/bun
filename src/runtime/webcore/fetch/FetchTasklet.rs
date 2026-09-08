@@ -827,7 +827,8 @@ impl FetchTasklet {
                 }
             }
 
-            // raw ptr: `body` and `get_fetch_headers()` are disjoint fields but borrowck can't see through the accessors.
+            // raw ptr: `body` lives in `response`, disjoint from the `self` fields used below, but
+            // borrowck can't see through the accessors.
             let body: *mut BodyValue = response.get_body_value();
             // `BodyAbortListener::on_abort` may have set `Error` while this
             // callback was queued; checked before `buffer_reset.set(false)` so
@@ -865,15 +866,9 @@ impl FetchTasklet {
                 if matches!(old, BodyValue::Locked(_)) {
                     bun_output::scoped_log!(FetchTasklet, "onBodyReceived old.resolve");
                     let mut old = old;
-                    // BodyValue::resolve takes `Option<NonNull<FetchHeaders>>` (opaque C++ handle
-                    // mutated via FFI); the inherent `get_fetch_headers` returns `Option<&_>`, so
-                    // erase the borrow into a raw NonNull. Disjoint from `body` (response.init vs
-                    // response.body) and outlives this block.
-                    let headers = response.get_fetch_headers().map(core::ptr::NonNull::from);
-                    // SAFETY: `body` points into `response.body`, disjoint from `headers`
-                    // (response.init); both live for this block.
+                    // SAFETY: `body` points into `response.body`, live for this block.
                     let body = unsafe { &mut *body };
-                    BodyValue::resolve(&mut old, body, &self.global_this, headers)?;
+                    BodyValue::resolve(&mut old, body, &self.global_this)?;
                 }
             }
         }

@@ -133,13 +133,6 @@ pub(crate) fn from_request(req: &AnyRequest, total: u64) -> Result {
     parse(h, total)
 }
 
-pub(crate) fn raw_from_request(req: &AnyRequest) -> Raw {
-    let Some(h) = req.header(b"range") else {
-        return Raw::None;
-    };
-    parse_raw(h)
-}
-
 /// Max bytes a `Content-Range: bytes ...` value can occupy: `"bytes "` (6) +
 /// three `u64::MAX` (20 each) + `'-'` + `'/'` = 68. 96 leaves slack.
 pub(crate) const CONTENT_RANGE_BUF: usize = 96;

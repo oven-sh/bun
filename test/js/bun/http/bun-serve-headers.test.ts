@@ -1,6 +1,8 @@
 import { describe, expect, test } from "bun:test";
+import { tempDir } from "harness";
 import { once } from "node:events";
 import * as net from "node:net";
+import { join } from "node:path";
 
 // https://github.com/oven-sh/bun/issues/9180
 test("weird headers", async () => {
@@ -263,5 +265,112 @@ describe("response Connection: close closes the socket", () => {
     } finally {
       socket.destroy();
     }
+  });
+});
+
+// `req.headers` of a served Request is built lazily from the uWS request. A
+// native reader of a request header (the body's MIME type, Range for a file
+// response) must see exactly what JS sees through `req.headers`: the same
+// value whether or not the handler read the headers first, awaited first, or
+// changed them.
+describe.concurrent("native readers agree with req.headers", () => {
+  // What the handler does before the read under test. In "sync" and "touched"
+  // the uWS request is still live; "touched" has already built `req.headers`
+  // from it. A microtask still runs inside the dispatch. After a macrotask the
+  // server has copied the headers and detached the uWS request.
+  const states = {
+    sync: (req: Request): Promise<void> | undefined => undefined,
+    touched: (req: Request): Promise<void> | undefined => void req.headers.has("x-touch"),
+    microtask: (req: Request): Promise<void> | undefined => Promise.resolve(),
+    macrotask: (req: Request): Promise<void> | undefined => new Promise<void>(resolve => setImmediate(resolve)),
+  };
+  type State = keyof typeof states;
+  const urlencoded = "application/x-www-form-urlencoded";
+
+  describe.each(Object.keys(states) as State[])("%s handler", state => {
+    describe("Content-Type for body readers", () => {
+      type Op = "none" | "set" | "delete" | "clone";
+      async function read(op: Op, reader: "blob" | "formData", wireContentType: string) {
+        let result: unknown;
+        using server = Bun.serve({
+          port: 0,
+          async fetch(req) {
+            const wait = states[state](req);
+            if (wait) await wait;
+            if (op === "set") req.headers.set("content-type", urlencoded);
+            if (op === "delete") req.headers.delete("content-type");
+            const subjects = op === "clone" ? [req.clone(), req] : [req];
+            try {
+              result = await Promise.all(
+                subjects.map(async r =>
+                  reader === "blob" ? (await r.blob()).type : Object.fromEntries(await r.formData()),
+                ),
+              );
+            } catch (e) {
+              result = (e as { code?: string }).code ?? String(e);
+            }
+            return new Response("done");
+          },
+        });
+        const res = await fetch(server.url, {
+          method: "POST",
+          body: "a=1",
+          headers: { "content-type": wireContentType },
+        });
+        expect(await res.text()).toBe("done");
+        return result;
+      }
+
+      test("blob().type is the wire Content-Type", async () => {
+        expect(await read("none", "blob", urlencoded)).toEqual([urlencoded]);
+      });
+      test("blob().type follows headers.set()", async () => {
+        expect(await read("set", "blob", "text/plain")).toEqual([urlencoded]);
+      });
+      test("blob().type survives clone() on both copies", async () => {
+        expect(await read("clone", "blob", urlencoded)).toEqual([urlencoded, urlencoded]);
+      });
+      test("formData() follows headers.set()", async () => {
+        expect(await read("set", "formData", "text/plain")).toEqual([{ a: "1" }]);
+      });
+      test("formData() follows headers.delete()", async () => {
+        expect(await read("delete", "formData", urlencoded)).toEqual("ERR_FORMDATA_PARSE_ERROR");
+      });
+      test("formData() survives clone() on both copies", async () => {
+        expect(await read("clone", "formData", urlencoded)).toEqual([{ a: "1" }, { a: "1" }]);
+      });
+    });
+
+    describe("Range for a Bun.file() response", () => {
+      const contents = "0123456789abcdef";
+      async function get(op: "none" | "set" | "delete", wireRange: string | undefined) {
+        using dir = tempDir("serve-range-from-headers", { "data.txt": contents });
+        using server = Bun.serve({
+          port: 0,
+          async fetch(req) {
+            const wait = states[state](req);
+            if (wait) await wait;
+            if (op === "set") req.headers.set("range", "bytes=2-5");
+            if (op === "delete") req.headers.delete("range");
+            return new Response(Bun.file(join(String(dir), "data.txt")));
+          },
+        });
+        const res = await fetch(server.url, { headers: wireRange ? { Range: wireRange } : {} });
+        return { status: res.status, contentRange: res.headers.get("content-range"), body: await res.text() };
+      }
+
+      test("the wire Range is honored", async () => {
+        expect(await get("none", "bytes=0-3")).toEqual({ status: 206, contentRange: "bytes 0-3/16", body: "0123" });
+      });
+      test("headers.delete('range') serves the whole file", async () => {
+        expect(await get("delete", "bytes=0-3")).toEqual({ status: 200, contentRange: null, body: contents });
+      });
+      test("headers.set('range') replaces the wire Range", async () => {
+        expect(await get("set", "bytes=0-3")).toEqual({ status: 206, contentRange: "bytes 2-5/16", body: "2345" });
+      });
+      test("headers.set('range') applies with no Range on the wire", async () => {
+        expect(await get("set", undefined)).toEqual({ status: 206, contentRange: "bytes 2-5/16", body: "2345" });
+      });
+    });
   });
 });

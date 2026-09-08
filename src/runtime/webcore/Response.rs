@@ -30,9 +30,9 @@ use bun_ptr::weak_ptr::WeakPtrData;
 /// `WebCore__FetchHeaders__deref`. NOT a `std::rc::Rc` (the payload lives on
 /// the C++ heap and is opaque here).
 ///
-/// Intentionally not `Clone`: the only "share" operation the surface
-/// exposes is `clone_this()`, which deep-copies a fresh `FetchHeaders` on the
-/// C++ side. Transferring ownership is by-move.
+/// Intentionally not `Clone`, so that sharing the same C++ object is spelled
+/// out: `new_ref()` takes another ref on it, `clone_this()` deep-copies a
+/// fresh `FetchHeaders` on the C++ side. Transferring ownership is by-move.
 #[repr(transparent)]
 pub struct HeadersRef(NonNull<FetchHeaders>);
 
@@ -45,6 +45,14 @@ impl HeadersRef {
     #[inline]
     pub(crate) unsafe fn adopt(ptr: NonNull<FetchHeaders>) -> Self {
         Self(ptr)
+    }
+
+    /// Take an additional ref on the same C++ `FetchHeaders` (no copy): both
+    /// handles observe later mutations.
+    #[inline]
+    pub(crate) fn new_ref(&self) -> Self {
+        bun_opaque::opaque_deref_mut(self.0.as_ptr()).ref_();
+        Self(self.0)
     }
 
     #[inline]
@@ -281,7 +289,7 @@ impl crate::webcore::body::BodyOwnerJs for Response {
 
 // BodyMixin is a trait with default methods providing getText/
 // getBody/getBytes/getBodyUsed/getJSON/getArrayBuffer/getBlob/getBlobWithoutCallFrame/
-// getFormData over any type exposing getBodyValue()/getFormDataEncoding()/etc.
+// getFormData over any type exposing getBodyValue()/getContentType()/etc.
 // Response implements it.
 
 impl BodyMixin for Response {
@@ -301,10 +309,8 @@ impl BodyMixin for Response {
         })
     }
     #[inline]
-    fn get_form_data_encoding(
-        &self,
-    ) -> bun_jsc::JsResult<Option<Box<bun_core::form_data::AsyncFormData>>> {
-        Response::get_form_data_encoding(self)
+    fn get_content_type(&self) -> JsResult<Option<Utf8Bytes<'_>>> {
+        Response::get_content_type(self)
     }
 }
 
@@ -436,19 +442,6 @@ impl Response {
         self.body.get().len() as usize
     }
 
-    pub(crate) fn get_form_data_encoding(
-        &self,
-    ) -> JsResult<Option<Box<bun_core::form_data::AsyncFormData>>> {
-        let Some(content_type_slice) = self.get_content_type()? else {
-            return Ok(None);
-        };
-        // content_type_slice drops at scope exit
-        let Some(encoding) = bun_core::form_data::Encoding::get(content_type_slice.slice()) else {
-            return Ok(None);
-        };
-        Ok(Some(bun_core::form_data::AsyncFormData::init(encoding)))
-    }
-
     pub(crate) fn calculate_estimated_byte_size(&self) {
         self.reported_estimated_size.set(
             self.body.get().value.get().estimated_size()
@@ -530,10 +523,6 @@ impl Response {
 }
 
 impl Response {
-    pub(crate) fn get_fetch_headers(&self) -> Option<&FetchHeaders> {
-        self.init.get().headers.as_deref()
-    }
-
     #[inline]
     pub(crate) fn status_code(&self) -> u16 {
         self.init.get().status_code

@@ -1554,8 +1554,6 @@ impl RewriterPipe {
         let Some(response) = self.response.get().as_deref() else {
             return;
         };
-        // For a waiting `.blob()`'s content type.
-        let headers = response.get_fetch_headers().map(NonNull::from);
         let body_value = response.get_body_value();
         let bytes = self.output_buffer.replace(Vec::new());
         let mut prev_value = core::mem::replace(
@@ -1565,7 +1563,7 @@ impl RewriterPipe {
                 was_string: false,
             }),
         );
-        let _ = webcore::body::Value::resolve(&mut prev_value, body_value, &self.global, headers);
+        let _ = webcore::body::Value::resolve(&mut prev_value, body_value, &self.global);
     }
 
     /// Feed the accumulated `pending_input` once unblocked, then maybe end,

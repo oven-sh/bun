@@ -153,7 +153,11 @@ pub struct RequestContext<
     pub(crate) blob: JsCell<AnyBlob>,
 
     pub(crate) sendfile: Cell<SendfileContext>,
-    pub(crate) range: RangeRequest::Raw,
+    /// A ref on the `Request`'s own `FetchHeaders`, taken when the request
+    /// goes async, so that header reads at render time (`Range`) see what the
+    /// handler sees through `req.headers` even if the JS `Request` has been
+    /// collected by then. Released in `finalize_without_deinit`.
+    pub(crate) request_headers: JsCell<Option<response::HeadersRef>>,
 
     pub(crate) request_body_readable_stream_ref: JsCell<readable_stream::Strong>,
     /// Owning `+1` handle into the per-VM `Body::Value` hive pool. Shared with
@@ -1381,15 +1385,6 @@ where
     }
 
     #[inline]
-    fn any_request(r: *mut Req<SSL_ENABLED, MUX>) -> uws::AnyRequest {
-        if MUX {
-            uws::AnyRequest::H3(r.cast::<bun_uws_sys::h3::Request>())
-        } else {
-            uws::AnyRequest::H1(r.cast::<bun_uws_sys::Request>())
-        }
-    }
-
-    #[inline]
     fn req_method(r: *mut Req<SSL_ENABLED, MUX>) -> &'static [u8] {
         // SAFETY: r is a live uWS/lsquic request handle for the duration of
         // the request callback; both surfaces return request-owned slices.
@@ -1425,7 +1420,7 @@ where
                     NonNull::new(server).map(|p| bun_ptr::BackRef::from_raw_mut(p.as_ptr())),
                 ),
                 defer_deinit_until_callback_completes: Cell::new(should_deinit_context),
-                range: RangeRequest::raw_from_request(&Self::any_request(req)),
+                request_headers: JsCell::new(None),
                 request_weakref: JsCell::new(request::WeakRef::EMPTY),
                 signal: Cell::new(None),
                 cookies: JsCell::new(None),
@@ -1612,6 +1607,7 @@ where
 
         // Releases the ref taken in `set_cookies` (via `CookieMapRef::drop`).
         drop(self.cookies.replace(None));
+        drop(self.request_headers.replace(None));
 
         if let Some(request) = self.request_mut() {
             request.request_context = AnyRequestContext::NULL;
@@ -1904,7 +1900,9 @@ where
         // sentinel or, if JS already read `.size`, the stat'd size; a
         // `.slice(0, n)` blob has `n < stat_size`. Skip if the user
         // already set Content-Range or a non-200 status — they're
-        // managing partial responses themselves.
+        // managing partial responses themselves. The Range value is read
+        // here, not when the request arrived, so that it is the one the
+        // handler sees (and may have set or deleted) through `req.headers`.
         let user_handles_range = if let Some(r) = self.response_mut() {
             r.status_code() != 200
                 || r.get_init_headers_mut()
@@ -1917,13 +1915,16 @@ where
             && (original_size == crate::webcore::blob::MAX_SIZE || original_size == stat_size);
         // RFC 9110 §14.2: Range is only defined for GET (HEAD mirrors GET's headers).
         let method_allows_range = self.method == Method::GET || self.method == Method::HEAD;
-        if is_regular
-            && method_allows_range
-            && !user_handles_range
-            && is_whole_file
-            && self.range != RangeRequest::Raw::None
-        {
-            match self.range.resolve(stat_size) {
+        let range = if is_regular && method_allows_range && !user_handles_range && is_whole_file {
+            self.request_header(jsc::HTTPHeaderName::Range, b"range")
+                .map_or(RangeRequest::Raw::None, |value| {
+                    RangeRequest::parse_raw(value.slice())
+                })
+        } else {
+            RangeRequest::Raw::None
+        };
+        if range != RangeRequest::Raw::None {
+            match range.resolve(stat_size) {
                 RangeRequest::Result::None => {}
                 RangeRequest::Result::Satisfiable { start, end } => {
                     let mut sendfile = self.sendfile.get();
@@ -2380,10 +2381,34 @@ where
                 request_object.set_fetch_headers(Some(response::HeadersRef::create_from_uws(req)));
             }
         }
+        // Render-time header reads (`request_header`) must not depend on the JS
+        // `Request` staying alive until then.
+        if self.request_headers.get().is_none() {
+            if let Some(headers) = request_object.fetch_headers() {
+                self.request_headers.set(Some(headers.new_ref()));
+            }
+        }
 
         // This object dies after the stack frame is popped
         // so we have to clear it in here too
         request_object.request_context.detach_request();
+    }
+
+    /// One request header, as the handler sees it through `req.headers`.
+    fn request_header(
+        &self,
+        name: jsc::HTTPHeaderName,
+        wire_name: &[u8],
+    ) -> Option<bun_core::Utf8Bytes<'static>> {
+        if let Some(headers) = self.request_headers.get() {
+            let headers = bun_opaque::opaque_deref_mut(headers.as_ptr());
+            return Some(headers.fast_get(name)?.to_utf8().into_owned());
+        }
+        Some(
+            self.request_mut()?
+                .get_header(name, wire_name)?
+                .into_owned(),
+        )
     }
 
     pub(crate) fn to_async(&self, req: *mut Req<SSL_ENABLED, MUX>, request_object: &mut Request) {
@@ -4247,7 +4272,7 @@ where
                 if matches!(old, Body::Value::Locked(_)) {
                     let _exit = vm.enter_event_loop_scope();
 
-                    let _ = Body::Value::resolve(&mut old, body, global_this, None); // TODO: properly propagate exception upwards
+                    let _ = Body::Value::resolve(&mut old, body, global_this); // TODO: properly propagate exception upwards
                 }
                 return;
             }
@@ -4406,7 +4431,7 @@ where
                     }
                     let mut new_body: Body::Value = Body::Value::Null;
                     let global_this = server.global_this();
-                    let _ = Body::Value::resolve(&mut old, &mut new_body, global_this, None); // TODO: properly propagate exception upwards
+                    let _ = Body::Value::resolve(&mut old, &mut new_body, global_this); // TODO: properly propagate exception upwards
                     *body = new_body;
                 }
             }

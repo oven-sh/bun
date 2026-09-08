@@ -181,10 +181,8 @@ impl BodyMixin for Request {
         })
     }
     #[inline]
-    fn get_form_data_encoding(
-        &self,
-    ) -> bun_jsc::JsResult<Option<Box<bun_core::form_data::AsyncFormData>>> {
-        Request::get_form_data_encoding(self)
+    fn get_content_type(&self) -> JsResult<Option<bun_core::Utf8Bytes<'_>>> {
+        Request::get_content_type(self)
     }
 }
 
@@ -236,59 +234,87 @@ impl Request {
         self.headers.set(headers);
     }
 
-    /// Returns the headers of the request. If the headers are not already cached, it will create a new FetchHeaders object.
-    /// If the headers are empty, it will look at request_context to get the headers.
-    /// If the headers are empty and request_context is null, it will create an empty FetchHeaders object.
+    /// The request's `FetchHeaders`, built from the live uWS request first if a
+    /// `Bun.serve` handler has not read `headers` yet. `None` only when there
+    /// are no headers and no uWS request to build them from.
+    ///
+    /// Every native reader of a request header goes through here, so that it
+    /// sees the same values as JS does through `req.headers` (including any
+    /// `set()`/`delete()` the handler made) instead of the original bytes.
+    #[allow(clippy::mut_from_ref)]
+    fn materialized_headers(&self) -> Option<&mut HeadersRef> {
+        if self.headers.get().is_none() {
+            let req = self.request_context.get_request()?;
+            self.headers.set(Some(HeadersRef::create_from_uws(
+                req.cast::<core::ffi::c_void>(),
+            )));
+        }
+        self.headers_mut().as_mut()
+    }
+
+    /// The headers if they exist already; does not build them.
+    pub(crate) fn fetch_headers(&self) -> Option<&HeadersRef> {
+        self.headers.get().as_ref()
+    }
+
+    /// One request header as `req.headers.get()` would return it. `wire_name`
+    /// is `name` in lowercase.
+    pub(crate) fn get_header(
+        &self,
+        name: HTTPHeaderName,
+        wire_name: &[u8],
+    ) -> Option<bun_core::Utf8Bytes<'_>> {
+        if self.headers.get().is_none() {
+            // Not built yet, so nothing was set or deleted: a header that is not
+            // on the wire is absent. Answer that without building the headers.
+            let req = self.request_context.get_request()?;
+            bun_opaque::opaque_deref(req).header(wire_name)?;
+        }
+        Some(self.materialized_headers()?.fast_get(name)?.to_utf8())
+    }
+
+    /// Returns the headers of the request, creating them if they do not exist
+    /// yet: from the uWS request when served by `Bun.serve`, otherwise empty
+    /// (plus the body Blob's content type, if any).
     #[allow(clippy::mut_from_ref)]
     pub(crate) fn ensure_fetch_headers(
         &self,
         global_this: &JSGlobalObject,
     ) -> JsResult<&mut HeadersRef> {
-        if self.headers.get().is_some() {
-            // headers is already set
-            return Ok(self.headers_mut().as_mut().unwrap());
+        if let Some(headers) = self.materialized_headers() {
+            return Ok(headers);
         }
 
-        if let Some(req) = self.request_context.get_request() {
-            // we have a request context, so we can get the headers from it
-            self.headers.set(Some(HeadersRef::create_from_uws(
-                req.cast::<core::ffi::c_void>(),
-            )));
-        } else {
-            // we don't have a request context, so we need to create an empty headers object
-            self.headers.set(Some(HeadersRef::create_empty()));
-            // Snapshot the pointer first; it stays valid across the field borrow.
-            let content_type: Option<*const [u8]> = match self.body_value() {
-                BodyValue::Blob(blob) => {
-                    Some(std::ptr::from_ref::<[u8]>(blob.content_type_slice()))
-                }
-                BodyValue::Locked(locked) => match locked.readable.get() {
-                    Some(readable) => match readable.ptr {
-                        crate::webcore::readable_stream::Source::Blob(blob) => {
-                            // SAFETY: `Source::Blob` holds a live `*mut ByteBlobLoader`
-                            // for as long as the readable stream exists; we only read
-                            // its `content_type` slice and immediately copy below.
-                            let ct: &[u8] = unsafe { (*blob).content_type.as_slice() };
-                            Some(std::ptr::from_ref::<[u8]>(ct))
-                        }
-                        _ => None,
-                    },
-                    None => None,
+        self.headers.set(Some(HeadersRef::create_empty()));
+        // Snapshot the pointer first; it stays valid across the field borrow.
+        let content_type: Option<*const [u8]> = match self.body_value() {
+            BodyValue::Blob(blob) => Some(std::ptr::from_ref::<[u8]>(blob.content_type_slice())),
+            BodyValue::Locked(locked) => match locked.readable.get() {
+                Some(readable) => match readable.ptr {
+                    crate::webcore::readable_stream::Source::Blob(blob) => {
+                        // SAFETY: `Source::Blob` holds a live `*mut ByteBlobLoader`
+                        // for as long as the readable stream exists; we only read
+                        // its `content_type` slice and immediately copy below.
+                        let ct: &[u8] = unsafe { (*blob).content_type.as_slice() };
+                        Some(std::ptr::from_ref::<[u8]>(ct))
+                    }
+                    _ => None,
                 },
-                _ => None,
-            };
+                None => None,
+            },
+            _ => None,
+        };
 
-            if let Some(content_type_) = content_type {
-                // SAFETY: the sources above are live for the duration of this
-                // call; the bytes are copied into the header map below.
-                let content_type_ = unsafe { &*content_type_ };
-                if !content_type_.is_empty() {
-                    self.headers_mut().as_mut().unwrap().put(
-                        HTTPHeaderName::ContentType,
-                        &BunString::ascii(content_type_),
-                        global_this,
-                    )?;
-                }
+        if let Some(content_type_) = content_type {
+            // SAFETY: the sources above are live for the duration of this
+            // call; the bytes are copied into the header map below.
+            let content_type_ = unsafe { &*content_type_ };
+            if !content_type_.is_empty() {
+                self.headers_mut().as_mut().unwrap().put(
+                    HTTPHeaderName::ContentType,
+                    &BunString::ascii(content_type_),
+                    global_this,
+                )?;
             }
         }
 
@@ -297,16 +323,7 @@ impl Request {
 
     #[allow(clippy::mut_from_ref)]
     pub(crate) fn get_fetch_headers_unless_empty(&self) -> Option<&mut HeadersRef> {
-        if self.headers.get().is_none() {
-            if let Some(req) = self.request_context.get_request() {
-                // we have a request context, so we can get the headers from it
-                self.headers.set(Some(HeadersRef::create_from_uws(
-                    req.cast::<core::ffi::c_void>(),
-                )));
-            }
-        }
-
-        let headers = self.headers_mut().as_mut()?;
+        let headers = self.materialized_headers()?;
         if headers.is_empty() {
             return None;
         }
@@ -322,38 +339,15 @@ impl Request {
         &self,
         global_this: &JSGlobalObject,
     ) -> JsResult<Option<HeadersRef>> {
-        if self.headers.get().is_none() {
-            if let Some(uws_req) = self.request_context.get_request() {
-                self.headers.set(Some(HeadersRef::create_from_uws(
-                    uws_req.cast::<core::ffi::c_void>(),
-                )));
-            }
+        match self.get_fetch_headers_unless_empty() {
+            Some(headers) => headers.clone_this(global_this),
+            None => Ok(None),
         }
-
-        if let Some(head) = self.headers_mut().as_mut() {
-            if head.is_empty() {
-                return Ok(None);
-            }
-
-            return head.clone_this(global_this);
-        }
-
-        Ok(None)
     }
 
     pub(crate) fn get_content_type(&self) -> JsResult<Option<bun_core::Utf8Bytes<'_>>> {
-        if let Some(req) = self.request_context.get_request() {
-            // S008: `uws::Request` is an `opaque_ffi!` ZST handle — safe deref.
-            let req = bun_opaque::opaque_deref(req);
-            if let Some(value) = req.header(b"content-type") {
-                return Ok(Some(bun_core::Utf8Bytes::Borrowed(value)));
-            }
-        }
-
-        if let Some(headers) = self.headers_mut().as_mut() {
-            if let Some(value) = headers.fast_get(HTTPHeaderName::ContentType) {
-                return Ok(Some(value.to_utf8()));
-            }
+        if let Some(value) = self.get_header(HTTPHeaderName::ContentType, b"content-type") {
+            return Ok(Some(value));
         }
 
         if let BodyValue::Blob(blob) = self.body_value() {
@@ -432,21 +426,6 @@ impl Request {
             weak_ptr_data: WeakPtrData::EMPTY,
             reported_estimated_size: Cell::new(0),
         }
-    }
-
-    pub(crate) fn get_form_data_encoding(
-        &self,
-    ) -> JsResult<Option<Box<crate::webcore::form_data::AsyncFormData>>> {
-        let Some(content_type_slice) = self.get_content_type()? else {
-            return Ok(None);
-        };
-        let Some(encoding) = crate::webcore::form_data::Encoding::get(content_type_slice.slice())
-        else {
-            return Ok(None);
-        };
-        Ok(Some(crate::webcore::form_data::AsyncFormData::init(
-            encoding,
-        )))
     }
 
     pub(crate) fn estimated_size(&self) -> usize {

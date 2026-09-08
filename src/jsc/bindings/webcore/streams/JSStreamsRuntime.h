@@ -188,8 +188,11 @@ namespace WebCore {
 // owner: BunStreamConsumers.cpp.
 //   onBufferedFastPath*: context = the JSReadableStream (the fast path's catch/finally pair).
 //   onReadableStreamTo*Fulfilled: the generic-path promise chains
-//     (toArrayBuffer/toBytes/toBlob: value = the chunk array; toJSON: value = the text;
+//     (toArrayBuffer/toBytes: value = the chunk array; toBlob: value = the chunk array,
+//      context = the contentType JSString or undefined; toJSON: value = the text;
 //      toFormData: value = the Blob, context = the contentType JSString).
+//   onReadableStreamToBlobSetType: toBlob's buffered fast path when a contentType is given;
+//     value = the native handle's Blob, context = the contentType JSString.
 //   onIntoArrayReadMany*: readableStreamIntoArray's readMany() continuation (readMany may
 //     return a Promise); context = an InternalFieldTuple{reader, resultArray}.
 //   onDirectConsumeLoopRead*: the readableStreamTo{Text,Array}Direct read loop;
@@ -205,6 +208,7 @@ namespace WebCore {
     V(onReadableStreamToTextChunksFulfilled)                                                                 \
     V(onReadableStreamToJSONFulfilled)                                                                       \
     V(onReadableStreamToBlobFulfilled)                                                                       \
+    V(onReadableStreamToBlobSetType) /* buffered fast path: give the native Blob the body's contentType */   \
     V(onReadableStreamToFormDataFulfilled)                                                                   \
     V(onIntoArrayReadManyFulfilled) /* append value; !done => readMany() again; done => release + resolve */ \
     V(onIntoArrayReadManyRejected) /* release the reader, reject the result promise */                       \

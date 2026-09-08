@@ -2595,6 +2595,10 @@ void WebCore__FetchHeaders__deref(WebCore::FetchHeaders* arg0)
 {
     arg0->deref();
 }
+void WebCore__FetchHeaders__ref(WebCore::FetchHeaders* arg0)
+{
+    arg0->ref();
+}
 
 WebCore::FetchHeaders* WebCore__FetchHeaders__createValueNotJS(JSC::JSGlobalObject* arg0, StringPointer* arg1, StringPointer* arg2, const EncodedSlice* arg3, uint32_t count)
 {

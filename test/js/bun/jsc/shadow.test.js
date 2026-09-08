@@ -64,7 +64,8 @@ describe("an exception that crosses the ShadowRealm boundary becomes a TypeError
       }
       return "did not throw";
     }`);
-    const thrower = (0, eval)(source);
+    // Created in this realm, wrapped for the shadow realm when passed in.
+    const thrower = new Function(`return (${source});`)();
     expect(callAndDescribe(thrower)).toBe("true:" + message);
   });
 

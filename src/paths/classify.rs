@@ -12,8 +12,7 @@ pub struct RelPathFacts {
     pub has_sep: bool,
     /// Any `.` anywhere (including inside names like `a.b`).
     pub has_dot: bool,
-    /// Some component is exactly `.` or `..`; names like `a.b` or `...` don't
-    /// count.
+    /// Some component is exactly `.` or `..` (`a.b` and `...` are names).
     pub has_dot_component: bool,
     /// `..` resolution climbs above the segment's own start: the running
     /// component depth (name +1, `..` −1, `.`/empty 0) ever goes negative.

@@ -3952,8 +3952,7 @@ mod windows_impl {
         let to_dir = to_dir.as_fd();
         let mut wf = bun_paths::w_path_buffer_pool::get();
         let mut wt = bun_paths::w_path_buffer_pool::get();
-        // `rename_at_w` opens `from` through `normalize_path_windows` itself;
-        // `to` goes into `FILE_RENAME_INFORMATION` as given, so resolve it here.
+        // `rename_at_w` normalizes `from` itself, `to` reaches `FILE_RENAME_INFORMATION` as is.
         let from_w = bun_paths::string_paths::to_nt_path(&mut wf, from.as_bytes());
         let to_w = super::nt_object_name_at(to_dir, to.as_bytes(), &mut wt.0[..])?;
         super::windows::rename_at_w(from_dir, from_w, to_dir, to_w, true)
@@ -4008,13 +4007,7 @@ mod windows_impl {
         // broke the old forward-split impl for absolute paths fed by
         // `bin::Linker::create_windows_shim`).
         //
-        // What stays here is a lexical `.`/`..` pre-collapse: it keeps every
-        // walk step on `mkdirat`'s verbatim route (a `.`/`..` component makes
-        // `mkdirat` resolve `dir`'s path first) and keeps the walk off
-        // prefixes like `a\..` (compile-outfile-subdirs.test.ts "works with .
-        // and .. in paths", outfile `./output/../output/./app.exe`). Leading
-        // `..` of a relative path cannot collapse without `dir`'s path; they
-        // stay, and `mkdirat` resolves them against `dir`.
+        // The lexical `.`/`..` pre-collapse below keeps the walk off prefixes like `a\..`.
         use bun_paths::{ComponentIterator, MakePathStep, PathFormat, is_sep_any as is_sep};
         if sub.is_empty() {
             return Ok(());
@@ -4077,8 +4070,7 @@ mod windows_impl {
                     if root_end > 0 {
                         continue;
                     } // absolute: `..` at root is root
-                    // Relative with nothing to pop: keep `..` literally;
-                    // `mkdirat(dir, "..\foo")` resolves it to `dir`'s parent.
+                    // Relative with nothing to pop: keep `..`, `mkdirat` resolves it.
                     if w > root_end {
                         buf.0[w] = b'\\';
                         w += 1;
@@ -7014,14 +7006,7 @@ pub fn openat_windows_a(dir: impl AsFd, path: &[u8], flags: i32, perm: Mode) -> 
     openat_windows_impl(dir, norm, flags, perm)
 }
 
-/// The NT object name for `path` relative to `dir`, for the wrappers that hand
-/// a dirfd-relative path straight to NT (`mkdirat`, `unlinkat`, the
-/// destination of `renameat`, `exists_at_type`). NT takes a `.` or `..`
-/// component as a literal name, neither resolved against `RootDirectory` nor
-/// collapsed inside a `\??\` name, so a path that has one goes through
-/// [`normalize_path_windows`] as in `openat`. Every other path keeps
-/// `to_nt_path16` (a separator flip, no syscall), which is what the per-entry
-/// callers (extraction, recursive rm, the install linkers) always hit.
+/// `to_nt_path16`, or [`normalize_path_windows`] if a `.`/`..` component (literal to NT) exists.
 #[cfg(windows)]
 pub(crate) fn nt_object_name_at_w<'a>(
     dir: Fd,
@@ -7149,11 +7134,7 @@ pub enum ExistsAtType {
     File,
     Directory,
 }
-/// Windows tail: `NtQueryAttributesFile` against an OBJECT_ATTRIBUTES built
-/// from an NT object name from [`nt_object_name_at`], either absolute
-/// (`\??\…`, `\Device\…`) or relative to `dir` with no `.`/`..` component.
-/// Shared by the UTF-8 (`exists_at_type`) and UTF-16 (`exists_at_type_w`)
-/// entry points so the width dispatch does not duplicate the syscall body.
+/// `NtQueryAttributesFile` on a name from [`nt_object_name_at`], shared by both widths.
 #[cfg(windows)]
 fn exists_at_type_nt(dir: Fd, path: &[u16]) -> Maybe<ExistsAtType> {
     use bun_windows_sys::externs as w;

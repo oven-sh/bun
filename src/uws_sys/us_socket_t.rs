@@ -617,8 +617,7 @@ pub struct StreamBuffer {
     pub cursor: usize,
 }
 
-// Invariant: a non-null `list_ptr` means this struct owns exactly one
-// `Vec<u8>` decomposed by `update`. `take_stream_buffer` is the only way out.
+// Invariant: a non-null `list_ptr` means this struct owns one `Vec<u8>` decomposed by `update`.
 impl us_socket_stream_buffer_t {
     pub fn update(&mut self, stream_buffer: StreamBuffer) {
         drop(self.take_stream_buffer());
@@ -639,8 +638,7 @@ impl us_socket_stream_buffer_t {
         self.total_bytes_written = self.total_bytes_written.saturating_add(written);
     }
 
-    /// Moves the owned buffer out and nulls the raw parts, so a second take or
-    /// a later `destroy` sees an empty buffer. `total_bytes_written` survives.
+    /// Moves the owned buffer out and nulls the raw parts. `total_bytes_written` survives.
     pub fn take_stream_buffer(&mut self) -> StreamBuffer {
         let list = if !self.list_ptr.is_null() {
             // SAFETY: the raw parts came from a Vec<u8> decomposed in `update`
@@ -657,8 +655,7 @@ impl us_socket_stream_buffer_t {
         StreamBuffer { list, cursor }
     }
 
-    /// Explicit teardown (no `Drop` impl: the struct is `#[repr(C)]` and freed
-    /// from C++ via `us_socket_free_stream_buffer`). Idempotent.
+    /// Teardown called from C++ via `us_socket_free_stream_buffer`. Idempotent.
     ///
     /// SAFETY: `list_ptr`/`list_cap` were produced by `update`.
     pub(crate) unsafe fn destroy(&mut self) {

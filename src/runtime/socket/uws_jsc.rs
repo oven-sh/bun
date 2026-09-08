@@ -141,8 +141,7 @@ unsafe extern "C" fn us_socket_buffered_js_write(
     // `&mut *socket` / `&mut *buffer` under Stacked Borrows, so raw pointers with
     // no uniqueness assertion are used throughout.
 
-    // Coerce `data` before taking the buffer: the coercion can run JS that
-    // re-enters this function on the same socket.
+    // Coerce `data` first: it can run JS that re-enters this function on the same socket.
     let node_buffer: BlobOrStringOrBuffer = if data.is_undefined() {
         BlobOrStringOrBuffer::StringOrBuffer(StringOrBuffer::EMPTY)
     } else {

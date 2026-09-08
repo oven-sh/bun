@@ -54,9 +54,15 @@ impl<R> StyleRule<R> {
 
     pub(crate) fn update_prefix(&mut self, context: &mut MinifyContext<'_, '_>) {
         self.vendor_prefix = selector::get_prefix(&self.selectors);
-        if self.vendor_prefix.contains(VendorPrefix::NONE)
-            && context.targets.should_compile_selectors()
-        {
+        if !self.vendor_prefix.contains(VendorPrefix::NONE) {
+            return;
+        }
+        if self.vendor_prefix != VendorPrefix::NONE {
+            // The author put an unprefixed pseudo next to a vendor-prefixed one. One printing
+            // pass per prefix would write the prefixed one without its prefix in the unprefixed
+            // pass, so print the rule once, as written.
+            self.vendor_prefix = VendorPrefix::empty();
+        } else if context.targets.should_compile_selectors() {
             self.vendor_prefix = selector::downlevel_selectors(
                 context.arena,
                 self.selectors.v.slice_mut(),
@@ -67,6 +73,19 @@ impl<R> StyleRule<R> {
 
     pub(crate) fn is_compatible(&self, targets: &css::targets::Targets) -> bool {
         selector::is_compatible(self.selectors.v.slice(), targets)
+    }
+
+    /// Whether the targets call for rewriting this rule's selector list: an `:is()` wrap or a
+    /// split, so that the selectors every target supports keep applying in the targets that lack
+    /// a feature another selector uses. A vendor-prefixed selector keeps the list as written: the
+    /// other engines drop the whole rule because of it, browser hacks such as
+    /// `_:-ms-lang(x), .ie-only {}` rely on that, and any rewrite would revive the other selectors
+    /// there.
+    pub(crate) fn should_compile_selector_list(&self, targets: &css::targets::Targets) -> bool {
+        self.selectors.v.len() > 1
+            && targets.should_compile_selectors()
+            && selector::compatibility(self.selectors.v.slice(), targets)
+                == selector::Compatibility::Incompatible
     }
 }
 
@@ -432,10 +451,7 @@ impl<R> StyleRule<R> {
         // nesting is compiled away the printed output still fans out per
         // selector, which is why the nesting branch bumps unconditionally.
         let saved_expansion_multiplier = context.selector_expansion_multiplier;
-        let selectors_incompatible = self.selectors.v.len() > 1
-            && context.targets.should_compile_selectors()
-            && !self.is_compatible(context.targets);
-        let splits_selectors = selectors_incompatible
+        let splits_selectors = self.should_compile_selector_list(context.targets)
             && !(context.targets.is_compatible(css::Feature::IsSelector)
                 && !self.selectors.any_has_pseudo_element()
                 && self.selectors.specifities_all_equal());

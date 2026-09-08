@@ -379,6 +379,12 @@ private:
                 us_socket_unref(s);
                 return s;
             }
+            /* Same for bytes that arrive behind a finished response that closes the
+             * connection while its body is still draining (onWritable closes then). */
+            if (httpResponseData->isDrainingBeforeClose() && !httpResponseData->isConnectRequest) {
+                us_socket_unref(s);
+                return s;
+            }
         }
 
         /* Cork this socket */
@@ -409,15 +415,28 @@ private:
             auto *nodeHttpResponseData = (HttpResponseData<SSL, true> *) httpResponseData;
             nodeHttpRequestTrailers = &nodeHttpResponseData->nodeHttpRequestTrailers;
         }
+        /* node:http compat: set when the request handler below stops the parse at
+         * a request pipelined behind a response that closes the connection. */
+        bool stoppedBehindClosingResponse = false;
 
-        auto result = httpResponseData->template consumePostPadded<IsNodeHttp>(httpContextData->maxHeaderSize, httpResponseData->isConnectRequest, httpContextData->flags.requireHostHeader,httpContextData->flags.useStrictMethodValidation, httpContextData->flags.useInsecureHTTPParser, httpContextData->flags.useLenientTransferEncoding, nodeHttpRequestTrailers, &httpResponseData->chunkedExtensionsByteCount, data, (unsigned int) length, s, [httpContextData](void *s, HttpRequest *httpRequest) -> void * {
+        auto result = httpResponseData->template consumePostPadded<IsNodeHttp>(httpContextData->maxHeaderSize, httpResponseData->isConnectRequest, httpContextData->flags.requireHostHeader,httpContextData->flags.useStrictMethodValidation, httpContextData->flags.useInsecureHTTPParser, httpContextData->flags.useLenientTransferEncoding, nodeHttpRequestTrailers, &httpResponseData->chunkedExtensionsByteCount, data, (unsigned int) length, s, [httpContextData, &stoppedBehindClosingResponse](void *s, HttpRequest *httpRequest) -> void * {
 
+
+            HttpResponseData<SSL> *httpResponseData = (HttpResponseData<SSL> *) us_socket_ext((us_socket_t *) s);
+
+            /* node:http compat: never dispatch a request pipelined behind a
+             * response that closes the connection (still draining, or flushed by
+             * the uncork after this parse). Dispatching it would reset the
+             * response state, drop HTTP_CONNECTION_CLOSE and answer it behind a
+             * body the peer reads up to the FIN. */
+            if (IsNodeHttp && httpResponseData->isDrainingBeforeClose()) {
+                stoppedBehindClosingResponse = true;
+                return nullptr;
+            }
 
             /* For every request we reset the timeout and hang until user makes action */
             /* Warning: if we are in shutdown state, resetting the timer is a security issue! */
             us_socket_timeout((us_socket_t *) s, 0);
-
-            HttpResponseData<SSL> *httpResponseData = (HttpResponseData<SSL> *) us_socket_ext((us_socket_t *) s);
 
             /* node:http compat: the JS layer stopped HTTP processing on this
              * connection (the user emitted 'close' on the socket - Node frees
@@ -733,6 +752,16 @@ private:
 
         /* It is okay to uncork a closed socket and we need to */
         ((AsyncSocket<SSL> *) s)->uncork();
+
+        /* node:http compat: parsing stopped behind a response that closes the
+         * connection. If the uncork above flushed the last of it, close now;
+         * otherwise onWritable closes once the buffer drains. */
+        if constexpr (IsNodeHttp) {
+            if (stoppedBehindClosingResponse && !us_socket_is_closed(s)) {
+                us_socket_unref(s);
+                ((HttpResponse<SSL> *) s)->closeIfDoneAndMarked(httpResponseData);
+            }
+        }
 
         /* We cannot return nullptr to the underlying stack in any case */
         return s;

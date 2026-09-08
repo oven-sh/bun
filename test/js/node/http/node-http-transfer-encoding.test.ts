@@ -1105,4 +1105,77 @@ describe("res.useChunkedEncodingByDefault = false makes the response close-delim
       connection: "closed",
     });
   });
+
+  test.concurrent("write() followed by an empty end() is close-delimited too", async () => {
+    const result = await exchange((req, res) => {
+      res.useChunkedEncodingByDefault = false;
+      res.write("hello");
+      res.end();
+    }, GET11);
+    expect(result).toEqual({
+      head: "HTTP/1.1 200 OK\r\nDate: <D>\r\nConnection: close",
+      body: "hello",
+      framing: "close-delimited",
+      connection: "closed",
+    });
+  });
+
+  // The body below is larger than the loopback socket buffers, so end() leaves
+  // part of it queued in the server while the pipelined request behind it is
+  // parsed from the same read. That request must not be answered (its bytes
+  // would land inside the close-delimited body) and the close must still come.
+  test.concurrent("a request pipelined behind a close-delimited response is not answered", async () => {
+    const body = Buffer.alloc(8 * 1024 * 1024, "a");
+    await using server = createServer((req, res) => {
+      if (req.url === "/first") {
+        res.useChunkedEncodingByDefault = false;
+        res.end(body);
+      } else {
+        res.end("SECOND");
+      }
+    });
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    const { port } = server.address() as AddressInfo;
+
+    const done = Promise.withResolvers<{ head: string; bodyLength: number; tail: string; closedByServer: boolean }>();
+    const socket = connect(port, "127.0.0.1", () => {
+      socket.write("GET /first HTTP/1.1\r\nHost: x\r\n\r\nGET /second HTTP/1.1\r\nHost: x\r\n\r\n");
+    });
+    const chunks: Buffer[] = [];
+    let received = 0;
+    let headBytes = Buffer.alloc(0);
+    let headLength = -1;
+    const settle = (closedByServer: boolean) => {
+      const raw = Buffer.concat(chunks);
+      done.resolve({
+        head: headBytes.toString("latin1").replace(/^Date: .*$/m, "Date: <D>"),
+        bodyLength: raw.length - headLength,
+        tail: raw.subarray(raw.length - 8).toString("latin1"),
+        closedByServer,
+      });
+      socket.destroy();
+    };
+    socket.on("data", (chunk: Buffer) => {
+      chunks.push(chunk);
+      received += chunk.length;
+      if (headLength === -1) {
+        const soFar = chunks.length === 1 ? chunk : Buffer.concat(chunks);
+        const headEnd = soFar.indexOf("\r\n\r\n");
+        if (headEnd === -1) return;
+        headBytes = soFar.subarray(0, headEnd);
+        headLength = headEnd + 4;
+      }
+      // More than head + body can only be a second response inside the body.
+      if (received > headLength + body.length) settle(false);
+    });
+    socket.on("end", () => settle(true));
+    socket.on("error", done.reject);
+
+    expect(await done.promise).toEqual({
+      head: "HTTP/1.1 200 OK\r\nDate: <D>\r\nConnection: close",
+      bodyLength: body.length,
+      tail: "aaaaaaaa",
+      closedByServer: true,
+    });
+  });
 });

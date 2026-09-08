@@ -135,6 +135,37 @@ describe.skipIf(!enabled)("bun fuzzilli", () => {
     expect(result.exitCode).toBe(0);
   });
 
+  test.concurrent("whatever a program throws or patches, it gets a status and the loop goes on", async () => {
+    // Thrown values whose string coercion throws, sync and async, and a
+    // program that breaks every builtin a loop written in JS would reach for.
+    const result = await runReprl([
+      /* 0 */ `throw Symbol("sync symbol");`,
+      /* 1 */ `function F() {} F[Symbol.toPrimitive] = () => F; throw F;`,
+      /* 2 */ `queueMicrotask(() => { throw { toString() { throw new Error("unprintable"); } }; });`,
+      /* 3 */ `Promise.reject(Symbol("async symbol"));`,
+      /* 4 */ `(async () => { await null; throw new Error("rejected after await"); })();`,
+      /* 5 */ `
+        console.log = console.error = () => { throw new Error("patched console"); };
+        process.on = process.off = process.emit = process.removeListener = undefined;
+        process.removeAllListeners();
+        globalThis.Buffer = undefined;
+        require("node:fs").writeSync = () => { throw new Error("patched writeSync"); };
+        Object.defineProperty(globalThis, "Promise", { value: undefined });
+        Reflect.apply = Function.prototype.call = Function.prototype.apply = undefined;
+        queueMicrotask(() => { throw new Error("after patching"); });
+      `,
+      /* 6 */ `console.log("ok 6");`,
+    ]);
+
+    expect(result.stderr).toContain("sync symbol");
+    expect(result.stderr).toContain("async symbol");
+    expect(result.stderr).toContain("rejected after await");
+    expect(result.stderr).toContain("after patching");
+    expect(result.stdout).toEqual(["ok 6"]);
+    expect(result.statuses).toEqual([0x100, 0x100, 0x100, 0x100, 0x100, 0x100, 0]);
+    expect(result.exitCode).toBe(0);
+  });
+
   test.concurrent("a program that never ends its own event loop still reports a status", async () => {
     // Program 0 stops neither the server nor the interval, so its event loop
     // never ends. The loop gets a fixed slice, then the status goes out and

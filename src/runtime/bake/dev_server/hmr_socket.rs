@@ -6,8 +6,10 @@ use bun_uws_sys::{Opcode, SendStatus};
 
 use crate::timer::EventLoopTimerState;
 
+use super::serialized_failure::{Owner, OwnerPacked, Packed};
 use super::source_map_store::{self, RemoveOrUpgradeMode};
 use super::{ConsoleLogKind, DevServer, HmrTopic, IncomingMessageId, MessageId};
+use crate::bake::Side;
 use crate::bake::dev_server_body::HmrTopicBits;
 
 // Struct definition lives in `dev_server/mod.rs` so the public
@@ -293,6 +295,32 @@ impl HmrSocket {
                 };
                 // SAFETY: JS-thread only; sole `&mut DevServer` for this scope.
                 unsafe { self.dev() }.source_maps.unref(kv.0);
+            }
+            x if x == IncomingMessageId::CheckErrors as u8 => {
+                let (owners, trailing) = msg[1..].as_chunks::<4>();
+                if !trailing.is_empty() {
+                    return ws.close();
+                }
+                // SAFETY: JS-thread only; sole `&mut DevServer` for this scope.
+                let dev = unsafe { self.dev() };
+                let mut response: Vec<u8> = vec![MessageId::Errors.char(), 0, 0, 0, 0];
+                let mut removed: u32 = 0;
+                for owner in owners {
+                    let key = match Packed::from_bits(u32::from_le_bytes(*owner)).decode() {
+                        Owner::Client(file) => OwnerPacked::new(Side::Client, file.get()),
+                        Owner::Server(file) => OwnerPacked::new(Side::Server, file.get()),
+                        Owner::None | Owner::Route(_) => continue,
+                    };
+                    if !dev.bundling_failures.contains_key(&key) {
+                        response.extend_from_slice(owner);
+                        removed += 1;
+                    }
+                }
+                if removed == 0 {
+                    return;
+                }
+                response[1..5].copy_from_slice(&removed.to_le_bytes());
+                let _ = ws.send(&response, Opcode::Binary, false, true);
             }
             _ => ws.close(),
         }

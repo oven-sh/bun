@@ -157,6 +157,24 @@ test("blob: can be imported", async () => {
   }).toThrow();
 });
 
+test("blob: can be imported with a fragment", async () => {
+  const blob = new Blob([`export const loaded = true;`], { type: "application/javascript" });
+  const url = URL.createObjectURL(blob);
+  try {
+    const { loaded } = await import(url + "#frag");
+    expect(loaded).toBe(true);
+    // A query is part of the blob URL store key, so it names no entry.
+    expect(async () => {
+      await import(url + "?query");
+    }).toThrow();
+  } finally {
+    URL.revokeObjectURL(url);
+  }
+  expect(async () => {
+    await import(url + "#other");
+  }).toThrow();
+});
+
 test("blob: can reliable get type from fetch #10072", async () => {
   using server = Bun.serve({
     fetch() {

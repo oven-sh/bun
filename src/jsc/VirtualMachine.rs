@@ -2267,8 +2267,8 @@ pub struct RuntimeHooks {
     /// `NodeFS` lives in `bun_runtime`; the high tier boxes one and returns
     /// the type-erased pointer. Stored back into `vm.node_fs`.
     pub create_node_fs: unsafe fn(vm: *mut VirtualMachine) -> *mut c_void,
-    /// `ObjectURLRegistry` lookup. Registry lives in `bun_runtime::webcore`.
-    pub has_blob_url: fn(blob_id: &[u8]) -> bool,
+    /// `ObjectURLRegistry` lookup of a `blob:` URL. Registry lives in `bun_runtime::webcore`.
+    pub has_blob_url: fn(url: &[u8]) -> bool,
     /// `Response::get_blob_without_call_frame` /
     /// `Request::get_blob_without_call_frame`. If
     /// `value` downcasts to a `Response` or `Request` (both live in
@@ -4498,12 +4498,12 @@ impl VirtualMachine {
             ret.path = self.dupe_resolved_path(specifier);
             return Ok(());
         }
-        if let Some(blob_id) = specifier.strip_prefix(b"blob:".as_slice()) {
+        if specifier.starts_with(b"blob:") {
             ret.result = None;
             // `WebCore.ObjectURLRegistry` lives in `bun_runtime`; routed
             // through [`RuntimeHooks::has_blob_url`].
             let has = runtime_hooks()
-                .map(|h| (h.has_blob_url)(blob_id))
+                .map(|h| (h.has_blob_url)(specifier))
                 .unwrap_or(false);
             if has {
                 ret.path = self.dupe_resolved_path(specifier);

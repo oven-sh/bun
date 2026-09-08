@@ -1338,9 +1338,8 @@ unsafe fn create_node_fs(vm: *mut VirtualMachine) -> *mut c_void {
     .cast::<c_void>()
 }
 
-/// `WebCore.ObjectURLRegistry.singleton().has(specifier["blob:".len..])`.
-fn has_blob_url(blob_id: &[u8]) -> bool {
-    crate::webcore::object_url_registry::ObjectURLRegistry::singleton().has(blob_id)
+fn has_blob_url(url: &[u8]) -> bool {
+    crate::webcore::object_url_registry::ObjectURLRegistry::singleton().has(url)
 }
 
 /// `Response::get_blob_without_call_frame` /
@@ -3991,7 +3990,7 @@ unsafe fn get_loader_and_virtual_source<'a>(
     if crate::webcore::object_url_registry::is_blob_url(specifier) {
         match crate::webcore::object_url_registry::ObjectURLRegistry::singleton()
             // SAFETY: per fn contract — `jsc_vm` is the live per-thread VM.
-            .resolve_and_dupe(&specifier[b"blob:".len()..], unsafe { &*jsc_vm }.global())
+            .resolve_and_dupe(specifier, unsafe { &*jsc_vm }.global())
         {
             Some(blob) => {
                 *blob_to_deinit = Some(blob);

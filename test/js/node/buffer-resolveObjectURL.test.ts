@@ -47,3 +47,41 @@ test("buffer.resolveObjectURL args", async () => {
   ).toBeUndefined();
   URL.revokeObjectURL(id);
 });
+
+// The blob URL store is keyed by the URL serialized without its fragment
+// (https://w3c.github.io/FileAPI/#blob-url-resolve), the same rule fetch(),
+// import() and new Worker() resolve by. Node keys by pathname instead, so it
+// also ignores a ?query. Bun treats a query as a different URL, like browsers.
+test("buffer.resolveObjectURL ignores the URL fragment", async () => {
+  const blob = new Blob(["hello"]);
+  const id = URL.createObjectURL(blob);
+  const uuid = id.slice("blob:".length);
+
+  for (const url of [id + "#frag", id + "#", id + "#frag?not-a-query", id + "#frag\n"]) {
+    const resolved = resolveObjectURL(url);
+    expect(resolved).toBeInstanceOf(Blob);
+    expect(await resolved!.text()).toBe("hello");
+  }
+
+  // A different scheme, path or query is a different URL.
+  for (const url of [uuid, "file:" + uuid, id + "/", id + "?query", id + "?query#frag", id + "?"]) {
+    expect(resolveObjectURL(url)).toBeUndefined();
+  }
+
+  URL.revokeObjectURL(id);
+  expect(resolveObjectURL(id + "#frag")).toBeUndefined();
+});
+
+// WPT FileAPI/url: "Only exact matches should revoke URLs".
+test("URL.revokeObjectURL only revokes an exact match", async () => {
+  const blob = new Blob(["hello"]);
+  const id = URL.createObjectURL(blob);
+
+  for (const url of [id + "#frag", id + "#", id + "?query", id + "/"]) {
+    URL.revokeObjectURL(url);
+    expect(await resolveObjectURL(id)?.text()).toBe("hello");
+  }
+
+  URL.revokeObjectURL(id);
+  expect(resolveObjectURL(id)).toBeUndefined();
+});

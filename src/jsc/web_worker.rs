@@ -1302,7 +1302,7 @@ unsafe fn resolve_entry_point_specifier<'s>(
     const BLOB_SPECIFIER_LEN: usize = b"blob:".len() + crate::uuid::UUID::STRING_LENGTH;
     if str.len() >= BLOB_SPECIFIER_LEN && str.starts_with(b"blob:") {
         let hooks = runtime_hooks().expect("RuntimeHooks not installed");
-        if (hooks.has_blob_url)(&str[b"blob:".len()..]) {
+        if (hooks.has_blob_url)(str) {
             return Some(str);
         } else {
             *error_message = BunString::static_("Blob URL is missing");

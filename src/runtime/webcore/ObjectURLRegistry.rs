@@ -70,10 +70,10 @@ impl ObjectURLRegistry {
 
     pub(crate) fn resolve_and_dupe(
         &self,
-        pathname: &[u8],
+        url: &[u8],
         global_object: &JSGlobalObject,
     ) -> Option<Blob> {
-        let uuid = uuid_from_pathname(pathname)?;
+        let uuid = uuid_from_url(url)?;
         let map = self.map.lock();
         let entry = map.get(&uuid.bytes)?;
         let blob = entry.blob.dupe_with_content_type(true);
@@ -83,32 +83,48 @@ impl ObjectURLRegistry {
 
     pub(crate) fn resolve_and_dupe_to_js(
         &self,
-        pathname: &[u8],
+        url: &[u8],
         global_object: &JSGlobalObject,
     ) -> Option<JSValue> {
-        let blob = Blob::new(self.resolve_and_dupe(pathname, global_object)?);
+        let blob = Blob::new(self.resolve_and_dupe(url, global_object)?);
         // SAFETY: `Blob::new` returns a freshly-boxed heap pointer.
         Some(unsafe { (*blob).to_js(global_object) })
     }
 
-    pub(crate) fn revoke(&self, pathname: &[u8]) {
-        let Some(uuid) = uuid_from_pathname(pathname) else {
+    /// Only the exact `blob:<uuid>` revokes. A URL with a query or a fragment
+    /// was never registered (WPT: "Only exact matches should revoke URLs").
+    pub(crate) fn revoke(&self, url: &[u8]) {
+        let url = bun_core::String::borrow_utf8(url);
+        let Some(uuid) = uuid_from_key(bun_url::href_from_string(&url)) else {
             return;
         };
         // Box<Entry> dropped here
         let _ = self.map.lock().remove(&uuid.bytes);
     }
 
-    pub(crate) fn has(&self, pathname: &[u8]) -> bool {
-        let Some(uuid) = uuid_from_pathname(pathname) else {
+    pub(crate) fn has(&self, url: &[u8]) -> bool {
+        let Some(uuid) = uuid_from_url(url) else {
             return false;
         };
         self.map.lock().contains_key(&uuid.bytes)
     }
 }
 
-fn uuid_from_pathname(pathname: &[u8]) -> Option<UUID> {
-    UUID::parse(pathname).ok()
+/// https://w3c.github.io/FileAPI/#blob-url-resolve: the store key is the URL
+/// serialized without its fragment, so `blob:<uuid>#frag` names the entry and
+/// `blob:<uuid>?query` does not.
+fn uuid_from_url(url: &[u8]) -> Option<UUID> {
+    let url = bun_core::String::borrow_utf8(url);
+    uuid_from_key(bun_url::href_from_string_without_fragment(&url))
+}
+
+/// `href` is the parser's serialization: a lowercase scheme, then, for a URL
+/// this registry minted, exactly the 36-byte UUID.
+fn uuid_from_key(href: bun_core::String) -> Option<UUID> {
+    if href.is_dead() {
+        return None;
+    }
+    UUID::parse(href.to_utf8().strip_prefix(b"blob:")?).ok()
 }
 
 #[bun_jsc::host_fn(export = "Bun__createObjectURL")]
@@ -155,16 +171,11 @@ fn bun_revoke_object_url(
     // `is_string()` is `is_string_like()` and admits `StringObject`, so
     // `to_bun_string` can still observe a user `toString` that throws.
     let str = url_arg.to_bun_string(global_object)?;
+    // O(prefix) reject, so a long non-blob string is never transcoded or parsed.
     if !str.starts_with_ascii(b"blob:") {
         return Ok(JSValue::UNDEFINED);
     }
-
-    let slice = str.to_utf8();
-    let sliced = slice.slice();
-    if sliced.len() < b"blob:".len() + UUID::STRING_LENGTH {
-        return Ok(JSValue::UNDEFINED);
-    }
-    ObjectURLRegistry::singleton().revoke(&sliced[b"blob:".len()..]);
+    ObjectURLRegistry::singleton().revoke(&str.to_utf8());
     Ok(JSValue::UNDEFINED)
 }
 
@@ -182,16 +193,11 @@ fn js_function_resolve_object_url(
         return Ok(JSValue::UNDEFINED);
     }
     let str = url_arg.to_bun_string(global_object)?;
-
-    if !str.starts_with_ascii(b"blob:") || str.length() < SPECIFIER_LEN {
+    // O(prefix) reject, so a long non-blob string is never transcoded or parsed.
+    if !str.starts_with_ascii(b"blob:") {
         return Ok(JSValue::UNDEFINED);
     }
-
-    let slice = str.to_utf8();
-    let sliced = slice.slice();
-
-    let registry = ObjectURLRegistry::singleton();
-    let blob = registry.resolve_and_dupe_to_js(&sliced[b"blob:".len()..], global_object);
+    let blob = ObjectURLRegistry::singleton().resolve_and_dupe_to_js(&str.to_utf8(), global_object);
     Ok(blob.unwrap_or(JSValue::UNDEFINED))
 }
 

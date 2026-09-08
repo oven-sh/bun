@@ -1213,7 +1213,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
             // Support blob: urls
             if url_type == URLType::Blob {
                 if let Some(blob) =
-                    ObjectURLRegistry::singleton().resolve_and_dupe(url_path_decoded, global_this)
+                    ObjectURLRegistry::singleton().resolve_and_dupe(url.href, global_this)
                 {
                     url_string = BunString::create_format(format_args!(
                         "blob:{}",

@@ -776,7 +776,10 @@ describe.concurrent("bun pm reads trustedDependencies from package.json, not a s
 
       ({ out, err, exitCode } = await run(ctx, ["pm", "untrusted"]));
       expect(err).not.toContain("error:");
-      expect(out).toContain("./node_modules/all-lifecycle-scripts @1.0.0".replaceAll("/", sep));
+      // On Windows the isolated linker reports the store path, so match the
+      // package and its scripts rather than the folder.
+      expect(out).toContain("all-lifecycle-scripts @1.0.0\n");
+      expect(out).toContain("[postinstall]: bun postinstall.js");
       expect(exitCode).toBe(0);
 
       ({ out, err, exitCode } = await run(ctx, ["pm", "ls", "--trusted"]));

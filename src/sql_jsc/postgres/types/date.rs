@@ -1,4 +1,4 @@
-use crate::jsc::{JSGlobalObject, JSValue, JsResult, bun_string_jsc};
+use crate::jsc::{ErrorCode, JSGlobalObject, JSValue, JsError, JsResult};
 
 // Postgres stores timestamp and timestampz as microseconds since 2000-01-01
 // This is a signed 64-bit integer.
@@ -78,18 +78,30 @@ fn components_to_ms_utc(
         .ok()
 }
 
+/// A `Date` whose time value is `NaN` (or a `NaN` bound where a timestamp is
+/// expected) names no instant, so there is nothing that could be sent for it.
+pub(crate) fn throw_invalid_date(global_object: &JSGlobalObject) -> JsError {
+    global_object
+        .err(
+            ErrorCode::INVALID_ARG_VALUE,
+            format_args!("An Invalid Date (or NaN) cannot be bound to a query parameter"),
+        )
+        .throw()
+}
+
+/// Binary `timestamp` / `timestamptz` encoding of a `Date`, or of a number of
+/// milliseconds since the Unix epoch. `write_bind` sends every other value as
+/// text.
 pub(crate) fn from_js(global_object: &JSGlobalObject, value: JSValue) -> JsResult<i64> {
     let double_value = if value.is_date() {
         value.get_unix_timestamp()
-    } else if value.is_number() {
-        value.as_number()
-    } else if value.is_string() {
-        let str = value.to_bun_string(global_object).expect("unreachable");
-        bun_string_jsc::parse_date(&str, global_object)?
     } else {
-        return Ok(0);
+        value.as_number()
     };
 
+    if double_value.is_nan() {
+        return Err(throw_invalid_date(global_object));
+    }
     // Round-trip the ±Infinity the decoder produces back to DT_NOEND /
     // DT_NOBEGIN; otherwise `f64::INFINITY as i64` saturates to i64::MAX and
     // the subtract/multiply below overflows.

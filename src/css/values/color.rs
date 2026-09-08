@@ -1928,11 +1928,6 @@ impl ComponentParser {
         F: Fn(&mut css::Parser, &mut ComponentParser) -> CssResult<C> + Copy,
     {
         if let CssColor::LightDark { light, dark } = from {
-            // Each half re-parses the remaining component range, so nested
-            // `light-dark()` origins double the parse work and the resulting
-            // value per level. The depth cap bounds that expansion; past it
-            // the color parse fails and the value falls back to an unparsed
-            // token list.
             input.enter_light_dark_origin()?;
             let result = (|| -> CssResult<C> {
                 let state = input.state();

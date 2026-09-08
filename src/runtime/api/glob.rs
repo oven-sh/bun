@@ -130,8 +130,7 @@ impl ScanOpts {
             }
             return Ok(Some(out));
         }
-        // A Buffer, DataView or array is an object too, but never an options bag.
-        // Taking it as one would silently scan `process.cwd()`.
+        // A Buffer, DataView or array is never an options bag; reading it as one would scan `process.cwd()`.
         let ty = opts_obj.js_type();
         if !ty.is_object() || ty.is_array_like() || ty == bun_jsc::JSType::DataView {
             return Err(global_this.throw(format_args!(

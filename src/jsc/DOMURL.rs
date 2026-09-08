@@ -58,10 +58,7 @@ impl DOMURL {
         Ok(path)
     }
 
-    /// [`file_system_path`](Self::file_system_path) for a path argument: a URL
-    /// that is not a non-empty `file:` path throws `ERR_INVALID_URL_SCHEME` /
-    /// `ERR_INVALID_FILE_URL_PATH` / `ERR_INVALID_FILE_URL_HOST` /
-    /// `ERR_INVALID_ARG_VALUE`, like `fileURLToPath()`.
+    /// [`file_system_path`](Self::file_system_path) that throws `fileURLToPath()`'s errors for a non-`file:` or empty path.
     pub fn file_system_path_for_js(&mut self, global: &JSGlobalObject) -> JsResult<bstr::String> {
         let code = match self.file_system_path() {
             Ok(path) if !path.is_empty() => return Ok(path),

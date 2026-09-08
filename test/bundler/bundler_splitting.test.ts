@@ -2279,8 +2279,7 @@ describe("bundler", () => {
     onAfterBundle(api) {
       const entry = api.readFile("/out/entry.js");
       expect(entry).toMatch(/import\("\.\/d-[a-z0-9]+\.js"\)/);
-      // `/ext.json` seen from `/out/entry.js`.
-      expect(entry).toMatch(/import\("\.\.\/ext\.json", \{\s*with: \{\s*type: "json"/);
+      expect(entry).toMatch(/import\("\.\/ext\.json", \{\s*with: \{\s*type: "json"/);
     },
   });
 

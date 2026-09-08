@@ -66,9 +66,10 @@ pub struct Chunk {
     /// The path template used to generate `final_rel_path`
     pub(crate) template: PathTemplate,
     /// Absolute directory this chunk's file lands in: the outdir (or, without
-    /// one, `--outfile`'s directory or the working directory) joined with the
-    /// directory part of `template`. Relative specifiers in the chunk's output
-    /// resolve against it, so `external` file paths are printed relative to it.
+    /// one, `--outfile`'s directory or the working directory) joined with
+    /// `template.rel_dir()`. Relative specifiers in the chunk's output resolve
+    /// against it, so `external` file paths are printed relative to it. Set in
+    /// `compute_chunks`, before the hash is known (see `PathTemplate::rel_dir`).
     pub(crate) output_dir_abs: Box<[u8]>,
 
     /// For code splitting

@@ -943,15 +943,11 @@ impl<'a> Resolver<'a> {
         self.matches_user_external_pattern(import_path)
     }
 
-    /// True iff `import_path` matches a user-supplied `--external` wildcard
-    /// pattern. Does NOT consider `packages = external`; use
-    /// `isExternalPattern` for the combined check.
+    /// True iff `import_path` as written matches a user-supplied `--external`
+    /// file path or wildcard pattern. Does NOT consider `packages = external`;
+    /// use `isExternalPattern` for the combined check.
     pub(crate) fn matches_user_external_pattern(&self, import_path: &[u8]) -> bool {
-        self.opts
-            .external
-            .patterns
-            .iter()
-            .any(|pattern| pattern.matches(import_path))
+        self.opts.external.matches_specifier(import_path)
     }
 
     /// Resolves `import_path` via the enclosing tsconfig's `paths`. Returns

@@ -1780,9 +1780,34 @@ describe("bundler", () => {
       api.expectFile("/out.js").toContain("h(");
     },
   });
-  // A `./` or `../` specifier that matches an `external` file is relative to the
-  // importer. Once hoisted into an output file it has to be relative to that
-  // file instead, wherever the file lands (two nested entry points here).
+  // `--external ./x` matches like esbuild: a specifier written exactly like the
+  // external is kept as written...
+  itBundled("edgecase/ExternalFileSpecifierAsWrittenIsKept", {
+    files: {
+      "/entry.js": /* js */ `
+        import config from "./config.js";
+        import { viaSub } from "./sub/reexport.js";
+        console.log(config, viaSub);
+      `,
+      // The same text names a different file here; it is matched by text all the same.
+      "/sub/reexport.js": `export { default as viaSub } from "./config.js";`,
+      "/config.js": `export default "root";`,
+      "/sub/config.js": `export default "sub";`,
+    },
+    external: ["./config.js"],
+    outdir: "/out",
+    onAfterBundle(api) {
+      const entry = api.readFile("/out/entry.js");
+      expect(entry).not.toContain(`"root"`);
+      expect(entry).not.toContain(`"sub"`);
+      const imports = new Bun.Transpiler().scanImports(entry).map(i => i.path);
+      expect([...new Set(imports)]).toEqual(["./config.js"]);
+    },
+  });
+  // ...while any other `./` or `../` specifier that resolves to the file is
+  // matched by path. That specifier is relative to the importer, so once hoisted
+  // into an output file it has to be relative to that file instead, wherever the
+  // file lands (two nested entry points here).
   itBundled("edgecase/ExternalFileRelativeToOutputFile", {
     files: {
       "/src/a/entry.js": /* js */ `
@@ -1884,6 +1909,46 @@ describe("bundler", () => {
       expect(imports).toEqual(["../../vendor/lib.js"]);
     },
     run: { file: "/out/nested/entry.js", stdout: "lib" },
+  });
+  // A `module.exports = require()` re-export is redirected to its target; the
+  // redirected record points at the same external file and prints the same way.
+  itBundled("edgecase/ExternalFileRelativeToOutputFileThroughCommonJSReexport", {
+    files: {
+      "/src/entry.js": /* js */ `
+        import lib from "./shim.cjs";
+        console.log(lib.id);
+      `,
+      "/src/shim.cjs": `module.exports = require("../vendor/lib.js");`,
+      "/vendor/lib.js": `export default { id: "lib" };`,
+    },
+    external: ["./vendor/lib.js"],
+    outdir: "/out/nested",
+    onAfterBundle(api) {
+      const imports = new Bun.Transpiler().scanImports(api.readFile("/out/nested/entry.js")).map(i => i.path);
+      expect(imports).toEqual(["../../vendor/lib.js"]);
+    },
+    run: { file: "/out/nested/entry.js", stdout: "lib" },
+  });
+  // An external file that is also an entry point is still external where it is
+  // imported: matching by path must not resolve the import to the bundled copy.
+  itBundled("edgecase/ExternalFileThatIsAlsoAnEntryPoint", {
+    files: {
+      "/src/entry.js": /* js */ `
+        import lib from "../lib.js";
+        console.log("entry", lib.id);
+      `,
+      "/lib.js": `export default { id: "lib" };`,
+    },
+    entryPoints: ["/src/entry.js", "/lib.js"],
+    outputPaths: ["/out/src/entry.js", "/out/lib.js"],
+    external: ["./lib.js"],
+    outdir: "/out",
+    onAfterBundle(api) {
+      const entry = api.readFile("/out/src/entry.js");
+      expect(entry).not.toContain(`id: "lib"`);
+      expect(new Bun.Transpiler().scanImports(entry).map(i => i.path)).toEqual(["../../lib.js"]);
+    },
+    run: { file: "/out/src/entry.js", stdout: "entry lib" },
   });
   // A `./`-prefixed wildcard names files, so besides matching specifiers as
   // written (kept as written, like esbuild) it also matches by resolved path:

@@ -120,6 +120,7 @@ pub(crate) fn init_external_modules(
 ) -> ExternalModules {
     let mut result = ExternalModules {
         node_modules: StringSet::default(),
+        exact: StringSet::default(),
         abs_paths: StringSet::default(),
         patterns: default_wildcard_patterns(),
         abs_patterns: Vec::new(),
@@ -183,15 +184,14 @@ pub(crate) fn init_external_modules(
         } else if bun_paths::is_package_path(external) {
             result.node_modules.insert(external).expect("unreachable");
         } else {
-            let normalized = validate_path(log, fs, cwd, external, b"external path");
+            // A specifier written exactly like the external stays as written
+            // (`--external ./config.js` + `import "./config.js"` prints
+            // `./config.js`); any other specifier that resolves to the file is
+            // matched by `abs_paths` and printed relative to the output.
+            result.exact.insert(external).expect("unreachable");
 
+            let normalized = validate_path(log, fs, cwd, external, b"external path");
             if !normalized.is_empty() {
-                // An absolute specifier is also matched as written: on Windows
-                // `/api/config` normalizes to `C:\api\config`, but in a source file
-                // it is a URL path that stays external verbatim.
-                if bun_paths::is_absolute(external) && *normalized != **external {
-                    result.abs_paths.insert(external).expect("unreachable");
-                }
                 result.abs_paths.insert(&normalized).expect("unreachable");
             }
         }
@@ -2485,6 +2485,32 @@ impl PathTemplate {
             &self.placeholder.target,
             sanitize_parent_dirs,
         )
+    }
+
+    /// The directory part of the expanded template, `/`-separated, relative to
+    /// the outdir. Usable before the chunk's hash is known: a missing `[hash]`
+    /// takes a stand-in, and a hash never contains a separator, so the
+    /// directory has the right depth either way (its text is only exact when
+    /// no directory segment uses `[hash]`).
+    pub(crate) fn rel_dir(&self, sanitize_parent_dirs: bool) -> Box<[u8]> {
+        let mut rel = Vec::<u8>::new();
+        path_template_print(
+            &mut rel,
+            &self.data,
+            &self.placeholder.dir,
+            &self.placeholder.name,
+            &self.placeholder.ext,
+            Some(
+                self.placeholder
+                    .hash
+                    .unwrap_or(bun_core::fmt::ContentHash::new(0, self.hash_len())),
+            ),
+            &self.placeholder.target,
+            sanitize_parent_dirs,
+        )
+        .expect("write to Vec<u8>");
+        bun_paths::resolve_path::platform_to_posix_in_place::<u8>(&mut rel);
+        Box::from(bun_paths::resolve_path::dirname::<bun_paths::platform::Posix>(&rel))
     }
 }
 

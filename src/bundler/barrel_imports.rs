@@ -317,7 +317,7 @@ fn record_target(
     if rec.source_index.is_valid() {
         return Some(rec.source_index.get());
     }
-    map?.get_path(&rec.path)
+    map?.get_record(rec)
 }
 
 /// The export names the result of `import()` / `require()` record `idx` can

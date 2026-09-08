@@ -19,14 +19,22 @@ pub enum Packages {
     External,
 }
 
+/// A file-path external (`./x.js`, `/abs/x.js`, `./dir/*`) is matched twice,
+/// like esbuild: against the specifier as written (`exact`, `patterns`), which
+/// keeps the specifier as written, and against the resolved absolute path
+/// (`abs_paths`, `abs_patterns`), which prints the file relative to the output.
 #[derive(Default)]
 pub struct ExternalModules {
-    /// Matched against the import specifier as written.
+    /// Wildcard patterns, matched against the import specifier as written.
     pub patterns: Vec<WildcardPattern>,
+    /// File-path externals as written, matched against the specifier as written.
+    pub exact: StringSet,
     /// `./`, `../` and absolute wildcard patterns resolved against the working
     /// directory; matched against the resolved absolute path like `abs_paths`.
     pub abs_patterns: Vec<WildcardPattern>,
+    /// File-path externals resolved against the working directory.
     pub abs_paths: StringSet,
+    /// Package names; a name also covers its subpaths.
     pub node_modules: StringSet,
 }
 impl Clone for ExternalModules {
@@ -35,6 +43,7 @@ impl Clone for ExternalModules {
         // `Result<_, AllocError>`), so this can't be `#[derive(Clone)]`.
         Self {
             patterns: self.patterns.clone(),
+            exact: self.exact.clone().expect("oom"),
             abs_patterns: self.abs_patterns.clone(),
             abs_paths: self.abs_paths.clone().expect("oom"),
             node_modules: self.node_modules.clone().expect("oom"),
@@ -42,6 +51,13 @@ impl Clone for ExternalModules {
     }
 }
 impl ExternalModules {
+    /// Whether the specifier as written was marked external, by text or by a
+    /// wildcard pattern.
+    pub fn matches_specifier(&self, import_path: &[u8]) -> bool {
+        (self.exact.count() > 0 && self.exact.contains(import_path))
+            || self.patterns.iter().any(|p| p.matches(import_path))
+    }
+
     /// Whether an absolute file path was marked external by path (`./file.js`,
     /// `/abs/file.js`) or by a path wildcard (`./dir/*`).
     pub fn matches_abs_path(&self, abs_path: &[u8]) -> bool {

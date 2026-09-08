@@ -740,23 +740,15 @@ pub(crate) fn compute_chunks(
         };
         let top_level_dir = bun_resolver::fs::FileSystem::get().top_level_dir;
         let sanitize_parent_dirs = !this.options.compile_mode.is_executable();
-        let mut rel_path: Vec<u8> = Vec::new();
         let mut join_buf = bun_paths::path_buffer_pool::get();
         for chunk in chunks.iter_mut() {
-            rel_path.clear();
-            // `[hash]` is unknown until the chunk is printed; it prints as "" here,
-            // which only matters for the directory part if a template puts it there.
-            chunk
-                .template
-                .print(&mut rel_path, sanitize_parent_dirs)
-                .expect("write to Vec<u8>");
-            let chunk_dir = resolve_path::dirname::<bun_paths::platform::Auto>(&rel_path);
+            let chunk_dir = chunk.template.rel_dir(sanitize_parent_dirs);
             chunk.output_dir_abs = Box::from(resolve_path::join_abs_string_buf::<
                 bun_paths::platform::Auto,
             >(
                 top_level_dir,
                 &mut join_buf[..],
-                &[output_base, chunk_dir],
+                &[output_base, &chunk_dir],
             ));
         }
     }

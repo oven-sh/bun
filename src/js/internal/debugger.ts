@@ -102,8 +102,7 @@ function cdpAdapterConstructor() {
   return (lazyInspectorCDPAdapter ??= require("internal/inspector/cdp").InspectorCDPAdapter);
 }
 
-// The endpoint opened for BUN_INSPECT, which prints no banner of its own. It is
-// started before the --inspect one, whose banner lists it.
+// The endpoint opened for BUN_INSPECT (started first), listed in the --inspect banner.
 let automaticEndpoint: string | undefined;
 
 export default function (

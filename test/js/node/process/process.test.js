@@ -1685,6 +1685,36 @@ describe.concurrent(() => {
     expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({ stdout: "ok", stderr: "", exitCode: 0 });
   });
 
+  // Node's processTicksAndRejections loops ticks, microtasks and rejections
+  // until all are empty, so work an 'unhandledRejection' listener queues runs
+  // even when that rejection was the loop's last activity.
+  it("runs the nextTicks and microtasks an unhandledRejection listener queues", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `process.on("unhandledRejection", e => {
+           process.nextTick(() => console.log("tick after", e.message));
+           Promise.resolve().then(() => {
+             console.log("microtask after", e.message);
+             setTimeout(() => console.log("timer after", e.message), 0);
+           });
+         });
+         process.on("exit", c => console.log("exit", c));
+         Promise.reject(new Error("a"));`,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({
+      stdout: "tick after a\nmicrotask after a\ntimer after a\nexit 0\n",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
   it("aborts when the uncaughtException handler throws", async () => {
     const proc = Bun.spawn([bunExe(), join(import.meta.dir, "process-onUncaughtExceptionAbort.js")], {
       stderr: "pipe",

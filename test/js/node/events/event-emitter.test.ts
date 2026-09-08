@@ -814,6 +814,90 @@ describe("EventEmitter captureRejections", () => {
 
     expect(handled).toEqual(null);
   });
+
+  // Node decides per call from this[kCapture], so the global default reaches an
+  // emitter whose constructor never ran (util.inherits without the super call).
+  test("EventEmitter.captureRejections applies to an emitter whose constructor never ran", async () => {
+    function NoConstructor() {}
+    Object.setPrototypeOf(NoConstructor.prototype, EventEmitter.prototype);
+    const before = EventEmitter.captureRejections;
+    EventEmitter.captureRejections = true;
+    try {
+      const ee = new (NoConstructor as any)();
+      const err = new Error("kaboom");
+      const { promise, resolve } = Promise.withResolvers();
+      ee.on("error", resolve);
+      ee.on("something", async () => {
+        throw err;
+      });
+      ee.emit("something");
+      expect(await promise).toBe(err);
+    } finally {
+      EventEmitter.captureRejections = before;
+    }
+    // ...and an emitter created while the default was off keeps not capturing.
+    const plain = new EventEmitter();
+    const onError = mock();
+    plain.on("error", onError);
+    let returned;
+    plain.on("something", () => (returned = Promise.reject(new Error("not captured"))));
+    plain.emit("something");
+    await returned.catch(() => {});
+    await sleep(5);
+    expect(onError).not.toHaveBeenCalled();
+  });
+
+  // Promises/A+: any thenable a listener returns is followed; `then` is read
+  // once, and a `then` getter that throws is emitted as 'error'.
+  test("captures thenables, reading `then` once", async () => {
+    const ee = new EventEmitter({ captureRejections: true });
+    const err = new Error("kaboom");
+    let reads = 0;
+    ee.on("something", () => {
+      const obj = {};
+      Object.defineProperty(obj, "then", {
+        get() {
+          reads++;
+          return (resolve, reject) => reject(err);
+        },
+      });
+      return obj;
+    });
+    const { promise, resolve } = Promise.withResolvers();
+    ee.on("error", resolve);
+    ee.emit("something");
+    expect(await promise).toBe(err);
+    expect(reads).toBe(1);
+  });
+
+  test("a `then` getter that throws is emitted as 'error'", () => {
+    const ee = new EventEmitter({ captureRejections: true });
+    const err = new Error("kaboom");
+    ee.on("something", () => {
+      const obj = {};
+      Object.defineProperty(obj, "then", {
+        get() {
+          throw err;
+        },
+      });
+      return obj;
+    });
+    const onError = mock();
+    ee.on("error", onError);
+    ee.emit("something");
+    expect(onError.mock.calls).toEqual([[err]]);
+  });
+
+  test("non-thenable return values are ignored", () => {
+    const ee = new EventEmitter({ captureRejections: true });
+    const onError = mock();
+    ee.on("error", onError);
+    ee.on("something", () => ({ then: "not a function" }));
+    ee.on("something", () => 42);
+    ee.on("something", () => null);
+    expect(ee.emit("something")).toBe(true);
+    expect(onError).not.toHaveBeenCalled();
+  });
 });
 
 const waysOfCreating = [

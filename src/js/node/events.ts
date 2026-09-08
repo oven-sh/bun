@@ -154,31 +154,56 @@ function applyHandlers(handlers, emitter, args) {
   }
 }
 
-function addCatch(emitter, promise, type, args) {
-  promise.then(undefined, function (err) {
-    // The callback is called with nextTick to avoid a follow-up rejection from this promise.
-    process.nextTick(emitUnhandledRejectionOrErr, emitter, err, type, args);
-  });
+// `result` is whatever a listener returned (not undefined/null): a thenable is
+// followed, anything else ignored. Promises/A+: `then` may be a getter, so it
+// is read once, and a getter that throws is an 'error'.
+function addCatch(emitter, result, type, args) {
+  if (!emitter[kCapture]) return;
+  try {
+    const then = result.then;
+    if (typeof then === "function") {
+      then.$call(result, undefined, function (err) {
+        // The callback is called with nextTick to avoid a follow-up rejection from this promise.
+        process.nextTick(emitUnhandledRejectionOrErr, emitter, err, type, args);
+      });
+    }
+  } catch (err) {
+    emitter.emit("error", err);
+  }
 }
 
 function emitUnhandledRejectionOrErr(emitter, err, type, args) {
   if (typeof emitter[kRejection] === "function") {
     emitter[kRejection](err, type, ...args);
   } else {
-    // If the error handler throws, it is not catchable and it will end up in 'uncaughtException'.
-    // We restore the previous value of kCapture in case the uncaughtException is present
-    // and the exception is handled.
+    // Capture is off while 'error' is emitted so a rejecting 'error' listener
+    // cannot loop back here. If the error handler throws, it is not catchable
+    // and it will end up in 'uncaughtException'; the previous value is
+    // restored in case that is handled.
+    const prev = emitter[kCapture];
     try {
       emitter[kCapture] = false;
       emitter.emit("error", err);
     } finally {
-      emitter[kCapture] = true;
+      emitter[kCapture] = prev;
     }
   }
 }
 
+// Mirrors EventEmitter.prototype[kCapture] (the `EventEmitter.captureRejections`
+// default) so the common emit path tests a closure variable, not a property.
+let captureRejectionsByDefault = false;
+
 const emitWithoutRejectionCapture = function emit(type, ...args) {
   $debug(`${this.constructor?.name || "EventEmitter"}.emit`, type);
+
+  // The constructor installs the capturing emit per instance; an emitter whose
+  // constructor never ran (util.inherits without the super call) lands here and
+  // follows the global default through the prototype's kCapture, as node's
+  // single emit does.
+  if (captureRejectionsByDefault && this[kCapture]) {
+    return emitWithRejectionCapture.$call(this, type, ...args);
+  }
 
   if (type === "error") {
     return emitError(this, args);
@@ -263,7 +288,7 @@ const emitWithRejectionCapture = function emit(type, ...args) {
         result = handler.$apply(this, args);
         break;
     }
-    if (result !== undefined && $isPromise(result)) {
+    if (result !== undefined && result !== null) {
       addCatch(this, result, type, args);
     }
     return true;
@@ -291,7 +316,7 @@ const emitWithRejectionCapture = function emit(type, ...args) {
         result = listener.$apply(this, args);
         break;
     }
-    if (result !== undefined && $isPromise(result)) {
+    if (result !== undefined && result !== null) {
       addCatch(this, result, type, args);
     }
   }
@@ -954,6 +979,7 @@ Object.defineProperties(EventEmitter, {
       validateBoolean(value, "EventEmitter.captureRejections");
 
       EventEmitterPrototype[kCapture] = value;
+      captureRejectionsByDefault = value;
     },
     enumerable: true,
   },

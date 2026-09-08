@@ -143,6 +143,25 @@ pub fn to_fetch_headers(
     )
 }
 
+/// [`to_fetch_headers`], owning the result.
+pub fn to_fetch_headers_ref(
+    this: &Headers,
+    global: &JSGlobalObject,
+) -> JsResult<bun_jsc::fetch_headers::HeadersRef> {
+    use bun_http_types::ETag::HeaderEntryColumns;
+    if this.entries.len() == 0 {
+        return Ok(bun_jsc::fetch_headers::HeadersRef::create_empty());
+    }
+    bun_jsc::fetch_headers::HeadersRef::create(
+        global,
+        this.entries.items_name(),
+        this.entries.items_value(),
+        // `from_bytes` scans for non-ASCII and tags UTF-8; `init` would leave
+        // the buffer Latin-1 and mojibake any UTF-8 header value bytes ≥0x80.
+        &EncodedSlice::from_bytes(this.buf.as_slice()),
+    )
+}
+
 struct H2TestingAPIs;
 
 impl H2TestingAPIs {

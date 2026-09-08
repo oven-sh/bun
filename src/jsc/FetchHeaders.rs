@@ -337,6 +337,27 @@ impl HeadersRef {
         Self(FetchHeaders::create_empty())
     }
 
+    /// [`FetchHeaders::create`] from parallel name/value columns into `buf`,
+    /// owning the fresh allocation.
+    #[inline]
+    pub fn create(
+        global: &JSGlobalObject,
+        names: &[StringPointer],
+        values: &[StringPointer],
+        buf: &EncodedSlice,
+    ) -> JsResult<Self> {
+        assert_eq!(names.len(), values.len());
+        // C++ only reads the columns.
+        FetchHeaders::create(
+            global,
+            names.as_ptr().cast_mut(),
+            values.as_ptr().cast_mut(),
+            buf,
+            names.len() as u32,
+        )
+        .map(Self)
+    }
+
     /// `FetchHeaders.createFromUWS(req)` — fresh C++ allocation, refcount 1.
     #[inline]
     pub fn create_from_uws(uws_request: *mut c_void) -> Self {

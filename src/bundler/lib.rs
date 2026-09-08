@@ -354,6 +354,17 @@ bun_dispatch::link_interface! {
         fn register_barrel_export(barrel_path: &[u8], alias: &[u8]);
     }
 }
+impl DevServerHandle {
+    /// The handle for the dev server `owner` points at. The handle is another
+    /// back-reference: whoever stores it takes on `owner`'s holder obligation
+    /// (must be dropped before the pointee).
+    #[inline]
+    pub fn from_owner<T: DevServerHandleOwner>(owner: bun_ptr::BackRef<T, bun_ptr::Root>) -> Self {
+        // SAFETY: `BackRef` invariant — the pointee is live while the handle's
+        // holder (bound by the same obligation) uses it.
+        unsafe { Self::of(owner.this_ptr().as_ptr()) }
+    }
+}
 // SAFETY: the handle is `{ kind, owner: *mut () }`; the raw pointer is what
 // defeats the auto-impl. `owner` is the single per-process `bake::DevServer`
 // (established at `unsafe fn new()`), which outlives every bundler worker

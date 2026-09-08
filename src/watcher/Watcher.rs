@@ -132,8 +132,49 @@ pub struct Watcher {
     pub(crate) ctx: *mut (),
     pub(crate) on_file_update: fn(*mut (), &mut [WatchEvent], &[ChangedFilePath], &WatchList),
     pub(crate) on_error: fn(*mut (), sys::Error),
+    /// Owned callback receiver (see [`Watcher::init_with_handler`]); when set,
+    /// `ctx`/`on_file_update`/`on_error` are unused.
+    pub(crate) handler: Option<Box<dyn WatcherHandler>>,
 
     pub thread_lock: ThreadLock,
+}
+
+/// A batch of file-change events being delivered to a [`WatcherHandler`] on
+/// the watcher thread while `Watcher.mutex` is held. The handler may evict
+/// entries through [`watcher_mut`](Self::watcher_mut)
+/// (`remove_at_index::<false>` + `flush_evictions`).
+pub struct FileUpdateBatch<'a> {
+    watcher: &'a mut Watcher,
+    event_count: usize,
+    changed_count: usize,
+}
+
+impl FileUpdateBatch<'_> {
+    #[inline]
+    pub fn events(&self) -> &[WatchEvent] {
+        &self.watcher.watch_events[..self.event_count]
+    }
+    /// Platform buffer of changed names inside watched directories; index it
+    /// with [`WatchEvent::names`].
+    #[inline]
+    pub fn changed_files(&self) -> &[ChangedFilePath] {
+        &self.watcher.changed_filepaths[..self.changed_count]
+    }
+    #[inline]
+    pub fn watcher(&self) -> &Watcher {
+        self.watcher
+    }
+    #[inline]
+    pub fn watcher_mut(&mut self) -> &mut Watcher {
+        self.watcher
+    }
+}
+
+/// Callback receiver owned by a [`Watcher`] (see [`Watcher::init_with_handler`]).
+/// Both methods run on the watcher thread.
+pub trait WatcherHandler: Send + 'static {
+    fn on_file_update(&mut self, batch: &mut FileUpdateBatch<'_>);
+    fn on_error(&mut self, err: sys::Error);
 }
 
 /// Context types passed to `Watcher::init` implement this trait.
@@ -187,13 +228,47 @@ impl Watcher {
             unsafe { (*ctx_opaque.cast::<T>()).on_watch_error(err) }
         }
 
+        Self::init_raw(
+            ctx.cast::<()>(),
+            on_file_update_wrapped::<T>,
+            on_error_wrapped::<T>,
+            None,
+            top_level_dir,
+        )
+    }
+
+    /// [`init`](Self::init) with an owned callback receiver instead of a raw
+    /// context pointer.
+    pub fn init_with_handler(
+        handler: Box<dyn WatcherHandler>,
+        top_level_dir: &'static [u8],
+    ) -> Result<Box<Watcher>, crate::Error> {
+        fn unused_update(_: *mut (), _: &mut [WatchEvent], _: &[ChangedFilePath], _: &WatchList) {}
+        fn unused_error(_: *mut (), _: sys::Error) {}
+        Self::init_raw(
+            core::ptr::null_mut(),
+            unused_update,
+            unused_error,
+            Some(handler),
+            top_level_dir,
+        )
+    }
+
+    fn init_raw(
+        ctx: *mut (),
+        on_file_update: fn(*mut (), &mut [WatchEvent], &[ChangedFilePath], &WatchList),
+        on_error: fn(*mut (), sys::Error),
+        handler: Option<Box<dyn WatcherHandler>>,
+        top_level_dir: &'static [u8],
+    ) -> Result<Box<Watcher>, crate::Error> {
         let this = Box::new(Watcher {
             watchlist: WatchList::default(),
             mutex: Mutex::default(),
             cwd: top_level_dir,
-            ctx: ctx.cast::<()>(),
-            on_file_update: on_file_update_wrapped::<T>,
-            on_error: on_error_wrapped::<T>,
+            ctx,
+            on_file_update,
+            on_error,
+            handler,
             platform: Platform::new(top_level_dir)?,
             watch_events: vec![WatchEvent::default(); MAX_COUNT].into_boxed_slice(),
             changed_filepaths: [const { None }; MAX_COUNT],
@@ -221,14 +296,24 @@ impl Watcher {
     /// and `self.changed_filepaths[..changed_count]` and calls this instead of
     /// open-coding the lock/trace/callback sequence.
     pub(crate) fn dispatch_file_updates(&mut self, event_count: usize, changed_count: usize) {
-        let _guard = self.mutex.lock_guard();
-        if !self.running.load() {
-            return;
+        self.mutex.lock();
+        if self.running.load() {
+            let events = &mut self.watch_events[..event_count];
+            let changed = &self.changed_filepaths[..changed_count];
+            WatcherTrace::write_events(&self.watchlist, events, changed);
+            match self.handler.take() {
+                Some(mut handler) => {
+                    handler.on_file_update(&mut FileUpdateBatch {
+                        watcher: self,
+                        event_count,
+                        changed_count,
+                    });
+                    self.handler = Some(handler);
+                }
+                None => (self.on_file_update)(self.ctx, events, changed, &self.watchlist),
+            }
         }
-        let events = &mut self.watch_events[..event_count];
-        let changed = &self.changed_filepaths[..changed_count];
-        WatcherTrace::write_events(&self.watchlist, events, changed);
-        (self.on_file_update)(self.ctx, events, changed, &self.watchlist);
+        self.mutex.unlock();
     }
 
     pub fn start(&mut self) -> Result<(), crate::Error> {
@@ -313,6 +398,13 @@ impl Watcher {
         }
     }
 
+    /// [`shutdown`](Self::shutdown) for the owning `Box` returned by
+    /// [`init`](Self::init) / [`init_with_handler`](Self::init_with_handler).
+    pub fn shutdown_boxed(self: Box<Self>, close_descriptors: bool) {
+        // SAFETY: `self` is the unique owning box, released here.
+        unsafe { Self::shutdown(Box::into_raw(self), close_descriptors) }
+    }
+
     pub fn get_hash(filepath: &[u8]) -> HashType {
         bun_wyhash::hash(filepath) as HashType
     }
@@ -359,7 +451,10 @@ impl Watcher {
                 self.platform.stop();
                 let running = self.running.load();
                 if running {
-                    (self.on_error)(self.ctx, err);
+                    match self.handler.as_mut() {
+                        Some(handler) => handler.on_error(err),
+                        None => (self.on_error)(self.ctx, err),
+                    }
                 }
                 running
             }

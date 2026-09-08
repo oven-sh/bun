@@ -25,25 +25,23 @@ bun_opaque::opaque_ffi! {
 ///
 /// Both slot fields are `Copy` `Cell`s, so every method takes `&self` —
 /// callers reach this through a shared `&Debugger` borrow.
-#[repr(transparent)]
-pub(crate) struct BunFrontendDevServerAgent(ErasedAgentSlot);
+#[derive(Clone, Copy)]
+pub(crate) struct BunFrontendDevServerAgent<'a>(&'a ErasedAgentSlot);
 
-impl BunFrontendDevServerAgent {
-    /// Reinterpret the `Debugger`'s erased slot as this agent. Sound because
-    /// `Self` is `#[repr(transparent)]` over [`ErasedAgentSlot`] and this
-    /// module is the slot's sole owner.
-    pub(crate) fn from_slot(slot: &ErasedAgentSlot) -> &Self {
-        // SAFETY: `#[repr(transparent)]` guarantees identical layout.
-        unsafe { &*core::ptr::from_ref(slot).cast::<Self>() }
+impl<'a> BunFrontendDevServerAgent<'a> {
+    /// View the `Debugger`'s erased slot as this agent; this module is the
+    /// slot's sole owner.
+    pub(crate) fn from_slot(slot: &'a ErasedAgentSlot) -> Self {
+        Self(slot)
     }
 
     /// `nextConnectionID` — wrapping post-increment.
-    pub(crate) fn next_connection_id(&self) -> i32 {
+    pub(crate) fn next_connection_id(self) -> i32 {
         self.0.post_increment_sequence()
     }
 
     #[inline]
-    pub(crate) fn is_enabled(&self) -> bool {
+    pub(crate) fn is_enabled(self) -> bool {
         !self.0.agent_ptr().is_null()
     }
 
@@ -52,7 +50,7 @@ impl BunFrontendDevServerAgent {
     /// stays live while the agent is enabled. Returns `None` when disabled.
     #[inline]
     #[allow(clippy::mut_from_ref)]
-    fn handle_mut(&self) -> Option<&mut InspectorBunFrontendDevServerAgentHandle> {
+    fn handle_mut(self) -> Option<&'a mut InspectorBunFrontendDevServerAgentHandle> {
         let handle = self.0.agent_ptr();
         if handle.is_null() {
             return None;
@@ -64,7 +62,7 @@ impl BunFrontendDevServerAgent {
         ))
     }
 
-    pub(crate) fn notify_client_connected(&self, dev_server_id: DebuggerId, connection_id: i32) {
+    pub(crate) fn notify_client_connected(self, dev_server_id: DebuggerId, connection_id: i32) {
         if let Some(handle) = self.handle_mut() {
             ffi::InspectorBunFrontendDevServerAgent__notifyClientConnected(
                 handle,
@@ -74,7 +72,7 @@ impl BunFrontendDevServerAgent {
         }
     }
 
-    pub(crate) fn notify_client_disconnected(&self, dev_server_id: DebuggerId, connection_id: i32) {
+    pub(crate) fn notify_client_disconnected(self, dev_server_id: DebuggerId, connection_id: i32) {
         if let Some(handle) = self.handle_mut() {
             ffi::InspectorBunFrontendDevServerAgent__notifyClientDisconnected(
                 handle,
@@ -85,25 +83,20 @@ impl BunFrontendDevServerAgent {
     }
 
     pub(crate) fn notify_bundle_start(
-        &self,
+        self,
         dev_server_id: DebuggerId,
-        trigger_files: &mut [BunString],
+        trigger_files: &[BunString],
     ) {
         if let Some(handle) = self.handle_mut() {
-            // SAFETY: `trigger_files` is a valid contiguous slice for the call;
-            // `(ptr, len)` pair derived from it.
-            unsafe {
-                ffi::InspectorBunFrontendDevServerAgent__notifyBundleStart(
-                    handle,
-                    dev_server_id.get(),
-                    trigger_files.as_mut_ptr(),
-                    trigger_files.len(),
-                )
-            }
+            ffi::InspectorBunFrontendDevServerAgent__notifyBundleStart(
+                handle,
+                dev_server_id.get(),
+                bun_core::ffi::FfiSlice::new(trigger_files),
+            )
         }
     }
 
-    pub(crate) fn notify_bundle_complete(&self, dev_server_id: DebuggerId, duration_ms: f64) {
+    pub(crate) fn notify_bundle_complete(self, dev_server_id: DebuggerId, duration_ms: f64) {
         if let Some(handle) = self.handle_mut() {
             ffi::InspectorBunFrontendDevServerAgent__notifyBundleComplete(
                 handle,
@@ -114,7 +107,7 @@ impl BunFrontendDevServerAgent {
     }
 
     pub(crate) fn notify_bundle_failed(
-        &self,
+        self,
         dev_server_id: DebuggerId,
         build_errors_payload_base64: BunString,
     ) {
@@ -131,7 +124,7 @@ impl BunFrontendDevServerAgent {
     /// `DevServer.RouteBundle.Index` (`-1` for `None`) — caller does
     /// `rbi.map(|i| i.get() as i32).unwrap_or(-1)`.
     pub(crate) fn notify_client_navigated(
-        &self,
+        self,
         dev_server_id: DebuggerId,
         connection_id: i32,
         url: &BunString,
@@ -150,7 +143,7 @@ impl BunFrontendDevServerAgent {
 
     /// `notifyConsoleLog`. `kind` is `DevServer.ConsoleLogKind as u8` (`b'l'`
     /// / `b'e'`) — caller does `kind as u8`.
-    pub(crate) fn notify_console_log(&self, dev_server_id: DebuggerId, kind: u8, data: &BunString) {
+    pub(crate) fn notify_console_log(self, dev_server_id: DebuggerId, kind: u8, data: &BunString) {
         if let Some(handle) = self.handle_mut() {
             ffi::InspectorBunFrontendDevServerAgent__notifyConsoleLog(
                 handle,
@@ -176,8 +169,7 @@ mod ffi {
     // SAFETY (safe fn): `InspectorBunFrontendDevServerAgentHandle` is an
     // `opaque_ffi!` ZST handle (`!Freeze` via `UnsafeCell`); `BunString` is a
     // `#[repr(C)]` in-param the C++ side reads in-place (`&`) or consumes
-    // (by value). `notifyBundleStart` keeps a raw
-    // `(ptr, len)` pair (slice not FFI-safe) and stays `unsafe`.
+    // (by value).
     unsafe extern "C" {
         pub(super) safe fn InspectorBunFrontendDevServerAgent__notifyClientConnected(
             agent: &mut InspectorBunFrontendDevServerAgentHandle,
@@ -189,11 +181,10 @@ mod ffi {
             dev_server_id: i32,
             connection_id: i32,
         );
-        pub(super) fn InspectorBunFrontendDevServerAgent__notifyBundleStart(
+        pub(super) safe fn InspectorBunFrontendDevServerAgent__notifyBundleStart(
             agent: &mut InspectorBunFrontendDevServerAgentHandle,
             dev_server_id: i32,
-            trigger_files: *mut BunString,
-            trigger_files_len: usize,
+            trigger_files: bun_core::ffi::FfiSlice<'_, BunString>,
         );
         pub(super) safe fn InspectorBunFrontendDevServerAgent__notifyBundleComplete(
             agent: &mut InspectorBunFrontendDevServerAgentHandle,

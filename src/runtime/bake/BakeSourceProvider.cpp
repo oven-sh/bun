@@ -80,7 +80,15 @@ extern "C" JSC::EncodedJSValue BakeLoadServerHmrPatch(GlobalObject* global, BunS
   return JSC::JSValue::encode(result);
 }
 
-extern "C" JSC::EncodedJSValue BakeLoadServerHmrPatchWithSourceMap(GlobalObject* global, BunString source, const char* sourceMapJSONPtr, size_t sourceMapJSONLength) {
+// `bun_core::ffi::FfiSlice<u8>`; ownership of the buffer transfers to the provider.
+struct BakeSourceMapJSON {
+  const char* ptr;
+  size_t len;
+};
+
+extern "C" JSC::EncodedJSValue BakeLoadServerHmrPatchWithSourceMap(GlobalObject* global, BunString source, BakeSourceMapJSON sourceMapJSON) {
+  const char* sourceMapJSONPtr = sourceMapJSON.ptr;
+  size_t sourceMapJSONLength = sourceMapJSON.len;
   JSC::VM&vm = global->vm();
   auto scope = DECLARE_THROW_SCOPE(vm);
 

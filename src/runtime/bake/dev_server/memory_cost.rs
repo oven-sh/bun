@@ -2,7 +2,7 @@ use core::mem::size_of;
 
 use crate::api::server::html_bundle::HTMLBundleRoute;
 use crate::bake::dev_server::{
-    DevServer, HmrSocket, IncrementalResult, TestingBatchEvents, deferred_request, packed_map,
+    DeferredRequest, DevServer, HmrSocket, IncrementalResult, TestingBatchEvents, packed_map,
 };
 use bun_collections::ArrayHashMap;
 
@@ -40,11 +40,11 @@ pub(crate) fn memory_cost_detailed(dev: &DevServer) -> MemoryCost {
     {
         let DevServer {
             magic: _,
+            this: _,
             root: _,
             inspector_server_id: _,
             configuration_hash_key: _,
             vm: _,
-            vm_handle: _,
             server: _,
             router: _,
             route_bundles: _,
@@ -65,12 +65,11 @@ pub(crate) fn memory_cost_detailed(dev: &DevServer) -> MemoryCost {
             server_register_update_callback: _,
             bun_watcher: _,
             directory_watchers: _,
-            watcher_atomics: _,
+            hot_reload: _,
             testing_batch_events: _,
             generation: _,
             bundles_since_last_error: _,
             framework: _,
-            bundler_framework_views: _,
             bundler_options: _,
             server_transpiler: _,
             client_transpiler: _,
@@ -79,7 +78,6 @@ pub(crate) fn memory_cost_detailed(dev: &DevServer) -> MemoryCost {
             plugin_state: _,
             current_bundle: _,
             next_bundle: _,
-            deferred_request_pool: _,
             active_websocket_connections: _,
             emit_incremental_visualizer_events: _,
             emit_memory_visualizer_events: _,
@@ -95,7 +93,6 @@ pub(crate) fn memory_cost_detailed(dev: &DevServer) -> MemoryCost {
     //   .bundles_since_last_error
     //   .configuration_hash_key
     //   .inspector_server_id
-    //   .deferred_request_pool
     //   .emit_incremental_visualizer_events
     //   .emit_memory_visualizer_events
     //   .frontend_only
@@ -106,7 +103,8 @@ pub(crate) fn memory_cost_detailed(dev: &DevServer) -> MemoryCost {
     //   .plugin_state
     //   .server_register_update_callback
     //   .server_fetch_function_callback
-    //   .watcher_atomics
+    //   .hot_reload
+    //   .this
 
     // pointers that are not considered a part of DevServer
     //   .vm
@@ -128,9 +126,6 @@ pub(crate) fn memory_cost_detailed(dev: &DevServer) -> MemoryCost {
     for bundle in dev.route_bundles.iter() {
         other_bytes += bundle.memory_cost();
     }
-    // .bundler_framework_views (the pointed-to Frameworks are owned elsewhere;
-    // count the Vec's own backing store)
-    other_bytes += memory_cost_array_list(&dev.bundler_framework_views);
     // .server_graph
     {
         let cost = dev.server_graph.memory_cost_detailed();
@@ -150,7 +145,8 @@ pub(crate) fn memory_cost_detailed(dev: &DevServer) -> MemoryCost {
     // .assets
     assets += dev.assets.memory_cost();
     // .active_websocket_connections
-    other_bytes += dev.active_websocket_connections.capacity() * size_of::<*const HmrSocket>();
+    other_bytes += dev.active_websocket_connections.capacity()
+        * (size_of::<usize>() + size_of::<bun_ptr::RefPtr<HmrSocket>>());
     // .source_maps
     other_bytes += memory_cost_array_hash_map(&dev.source_maps.entries);
     for entry in dev.source_maps.entries.values() {
@@ -221,12 +217,11 @@ pub(crate) fn memory_cost_detailed(dev: &DevServer) -> MemoryCost {
     // All entries are owned by the bundler arena, not DevServer, except for `requests`
     // .current_bundle
     if let Some(bundle) = &dev.current_bundle {
-        // `SinglyLinkedList::len()` is an O(N) walk; only the node count matters.
-        other_bytes += bundle.requests.len() * size_of::<deferred_request::Node>();
+        other_bytes += bundle.requests.len() * size_of::<DeferredRequest>();
     }
     // .next_bundle
     {
-        other_bytes += dev.next_bundle.requests.len() * size_of::<deferred_request::Node>();
+        other_bytes += dev.next_bundle.requests.len() * size_of::<DeferredRequest>();
         other_bytes += memory_cost_array_hash_map(&dev.next_bundle.route_queue);
     }
     // .route_lookup

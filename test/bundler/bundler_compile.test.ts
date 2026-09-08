@@ -1952,11 +1952,7 @@ describe("embedded addon extraction and the temp directory", () => {
         stdout: "pipe",
         stderr: "pipe",
       });
-      const [, buildStderr, buildExit] = await Promise.all([
-        build.stdout.text(),
-        build.stderr.text(),
-        build.exited,
-      ]);
+      const [, buildStderr, buildExit] = await Promise.all([build.stdout.text(), build.stderr.text(), build.exited]);
       expect(buildStderr).not.toContain("error:");
       expect(buildExit).toBe(0);
       return { dir: cwd, exe: join(cwd, "app") };

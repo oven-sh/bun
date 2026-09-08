@@ -597,7 +597,12 @@ fn decimal_fields(bytes: &[u8], out: &mut [u64]) -> usize {
     for &byte in bytes.iter().chain(core::iter::once(&b' ')) {
         if byte.is_ascii_digit() {
             let digit = u64::from(byte - b'0');
-            current = Some(current.unwrap_or(0).saturating_mul(10).saturating_add(digit));
+            current = Some(
+                current
+                    .unwrap_or(0)
+                    .saturating_mul(10)
+                    .saturating_add(digit),
+            );
         } else if let Some(value) = current.take() {
             if let Some(slot) = out.get_mut(count) {
                 *slot = value;

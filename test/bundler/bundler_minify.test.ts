@@ -1398,6 +1398,32 @@ describe("bundler", () => {
       expect(code).toMatch(/=>\s*\{\s*return a \+ 1;?\s*\}/);
     },
   });
+
+  // An assignment to an export declared in a sibling TypeScript namespace
+  // block must print as a property access on the namespace object. If it is
+  // left as a bare identifier, the renamer does not reserve that name and can
+  // hand it to the namespace closure argument, so `x = []` replaces the
+  // namespace object and `y` is lost without an error. The enum members only
+  // bias the minifier's name alphabet toward `x`.
+  for (const bundling of [true, false]) {
+    itBundled(`minify/TSNamespaceSiblingExportAssignment${bundling ? "" : "NoBundle"}`, {
+      files: {
+        "/entry.ts": /* ts */ `
+          namespace N { export let x: any = 1 }
+          namespace N { x = []; export const y = 2 }
+          enum Flags { xx = 1, xxx = 2, xxxx = 4 }
+          console.log(JSON.stringify(N), Flags.xx);
+        `,
+      },
+      bundling,
+      minifySyntax: true,
+      minifyWhitespace: true,
+      minifyIdentifiers: true,
+      run: {
+        stdout: `{"x":[],"y":2} 1`,
+      },
+    });
+  }
 });
 
 // The runtime transpiler (`bun run`/`bun test`) implicitly enables

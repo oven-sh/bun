@@ -560,8 +560,7 @@ extern "C" fn on_jsc_invalid_env_var(name: *const u8, len: usize) {
     exit_with_jsc_env_var_help();
 }
 
-/// JSC aborts on a combination of options it cannot run with. When that combination comes from
-/// `BUN_JSC_*` environment variables it is a configuration error, so say which ones and exit(1).
+/// A `BUN_JSC_*` combination JSC cannot run with: name the variables and exit(1) before JSC aborts.
 extern "C" fn on_jsc_incoherent_options(reason: *const u8, len: usize) {
     // SAFETY: C++ guarantees `reason[..len]` is valid for the call.
     let reason = unsafe { bun_core::ffi::slice(reason, len) };

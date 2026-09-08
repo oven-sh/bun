@@ -280,11 +280,9 @@ extern "C" long Bun__crashHandlerFromJSCFrame(void*, void*, void*, void*);
 // bun_icu_default_locale.cpp
 extern "C" void Bun__ensureICUDefaultLocale();
 
-// JSC::Options::assertOptionsAreCoherent() CRASH()es when WebAssembly is on and
-// no tier that can run it is. Its other rules cannot fire: notifyOptionsChanged()
-// repairs those combinations. In Bun this one can only come from BUN_JSC_*
-// environment variables, so it is a configuration error, not a crash. Written
-// against the state after notifyOptionsChanged(): useJIT=0 turns useBBQJIT off.
+// The one JSC::Options::assertOptionsAreCoherent() rule that BUN_JSC_* variables can
+// reach (notifyOptionsChanged() repairs the others). Checked first so it exits as a
+// configuration error instead of CRASH()ing.
 static ASCIILiteral incoherentJSCOptions()
 {
     using JSC::Options;

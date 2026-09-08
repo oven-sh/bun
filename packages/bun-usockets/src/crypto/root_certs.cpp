@@ -1,5 +1,6 @@
 #include "./root_certs_header.h"
 #include "./internal/internal.h"
+#include <atomic>
 #include <mutex>
 #include <string.h>
 #include <string_view>
@@ -291,64 +292,21 @@ const us_system_certs_t &us_get_root_system_certs() {
   return system_certs;
 }
 
-// tls.setDefaultCACertificates(): the process-wide user root set that replaces
-// the bundled/system/extra roots for every store built afterwards, and the
-// shared store cache it invalidates.
-// https://github.com/nodejs/node/blob/v26.3.0/src/crypto/crypto_context.cc#L1064-L1076
-static std::mutex us_default_ca_mutex;
-static STACK_OF(X509) *us_root_certs_from_users = nullptr;
-static X509_STORE *us_shared_default_ca_store_cache = nullptr;
-static uint64_t us_default_ca_generation = 0;
-
-// https://github.com/nodejs/node/blob/v26.3.0/src/crypto/crypto_context.cc#L1261-L1310
-extern "C" int us_set_default_ca_certs(const char *const *pem, size_t count) {
-  STACK_OF(X509) *certs = sk_X509_new_null();
-  if (certs == NULL) {
-    return 0;
+static X509_STORE *us_new_flagged_store() {
+  X509_STORE *store = X509_STORE_new();
+  if (store != NULL) {
+    X509_STORE_set_flags(store, X509_V_FLAG_IGNORE_EXPIRED_TRUST_ANCHORS);
   }
-  for (size_t i = 0; i < count; i++) {
-    BIO *in = BIO_new_mem_buf(pem[i], -1);
-    if (in == NULL) {
-      sk_X509_pop_free(certs, X509_free);
-      return 0;
-    }
-    X509 *x = PEM_read_bio_X509(in, NULL, us_no_password_callback, NULL);
-    BIO_free(in);
-    if (x == NULL) {
-      // The OpenSSL error stays queued: the caller reports it like node's ThrowCryptoError.
-      sk_X509_pop_free(certs, X509_free);
-      return 0;
-    }
-    sk_X509_push(certs, x);
-  }
-  std::lock_guard<std::mutex> lock(us_default_ca_mutex);
-  if (us_root_certs_from_users != nullptr) {
-    sk_X509_pop_free(us_root_certs_from_users, X509_free);
-  }
-  us_root_certs_from_users = certs;
-  us_default_ca_generation++;
-  if (us_shared_default_ca_store_cache != nullptr) {
-    X509_STORE_free(us_shared_default_ca_store_cache);
-    us_shared_default_ca_store_cache = nullptr;
-  }
-  return 1;
+  return store;
 }
 
-extern "C" X509_STORE *us_get_default_ca_store() {
-  X509_STORE *store = X509_STORE_new();
+// The bundled roots plus the OpenSSL default locations, NODE_EXTRA_CA_CERTS and
+// (with --use-system-ca) the OS store: what every context trusts when neither
+// `ca` nor tls.setDefaultCACertificates() says otherwise.
+static X509_STORE *us_build_base_default_ca_store() {
+  X509_STORE *store = us_new_flagged_store();
   if (store == NULL) {
     return NULL;
-  }
-  X509_STORE_set_flags(store, X509_V_FLAG_IGNORE_EXPIRED_TRUST_ANCHORS);
-
-  {
-    std::lock_guard<std::mutex> lock(us_default_ca_mutex);
-    if (us_root_certs_from_users != nullptr) {
-      for (size_t i = 0; i < sk_X509_num(us_root_certs_from_users); i++) {
-        X509_STORE_add_cert(store, sk_X509_value(us_root_certs_from_users, i));
-      }
-      return store;
-    }
   }
 
   X509_LAZY_CERT_SET *bundled = us_get_bundled_root_cert_set();
@@ -399,41 +357,89 @@ extern "C" X509_STORE *us_get_default_ca_store() {
   return store;
 }
 
+// tls.setDefaultCACertificates(): the user root set that replaces the base
+// store for every context built afterwards.
+// https://github.com/nodejs/node/blob/v26.3.0/src/crypto/crypto_context.cc#L1064-L1076
+// Node keeps it thread_local; Bun's fetch() verifies on the HTTP thread, so the
+// set is published to all threads through one atomic pointer. A published set
+// is immutable and is not freed when a later call supersedes it: a reader that
+// loaded the pointer just before the swap keeps valid memory, at the cost of
+// one set per setDefaultCACertificates() call.
+struct us_user_root_set {
+  STACK_OF(X509) *certs;
+  // Built from `certs` when the set is published; handed out by
+  // us_get_shared_default_ca_store().
+  X509_STORE *shared;
+};
+static std::atomic<us_user_root_set *> us_user_roots{nullptr};
+
+static X509_STORE *us_build_user_root_store(STACK_OF(X509) *certs) {
+  X509_STORE *store = us_new_flagged_store();
+  if (store == NULL) {
+    return NULL;
+  }
+  for (size_t i = 0; i < sk_X509_num(certs); i++) {
+    X509_STORE_add_cert(store, sk_X509_value(certs, i));
+  }
+  return store;
+}
+
+// https://github.com/nodejs/node/blob/v26.3.0/src/crypto/crypto_context.cc#L1261-L1310
+extern "C" int us_set_default_ca_certs(const char *const *pem, size_t count) {
+  STACK_OF(X509) *certs = sk_X509_new_null();
+  if (certs == NULL) {
+    return 0;
+  }
+  for (size_t i = 0; i < count; i++) {
+    BIO *in = BIO_new_mem_buf(pem[i], -1);
+    if (in == NULL) {
+      sk_X509_pop_free(certs, X509_free);
+      return 0;
+    }
+    X509 *x = PEM_read_bio_X509(in, NULL, us_no_password_callback, NULL);
+    BIO_free(in);
+    if (x == NULL) {
+      // The OpenSSL error stays queued: the caller reports it like node's ThrowCryptoError.
+      sk_X509_pop_free(certs, X509_free);
+      return 0;
+    }
+    sk_X509_push(certs, x);
+  }
+  X509_STORE *shared = us_build_user_root_store(certs);
+  if (shared == NULL) {
+    sk_X509_pop_free(certs, X509_free);
+    return 0;
+  }
+  us_user_root_set *set = new us_user_root_set{certs, shared};
+  // The previous set, if any, stays allocated; see the comment above.
+  us_user_roots.store(set, std::memory_order_release);
+  return 1;
+}
+
+// A fresh store the caller owns and may extend (addCACert).
+extern "C" X509_STORE *us_get_default_ca_store() {
+  us_user_root_set *user = us_user_roots.load(std::memory_order_acquire);
+  if (user != nullptr) {
+    return us_build_user_root_store(user->certs);
+  }
+  return us_build_base_default_ca_store();
+}
+
 // Process-wide immutable default store. Safe to share across SSL_CTXs that
 // don't add per-config CAs (the user-`ca` path in build_raw populates the
 // SSL_CTX's own private, initially-empty store instead), so roots parsed for
 // one connection's chain are already there for the next.
 extern "C" X509_STORE *us_get_shared_default_ca_store() {
-  for (;;) {
-    uint64_t generation;
-    {
-      std::lock_guard<std::mutex> lock(us_default_ca_mutex);
-      if (us_shared_default_ca_store_cache != nullptr) {
-        X509_STORE_up_ref(us_shared_default_ca_store_cache);
-        return us_shared_default_ca_store_cache;
-      }
-      generation = us_default_ca_generation;
-    }
-    // Built outside the lock: us_get_default_ca_store() takes it to read the user set.
-    X509_STORE *built = us_get_default_ca_store();
-    if (built == nullptr) {
-      return nullptr;
-    }
-    std::lock_guard<std::mutex> lock(us_default_ca_mutex);
-    if (generation != us_default_ca_generation) {
-      // us_set_default_ca_certs() ran during the build: `built` holds the old roots.
-      X509_STORE_free(built);
-      continue;
-    }
-    if (us_shared_default_ca_store_cache == nullptr) {
-      us_shared_default_ca_store_cache = built;
-    } else {
-      // Another thread built it first: keep theirs.
-      X509_STORE_free(built);
-    }
-    X509_STORE_up_ref(us_shared_default_ca_store_cache);
-    return us_shared_default_ca_store_cache;
+  us_user_root_set *user = us_user_roots.load(std::memory_order_acquire);
+  if (user != nullptr) {
+    X509_STORE_up_ref(user->shared);
+    return user->shared;
   }
+  static X509_STORE *shared = nullptr;
+  static std::once_flag once;
+  std::call_once(once, []() { shared = us_build_base_default_ca_store(); });
+  if (shared) X509_STORE_up_ref(shared);
+  return shared;
 }
 
 extern "C" const char *us_get_default_ciphers() {

@@ -294,8 +294,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     }
 
                     if !p.is_control_flow_dead && id.ref_.eql(p.module_ref) {
-                        // Earlier `module.exports` reads may already be rewritten to `exports`,
-                        // even when named exports were deoptimized by something else since.
+                        // Undoes earlier `module.exports` -> `exports` rewrites at print time.
                         if name == b"exports"
                             && identifier_opts.assign_target() != js_ast::AssignTarget::None
                         {

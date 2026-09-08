@@ -1013,11 +1013,8 @@ impl<'a> Parser<'a> {
                 }
             }
 
-            // TypeScript "export = value;" becomes "module.exports = value;". TypeScript
-            // moves this statement to the end when it generates code, so its part is
-            // visited in source order but placed after every other statement's part.
-            // Merged into `parts` right after the loop (not via `after`) so the
-            // `module.exports = require()` redirect scan below still sees it.
+            // TypeScript emits "export = value;" as a trailing "module.exports = value;".
+            // Not `after`: the `module.exports = require()` redirect scan reads `parts`.
             let mut export_equals_parts = BumpVec::<js_ast::Part>::new_in(arena);
 
             // When tree shaking is enabled, each top-level statement is potentially a separate part.

@@ -158,9 +158,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         data: &mut S::ExportEquals,
     ) -> Result<(), Error> {
         // "module.exports = value"
-        // The synthesized `module.exports` target is not visited, so apply the same
-        // deoptimizations `maybe_rewrite_property_access` applies to a hand-written
-        // assignment: other `module.exports` reads must not print as `exports`.
+        // The synthesized target is not visited; deoptimize as a written assignment would.
         p.commonjs_module_exports_assigned_deoptimized = true;
         p.deoptimize_common_js_named_exports();
         // Evaluate lhs before visiting the rhs

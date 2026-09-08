@@ -959,7 +959,7 @@ With multiple entrypoints, the generated file hierarchy reflects the directory s
 The `naming` field customizes the names and locations of the generated files. It accepts a template string. Bun uses the template for all bundles that correspond to entrypoints and replaces the following tokens with their values:
 
 - `[name]` - The name of the entrypoint file, without the extension.
-- `[ext]` - The extension of the generated bundle.
+- `[ext]` - The extension of the generated file, without the leading `.`. When an asset has no extension, Bun also drops a `.` that comes right before `[ext]` in the template, so `[name]-[hash].[ext]` gives `LICENSE-a1b2c3d4` and not `LICENSE-a1b2c3d4.`.
 - `[hash]` - A hash of the bundle contents: 8 lowercase alphanumeric characters. If two outputs with different contents would print the same characters, both get enough extra characters to differ (as do the outputs that reference them). `[hash9]` through `[hash13]` set a wider minimum; `[hash13]` is the full 64-bit hash.
 - `[dir]` - The relative path from the project root to the parent directory of the source file.
 

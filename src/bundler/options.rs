@@ -2193,7 +2193,7 @@ fn path_template_print<W: bun_io::Write>(
     let mut remain: &[u8] = data;
     while let Some(j) = strings::index_of_char(remain, b'[') {
         let j = j as usize;
-        PathTemplate::write_replacing_slashes_on_windows(writer, &remain[0..j])?;
+        let literal = &remain[0..j];
         remain = &remain[j + 1..];
 
         let mut count: isize = 1;
@@ -2214,6 +2214,7 @@ fn path_template_print<W: bun_io::Write>(
 
         if count != 0 {
             // No matching `]`: emit `[` and fall through to write `remain` literally.
+            PathTemplate::write_replacing_slashes_on_windows(writer, literal)?;
             writer.write_all(b"[")?;
             break;
         }
@@ -2222,12 +2223,21 @@ fn path_template_print<W: bun_io::Write>(
 
         let Some((field, hash_len)) = placeholder_field(placeholder) else {
             // Unknown placeholder: keep `[placeholder]` verbatim in the output.
+            PathTemplate::write_replacing_slashes_on_windows(writer, literal)?;
             writer.write_all(b"[")?;
             PathTemplate::write_replacing_slashes_on_windows(writer, placeholder)?;
             writer.write_all(b"]")?;
             remain = &remain[end_len + 1..];
             continue;
         };
+
+        // `[name].[ext]` for a file with no extension is `name`, not `name.`.
+        let literal = if field == PlaceholderField::Ext && ext.is_empty() {
+            literal.strip_suffix(b".").unwrap_or(literal)
+        } else {
+            literal
+        };
+        PathTemplate::write_replacing_slashes_on_windows(writer, literal)?;
 
         match field {
             PlaceholderField::Dir => {
@@ -2315,7 +2325,8 @@ fn write_sanitized_parent_dirs_rewrites_every_dotdot_segment() {
 fn path_template_print_tolerates_malformed_brackets() {
     fn run(template: &[u8]) -> Vec<u8> {
         let mut out = Vec::new();
-        path_template_print(&mut out, template, b"D", b"N", b"E", Some(0), b"T", false).unwrap();
+        let hash = Some(bun_core::fmt::ContentHash::short(0));
+        path_template_print(&mut out, template, b"D", b"N", b"E", hash, b"T", false).unwrap();
         out
     }
     // Unterminated known placeholder: used to slice one past the end.
@@ -2357,6 +2368,24 @@ fn path_template_print_tolerates_malformed_brackets() {
     assert_eq!(find_unterminated_placeholder(b"]"), None);
     assert_eq!(find_unterminated_placeholder(b"[dir]/[name].[ext]"), None);
     assert_eq!(find_unterminated_placeholder(b"[foo]-[name].[ext]"), None);
+}
+
+#[cfg(test)]
+#[test]
+fn path_template_print_drops_the_dot_before_an_empty_ext() {
+    fn run(template: &[u8], ext: &[u8]) -> Vec<u8> {
+        let mut out = Vec::new();
+        let hash = Some(bun_core::fmt::ContentHash::short(0));
+        path_template_print(&mut out, template, b"D", b"N", ext, hash, b"T", false).unwrap();
+        out
+    }
+    assert_eq!(run(b"[name]-[hash].[ext]", b""), b"N-00000000");
+    assert_eq!(run(b"[dir]/[name].[ext]", b""), b"D/N");
+    assert_eq!(run(b"[name].[hash].asset.[ext]", b""), b"N.00000000.asset");
+    // Only a `.` that touches `[ext]` goes; other separators and a non-empty ext are untouched.
+    assert_eq!(run(b"[name]-[ext]", b""), b"N-");
+    assert_eq!(run(b"[ext]/[name]", b""), b"/N");
+    assert_eq!(run(b"[name].[ext]", b"js"), b"N.js");
 }
 
 impl PathTemplate {

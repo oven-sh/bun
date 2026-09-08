@@ -5787,6 +5787,12 @@ describe("synthesized undefined and NaN next to a binding of the same name", () 
     );
   });
 
+  it("sees a binding that a data loader synthesizes for a top-level key", () => {
+    expect(plain.transformSync('NaN = "n"\nx = nan', "toml")).toBe(
+      'var NaN = "n", x = 0 / 0;\n\nexport {\n  NaN,\n  x\n};\nexport default {\n  NaN,\n  x\n};\n',
+    );
+  });
+
   it("still evaluates to the global values at runtime", () => {
     const out = minifier.transformSync(`
       var result = (function (undefined, NaN) {

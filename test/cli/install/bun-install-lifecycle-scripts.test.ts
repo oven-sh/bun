@@ -201,12 +201,12 @@ for (const linker of ["hoisted", "isolated"] as const) {
         }
         install.kill("SIGKILL");
         await install.exited;
-        process.kill(scriptPid, "SIGKILL");
-        // On Windows a process keeps its working directory open, so wait until the script
-        // process is gone before the next install replaces that directory.
-        while (isWindows) {
+        // Windows kills the script with the install, other platforms leave it running.
+        // Kill it until it is gone: a live script writes into the package directory the
+        // next install replaces.
+        while (true) {
           try {
-            process.kill(scriptPid, 0);
+            process.kill(scriptPid, "SIGKILL");
           } catch {
             break;
           }

@@ -101,14 +101,14 @@ extern "C" JSC::EncodedJSValue Bun__NodeHTTPServerSocket__getCipher(JSC::JSGloba
 extern "C" JSC::EncodedJSValue Bun__NodeHTTPServerSocket__getPeerCertificate(JSC::JSGlobalObject*, us_socket_t*, bool is_ssl, JSC::CallFrame*);
 extern "C" JSC::EncodedJSValue Bun__NodeHTTPServerSocket__getTLSVersion(JSC::JSGlobalObject*, us_socket_t*, bool is_ssl, JSC::CallFrame*);
 
-#define NODE_HTTP_SERVER_SOCKET_TLS_FN(jsName, rustName)                                                                                  \
-    JSC_DEFINE_HOST_FUNCTION(jsName, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))                                    \
-    {                                                                                                                                     \
-        auto* thisObject = dynamicDowncast<JSNodeHTTPServerSocket>(callFrame->thisValue());                                               \
-        if (!thisObject || thisObject->isClosed() || !thisObject->socket) [[unlikely]] {                                                  \
-            return JSValue::encode(JSC::jsUndefined());                                                                                    \
-        }                                                                                                                                 \
-        return rustName(globalObject, thisObject->socket, thisObject->is_ssl, callFrame);                                                 \
+#define NODE_HTTP_SERVER_SOCKET_TLS_FN(jsName, rustName)                                               \
+    JSC_DEFINE_HOST_FUNCTION(jsName, (JSC::JSGlobalObject * globalObject, JSC::CallFrame * callFrame)) \
+    {                                                                                                  \
+        auto* thisObject = dynamicDowncast<JSNodeHTTPServerSocket>(callFrame->thisValue());            \
+        if (!thisObject || thisObject->isClosed() || !thisObject->socket) [[unlikely]] {               \
+            return JSValue::encode(JSC::jsUndefined());                                                \
+        }                                                                                              \
+        return rustName(globalObject, thisObject->socket, thisObject->is_ssl, callFrame);              \
     }
 
 NODE_HTTP_SERVER_SOCKET_TLS_FN(jsFunctionNodeHTTPServerSocketGetCipher, Bun__NodeHTTPServerSocket__getCipher)

@@ -21,7 +21,7 @@ use crate::bun_fs::FileSystem;
 
 use super::add_remove_with_filter::{
     WorkspaceMembers, WorkspaceTarget, fetch_entry_root, load_workspace_members,
-    local_relative_path, root_package_json_path,
+    local_relative_path,
 };
 use super::options::LogLevel;
 use super::package_json_editor::{self as PackageJSONEditor, EditOptions};
@@ -89,14 +89,6 @@ fn root_entry<'a>(root_entries: &'a [RootEntry], name: &[u8]) -> Option<&'a [u8]
         .iter()
         .find(|(entry_name, _)| **entry_name == *name)
         .map(|(_, text)| &text[..])
-}
-
-fn root_target() -> WorkspaceTarget {
-    WorkspaceTarget {
-        name: Box::default(),
-        name_hash: None,
-        package_json_path: root_package_json_path(),
-    }
 }
 
 fn target_label(package_json: &Expr) -> Box<[u8]> {
@@ -422,7 +414,7 @@ pub(crate) fn prepare(manager: &mut PackageManager, updates: &[UpdateRequest]) {
                 Global::crash();
             }
         }
-        let root = fetch_entry_root(manager, &root_target());
+        let root = fetch_entry_root(manager, &WorkspaceTarget::root());
         if root.get(b"workspaces").is_none() {
             Output::err_generic(
                 "--catalog requires a \"workspaces\" field in the root package.json",
@@ -436,7 +428,7 @@ pub(crate) fn prepare(manager: &mut PackageManager, updates: &[UpdateRequest]) {
         return;
     }
 
-    let root = fetch_entry_root(manager, &root_target());
+    let root = fetch_entry_root(manager, &WorkspaceTarget::root());
     if !root_defines_catalogs(&root) {
         return;
     }

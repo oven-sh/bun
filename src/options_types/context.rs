@@ -440,10 +440,8 @@ pub struct TestOptions {
     /// `bun test --parallel-delay=MS`: how long the first worker must be
     /// busy before spawning the rest. None = use the built-in default.
     pub parallel_delay_ms: Option<u32>,
-    /// `bun test --parallel`: runtime flags from this command line,
-    /// re-serialized as one `--name[=value]` token each, that the coordinator
-    /// appends to every worker's argv (`TEST_WORKER_FORWARDED_FLAGS` in
-    /// Arguments.rs).
+    /// `bun test --parallel`: command-line flags re-serialized for the worker
+    /// argv (`TEST_WORKER_FORWARDED_FLAGS` in Arguments.rs).
     pub parallel_forwarded_argv: Vec<Box<[u8]>>,
     /// Internal: this process is a `--parallel` worker. Files arrive over
     /// fd 3, results are written back over fd 3; no discovery, no header.

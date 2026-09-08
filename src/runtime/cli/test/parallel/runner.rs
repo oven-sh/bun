@@ -234,12 +234,9 @@ pub(crate) fn run_as_coordinator(
 /// `--only-failures` since the worker formats result lines and the coordinator
 /// prints them verbatim. `--reporter=junit` is forwarded (without the outfile)
 /// so workers attach the per-test detail the coordinator's JunitReporter
-/// needs. Test-runner and transpiler options are rebuilt here from merged
-/// bunfig + command-line state; plain runtime flags (`--console-depth`,
-/// `--throw-deprecation`, `--config`, ...) arrive pre-serialized in
-/// `test_options.parallel_forwarded_argv`. `TEST_WORKER_FORWARDED_FLAGS` /
-/// `TEST_WORKER_UNFORWARDED_FLAGS` in Arguments.rs classify every flag
-/// `bun test` accepts. Coordinator-only concerns — file discovery
+/// needs. Plain runtime flags arrive pre-serialized in
+/// `test_options.parallel_forwarded_argv` (`TEST_WORKER_FORWARDED_FLAGS` in
+/// Arguments.rs). Coordinator-only concerns — file discovery
 /// (`--path-ignore-patterns`, `--changed`), `--reporter-outfile`,
 /// `--pass-with-no-tests`, `--parallel` itself — are intentionally not
 /// forwarded.

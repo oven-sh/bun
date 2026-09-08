@@ -650,15 +650,9 @@ const TEST_PARAMS: &[ParamType] = concat_params!(
 );
 
 // ─── `bun test --parallel`: which flags reach the worker processes ──────────
-// Every named `TEST_PARAMS` flag is in exactly one of the two lists below
-// (a compile-time check follows them), so a new flag cannot silently go
-// missing from `--parallel` workers.
 
-/// Flags whose whole effect is inside the process that runs the test files.
-/// The coordinator re-serializes each one given on its command line as
-/// `--name[=value]` onto every worker's argv
-/// (`TestOptions::parallel_forwarded_argv`). A bunfig setting needs no entry:
-/// a worker loads the same bunfig, which is why `--config` is here.
+/// Re-serialized from the parsed command line as `--name[=value]` onto every
+/// worker's argv. bunfig settings need no entry: a worker loads bunfig itself.
 const TEST_WORKER_FORWARDED_FLAGS: &[&[u8]] = &[
     b"--no-orphans",
     // Module loading and transpilation.
@@ -715,10 +709,10 @@ const TEST_WORKER_FORWARDED_FLAGS: &[&[u8]] = &[
     b"--stack-trace-limit",
 ];
 
-/// Every other named flag `bun test` accepts.
+/// Every other `bun test` flag. Each `TEST_PARAMS` flag is in exactly one of the
+/// two lists; the compile-time check below names any that is not.
 const TEST_WORKER_UNFORWARDED_FLAGS: &[&[u8]] = &[
-    // `build_worker_argv` forwards these from merged bunfig + command-line
-    // state instead.
+    // Forwarded by `build_worker_argv` from merged bunfig + command-line state.
     b"--timeout",
     b"--update-snapshots",
     b"--rerun-each",
@@ -759,9 +753,7 @@ const TEST_WORKER_UNFORWARDED_FLAGS: &[&[u8]] = &[
     b"--jsx-import-source",
     b"--jsx-runtime",
     b"--jsx-side-effects",
-    // Coordinator concerns: file discovery, reporting, supervision. A worker
-    // starts in the coordinator's working directory with the coordinator's
-    // environment, so `--cwd` and the env-file flags are already applied.
+    // Coordinator-only. A worker inherits the cwd and the environment.
     b"--test-worker",
     b"--parallel",
     b"--parallel-delay",
@@ -782,16 +774,13 @@ const TEST_WORKER_UNFORWARDED_FLAGS: &[&[u8]] = &[
     b"--cwd",
     b"--env-file",
     b"--no-env-file",
-    // `DEBUG_PARAMS`: absent from release builds, where the forwarded list
-    // could not resolve it.
+    // `DEBUG_PARAMS`: not in release builds' `TEST_PARAMS`.
     b"--breakpoint-resolve",
     // One debugger endpoint cannot serve N workers.
     b"--inspect",
     b"--inspect-wait",
     b"--inspect-brk",
-    // `bun test` does not start the profilers (#40184). An explicit
-    // `--cpu-prof-name`/`--heap-prof-name` would also name one file for N
-    // workers, so per-worker profiling needs its own naming rule first.
+    // Not started by `bun test` (#40184); one output name would collide.
     b"--cpu-prof",
     b"--cpu-prof-name",
     b"--cpu-prof-dir",
@@ -880,8 +869,7 @@ const fn const_panic_concat(parts: &[&[u8]]) -> ! {
     }
 }
 
-/// `TEST_WORKER_FORWARDED_FLAGS` with each flag's value arity, resolved
-/// against `TEST_PARAMS` at compile time.
+/// `TEST_WORKER_FORWARDED_FLAGS` with each flag's value arity from `TEST_PARAMS`.
 static TEST_WORKER_FORWARDED: [(&[u8], clap::Values); TEST_WORKER_FORWARDED_FLAGS.len()] = {
     let mut out = [(b"" as &[u8], clap::Values::None); TEST_WORKER_FORWARDED_FLAGS.len()];
     let mut i = 0;
@@ -931,8 +919,7 @@ const _: () = {
     }
 };
 
-/// `bun test --parallel`: every `TEST_WORKER_FORWARDED_FLAGS` entry given on
-/// this command line, one `--name[=value]` token per occurrence.
+/// The `TEST_WORKER_FORWARDED_FLAGS` given on this command line, as argv tokens.
 #[cold]
 #[inline(never)]
 fn test_worker_forwarded_argv(args: &clap::Args<clap::Help>) -> Vec<Box<[u8]>> {

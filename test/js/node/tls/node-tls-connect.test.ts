@@ -237,11 +237,6 @@ for (const { name, connect } of tests) {
     const COMMON_CERT = { ...COMMON_CERT_ };
 
     it("surfaces the fatal TLS alert when ALPN has no overlap", async () => {
-      // The server only speaks h2 and the client only offers xyz, so the
-      // server rejects the handshake with a fatal no_application_protocol
-      // alert. No TLS session (and no peer certificate) ever exists: the
-      // error must carry the OpenSSL alert, not a certificate-verification
-      // code, and checkServerIdentity must never run.
       await using server = tls.createServer({
         key: COMMON_CERT.key,
         cert: COMMON_CERT.cert,
@@ -286,11 +281,9 @@ for (const { name, connect } of tests) {
     });
 
     it("emits error (not secureConnect) on a handshake_failure alert with rejectUnauthorized: false", async () => {
-      // Peer answers the ClientHello with a fatal handshake_failure alert: the
-      // TLS layer was never established, so the socket must error. It cannot
-      // fall through to secureConnect even with verification disabled.
       await using server = net.createServer(s => {
         s.resume();
+        // TLS alert record: level fatal (2), description handshake_failure (40).
         s.end(Buffer.from([0x15, 0x03, 0x03, 0x00, 0x02, 0x02, 0x28]));
       });
       await once(server.listen(0, "127.0.0.1"), "listening");

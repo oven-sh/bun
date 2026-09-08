@@ -372,8 +372,9 @@ describe.concurrent("bun info", () => {
   });
 });
 
-// The version part of `name@spec` is classified the way `bun add` classifies it: a dist-tag only ever
-// matches `dist-tags` (an unknown tag is an error, never `latest`), a range picks the best published match.
+// The version part of `name@spec` resolves like `npm view`: a dist-tag with exactly that name wins, otherwise a
+// range picks the best published match. An unknown tag is an error; it is never handed to the range parser
+// (which skips unknown words and would match `latest`).
 describe.concurrent("bun info version spec", () => {
   const packument = (name: string, tags: Record<string, string>, published: string[]) => ({
     name,
@@ -386,14 +387,16 @@ describe.concurrent("bun info version spec", () => {
     ),
   });
   const packuments: Record<string, object> = {
-    "zz-tags": packument("zz-tags", { latest: "2.0.0", next: "3.0.0", beta: "2.5.0" }, [
+    // `v1-lts` (the Angular `vNN-lts` shape) reads as the range `1` to the spec classifier; it is a tag.
+    "zz-tags": packument("zz-tags", { latest: "2.0.0", next: "3.0.0", beta: "2.5.0", "v1-lts": "1.0.0" }, [
       "1.0.0",
+      "1.5.0",
       "2.0.0",
       "2.5.0",
       "3.0.0",
     ]),
     "zz-case": packument("zz-case", { latest: "1.0.0", Next: "2.0.0" }, ["1.0.0", "2.0.0"]),
-    "zz-dangling": packument("zz-dangling", { latest: "9.9.9" }, ["1.0.0"]),
+    "zz-dangling": packument("zz-dangling", { latest: "9.9.9", "v0-legacy": "0.5.0" }, ["1.0.0"]),
     "zz-onlypre": packument("zz-onlypre", { latest: "1.0.0-beta.2" }, ["1.0.0-beta.1", "1.0.0-beta.2"]),
   };
   let server: ReturnType<typeof Bun.serve>;
@@ -438,6 +441,7 @@ describe.concurrent("bun info version spec", () => {
         - latest: 2.0.0
         - next: 3.0.0
         - beta: 2.5.0
+        - v1-lts: 1.0.0
         "
       `);
       expect(exitCode).toBe(1);
@@ -462,11 +466,16 @@ describe.concurrent("bun info version spec", () => {
     expect(exact.exitCode).toBe(0);
   });
 
-  test("a `latest` tag that points at an unpublished version is an error", async () => {
-    for (const args of [["zz-dangling"], ["zz-dangling@latest"], ["zz-dangling", "version"]]) {
+  test("a tag that points at an unpublished version is an error", async () => {
+    for (const [args, tag] of [
+      [["zz-dangling"], "latest"],
+      [["zz-dangling@latest"], "latest"],
+      [["zz-dangling", "version"], "latest"],
+      [["zz-dangling@v0-legacy", "version"], "v0-legacy"],
+    ] as const) {
       const { stdout, stderr, exitCode } = await info(...args);
       expect(stdout).toBe("");
-      expect(stderr).toStartWith(`error: Package "zz-dangling" with tag "latest" not found, but package exists\n`);
+      expect(stderr).toStartWith(`error: Package "zz-dangling" with tag "${tag}" not found, but package exists\n`);
       expect(exitCode).toBe(1);
     }
   });
@@ -477,6 +486,7 @@ describe.concurrent("bun info version spec", () => {
       "zz-tags",
       "zz-tags@next",
       "zz-tags@beta",
+      "zz-tags@v1-lts",
       "zz-tags@3.0.0",
       "zz-tags@v3.0.0",
       "zz-tags@^1",
@@ -491,9 +501,11 @@ describe.concurrent("bun info version spec", () => {
       "zz-tags": "2.0.0",
       "zz-tags@next": "3.0.0",
       "zz-tags@beta": "2.5.0",
+      // the tag, not the newest `1.x`
+      "zz-tags@v1-lts": "1.0.0",
       "zz-tags@3.0.0": "3.0.0",
       "zz-tags@v3.0.0": "3.0.0",
-      "zz-tags@^1": "1.0.0",
+      "zz-tags@^1": "1.5.0",
       "zz-onlypre": "1.0.0-beta.2",
     });
   });
@@ -517,6 +529,7 @@ describe.concurrent("bun info version spec", () => {
 
       Recent versions:
       - 1.0.0
+      - 1.5.0
       - 2.0.0
       - 2.5.0
       - 3.0.0

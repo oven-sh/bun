@@ -1532,16 +1532,20 @@ impl PackageManifest {
         self.pkg.prereleases.keys.get(&self.versions)
     }
 
-    /// Resolves the version part of a `name@spec` CLI argument against this manifest, classified the way
-    /// `bun add` classifies it: a dist-tag only ever matches `dist-tags`, a semver range picks the best
-    /// published match, and any other kind of spec (git, tarball, folder, ...) matches nothing here.
+    /// Resolves the version part of a `name@spec` CLI argument against this manifest the way `npm view`
+    /// does: a dist-tag with exactly that name wins, otherwise a semver range picks the best published
+    /// match. A miss is classified with the `Tag::infer` that `bun add` uses, so an unknown tag is
+    /// `DistTagNotFound` and never reaches the range parser, and any other kind of spec (git, tarball,
+    /// folder, ...) matches nothing here.
     pub fn find_by_spec(&self, spec: &[u8]) -> Result<FindResult<'_>, Error> {
         use crate::dependency::{Tag, TagExt as _};
+        let spec = if spec.is_empty() { b"latest" } else { spec };
+        // Checked before classifying because published tag names like `v12-lts` read as a range.
+        if let Some((_, version)) = self.dist_tags().find(|(tag, _)| *tag == spec) {
+            return self.find_by_version(version).ok_or(Error::DistTagNotFound);
+        }
         match Tag::infer(spec) {
-            Tag::DistTag => {
-                let tag = if spec.is_empty() { b"latest" } else { spec };
-                self.find_by_dist_tag(tag).ok_or(Error::DistTagNotFound)
-            }
+            Tag::DistTag => Err(Error::DistTagNotFound),
             Tag::Npm => {
                 // `v1.2.3` -> `1.2.3`, as `dependency::parse_with_tag` does.
                 let range = if spec.len() > 1 && spec[0] == b'v' {

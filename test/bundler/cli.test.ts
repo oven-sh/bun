@@ -422,6 +422,7 @@ describe.concurrent("--sourcemap never writes next to the entry point", () => {
       const { stdout, stderr, exitCode } = await build(String(dir), "src/entry.js", "--outfile=dist/js/entry.js", flag);
       expect(stderr).toBe("");
       expect(stdout).toContain("entry.js");
+      expect(exitCode).toBe(0);
 
       const after = tree(String(dir));
       const bundle = after["dist/js/entry.js"];
@@ -440,7 +441,6 @@ describe.concurrent("--sourcemap never writes next to the entry point", () => {
         expect(JSON.parse(after["dist/js/entry.js.map"]).sources).toEqual(["../../src/dep.js", "../../src/entry.js"]);
       }
       for (const file of Object.keys(fixture)) expect(after[file]).toBe(fixture[file]);
-      expect(exitCode).toBe(0);
     },
   );
 
@@ -455,13 +455,13 @@ describe.concurrent("--sourcemap never writes next to the entry point", () => {
     );
     expect(stderr).toBe("");
     expect(stdout).toContain("index.html");
+    expect(exitCode).toBe(0);
 
     const after = tree(String(dir));
     const written = Object.keys(after).filter(file => !(file in fixture));
     expect(written).toEqual([expect.stringMatching(/^work\/index(-\w+)?\.js\.map$/), "work/index.html"]);
     expect(after["work/index.html"]).toContain("console.log(");
     for (const file of Object.keys(fixture)) expect(after[file]).toBe(fixture[file]);
-    expect(exitCode).toBe(0);
   });
 });
 

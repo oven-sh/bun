@@ -2109,9 +2109,7 @@ impl PublishError {
     }
 }
 
-/// `url.href` as it is shown in an error: any `user:password@` is cut out of the
-/// authority (also for a URL with no scheme, where `URL::parse` leaves the userinfo
-/// inside the host or path), and repeated trailing slashes collapse to one.
+/// `url.href` without `user:password@` (scheme or not) and with one trailing slash.
 fn redacted_registry_href(url: &URL<'_>) -> Box<[u8]> {
     let href = url.href;
     let authority_start = if !url.protocol.is_empty() {

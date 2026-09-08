@@ -677,6 +677,9 @@ void us_socket_shutdown(us_socket_r s) nonnull_fn_decl;
 void us_socket_shutdown_read(us_socket_r s) nonnull_fn_decl;
 int us_socket_is_shut_down(us_socket_r s) nonnull_fn_decl;
 int us_socket_is_closed(us_socket_r s) nonnull_fn_decl;
+/* The last write was short (the kernel send buffer is full) and the socket
+ * polls for a writable event. Cleared when that event is dispatched. */
+int us_socket_is_awaiting_writable(us_socket_r s) nonnull_fn_decl;
 int us_socket_is_ssl_handshake_finished(us_socket_r s) nonnull_fn_decl;
 int us_socket_ssl_handshake_callback_has_fired(us_socket_r s) nonnull_fn_decl;
 /* TLS ciphertext bytes already sealed for this socket and reported as
@@ -724,6 +727,16 @@ int us_socket_get_error(us_socket_r s);
  * making a stall there routine backpressure, so it asks the kernel
  * (SO_ERROR, then a zero-byte send probe). */
 int us_socket_stalled_write_means_peer_gone(us_socket_r s);
+/* A monotonic count of bytes this socket has delivered toward the peer (Linux
+ * TCP_INFO tcpi_bytes_acked, macOS tcpi_txbytes, Windows SIO_TCP_INFO BytesOut).
+ * Returns 0 and writes the mark, or -1 where the platform or socket kind cannot
+ * answer. Take it when an idle timer is armed with outgoing bytes pending, so
+ * that the timeout can tell a slow reader from a stalled one with
+ * us_socket_send_progressed. */
+int us_socket_send_progress_mark(us_socket_r s, uint64_t *mark);
+/* Did the kernel move at least min_bytes toward the peer since *mark was
+ * taken, with no write in between? Advances *mark when it did. */
+int us_socket_send_progressed(us_socket_r s, uint64_t *mark, uint64_t min_bytes);
 
 void us_socket_ref(us_socket_r s);
 void us_socket_unref(us_socket_r s);

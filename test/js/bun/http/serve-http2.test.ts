@@ -1,26 +1,27 @@
+import { dlopen, FFIType, ptr } from "bun:ffi";
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from "bun:test";
 import { randomBytes } from "crypto";
-import { bunEnv, bunExe, tempDir, tls as tlsCert } from "harness";
+import { bunEnv, bunExe, isWindows, libcPathForDlopen, tempDir, tls as tlsCert } from "harness";
 import http2 from "node:http2";
 import net from "node:net";
 import { join } from "node:path";
 import tls from "node:tls";
 import {
-  F,
-  Fixture,
-  PREFACE,
-  RawH2,
-  SharedSession,
-  T,
   baseHeaders,
   connectH2,
   decodeStatus,
+  F,
+  Fixture,
   frame,
   hpackFields,
   hpackLiteral,
+  PREFACE,
+  RawH2,
   request,
   sha256,
+  SharedSession,
   startFixture,
+  T,
 } from "./serve-http2-helpers";
 
 /** One HTTP/1.1 request on the fixture's port, written byte-exact (no
@@ -855,4 +856,82 @@ describe("Bun.serve http2 in-process", () => {
     expect(aborted).toBe(1);
     await new Promise<void>(r => session.close(() => r()));
   });
+
+  // The peer opens a window far larger than the kernel send buffer, so the TCP
+  // send buffer throttles the response, like an HTTP/1.1 client reading slowly.
+  // No write and no writable event re-arms the idle timer while the buffer
+  // stays full, yet the peer keeps taking bytes and must not be aborted. The
+  // client reads at a fixed low rate for longer than one idle period; the body
+  // is larger than the window so it never completes here, surviving the window
+  // is the point. Timing constraints (idleTimeout 10, pinned SO_RCVBUF, capped
+  // pauses) are the same as the HTTP/1.1 twin in serve.test.ts, which explains
+  // them. Skipped on Windows (the buffered remainder gets no writable event
+  // there while the peer reads slowly, a separate Windows issue).
+  test.skipIf(isWindows)(
+    "idleTimeout keeps a slow reader alive",
+    async () => {
+      const TOTAL = 16 << 20; // well above what the paced window plus kernel buffers can absorb
+      const IDLE_S = 10;
+      const RATE = 32 * 1024; // bytes/sec, below the Linux writable-event rate, above the 16 KB/s floor
+      const PAUSE_CAP_MS = 4_000;
+      let aborted = false;
+      await using server = Bun.serve({
+        hostname: "127.0.0.1",
+        port: 0,
+        http2: true,
+        idleTimeout: IDLE_S,
+        fetch(req) {
+          req.signal.addEventListener("abort", () => (aborted = true));
+          return new Response(new Uint8Array(TOTAL));
+        },
+      });
+      const settings = Buffer.alloc(6);
+      settings.writeUInt16BE(4, 0); // INITIAL_WINDOW_SIZE
+      settings.writeUInt32BE(64 << 20, 2);
+      const raw = await RawH2.connect(server.port, false, { settings });
+      {
+        const libc = dlopen(libcPathForDlopen(), {
+          setsockopt: {
+            args: [FFIType.int, FFIType.int, FFIType.int, FFIType.ptr, FFIType.u32],
+            returns: FFIType.int,
+          },
+        });
+        const SOL_SOCKET = process.platform === "darwin" ? 0xffff : 1;
+        const SO_RCVBUF = process.platform === "darwin" ? 0x1002 : 8;
+        const value = new Int32Array([64 * 1024]); // bounds the chunk size Linux hands the client
+        const rc = libc.symbols.setsockopt((raw.socket as any)._handle.fd, SOL_SOCKET, SO_RCVBUF, ptr(value), 4);
+        libc.close();
+        if (rc !== 0) throw new Error("setsockopt(SO_RCVBUF) failed");
+      }
+      const inc = Buffer.alloc(4);
+      inc.writeUInt32BE(64 << 20, 0);
+      raw.write(frame(T.WINDOW_UPDATE, 0, 0, inc));
+      const RUN_MS = IDLE_S * 1000 + 8_000;
+      // Pace against a schedule (bytes so far / RATE) so a late timer shortens
+      // the next pause instead of lowering the rate; a pause is capped so an
+      // oversized chunk cannot open a long gap.
+      const start = performance.now();
+      let received = 0;
+      raw.socket.on("data", (d: Buffer) => {
+        received += d.length;
+        const elapsed = performance.now() - start;
+        if (elapsed >= RUN_MS) return;
+        const lag = Math.min((received / RATE) * 1000 - elapsed, PAUSE_CAP_MS);
+        if (lag > 1) {
+          raw.socket.pause();
+          setTimeout(() => raw.socket.resume(), lag);
+        }
+      });
+      raw.headers(1, baseHeaders("/"));
+      const { promise, resolve } = Promise.withResolvers<void>();
+      raw.socket.on("close", () => resolve()); // the server aborting fires this early
+      const deadline = setTimeout(() => resolve(), RUN_MS + 2_000);
+      await promise;
+      clearTimeout(deadline);
+      const gotData = raw.frames.some(f => f.type === T.DATA && f.streamId === 1);
+      expect({ aborted, gotData }).toEqual({ aborted: false, gotData: true });
+      raw.close();
+    },
+    30_000,
+  );
 });

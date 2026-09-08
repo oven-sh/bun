@@ -150,6 +150,10 @@ struct HttpResponseData : AsyncSocketData<SSL>, HttpParser {
          * shutdown sweep; the shouldCloseConnection() gates act on it once the
          * in-flight work completes. */
         HTTP_CLOSE_WHEN_IDLE = 1 << 17,
+        /* The idle timer was armed while outgoing bytes were pending, and
+         * sendProgressMark holds the kernel's delivery mark from that moment
+         * (HttpResponse::resetTimeout). onTimeout compares against it. */
+        HTTP_SEND_PROGRESS_MARKED = 1 << 18,
 
         /* Bits that describe the connection rather than the response in flight.
          * There is one HttpResponseData per socket, reused by every request on a
@@ -197,6 +201,9 @@ struct HttpResponseData : AsyncSocketData<SSL>, HttpParser {
     OnTimeoutCallback onTimeout = nullptr;
     /* Outgoing offset */
     uint64_t offset = 0;
+    /* us_socket_send_progress_mark when the idle timer was last armed or
+     * extended, valid while HTTP_SEND_PROGRESS_MARKED is set. */
+    uint64_t sendProgressMark = 0;
 
     /* Let's track number of bytes since last timeout reset in data handler */
     unsigned int received_bytes_per_timeout = 0;

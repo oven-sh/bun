@@ -108,15 +108,17 @@ private:
     us_socket_group_t group{};
     HttpContextData<SSL> data;
 
-    /* Minimum allowed receive throughput per second (clients uploading less than 16kB/sec get dropped) */
-    static constexpr int HTTP_RECEIVE_THROUGHPUT_BYTES = 16 * 1024;
-
     /* Not constexpr — the ordinals are linked from `src/uws_sys/SocketKind.rs`
      * so a reorder there can't silently mis-route us. Only ever read
      * at runtime (listen/adopt). */
     static unsigned char socketKind() { return SSL ? US_SOCKET_KIND_UWS_HTTP_TLS : US_SOCKET_KIND_UWS_HTTP; }
 
 public:
+    /* Minimum allowed throughput per second in either direction: a client that
+     * uploads, or takes a response, slower than 16kB/sec is idle. Shared with
+     * Http2Context::onTimeout. */
+    static constexpr int HTTP_RECEIVE_THROUGHPUT_BYTES = 16 * 1024;
+
     /* node:http flood prevention: re-feed parked request bytes through the same
      * parse path fresh socket data takes. The caller guarantees the buffer has
      * LIBUS_RECV_BUFFER_PADDING of writable slack past `length`. */
@@ -944,6 +946,17 @@ private:
         AsyncSocket<SSL> *asyncSocket = reinterpret_cast<AsyncSocket<SSL> *>(s);
         // Node.js by default closes the connection but they emit the timeout event before that
         HttpResponseData<SSL> *httpResponseData = reinterpret_cast<HttpResponseData<SSL> *>(asyncSocket->getAsyncSocketData());
+
+        /* The timer was armed with outgoing bytes pending (see
+         * HttpResponse::resetTimeout). A peer that took them at the same
+         * minimum rate the receive side demands (onData) is a slow reader,
+         * not an idle one: give it another period. */
+        if ((httpResponseData->state & HttpResponseData<SSL>::HTTP_SEND_PROGRESS_MARKED)
+            && us_socket_send_progressed(s, &httpResponseData->sendProgressMark,
+                                         (uint64_t) HTTP_RECEIVE_THROUGHPUT_BYTES * httpResponseData->idleTimeout)) {
+            asyncSocket->timeout(httpResponseData->idleTimeout);
+            return s;
+        }
 
         if (httpResponseData->onTimeout) {
             httpResponseData->onTimeout((HttpResponse<SSL> *)s, httpResponseData->userData);

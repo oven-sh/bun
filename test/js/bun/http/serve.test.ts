@@ -1,5 +1,5 @@
 import { file, gc, Serve, serve, Server } from "bun";
-import { afterAll, afterEach, describe, expect, it, mock } from "bun:test";
+import { afterAll, afterEach, beforeAll, describe, expect, it, mock } from "bun:test";
 import { readFileSync, writeFileSync } from "fs";
 import {
   bunEnv,
@@ -13,6 +13,8 @@ import {
   isIPv4,
   isIPv6,
   isPosix,
+  isWindows,
+  libcPathForDlopen,
   runFixtureMaxRSS,
   tempDir,
   tls,
@@ -22,6 +24,7 @@ import { connect } from "net";
 import { join, resolve } from "path";
 // import { renderToReadableStream } from "react-dom/server";
 // import app_jsx from "./app.jsx";
+import { dlopen, FFIType, ptr } from "bun:ffi";
 import { heapStats } from "bun:jsc";
 import { spawn } from "child_process";
 import net from "node:net";
@@ -3122,6 +3125,152 @@ it.concurrent(
   },
   20_000,
 );
+
+// A client that reads continuously but slower than the kernel send buffer
+// drains gets no writable event on the server for longer than idleTimeout, so
+// the server used to abort the request and close the socket mid-body. The
+// client here reads at a fixed low rate, well below the rate that frees a
+// writable event on Linux but well above the 16 KB/s the receive side already
+// requires. With the fix the request stays open and keeps receiving data;
+// without it the server aborts within idleTimeout.
+//
+// What the server can observe is bursty. The kernel reports delivered bytes
+// only when the peer's window moves, and the client sees data in chunks (up to
+// 512 KB per event on macOS loopback, whose stack also serves a slow reader in
+// persist-timer bursts about 4 s apart). So the gap between observable steps
+// must stay well inside the shortest idle window: idleTimeout is 10 (the
+// default the bug was reported against), which uSockets' 4 s ticks
+// ((seconds + 3) >> 2 = 3 ticks) turn into 8 to 12 s; the client pins a small
+// SO_RCVBUF so Linux hands it chunks of at most ~128 KB; and no single pause
+// exceeds PAUSE_CAP_MS whatever the chunk size.
+//
+// Skipped on Windows: a remainder held in the uWS buffer gets no writable
+// event there while the peer reads slowly, and a peer that stops reading is
+// never timed out. Both are separate Windows issues.
+describe.concurrent.skipIf(isWindows)("idleTimeout and a slow reader", () => {
+  const TOTAL = 16 << 20; // well above what the paced window plus kernel buffers can absorb
+  const IDLE_S = 10;
+  // Bytes per second: below the rate that frees a writable event on Linux (so
+  // the old code times out), above the 16 KB/s floor.
+  const RATE = 32 * 1024;
+  const RCVBUF = 64 * 1024;
+  const PAUSE_CAP_MS = 4_000;
+
+  function pinRecvBuffer(sock: net.Socket) {
+    const libc = dlopen(libcPathForDlopen(), {
+      setsockopt: {
+        args: [FFIType.int, FFIType.int, FFIType.int, FFIType.ptr, FFIType.u32],
+        returns: FFIType.int,
+      },
+    });
+    const SOL_SOCKET = process.platform === "darwin" ? 0xffff : 1;
+    const SO_RCVBUF = process.platform === "darwin" ? 0x1002 : 8;
+    const value = new Int32Array([RCVBUF]);
+    const rc = libc.symbols.setsockopt((sock as any)._handle.fd, SOL_SOCKET, SO_RCVBUF, ptr(value), 4);
+    libc.close();
+    if (rc !== 0) throw new Error("setsockopt(SO_RCVBUF) failed");
+  }
+
+  // Pace reads against a schedule (bytes so far / RATE) rather than a fixed
+  // pause per chunk: a timer that fires late shortens the next pause instead
+  // of lowering the rate. A pause is capped, so an oversized chunk raises the
+  // rate for a moment rather than opening a long gap.
+  function paceReads(sock: net.Socket, untilMs: number) {
+    const start = performance.now();
+    let received = 0;
+    sock.on("data", (d: Buffer) => {
+      received += d.length;
+      const elapsed = performance.now() - start;
+      if (elapsed >= untilMs) return;
+      const lag = Math.min((received / RATE) * 1000 - elapsed, PAUSE_CAP_MS);
+      if (lag > 1) {
+        sock.pause();
+        setTimeout(() => sock.resume(), lag);
+      }
+    });
+    return () => received;
+  }
+
+  function serveBody(kind: "bytes" | "stream" | "file", onAbort: () => void) {
+    return Bun.serve({
+      hostname: "127.0.0.1",
+      port: 0,
+      idleTimeout: IDLE_S,
+      fetch(req) {
+        req.signal.addEventListener("abort", onAbort);
+        if (kind === "bytes") return new Response(new Uint8Array(TOTAL));
+        if (kind === "file") return new Response(Bun.file(bigFile));
+        const chunk = new Uint8Array(64 * 1024);
+        let sent = 0;
+        return new Response(
+          new ReadableStream({
+            pull(c) {
+              if (sent >= TOTAL) return c.close();
+              c.enqueue(chunk);
+              sent += chunk.byteLength;
+            },
+          }),
+        );
+      },
+    });
+  }
+
+  let dir: ReturnType<typeof tempDir> | undefined;
+  let bigFile = "";
+  beforeAll(() => {
+    dir = tempDir("serve-slow-reader", { "big.bin": Buffer.alloc(TOTAL) });
+    bigFile = join(String(dir), "big.bin");
+  });
+  afterAll(() => dir?.[Symbol.dispose]());
+
+  for (const kind of ["bytes", "stream", "file"] as const) {
+    // Read at RATE for longer than one idle period, then assert the request is
+    // still alive and bytes kept arriving. The body is far larger than the
+    // window, so it never completes here: surviving the window is the point.
+    it(`keeps a slow ${kind} reader alive`, async () => {
+      let aborted = false;
+      using server = serveBody(kind, () => (aborted = true));
+      const RUN_MS = IDLE_S * 1000 + 8_000;
+      const { promise, resolve } = Promise.withResolvers<void>();
+      const sock = net.connect(server.port, "127.0.0.1", () => {
+        pinRecvBuffer(sock);
+        sock.write("GET / HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n");
+      });
+      const received = paceReads(sock, RUN_MS);
+      sock.on("error", () => resolve());
+      sock.on("close", () => resolve()); // the server aborting fires this early
+      const deadline = setTimeout(() => resolve(), RUN_MS + 2_000);
+      await promise;
+      clearTimeout(deadline);
+      expect({ aborted, receivedSomething: received() > 0 }).toEqual({ aborted: false, receivedSomething: true });
+      sock.destroy();
+    }, 30_000);
+  }
+
+  // A peer that reads nothing is idle, not slow: the request must still abort.
+  // One idle period can be re-armed by the bytes already in flight when the
+  // peer stopped, so the abort lands within about two periods, not one.
+  it("still times out a reader that stops", async () => {
+    let aborted = false;
+    using server = serveBody("bytes", () => (aborted = true));
+    const { promise, resolve } = Promise.withResolvers<void>();
+    const sock = net.connect(server.port, "127.0.0.1", () => {
+      pinRecvBuffer(sock);
+      sock.write("GET / HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n");
+    });
+    // Read one chunk to open the response, then never read again.
+    sock.once("data", () => sock.pause());
+    sock.on("error", () => resolve());
+    sock.on("close", () => resolve());
+    const poll = setInterval(() => aborted && resolve(), 200);
+    const deadline = setTimeout(() => resolve(), 40_000);
+    await promise;
+    clearInterval(poll);
+    clearTimeout(deadline);
+    expect(aborted).toBe(true);
+    sock.destroy();
+  }, 45_000);
+});
 
 it.concurrent("allow requestIP after async operation", async () => {
   using server = Bun.serve({

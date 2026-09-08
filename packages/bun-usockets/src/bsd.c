@@ -680,6 +680,62 @@ int bsd_socket_buffer_size(LIBUS_SOCKET_DESCRIPTOR fd, int is_recv, int size, in
     return 0;
 }
 
+int bsd_socket_send_progress_mark(LIBUS_SOCKET_DESCRIPTOR fd, uint64_t *mark) {
+    /* A monotonic count of bytes this socket has delivered toward the peer.
+     * A queue-depth reading (SIOCOUTQ) is wrong here: a producer that refills
+     * the send buffer as fast as the peer drains it holds the depth constant,
+     * so the delta reads as no progress even while the peer reads steadily.
+     * The cumulative counter always grows with real throughput. */
+#if defined(_WIN32)
+    TCP_INFO_v0 info;
+    DWORD version = 0, bytes = 0;
+    memset(&info, 0, sizeof(info));
+    if (WSAIoctl(fd, SIO_TCP_INFO, &version, sizeof(version), &info, sizeof(info), &bytes, NULL, NULL) != 0) {
+        return -1;
+    }
+    *mark = info.BytesOut;
+    return 0;
+#elif defined(__APPLE__)
+    struct tcp_connection_info info;
+    socklen_t len = sizeof(info);
+    memset(&info, 0, sizeof(info));
+    if (getsockopt(fd, IPPROTO_TCP, TCP_CONNECTION_INFO, &info, &len) != 0) {
+        return -1;
+    }
+    *mark = info.tcpi_txbytes;
+    return 0;
+#elif defined(__linux__)
+    /* The kernel's struct tcp_info is append-only (uapi/linux/tcp.h). Some libc
+     * headers predate tcpi_bytes_acked, so match the ABI prefix up to it by
+     * hand rather than depend on the header: 8 bytes of __u8 fields, then 24
+     * __u32, then the __u64 block whose third member is tcpi_bytes_acked
+     * (RFC4898 tcpEStatsAppHCThruOctetsAcked, Linux 4.6+). */
+    struct {
+        uint8_t u8[8];
+        uint32_t u32[24];
+        uint64_t pacing_rate;
+        uint64_t max_pacing_rate;
+        uint64_t bytes_acked;
+    } info;
+    socklen_t len = sizeof(info);
+    memset(&info, 0, sizeof(info));
+    if (getsockopt(fd, IPPROTO_TCP, TCP_INFO, &info, &len) != 0) {
+        return -1;
+    }
+    /* An older kernel returns a shorter struct and leaves bytes_acked at 0,
+     * which reads as no progress (the old close-on-timeout behaviour). */
+    if (len < sizeof(info)) {
+        return -1;
+    }
+    *mark = info.bytes_acked;
+    return 0;
+#else
+    (void) fd;
+    (void) mark;
+    return -1;
+#endif
+}
+
 void bsd_socket_flush(LIBUS_SOCKET_DESCRIPTOR fd) {
     // Linux TCP_CORK has the same underlying corking mechanism as with MSG_MORE
 #ifdef TCP_CORK

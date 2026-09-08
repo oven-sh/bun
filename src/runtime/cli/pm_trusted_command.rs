@@ -25,8 +25,7 @@ use crate::package_manager_command::PackageManagerCommand;
 
 type DepIdSet = ArrayHashMap<DependencyID, (), ArrayIdentityContext>;
 
-/// A dependency's scripts count as blocked when package.json does not trust it, or
-/// trusts it by name but no saved install has recorded that in `bun.lock` yet.
+/// Blocked: package.json does not trust it, or `bun.lock` has not recorded the trust yet.
 fn scripts_blocked(
     lockfile: &Lockfile,
     recorded: &Option<TrustedDependenciesSet>,

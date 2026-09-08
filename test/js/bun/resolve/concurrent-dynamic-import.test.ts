@@ -77,9 +77,8 @@ describe.concurrent("concurrent dynamic imports of disjoint graphs evaluate in a
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).toBe("");
-    const results: string[] = JSON.parse(stdout.trim());
     expect(exitCode).toBe(0);
-    return results;
+    return JSON.parse(stdout.trim()) as string[];
   }
 
   test("equal depth: import() call order, even when the first graph is slower to transpile", async () => {

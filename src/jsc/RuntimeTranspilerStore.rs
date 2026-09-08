@@ -201,8 +201,7 @@ pub struct RuntimeTranspilerStore {
     pub(crate) generation_number: AtomicU32,
     pub(crate) store: TranspilerJobStore,
     pub enabled: bool,
-    /// Scheduled jobs no pool thread has started, oldest first. Pool threads
-    /// start them in this order (see [`TranspileRunner`]).
+    /// Jobs no pool thread has started, oldest first; see [`TranspileRunner`].
     unstarted: Guarded<VecDeque<UnstartedJob>>,
     /// Finished jobs, pushed by pool threads in completion order.
     pub(crate) queue: Queue,
@@ -230,12 +229,10 @@ impl Default for RuntimeTranspilerStore {
     }
 }
 
-/// Hands finished jobs back to JSC strictly in the order `transpile()`
-/// scheduled them, not in the order pool threads finish them. JSC evaluates a
-/// module graph in the microtask drain after its last fetch settles, so the
-/// settle order decides which of several concurrently loading graphs (two
-/// `import()` calls in one tick, say) evaluates first. Scheduling order makes
-/// that the same on every run. Transpiling itself stays parallel.
+/// Hands finished jobs back to JSC in the order `transpile()` scheduled them,
+/// not the order pool threads finish them, so that which of several
+/// concurrently loading module graphs JSC evaluates first (it evaluates a graph
+/// once its last fetch settles) is the same on every run.
 #[derive(Default)]
 struct FulfillOrder {
     next_seq: u64,
@@ -285,9 +282,8 @@ impl FulfillOrder {
     }
 }
 
-/// One per scheduled job. Runs the oldest unstarted job rather than its own,
-/// so a burst of imports starts transpiling in request order even though the
-/// pool runs tasks newest-first, which keeps `FulfillOrder`'s waits short.
+/// One per scheduled job. Runs the oldest unstarted job, not its own, so a
+/// burst starts in request order although the pool runs tasks newest-first.
 struct TranspileRunner {
     store: *const RuntimeTranspilerStore,
     task: WorkPoolTask,
@@ -360,36 +356,39 @@ impl RuntimeTranspilerStore {
     /// Each fulfilment is a JS entry of its own: an error one leaves pending is
     /// reported here and the drain goes on. The VM's termination ends it; jobs
     /// not yet fulfilled stay parked for a later drain or the teardown release.
-    // Note: takes `NonNull` rather than `&mut` for `event_loop`/`vm`
-    // because `&mut self` already aliases `vm.transpiler_store` (this `Self` is
-    // a field of `VirtualMachine`). Field-level derefs only.
-    pub fn run_from_js_thread(
-        &mut self,
+    ///
+    /// # Safety
+    /// JS thread; `this` is the live VM's store. Fulfilment and the drain run
+    /// JS, which can call `transpile()` or tick the loop into this function
+    /// again, so `this` is only dereferenced between those calls, never across.
+    pub unsafe fn run_from_js_thread(
+        this: *mut Self,
         event_loop: NonNull<EventLoop>,
         global: &JSGlobalObject,
         vm: NonNull<VirtualMachine>,
     ) {
-        let batch = self.queue.pop_batch();
-        let mut iter = batch.iterator();
-        while let Some(job) = NonNull::new(iter.next()) {
-            // SAFETY: a live finished job; the pool thread never touches `seq`.
-            let seq = unsafe { (*job.as_ptr()).seq };
-            bun_core::scoped_log!(
-                RuntimeTranspilerStore,
-                "finished({}, seq {}, next to fulfill {})",
-                // SAFETY: as above.
-                bstr::BStr::new(unsafe { (*job.as_ptr()).path.text }),
-                seq,
-                self.order.next_to_fulfill
-            );
-            self.order.park(seq, job);
+        // SAFETY: per fn contract; no JS runs while the batch is parked.
+        unsafe {
+            let batch = (*this).queue.pop_batch();
+            let mut iter = batch.iterator();
+            while let Some(job) = NonNull::new(iter.next()) {
+                // a live finished job; the pool thread never touches `seq`.
+                let seq = (*job.as_ptr()).seq;
+                bun_core::scoped_log!(
+                    RuntimeTranspilerStore,
+                    "finished({}, seq {}, next to fulfill {})",
+                    bstr::BStr::new((*job.as_ptr()).path.text),
+                    seq,
+                    (*this).order.next_to_fulfill
+                );
+                (*this).order.park(seq, job);
+            }
         }
         // SAFETY: `vm` is the live owning VM (caller is the JS-thread tick loop).
         let jsc_vm = unsafe { (*vm.as_ptr()).jsc_vm() };
         let mut first = true;
-        // Fulfilment and the drain enter JS, which may re-enter this function,
-        // so the next job is looked up afresh each turn.
-        while self.order.next_is_ready() {
+        // SAFETY (every `(*this)` below): per fn contract, a fresh short deref.
+        while unsafe { (*this).order.next_is_ready() } {
             if !first {
                 // if there are more, we need to drain the microtasks from the previous run
                 // SAFETY: `event_loop` is the VM's live event-loop self-pointer.
@@ -400,7 +399,7 @@ impl RuntimeTranspilerStore {
                 }
             }
             first = false;
-            let Some(job) = self.order.take_next() else {
+            let Some(job) = (unsafe { (*this).order.take_next() }) else {
                 break;
             };
             // SAFETY: `job` is a live finished job this thread popped from the queue.

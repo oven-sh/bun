@@ -310,6 +310,41 @@ console.log("requires " + dep);`,
     run: { file: "out/run.mjs", stdout: "first\nsecond" },
   });
 
+  // The chunk prints wrapped files ahead of the flat ones, so the call for a
+  // CommonJS script that sits between two plain scripts must come from the
+  // tag's own part to keep document order, not from next to the wrapper.
+  itBundled("html/script-src-commonjs-between-plain-scripts", {
+    outdir: "out/",
+    files: {
+      "/index.html": `
+<!DOCTYPE html>
+<html>
+  <body>
+    <script src="./first.js"></script>
+    <script src="./umd-badge.js"></script>
+    <script src="./last.js"></script>
+  </body>
+</html>`,
+      "/first.js": `console.log("first");`,
+      "/umd-badge.js": `
+(function (root, factory) {
+  if (typeof module === "object" && module.exports) module.exports = factory();
+  else root.Badge = factory();
+})(globalThis, function () {
+  console.log("umd badge");
+  return {};
+});`,
+      "/last.js": `console.log("last");`,
+    },
+    entryPoints: ["/index.html"],
+    onAfterBundle(api) {
+      const js = api.readFile("out/index.html").match(/src="\.\/([^"]+\.js)"/)![1];
+      api.expectFile("out/" + js).not.toContain("__toESM");
+      api.writeFile("out/run.mjs", `import "./${js}";`);
+    },
+    run: { file: "out/run.mjs", stdout: "first\numd badge\nlast" },
+  });
+
   // Same, when the script resolved to a lazily-initialized ES module (here
   // because another script also `import()`s it): the page calls `init_foo()`,
   // with `await` when the module uses top-level await.

@@ -2717,8 +2717,6 @@ it("tls.DEFAULT_CIPHERS applies to servers created without a ciphers option", as
     const tlsServer = await listen(tls.createServer(cert, s => s.end("x")));
     const httpsServer = await listen(https.createServer(cert, (req, res) => res.end("x")));
     const bunServer = Bun.serve({ port: 0, tls: cert, fetch: () => new Response("x") });
-    // Only TLS 1.3 suite names leaves no TLS 1.2 cipher, so the protocol
-    // floor becomes TLS 1.3 (Node's configSecureContext does the same).
     tls.DEFAULT_CIPHERS = "TLS_AES_128_GCM_SHA256";
     const tls13OnlyServer = await listen(tls.createServer(cert, s => s.end("x")));
 

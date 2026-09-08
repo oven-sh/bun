@@ -283,8 +283,7 @@ fn apply_default_ciphers(vm: &VirtualMachine, cfg: &mut SSLConfig) {
         return;
     };
     cfg.ssl_ciphers = dupe_z(ciphers);
-    // `SSL_CTX_set_cipher_list("")` keeps BoringSSL's built-in TLS 1.2 list,
-    // so a TLS 1.3-only policy is enforced through the version floor instead.
+    // An empty TLS 1.2 list would leave BoringSSL's built-in one in effect.
     let tls1_3 = i32::from(bun_boringssl_sys::TLS1_3_VERSION);
     if ciphers.is_empty() && cfg.ssl_min_version < tls1_3 {
         cfg.ssl_min_version = tls1_3;

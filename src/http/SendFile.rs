@@ -107,8 +107,13 @@ impl SendFile {
         {
             let _ = adjusted_count;
             let buf = crate::scratch::file_body_copy_buffer();
+            // A writable event can mean as little as the low-water mark of
+            // socket space. Start small and double while the socket keeps
+            // taking whole chunks, so a slow link does not pread 256 KiB to
+            // send 2 KiB on every wake.
+            let mut chunk: usize = 16 * 1024;
             loop {
-                let want = buf.len().min(self.remain);
+                let want = chunk.min(buf.len()).min(self.remain);
                 if want == 0 {
                     return Status::Done;
                 }
@@ -134,6 +139,7 @@ impl SendFile {
                 if wrote < read {
                     break;
                 }
+                chunk = chunk.saturating_mul(2);
             }
         }
 

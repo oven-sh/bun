@@ -42,6 +42,17 @@ extern "C" BunString Bun__getEnvValueBunString(JSGlobalObject* globalObject, con
 extern "C" void Bun__setEnvValue(JSGlobalObject* globalObject, const BunString* name, const BunString* value);
 extern "C" bool Bun__Node__ProcessPendingDeprecation;
 
+// The object `process.env` and `Bun.env` resolve to (on Windows, the Proxy).
+extern "C" [[ZIG_EXPORT(zero_is_throw)]] JSC::EncodedJSValue Bun__Process__getEnvObject(JSC::JSGlobalObject* lexicalGlobalObject)
+{
+    auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSObject* env = globalObject->processEnvObject();
+    RETURN_IF_EXCEPTION(scope, {});
+    return JSValue::encode(env);
+}
+
 namespace Bun {
 
 using namespace WebCore;

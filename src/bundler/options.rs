@@ -836,7 +836,8 @@ pub(crate) fn defines_from_transform_options(
     // drops the redundant outer `keys.clone() + values.clone()`.
     maybe_input_define: Option<&api::StringMap>,
     target: Target,
-    env_loader: Option<&mut DotEnv::Loader>,
+    // The map `process.env.*` defines are inlined from.
+    env_map: Option<&DotEnv::Map>,
     framework_env: Option<&Env>,
     node_env: Option<&[u8]>,
     drop: &[&[u8]],
@@ -859,7 +860,7 @@ pub(crate) fn defines_from_transform_options(
     let mut behavior = api::DotEnvBehavior::disable;
 
     'load_env: {
-        let Some(env) = env_loader else {
+        let Some(env) = env_map else {
             break 'load_env;
         };
         let Some(framework) = framework_env else {
@@ -1603,10 +1604,14 @@ impl<'a> BundleOptions<'a> {
         b"react-refresh",
     ];
 
+    /// `process_env`, when given, is the map `process.env.*` defines are
+    /// inlined from (for `env.behavior` `load_all` / `prefix`) instead of
+    /// `loader_`'s map: `Bun.build` passes the caller's live `process.env`.
     pub(crate) fn load_defines(
         &mut self,
         arena: &bun_alloc::Arena,
-        loader_: Option<&mut DotEnv::Loader>,
+        loader_: Option<&DotEnv::Loader>,
+        process_env: Option<&DotEnv::Map>,
     ) -> Result<(), crate::Error> {
         // Forwarding the env as an `Option<&Env>` parameter forced the
         // caller into an aliased-`&mut` UB
@@ -1621,28 +1626,22 @@ impl<'a> BundleOptions<'a> {
         if self.defines_loaded {
             return Ok(());
         }
-        // PERF: borrowed static literals for the three
-        // constant cases; only the env-loader case needs an owned copy (it has
-        // to outlive the `&mut loader_` we pass below, so it can't stay a borrow
-        // into the loader). `Cow` keeps the literals zero-alloc — matters because
-        // every VM with no `NODE_ENV` in its env hits the `"development"` arm.
-        let node_env: Option<Cow<[u8]>> = 'node_env: {
-            if let Some(e) = loader_.as_deref() {
-                if let Some(env_) = e.get_node_env() {
-                    break 'node_env Some(Cow::Owned(env_.to_vec()));
-                }
+        let node_env: Option<&[u8]> = 'node_env: {
+            if let Some(env_) = loader_.and_then(|e| e.get_node_env()) {
+                break 'node_env Some(env_);
             }
 
             if self.is_test() {
-                break 'node_env Some(Cow::Borrowed(b"\"test\"".as_slice()));
+                break 'node_env Some(b"\"test\"".as_slice());
             }
 
             if self.production {
-                break 'node_env Some(Cow::Borrowed(b"\"production\"".as_slice()));
+                break 'node_env Some(b"\"production\"".as_slice());
             }
 
-            Some(Cow::Borrowed(b"\"development\"".as_slice()))
+            Some(b"\"development\"".as_slice())
         };
+        let env_map = process_env.or(loader_.map(|loader| &loader.map));
         // reshaped for borrowck — node_env computed before passing self.log
         self.define = defines_from_transform_options(
             // No other `&mut Log` is live across this call (see `log_mut`
@@ -1650,9 +1649,9 @@ impl<'a> BundleOptions<'a> {
             self.log_mut(),
             self.transform_options.define.as_ref(),
             self.target,
-            loader_,
+            env_map,
             Some(&self.env),
-            node_env.as_deref(),
+            node_env,
             // `&self.drop` is `Box<[Box<[u8]>]>`; the callee wants `&[&[u8]]`,
             // so re-borrow per call (cold path: once per options build).
             &self.drop.iter().map(|s| s.as_ref()).collect::<Vec<_>>(),

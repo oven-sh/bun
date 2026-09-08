@@ -104,6 +104,47 @@ pub mod js_bundler {
         Ok(this)
     }
 
+    /// Copy the own enumerable entries of `process.env` as it is now (only
+    /// those whose key starts with `prefix`, when given). The VM's env loader
+    /// map is not the same thing: it is the environment the process started
+    /// with, so a key the script deleted is still in it and a key the script
+    /// set is not.
+    fn process_env_snapshot(
+        global_this: &JSGlobalObject,
+        prefix: Option<&[u8]>,
+    ) -> JsResult<bun_dotenv::Map> {
+        let mut map = bun_dotenv::Map::init();
+        let Some(process_env) = global_this.process_env()?.get_object() else {
+            return Ok(map);
+        };
+
+        let iter = jsc::JSPropertyIterator::init(
+            global_this,
+            process_env,
+            jsc::JSPropertyIteratorOptions {
+                skip_empty_name: true,
+                include_value: true,
+                ..Default::default()
+            },
+        )?;
+        map.ensure_unused_capacity(iter.len)?;
+
+        while let Some((key, value)) = iter.next()? {
+            // On Windows `process.env` is a Proxy that also owns a `toJSON` function.
+            if value.is_undefined_or_null() || value.is_callable() {
+                continue;
+            }
+            let key = key.to_utf8();
+            if prefix.is_some_and(|prefix| !key.starts_with(prefix)) {
+                continue;
+            }
+            let value = value.to_bun_string(global_this)?;
+            map.put(&key, &value.to_utf8())?;
+        }
+
+        Ok(map)
+    }
+
     pub struct Config {
         pub(crate) target: Target,
         pub(crate) entry_points: StringSet,
@@ -151,6 +192,10 @@ pub mod js_bundler {
         pub(crate) throw_on_error: bool,
         pub(crate) env_behavior: api::DotEnvBehavior,
         pub(crate) env_prefix: OwnedString,
+        /// `process.env` as it was when `Bun.build` was called. `env: "inline"`
+        /// and `env: "PREFIX_*"` inline these values, not the environment the
+        /// process started with.
+        pub(crate) process_env: Option<bun_dotenv::Map>,
         pub(crate) compile: Option<CompileOptions>,
         /// In-memory files that can be used as entrypoints or imported.
         /// These files do not need to exist on disk.
@@ -216,6 +261,7 @@ pub mod js_bundler {
                 throw_on_error: true,
                 env_behavior: api::DotEnvBehavior::Disable,
                 env_prefix: OwnedString::default(),
+                process_env: None,
                 compile: None,
                 files: FileMap::default(),
                 metafile: false,
@@ -721,6 +767,19 @@ pub mod js_bundler {
                         )));
                     }
                 }
+            }
+
+            match this.env_behavior {
+                api::DotEnvBehavior::LoadAll => {
+                    this.process_env = Some(process_env_snapshot(global_this, None)?);
+                }
+                api::DotEnvBehavior::Prefix => {
+                    this.process_env = Some(process_env_snapshot(
+                        global_this,
+                        Some(this.env_prefix.list.as_slice()),
+                    )?);
+                }
+                _ => {}
             }
 
             if let Some(packages) = config.get_optional_enum_from_map(

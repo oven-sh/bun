@@ -578,7 +578,19 @@ impl<'a> Transpiler<'a> {
 
     /// Load env files and build `options.define`. Idempotent — a no-op once
     /// `options.defines_loaded` is set.
+    #[inline]
     pub fn configure_defines(&mut self) -> crate::Result<()> {
+        self.configure_defines_with_process_env(None)
+    }
+
+    /// [`Self::configure_defines`], but `process.env.*` defines (for
+    /// `env.behavior` `load_all` / `prefix`) are inlined from `process_env`
+    /// instead of the env loader's map, which holds the environment the
+    /// process started with. `Bun.build` passes the caller's live `process.env`.
+    pub fn configure_defines_with_process_env(
+        &mut self,
+        process_env: Option<&dot_env::Map>,
+    ) -> crate::Result<()> {
         if self.options.defines_loaded {
             return Ok(());
         }
@@ -590,7 +602,7 @@ impl<'a> Transpiler<'a> {
 
         self.run_env_loader(self.options.env.disable_default_env_files)?;
 
-        let env_loader = self.env_mut();
+        let env_loader = self.env();
         let mut is_production = env_loader.is_production();
 
         // `load_defines` injects a default `process.env.NODE_ENV`; sample the
@@ -620,7 +632,8 @@ impl<'a> Transpiler<'a> {
         // Spec passed `&this.options.env` as a separate arg; `load_defines` now
         // reads `&self.env` internally so the disjoint borrow is resolved
         // inside the `&mut self` scope without `unsafe`.
-        self.options.load_defines(self.arena, Some(env_loader))?;
+        self.options
+            .load_defines(self.arena, Some(env_loader), process_env)?;
 
         let mut is_development = false;
         if had_explicit_node_env {

@@ -1079,7 +1079,9 @@ impl CompletionStruct for JSBundleCompletionTask {
         }
 
         transpiler.configure_linker();
-        transpiler.configure_defines()?;
+        transpiler.configure_defines_with_process_env(config.process_env.as_ref())?;
+        // The define table copied what it inlines.
+        config.process_env = None;
 
         // After configure_defines(): downloading the target reads proxy/TLS settings from the loaded env.
         transpiler.options.compile_target_builtins = match &config.compile {

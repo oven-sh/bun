@@ -661,6 +661,8 @@ Server.prototype.listen = function () {
     if (cluster === undefined) cluster = require("node:cluster");
 
     const notifyListening = () => {
+      // No channel (NODE_UNIQUE_ID inherited by a plain child, or already disconnected): nothing to notify.
+      if (!process.connected) return;
       cluster.worker.state = "listening";
       const address = server.address();
       const isObjectAddress = address !== null && typeof address === "object";

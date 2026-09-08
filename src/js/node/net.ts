@@ -3661,7 +3661,9 @@ Server.prototype[Symbol.asyncDispose] = function () {
 };
 
 Server.prototype._emitCloseIfDrained = function _emitCloseIfDrained() {
-  if (this._handle || this._connections > 0) {
+  // Truthiness, not `> 0`: after the worker-close reset a late local socket takes
+  // the count negative. https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L2472
+  if (this._handle || this._connections) {
     return;
   }
   process.nextTick(() => {

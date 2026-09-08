@@ -1284,8 +1284,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         super::AnyServer::from(std::ptr::from_ref::<Self>(self))
     }
 
-    /// `owner` is the server a Request/NodeHTTPResponse is still attached to
-    /// (`None` once detached, which callers already treat as "not live").
+    /// `owner`: the server the Request is still attached to; `None` once detached.
     fn check_same_server(
         &self,
         global: &JSGlobalObject,

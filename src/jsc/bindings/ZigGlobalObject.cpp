@@ -3031,6 +3031,22 @@ uint8_t GlobalObject::drainMicrotasks()
     }
     scope.assertNoExceptionExceptTermination();
 
+    performMicrotaskCheckpoint();
+    // Only a termination is left pending by the checkpoint.
+    if (scope.exception()) [[unlikely]] {
+        Bun__VM__takeTerminationOutsideScript(this);
+        return 1;
+    }
+
+    return 0;
+}
+
+void GlobalObject::performMicrotaskCheckpoint()
+{
+    auto& vm = this->vm();
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    scope.assertNoException();
+
     // A checkpoint with no script on the stack ends an event loop callback: an
     // AsyncLocalStorage frame it installed with enterWith() must not leak into
     // the next one (everything queued runs under the frame it captured).
@@ -3040,26 +3056,20 @@ uint8_t GlobalObject::drainMicrotasks()
     if (auto nextTickQueue = this->m_nextTickQueue.get()) {
         nextTickQueue->drain(vm, this);
         if (auto* exception = scope.exception()) {
-            if (vm.isTerminationException(exception)) {
-                Bun__VM__takeTerminationOutsideScript(this);
-                return 1;
-            }
+            if (vm.isTerminationException(exception))
+                return;
             (void)scope.tryClearException();
             this->reportUncaughtExceptionAtEventLoop(this, exception);
-            return 0;
+            return;
         }
     }
     vm.drainMicrotasks();
     if (auto* exception = scope.exception()) {
-        if (vm.isTerminationException(exception)) {
-            Bun__VM__takeTerminationOutsideScript(this);
-            return 1;
-        }
+        if (vm.isTerminationException(exception))
+            return;
         (void)scope.tryClearException();
         this->reportUncaughtExceptionAtEventLoop(this, exception);
     }
-
-    return 0;
 }
 
 // The Rust event loop's entry to drainMicrotasks() (`EventLoop::exit()` and the

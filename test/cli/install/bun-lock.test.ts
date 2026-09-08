@@ -46,9 +46,12 @@ it("should write plaintext lockfiles", async () => {
     }),
   );
 
-  // Run 'bun install' to generate the lockfile
+  // Run 'bun install' to generate the lockfile. The lockfile mode is
+  // `0o666 & ~umask`, so pin the umask for the assertion below.
   const installResult = spawn({
-    cmd: [bunExe(), "install", "--save-text-lockfile"],
+    cmd: isWindows
+      ? [bunExe(), "install", "--save-text-lockfile"]
+      : ["sh", "-c", `umask 022 && exec "$0" install --save-text-lockfile`, bunExe()],
     cwd: packageDir,
     env,
   });
@@ -61,7 +64,7 @@ it("should write plaintext lockfiles", async () => {
   await using file = await open(join(packageDir, "bun.lock"), "r");
   const stat = await file.stat();
 
-  // in unix, 0o644 == 33188
+  // in unix, 0o644 == 33188 (at umask 022)
   let mode = 33188;
   // ..but windows is different
   if (isWindows) {

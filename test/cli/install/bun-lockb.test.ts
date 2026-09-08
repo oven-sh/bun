@@ -33,9 +33,10 @@ it("should not print anything to stderr when running bun.lockb", async () => {
     }),
   );
 
-  // Run 'bun install' to generate the lockfile
+  // Run 'bun install' to generate the lockfile. The lockfile mode is
+  // `0o777 & ~umask`, so pin the umask for the assertion below.
   const installResult = spawn({
-    cmd: [bunExe(), "install"],
+    cmd: isWindows ? [bunExe(), "install"] : ["sh", "-c", `umask 022 && exec "$0" install`, bunExe()],
     cwd: packageDir,
     env,
   });
@@ -48,7 +49,7 @@ it("should not print anything to stderr when running bun.lockb", async () => {
   await using file = await open(join(packageDir, "bun.lockb"), "r");
   const stat = await file.stat();
 
-  // in unix, 0o755 == 33261
+  // in unix, 0o755 == 33261 (at umask 022)
   let mode = 33261;
   // ..but windows is different
   if (isWindows) {

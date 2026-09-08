@@ -11,7 +11,7 @@
 
 import { SQL } from "bun";
 import { expect, test } from "bun:test";
-import { describeWithContainer, isDockerEnabled } from "harness";
+import { describeWithContainer } from "harness";
 
 // setTimeout's maximum delay is 2 ** 31 - 1 milliseconds.
 const MAX_TIMEOUT_SECONDS = (2 ** 31 - 1) / 1000; // 2147483.647
@@ -111,24 +111,23 @@ test("sqlite: transaction close() rejects an overflowing timeout and leaves the 
   expect(result).toBe("callback completed");
 });
 
-// reserved_sql.close() is the remaining variant; it needs a real connection,
-// so it runs against the docker postgres service when available.
-if (isDockerEnabled()) {
-  describeWithContainer("postgres", { image: "postgres_plain" }, container => {
-    test("reserved connection close() rejects an overflowing timeout and stays usable", async () => {
-      await container.ready;
-      const url = `postgres://bun_sql_test@${container.host}:${container.port}/bun_sql_test`;
-      await using sql = new SQL(url, { max: 2 });
-      // disposal calls release(); it runs before the pool's own disposal
-      await using reserved = await sql.reserve();
-      const err = await reserved.close({ timeout: 2 ** 31 }).then(
-        () => null,
-        e => e,
-      );
-      expect(err?.code).toBe("ERR_INVALID_ARG_VALUE");
-      // the rejected close must leave the reserved connection untouched
-      const rows = await reserved`select 1 as x`;
-      expect(rows[0]).toEqual({ x: 1 });
-    });
+// reserved_sql.close() is the remaining variant; it needs a real connection.
+// describeWithContainer marks the block todo when no postgres service is
+// reachable.
+describeWithContainer("postgres", { image: "postgres_plain" }, container => {
+  test("reserved connection close() rejects an overflowing timeout and stays usable", async () => {
+    await container.ready;
+    const url = `postgres://bun_sql_test@${container.host}:${container.port}/bun_sql_test`;
+    await using sql = new SQL(url, { max: 2 });
+    // disposal calls release(); it runs before the pool's own disposal
+    await using reserved = await sql.reserve();
+    const err = await reserved.close({ timeout: 2 ** 31 }).then(
+      () => null,
+      e => e,
+    );
+    expect(err?.code).toBe("ERR_INVALID_ARG_VALUE");
+    // the rejected close must leave the reserved connection untouched
+    const rows = await reserved`select 1 as x`;
+    expect(rows[0]).toEqual({ x: 1 });
   });
-}
+});

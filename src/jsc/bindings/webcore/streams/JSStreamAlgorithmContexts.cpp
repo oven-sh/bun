@@ -15,6 +15,7 @@ namespace WebCore {
 
 using namespace JSC;
 using Bun::WebStreams::analyzeBarrierEdge;
+using Bun::WebStreams::visitInternalFieldsHidden;
 
 const ClassInfo JSStreamFromIterableContext::s_info = { "StreamFromIterableContext"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSStreamFromIterableContext) };
 
@@ -53,7 +54,7 @@ void JSStreamFromIterableContext::visitChildrenImpl(JSCell* cell, Visitor& visit
 {
     auto* thisObject = uncheckedDowncast<JSStreamFromIterableContext>(cell);
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
-    Base::visitChildren(thisObject, visitor);
+    visitInternalFieldsHidden(thisObject, visitor);
 }
 
 void JSStreamFromIterableContext::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)

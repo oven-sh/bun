@@ -16,6 +16,7 @@ namespace WebCore {
 
 using namespace JSC;
 using Bun::WebStreams::analyzeBarrierEdge;
+using Bun::WebStreams::visitInternalFieldsHidden;
 
 const ClassInfo JSStreamTeeState::s_info = { "StreamTeeState"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSStreamTeeState) };
 
@@ -54,7 +55,7 @@ void JSStreamTeeState::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 {
     auto* thisObject = uncheckedDowncast<JSStreamTeeState>(cell);
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
-    Base::visitChildren(thisObject, visitor);
+    visitInternalFieldsHidden(thisObject, visitor);
 }
 
 void JSStreamTeeState::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)

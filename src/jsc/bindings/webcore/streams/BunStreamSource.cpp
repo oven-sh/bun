@@ -44,6 +44,7 @@ namespace WebCore {
 
 using namespace JSC;
 using Bun::WebStreams::analyzeBarrierEdge;
+using Bun::WebStreams::visitInternalFieldsHidden;
 
 const ClassInfo JSNativeStreamSourceAdapter::s_info = { "NativeStreamSourceAdapter"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSNativeStreamSourceAdapter) };
 
@@ -83,7 +84,7 @@ void JSNativeStreamSourceAdapter::visitChildrenImpl(JSCell* cell, Visitor& visit
 {
     auto* thisObject = uncheckedDowncast<JSNativeStreamSourceAdapter>(cell);
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
-    Base::visitChildren(thisObject, visitor);
+    visitInternalFieldsHidden(thisObject, visitor);
 }
 
 DEFINE_VISIT_CHILDREN(JSNativeStreamSourceAdapter);
@@ -123,7 +124,7 @@ void JSDirectSinkCloseState::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 {
     auto* thisObject = uncheckedDowncast<JSDirectSinkCloseState>(cell);
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
-    Base::visitChildren(thisObject, visitor);
+    visitInternalFieldsHidden(thisObject, visitor);
 }
 
 DEFINE_VISIT_CHILDREN(JSDirectSinkCloseState);
@@ -173,7 +174,7 @@ void JSReadStreamIntoSinkOperation::visitChildrenImpl(JSCell* cell, Visitor& vis
 {
     auto* thisObject = uncheckedDowncast<JSReadStreamIntoSinkOperation>(cell);
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
-    Base::visitChildren(thisObject, visitor);
+    visitInternalFieldsHidden(thisObject, visitor);
 }
 
 DEFINE_VISIT_CHILDREN(JSReadStreamIntoSinkOperation);

@@ -31,5 +31,15 @@ ALWAYS_INLINE void analyzeBarrierEdge(JSC::VM& vm, JSC::HeapAnalyzer& analyzer, 
         analyzer.analyzePropertyNameEdge(from, value.asCell(), JSC::Identifier::fromString(vm, name).impl());
 }
 
+// visitChildren for a JSInternalFieldObjectImpl cell whose analyzeHeap names its fields: marks
+// the fields as HIDDEN edges so the named ones are the only edges a heap snapshot records.
+template<typename T, typename Visitor>
+ALWAYS_INLINE void visitInternalFieldsHidden(T* cell, Visitor& visitor)
+{
+    using Impl = typename T::Base;
+    Impl::Base::visitChildren(cell, visitor);
+    visitor.appendValuesHidden(&static_cast<Impl*>(cell)->internalField(0), Impl::numberOfInternalFields);
+}
+
 } // namespace WebStreams
 } // namespace Bun

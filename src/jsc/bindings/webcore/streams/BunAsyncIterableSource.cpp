@@ -67,7 +67,7 @@ void JSAsyncIteratorSourceOperation::visitChildrenImpl(JSCell* cell, Visitor& vi
 {
     auto* thisObject = uncheckedDowncast<JSAsyncIteratorSourceOperation>(cell);
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
-    Base::visitChildren(thisObject, visitor);
+    visitInternalFieldsHidden(thisObject, visitor);
 }
 
 DEFINE_VISIT_CHILDREN(JSAsyncIteratorSourceOperation);

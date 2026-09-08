@@ -2299,8 +2299,7 @@ class Http2Stream extends Duplex {
   [bunHTTP2AsyncContextFrame] = $getInternalField($asyncContext, 0);
 
   rstCode: number = 0;
-  // END_STREAM flag of the header block that opened the stream (node's onSessionHeaders sets it
-  // only there: a server's request block, never a client's response or trailers). Kept after close.
+  // END_STREAM flag of the header block that opened the stream, as in node's onSessionHeaders.
   [kEndAfterHeaders]: boolean = false;
   headersSent: boolean = false;
   [bunHTTP2Headers]: any;
